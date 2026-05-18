@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingHorizontal="12dp"
+    android:paddingVertical="4dp">
+
+    <!-- 时间戳 -->
+    <TextView
+        android:id="@+id/tvTime"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:textSize="11sp"
+        android:textColor="#999999"
+        android:visibility="gone" />
+
+    <!-- 用户消息：右对齐 -->
+    <LinearLayout
+        android:id="@+id/layoutUser"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:gravity="end"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tvUserMessage"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_message_user"
+                android:maxWidth="280dp"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="12dp"
+                android:textColor="#FFFFFF"
+                android:textSize="15sp"
+                android:lineSpacingExtra="3dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:longClickable="true" />
+
+        </LinearLayout>
+
+        <!-- 用户消息操作按钮（编辑/复制/删除） -->
+        <LinearLayout
+            android:id="@+id/layoutUserActions"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:gravity="end"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/btnCopyUser"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="2dp"
+                android:gravity="center"
+                android:text="复制"
+                android:textSize="12sp"
+                android:textColor="#666666"
+                android:background="@drawable/bg_action_btn"
+                android:layout_marginEnd="6dp" />
+
+            <TextView
+                android:id="@+id/btnEditUser"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="2dp"
+                android:gravity="center"
+                android:text="编辑"
+                android:textSize="12sp"
+                android:textColor="#666666"
+                android:background="@drawable/bg_action_btn" />
+
+            <TextView
+                android:id="@+id/btnDeleteUser"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="2dp"
+                android:gravity="center"
+                android:text="删除"
+                android:textSize="12sp"
+                android:textColor="#FF5252"
+                android:background="@drawable/bg_action_btn"
+                android:layout_marginStart="6dp" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- AI 消息：左对齐，带头像 -->
+    <LinearLayout
+        android:id="@+id/layoutBot"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:gravity="start"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <!-- AI 头像占位 -->
+        <LinearLayout
+            android:id="@+id/ivAvatar"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_gravity="bottom"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/bg_avatar"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="AI"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tvBotMessage"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_message_bot"
+                    android:maxWidth="250dp"
+                    android:paddingHorizontal="16dp"
+                    android:paddingVertical="12dp"
+                    android:textColor="#333333"
+                    android:textSize="15sp"
+                    android:lineSpacingExtra="3dp"
+                    android:visibility="visible"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:longClickable="true" />
+
+                <!-- 打字动画指示器（流式输出中显示） -->
+                <TextView
+                    android:id="@+id/tvTypingIndicator"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:gravity="center"
+                    android:text="..."
+                    android:textColor="#1E88E5"
+                    android:textSize="20sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+
+            </LinearLayout>
+
+            <!-- AI 消息操作按钮（复制） -->
+            <LinearLayout
+                android:id="@+id/layoutBotActions"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:orientation="horizontal"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/btnCopyBot"
+                    android:layout_width="wrap_content"
+                    android:layout_height="28dp"
+                    android:paddingHorizontal="12dp"
+                    android:paddingVertical="2dp"
+                    android:gravity="center"
+                    android:text="复制"
+                    android:textSize="12sp"
+                    android:textColor="#666666"
+                    android:background="@drawable/bg_action_btn" />
+
+            </LinearLayout>
+
+            <!-- 错误提示 -->
+            <TextView
+                android:id="@+id/tvErrorHint"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:paddingLeft="4dp"
+                android:text="⚠️ 消息发送失败"
+                android:textColor="#FF5252"
+                android:textSize="12sp"
+                android:visibility="gone" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</LinearLayout>

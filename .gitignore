@@ -1,17 +1,28 @@
+# Gradle 构建输出和缓存
+.gradle/
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# IDE 配置（Android Studio / IntelliJ IDEA）
+.idea/
 *.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
+/.idea/caches/
+/.idea/libraries/
 /.idea/modules.xml
 /.idea/workspace.xml
 /.idea/navEditor.xml
 /.idea/assetWizardSettings.xml
-.DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
+
+# 本地配置文件（包含敏感信息）
 local.properties
+*local.properties
 api_keys_local.properties
 app/src/main/assets/api_keys_local.properties
+
+# 系统文件
+.DS_Store
+
+# 其他
+*.log

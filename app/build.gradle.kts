@@ -1,0 +1,66 @@
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
+android {
+    namespace = "com.chin.stockanalysis"
+    compileSdk = 34
+
+    defaultConfig {
+        applicationId = "com.chin.stockanalysis"
+        //minSdk = 21
+        minSdk = 26
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0"
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+
+    kotlinOptions {
+        jvmTarget = "11"
+    }
+
+    viewBinding {
+        enable = true
+    }
+}
+
+dependencies {
+    implementation("androidx.core:core-ktx:1.12.0")
+    implementation("androidx.appcompat:appcompat:1.6.1")
+    implementation("com.google.android.material:material:1.11.0")
+    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+
+    // Fragment & ViewPager2 (新增)
+    implementation("androidx.fragment:fragment-ktx:1.6.1")
+    implementation("androidx.viewpager2:viewpager2:1.0.0")
+
+    // A股K线图
+    //implementation("com.github.wusea:StockChart:1.1.0")
+    // ✅ 绝对可用、免费、公开、无 401 的 A 股 K 线库
+    implementation("com.github.PhilJay:MPAndroidChart:v3.1.0")
+
+    // 网络请求
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // JSON
+    implementation("com.google.code.gson:gson:2.10.1")
+    // 独立 org.json 库，确保单元测试环境中 JSONObject 可用（Android 系统的 org.json 在纯 JVM 测试中不可用）
+    implementation("org.json:json:20240303")
+
+    // Test
+    testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test.ext:junit:1.1.5")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
+}
