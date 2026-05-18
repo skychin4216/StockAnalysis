@@ -9,19 +9,24 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.PopupMenu
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.chin.stockanalysis.databinding.ActivityChatBinding
 import com.chin.stockanalysis.stock.StockService
+import com.chin.stockanalysis.stock.data.MultiSourceStockRepository
+import com.chin.stockanalysis.stock.data.StockDataSourceFactory
 import com.chin.stockanalysis.stock.data.StockRepository
 import com.chin.stockanalysis.stock.data.sources.EastMoneyStockSource
 import com.chin.stockanalysis.stock.data.sources.SinaStockSource
 import com.chin.stockanalysis.stock.data.sources.TencentStockSource
-import com.chin.stockanalysis.ui.ChatAdapter
-import com.chin.stockanalysis.ui.Message
+import com.chin.stockanalysis.ui.ChatAdapter      // ✅ 修正
+import com.chin.stockanalysis.ui.Message          // ✅ 修正
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -29,6 +34,7 @@ import kotlinx.coroutines.withContext
  * AI 聊天 Activity - 股票分析助手
  *
  * 集成：
+ * - 多源股票数据（智能缓存 + 并发获取 + 优先级管理）
  * - 多 AI API 提供商（DeepSeek、硅基流动、豆包等）
  * - 股票实时数据服务（自动识别股票意图并注入数据到 AI prompt）
  * - 消息操作（复制/编辑/删除）
@@ -68,19 +74,55 @@ class ChatActivity : AppCompatActivity() {
 
     private var apiProvider: ApiProvider? = null
     private lateinit var stockService: StockService
+    private lateinit var multiSourceRepository: MultiSourceStockRepository
 
     private val activityJob = SupervisorJob()
     private val uiScope = CoroutineScope(Dispatchers.Main + activityJob)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         try {
             binding = ActivityChatBinding.inflate(layoutInflater)
             setContentView(binding.root)
 
+            // ============================================================
+            // 步骤 1: 初始化多源股票数据仓储 (功能 A/B/C)
+            // ============================================================
+            multiSourceRepository = StockDataSourceFactory.createDefaultRepository(this)
+            Log.d(TAG, "✅ 多源仓储初始化完成")
+
+            // ============================================================
+            // 步骤 2: 启动后台健康检查（每30秒）
+            // ============================================================
+            lifecycleScope.launch {
+                while (isActive) {
+                    try {
+                        multiSourceRepository.healthCheck()
+                        delay(30000)  // 每30秒检查一次
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Health check error: ${e.message}")
+                    }
+                }
+            }
+
+            // ============================================================
+            // 步骤 3: 打印诊断信息（调试用）
+            // ============================================================
+            lifecycleScope.launch {
+                delay(2000)
+                val diagnostics = multiSourceRepository.getDiagnostics()
+                Log.d(TAG, "\n$diagnostics")
+            }
+
+            // ============================================================
+            // 步骤 4: 初始化 AI API 提供商
+            // ============================================================
             initProvider()
 
-            // 初始化股票服务
+            // ============================================================
+            // 步骤 5: 初始化股票服务
+            // ============================================================
             val repository = StockRepository(
                 primarySource = SinaStockSource(),
                 fallbackSources = listOf(
@@ -90,13 +132,16 @@ class ChatActivity : AppCompatActivity() {
             )
             stockService = StockService(repository = repository)
 
+            // ============================================================
+            // 步骤 6: 初始化 UI 组件
+            // ============================================================
             setupToolbar()
             setupRecyclerView()
             setupInput()
             setupMenu()
             showWelcomeMessage()
 
-            Log.d(TAG, "✅ ChatActivity 初始化完成")
+            Log.d(TAG, "✅ ChatActivity 初始化完成 - 所有功能就绪")
         } catch (e: Exception) {
             Log.e(TAG, "❌❌❌ ChatActivity 初始化失败 ❌❌❌")
             Log.e(TAG, "错误类型: ${e.javaClass.simpleName}")
@@ -173,6 +218,7 @@ class ChatActivity : AppCompatActivity() {
             val popup = PopupMenu(this, view)
             popup.menu.add("切换 API 提供商")
             popup.menu.add("清空对话")
+            popup.menu.add("数据源诊断")  // 新增：查看数据源状态
             popup.setOnMenuItemClickListener { item ->
                 when (item.title) {
                     "切换 API 提供商" -> {
@@ -181,6 +227,12 @@ class ChatActivity : AppCompatActivity() {
                     }
                     "清空对话" -> {
                         clearMessages()
+                        true
+                    }
+                    "数据源诊断" -> {
+                        val diagnostics = multiSourceRepository.getDiagnostics()
+                        Toast.makeText(this, "诊断信息已打印到日志", Toast.LENGTH_SHORT).show()
+                        Log.d(TAG, diagnostics)
                         true
                     }
                     else -> false
@@ -196,11 +248,12 @@ class ChatActivity : AppCompatActivity() {
         val providerName = apiProvider?.config?.name ?: "未配置"
         addBotMessage(
             "👋 你好！我是你的A股投资分析助手。\n" +
-                "当前模型: $providerName\n\n" +
-                "你可以这样问我：\n" +
-                "• 600519 现在多少钱？\n" +
-                "• 帮我分析一下贵州茅台\n" +
-                "• 上证指数今天怎么样？"
+                    "当前模型: $providerName\n" +
+                    "数据源: 多源并发 (新浪/聱宽/腾讯/东方/AKShare)\n\n" +
+                    "你可以这样问我：\n" +
+                    "• 600519 现在多少钱？\n" +
+                    "• 帮我分析一下贵州茅台\n" +
+                    "• 上证指数今天怎么样？"
         )
     }
 
@@ -255,7 +308,7 @@ class ChatActivity : AppCompatActivity() {
         return try {
             val ctx = stockService.processUserInput(userText)
             if (ctx.hasStockData && ctx.promptPrefix.isNotBlank()) {
-                "$SYSTEM_PROMPT\n\n${ctx.promptPrefix}"
+                "$SYSTEM_PROMPT\n\n【实时行情数据】\n${ctx.promptPrefix}"
             } else {
                 SYSTEM_PROMPT
             }

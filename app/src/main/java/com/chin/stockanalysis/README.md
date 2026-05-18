@@ -16,7 +16,116 @@
 | `stock/` | 股票行情模块 |
 | `ui/` | UI Fragment（ChatTab, StockTab, Settings） |
 
-## 核心架构关系
+## stock/ 包结构（股票行情模块）
+
+```
+stock/
+├── StockService.kt             # 核心服务门面（意图识别 + 数据获取 + 格式化）
+├── StockContext.kt             # 处理结果数据类（用于注入 AI prompt）
+├── StockRealtime.kt            # 统一数据模型
+│
+├── intent/                     # 意图识别层（Chain of Responsibility）
+│   ├── StockIntent.kt          # 意图枚举
+│   ├── IntentResult.kt         # 意图解析结果
+│   ├── IntentProcessorChain.kt # 处理器链
+│   └── handlers/
+│       ├── IntentHandler.kt    # 处理器接口
+│       ├── StockCodeHandler.kt # 股票代码匹配（"600519"）
+│       ├── StockNameHandler.kt # 股票名称匹配（"茅台"）
+│       ├── IndexHandler.kt     # 指数查询（"上证指数"）
+│       ├── HotStockHandler.kt  # 热门/涨停板（可选）
+│       └── AiIntentHandler.kt  # AI 兜底解析（需要 LLM，可选）
+│
+├── data/                       # 数据访问层（Repository Pattern）
+│   ├── StockRepository.kt      # 数据仓储（缓存 + 多源降级）
+│   ├── StockDataSource.kt      # 数据源接口
+│   ├── StockCache.kt           # LRU 缓存（3秒 TTL）
+│   └── sources/
+│       ├── SinaStockSource.kt       # 新浪财经（主源，优先级 1）
+│       ├── TencentStockSource.kt    # 腾讯财经（备源，优先级 2）
+│       └── EastMoneyStockSource.kt  # 东方财富（备源，优先级 3）
+│
+├── formatter/                  # 数据格式化层
+│   └── StockDataFormatter.kt   # 格式化数据用于 AI prompt
+│
+├── realtime/                   # 🔥 实时数据框架（新增）
+│   ├── RealtimeConfig.kt       # 配置管理 + 工厂方法
+│   ├── RealtimeDataAccessor.kt # 实时数据访问器（并发请求 + 智能选源）
+│   └── RealtimeDataProcessor.kt# 实时数据处理器（验证 + 清洗 + 格式化）
+│
+└── analysis/                   # AI 分析层
+    └── AiStockAnalyzer.kt      # AI 意图解析 + 技术分析（可选）
+```
+
+## 实时数据框架（realtime/ 包）
+
+### 为什么豆包App能实时获取股票，但豆包API不行？
+
+- **豆包App**：客户端**直连**新浪/腾讯等开源财经 API → 获取实时行情 → 注入 AI prompt → 展示
+- **豆包API**：仅调用 AI 模型本身，模型训练数据有截止日期 → **无实时数据**
+- **结论**：实时数据必须从**开源财经网站**的 HTTP 接口获取，不能依赖 AI API
+
+### 三个核心组件
+
+| 类 | 职责 | 关键特性 |
+|------|------|---------|
+| `RealtimeDataAccessor` | **访问实时数据** | 并发请求多源、按延迟智能选源、后台健康检查、频率控制、自动恢复 |
+| `RealtimeDataProcessor` | **处理实时数据** | 数据验证（价格/涨跌幅/量合理性）、数据清洗、交易时段感知（5种状态）、formatForAi/formatForUi 双格式化、Flow 自动推送 |
+| `RealtimeConfig` | **配置管理** | Builder 模式、3种预设（DEFAULT/FASTEST/LOW_TRAFFIC）、createProcessor() 工厂方法 |
+
+### 一行代码接入
+
+```kotlin
+// 创建处理器
+val processor = RealtimeConfig.createProcessor()
+
+// 协程中获取实时数据
+lifecycleScope.launch {
+    val result = processor.getProcessedRealtime(listOf("sh600519"))
+
+    // 用于 AI prompt 注入
+    val aiText = processor.formatForAi(result)
+
+    // 或用于 UI 展示
+    val uiData = processor.formatForUi(result)
+}
+```
+
+### 三种预设模式
+
+| 模式 | 缓存TTL | 说明 |
+|------|---------|------|
+| `DEFAULT` | 3秒 | 稳定模式，并发取最快 |
+| `FASTEST` | 2秒 | 极速模式，最新数据 |
+| `LOW_TRAFFIC` | 5秒 | 低流量模式，降频率 |
+
+### 数据流
+
+```
+用户输入 → IntentProcessor → StockService.processUserInputRealtime()
+                                    │
+                                    ▼
+                            RealtimeDataProcessor.getProcessedRealtime()
+                                    │
+                           ┌────────┴────────┐
+                           ▼                  ▼
+                    StockCache(缓存)   RealtimeDataAccessor.fetchRealtime()
+                                           │
+                              ┌─────────────┼─────────────┐
+                              ▼             ▼             ▼
+                      SinaSource     TencentSource   EastMoneySource
+                      (并发)          (并发)           (并发)
+                              │
+                              ▼  (取最快返回)
+                           验证 → 清洗 → 写入缓存 → 格式化
+                                    │
+                                    ▼
+                                AI Prompt
+```
+
+---
+
+## 核心架构关系（API 层）
 
 ```
 ApiProvider.kt (接口 + 配置定义)
