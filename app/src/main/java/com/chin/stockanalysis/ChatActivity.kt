@@ -121,19 +121,31 @@ class ChatActivity : AppCompatActivity() {
             initProvider()
 
             // ============================================================
-            // 步骤 5: 初始化股票服务
+            // 步骤 5: 初始化股票服务（使用顺序降级仓储，含全部5个数据源）
             // ============================================================
+            val fullSources = StockDataSourceFactory.createDefaultSources(this)
+            val primary = fullSources.firstOrNull() ?: SinaStockSource()
+            val fallbacks = fullSources.drop(1)
+            Log.d(TAG, "✅ StockService 使用 ${fullSources.size} 个数据源 (主源: ${primary::class.simpleName})")
+
             val repository = StockRepository(
-                primarySource = SinaStockSource(),
-                fallbackSources = listOf(
-                    TencentStockSource(),
-                    EastMoneyStockSource()
-                )
+                primarySource = primary,
+                fallbackSources = fallbacks
             )
             stockService = StockService(repository = repository)
 
             // ============================================================
-            // 步骤 6: 初始化 UI 组件
+            // 步骤 6: 打印完整数据源信息
+            // ============================================================
+            Log.d(TAG, "═══════════════════════════════════════")
+            Log.d(TAG, "📊 数据源配置:")
+            fullSources.forEach { source ->
+                Log.d(TAG, "  [p${source.priority()}] ${source::class.simpleName}")
+            }
+            Log.d(TAG, "═══════════════════════════════════════")
+
+            // ============================================================
+            // 步骤 7: 初始化 UI 组件
             // ============================================================
             setupToolbar()
             setupRecyclerView()
@@ -142,6 +154,7 @@ class ChatActivity : AppCompatActivity() {
             showWelcomeMessage()
 
             Log.d(TAG, "✅ ChatActivity 初始化完成 - 所有功能就绪")
+            Log.d(TAG, "═══════════════════════════════════════")
         } catch (e: Exception) {
             Log.e(TAG, "❌❌❌ ChatActivity 初始化失败 ❌❌❌")
             Log.e(TAG, "错误类型: ${e.javaClass.simpleName}")
@@ -305,15 +318,40 @@ class ChatActivity : AppCompatActivity() {
 
     /** 根据用户输入构建 system prompt（注入股票数据） */
     private fun buildSystemPromptWithStockData(userText: String): String {
+        val startTime = System.currentTimeMillis()
+        Log.d(TAG, "═══════════════════════════════════════")
+        Log.d(TAG, "🔍 开始处理用户输入: '${userText.take(50)}...'")
+        Log.d(TAG, "═══════════════════════════════════════")
+
         return try {
             val ctx = stockService.processUserInput(userText)
+
+            val elapsed = System.currentTimeMillis() - startTime
+            Log.d(TAG, "═══════════════════════════════════════")
+            Log.d(TAG, "📋 StockService.processUserInput 结果 (${elapsed}ms):")
+            Log.d(TAG, "  intent: ${ctx.intent.intent}")
+            Log.d(TAG, "  stockCodes: ${ctx.intent.stockCodes}")
+            Log.d(TAG, "  stockNames: ${ctx.intent.stockNames}")
+            Log.d(TAG, "  confidence: ${ctx.intent.confidence}")
+            Log.d(TAG, "  hasStockData: ${ctx.hasStockData}")
+            Log.d(TAG, "  promptPrefix 长度: ${ctx.promptPrefix.length}")
+            Log.d(TAG, "  promptPrefix 前200字: ${ctx.promptPrefix.take(200)}")
+
             if (ctx.hasStockData && ctx.promptPrefix.isNotBlank()) {
-                "$SYSTEM_PROMPT\n\n【实时行情数据】\n${ctx.promptPrefix}"
+                val result = "$SYSTEM_PROMPT\n\n【实时行情数据】\n${ctx.promptPrefix}"
+                Log.d(TAG, "✅ 成功注入实时数据到 system prompt (总长: ${result.length} chars)")
+                Log.d(TAG, "═══════════════════════════════════════")
+                result
             } else {
+                Log.w(TAG, "⚠️ 未获取到股票数据 (hasStockData=${ctx.hasStockData}, promptPrefix.isEmpty=${ctx.promptPrefix.isBlank()})")
+                Log.d(TAG, "  rawQuery: '${ctx.intent.rawQuery.take(50)}...'")
+                Log.d(TAG, "  intent: ${ctx.intent.intent}")
+                Log.d(TAG, "═══════════════════════════════════════")
                 SYSTEM_PROMPT
             }
         } catch (e: Exception) {
-            Log.e(TAG, "构建股票数据失败: ${e.message}", e)
+            Log.e(TAG, "❌ 构建股票数据失败: ${e.message}", e)
+            Log.e(TAG, "═══════════════════════════════════════")
             SYSTEM_PROMPT
         }
     }

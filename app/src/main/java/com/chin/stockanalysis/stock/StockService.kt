@@ -1,5 +1,6 @@
 package com.chin.stockanalysis.stock
 
+import android.util.Log
 import com.chin.stockanalysis.stock.data.StockRepository
 import com.chin.stockanalysis.stock.formatter.StockDataFormatter
 import com.chin.stockanalysis.stock.intent.IntentProcessorChain
@@ -25,6 +26,8 @@ class StockService(
     private val repository: StockRepository,
     private val dataFormatter: StockDataFormatter = StockDataFormatter()
 ) {
+    private val tag = "StockService"
+
     // ======================== 原始兼容方法 ========================
 
     /**
@@ -34,8 +37,17 @@ class StockService(
      * @return StockContext 包含意图和格式化数据
      */
     fun processUserInput(userMessage: String): StockContext {
+        Log.d(tag, "═══════════════════════════════════════")
+        Log.d(tag, "📥 StockService.processUserInput 开始")
+        Log.d(tag, "  用户输入: '${userMessage.take(80)}...'")
+
         // 1. 意图识别
         val intent = intentProcessor.process(userMessage)
+        Log.d(tag, "  ➡ IntentProcessor 结果:")
+        Log.d(tag, "    intent: ${intent.intent}")
+        Log.d(tag, "    codes: ${intent.stockCodes}")
+        Log.d(tag, "    names: ${intent.stockNames}")
+        Log.d(tag, "    confidence: ${intent.confidence}")
 
         // 2. 根据意图获取数据
         val data = when (intent.intent) {
@@ -43,20 +55,34 @@ class StockService(
             StockIntent.QUERY_INDEX,
             StockIntent.TECHNICAL_ANALYSIS,
             StockIntent.COMPARE_STOCKS -> {
-                repository.getRealtime(intent.stockCodes)
+                val codes = intent.stockCodes
+                Log.d(tag, "  ➡ 准备获取数据: codes=$codes")
+                val startTime = System.currentTimeMillis()
+                val result = repository.getRealtime(codes)
+                val elapsed = System.currentTimeMillis() - startTime
+                Log.d(tag, "  ➡ StockRepository.getRealtime (${elapsed}ms): ${result.size}/${codes.size} stocks")
+                result
             }
-            else -> emptyMap()
+            else -> {
+                Log.d(tag, "  ➡ 意图 ${intent.intent} 不需要数据获取")
+                emptyMap()
+            }
         }
 
         // 3. 格式化输出
         val formattedData = dataFormatter.format(intent, data)
+        Log.d(tag, "  ➡ StockDataFormatter.format: ${formattedData.length} chars")
+        Log.d(tag, "  ➡ 前100字: ${formattedData.take(100)}")
 
         // 4. 返回上下文
-        return StockContext(
+        val result = StockContext(
             intent = intent,
             hasStockData = data.isNotEmpty(),
             promptPrefix = formattedData
         )
+        Log.d(tag, "📤 StockService.processUserInput 结束: hasStockData=${result.hasStockData}")
+        Log.d(tag, "═══════════════════════════════════════")
+        return result
     }
 
     // ======================== 实时数据增强方法 ========================

@@ -111,7 +111,7 @@ class RealtimeConfig private constructor(
             sources: List<StockDataSource> = createDefaultSources(),
             config: RealtimeConfig = DEFAULT
         ): RealtimeDataProcessor {
-            val cache = StockCache(ttlMs = config.cacheTtlMs)
+            val cache = StockCache(defaultTtlMs = config.cacheTtlMs)
             val accessor = createAccessor(sources, config)
             return RealtimeDataProcessor(
                 cache = cache,
@@ -123,7 +123,7 @@ class RealtimeConfig private constructor(
          * 仅创建缓存（不带 accessor），适用于离线场景
          */
         fun createCacheOnly(config: RealtimeConfig = DEFAULT): RealtimeDataProcessor {
-            val cache = StockCache(ttlMs = config.cacheTtlMs)
+            val cache = StockCache(defaultTtlMs = config.cacheTtlMs)
             return RealtimeDataProcessor(
                 cache = cache,
                 accessor = null

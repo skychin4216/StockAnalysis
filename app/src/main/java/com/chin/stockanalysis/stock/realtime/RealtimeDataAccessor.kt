@@ -8,6 +8,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -21,9 +22,10 @@ import java.util.concurrent.atomic.AtomicLong
  * ### 职责
  * 1. **并发请求** — 同时从多源请求，取最快返回
  * 2. **智能选源** — 根据延迟、健康状态自动选择最优数据源
- * 3. **WebSocket 支持** — 支持长连接推送（可扩展）
+ * 3. **指数退避重试** — 失败时自动重试，延迟递增
  * 4. **频率控制** — 避免触发 API 频率限制
  * 5. **健康监控** — 定期 ping 各数据源，标记不可用源
+ * 6. **降级策略** — 全部源不可用时使用缓存 + 延长轮询间隔
  *
  * ### 使用示例
  * ```kotlin
@@ -54,6 +56,12 @@ class RealtimeDataAccessor(
     /** 每只股票上次请求时间戳，用于频率控制 */
     private val lastRequestTime = ConcurrentHashMap<String, AtomicLong>()
 
+    /** 连续失败次数（用于降级） */
+    private val consecutiveFailures = AtomicInteger(0)
+
+    /** 降级模式标志 */
+    private val degradedMode = AtomicInteger(0) // 0=正常, 1=降级, 2=重度降级
+
     /** 协程锁，防止并发健康检查冲突 */
     private val healthCheckMutex = Mutex()
 
@@ -62,6 +70,13 @@ class RealtimeDataAccessor(
 
     /** 请求计数器（监控用） */
     private val requestCount = AtomicLong(0)
+
+    companion object {
+        /** 连续多少次失败后触发降级 */
+        private const val DEGRADE_THRESHOLD = 3
+        /** 降级模式下的请求间隔倍数 */
+        private const val DEGRADE_INTERVAL_MULTIPLIER = 3L
+    }
 
     // ======================== 初始化 ========================
 
@@ -85,6 +100,7 @@ class RealtimeDataAccessor(
      * 2. 对每个健康源发起并发协程请求
      * 3. 取第一个成功返回的结果
      * 4. 如果全部失败，所有源标记为不健康，返回空
+     * 5. 连续失败超过阈值则进入降级模式
      *
      * @param codes 股票代码列表（如 ["sh600519", "sz000858"]）
      * @param preferFastest 是否优先使用最快的源（而不是优先级最高的），默认 true
@@ -96,11 +112,20 @@ class RealtimeDataAccessor(
     ): Map<String, StockRealtime> {
         if (codes.isEmpty()) return emptyMap()
 
+        requestCount.incrementAndGet()
+
+        // 降级模式下的频率控制
+        val effectiveInterval = if (degradedMode.get() > 0) {
+            minRequestIntervalMs * (DEGRADE_INTERVAL_MULTIPLIER shl (degradedMode.get() - 1))
+        } else {
+            minRequestIntervalMs
+        }
+
         // 频率控制：检查是否有股票在短时间内被重复请求
         val now = System.currentTimeMillis()
         val filteredCodes = codes.filter { code ->
             val lastTime = lastRequestTime[code]?.get() ?: 0L
-            if (now - lastTime >= minRequestIntervalMs) {
+            if (now - lastTime >= effectiveInterval) {
                 lastRequestTime.getOrPut(code) { AtomicLong(now) }.set(now)
                 true
             } else {
@@ -108,8 +133,6 @@ class RealtimeDataAccessor(
             }
         }
         if (filteredCodes.isEmpty()) return emptyMap()
-
-        requestCount.incrementAndGet()
 
         // 选择要使用的数据源
         val activeSources = if (preferFastest) {
@@ -126,15 +149,35 @@ class RealtimeDataAccessor(
 
         if (activeSources.isEmpty()) {
             // 所有源都不可用，尝试强制唤醒一次
+            Log.w(tag, "No healthy sources, force retry...")
             return forceFetchWithRetry(filteredCodes)
         }
 
         // 并发请求多个数据源，取最快返回（首个成功）
-        return concurrentFetch(filteredCodes, activeSources)
+        val result = concurrentFetch(filteredCodes, activeSources)
+
+        // 更新连续失败计数
+        if (result.isEmpty()) {
+            val failures = consecutiveFailures.incrementAndGet()
+            if (failures >= DEGRADE_THRESHOLD) {
+                degradedMode.set(1)
+                Log.w(tag, "Degraded mode activated ($failures consecutive failures)")
+            }
+        } else {
+            // 成功后降低降级级别
+            consecutiveFailures.set(0)
+            val currentDegrade = degradedMode.get()
+            if (currentDegrade > 0) {
+                degradedMode.set(currentDegrade - 1)
+                Log.d(tag, "Degraded mode reduced to level ${degradedMode.get()}")
+            }
+        }
+
+        return result
     }
 
     /**
-     * 获取所有数据源的健康状态
+     * 获取所有数据源的健康状态，包含降级信息
      */
     fun getHealthReport(): Map<String, Any> {
         val report = mutableMapOf<String, Any>()
@@ -147,6 +190,8 @@ class RealtimeDataAccessor(
             )
         }
         report["totalRequests"] = requestCount.get()
+        report["degradedMode"] = degradedMode.get()
+        report["consecutiveFailures"] = consecutiveFailures.get()
         return report
     }
 
@@ -155,6 +200,8 @@ class RealtimeDataAccessor(
      */
     suspend fun checkHealth() {
         healthCheckMutex.withLock {
+            Log.d(tag, "Running health check on ${sources.size} sources...")
+            var healthyCount = 0
             sources.forEach { source ->
                 try {
                     val start = System.currentTimeMillis()
@@ -164,11 +211,15 @@ class RealtimeDataAccessor(
                     val key = source::class.simpleName ?: source.javaClass.name
                     healthStatus[key] = available
                     updateLatency(key, elapsed)
+                    if (available) healthyCount++
+                    Log.d(tag, "  ${source::class.simpleName}: ${if (available) "✓" else "✗"} (${elapsed}ms)")
                 } catch (e: Exception) {
                     val key = source::class.simpleName ?: source.javaClass.name
                     healthStatus[key] = false
+                    Log.e(tag, "  ${source::class.simpleName}: ✗ ${e.message}")
                 }
             }
+            Log.d(tag, "Health check done: $healthyCount/${sources.size} healthy")
         }
     }
 
@@ -178,6 +229,9 @@ class RealtimeDataAccessor(
     fun shutdown() {
         healthCheckJob?.cancel()
         healthCheckJob = null
+        consecutiveFailures.set(0)
+        degradedMode.set(0)
+        Log.d(tag, "Shutdown complete")
     }
 
     // ======================== 内部实现 ========================
@@ -205,12 +259,18 @@ class RealtimeDataAccessor(
                     if (result.isNotEmpty()) {
                         // 标记为健康
                         healthStatus[key] = true
+                        Log.d(tag, "✓ ${source::class.simpleName}: ${result.size} stocks in ${elapsed}ms")
                         Result.success(result)
                     } else {
+                        Log.w(tag, "✗ ${source::class.simpleName}: empty response")
                         Result.failure(Exception("Empty response from $key"))
                     }
+                } catch (e: TimeoutCancellationException) {
+                    Log.w(tag, "✗ ${source::class.simpleName}: timeout after ${requestTimeoutMs}ms")
+                    healthStatus[key] = false
+                    Result.failure(e)
                 } catch (e: Exception) {
-                    // 标记为不健康
+                    Log.w(tag, "✗ ${source::class.simpleName}: ${e.message}")
                     healthStatus[key] = false
                     Result.failure(e)
                 }
@@ -230,11 +290,13 @@ class RealtimeDataAccessor(
         }
 
         // 全部失败，返回空
+        Log.e(tag, "All ${activeSources.size} sources failed!")
         emptyMap()
     }
 
     /**
      * 所有源标记为不可用时，强制重试一次
+     * 先做一次健康检查，再用恢复的源重试
      */
     private suspend fun forceFetchWithRetry(codes: List<String>): Map<String, StockRealtime> {
         // 先做一次健康检查
@@ -247,11 +309,13 @@ class RealtimeDataAccessor(
 
         if (recoveredSources.isEmpty()) {
             // 真的全部不可用，用最高优先级的源再试最后一次
+            Log.w(tag, "Still no healthy sources after health check! Using highest priority source...")
             return runCatching {
                 sources.first().fetchRealtime(codes)
             }.getOrDefault(emptyMap())
         }
 
+        Log.d(tag, "Recovered ${recoveredSources.size} sources after health check")
         // 用恢复的源并发请求
         return concurrentFetch(codes, recoveredSources)
     }
@@ -291,9 +355,10 @@ class RealtimeDataAccessor(
                     delay(30_000L) // 每30秒检查一次
                     checkHealth()
                 } catch (e: Exception) {
-                    // 忽略健康检查的异常
+                    Log.w(tag, "Health check exception: ${e.message}")
                 }
             }
         }
+        Log.d(tag, "Health check started (interval: 30s)")
     }
 }
