@@ -18,15 +18,12 @@ import android.app.AlertDialog  // 添加 AlertDialog 导入
 import com.chin.stockanalysis.ApiConfigManager
 import com.chin.stockanalysis.ApiProvider
 import com.chin.stockanalysis.databinding.FragmentChatBinding
+import com.chin.stockanalysis.stock.IntentRecognizer
 import com.chin.stockanalysis.stock.StockService
-import com.chin.stockanalysis.stock.data.StockRepository
-import com.chin.stockanalysis.stock.data.sources.EastMoneyStockSource
-import com.chin.stockanalysis.stock.data.sources.SinaStockSource
-import com.chin.stockanalysis.stock.data.sources.TencentStockSource
-import kotlinx.coroutines.CoroutineScope
+import com.chin.stockanalysis.stock.data.StockDataSourceFactory
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -56,8 +53,8 @@ class ChatTabFragment : Fragment() {
     private lateinit var adapter: ChatAdapter
     private val messages: MutableList<Message> = mutableListOf()
 
-    private val fragmentJob = SupervisorJob()
-    private val uiScope = CoroutineScope(Dispatchers.Main + fragmentJob)
+    // 当前正在进行的流式请求 Job（可取消）
+    private var currentStreamingJob: Job? = null
 
     private var apiProvider: ApiProvider? = null
     private lateinit var stockService: StockService
@@ -93,7 +90,7 @@ class ChatTabFragment : Fragment() {
 
     override fun onDestroy() {
         super.onDestroy()
-        fragmentJob.cancel()
+        currentStreamingJob?.cancel()
     }
 
     private fun initProvider() {
@@ -103,12 +100,9 @@ class ChatTabFragment : Fragment() {
     }
 
     private fun initStockService() {
-        stockService = StockService(
-            repository = StockRepository(
-                primarySource = SinaStockSource(),
-                fallbackSources = listOf(TencentStockSource(), EastMoneyStockSource())
-            )
-        )
+        // 使用并发多源仓储，从5个数据源竞速获取数据
+        val multiSourceRepo = StockDataSourceFactory.createDefaultRepository(requireContext())
+        stockService = StockService(repository = multiSourceRepo)
     }
 
     // ✅ 100% 无报错
@@ -194,7 +188,8 @@ class ChatTabFragment : Fragment() {
         addMessage(streamingMessage)
         val streamingIndex = messages.size - 1
 
-        uiScope.launch {
+        // 使用 viewLifecycleOwner.lifecycleScope 确保 Fragment 销毁时自动取消
+        currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
             val finalSystemPrompt = withContext(Dispatchers.IO) {
                 buildSystemPromptWithStockData(userText)
             }
@@ -206,18 +201,19 @@ class ChatTabFragment : Fragment() {
                 systemPrompt = finalSystemPrompt,
                 onSuccess = { chunk ->
                     accumulated.append(chunk)
-                    activity?.runOnUiThread {
+                    // isAdded 确保 Fragment 仍然附加到 Activity（解决 HOME 键后回来可能崩溃）
+                    if (isAdded) requireActivity().runOnUiThread {
                         updateStreamingMessage(streamingIndex, accumulated.toString())
                     }
                 },
                 onComplete = { full ->
                     val finalText = full.ifEmpty { accumulated.toString() }
-                    activity?.runOnUiThread {
+                    if (isAdded) requireActivity().runOnUiThread {
                         completeStreamingMessage(streamingIndex, finalText)
                     }
                 },
                 onError = { errMsg ->
-                    activity?.runOnUiThread {
+                    if (isAdded) requireActivity().runOnUiThread {
                         failStreamingMessage(streamingIndex, errMsg)
                     }
                 }
@@ -226,15 +222,57 @@ class ChatTabFragment : Fragment() {
     }
 
     private fun buildSystemPromptWithStockData(userText: String): String {
+        val startTime = System.currentTimeMillis()
+        Log.i(TAG, "═══════════════════════════════════════")
+        Log.i(TAG, "🔍 开始处理用户输入: '${userText.take(50)}...'")
+        Log.i(TAG, "═══════════════════════════════════════")
+
+        // 🧪 新流程对比测试：IntentRecognizer 一步识别
+        val recognizer = IntentRecognizer()
+        val newResult = recognizer.recognizeAndProcess(userText)
+        Log.i(TAG, "═══════════════════════════════════════")
+        Log.i(TAG, "🧪 [新流程对比] IntentRecognizer.recognizeAndProcess:")
+        Log.i(TAG, "  intentType: ${newResult.intentType}")
+        Log.i(TAG, "  stockCodes: ${newResult.stockCodes}")
+        Log.i(TAG, "  hasMarketData: ${newResult.hasMarketData}")
+        Log.i(TAG, "  confidence: ${newResult.confidence}")
+        Log.i(TAG, "  promptInjection 长度: ${newResult.promptInjection.length}")
+        if (newResult.intentType.name.contains("GENERAL_MARKET") || newResult.intentType.name.contains("UNKNOWN")) {
+            Log.i(TAG, "  🧪 用户输入没有具体股票代码 → AI 不会收到实时行情数据（这是正常的）")
+        } else if (newResult.hasMarketData) {
+            Log.i(TAG, "  🧪 IntentRecognizer 识别出具体股票代码，可获取实时数据")
+        }
+        Log.i(TAG, "═══════════════════════════════════════")
+
+        // 旧流程：StockService（保持原有逻辑不变）
         return try {
             val ctx = stockService.processUserInput(userText)
+            val elapsed = System.currentTimeMillis() - startTime
+
+            Log.i(TAG, "═══════════════════════════════════════")
+            Log.i(TAG, "📋 [旧流程] StockService.processUserInput 结果 (${elapsed}ms):")
+            Log.i(TAG, "  intent: ${ctx.intent.intent}")
+            Log.i(TAG, "  stockCodes: ${ctx.intent.stockCodes}")
+            Log.i(TAG, "  stockNames: ${ctx.intent.stockNames}")
+            Log.i(TAG, "  confidence: ${ctx.intent.confidence}")
+            Log.i(TAG, "  hasStockData: ${ctx.hasStockData}")
+            Log.i(TAG, "  promptPrefix 长度: ${ctx.promptPrefix.length}")
+            Log.i(TAG, "  promptPrefix 前200字: ${ctx.promptPrefix.take(200)}")
+
             if (ctx.hasStockData && ctx.promptPrefix.isNotBlank()) {
-                "$SYSTEM_PROMPT\n\n${ctx.promptPrefix}"
+                val result = "$SYSTEM_PROMPT\n\n【实时行情数据】\n${ctx.promptPrefix}"
+                Log.i(TAG, "✅ [旧流程] 成功注入实时数据 (总长: ${result.length})")
+                Log.i(TAG, "═══════════════════════════════════════")
+                result
             } else {
+                Log.w(TAG, "⚠️ [旧流程] 未获取到股票数据")
+                Log.w(TAG, "  ⚠️ 旧流程返回 ${ctx.intent.intent} → AI 无实时数据（新流程对比可见 intentType）")
+                Log.i(TAG, "═══════════════════════════════════════")
                 SYSTEM_PROMPT
             }
         } catch (e: Exception) {
-            Log.e(TAG, "构建股票数据失败: ${e.message}", e)
+            Log.e(TAG, "❌ 构建股票数据失败: ${e.message}", e)
+            Log.i(TAG, "═══════════════════════════════════════")
             SYSTEM_PROMPT
         }
     }

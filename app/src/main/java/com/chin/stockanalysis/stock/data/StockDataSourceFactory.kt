@@ -29,32 +29,32 @@ object StockDataSourceFactory {
     fun createDefaultSources(context: Context): List<StockDataSource> {
         val sources = mutableListOf<StockDataSource>()
 
-        // 1. 聚宽（优先级2，需要Token）
+        // 1. 聚宽（优先级1，需要Token，如果有Token则优先使用）
         try {
             val jqToken = loadJoinQuantsToken(context)
             if (jqToken.isNotEmpty()) {
                 sources.add(JoinQuantsSource(jqToken))
-                Log.d(tag, "✓ JoinQuants (priority=2)")
+                Log.d(tag, "✓ JoinQuants (priority=1)")
             }
         } catch (e: Exception) {
             Log.w(tag, "JoinQuants init failed: ${e.message}")
         }
 
-        // 2. 新浪财经（优先级1，核心源）
+        // 2. 新浪财经（优先级2，核心源）
         sources.add(SinaStockSource())
-        Log.d(tag, "✓ Sina (priority=1)")
+        Log.d(tag, "✓ Sina (priority=2)")
 
-        // 3. AKShare（优先级4，免费补充）
-        sources.add(AKShareSource())
-        Log.d(tag, "✓ AKShare (priority=4)")
-
-        // 4. 腾讯财经（优先级2，备用）
+        // 3. 腾讯财经（优先级3，备用）
         sources.add(TencentStockSource())
-        Log.d(tag, "✓ Tencent (priority=2)")
+        Log.d(tag, "✓ Tencent (priority=3)")
 
-        // 5. 东方财富（优先级3，备用）
+        // 4. 东方财富（优先级4，备用）
         sources.add(EastMoneyStockSource())
-        Log.d(tag, "✓ EastMoney (priority=3)")
+        Log.d(tag, "✓ EastMoney (priority=4)")
+
+        // 5. AKShare（优先级5，免费补充）
+        sources.add(AKShareSource())
+        Log.d(tag, "✓ AKShare (priority=5)")
 
         return sources.sortedBy { it.priority() }
     }

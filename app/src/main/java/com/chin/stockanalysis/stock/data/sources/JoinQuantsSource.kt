@@ -171,5 +171,5 @@ class JoinQuantsSource(private val token: String = "") : StockDataSource {
         }
     }
 
-    override fun priority(): Int = 2
+    override fun priority(): Int = 1
 }

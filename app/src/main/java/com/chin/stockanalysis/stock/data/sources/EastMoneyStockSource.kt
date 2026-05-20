@@ -166,5 +166,5 @@ class EastMoneyStockSource : StockDataSource {
         healthClient.newCall(request).execute().isSuccessful
     }.getOrDefault(false)
 
-    override fun priority(): Int = 3
+    override fun priority(): Int = 4
 }

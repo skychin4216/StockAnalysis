@@ -1,12 +1,12 @@
 package com.chin.stockanalysis
 
 import android.util.Log
+import com.chin.stockanalysis.ui.Message
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -171,17 +171,13 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
     private fun handleStreamResponse(response: Response, onSuccess: (String) -> Unit, onComplete: (String) -> Unit, onError: (String) -> Unit) {
         try {
             val body = response.body ?: run { onError("响应体为空"); return }
-            // 先用 string() 取原始内容，再逐行解析（Android 上 byteStream() 有时返回已关闭的流）
-            val raw = body.string()
-            Log.d(TAG, "SSE 原始响应长度: ${raw.length}")
-            if (raw.isBlank()) {
-                Log.w(TAG, "SSE 响应为空")
-                onError("AI 回复为空")
-                return
-            }
+            // 使用 source().buffer() 逐行读取 SSE 流，避免 body.string() 一次性加载大响应导致 connection abort
+            val source = body.source()
             val fullContent = StringBuilder()
             var lineCount = 0
-            for (line in raw.lines()) {
+
+            while (!source.exhausted()) {
+                val line = source.readUtf8Line() ?: break
                 lineCount++
                 val trimmed = line.trim()
                 if (trimmed.startsWith("data: ")) {
@@ -195,11 +191,12 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
                         val choices = json.optJSONArray("choices")
                         if (choices != null && choices.length() > 0) {
                             val choice = choices.getJSONObject(0)
-                            val delta = choice.optJSONObject("delta")
+                        val delta = choice.optJSONObject("delta")
                             val msg = choice.optJSONObject("message")
-                            val content = delta?.optString("content", "")
-                                ?: msg?.optString("content", "")
-                                ?: ""
+                            // 使用 opt("content") 而非 optString: 当 JSON 值为 null 时
+                            // optString 返回字符串 "null"，opt 返回 JSONObject.NULL 对象
+                            val rawContent = delta?.opt("content") ?: msg?.opt("content")
+                            val content = if (rawContent is String) rawContent else ""
                             if (content.isNotBlank()) {
                                 fullContent.append(content)
                                 onSuccess(content)
@@ -207,17 +204,18 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
                         }
                     } catch (ex: Exception) {
                         if (data.isNotBlank() && data.length < 200) {
-                            Log.d(TAG, "跳过非 JSON data: $data")
+                            Log.v(TAG, "跳过非 JSON data: $data")
                         }
                     }
                 }
             }
+
             val result = fullContent.toString()
             Log.d(TAG, "流式处理完成: ${result.length} 字符, $lineCount 行")
             if (result.isNotBlank()) {
                 onComplete(result)
             } else {
-                Log.w(TAG, "流式响应为空（原始 ${raw.length} 字节, $lineCount 行）\n原始内容: ${raw.take(300)}")
+                Log.w(TAG, "流式响应为空")
                 onError("AI 回复为空")
             }
         } catch (e: Exception) {
@@ -252,7 +250,10 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
             httpCode == 400 && (ml.contains("model") || ml.contains("endpoint")) -> "🔍 模型不存在（400）\n您选择的模型名称在当前提供商中不存在。$hint"
             httpCode == 400 -> "⚠️ 请求参数错误（400）$hint"
             httpCode == 401 -> "🔑 API Key 无效（401）\n请在设置中重新填写正确的 API Key。$hint"
-            httpCode == 403 || cl.contains("forbidden") -> "🚫 访问被拒绝（403）\n可能原因：API Key 权限不足、模型未开通、或账户余额为 0。$hint"
+            httpCode == 403 && (ml.contains("insufficient") || ml.contains("balance") || serverCode == "30001") ->
+                "💰 硅基流动账户余额不足（403 code=30001）\n请前往 siliconflow.cn 充值后再试。$hint"
+            httpCode == 403 || cl.contains("forbidden") ->
+                "🚫 访问被拒绝（403）\n可能原因：API Key 权限不足、模型未开通、或账户余额为 0。$hint"
             httpCode == 404 || ml.contains("does not exist") -> "❓ 模型或端点不存在（404）\n请在设置中切换模型。$hint"
             httpCode == 429 || ml.contains("rate limit") -> "⏳ 请求过于频繁（429）\n请稍候 10 秒后再试。$hint"
             httpCode >= 500 -> "🔧 AI 服务暂时不可用（$httpCode）\n已自动重试 $MAX_RETRIES 次，请稍后重试。$hint"

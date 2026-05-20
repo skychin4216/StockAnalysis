@@ -18,22 +18,15 @@ import com.chin.stockanalysis.ApiConfigManager
 import com.chin.stockanalysis.ApiProviderConfig
 import com.chin.stockanalysis.databinding.FragmentSettingsBinding
 import com.chin.stockanalysis.stock.StockService
-import com.chin.stockanalysis.stock.data.StockRepository
-import com.chin.stockanalysis.stock.data.sources.EastMoneyStockSource
-import com.chin.stockanalysis.stock.data.sources.SinaStockSource
-import com.chin.stockanalysis.stock.data.sources.TencentStockSource
+import com.chin.stockanalysis.stock.data.StockDataSourceFactory
 
 class SettingsFragment : Fragment() {
     private var _binding: FragmentSettingsBinding? = null
     private val binding get() = _binding!!
     private lateinit var apiConfigManager: ApiConfigManager
     private val stockService: StockService by lazy {
-        StockService(
-            repository = StockRepository(
-                primarySource = SinaStockSource(),
-                fallbackSources = listOf(TencentStockSource(), EastMoneyStockSource())
-            )
-        )
+        val multiSourceRepo = StockDataSourceFactory.createDefaultRepository(requireContext())
+        StockService(repository = multiSourceRepo)
     }
 
     override fun onCreateView(

@@ -139,5 +139,5 @@ class TencentStockSource : StockDataSource {
         healthClient.newCall(request).execute().isSuccessful
     }.getOrDefault(false)
 
-    override fun priority(): Int = 2
+    override fun priority(): Int = 3
 }

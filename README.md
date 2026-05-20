@@ -15,6 +15,7 @@ A股股票智能分析平台 - 融合 AI 聊天、实时行情和量化分析的
 - 🧠 **意图识别引擎** - 识别5类意图（简单查询/产业链/技术面/投资建议/通用）
 - ☁️ **云端复杂分析** - 产业链分析等CPU密集任务由服务器处理
 - 📈 **K线分析** - MPAndroidChart 展示日K线，支持技术指标
+- 🐛 **全链路Debug日志** - 从意图识别到数据获取到Prompt构建，每一步都有详细日志
 
 ## 🚀 快速开始
 
@@ -125,7 +126,7 @@ AKShare(150ms)
 ┌─────────────┐
 │   UI 层     │  (ChatActivity, Fragments)
 ├─────────────┤
-│ 业务逻辑层   │  (StockService, IntentRecognizer, RemoteDataService)
+│ 业务逻辑层   │  (StockService, IntentProcessorChain, AiStockAnalyzer)
 ├─────────────┤
 │ 数据访问层   │  (MultiSourceRepository, SmartCache, Factory)
 ├─────────────┤
@@ -142,6 +143,41 @@ AKShare(150ms)
 | **API调用/天** | 6000次 | 1482次 | **75%** 💾 |
 | **单点故障** | 延迟1秒+ | 无感知 | ✅ |
 | **用户体验** | 卡顿 | 极速 | ⭐⭐⭐⭐⭐ |
+
+## 🐛 Debug 日志指南
+
+本项目在所有关键路径上都添加了详细的 debug 日志，方便排查问题。
+
+### Logcat 过滤 TAG
+
+| TAG | 打印内容 | 常见问题排查 |
+|-----|---------|------------|
+| `IntentProcessorChain` | 用户输入经过了哪些 Handler，各自的 match/parse 结果 | **"分析今天股市"返回 UNKNOWN → 这是正常行为**，因为没有具体股票代码/名称 |
+| `ChatActivity` | 是否获取到实时数据，Prompt 总长度 | `hasStockData=false` → 用户输入没有具体股票代码，系统无法获取数据 |
+| `StockService` | 意图类型、stockCodes、数据大小 | `data=0` → 意图没有匹配到股票代码 |
+| `MultiSourceRepository` | 各数据源健康状况、并发请求耗时 | 某个源一直 `✗` → 该数据源不可用 |
+| `SmartStockCache` | 缓存命中率、TTL 值 | TTL=1000 → 交易中；TTL=300000 → 盘后 |
+| `SinaStockSource` | 新浪请求过程、GBK解码 | "empty response" → 检查 Referer 头 |
+| `JoinQuantsSource` | Token认证、批量查询 | "API error" → Token 无效 |
+
+### 常见问题排查流程
+
+**Q: AI 回复"我无法获取A股实时行情"**
+→ 检查 `IntentProcessorChain` 日志：
+- 如果是 UNKNOWN（没有匹配股票代码/名称）→ **正常**，AI 应直接基于知识回答
+- 我们在 2026-05-20 已修复 SYSTEM_PROMPT，禁止 AI 在没有实时数据时说"无法获取"
+- 确认是否更新到最新代码
+
+**Q: 具体股票代码查询没有数据**
+→ 检查 `MultiSourceRepository` 日志：
+- 所有源都 `✗` → 网络问题或 API 被封
+- 某个源 `✓` 但返回空 → 该数据源代码格式不对
+- 运行菜单 "数据源诊断" 查看详细状态
+
+**Q: 并发请求很慢**
+→ 检查各源的健康状态：
+- 如果全部正常但慢，可能是 DNS 解析或网络问题
+- 某个源超时导致等待 → `HttpClientProvider` 中超时时间可调整
 
 ## 🔧 技术栈
 
@@ -218,12 +254,105 @@ serverless deploy
 
 详见: [Github架构设计.md #部署指南](./Github架构设计.md#部署指南)
 
+## ☁️ 云端复杂分析（开发中）
+
+### 目标
+
+将产业链分析、行业热点分析、多维度技术分析等 CPU 密集型任务从 Android 端迁移到云端（Aliyun Function Compute），降低 App 功耗，提升分析质量。
+
+### 需要实现的三个文件
+
+#### 1. `RemoteDataService.kt` — 云 API 调用封装
+
+与后端通信的 HTTP 客户端，封装 health check、实时数据转发、复杂分析请求。
+
+```kotlin
+class RemoteDataService(baseUrl: String) {
+    private val client = OkHttpClient()
+    
+    suspend fun healthCheck(): Boolean
+    suspend fun getRealtime(codes: List<String>): Map<String, StockRealtime>
+    suspend fun analyzeIndustryChain(query: String): AnalysisResult
+}
+```
+
+**参考实现**：`app/src/main/java/com/chin/stockanalysis/stock/data/HttpClientProvider.kt`（共享 OkHttp 连接池模式），将其包装为 REST API 调用即可。
+
+#### 2. `IntentRecognizer.kt` — 云端意图识别引擎
+
+将 IntentProcessorChain 的职责链模式抽取为独立的识别引擎，支持正则匹配 + AI 兜底的云端版本。
+
+```kotlin
+class IntentRecognizer(private val apiProvider: ApiProvider?) {
+    fun recognizeAndProcess(input: String): ProcessResult {
+        // 正则匹配 5 类意图
+        // 提取股票代码/关键词
+        // 构建动态 prompt injection
+    }
+}
+```
+
+**参考实现**：现有 `IntentProcessorChain.kt` + `AiStockAnalyzer.kt` 的逻辑已经完备，抽取其中独立的方法即可。
+
+#### 3. `ProcessResult.kt` — 统一处理结果数据类
+
+```kotlin
+data class ProcessResult(
+    val intentType: IntentType,
+    val stockCodes: List<String>,
+    val promptInjection: String,
+    val data: Map<String, Any>
+)
+
+enum class IntentType {
+    SIMPLE_QUERY,        // "600519多少钱"
+    INDUSTRY_ANALYSIS,   // "分析人形机器人前10股票"
+    TECHNICAL_ANALYSIS,  // "分析000001K线"
+    INVESTMENT_ADVICE,   // "000001适合买吗"
+    GENERAL_CHAT         // "你好"
+}
+```
+
+**参考实现**：现有 `IntentResult.kt` + `StockContext.kt` 已经覆盖了类似的功能，合并即可。
+
+### 实现步骤
+
+```
+第1步：创建 ProcessResult.kt（数据类，10分钟）
+  └─ 定义 IntentType 枚举 + ProcessResult 数据类
+
+第2步：创建 RemoteDataService.kt（网络层，30分钟）
+  └─ 封装 OkHttp 调用，支持 Aliyun FC 的 3 个 API
+  └─ 参考 HttpClientProvider.kt 的共享连接池模式
+
+第3步：创建 IntentRecognizer.kt（业务逻辑，30分钟）
+  └─ 从 IntentProcessorChain 抽取核心识别逻辑
+  └─ 合并 AiStockAnalyzer 的 AI 兜底能力
+  └─ 返回 ProcessResult 而非 IntentResult
+
+第4步：集成到 ChatActivity.kt（测试验证，30分钟）
+  └─ 替换原有 IntentProcessorChain + StockService 的调用
+  └─ 验证普通查询和复杂查询都能正常工作
+```
+
+### 后端 API 定义（python_backend/app.py 已提供）
+
+```python
+GET  /health                    # 健康检查
+POST /api/stock/realtime        # 多源并发获取实时行情
+POST /api/analysis/complex      # 复杂分析（产业链等）
+```
+
+详见: [Github架构设计.md #云服务集成](./Github架构设计.md#云服务集成)
+
 ## 🐛 故障排查
 
 ### 常见问题
 
 | 问题 | 解决方案 |
 |------|--------|
+| **AI 说无法获取实时行情** | 确认代码已更新到最新版（修复了 SYSTEM_PROMPT），见 Debug 日志指南 |
+| **"分析今天股市" 没有数据** | 正常行为，因为没有具体股票代码。AI 应直接基于知识回答 |
 | **新浪数据为空** | 检查 Referer 头和 GBK 解码 |
 | **聱宽Token无效** | 去 joinquants.com 重新生成 |
 | **RemoteService 404** | 检查 Aliyun FC 部署和 URL 配置 |
@@ -266,4 +395,3 @@ serverless deploy
 **最后更新**: 2026-05-20  
 **维护者**: AI 架构设计团队  
 **版本**: v3.0 企业级
-

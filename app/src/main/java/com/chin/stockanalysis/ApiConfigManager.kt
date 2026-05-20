@@ -157,26 +157,30 @@ class ApiConfigManager(context: Context) {
 
         // 火山引擎 - 豆包大模型（字节跳动官方，付费，推荐使用）
         // 优先使用自定义 Endpoint ID，不可用时自动回退到公共模型
+        // 💡 速度提示：doubao-1.5-lite-32k 最快 / doubao-1.5-pro-32k 质量好
         ApiProviderConfig(
             id = "doubao",
             name = "🔥 豆包大模型 (付费)",
             baseUrl = "https://ark.cn-beijing.volces.com/api/v3/",
             model = "ep-20260515024618-chcvf",
-            description = "火山引擎 Ark 平台。优先用自定义接入点，不可用时自动回退到公共模型",
+            description = "火山引擎 Ark 平台。如响应慢可改用 doubao-1.5-lite-32k（快速）或 doubao-1.5-pro-32k（质量）",
             isFree = false,
             supportedModels = listOf(
+                // ⭐ 最新 1.5 系列（推荐，速度快、质量好）
+                "doubao-1.5-pro-32k",          // 最新旗舰，速度/质量均衡 ⭐推荐
+                "doubao-1.5-pro-256k",         // 超长上下文版本
+                "doubao-1.5-lite-32k",         // 最快最便宜
+                "doubao-1.5-vision-pro-250328",// 视觉多模态
+                // Seed 系列（实验性模型）
                 "doubao-seed-2-0-lite-260428",
                 "doubao-seed-2-0-mini-260428",
-                "doubao-seed-2-0-mini-260215",
-                "doubao-seed-2-0-code-preview-260215",
-                "doubao-seed-1-6-251015",
-                "doubao-seed-1-8-251228",
                 "doubao-seed-1-6-flash-250828",
-                "doubao-seed-code-preview-251028"
+                "doubao-seed-1-8-251228",
+                "doubao-seed-1-6-251015"
             ),
             fallbackModels = listOf(
-                "doubao-seed-2-0-lite-260428",
-                "doubao-seed-2-0-mini-260428"
+                "doubao-1.5-pro-32k",
+                "doubao-1.5-lite-32k"
             )
         ),
 
@@ -191,15 +195,40 @@ class ApiConfigManager(context: Context) {
             supportedModels = listOf("deepseek-chat", "deepseek-reasoner")
         ),
 
-        // 阿里云百炼 - 通义千问 Plus（付费，有免费额度）
+        // 阿里云百炼 - Qwen3 全系列（2025年5月最新发布，推荐使用）
+        ApiProviderConfig(
+            id = "dashscope-qwen3",
+            name = "⭐ 阿里云 Qwen3 (付费)",
+            baseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1/",
+            model = "qwen3-235b-a22b",
+            description = "Qwen3 最新旗舰系列，支持 235B MoE 超大模型和 32B/14B/8B 多个尺寸，thinking 模式可切换",
+            isFree = false,
+            supportedModels = listOf(
+                // MoE 系列（参数量大，性价比高）
+                "qwen3-235b-a22b",     // 最强 MoE，旗舰 ⭐
+                "qwen3-30b-a3b",       // 轻量 MoE，速度快
+                // Dense 系列（稳定，适合生产）
+                "qwen3-32b",           // 最强 Dense ⭐推荐
+                "qwen3-14b",           // 均衡
+                "qwen3-8b",            // 轻量
+                "qwen3-4b",            // 极速
+                // 向后兼容：Qwen2.5 系列
+                "qwen-max",
+                "qwen-plus",
+                "qwen-turbo"
+            ),
+            fallbackModels = listOf("qwen3-32b", "qwen-plus")
+        ),
+
+        // 阿里云百炼 - 通义千问经典系列（付费，有免费额度）
         ApiProviderConfig(
             id = "dashscope",
-            name = "阿里云百炼 Qwen (付费)",
+            name = "阿里云百炼 Qwen2.5 (付费)",
             baseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1/",
             model = "qwen-plus",
-            description = "阿里云百炼平台，通义千问 Plus 模型，有免费额度",
+            description = "阿里云百炼平台，通义千问 Qwen2.5 系列，有免费额度",
             isFree = false,
-            supportedModels = listOf("qwen-plus", "qwen-turbo", "qwen-max", "deepseek-r1")
+            supportedModels = listOf("qwen-plus", "qwen-turbo", "qwen-max", "qwen-max-latest", "deepseek-r1")
         ),
 
         // 阿里云 MaaS (Model as a Service) - 用户专属实例
@@ -347,14 +376,10 @@ class ApiConfigManager(context: Context) {
         return allModels.filter { it !in KNOWN_INVALID_MODELS }
     }
 
-    /** 已知无效的模型名称/ID列表（会在 getProviderModels() 中自动过滤） */
+    /** 已知无效的模型 ID 列表（会在 getProviderModels() 中自动过滤）
+     *  只放真正无效的旧 Endpoint ID，不要放正常模型名称！ */
     private val KNOWN_INVALID_MODELS = setOf(
-        "ep-20260515024618-chcvf",
-        "doubao-1.5-pro-256k",
-        "doubao-1.5-pro-32k",
-        "doubao-1.5-lite-32k",
-        "doubao-1.5-vision-pro-250328",
-        "doubao-1-5-ui-tars-250428",
+        "ep-20260515024618-chcvf",  // 旧自定义 Endpoint ID，已失效
     )
 
     /** 获取当前提供商选中的模型；未配置时返回默认模型。
@@ -422,7 +447,8 @@ class ApiConfigManager(context: Context) {
                 ApiKeysLoader.KEY_SILICONFLOW
             "doubao" -> ApiKeysLoader.KEY_DOUBAO
             "deepseek-official" -> ApiKeysLoader.KEY_DEEPSEEK
-            "aliyun-maas" -> ApiKeysLoader.KEY_ALIYUN_MAAS
+            // 阿里云 DashScope 统一使用 ALIYUN_MAAS_KEY
+            "aliyun-maas", "dashscope", "dashscope-qwen3" -> ApiKeysLoader.KEY_ALIYUN_MAAS
             else -> "${providerId.uppercase()}_KEY"
         }
     }

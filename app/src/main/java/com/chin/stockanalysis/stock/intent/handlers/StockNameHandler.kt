@@ -11,6 +11,8 @@ class StockNameHandler : IntentHandler {
 
     companion object {
         // 常见 A 股股票名称映射表
+        // 常见 A 股股票名称映射表（按代码排序）
+        // 添加新的股票时，格式：\"名称\" to "sh/szXXXXXX"
         private val STOCK_NAME_MAP = mapOf(
             "茅台" to "sh600519",
             "五粮液" to "sz000858",
@@ -24,7 +26,19 @@ class StockNameHandler : IntentHandler {
             "贵州茅台" to "sh600519",
             "美的集团" to "sz000333",
             "格力电器" to "sz000651",
-            "苹果" to "sh603160"
+            "苹果" to "sh603160",
+            "华勤技术" to "sh603296",
+            "立讯精密" to "sz002475",
+            "海康威视" to "sz002415",
+            "中芯国际" to "sh688981",
+            "长江电力" to "sh600900",
+            "中兴通讯" to "sz000063",
+            "迈瑞医疗" to "sz300760",
+            "恒瑞医药" to "sh600276",
+            "药明康德" to "sh603259",
+            "科大讯飞" to "sz002230",
+            "紫金矿业" to "sh601899",
+            "万华化学" to "sh600309"
         )
     }
 

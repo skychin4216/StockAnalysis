@@ -136,5 +136,5 @@ class AKShareSource : StockDataSource {
         }
     }
 
-    override fun priority(): Int = 4
+    override fun priority(): Int = 5
 }

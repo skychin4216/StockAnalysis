@@ -12,13 +12,10 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.chin.stockanalysis.databinding.ActivityChatBinding
+import com.chin.stockanalysis.stock.IntentRecognizer
 import com.chin.stockanalysis.stock.StockService
 import com.chin.stockanalysis.stock.data.MultiSourceStockRepository
 import com.chin.stockanalysis.stock.data.StockDataSourceFactory
-import com.chin.stockanalysis.stock.data.StockRepository
-import com.chin.stockanalysis.stock.data.sources.EastMoneyStockSource
-import com.chin.stockanalysis.stock.data.sources.SinaStockSource
-import com.chin.stockanalysis.stock.data.sources.TencentStockSource
 import com.chin.stockanalysis.ui.ChatAdapter      // ✅ 修正
 import com.chin.stockanalysis.ui.Message          // ✅ 修正
 import kotlinx.coroutines.CoroutineScope
@@ -51,11 +48,13 @@ class ChatActivity : AppCompatActivity() {
 4. 回答用户关于股票投资的各种问题
 
 规则：
-- 基于提供的实时数据进行分析，如果数据不可用，诚实告知用户
+- 【实时数据说明】如果下方注入了【实时行情数据】，请基于这些数据进行分析。这是通过新浪/腾讯/东方财富等免费API实时获取的。
+- 【无实时数据处理】如果下方没有【实时行情数据】注入，说明用户问的是股市常识、投资理念、或者没有具体股票代码/名称的通用问题。这种情况下请直接基于你的训练知识回答，不要说"我无法获取实时行情"或"我的知识有截止日期"——普通股市常识和投资理念问答不需要实时数据。
 - 不要给出具体的买卖建议，只提供分析参考
 - 用中文回答，专业但易懂
 - 适当使用emoji增强可读性
-- 风险提示：投资有风险，入市需谨慎"""
+- 风险提示：投资有风险，入市需谨慎
+- 本APP支持5个数据源并发获取（新浪、腾讯、东方财富、聚宽、AKShare），当用户查询具体股票代码或名称时会自动注入实时行情。"""
         // 各提供商的 API Key 配置键名（用于日志诊断）
         private val KEY_LOG_MAP = mapOf(
             "siliconflow-v3-flash" to "SILICONFLOW_KEY",
@@ -121,27 +120,18 @@ class ChatActivity : AppCompatActivity() {
             initProvider()
 
             // ============================================================
-            // 步骤 5: 初始化股票服务（使用顺序降级仓储，含全部5个数据源）
+            // 步骤 5: 初始化股票服务（使用并发多源仓储）
             // ============================================================
-            val fullSources = StockDataSourceFactory.createDefaultSources(this)
-            val primary = fullSources.firstOrNull() ?: SinaStockSource()
-            val fallbacks = fullSources.drop(1)
-            Log.d(TAG, "✅ StockService 使用 ${fullSources.size} 个数据源 (主源: ${primary::class.simpleName})")
-
-            val repository = StockRepository(
-                primarySource = primary,
-                fallbackSources = fallbacks
-            )
-            stockService = StockService(repository = repository)
+            // 复用已有的 multiSourceRepository（并发竞速 5 个数据源）
+            stockService = StockService(repository = multiSourceRepository)
 
             // ============================================================
             // 步骤 6: 打印完整数据源信息
             // ============================================================
             Log.d(TAG, "═══════════════════════════════════════")
             Log.d(TAG, "📊 数据源配置:")
-            fullSources.forEach { source ->
-                Log.d(TAG, "  [p${source.priority()}] ${source::class.simpleName}")
-            }
+            Log.d(TAG, "📊 多源仓储已使用并发竞速模式")
+            Log.d(TAG, "📊 诊断信息: ${multiSourceRepository.getDiagnostics().take(200)}")
             Log.d(TAG, "═══════════════════════════════════════")
 
             // ============================================================
@@ -320,15 +310,37 @@ class ChatActivity : AppCompatActivity() {
     private fun buildSystemPromptWithStockData(userText: String): String {
         val startTime = System.currentTimeMillis()
         Log.d(TAG, "═══════════════════════════════════════")
-        Log.d(TAG, "🔍 开始处理用户输入: '${userText.take(50)}...'")
+        Log.e(TAG, "🔍 开始处理用户输入: '${userText.take(50)}...'")
         Log.d(TAG, "═══════════════════════════════════════")
 
+        // ============================================================
+        // 🧪 新流程对比测试：IntentRecognizer 一步识别
+        // ============================================================
+        val newRecognizer = IntentRecognizer()
+        val newResult = newRecognizer.recognizeAndProcess(userText)
+        Log.i(TAG, "═══════════════════════════════════════")
+        Log.w(TAG, "🧪 [新流程对比] IntentRecognizer.recognizeAndProcess:")
+        Log.i(TAG, "  intentType: ${newResult.intentType}")
+        Log.i(TAG, "  stockCodes: ${newResult.stockCodes}")
+        Log.i(TAG, "  hasMarketData: ${newResult.hasMarketData}")
+        Log.i(TAG, "  confidence: ${newResult.confidence}")
+        Log.i(TAG, "  🧪 promptInjection 长度: ${newResult.promptInjection.length}")
+        if (newResult.intentType.name.contains("GENERAL_MARKET") || newResult.intentType.name.contains("UNKNOWN")) {
+            Log.i(TAG, "  🧪 用户输入没有具体股票代码 → AI 不会收到实时行情数据（这是正常的）")
+        } else if (newResult.hasMarketData) {
+            Log.i(TAG, "  🧪 IntentRecognizer 识别出具体股票代码，可获取实时数据")
+        }
+        Log.i(TAG, "═══════════════════════════════════════")
+
+        // ============================================================
+        // 旧流程：StockService（保持原有逻辑不变，继续正常运行）
+        // ============================================================
         return try {
             val ctx = stockService.processUserInput(userText)
 
             val elapsed = System.currentTimeMillis() - startTime
             Log.d(TAG, "═══════════════════════════════════════")
-            Log.d(TAG, "📋 StockService.processUserInput 结果 (${elapsed}ms):")
+            Log.e(TAG, "📋 [旧流程] StockService.processUserInput 结果 (${elapsed}ms):")
             Log.d(TAG, "  intent: ${ctx.intent.intent}")
             Log.d(TAG, "  stockCodes: ${ctx.intent.stockCodes}")
             Log.d(TAG, "  stockNames: ${ctx.intent.stockNames}")
@@ -339,13 +351,14 @@ class ChatActivity : AppCompatActivity() {
 
             if (ctx.hasStockData && ctx.promptPrefix.isNotBlank()) {
                 val result = "$SYSTEM_PROMPT\n\n【实时行情数据】\n${ctx.promptPrefix}"
-                Log.d(TAG, "✅ 成功注入实时数据到 system prompt (总长: ${result.length} chars)")
+                Log.w(TAG, "✅ [旧流程] 成功注入实时数据到 system prompt (总长: ${result.length} chars)")
                 Log.d(TAG, "═══════════════════════════════════════")
                 result
             } else {
-                Log.w(TAG, "⚠️ 未获取到股票数据 (hasStockData=${ctx.hasStockData}, promptPrefix.isEmpty=${ctx.promptPrefix.isBlank()})")
+                Log.w(TAG, "⚠️ [旧流程] 未获取到股票数据 (hasStockData=${ctx.hasStockData}, promptPrefix.isEmpty=${ctx.promptPrefix.isBlank()})")
                 Log.d(TAG, "  rawQuery: '${ctx.intent.rawQuery.take(50)}...'")
                 Log.d(TAG, "  intent: ${ctx.intent.intent}")
+                Log.d(TAG, "  ⚠️ 旧流程返回 UNKNOWN → AI 无实时数据（新流程对比可见 intentType）")
                 Log.d(TAG, "═══════════════════════════════════════")
                 SYSTEM_PROMPT
             }

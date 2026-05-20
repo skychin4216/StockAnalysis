@@ -270,5 +270,5 @@ class SinaStockSource : StockDataSource {
         }
     }
 
-    override fun priority(): Int = 1
+    override fun priority(): Int = 2
 }
