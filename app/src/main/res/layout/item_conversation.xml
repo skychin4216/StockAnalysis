@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  对话列表项（参考豆包 app2）
+  [彩色圆形头像] [标题(粗体)] [摘要(灰色1行)]
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="72dp"
+    android:background="?attr/selectableItemBackground"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingEnd="16dp"
+    android:paddingStart="16dp">
+
+    <!-- 彩色圆形头像 -->
+    <FrameLayout
+        android:id="@+id/ivAvatar"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:layout_marginEnd="14dp">
+
+        <!-- 彩色圆形背景 (颜色由代码动态设置) -->
+        <ImageView
+            android:id="@+id/ivAvatarBg"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:src="@drawable/bg_avatar"
+            android:contentDescription="头像背景" />
+
+        <!-- 💬 图标 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="💬"
+            android:textSize="18sp" />
+
+    </FrameLayout>
+
+    <!-- 标题 + 摘要 -->
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tvTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="#111111"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvSubtitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="#AAAAAA"
+            android:textSize="13sp" />
+
+    </LinearLayout>
+
+</LinearLayout>

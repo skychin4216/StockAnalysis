@@ -1,3 +1,45 @@
 <resources>
-    <string name="app_name">stockanalysis</string>
+    <string name="app_name">股票分析</string>
+
+    <!-- AI 聊天相关 -->
+    <string name="chat_title">AI 智能助手</string>
+    <string name="chat_input_hint">发消息或按住说话...</string>
+    <string name="chat_send">发送</string>
+
+    <!-- 底部导航（豆包风格4个Tab） -->
+    <string name="nav_chat">对话</string>
+    <string name="nav_stock">股票</string>
+    <string name="nav_strategy">策略</string>
+    <string name="nav_mine">我的</string>
+
+    <!-- 对话页 -->
+    <string name="new_conversation">新建对话</string>
+    <string name="conversation_title">对话</string>
+    <string name="new_topic_hint">聊聊新话题</string>
+    <string name="ai_content_hint">内容由AI生成，请仔细甄别</string>
+
+    <!-- 消息操作 -->
+    <string name="msg_copy">复制</string>
+    <string name="msg_play_voice">🔊</string>
+    <string name="msg_favorite">⭐</string>
+    <string name="msg_share">转发</string>
+    <string name="msg_regenerate">🔄重新生成</string>
+    <string name="msg_edit">编辑</string>
+    <string name="msg_delete">删除</string>
+
+    <!-- 股票浏览 -->
+    <string name="stocks_title">股票浏览</string>
+    <string name="stocks_a_shares">A股</string>
+    <string name="stocks_etf">ETF</string>
+    <string name="stocks_search_hint">搜索股票代码或名称</string>
+    <string name="stocks_hot">热门</string>
+    <string name="stocks_gain">涨幅</string>
+    <string name="stocks_lose">跌幅</string>
+
+    <!-- 策略 -->
+    <string name="strategy_title">策略中心</string>
+
+    <!-- 我的（原设置） -->
+    <string name="mine_title">我的</string>
+    <string name="settings_title">设置</string>
 </resources>

@@ -24,6 +24,11 @@ class ChatAdapter(
     var onEditMessage: ((Int, String) -> Unit)? = null
     var onDeleteMessage: ((Int) -> Unit)? = null
     var onUndoMessage: ((Int) -> Unit)? = null
+    // 豆包风格新增操作
+    var onPlayVoice: ((String) -> Unit)? = null
+    var onFavorite: ((String) -> Unit)? = null
+    var onShare: ((String) -> Unit)? = null
+    var onRegenerate: ((Int) -> Unit)? = null
 
     inner class MessageViewHolder(
         private val binding: ItemMessageBinding
@@ -69,14 +74,30 @@ class ChatAdapter(
                 layoutUser.visibility = View.GONE
                 layoutBot.visibility = View.VISIBLE
                 tvBotMessage.text = message.content
+                tvBotMessage.visibility = View.VISIBLE
+                tvTypingIndicator.visibility = View.GONE
+                tvErrorHint.visibility = View.GONE
 
+                // 点击消息 → 显示/隐藏操作栏
+                tvBotMessage.setOnClickListener {
+                    val visible = layoutBotActions.visibility == View.VISIBLE
+                    layoutBotActions.visibility = if (visible) View.GONE else View.VISIBLE
+                }
                 tvBotMessage.setOnLongClickListener {
                     showPopupMenu(it, position, message)
                     true
                 }
-                btnCopyBot.setOnClickListener {
-                    onCopyMessage?.invoke(message.content)
-                }
+
+                // 复制
+                btnCopyBot.setOnClickListener { onCopyMessage?.invoke(message.content) }
+                // 🔊 播放
+                btnPlayVoice.setOnClickListener { onPlayVoice?.invoke(message.content) }
+                // ⭐ 收藏
+                btnFavorite.setOnClickListener { onFavorite?.invoke(message.content) }
+                // 转发
+                btnShare.setOnClickListener { onShare?.invoke(message.content) }
+                // 🔄 重新生成
+                btnRegenerate.setOnClickListener { onRegenerate?.invoke(position) }
             }
         }
 
@@ -86,14 +107,20 @@ class ChatAdapter(
                 layoutUser.visibility = View.GONE
                 tvBotMessage.text = message.content
                 tvTypingIndicator.visibility = View.VISIBLE
+                layoutBotActions.visibility = View.GONE  // 流式输出中不显示操作栏
+                tvErrorHint.visibility = View.GONE
             }
         }
 
         private fun bindError(message: Message) {
             binding.apply {
+                layoutBot.visibility = View.VISIBLE
+                layoutUser.visibility = View.GONE
                 tvErrorHint.text = message.errorMessage ?: message.content
                 tvErrorHint.visibility = View.VISIBLE
                 tvBotMessage.visibility = View.GONE
+                tvTypingIndicator.visibility = View.GONE
+                layoutBotActions.visibility = View.GONE
             }
         }
 

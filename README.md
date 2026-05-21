@@ -16,6 +16,10 @@ A股股票智能分析平台 - 融合 AI 聊天、实时行情和量化分析的
 - ☁️ **云端复杂分析** - 产业链分析等CPU密集任务由服务器处理
 - 📈 **K线分析** - MPAndroidChart 展示日K线，支持技术指标
 - 🐛 **全链路Debug日志** - 从意图识别到数据获取到Prompt构建，每一步都有详细日志
+- 🚀 **主题/板块查询** - 输入"商业航天/有色金属/化工前20"自动拉板块实时数据+产业链分析表格
+- 📊 **五档盘口低吸** - 含"买手/卖手/低吸"关键词时自动拉东方财富五档挂单，输出买卖比评级
+- 📌 **用户偏好记忆** - "剔除科创板/200亿以下过滤"等条件持久化，后续查询自动应用
+- 🔧 **可扩展查询引擎** - `StockQueryEngine` 统一封装，Fragment/Activity 共享，一处修改全局生效
 
 ## 🚀 快速开始
 
@@ -123,15 +127,27 @@ AKShare(150ms)
 ## 🏗️ 架构总览
 
 ```
-┌─────────────┐
-│   UI 层     │  (ChatActivity, Fragments)
-├─────────────┤
-│ 业务逻辑层   │  (StockService, IntentProcessorChain, AiStockAnalyzer)
-├─────────────┤
-│ 数据访问层   │  (MultiSourceRepository, SmartCache, Factory)
-├─────────────┤
-│ 外部API层    │  (Sina, JoinQuants, Tencent, EastMoney, AKShare)
-└─────────────┘
+┌─────────────────────────────────────────────────┐
+│   UI 层                                          │
+│   ChatActivity / ChatTabFragment                 │
+├─────────────────────────────────────────────────┤
+│   查询引擎层（v4.0 新增）                          │
+│   StockQueryEngine（统一入口，Fragment/Activity共用）│
+│   ├─ ThemeStockService（主题/板块 + 盘口数据）    │
+│   │   ├─ ThemeStockLibrary（内置主题库方案A）     │
+│   │   ├─ EastMoneySectorSource（板块API 方案B）   │
+│   │   └─ EastMoneyBidAskSource（五档盘口）        │
+│   ├─ StockService（具体股票意图识别+行情）         │
+│   │   ├─ IntentProcessorChain                   │
+│   │   └─ StockDataFormatter                     │
+│   └─ UserPreferenceManager（偏好记忆持久化）      │
+├─────────────────────────────────────────────────┤
+│   数据访问层                                      │
+│   MultiSourceRepository + SmartCache + Factory  │
+├─────────────────────────────────────────────────┤
+│   外部API层                                      │
+│   Sina / JoinQuants / Tencent / EastMoney / AKShare│
+└─────────────────────────────────────────────────┘
 ```
 
 ## 📊 性能对比

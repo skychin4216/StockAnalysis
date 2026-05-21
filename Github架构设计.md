@@ -920,6 +920,92 @@ import com.chin.stockanalysis.ChatAdapter  // 包名错误!
 
 **文档完成时间**: 2026-05-20  
 **维护者**: AI 架构设计团队  
-**版本**: v3.0 企业级  
+**版本**: v4.0 企业级  
 **状态**: ✅ 更新完成
+
+---
+
+## v4.0 新增：主题/板块查询引擎
+
+> **更新日期**: 2026-05-21  
+> **新增模块**: StockQueryEngine + ThemeStockService + 偏好记忆 + 五档盘口
+
+### 核心架构变更
+
+v4.0 引入 `StockQueryEngine` 作为所有股票查询逻辑的统一入口，
+`ChatTabFragment` 和 `ChatActivity` 都不再直接持有 `StockService` / `ThemeStockService` 的引用，
+所有逻辑通过 `StockQueryEngine` 统一分发。
+
+```
+ChatTabFragment / ChatActivity
+  └─ StockQueryEngine.buildSystemPrompt(userText, basePrompt, onPreferenceLeaned)
+       │
+       ├─ [阶段0] UserPreferenceManager.learnFromMessage()
+       │    └─ SharedPreferences 持久化（跨 App 重启）
+       │
+       ├─ [阶段1] ThemeStockService.processThemeQuery()   ← 新增（优先级最高）
+       │    │    触发关键词：化工/商业航天/有色金属/AI算力/半导体/医药等
+       │    ├─ 方案A (ThemeStockLibrary)：内置10大主题，每股含业务+产业链依据
+       │    │    └─ MultiSourceStockRepository.getRealtime()
+       │    ├─ 方案B (EastMoneySectorSource)：东方财富板块成分股 API
+       │    │    └─ 40+行业/概念板块，按市值动态拉取 → getRealtime()
+       │    └─ EastMoneyBidAskSource（含"买手/卖手/低吸/尾盘"时触发）
+       │         └─ 五档挂单 → 买卖比 → 🟢🟡⚪🔴低吸评级
+       │
+       ├─ [阶段2] StockService.processUserInput()          ← 原有（无变更）
+       │    ├─ IntentProcessorChain（意图识别职责链）
+       │    └─ MultiSourceStockRepository.getRealtime()
+       │
+       └─ [阶段3] 通用回答（无实时数据，AI 基于训练知识）
+```
+
+### 新增文件清单
+
+| 文件 | 包路径 | 功能 |
+|------|--------|------|
+| `StockQueryEngine.kt` | `stock/` | 统一查询调度入口，供 Fragment/Activity 共用 |
+| `ThemeStockLibrary.kt` | `stock/theme/` | 内置主题库（10大主题，每股含业务描述+产业链依据） |
+| `ThemeStockService.kt` | `stock/theme/` | 整合层：方案A/B + 盘口数据 + AI prompt 构建 |
+| `UserPreferenceManager.kt` | `stock/theme/` | 用户偏好持久化（剔除科创板/市值/价格区间） |
+| `EastMoneySectorSource.kt` | `stock/data/sources/` | 东方财富板块成分股 API（40+行业板块） |
+| `EastMoneyBidAskSource.kt` | `stock/data/sources/` | 东方财富五档盘口 API（买卖比 + 低吸评级） |
+
+### AI 输出格式规范（v4.0）
+
+当用户输入 `帮忙分析化工前20的股票，整理成表格` 时，
+`ThemeStockService` 会向 AI 注入以下格式指令，AI 输出应为：
+
+```
+化工行业前 20 龙头股（2026.05.21）
+说明：按总市值 + 行业地位 + 业绩确定性综合排序；"尾盘低吸参考" 仅作短线参考，非投资建议。
+
+| 排名 | 股票代码 | 股票名称 | 核心赛道 | 市值（亿） | 核心依据（龙头逻辑） | 尾盘低吸参考 |
+|------|---------|---------|---------|----------|------------------|------------|
+| 1    | 600309  | 万华化学 | 聚氨酯/新材料 | 2620 | 全球MDI龙头（市占35%+），技术壁垒强 | 🟡 买卖比1.3 低吸观察 |
+| 2    | 600028  | 中国石化 | 石油化工综合 | 4890 | 全国最大炼化企业，成品油终端定价权 | ⚪ 均衡观望 |
+...
+
+⚠️ 投资有风险，入市需谨慎，以上均为信息参考，不构成投资建议。
+```
+
+### 用户偏好记忆
+
+| 偏好 | 触发关键词 | 持久化 Key | 效果 |
+|------|----------|-----------|------|
+| 剔除科创板 | "剔除科创板"、"排除科创" | `exclude_exchange_kcb` | 过滤688/689开头股票 |
+| 剔除创业板 | "剔除创业板"、"排除创业" | `exclude_exchange_cyb` | 过滤300/301开头股票 |
+| 最低市值 | "200亿以上"、"大市值" | `min_market_cap` | 过滤小市值股票 |
+| 价格区间 | "50元以下"、"10~50元" | `price_min/max` | 过滤高价股 |
+
+菜单 → "已记忆的偏好" 查看，"清除偏好记忆" 一键重置。
+
+### Logcat TAG（新增）
+
+| TAG | 功能 |
+|-----|------|
+| `StockQueryEngine` | 三阶段执行日志，每阶段耗时 |
+| `ThemeStockService` | 主题/板块匹配结果，方案A/B 选择日志 |
+| `EastMoneySectorSource` | 板块 API 请求/响应，市值过滤结果 |
+| `EastMoneyBidAskSource` | 五档盘口数据，买卖比计算结果 |
+| `UserPreferenceManager` | 学到的新偏好，当前生效的过滤条件 |
 

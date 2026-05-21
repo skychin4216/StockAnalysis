@@ -23,6 +23,11 @@ import java.time.LocalTime
  */
 class SmartStockCache(private val maxSize: Int = 200) {
 
+    companion object {
+        /** 预取数据默认 TTL：10 分钟 */
+        const val PREFETCH_TTL_MS = 10 * 60 * 1000L
+    }
+
     private data class CacheEntry(
         val data: StockRealtime,
         val timestamp: Long,
@@ -65,6 +70,38 @@ class SmartStockCache(private val maxSize: Int = 200) {
             }
         }
         Log.d(tag, "Cached ${data.size} stocks with TTL=${ttl / 1000}s")
+    }
+
+    /**
+     * 预取写入：使用指定 TTL（覆盖智能TTL），TTL 取 max(smartTTL, ttlMs)
+     *
+     * 用于后台预取场景：交易中智能TTL=1s，但预取数据可保留 10 分钟，
+     * 这样用户提问时如果数据在 10 分钟内则秒返回，无需实时请求。
+     *
+     * @param data 股票数据
+     * @param ttlMs 期望的 TTL（毫秒），将与智能TTL取较大值
+     */
+    fun putWithExtendedTtl(data: Map<String, StockRealtime>, ttlMs: Long = 10 * 60 * 1000L) {
+        if (data.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val smartTtl = calculateSmartTTL()
+        val effectiveTtl = maxOf(smartTtl, ttlMs)
+        synchronized(cache) {
+            for ((code, realtime) in data) {
+                // 只有当缓存中没有数据，或现有数据即将过期（< 30s）才覆盖
+                // 避免把更新鲜的短TTL数据覆盖为旧的长TTL数据
+                val existing = cache[code]
+                val existingAge = if (existing != null) now - existing.timestamp else Long.MAX_VALUE
+                val shouldUpdate = existing == null || existingAge > existing.ttlMs - 30_000L
+                if (shouldUpdate) {
+                    cache[code] = CacheEntry(realtime, now, effectiveTtl)
+                    if (cache.size > maxSize) {
+                        cache.remove(cache.keys.firstOrNull())
+                    }
+                }
+            }
+        }
+        Log.d(tag, "Prefetch cached ${data.size} stocks TTL=${effectiveTtl / 1000}s (smart=${smartTtl / 1000}s, requested=${ttlMs / 1000}s)")
     }
 
     /**

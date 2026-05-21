@@ -49,7 +49,7 @@
 
         </LinearLayout>
 
-        <!-- 用户消息操作按钮（编辑/复制/删除） -->
+        <!-- 用户消息操作按钮 -->
         <LinearLayout
             android:id="@+id/layoutUserActions"
             android:layout_width="wrap_content"
@@ -111,7 +111,7 @@
         android:orientation="horizontal"
         android:visibility="gone">
 
-        <!-- AI 头像占位 -->
+        <!-- AI 头像 -->
         <LinearLayout
             android:id="@+id/ivAvatar"
             android:layout_width="36dp"
@@ -158,7 +158,7 @@
                     android:focusable="true"
                     android:longClickable="true" />
 
-                <!-- 打字动画指示器（流式输出中显示） -->
+                <!-- 打字动画指示器 -->
                 <TextView
                     android:id="@+id/tvTypingIndicator"
                     android:layout_width="wrap_content"
@@ -173,25 +173,83 @@
 
             </LinearLayout>
 
-            <!-- AI 消息操作按钮（复制） -->
+            <!-- ── AI 消息操作栏（豆包风格，点击消息后显示）── -->
+            <!-- 复制 🔊播放 ⭐收藏 转发 🔄重新生成 -->
             <LinearLayout
                 android:id="@+id/layoutBotActions"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
+                android:layout_marginTop="6dp"
                 android:orientation="horizontal"
                 android:visibility="gone">
 
+                <!-- 复制 -->
                 <TextView
                     android:id="@+id/btnCopyBot"
                     android:layout_width="wrap_content"
                     android:layout_height="28dp"
-                    android:paddingHorizontal="12dp"
+                    android:paddingHorizontal="10dp"
                     android:paddingVertical="2dp"
                     android:gravity="center"
                     android:text="复制"
                     android:textSize="12sp"
                     android:textColor="#666666"
+                    android:background="@drawable/bg_action_btn"
+                    android:layout_marginEnd="5dp" />
+
+                <!-- 🔊 播放声音 -->
+                <TextView
+                    android:id="@+id/btnPlayVoice"
+                    android:layout_width="wrap_content"
+                    android:layout_height="28dp"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="2dp"
+                    android:gravity="center"
+                    android:text="🔊"
+                    android:textSize="14sp"
+                    android:textColor="#666666"
+                    android:background="@drawable/bg_action_btn"
+                    android:layout_marginEnd="5dp" />
+
+                <!-- ⭐ 收藏 -->
+                <TextView
+                    android:id="@+id/btnFavorite"
+                    android:layout_width="wrap_content"
+                    android:layout_height="28dp"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="2dp"
+                    android:gravity="center"
+                    android:text="⭐"
+                    android:textSize="14sp"
+                    android:textColor="#666666"
+                    android:background="@drawable/bg_action_btn"
+                    android:layout_marginEnd="5dp" />
+
+                <!-- 转发 -->
+                <TextView
+                    android:id="@+id/btnShare"
+                    android:layout_width="wrap_content"
+                    android:layout_height="28dp"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="2dp"
+                    android:gravity="center"
+                    android:text="转发"
+                    android:textSize="12sp"
+                    android:textColor="#666666"
+                    android:background="@drawable/bg_action_btn"
+                    android:layout_marginEnd="5dp" />
+
+                <!-- 🔄 重新生成 -->
+                <TextView
+                    android:id="@+id/btnRegenerate"
+                    android:layout_width="wrap_content"
+                    android:layout_height="28dp"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="2dp"
+                    android:gravity="center"
+                    android:text="🔄重新生成"
+                    android:textSize="12sp"
+                    android:textColor="#1E88E5"
                     android:background="@drawable/bg_action_btn" />
 
             </LinearLayout>

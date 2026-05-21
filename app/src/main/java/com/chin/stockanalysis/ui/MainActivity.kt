@@ -13,13 +13,9 @@ import com.chin.stockanalysis.databinding.ActivityMainBinding
 import com.google.android.material.bottomnavigation.BottomNavigationView
 
 /**
- * StockAnalysis v2.0 — 主 Tab Activity（UI 层）
+ * 主 Activity — 豆包风格四 Tab 布局
  *
- * 对齐《项目架构说明.md》：
- * - Multi-Fragment + BottomNavigationView + ViewPager2
- * - 📊 StockTabFragment：实时行情 / K线 / 技术指标
- * - 💬 ChatTabFragment：AI 智能对话入口
- * - ⚙️ SettingsFragment：API Provider / Model / API Key 配置
+ * 对话(0) | 股票(1) | 策略(2) | 我的(3)
  */
 class MainActivity : AppCompatActivity() {
 
@@ -29,9 +25,10 @@ class MainActivity : AppCompatActivity() {
 
     private val tabFragments: List<Fragment> by lazy {
         listOf(
-            StockTabFragment(),
-            ChatTabFragment(),
-            SettingsFragment()
+            ChatTabFragment(),    // 0 - 对话
+            StockTabFragment(),   // 1 - 股票
+            StrategyFragment(),   // 2 - 策略
+            SettingsFragment()    // 3 - 我的
         )
     }
 
@@ -39,7 +36,6 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-
         initGlobalServices()
         setupSystemBars()
         setupViewPager()
@@ -47,7 +43,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun initGlobalServices() {
-        // 预热配置管理器，保证设置页和聊天页读取同一份 Provider/Model/API Key 配置。
         ApiConfigManager.getInstance(applicationContext)
     }
 
@@ -64,38 +59,35 @@ class MainActivity : AppCompatActivity() {
         viewPager.adapter = MainTabAdapter(this, tabFragments)
         viewPager.isUserInputEnabled = false
         viewPager.offscreenPageLimit = tabFragments.size - 1
-        // 默认显示聊天 Tab（index=1），而非股票 Tab（index=0）
-        viewPager.setCurrentItem(1, false)
+        viewPager.setCurrentItem(0, false)   // 默认「对话」tab
     }
 
     private fun setupBottomNavigation() {
         bottomNav = binding.bottomNav
-
-        // 初始同步底部导航高亮为"聊天"（与 setupViewPager 中默认选中 index=1 保持一致）
         bottomNav.selectedItemId = R.id.nav_chat
 
         bottomNav.setOnItemSelectedListener { item ->
             val pageIndex = when (item.itemId) {
-                R.id.nav_stock -> 0
-                R.id.nav_chat -> 1
-                R.id.nav_settings -> 2
+                R.id.nav_chat     -> 0
+                R.id.nav_stock    -> 1
+                R.id.nav_strategy -> 2
+                R.id.nav_mine     -> 3
                 else -> -1
             }
             if (pageIndex >= 0) {
                 viewPager.setCurrentItem(pageIndex, false)
                 true
-            } else {
-                false
-            }
+            } else false
         }
 
         viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
                 val itemId = when (position) {
-                    0 -> R.id.nav_stock
-                    1 -> R.id.nav_chat
-                    2 -> R.id.nav_settings
-                    else -> R.id.nav_stock
+                    0 -> R.id.nav_chat
+                    1 -> R.id.nav_stock
+                    2 -> R.id.nav_strategy
+                    3 -> R.id.nav_mine
+                    else -> R.id.nav_chat
                 }
                 if (bottomNav.selectedItemId != itemId) {
                     bottomNav.selectedItemId = itemId
@@ -108,7 +100,7 @@ class MainActivity : AppCompatActivity() {
         activity: AppCompatActivity,
         private val fragments: List<Fragment>
     ) : FragmentStateAdapter(activity) {
-        override fun getItemCount(): Int = fragments.size
-        override fun createFragment(position: Int): Fragment = fragments[position]
+        override fun getItemCount() = fragments.size
+        override fun createFragment(position: Int) = fragments[position]
     }
 }

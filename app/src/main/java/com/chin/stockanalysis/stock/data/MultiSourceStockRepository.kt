@@ -58,6 +58,20 @@ class MultiSourceStockRepository(
     }
 
     /**
+     * 将已拉取的数据以**扩展 TTL** 写入缓存（供后台预取调度器使用）
+     *
+     * 正常的 getRealtime → cache.put()（智能 TTL，交易中仅 1s）
+     * 预取场景 → cache.putWithExtendedTtl()（默认 10 分钟）
+     * 这样当用户发问时，缓存已预热，立即秒返回无需实时请求。
+     *
+     * @param data 已获取的股票数据（通常来自 getRealtime 的结果）
+     * @param ttlMs 缓存保留时长，默认 10 分钟
+     */
+    fun putToCache(data: Map<String, StockRealtime>, ttlMs: Long = SmartStockCache.PREFETCH_TTL_MS) {
+        cache.putWithExtendedTtl(data, ttlMs)
+    }
+
+    /**
      * 获取实时数据 - 并发请求所有健康源，取最快返回（挂起版本）
      */
     suspend fun getRealtimeSuspend(codes: List<String>): Map<String, StockRealtime> =

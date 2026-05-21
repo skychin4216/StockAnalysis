@@ -1,30 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  启动图标前景 - K线上涨图
+  设计参考：东方财富 App 风格
+  Canvas: 108x108  Safe zone: 22~86 (72x72)
+  元素：3根K线蜡烛（左小右大，呈上涨趋势）+ 黄色趋势线 + 上涨箭头
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path android:pathData="M31,63.928c0,0 6.4,-11 12.1,-13.1c7.2,-2.6 26,-1.4 26,-1.4l38.1,38.1L107,108.928l-32,-1L31,63.928z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:endX="85.84757"
-                android:endY="92.4963"
-                android:startX="42.9492"
-                android:startY="49.59793"
-                android:type="linear">
-                <item
-                    android:color="#44000000"
-                    android:offset="0.0" />
-                <item
-                    android:color="#00000000"
-                    android:offset="1.0" />
-            </gradient>
-        </aapt:attr>
-    </path>
+
+    <!-- ════ 底部基线 ════ -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.5"
+        android:strokeAlpha="0.4"
+        android:strokeLineCap="round"
+        android:pathData="M22,84 L86,84" />
+
+    <!-- ════ 黄色上升趋势线 ════ -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFEB3B"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:pathData="M26,80 L46,68 L66,52 L84,32" />
+
+    <!-- ════ K线1：左 - 阴线(小) ════ -->
+    <!-- 上影线 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M32,61 L32,65" />
+    <!-- 阴线体：空心描边，上收下开 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.8"
+        android:pathData="M27,65 L37,65 L37,76 L27,76 Z" />
+    <!-- 下影线 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M32,76 L32,80" />
+
+    <!-- ════ K线2：中 - 阳线(中) ════ -->
+    <!-- 上影线 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M54,44 L54,49" />
+    <!-- 阳线体：实心白 -->
     <path
         android:fillColor="#FFFFFF"
-        android:fillType="nonZero"
-        android:pathData="M65.3,45.828l3.8,-6.6c0.2,-0.4 0.1,-0.9 -0.3,-1.1c-0.4,-0.2 -0.9,-0.1 -1.1,0.3l-3.9,6.7c-6.3,-2.8 -13.4,-2.8 -19.7,0l-3.9,-6.7c-0.2,-0.4 -0.7,-0.5 -1.1,-0.3C38.8,38.328 38.7,38.828 38.9,39.228l3.8,6.6C36.2,49.428 31.7,56.028 31,63.928h46C76.3,56.028 71.8,49.428 65.3,45.828zM43.4,57.328c-0.8,0 -1.5,-0.5 -1.8,-1.2c-0.3,-0.7 -0.1,-1.5 0.4,-2.1c0.5,-0.5 1.4,-0.7 2.1,-0.4c0.7,0.3 1.2,1 1.2,1.8C45.3,56.528 44.5,57.328 43.4,57.328L43.4,57.328zM64.6,57.328c-0.8,0 -1.5,-0.5 -1.8,-1.2s-0.1,-1.5 0.4,-2.1c0.5,-0.5 1.4,-0.7 2.1,-0.4c0.7,0.3 1.2,1 1.2,1.8C66.5,56.528 65.6,57.328 64.6,57.328L64.6,57.328z"
-        android:strokeWidth="1"
-        android:strokeColor="#00000000" />
+        android:pathData="M49,49 L59,49 L59,67 L49,67 Z" />
+    <!-- 下影线 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M54,67 L54,71" />
+
+    <!-- ════ K线3：右 - 大阳线 ════ -->
+    <!-- 上影线 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M76,24 L76,30" />
+    <!-- 大阳线体：实心白 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M71,30 L81,30 L81,58 L71,58 Z" />
+    <!-- 下影线 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M76,58 L76,63" />
+
+    <!-- ════ 右上角上涨箭头（黄色） ════ -->
+    <!-- 箭头线段：↗ 方向 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFEB3B"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M78,38 L86,28" />
+    <!-- 箭头头部（右+上两条边） -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFEB3B"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M80,28 L86,28 L86,34" />
+
 </vector>

@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  豆包风格 对话列表页（app2）
+  顶部工具栏：⬜ | 对话 | 🔍 ✏️
+  列表：彩色头像 + 标题 + 摘要
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF"
+    android:orientation="vertical">
+
+    <!-- 顶部标题栏 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:background="#FFFFFF"
+        android:elevation="2dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingEnd="8dp"
+        android:paddingStart="12dp">
+
+        <!-- 左侧：展开/切换图标 -->
+        <ImageButton
+            android:id="@+id/btnExpand"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@android:color/transparent"
+            android:contentDescription="展开"
+            android:padding="8dp"
+            android:src="@android:drawable/ic_dialog_alert"
+            android:tint="#444444" />
+
+        <!-- 标题"对话" -->
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="对话"
+            android:textColor="#111111"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <!-- 🔍 搜索 -->
+        <ImageButton
+            android:id="@+id/btnSearch"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@android:color/transparent"
+            android:contentDescription="搜索"
+            android:padding="8dp"
+            android:src="@android:drawable/ic_menu_search"
+            android:tint="#444444" />
+
+        <!-- ✏️ 新建对话 -->
+        <ImageButton
+            android:id="@+id/btnNewChat"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@android:color/transparent"
+            android:contentDescription="新建对话"
+            android:padding="8dp"
+            android:src="@android:drawable/ic_input_add"
+            android:tint="#444444" />
+
+    </LinearLayout>
+
+    <!-- 细分隔线 -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0.5dp"
+        android:background="#F0F0F0" />
+
+    <!-- 对话列表 -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvConversations"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#FAFAFA"
+        android:overScrollMode="never" />
+
+</LinearLayout>
