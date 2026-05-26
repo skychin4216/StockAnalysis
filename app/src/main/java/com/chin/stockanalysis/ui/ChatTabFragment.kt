@@ -190,7 +190,7 @@ class ChatTabFragment : Fragment() {
     }
 
     private fun setupInput() {
-        // ➕ 发送
+        // 发送按钮点击
         binding.btnSend.setOnClickListener {
             val text = binding.etInput.text.toString().trim()
             if (text.isEmpty()) {
@@ -218,6 +218,24 @@ class ChatTabFragment : Fragment() {
         binding.btnVoice.setOnClickListener {
             Toast.makeText(requireContext(), "🎤 语音输入功能开发中，敬请期待~", Toast.LENGTH_SHORT).show()
         }
+
+        // 根据输入内容切换右边按钮：空 → 🎤 + ➕，有内容 → ↑ 发送箭头
+        binding.etInput.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                val hasText = !s.isNullOrBlank()
+                if (hasText) {
+                    // 有输入：隐藏 🎤，右边按钮变为 ↑ 发送箭头
+                    binding.btnVoice.visibility = View.GONE
+                    binding.btnSend.setImageResource(com.chin.stockanalysis.R.drawable.ic_send_arrow)
+                } else {
+                    // 无输入：显示 🎤，右边按钮还原为 ➕
+                    binding.btnVoice.visibility = View.VISIBLE
+                    binding.btnSend.setImageResource(android.R.drawable.ic_input_add)
+                }
+            }
+        })
     }
 
     private fun setupTitleBar() {

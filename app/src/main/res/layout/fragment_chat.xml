@@ -1,15 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   豆包风格 聊天窗口（app1）
-  顶部白色标题栏：≡ | 标题 | 📞 🔇
+  顶部白色标题栏：≡ | 标题 | ⋮
   消息列表
-  底部输入：📷 | 输入框 | 🎤 ➕
+  底部输入：📷 | 输入框 | 🎤 / ➕（空状态时） → ↑ 箭头（有输入时）
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#FFFFFF"
     android:orientation="vertical">
 
     <!-- ── 顶部标题栏（白色，类似豆包 app1）── -->
@@ -170,7 +169,7 @@
                 android:textColorHint="#BBBBBB"
                 android:textSize="15sp" />
 
-            <!-- 🎤 语音按钮 -->
+            <!-- 🎤 语音按钮（空输入时显示） -->
             <ImageButton
                 android:id="@+id/btnVoice"
                 android:layout_width="36dp"
@@ -181,7 +180,7 @@
                 android:src="@android:drawable/ic_btn_speak_now"
                 android:tint="#999999" />
 
-            <!-- ➕ 更多/发送按钮 -->
+            <!-- 发送按钮：空状态显示 ➕，有输入时切换为 ↑ 箭头 -->
             <ImageButton
                 android:id="@+id/btnSend"
                 android:layout_width="36dp"

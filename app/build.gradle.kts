@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("com.google.devtools.ksp")
 }
 
 android {
@@ -53,6 +54,11 @@ dependencies {
 
     // 网络请求
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Room 数据库（本地持久化）
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    ksp("androidx.room:room-compiler:2.6.1")
 
     // JSON
     implementation("com.google.code.gson:gson:2.10.1")

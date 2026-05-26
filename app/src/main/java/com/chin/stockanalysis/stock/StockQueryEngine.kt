@@ -2,6 +2,7 @@ package com.chin.stockanalysis.stock
 
 import android.content.Context
 import android.util.Log
+import com.chin.stockanalysis.stock.database.StockDatabaseManager
 import com.chin.stockanalysis.stock.data.MultiSourceStockRepository
 import com.chin.stockanalysis.stock.data.StockDataSourceFactory
 import com.chin.stockanalysis.stock.prefetch.StockPrefetchScheduler
@@ -9,6 +10,7 @@ import com.chin.stockanalysis.stock.prefetch.UserQueryHistory
 import com.chin.stockanalysis.stock.theme.ThemeStockService
 import com.chin.stockanalysis.stock.theme.UserPreferenceManager
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 /**
  * ## 股票查询引擎（共享核心逻辑 + 后台预取）
@@ -107,6 +109,9 @@ class StockQueryEngine private constructor(
     /** 用户查询历史（学习高频股票/主题，用于预取决策）*/
     val queryHistory: UserQueryHistory = UserQueryHistory.getInstance(context)
 
+    /** v5.0 新增：本地数据库管理器（股票基本信息 + 板块映射）*/
+    val dbManager: StockDatabaseManager = StockDatabaseManager.getInstance(context)
+
     /** 后台预取调度器（预热缓存，加速响应）*/
     val prefetchScheduler: StockPrefetchScheduler = StockPrefetchScheduler(
         repository = repository,
@@ -128,6 +133,11 @@ class StockQueryEngine private constructor(
     fun startPrefetch(scope: CoroutineScope) {
         prefetchScheduler.start(scope)
         Log.i(TAG, "预取调度器已启动 | 历史: ${queryHistory.getSummary()}")
+
+        // v5.0：异步初始化本地数据库（首次启动时从 ThemeStockLibrary 迁移数据）
+        scope.launch {
+            dbManager.ensureInitialized()
+        }
     }
 
     /**
