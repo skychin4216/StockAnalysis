@@ -3,8 +3,8 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:paddingHorizontal="12dp"
-    android:paddingVertical="4dp">
+    android:paddingHorizontal="8dp"
+    android:paddingVertical="3dp">
 
     <!-- 时间戳 -->
     <TextView
@@ -101,172 +101,129 @@
 
     </LinearLayout>
 
-    <!-- AI 消息：左对齐，带头像 -->
+    <!-- AI 消息：无头像，全宽，紧贴边缘 -->
     <LinearLayout
         android:id="@+id/layoutBot"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:gravity="start"
-        android:orientation="horizontal"
+        android:layout_marginTop="3dp"
+        android:orientation="vertical"
         android:visibility="gone">
 
-        <!-- AI 头像 -->
-        <LinearLayout
-            android:id="@+id/ivAvatar"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:layout_gravity="bottom"
-            android:layout_marginEnd="8dp"
-            android:background="@drawable/bg_avatar"
-            android:gravity="center"
-            android:orientation="vertical">
+        <TextView
+            android:id="@+id/tvBotMessage"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_message_bot"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="10dp"
+            android:textColor="#333333"
+            android:textSize="15sp"
+            android:lineSpacingExtra="3dp"
+            android:visibility="visible"
+            android:clickable="true"
+            android:focusable="true"
+            android:longClickable="true" />
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="AI"
-                android:textColor="#FFFFFF"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-        </LinearLayout>
-
-        <LinearLayout
+        <!-- 打字动画指示器 -->
+        <TextView
+            android:id="@+id/tvTypingIndicator"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:orientation="vertical">
+            android:layout_marginStart="6dp"
+            android:gravity="center"
+            android:text="..."
+            android:textColor="#1E88E5"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
 
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal">
+        <!-- AI 消息操作栏 -->
+        <LinearLayout
+            android:id="@+id/layoutBotActions"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:orientation="horizontal"
+            android:visibility="gone">
 
-                <TextView
-                    android:id="@+id/tvBotMessage"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/bg_message_bot"
-                    android:maxWidth="250dp"
-                    android:paddingHorizontal="16dp"
-                    android:paddingVertical="12dp"
-                    android:textColor="#333333"
-                    android:textSize="15sp"
-                    android:lineSpacingExtra="3dp"
-                    android:visibility="visible"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:longClickable="true" />
-
-                <!-- 打字动画指示器 -->
-                <TextView
-                    android:id="@+id/tvTypingIndicator"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
-                    android:gravity="center"
-                    android:text="..."
-                    android:textColor="#1E88E5"
-                    android:textSize="20sp"
-                    android:textStyle="bold"
-                    android:visibility="gone" />
-
-            </LinearLayout>
-
-            <!-- ── AI 消息操作栏（豆包风格，点击消息后显示）── -->
-            <!-- 复制 🔊播放 ⭐收藏 转发 🔄重新生成 -->
-            <LinearLayout
-                android:id="@+id/layoutBotActions"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:orientation="horizontal"
-                android:visibility="gone">
-
-                <!-- 复制 -->
-                <TextView
-                    android:id="@+id/btnCopyBot"
-                    android:layout_width="wrap_content"
-                    android:layout_height="28dp"
-                    android:paddingHorizontal="10dp"
-                    android:paddingVertical="2dp"
-                    android:gravity="center"
-                    android:text="复制"
-                    android:textSize="12sp"
-                    android:textColor="#666666"
-                    android:background="@drawable/bg_action_btn"
-                    android:layout_marginEnd="5dp" />
-
-                <!-- 🔊 播放声音 -->
-                <TextView
-                    android:id="@+id/btnPlayVoice"
-                    android:layout_width="wrap_content"
-                    android:layout_height="28dp"
-                    android:paddingHorizontal="10dp"
-                    android:paddingVertical="2dp"
-                    android:gravity="center"
-                    android:text="🔊"
-                    android:textSize="14sp"
-                    android:textColor="#666666"
-                    android:background="@drawable/bg_action_btn"
-                    android:layout_marginEnd="5dp" />
-
-                <!-- ⭐ 收藏 -->
-                <TextView
-                    android:id="@+id/btnFavorite"
-                    android:layout_width="wrap_content"
-                    android:layout_height="28dp"
-                    android:paddingHorizontal="10dp"
-                    android:paddingVertical="2dp"
-                    android:gravity="center"
-                    android:text="⭐"
-                    android:textSize="14sp"
-                    android:textColor="#666666"
-                    android:background="@drawable/bg_action_btn"
-                    android:layout_marginEnd="5dp" />
-
-                <!-- 转发 -->
-                <TextView
-                    android:id="@+id/btnShare"
-                    android:layout_width="wrap_content"
-                    android:layout_height="28dp"
-                    android:paddingHorizontal="10dp"
-                    android:paddingVertical="2dp"
-                    android:gravity="center"
-                    android:text="转发"
-                    android:textSize="12sp"
-                    android:textColor="#666666"
-                    android:background="@drawable/bg_action_btn"
-                    android:layout_marginEnd="5dp" />
-
-                <!-- 🔄 重新生成 -->
-                <TextView
-                    android:id="@+id/btnRegenerate"
-                    android:layout_width="wrap_content"
-                    android:layout_height="28dp"
-                    android:paddingHorizontal="10dp"
-                    android:paddingVertical="2dp"
-                    android:gravity="center"
-                    android:text="🔄重新生成"
-                    android:textSize="12sp"
-                    android:textColor="#1E88E5"
-                    android:background="@drawable/bg_action_btn" />
-
-            </LinearLayout>
-
-            <!-- 错误提示 -->
             <TextView
-                android:id="@+id/tvErrorHint"
+                android:id="@+id/btnCopyBot"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:paddingLeft="4dp"
-                android:text="⚠️ 消息发送失败"
-                android:textColor="#FF5252"
+                android:layout_height="28dp"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="2dp"
+                android:gravity="center"
+                android:text="复制"
                 android:textSize="12sp"
-                android:visibility="gone" />
+                android:textColor="#666666"
+                android:background="@drawable/bg_action_btn"
+                android:layout_marginEnd="5dp" />
+
+            <TextView
+                android:id="@+id/btnPlayVoice"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="2dp"
+                android:gravity="center"
+                android:text="🔊"
+                android:textSize="14sp"
+                android:textColor="#666666"
+                android:background="@drawable/bg_action_btn"
+                android:layout_marginEnd="5dp" />
+
+            <TextView
+                android:id="@+id/btnFavorite"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="2dp"
+                android:gravity="center"
+                android:text="⭐"
+                android:textSize="14sp"
+                android:textColor="#666666"
+                android:background="@drawable/bg_action_btn"
+                android:layout_marginEnd="5dp" />
+
+            <TextView
+                android:id="@+id/btnShare"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="2dp"
+                android:gravity="center"
+                android:text="转发"
+                android:textSize="12sp"
+                android:textColor="#666666"
+                android:background="@drawable/bg_action_btn"
+                android:layout_marginEnd="5dp" />
+
+            <TextView
+                android:id="@+id/btnRegenerate"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="2dp"
+                android:gravity="center"
+                android:text="🔄重新生成"
+                android:textSize="12sp"
+                android:textColor="#1E88E5"
+                android:background="@drawable/bg_action_btn" />
 
         </LinearLayout>
+
+        <!-- 错误提示 -->
+        <TextView
+            android:id="@+id/tvErrorHint"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:paddingLeft="4dp"
+            android:text="⚠️ 消息发送失败"
+            android:textColor="#FF5252"
+            android:textSize="12sp"
+            android:visibility="gone" />
 
     </LinearLayout>
 

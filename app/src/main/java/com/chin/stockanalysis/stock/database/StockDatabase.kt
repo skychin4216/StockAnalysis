@@ -1,6 +1,9 @@
 package com.chin.stockanalysis.stock.database
 
+import android.content.Context
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -124,16 +127,69 @@ interface SectorStockDao {
 @Database(
     entities = [
         StockBasicEntity::class,
-        SectorStockEntity::class
+        SectorStockEntity::class,
+        com.chin.stockanalysis.conversation.ConversationEntity::class,
+        com.chin.stockanalysis.memory.KeyMemoryEntity::class
     ],
-    version = 1,
+    version = 3,
     exportSchema = false
 )
 abstract class StockDatabase : RoomDatabase() {
     abstract fun stockBasicDao(): StockBasicDao
     abstract fun sectorStockDao(): SectorStockDao
+    abstract fun conversationDao(): com.chin.stockanalysis.conversation.ConversationDao
+    abstract fun keyMemoryDao(): com.chin.stockanalysis.memory.KeyMemoryDao
 
     companion object {
         const val DATABASE_NAME = "stock_analysis.db"
+
+        /** v1 → v2 迁移：新增 conversations 表 */
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS conversations (
+                        id TEXT PRIMARY KEY NOT NULL,
+                        title TEXT NOT NULL,
+                        subtitle TEXT NOT NULL,
+                        timestamp INTEGER NOT NULL,
+                        messages_json TEXT NOT NULL DEFAULT '[]'
+                    )
+                """.trimIndent())
+            }
+        }
+
+        /** v2 → v3 迁移：新增 key_memories 表 */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS key_memories (
+                        id TEXT PRIMARY KEY NOT NULL,
+                        category TEXT NOT NULL,
+                        `key` TEXT NOT NULL,
+                        value TEXT NOT NULL,
+                        weight REAL NOT NULL DEFAULT 0.3,
+                        source_conv_ids TEXT NOT NULL DEFAULT '[]',
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    )
+                """.trimIndent())
+            }
+        }
+
+        @Volatile
+        private var INSTANCE: StockDatabase? = null
+
+        fun getInstance(context: Context): StockDatabase {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: Room.databaseBuilder(
+                    context.applicationContext,
+                    StockDatabase::class.java,
+                    DATABASE_NAME
+                )
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .build()
+                    .also { INSTANCE = it }
+            }
+        }
     }
 }

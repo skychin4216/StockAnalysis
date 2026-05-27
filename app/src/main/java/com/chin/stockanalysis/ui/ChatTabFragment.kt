@@ -19,12 +19,18 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.chin.stockanalysis.ApiConfigManager
 import com.chin.stockanalysis.ApiProvider
+import com.chin.stockanalysis.conversation.ConversationEntity
+import com.chin.stockanalysis.conversation.ConversationRepository
 import com.chin.stockanalysis.databinding.FragmentChatBinding
+import com.chin.stockanalysis.memory.KeyMemoryManager
+import com.chin.stockanalysis.memory.KeyMemoryEntity
 import com.chin.stockanalysis.stock.StockQueryEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
 import java.util.Locale
 
 /**
@@ -49,12 +55,13 @@ class ChatTabFragment : Fragment() {
 4. 回答用户关于股票投资的各种问题
 
 规则：
-- 如果下方注入了【实时行情数据】，请基于这些数据进行分析。
+- 如果下方注入了【实时行情数据】，必须严格基于注入数据中的价格进行分析。禁止使用你训练数据中的过时价格！
+- 注入数据中的"最新价"字段是实时行情，优先使用。
 - 如果没有【实时行情数据】，直接基于训练知识回答，不要说无法获取实时数据。
 - 不要给出具体买卖建议，只提供分析参考
 - 用中文回答，专业但易懂，适当使用emoji
 - 风险提示：投资有风险，入市需谨慎
-- 本APP支持5个数据源并发获取（新浪、腾讯、东方财富、聚宽、AKShare）。"""
+- ⚠️ 强制规则：每次提及个股时，必须从注入数据中提取最新价格并输出，格式如："贵州茅台(600519) 最新价 1680.50 元"。绝对不要使用训练数据中的旧价格！"""
     }
 
     private var _binding: FragmentChatBinding? = null
@@ -71,10 +78,23 @@ class ChatTabFragment : Fragment() {
         StockQueryEngine.create(requireContext())
     }
 
-    // 历史会话（传递给 ConversationListFragment）
-    private val sessions = mutableListOf<ConversationListFragment.ConversationSession>()
-    // 当前会话是否已有标题
+    /** 对话持久化仓库 */
+    private lateinit var convRepo: ConversationRepository
+
+    /** 关键信息记忆管理器 */
+    private lateinit var memoryManager: KeyMemoryManager
+
+    /** 当前会话 ID */
+    private var currentConvId: String = System.currentTimeMillis().toString()
+
+    /** 当前会话是否已有标题 */
     private var hasAutoTitle = false
+
+    /** 记录当前会话开始时间戳 */
+    private var sessionStartTime: Long = System.currentTimeMillis()
+
+    /** 当前的追问建议列表 */
+    private var followUpSuggestions: List<KeyMemoryManager.FollowUpSuggestion> = emptyList()
 
     // ════════════════════════════════════════
     // 生命周期
@@ -89,6 +109,8 @@ class ChatTabFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        convRepo = ConversationRepository(requireContext())
+        memoryManager = KeyMemoryManager(requireContext())
         initProvider()
         setupRecyclerView()
         setupInput()
@@ -102,6 +124,20 @@ class ChatTabFragment : Fragment() {
         initProvider()
     }
 
+    override fun onPause() {
+        super.onPause()
+        // 需求1：Home 键/切后台时取消正在进行的 API 调用
+        cancelApiCall()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // 再次确保取消
+        cancelApiCall()
+        // 自动保存当前会话到数据库
+        saveCurrentConversation()
+    }
+
     override fun onDestroyView() {
         super.onDestroyView()
         _binding = null
@@ -109,8 +145,19 @@ class ChatTabFragment : Fragment() {
 
     override fun onDestroy() {
         super.onDestroy()
-        currentStreamingJob?.cancel()
+        cancelApiCall()
         tts?.shutdown()
+    }
+
+    // ════════════════════════════════════════
+    // 需求1：取消 API 调用
+    // ════════════════════════════════════════
+
+    private fun cancelApiCall() {
+        currentStreamingJob?.cancel()
+        currentStreamingJob = null
+        apiProvider?.cancel()
+        Log.d(TAG, "🛑 已取消进行中的 API 请求")
     }
 
     // ════════════════════════════════════════
@@ -298,44 +345,104 @@ class ChatTabFragment : Fragment() {
     }
 
     // ════════════════════════════════════════
-    // 历史对话（BottomSheet）
+    // 需求2：历史对话（从 Room DB 加载）
     // ════════════════════════════════════════
 
     private fun showConversationHistory() {
-        val sheet = ConversationListFragment.newInstance()
-        sheet.sessions = sessions.toList()
+        val sheet = ConversationListFragment()
         sheet.onNewChatClick = { startNewConversation() }
-        sheet.onSessionClick = { session ->
-            Toast.makeText(requireContext(), "💬 ${session.title}", Toast.LENGTH_SHORT).show()
+        sheet.onSessionClick = { sessionId ->
+            lifecycleScope.launch { loadConversation(sessionId) }
         }
+        sheet.onDeleteSession = { sessionId ->
+            lifecycleScope.launch {
+                convRepo.deleteConversation(sessionId)
+                Toast.makeText(requireContext(), "已删除", Toast.LENGTH_SHORT).show()
+            }
+        }
+        sheet.convRepo = convRepo
         sheet.show(childFragmentManager, "conversation_history")
     }
 
-    private fun startNewConversation() {
-        // 保存当前会话到历史
-        val firstUser = messages.firstOrNull { it.isUser }
-        val lastBot = messages.lastOrNull { !it.isUser && !it.isError }
-        if (firstUser != null) {
-            val title = firstUser.content.let {
-                if (it.length > 18) it.take(18) + "…" else it
-            }
-            val subtitle = lastBot?.content?.let {
-                if (it.length > 30) it.take(30) + "…" else it
-            } ?: "暂无回复"
-            val ts = java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
-                .format(java.util.Date())
-            sessions.add(0, ConversationListFragment.ConversationSession(
-                id = System.currentTimeMillis().toString(),
-                title = title,
-                subtitle = subtitle,
-                timestamp = ts
-            ))
+    private suspend fun loadConversation(convId: String) {
+        val entity = withContext(Dispatchers.IO) { convRepo.getById(convId) }
+        if (entity == null) {
+            Toast.makeText(requireContext(), "对话不存在", Toast.LENGTH_SHORT).show()
+            return
         }
-        // 清空当前对话
+        cancelApiCall()
+        saveCurrentConversationSync()
+
+        val loadedMessages = ConversationRepository.deserializeMessages(entity.messagesJson)
+        messages.clear()
+        messages.addAll(loadedMessages)
+        adapter.notifyDataSetChanged()
+
+        currentConvId = entity.id
+        sessionStartTime = entity.timestamp
+        hasAutoTitle = loadedMessages.any { it.isUser }
+        binding.tvChatTitle.text = entity.title
+        binding.recyclerView.scrollToPosition(messages.size - 1)
+        Toast.makeText(requireContext(), "💬 ${entity.title}", Toast.LENGTH_SHORT).show()
+    }
+
+    /** 判断当前对话是否有值得保存的用户内容 */
+    private fun hasMeaningfulContent(): Boolean {
+        val userMessages = messages.filter { it.isUser && !it.isStreaming && !it.isError && it.content.isNotBlank() }
+        if (userMessages.isEmpty()) return false
+        // 至少有一条非 trivial 的消息
+        return userMessages.any { !isTrivialMessage(it.content) }
+    }
+
+    private fun saveCurrentConversation() {
+        // 没有任何用户输入 → 不保存（仅欢迎消息不算对话）
+        if (!hasMeaningfulContent()) {
+            Log.d(TAG, "⏭️ 跳过保存：无有效用户内容")
+            return
+        }
+        val realMessages = messages.filter { !it.isStreaming && !it.isError && it.content.isNotBlank() }
+        val (title, subtitle) = ConversationRepository.generateTitleAndSubtitle(realMessages)
+        val messagesJson = ConversationRepository.serializeMessages(realMessages)
+
+        val entity = ConversationEntity(
+            id = currentConvId,
+            title = title,
+            subtitle = subtitle,
+            timestamp = sessionStartTime,
+            messagesJson = messagesJson
+        )
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) { convRepo.saveConversation(entity) }
+            Log.d(TAG, "💾 已保存会话: $title")
+        }
+    }
+
+    /** 同步保存（用于加载其他会话前保存当前会话） */
+    private fun saveCurrentConversationSync() {
+        if (!hasMeaningfulContent()) return
+        val realMessages = messages.filter { !it.isStreaming && !it.isError && it.content.isNotBlank() }
+        val (title, subtitle) = ConversationRepository.generateTitleAndSubtitle(realMessages)
+        val messagesJson = ConversationRepository.serializeMessages(realMessages)
+        val entity = ConversationEntity(
+            id = currentConvId,
+            title = title,
+            subtitle = subtitle,
+            timestamp = sessionStartTime,
+            messagesJson = messagesJson
+        )
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) { convRepo.saveConversation(entity) }
+        }
+    }
+
+    private fun startNewConversation() {
+        saveCurrentConversation()
         val size = messages.size
         messages.clear()
         adapter.notifyItemRangeRemoved(0, size)
         hasAutoTitle = false
+        currentConvId = System.currentTimeMillis().toString()
+        sessionStartTime = System.currentTimeMillis()
         if (_binding != null) {
             binding.tvChatTitle.text = getString(com.chin.stockanalysis.R.string.app_name)
         }
@@ -367,8 +474,13 @@ class ChatTabFragment : Fragment() {
         addMessage(streamingMessage)
         val streamingIndex = messages.size - 1
 
+        // 隐藏追问 chips
+        showFollowUpChips(emptyList())
+
         currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
-            val finalSystemPrompt = withContext(Dispatchers.IO) {
+            // 并行获取 memorySuffix 和行情数据（关键加速：串行→并行）
+            val memoryDeferred = async(Dispatchers.IO) { memoryManager.buildMemorySuffix() }
+            val dataDeferred = async(Dispatchers.IO) {
                 queryEngine.buildSystemPrompt(
                     userText = userText,
                     baseSystemPrompt = BASE_SYSTEM_PROMPT,
@@ -384,32 +496,86 @@ class ChatTabFragment : Fragment() {
                 )
             }
 
-            val history = messages.toList().subList(0, streamingIndex)
-            val accumulated = StringBuilder()
+            val memorySuffix = memoryDeferred.await()
+            // 将记忆注入行情 prompt：把 BASE_SYSTEM_PROMPT + memory + 行情合并
+            val dataPrompt = dataDeferred.await()
+            val finalSystemPrompt = dataPrompt + memorySuffix
 
-            provider.sendMessageStream(
-                messages = history,
+            val history = messages.toList().subList(0, streamingIndex)
+
+            sendWithRetry(
+                provider = provider,
+                history = history,
                 systemPrompt = finalSystemPrompt,
-                onSuccess = { chunk ->
-                    accumulated.append(chunk)
-                    if (isAdded) requireActivity().runOnUiThread {
-                        updateStreamingMessage(streamingIndex, accumulated.toString())
+                streamingIndex = streamingIndex,
+                maxRetries = 3
+            )
+        }
+    }
+
+    /** 带重试的流式请求（最多 maxRetries 次，每次失败显示"重新获取中..."） */
+    private suspend fun sendWithRetry(
+        provider: ApiProvider,
+        history: List<Message>,
+        systemPrompt: String,
+        streamingIndex: Int,
+        maxRetries: Int,
+        attempt: Int = 1
+    ) {
+        val accumulated = StringBuilder()
+
+        try {
+            kotlinx.coroutines.suspendCancellableCoroutine<Unit> { cont ->
+                provider.sendMessageStream(
+                    messages = history,
+                    systemPrompt = systemPrompt,
+                    onSuccess = { chunk ->
+                        accumulated.append(chunk)
+                        if (isAdded) requireActivity().runOnUiThread {
+                            updateStreamingMessage(streamingIndex, accumulated.toString())
+                        }
+                    },
+                    onComplete = { full ->
+                        val finalText = full.ifEmpty { accumulated.toString() }
+                        if (isAdded) requireActivity().runOnUiThread {
+                            completeStreamingMessage(streamingIndex, finalText)
+                            binding.tvNewTopicHint.visibility = View.VISIBLE
+                            onMessageComplete()
+                        }
+                        cont.resumeWith(Result.success(Unit))
+                    },
+                    onError = { errMsg ->
+                        cont.resumeWith(Result.failure(Exception(errMsg)))
                     }
-                },
-                onComplete = { full ->
-                    val finalText = full.ifEmpty { accumulated.toString() }
-                    if (isAdded) requireActivity().runOnUiThread {
-                        completeStreamingMessage(streamingIndex, finalText)
-                        // 消息结束后显示"聊聊新话题"提示
-                        binding.tvNewTopicHint.visibility = View.VISIBLE
-                    }
-                },
-                onError = { errMsg ->
-                    if (isAdded) requireActivity().runOnUiThread {
-                        failStreamingMessage(streamingIndex, errMsg)
+                )
+            }
+        } catch (e: Exception) {
+            if (attempt < maxRetries && isAdded) {
+                requireActivity().runOnUiThread {
+                    Toast.makeText(
+                        requireContext(),
+                        "⏳ 重新获取中... (${attempt}/$maxRetries)",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+                // 保存已收到的部分内容
+                val partial = accumulated.toString()
+                if (partial.isNotBlank()) {
+                    requireActivity().runOnUiThread {
+                        messages[streamingIndex] = messages[streamingIndex].copy(
+                            content = partial + "\n\n_尝试重新获取..._",
+                            isStreaming = true
+                        )
+                        adapter.notifyItemChanged(streamingIndex)
                     }
                 }
-            )
+                kotlinx.coroutines.delay(1500L)
+                sendWithRetry(provider, history, systemPrompt, streamingIndex, maxRetries, attempt + 1)
+            } else {
+                if (isAdded) requireActivity().runOnUiThread {
+                    failStreamingMessage(streamingIndex, "已重试 $maxRetries 次: ${e.message}")
+                }
+            }
         }
     }
 
@@ -496,5 +662,79 @@ class ChatTabFragment : Fragment() {
     private fun hideKeyboard() {
         val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         imm.hideSoftInputFromWindow(binding.etInput.windowToken, 0)
+    }
+
+    /** 判断消息是否无价值（仅符号/空格/单字） */
+    private fun isTrivialMessage(text: String): Boolean {
+        val cleaned = text.replace(Regex("[\\s,.，。!！?？、；;：:【】()（）、·]+"), "")
+        return cleaned.length < 3
+    }
+
+    // ════════════════════════════════════════
+    // v4.2：记忆提取 + 追问 Chip
+    // ════════════════════════════════════════
+
+    /**
+     * AI 回复完成后：异步提取关键信息 + 生成追问建议。
+     */
+    private fun onMessageComplete() {
+        lifecycleScope.launch {
+            try {
+                // 1. 提取关键信息并合并到记忆
+                withContext(Dispatchers.IO) {
+                    memoryManager.extractAndMergeMemories(messages, currentConvId)
+                }
+                // 2. 生成追问建议
+                val activeMemories = withContext(Dispatchers.IO) {
+                    memoryManager.getAllMemories().filter { it.weight >= 0.3f }
+                }
+                val suggestions = memoryManager.generateFollowUpSuggestions(messages, activeMemories)
+                if (suggestions.isNotEmpty() && isAdded) {
+                    requireActivity().runOnUiThread {
+                        showFollowUpChips(suggestions)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "记忆提取/追问生成异常: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * 在输入框上方显示追问 Chip 列表。
+     * 使用简单的文本按钮方式实现（无需额外 layout 改动）。
+     */
+    private fun showFollowUpChips(suggestions: List<KeyMemoryManager.FollowUpSuggestion>) {
+        followUpSuggestions = suggestions
+        // 这里的实现策略：将追问作为 bot 消息添加到对话中，以"💡 你可能还想问："为前缀
+        if (suggestions.isNotEmpty()) {
+            val chipText = buildString {
+                appendLine("💡 你可能还想问：")
+                for ((i, s) in suggestions.withIndex()) {
+                    appendLine("${i + 1}. ${s.text}")
+                }
+                appendLine("\n⬆️ 点击上方问题或输入发送即可继续对话")
+            }
+            addBotMessage(chipText)
+            Log.d(TAG, "💡 追问建议: ${suggestions.map { it.text.take(20) }}")
+        }
+    }
+
+    /**
+     * 用户确认追问：提升对应记忆权重并发送追问。
+     */
+    private fun onFollowUpConfirmed(suggestion: KeyMemoryManager.FollowUpSuggestion) {
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                memoryManager.boostMemoryWeight(
+                    key = suggestion.memoryKey,
+                    value = suggestion.memoryValue,
+                    category = suggestion.memoryCategory,
+                    convId = currentConvId
+                )
+            }
+        }
+        // 自动发送追问文本
+        sendMessage(suggestion.text)
     }
 }

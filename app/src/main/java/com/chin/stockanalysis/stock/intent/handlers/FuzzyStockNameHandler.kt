@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit
  *
  * ✅ 支持任意 A 股股票名称，不需要硬编码
  * ✅ 搜索结果本地缓存（LRU，最多500条）
+ * ✅ 支持多股票同时查询（"和"/"跟"/"与" 拆分）
  * ✅ 搜索超时 3 秒，失败不影响主流程
  *
  * 调用链位置：位于 StockNameHandler 之后，GeneralStockHandler 之前
@@ -45,13 +46,18 @@ class FuzzyStockNameHandler : IntentHandler {
 
         // 在提取候选词之前先从输入中剥离的查询前后缀词
         private val STRIP_WORDS = listOf(
-            "帮我分析", "帮我看看", "帮我查", "分析一下", "分析",
-            "怎么样", "多少钱", "现价", "查询", "查看",
-            "走势如何", "走势", "行情", "怎么了", "涨了吗", "跌了吗",
-            "技术面", "基本面", "今天", "最新"
+            "还能追涨", "可以追涨", "还能买", "还能买吗", "能买吗",
+            "能不能买", "可以买入吗", "可以买", "帮我分析", "帮我看看",
+            "帮我查", "分析一下", "分析", "怎么样", "多少钱", "现价",
+            "查询", "查看", "走势如何", "走势", "行情", "怎么了",
+            "涨了吗", "跌了吗", "追涨", "技术面", "基本面", "今天", "最新"
         )
 
+        // 多股票连接词 — 拆分多支股票查询
+        private val STOCK_CONNECTORS = Regex("和|跟|与|还有|以及|、")
+
         // 纯中文字符正则（备用）
+        @Suppress("unused")
         private val CHINESE_ONLY = Regex("^[\\u4e00-\\u9fff·]{$MIN_NAME_LEN,$MAX_NAME_LEN}$")
 
         // 东方财富搜索 API（公开接口，无需鉴权）
@@ -74,74 +80,106 @@ class FuzzyStockNameHandler : IntentHandler {
      * 提取输入中的中文词组，尝试判断是否为可搜索的股票名称
      */
     override fun match(input: String): Boolean {
-        val candidate = extractStockNameCandidate(input)
-        if (candidate == null) {
+        val candidates = extractStockNameCandidates(input)
+        if (candidates.isEmpty()) {
             Log.v(TAG, "match: 未提取到有效候选词 from '${input.take(20)}'")
             return false
         }
-        Log.d(TAG, "match: 候选词 '$candidate' from '${input.take(20)}'")
+        Log.d(TAG, "match: 候选词 $candidates from '${input.take(20)}'")
         return true
     }
 
     override fun parse(input: String): IntentResult {
-        val candidate = extractStockNameCandidate(input) ?: return unknownResult(input)
+        val candidates = extractStockNameCandidates(input)
+        if (candidates.isEmpty()) return unknownResult(input)
 
-        // 1. 优先查缓存
-        val cached = searchCache[candidate]
-        if (cached != null) {
-            Log.d(TAG, "parse: 缓存命中 '$candidate' → $cached")
-            return buildResult(input, candidate, cached)
-        }
+        val allCodes = mutableListOf<String>()
+        val allNames = mutableListOf<String>()
 
-        // 2. 调用东方财富搜索 API
-        val codes = searchEastMoney(candidate) ?: searchSina(candidate) ?: emptyList()
-
-        // 3. 存缓存
-        if (codes.isNotEmpty()) {
-            if (searchCache.size >= CACHE_MAX_SIZE) {
-                searchCache.entries.firstOrNull()?.let { searchCache.remove(it.key) }
+        for (candidate in candidates) {
+            // 1. 优先查缓存
+            val cached = searchCache[candidate]
+            if (cached != null) {
+                Log.d(TAG, "parse: 缓存命中 '$candidate' → $cached")
+                if (cached.isNotEmpty()) {
+                    allCodes.addAll(cached)
+                    allNames.add(candidate)
+                }
+                continue
             }
-            searchCache[candidate] = codes
-            Log.i(TAG, "parse: 搜索命中 '$candidate' → $codes")
-        } else {
-            Log.w(TAG, "parse: 搜索无结果 '$candidate'")
-            // 缓存空结果，避免重复无效搜索
-            searchCache[candidate] = emptyList()
+
+            // 2. 调用东方财富搜索 API
+            val codes = searchEastMoney(candidate) ?: searchSina(candidate) ?: emptyList()
+
+            // 3. 存缓存
+            if (codes.isNotEmpty()) {
+                if (searchCache.size >= CACHE_MAX_SIZE) {
+                    searchCache.entries.firstOrNull()?.let { searchCache.remove(it.key) }
+                }
+                searchCache[candidate] = codes
+                allCodes.addAll(codes)
+                allNames.add(candidate)
+                Log.i(TAG, "parse: 搜索命中 '$candidate' → $codes")
+            } else {
+                Log.w(TAG, "parse: 搜索无结果 '$candidate'")
+                // 缓存空结果，避免重复无效搜索
+                searchCache[candidate] = emptyList()
+            }
         }
 
-        return buildResult(input, candidate, codes)
+        val distinctCodes = allCodes.distinct()
+        val distinctNames = allNames.distinct()
+
+        return buildResult(input, distinctNames, distinctCodes)
     }
 
     // ======================== 内部工具 ========================
 
     /**
-     * 从用户输入中提取潜在的股票名称候选词
+     * 从用户输入中提取潜在的股票名称候选词列表
      *
-     * 策略：
-     * 1. 先将常用查询词（分析、怎么样等）从输入中剥离
-     * 2. 在剩余文字中寻找 2-6 个字的纯中文词组
-     * 3. 排除通用词（今天、股市等）
+     * 策略 v2.0（多股票支持）：
+     * 1. 先将常用查询词从输入中剥离
+     * 2. 按连接词（和/跟/与/还有/以及/、）拆分子句
+     * 3. 在每个子句中寻找 2-8 个字的纯中文词组
+     * 4. 排除通用词（今天、股市等）
+     * 5. 返回所有有效候选词
      */
-    private fun extractStockNameCandidate(input: String): String? {
-        // 第1步：剥离常用查询前后缀（for 循环避免 lambda 捕获 var 的限制）
+    private fun extractStockNameCandidates(input: String): List<String> {
+        // 第1步：剥离常用查询前后缀
         var stripped = input
         for (word in STRIP_WORDS) { stripped = stripped.replace(word, " ") }
         stripped = stripped.replace(Regex("[\\s，。？！、,.?！\\d]"), " ").trim()
 
-        // 第2步：提取纯中文词组（2-6字）
-        val segments = Regex("[\\u4e00-\\u9fff·]{$MIN_NAME_LEN,$MAX_NAME_LEN}")
-            .findAll(stripped)
-            .map { it.value }
-            .filter { segment ->
-                // 排除完全匹配黑名单的词（如"今天"、"股市"）
-                BLACKLIST_WORDS.none { segment == it || segment == it }
-            }
-            .toList()
+        // 第2步：按连接词拆分子句，分别提取
+        val clauses = stripped.split(STOCK_CONNECTORS).filter { it.isNotBlank() }
+        Log.v(TAG, "extractCandidates: clauses after split = $clauses")
 
-        if (segments.isEmpty()) return null
+        val allSegments = mutableListOf<String>()
 
-        // 第3步：选最可能是股票名的词（优先 3-5 字，其次 2 字）
-        return segments.maxByOrNull { if (it.length in 3..5) it.length + 10 else it.length }
+        for (clause in clauses) {
+            val trimClause = clause.trim()
+            // 提取纯中文词组（2-8字）
+            val segments = Regex("[\\u4e00-\\u9fff·]{$MIN_NAME_LEN,$MAX_NAME_LEN}")
+                .findAll(trimClause)
+                .map { it.value }
+                .filter { segment ->
+                    // 排除完全匹配黑名单的词
+                    BLACKLIST_WORDS.none { it == segment }
+                }
+                .toList()
+            allSegments.addAll(segments)
+        }
+
+        if (allSegments.isEmpty()) return emptyList()
+
+        // 第3步：去重，优先保留 3-5 字的词（最像股票名）
+        val scored = allSegments
+            .distinct()
+            .map { it to (if (it.length in 3..5) it.length + 10 else it.length) }
+            .sortedByDescending { it.second }
+
+        return scored.map { it.first }
     }
 
     /**
@@ -228,7 +266,7 @@ class FuzzyStockNameHandler : IntentHandler {
         }
     }
 
-    private fun buildResult(input: String, name: String, codes: List<String>): IntentResult {
+    private fun buildResult(input: String, names: List<String>, codes: List<String>): IntentResult {
         val intent = when {
             codes.isEmpty() -> StockIntent.UNKNOWN
             codes.size >= 2 && (input.contains("对比") || input.contains("比较")) ->
@@ -240,10 +278,10 @@ class FuzzyStockNameHandler : IntentHandler {
         return IntentResult(
             intent = intent,
             stockCodes = codes,
-            stockNames = if (codes.isNotEmpty()) listOf(name) else emptyList(),
+            stockNames = names,
             confidence = if (codes.isNotEmpty()) 0.75f else 0.0f,
             rawQuery = input,
-            parsedParams = mapOf("source" to "fuzzy_search", "query" to name)
+            parsedParams = mapOf("source" to "fuzzy_search_multi", "queries" to names)
         )
     }
 

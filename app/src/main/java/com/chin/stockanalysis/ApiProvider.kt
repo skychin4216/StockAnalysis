@@ -51,4 +51,10 @@ interface ApiProvider {
         onComplete: (fullContent: String) -> Unit,
         onError: (errorMsg: String) -> Unit
     )
+
+    /**
+     * 取消正在进行的流式请求。
+     * 典型调用场景：用户按 Home 键离开、切换到其他 Tab、或主动停止生成。
+     */
+    fun cancel()
 }

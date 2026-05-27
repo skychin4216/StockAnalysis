@@ -58,12 +58,8 @@ class StockDatabaseManager private constructor(context: Context) {
         }
     }
 
-    // Room 数据库（单例）
-    val db: StockDatabase = Room.databaseBuilder(
-        context,
-        StockDatabase::class.java,
-        StockDatabase.DATABASE_NAME
-    ).build()
+    // Room 数据库（单例，含 migration）
+    val db: StockDatabase = StockDatabase.getInstance(context)
 
     private val stockDao = db.stockBasicDao()
     private val sectorDao = db.sectorStockDao()

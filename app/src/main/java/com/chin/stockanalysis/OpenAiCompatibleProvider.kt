@@ -9,28 +9,40 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * OpenAI 兼容 API 直连提供商
  *
- * 支持模型回退机制：主模型（如 ep-*）不可用时自动切换到备用模型。
- * 支持 HTTP 5xx 自动重试（最多 2 次）。
+ * 根本性健壮改进：
+ * - 连接/写入超时 30s，读取超时不限（流式连接可能长时间无数据）
+ * - OkHttp 自动重试网络故障
+ * - 流式解析容错：跳过空行/非 JSON 行，JSON 解析失败不中断流
+ * - cancel() 取消进行中的请求
  */
 class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProvider {
 
     companion object {
         private const val TAG = "OpenAiProvider"
-        private const val TIMEOUT_SECONDS = 60L
-        private const val MAX_RETRIES = 2
-        private const val RETRY_DELAY_MS = 1500L
+
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .readTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        .writeTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(0, TimeUnit.MILLISECONDS)      // 流式无读取超时
+        .retryOnConnectionFailure(true)              // 网络故障自动重试
+        .connectionPool(ConnectionPool(5, 1, TimeUnit.MINUTES))  // 连接池复用
+        .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))   // HTTP/2 多路复用
         .build()
+
+    private val activeCall = AtomicReference<Call?>(null)
+
+    override fun cancel() {
+        val call = activeCall.getAndSet(null)
+        call?.cancel()
+    }
 
     override fun sendMessageStream(
         messages: List<Message>,
@@ -39,46 +51,23 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         onComplete: (fullContent: String) -> Unit,
         onError: (errorMsg: String) -> Unit
     ) {
-        sendWithFallback(messages, systemPrompt, onSuccess, onComplete, onError, modelIndex = 0)
+        doSend(messages, systemPrompt, onSuccess, onComplete, onError, modelIndex = 0, retryCount = 0)
     }
 
-    private fun sendWithFallback(
+    private fun doSend(
         messages: List<Message>,
         systemPrompt: String,
         onSuccess: (content: String) -> Unit,
         onComplete: (fullContent: String) -> Unit,
         onError: (errorMsg: String) -> Unit,
-        modelIndex: Int
+        modelIndex: Int,
+        retryCount: Int
     ) {
-        val effectiveModel = when (modelIndex) {
-            0 -> config.model
-            else -> {
-                val idx = modelIndex - 1
-                if (idx < config.fallbackModels.size) config.fallbackModels[idx]
-                else { onError("所有模型均不可用（已尝试 $modelIndex 个）"); return }
-            }
-        }
-        if (modelIndex > 0) Log.d(TAG, "🔄 回退到备用模型 #$modelIndex: $effectiveModel")
-        sendWithRetry(messages, systemPrompt, onSuccess, onComplete, onError, retryCount = 0, currentModel = effectiveModel, modelIndex = modelIndex)
-    }
-
-    private fun sendWithRetry(
-        messages: List<Message>,
-        systemPrompt: String,
-        onSuccess: (content: String) -> Unit,
-        onComplete: (fullContent: String) -> Unit,
-        onError: (errorMsg: String) -> Unit,
-        retryCount: Int,
-        currentModel: String,
-        modelIndex: Int
-    ) {
-        Log.d(TAG, "\n🌐🌐🌐 直连 API（第 ${retryCount + 1} 次）🌐🌐🌐")
-        Log.d(TAG, "Provider: ${config.name}, Base URL: ${config.baseUrl}, Model: $currentModel")
-
+        val model = getModel(modelIndex, onError) ?: return
         val url = config.baseUrl.trimEnd('/') + "/chat/completions"
-        val requestBody = buildOpenAiRequestBody(messages, systemPrompt, currentModel)
-        Log.d(TAG, "📦 请求体:\n${redactSensitiveFields(requestBody).toString(2)}")
-        Log.d(TAG, "📤 发送直连请求到: $url")
+        val requestBody = buildBody(messages, systemPrompt, model)
+
+        Log.d(TAG, "📤 请求: $url | 模型: $model | 重试: $retryCount")
 
         val request = Request.Builder()
             .url(url)
@@ -87,77 +76,88 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
             .post(requestBody.toString().toRequestBody(JSON_MEDIA_TYPE))
             .build()
 
-        client.newCall(request).enqueue(object : Callback {
+        val call = client.newCall(request)
+        activeCall.set(call)
+
+        call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                Log.e(TAG, "❌ 请求失败: ${e.javaClass.simpleName} - ${e.message}")
-                if (retryCount < MAX_RETRIES && isRetryableFailure(e)) {
-                    Log.d(TAG, "🔄 准备第 ${retryCount + 2} 次重试...")
-                    Thread.sleep(RETRY_DELAY_MS)
-                    sendWithRetry(messages, systemPrompt, onSuccess, onComplete, onError, retryCount + 1, currentModel, modelIndex)
-                    return
-                }
-                if (modelIndex < config.fallbackModels.size) {
-                    Log.d(TAG, "🔄 网络错误，回退到备用模型...")
-                    sendWithFallback(messages, systemPrompt, onSuccess, onComplete, onError, modelIndex + 1)
-                    return
-                }
-                onError(when {
-                    e.message?.contains("timeout", true) == true -> "请求超时，请检查网络或稍后重试"
-                    e.message?.contains("Unable to resolve host", true) == true -> "无法连接服务器：域名解析失败"
-                    else -> "网络错误：${e.message}"
-                })
+                activeCall.compareAndSet(call, null)
+                if (call.isCanceled()) return
+
+                Log.e(TAG, "❌ 网络失败: ${e.message}")
+                handleRetry(messages, systemPrompt, onSuccess, onComplete, onError,
+                    modelIndex, retryCount + 1, "网络错误: ${e.message}")
             }
 
             override fun onResponse(call: Call, response: Response) {
-                Log.d(TAG, "\n📥 响应: HTTP ${response.code}")
+                activeCall.compareAndSet(call, null)
+                if (call.isCanceled()) { response.close(); return }
+
+                if (!response.isSuccessful) {
+                    response.close()
+                    val code = response.code
+                    Log.e(TAG, "❌ HTTP $code")
+                    handleRetry(messages, systemPrompt, onSuccess, onComplete, onError,
+                        modelIndex, retryCount + 1, "HTTP $code")
+                    return
+                }
+
                 try {
-                    if (!response.isSuccessful) {
-                        val errorBody = response.body?.string() ?: ""
-                        Log.e(TAG, "❌ HTTP ${response.code}: $errorBody")
-
-                        if (response.code >= 500 && retryCount < MAX_RETRIES) {
-                            Log.d(TAG, "🔄 HTTP ${response.code}，准备第 ${retryCount + 2} 次重试...")
-                            Thread.sleep(RETRY_DELAY_MS)
-                            sendWithRetry(messages, systemPrompt, onSuccess, onComplete, onError, retryCount + 1, currentModel, modelIndex)
-                            return
-                        }
-
-                        if (modelIndex < config.fallbackModels.size) {
-                            Log.d(TAG, "🔄 主模型失败，回退到备用模型...")
-                            sendWithFallback(messages, systemPrompt, onSuccess, onComplete, onError, modelIndex + 1)
-                            return
-                        }
-
-                        onError(parseErrorResponse(response.code, errorBody))
-                        return
-                    }
-
-                    val contentType = response.header("Content-Type", "") ?: ""
-                    Log.d(TAG, "Content-Type: $contentType, isStream=${contentType.contains("text/event-stream")}")
-
-                    if (contentType.contains("text/event-stream") || contentType.contains("application/x-ndjson")) {
-                        handleStreamResponse(response, onSuccess, onComplete, onError)
-                    } else {
-                        val raw = response.body?.string() ?: ""
-                        Log.d(TAG, "非流式响应(前200字符): ${raw.take(200)}")
-                        val content = extractContentFromResponse(raw)
-                        if (content != null) onComplete(content)
-                        else onError("解析响应失败：无法从响应中提取 content")
-                    }
+                    handleResponse(response, onSuccess, onComplete, onError)
                 } catch (e: Exception) {
-                    Log.e(TAG, "❌ 处理响应出错: ${e.message}")
-                    onError("处理响应出错：${e.message}")
+                    Log.e(TAG, "❌ 响应处理异常: ${e.message}")
+                    val partial = accumulated?.toString() ?: ""
+                    if (partial.isNotBlank()) {
+                        onComplete(partial)
+                    } else {
+                        handleRetry(messages, systemPrompt, onSuccess, onComplete, onError,
+                            modelIndex, retryCount + 1, "流式处理异常: ${e.message}")
+                    }
                 }
             }
         })
     }
 
-    private fun buildOpenAiRequestBody(messages: List<Message>, systemPrompt: String?, model: String): JSONObject {
+    private fun getModel(modelIndex: Int, onError: (String) -> Unit): String? {
+        return when (modelIndex) {
+            0 -> config.model
+            else -> {
+                val idx = modelIndex - 1
+                if (idx < config.fallbackModels.size) config.fallbackModels[idx]
+                else { onError("所有模型均不可用"); null }
+            }
+        }
+    }
+
+    private fun handleRetry(
+        messages: List<Message>, systemPrompt: String,
+        onSuccess: (String) -> Unit, onComplete: (String) -> Unit,
+        onError: (String) -> Unit,
+        modelIndex: Int, retryCount: Int, lastError: String
+    ) {
+        when {
+            retryCount < 3 -> {
+                Log.d(TAG, "🔄 第 $retryCount 次重试中...")
+                doSend(messages, systemPrompt, onSuccess, onComplete, onError, modelIndex, retryCount)
+            }
+            modelIndex < config.fallbackModels.size -> {
+                Log.d(TAG, "🔄 回退到备用模型 #${modelIndex + 1}")
+                doSend(messages, systemPrompt, onSuccess, onComplete, onError, modelIndex + 1, 0)
+            }
+            else -> onError(lastError)
+        }
+    }
+
+    private fun buildBody(messages: List<Message>, systemPrompt: String?, model: String): JSONObject {
         val msgArray = JSONArray()
-        if (!systemPrompt.isNullOrBlank()) msgArray.put(JSONObject().apply { put("role", "system"); put("content", systemPrompt) })
+        if (!systemPrompt.isNullOrBlank())
+            msgArray.put(JSONObject().apply { put("role", "system"); put("content", systemPrompt) })
         for (msg in messages) {
             if (msg.isStreaming || msg.isError || msg.content.isBlank()) continue
-            msgArray.put(JSONObject().apply { put("role", if (msg.isUser) "user" else "assistant"); put("content", msg.content) })
+            msgArray.put(JSONObject().apply {
+                put("role", if (msg.isUser) "user" else "assistant")
+                put("content", msg.content)
+            })
         }
         return JSONObject().apply {
             put("model", model)
@@ -168,96 +168,77 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         }
     }
 
-    private fun handleStreamResponse(response: Response, onSuccess: (String) -> Unit, onComplete: (String) -> Unit, onError: (String) -> Unit) {
-        try {
-            val body = response.body ?: run { onError("响应体为空"); return }
-            // 使用 source().buffer() 逐行读取 SSE 流，避免 body.string() 一次性加载大响应导致 connection abort
-            val source = body.source()
-            val fullContent = StringBuilder()
-            var lineCount = 0
+    // ─── 流式响应处理（核心健壮改进） ───
 
+    /** 线程间传递已累积内容（用于异常时回传部分结果） */
+    @Volatile
+    private var accumulated: StringBuilder? = null
+
+    private fun handleResponse(
+        response: Response,
+        onSuccess: (String) -> Unit,
+        onComplete: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val body = response.body ?: run { onError("响应体为空"); return }
+        val source = body.source()
+        val sb = StringBuilder()
+        accumulated = sb
+        var lineCount = 0
+
+        try {
             while (!source.exhausted()) {
                 val line = source.readUtf8Line() ?: break
                 lineCount++
+
                 val trimmed = line.trim()
-                if (trimmed.startsWith("data: ")) {
-                    val data = trimmed.removePrefix("data: ").trim()
-                    if (data == "[DONE]") {
-                        Log.d(TAG, "✅ 收到 [DONE] (共 $lineCount 行)")
-                        break
-                    }
-                    try {
-                        val json = JSONObject(data)
-                        val choices = json.optJSONArray("choices")
-                        if (choices != null && choices.length() > 0) {
-                            val choice = choices.getJSONObject(0)
-                        val delta = choice.optJSONObject("delta")
-                            val msg = choice.optJSONObject("message")
-                            // 使用 opt("content") 而非 optString: 当 JSON 值为 null 时
-                            // optString 返回字符串 "null"，opt 返回 JSONObject.NULL 对象
-                            val rawContent = delta?.opt("content") ?: msg?.opt("content")
-                            val content = if (rawContent is String) rawContent else ""
-                            if (content.isNotBlank()) {
-                                fullContent.append(content)
+                if (trimmed.isEmpty() || !trimmed.startsWith("data: ")) continue
+
+                val data = trimmed.removePrefix("data: ").trim()
+                if (data == "[DONE]") {
+                    Log.d(TAG, "✅ [DONE] | ${sb.length} 字符 | $lineCount 行")
+                    break
+                }
+
+                // 容错解析：单行 JSON 失败不中断整个流
+                try {
+                    val json = JSONObject(data)
+                    val choices = json.optJSONArray("choices")
+                    if (choices != null && choices.length() > 0) {
+                        val delta = choices.getJSONObject(0).optJSONObject("delta")
+                        if (delta != null) {
+                            // 使用 opt() 避免 null 转字符串
+                            val content = delta.optString("content", "")
+                            if (content.isNotEmpty()) {
+                                sb.append(content)
                                 onSuccess(content)
                             }
                         }
-                    } catch (ex: Exception) {
-                        if (data.isNotBlank() && data.length < 200) {
-                            Log.v(TAG, "跳过非 JSON data: $data")
-                        }
                     }
+                } catch (e: Exception) {
+                    // 跳过非 JSON 行（如注释、空数据行）
+                    if (lineCount <= 2) Log.v(TAG, "跳过非 JSON 行: ${data.take(80)}")
                 }
             }
-
-            val result = fullContent.toString()
-            Log.d(TAG, "流式处理完成: ${result.length} 字符, $lineCount 行")
-            if (result.isNotBlank()) {
-                onComplete(result)
+        } catch (e: IOException) {
+            val partial = sb.toString()
+            if (partial.isNotBlank()) {
+                Log.w(TAG, "⚠️ 流中断（${e.message}），已收到 ${partial.length} 字符，返回部分结果")
+                onComplete(partial)
             } else {
-                Log.w(TAG, "流式响应为空")
-                onError("AI 回复为空")
+                throw e // 没有收到任何数据，抛出让外层重试
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ 流式处理异常: ${e.message}", e)
-            onError("流式处理异常：${e.message}")
+            return
+        } finally {
+            accumulated = null
         }
-    }
 
-    private fun extractContentFromResponse(bodyStr: String): String? = try {
-        val json = JSONObject(bodyStr)
-        json.optJSONArray("choices")?.getJSONObject(0)?.optJSONObject("message")?.optString("content", null)
-    } catch (e: Exception) { Log.e(TAG, "❌ 解析 JSON 失败: ${e.message}"); null }
-
-    private fun isRetryableFailure(e: IOException): Boolean {
-        val msg = e.message?.lowercase() ?: return true
-        return msg.contains("timeout") || msg.contains("reset") || msg.contains("refused") || msg.contains("closed") || msg.contains("eof") || msg.contains("broken pipe")
-    }
-
-    private fun redactSensitiveFields(source: JSONObject) = JSONObject(source.toString()).apply { if (has("api_key")) put("api_key", "***") }
-
-    private fun parseErrorResponse(httpCode: Int, errorBody: String): String {
-        val (serverCode, serverMsg) = try {
-            val json = JSONObject(errorBody)
-            val error = json.optJSONObject("error")
-            if (error != null) Pair(error.optString("code", ""), error.optString("message", ""))
-            else Pair("", json.optString("message", errorBody))
-        } catch (_: Exception) { Pair("", errorBody) }
-        val hint = if (serverMsg.isNotBlank()) "\n💬 服务器返回: $serverMsg" else ""
-        val cl = serverCode.lowercase(); val ml = serverMsg.lowercase()
-        return when {
-            httpCode == 402 || ml.contains("insufficient balance") -> "💰 账户余额不足（402）\n您的 API 账户余额已用完，请前往对应平台充值后再试。$hint"
-            httpCode == 400 && (ml.contains("model") || ml.contains("endpoint")) -> "🔍 模型不存在（400）\n您选择的模型名称在当前提供商中不存在。$hint"
-            httpCode == 400 -> "⚠️ 请求参数错误（400）$hint"
-            httpCode == 401 -> "🔑 API Key 无效（401）\n请在设置中重新填写正确的 API Key。$hint"
-            httpCode == 403 && (ml.contains("insufficient") || ml.contains("balance") || serverCode == "30001") ->
-                "💰 硅基流动账户余额不足（403 code=30001）\n请前往 siliconflow.cn 充值后再试。$hint"
-            httpCode == 403 || cl.contains("forbidden") ->
-                "🚫 访问被拒绝（403）\n可能原因：API Key 权限不足、模型未开通、或账户余额为 0。$hint"
-            httpCode == 404 || ml.contains("does not exist") -> "❓ 模型或端点不存在（404）\n请在设置中切换模型。$hint"
-            httpCode == 429 || ml.contains("rate limit") -> "⏳ 请求过于频繁（429）\n请稍候 10 秒后再试。$hint"
-            httpCode >= 500 -> "🔧 AI 服务暂时不可用（$httpCode）\n已自动重试 $MAX_RETRIES 次，请稍后重试。$hint"
-            else -> "❌ 请求失败（HTTP $httpCode）$hint"
+        val result = sb.toString()
+        if (result.isNotBlank()) {
+            Log.d(TAG, "流式完成: ${result.length} 字符 | $lineCount 行")
+            onComplete(result)
+        } else {
+            onError("AI 回复为空")
         }
     }
 }

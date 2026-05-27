@@ -1,16 +1,22 @@
 package com.chin.stockanalysis.ui
 
 import android.os.Bundle
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import androidx.viewpager2.adapter.FragmentStateAdapter
 import androidx.viewpager2.widget.ViewPager2
 import com.chin.stockanalysis.ApiConfigManager
 import com.chin.stockanalysis.R
+import com.chin.stockanalysis.conversation.ConversationRepository
 import com.chin.stockanalysis.databinding.ActivityMainBinding
 import com.google.android.material.bottomnavigation.BottomNavigationView
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 主 Activity — 豆包风格四 Tab 布局
@@ -44,6 +50,25 @@ class MainActivity : AppCompatActivity() {
 
     private fun initGlobalServices() {
         ApiConfigManager.getInstance(applicationContext)
+        // 需求3：安装新版本时自动查询外部路径并导入旧对话数据
+        migrateLegacyConversations()
+    }
+
+    private fun migrateLegacyConversations() {
+        lifecycleScope.launch {
+            val count = withContext(Dispatchers.IO) {
+                ConversationRepository(applicationContext).migrateLegacyConversations()
+            }
+            if (count > 0) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "✅ 已从旧版本导入 $count 条历史对话",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
     }
 
     private fun setupSystemBars() {
@@ -64,6 +89,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupBottomNavigation() {
         bottomNav = binding.bottomNav
+        // 东方财富风格：选中项橙红色
+        bottomNav.itemIconTintList = resources.getColorStateList(com.chin.stockanalysis.R.color.nav_item_tint)
+        bottomNav.itemTextColor = resources.getColorStateList(com.chin.stockanalysis.R.color.nav_item_tint)
         bottomNav.selectedItemId = R.id.nav_chat
 
         bottomNav.setOnItemSelectedListener { item ->

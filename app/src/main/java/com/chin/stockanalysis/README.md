@@ -13,8 +13,10 @@
 | `MainActivity.kt` | 底部导航 Activity |
 | `Message.kt` | 聊天消息数据类 |
 | `StockDataProvider.kt` | 股票数据提供者 |
-| `stock/` | 股票行情模块（5源并发 + 实时数据框架 + 意图识别） |
-| `ui/` | UI Fragment（ChatTab, StockTab, Settings） |
+| `stock/` | 股票行情模块（5源并发 + 实时数据框架 + 意图识别 + 自动刷新） |
+| `strategy/` | ★ 量化选股策略模块（策略引擎 + 3种内置策略） |
+| `skill/` | ★ 智能追问 + 个人Skill引擎（FollowUpGenerator + SkillEngine） |
+| `ui/` | UI Fragment（ChatTab, StockTab, Strategy, Settings） |
 
 ## stock/ 包结构（股票行情模块，2026-05-20 最新版）
 

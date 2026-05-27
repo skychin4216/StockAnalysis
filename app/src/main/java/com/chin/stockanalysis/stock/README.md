@@ -17,6 +17,7 @@ stock/
 ├── intent/                   意图处理（链式处理器）
 ├── prefetch/                 后台预取调度
 ├── realtime/                 实时数据处理
+├── autorefresh/              ★ 自动刷新（TLL 架构）
 └── theme/                    主题/板块识别 + 内置股票库 + 用户偏好
 ```
 
@@ -29,4 +30,5 @@ ChatTabFragment / ChatActivity
        ├─ ThemeStockService (theme/)          主题/板块识别 → 东方财富API + ThemeStockLibrary
        ├─ StockService + StockFormatter       具体股票查询 → MultiSourceStockRepository
        ├─ StockDatabaseManager (database/)    本地 SQLite 查询
+       ├─ StockAutoRefreshManager (autorefresh/) ★ TLL 自动刷新
        └─ StockPrefetchScheduler (prefetch/)  后台预热缓存
