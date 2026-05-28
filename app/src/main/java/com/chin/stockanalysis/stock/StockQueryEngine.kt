@@ -170,30 +170,37 @@ class StockQueryEngine private constructor(
         val prefPrompt = userPrefManager.buildPreferencePrompt()
 
         // ══════════════════════════════════════════════════
-        // 阶段 1：主题/板块查询（优先级最高）
-        //   识别"商业航天"、"有色金属"、"AI算力"等
+        // 阶段 1：主题/板块查询
+        //   识别"商业航天"、"有色金属"、"AI算力"等行业/板块关键词
+        //   ⚠️ 但如果用户输入中包含明确的**个股**名称或代码，
+        //      则跳过板块查询，走阶段2的精确股票查询
         // ══════════════════════════════════════════════════
-        try {
-            val themeResult = themeStockService.processThemeQuery(
-                userInput = userText,
-                topN = 20,
-                withBidAsk = false,  // 含"买手/卖手/低吸"时自动开启
-                prefManager = userPrefManager
-            )
-            if (themeResult != null) {
-                val elapsed = System.currentTimeMillis() - startTime
-                val cacheHint = if (elapsed < 100) "⚡缓存命中" else "🌐实时获取"
-                Log.w(TAG, "✅ [主题/板块] ${themeResult.themeName} | ${themeResult.stockCount}只 | ${elapsed}ms $cacheHint")
-                Log.d(TAG, "═══════════════════════════════════════")
+        val hasIndividualStock = hasStockNameOrCode(userText)
+        if (!hasIndividualStock) {
+            try {
+                val themeResult = themeStockService.processThemeQuery(
+                    userInput = userText,
+                    topN = 20,
+                    withBidAsk = false,  // 含"买手/卖手/低吸"时自动开启
+                    prefManager = userPrefManager
+                )
+                if (themeResult != null) {
+                    val elapsed = System.currentTimeMillis() - startTime
+                    val cacheHint = if (elapsed < 100) "⚡缓存命中" else "🌐实时获取"
+                    Log.w(TAG, "✅ [主题/板块] ${themeResult.themeName} | ${themeResult.stockCount}只 | ${elapsed}ms $cacheHint")
+                    Log.d(TAG, "═══════════════════════════════════════")
 
-                // 异步触发：下次用户再问相同主题时数据已在缓存
-                // （不等待，不阻塞当前请求）
-                prefetchScheduler.recordQuery(themeResult.stockCodes, themeResult.themeName)
+                    // 异步触发：下次用户再问相同主题时数据已在缓存
+                    // （不等待，不阻塞当前请求）
+                    prefetchScheduler.recordQuery(themeResult.stockCodes, themeResult.themeName)
 
-                return "$baseSystemPrompt$prefPrompt\n\n${themeResult.promptInjection}"
+                    return "$baseSystemPrompt$prefPrompt\n\n${themeResult.promptInjection}"
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ ThemeStockService 异常（跳过）: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "⚠️ ThemeStockService 异常（跳过）: ${e.message}")
+        } else {
+            Log.d(TAG, "🔍 检测到个股名称/代码，跳过板块查询，走精确查询")
         }
 
         // ══════════════════════════════════════════════════
@@ -232,4 +239,51 @@ class StockQueryEngine private constructor(
      * 获取多源仓储（供外部需要直接操作数据时使用，如诊断、健康检查）
      */
     fun getRepository(): MultiSourceStockRepository = repository
+
+    // ════════════════════════════════════════
+    // 私有辅助方法
+    // ════════════════════════════════════════
+
+    /**
+     * 检测用户输入是否包含已知个股名称或股票代码
+     *
+     * 当检测到个股时，阶段1的板块/主题查询应被跳过，
+     * 直接进入阶段2的精确股票价格查询。
+     *
+     * 检测规则：
+     * 1. 匹配 StockNameHandler 中的已知股票名称（茅台/宁德时代/比亚迪等）
+     * 2. 匹配 sh/sz + 6位数字 格式的完整股票代码（sh600519 / sz000858 等）
+     * 3. 匹配 6位纯数字 的股票代码（600519 / 000858 等）
+     */
+    private fun hasStockNameOrCode(userText: String): Boolean {
+        // 规则1：常见 A 股名称关键词（与 StockNameHandler 内置表对齐）
+        val commonNames = listOf(
+            "茅台", "五粮液", "宁德时代", "比亚迪", "工商银行", "建设银行",
+            "农业银行", "中国银行", "贵州茅台", "美的集团", "格力电器",
+            "立讯精密", "海康威视", "中芯国际", "长江电力", "中兴通讯",
+            "迈瑞医疗", "恒瑞医药", "药明康德", "科大讯飞", "紫金矿业",
+            "万华化学", "生益科技", "沪电股份", "韦尔股份", "深信服",
+            "广联达", "用友网络", "恒生电子", "赣锋锂业", "北方稀土",
+            "中科三环", "山东黄金", "中国铝业", "华勤技术", "汇顶科技",
+            "平安", "苹果"
+        )
+        if (commonNames.any { userText.contains(it) }) {
+            Log.d(TAG, "hasStockNameOrCode: 匹配到个股名称 → skip theme query")
+            return true
+        }
+
+        // 规则2：sh/sz + 6位数字的完整代码格式
+        if (Regex("""[sS][hHzZ]\d{6}""").containsMatchIn(userText)) {
+            Log.d(TAG, "hasStockNameOrCode: 匹配到股票代码（sh/sz格式） → skip theme query")
+            return true
+        }
+
+        // 规则3：6位纯数字代码（可能是股票代码）
+        if (Regex("""\b\d{6}\b""").containsMatchIn(userText)) {
+            Log.d(TAG, "hasStockNameOrCode: 匹配到6位数字代码 → skip theme query")
+            return true
+        }
+
+        return false
+    }
 }

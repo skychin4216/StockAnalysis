@@ -27,23 +27,14 @@ object ThemeStockLibrary {
         "航天" to "commercial_space",
         "马斯克" to "commercial_space",
         "SpaceX" to "commercial_space",
-        "卫星" to "commercial_space",
         "星链" to "commercial_space",
         "低轨卫星" to "commercial_space",
         "星舰" to "commercial_space",
         "火箭" to "commercial_space",
 
-        // 有色金属
+        // 有色金属（板块/行业词）
         "有色金属" to "nonferrous_metals",
         "有色" to "nonferrous_metals",
-        "铜" to "nonferrous_metals",
-        "铝" to "nonferrous_metals",
-        "稀土" to "nonferrous_metals",
-        "黄金" to "nonferrous_metals",
-        "白银" to "nonferrous_metals",
-        "锂" to "nonferrous_metals",
-        "钴" to "nonferrous_metals",
-        "镍" to "nonferrous_metals",
 
         // AI / 人工智能
         "人工智能" to "ai_tech",
@@ -67,8 +58,6 @@ object ThemeStockLibrary {
 
         // 白酒
         "白酒" to "liquor",
-        "茅台" to "liquor",
-        "五粮液" to "liquor",
 
         // 军工
         "军工" to "military",
@@ -87,7 +76,7 @@ object ThemeStockLibrary {
 
         // 钢铁
         "钢铁" to "steel",
-        "铁" to "steel",
+        "钢铁板块" to "steel",
         "特钢" to "steel",
     )
 

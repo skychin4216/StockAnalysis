@@ -47,8 +47,6 @@ class ChatTabFragment : Fragment() {
 
     companion object {
         private const val TAG = "ChatTabFragment"
-        private const val PREFS_NAME = "chat_prefs"
-        private const val KEY_FIRST_LAUNCH_DONE = "first_launch_welcome_done"
 
         private const val BASE_SYSTEM_PROMPT = """你是一个专业的A股股票投资分析助手。你的职责包括：
 
@@ -299,14 +297,12 @@ class ChatTabFragment : Fragment() {
         // ⋮ 菜单
         binding.btnMenu.setOnClickListener { view ->
             val popup = PopupMenu(requireContext(), view)
-            popup.menu.add("修改标题")
             popup.menu.add("清空对话")
             popup.menu.add("已记忆的偏好")
             popup.menu.add("清除偏好记忆")
             popup.menu.add("数据源诊断")
             popup.setOnMenuItemClickListener { item ->
                 when (item.title) {
-                    "修改标题" -> { showEditTitleDialog(); true }
                     "清空对话" -> { startNewConversation(); true }
                     "已记忆的偏好" -> {
                         AlertDialog.Builder(requireContext())
@@ -335,27 +331,18 @@ class ChatTabFragment : Fragment() {
         }
     }
 
-    /**
-     * 显示欢迎引导消息。
-     * 仅在**首次安装**后第一次进入对话时显示，后续不再显示。
-     */
     private fun showWelcomeMessage() {
         if (messages.isNotEmpty()) return
-        val prefs = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val alreadyDone = prefs.getBoolean(KEY_FIRST_LAUNCH_DONE, false)
-        if (!alreadyDone) {
-            addBotMessage(
-                "👋 你好！我是你的智能助手！\n" +
-                        "当前模型: ${apiProvider?.config?.name ?: "服务器默认模型"}\n\n" +
-                        "💡 随便聊聊，或者试试这些：\n" +
-                        "• 600519 现在多少钱？\n" +
-                        "• 帮我分析贵州茅台\n" +
-                        "• 商业航天产业链有哪些股票？\n" +
-                        "• 今天天气怎么样？\n\n" +
-                        "📖 点击左上角 ≡ 可查看历史对话"
-            )
-            prefs.edit().putBoolean(KEY_FIRST_LAUNCH_DONE, true).apply()
-        }
+        addBotMessage(
+            "👋 你好！我是你的A股投资分析助手。\n" +
+                    "当前模型: ${apiProvider?.config?.name ?: "服务器默认模型"}\n\n" +
+                    "💡 支持以下查询：\n" +
+                    "• 600519 现在多少钱？\n" +
+                    "• 帮我分析贵州茅台\n" +
+                    "• 商业航天产业链前10支股票\n" +
+                    "• 有色金属板块今天怎么样？\n\n" +
+                    "📖 点击左上角 ≡ 可查看历史对话"
+        )
     }
 
     // ════════════════════════════════════════
@@ -472,11 +459,11 @@ class ChatTabFragment : Fragment() {
         binding.etInput.setText("")
         hideKeyboard()
 
-        // 第一条用户消息 → 智能提取标题
+        // 第一条用户消息 → 自动更新标题栏
         if (!hasAutoTitle) {
             hasAutoTitle = true
-            val autoTitle = extractSmartTitle(userText)
-            binding.tvChatTitle.text = autoTitle
+            val title = if (userText.length > 12) userText.take(12) + "…" else userText
+            binding.tvChatTitle.text = title
         }
 
         val provider = apiProvider ?: run {
@@ -682,65 +669,6 @@ class ChatTabFragment : Fragment() {
     private fun isTrivialMessage(text: String): Boolean {
         val cleaned = text.replace(Regex("[\\s,.，。!！?？、；;：:【】()（）、·]+"), "")
         return cleaned.length < 3
-    }
-
-    // ════════════════════════════════════════
-    // v6.0: 外部调用发送消息（策略→对话联动）
-    // ════════════════════════════════════════
-
-    /** 供 MainActivity 从外部调用发送消息 */
-    fun sendMessageFromExternal(text: String) {
-        binding.etInput.setText(text)
-        // 模拟点击发送按钮
-        binding.btnSend.performClick()
-    }
-
-    // ════════════════════════════════════════
-    // 智能标题提取 + 自定义标题
-    // ════════════════════════════════════════
-
-    private fun extractSmartTitle(userText: String): String {
-        val text = userText.trim()
-        if (text.isEmpty()) return "新对话"
-        val codeMatch = Regex("""[sS][hHzZ](\d{6})""").find(text)
-        if (codeMatch != null) {
-            val code = codeMatch.groupValues[1]
-            return when {
-                text.contains("分析") || text.contains("走势") -> "${code} 技术分析"
-                text.contains("对比") || text.contains("比较") -> "${code} 对比查询"
-                else -> "${code} 行情查询"
-            }
-        }
-        val pureNumMatch = Regex("""\b(\d{6})\b""").find(text)
-        if (pureNumMatch != null) return "${pureNumMatch.groupValues[1]} 查询"
-        val keywords = listOf("分析", "走势", "行情", "怎么样", "多少钱", "最新")
-        val matchedKeyword = keywords.firstOrNull { text.contains(it) }
-        if (matchedKeyword != null) {
-            val prefix = text.take(15).replace(matchedKeyword, "").trim()
-            return if (prefix.length >= 2) "${prefix} ${matchedKeyword}" else text.take(15)
-        }
-        return if (text.length <= 15) text else text.take(15) + "…"
-    }
-
-    private fun showEditTitleDialog() {
-        val input = EditText(requireContext()).apply {
-            setText(binding.tvChatTitle.text)
-            setSelection(text?.length ?: 0)
-            hint = "输入新的会话标题"
-        }
-        AlertDialog.Builder(requireContext())
-            .setTitle("✏️ 修改会话标题")
-            .setView(input)
-            .setNegativeButton("取消", null)
-            .setPositiveButton("确定") { _, _ ->
-                val newTitle = input.text?.toString()?.trim()
-                if (!newTitle.isNullOrBlank()) {
-                    binding.tvChatTitle.text = newTitle
-                    saveCurrentConversation()
-                    Toast.makeText(requireContext(), "✅ 标题已更新", Toast.LENGTH_SHORT).show()
-                }
-            }
-            .show()
     }
 
     // ════════════════════════════════════════

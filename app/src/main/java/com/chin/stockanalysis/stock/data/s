@@ -1,0 +1,182 @@
+package com.chin.stockanalysis.stock.data.sources
+
+import android.util.Log
+import com.chin.stockanalysis.stock.data.HttpClientProvider
+import okhttp3.Request
+import org.json.JSONObject
+
+/**
+ * 东方财富热门板块 + 全球指数行情数据源
+ *
+ * 数据来源：东方财富公开行情 API（无需鉴权）
+ *
+ * ### 接口说明
+ * - 板块行情：https://push2.eastmoney.com/api/qt/clist/get
+ *   (fs=m:90+t:2 — A 股行业板块，按涨跌幅排序)
+ * - 指数行情：https://push2.eastmoney.com/api/qt/ulist.np/get
+ *   (上证指数/深证成指/创业板指/沪深300/韩国KOSPI/纳斯达克/恒生指数等)
+ *
+ * ### 自动刷新
+ * 建议配合 MarketHotFragment 中的 Coroutine 定时器，每 60 秒刷新一次。
+ */
+class EastMoneyHotSectorSource {
+
+    private val client = HttpClientProvider.realtimeClient
+    private val tag = "HotSectorSource"
+
+    companion object {
+        private const val SECTOR_URL =
+            "https://push2.eastmoney.com/api/qt/clist/get?" +
+                    "pn=1&pz=20&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281" +
+                    "&fltt=2&invt=2&fid=f3&fs=m:90+t:2+f:!50" +
+                    "&fields=f2,f3,f4,f8,f12,f14,f15,f16,f17,f18,f20,f21,f23,f24,f25,f22,f11,f62,f128,f136,f115,f152"
+
+        // 全球指数代码（东方财富代码体系）
+        private val INDEX_CODES = listOf(
+            "1.000001" to "上证指数",    // 上证
+            "0.399001" to "深证成指",    // 深证
+            "0.399006" to "创业板指",    // 创业板
+            "1.000300" to "沪深300",     // 沪深300
+            "100.KS11" to "韩国KOSPI",   // 韩国综合
+            "100.NDX"  to "纳斯达克",    // 纳斯达克
+            "100.HSI"  to "恒生指数",    // 恒生
+            "100.N225" to "日经225",     // 日经
+            "100.GDAXI" to "德国DAX"     // 德国DAX
+        )
+    }
+
+    // ======================== 数据模型 ========================
+
+    data class HotSector(
+        val code: String,       // 板块代码 (BK0478)
+        val name: String,       // 板块名称 (有色金属)
+        val changePercent: Double,  // 涨跌幅 %
+        val sectorIndex: Double,    // 板块指数点
+        val top1StockName: String,  // 领涨股名称
+        val top1StockCode: String,  // 领涨股代码
+        val top1ChangePercent: Double  // 领涨股涨幅
+    )
+
+    data class GlobalIndex(
+        val code: String,
+        val name: String,
+        val price: Double,
+        val changePercent: Double,
+        val changeAmount: Double
+    )
+
+    // ======================== 公开方法 ========================
+
+    /**
+     * 获取热门板块列表（按涨跌幅排序，Top 20）
+     */
+    fun fetchHotSectors(): List<HotSector> {
+        return try {
+            val req = Request.Builder().url(SECTOR_URL)
+                .addHeader("User-Agent", "Mozilla/5.0")
+                .build()
+            val resp = client.newCall(req).execute()
+            if (!resp.isSuccessful) {
+                Log.w(tag, "fetchHotSectors HTTP ${resp.code}")
+                return emptyList()
+            }
+            val body = resp.body?.string() ?: return emptyList()
+            parseSectorResponse(body)
+        } catch (e: Exception) {
+            Log.w(tag, "fetchHotSectors error: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /**
+     * 获取全球指数行情（并发批量拉取）
+     */
+    fun fetchGlobalIndices(): List<GlobalIndex> {
+        if (INDEX_CODES.isEmpty()) return emptyList()
+        // 东方财富批量指数 API
+        val codes = INDEX_CODES.joinToString(",") { it.first }
+        val url = "https://push2.eastmoney.com/api/qt/ulist.np/get?" +
+                "fltt=2&invt=2&fields=f2,f3,f4,f12,f14" +
+                "&secids=$codes"
+        return try {
+            val req = Request.Builder().url(url)
+                .addHeader("User-Agent", "Mozilla/5.0")
+                .build()
+            val resp = client.newCall(req).execute()
+            if (!resp.isSuccessful) {
+                Log.w(tag, "fetchGlobalIndices HTTP ${resp.code}")
+                return emptyList()
+            }
+            val body = resp.body?.string() ?: return emptyList()
+            parseIndexResponse(body)
+        } catch (e: Exception) {
+            Log.w(tag, "fetchGlobalIndices error: ${e.message}")
+            emptyList()
+        }
+    }
+
+    // ======================== JSON 解析 ========================
+
+    private fun parseSectorResponse(body: String): List<HotSector> {
+        return try {
+            val json = JSONObject(body)
+            val data = json.optJSONObject("data") ?: return emptyList()
+            val diffs = data.optJSONArray("diff") ?: return emptyList()
+            val result = mutableListOf<HotSector>()
+
+            for (i in 0 until diffs.length()) {
+                val item = diffs.getJSONObject(i)
+                result.add(
+                    HotSector(
+                        code = item.optString("f12", ""),
+                        name = item.optString("f14", ""),
+                        changePercent = item.optDouble("f3", 0.0),
+                        sectorIndex = item.optDouble("f2", 0.0),
+                        top1StockName = item.optString("f128", ""),
+                        top1StockCode = item.optString("f140", "").ifEmpty { item.optString("f136", "") },
+                        top1ChangePercent = item.optDouble("f124", 0.0)
+                    )
+                )
+            }
+            Log.d(tag, "parseSectorResponse: ${result.size} sectors")
+            result
+        } catch (e: Exception) {
+            Log.w(tag, "parseSectorResponse error: ${e.message}")
+            emptyList()
+        }
+    }
+
+    private fun parseIndexResponse(body: String): List<GlobalIndex> {
+        return try {
+            val json = JSONObject(body)
+            val data = json.optJSONObject("data") ?: return emptyList()
+            val diffs = data.optJSONArray("diff") ?: return emptyList()
+            val result = mutableListOf<GlobalIndex>()
+
+            for (i in 0 until diffs.length()) {
+                val item = diffs.getJSONObject(i)
+                result.add(
+                    GlobalIndex(
+                        code = item.optString("f12", ""),
+                        name = item.optString("f14", ""),
+                        price = item.optDouble("f2", 0.0),
+                        changePercent = item.optDouble("f3", 0.0),
+                        changeAmount = item.optDouble("f4", 0.0)
+                    )
+                )
+            }
+            Log.d(tag, "parseIndexResponse: ${result.size} indices")
+            // 补齐指数名称映射
+            result.forEach { idx ->
+                val mapped = INDEX_CODES.firstOrNull { it.first == "1.${idx.code}" || it.first == "0.${idx.code}" || it.first == "100.${idx.code}" }
+                if (mapped != null && idx.name.isEmpty()) {
+                    result[result.indexOf(idx)] = idx.copy(name = mapped.second)
+                }
+            }
+            result
+        } catch (e: Exception) {
+            Log.w(tag, "parseIndexResponse error: ${e.message}")
+            emptyList()
+        }
+    }
+}

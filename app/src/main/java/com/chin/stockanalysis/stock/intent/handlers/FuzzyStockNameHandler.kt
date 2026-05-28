@@ -45,12 +45,16 @@ class FuzzyStockNameHandler : IntentHandler {
         )
 
         // 在提取候选词之前先从输入中剥离的查询前后缀词
+        // ⚠️ 这些词会干扰候选词提取，必须按长度从长到短排列（先剥离长词组，避免残留短词）
         private val STRIP_WORDS = listOf(
-            "还能追涨", "可以追涨", "还能买", "还能买吗", "能买吗",
-            "能不能买", "可以买入吗", "可以买", "帮我分析", "帮我看看",
-            "帮我查", "分析一下", "分析", "怎么样", "多少钱", "现价",
-            "查询", "查看", "走势如何", "走势", "行情", "怎么了",
-            "涨了吗", "跌了吗", "追涨", "技术面", "基本面", "今天", "最新"
+            "还能追涨", "可以追涨", "还能买吗", "能买吗", "能不能买",
+            "可以买入吗", "的最新股价", "最新股价", "的股价", "现价",
+            "价格是多少", "多少钱", "是什么价", "什么价格", "什么价",
+            "还能买", "可以买", "帮我分析", "帮我看看", "帮我查",
+            "分析一下", "走势如何", "怎么样", "怎么了", "怎么样", "是多少",
+            "涨了吗", "跌了吗", "今日", "今天", "最新", "最近",
+            "分析", "查询", "查看", "走势", "行情", "价格", "股价",
+            "追涨", "技术面", "基本面"
         )
 
         // 多股票连接词 — 拆分多支股票查询
@@ -173,13 +177,43 @@ class FuzzyStockNameHandler : IntentHandler {
 
         if (allSegments.isEmpty()) return emptyList()
 
-        // 第3步：去重，优先保留 3-5 字的词（最像股票名）
-        val scored = allSegments
+        // 第3步：尾部清理 — 剥离中文语法助词后缀
+        // 典型场景："华润三九的" → "华润三九", "茅台了" → "茅台"
+        // 东方财富搜索 API 要求精确匹配股票名称，多余的语法词会导致搜索失败
+        val cleanedSegments = allSegments.map { segment ->
+            var cleaned = segment
+            // 剥离尾部常见的中文单字语法助词
+            while (cleaned.length >= MIN_NAME_LEN) {
+                val lastChar = cleaned.last()
+                if (lastChar == '的' || lastChar == '是' || lastChar == '了' ||
+                    lastChar == '吗' || lastChar == '呢' || lastChar == '吧' ||
+                    lastChar == '啊' || lastChar == '呀' || lastChar == '么' ||
+                    lastChar == '哦' || lastChar == '嘛' || lastChar == '着' ||
+                    lastChar == '过' || lastChar == '在' || lastChar == '到') {
+                    cleaned = cleaned.dropLast(1)
+                } else break
+            }
+            // 同时剥离残留的双字查询词（"如何"、"是否"等）
+            if (cleaned.length >= MIN_NAME_LEN + 2) {
+                val lastTwo = cleaned.takeLast(2)
+                if (lastTwo == "如何" || lastTwo == "是否" || lastTwo == "可以" ||
+                    lastTwo == "现在" || lastTwo == "什么")
+                    cleaned = cleaned.dropLast(2)
+            }
+            cleaned
+        }.filter { it.length >= MIN_NAME_LEN }
+
+        if (cleanedSegments.isEmpty()) return emptyList()
+
+        // 第4步：去重，优先保留 3-5 字的词（最像股票名）
+        val scored = cleanedSegments
             .distinct()
             .map { it to (if (it.length in 3..5) it.length + 10 else it.length) }
             .sortedByDescending { it.second }
 
-        return scored.map { it.first }
+        val result = scored.map { it.first }
+        Log.d(TAG, "extractCandidates: raw=[${allSegments.joinToString(",")}] cleaned=$result")
+        return result
     }
 
     /**

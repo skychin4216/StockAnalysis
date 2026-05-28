@@ -1,0 +1,274 @@
+package com.chin.stockanalysis.ui
+
+import android.graphics.Color
+import android.graphics.Typeface
+import android.os.Bundle
+import android.view.Gravity
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.*
+import android.widget.LinearLayout.LayoutParams
+import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
+import com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/**
+ * 热门行情页 — 全球指数 + A 股热门板块
+ *
+ * - 顶部：指数行情条（上证/深证/创业板/沪深300/韩国KOSPI/纳指等）
+ * - 下方：热门板块卡片列表（按涨跌幅排序）
+ * - 每 60 秒自动刷新
+ * - 数据来源：东方财富公开 API
+ */
+class MarketHotFragment : Fragment() {
+
+    private lateinit var rootLayout: LinearLayout
+    private lateinit var indexRow: LinearLayout
+    private lateinit var sectorContainer: LinearLayout
+    private lateinit var refreshTv: TextView
+    private lateinit var progressBar: ProgressBar
+
+    private val hotSource = EastMoneyHotSectorSource()
+    private var refreshJob: Job? = null
+
+    override fun onCreateView(
+        inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
+    ): View {
+        rootLayout = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#F5F6FA"))
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+        }
+        buildUI()
+        startAutoRefresh()
+        return rootLayout
+    }
+
+    private fun buildUI() {
+        // 标题
+        val header = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(24, 40, 24, 12)
+            setBackgroundColor(Color.WHITE)
+        }
+        header.addView(TextView(requireContext()).apply {
+            text = "🔥 热门行情"
+            textSize = 22f
+            setTextColor(Color.parseColor("#1A1A2E"))
+            setTypeface(null, Typeface.BOLD)
+            layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
+        })
+        refreshTv = TextView(requireContext()).apply {
+            text = "⏳ 加载中..."
+            textSize = 11f
+            setTextColor(Color.parseColor("#999999"))
+        }
+        header.addView(refreshTv)
+        rootLayout.addView(header)
+
+        // 指数行情条
+        indexRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(12, 8, 12, 8)
+            setBackgroundColor(Color.WHITE)
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+        }
+        rootLayout.addView(createIndexScroll())
+        progressBar = ProgressBar(requireContext()).apply {
+            visibility = View.GONE
+        }
+        rootLayout.addView(progressBar)
+
+        // 板块标题
+        val sectorTitle = LinearLayout(requireContext()).apply {
+            setPadding(24, 20, 24, 8)
+            setBackgroundColor(Color.parseColor("#F5F6FA"))
+        }
+        sectorTitle.addView(TextView(requireContext()).apply {
+            text = "📊 A 股热门板块"
+            textSize = 16f
+            setTextColor(Color.parseColor("#333333"))
+            setTypeface(null, Typeface.BOLD)
+        })
+        rootLayout.addView(sectorTitle)
+
+        // 板块列表容器
+        sectorContainer = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(12, 0, 12, 80)
+        }
+        rootLayout.addView(sectorContainer)
+    }
+
+    private fun createIndexScroll(): HorizontalScrollView {
+        val scroll = HorizontalScrollView(requireContext()).apply {
+            isHorizontalScrollBarEnabled = false
+        }
+        scroll.addView(indexRow)
+        return scroll
+    }
+
+    private fun startAutoRefresh() {
+        refreshJob = lifecycleScope.launch {
+            while (isActive) {
+                refreshData()
+                delay(60_000L) // 60 秒刷新
+            }
+        }
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        refreshJob?.cancel()
+    }
+
+    private fun refreshData() {
+        lifecycleScope.launch {
+            progressBar.visibility = View.VISIBLE
+            val indices = withContext(Dispatchers.IO) { hotSource.fetchGlobalIndices() }
+            val sectors = withContext(Dispatchers.IO) { hotSource.fetchHotSectors() }
+            progressBar.visibility = View.GONE
+
+            val now = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+                .format(java.util.Date())
+            refreshTv.text = "🕐 $now"
+
+            updateIndexRow(indices)
+            updateSectorList(sectors)
+        }
+    }
+
+    private fun updateIndexRow(indices: List<EastMoneyHotSectorSource.GlobalIndex>) {
+        indexRow.removeAllViews()
+        if (indices.isEmpty()) {
+            indexRow.addView(TextView(requireContext()).apply {
+                text = "暂无数据"
+                textSize = 12f
+                setTextColor(Color.GRAY)
+            })
+            return
+        }
+        for (idx in indices) {
+            val card = LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(14, 6, 14, 6)
+                setBackgroundColor(Color.parseColor("#F8F9FC"))
+                (layoutParams as? LayoutParams)?.setMargins(4, 0, 4, 0)
+            }
+            val nameTv = TextView(requireContext()).apply {
+                text = idx.name
+                textSize = 11f
+                setTextColor(Color.parseColor("#666666"))
+            }
+            card.addView(nameTv)
+            val priceTv = TextView(requireContext()).apply {
+                text = String.format("%.0f", idx.price)
+                textSize = 14f
+                setTextColor(Color.parseColor("#1A1A2E"))
+                setTypeface(null, Typeface.BOLD)
+            }
+            card.addView(priceTv)
+            val changeTv = TextView(requireContext()).apply {
+                val sign = if (idx.changePercent >= 0) "+" else ""
+                text = "$sign${String.format("%.2f", idx.changePercent)}%"
+                textSize = 11f
+                setTextColor(if (idx.changePercent >= 0) Color.parseColor("#E53935") else Color.parseColor("#43A047"))
+            }
+            card.addView(changeTv)
+            indexRow.addView(card)
+        }
+    }
+
+    private fun updateSectorList(sectors: List<EastMoneyHotSectorSource.HotSector>) {
+        sectorContainer.removeAllViews()
+        if (sectors.isEmpty()) {
+            sectorContainer.addView(TextView(requireContext()).apply {
+                text = "暂无板块数据"
+                textSize = 14f
+                setTextColor(Color.GRAY)
+                setPadding(24, 24, 24, 24)
+            })
+            return
+        }
+        for ((i, sector) in sectors.withIndex()) {
+            val card = createSectorCard(sector, i + 1)
+            sectorContainer.addView(card)
+        }
+    }
+
+    private fun createSectorCard(sector: EastMoneyHotSectorSource.HotSector, rank: Int): LinearLayout {
+        val ctx = requireContext()
+        val card = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.WHITE)
+            setPadding(16, 12, 16, 12)
+            (layoutParams as? LayoutParams)?.setMargins(0, 0, 0, 8)
+            elevation = 2f
+        }
+
+        // 第一行：排名 + 板块名 + 涨幅
+        val row1 = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val rankTv = TextView(ctx).apply {
+            text = if (rank <= 3) listOf("🥇", "🥈", "🥉")[rank - 1] else "$rank"
+            textSize = 16f
+            layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                marginEnd = 10
+            }
+        }
+        row1.addView(rankTv)
+        val nameTv = TextView(ctx).apply {
+            text = sector.name
+            textSize = 15f
+            setTextColor(Color.parseColor("#222222"))
+            setTypeface(null, Typeface.BOLD)
+            layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
+        }
+        row1.addView(nameTv)
+        val changeTv = TextView(ctx).apply {
+            val sign = if (sector.changePercent >= 0) "+" else ""
+            text = "$sign${String.format("%.2f", sector.changePercent)}%"
+            textSize = 16f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(if (sector.changePercent >= 0) Color.parseColor("#E53935") else Color.parseColor("#43A047"))
+        }
+        row1.addView(changeTv)
+        card.addView(row1)
+
+        // 第二行：领涨股
+        if (sector.top1StockName.isNotEmpty()) {
+            val row2 = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, 4, 0, 0)
+            }
+            row2.addView(TextView(ctx).apply {
+                text = "领涨: ${sector.top1StockName}"
+                textSize = 12f
+                setTextColor(Color.parseColor("#888888"))
+            })
+            if (sector.top1ChangePercent != 0.0) {
+                row2.addView(TextView(ctx).apply {
+                    val sign = if (sector.top1ChangePercent >= 0) "+" else ""
+                    text = "  $sign${String.format("%.2f", sector.top1ChangePercent)}%"
+                    textSize = 12f
+                    setTextColor(if (sector.top1ChangePercent >= 0) Color.parseColor("#E53935") else Color.parseColor("#43A047"))
+                })
+            }
+            card.addView(row2)
+        }
+
+        return card
+    }
+}

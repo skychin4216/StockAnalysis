@@ -1,282 +1,336 @@
 package com.chin.stockanalysis.ui
 
 import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
-import android.view.Gravity
-import android.view.LayoutInflater
-import android.view.View
-import android.view.ViewGroup
+import android.view.*
 import android.widget.*
 import android.widget.LinearLayout.LayoutParams
+import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
-import com.chin.stockanalysis.stock.data.MultiSourceStockRepository
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.chin.stockanalysis.stock.data.StockDataSourceFactory
-import com.chin.stockanalysis.strategy.StrategyEngine
+import com.chin.stockanalysis.strategy.*
 import com.chin.stockanalysis.strategy.data.StockScreener
 import com.chin.stockanalysis.strategy.models.ScreeningResult
-import com.chin.stockanalysis.strategy.strategies.LowValuationStrategy
-import com.chin.stockanalysis.strategy.strategies.MovingAverageStrategy
-import com.chin.stockanalysis.strategy.strategies.VolumeBreakStrategy
+import com.chin.stockanalysis.strategy.models.WeightFactor
+import com.chin.stockanalysis.strategy.strategies.*
+import com.chin.stockanalysis.strategy.ui.StrategyAdapter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/**
- * ## 策略中心 — 量化选股策略
- *
- * 集成了 [StrategyEngine] 和三种内置策略：
- * - 均线金叉策略
- * - 放量突破策略
- * - 低估值策略
- *
- * 支持策略扫描、查看结果、启停策略。
- */
 class StrategyFragment : Fragment() {
 
     private lateinit var layout: LinearLayout
+    private lateinit var recyclerView: RecyclerView
+    private lateinit var adapter: StrategyAdapter
     private lateinit var statusTv: TextView
-    private lateinit var resultContainer: LinearLayout
     private lateinit var scanBtn: Button
     private lateinit var progressBar: ProgressBar
+    private lateinit var scopeSelector: TextView
 
     private var engine: StrategyEngine? = null
-    private var repository: MultiSourceStockRepository? = null
+    private var screener: StockScreener? = null
+    private var currentScope: ScanScope = ScanScope.FULL_MARKET
+    private var currentScopeParam: String = ""
 
-    override fun onCreateView(
-        inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
-    ): View {
+    private val SECTORS = listOf(
+        "全市场" to "", "化工" to "BK0423", "有色金属" to "BK0478", "半导体" to "BK0467",
+        "医药" to "BK0465", "新能源" to "BK0493", "军工" to "BK0469",
+        "消费" to "BK0473", "金融" to "BK0471", "AI算力" to "BK0800", "商业航天" to "BK0812"
+    )
+    private val WATCHLIST_SAMPLE = listOf(
+        "sh600519" to "贵州茅台", "sz002594" to "比亚迪", "sz300750" to "宁德时代",
+        "sh600183" to "生益科技", "sz002463" to "沪电股份",
+        "sh601318" to "中国平安", "sz000858" to "五粮液", "sh688981" to "中芯国际"
+    )
+
+    enum class ScanScope(val label: String) { FULL_MARKET("全市场"), SECTOR("板块"), WATCHLIST("自选股") }
+
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         layout = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(32, 48, 32, 32)
-            setBackgroundColor(Color.parseColor("#FAFAFA"))
+            setBackgroundColor(Color.parseColor("#F5F6FA"))
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         }
-
         initEngine()
         buildUI()
-
         return layout
     }
 
     private fun initEngine() {
         val ctx = requireContext().applicationContext
-        repository = StockDataSourceFactory.createDefaultRepository(ctx)
-        val screener = StockScreener(repository!!)
-        engine = StrategyEngine(ctx, screener).apply {
-            registerStrategy(MovingAverageStrategy(screener))
-            registerStrategy(VolumeBreakStrategy(screener))
-            registerStrategy(LowValuationStrategy(screener))
+        val repo = StockDataSourceFactory.createDefaultRepository(ctx)
+        screener = StockScreener(repo)
+        engine = StrategyEngine(ctx, screener!!).apply {
+            registerStrategy(MovingAverageStrategy(screener!!))
+            registerStrategy(VolumeBreakStrategy(screener!!))
+            registerStrategy(LowValuationStrategy(screener!!))
+            registerStrategy(GapUpMomentumStrategy(screener!!))
+            registerStrategy(TurnoverFilterStrategy(screener!!))
         }
     }
 
     private fun buildUI() {
-        // ── 标题 ──
-        val titleTv = TextView(requireContext()).apply {
-            text = "🎯 量化选股策略"
-            textSize = 22f
-            setTextColor(Color.parseColor("#333333"))
-            setPadding(0, 0, 0, 8)
+        val header = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(24, 48, 24, 16); setBackgroundColor(Color.WHITE); elevation = 2f
         }
-        layout.addView(titleTv)
+        header.addView(TextView(requireContext()).apply {
+            text = "🎯 量化选股"; textSize = 24f; setTextColor(Color.parseColor("#1A1A2E")); setTypeface(null, Typeface.BOLD)
+        })
+        header.addView(TextView(requireContext()).apply {
+            text = "5 种策略 · 全市场/板块/自选股"; textSize = 13f; setTextColor(Color.parseColor("#999999")); setPadding(0, 4, 0, 0)
+        })
+        layout.addView(header)
 
-        val subtitleTv = TextView(requireContext()).apply {
-            text = "均线金叉 · 放量突破 · 低估值 · 更多策略持续添加中"
-            textSize = 13f
-            setTextColor(Color.parseColor("#999999"))
-            setPadding(0, 0, 0, 20)
+        val scopeRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(24, 10, 24, 10); setBackgroundColor(Color.WHITE)
         }
-        layout.addView(subtitleTv)
+        scopeRow.addView(TextView(requireContext()).apply {
+            text = "扫描范围: "; textSize = 13f; setTextColor(Color.parseColor("#888888"))
+        })
+        scopeSelector = TextView(requireContext()).apply {
+            text = "全市场 ▼"; textSize = 14f; setTextColor(Color.parseColor("#1565C0"))
+            setTypeface(null, Typeface.BOLD); setPadding(12, 6, 12, 6)
+            setBackgroundColor(Color.parseColor("#E3F2FD"))
+            setOnClickListener { showScopeDialog() }
+        }
+        scopeRow.addView(scopeSelector)
+        layout.addView(scopeRow)
 
-        // ── 扫描按钮 ──
+        val scanBar = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(24, 8, 24, 8); setBackgroundColor(Color.WHITE)
+        }
         scanBtn = Button(requireContext()).apply {
-            text = "▶ 开始选股扫描"
-            textSize = 16f
-            setBackgroundColor(Color.parseColor("#E65100"))
-            setTextColor(Color.WHITE)
-            setPadding(32, 16, 32, 16)
-            setOnClickListener { runStrategies() }
+            text = "▶  执行全部策略"; textSize = 15f; setBackgroundColor(Color.parseColor("#E65100")); setTextColor(Color.WHITE)
+            setPadding(24, 12, 24, 12); setOnClickListener { runAllStrategies() }
         }
-        val btnParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT
-        ).apply { bottomMargin = 16 }
-        layout.addView(scanBtn, btnParams)
-
-        // ── 进度条 ──
-        progressBar = ProgressBar(requireContext()).apply {
-            visibility = View.GONE
-        }
-        layout.addView(progressBar)
-
-        // ── 状态文本 ──
+        scanBar.addView(scanBtn)
+        progressBar = ProgressBar(requireContext()).apply { visibility = View.GONE }
+        scanBar.addView(progressBar)
         statusTv = TextView(requireContext()).apply {
-            text = "已加载 3 个策略，点击按钮开始扫描"
-            textSize = 14f
-            setTextColor(Color.parseColor("#666666"))
-            setPadding(0, 8, 0, 16)
+            text = "  5 个策略已就绪"; textSize = 12f; setTextColor(Color.parseColor("#AAAAAA"))
         }
-        layout.addView(statusTv)
+        scanBar.addView(statusTv)
+        layout.addView(scanBar)
 
-        // ── 结果容器（可滚动） ──
-        val scrollView = ScrollView(requireContext()).apply {
-            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f)
+        recyclerView = RecyclerView(requireContext()).apply {
+            layoutManager = LinearLayoutManager(context)
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+            setPadding(0, 8, 0, 80); clipToPadding = false
         }
-        resultContainer = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL
+        layout.addView(recyclerView)
+        refreshList()
+
+        val fab = Button(requireContext()).apply {
+            text = "+ 添加自定义策略"; textSize = 14f; setBackgroundColor(Color.parseColor("#1565C0")); setTextColor(Color.WHITE)
+            setOnClickListener { showAddDialog() }
         }
-        scrollView.addView(resultContainer)
-        layout.addView(scrollView)
+        layout.addView(fab, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply { setMargins(24, 16, 24, 32) })
     }
 
-    private fun runStrategies() {
+    private fun refreshList() {
+        engine?.let {
+            adapter = StrategyAdapter(it.getStrategies(), ::onStrategyClick, ::onStrategyToggle)
+            recyclerView.adapter = adapter
+            statusTv.text = "  ${it.getStrategies().size} 个策略已就绪"
+        }
+    }
+
+    private fun showScopeDialog() {
+        val items = SECTORS.map { it.first }
+        AlertDialog.Builder(requireContext())
+            .setTitle("选择扫描范围")
+            .setSingleChoiceItems(items.toTypedArray(), 0) { _, _ -> }
+            .setPositiveButton("确定") { dialog, _ ->
+                val listView = (dialog as AlertDialog).listView
+                val checkedPos = listView.checkedItemPosition
+                if (checkedPos >= 0 && checkedPos < SECTORS.size) {
+                    val (name, _) = SECTORS[checkedPos]
+                    currentScopeParam = name
+                    currentScope = if (name == "全市场") ScanScope.FULL_MARKET else ScanScope.SECTOR
+                }
+                scopeSelector.text = "${currentScopeParam.ifEmpty { "全市场" }} ▼"
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun getScopePool(): List<String> {
+        return when (currentScope) {
+            ScanScope.FULL_MARKET -> emptyList()
+            ScanScope.SECTOR -> emptyList()
+            ScanScope.WATCHLIST -> WATCHLIST_SAMPLE.map { it.first }
+        }
+    }
+
+    private fun applyScope(): List<String> {
+        return when (currentScope) {
+            ScanScope.FULL_MARKET -> emptyList()
+            ScanScope.WATCHLIST -> WATCHLIST_SAMPLE.map { it.first }
+            ScanScope.SECTOR -> emptyList()
+        }
+    }
+
+    private fun onStrategyClick(strategy: Strategy) {
+        val detail = StrategyDetailFragment()
+        detail.strategy = strategy
+        detail.onSave = { updated ->
+            engine?.apply { removeStrategy(updated.id); registerStrategy(updated); refreshList() }
+        }
+        detail.show(parentFragmentManager, "strategy_detail")
+    }
+
+    private fun onStrategyToggle(strategy: Strategy) {
+        engine?.setEnabled(strategy.id, !engine!!.isEnabled(strategy.id))
+    }
+
+    private fun runAllStrategies() {
         val eng = engine ?: return
+        scanBtn.isEnabled = false; scanBtn.text = "⏳ 扫描中..."
+        progressBar.visibility = View.VISIBLE; statusTv.text = "  正在获取市场数据..."
 
-        scanBtn.isEnabled = false
-        scanBtn.text = "⏳ 扫描中..."
-        progressBar.visibility = View.VISIBLE
-        statusTv.text = "正在从东方财富获取市场数据并执行策略扫描..."
-        resultContainer.removeAllViews()
-
-        eng.runAll(lifecycleScope,
-            onProgress = { result ->
-                lifecycleScope.launch(Dispatchers.Main) {
-                    addResultCard(result)
-                }
-            },
-            onComplete = { results ->
-                lifecycleScope.launch(Dispatchers.Main) {
-                    scanBtn.isEnabled = true
-                    scanBtn.text = "▶ 重新扫描"
-                    progressBar.visibility = View.GONE
-                    statusTv.text = buildString {
-                        append("扫描完成 — ")
-                        val totalHits = results.sumOf { it.hitCount }
-                        val totalScanned = results.firstOrNull()?.totalScanned ?: 0
-                        append("$totalScanned 只股票中命中 $totalHits 只")
-                        append("\n")
-                        results.forEach { r ->
-                            append("  ${r.strategyName}: 命中 ${r.hitCount} 只 | ${r.scanTimeMs}ms")
-                            append("\n")
-                        }
-                    }
-                }
+        eng.runAll(lifecycleScope, onComplete = { results ->
+            lifecycleScope.launch(Dispatchers.Main) {
+                scanBtn.isEnabled = true; scanBtn.text = "▶  执行全部策略"
+                progressBar.visibility = View.GONE
+                val totalHits = results.sumOf { it.hitCount }
+                if (totalHits > 0) showResultsDialog(results)
+                else showResultsDialogSimple(results)
             }
-        )
+        })
     }
 
-    private fun addResultCard(result: ScreeningResult) {
-        val card = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(16, 12, 16, 12)
-            setBackgroundColor(Color.WHITE)
-            val margin = 12
-            (layoutParams as? LinearLayout.LayoutParams)?.setMargins(0, margin, 0, margin)
-            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
-            elevation = 4f
-        }
+    // ======================== v6.0: 结果对话框 ========================
 
-        // 标题行
-        val titleRow = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-
-        val iconTv = TextView(requireContext()).apply {
-            text = result.category.icon
-            textSize = 18f
-        }
-        titleRow.addView(iconTv)
-
-        val nameTv = TextView(requireContext()).apply {
-            text = "  ${result.strategyName}"
-            textSize = 16f
-            setTextColor(Color.parseColor("#333333"))
-            setTypeface(null, android.graphics.Typeface.BOLD)
-        }
-        titleRow.addView(nameTv)
-
-        card.addView(titleRow)
-
-        // 统计行
-        val statsTv = TextView(requireContext()).apply {
-            text = "扫描 ${result.totalScanned} 只 | 命中 ${result.hitCount} 只 | 命中率 ${String.format("%.1f", result.hitRate * 100)}% | ${result.scanTimeMs}ms"
-            textSize = 12f
-            setTextColor(Color.parseColor("#999999"))
-            setPadding(0, 4, 0, 8)
-        }
-        card.addView(statsTv)
-
-        // 分隔线
-        val divider = View(requireContext()).apply {
-            setBackgroundColor(Color.parseColor("#EEEEEE"))
-            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, 2)
-        }
-        card.addView(divider)
-
-        // 信号列表（Top 5）
-        val topSignals = result.topN(5)
-        if (topSignals.isEmpty()) {
-            val emptyTv = TextView(requireContext()).apply {
-                text = "  ⚪ 未命中符合条件的股票"
-                textSize = 13f
-                setTextColor(Color.parseColor("#AAAAAA"))
-                setPadding(0, 8, 0, 0)
-            }
-            card.addView(emptyTv)
-        } else {
-            for (signal in topSignals) {
-                val signalRow = LinearLayout(requireContext()).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    setPadding(0, 6, 0, 0)
-                }
-
-                val emojiTv = TextView(requireContext()).apply {
-                    text = signal.emoji
-                    textSize = 16f
-                    layoutParams = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.WRAP_CONTENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    ).apply { rightMargin = 4 }
-                }
-                signalRow.addView(emojiTv)
-
-                val detailTv = TextView(requireContext()).apply {
-                    text = buildString {
-                        append("${signal.stockName}(${signal.stockCode})  ")
-                        append("强度:${signal.strength}%  ")
-                        append("¥${String.format("%.2f", signal.currentPrice)}  ")
-                        append("${String.format("%+.2f", signal.changePercent)}%")
-                    }
-                    textSize = 12f
-                    setTextColor(Color.parseColor("#555555"))
-                }
-                signalRow.addView(detailTv)
-
-                card.addView(signalRow)
-
-                // 理由
-                val reasonTv = TextView(requireContext()).apply {
-                    text = "     ${signal.reason}"
-                    textSize = 11f
-                    setTextColor(Color.parseColor("#888888"))
-                    setPadding(24, 2, 0, 0)
-                }
-                card.addView(reasonTv)
-            }
-
-            if (result.hitCount > 5) {
-                val moreTv = TextView(requireContext()).apply {
-                    text = "  ... 还有 ${result.hitCount - 5} 只"
-                    textSize = 12f
-                    setTextColor(Color.parseColor("#BBBBBB"))
-                    setPadding(0, 6, 0, 0)
-                }
-                card.addView(moreTv)
+    private fun openResultDialog(result: ScreeningResult) {
+        val dialog = StrategyResultDialogFragment()
+        dialog.result = result
+        dialog.onAskQuestion = { question ->
+            val contextMsg = buildStrategyContextMessage(result, question)
+            // 切换到对话 Tab 并发送消息
+            if (activity is MainActivity) {
+                (activity as MainActivity).switchToChatAndSend(contextMsg)
+            } else {
+                Toast.makeText(requireContext(), "提问已记录: $question", Toast.LENGTH_SHORT).show()
             }
         }
+        dialog.show(parentFragmentManager, "strategy_result")
+    }
 
-        resultContainer.addView(card)
+    private fun buildStrategyContextMessage(result: ScreeningResult, question: String): String {
+        val sb = StringBuilder()
+        sb.appendLine("基于以下策略扫描结果，请回答用户问题：")
+        sb.appendLine("策略: ${result.strategyName} | 扫描: ${result.totalScanned}只 | 命中: ${result.hitCount}只")
+        sb.appendLine()
+        sb.appendLine("| 排名 | 名称 | 代码 | 强度% | 价格 | 涨跌% |")
+        sb.appendLine("|------|------|------|-------|------|-------|")
+        for ((i, s) in result.signals.take(10).withIndex()) {
+            sb.appendLine("| ${i + 1} | ${s.stockName} | ${s.stockCode.takeLast(6)} | ${s.strength}% | ${"%.2f".format(s.currentPrice)} | ${"%.2f".format(s.changePercent)}% |")
+        }
+        sb.appendLine()
+        sb.appendLine("用户问题: $question")
+        return sb.toString()
+    }
+
+    // ======================== 结果展示 ========================
+
+    private fun showResultsDialogSimple(results: List<ScreeningResult>) {
+        val sb = StringBuilder()
+        for (r in results) {
+            sb.append("${r.category.icon} ${r.strategyName}: 扫描${r.totalScanned}只, 命中${r.hitCount}只\n")
+            if (r.signals.isEmpty()) sb.append("  未命中\n")
+            else {
+                for (sig in r.signals.take(5)) {
+                    sb.append("  ${sig.emoji} ${sig.stockName}(${sig.stockCode}) 强度:${sig.strength}%\n")
+                }
+            }
+        }
+        AlertDialog.Builder(requireContext())
+            .setTitle("📊 扫描结果")
+            .setMessage(sb.toString().trim())
+            .setPositiveButton("关闭", null)
+            .show()
+    }
+
+    private fun showResultsDialog(results: List<ScreeningResult>) {
+        val scrollView = ScrollView(requireContext())
+        val container = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(24, 24, 24, 24)
+        }
+        for (result in results) {
+            val titleRow = TextView(requireContext()).apply {
+                text = "${result.category.icon} ${result.strategyName}  (${result.hitCount}只 / ${result.scanTimeMs}ms)"
+                textSize = 15f; setTextColor(Color.parseColor("#333333"))
+                setTypeface(null, Typeface.BOLD); setPadding(0, 16, 0, 8)
+            }
+            titleRow.setOnClickListener { openResultDialog(result) }
+            container.addView(titleRow)
+
+            val table = TableLayout(requireContext()).apply { isStretchAllColumns = true }
+            val headerRow = TableRow(requireContext())
+            for (hdr in listOf("名称", "代码", "强度", "价格", "涨幅")) {
+                headerRow.addView(TextView(requireContext()).apply {
+                    text = hdr; textSize = 11f; setTextColor(Color.parseColor("#999999"))
+                    setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER; setPadding(4, 4, 4, 4)
+                })
+            }
+            table.addView(headerRow)
+            for (sig in result.signals.take(10)) {
+                val row = TableRow(requireContext())
+                val color = when { sig.strength >= 80 -> Color.parseColor("#E65100"); sig.strength >= 60 -> Color.parseColor("#2E7D32"); else -> Color.parseColor("#666666") }
+                row.setOnClickListener { openResultDialog(result) }
+                for (cell in listOf(sig.stockName, sig.stockCode, "${sig.strength}%", String.format("%.2f", sig.currentPrice), "${String.format("%+.2f", sig.changePercent)}%")) {
+                    row.addView(TextView(requireContext()).apply {
+                        text = cell; textSize = 11f; setTextColor(color); gravity = Gravity.CENTER; setPadding(2, 4, 2, 4)
+                    })
+                }
+                table.addView(row)
+            }
+            container.addView(table)
+        }
+        scrollView.addView(container)
+        AlertDialog.Builder(requireContext()).setTitle("📊 扫描结果（点击策略名查看详情）").setView(scrollView).setPositiveButton("关闭", null).show()
+    }
+
+    private fun showAddDialog() {
+        val nameInput = EditText(requireContext()).apply { hint = "策略名称"; setSingleLine() }
+        val descInput = EditText(requireContext()).apply { hint = "策略描述"; setSingleLine() }
+        val container = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(32, 16, 32, 8)
+            addView(nameInput, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply { bottomMargin = 12 })
+            addView(descInput, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        }
+        AlertDialog.Builder(requireContext())
+            .setTitle("添加自定义策略")
+            .setView(container)
+            .setPositiveButton("创建") { _, _ ->
+                val name = nameInput.text.toString().trim()
+                if (name.isNotBlank()) {
+                    val id = "custom_${System.currentTimeMillis()}"
+                    engine?.registerStrategy(object : Strategy {
+                        override val id = id; override var name = name
+                        override var description = descInput.text.toString().trim().ifEmpty { "自定义策略" }
+                        override val category = StrategyCategory.CUSTOM
+                        override val config = StrategyConfig.fullMarket(20)
+                        override var weightFactors = listOf(WeightFactor("default", "综合评分", 100, "默认权重"))
+                        override val source = StrategySource.USER_CUSTOM
+                        override suspend fun screen() = Result.success(ScreeningResult(
+                            strategyId = id, strategyName = name, category = StrategyCategory.CUSTOM,
+                            signals = emptyList(), totalScanned = 0, scanTimeMs = 0
+                        ))
+                        override suspend fun isAvailable() = false
+                    })
+                    refreshList()
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     override fun onDestroyView() {

@@ -13,6 +13,7 @@ import com.chin.stockanalysis.ApiConfigManager
 import com.chin.stockanalysis.R
 import com.chin.stockanalysis.conversation.ConversationRepository
 import com.chin.stockanalysis.databinding.ActivityMainBinding
+import com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.Companion.startPoolScheduler
 import com.google.android.material.bottomnavigation.BottomNavigationView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -50,7 +51,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun initGlobalServices() {
         ApiConfigManager.getInstance(applicationContext)
-        // 需求3：安装新版本时自动查询外部路径并导入旧对话数据
+        // App 启动即拉取热门板块数据（统一池 + 后台调度）
+        startPoolScheduler(lifecycleScope)
         migrateLegacyConversations()
     }
 
@@ -122,6 +124,23 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         })
+    }
+
+    /**
+     * 从策略页面等非对话Tab切换到对话Tab并发送消息
+     */
+    fun switchToChatAndSend(message: String) {
+        // 切换到对话 Tab
+        viewPager.setCurrentItem(0, false)
+        bottomNav.selectedItemId = R.id.nav_chat
+        // 延迟发送（等待 Fragment 就绪）
+        viewPager.postDelayed({
+            val chatFragment = supportFragmentManager.fragments
+                .firstOrNull { it is ChatTabFragment } as? ChatTabFragment
+            if (chatFragment != null) {
+                chatFragment.sendMessageFromExternal(message)
+            }
+        }, 300)
     }
 
     private class MainTabAdapter(
