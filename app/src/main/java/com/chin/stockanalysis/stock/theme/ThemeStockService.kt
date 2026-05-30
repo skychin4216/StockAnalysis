@@ -65,8 +65,13 @@ class ThemeStockService(
         val sectorResult = trySectorQuery(userInput, requestedTopN, excludeKcb, excludeCyb, minCap)
         if (sectorResult != null) {
             val (sectorName, sectorStocks) = sectorResult
-            val codes = sectorStocks.map { it.code }
-            Log.d(tag, "方案B 成功: $sectorName → ${codes.size} stocks")
+            // 去重：按 stock_code 去重，保留首次出现
+            val seenCodes = mutableSetOf<String>()
+            val deduped = sectorStocks.filter { s -> seenCodes.add(s.code) }
+            val codes = deduped.map { it.code }
+            if (deduped.size < sectorStocks.size) {
+                Log.d(tag, "去重: ${sectorStocks.size} → ${deduped.size} stocks (移除${sectorStocks.size - deduped.size}条重复)")
+            }
 
             // 同时拉实时行情（覆盖 SectorStock 中已有的数据，确保最新）
             val realtimeMap = try { repository.getRealtime(codes.take(20)) } catch (e: Exception) { emptyMap() }
@@ -76,13 +81,13 @@ class ThemeStockService(
                 try { bidAskSource.fetchBidAsk(codes.take(20)) } catch (e: Exception) { emptyMap() }
             } else emptyMap()
 
-            val prompt = buildSectorPrompt(sectorName, sectorStocks, realtimeMap, bidAskMap, userInput, prefManager)
+            val prompt = buildSectorPrompt(sectorName, deduped, realtimeMap, bidAskMap, userInput, prefManager)
             return ThemeQueryResult(
                 type = QueryType.SECTOR,
                 themeName = sectorName,
                 stockCodes = codes,
                 promptInjection = prompt,
-                stockCount = sectorStocks.size
+                stockCount = deduped.size
             )
         }
 

@@ -25,6 +25,8 @@ import com.chin.stockanalysis.conversation.ConversationRepository
 import com.chin.stockanalysis.databinding.FragmentChatBinding
 import com.chin.stockanalysis.memory.KeyMemoryManager
 import com.chin.stockanalysis.memory.KeyMemoryEntity
+import com.chin.stockanalysis.news.NewsFactorManager
+import com.chin.stockanalysis.news.NewsFactorEntity
 import com.chin.stockanalysis.stock.StockQueryEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -748,7 +750,7 @@ class ChatTabFragment : Fragment() {
     // ════════════════════════════════════════
 
     /**
-     * AI 回复完成后：异步提取关键信息 + 生成追问建议。
+     * AI 回复完成后：异步提取关键信息 + 生成追问建议 + 检测新闻因子。
      */
     private fun onMessageComplete() {
         lifecycleScope.launch {
@@ -767,10 +769,101 @@ class ChatTabFragment : Fragment() {
                         showFollowUpChips(suggestions)
                     }
                 }
+                // 3. 检测新闻因子
+                checkAndPromptNewsFactor()
             } catch (e: Exception) {
                 Log.e(TAG, "记忆提取/追问生成异常: ${e.message}")
             }
         }
+    }
+
+    /**
+     * 检测用户最后一条消息是否包含新闻信息，如有则询问是否添加到数据库。
+     */
+    private suspend fun checkAndPromptNewsFactor() {
+        val lastUserMsg = messages.lastOrNull { it.isUser && !it.isStreaming && !it.isError } ?: return
+        val lastAiMsg = messages.lastOrNull { !it.isUser && !it.isStreaming && !it.isError } ?: return
+
+        val newsManager = NewsFactorManager(requireContext())
+        val extracted = try {
+            newsManager.tryExtractFromUserMessage(lastUserMsg.content)
+        } catch (e: Exception) {
+            Log.w(TAG, "新闻因子检测失败: ${e.message}")
+            null
+        }
+
+        if (extracted != null && isAdded) {
+            requireActivity().runOnUiThread {
+                showNewsFactorDialog(newsManager, extracted)
+            }
+        }
+    }
+
+    /**
+     * 显示对话框，询问用户是否将提取的新闻因子保存到数据库。
+     */
+    private fun showNewsFactorDialog(newsManager: NewsFactorManager, factor: NewsFactorEntity) {
+        val sentimentEmoji = when {
+            factor.sentiment > 0 -> "📈 利好"
+            factor.sentiment < 0 -> "📉 利空"
+            else -> "➖ 中性"
+        }
+        val message = buildString {
+            appendLine("检测到以下新闻信息，是否添加到新闻因子数据库？")
+            appendLine()
+            appendLine("🏢 公司: ${factor.companyName}")
+            if (factor.stockCode.isNotEmpty()) appendLine("📊 代码: ${factor.stockCode}")
+            appendLine("📰 标题: ${factor.title}")
+            if (factor.content.isNotEmpty()) appendLine("📝 摘要: ${factor.content.take(80)}...")
+            appendLine("🎯 情绪: $sentimentEmoji (强度:${factor.impactStrength})")
+            if (factor.sector.isNotEmpty()) appendLine("🏭 行业: ${factor.sector}")
+            if (factor.tags.isNotEmpty()) appendLine("🏷️ 标签: ${factor.tags}")
+            appendLine()
+            appendLine("保存后可在策略分析中作为参考因子。\n超过3个月自动失效，超过1年自动清理。")
+        }
+
+        AlertDialog.Builder(requireContext())
+            .setTitle("📰 新闻因子提取")
+            .setMessage(message)
+            .setPositiveButton("保存") { _, _ ->
+                lifecycleScope.launch {
+                    try {
+                        newsManager.insertFactor(factor)
+                        if (isAdded) requireActivity().runOnUiThread {
+                            Toast.makeText(requireContext(), "✅ 新闻因子已保存到数据库", Toast.LENGTH_SHORT).show()
+                        }
+                        Log.i(TAG, "新闻因子已保存: ${factor.companyName} - ${factor.title}")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "保存新闻因子失败: ${e.message}")
+                        if (isAdded) requireActivity().runOnUiThread {
+                            Toast.makeText(requireContext(), "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+            .setNeutralButton("查看更多新闻") { _, _ ->
+                lifecycleScope.launch {
+                    try {
+                        val stats = newsManager.getStats()
+                        if (isAdded) requireActivity().runOnUiThread {
+                            AlertDialog.Builder(requireContext())
+                                .setTitle("📊 新闻因子库统计")
+                                .setMessage(
+                                    "总数: ${stats.totalCount}\n" +
+                                    "活跃(3个月内): ${stats.activeCount}\n" +
+                                    "利好: ${stats.bullishCount} | 利空: ${stats.bearishCount}\n" +
+                                    "最新新闻日期: ${stats.latestNewsDate ?: "无"}"
+                                )
+                                .setPositiveButton("关闭", null)
+                                .show()
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "获取统计失败: ${e.message}")
+                    }
+                }
+            }
+            .setNegativeButton("忽略", null)
+            .show()
     }
 
     /**

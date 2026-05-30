@@ -9,6 +9,8 @@
 | 文件 | 职责 |
 |------|------|
 | `StockAnalysisTest.kt` | ★ 主测试类：意图识别 + 价格验证 + 多股票回归 |
+| `V6FeatureTest.kt` | ★ v6.0 功能测试：板块别名隔离/个股检测/Watchlist持久化/东方财富API解析 |
+| `backtest/StrategyBacktestTest.kt` | ★ v7.0 策略回测测试：早盘过滤/创业板剔除/MACD打分/主力扣分/加速剔除/回踩评分/分级仓位 |
 | `testdata/TestPrompts.kt` | 16 个预定义测试 prompt（单/多股票查询、指数、技术分析等） |
 | `testdata/PriceAssertions.kt` | 价格合理性断言（价格区间/涨跌幅/成交量/时间戳） |
 | `ExampleInstrumentedTest.kt` | 示例测试，测试 App 的 applicationId |
@@ -35,6 +37,30 @@
 | `testIndexQuery` | 1 | 指数查询 |
 | `testNonStockQuery` | 1 | 非股票意图识别 |
 | `testEmptyInput` | 1 | 空输入处理 |
+
+### V6FeatureTest 测试覆盖
+
+| 测试方法 | 覆盖内容 |
+|---------|---------|
+| `testThemeAlias_noIndividualStockMatch` | 个股名不应匹配到板块查询 |
+| `testThemeAlias_sectorWordsStillMatch` | 板块关键词仍能正常匹配 |
+| `testStockNameDetection` | 个股/代码正确识别 |
+| `testWatchlistGroupSerialization` | WatchlistGroup JSON序列化/反序列化 |
+| `testWatchlistGroup_addRemoveStocks` | 自选股添加/删除 |
+| `testEastMoneyHotSector_parseSectorResponse` | 东方财富热门板块JSON解析 |
+| `testEastMoneyHotSector_parseIndexResponse` | 东方财富指数JSON解析 |
+
+### StrategyBacktestTest 测试覆盖（v7.0新增 🔥）
+
+| 测试方法 | 覆盖内容 |
+|---------|---------|
+| `testMorningStrategyScoring` | 早盘追涨基本过滤条件验证 |
+| `testMorningStrategyRejectGEM` | 创业板正确剔除 |
+| `testWeightedStrategyMACD` | MACD金叉=50分 |
+| `testWeightedStrategyCapitalPenalty` | 主力大额流出扣-20分 |
+| `testTailPickRejectRocketStock` | 加速股涨>8%剔除 |
+| `testTailPickPullbackScore` | 低开高走回踩评分=20 |
+| `testTailPickPositionLimit` | 5档分级仓位正确 |
 
 ## 与单元测试 (test/) 的区别
 

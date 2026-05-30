@@ -36,21 +36,33 @@ class LowValuationStrategy(
         return@withContext try {
             val pool = if (config.stockPool.isEmpty()) screener.scanFullMarket()
             else screener.scanSpecific(config.stockPool).values.toList()
-            if (pool.isEmpty()) return@withContext Result.success(ScreeningResult(
-                strategyId = id, strategyName = name, category = category,
-                signals = emptyList(), totalScanned = 0, scanTimeMs = System.currentTimeMillis() - startTime
-            ))
-            val signals = pool
-                .filter { it.amount > 50_000_000 && it.changePercent in -5.0..5.0 && it.price > 1.0 }
-                .map { calculateSignal(it) }
-                .filter { it.strength >= 40 }
-                .sortedByDescending { it.strength }
-                .take(config.maxResults)
-            Result.success(ScreeningResult(
-                strategyId = id, strategyName = name, category = category,
-                signals = signals, totalScanned = pool.size, scanTimeMs = System.currentTimeMillis() - startTime
-            ))
+            screenWithPool(pool, startTime)
         } catch (e: Exception) { Result.failure(e) }
+    }
+
+    override suspend fun screenWithData(preloadedStocks: List<StockRealtime>): Result<ScreeningResult> {
+        val startTime = System.currentTimeMillis()
+        return try {
+            val pool = if (config.stockPool.isNotEmpty()) preloadedStocks.filter { it.code in config.stockPool } else preloadedStocks
+            screenWithPool(pool, startTime)
+        } catch (e: Exception) { Result.failure(e) }
+    }
+
+    private fun screenWithPool(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
+        if (pool.isEmpty()) return Result.success(ScreeningResult(
+            strategyId = id, strategyName = name, category = category,
+            signals = emptyList(), totalScanned = 0, scanTimeMs = System.currentTimeMillis() - startTime
+        ))
+        val signals = pool
+            .filter { it.amount > 50_000_000 && it.changePercent in -5.0..5.0 && it.price > 1.0 }
+            .map { calculateSignal(it) }
+            .filter { it.strength >= 40 }
+            .sortedByDescending { it.strength }
+            .take(config.maxResults)
+        return Result.success(ScreeningResult(
+            strategyId = id, strategyName = name, category = category,
+            signals = signals, totalScanned = pool.size, scanTimeMs = System.currentTimeMillis() - startTime
+        ))
     }
 
     override suspend fun isAvailable(): Boolean = true

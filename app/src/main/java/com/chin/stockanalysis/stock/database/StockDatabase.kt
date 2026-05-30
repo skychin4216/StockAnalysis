@@ -129,9 +129,14 @@ interface SectorStockDao {
         StockBasicEntity::class,
         SectorStockEntity::class,
         com.chin.stockanalysis.conversation.ConversationEntity::class,
-        com.chin.stockanalysis.memory.KeyMemoryEntity::class
+        com.chin.stockanalysis.memory.KeyMemoryEntity::class,
+        com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity::class,
+        com.chin.stockanalysis.strategy.backtest.StrategyPredictionEntity::class,
+        com.chin.stockanalysis.strategy.backtest.StrategyWeightSnapshotEntity::class,
+        com.chin.stockanalysis.strategy.backtest.SectorDailyRecordEntity::class,
+        com.chin.stockanalysis.news.NewsFactorEntity::class
     ],
-    version = 3,
+    version = 6,
     exportSchema = false
 )
 abstract class StockDatabase : RoomDatabase() {
@@ -139,6 +144,11 @@ abstract class StockDatabase : RoomDatabase() {
     abstract fun sectorStockDao(): SectorStockDao
     abstract fun conversationDao(): com.chin.stockanalysis.conversation.ConversationDao
     abstract fun keyMemoryDao(): com.chin.stockanalysis.memory.KeyMemoryDao
+    abstract fun dailySnapshotDao(): com.chin.stockanalysis.strategy.backtest.DailySnapshotDao
+    abstract fun strategyPredictionDao(): com.chin.stockanalysis.strategy.backtest.StrategyPredictionDao
+    abstract fun strategyWeightSnapshotDao(): com.chin.stockanalysis.strategy.backtest.StrategyWeightSnapshotDao
+    abstract fun sectorDailyRecordDao(): com.chin.stockanalysis.strategy.backtest.SectorDailyRecordDao
+    abstract fun newsFactorDao(): com.chin.stockanalysis.news.NewsFactorDao
 
     companion object {
         const val DATABASE_NAME = "stock_analysis.db"
@@ -176,6 +186,114 @@ abstract class StockDatabase : RoomDatabase() {
             }
         }
 
+        /** v3 → v4 迁移：新增回测相关表（daily_snapshot, strategy_prediction, strategy_weight_snapshot） */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS daily_snapshot (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        code TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        date TEXT NOT NULL,
+                        open REAL NOT NULL,
+                        close REAL NOT NULL,
+                        high REAL NOT NULL,
+                        low REAL NOT NULL,
+                        volume INTEGER NOT NULL,
+                        amount REAL NOT NULL,
+                        change_pct REAL NOT NULL,
+                        turnover_rate REAL NOT NULL,
+                        main_net_inflow REAL NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_daily_snapshot_date ON daily_snapshot(date)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_daily_snapshot_code_date ON daily_snapshot(code, date)")
+
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS strategy_prediction (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        strategy_id TEXT NOT NULL,
+                        strategy_name TEXT NOT NULL,
+                        date TEXT NOT NULL,
+                        stock_code TEXT NOT NULL,
+                        stock_name TEXT NOT NULL,
+                        predicted_score INTEGER NOT NULL,
+                        predicted_action TEXT NOT NULL,
+                        actual_next_day_pct REAL,
+                        actual_5day_pct REAL,
+                        actual_10day_pct REAL,
+                        was_correct INTEGER,
+                        deviation REAL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_strategy_prediction_strategy_id_date ON strategy_prediction(strategy_id, date)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_strategy_prediction_stock_code_date ON strategy_prediction(stock_code, date)")
+
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS strategy_weight_snapshot (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        strategy_id TEXT NOT NULL,
+                        date TEXT NOT NULL,
+                        weight_json TEXT NOT NULL,
+                        total_score INTEGER NOT NULL DEFAULT 0,
+                        hit_count INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_strategy_weight_snapshot_strategy_id_date ON strategy_weight_snapshot(strategy_id, date)")
+            }
+        }
+
+        /** v4 → v5 迁移：新增板块每日记录表 */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS sector_daily_record (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        date TEXT NOT NULL,
+                        sector_code TEXT NOT NULL,
+                        sector_name TEXT NOT NULL,
+                        change_pct REAL NOT NULL,
+                        main_net_inflow REAL NOT NULL,
+                        hot_score REAL NOT NULL,
+                        composite_score REAL NOT NULL,
+                        rank INTEGER NOT NULL,
+                        is_hot TEXT NOT NULL,
+                        consecutive_hot_days INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_sector_daily_record_date ON sector_daily_record(date)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_sector_daily_record_code_date ON sector_daily_record(sector_code, date)")
+            }
+        }
+
+        /** v5 → v6 迁移：新增 news_factors 表（新闻利好利空因子库） */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS news_factors (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        stock_code TEXT NOT NULL DEFAULT '',
+                        company_name TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        news_date TEXT NOT NULL,
+                        sentiment INTEGER NOT NULL DEFAULT 0,
+                        impact_strength INTEGER NOT NULL DEFAULT 50,
+                        source TEXT NOT NULL DEFAULT 'ai_extract',
+                        source_url TEXT NOT NULL DEFAULT '',
+                        tags TEXT NOT NULL DEFAULT '',
+                        sector TEXT NOT NULL DEFAULT '',
+                        created_at INTEGER NOT NULL,
+                        is_active INTEGER NOT NULL DEFAULT 1
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_news_factors_stock_code ON news_factors(stock_code)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_news_factors_news_date ON news_factors(news_date)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_news_factors_sentiment ON news_factors(sentiment)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_news_factors_created_at ON news_factors(created_at)")
+            }
+        }
+
         @Volatile
         private var INSTANCE: StockDatabase? = null
 
@@ -186,7 +304,8 @@ abstract class StockDatabase : RoomDatabase() {
                     StockDatabase::class.java,
                     DATABASE_NAME
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }
             }

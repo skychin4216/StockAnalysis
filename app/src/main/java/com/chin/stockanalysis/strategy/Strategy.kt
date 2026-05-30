@@ -1,5 +1,6 @@
 package com.chin.stockanalysis.strategy
 
+import com.chin.stockanalysis.stock.StockRealtime
 import com.chin.stockanalysis.strategy.models.ScreeningResult
 import com.chin.stockanalysis.strategy.models.WeightFactor
 
@@ -12,6 +13,10 @@ import com.chin.stockanalysis.strategy.models.WeightFactor
  * ```
  * isAvailable() → screen() → 返回 ScreeningResult
  * ```
+ *
+ * ### 历史回测模式
+ * 调用 `screenWithData(stocks)` 可传入预加载的历史数据，
+ * 避免回测时调用实时 API。默认实现委托给 `screen()`。
  */
 interface Strategy {
     /** 策略唯一标识 */
@@ -36,9 +41,19 @@ interface Strategy {
     val source: StrategySource
 
     /**
-     * 执行选股扫描
+     * 执行选股扫描（使用实时 API）
      */
     suspend fun screen(): Result<ScreeningResult>
+
+    /**
+     * 使用预加载的股票列表执行选股（用于历史回测）。
+     * 默认委托给 screen()，策略可覆写以使用预加载数据。
+     *
+     * @param preloadedStocks 预加载的股票行情列表
+     */
+    suspend fun screenWithData(preloadedStocks: List<StockRealtime>): Result<ScreeningResult> {
+        return screen()
+    }
 
     /**
      * 判断策略当前是否可用

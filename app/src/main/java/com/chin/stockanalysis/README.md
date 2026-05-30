@@ -14,7 +14,9 @@
 | `Message.kt` | 聊天消息数据类 |
 | `StockDataProvider.kt` | 股票数据提供者 |
 | `stock/` | 股票行情模块（5源并发 + 实时数据框架 + 意图识别 + 自动刷新） |
-| `strategy/` | ★ 量化选股策略模块（策略引擎 + 3种内置策略） |
+| `strategy/` | ★ 量化选股策略模块（7种策略 + 回测引擎 + AI预测 + 自测调优） |
+| `strategy/predict/` | 🔥 AI 综合预测引擎（方案A:多日OHLCV / 方案B:新闻因子） |
+| `news/` | 🔥 新闻利好利空因子库（AI提取 + 数据库 + 策略分析集成） |
 | `skill/` | ★ 智能追问 + 个人Skill引擎（FollowUpGenerator + SkillEngine） |
 | `ui/` | UI Fragment（ChatTab, StockTab, Strategy, Settings） |
 

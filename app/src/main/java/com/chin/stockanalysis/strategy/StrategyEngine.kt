@@ -115,7 +115,7 @@ class StrategyEngine(
     // ═══════════════════════════════
 
     /**
-     * 异步执行所有启用策略
+     * 异步执行所有启用策略（实时模式：每个策略独立调用 API）
      *
      * @param scope 协程作用域
      * @param onProgress 每完成一个策略的回调（在 IO 线程）
@@ -143,6 +143,55 @@ class StrategyEngine(
             val jobs = enabled.map { strategy ->
                 async {
                     runOneInternal(strategy, onProgress)
+                }
+            }
+
+            for (job in jobs) {
+                val result = job.await()
+                if (result != null) results.add(result)
+            }
+
+            val elapsed = System.currentTimeMillis() - startTime
+            Log.i(TAG, "全部策略执行完成: ${results.size}/${enabled.size} 成功, 耗时 ${elapsed}ms")
+
+            withContext(Dispatchers.Main) { onComplete?.invoke(results) }
+        }
+    }
+
+    /**
+     * ## 使用预加载的股票数据并发执行所有启用策略（推荐用于历史回测）
+     *
+     * 相比 runAll()，此方法：
+     * - 不重复调用 HTTP API（所有策略共享同一份数据）
+     * - 通过 screenWithData() 使用预加载数据
+     *
+     * @param scope 协程作用域
+     * @param preloadedStocks 预加载的股票行情列表
+     * @param onProgress 每完成一个策略的回调
+     * @param onComplete 全部完成的回调
+     */
+    fun runAllWithData(
+        scope: CoroutineScope,
+        preloadedStocks: List<com.chin.stockanalysis.stock.StockRealtime>,
+        onProgress: ((ScreeningResult) -> Unit)? = null,
+        onComplete: ((List<ScreeningResult>) -> Unit)? = null
+    ) {
+        scanJob?.cancel()
+        scanJob = scope.launch(Dispatchers.IO) {
+            val enabled = getEnabledStrategies()
+            if (enabled.isEmpty()) {
+                Log.w(TAG, "没有启用的策略")
+                withContext(Dispatchers.Main) { onComplete?.invoke(emptyList()) }
+                return@launch
+            }
+
+            Log.i(TAG, "开始执行 ${enabled.size} 个策略（预加载 ${preloadedStocks.size} 只股票）...")
+            val startTime = System.currentTimeMillis()
+            val results = mutableListOf<ScreeningResult>()
+
+            val jobs = enabled.map { strategy ->
+                async {
+                    runWithDataInternal(strategy, preloadedStocks, onProgress)
                 }
             }
 
@@ -228,6 +277,38 @@ class StrategyEngine(
                 onProgress?.invoke(result)
             } else {
                 Log.w(TAG, "  ⚠️ ${strategy.id}: 超时")
+            }
+
+            result
+        } catch (e: Exception) {
+            Log.e(TAG, "  ❌ ${strategy.id}: ${e.message}", e)
+            null
+        }
+    }
+
+    private suspend fun runWithDataInternal(
+        strategy: Strategy,
+        preloadedStocks: List<StockRealtime>,
+        onProgress: ((ScreeningResult) -> Unit)?
+    ): ScreeningResult? {
+        val startTime = System.currentTimeMillis()
+        Log.d(TAG, "  执行策略(预加载): ${strategy.id} - ${strategy.name}")
+
+        return try {
+            if (!strategy.isAvailable()) {
+                Log.w(TAG, "  策略 ${strategy.id} 不可用，跳过")
+                return null
+            }
+
+            val result = withTimeoutOrNull(30_000L) {
+                strategy.screenWithData(preloadedStocks).getOrThrow()
+            }
+
+            if (result != null) {
+                lastResults[strategy.id] = result
+                val elapsed = System.currentTimeMillis() - startTime
+                Log.i(TAG, "  ✅ ${strategy.id}: 命中 ${result.hitCount} 只 / ${elapsed}ms (预加载数据)")
+                onProgress?.invoke(result)
             }
 
             result
