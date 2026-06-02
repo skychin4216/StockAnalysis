@@ -1,5 +1,6 @@
 package com.chin.stockanalysis.strategy.strategies
 
+import android.util.Log
 import com.chin.stockanalysis.stock.StockRealtime
 import com.chin.stockanalysis.strategy.*
 import com.chin.stockanalysis.strategy.data.StockScreener
@@ -61,12 +62,12 @@ class TurnoverFilterStrategy(
             strategyId = id, strategyName = name, category = category,
             signals = emptyList(), totalScanned = 0, scanTimeMs = System.currentTimeMillis() - startTime
         ))
-        val signals = pool
-            .filter { it.amount > 50_000_000 && it.changePercent >= 1.0 && it.price > 2.0 && it.price < 300.0 }
-            .map { calculateSignal(it) }
-            .filter { it.strength >= 30 }
-            .sortedByDescending { it.strength }
-            .take(config.maxResults)
+        val step1 = pool.filter { it.amount > 50_000_000 && it.changePercent >= 1.0 && it.price > 2.0 && it.price < 300.0 }
+        Log.i("TO_Strategy", "pool=${pool.size} → 过滤(amt>50M & chg>=1% & price2-300)=${step1.size}")
+        val step2 = step1.map { calculateSignal(it) }
+        val step3 = step2.filter { it.strength >= 30 }
+        Log.i("TO_Strategy", "打分后 strength>=30: ${step3.size}")
+        val signals = step3.sortedByDescending { it.strength }.take(config.maxResults)
         return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,
             signals = signals, totalScanned = pool.size, scanTimeMs = System.currentTimeMillis() - startTime

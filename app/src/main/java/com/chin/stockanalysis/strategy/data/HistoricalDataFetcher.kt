@@ -3,6 +3,7 @@ package com.chin.stockanalysis.strategy.data
 import android.content.Context
 import android.util.Log
 import com.chin.stockanalysis.stock.data.HttpClientProvider
+import com.chin.stockanalysis.stock.database.StockBasicEntity
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
 import com.chin.stockanalysis.stock.database.StockDatabase
 import kotlinx.coroutines.*
@@ -75,6 +76,16 @@ class HistoricalDataFetcher(private val context: Context) {
 
         Log.i(TAG, "━━━ 开始拉取历史数据: ${startDate.format(STORE_FMT)} ~ ${endDate.format(STORE_FMT)} ━━━")
 
+        // 已有数据日期去重：跳过已存在数据的日期
+        val existingDates = db.dailySnapshotDao().getAvailableDates(500).toSet()
+        val todayStr = LocalDate.now().format(STORE_FMT)
+        val alreadyImported = existingDates.contains(todayStr)
+
+        if (alreadyImported && existingDates.size > 10) {
+            Log.i(TAG, "✅ 已有 ${existingDates.size} 个交易日数据，跳过重复导入")
+            return@withContext 0
+        }
+
         var totalRecords = 0
         val totalStocks = TOP_STOCKS.size
 
@@ -86,10 +97,20 @@ class HistoricalDataFetcher(private val context: Context) {
                 }
             }
             for (job in jobs) {
-                val records = job.await()
+                val (records, name) = job.await()
                 if (records.isNotEmpty()) {
                     db.dailySnapshotDao().insertAll(records)
                     totalRecords += records.size
+                    // 同步写入 stock_basics 表（确保名称映射完整）
+                    if (name.isNotBlank()) {
+                        try {
+                            db.stockBasicDao().insert(StockBasicEntity(
+                                code = records.first().code,
+                                name = name,
+                                business = ""
+                            ))
+                        } catch (_: Exception) { /* 已存在则忽略 */ }
+                    }
                 }
                 onProgress?.invoke(FetchProgress(
                     totalStocks = totalStocks,
@@ -100,11 +121,57 @@ class HistoricalDataFetcher(private val context: Context) {
             }
         }
 
+        // 补齐缺失的股票名称（旧数据可能为空）
+        val filledCount = fillMissingNames()
+        if (filledCount > 0) {
+            Log.i(TAG, "✅ 补齐了 $filledCount 只股票的名称映射")
+        }
+
         Log.i(TAG, "✅ 历史数据拉取完成: $totalRecords 条记录")
         totalRecords
     }
 
     private var TOTAL_COMPLETE = 0  // 线程安全的计数器简化
+
+    /**
+     * 修正所有股票名称（包括空名和错名）。
+     * 从东方财富 API 逐一查询正确名称，覆盖 daily_snapshot 和 stock_basics。
+     */
+    private suspend fun fillMissingNames(): Int {
+        try {
+            // 收集所有出现过的股票代码
+            val recentDates = db.dailySnapshotDao().getAvailableDates(10)
+            if (recentDates.isEmpty()) return 0
+            val allCodes = mutableSetOf<String>()
+            for (date in recentDates) {
+                val shots = db.dailySnapshotDao().getByDate(date)
+                for (s in shots) allCodes.add(s.code)
+            }
+            if (allCodes.isEmpty()) return 0
+
+            Log.i(TAG, "正在为 ${allCodes.size} 只股票修正名称...")
+            var corrected = 0
+            for (code in allCodes) {
+                try {
+                    val (records, name) = fetchOneStock(code,
+                        startDate = LocalDate.now().minusDays(3),
+                        endDate = LocalDate.now())
+                    if (name.isNotBlank()) {
+                        // 覆盖 stock_basics（REPLACE 策略更新旧值）
+                        db.stockBasicDao().insert(StockBasicEntity(code = code, name = name, business = ""))
+                        // 覆盖 daily_snapshot 中该 code 的所有名称
+                        db.dailySnapshotDao().updateName(code, name)
+                        corrected++
+                    }
+                } catch (_: Exception) { /* skip */ }
+            }
+            Log.i(TAG, "名称修正完成: $corrected/${allCodes.size}")
+            return corrected
+        } catch (e: Exception) {
+            Log.w(TAG, "名称修正失败: ${e.message}")
+            return 0
+        }
+    }
 
     /**
      * 拉取单只股票的历史K线
@@ -113,7 +180,7 @@ class HistoricalDataFetcher(private val context: Context) {
         code: String,
         startDate: LocalDate,
         endDate: LocalDate
-    ): List<DailySnapshotEntity> {
+    ): Pair<List<DailySnapshotEntity>, String> {
         try {
         val market = if (code.startsWith("sh")) 1 else 0
         val pureCode = code.removePrefix("sh").removePrefix("sz")
@@ -134,18 +201,22 @@ class HistoricalDataFetcher(private val context: Context) {
             .build()
 
         val resp = client.newCall(req).execute()
-        if (!resp.isSuccessful) return emptyList()
+        if (!resp.isSuccessful) return Pair(emptyList(), "")
 
-        val body = resp.body?.string() ?: return emptyList()
+        val body = resp.body?.string() ?: return Pair(emptyList(), "")
         val data = JSONObject(body).optJSONObject("data")
-        val klines = data?.optJSONArray("klines") ?: return emptyList()
+        val klines = data?.optJSONArray("klines") ?: return Pair(emptyList(), "")
+
+        // 从顶层 data JSON 提取股票名称
+        val stockName = data.optString("name", "").trim()
+            .takeIf { it.isNotBlank() && it.length < 20 } ?: ""
 
         val results = mutableListOf<DailySnapshotEntity>()
 
         for (i in 0 until klines.length()) {
             val line = klines.getString(i)
             val parts = line.split(",")
-            if (parts.size < 8) continue
+            if (parts.size < 9) continue
 
             // f51:日期 f52:开盘 f53:收盘 f54:最高 f55:最低 f56:成交量 f57:成交额 f58:振幅 f61:涨跌幅
             val dateStr = parts[0].replace("-", "")
@@ -153,7 +224,7 @@ class HistoricalDataFetcher(private val context: Context) {
 
             results.add(DailySnapshotEntity(
                 code = code,
-                name = "",  // 名称后续从 stock_basics 表补充
+                name = stockName,
                 date = date,
                 open = parts[1].toDoubleOrNull() ?: 0.0,
                 close = parts[2].toDoubleOrNull() ?: 0.0,
@@ -167,10 +238,10 @@ class HistoricalDataFetcher(private val context: Context) {
             ))
         }
 
-            return results
+            return Pair(results, stockName)
         } catch (e: Exception) {
             Log.w(TAG, "拉取 $code 失败: ${e.message}")
-            return emptyList()
+            return Pair(emptyList(), "")
         }
     }
 }

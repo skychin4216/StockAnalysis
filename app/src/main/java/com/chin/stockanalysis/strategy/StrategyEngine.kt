@@ -273,10 +273,13 @@ class StrategyEngine(
             if (result != null) {
                 lastResults[strategy.id] = result
                 val elapsed = System.currentTimeMillis() - startTime
-                Log.i(TAG, "  ✅ ${strategy.id}: 命中 ${result.hitCount} 只 / ${elapsed}ms")
+                Log.i(TAG, "  ✅ ${strategy.id}: 扫描${result.totalScanned}只 命中${result.hitCount}只 / ${elapsed}ms")
+                if (result.hitCount == 0 && result.totalScanned > 0) {
+                    Log.w(TAG, "  🔍 ${strategy.id}: 扫描了${result.totalScanned}只但零命中，检查筛选条件")
+                }
                 onProgress?.invoke(result)
             } else {
-                Log.w(TAG, "  ⚠️ ${strategy.id}: 超时")
+                Log.w(TAG, "  ⚠️ ${strategy.id}: 超时（30s无响应）")
             }
 
             result

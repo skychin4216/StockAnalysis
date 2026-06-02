@@ -94,22 +94,23 @@ class TailLowPickStrategy(
 
         // Step 1: 硬性过滤
         val filtered = pool.filter { passesHardFilters(it) }
-        Log.d(id, "硬性过滤: ${pool.size} → ${filtered.size}")
+        Log.i("TL_Strategy", "硬性过滤: pool=${pool.size} → ${filtered.size}")
 
         // Step 2: 7维打分
-        val scored = filtered.map { stock ->
+        val scoredAll = filtered.map { stock ->
             val score = calculateScore(stock)
             stock to score
-        }.filter { (_, score) -> score.total >= config.getInt("score_threshold", 80) }
+        }
+        val scored = scoredAll.filter { (_, score) -> score.total >= config.getInt("score_threshold", 80) }
+        Log.i("TL_Strategy", "打分后 total>=80: ${scored.size}")
+        val finalSignals = scored
             .sortedByDescending { (_, score) -> score.total }
             .take(config.maxResults)
-
-        // Step 3: 分级仓位建议
-        val signals = scored.map { (stock, score) -> buildSignal(stock, score) }
+            .map { (stock, score) -> buildSignal(stock, score) }
 
         return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,
-            signals = signals, totalScanned = pool.size, scanTimeMs = System.currentTimeMillis() - startTime
+            signals = finalSignals, totalScanned = pool.size, scanTimeMs = System.currentTimeMillis() - startTime
         ))
     }
 
@@ -120,11 +121,7 @@ class TailLowPickStrategy(
     // ═══════════════════════════════
 
     private fun passesHardFilters(stock: StockRealtime): Boolean {
-        // 1. 仅主板 000/600
-        val pureCode = stock.code.removePrefix("sh").removePrefix("sz")
-        if (!pureCode.startsWith("000") && !pureCode.startsWith("600")) return false
-
-        // 2. 市值≥150亿：成交额代理
+        // 1. 市值≥150亿：成交额代理
         if (stock.amount < 300_000_000) return false
 
         // 3. 价格合理

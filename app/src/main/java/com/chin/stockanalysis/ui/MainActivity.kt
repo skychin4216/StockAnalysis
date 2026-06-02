@@ -13,6 +13,7 @@ import com.chin.stockanalysis.ApiConfigManager
 import com.chin.stockanalysis.R
 import com.chin.stockanalysis.conversation.ConversationRepository
 import com.chin.stockanalysis.databinding.ActivityMainBinding
+import com.chin.stockanalysis.news.HotSectorNewsUpdater
 import com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.Companion.startPoolScheduler
 import com.google.android.material.bottomnavigation.BottomNavigationView
 import kotlinx.coroutines.Dispatchers
@@ -54,6 +55,10 @@ class MainActivity : AppCompatActivity() {
         // App 启动即拉取热门板块数据（统一池 + 后台调度）
         startPoolScheduler(lifecycleScope)
         migrateLegacyConversations()
+        // 后台拉取热点板块新闻
+        lifecycleScope.launch(Dispatchers.IO) {
+            HotSectorNewsUpdater(applicationContext).updateIfNeeded()
+        }
     }
 
     private fun migrateLegacyConversations() {

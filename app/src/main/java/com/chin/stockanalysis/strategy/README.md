@@ -1,6 +1,6 @@
-# 量化选股策略模块 v3.0 (strategy/)
+# 量化选股策略模块 v3.1 (strategy/)
 
-> 2026-05-31 — 新增 AI 综合预测引擎 + 策略自测调优 + 新闻因子集成 + screenWithData 接口
+> 2026-06-03 — 增量梯度自测调优 + AI预测自动回退 + 历史数据导入增强 + 板块限制放宽 + 策略统计面板
 
 ## 架构
 
@@ -12,7 +12,7 @@ strategy/
 ├── StrategyEngine.kt                # 策略引擎（runAll + runAllWithData + 注册/删除/启用）
 ├── data/
 │   ├── StockScreener.kt             # 股票扫描器（东方财富全市场 API）
-│   ├── HistoricalDataFetcher.kt     # 历史K线拉取（东方财富）
+│   ├── HistoricalDataFetcher.kt     # 历史K线拉取（东方财富 + 名称自动提取 + 去重 + 补齐）
 │   └── FactorDataProvider.kt        # 统一因子源（Level2资金/财报/新闻）
 ├── models/
 │   ├── ScreeningResult.kt           # 扫描结果
@@ -24,10 +24,10 @@ strategy/
 │   ├── LowValuationStrategy.kt      # 低估值策略 (3维)
 │   ├── GapUpMomentumStrategy.kt     # 高开高走策略 (3维)
 │   ├── TurnoverFilterStrategy.kt    # 换手率活跃策略 (3维)
-│   ├── EarlyMorningChaseStrategy.kt # 早盘追涨选股分析 (5维+9硬过滤)
-│   └── TailLowPickStrategy.kt       # 超短线尾盘低吸 (7维+分级仓位)
+│   ├── EarlyMorningChaseStrategy.kt # 早盘追涨选股分析 (5维+全板块, maxResult=10)
+│   └── TailLowPickStrategy.kt       # 超短线尾盘低吸 (7维+全板块+分级仓位)
 ├── predict/
-│   └── AIPredictionEngine.kt        # 🔥 AI 综合预测（方案A:多日OHLCV / 方案B:新闻+技术指标）
+│   └── AIPredictionEngine.kt        # 🔥 AI 综合预测（方案A:多日OHLCV / 方案B:新闻+技术指标 / 自动回退豆包）
 ├── backtest/
 │   ├── HistoricalDataStore.kt       # Room 实体 + DAO（3表）
 │   ├── BacktestEngine.kt            # T+1 / 5日评估引擎
@@ -36,10 +36,12 @@ strategy/
 │   ├── SectorDailyRecord.kt         # 板块日记录 Entity + DAO
 │   ├── SectorRotationEngine.kt      # 板块轮动分析（动量/相关性/轮动速度）
 │   ├── StrategyOptimizer.kt         # 权重自动优化（网格搜索 + AI确认）
-│   └── StrategySelfTuner.kt         # 🔥 自测调优引擎（回测→评估→调优→再回测闭环）
+│   └── StrategySelfTuner.kt         # 🔥 增量梯度自测调优（回测→反推最优权重→持久化→再回测闭环）
 └── ui/
     ├── StrategyAdapter.kt
     ├── StrategyFragment.kt          # 🔥 双模式 + AI预测 + 调优按钮
+    ├── StrategyListFragment.kt      # 🔥 策略列表视图（列表/网格切换）
+    ├── StrategyStatsFragment.kt     # 🔥 策略统计面板（排名/最优持仓周期/Top股票）
     └── StrategyDetailFragment.kt
 ```
 
@@ -52,10 +54,73 @@ strategy/
 | 3 | 低估值策略 | `low_valuation` | 3维 | 内置 |
 | 4 | 高开高走策略 | `gap_up_momentum` | 3维 | 内置 |
 | 5 | 换手率活跃策略 | `turnover_active` | 3维 | 内置 |
-| 6 | 早盘追涨选股分析 | `early_morning_chase` | **5维+9硬过滤** 🔥 | 自定义 |
-| 7 | 超短线股票筛选逻辑 | `tail_low_pick` | **7维+回踩+分级仓位** 🔥 | 自定义 |
+| 6 | 早盘追涨选股分析 | `early_morning_chase` | **5维+全板块, maxResults=10** 🔥 | 自定义 |
+| 7 | 超短线股票筛选逻辑 | `tail_low_pick` | **7维+全板块+回踩+分级仓位** 🔥 | 自定义 |
 
-## 🔥 v3.0 新增功能
+## 🔥 v3.1 新增功能（2026-06-03）
+
+### 1. 增量梯度自测调优 (StrategySelfTuner 升级)
+
+**旧版**：准确率 < 阈值 → 微调权重因子（±5 偏置），缺乏方向性。
+
+**新版（增量梯度版）**：
+```
+1. 加载该策略的历史权重快照（如有）
+2. 跑最近 N 个交易日的历史回测
+3. 逐日统计预测信号中"下一天涨幅靠前"的股票 ← 梯度方向
+4. 计算因子与次日涨幅的相关系数，按梯度增量调整权重（±5%步长）
+5. 持久化新权重到 strategy_weight_snapshot 表
+6. 再回测 → 对比优化前后效果
+7. 记录每日涨幅 Top 板块/个股供统计面板使用
+```
+
+**核心改进**：从"盲目微调"变为"有方向性的梯度优化"，每次都向收益更高的方向调整。
+
+### 2. AI 预测引擎自动回退
+
+`AIPredictionEngine` 现在支持自动回退：
+- 当前配置的 AI 后端无有效 API Key 时 → 自动回退到豆包（assets 内置 key）
+- 无需用户手动切换后端
+- 日志清晰显示回退路径：`"当前后端(X)无有效API Key，尝试回退到豆包"`
+
+### 3. 历史数据导入增强 (HistoricalDataFetcher)
+
+| 改进 | 说明 |
+|------|------|
+| **去重检测** | 导入前检查已有数据日期，如今天已存在则跳过，避免重复导入 |
+| **名称自动提取** | 从东方财富 K线 API 顶层 JSON 直接提取股票名称（不再留空） |
+| **同步写入 stock_basics** | 导入 K线时自动将名称写入 `stock_basics` 表 |
+| **名称补齐 (fillMissingNames)** | 遍历所有出现过的股票代码，从 API 查询正确名称，覆盖 `daily_snapshot` 和 `stock_basics` |
+| **返回类型变更** | `fetchOneStock()` 从 `List<DailySnapshotEntity>` 变为 `Pair<List<DailySnapshotEntity>, String>` |
+| **更严格数据验证** | K线解析要求 `parts.size >= 9`（原来是 8），确保涨跌幅字段存在 |
+
+### 4. 策略筛选放宽
+
+两个自定义策略移除了**板块限制**（原来只允许 000/600 开头的主板股票）：
+
+| 策略 | 变更 |
+|------|------|
+| **EarlyMorningChaseStrategy** | 移除 `000/600` 板块限制 → 允许创业板(300)和科创板(688) |
+| **TailLowPickStrategy** | 移除 `000/600` 板块限制 → 覆盖全板块 |
+| **EarlyMorningChaseStrategy** | `maxResults`: 5 → **10** |
+
+### 5. 新增 UI 组件
+
+| 新文件 | 功能 |
+|--------|------|
+| `StrategyListFragment.kt` | 🔥 策略列表视图 — 支持列表/网格切换，展示所有7个策略卡片 |
+| `StrategyStatsFragment.kt` | 🔥 策略统计面板 — 排名/最优持仓周期/每日Top涨幅板块与个股对比 |
+| `StrategyDataIntegrityTest.kt` | 数据完整性测试 — 验证回测数据的完整性和准确性（androidTest） |
+
+### 6. 策略引擎日志增强
+
+- 扫描结果日志从 `命中 X 只` 变为 `扫描X只 命中Y只`，方便发现"扫了很多但零命中"的问题
+- 零命中时自动输出警告：`扫描了X只但零命中，检查筛选条件`
+- 超时信息更明确：`超时（30s无响应）`
+
+---
+
+## 🔥 v3.0 新增功能（2026-05-31）
 
 ### 1. screenWithData() 接口（历史回测修复）
 
@@ -144,6 +209,17 @@ UI 按钮：`执行` | `调优` | `导入` | `+自定义`
     2. 均线金叉策略      准确率: 52.0% ...
 ```
 
+## 🔥 策略统计面板 (v3.1 新增)
+
+`StrategyStatsFragment` 提供跨策略对比分析：
+
+| 统计维度 | 说明 |
+|----------|------|
+| 🔢 策略排名 | 按历史准确率/均收益/胜率排序 |
+| ⏱ 最优持仓周期 | 对比 1日/3日/5日/10日 持有下的均收益和胜率 |
+| 🏆 每日涨幅 Top 板块 | 昨日涨幅最高的板块排行 |
+| 🏆 每日涨幅 Top 个股 | 昨日涨幅最高的个股排行 |
+
 ## 🔥 因子层
 
 ### MathIndicators — 技术指标计算
@@ -194,3 +270,4 @@ StrategyOptimizer.autoOptimize(strategy, report)
 | `strategy_weight_snapshot` | 策略权重快照 | v4 |
 | `sector_daily_record` | 板块每日记录 | v5 |
 | `news_factors` | 新闻利好利空因子 | v6 |
+| `stock_basics` | 股票基本信息（名称映射） | v6+ |

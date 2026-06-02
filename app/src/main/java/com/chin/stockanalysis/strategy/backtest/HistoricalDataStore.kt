@@ -165,6 +165,10 @@ interface DailySnapshotDao {
     /** 删除超过N天的旧数据 */
     @Query("DELETE FROM daily_snapshot WHERE date < :beforeDate")
     suspend fun deleteOlderThan(beforeDate: String): Int
+
+    /** 批量更新股票名称（覆盖空名和错名） */
+    @Query("UPDATE daily_snapshot SET name = :name WHERE code = :code")
+    suspend fun updateName(code: String, name: String)
 }
 
 @Dao

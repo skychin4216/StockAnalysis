@@ -47,7 +47,7 @@ class EarlyMorningChaseStrategy(
             "score_threshold" to 75,        // 入选门槛
             "max_results" to 5
         ),
-        maxResults = 5
+        maxResults = 10
     )
 
     override var weightFactors: List<WeightFactor> = listOf(
@@ -130,13 +130,7 @@ class EarlyMorningChaseStrategy(
     // ═══════════════════════════════
 
     private fun passesHardFilters(stock: StockRealtime): Boolean {
-        // 1. 标的限制：仅沪市/深市主板 000/600 开头
-        val pureCode = stock.code.removePrefix("sh").removePrefix("sz")
-        if (!pureCode.startsWith("000") && !pureCode.startsWith("600")) {
-            return false  // 剔除创业板300、科创板688
-        }
-
-        // 2. 市值门槛：≥200亿（通过成交额代理：大市值通常成交额>5亿）
+        // 1. 市值门槛：≥200亿（通过成交额代理：大市值通常成交额>5亿）
         // TODO: 接入市值数据后改为精确判断
         if (stock.amount < 500_000_000) return false
 

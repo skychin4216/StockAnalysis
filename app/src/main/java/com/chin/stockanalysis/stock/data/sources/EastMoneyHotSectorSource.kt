@@ -62,7 +62,9 @@ class EastMoneyHotSectorSource {
         val isBoard: Boolean = false, val limitDays: Int = 0, val threeDayInflow: Double = 0.0
     )
 
-    private val BLACKLIST_KW = listOf("体育","足球","彩票","赛马","博彩","电竞","地摊","盲盒","宠物","网红","直播","ST股","ST板","退市","壳资源","预亏","预盈")
+    /** 板块名称中常见的编号后缀，需要剥离后去重合并 */
+    private val STRIP_SUFFIX_REGEX = Regex("[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅠⅠⅠⅠⅠⅠ]|[0-9]+|\\([^)]*\\)|（[^）]*）$")
+    private val BLACKLIST_KW = listOf("房地产","足球","彩票","赛马","博彩","电竞","地摊","盲盒","宠物","网红","直播","ST股","ST板","退市","壳资源","预亏","预盈")
     private val MERGE_KW: List<Pair<String,String>> = listOf(
         "钼" to "有色金属","钨" to "有色金属","钴" to "有色金属","镍" to "有色金属",
         "锑" to "有色金属","锗" to "有色金属","镓" to "有色金属",
@@ -77,9 +79,18 @@ class EastMoneyHotSectorSource {
         val inN = (i / 50.0).coerceIn(-1.0, 1.0) * 10
         return c * 0.45 + tn * 0.20 + inN * 0.20 + top * 0.15
     }
-    private fun filterAndMerge(raw: List<HotSector>) = raw
-        .filter { s -> !BLACKLIST_KW.any { s.name.contains(it, true) } }
-        .map { s -> MERGE_KW.firstOrNull { s.name.contains(it.first, true) }?.let { s.copy(name = "${it.second}·${s.name}") } ?: s }
+    private fun stripSuffix(name: String): String {
+        return name.replace(STRIP_SUFFIX_REGEX, "").trim().replace("·$".toRegex(), "").replace("\\.$".toRegex(), "")
+    }
+    private fun filterAndMerge(raw: List<HotSector>): List<HotSector> {
+        val filtered = raw
+            .filter { s -> !BLACKLIST_KW.any { s.name.contains(it, true) } }
+            .map { s -> MERGE_KW.firstOrNull { s.name.contains(it.first, true) }?.let { s.copy(name = "${it.second}·${s.name}") } ?: s }
+        // 剥离编码后缀（如Ⅰ/Ⅱ/III）后按名称去重，保留compositeScore最高的那条
+        return filtered
+            .groupBy { stripSuffix(it.name) }
+            .map { (_, group) -> group.maxByOrNull { it.compositeScore } ?: group.first() }
+    }
 
     // ============ 全量池 ============
     private var rawPool: List<HotSector> = emptyList()

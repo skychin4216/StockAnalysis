@@ -85,7 +85,27 @@ class AIPredictionEngine(private val context: Context) {
         selectedDate: String,
         onProgress: ((String) -> Unit)? = null
     ): AIPrediction? {
-        val provider = ApiConfigManager.getInstance(context).createCurrentProvider() ?: return null
+        // 自动回退：当前 provider 无有效 key 时回退到豆包（assets 内置 key）
+        val configManager = ApiConfigManager.getInstance(context)
+        var provider: ApiProvider? = null
+        val currentConfig = configManager.getCurrentProviderConfig()
+        val currentKey = currentConfig?.apiKey?.trim() ?: ""
+        if (currentKey.isNotBlank()) {
+            provider = configManager.createCurrentProvider()
+        } else {
+            Log.w(TAG, "当前后端(${currentConfig?.name ?: "无"})无有效API Key，尝试回退到豆包")
+        }
+
+        if (provider == null) {
+            val fallback = configManager.getProviderConfig("doubao")
+            if (fallback != null && fallback.apiKey.isNotBlank()) {
+                provider = com.chin.stockanalysis.OpenAiCompatibleProvider(fallback)
+                Log.i(TAG, "✅ 已回退到豆包后端")
+            } else {
+                Log.e(TAG, "无可用AI后端（豆包Key也缺失），请检查 assets/api_keys_local.properties")
+                return null
+            }
+        }
 
         return try {
             onProgress?.invoke("正在收集历史数据...")

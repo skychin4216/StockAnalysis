@@ -1,5 +1,6 @@
 package com.chin.stockanalysis.strategy.strategies
 
+import android.util.Log
 import com.chin.stockanalysis.stock.StockRealtime
 import com.chin.stockanalysis.strategy.*
 import com.chin.stockanalysis.strategy.data.StockScreener
@@ -53,10 +54,16 @@ class VolumeBreakStrategy(
             strategyId = id, strategyName = name, category = category,
             signals = emptyList(), totalScanned = 0, scanTimeMs = System.currentTimeMillis() - startTime
         ))
-        val signals = pool
-            .filter { it.changePercent >= 2.0 && it.price > it.open && it.amount > 10_000_000 }
-            .map { calculateSignal(it) }
-            .filter { it.strength >= 50 }
+        val step1 = pool.filter { it.changePercent >= 2.0 && it.price > it.open && it.amount > 10_000_000 }
+        Log.i("VB_Strategy", "pool=${pool.size} → 过滤(chg>=2% & price>open & amt>10M)=${step1.size}")
+        val step2 = step1.map { calculateSignal(it) }
+        val step3 = step2.filter { it.strength >= 30 }
+        Log.i("VB_Strategy", "打分后 strength>=30: ${step3.size}")
+        if (step2.isNotEmpty()) {
+            val top = step2.sortedByDescending { it.strength }.take(3)
+            Log.i("VB_Strategy", "  Top3: ${top.joinToString { "${it.stockName}=${it.strength}" }}")
+        }
+        val signals = step3
             .sortedByDescending { it.strength }
             .take(config.maxResults)
         return Result.success(ScreeningResult(

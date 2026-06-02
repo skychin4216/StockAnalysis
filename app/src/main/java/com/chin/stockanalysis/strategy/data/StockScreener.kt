@@ -101,8 +101,11 @@ class StockScreener(
             for (i in 0 until diffList.length()) {
                 val item = diffList.getJSONObject(i)
                 val code = item.optString("f12", "")
-                val market = item.optInt("f13", 0)  // 0=深交所, 1=上交所
-                val prefix = if (market == 1) "sh" else "sz"
+                val prefix = when {
+                    code.startsWith("6") || code.startsWith("9") -> "sh"
+                    code.startsWith("4") || code.startsWith("8") -> "bj"
+                    else -> "sz"
+                }
 
                 results.add(
                     StockRealtime(
@@ -113,8 +116,8 @@ class StockScreener(
                         yestClose = item.optDouble("f18", 0.0),
                         high = item.optDouble("f15", 0.0),
                         low = item.optDouble("f16", 0.0),
-                        volume = item.optLong("f5", 0L),
-                        amount = item.optDouble("f6", 0.0),
+                        volume = item.optLong("f5", 0L) * 100,  // 东方财富单位手→股
+                        amount = item.optDouble("f6", 0.0) * 10000,  // 东方财富万元→元
                         changePercent = item.optDouble("f3", 0.0),
                         changeAmount = item.optDouble("f4", 0.0),
                         timestamp = System.currentTimeMillis()
@@ -122,7 +125,8 @@ class StockScreener(
                 )
             }
 
-            Log.d(TAG, "扫描全市场: ${results.size} 只股票")
+            val sampleNames = results.take(5).joinToString(" | ") { "${it.code}=${it.name} price=${it.price} chg=${it.changePercent}%" }
+            Log.i(TAG, "扫描全市场: ${results.size} 只股票, 样本: $sampleNames")
             results
         } catch (e: Exception) {
             Log.e(TAG, "解析全市场响应失败: ${e.message}", e)

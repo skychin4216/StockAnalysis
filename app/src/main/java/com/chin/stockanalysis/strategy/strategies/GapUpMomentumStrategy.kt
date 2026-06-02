@@ -1,5 +1,6 @@
 package com.chin.stockanalysis.strategy.strategies
 
+import android.util.Log
 import com.chin.stockanalysis.stock.StockRealtime
 import com.chin.stockanalysis.strategy.*
 import com.chin.stockanalysis.strategy.data.StockScreener
@@ -61,17 +62,17 @@ class GapUpMomentumStrategy(
             strategyId = id, strategyName = name, category = category,
             signals = emptyList(), totalScanned = 0, scanTimeMs = System.currentTimeMillis() - startTime
         ))
-        val signals = pool
-            .filter { it.yestClose > 0 && it.open > 0 && it.price > 0 }
-            .filter {
-                val gapPct = (it.open - it.yestClose) / it.yestClose * 100
-                val intraPct = (it.price - it.open) / it.open * 100
-                gapPct >= 1.0 && intraPct >= 0.5 && it.changePercent >= 1.5
-            }
-            .map { calculateSignal(it) }
-            .filter { it.strength >= 30 }
-            .sortedByDescending { it.strength }
-            .take(config.maxResults)
+        val step1 = pool.filter { it.yestClose > 0 && it.open > 0 && it.price > 0 }
+        val step2 = step1.filter {
+            val gapPct = (it.open - it.yestClose) / it.yestClose * 100
+            val intraPct = (it.price - it.open) / it.open * 100
+            gapPct >= 1.0 && intraPct >= 0.5 && it.changePercent >= 1.5
+        }
+        Log.i("GU_Strategy", "pool=${pool.size} → 基础过滤=${step1.size} → 高开高走(gap≥1% & intra≥0.5%)=${step2.size}")
+        val step3 = step2.map { calculateSignal(it) }
+        val step4 = step3.filter { it.strength >= 30 }
+        Log.i("GU_Strategy", "打分后 strength>=30: ${step4.size}")
+        val signals = step4.sortedByDescending { it.strength }.take(config.maxResults)
         return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,
             signals = signals, totalScanned = pool.size, scanTimeMs = System.currentTimeMillis() - startTime
