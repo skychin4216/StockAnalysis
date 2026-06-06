@@ -217,6 +217,38 @@ paths:
                     type: array
                     items:
                       type: object
+  /api/ai/analyze_stock:
+    post:
+      summary: Analyze a stock with AI and return structured analysis
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                symbol:
+                  type: string
+                date:
+                  type: string
+                  format: date
+                mode:
+                  type: string
+      responses:
+        '200':
+          description: Analysis result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exec_id:
+                    type: string
+                  status:
+                    type: string
+                  data:
+                    type: object
+                    description: Structured analysis JSON as defined in docs
 components:
   schemas:
     StrategyResultItem:

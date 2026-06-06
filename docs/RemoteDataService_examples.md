@@ -36,7 +36,17 @@ interface StrategyApi {
 
     @GET("/api/ui/selections")
     suspend fun getUiSelections(@Query("date") date: String): UiSelectionsResponse
+
+    @POST("/api/ai/analyze_stock")
+    suspend fun analyzeStock(@Body req: AnalyzeStockRequest): AnalyzeStockResponse
 }
+
+// 新增 DTOs
+
+data class AnalyzeStockRequest(val symbol: String, val date: String, val mode: String? = null)
+
+data class AnalyzeStockResponse(val exec_id: String, val status: String, val data: Map<String, Any>?)
+
 
 // DTOs (简化版)
 
