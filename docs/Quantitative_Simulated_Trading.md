@@ -162,3 +162,105 @@ def build_portfolio(strategy_results: List[ {symbol, score}], max_positions: int
 ---
 
 如需，我可以把本文中的接口/类签名映射到你项目的具体文件（例如：在哪个包下建 Strategy 接口、StrategyManager 的实现位置、SQL 表的建表 SQL）。要我继续映射并且生成具体 PR 吗？
+---
+
+## AI 对话与股票分析规范（合并自 AI_Dialogue_Stock_Analysis.md）
+
+# AI 对话：以炒股思维构建的交互与后端需求
+
+目标：提升 AI 与用户在股票咨询场景的对话质量，使回复体现真实交易者的思路 —— 快速识别要点、获取板块/热股/流动性/分红/订单面信息，做出可解释的投资提示并以表格形式呈现相关股票与产业链信息。
+
+1. 核心设计原则
+- 以交易者思路优先：核心回答包含（1）板块及热点（2）流动性与订单面（3）盈利与分红信息（4）上下游/产业链相关公司（5）短中长期风险提示与操作建议。 
+- 可复现的 AI 输出：要求模型输出严格的 JSON 字段，便于前端程序化渲染与风险审计。
+- 数据驱动：AI 必须以实时/近实时数据为依据，任何主观推断需标注置信度与数据来源。
+
+2. 后端必须提供的数据（按优先级）
+- 目标股票基本信息：公司名称、所属行业/板块、最新价、昨收、涨跌幅、市值、流通市值、每股收益、净利率。
+- 财务摘录：近四季度营收、净利、现金流、股息/分红记录（近5年），ROE/ROA 等关键指标。
+- 板块热门股票：同板块按成交量或涨幅排序的 Top N（N=5-10），包含当日成交额、换手率
+- 订单簿/委托信息：当日买卖盘口深度（如前五档）、大单监测（大于门槛的买入或卖出）
+- 新闻/研报因子：近30天新闻情绪、重大公告（增持/减持/回购/财报预告/政策）
+- 产业链/上下游关系：公司供应商与客户名单（若有），并标注与目标公司业务相关度
+- 历史行情切片：近1/5/20/60/120日的OHLCV
+
+3. 后端处理与 API 设计（建议）
+- 新增接口: GET /api/analysis/stock_overview?symbol=sh600519&date=YYYY-MM-DD
+  - 返回：{symbol, name, sector, market_cap, liquidityMetrics, financials, dividends, top_sector_peers: [], orderbook_summary: {}, news: [], supply_chain: []}
+- 支持批量：GET /api/analysis/sector_peers?sector=新能源&limit=10
+- 支持大单/盘口查询：GET /api/market/orderbook?symbol=sh600519&depth=5
+- AI 调用入口：POST /api/ai/analyze_stock
+  - body: { symbol: "sh600519", date: "2026-06-07", mode: "auto|A|B", include_peers: true }
+  - 行为：后端拉取 stock_overview、sector_peers、orderbook，构建 prompt，调用 LLM，解析并返回结构化 JSON 与 human_summary
+
+4. Prompt 设计与约束（强制）
+- System 指令必须固定格式，强调：
+  - 仅基于提供的数据进行判断，不要编造事实
+  - 输出必须为 JSON，遵循下面的 schema
+  - 如置信度低于阈值（例如 0.6），在字段中标注 "confidence": <0-1>
+
+- Prompt 模板（摘要）:
+  - "你是专业的A股量化分析师。输入：{stock_overview, peers, orderbook, financials, news, supply_chain, historical}. 请按 schema 输出 JSON，并给出最多 5 条可操作建议。"
+
+5. AI 输出 Schema（严格）
+{
+  "symbol": "sh600519",
+  "selected_date": "2026-06-07",
+  "market_outlook": "bullish|neutral|bearish",
+  "confidence": 0.78,
+  "score": 72, // 0-100
+  "top_peers": [ {"symbol":"sz002594","name":"比亚迪","reason":"成交额高，动量强","metric": {...} } ],
+  "orderbook_summary": { "bid_pressure": 0.6, "ask_pressure": 0.4, "large_buy_count": 3, "large_sell_count": 1 },
+  "financial_highlights": { "ttm_net_profit": ..., "dividend_yield": 0.015 },
+  "supply_chain_related": [ {"symbol":"...","relation":"supplier|customer","relevance":0.8} ],
+  "recommendations": [ {"action":"watch|buy|buy_partial|sell|avoid","reason":"...","confidence":0.7,"suggested_size":"10%"} ],
+  "table_view": {
+    "columns": ["symbol","name","最新价","涨跌%","成交额","换手","盈亏","分红","relation"],
+    "rows": [ ["sh600519","贵州茅台",...], ... ]
+  }
+}
+
+6. 前端呈现（UI 要点）
+- 首段：简短人类可读结论（1-2句）和风险提示。
+- 表格：使用 table_view 内容显示同行/上下游/推荐标的，支持点击跳转到个股详情。
+- 交互按钮："查看板块热度"、"查看订单簿"、"将选股加入模拟"（若用户已有模拟会话则直接加入）。
+- 变体：在结果旁显示 source badges（数据来源：行情、新闻、公告、AI-model-x）和 exec_id 供审计。
+
+7. 交互流程（示例）
+- 用户: "分析贵州茅台" → 前端调用 POST /api/ai/analyze_stock
+- 后端：检查是否有当天 stock_overview；若无则并行拉取数据，保存 snapshot；构建 prompt（包含示例输出），调用 LLM
+- 后端：解析 LLM 输出，做一致性检查（字段存在性、数值边界、是否与原始数据冲突），若冲突则标注并降低 confidence
+- 返回给前端：结构化 JSON + human_summary。前端渲染并允许用户进一步追问（追问时附带已存在 context）
+
+8. 审计、缓存与性能
+- 缓存层：对 stock_overview 缓存 30s（交易中），5min（盘后），并保留每日快照供回溯。
+- 请求限流：对 AI 分析请求做 rate-limit 与排队（exec_id 模式），避免滥用造成费用暴涨。
+- 日志：记录 exec_id、请求者、prompt hash、AI raw response、parsed JSON，保存至少90天。
+
+9. 风险与治理
+- 强制输出来源与置信度；任何投资建议前须显示免责声明。
+- 敏感字段屏蔽：不在 UI 中显示完整订单簿原始流水，只显示摘要（除非用户权限允许）。
+- 模型回退：若 AI 输出为空或解析失败，后端应返回基于规则的备选（如基于动量/流动性排序的 Top3）
+
+10. 示例交互（简短）
+- 返回 human_summary:
+  - "板块：白酒，短期中性偏强。茅台今日成交额放大，榜单中出现数笔大买单（买盘强度0.65）。建议：逢低分批小仓位建仓（建议初始仓位5%），止损3%" 
+- 表格（示意）:
+  | 代码 | 名称 | 现价 | 涨跌% | 成交额 | 换手 | 盈利 | 分红 | 关系 |
+  |------|------|------:|------:|------:|-----:|-----:|-----:|-----:|
+  | sh600519 | 贵州茅台 | 1600.00 | +1.2% | 1.2亿 | 0.8% | 18% | 1.2% | self |
+  | sz000858 | 五粮液 | 120.00 | +0.8% | 8000万 | 1.0% | 12% | 0.9% | peer |
+
+11. 测试用例与验收标准
+- 精度验收：在历史样本上，AI 提取的 top_peers 与数据库排序 Top5 的重合度 >= 0.8
+- 质量验收：生成的 JSON 必须通过 schema 校验，且 human_summary 不超过 2 个句子
+- 性能验收：99% 请求在 5s 内返回（若含 AI 调用则可为排队+异步，返回 exec_id 在 1s 内）
+
+---
+
+下步：
+- 我可以把上述规范加入 docs/Quantitative_Simulated_Trading.md 并生成对应的 API 片段与示例请求/响应（并提交 PR）。
+- 或者把后端示例实现（伪代码）生成到 strategy 服务里的 RemoteDataService/AI handler。 
+
+请选择：
+- "写入 docs 并提交 PR" 或 "先查看变更" 或 "生成后端伪代码"。
