@@ -97,8 +97,15 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
                     response.close()
                     val code = response.code
                     Log.e(TAG, "❌ HTTP $code")
-                    handleRetry(messages, systemPrompt, onSuccess, onComplete, onError,
-                        modelIndex, retryCount + 1, "HTTP $code")
+                    // 4xx 客户端错误（404/403/401）重试无意义，直接跳到回退模型
+                    if (code in 400..499) {
+                        Log.d(TAG, "🔄 客户端错误 $code，跳过重试，直接切换模型")
+                        handleRetry(messages, systemPrompt, onSuccess, onComplete, onError,
+                            modelIndex, 3, "HTTP $code")  // retryCount=3 强制跳过重试
+                    } else {
+                        handleRetry(messages, systemPrompt, onSuccess, onComplete, onError,
+                            modelIndex, retryCount + 1, "HTTP $code")
+                    }
                     return
                 }
 

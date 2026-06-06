@@ -44,7 +44,7 @@ class TailLowPickStrategy(
         params = mapOf(
             "market_cap_min" to 150.0,
             "tail_capital_ratio_min" to 0.30,  // 尾盘资金占比最低30%
-            "score_threshold" to 80,           // 入选门槛
+            "score_threshold" to 60,           // 入选门槛（从80降到60，让更多候选通过）
             "max_results" to 10,
             "ipo_days_min" to 365             // 上市满12个月
         ),
@@ -101,8 +101,8 @@ class TailLowPickStrategy(
             val score = calculateScore(stock)
             stock to score
         }
-        val scored = scoredAll.filter { (_, score) -> score.total >= config.getInt("score_threshold", 80) }
-        Log.i("TL_Strategy", "打分后 total>=80: ${scored.size}")
+        val scored = scoredAll.filter { (_, score) -> score.total >= config.getInt("score_threshold", 60) }
+        Log.i("TL_Strategy", "打分后 total>=60: ${scored.size}")
         val finalSignals = scored
             .sortedByDescending { (_, score) -> score.total }
             .take(config.maxResults)
@@ -121,22 +121,21 @@ class TailLowPickStrategy(
     // ═══════════════════════════════
 
     private fun passesHardFilters(stock: StockRealtime): Boolean {
-        // 1. 市值≥150亿：成交额代理
-        if (stock.amount < 300_000_000) return false
+        // 1. 市值≥150亿：成交额代理（放宽到1亿）
+        if (stock.amount < 100_000_000) return false
 
         // 3. 价格合理
         if (stock.price <= 1.0) return false
 
         // 4. 尾盘资金要求：收盘价位于日内高位（代理资金占比≥30%）
-        if (stock.high > 0 && stock.price < stock.high * 0.95) return false  // 收在低位 ≈ 资金流出
+        if (stock.high > 0 && stock.price < stock.high * 0.90) return false  // 放宽到90%
 
         // 5. 低吸形态过滤：禁止直线拉升无回踩
         // 全日涨幅过大且无回踩 → 加速行情，剔除
-        if (stock.changePercent > 8) return false  // 涨超8%无低吸价值
+        if (stock.changePercent > 10) return false  // 放宽到10%
 
-        // 6. 分时形态：收盘价>开盘价（代理分时均价线上方）
-        // 允许小幅回调但必须收在开盘价之上
-        if (stock.price < stock.open && stock.changePercent < -1) return false
+        // 6. 分时形态：排除跌幅超过-5%的股票
+        if (stock.changePercent < -5) return false
 
         // 7. 无长上影线
         if (stock.high > 0 && stock.open > 0) {
@@ -145,8 +144,8 @@ class TailLowPickStrategy(
             if (body > 0 && upperShadow / body > 2.0) return false  // 极长上影线
         }
 
-        // 8. 日内无宽幅震荡
-        if (stock.high > 0 && stock.low > 0 && stock.high > stock.low * 1.15) return false  // 振幅>15%
+        // 8. 日内无宽幅震荡（放宽到25%）
+        if (stock.high > 0 && stock.low > 0 && stock.high > stock.low * 1.25) return false
 
         return true
     }
@@ -197,8 +196,8 @@ class TailLowPickStrategy(
             stock.price > stock.open && stock.changePercent in 0.2..1.5 -> 15
             // 收在开盘价附近（小十字星）
             kotlin.math.abs(stock.price - stock.open) / maxOf(stock.open, 0.01) < 0.005 -> 12
-            // 其他情况
-            stock.price >= stock.open -> 8
+            // 其他情况：只要有成交且价格合理，给基础分
+            stock.amount > 200_000_000 -> 8
             else -> 3
         }
 
@@ -231,13 +230,7 @@ class TailLowPickStrategy(
             else -> 2
         }
 
-        val rawTotal = sectorScore * (w["sector_match"]?.weight ?: 25) / 100 +
-                outlookScore * (w["sector_outlook"]?.weight ?: 10) / 100 +
-                newsScore * (w["news_sentiment"]?.weight ?: 5) / 100 +
-                techScore * (w["tail_tech"]?.weight ?: 20) / 100 +
-                capitalScore * (w["tail_capital"]?.weight ?: 15) / 100 +
-                activeScore * (w["stock_active"]?.weight ?: 10) / 100 +
-                volumeScore * (w["volume_health"]?.weight ?: 10) / 100
+        val rawTotal = sectorScore + outlookScore + newsScore + techScore + capitalScore + activeScore + volumeScore
 
         return TailScore(
             total = minOf(rawTotal, 100),

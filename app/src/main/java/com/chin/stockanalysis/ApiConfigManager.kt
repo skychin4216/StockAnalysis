@@ -162,25 +162,31 @@ class ApiConfigManager(context: Context) {
             id = "doubao",
             name = "🔥 豆包大模型 (付费)",
             baseUrl = "https://ark.cn-beijing.volces.com/api/v3/",
-            model = "ep-20260515024618-chcvf",
-            description = "火山引擎 Ark 平台。如响应慢可改用 doubao-1.5-lite-32k（快速）或 doubao-1.5-pro-32k（质量）",
+            model = "doubao-seed-2-0-pro-260215",
+            description = "火山引擎 Ark 平台。默认使用最强 Seed 2.0 Pro",
             isFree = false,
             supportedModels = listOf(
-                // ⭐ 最新 1.5 系列（推荐，速度快、质量好）
-                "doubao-1.5-pro-32k",          // 最新旗舰，速度/质量均衡 ⭐推荐
-                "doubao-1.5-pro-256k",         // 超长上下文版本
-                "doubao-1.5-lite-32k",         // 最快最便宜
-                "doubao-1.5-vision-pro-250328",// 视觉多模态
-                // Seed 系列（实验性模型）
-                "doubao-seed-2-0-lite-260428",
-                "doubao-seed-2-0-mini-260428",
-                "doubao-seed-1-6-flash-250828",
-                "doubao-seed-1-8-251228",
-                "doubao-seed-1-6-251015"
+                // ⭐ Seed 2.0 系列（按能力强弱排序）
+                "doubao-seed-2-0-pro-260215",        // 🔥 Seed 2.0 Pro，旗舰最强 ⭐默认
+                "doubao-seed-2-0-code-preview-260215",// Seed 2.0 Code，代码生成
+                "doubao-seed-2-0-mini-260428",        // Seed 2.0 Mini，轻量
+                "doubao-seed-2-0-mini-260215",        // Seed 2.0 Mini (旧版)
+                "doubao-seed-2-0-lite-260428",        // Seed 2.0 Lite，速度最快
+                // Seed 1.x 系列
+                "doubao-seed-1-8-251228",             // Seed 1.8
+                "doubao-seed-1-6-251015",             // Seed 1.6
+                "doubao-seed-1-6-flash-250828",       // Seed 1.6 Flash
+                "doubao-seed-1-6-vision-250815",      // Seed 1.6 Vision 多模态
+                "doubao-seed-code-preview-251028",    // Seed Code Preview (旧)
+                // 经典 1.5
+                "doubao-1-5-pro-32k-250115",          // 1.5 Pro 32k
+                // 自定义接入点 ID（按需启用）
+                "ep-20260515024618-chcvf"
             ),
             fallbackModels = listOf(
-                "doubao-1.5-pro-32k",
-                "doubao-1.5-lite-32k"
+                "doubao-seed-2-0-code-preview-260215",
+                "doubao-seed-2-0-mini-260428",
+                "doubao-1-5-pro-32k-250115"
             )
         ),
 
@@ -376,11 +382,8 @@ class ApiConfigManager(context: Context) {
         return allModels.filter { it !in KNOWN_INVALID_MODELS }
     }
 
-    /** 已知无效的模型 ID 列表（会在 getProviderModels() 中自动过滤）
-     *  只放真正无效的旧 Endpoint ID，不要放正常模型名称！ */
-    private val KNOWN_INVALID_MODELS = setOf(
-        "ep-20260515024618-chcvf",  // 旧自定义 Endpoint ID，已失效
-    )
+    /** 已知无效的模型 ID 列表（会在 getProviderModels() 中自动过滤） */
+    private val KNOWN_INVALID_MODELS = emptySet<String>()
 
     /** 获取当前提供商选中的模型；未配置时返回默认模型。
      *  如果持久化的模型已不在有效列表中，自动清除并回退到默认模型。 */

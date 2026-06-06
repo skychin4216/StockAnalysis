@@ -85,6 +85,8 @@ class HistoricalBacktestEngine(private val context: Context) {
     ): StrategyBacktestReport {
         var totalBuys = 0
         var correctBuys = 0
+        var totalSignals = 0        // 所有信号（BUY+WATCH+HOLD）
+        var totalCorrect = 0        // 所有信号中次日正确的
         var totalReturn = 0.0
         var maxGain = 0.0
         var maxLoss = 0.0
@@ -108,8 +110,8 @@ class HistoricalBacktestEngine(private val context: Context) {
                         price = snap.close, open = snap.open,
                         yestClose = if (i > 0) {
                             db.dailySnapshotDao().getByDate(dates[i - 1])
-                                .find { it.code == snap.code }?.close ?: snap.open * 0.99
-                        } else snap.open * 0.99,
+                                .find { it.code == snap.code }?.close ?: snap.close / (1.0 + snap.changePct / 100.0)
+                        } else snap.close / (1.0 + snap.changePct / 100.0),
                         high = snap.high, low = snap.low,
                         volume = snap.volume, amount = snap.amount,
                         changePercent = snap.changePct,
@@ -120,6 +122,7 @@ class HistoricalBacktestEngine(private val context: Context) {
 
                 // 3. 执行策略筛选（直接调用打分逻辑）
                 val signals = executeStrategyOnHistoricalData(strategy, stockList)
+                Log.d(TAG, "  ${strategy.name} @ $today: ${stockList.size}只 → ${signals.size}信号")
                 if (signals.isEmpty()) continue
                 totalScanHits += signals.size
 
@@ -128,13 +131,15 @@ class HistoricalBacktestEngine(private val context: Context) {
                 if (tomorrowSnapshots.isEmpty()) continue
 
                 var dayBuys = 0; var dayCorrect = 0
+                var daySignals = 0; var daySignalCorrect = 0
                 for (signal in signals.take(5)) {
                     val tomorrowSnap = tomorrowSnapshots.find { it.code == signal.stockCode } ?: continue
                     val actualPct = tomorrowSnap.changePct
+                    // WATCH/HOLD: 期望次日收涨（至少不跌）才视为"正确"
                     val isCorrect = when (signal.action) {
                         SignalAction.BUY -> actualPct > 0
-                        SignalAction.WATCH -> true
-                        SignalAction.HOLD -> true
+                        SignalAction.WATCH -> actualPct >= 0
+                        SignalAction.HOLD -> actualPct >= -1.0
                         SignalAction.SELL -> actualPct < 0
                         else -> null
                     }
@@ -153,6 +158,14 @@ class HistoricalBacktestEngine(private val context: Context) {
                         )
                     ))
 
+                    // 统计所有信号（不仅仅是BUY）
+                    daySignals++
+                    totalSignals++
+                    if (isCorrect == true) {
+                        daySignalCorrect++
+                        totalCorrect++
+                    }
+
                     if (signal.action == SignalAction.BUY) {
                         dayBuys++
                         if (isCorrect == true) dayCorrect++
@@ -165,10 +178,10 @@ class HistoricalBacktestEngine(private val context: Context) {
                 totalBuys += dayBuys
                 correctBuys += dayCorrect
 
-                if (dayBuys > 0) {
+                if (daySignals > 0) {
                     dayDetails.add(DayBacktestDetail(
-                        date = today, buys = dayBuys, correct = dayCorrect,
-                        avgReturn = totalReturn / totalBuys
+                        date = today, buys = daySignals, correct = daySignalCorrect,
+                        avgReturn = if (totalBuys > 0) totalReturn / totalBuys else actualReturnForDay(dayBuys, dayCorrect, signals, tomorrowSnapshots)
                     ))
                 }
             } catch (e: Exception) {
@@ -180,15 +193,30 @@ class HistoricalBacktestEngine(private val context: Context) {
             strategyId = strategy.id,
             strategyName = strategy.name,
             totalDays = dates.size - 1,
-            totalBuys = totalBuys,
-            correctBuys = correctBuys,
-            buyAccuracy = if (totalBuys > 0) correctBuys.toFloat() / totalBuys else 0f,
+            totalBuys = totalSignals,         // 改用总信号数
+            correctBuys = totalCorrect,        // 总正确数
+            buyAccuracy = if (totalSignals > 0) totalCorrect.toFloat() / totalSignals else 0f,
             avgReturn = if (totalBuys > 0) totalReturn / totalBuys else 0.0,
             maxGain = maxGain,
             maxLoss = maxLoss,
             totalHits = totalScanHits,
             dayDetails = dayDetails
         )
+    }
+
+    /** 计算当天信号的平均实际涨幅 */
+    private fun actualReturnForDay(
+        dayBuys: Int, dayCorrect: Int,
+        signals: List<com.chin.stockanalysis.strategy.models.StrategySignal>,
+        tomorrowSnapshots: List<DailySnapshotEntity>
+    ): Double {
+        if (signals.isEmpty()) return 0.0
+        val returns = mutableListOf<Double>()
+        for (sig in signals) {
+            val snap = tomorrowSnapshots.find { it.code == sig.stockCode } ?: continue
+            returns.add(snap.changePct)
+        }
+        return if (returns.isNotEmpty()) returns.average() else 0.0
     }
 
     /**

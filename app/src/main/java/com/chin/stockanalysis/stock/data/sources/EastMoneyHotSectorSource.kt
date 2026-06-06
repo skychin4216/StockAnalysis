@@ -2,6 +2,7 @@ package com.chin.stockanalysis.stock.data.sources
 
 import android.util.Log
 import com.chin.stockanalysis.stock.data.HttpClientProvider
+import com.chin.stockanalysis.stock.database.ChinaMarketTradingHours as A股TradingHours
 import kotlinx.coroutines.*
 import okhttp3.Request
 import org.json.JSONObject
@@ -15,6 +16,7 @@ class EastMoneyHotSectorSource {
             "1.000001" to "上证指数", "0.399001" to "深证成指",
             "0.399006" to "创业板指", "1.000300" to "沪深300",
             "100.KS11" to "韩国KOSPI", "100.NDX" to "纳斯达克",
+            "100.DJI" to "道琼斯", "100.SPX" to "标普500",
             "100.HSI" to "恒生指数", "1.510050" to "ETF", "1.159915" to "ETF"
         )
         @Volatile var industrySectors: List<HotSector> = emptyList()
@@ -40,7 +42,19 @@ class EastMoneyHotSectorSource {
             scope.launch(Dispatchers.IO) {
                 delay(1000)
                 try { globalIndices = source.fetchIndexRaw() } catch (_: Exception) {}
-                while (isActive) { delay(3 * 60_000L); try { globalIndices = source.fetchIndexRaw() } catch (_: Exception) {} }
+                while (isActive) {
+                    // 智能刷新：根据市场状态调整间隔
+                    val interval = A股TradingHours.获取刷新间隔()
+                    // 如果所有市场都已收盘且已有数据，降低刷新频率
+                    if (!A股TradingHours.是否有市场在交易() && globalIndices.isNotEmpty()) {
+                        delay(5 * 60_000L)  // 收盘后每5分钟检查一次即可
+                    } else {
+                        delay(interval)
+                    }
+                    if (isActive) {
+                        try { globalIndices = source.fetchIndexRaw() } catch (_: Exception) {}
+                    }
+                }
             }
             Log.i("HotPool", "🚀 池调度已启动 (池3min/排序10min)")
         }
@@ -88,7 +102,7 @@ class EastMoneyHotSectorSource {
             .map { s -> MERGE_KW.firstOrNull { s.name.contains(it.first, true) }?.let { s.copy(name = "${it.second}·${s.name}") } ?: s }
         // 剥离编码后缀（如Ⅰ/Ⅱ/III）后按名称去重，保留compositeScore最高的那条
         return filtered
-            .groupBy { stripSuffix(it.name) }
+            .groupBy { Pair(it.sectorType, stripSuffix(it.name)) }
             .map { (_, group) -> group.maxByOrNull { it.compositeScore } ?: group.first() }
     }
 

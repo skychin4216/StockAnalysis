@@ -15,6 +15,7 @@ import com.chin.stockanalysis.conversation.ConversationRepository
 import com.chin.stockanalysis.databinding.ActivityMainBinding
 import com.chin.stockanalysis.news.HotSectorNewsUpdater
 import com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.Companion.startPoolScheduler
+import com.chin.stockanalysis.stock.database.StockDataCenter
 import com.google.android.material.bottomnavigation.BottomNavigationView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -54,6 +55,8 @@ class MainActivity : AppCompatActivity() {
         ApiConfigManager.getInstance(applicationContext)
         // App 启动即拉取热门板块数据（统一池 + 后台调度）
         startPoolScheduler(lifecycleScope)
+        // 初始化共享股票数据中心（板块/股票/策略公用）
+        StockDataCenter.init(applicationContext, lifecycleScope)
         migrateLegacyConversations()
         // 后台拉取热点板块新闻
         lifecycleScope.launch(Dispatchers.IO) {
@@ -89,7 +92,7 @@ class MainActivity : AppCompatActivity() {
     private fun setupViewPager() {
         viewPager = binding.viewPager
         viewPager.adapter = MainTabAdapter(this, tabFragments)
-        viewPager.isUserInputEnabled = false
+        viewPager.isUserInputEnabled = true   // 允许左右滑动切换 Tab
         viewPager.offscreenPageLimit = tabFragments.size - 1
         viewPager.setCurrentItem(0, false)   // 默认「对话」tab
     }

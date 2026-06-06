@@ -304,7 +304,7 @@ curl "https://hq.sinajs.cn/list=sh600519" \
 
 ### 下一步
 
-1. 👉 阅读完整架构: [Github架构设计.md](./Github架构设计.md)
+1. 👉 阅读完整架构: [Github架构设计.md](Github_architecture.md)
 2. 👉 理解三大功能的原理
 3. 👉 部署Python后端 (如果需要产业链分析)
 4. 👉 根据需要定制化开发
@@ -351,7 +351,7 @@ serverless deploy
 # 5. 获取 Function URL，更新 ChatActivity.kt
 ```
 
-详见: [完整架构设计 - 部署指南](./Github架构设计.md#部署指南)
+详见: [完整架构设计 - 部署指南](Github_architecture.md#部署指南)
 
 ## 📚 学习路径
 
@@ -362,7 +362,7 @@ serverless deploy
 
 ### 中级 (理解架构)
 1. 完整阅读 [app/README.md](./app/README.md)
-2. 深入 [Github架构设计.md](./Github架构设计.md)
+2. 深入 [Github架构设计.md](Github_architecture.md)
 3. 研究 SmartStockCache 和 MultiSourceStockRepository
 
 ### 高级 (贡献代码)
@@ -442,9 +442,9 @@ Log.d("PERF", "数据获取耗时: ${elapsed}ms")
 
 ## 🆘 获取帮助
 
-- 📖 完整文档: [Github架构设计.md](./Github架构设计.md)
+- 📖 完整文档: [Github架构设计.md](Github_architecture.md)
 - 💬 应用文档: [app/README.md](./app/README.md)
-- 🐛 故障排查: [Github架构设计.md - 故障排查](./Github架构设计.md#故障排查)
+- 🐛 故障排查: [Github架构设计.md - 故障排查](Github_architecture.md#故障排查)
 - 📞 联系: support@stockanalysis.dev
 
 ---
@@ -452,7 +452,7 @@ Log.d("PERF", "数据获取耗时: ${elapsed}ms")
 **恭喜！你已经完成了快速开始。** 🎉
 
 接下来，建议：
-1. 深入阅读 [Github架构设计.md](./Github架构设计.md) ⭐⭐⭐
+1. 深入阅读 [Github架构设计.md](Github_architecture.md) ⭐⭐⭐
 2. 理解三大核心功能的原理
 3. 尝试修改代码和测试
 

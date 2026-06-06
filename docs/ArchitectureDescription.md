@@ -1,0 +1,550 @@
+# 📊 StockAnalysis 项目架构说明（v2.0 重设计版）
+
+## 概述
+。用户可以像使用 DeepSeek/豆包一样与 AI 交互，AI 能够理解股票相关问题、自动获取最新数据并生成专业的投资分析报告。
+
+## 核心特性
+- 🧠 **AI 智能对话** - DeepSeek/豆包风格的聊天界面，支持多 API 提供商
+- 📊 **实时行情** - 接入多源数据（新浪、腾讯、东方财富），支持自动降级
+- 🎯 **意图识别** - 智能理解用户意图，自动获取相关数据并注入 AI 分析
+- 📈 **K 线分析** - MPAndroidChart 展示日 K 线，支持技术指标计算
+- 💾 **智能缓存** - 3秒缓存机制，加速查询响应
+
+## 技术栈（v2.0）
+| 组件         | 技术/库                           | 说明                    |
+|--------------|-----------------------------------|------------------------|
+| 语言         | Kotlin                            | 100% Kotlin编写        |
+| 应用架构     | Multi-Fragment + MVVM             | 新增：支持多页面Tab   |
+| UI 框架      | Android ViewBinding + Fragment    | 新增：BottomNavigationView |
+| 聊天界面     | RecyclerView + Custom ViewType    | 新增：4种消息气泡样式  |
+| K 线图表     | MPAndroidChart (CandleStickChart) | 保留：其他页面使用    |
+| 网络请求     | OkHttp 4.12                       | 保留                   |
+| JSON 解析    | org.json + Gson                   | 升级：新增Gson支持    |
+| 构建工具     | Gradle KTS                        | 保留                   |
+
+## 项目结构（v2.0）
+
+### 整体架构
+```
+┌───────────────────────────────────────────────────────────────────┐
+│                      MainActivity (TabActivity)                    │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │  Bottom Navigation View (3 Tabs)                           │  │
+│  ├─────────────┬──────────────────┬──────────────┬──────────┤  │
+│  │  📊 Stock   │  💬 AI Chat      │  ⚙️ Settings │          │  │
+│  │  (Fragment) │  (Fragment)      │  (Fragment)  │          │  │
+│  │             │                  │              │          │  │
+│  │ (K线+策略)   │ (消息气泡+输入框) │ (API配置)    │          │  │
+│  └─────────────┴──────────────────┴──────────────┴──────────┘  │
+└───────────────────────────────────────────────────────────────────┘
+             │
+             ▼ (后端服务无关UI,可复用)
+┌───────────────────────────────────────────────────────────────────┐
+│              核心业务逻辑层（无 UI 依赖）                          │
+├───────────────────────────────────────────────────────────────────┤
+│  🧠 意图识别       📊 数据服务        🤖 AI分析                   │
+│  ┌──────────┐    ┌────────────┐    ┌──────────────┐             │
+│  │Intent    │    │Stock       │    │AI Stock      │             │
+│  │Processor │───▶│Service     │───▶│Analyzer      │             │
+│  └──────────┘    └────────────┘    └──────────────┘             │
+│       │                 │                                        │
+│       ▼                 ▼                                        │
+│  ┌─────────────────────────────────────────────────────┐        │
+│  │        StockRepository + Cache 层                    │        │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────┐ │        │
+│  │  │ Sina     │ │ Tencent  │ │ EastMoney│ │ Cache  │ │        │
+│  │  │ (Primary)│ │ (Backup1)│ │(Backup2) │ │(3sec)  │ │        │
+│  │  └──────────┘ └──────────┘ └──────────┘ └────────┘ │        │
+│  └─────────────────────────────────────────────────────┘        │
+│                    ▲                                             │
+│                    │                                             │
+│        对外 HTTP API (新浪/腾讯/东方财富)                        │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+### 文件结构
+```
+stockanalysis/
+├── build.gradle.kts              # 根级构建配置
+├── settings.gradle.kts           # 项目设置
+├── gradle.properties             # Gradle 属性
+├── gradle/
+│   └── libs.versions.toml        # 版本目录
+│
+└── app/
+    ├── build.gradle.kts          # 模块构建配置
+    ├── AndroidManifest.xml       # 应用清单
+    ├── src/
+    │   ├── main/
+    │   │   ├── java/com/chin/stockanalysis/
+    │   │   │   ├── ui/                        # UI 层（新）
+    │   │   │   │   ├── MainActivity.kt         # 主 TabActivity
+    │   │   │   │   ├── StockTabFragment.kt    # K线页面
+    │   │   │   │   ├── ChatTabFragment.kt     # 聊天页面
+    │   │   │   │   ├── SettingsFragment.kt    # 设置页面
+    │   │   │   │   ├── ChatActivity.kt        # 聊天详情 Activity
+    │   │   │   │   ├── ChatAdapter.kt         # 消息适配器
+    │   │   │   │   └── Message.kt             # 消息数据模型
+    │   │   │   │
+    │   │   │   ├── stock/                     # 股票服务包（新）
+    │   │   │   │   ├── StockService.kt        # 核心服务门面
+    │   │   │   │   ├── StockContext.kt        # 处理结果数据类
+    │   │   │   │   ├── StockRealtime.kt       # 统一数据模型
+    │   │   │   │   │
+    │   │   │   │   ├── intent/                # 意图识别层
+    │   │   │   │   │   ├── StockIntent.kt
+    │   │   │   │   │   ├── IntentResult.kt
+    │   │   │   │   │   ├── IntentProcessorChain.kt
+    │   │   │   │   │   └── handlers/
+    │   │   │   │   │       ├── IntentHandler.kt
+    │   │   │   │   │       ├── StockCodeHandler.kt
+    │   │   │   │   │       ├── StockNameHandler.kt
+    │   │   │   │   │       ├── HotStockHandler.kt
+    │   │   │   │   │       └── AiIntentHandler.kt
+    │   │   │   │   │
+    │   │   │   │   ├── data/                  # 数据访问层
+    │   │   │   │   │   ├── StockRepository.kt
+    │   │   │   │   │   ├── StockDataSource.kt
+    │   │   │   │   │   ├── StockCache.kt
+    │   │   │   │   │   └── sources/
+    │   │   │   │   │       ├── SinaStockSource.kt
+    │   │   │   │   │       ├── TencentStockSource.kt
+    │   │   │   │   │       └── EastMoneyStockSource.kt
+    │   │   │   │   │
+    │   │   │   │   ├── formatter/             # 格式化层
+    │   │   │   │   │   └── StockDataFormatter.kt
+    │   │   │   │   │
+    │   │   │   │   └── analysis/              # AI分析层
+    │   │   │   │       └── AiStockAnalyzer.kt
+    │   │   │   │
+    │   │   │   └── api/                       # API 调用层（改进）
+    │   │   │       ├── ApiProvider.kt
+    │   │   │       ├── OpenAiCompatibleProvider.kt
+    │   │   │       └── ApiConfigManager.kt
+    │   │   │
+    │   │   ├── res/
+    │   │   │   ├── layout/
+    │   │   │   │   ├── activity_main.xml           # TabLayout主布局
+    │   │   │   │   ├── fragment_stock.xml          # K线页面布局
+    │   │   │   │   ├── fragment_chat.xml           # 聊天页面布局
+    │   │   │   │   ├── fragment_settings.xml       # 设置页面布局
+    │   │   │   │   ├── activity_chat.xml           # 聊天详情Activity布局
+    │   │   │   │   └── item_message.xml            # 消息气泡布局
+    │   │   │   ├── drawable/                       # UI 资源
+    │   │   │   │   ├── bubble_user.xml             # 用户消息气泡
+    │   │   │   │   ├── bubble_ai.xml               # AI消息气泡
+    │   │   │   │   └── bubble_error.xml            # 错误提示气泡
+    │   │   │   ├── mipmap-*/                       # 应用图标
+    │   │   │   ├── values/
+    │   │   │   │   ├── colors.xml
+    │   │   │   │   ├── strings.xml
+    │   │   │   │   ├── themes.xml
+    │   │   │   │   └── dimens.xml                  # 新增：尺寸定义
+    │   │   │   └── xml/
+    │   │   │       ├── backup_rules.xml
+    │   │   │       └── data_extraction_rules.xml
+    │   │   ├── test/
+    │   │   └── androidTest/
+    │   └── proguard-rules.pro
+    └── gradle/wrapper/
+```
+
+## 核心模块职责
+
+### 1️⃣ MainActivity.kt
+- **数据获取**：通过 OkHttp 异步请求新浪财经 A 股接口，解析 JSON 获取 OHLC 数据
+- **K 线绘制**：使用 MPAndroidChart CandleStickChart 渲染日 K 线
+- **量化策略**：内置均线策略（MA5/MA10 金叉/死叉），结果显示在 `tvStrategy` TextView
+
+### 2️⃣ activity_main.xml
+- `CandleStickChart` (`@+id/klineChart`) — 320dp 高度的 K 线图
+- `TextView` (`@+id/tvStrategy`) — 策略结果显示区域
+
+## 实时数据框架（新增）
+
+### 为什么豆包App能实时获取股票信息，但通过豆包的API接口获取不到？
+
+**核心原因**：
+- **豆包App**：客户端直接调用新浪/腾讯等开源财经API获取实时数据 → 注入AI prompt → 展示给用户
+- **豆包API**：如果只调用AI模型，模型训练数据有截止日期，无法获取实时数据
+- **结论**：实时数据必须从**开源财经网站**的HTTP接口获取，不能依赖AI API
+
+### 实时数据组件
+
+我们设计了两个专门类来处理实时数据：
+
+```
+stock/realtime/
+├── RealtimeDataAccessor.kt  # ① 专门访问实时数据（并发请求、健康检查、频率控制）
+├── RealtimeDataProcessor.kt # ② 专门处理实时数据（验证、清洗、市场状态、格式化）
+└── RealtimeConfig.kt        # ③ 配置管理 + 工厂方法
+```
+
+#### ① RealtimeDataAccessor（实时数据访问器）
+
+| 特性 | 说明 |
+|------|------|
+| **并发请求** | 同时从多个数据源请求，取最快返回的，而非顺序降级 |
+| **智能选源** | 根据延迟自动排序，优先选最快的源 |
+| **健康检查** | 后台每30秒自动ping各数据源，标记不可用的 |
+| **频率控制** | 同一股票1秒内不可重复请求，防止被限流 |
+| **自动恢复** | 所有源不可用时，强制重试并恢复 |
+
+工作流程：
+```
+fetchRealtime(["sh600519"])
+    │
+    ├─ 1. 频率控制 → 检查该股票上次请求是否 > 1秒
+    ├─ 2. 过滤健康源 → 排除已标记不可用的源
+    ├─ 3. 按延迟/优先级排序
+    ├─ 4. 并发请求所有活跃源（async/await）
+    ├─ 5. 取第一个成功返回的结果
+    └─ 6. 更新延迟统计 + 健康状态
+```
+
+#### ② RealtimeDataProcessor（实时数据处理器）
+
+| 特性 | 说明 |
+|------|------|
+| **数据验证** | 检查价格合理性、涨跌幅是否超±20%限、最高<最低等异常 |
+| **数据清洗** | 跳过名称为空、价格为0/负数的异常记录 |
+| **交易时段感知** | 自动判断交易中/午休/盘前/收盘/周末休市 |
+| **新鲜度判断** | 交易中要求数据 <5秒，收盘后放宽到5分钟 |
+| **格式化** | `formatForAi()` 生成AI prompt文本，`formatForUi()` 生成结构化UI数据 |
+| **Flow观察** | `observeRealtime()` 每N秒自动推送最新数据 |
+
+#### ③ RealtimeConfig（配置管理）
+
+三种预设配置：
+
+| 模式 | 说明 | 适用场景 |
+|------|------|----------|
+| `DEFAULT` | 稳定模式，并发取最快 | 大多数场景 |
+| `FASTEST` | 极速模式，缓存更短 | 高频交易时需要最新数据 |
+| `LOW_TRAFFIC` | 低流量模式，降低频率 | 慢速网络或节省流量 |
+
+### 使用示例
+
+```kotlin
+// 1. 一行代码获取完整配置的处理器
+val processor = RealtimeConfig.createProcessor()
+
+// 2. 获取实时数据（协程中调用）
+lifecycleScope.launch {
+    val result = processor.getProcessedRealtime(listOf("sh600519"))
+    
+    // 3. 格式化数据用于 AI prompt 注入
+    val aiText = processor.formatForAi(result)
+    
+    // 4. 或格式化用于 UI 展示
+    val uiData = processor.formatForUi(result)
+}
+```
+
+### 与原有 StockService 的集成
+
+```kotlin
+class ChatActivity {
+    // 原有 StockService
+    private lateinit var stockService: StockService
+    
+    // 新增：实时数据处理器
+    private lateinit var realtimeProcessor: RealtimeDataProcessor
+    
+    override fun onCreate(savedInstanceState: Bundle?) {
+        // ... 原有初始化
+        
+        // 创建实时数据处理器（一行代码）
+        realtimeProcessor = RealtimeConfig.createProcessor()
+        
+        // 或自定义配置
+        realtimeProcessor = RealtimeConfig.createProcessor(
+            config = RealtimeConfig.FASTEST
+        )
+    }
+    
+    // 使用新的实时方法
+    private suspend fun getRealtimeStockData(userMessage: String): StockContext {
+        return stockService.processUserInputRealtime(userMessage, realtimeProcessor)
+    }
+}
+```
+
+### 数据流对比
+
+**原有流程**：
+```
+用户输入 → IntentProcessor → StockRepository → SinaSource(顺序) → Formatter → AI Prompt
+                                                                    ↑
+                                                            StockDataFormatter
+```
+
+**新实时流程**：
+```
+用户输入 → IntentProcessor → StockService.processUserInputRealtime()
+                                    │
+                                    ▼
+                            RealtimeDataProcessor.getProcessedRealtime()
+                                    │
+                           ┌────────┴────────┐
+                           ▼                  ▼
+                    StockCache(缓存)   RealtimeDataAccessor.fetchRealtime()
+                                           │
+                              ┌─────────────┼─────────────┐
+                              ▼             ▼             ▼
+                      SinaSource     TencentSource   EastMoneySource
+                      (并发)          (并发)           (并发)
+                              │
+                              ▼  (取最快返回)
+                           验证 → 清洗 → 写入缓存 → 格式化
+                                    │
+                                    ▼
+                                AI Prompt
+```
+
+### 文件组织
+
+```
+stock/realtime/
+├── RealtimeDataAccessor.kt   # 并发请求、选源、健康检查、频率控制
+├── RealtimeDataProcessor.kt  # 验证、清洗、市场状态、格式化、Flow观察
+│                            （包含：ProcessedResult, MarketStatus, UiStockData）
+└── RealtimeConfig.kt         # 三种预设模式、Builder、工厂方法
+```
+
+---
+
+## 实现阶段与优先级
+
+### 🟢 Phase 1: UI 重构（3-4 小时）
+目标：完成 Tab 架构 + 聊天界面基础框架
+
+- [x] 创建 `ui/` 包结构
+- [x] 实现 `MainActivity.kt` (TabActivity)
+- [x] 实现 `StockTabFragment.kt` (K线迁移)
+- [x] 实现 `ChatTabFragment.kt` (快捷入口)
+- [x] 实现 `SettingsFragment.kt` (API配置)
+- [x] 实现 `ChatActivity.kt` (聊天主体)
+- [x] 实现 `ChatAdapter.kt` (消息列表)
+- [x] 实现 `Message.kt` (数据模型)
+- [x] 新建各布局文件
+- [x] 新建气泡 Drawable 资源
+- [x] 注册 AndroidManifest
+
+**验收标准**：App 启动能看到 3 个 Tab，能进入聊天页，能输入发送消息（暂无后端处理）
+
+---
+
+### 🟡 Phase 2: 股票数据服务（4-5 小时）
+目标：完整的股票数据获取 + 意图识别
+
+- [x] 创建 `stock/` 包结构
+- [x] 实现 `StockRealtime.kt` (数据模型)
+- [x] 实现 `StockIntent.kt` + `IntentResult.kt`
+- [x] 实现 `StockDataSource.kt` (接口)
+- [x] 实现 `SinaStockSource.kt` (新浪财经)
+- [x] 实现 `StockCache.kt` (缓存机制)
+- [x] 实现 `StockRepository.kt` (数据仓储)
+- [x] 实现各 `Handler` (意图处理)
+- [x] 实现 `IntentProcessorChain.kt` (职责链)
+- [x] 实现 `StockDataFormatter.kt` (格式化)
+- [x] 实现 `StockService.kt` (服务门面)
+
+**验收标准**：能够解析"茅台"获取实时行情，格式化为文本
+
+---
+
+### 🔴 Phase 3: AI 集成 (3-4 小时)
+目标：完整的聊天 + 股票数据融合
+
+- [ ] 优化 `ChatActivity.kt` (集成 StockService)
+- [ ] 实现消息流式输出(打字效果)
+- [ ] 实现 `AiStockAnalyzer.kt` (复杂意图)
+- [x] 实现备用数据源 (TencentSource, EastMoneySource)
+- [x] 完善错误处理 + 降级逻辑
+- [x] **新增实时数据框架** (RealtimeDataAccessor + RealtimeDataProcessor)
+- [ ] 测试完整数据流
+
+**验收标准**：用户输入"茅台"，AI 能回复实时价格；输入复杂问题，AI 能进行分析
+
+---
+
+## 依赖关系
+
+```
+Phase 1 (UI)
+    ↑
+    │(需要)
+Phase 2 (数据服务)
+    ↑
+    │(需要)
+Phase 3 (AI集成)
+    ↑
+    │(需要)
+Phase 2.5 (实时数据框架) ← 新增：RealtimeDataAccessor + RealtimeDataProcessor
+```
+
+每个 Phase 相对独立，可并行开发某些模块。
+
+## 实时数据框架文件间依赖关系
+
+```
+RealtimeConfig.kt
+    │
+    ├──→ 依赖 RealtimeDataProcessor.kt
+    │         │
+    │         ├──→ 依赖 StockCache.kt（缓存）
+    │         └──→ 依赖 RealtimeDataAccessor.kt
+    │                  │
+    │                  ├──→ 依赖 StockDataSource.kt（接口）
+    │                  └──→ 依赖 sina/tencent/eastmoney 实现
+    │
+    └──→ 依赖 StockService.kt（通过 processUserInputRealtime 集成）
+```
+
+**新文件无循环依赖**，所有新增的 `realtime/` 包只依赖已有 `data/` 包的基础设施。
+
+---
+
+## 依赖库版本
+
+```gradle
+// 核心
+implementation 'org.jetbrains.kotlin:kotlin-stdlib'
+implementation 'androidx.appcompat:appcompat:1.6.1'
+implementation 'androidx.core:core-ktx:1.12.0'
+
+// UI
+implementation 'com.google.android.material:material:1.11.0'
+implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+implementation 'androidx.fragment:fragment-ktx:1.6.1'
+implementation 'androidx.recyclerview:recyclerview:1.3.1'
+
+// 图表
+implementation 'com.github.PhilJay:MPAndroidChart:v3.1.0'
+
+// 网络
+implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+// JSON
+implementation 'com.google.code.gson:gson:2.10.1'
+
+// 异步(可选)
+implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.1'
+```
+
+---
+
+## A 股数据适配
+
+- **行情数据来源**：新浪财经免费 JSON API（无需 token）
+- **备用源**：腾讯财经、东方财富（自动降级）
+- **交易规则**：T+1 交易制，±10% 涨跌停（策略需补充约束）
+- **节假日过滤**：当前未实现，建议后续补充
+- **复权处理**：接口返回原始价格，未做前/后复权
+
+---
+
+## v5.0 架构更新（2026-05-27）
+
+### 新增模块
+
+| 模块 | 路径 | 功能 |
+|------|------|------|
+| 自动刷新 | `stock/autorefresh/` | TLL 架构：交易时段 60s 自动拉取最新价格 |
+| 量化策略 | `strategy/` | 策略引擎 + 3 种选股策略（均线/放量/低估值） |
+| 智能技能 | `skill/` | FollowUpGenerator（带来源标注的追问） + SkillEngine（个人技能管理） |
+| 自动化测试 | `androidTest/` | 16 个测试用例覆盖意图识别+价格验证+多股票回归 |
+
+### 架构全景图（v5.0）
+
+```
+│   ├── stock/                                   # 股票核心引擎
+│   │   ├── StockQueryEngine.kt                  # ★ 统一查询引擎
+│   │   ├── intent/handlers/                     # 意图识别（支持多股票拆分）
+│   │   ├── autorefresh/                         # [v5.0] TLL 自动刷新
+│   │   └── ...
+│   ├── strategy/                                # [v5.0] 量化选股策略
+│   │   ├── StrategyEngine.kt                    # 策略引擎
+│   │   ├── strategies/                          # 3种策略
+│   │   └── data/StockScreener.kt                # 全市场扫描器
+│   ├── skill/                                   # [v5.0] 智能追问+个人技能
+│   │   ├── SkillEngine.kt                       # 技能引擎
+│   │   └── prediction/FollowUpGenerator.kt      # 追问生成器
+│   └── ui/
+│       ├── ChatTabFragment.kt
+│       ├── StrategyFragment.kt                  # [v5.0] 策略中心UI
+│       └── ...
+```
+
+## v4.0 架构更新（2026-05-21）
+
+### 新增：主题/板块查询模块
+
+在 v3.0 的「具体股票实时行情查询」基础上，v4.0 新增了「主题/板块查询」能力，
+支持"化工前20"、"有色金属"、"商业航天产业链"等行业级别的批量分析。
+
+#### 核心变化：引入 StockQueryEngine
+
+```kotlin
+// Fragment/Activity 统一使用
+private val queryEngine: StockQueryEngine by lazy {
+    StockQueryEngine.create(requireContext())
+}
+
+// 发送消息时
+val systemPrompt = withContext(Dispatchers.IO) {
+    queryEngine.buildSystemPrompt(
+        userText = userText,
+        baseSystemPrompt = BASE_SYSTEM_PROMPT,
+        onPreferenceLeaned = { /* 通知 UI 弹 Toast */ }
+    )
+}
+```
+
+#### 新增 `stock/theme/` 子模块
+
+| 类 | 职责 |
+|----|------|
+| `ThemeStockLibrary` | 内置10大主题股票库（商业航天/有色金属/AI算力/半导体/军工/化工/医药/新能源/消费/金融），每股预置业务描述和产业链依据 |
+| `ThemeStockService` | 整合层，方案A（内置库）+ 方案B（东方财富板块 API），自动选择更全面的数据路径 |
+| `UserPreferenceManager` | 单例，持久化用户的过滤偏好（剔除科创板/创业板/市值区间/价格区间），自动从对话中学习 |
+
+#### 新增 `stock/data/sources/` 数据源
+
+| 类 | API | 功能 |
+|----|-----|------|
+| `EastMoneySectorSource` | 东方财富 push2 行情 API | 按板块名称拉取成分股（40+行业/概念板块），支持市值/交易所过滤 |
+| `EastMoneyBidAskSource` | 东方财富五档行情 API | 获取股票的五档买卖挂单，计算买卖比，输出 🟢🟡⚪🔴 低吸评级 |
+
+#### UI 层变化
+
+- `ChatTabFragment`：删除 `initStockService` + `buildSystemPromptWithStockData`，改用 `queryEngine.buildSystemPrompt()`
+- `ChatActivity`：同上，去掉所有重复字段
+- 菜单新增：「已记忆的偏好」「清除偏好记忆」「数据源诊断」
+
+#### 数据流（v4.0）
+
+```
+用户输入
+    │
+    ▼
+StockQueryEngine.buildSystemPrompt()
+    │
+    ├─ 检测到"化工/有色金属/商业航天"
+    │   └─ ThemeStockService → 东方财富板块API → getRealtime()
+    │       → 构建含10~20只股票行情+产业链依据的 prompt
+    │
+    ├─ 检测到股票代码/名称（600519/贵州茅台）
+    │   └─ StockService → IntentProcessorChain → getRealtime()
+    │       → 构建单股/多股实时行情的 prompt
+    │
+    └─ 普通问题
+        → 直接返回 baseSystemPrompt（AI 基于训练知识回答）
+    │
+    ▼
+AI Provider.sendMessageStream()
+    │
+    ▼
+流式输出到聊天界面（Markdown 表格渲染）
+```

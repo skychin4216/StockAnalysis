@@ -13,6 +13,8 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource
 import com.chin.stockanalysis.stock.data.sources.SectorSubDivision
+import com.chin.stockanalysis.stock.database.SectorStockEntity
+import com.chin.stockanalysis.stock.database.StockDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -81,12 +83,15 @@ class SectorDetailFragment : Fragment() {
         // 有 BK 代码 → 网络拉取实时龙头表格（含现价/涨跌/换手/主力流入/市值）
         if (sectorCode.isNotEmpty()) {
             lifecycleScope.launch {
-                val leaders = withContext(Dispatchers.IO) { hotSource.fetchSectorLeaders(sectorCode, 10) }
+                val leaders = withContext(Dispatchers.IO) { hotSource.fetchSectorLeaders(sectorCode, 20) }
                 loadingTv.visibility = View.GONE
                 if (leaders.isNotEmpty()) {
+                    // 保存板块→股票映射到数据库（反向查询用）
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        saveSectorStockMapping(sectorName, sectorCode, leaders)
+                    }
                     container.addView(createLeaderCard(sectorName, leaders))
                 } else {
-                    // 网络失败 → 用静态数据兜底
                     showStaticData(sectorName)
                 }
             }
@@ -141,10 +146,26 @@ class SectorDetailFragment : Fragment() {
             })
         }
         card.addView(header)
+        val sectorNameFinal = sectorName
         for ((idx, s) in leaders.withIndex()) {
             val row = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL; setPadding(4, 6, 4, 6)
                 if (idx % 2 == 1) setBackgroundColor(Color.parseColor("#F5F5F5"))
+                // 点击股票 → 跳转到股票详情页（而非板块页）
+                setOnClickListener {
+                    val detail = StockDetailFragment.newInstance(
+                        stockCode = s.code.takeIf { it.isNotBlank() } ?: "",
+                        stockName = s.name,
+                        price = s.price,
+                        changePct = s.changePercent,
+                        sectorName = sectorNameFinal
+                    )
+                    activity?.supportFragmentManager
+                        ?.beginTransaction()
+                        ?.replace(android.R.id.content, detail)
+                        ?.addToBackStack(null)
+                        ?.commit()
+                }
             }
             row.addView(TextView(ctx).apply {
                 text = "${idx + 1}. ${s.name}\n${s.code.takeLast(6)}"
@@ -196,6 +217,44 @@ class SectorDetailFragment : Fragment() {
 
     // ======================== 静态精选子板块 ========================
 
+    // ======================== 板块→股票映射持久化 ========================
+
+    /** 将东方财富返回的龙头股存入 sector_stocks 表，实现反向查询 */
+    private suspend fun saveSectorStockMapping(
+        sectorName: String, sectorCode: String, leaders: List<EastMoneyHotSectorSource.LeaderStock>
+    ) {
+        try {
+            val db = StockDatabase.getInstance(requireContext())
+            // 生成 sector_key：用 sector_name 做 key（与 ThemeStockLibrary 一致）
+            val sectorKey = sectorName
+            val entities = leaders.mapNotNull { leader ->
+                val code = leader.code
+                if (code.isBlank()) return@mapNotNull null
+                // 补全交易所前缀（东方财富 f12 字段只返回数字代码）
+                val fullCode = when {
+                    code.startsWith("sh") || code.startsWith("sz") || code.startsWith("bj") -> code
+                    code.startsWith("6") || code.startsWith("9") -> "sh$code"
+                    code.startsWith("4") || code.startsWith("8") -> "bj$code"
+                    else -> "sz$code"
+                }
+                // 补全0开头的代码为6位
+                val fullCode6 = if (fullCode.take(2) in setOf("sh","sz","bj") && fullCode.length == 8) fullCode
+                    else if (fullCode.take(2) == "sh" && fullCode.length < 8) "sh${code.padStart(6, '0')}"
+                    else fullCode
+
+                SectorStockEntity(sectorKey = sectorKey, sectorName = sectorName, stockCode = fullCode6)
+            }
+            if (entities.isNotEmpty()) {
+                db.sectorStockDao().insertAll(entities)
+                android.util.Log.i("SectorDetail", "保存板块映射: $sectorName → ${entities.size} 只股票")
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("SectorDetail", "保存板块映射失败: ${e.message}")
+        }
+    }
+
+    // ======================== 静态精选子板块 ========================
+
     private fun createSubSectorCard(ss: SectorSubDivision.SubSector): LinearLayout {
         val ctx = requireContext()
         val card = LinearLayout(ctx).apply {
@@ -232,6 +291,19 @@ class SectorDetailFragment : Fragment() {
             orientation = LinearLayout.VERTICAL; setPadding(8, 6, 0, 4)
             (layoutParams as? LayoutParams)?.setMargins(0, 0, 0, 6)
             setBackgroundColor(Color.parseColor("#F8F9FC"))
+            // 点击静态股票 → 跳转到股票详情页（而非板块页）
+            setOnClickListener {
+                val detail = StockDetailFragment.newInstance(
+                    stockCode = stock.code,
+                    stockName = stock.name,
+                    sectorName = "" // 从子板块推断
+                )
+                activity?.supportFragmentManager
+                    ?.beginTransaction()
+                    ?.replace(android.R.id.content, detail)
+                    ?.addToBackStack(null)
+                    ?.commit()
+            }
         }
         val boardTag = if (stock.isMainBoard) "" else " [${stock.boardType}]"
         row.addView(TextView(ctx).apply {

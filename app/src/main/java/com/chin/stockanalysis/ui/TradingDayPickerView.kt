@@ -1,0 +1,178 @@
+package com.chin.stockanalysis.ui
+
+import android.app.DatePickerDialog
+import android.content.Context
+import android.graphics.Color
+import android.graphics.Typeface
+import android.util.AttributeSet
+import android.view.Gravity
+import android.view.View
+import android.widget.*
+import java.time.DayOfWeek
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
+
+/**
+ * ## 交易日选择器组件
+ *
+ * 格式: `[<] 2026-06-05 [>]`
+ * - `<` 切换到上一个交易日（自动跳过周末/假期）
+ * - `>` 切换到下一个交易日，到最近交易日时自动禁用
+ * - 点击日期文本弹出系统日历选择任意一天
+ *
+ * 可复用于：模拟交易、量化选股等需要选择历史交易日的场景。
+ */
+class TradingDayPickerView @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null,
+    defStyleAttr: Int = 0
+) : LinearLayout(context, attrs, defStyleAttr) {
+
+    companion object {
+        private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+
+        /** 中国股市假日（2025-2026），需要每年更新 */
+        val CHINESE_HOLIDAYS: Set<LocalDate> by lazy {
+            val raw = listOf(
+                "2025-01-01","2025-01-27","2025-01-28","2025-01-29","2025-01-30","2025-01-31","2025-02-03","2025-02-04",
+                "2025-04-04","2025-04-05","2025-04-06","2025-05-01","2025-05-02","2025-05-03","2025-05-04","2025-05-05",
+                "2025-05-31","2025-06-01","2025-06-02",
+                "2025-10-01","2025-10-02","2025-10-03","2025-10-04","2025-10-05","2025-10-06","2025-10-07","2025-10-08",
+                "2026-01-01","2026-01-02","2026-01-03",
+                "2026-02-16","2026-02-17","2026-02-18","2026-02-19","2026-02-20","2026-02-21","2026-02-22","2026-02-23",
+                "2026-04-04","2026-04-05","2026-04-06",
+                "2026-05-01","2026-05-02","2026-05-03","2026-05-04","2026-05-05",
+                "2026-05-31","2026-06-01",
+                "2026-10-01","2026-10-02","2026-10-03","2026-10-04","2026-10-05","2026-10-06","2026-10-07"
+            )
+            raw.map { LocalDate.parse(it) }.toSet()
+        }
+
+        /**
+         * 获取最近一个交易日。
+         * < 9:30 返回昨天；跳过周末和中国假期。
+         */
+        fun recentTradingDay(): LocalDate {
+            var d = LocalDate.now()
+            if (LocalTime.now() < LocalTime.of(9, 30)) d = d.minusDays(1)
+            while (d.dayOfWeek == DayOfWeek.SATURDAY || d.dayOfWeek == DayOfWeek.SUNDAY || d in CHINESE_HOLIDAYS) {
+                d = d.minusDays(1)
+            }
+            return d
+        }
+    }
+
+    private val prevBtn: Button
+    private val dateTv: TextView
+    private val nextBtn: Button
+
+    private var _selectedDate: LocalDate = recentTradingDay()
+
+    /** 当前选中的交易日 */
+    var selectedDate: LocalDate
+        get() = _selectedDate
+        set(value) {
+            _selectedDate = value
+            refreshUI()
+        }
+
+    /** 日期变化回调 (参数: 新的 LocalDate) */
+    var onDateChanged: ((LocalDate) -> Unit)? = null
+
+    init {
+        orientation = HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+
+        prevBtn = Button(context).apply {
+            text = "<"
+            textSize = 11f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#1565C0"))
+            setPadding(dp(3), dp(0), dp(3), dp(0))
+            setMinWidth(0); setMinimumWidth(0)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, dp(20)
+            )
+            setOnClickListener { navigate(-1) }
+        }
+        addView(prevBtn)
+
+        dateTv = TextView(context).apply {
+            textSize = 11f
+            setTextColor(Color.parseColor("#E65100"))
+            setTypeface(null, Typeface.BOLD)
+            setPadding(dp(4), 0, dp(4), 0)
+            setOnClickListener { showCalendarPicker() }
+        }
+        addView(dateTv)
+
+        nextBtn = Button(context).apply {
+            text = ">"
+            textSize = 11f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#1565C0"))
+            setPadding(dp(3), dp(0), dp(3), dp(0))
+            setMinWidth(0); setMinimumWidth(0)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, dp(20)
+            )
+            setOnClickListener { navigate(+1) }
+        }
+        addView(nextBtn)
+
+        refreshUI()
+    }
+
+    /** 按 delta 天切换交易日，自动跳过非交易日 */
+    private fun navigate(delta: Int) {
+        var d = _selectedDate.plusDays(delta.toLong())
+        while (d.dayOfWeek == DayOfWeek.SATURDAY ||
+            d.dayOfWeek == DayOfWeek.SUNDAY ||
+            d in CHINESE_HOLIDAYS
+        ) {
+            d = d.plusDays(delta.toLong())
+        }
+        val today = recentTradingDay()
+        if (d.isAfter(today)) return
+        _selectedDate = d
+        refreshUI()
+        onDateChanged?.invoke(d)
+    }
+
+    /** 弹出系统日历供用户点选 */
+    private fun showCalendarPicker() {
+        val dialog = DatePickerDialog(
+            context,
+            { _, year, month, dayOfMonth ->
+                val picked = LocalDate.of(year, month + 1, dayOfMonth)
+                val today = recentTradingDay()
+                if (picked.isAfter(today)) {
+                    Toast.makeText(context, "不能选择未来日期", Toast.LENGTH_SHORT).show()
+                    return@DatePickerDialog
+                }
+                _selectedDate = picked
+                refreshUI()
+                onDateChanged?.invoke(picked)
+            },
+            _selectedDate.year,
+            _selectedDate.monthValue - 1,
+            _selectedDate.dayOfMonth
+        )
+        dialog.show()
+    }
+
+    /** 刷新日期文本和箭头状态 */
+    private fun refreshUI() {
+        val today = recentTradingDay()
+        val isNonTradingDay = _selectedDate.dayOfWeek == DayOfWeek.SATURDAY ||
+                _selectedDate.dayOfWeek == DayOfWeek.SUNDAY ||
+                _selectedDate in CHINESE_HOLIDAYS
+        dateTv.text = _selectedDate.format(DATE_FMT)
+        dateTv.setTextColor(if (isNonTradingDay) Color.parseColor("#EF6C00") else Color.parseColor("#E65100"))
+        nextBtn.isEnabled = _selectedDate < today
+        nextBtn.alpha = if (_selectedDate < today) 1.0f else 0.4f
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
+}

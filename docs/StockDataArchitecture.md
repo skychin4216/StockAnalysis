@@ -1,0 +1,642 @@
+# 股票數據服務架構設計
+
+## 1. 問題分析
+
+### 1.1 用戶輸入的多樣性
+
+我們需要處理的用戶輸入場景：
+
+| 場景 | 示例 | 處理方式 |
+|------|------|----------|
+| **直接股票代碼** | "600519" | 正則匹配，直接查詢實時行情 |
+| **股票名稱** | "茅台"、"貴州茅台" | 名稱→代碼映射表查詢 |
+| **模糊名稱** | "茅臺"（錯別字）、"茅臺酒" | 先問 AI 糾正，再查詢 |
+| **多隻股票** | "茅台和五糧液"、"茅台,平安,寧德時代" | 批量查詢多隻 |
+| **指數查詢** | "上證指數"、"創業板指" | 特殊處理（行情格式不同） |
+| **AI 需要理解的查詢** | "今天哪些股票漲停了？"、"白酒板塊走勢如何"、"推薦幾隻潛力股" | 先調用 AI 解析意圖，再執行對應操作 |
+| **技術分析** | "分析茅台的MACD"、"畫一下茅台的K線" | 需要調用歷史數據接口 |
+| **市值/基本面** | "茅台的市值多少"、"比亞迪的PE" | 需要調用財務數據接口 |
+| **比較分析** | "茅台和五糧液哪個更值得買" | 多隻股票對比，AI 綜合分析 |
+
+### 1.2 現有方案的問題
+
+當前的 `StockDataProvider` 只做了最簡單的實時行情查詢：
+- 只能處理簡單的股票代碼/名稱
+- 沒有意圖識別（無法區分「查股價」vs「熱門股票」）
+- 沒有多數據源支持
+- 沒有緩存
+- 沒有錯誤恢復
+- 無法處理複雜查詢
+
+---
+
+## 2. 目標架構
+
+參考 **Clean Architecture + Repository Pattern + Chain of Responsibility**，設計如下：
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         ChatActivity                                │
+│  ┌─────────────────────────────────────────────────────────────────┐│
+│  │  sendMessage() → callAiApi()                                    ││
+│  │                                                                 ││
+│  │  ├─ 1. 檢測是否包含股票意圖 → StockIntentProcessor              ││
+│  │  ├─ 2. 若有，解析意圖 → 獲取數據 → 注入 prompt                 ││
+│  │  └─ 3. 正常的 AI 調用                                           ││
+│  └─────────────────────────────────────────────────────────────────┘│
+│                             │                                        │
+│                             ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐│
+│  │                    StockService（核心服務）                       ││
+│  │                                                                 ││
+│  │  職責：                                                         ││
+│  │  - 統一的對外接口                                                ││
+│  │  - 組合 IntentProcessor + DataProcessor                        ││
+│  │  - 管理錯誤恢復與降級                                            ││
+│  │  - 格式化輸出                                                   ││
+│  └─────────────────────────────────────────────────────────────────┘│
+│                             │                                        │
+│              ┌──────────────┼──────────────┐                        │
+│              ▼              ▼              ▼                        │
+│  ┌──────────────────┐ ┌──────────┐ ┌──────────────┐                │
+│  │ IntentProcessor  │ │  Cache   │ │ DataProcessor│                │
+│  │ (意圖識別鏈)      │ │ (緩存層)  │ │ (數據處理器)  │                │
+│  └──────────────────┘ └──────────┘ └──────────────┘                │
+│              │                                         │            │
+│              ▼                                         ▼            │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │                    StockRepository（數據倉儲）                 │   │
+│  │                                                              │   │
+│  │  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌──────────┐ │   │
+│  │  │ SinaSource │ │ TencentSrc │ │ EastMoney  │ │ HistSrc  │ │   │
+│  │  │ (新浪實時) │ │ (騰訊實時)  │ │ (東方財富)  │ │ (歷史K)  │ │   │
+│  │  └────────────┘ └────────────┘ └────────────┘ └──────────┘ │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3. 核心組件設計
+
+### 3.1 意圖識別層（IntentProcessor）
+
+使用 **Chain of Responsibility 設計模式**，每個處理器負責一種意圖：
+
+```kotlin
+// 意圖枚舉
+enum class StockIntent {
+    QUERY_PRICE,        // 查詢實時股價（單隻/多隻）
+    QUERY_INDEX,        // 查詢大盤指數
+    QUERY_HOT_STOCKS,   // 熱門股票/漲停板
+    QUERY_HISTORY,      // 歷史K線數據
+    QUERY_FINANCIALS,   // 財務數據/基本面
+    QUERY_SECTOR,       // 板塊行情
+    COMPARE_STOCKS,     // 對比分析
+    TECHNICAL_ANALYSIS, // 技術分析
+    UNKNOWN             // 不包含股票意圖
+}
+
+// 意圖解析結果
+data class IntentResult(
+    val intent: StockIntent,
+    val stockCodes: List<String>,       // 提取出的股票代碼
+    val stockNames: List<String>,       // 提取出的股票名稱
+    val confidence: Float,              // 置信度 0.0~1.0
+    val rawQuery: String,               // 原始用戶輸入
+    val parsedParams: Map<String, Any>  // 額外參數（如時間範圍等）
+)
+
+// 意圖處理器接口
+interface IntentHandler {
+    // 檢查是否匹配此處理器
+    fun match(input: String): Boolean
+    // 解析意圖
+    fun parse(input: String): IntentResult
+    // 下一個處理器（Chain of Responsibility）
+    var next: IntentHandler?
+}
+
+// 具體處理器鏈
+class IntentProcessorChain {
+    private val handlers = listOf(
+        StockCodeHandler(),        // 純數字代碼 "600519"
+        StockNameHandler(),        // 股票名稱 "茅台"
+        IndexHandler(),            // 指數 "上證指數"
+        StockCodeHandler(),        // 多股票 "600519 000858"
+        // HotStockHandler(),      // 熱門/漲停（可選，未實現）
+        // AiIntentHandler(),      // 需要AI解析的意圖（最後一關，可選）
+    )
+    
+    fun process(input: String): IntentResult {
+        for (handler in handlers) {
+            if (handler.match(input)) {
+                val result = handler.parse(input)
+                if (result.confidence >= 0.7f) return result
+            }
+        }
+        return IntentResult(UNKNOWN, ...)
+    }
+}
+```
+
+### 3.2 已實現的 IntentHandler
+
+#### StockCodeHandler ✅
+- 匹配正則 `(sh|sz)?\d{6}`
+- 自動加 sh/sz 前綴，支持技術分析/對比意圖識別
+- 置信度 0.85~0.95
+
+#### StockNameHandler ✅
+- 內置 28 個常見 A 股名稱映射表
+- 支持多股票匹配，識別技術分析/對比意圖
+- 置信度 0.8
+
+#### IndexHandler ✅
+- 7 個大盤指數映射（上證指數、深證指數、創業板指等）
+- 置信度 0.9
+
+### 3.3 數據源層（Repository Pattern）
+
+```kotlin
+// 統一數據模型
+data class StockRealtime(
+    val code: String,           // 股票代碼 sh600519
+    val name: String,           // 貴州茅台
+    val price: Double,          // 當前價
+    val open: Double,           // 開盤價
+    val yestClose: Double,      // 昨收
+    val high: Double,           // 最高
+    val low: Double,            // 最低
+    val volume: Long,           // 成交量(股)
+    val amount: Double,         // 成交額
+    val changePercent: Double,  // 漲跌幅 %
+    val changeAmount: Double,   // 漲跌額
+    val timestamp: Long         // 時間戳
+)
+
+// 數據源接口
+interface StockDataSource {
+    fun fetchRealtime(codes: List<String>): Map<String, StockRealtime>
+    fun isAvailable(): Boolean
+    fun priority(): Int  // 優先級，備援用
+}
+```
+
+### 3.4 數據倉儲（StockRepository ✅）
+
+```kotlin
+class StockRepository(
+    private val primarySource: StockDataSource,
+    private val fallbackSources: List<StockDataSource>,
+    private val cache: StockCache
+) {
+    fun getRealtime(codes: List<String>): Map<String, StockRealtime> {
+        // 1. 先查緩存
+        val cached = cache.get(codes)
+        val uncached = codes - cached.keys
+        
+        if (uncached.isEmpty()) return cached
+        
+        // 2. 主數據源查詢（新浪）
+        try {
+            val fresh = primarySource.fetchRealtime(uncached)
+            cache.put(fresh)
+            return cached + fresh
+        } catch (e: Exception) {
+            // 3. 主源失敗，降級到備用源（騰訊→東方財富）
+            for (fallback in fallbackSources) {
+                try {
+                    val fresh = fallback.fetchRealtime(uncached)
+                    cache.put(fresh)
+                    return cached + fresh
+                } catch (_: Exception) { }
+            }
+            // 4. 全部失敗，返回緩存數據（即使過期）
+            return cached
+        }
+    }
+}
+```
+
+### 3.5 緩存層（StockCache ✅）
+
+```kotlin
+// ✅ 已升級為智能 TTL！
+class StockCache(private val defaultTtlMs: Long = 3000) {
+    // 智能 TTL 策略（自動感知交易時段）
+    // 交易中 9:30-11:30, 13:00-15:00 → 1秒
+    // 午休 11:30-13:00 → 5秒
+    // 盤後 15:00-22:00 → 5分鐘
+    // 深夜 22:00-9:30 → 30分鐘
+    // 周末 → 1小時
+}
+```
+
+---
+
+## 4. 已實現的關鍵改進（2026-05-19 更新）
+
+根據實際開發過程中的問題和優化需求，完成了以下重要改進：
+
+### 4.1 共享 HTTP 連接池 ✅ HttpClientProvider.kt
+
+```kotlin
+object HttpClientProvider {
+    val realtimeClient: OkHttpClient    // 5s超時，連接池10個，keep-alive 60s
+    val healthCheckClient: OkHttpClient // 3s超時，快速檢測健康狀態
+    val webSocketClient: OkHttpClient   // 長連接，30s心跳（預留）
+}
+```
+
+所有數據源（新浪/騰訊/東方財富）統一使用此連接池，**避免重複創建 TCP 連接**。
+
+### 4.2 新浪 GBK 編碼處理 ✅
+
+```kotlin
+// ⚠️ 新浪返回的是 GBK/GB2312 編碼，必須用 bytes() 讀取後指定編碼解碼！
+val bodyBytes = response.body?.bytes()
+val body = String(bodyBytes, Charset.forName("GBK"))
+// 解碼失敗時自動回退到默認編碼
+```
+
+### 4.3 指數退避重試 ✅
+
+| 數據源 | 最大重試 | 延遲策略 |
+|--------|---------|----------|
+| SinaStockSource | 2次 | 500ms → 1000ms |
+| TencentStockSource | 2次 | 300ms → 600ms |
+| EastMoneyStockSource | 2次 | 300ms → 600ms |
+
+### 4.4 反爬 Headers 補充 ✅
+
+| 數據源 | 新增 Headers |
+|--------|-------------|
+| SinaStockSource | `Referer: https://finance.sina.com.cn`, `User-Agent` |
+| TencentStockSource | `User-Agent` |
+| EastMoneyStockSource | `User-Agent`, `Referer: https://quote.eastmoney.com/` |
+
+### 4.5 降級模式 ✅ RealtimeDataAccessor
+
+```
+連續失敗 3 次 → 自動進入降級模式
+    ├── 請求間隔延長 3 倍（防止被限流）
+    ├── 成功恢復後逐級退出降級
+    └── 全部源不可用 → 健康檢查 → 最高優先級源兜底
+```
+
+### 4.6 單位修正 ✅ EastMoneyStockSource
+
+- 成交量：東方財富返回單位爲「手」，已修正爲「股」（×100）
+- 成交額：東方財富返回單位爲「萬元」，已修正爲「元」（×10000）
+
+### 4.7 智能緩存 TTL ✅ StockCache
+
+| 時間段 | TTL | 說明 |
+|--------|-----|------|
+| 交易中 9:30-11:30, 13:00-15:00 | **1秒** | 極短緩存，確保實時性 |
+| 午休 11:30-13:00 | **5秒** | 中間狀態 |
+| 盤後 15:00-22:00 | **5分鐘** | 可接受延遲 |
+| 深夜-盤前 22:00-9:30 | **30分鐘** | 長期緩存 |
+| 周末/節假日 | **1小時** | 數據不會變動 |
+
+---
+
+## 5. 完整數據流程
+
+### 5.1 簡單查詢（無需 AI 解析）
+
+```
+用戶輸入: "茅台"
+    │
+    ▼
+StockIntentProcessor.process("茅台")
+    │
+    ├─ StockCodeHandler.match → false（無純數字）
+    ├─ IndexHandler.match → false
+    ├─ StockNameHandler.match("茅台") → true
+    │   └─ parse → IntentResult(QUERY_PRICE, codes=["sh600519"])
+    │      (已實現 StockNameHandler 內置映射表)
+    │
+    ▼
+StockRepository.getRealtime(["sh600519"])
+    │
+    ├─ 1. 查緩存 → 未命中 (或命中)
+    ├─ 2. 調用 SinaSource.fetchRealtime (GBK解碼+重試) → 成功
+    ├─ 3. 寫入緩存 (智能TTL)
+    └─ 4. 返回 StockRealtime
+    │
+    ▼
+StockDataFormatter.format → 格式化字符串
+    │
+    ▼
+StockContext(promptPrefix = "【實時行情】茅台: 1688.00 ▲0.14%")
+    │
+    ▼
+ChatActivity → 注入到 system prompt → 發送給 AI
+```
+
+### 5.2 實時數據流程（RealtimeDataProcessor）
+
+```
+用戶輸入 → IntentProcessor → StockService.processUserInputRealtime()
+                                    │
+                                    ▼
+                            RealtimeDataProcessor.getProcessedRealtime()
+                                    │
+                           ┌────────┴────────┐
+                           ▼                  ▼
+                    StockCache(緩存)   RealtimeDataAccessor.fetchRealtime()
+                                            │
+                               ┌─────────────┼─────────────┐
+                               ▼             ▼             ▼
+                       SinaSource     TencentSource   EastMoneySource
+                       (GBK解碼+重試)   (重試)           (重試)
+                               │
+                               ▼  (取最快返回)
+                            驗證 → 清洗 → 寫入緩存 → 格式化
+                                    │
+                                    ▼
+                                AI Prompt
+```
+
+---
+
+## 6. 格式化器設計
+
+```kotlin
+class StockDataFormatter {
+    /**
+     * 根據意圖和數據生成適合注入 prompt 的文本
+     */
+    fun format(intent: IntentResult, data: Map<String, StockRealtime>): String {
+        return when (intent.intent) {
+            StockIntent.QUERY_PRICE -> formatRealtime(intent, data)
+            StockIntent.QUERY_INDEX -> formatIndex(data)
+            StockIntent.TECHNICAL_ANALYSIS -> formatTechnicalAnalysis(intent, data)
+            StockIntent.COMPARE_STOCKS -> formatComparison(intent, data)
+            else -> ""
+        }
+    }
+}
+```
+
+---
+
+## 7. 文件組織結構（最新）
+
+```
+app/src/main/java/com/chin/stockanalysis/stock/
+├── StockService.kt                 # 核心服務門面
+├── StockContext.kt                 # 處理結果數據類
+├── StockRealtime.kt                # 統一數據模型
+│
+├── intent/                         # 意圖識別層 ✅ 已實現
+│   ├── StockIntent.kt              # 9種意圖枚舉
+│   ├── IntentResult.kt             # 意圖解析結果
+│   ├── IntentProcessorChain.kt     # 處理器鏈（3種Handler）
+│   └── handlers/
+│       ├── IntentHandler.kt        # 處理器接口
+│       ├── StockCodeHandler.kt     # 股票代碼處理 ✅
+│       ├── StockNameHandler.kt     # 股票名稱處理 ✅
+│       └── IndexHandler.kt         # 指數處理 ✅
+│
+├── data/                           # 數據訪問層
+│   ├── StockRepository.kt          # 數據倉儲 ✅ 含降級
+│   ├── StockDataSource.kt          # 數據源接口
+│   ├── StockCache.kt               # 智能TTL緩存 ✅
+│   ├── HttpClientProvider.kt       # 共享連接池 ✅ **新增**
+│   └── sources/
+│       ├── SinaStockSource.kt      # 新浪財經 (GBK解碼+重試) ✅ 改進
+│       ├── TencentStockSource.kt   # 騰訊財經 (重試) ✅ 改進
+│       └── EastMoneyStockSource.kt # 東方財富 (重試+單位修正) ✅ 改進
+│
+├── formatter/
+│   └── StockDataFormatter.kt       # 數據格式化 ✅
+│
+├── realtime/                       # 🔥 實時數據框架 **新增**
+│   ├── RealtimeConfig.kt           # 配置管理 + 3種預設模式
+│   ├── RealtimeDataAccessor.kt     # 併發請求 + 智能選源 + 降級
+│   └── RealtimeDataProcessor.kt    # 驗證 + 清洗 + 交易時段感知
+│
+└── analysis/                       # AI分析層（待實現）
+    └── AiStockAnalyzer.kt          # AI意圖解析（可選）
+```
+
+---
+
+## 8. 實施進度（更新於 2026-05-19）
+
+| 階段 | 內容 | 狀態 |
+|------|------|------|
+| **P0** | 統一數據模型 + 新浪財經數據源 + 緩存 + Repository + Formatter | ✅ 完成 |
+| **P1** | IntentProcessorChain + IndexHandler + 騰訊/東方財富備源 | ✅ 完成 |
+| **P1.5** | GBK編碼修復 + 指數退避重試 + 共享連接池 + 智能TTL + 降級模式 | ✅ **本次新增** |
+| **P2** | AiIntentHandler + AiStockAnalyzer（調用LLM解析意圖） | ⏳ 待實現 |
+| **P3** | 技術分析（歷史K線 + MACD/KDJ計算） | ⏳ 待實現 |
+| **P4** | 板塊查詢 + 熱門股票 + 財務數據 | ⏳ 待實現 |
+
+### 對照用戶需求 Checklist ✅
+
+| 優先級 | 任務 | 狀態 |
+|--------|------|------|
+| P0-必做 | ✅ 確定主數據源（新浪財經） | ✅ SinaStockSource.kt |
+| P0-必做 | ✅ 處理字符編碼（GBK→UTF-8） | ✅ SinaStockSource.kt |
+| P0-必做 | ✅ 建立統一數據模型 | ✅ StockRealtime.kt |
+| P0-必做 | ✅ 實現緩存層（智能TTL） | ✅ StockCache.kt |
+| P0-必做 | ✅ 實現數據倉儲（Repository） | ✅ StockRepository.kt |
+| P1-重要 | ✅ 實現意圖識別鏈 | ✅ IntentProcessorChain.kt + 3個Handler |
+| P1-重要 | ✅ 添加備用數據源（騰訊/東方財富） | ✅ TencentStockSource.kt + EastMoneyStockSource.kt |
+| P1.5-優化 | ✅ 共享HTTP連接池 | ✅ HttpClientProvider.kt **新增** |
+| P1.5-優化 | ✅ 指數退避重試 | ✅ 所有Source |
+| P1.5-優化 | ✅ 智能緩存TTL | ✅ StockCache.kt |
+| P1.5-優化 | ✅ 降級模式 | ✅ RealtimeDataAccessor.kt |
+| P1.5-優化 | ✅ 反爬Headers | ✅ 所有Source |
+| P1.5-優化 | ✅ 單位修正（東方財富） | ✅ EastMoneyStockSource.kt |
+| P2-後續 | ⏳ AI意圖解析 + 技術分析 | ⏳ AiStockAnalyzer.kt |
+| P2-後續 | ⏳ HotStockHandler / AiIntentHandler | ⏳ 待實現 |
+
+---
+
+## 9. 與 ChatActivity 的集成
+
+```kotlin
+// 在 ChatActivity 中
+class ChatActivity {
+    // 新增：股票服務
+    private lateinit var stockService: StockService
+    private lateinit var realtimeProcessor: RealtimeDataProcessor
+    
+    override fun onCreate(savedInstanceState: Bundle?) {
+        // ... 原有初始化
+        
+        // 一鍵創建實時數據處理器（共享連接池 + 智能選源）
+        realtimeProcessor = RealtimeConfig.createProcessor()
+        
+        // 或自定義配置
+        realtimeProcessor = RealtimeConfig.createProcessor(
+            config = RealtimeConfig.FASTEST  // 極速模式
+        )
+        
+        // 原有 StockService（同步模式）
+        val repository = StockRepository(
+            primarySource = SinaStockSource(),
+            fallbackSources = listOf(TencentStockSource(), EastMoneyStockSource()),
+            cache = StockCache()
+        )
+        stockService = StockService(
+            intentProcessor = IntentProcessorChain(),
+            repository = repository,
+            dataFormatter = StockDataFormatter()
+        )
+    }
+    
+    // 使用新的實時協程方法
+    private suspend fun getRealtimeStockData(userMessage: String): StockContext {
+        return stockService.processUserInputRealtime(userMessage, realtimeProcessor)
+    }
+}
+```
+
+---
+
+## 10. 錯誤處理策略
+
+```kotlin
+sealed class StockResult<out T> {
+    data class Success<T>(val data: T) : StockResult<T>()
+    data class StaleData<T>(val data: T, val age: Long) : StockResult<T>()  // 返回過期數據
+    data class PartialSuccess<T>(val data: T, val failed: List<String>) : StockResult<T>() // 部分成功
+    data class Error(val message: String, val cause: Throwable? = null) : StockResult<Nothing>()
+    object NotApplicable : StockResult<Nothing>() // 不包含股票意圖
+}
+```
+
+---
+
+## 11. 可擴展性
+
+### 11.1 添加新的數據源
+
+```kotlin
+// 只需實現 StockDataSource 接口
+class MyStockSource : StockDataSource {
+    override fun fetchRealtime(codes: List<String>): Map<String, StockRealtime> {
+        // 實現自己的 API 調用
+    }
+    override fun isAvailable(): Boolean = true
+    override fun priority(): Int = 2
+}
+// 然後在 RealtimeConfig.createDefaultSources() 中註冊即可
+```
+
+### 11.2 添加新的意圖
+
+```kotlin
+enum class StockIntent {
+    // ... 已有的
+    QUERY_DIVIDEND,     // 分紅信息
+    QUERY_IPO,          // IPO 信息
+    QUERY_NEWS          // 股票新聞
+}
+
+// 實現對應的 Handler
+class DividendHandler : IntentHandler {
+    override fun match(input: String): Boolean {
+        return input.contains("分紅") || input.contains("股息")
+    }
+    override fun parse(input: String): IntentResult { ... }
+}
+
+// 註冊到 IntentProcessorChain
+```
+
+---
+
+## 12. 設計模式總結
+
+| 模式 | 使用場景 | 好處 |
+|------|----------|------|
+| **Chain of Responsibility** | IntentProcessorChain | 每個 Handler 只處理自己擅長的意圖，可插拔 |
+| **Repository** | StockRepository | 統一數據訪問接口，隔離數據源變化 |
+| **Strategy** | StockDataSource | 可隨時切換/添加數據源 |
+| **Facade** | StockService | 簡化 ChatActivity 的調用 |
+| **Singleton** | HttpClientProvider | 全局共享 OkHttp 連接池 |
+| **Builder** | RealtimeConfig | 靈活配置，多種預設模式 |
+| **Decorator** | Cache 包裹 Repository | 透明添加緩存能力 |
+
+---
+
+## v5.0 更新（2026-05-27）：多股票查詢修復 + 自動刷新 + 量化策略 + 智能追問
+
+### 新增模塊
+
+| 模塊 | 路徑 | 功能 |
+|------|------|------|
+| 自動刷新 | `stock/autorefresh/` | TLL 架構（交易時段 60s 刷新，非交易時段跳過） |
+| 量化策略 | `strategy/` | 策略引擎 + 3 種內置選股策略 |
+| 智能追問 | `skill/` | FollowUpGenerator（帶來源標註的追問）+ SkillEngine |
+| 多股票修復 | `intent/handlers/` | FuzzyStockNameHandler v2.0 支持 "和/跟/與" 拆分多股票 |
+
+### 新增數據源
+- `strategy/data/StockScreener.kt`：東方財富全市場實時行情掃描器
+
+## v4.0 更新：主題/板塊查詢 + 統一查詢引擎
+
+> **更新日期**: 2026-05-21
+
+### 新增數據源
+
+#### EastMoneySectorSource（東方財富板塊成分股 API）
+
+```
+用戶輸入：「帮我分析化工前20的股票」
+    │
+    ▼
+EastMoneySectorSource.fetchByName("化工", topN=20)
+    │  ① 查 SECTOR_CODE_MAP → "化工" → sectId="BK0423"
+    │  ② GET https://push2.eastmoney.com/api/qt/clist/get?fid=f20&pn=1&pz=20&...
+    │  ③ JSON 解析 → List<SectorStock>（含 name/code/price/changePercent/marketCapBillion）
+    │  ④ 過濾：excludeKcb=688/689, excludeCyb=300/301, minCap=userPref
+    ▼
+List<SectorStock>（已排序+過濾）
+```
+
+支持板塊：化工、有色金属、醫藥、半導體、軍工、新能源、商業航天（40+行業/概念板塊）
+
+#### EastMoneyBidAskSource（東方財富五檔盤口 API）
+
+```
+用戶輸入：「含買手/賣手/低吸/尾盤等關鍵詞」
+    │
+    ▼
+EastMoneyBidAskSource.fetchBidAsk(codes)
+    │  GET https://push2.eastmoney.com/api/qt/stock/get?...
+    │  解析五檔：buyVols[5] + askVols[5]
+    │  計算買賣比 = sum(buyVols) / sum(askVols)
+    ▼
+BidAskData：{ name, code, bidAskRatio, ratingText, currentPrice }
+評級：🟢≥1.5 | 🟡1.2~1.5 | ⚪0.8~1.2 | 🔴<0.8
+```
+
+### 新增統一查詢引擎 StockQueryEngine
+
+```
+StockQueryEngine（統一調度層，無任何業務邏輯）
+    │
+    ├─ [阶段1] ThemeStockService（主題/板塊，優先級最高）
+    │    ├─ ThemeStockLibrary（方案A，內置主題庫）
+    │    │    └─ MultiSourceStockRepository.getRealtime()
+    │    └─ EastMoneySectorSource（方案B，東方財富板塊API）
+    │         └─ MultiSourceStockRepository.getRealtime()
+    │
+    ├─ [阶段2] StockService（具體股票，原有流程）
+    │    ├─ IntentProcessorChain（職責鏈意圖識別）
+    │    └─ MultiSourceStockRepository.getRealtime()
+    │
+    └─ [阶段3] 通用回答（AI 直接基於訓練知識）
+```
+
+**設計原則**：StockQueryEngine 只做調度，不重複任何已有邏輯；
+所有數據源（Sina/Tencent/EastMoney/AKShare/JoinQuants）均通過
+`MultiSourceStockRepository` 的同一實例訪問，共享緩存和連接池。

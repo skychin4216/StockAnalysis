@@ -12,6 +12,8 @@ import android.widget.LinearLayout.LayoutParams
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource
+import com.chin.stockanalysis.stock.database.StockDatabase
+import com.chin.stockanalysis.strategy.backtest.SectorDailyRecordEntity
 import kotlinx.coroutines.*
 
 /**
@@ -29,8 +31,7 @@ class SectorTabFragment : Fragment() {
     }
 
     private var refreshJob: Job? = null
-    private lateinit var grid: LinearLayout
-    private lateinit var refreshTv: TextView
+    private lateinit var grid: TableLayout
     private var sectorType: Int = 2
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -43,16 +44,8 @@ class SectorTabFragment : Fragment() {
             orientation = LinearLayout.VERTICAL
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         }
-        val hdr = LinearLayout(requireContext()).apply {
-            setPadding(16, 8, 16, 8); setBackgroundColor(Color.parseColor("#F5F6FA"))
-        }
-        refreshTv = TextView(requireContext()).apply {
-            text = "⏳加载中..."; textSize = 10f; setTextColor(Color.parseColor("#999999"))
-        }
-        hdr.addView(refreshTv)
-        root.addView(hdr)
-        grid = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(8, 4, 8, 80)
+        grid = TableLayout(requireContext()).apply {
+            isStretchAllColumns = true; setPadding(4, 2, 4, 80)
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
         }
         val sv = ScrollView(requireContext()).apply {
@@ -66,87 +59,110 @@ class SectorTabFragment : Fragment() {
 
     private fun startRefresh() {
         refreshJob = lifecycleScope.launch {
-            refreshFromCache()  // 立即从缓存读取
+            // 先检查全局缓存（MainActivity 启动时已触发 pool scheduler）
+            val immediateData = when (sectorType) {
+                1 -> EastMoneyHotSectorSource.indexSectors
+                2 -> EastMoneyHotSectorSource.industrySectors
+                3 -> EastMoneyHotSectorSource.conceptSectors
+                else -> emptyList()
+            }
+            if (immediateData.isNotEmpty()) {
+                updateGrid(immediateData)
+            } else {
+                // 等 2 秒让 pool scheduler 完成首次拉取
+                delay(2_000L)
+                if (isActive) refreshFromCache()
+            }
+            // 5 秒后再重试一次（确保数据正确）
+            delay(5_000L)
+            if (isActive) refreshFromCache()
             while (isActive) {
-                delay(10 * 60_000L)  // 每 10 分钟刷新一次
+                delay(10 * 60_000L)
                 if (isActive) refreshFromCache()
             }
         }
     }
 
     private fun refreshFromCache() {
-        var list = when (sectorType) {
+        // 1. 优先使用全局缓存
+        val live = when (sectorType) {
             1 -> EastMoneyHotSectorSource.indexSectors
             2 -> EastMoneyHotSectorSource.industrySectors
             3 -> EastMoneyHotSectorSource.conceptSectors
             else -> emptyList()
         }
-        // Fallback：如果全局缓存为空（后台调度器还没完成首次拉取），直接同步获取
-        if (list.isEmpty()) {
-            lifecycleScope.launch(Dispatchers.IO) {
-                val direct = EastMoneyHotSectorSource().fetchSectorsByTypeDirect(sectorType, 20)
-                lifecycleScope.launch(Dispatchers.Main) {
-                    refreshTv.text = "🕐${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())}"
-                    updateGrid(direct)
+        if (live.isNotEmpty()) { updateGrid(live); return }
+
+        // 2. 全局缓存为空 → 直接 API 获取
+        lifecycleScope.launch(Dispatchers.IO) {
+            val direct = EastMoneyHotSectorSource().fetchSectorsByTypeDirect(sectorType, 20)
+            if (direct.isNotEmpty()) { lifecycleScope.launch(Dispatchers.Main) { updateGrid(direct) }; return@launch }
+            // 3. API 也失败 → 历史 DB
+            loadFromHistoryOnly()
+        }
+    }
+
+    /** 从历史 sector_daily_record 表加载（不使用快照聚合，避免显示错误子板块） */
+    private suspend fun loadFromHistoryOnly() {
+        try {
+            val db = StockDatabase.getInstance(requireContext())
+            val latestDates = db.dailySnapshotDao().getAvailableDates(3)
+            if (latestDates.isNotEmpty()) {
+                val date = latestDates.first()
+                val records = db.sectorDailyRecordDao().getByDate(date)
+                if (records.isNotEmpty()) {
+                    val sectors = records.map { r: SectorDailyRecordEntity ->
+                        EastMoneyHotSectorSource.HotSector(
+                            code = r.sectorCode, name = r.sectorName,
+                            changePercent = r.changePct, sectorIndex = 0.0,
+                            hotScore = r.hotScore.toDouble(), mainNetInflow = r.mainNetInflow,
+                            compositeScore = r.compositeScore
+                        )
+                    }
+                    lifecycleScope.launch(Dispatchers.Main) { updateGrid(sectors) }
+                    return
                 }
             }
-            return
+        } catch (_: Exception) {}
+        // 历史 DB 也没有 → 显示"加载中"，等 pool scheduler 完成后会自动刷新
+        lifecycleScope.launch(Dispatchers.Main) {
+            if (grid.childCount == 0) {
+                grid.removeAllViews()
+                grid.addView(TableRow(requireContext()).apply {
+                    addView(TextView(requireContext()).apply { text = "⏳ 加载中..."; textSize = 12f; setTextColor(Color.parseColor("#AAAAAA")); setPadding(8, 16, 8, 8) })
+                })
+            }
         }
-        refreshTv.text = "🕐${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())}"
-        updateGrid(list)
     }
 
     override fun onDestroyView() { super.onDestroyView(); refreshJob?.cancel() }
 
     private fun updateGrid(sectors: List<EastMoneyHotSectorSource.HotSector>) {
         grid.removeAllViews()
-        if (sectors.isEmpty()) { grid.addView(TextView(requireContext()).apply { text="暂无数据";textSize=12f;setTextColor(Color.GRAY)});return }
-        for (s in sectors) { grid.addView(createSectorCard(s)) }
+        if (sectors.isEmpty()) {
+            val er = TableRow(requireContext()); er.addView(TextView(requireContext()).apply { text="暂无数据"; textSize=12f; setTextColor(Color.GRAY); setPadding(8,8,8,8) }); grid.addView(er)
+            return
+        }
+        // 表头
+        val hr = TableRow(requireContext()).apply { setBackgroundColor(Color.parseColor("#F0F0F5")) }
+        for (h in listOf("板块", "涨跌", "热度", "主力流入", "领涨")) hr.addView(TextView(requireContext()).apply { text=h; textSize=10f; setTextColor(Color.parseColor("#888888")); setTypeface(null, Typeface.BOLD); gravity=Gravity.CENTER; setPadding(4,6,4,6) })
+        grid.addView(hr)
+        for (s in sectors) grid.addView(createSectorRow(s))
     }
 
-    private fun createSectorCard(s: EastMoneyHotSectorSource.HotSector): LinearLayout {
+    private fun createSectorRow(s: EastMoneyHotSectorSource.HotSector): TableRow {
         val ctx = requireContext()
-        val card = LinearLayout(ctx).apply {
-            orientation=LinearLayout.HORIZONTAL; setBackgroundColor(Color.WHITE); setPadding(12,10,12,10)
-            (layoutParams as? LayoutParams)?.setMargins(0,0,0,6); elevation=2f
-            gravity=Gravity.CENTER_VERTICAL
+        val row = TableRow(ctx).apply { setBackgroundColor(Color.WHITE); setPadding(0,0,0,2)
+            setOnClickListener { val d = SectorDetailFragment.newInstance(s.name, s.code); activity?.supportFragmentManager?.beginTransaction()?.replace(android.R.id.content, d)?.addToBackStack(null)?.commit() }
         }
-        card.addView(TextView(ctx).apply{
-            text=s.name;textSize=13f;setTextColor(Color.parseColor("#222222"));setTypeface(null,Typeface.BOLD)
-            layoutParams=LayoutParams(0,LayoutParams.WRAP_CONTENT,1f)
-            maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END
-        })
+        row.addView(TextView(ctx).apply { text=s.name; textSize=12f; setTextColor(Color.parseColor("#222222")); setTypeface(null,Typeface.BOLD); maxLines=1; ellipsize=android.text.TextUtils.TruncateAt.END; setPadding(6,8,2,8) })
         val sign=if(s.changePercent>=0)"+" else ""
-        card.addView(TextView(ctx).apply{
-            text="$sign${"%.2f".format(s.changePercent)}%"
-            textSize=13f;setTypeface(null,Typeface.BOLD)
-            setTextColor(if(s.changePercent>=0) Color.parseColor("#E53935") else Color.parseColor("#43A047"))
-            layoutParams=LayoutParams(LayoutParams.WRAP_CONTENT,LayoutParams.WRAP_CONTENT).apply{marginStart=8}
-        })
-        val inflow=s.mainNetInflow
-        card.addView(TextView(ctx).apply{
-            text="🔥${"%.1f".format(s.hotScore)}  ${if(inflow>=0)"+" else ""}${"%.1f".format(inflow)}亿"
-            textSize=10f;setTextColor(if(inflow>=0)Color.parseColor("#E53935") else Color.parseColor("#43A047"))
-            layoutParams=LayoutParams(LayoutParams.WRAP_CONTENT,LayoutParams.WRAP_CONTENT).apply{marginStart=8}
-        })
-        if(s.top1StockName.isNotEmpty()){
-            card.addView(TextView(ctx).apply{
-                text=" ↳${s.top1StockName}"
-                textSize=10f;setTextColor(Color.parseColor("#888888"))
-                maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END
-                layoutParams=LayoutParams(LayoutParams.WRAP_CONTENT,LayoutParams.WRAP_CONTENT).apply{marginStart=6}
-            })
-        }
-        card.setOnClickListener {
-            val t0 = System.currentTimeMillis()
-            android.util.Log.i("SectorTab", "CLICK sector='${s.name}' code='${s.code}'")
-            val d = SectorDetailFragment.newInstance(s.name, s.code)
-            val t1 = System.currentTimeMillis()
-            android.util.Log.i("SectorTab", "newInstance done (${t1-t0}ms)")
-            activity?.supportFragmentManager?.beginTransaction()?.replace(android.R.id.content, d)?.addToBackStack(null)?.commit()
-            val t2 = System.currentTimeMillis()
-            android.util.Log.i("SectorTab", "fragment replace committed (${t2-t0}ms total)")
-        }
-        return card
+        row.addView(TextView(ctx).apply { text="$sign${"%.2f".format(s.changePercent)}%"; textSize=12f; setTypeface(null,Typeface.BOLD); setTextColor(if(s.changePercent>=0)Color.parseColor("#E53935") else Color.parseColor("#43A047")); gravity=Gravity.CENTER; setPadding(2,8,2,8) })
+        row.addView(TextView(ctx).apply { text="${"%.0f".format(s.hotScore)}"; textSize=11f; setTextColor(Color.parseColor("#E65100")); gravity=Gravity.CENTER; setPadding(2,8,2,8) })
+        val inflow=s.mainNetInflow; val isign=if(inflow>=0)"+" else ""
+        row.addView(TextView(ctx).apply { text="${isign}${"%.1f".format(inflow)}亿"; textSize=10f; setTextColor(if(inflow>=0)Color.parseColor("#E53935") else Color.parseColor("#43A047")); gravity=Gravity.CENTER; setPadding(2,8,2,8) })
+        row.addView(TextView(ctx).apply { text=if(s.top1StockName.isNotEmpty())s.top1StockName else "-"; textSize=10f; setTextColor(Color.parseColor("#888888")); maxLines=1; ellipsize=android.text.TextUtils.TruncateAt.END; gravity=Gravity.CENTER; setPadding(2,8,4,8) })
+        return row
     }
+
 }

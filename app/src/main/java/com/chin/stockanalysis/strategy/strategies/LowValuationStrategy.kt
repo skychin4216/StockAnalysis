@@ -74,9 +74,7 @@ class LowValuationStrategy(
         val changeAbs = kotlin.math.abs(stock.changePercent)
         val stableScore = when { changeAbs < 0.5 -> 30; changeAbs < 1.0 -> 25; changeAbs < 2.0 -> 20; changeAbs < 3.0 -> 15; changeAbs < 5.0 -> 10; else -> 5 }
         val liquidityScore = when { stock.amount > 500_000_000 -> 25; stock.amount > 200_000_000 -> 20; stock.amount > 100_000_000 -> 15; else -> 10 }
-        val rawStrength = (valuationScore * (w["valuation"]?.weight ?: 40) / 100.0).toInt() +
-                (stableScore * (w["stable"]?.weight ?: 30) / 100.0).toInt() +
-                (liquidityScore * (w["liquidity"]?.weight ?: 30) / 100.0).toInt()
+        val rawStrength = valuationScore + stableScore + liquidityScore
         val strength = minOf(rawStrength, 100)
         return StrategySignal(
             stockCode = stock.code, stockName = stock.name, strategyId = id, category = category,

@@ -6,6 +6,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import com.chin.stockanalysis.util.JsonUtils
 import java.util.concurrent.TimeUnit
 
 /**
@@ -100,8 +101,9 @@ class RemoteDataService(
                 return null
             }
 
-            val result = response.body?.string()
-            Log.d(tag, "getRealtime(${codes.size} codes) → ${result?.length ?: 0} chars")
+            val raw = response.body?.string()
+            val result = JsonUtils.sanitizeJsonString(raw)
+            Log.d(tag, "getRealtime(${codes.size} codes) → raw=${raw?.length ?: 0} chars, cleaned=${result?.length ?: 0} chars")
             result
         } catch (e: Exception) {
             Log.e(tag, "getRealtime failed: ${e.message}")
@@ -135,8 +137,9 @@ class RemoteDataService(
                 return null
             }
 
-            val result = response.body?.string()
-            Log.d(tag, "analyzeComplex('${query.take(30)}...') → ${result?.length ?: 0} chars")
+            val raw = response.body?.string()
+            val result = JsonUtils.sanitizeJsonString(raw)
+            Log.d(tag, "analyzeComplex('${query.take(30)}...') → raw=${raw?.length ?: 0} chars, cleaned=${result?.length ?: 0} chars")
             result
         } catch (e: Exception) {
             Log.e(tag, "analyzeComplex failed: ${e.message}")

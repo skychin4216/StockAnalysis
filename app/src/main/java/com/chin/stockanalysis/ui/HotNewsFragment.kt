@@ -1,3 +1,4 @@
+
 package com.chin.stockanalysis.ui
 
 import android.graphics.Color
@@ -14,6 +15,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.chin.stockanalysis.news.NewsFactorEntity
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource
+import com.chin.stockanalysis.stock.database.StockDataCenter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -21,7 +23,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * ## 热点新闻列表 (Fire)
+ * 热点新闻列表 v3.0 — 下拉框：当日/近10日/近100日热门 + 今日Top5板块（按热度排序）
+ * 选择后自动更新标题/副标题并刷新新闻
  */
 class HotNewsFragment : Fragment() {
 
@@ -30,8 +33,12 @@ class HotNewsFragment : Fragment() {
     private lateinit var emptyTv: TextView
     private lateinit var hotSectorTv: TextView
     private lateinit var hotSectorDropBtn: Button
-    private var selectedPreset = 0
-    private val selectedSectors = mutableSetOf<String>()
+    private lateinit var titleTv: TextView
+    private lateinit var subtitleTv: TextView
+
+    /** 当前选中项: 0=当日热门, 1=近10日, 2=近100日, 3..=具体板块 */
+    private var selectedLabel = "当日热门"
+    private var selectedSectorFilter: String? = null   // null=全部热门, "MLCC"=指定板块
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         val ctx = requireContext()
@@ -39,12 +46,20 @@ class HotNewsFragment : Fragment() {
             orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.parseColor("#F5F6FA"))
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         }
+
+        // ─── Header ───
         val header = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(16, 16, 16, 12); setBackgroundColor(Color.WHITE) }
-        header.addView(TextView(ctx).apply { text = "🔥 热点新闻"; textSize = 20f; setTextColor(Color.parseColor("#1A1A2E")); setTypeface(null, Typeface.BOLD) })
-        header.addView(TextView(ctx).apply { text = "AI 硬件优先 · 热门板块动态 · 关联 A 股"; textSize = 12f; setTextColor(Color.parseColor("#999999")); setPadding(0, 2, 0, 0) })
+        titleTv = TextView(ctx).apply {
+            text = "今日热门板块 · 关联A股"; textSize = 18f
+            setTextColor(Color.parseColor("#1A1A2E")); setTypeface(null, Typeface.BOLD); setPadding(0, 0, 0, 4)
+        }; header.addView(titleTv)
+        subtitleTv = TextView(ctx).apply {
+            text = "最新财经资讯 · 利好利空因子 · 策略参考数据"; textSize = 11f
+            setTextColor(Color.parseColor("#999999")); setPadding(0, 0, 0, 0)
+        }; header.addView(subtitleTv)
 
         val hotSectorRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, 8, 0, 0) }
-        hotSectorRow.addView(TextView(ctx).apply { text = "🏷"; textSize = 13f; setPadding(0, 0, 4, 0) })
+        hotSectorRow.addView(TextView(ctx).apply { text = "🔥"; textSize = 13f; setPadding(0, 0, 4, 0) })
         hotSectorTv = TextView(ctx).apply { text = "加载中..."; textSize = 12f; setTextColor(Color.parseColor("#E65100")); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f) }
         hotSectorRow.addView(hotSectorTv)
         hotSectorDropBtn = Button(ctx).apply {
@@ -57,6 +72,7 @@ class HotNewsFragment : Fragment() {
         hotSectorRow.addView(hotSectorDropBtn)
         header.addView(hotSectorRow); root.addView(header)
 
+        // ─── Refresh Row ───
         val refreshRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(16, 6, 16, 6); setBackgroundColor(Color.WHITE) }
         val refreshBtn = Button(ctx).apply { text = "🔄 刷新新闻"; textSize = 13f; setBackgroundColor(Color.parseColor("#1565C0")); setTextColor(Color.WHITE); setPadding(16, 8, 16, 8); setMinWidth(0); setMinimumWidth(0); setOnClickListener { loadNews(forceRefresh = true) } }
         refreshRow.addView(refreshBtn)
@@ -66,86 +82,144 @@ class HotNewsFragment : Fragment() {
         emptyTv = TextView(ctx).apply { text = "暂无热点新闻\n请先确保已导入历史数据，App 启动后会自动拉取"; textSize = 14f; setTextColor(Color.parseColor("#AAAAAA")); gravity = Gravity.CENTER; setPadding(32, 64, 32, 64); visibility = View.GONE }; root.addView(emptyTv)
         recyclerView = RecyclerView(ctx).apply { layoutManager = LinearLayoutManager(ctx); layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f); adapter = NewsAdapter(emptyList(), ::onNewsClick, ::onRelatedStocks) }; root.addView(recyclerView)
 
-        loadNews(); refreshHotSectors(); startHotSectorRefresh()
+        loadNews(); loadAndPopulateDropdown(); startHotSectorRefresh()
         return root
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density + 0.5f).toInt()
-    override fun onResume() { super.onResume(); refreshHotSectors() }
+    override fun onResume() { super.onResume(); loadAndPopulateDropdown() }
 
-    private fun refreshHotSectors() {
-        if (selectedSectors.isNotEmpty()) { hotSectorTv.text = selectedSectors.take(5).joinToString("  "); return }
-        val sectors = EastMoneyHotSectorSource.conceptSectors
-        if (sectors.isNotEmpty()) { hotSectorTv.text = sectors.take(5).joinToString("  ") { it.name }; return }
+    // ─── 加载并填充下拉框显示的热门板块 ───
+    private fun loadAndPopulateDropdown() {
         lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val db = StockDatabase.getInstance(requireContext())
-                val news = db.newsFactorDao().getAllActive(50).map { it.sector }.filter { it.isNotBlank() }.distinct().take(5)
-                if (news.isNotEmpty()) { withContext(Dispatchers.Main) { hotSectorTv.text = news.joinToString("  ") }; return@launch }
-                val latest = db.sectorDailyRecordDao().getByDate(StrategyListFragment.recentTradingDay().toString())
-                val names = if (latest.isNotEmpty()) latest.take(5).joinToString("  ") { it.sectorName } else "暂无热门板块"
-                withContext(Dispatchers.Main) { hotSectorTv.text = names }
-            } catch (_: Exception) { withContext(Dispatchers.Main) { hotSectorTv.text = "暂无热门板块" } }
+            val top5 = getTop5HotSectors()
+            withContext(Dispatchers.Main) {
+                hotSectorTv.text = if (top5.isNotEmpty()) top5.joinToString("  ") else "暂无热门板块"
+            }
         }
     }
 
-    private fun startHotSectorRefresh() { lifecycleScope.launch(Dispatchers.IO) { while (isActive) { delay(3 * 60_000L); withContext(Dispatchers.Main) { refreshHotSectors() } } } }
+    /** 获取今日Top5热门板块（按热度分数排序） */
+    private suspend fun getTop5HotSectors(): List<String> {
+        try {
+            // 优先新闻因子
+            val db = StockDatabase.getInstance(requireContext())
+            val newsSectors = db.newsFactorDao().getAllActive(50)
+                .map { it.sector }.filter { it.isNotBlank() }.distinct().take(5)
+            if (newsSectors.size >= 3) return newsSectors
+        } catch (_: Exception) {}
+        // 实时板块热度排序
+        val live = (EastMoneyHotSectorSource.conceptSectors + EastMoneyHotSectorSource.industrySectors)
+            .sortedByDescending { it.compositeScore }.map { it.name }.distinct().take(5)
+        if (live.isNotEmpty()) return live
+        // Fallback
+        return StockDataCenter.getHotSectorsByPeriod(1).take(5)
+    }
+
+    private fun startHotSectorRefresh() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            while (isActive) { delay(3 * 60_000L); val top5 = getTop5HotSectors(); withContext(Dispatchers.Main) { hotSectorTv.text = if (top5.isNotEmpty()) top5.joinToString("  ") else "暂无热门板块" } }
+        }
+    }
+
+    // ─── 下拉弹窗：当日热门/近10日/近100日 + 今日Top5板块 ───
+    private fun showSectorDropdown() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val top5 = getTop5HotSectors()
+            withContext(Dispatchers.Main) {
+                val ctx = requireContext()
+                val root = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.WHITE); setPadding(dp(4), dp(4), dp(4), dp(4)) }
+                root.addView(TextView(ctx).apply { text = "🏷 选择新闻范围"; textSize = 11f; setTextColor(Color.parseColor("#1565C0")); setTypeface(null, Typeface.BOLD); setPadding(dp(4), dp(2), dp(4), dp(6)) })
+
+                // 时间范围选项
+                val timeItems = listOf("当日热门", "近10日热门", "近100日热门")
+                for (t in timeItems) {
+                    val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(4), dp(2), dp(4), dp(2)); setBackgroundColor(if (selectedLabel == t && selectedSectorFilter == null) Color.parseColor("#FFF3E0") else Color.TRANSPARENT) }
+                    row.addView(TextView(ctx).apply { text = if (selectedLabel == t && selectedSectorFilter == null) "●" else "○"; textSize = 13f; setTextColor(Color.parseColor("#1565C0")); setPadding(0, 0, dp(8), 0) })
+                    row.addView(TextView(ctx).apply { text = t; textSize = 13f; setTextColor(Color.parseColor("#222222")) })
+                    root.addView(row)
+                }
+
+                // 分隔线 + 今日热门板块标题
+                root.addView(View(ctx).apply { layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, 1).apply { setMargins(0, dp(6), 0, dp(4)) }; setBackgroundColor(Color.parseColor("#DDDDDD")) })
+                root.addView(TextView(ctx).apply { text = "今日热门板块 (Top 5)"; textSize = 11f; setTextColor(Color.parseColor("#888888")); setTypeface(null, Typeface.BOLD); setPadding(dp(4), dp(2), dp(4), dp(4)) })
+
+                // Top5 板块选项
+                if (top5.isEmpty()) {
+                    root.addView(TextView(ctx).apply { text = "  暂无板块数据"; textSize = 11f; setTextColor(Color.parseColor("#AAAAAA")); setPadding(dp(4), dp(2), dp(4), dp(2)) })
+                } else {
+                    for ((idx, sectorName) in top5.withIndex()) {
+                        val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(4), dp(2), dp(4), dp(2)); setBackgroundColor(if (selectedSectorFilter == sectorName) Color.parseColor("#FFF3E0") else Color.TRANSPARENT) }
+                        row.addView(TextView(ctx).apply { text = if (selectedSectorFilter == sectorName) "●" else "○"; textSize = 13f; setTextColor(Color.parseColor("#E65100")); setPadding(0, 0, dp(8), 0) })
+                        row.addView(TextView(ctx).apply { text = "#${idx + 1} $sectorName"; textSize = 13f; setTextColor(Color.parseColor("#222222")) })
+                        root.addView(row)
+                    }
+                }
+
+                val popup = PopupWindow(root, dp(200), LayoutParams.WRAP_CONTENT, true).apply { setBackgroundDrawable(ColorDrawable(Color.WHITE)); elevation = 8f }
+
+                // 点击逻辑：绑定每个 row
+                var idx2 = 0
+                for (i in 0 until root.childCount) {
+                    val child = root.getChildAt(i)
+                    val tag = when {
+                        i in 1..3 -> timeItems[i - 1] to (null as String?)
+                        i >= 6 && i < 6 + top5.size -> top5[i - 6] to top5[i - 6]
+                        else -> continue
+                    }
+                    val (lbl, sectorFilter) = tag
+                    child.setOnClickListener {
+                        selectedLabel = lbl; selectedSectorFilter = sectorFilter
+                        hotSectorDropBtn.text = "$lbl ▼"
+                        updateTitleBySelection()
+                        popup.dismiss()
+                        loadNews(forceRefresh = true)
+                    }
+                }
+                popup.showAsDropDown(hotSectorDropBtn, 0, 4, Gravity.END)
+            }
+        }
+    }
+
+    /** 根据当前选项更新标题和副标题 */
+    private fun updateTitleBySelection() {
+        if (!isAdded) return
+        when {
+            selectedSectorFilter != null -> {
+                titleTv.text = "${selectedSectorFilter} 板块动态 · 关联A股"
+                subtitleTv.text = "聚焦「${selectedSectorFilter}」板块最新资讯与利好利空因子"
+            }
+            selectedLabel == "近10日热门" -> {
+                titleTv.text = "近10日热门板块 · 关联A股"
+                subtitleTv.text = "近10个交易日热度最高板块 · 利好利空因子 · 策略参考"
+            }
+            selectedLabel == "近100日热门" -> {
+                titleTv.text = "近100日热门板块 · 关联A股"
+                subtitleTv.text = "近100个交易日热度统计 · 中长期板块趋势 · 策略参考"
+            }
+            else -> {
+                titleTv.text = "今日热门板块 · 关联A股"
+                subtitleTv.text = "最新财经资讯 · 利好利空因子 · 策略参考数据"
+            }
+        }
+    }
 
     private fun loadNews(forceRefresh: Boolean = false) {
         loadingTv.text = "⏳ ${if (forceRefresh) "正在搜索最新新闻..." else "加载中..."}"; recyclerView.visibility = View.GONE; emptyTv.visibility = View.GONE
         lifecycleScope.launch {
-            if (forceRefresh) withContext(Dispatchers.IO) { com.chin.stockanalysis.news.HotSectorNewsUpdater(requireContext()).updateIfNeeded(forceRefresh = true) }
-            val news = withContext(Dispatchers.IO) { try { StockDatabase.getInstance(requireContext()).newsFactorDao().getAllActive(100) } catch (e: Exception) { emptyList() } }
+            withContext(Dispatchers.IO) {
+                com.chin.stockanalysis.news.HotSectorNewsUpdater(requireContext()).updateIfNeeded(
+                    forceRefresh = true
+                )
+            }
+            var news = withContext(Dispatchers.IO) { try { StockDatabase.getInstance(requireContext()).newsFactorDao().getAllActive(100) } catch (_: Exception) { emptyList() } }
+            // 若选了具体板块，过滤板块相关新闻
+            if (selectedSectorFilter != null) { news = news.filter { it.sector.contains(selectedSectorFilter!!, ignoreCase = true) || it.title.contains(selectedSectorFilter!!, ignoreCase = true) || it.content.contains(selectedSectorFilter!!, ignoreCase = true) } }
             withContext(Dispatchers.Main) {
-                loadingTv.text = if (news.isNotEmpty()) "共 ${news.size} 条" else "暂无新闻"; refreshHotSectors()
+                loadingTv.text = if (news.isNotEmpty()) "共 ${news.size} 条" else "暂无新闻"
                 if (news.isEmpty()) { emptyTv.visibility = View.VISIBLE; recyclerView.visibility = View.GONE } else { emptyTv.visibility = View.GONE; recyclerView.visibility = View.VISIBLE; (recyclerView.adapter as? NewsAdapter)?.update(news) }
             }
         }
-    }
-
-    // ── Combined dropdown ──
-    private fun showSectorDropdown() {
-        lifecycleScope.launch(Dispatchers.IO) {
-            val presets = listOf("当日热门", "最近交易日", "近10日", "近100日")
-            val allNames = mutableSetOf<String>()
-            val live = EastMoneyHotSectorSource.conceptSectors
-            if (live.isNotEmpty()) allNames.addAll(live.map { it.name })
-            try { val db = StockDatabase.getInstance(requireContext()); allNames.addAll(db.newsFactorDao().getAllActive(100).map { it.sector }.filter { it.isNotBlank() }); allNames.addAll(db.sectorDailyRecordDao().getRecentDays(100).map { it.sectorName }.filter { it.isNotBlank() }) } catch (_: Exception) {}
-            val sorted = allNames.filter { it.isNotEmpty() }.sorted()
-            withContext(Dispatchers.Main) {
-                val popup = buildCombinedPopup(presets, sorted)
-                hotSectorDropBtn.tag = popup; popup.showAsDropDown(hotSectorDropBtn, 0, 4, Gravity.END)
-            }
-        }
-    }
-
-    private fun buildCombinedPopup(presets: List<String>, sorted: List<String>): PopupWindow {
-        val ctx = requireContext(); val w = dp(170)
-        val root = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.WHITE); setPadding(dp(4), dp(4), dp(4), dp(4)) }
-        root.addView(TextView(ctx).apply { text = "🏷 选择板块"; textSize = 11f; setTextColor(Color.parseColor("#1565C0")); setTypeface(null, Typeface.BOLD); setPadding(dp(4), dp(2), dp(4), dp(4)) })
-        for ((i, p) in presets.withIndex()) {
-            val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(4), dp(1), dp(4), dp(1)) }
-            row.addView(TextView(ctx).apply { text = if (selectedPreset == i) "●" else "○"; textSize = 12f; setTextColor(Color.parseColor("#1565C0")); setPadding(0, 0, dp(6), 0) })
-            row.addView(TextView(ctx).apply { text = p; textSize = 12f; setTextColor(Color.parseColor("#333333")); layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f) })
-            row.setOnClickListener { selectedPreset = i; selectedSectors.clear(); hotSectorDropBtn.text = "$p ▼"; refreshHotSectors(); try { (hotSectorDropBtn.tag as? PopupWindow)?.dismiss() } catch (_: Exception) {} }
-            root.addView(row)
-        }
-        root.addView(View(ctx).apply { layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, 1).apply { setMargins(0, dp(4), 0, dp(4)) }; setBackgroundColor(Color.parseColor("#DDDDDD")) })
-        val scroll = ScrollView(ctx).apply { layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dp(180)) }
-        val list = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
-        for (name in sorted) {
-            val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(2), dp(1), dp(2), dp(1)) }
-            val cb = CheckBox(ctx).apply { isChecked = name in selectedSectors; setPadding(0, 0, dp(4), 0); setOnCheckedChangeListener { _, chk -> if (chk) selectedSectors.add(name) else selectedSectors.remove(name) } }
-            row.addView(cb); row.addView(TextView(ctx).apply { text = name; textSize = 11f; setTextColor(Color.parseColor("#333333")); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f) })
-            list.addView(row)
-        }
-        scroll.addView(list); root.addView(scroll)
-        val btnRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, 0) }
-        listOf("清除" to { selectedSectors.clear(); selectedPreset = 0; hotSectorDropBtn.text = "当日热门 ▼"; refreshHotSectors() },
-               "确定" to { hotSectorDropBtn.text = if (selectedSectors.isEmpty()) "${presets[selectedPreset]} ▼" else "✓${selectedSectors.size} ▼"; refreshHotSectors() })
-            .forEach { (lbl, act) -> btnRow.addView(TextView(ctx).apply { text = lbl; textSize = 11f; gravity = Gravity.CENTER; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#1565C0")); setPadding(0, dp(6), 0, dp(6)); layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f); setOnClickListener { act(); try { (hotSectorDropBtn.tag as? PopupWindow)?.dismiss() } catch (_: Exception) {} } }) }
-        root.addView(btnRow)
-        return PopupWindow(root, w, LayoutParams.WRAP_CONTENT, true).apply { setBackgroundDrawable(ColorDrawable(Color.WHITE)); elevation = 8f }
     }
 
     private fun onNewsClick(news: NewsFactorEntity) { HotNewsDetailFragment().apply { this.newsItem = news }.show(parentFragmentManager, "hot_news_detail") }
