@@ -1,127 +1,164 @@
-# 量化选股与模拟交易系统架构
+# 量化选股与模拟交易系统架构（详细补充）
 
-## 目标
-- 将现有“量化选股”扩展为可展示的 AI 量化策略（方案A/方案B），并在 UI 同时显示两套方案的选股结果。
-- 支持用户对方案设置星级优先级（可视化优先使用哪个方案）。
-- 将 AI 选股结果与模拟交易引擎紧密绑定：模拟交易前必须使用当天的量化选股结果；若尚未执行，则模拟交易自动调用选股并保存结果。
+本文在原架构基础上补充：代码框架（接口/伪代码）、交互逻辑、常见 bug 与修复方法，以及可选的更先进策略建议。目标是给开发团队直接可落地的设计说明。
 
----
-
-## 总体设计要点（高层）
-1. 策略模块化：把“方案A/方案B/未来AI方案”都实现为独立的策略插件（接口相同，输入为市场数据，输出为候选股票与评分与元信息）。
-2. 策略注册与元数据：每个策略注册时提供：id、name、version、类型（规则/ML/AI）、参数、输出字段、权重建议。
-3. 策略执行与缓存：策略执行结果按日期缓存到数据库（策略结果表），并记录执行元信息（参数、随机种子、模型版本），保证可复现。
-4. UI 展示：可以并列显示方案A和方案B的选股列表，并支持对某一方案打星（优先级）。也提供合并视图（按优先级/评分合并）。
-5. 模拟交易前检查：模拟交易引擎在每个交易日执行前，检查当日是否存在已执行的策略结果；若不存在则调用策略执行 API（可按用户设置执行哪些策略）并等待结果入库。
-6. 持久化与审计：所有策略执行与模拟交易订单都入库并带时间戳，便于回测、审计与再现。
+## 设计原则（精简）
+- 明确可复现性：策略执行必须记录 exec_id、参数、模型版本与随机种子。
+- 单一职责：策略只负责打分/排序，组合构建与交易由上层服务负责。
+- 可配置与可测试：星级权重、合并规则、交易成本等均从配置读取并有契约测试。
 
 ---
 
-## 组件清单
-- 数据层
-  - 原始行情/因子数据存储（历史k线、财报、预处理因子）
-  - 特征/因子仓库（Feature Store）
-  - 策略结果表（StrategyResults）
-  - 模拟交易日志（SimTrades）、账户快照（SimAccounts）
+## 接口与代码框架（伪代码）
 
-- 策略层
-  - 策略接口（Strategy Interface）：输入 DataFrame，返回 List{symbol, score, reason, meta}
-  - 方案A（示例：规则/因子打分）
-  - 方案B（示例：AI/模型评分或混合 ensemble）
-  - 策略管理服务：注册、版本管理、参数管理、手动/定时触发
+策略接口（Python 风格）：
 
-- API 层
-  - GET /strategies — 列出可用策略和元数据
-  - POST /strategies/{id}/run?date=YYYY-MM-DD — 执行策略并返回/保存结果
-  - GET /strategies/{id}/results?date=YYYY-MM-DD — 获取已保存的策略结果
-  - POST /simulations/start — 模拟交易入口（内部会保证已存在当日策略结果；否则触发策略执行）
-  - GET /ui/selections?date=YYYY-MM-DD — 返回UI层需要的多个方案的并列/合并视图
+class Strategy:
+    id: str
+    name: str
+    version: str
 
-- 模拟交易层
-  - 前置检查：确认已存在当日策略结果（按优先策略或合并逻辑选取标的）
-  - 策略-to-portfolio 转换：基于评分/优先级/用户配置（持仓上限、单股权重、仓位限制）生成下单计划
-  - 交易模拟器：支持成交模型（市价/限价/滑点/手续费）与执行延迟、分笔模拟
-  - 账务引擎：记录资金、持仓、P&L、交易成本
+    def run(self, market_df: DataFrame, params: dict) -> List[Dict]:
+        """返回 [{symbol, score, rank, reason, meta}] 并不直接写库"""
 
-- UI 层
-  - 策略面板：并列展示方案A & 方案B，表格含 symbol、评分、理由、推荐仓位
-  - 星级控制：每个策略可打星（1-5），星级影响合并时的优先权重
-  - 一键入选/全部入选：用于快速将策略结果导入模拟交易
-  - 历史与审计：查看某日策略输入参数与输出，回溯交易行为
+策略管理器（负责调用并持久化）:
 
----
+class StrategyManager:
+    def execute(strategy_id, date, params):
+        exec_id = create_exec_record(...)
+        results = Strategy.load(strategy_id).run(market_df, params)
+        validate_results(results)
+        write_strategy_results(exec_id, date, strategy_id, results)
+        return exec_id
 
-## 关键流程（伪流程）
-1. 策略执行
-   - 调用 POST /strategies/{id}/run?date=2026-06-06
-   - 策略取数据->计算->生成结果->持久化到 StrategyResults(date, strategy_id)
-   - 记录执行日志（参数、耗时、样本）
+API 示例（Flask / FastAPI 风格）：
+- POST /strategies/{id}/run?date=YYYY-MM-DD
+  - body: {params}
+  - response: {exec_id, status}
 
-2. 模拟交易启动（用户点击或自动触发）
-   - 请求 POST /simulations/start(date)
-   - 检查 StrategyResults for date
-     - 若存在：读取用户偏好（首选策略/星级权重），生成组合并进入下单模拟
-     - 若不存在：按配置自动顺序触发策略（可并行触发A和B），等待保存后继续
-   - 生成下单计划（基于评分、仓位和风控规则）
-   - 在交易模拟器中执行并保存 SimTrades & SimAccounts
+- POST /simulations/start?date=YYYY-MM-DD
+  - body: {use_strategies: ["A","B"], merge_mode: "star"}
+  - behavior: 确保当日 StrategyResults 存在；若不存在则按 use_strategies 顺序触发 execute
 
 ---
 
-## 策略 A 与 策略 B 的差异建议（示例）
-- 方案A（因子/规则）
-  - 优点：透明、可解释、稳定
-  - 用途：基准筛选、低风险偏好
-- 方案B（AI/模型/ensemble）
-  - 优点：能捕捉复杂非线性关系、灵活
-  - 风险：需管理过拟合、漂移、模型版本
-
-建议同时展示两者结果，UI 提供合并规则：
-- 优先选：若某用户给方案B更高星级，则在合并时优先保留方案B的标的或按权重混合。
-- 显示冲突：若两个方案选中但仓位冲突，展示冲突提示并提供合并建议（按评分/星级/固定规则）
-
----
-
-## 数据库 表设计（建议）
-- StrategyResults
-  - id (pk), date, strategy_id, symbol, score (float), rank, meta(json), created_at, exec_id
-- StrategyExecs
-  - exec_id (pk), strategy_id, date, params(json), model_version, duration_ms, status, created_at
-- SimTrades
-  - id, sim_id, date, symbol, side, qty, price, fee, reason, created_at
-- SimAccounts
-  - sim_id, timestamp, cash, positions(json), nav
+## UI 与交互逻辑（流程图概念）
+1. 用户打开策略面板，看到方案 A / B 的并列列表（评分、理由、建议仓位）。
+2. 用户可为每个策略设置星级（1-5）。界面保存到用户偏好 API。
+3. 当用户点击“模拟交易”或“开始回测”：
+   - 前端调用 POST /simulations/start(date)
+   - 后端检查 StrategyResults(date)
+     - 存在：按用户偏好合并并下单计划
+     - 不存在：按用户设置并行触发策略执行，等待 exec_id 完成并写入 DB，然后继续
+4. 合并规则示例（星级优先）：
+   - 每个策略 i 有星级 S_i (1-5)，规范化权重 w_i = S_i / sum(S_j)
+   - 最终 score_for_symbol = sum_i (w_i * score_i(symbol))
+   - 对于仅出现在某策略的 symbol，视为 score_i=-inf 或按最低流动性罚分
 
 ---
 
-## 接口与实现细节建议
-- 策略执行应支持异步任务队列（例如：Celery / Hangfire / Windows Task Scheduler）并返回 exec_id，供 UI 查询状态。
-- 强制结果写库：所有外部触发的策略执行都必须把结果写入 StrategyResults，避免临时内存结果造成模拟不可重复。
-- 并行执行：对 A/B 策略可并行触发以缩短等待时间。
-- 回放/回测模式：允许模拟交易复用历史的 StrategyResults（不重新执行），以保证回测一致性。
+## 策略-to-portfolio 策略签名（伪代码）
+
+def build_portfolio(strategy_results: List[ {symbol, score}], max_positions: int, exposure: float):
+    # 1. 按 score 排序，选 top N
+    # 2. 根据 score 分配权重（如 softmax 或按线性归一化）
+    # 3. 应用仓位限制与风控规则（单股上限、行业暴露）
+    return List[ {symbol, target_weight} ]
+
+下单计划转换示例：
+- target_cash_per_position = portfolio_value * target_weight
+- qty = floor(target_cash_per_position / current_price / lot_size) * lot_size
 
 ---
 
-## 风控与质量保障
-- 模型版本与种子记录，保证可复现
-- 策略输出的合理性检查：行业/流动性/停牌过滤
-- 模拟交易加入滑点/成交概率模型，逼近真实市场
-- 定期对 AI 策略做漂移检测与再训练流程
+## 常见 BUG 与修复方法
+1. 非确定性结果（复现失败）
+   - 原因：模型未设置随机种子、使用了多线程无序操作或未记录版本
+   - 修复：模型初始化强制 seed，记录软件/模型版本及依赖（requirements.txt），在 StrategyExecs 存 seed 与 git commit id
+2. 策略结果未写入 DB（模拟器拿不到数据）
+   - 原因：策略直接返回内存结果或执行中断未捕获异常
+   - 修复：策略管理器必须 try/except 捕获异常，保证写入失败状态到 StrategyExecs 并返回清晰错误；写入采用事务性操作
+3. 流动性/停牌未过滤导致买入失败模拟
+   - 原因：策略只基于信号，无流动性检查
+   - 修复：在 StrategyResults 写入前做一轮过滤：成交量、日换手率、是否停牌、最大单日成交额阈值
+4. 合并/权重冲突导致超额仓位
+   - 原因：简单相加权重未归一化
+   - 修复：在合并后进行归一化并应用 max_position 与 cash_cap 限制；记录调整日志供 UI 展示
+5. 回测与实时交易差异太大
+   - 原因：回测使用理想成交（无滑点/即时成交）
+   - 修复：模拟器加滑点模型、成交概率与分笔执行逻辑；用历史成交分布校准参数
 
 ---
 
-## 开发/运维建议
-- 日志与审计：详细记录每次策略执行与模拟下单的输入参数与输出结果
-- 自动化测试：策略接口契约测试，模拟器回归测试
-- 配置化：把星级优先级、合并规则、手续费与滑点参数放到配置中心
+## 测试与质量保证
+- 策略契约测试：给定固定 seed 与 mock 市场数据，策略输出必须与基线 JSON 匹配
+- 集成测试：从策略执行到模拟交易完整流水应写到 test DB，并断言最终账户快照
+- 回归测试：对关键策略定期跑历史回测比对关键指标（收益/最大回撤/胜率）
+- 监控：线上策略执行失败率、执行时长、输出分布漂移报警
 
 ---
 
-## 下一步（建议）
-1. 在代码仓库中添加“策略接口”与“策略结果持久化”规范文档（README）
-2. 实现一个轻量的策略管理 API（列出/触发/查询），保证模拟交易可用该 API 自动唤醒策略
-3. 在 UI 中先展示 A/B 两套结果与星级控件，后续再做合并/自动下单策略
-
+## 更先进/建议的策略（优先级）
+1. 因子+机器学习混合（推荐）
+   - 因子工程（动量、价值、质量、成长、波动率）作为特征，使用 LightGBM/XGBoost 做排序/回归
+   - 优点：可解释性 + 非线性能力
+2. 时间序列深度学习（次选）
+   - 使用 TCN/Transformer（例如 Temporal Fusion Transformer）捕捉多尺度时间依赖
+   - 要点：需要大量数据，注意过拟合和漂移
+3. 强化学习（仅做执行策略或仓位微调）
+   - 用 RL 优化执行成本/滑点或短期资金配比，不建议直接用 RL 做选股（数据效率低、难解释）
+4. 简单 ensemble（必备）
+   - 把多个模型/规则的排名做加权平均，权重按历史表现（每策略 rolling-sharpe）动态调整
 
 ---
 
-如需，我可以把上述内容整理成项目内 README（放到 repo 根），或根据你现有代码结构把同样内容映射到具体文件与接口签名（需要查看代码架构）。
+## 监控、再训练与模型管理
+- 模型注册：在 StrategyExecs 记录 model_artifact_location（路径或哈希）
+- 再训练策略：基于漂移检测（KL divergence / PSI / 带标签的回测退化）触发
+- 回滚计划：发现新模型效果变差时自动回滚到上一稳定版本并告警
+
+---
+
+## 运维建议（简短）
+- 所有关键 API 返回 exec_id 与 status，UI 通过轮询或 websockets 更新执行进度
+- 权限与审批：批量执行高风险策略需二次确认（尤其是模拟->实盘通道）
+- 审计日志：保存策略输入与输出快照（至少最近 90 天）以便合规/回溯
+
+---
+
+## 代码层注意事项（针对当前代码库）
+以下为对现有代码中关键类/行为的提炼，便于开发者快速定位实现并将文档与代码保持一致：
+
+- StrategyEngine
+  - 启用策略的持久化位置：SharedPreferences 名称 = "strategy_prefs"，键 = "enabled_strategy_ids"。
+  - 执行超时：每个策略执行被限制为 30 秒（见 runOneInternal 中的 withTimeoutOrNull(30_000L)）。
+  - 最近结果缓存：lastResults 保存在内存，仅用于 UI 快速展示，非长期持久化。回测应使用 runAllWithData。
+
+- AIPredictionEngine
+  - AI 提供商选择：优先使用 ApiConfigManager.createCurrentProvider()，若无有效 key 会回退到 assets 中配置的 "doubao" 提供商。
+  - Prompt 与解析：引导 AI 输出严格 JSON（从第一个 '{' 到最后一个 '}' 截取并解析），因此 Prompt 必须明确输出格式样例。
+  - 错误处理：predict 在异常时返回 null，并在日志中记录失败原因，调用方需处理 null 情形。
+
+- SimulationTradeEngine
+  - 核心常量（PERIOD_DAYS、MAX_STOCKS_PER_STRATEGY、FINAL_TOP3 等）直接影响回测/模拟行为，调参时请优先调整这些常量或通过 TradeSessionConfig 传入。
+  - 数据持久化点：savePeriodResultToDb() 与 saveBacktrackResult() 等函数将结果写入 Room DAO（例如 dailyPeriodResultDao）。文档中应列明对应的 DAO/Entity 名称以便审计与迁移。
+  - runTradeSession 会在每个周期执行 executeStrategy、新闻评分、板块轮动惩罚、主板过滤并保存周期结果；AI 最终选股基于 allPeriodResults 汇总。
+
+- StrategyConfig
+  - 常用构造器：fullMarket(), pool(), custom(params)。建议策略开发者在文档中举例如何通过 params 传入常用参数（如阈值、窗口大小）。
+
+- UI 与交互
+  - StrategyResultDialogFragment 暴露 onAskQuestion 回调，前端发送追问需要后端或 Chat 模块提供流式 AI 回复接口（目前为占位实现）。
+  - UI 中评分计算在对话框 UI 有轻量计算（评分 = strength * (1 + changePercent/100) / 10），如需严格一致应将该计算抽到后端或共享库。
+
+- DB / DAO（说明性）
+  - 代码中引用的 DAO：dailySnapshotDao(), dailyPeriodResultDao(), strategyTradeFittingParamDao() 等。请在 docs/股票數據架構設計.md 中补充对应 Entity 名称与必要字段。
+
+- 建议的快速修复条目（优先级）
+  1. 在 StrategyExecs 写入中强制记录随机种子、git commit id 与 model artifact 路径，保证可复现（高优先）。
+  2. 在 AIPredictionEngine 的 prompt 构建处增加最大候选数量与超长截断策略，避免超长 prompt 导致 provider 拒绝（中优先）。
+  3. 在模拟交易写库前对候选股票进行一次流动性/停牌过滤（中优先）。
+
+---
+
+如需，我可以把本文中的接口/类签名映射到你项目的具体文件（例如：在哪个包下建 Strategy 接口、StrategyManager 的实现位置、SQL 表的建表 SQL）。要我继续映射并且生成具体 PR 吗？

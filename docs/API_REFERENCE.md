@@ -511,6 +511,108 @@ lifecycleScope.launch {
 
 ---
 
+## 策略与模拟交易服务 API
+
+本节描述在后端或云服务中建议暴露的策略执行与模拟交易相关接口。移动端（App）可通过 RemoteDataService 调用这些 API 来触发策略执行、获取策略结果并启动模拟交易会话。
+
+### 1. POST /api/strategies/{strategy_id}/run
+- 描述: 触发指定策略在给定日期执行并持久化结果（非阻塞，返回 exec_id）
+- 请求:
+  - 方法: POST
+  - 路径参数: strategy_id (字符串)
+  - 查询参数: date=YYYY-MM-DD
+  - body: {
+      "params": { /* 策略自定义参数，键值对 */ },
+      "requester": "mobile|scheduler|user" // 可选
+    }
+- 响应(202 Accepted):
+  {
+    "exec_id": "uuid-xxx",
+    "status": "queued",
+    "message": "Strategy execution queued"
+  }
+- 注意: 执行结果写入数据库（StrategyResults 与 StrategyExecs），客户端可轮询 GET /api/strategies/{strategy_id}/results?date=YYYY-MM-DD 或 GET /api/executions/{exec_id}
+
+### 2. GET /api/strategies/{strategy_id}/results
+- 描述: 查询某策略在某日的执行结果（若未执行返回 404 或空数组，视实现而定）
+- 请求:
+  - 方法: GET
+  - 查询参数: date=YYYY-MM-DD
+- 响应(200 OK):
+  {
+    "strategy_id": "A",
+    "date": "2026-06-07",
+    "exec_id": "uuid-xxx",
+    "status": "completed",
+    "results": [
+      { "symbol": "sh600519", "score": 85, "rank": 1, "meta": { /* 任意JSON */ } },
+      ...
+    ]
+  }
+
+### 3. GET /api/executions/{exec_id}
+- 描述: 查询执行任务状态与元信息
+- 响应示例:
+  {
+    "exec_id": "uuid-xxx",
+    "strategy_id": "A",
+    "date": "2026-06-07",
+    "status": "running|completed|failed",
+    "started_at": "2026-06-07T01:23:45Z",
+    "finished_at": null,
+    "error": null,
+    "meta": { "model_version": "v1.2", "seed": 12345 }
+  }
+
+### 4. POST /api/simulations/start
+- 描述: 启动一次模拟交易会话，后端会确保当天策略结果存在（若不存在则按请求触发策略执行并等待完成）
+- 请求:
+  - 方法: POST
+  - body: {
+      "date": "2026-06-07",
+      "use_strategies": ["A","B"],
+      "merge_mode": "star|weight|manual",
+      "user_id": "user-123",
+      "capital": 100000.0,
+      "max_positions": 10
+    }
+- 响应(200):
+  {
+    "simulation_id": "sim-uuid-xxx",
+    "status": "started",
+    "report_url": "/api/simulations/sim-uuid-xxx/report"
+  }
+- 注意: 若策略执行被异步排队，API 可返回 202 并提供 poll URL 或 websocket 推送地址以便客户端获得完成通知。
+
+### 5. GET /api/simulations/{simulation_id}/report
+- 描述: 获取模拟交易报告与买入建议
+- 响应示例:
+  {
+    "simulation_id": "sim-uuid-xxx",
+    "trade_date": "2026-06-07",
+    "ai_picks": [ {"rank":1, "symbol":"sh600519", "composite_score":85, "reason":"..."}],
+    "buy_orders": [ {"symbol":"sh600519","qty":100,"price":1234.56}],
+    "summary": "...",
+    "backtest_metrics": { "nav": 100123.45, "max_drawdown": 0.03 }
+  }
+
+### 6. GET /api/ui/selections?date=YYYY-MM-DD
+- 描述: 返回供 UI 展示的多策略并列/合并视图（包含策略元数据、打星、以及合并后的候选股票）
+- 响应示例:
+  {
+    "date": "2026-06-07",
+    "strategies": [
+      {"id":"A","name":"方案A","star":4,"results_url": "/api/strategies/A/results?date=2026-06-07"},
+      {"id":"B","name":"方案B","star":3,"results_url": "/api/strategies/B/results?date=2026-06-07"}
+    ],
+    "merged": [ {"symbol":"sh600519","score":85,"source":["A","B"]} ]
+  }
+
+### 7. Webhook / Push
+- 建议支持 Webhook 或 websocket 推送：当 exec_id 完成或 simulation 完成时推送事件到客户端（便于 UI 实时刷新）。
+
+---
+
 ## UI组件API
 
 ### 1. ChatAdapter
