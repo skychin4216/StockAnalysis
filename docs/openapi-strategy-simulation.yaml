@@ -1,0 +1,232 @@
+openapi: 3.0.3
+info:
+  title: Strategy & Simulation API
+  version: 1.0.0
+  description: OpenAPI fragment for strategy execution and simulated trading endpoints used by the mobile app.
+servers:
+  - url: https://api.example.com
+paths:
+  /api/strategies/{strategy_id}/run:
+    post:
+      summary: Run a strategy for a date
+      parameters:
+        - name: strategy_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                params:
+                  type: object
+                  additionalProperties: true
+                requester:
+                  type: string
+      responses:
+        '202':
+          description: Queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exec_id:
+                    type: string
+                  status:
+                    type: string
+                  message:
+                    type: string
+  /api/strategies/{strategy_id}/results:
+    get:
+      summary: Get strategy results for a date
+      parameters:
+        - name: strategy_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  strategy_id:
+                    type: string
+                  date:
+                    type: string
+                    format: date
+                  exec_id:
+                    type: string
+                  status:
+                    type: string
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        symbol:
+                          type: string
+                        score:
+                          type: number
+                        rank:
+                          type: integer
+                        meta:
+                          type: object
+  /api/executions/{exec_id}:
+    get:
+      summary: Query execution status
+      parameters:
+        - name: exec_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Execution status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exec_id:
+                    type: string
+                  strategy_id:
+                    type: string
+                  date:
+                    type: string
+                  status:
+                    type: string
+                  meta:
+                    type: object
+  /api/simulations/start:
+    post:
+      summary: Start a simulation session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                date:
+                  type: string
+                  format: date
+                use_strategies:
+                  type: array
+                  items:
+                    type: string
+                merge_mode:
+                  type: string
+                user_id:
+                  type: string
+                capital:
+                  type: number
+                max_positions:
+                  type: integer
+      responses:
+        '200':
+          description: Simulation started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  simulation_id:
+                    type: string
+                  status:
+                    type: string
+                  report_url:
+                    type: string
+  /api/simulations/{simulation_id}/report:
+    get:
+      summary: Get simulation report
+      parameters:
+        - name: simulation_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Simulation report
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  simulation_id:
+                    type: string
+                  trade_date:
+                    type: string
+                  ai_picks:
+                    type: array
+                    items:
+                      type: object
+                  buy_orders:
+                    type: array
+                    items:
+                      type: object
+                  summary:
+                    type: string
+  /api/ui/selections:
+    get:
+      summary: UI selections and merged candidates
+      parameters:
+        - name: date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: UI selections
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  date:
+                    type: string
+                  strategies:
+                    type: array
+                    items:
+                      type: object
+                  merged:
+                    type: array
+                    items:
+                      type: object
+components:
+  schemas:
+    StrategyResultItem:
+      type: object
+      properties:
+        symbol:
+          type: string
+        score:
+          type: number
+        rank:
+          type: integer
+        meta:
+          type: object
