@@ -78,7 +78,10 @@ class DataCompletenessChecker(private val db: StockDatabase) {
         // 1. 查 DB
         try {
             val existing = db.sectorStockDao().getSectorNamesByStockCode(stockCode)
-            if (existing.isNotEmpty()) return@withContext existing.first()
+            if (existing.isNotEmpty()) {
+                val sector = existing.first()
+                if (sector != "null" && !sector.contains("null", ignoreCase = true)) return@withContext sector
+            }
         } catch (_: Exception) { /* DB 查询失败继续 */ }
 
         // 2. AI 判断
@@ -121,7 +124,10 @@ class DataCompletenessChecker(private val db: StockDatabase) {
     suspend fun ensureSectorFast(stockCode: String, stockName: String): String = withContext(Dispatchers.IO) {
         try {
             val existing = db.sectorStockDao().getSectorNamesByStockCode(stockCode)
-            if (existing.isNotEmpty() && existing.first() != "null") return@withContext existing.first()
+            if (existing.isNotEmpty()) {
+                val sector = existing.first()
+                if (sector != "null" && !sector.contains("null", ignoreCase = true)) return@withContext sector
+            }
         } catch (_: Exception) { }
         val fallback = hardcodedSector(stockName)
         if (fallback != "-") {
@@ -143,8 +149,8 @@ class DataCompletenessChecker(private val db: StockDatabase) {
                 systemPrompt = "你是A股股票分析师。仅输出股票所属的A股板块名称(5字以内)。例如: 输入\"宁德时代\" → 输出\"电池\"。输入\"$stockName\" →",
                 onSuccess = {},
                 onComplete = { full ->
-                    val result = full.trim().take(8).replace("\"", "")
-                    cont.resume(if (result.isBlank() || result == "null") null else result)
+                    val result = full.trim().take(8).replace("\"", "").replace("null", "").trim()
+                    cont.resume(if (result.isBlank()) null else result)
                 },
                 onError = { cont.resume(null) }
             )

@@ -35,7 +35,7 @@ class TailLowPickStrategy(
 ) : Strategy {
 
     override val id = "tail_low_pick"
-    override var name = "超短线股票筛选逻辑"
+    override var name = "超短线筛选逻辑"
     override var description = "尾盘14:30-15:00低吸：强制回踩企稳过滤，尾盘资金≥30%，7维打分(主线25+景气10+舆情5+技术20+资金15+股性10+量能10)"
     override val category = StrategyCategory.CUSTOM
     override val source = StrategySource.USER_CUSTOM

@@ -288,9 +288,15 @@ class ChatTabFragment : Fragment() {
 
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                // 1. 热门板块 Top3（静态缓存，无网络请求）
-                val hotSectors = com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.conceptSectors
+                // 1. 热门板块 Top3（优先用全局缓存，缓存空时直接网络请求兜底）
+                var hotSectors = com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.conceptSectors
                     .sortedByDescending { it.changePercent }.take(3)
+                if (hotSectors.isEmpty()) {
+                    // 缓存未就绪，直接网络请求兜底
+                    val source = com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource()
+                    hotSectors = source.fetchSectorsByTypeDirect(type = 3, topN = 3)
+                        .sortedByDescending { it.changePercent }.take(3)
+                }
                 val sectorLines = if (hotSectors.isNotEmpty()) {
                     hotSectors.withIndex().joinToString("\n") { (i, s) ->
                         val emoji = if (s.changePercent > 0) "📈" else "📉"
@@ -313,7 +319,7 @@ class ChatTabFragment : Fragment() {
                     top5.joinToString("\n") { snap ->
                         val emoji = if (snap.changePct > 0) "📈" else "📉"
                         val sign = if (snap.changePct > 0) "+" else ""
-                        val sector = sectorCache[snap.code] ?: "-"
+                        val sector = (sectorCache[snap.code] ?: "-").replace("null", "")
                         "$emoji ${snap.name} $sign${"%.2f".format(snap.changePct)}%  $sector"
                     }
                 } else "暂无交易日数据"

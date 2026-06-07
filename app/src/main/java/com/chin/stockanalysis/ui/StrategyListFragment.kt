@@ -96,6 +96,7 @@ class StrategyListFragment : Fragment() {
             registerStrategy(TurnoverFilterStrategy(screener!!))
             registerStrategy(EarlyMorningChaseStrategy(screener!!))
             registerStrategy(TailLowPickStrategy(screener!!))
+            registerStrategy(AIPredictionStrategy(requireContext().applicationContext))
         }
         strategyCount = engine?.getStrategies()?.size ?: 7
         lifecycleScope.launch(Dispatchers.IO) {
@@ -176,7 +177,6 @@ class StrategyListFragment : Fragment() {
 
         val row2 = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(8,4,8,4); setBackgroundColor(Color.WHITE) }
         scanBtn = Button(requireContext()).apply { text = "执行策略"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#E65100")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,48,1.3f).apply { marginEnd = 3 }; setOnClickListener { runSelectedStrategies() } }; row2.addView(scanBtn)
-        val aiQuantBtn = Button(requireContext()).apply { text = "🤖AI量化选股"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#2266FF")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,48,1.5f).apply { marginEnd = 3 }; setOnClickListener { runAIPredict() } }; row2.addView(aiQuantBtn)
         tuneBtn = Button(requireContext()).apply { text = "调优(90%)"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#EF6C00")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,48,1.3f).apply { marginEnd = 3 }; setOnClickListener { runSelfTune() } }; row2.addView(tuneBtn)
         val importBtn = Button(requireContext()).apply { text = "导入"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#2E7D32")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,48,1.2f).apply { marginEnd = 3 }; setOnClickListener { importHistoricalData() } }; row2.addView(importBtn)
         val addCustomBtn = Button(requireContext()).apply { text = "+策略"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#1565C0")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,48,1.0f); setOnClickListener { showAddDialog() } }; row2.addView(addCustomBtn)
@@ -388,8 +388,23 @@ class StrategyListFragment : Fragment() {
             val yc = if (snap.changePct != 0.0 && snap.close != 0.0) snap.close / (1.0 + snap.changePct / 100.0) else snap.close
             com.chin.stockanalysis.stock.StockRealtime(code = snap.code, name = dn, price = snap.close, open = snap.open, yestClose = yc, high = snap.high, low = snap.low, volume = snap.volume, amount = snap.amount, changePercent = snap.changePct, changeAmount = snap.close * snap.changePct / 100, timestamp = System.currentTimeMillis())
         }
-        val results = mutableListOf<ScreeningResult>()
-        for (s in eng.getStrategies()) { if (!eng.isEnabled(s.id)) continue; try { s.screenWithData(stockList).getOrNull()?.let { results.add(it) } } catch (e: Exception) { Log.w("SLF", "策略 ${s.id} 异常: ${e.message}") } }
+        val strategies = eng.getStrategies()
+        val nonAiResults = mutableListOf<ScreeningResult>()
+        var aiResult: ScreeningResult? = null
+        // 先执行非AI策略
+        for (s in strategies) {
+            if (!eng.isEnabled(s.id)) continue
+            if (s.id == "ai_prediction") continue  // AI策略稍后执行
+            try { s.screenWithData(stockList).getOrNull()?.let { nonAiResults.add(it) } } catch (e: Exception) { Log.w("SLF", "策略 ${s.id} 异常: ${e.message}") }
+        }
+        // 执行AI策略（注入其他策略结果）
+        val aiStrategy = strategies.find { it.id == "ai_prediction" }
+        if (aiStrategy != null && eng.isEnabled("ai_prediction") && aiStrategy is AIPredictionStrategy) {
+            aiStrategy.strategyResults = nonAiResults.toList()
+            aiStrategy.targetDate = selectedDate
+            try { aiResult = aiStrategy.screenWithData(stockList).getOrNull() } catch (e: Exception) { Log.w("SLF", "AI预测异常: ${e.message}") }
+        }
+        val results = (nonAiResults + listOfNotNull(aiResult)).toMutableList()
         // 更新缓存
         cachedResults = results
         lastExecTimeMs = System.currentTimeMillis()
@@ -444,8 +459,23 @@ class StrategyListFragment : Fragment() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val rts = screener?.scanFullMarket() ?: emptyList()
-                val results = mutableListOf<ScreeningResult>()
-                if (rts.isNotEmpty()) { for (s in eng.getStrategies()) { if (!eng.isEnabled(s.id)) continue; try { s.screenWithData(rts).getOrNull()?.let { results.add(it) } } catch (e: Exception) { Log.w("SLF", "实时 ${s.id}: ${e.message}") } } }
+                val strategies = eng.getStrategies()
+                val nonAiResults = mutableListOf<ScreeningResult>()
+                var aiResult: ScreeningResult? = null
+                if (rts.isNotEmpty()) {
+                    for (s in strategies) {
+                        if (!eng.isEnabled(s.id)) continue
+                        if (s.id == "ai_prediction") continue
+                        try { s.screenWithData(rts).getOrNull()?.let { nonAiResults.add(it) } } catch (e: Exception) { Log.w("SLF", "实时 ${s.id}: ${e.message}") }
+                    }
+                    val aiStrategy = strategies.find { it.id == "ai_prediction" }
+                    if (aiStrategy != null && eng.isEnabled("ai_prediction") && aiStrategy is AIPredictionStrategy) {
+                        aiStrategy.strategyResults = nonAiResults.toList()
+                        aiStrategy.targetDate = selectedDate
+                        try { aiResult = aiStrategy.screenWithData(rts).getOrNull() } catch (e: Exception) { Log.w("SLF", "AI预测实时异常: ${e.message}") }
+                    }
+                }
+                val results = (nonAiResults + listOfNotNull(aiResult)).toMutableList()
                 // 更新缓存
                 cachedResults = results.takeIf { it.isNotEmpty() }
                 lastExecTimeMs = System.currentTimeMillis()
