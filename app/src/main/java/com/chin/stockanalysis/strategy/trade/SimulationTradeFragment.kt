@@ -84,17 +84,8 @@ class SimulationTradeFragment : Fragment() {
 
     private fun initEngine() {
         val ctx = requireContext().applicationContext
-        val repo = StockDataSourceFactory.createDefaultRepository(ctx)
-        screener = StockScreener(repo)
-        engine = StrategyEngine(ctx, screener!!).apply {
-            registerStrategy(MovingAverageStrategy(screener!!))
-            registerStrategy(VolumeBreakStrategy(screener!!))
-            registerStrategy(LowValuationStrategy(screener!!))
-            registerStrategy(GapUpMomentumStrategy(screener!!))
-            registerStrategy(TurnoverFilterStrategy(screener!!))
-            registerStrategy(com.chin.stockanalysis.strategy.strategies.EarlyMorningChaseStrategy(screener!!))
-            registerStrategy(TailLowPickStrategy(screener!!))
-        }
+        com.chin.stockanalysis.strategy.StrategyEngineHolder.init(ctx)
+        engine = com.chin.stockanalysis.strategy.StrategyEngineHolder.get()
         tradeEngine = SimulationTradeEngine(ctx)
     }
 
@@ -260,7 +251,7 @@ class SimulationTradeFragment : Fragment() {
         row.addView(executeBtn)
 
         fittingBtn = Button(requireContext()).apply {
-            text = "🔧 拟合"
+            text = "🔧 调优(90%)"
             textSize = 11f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#EF6C00"))
@@ -268,7 +259,7 @@ class SimulationTradeFragment : Fragment() {
             setMinWidth(0)
             setMinimumWidth(0)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 4 }
-            setOnClickListener { showFittingParams() }
+            setOnClickListener { showFittingParams() }  // 显示拟合历史数据
         }
         row.addView(fittingBtn)
 
@@ -325,7 +316,7 @@ class SimulationTradeFragment : Fragment() {
                     tradeDate = browsingDate.format(DATE_FMT),
                     periods = selectedPeriods.toList().sorted(),
                     onlyMainBoard = mainBoardSwitch.isChecked,
-                    maxFitRounds = 200 // 为了效率先设为200轮
+                    maxFitRounds = 20 // 快速拟合
                 )
                 val strategies = eng.getStrategies().filter { eng.isEnabled(it.id) }
 
@@ -362,155 +353,128 @@ class SimulationTradeFragment : Fragment() {
 
     private fun showTradeReport(report: SimulationTradeEngine.TradeSessionReport) {
         resultsContainer.removeAllViews()
+        val PERIOD_LABELS = mapOf(1 to "当日", 3 to "近3日", 10 to "近10日", 30 to "近30日", 50 to "近50日", 100 to "近100日")
 
-        // 添加报告内容（可滚动）
-        val scrollView = ScrollView(requireContext())
-        val content = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(8, 8, 8, 8)
+        val sv = ScrollView(requireContext())
+        val c = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL; setPadding(8, 8, 8, 8) }
+
+        // 标题行
+        c.addView(TextView(requireContext()).apply {
+            text = "📊 模拟交易报告  ${report.config.tradeDate}"
+            textSize = 15f; setTextColor(Color.parseColor("#1A1A2E")); setTypeface(null, Typeface.BOLD)
+            setPadding(0, 8, 0, 8)
+        })
+
+        // 表格: 策略|周期|精选3只|买入价|卖出价|收益
+        val table = TableLayout(requireContext()).apply { isStretchAllColumns = true }
+        val hr = TableRow(requireContext())
+        for (h in listOf("策略", "周期", "精选3只", "买入价", "卖出价", "收益")) {
+            hr.addView(TextView(requireContext()).apply {
+                text = h; textSize = 9f; setTextColor(Color.parseColor("#999999"))
+                setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER; setPadding(2, 4, 2, 4)
+            })
         }
+        table.addView(hr)
 
-        // 摘要
-        content.addView(TextView(requireContext()).apply {
-            text = report.summary
-            textSize = 10f
-            setTextColor(Color.parseColor("#333333"))
-            setLineSpacing(2f, 1.1f)
-            setTypeface(Typeface.MONOSPACE)
+        // 显示所有启用的策略 × 所有周期（含无信号的结果）
+        val resultMap = report.periodResults.groupBy { it.strategyId to it.periodDays }
+        val enabledStrategies = engine?.getStrategies()?.filter { engine!!.isEnabled(it.id) } ?: emptyList()
+        for (strategy in enabledStrategies) {
+            for (period in report.config.periods) {
+                val pr = resultMap[strategy.id to period]?.firstOrNull()
+                val name = strategy.name.take(8)
+                val periodLabel = PERIOD_LABELS[period] ?: "${period}日"
+                val hasResults = pr != null && pr.finalTop3.isNotEmpty()
+                val top3Text = if (hasResults) {
+                    pr!!.finalTop3.joinToString("\n") { "${it.stockName}(${it.stockCode.takeLast(6)}) ${"%.1f".format(it.strength)}%" }
+                } else "⚠ 无信号"
+                val row = TableRow(requireContext())
+                if (hasResults && pr != null) { row.setOnClickListener { showDetailDialog(report, pr!!) } }
+
+                row.addView(TextView(requireContext()).apply {
+                    text = name; textSize = 10f; setTextColor(Color.parseColor("#222222"))
+                    setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER_VERTICAL; setPadding(1, 4, 1, 4)
+                })
+                row.addView(TextView(requireContext()).apply {
+                    text = periodLabel; textSize = 10f
+                    setTextColor(Color.parseColor("#333333")); gravity = Gravity.CENTER; setPadding(1, 4, 1, 4)
+                })
+                row.addView(TextView(requireContext()).apply {
+                    text = top3Text; textSize = 8f; setTextColor(Color.parseColor("#666666"))
+                    setLineSpacing(1.5f, 1f); setPadding(1, 4, 1, 4)
+                })
+                row.addView(TextView(requireContext()).apply {
+                    text = "—"; textSize = 10f; setTextColor(Color.parseColor("#999999"))
+                    gravity = Gravity.CENTER; setPadding(1, 4, 1, 4)
+                })
+                row.addView(TextView(requireContext()).apply {
+                    text = "—"; textSize = 10f; setTextColor(Color.parseColor("#999999"))
+                    gravity = Gravity.CENTER; setPadding(1, 4, 1, 4)
+                })
+                row.addView(TextView(requireContext()).apply {
+                    text = "回溯后"; textSize = 9f; setTextColor(Color.parseColor("#1565C0"))
+                    gravity = Gravity.CENTER; setPadding(1, 4, 1, 4)
+                })
+                table.addView(row)
+            }
+        }
+        c.addView(table)
+
+        // 统计摘要
+        val totalSignals = report.periodResults.sumOf { it.rawStockSignals.size }
+        val totalTop3 = report.periodResults.sumOf { it.finalTop3.size }
+        c.addView(TextView(requireContext()).apply {
+            text = "\n📋 执行${report.periodResults.map { it.strategyId }.distinct().size}个策略/${report.periodResults.size}个周期结果，原始信号${totalSignals}只，精选${totalTop3}只"
+            textSize = 10f; setTextColor(Color.parseColor("#999999")); setPadding(0, 8, 0, 4)
         })
 
         // AI精选
         if (report.aiTop3.isNotEmpty()) {
-            content.addView(TextView(requireContext()).apply {
-                text = "\n🤖 AI精选 Top3"
-                textSize = 15f
-                setTextColor(Color.parseColor("#1565C0"))
-                setTypeface(null, Typeface.BOLD)
-                setPadding(0, 12, 0, 8)
+            c.addView(View(requireContext()).apply {
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1).apply { topMargin = 8; bottomMargin = 4 }
+                setBackgroundColor(Color.parseColor("#DDDDDD"))
             })
-
+            c.addView(TextView(requireContext()).apply {
+                text = "🤖 AI精选 Top3"; textSize = 14f; setTextColor(Color.parseColor("#1565C0"))
+                setTypeface(null, Typeface.BOLD); setPadding(0, 8, 0, 6)
+            })
             for (pick in report.aiTop3) {
-                val pickCard = LinearLayout(requireContext()).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(12, 8, 12, 8)
-                    setBackgroundColor(Color.WHITE)
-                    layoutParams = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    ).apply { bottomMargin = 6 }
-                    setOnClickListener {
-                        // 跳转到股票详情
-                        val detail = com.chin.stockanalysis.ui.StockDetailFragment.newInstance(
-                            pick.stockCode, pick.stockName, 0.0, 0.0, ""
-                        )
-                        activity?.supportFragmentManager?.beginTransaction()
-                            ?.replace(android.R.id.content, detail)
-                            ?.addToBackStack(null)
-                            ?.commit()
-                    }
-                }
-
-                pickCard.addView(TextView(requireContext()).apply {
-                    text = "#${pick.rank} ${pick.stockName} (${pick.stockCode.takeLast(6)})"
-                    textSize = 14f
-                    setTextColor(Color.parseColor("#1A1A2E"))
-                    setTypeface(null, Typeface.BOLD)
+                val scoreColor = when { pick.compositeScore >= 75 -> "#E65100"; pick.compositeScore >= 60 -> "#2E7D32"; else -> "#666666" }
+                c.addView(TextView(requireContext()).apply {
+                    text = "#${pick.rank} ${pick.stockName}(${pick.stockCode.takeLast(6)}) 评分:${pick.compositeScore} 概率:${pick.upProbability}% ${pick.actionSuggestion}"
+                    textSize = 11f; setTextColor(Color.parseColor(scoreColor)); setPadding(0, 2, 0, 2)
                 })
-
-                val scoreColor = when {
-                    pick.compositeScore >= 75 -> Color.parseColor("#E65100")
-                    pick.compositeScore >= 60 -> Color.parseColor("#2E7D32")
-                    else -> Color.parseColor("#666666")
-                }
-
-                pickCard.addView(TextView(requireContext()).apply {
-                    text = "综合评分: ${pick.compositeScore}% | 上涨概率: ${pick.upProbability}% | 建议: ${pick.actionSuggestion}"
-                    textSize = 12f
-                    setTextColor(scoreColor)
-                    setPadding(0, 4, 0, 2)
+                c.addView(TextView(requireContext()).apply {
+                    text = "  ${pick.reason.take(100)}"; textSize = 9f
+                    setTextColor(Color.parseColor("#999999")); setPadding(8, 0, 0, 4)
                 })
-
-                pickCard.addView(TextView(requireContext()).apply {
-                    text = "理由: ${pick.reason.take(150)}"
-                    textSize = 11f
-                    setTextColor(Color.parseColor("#666666"))
-                })
-
-                content.addView(pickCard)
             }
         }
 
-        // 买入建议
-        if (report.buyOrders.isNotEmpty()) {
-            content.addView(TextView(requireContext()).apply {
-                text = "\n📝 买入建议"
-                textSize = 15f
-                setTextColor(Color.parseColor("#E65100"))
-                setTypeface(null, Typeface.BOLD)
-                setPadding(0, 12, 0, 8)
-            })
+        sv.addView(c)
+        resultsContainer.addView(sv)
+    }
 
-            for (order in report.buyOrders) {
-                val orderCard = LinearLayout(requireContext()).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(12, 8, 12, 8)
-                    setBackgroundColor(Color.WHITE)
-                    layoutParams = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    ).apply { bottomMargin = 4 }
-                }
-
-                orderCard.addView(TextView(requireContext()).apply {
-                    text = order.stockName
-                    textSize = 13f
-                    setTextColor(Color.parseColor("#1A1A2E"))
-                    setTypeface(null, Typeface.BOLD)
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                })
-
-                orderCard.addView(TextView(requireContext()).apply {
-                    text = "¥${"%.2f".format(order.buyPrice)}"
-                    textSize = 13f
-                    setTextColor(Color.parseColor("#E53935"))
-                    setTypeface(null, Typeface.BOLD)
-                    setPadding(8, 0, 8, 0)
-                })
-
-                orderCard.addView(TextView(requireContext()).apply {
-                    text = "x${order.quantity}"
-                    textSize = 11f
-                    setTextColor(Color.parseColor("#666666"))
-                })
-
-                content.addView(orderCard)
-
-                // 保存交易订单到数据库
-                lifecycleScope.launch(Dispatchers.IO) {
-                    try {
-                        val db = StockDatabase.getInstance(requireContext())
-                        val entity = StrategyTradeOrderEntity(
-                            strategyId = order.strategyId,
-                            stockCode = order.stockCode,
-                            stockName = order.stockName,
-                            tradeDate = order.tradeDate,
-                            buyPrice = order.buyPrice,
-                            buyTime = order.buyTime,
-                            quantity = order.quantity,
-                            orderType = order.orderType,
-                            status = "BUYING",
-                            reason = order.reason,
-                            scoreAtBuy = order.scoreAtBuy
-                        )
-                        db.strategyTradeOrderDao().insert(entity)
-                    } catch (_: Exception) {}
-                }
+    private fun showDetailDialog(report: SimulationTradeEngine.TradeSessionReport, pr: SimulationTradeEngine.StrategyPeriodResult) {
+        val s = StringBuilder()
+        s.appendLine("【${pr.strategyName}】${report.config.tradeDate}")
+        s.appendLine("周期: ${pr.periodDays}日  新闻力度: ${pr.newsStrengthScore}  轮动惩罚: ${pr.rotationPenalty}")
+        s.appendLine()
+        if (pr.finalTop3.isNotEmpty()) {
+            s.appendLine("🔥 精选Top3:")
+            for ((i, sig) in pr.finalTop3.withIndex()) {
+                s.appendLine("  ${i+1}. ${sig.stockName}(${sig.stockCode.takeLast(6)}) 强度:${sig.strength}%")
+                s.appendLine("     ${sig.reason.take(80)}")
             }
         }
-
-        scrollView.addView(content)
-        resultsContainer.addView(scrollView)
+        if (pr.filteredStocks.isNotEmpty()) {
+            s.appendLine()
+            s.appendLine("🚫 被过滤(${pr.filteredStocks.size}只):")
+            for (f in pr.filteredStocks.take(5)) {
+                s.appendLine("  ${f.stockName}: ${f.reason}")
+            }
+        }
+        showDialog(pr.strategyName, s.toString())
     }
 
     // ═══════════════════════════════════════

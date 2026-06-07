@@ -433,50 +433,73 @@ class SimulationTradeEngine(private val context: Context) {
 
         val allPeriodResults = mutableListOf<StrategyPeriodResult>()
 
-        // 对每个策略
-        for (strategy in strategies) {
-            Log.i(TAG, "策略: ${strategy.name} (${strategy.id})")
+        // 对每个周期 (period-first loop, AI策略每周期在非AI策略之后执行)
+        for (period in config.periods) {
+            val periodData = getPeriodData(period, config.tradeDate)
+            if (periodData.isEmpty()) continue
 
-            // 对每个周期
-            for (period in config.periods) {
-                val periodData = getPeriodData(period, config.tradeDate)
-                if (periodData.isEmpty()) continue
+            // 本周期非AI策略的ScreeningResult（供AI策略注入）
+            val periodResults = mutableListOf<com.chin.stockanalysis.strategy.models.ScreeningResult>()
 
-                // 1. 执行策略
+            // 先执行所有非AI策略
+            for (strategy in strategies) {
+                if (strategy.id == "ai_prediction") continue
+                Log.d(TAG, "策略: ${strategy.name} [${period}日]")
+
                 val rawSignals = executeStrategy(strategy, stockList, period) ?: continue
                 if (rawSignals.isEmpty()) continue
+                Log.d(TAG, "  原始信号${rawSignals.size}只")
 
-                Log.d(TAG, "  周期${period}日: 原始信号${rawSignals.size}只")
-
-                // 2. 新闻力度评分
                 val newsScore = calculateNewsStrength(rawSignals, config.tradeDate)
-
-                // 3. 板块轮动惩罚
                 val rotationPenaltyScore = calculateRotationPenalty(rawSignals, config.tradeDate)
-
-                // 4. 主板过滤
                 val (filtered, filteredInfo) = filterByMainBoard(rawSignals, config.onlyMainBoard)
-
-                // 5. 最终Top3
                 val top3 = selectTop3(filtered, newsScore, rotationPenaltyScore, config.tradeDate)
 
-                allPeriodResults.add(StrategyPeriodResult(
-                    strategyId = strategy.id,
-                    strategyName = strategy.name,
-                    periodDays = period,
-                    tradeDate = config.tradeDate,
-                    rawStockSignals = rawSignals.take(MAX_STOCKS_PER_STRATEGY),
-                    newsStrengthScore = newsScore,
-                    rotationPenalty = rotationPenaltyScore,
-                    afterMainBoardFilter = filtered.take(MAX_STOCKS_PER_STRATEGY),
-                    filteredStocks = filteredInfo.take(20),
-                    finalTop3 = top3
+                // 构建ScreeningResult供AI策略使用
+                periodResults.add(com.chin.stockanalysis.strategy.models.ScreeningResult(
+                    strategyId = strategy.id, strategyName = strategy.name,
+                    category = strategy.category, signals = rawSignals,
+                    totalScanned = rawSignals.size, scanTimeMs = 0
                 ))
 
-                // 保存结果到数据库
+                allPeriodResults.add(StrategyPeriodResult(
+                    strategyId = strategy.id, strategyName = strategy.name,
+                    periodDays = period, tradeDate = config.tradeDate,
+                    rawStockSignals = rawSignals.take(MAX_STOCKS_PER_STRATEGY),
+                    newsStrengthScore = newsScore, rotationPenalty = rotationPenaltyScore,
+                    afterMainBoardFilter = filtered.take(MAX_STOCKS_PER_STRATEGY),
+                    filteredStocks = filteredInfo.take(20), finalTop3 = top3
+                ))
+
                 savePeriodResultToDb(strategy.id, strategy.name, period, config.tradeDate,
                     rawSignals, newsScore, rotationPenaltyScore,
                     filtered.map { it.stockCode }, filteredInfo, top3)
+            }
+
+            // 执行AI策略（注入本周期非AI结果）
+            val aiStrategy = strategies.find { it.id == "ai_prediction" }
+            if (aiStrategy != null && aiStrategy is com.chin.stockanalysis.strategy.strategies.AIPredictionStrategy && periodResults.isNotEmpty()) {
+                aiStrategy.strategyResults = periodResults.toList()
+                aiStrategy.targetDate = config.tradeDate
+                val aiRawSignals = executeStrategy(aiStrategy, stockList, period) ?: emptyList()
+                if (aiRawSignals.isNotEmpty()) {
+                    Log.d(TAG, "  AI量化选股 [${period}日]: ${aiRawSignals.size}只")
+                    val newsScore = calculateNewsStrength(aiRawSignals, config.tradeDate)
+                    val rotationPenaltyScore = calculateRotationPenalty(aiRawSignals, config.tradeDate)
+                    val (filtered, filteredInfo) = filterByMainBoard(aiRawSignals, config.onlyMainBoard)
+                    val top3 = selectTop3(filtered, newsScore, rotationPenaltyScore, config.tradeDate)
+                    allPeriodResults.add(StrategyPeriodResult(
+                        strategyId = aiStrategy.id, strategyName = aiStrategy.name,
+                        periodDays = period, tradeDate = config.tradeDate,
+                        rawStockSignals = aiRawSignals.take(MAX_STOCKS_PER_STRATEGY),
+                        newsStrengthScore = newsScore, rotationPenalty = rotationPenaltyScore,
+                        afterMainBoardFilter = filtered.take(MAX_STOCKS_PER_STRATEGY),
+                        filteredStocks = filteredInfo.take(20), finalTop3 = top3
+                    ))
+                    savePeriodResultToDb(aiStrategy.id, aiStrategy.name, period, config.tradeDate,
+                        aiRawSignals, newsScore, rotationPenaltyScore,
+                        filtered.map { it.stockCode }, filteredInfo, top3)
+                }
             }
         }
 

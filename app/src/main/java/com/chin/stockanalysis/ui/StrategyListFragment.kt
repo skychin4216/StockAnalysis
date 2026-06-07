@@ -86,19 +86,9 @@ class StrategyListFragment : Fragment() {
         val ctx = requireContext().applicationContext
         // 確保熱門板塊調度器已啟動 (不管 MarketHotFragment 有沒有建立)
         EastMoneyHotSectorSource.startPoolScheduler(lifecycleScope)
-        val repo = StockDataSourceFactory.createDefaultRepository(ctx)
-        screener = StockScreener(repo)
-        engine = StrategyEngine(ctx, screener!!).apply {
-            registerStrategy(MovingAverageStrategy(screener!!))
-            registerStrategy(VolumeBreakStrategy(screener!!))
-            registerStrategy(LowValuationStrategy(screener!!))
-            registerStrategy(GapUpMomentumStrategy(screener!!))
-            registerStrategy(TurnoverFilterStrategy(screener!!))
-            registerStrategy(EarlyMorningChaseStrategy(screener!!))
-            registerStrategy(TailLowPickStrategy(screener!!))
-            registerStrategy(AIPredictionStrategy(requireContext().applicationContext))
-        }
-        strategyCount = engine?.getStrategies()?.size ?: 7
+        StrategyEngineHolder.init(ctx)
+        engine = StrategyEngineHolder.get()
+        strategyCount = engine?.getStrategies()?.size ?: 8
         lifecycleScope.launch(Dispatchers.IO) {
             engine?.getStrategies()?.forEach { strategy ->
                 StrategySelfTuner.loadLatestTunedWeights(requireContext(), strategy.id)?.let { tuned ->
