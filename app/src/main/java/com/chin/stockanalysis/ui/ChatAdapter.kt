@@ -1,5 +1,9 @@
 package com.chin.stockanalysis.ui
 
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
+import android.text.style.TypefaceSpan
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -24,7 +28,6 @@ class ChatAdapter(
     var onEditMessage: ((Int, String) -> Unit)? = null
     var onDeleteMessage: ((Int) -> Unit)? = null
     var onUndoMessage: ((Int) -> Unit)? = null
-    // 豆包风格新增操作
     var onPlayVoice: ((String) -> Unit)? = null
     var onFavorite: ((String) -> Unit)? = null
     var onShare: ((String) -> Unit)? = null
@@ -56,16 +59,9 @@ class ChatAdapter(
                     showPopupMenu(it, position, message)
                     true
                 }
-
-                btnCopyUser.setOnClickListener {
-                    onCopyMessage?.invoke(message.content)
-                }
-                btnEditUser.setOnClickListener {
-                    onEditMessage?.invoke(position, message.content)
-                }
-                btnDeleteUser.setOnClickListener {
-                    onDeleteMessage?.invoke(position)
-                }
+                btnCopyUser.setOnClickListener { onCopyMessage?.invoke(message.content) }
+                btnEditUser.setOnClickListener { onEditMessage?.invoke(position, message.content) }
+                btnDeleteUser.setOnClickListener { onDeleteMessage?.invoke(position) }
             }
         }
 
@@ -76,9 +72,12 @@ class ChatAdapter(
                 tvBotMessage.text = message.content
                 tvBotMessage.visibility = View.VISIBLE
                 tvTypingIndicator.visibility = View.GONE
+                tvLoadingStatus.visibility = View.GONE
                 tvErrorHint.visibility = View.GONE
 
-                // 点击消息 → 显示/隐藏操作栏
+                // v9.0: 股票表格检测
+                renderStockTable(message.content)
+
                 tvBotMessage.setOnClickListener {
                     val visible = layoutBotActions.visibility == View.VISIBLE
                     layoutBotActions.visibility = if (visible) View.GONE else View.VISIBLE
@@ -88,15 +87,10 @@ class ChatAdapter(
                     true
                 }
 
-                // 复制
                 btnCopyBot.setOnClickListener { onCopyMessage?.invoke(message.content) }
-                // 🔊 播放
                 btnPlayVoice.setOnClickListener { onPlayVoice?.invoke(message.content) }
-                // ⭐ 收藏
                 btnFavorite.setOnClickListener { onFavorite?.invoke(message.content) }
-                // 转发
                 btnShare.setOnClickListener { onShare?.invoke(message.content) }
-                // 🔄 重新生成
                 btnRegenerate.setOnClickListener { onRegenerate?.invoke(position) }
             }
         }
@@ -106,8 +100,18 @@ class ChatAdapter(
                 layoutBot.visibility = View.VISIBLE
                 layoutUser.visibility = View.GONE
                 tvBotMessage.text = message.content
-                tvTypingIndicator.visibility = View.VISIBLE
-                layoutBotActions.visibility = View.GONE  // 流式输出中不显示操作栏
+
+                // v9.0: 加载状态文字优先于 "..."
+                if (message.loadingStatus != null) {
+                    tvLoadingStatus.text = message.loadingStatus
+                    tvLoadingStatus.visibility = View.VISIBLE
+                    tvTypingIndicator.visibility = View.GONE
+                } else {
+                    tvLoadingStatus.visibility = View.GONE
+                    tvTypingIndicator.visibility = if (message.content.isEmpty()) View.VISIBLE else View.GONE
+                }
+                layoutBotActions.visibility = View.GONE
+                layoutStockTable.visibility = View.GONE
                 tvErrorHint.visibility = View.GONE
             }
         }
@@ -120,7 +124,54 @@ class ChatAdapter(
                 tvErrorHint.visibility = View.VISIBLE
                 tvBotMessage.visibility = View.GONE
                 tvTypingIndicator.visibility = View.GONE
+                tvLoadingStatus.visibility = View.GONE
                 layoutBotActions.visibility = View.GONE
+                layoutStockTable.visibility = View.GONE
+            }
+        }
+
+        /** v9.0: 检测并渲染股票 CSV 表格 */
+        private fun renderStockTable(content: String) {
+            // 检测是否包含表格标记 (| 分隔的表格行)
+            val lines = content.lines()
+            val tableStart = lines.indexOfFirst { it.trimStart().startsWith("|") && it.contains("---") }
+            if (tableStart < 0) {
+                binding.layoutStockTable.visibility = View.GONE
+                return
+            }
+
+            // 收集表格内容
+            val tableLines = mutableListOf<String>()
+            for (i in tableStart until lines.size) {
+                val line = lines[i].trim()
+                if (line.startsWith("|") && line.endsWith("|")) {
+                    tableLines.add(line)
+                } else if (tableLines.isNotEmpty()) break
+            }
+            if (tableLines.size < 3) {
+                binding.layoutStockTable.visibility = View.GONE
+                return
+            }
+
+            // 用 monospace 字体渲染对齐的表格
+            val sb = StringBuilder()
+            val headerLine = tableLines[1] // --- 分隔行之后的第一个数据行从 index 2 开始
+            // 实际上：header, ---, data1, data2...
+            // 取表头行 + 数据行，跳过 ---
+
+            for (i in tableLines.indices) {
+                if (i == 1) continue // 跳过 --- 分隔行
+                val cells = tableLines[i].split("|").filter { it.isNotBlank() }.map { it.trim() }
+                if (cells.isEmpty()) continue
+                sb.appendLine(cells.joinToString(" │ "))
+                if (i == 0) sb.appendLine("─".repeat(sb.length - 1))
+            }
+
+            if (sb.isNotEmpty()) {
+                binding.tvStockTable.text = sb.toString().trimEnd()
+                binding.layoutStockTable.visibility = View.VISIBLE
+            } else {
+                binding.layoutStockTable.visibility = View.GONE
             }
         }
 
@@ -134,15 +185,9 @@ class ChatAdapter(
             popup.setOnMenuItemClickListener { item ->
                 when (item.title) {
                     "选取文字" -> {
-                        // 找到当前消息的 TextView 并启用文本选择
                         val tv = if (message.isUser) binding.tvUserMessage else binding.tvBotMessage
                         tv.setTextIsSelectable(true)
-                        // 通知用户
-                        android.widget.Toast.makeText(
-                            anchor.context,
-                            "已启用文本选择，长按文字即可选取",
-                            android.widget.Toast.LENGTH_SHORT
-                        ).show()
+                        android.widget.Toast.makeText(anchor.context, "已启用文本选择，长按文字即可选取", android.widget.Toast.LENGTH_SHORT).show()
                     }
                     "复制" -> onCopyMessage?.invoke(message.content)
                     "编辑" -> onEditMessage?.invoke(position, message.content)
@@ -170,9 +215,7 @@ class ChatAdapter(
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MessageViewHolder {
-        val binding = ItemMessageBinding.inflate(
-            LayoutInflater.from(parent.context), parent, false
-        )
+        val binding = ItemMessageBinding.inflate(LayoutInflater.from(parent.context), parent, false)
         return MessageViewHolder(binding)
     }
 

@@ -16,7 +16,7 @@
         android:textColor="#999999"
         android:visibility="gone" />
 
-    <!-- 用户消息：右对齐 -->
+    <!-- 用户消息 -->
     <LinearLayout
         android:id="@+id/layoutUser"
         android:layout_width="match_parent"
@@ -46,10 +46,8 @@
                 android:clickable="true"
                 android:focusable="true"
                 android:longClickable="true" />
-
         </LinearLayout>
 
-        <!-- 用户消息操作按钮 -->
         <LinearLayout
             android:id="@+id/layoutUserActions"
             android:layout_width="wrap_content"
@@ -96,12 +94,10 @@
                 android:textColor="#FF5252"
                 android:background="@drawable/bg_action_btn"
                 android:layout_marginStart="6dp" />
-
         </LinearLayout>
-
     </LinearLayout>
 
-    <!-- AI 消息：无头像，全宽，紧贴边缘 -->
+    <!-- AI 消息 -->
     <LinearLayout
         android:id="@+id/layoutBot"
         android:layout_width="match_parent"
@@ -125,7 +121,18 @@
             android:focusable="true"
             android:longClickable="true" />
 
-        <!-- 打字动画指示器 -->
+        <!-- v9.0: 加载状态文字替代 "..." -->
+        <TextView
+            android:id="@+id/tvLoadingStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:layout_marginTop="4dp"
+            android:text="正在搜索..."
+            android:textColor="#1E88E5"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
         <TextView
             android:id="@+id/tvTypingIndicator"
             android:layout_width="wrap_content"
@@ -137,6 +144,27 @@
             android:textSize="20sp"
             android:textStyle="bold"
             android:visibility="gone" />
+
+        <!-- v9.0: 股票表格容器 (内嵌 HTML 表格) -->
+        <LinearLayout
+            android:id="@+id/layoutStockTable"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:background="@drawable/bg_message_bot"
+            android:padding="8dp"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/tvStockTable"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#333333"
+                android:textSize="13sp"
+                android:fontFamily="monospace"
+                android:lineSpacingExtra="2dp" />
+        </LinearLayout>
 
         <!-- AI 消息操作栏 -->
         <LinearLayout
@@ -210,10 +238,8 @@
                 android:textSize="12sp"
                 android:textColor="#1E88E5"
                 android:background="@drawable/bg_action_btn" />
-
         </LinearLayout>
 
-        <!-- 错误提示 -->
         <TextView
             android:id="@+id/tvErrorHint"
             android:layout_width="wrap_content"
@@ -224,7 +250,5 @@
             android:textColor="#FF5252"
             android:textSize="12sp"
             android:visibility="gone" />
-
     </LinearLayout>
-
 </LinearLayout>

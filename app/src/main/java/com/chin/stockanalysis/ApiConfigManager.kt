@@ -56,6 +56,14 @@ class ApiConfigManager(context: Context) {
      *    只需在下面的列表中添加一项 ApiProviderConfig 即可。
      *    不需要修改任何其他代码！
      */
+    /** 获取所有预置 Provider 配置（含运行时注入的 Key） */
+    fun getAllConfigs(): List<ApiProviderConfig> {
+        return builtInProviders.map { config ->
+            val key = getUserApiKey(config.id)
+            if (key?.isNotBlank() == true) config.copy(apiKey = key!!) else config
+        }
+    }
+
     val builtInProviders: List<ApiProviderConfig> = listOf(
         // ═══════════════════════════════════════════════════════════════
         // 🆓 免费 API（无需充值，有免费额度）

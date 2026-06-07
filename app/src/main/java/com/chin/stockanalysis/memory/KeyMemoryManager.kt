@@ -55,10 +55,10 @@ class KeyMemoryManager(private val context: Context) {
     // 2. 提取和合并记忆
     // ════════════════════════════════════════
 
-    suspend fun extractAndMergeMemories(messages: List<Message>, convId: String): Int {
+    suspend fun extractAndMergeMemories(messages: List<Message>, convId: String, provider: ApiProvider? = null): Int {
         if (messages.size < 2) return 0
         return try {
-            val extracted = extractViaAI(messages)
+            val extracted = extractViaAI(messages, provider)
             if (extracted.isEmpty()) return 0
             var merged = 0
             val now = System.currentTimeMillis()
@@ -86,8 +86,8 @@ class KeyMemoryManager(private val context: Context) {
         }
     }
 
-    private suspend fun extractViaAI(messages: List<Message>): List<Triple<String, String, String>> {
-        val provider = ApiConfigManager.getInstance(context).createCurrentProvider() ?: return emptyList()
+    private suspend fun extractViaAI(messages: List<Message>, overrideProvider: ApiProvider? = null): List<Triple<String, String, String>> {
+        val provider = overrideProvider ?: ApiConfigManager.getInstance(context).createCurrentProvider() ?: return emptyList()
         val conversationText = messages
             .filter { !it.isStreaming && !it.isError }
             .joinToString("\n") { "${if (it.isUser) "用户" else "AI"}: ${it.content}" }
@@ -160,11 +160,12 @@ $conversationText"""
      */
     suspend fun generateFollowUpSuggestions(
         messages: List<Message>,
-        memories: List<KeyMemoryEntity>
+        memories: List<KeyMemoryEntity>,
+        provider: ApiProvider? = null
     ): List<FollowUpSuggestion> {
         // 优先 AI
         try {
-            val ai = generateViaAI(messages, memories)
+            val ai = generateViaAI(messages, memories, provider)
             if (ai.isNotEmpty()) {
                 Log.d(TAG, "🤖 AI 追问: ${ai.map { it.text.take(30) }}")
                 return ai.take(2)
@@ -177,9 +178,10 @@ $conversationText"""
 
     private suspend fun generateViaAI(
         messages: List<Message>,
-        memories: List<KeyMemoryEntity>
+        memories: List<KeyMemoryEntity>,
+        overrideProvider: ApiProvider? = null
     ): List<FollowUpSuggestion> {
-        val provider = ApiConfigManager.getInstance(context).createCurrentProvider() ?: return emptyList()
+        val provider = overrideProvider ?: ApiConfigManager.getInstance(context).createCurrentProvider() ?: return emptyList()
         val recent = messages.filter { !it.isStreaming && !it.isError && it.content.isNotBlank() }.takeLast(6)
         if (recent.size < 2) return emptyList()
 

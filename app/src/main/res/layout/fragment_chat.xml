@@ -1,17 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  豆包风格 聊天窗口（app1）
-  顶部白色标题栏：≡ | 标题 | ⋮
-  消息列表
-  底部输入：📷 | 输入框 | 🎤 / ➕（空状态时） → ↑ 箭头（有输入时）
--->
+<!-- 豆包风格 聊天窗口 v9.0 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical">
 
-    <!-- ── 顶部标题栏（白色，类似豆包 app1）── -->
+    <!-- ── 顶部标题栏 ── -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="56dp"
@@ -22,7 +17,6 @@
         android:paddingEnd="8dp"
         android:paddingStart="4dp">
 
-        <!-- ≡ 两横线返回按钮（回到对话列表） -->
         <ImageButton
             android:id="@+id/btnDrawer"
             android:layout_width="44dp"
@@ -32,7 +26,6 @@
             android:padding="10dp"
             android:src="@drawable/ic_menu_lines" />
 
-        <!-- 标题区（居中，垂直两行） -->
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
@@ -75,7 +68,6 @@
                 android:textSize="10sp" />
         </LinearLayout>
 
-        <!-- 更多菜单（⋮） -->
         <ImageView
             android:id="@+id/btnMenu"
             android:layout_width="36dp"
@@ -84,10 +76,8 @@
             android:padding="6dp"
             android:src="@android:drawable/ic_menu_more"
             android:tint="#666666" />
-
     </LinearLayout>
 
-    <!-- 细分隔线 -->
     <View
         android:layout_width="match_parent"
         android:layout_height="0.5dp"
@@ -107,6 +97,35 @@
         android:paddingStart="12dp"
         android:paddingTop="8dp" />
 
+    <!-- ── 热门板块提示卡片 ── -->
+    <LinearLayout
+        android:id="@+id/layoutHotSectors"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#F7F8FA"
+        android:orientation="vertical"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="8dp"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="🔥 今日热门"
+            android:textColor="#333333"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvHotSectors"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="#666666"
+            android:textSize="12sp"
+            android:lineSpacingExtra="2dp" />
+    </LinearLayout>
+
     <!-- ── "聊聊新话题" 提示 ── -->
     <TextView
         android:id="@+id/tvNewTopicHint"
@@ -119,7 +138,7 @@
         android:textSize="12sp"
         android:visibility="gone" />
 
-    <!-- ── 底部输入区（白色圆角卡片风格）── -->
+    <!-- ── 底部输入区 v9.0 圆润风格 ── -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -129,28 +148,29 @@
         android:paddingBottom="8dp"
         android:paddingTop="6dp">
 
-        <!-- 输入行：📷 | 输入框 | 🎤 | ➕ -->
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="50dp"
-            android:layout_marginEnd="12dp"
-            android:layout_marginStart="12dp"
+            android:layout_height="48dp"
+            android:layout_marginEnd="10dp"
+            android:layout_marginStart="10dp"
             android:background="@drawable/bg_input"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingEnd="6dp"
-            android:paddingStart="6dp">
+            android:paddingEnd="4dp"
+            android:paddingStart="4dp">
 
-            <!-- 📷 相机按钮 -->
+            <!-- ⚡ AI增强开关 (v9.0) -->
             <ImageButton
-                android:id="@+id/btnImage"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
-                android:background="@android:color/transparent"
-                android:contentDescription="图片"
-                android:padding="6dp"
-                android:src="@android:drawable/ic_menu_camera"
-                android:tint="#999999" />
+                android:id="@+id/btnAiBoost"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:layout_marginStart="3dp"
+                android:layout_marginEnd="2dp"
+                android:background="@drawable/bg_btn_circle"
+                android:contentDescription="AI增强"
+                android:padding="5dp"
+                android:src="@drawable/ic_ai_boost"
+                android:tint="#AAAAAA" />
 
             <!-- 输入框 -->
             <EditText
@@ -169,30 +189,27 @@
                 android:textColorHint="#BBBBBB"
                 android:textSize="15sp" />
 
-            <!-- 🎤 语音按钮（空输入时显示） -->
+            <!-- 🎤 语音按钮 (圆润，空输入时显示) -->
             <ImageButton
                 android:id="@+id/btnVoice"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
-                android:background="@android:color/transparent"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:background="@drawable/bg_btn_circle"
                 android:contentDescription="语音输入"
-                android:padding="6dp"
+                android:padding="7dp"
                 android:src="@android:drawable/ic_btn_speak_now"
-                android:tint="#999999" />
+                android:tint="#666666" />
 
-            <!-- 发送按钮：空状态显示 ➕，有输入时切换为 ↑ 箭头 -->
+            <!-- 发送按钮：空状态 ➕，有输入时 ↑ 箭头 -->
             <ImageButton
                 android:id="@+id/btnSend"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
                 android:background="@drawable/bg_send"
                 android:contentDescription="发送"
                 android:padding="8dp"
                 android:src="@android:drawable/ic_input_add"
                 app:tint="#FFFFFF" />
-
         </LinearLayout>
-
     </LinearLayout>
-
 </LinearLayout>

@@ -1,61 +1,82 @@
-# Implementation Plan and Changes (saved)
+# Implementation Plan — 智能对话引擎 v2.0
 
 Date: 2026-06-07
 Branch: dev
 
-## 1) Summary of work completed (today)
-- Added AI-focused docs and merged into architecture doc:
-  - docs/AI_Dialogue_Stock_Analysis.md
-  - docs/Quantitative_Simulated_Trading.md (merged AI dialogue)
-  - docs/Codebase_Doc_Update_Notes.md
-  - docs/backend_ai_handler.md (handler pseudocode)
-  - docs/openapi-strategy-simulation.yaml (OpenAPI fragment)
-  - docs/RemoteDataService_examples.md (Retrofit examples)
-- Created skills/dialog_techniques/* (intent-recognition, dialog-techniques, copilot-guidelines, prompt-design)
-- Integrated local AI handler + client and DTOs into app:
-  - app/src/main/java/com/chin/stockanalysis/strategy/predict/AIAnalyzeHandler.kt
-  - app/src/main/java/com/chin/stockanalysis/remote/RemoteAiClient.kt
-  - app/src/main/java/com/chin/stockanalysis/remote/RetrofitFactory.kt
-  - app/src/main/java/com/chin/stockanalysis/docs/RemoteDataService_examples.kt
-- Moved project root Markdown files into docs/
-- Committed and pushed changes to remote branch: dev
+## 1) 方案评估与升级决策
 
-## 2) Files changed/added (full paths)
-- docs/Quantitative_Simulated_Trading.md (updated, merged AI dialog)
-- docs/AI_Dialogue_Stock_Analysis.md (new)
-- docs/Codebase_Doc_Update_Notes.md (new)
-- docs/backend_ai_handler.md (new)
-- docs/openapi-strategy-simulation.yaml (new)
-- docs/RemoteDataService_examples.md (new)
-- docs/API_REFERENCE.md (updated)
-- docs/implementation_plan.md (this file)
-- skills/dialog_techniques/intent-recognition.md
-- skills/dialog_techniques/dialog-techniques.md
-- skills/dialog_techniques/copilot-guidelines.md
-- skills/dialog_techniques/prompt-design.md
+### Copilot 原方案 (d665391) 评估
+| 方面 | 结论 |
+|------|------|
+| KSP 问题根因 | ✅ 正确诊断：DTO 放主模块触发 Room KSP 扫描崩溃 |
+| 模块化拆分 | ✅ RemoteAiClient/RetrofitFactory → 独立模块 |
+| 对话速度优化 | ❌ 完全缺失 |
+| 意图预判/后台预测 | ❌ 完全缺失 |
+| 核心定位偏差 | 把 AI 当数据库查询工具，而非对话引擎 |
 
-- app/src/main/java/com/chin/stockanalysis/strategy/predict/AIAnalyzeHandler.kt (new)
-- app/src/main/java/com/chin/stockanalysis/remote/RemoteAiClient.kt (new)
-- app/src/main/java/com/chin/stockanalysis/remote/RetrofitFactory.kt (new)
-- app/src/main/java/com/chin/stockanalysis/docs/RemoteDataService_examples.kt (new)
-
-## 3) Next steps (high priority, for tomorrow)
-1. Fix KSP build failure seen during assembleDebug: run Gradle with --stacktrace, inspect KSP logs, and fix plugin or generated-code issues. (Owner: me)
-2. Wire RemoteAiClient into UI Chat flow (ChatTabFragment):
-   - Call analyzeStock(local mode) when user asks stock analysis
-   - Render structured JSON result in StrategyResultDialogFragment table_view
-   - Add "Add to simulation" button
-3. Implement server endpoint /api/ai/analyze_stock using backend_ai_handler.md pseudocode (server team or create a lightweight service). Add OpenAPI route and unit tests.
-4. Add JSON Schema validator for LLM output; implement fallback rule-based output when parsing fails.
-5. Add tests: strategy contract tests & AI handler integration tests (mock provider).
-6. Add rate-limiting, caching (30s intraday) and logging of prompt/exec_id; expose exec status endpoint.
-7. Create PR(s) for code changes and request review; include run logs and example outputs.
-
-## 4) Medium/Lower priority items
-- Generate a Postman collection & Swagger UI from openapi YAML and publish to docs site.
-- Create monitoring dashboard for AI calls (cost, latency, failure rate).
-- Improve AI prompts (few-shot examples) and add CI check for JSON schema validity.
+### 新方案：参考豆包AI 架构
+豆包核心优势：首 Token < 500ms、打字时预判意图、对话后后台静默预测、分层缓存。
 
 ---
 
-If this plan looks good, I'll start with step 1 (trace KSP build error) and then implement step 2 (UI wiring). Reply "start" to proceed or reply with modifications.
+## 2) 实施步骤（5 步）
+
+### Step 1: ConnectionPreWarmPool（连接预热池）
+- **文件**: `app/src/main/java/com/chin/stockanalysis/ai/ConnectionPreWarmPool.kt`
+- **改动**: `OpenAiCompatibleProvider.kt` 集成预热池
+- **效果**: 首 Token 延迟 -200~300ms（消除 TCP/TLS 握手）
+
+### Step 2: SmartContextWindow（智能上下文缓存）
+- **文件**: `app/src/main/java/com/chin/stockanalysis/ai/SmartContextWindow.kt`
+- **改动**: `ChatTabFragment.kt` 使用缓存代替每次重建 systemPrompt
+- **效果**: 消息发送前延迟 -500ms~1s
+
+### Step 3: 并行化 onMessageComplete
+- **改动**: `ChatTabFragment.kt` — 记忆提取 + 追问生成在 AI 回复流式输出时并行执行
+- **效果**: 追问建议提前 1-2s 出现
+
+### Step 4: IntentPredictionEngine（意图预判引擎）
+- **文件**: `app/src/main/java/com/chin/stockanalysis/ai/IntentPredictionEngine.kt`
+- **改动**: `ChatTabFragment.kt` — 用户输入 ≥3 字符时后台并行识别意图
+- **效果**: 感知智能度大幅提升，提前准备上下文
+
+### Step 5: BackgroundPredictor（后台静默预测）
+- **文件**: `app/src/main/java/com/chin/stockanalysis/ai/BackgroundPredictor.kt`
+- **改动**: `ChatTabFragment.kt` — 对话完成后后台执行预测任务
+- **效果**: 豆包级智能体验
+
+---
+
+## 3) 架构总览
+
+```
+ChatTabFragment
+├── IntentPredictionEngine  ← 用户打字时并行运行
+├── SmartContextWindow      ← 分层缓存(内存+DB)
+├── BackgroundPredictor     ← 对话完成后后台运行
+├── OpenAiCompatibleProvider (集成 ConnectionPreWarmPool)
+└── KeyMemoryManager (现有，并行化)
+```
+
+---
+
+## 4) 文件变更清单
+
+### 新增文件
+- `app/src/main/java/com/chin/stockanalysis/ai/ConnectionPreWarmPool.kt`
+- `app/src/main/java/com/chin/stockanalysis/ai/SmartContextWindow.kt`
+- `app/src/main/java/com/chin/stockanalysis/ai/IntentPredictionEngine.kt`
+- `app/src/main/java/com/chin/stockanalysis/ai/BackgroundPredictor.kt`
+
+### 修改文件
+- `app/src/main/java/com/chin/stockanalysis/OpenAiCompatibleProvider.kt` — 集成预热池
+- `app/src/main/java/com/chin/stockanalysis/ui/ChatTabFragment.kt` — 集成全部新组件
+- `docs/implementation_plan.md` — 更新（本文件）
+- `docs/README.md` — 更新架构说明
+
+---
+
+## 5) 中优先级后续任务
+- 将 DTO + Retrofit 移入独立 `feature/ai-analyze` 模块
+- 添加 AI 调用成本/延迟/失败率监控 dashboard
+- WebSocket 支持（替代当前 HTTP 轮询式流式）

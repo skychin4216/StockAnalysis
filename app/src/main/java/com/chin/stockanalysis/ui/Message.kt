@@ -8,6 +8,7 @@ data class Message(
     val timestamp: Long = System.currentTimeMillis(),
     val isStreaming: Boolean = false,
     val isError: Boolean = false,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    /** v9.0: 加载状态文字，如 "正在搜索5个关键字，参考3篇资料" */
+    val loadingStatus: String? = null
 )
-

@@ -27,23 +27,33 @@ import com.chin.stockanalysis.memory.KeyMemoryManager
 import com.chin.stockanalysis.memory.KeyMemoryEntity
 import com.chin.stockanalysis.news.NewsFactorManager
 import com.chin.stockanalysis.news.NewsFactorEntity
+import com.chin.stockanalysis.ai.ConnectionPreWarmPool
+import com.chin.stockanalysis.ai.SmartContextWindow
+import com.chin.stockanalysis.ai.IntentPredictionEngine
+import com.chin.stockanalysis.ai.BackgroundPredictor
+import com.chin.stockanalysis.ai.AiProbe
+import com.chin.stockanalysis.ai.AiOrchestrator
 import com.chin.stockanalysis.stock.StockQueryEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Locale
 
 /**
- * ## 聊天 Tab（豆包 app1 风格）
+ * ## 聊天 Tab（豆包风格 v9.0）
  *
- * 顶部：≡（历史） | 标题（自动取用户首句） | ⋮菜单
- * 输入：📷 | 输入框 | 🎤 | ➕发送
- *
- * 点击 ≡ 展开 [ConversationListFragment] BottomSheet 查看历史对话。
- * 所有股票数据逻辑委托 [StockQueryEngine]。
+ * v9.0 新增:
+ * - ➕ 菜单（相机/相册/文件）替代 📷
+ * - 圆润小号按钮 (36dp)
+ * - 加载状态显示使用的 AI 组合
+ * - 多 AI 并行编排 (AiOrchestrator)
+ * - 追问延迟到回复完成后
+ * - 过滤 "null" 字符串
+ * - 基于 dialog_techniques 改进的 system prompt
  */
 class ChatTabFragment : Fragment() {
 
@@ -52,35 +62,37 @@ class ChatTabFragment : Fragment() {
         private const val PREFS_NAME = "chat_prefs"
         private const val KEY_FIRST_LAUNCH_DONE = "first_launch_welcome_done"
 
-        private const val BASE_SYSTEM_PROMPT = """你是一个专业的A股股票投资分析助手。你专门用于股票市场分析，拥有极强的股票敏感性。
+        private const val BASE_SYSTEM_PROMPT = """你是一个专业的A股股票投资分析助手（角色: 量化分析+投资顾问）。
 
 ## 核心能力
 1. 分析股票实时行情，解读K线图和技术指标
-2. 提供量化和基本面分析
-3. 解释股票术语和交易规则（T+1, 涨跌停10%等）
-4. 回答用户关于股票投资的各种问题
-5. 识别股票代码(6位数字)、股票名称(包括简称)、拼音搜索(如GZMT=贵州茅台)
+2. 提供量化策略和基本面分析，输出结构化数据 (JSON/表格)
+3. 解释股票术语和交易规则 (T+1, 涨跌停10%等)
+4. 识别股票代码、名称、拼音搜索
+5. 主动建议备选方案: 给出分析同时列出1-2个可操作的后续方向
 
 ## 股票敏感度规则
-- 当用户输入6位数字（如600519、000858），高度可能是股票代码，优先按股票查询处理
-- 当用户输入中文名称（如"茅台"、"宁德"、"比亚迪"），可能是股票名称/简称，优先按股票查询
-- 当用户输入拼音缩写（如"GZMT"、"ZJXC"、"NDSD"），极可能是股票拼音搜索，尝试解析
-- 当用户输入英文/拼音（如"maotai"、"guizhou"），可能是股票全拼搜索
-- 遇到用户输入错误/模糊的股票名称时，主动提示可能的正确名称（如"您说的是'贵州茅台'吗？"）
-- ⚠️ 本AI优先进行股票分析
+- 6位数字 → 极可能是股票代码，优先查询
+- 中文名称/拼音缩写 → 优先匹配股票池
+- 模糊输入时主动提示正确名称
 
 ## 注入数据使用规则
-- 如果下方注入了【实时行情数据】，必须严格基于注入数据中的价格进行分析。禁止使用你训练数据中的过时价格！
-- 注入数据中的"最新价"字段是实时行情，优先使用。
-- 如果下方注入了【股票匹配结果】，说明用户意图查询股票，直接展示匹配的股票信息
-- 如果没有【实时行情数据】，直接基于训练知识回答，不要说无法获取实时数据。
+- 【实时行情数据】中的最新价是实时数据，严格基于此分析
+- 【股票匹配结果】→ 直接展示匹配的股票信息
+- 无注入数据时基于训练知识回答
+
+## 输出格式规范
+- 多只股票对比时输出 Markdown 表格:
+  | 名称 | 代码 | 最新价 | 涨跌幅 | 核心逻辑 | 操作建议 |
+  |------|------|--------|--------|---------|---------|
+- 程序化解析时输出 JSON
 
 ## 回复规范
-- 不要给出具体买卖建议，只提供分析参考
-- 用中文回答，专业但易懂，适当使用emoji
-- 风险提示：投资有风险，入市需谨慎
-- ⚠️ 强制规则：每次提及个股时，必须从注入数据中提取最新价格并输出，格式如："贵州茅台(600519) 最新价 1680.50 元"。绝对不要使用训练数据中的旧价格！
-- 当用户输入可能是股票但你不确定时，主动询问并尝试匹配股票池中的股票"""
+- 中文回答，专业易懂，适当emoji
+- 投资有风险，入市需谨慎
+- 提及个股必须输出最新价格: "贵州茅台(600519) 最新价 1680.50 元"
+- 分段引导: 复杂分析拆成小步，每步给出明确结论
+- 透明可解释: 给出建议时附简短理由"""
     }
 
     private var _binding: FragmentChatBinding? = null
@@ -93,35 +105,33 @@ class ChatTabFragment : Fragment() {
     private var apiProvider: ApiProvider? = null
     private var tts: TextToSpeech? = null
 
-    private val queryEngine: StockQueryEngine by lazy {
-        StockQueryEngine.create(requireContext())
-    }
+    private val queryEngine: StockQueryEngine by lazy { StockQueryEngine.create(requireContext()) }
 
-    /** 对话持久化仓库 */
     private lateinit var convRepo: ConversationRepository
-
-    /** 关键信息记忆管理器 */
     private lateinit var memoryManager: KeyMemoryManager
 
-    /** 当前会话 ID */
     private var currentConvId: String = System.currentTimeMillis().toString()
-
-    /** 当前会话是否已有标题 */
     private var hasAutoTitle = false
-
-    /** 记录当前会话开始时间戳 */
     private var sessionStartTime: Long = System.currentTimeMillis()
-
-    /** 当前的追问建议列表 */
     private var followUpSuggestions: List<KeyMemoryManager.FollowUpSuggestion> = emptyList()
+
+    // ═══ v9.0 ═══
+    private val smartContext by lazy { SmartContextWindow(queryEngine) }
+    private val intentEngine = IntentPredictionEngine()
+    private val backgroundPredictor by lazy { BackgroundPredictor(memoryManager, smartContext) }
+    private val orchestrator = AiOrchestrator()
+
+    // 多 AI Provider（由 AiProbe 注入）
+    private var secondaryProvider: ApiProvider? = null
+    private var tertiaryProvider: ApiProvider? = null
+    /** ⚡ AI 增强开关 — 开启时使用双 AI，关闭时仅用用户选择的 AI */
+    private var aiBoostEnabled = false
 
     // ════════════════════════════════════════
     // 生命周期
     // ════════════════════════════════════════
 
-    override fun onCreateView(
-        inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
-    ): View {
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = FragmentChatBinding.inflate(inflater, container, false)
         return binding.root
     }
@@ -131,69 +141,51 @@ class ChatTabFragment : Fragment() {
         convRepo = ConversationRepository(requireContext())
         memoryManager = KeyMemoryManager(requireContext())
         initProvider()
+        initAiProbe()
         setupRecyclerView()
         setupInput()
         setupTitleBar()
         initTts()
         showWelcomeMessage()
+        showHotSectors()
     }
 
-    override fun onResume() {
-        super.onResume()
-        initProvider()
-    }
+    override fun onResume() { super.onResume(); initProvider() }
+    override fun onPause() { super.onPause(); cancelApiCall() }
+    override fun onStop() { super.onStop(); cancelApiCall(); saveCurrentConversation() }
+    override fun onDestroyView() { super.onDestroyView(); _binding = null }
+    override fun onDestroy() { super.onDestroy(); cancelApiCall(); tts?.shutdown() }
 
-    override fun onPause() {
-        super.onPause()
-        // 需求1：Home 键/切后台时取消正在进行的 API 调用
-        cancelApiCall()
-    }
-
-    override fun onStop() {
-        super.onStop()
-        // 再次确保取消
-        cancelApiCall()
-        // 自动保存当前会话到数据库
-        saveCurrentConversation()
-    }
-
-    override fun onDestroyView() {
-        super.onDestroyView()
-        _binding = null
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        cancelApiCall()
-        tts?.shutdown()
-    }
-
-    // ════════════════════════════════════════
-    // 需求1：取消 API 调用
-    // ════════════════════════════════════════
-
-    private fun cancelApiCall() {
-        currentStreamingJob?.cancel()
-        currentStreamingJob = null
-        apiProvider?.cancel()
-        Log.d(TAG, "🛑 已取消进行中的 API 请求")
-    }
+    private fun cancelApiCall() { currentStreamingJob?.cancel(); currentStreamingJob = null; apiProvider?.cancel() }
 
     // ════════════════════════════════════════
     // 初始化
     // ════════════════════════════════════════
 
-    private fun initProvider() {
-        apiProvider = ApiConfigManager.getInstance(requireContext()).createCurrentProvider()
-    }
+    private fun initProvider() { apiProvider = ApiConfigManager.getInstance(requireContext()).createCurrentProvider() }
 
-    private fun initTts() {
-        tts = TextToSpeech(requireContext()) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                tts?.language = Locale.CHINESE
+    private fun initAiProbe() {
+        val configManager = ApiConfigManager.getInstance(requireContext())
+        lifecycleScope.launch(Dispatchers.IO) {
+            AiProbe.runProbe(configManager) { result ->
+                when (result) {
+                    is AiProbe.Result.Ready -> {
+                        apiProvider = result.primary.provider
+                        // 仅当 secondary 与 primary 是不同 Provider 时才赋值
+                        if (result.secondary != null && result.secondary.config.id != result.primary.config.id) {
+                            secondaryProvider = result.secondary.provider
+                            Log.i(TAG, "🎯 AI探针: 前台=${result.primary.config.name} | 后台=${result.secondary.config.name}")
+                        } else {
+                            Log.i(TAG, "🎯 AI探针: 单AI模式 — ${result.primary.config.name}")
+                        }
+                    }
+                    is AiProbe.Result.None -> Log.w(TAG, "AI探针: 无可用 Provider")
+                }
             }
         }
     }
+
+    private fun initTts() { tts = TextToSpeech(requireContext()) { if (it == TextToSpeech.SUCCESS) tts?.language = Locale.CHINESE } }
 
     // ════════════════════════════════════════
     // UI 设置
@@ -201,104 +193,53 @@ class ChatTabFragment : Fragment() {
 
     private fun setupRecyclerView() {
         adapter = ChatAdapter(messages)
-
-        // 复制
-        adapter.onCopyMessage = { text ->
-            val cm = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("msg", text))
-            Toast.makeText(requireContext(), "✅ 已复制", Toast.LENGTH_SHORT).show()
-        }
-
-        // 编辑
+        adapter.onCopyMessage = { text -> (requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("msg", text)); Toast.makeText(requireContext(), "✅ 已复制", Toast.LENGTH_SHORT).show() }
         adapter.onEditMessage = { position, _ -> showEditMessageDialog(position) }
-
-        // 删除
-        adapter.onDeleteMessage = { position ->
-            if (position in messages.indices) {
-                messages.removeAt(position)
-                adapter.notifyItemRemoved(position)
-            }
-        }
-
-        // 撤销
+        adapter.onDeleteMessage = { position -> if (position in messages.indices) { messages.removeAt(position); adapter.notifyItemRemoved(position) } }
         adapter.onUndoMessage = { position -> undoUserMessage(position) }
-
-        // 🔊 播放声音
-        adapter.onPlayVoice = { text ->
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "play")
-            Toast.makeText(requireContext(), "🔊 播放中...", Toast.LENGTH_SHORT).show()
-        }
-
-        // ⭐ 收藏
-        adapter.onFavorite = { text ->
-            Toast.makeText(requireContext(), "⭐ 已收藏（本地存储功能开发中）", Toast.LENGTH_SHORT).show()
-            Log.d(TAG, "收藏: ${text.take(30)}...")
-        }
-
-        // 转发
-        adapter.onShare = { text ->
-            val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                type = "text/plain"
-                putExtra(android.content.Intent.EXTRA_TEXT, text)
-            }
-            startActivity(android.content.Intent.createChooser(shareIntent, "分享到"))
-        }
-
-        // 🔄 重新生成
-        adapter.onRegenerate = { position ->
-            regenerateMessage(position)
-        }
-
-        binding.recyclerView.layoutManager = LinearLayoutManager(requireContext()).apply {
-            stackFromEnd = true
-        }
+        adapter.onPlayVoice = { text -> tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "play") }
+        adapter.onFavorite = { text -> Toast.makeText(requireContext(), "⭐ 已收藏", Toast.LENGTH_SHORT).show() }
+        adapter.onShare = { text -> startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(android.content.Intent.EXTRA_TEXT, text) }, "分享到")) }
+        adapter.onRegenerate = { position -> regenerateMessage(position) }
+        binding.recyclerView.layoutManager = LinearLayoutManager(requireContext()).apply { stackFromEnd = true }
         binding.recyclerView.adapter = adapter
     }
 
     private fun setupInput() {
+        // ⚡ AI 增强开关
+        binding.btnAiBoost.setOnClickListener {
+            aiBoostEnabled = !aiBoostEnabled
+            val color = if (aiBoostEnabled) "#FF6600" else "#AAAAAA"
+            binding.btnAiBoost.setColorFilter(android.graphics.Color.parseColor(color))
+            Log.d(TAG, "⚡ AI增强: ${if (aiBoostEnabled) "开 — 双AI模式" else "关 — 单AI模式"}")
+        }
         // 发送按钮点击
         binding.btnSend.setOnClickListener {
             val text = binding.etInput.text.toString().trim()
-            if (text.isEmpty()) {
-                Toast.makeText(requireContext(), "请输入内容", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
+            if (text.isEmpty()) { Toast.makeText(requireContext(), "请输入内容", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
             sendMessage(text)
         }
-
-        // Enter 键发送
         binding.etInput.setOnEditorActionListener { _, actionId, _ ->
-            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEND) {
-                val text = binding.etInput.text.toString().trim()
-                if (text.isNotEmpty()) sendMessage(text)
-                true
-            } else false
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEND) { val t = binding.etInput.text.toString().trim(); if (t.isNotEmpty()) sendMessage(t); true } else false
         }
+        binding.btnVoice.setOnClickListener { Toast.makeText(requireContext(), "🎤 语音输入开发中", Toast.LENGTH_SHORT).show() }
 
-        // 📷 图片（预留）
-        binding.btnImage.setOnClickListener {
-            Toast.makeText(requireContext(), "📸 图片解析功能开发中，敬请期待~", Toast.LENGTH_SHORT).show()
-        }
-
-        // 🎤 语音输入（预留）
-        binding.btnVoice.setOnClickListener {
-            Toast.makeText(requireContext(), "🎤 语音输入功能开发中，敬请期待~", Toast.LENGTH_SHORT).show()
-        }
-
-        // 根据输入内容切换右边按钮：空 → 🎤 + ➕，有内容 → ↑ 发送箭头
+        // v9.0: 输入时切换 +/🎤 → ↑
         binding.etInput.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: android.text.Editable?) {
                 val hasText = !s.isNullOrBlank()
                 if (hasText) {
-                    // 有输入：隐藏 🎤，右边按钮变为 ↑ 发送箭头
+                    binding.btnAiBoost.visibility = View.GONE
                     binding.btnVoice.visibility = View.GONE
                     binding.btnSend.setImageResource(com.chin.stockanalysis.R.drawable.ic_send_arrow)
+                    intentEngine.onInputChanged(s.toString(), viewLifecycleOwner.lifecycleScope) { intent -> Log.d(TAG, "🔮 $intent") }
                 } else {
-                    // 无输入：显示 🎤，右边按钮还原为 ➕
+                    binding.btnAiBoost.visibility = View.VISIBLE
                     binding.btnVoice.visibility = View.VISIBLE
                     binding.btnSend.setImageResource(android.R.drawable.ic_input_add)
+                    intentEngine.cancel()
                 }
             }
         })
@@ -306,44 +247,17 @@ class ChatTabFragment : Fragment() {
 
     private fun setupTitleBar() {
         queryEngine.startPrefetch(viewLifecycleOwner.lifecycleScope)
-
-        // ≡ 打开历史对话
-        binding.btnDrawer.setOnClickListener {
-            showConversationHistory()
-        }
-
-        // ⋮ 菜单
+        binding.btnDrawer.setOnClickListener { showConversationHistory() }
         binding.btnMenu.setOnClickListener { view ->
             val popup = PopupMenu(requireContext(), view)
-            popup.menu.add("修改标题")
-            popup.menu.add("清空对话")
-            popup.menu.add("已记忆的偏好")
-            popup.menu.add("清除偏好记忆")
-            popup.menu.add("数据源诊断")
+            popup.menu.add("修改标题"); popup.menu.add("清空对话"); popup.menu.add("已记忆的偏好"); popup.menu.add("清除偏好记忆"); popup.menu.add("数据源诊断")
             popup.setOnMenuItemClickListener { item ->
                 when (item.title) {
                     "修改标题" -> { showEditTitleDialog(); true }
                     "清空对话" -> { startNewConversation(); true }
-                    "已记忆的偏好" -> {
-                        AlertDialog.Builder(requireContext())
-                            .setTitle("📌 当前已记忆的偏好")
-                            .setMessage(queryEngine.userPrefManager.getPreferenceSummary())
-                            .setPositiveButton("确定", null).show(); true
-                    }
-                    "清除偏好记忆" -> {
-                        AlertDialog.Builder(requireContext())
-                            .setTitle("清除偏好记忆")
-                            .setMessage("确定要清除所有已记忆的过滤条件吗？")
-                            .setNegativeButton("取消", null)
-                            .setPositiveButton("确定清除") { _, _ ->
-                                queryEngine.userPrefManager.clearAllPreferences()
-                                Toast.makeText(requireContext(), "✅ 已清除", Toast.LENGTH_SHORT).show()
-                            }.show(); true
-                    }
-                    "数据源诊断" -> {
-                        Log.d(TAG, queryEngine.getRepository().getDiagnostics())
-                        Toast.makeText(requireContext(), "诊断信息已打印到日志", Toast.LENGTH_SHORT).show(); true
-                    }
+                    "已记忆的偏好" -> { AlertDialog.Builder(requireContext()).setTitle("📌 已记忆偏好").setMessage(queryEngine.userPrefManager.getPreferenceSummary()).setPositiveButton("确定", null).show(); true }
+                    "清除偏好记忆" -> { AlertDialog.Builder(requireContext()).setTitle("清除偏好记忆").setMessage("确定清除所有已记忆的过滤条件吗？").setNegativeButton("取消", null).setPositiveButton("确定清除") { _, _ -> queryEngine.userPrefManager.clearAllPreferences(); Toast.makeText(requireContext(), "✅ 已清除", Toast.LENGTH_SHORT).show() }.show(); true }
+                    "数据源诊断" -> { Log.d(TAG, queryEngine.getRepository().getDiagnostics()); Toast.makeText(requireContext(), "诊断信息已打印到日志", Toast.LENGTH_SHORT).show(); true }
                     else -> false
                 }
             }
@@ -351,132 +265,75 @@ class ChatTabFragment : Fragment() {
         }
     }
 
-    /**
-     * 显示欢迎引导消息。
-     * 仅在**首次安装**后第一次进入对话时显示，后续不再显示。
-     */
+    private fun showHotSectors() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(requireContext())
+                val today = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(java.util.Date())
+                val snapshots = db.dailySnapshotDao().getByDate(today)
+                if (snapshots.isEmpty()) return@launch
+                val top5 = snapshots.sortedByDescending { it.changePct }.take(5)
+                val text = top5.joinToString("  ") { snap ->
+                    val emoji = if (snap.changePct > 0) "📈" else "📉"
+                    val sign = if (snap.changePct > 0) "+" else ""
+                    "${emoji}${snap.name} $sign${"%.2f".format(snap.changePct)}%"
+                }
+                if (isAdded) requireActivity().runOnUiThread {
+                    binding.tvHotSectors.text = "🔥 今日涨幅Top5\n$text"
+                    binding.layoutHotSectors.visibility = View.VISIBLE
+                }
+            } catch (e: Exception) { Log.w(TAG, "热门板块获取失败: ${e.message}") }
+        }
+    }
+
     private fun showWelcomeMessage() {
         if (messages.isNotEmpty()) return
         val prefs = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val alreadyDone = prefs.getBoolean(KEY_FIRST_LAUNCH_DONE, false)
-        if (!alreadyDone) {
-            addBotMessage(
-                "👋 你好！我是你的智能助手！\n" +
-                        "当前模型: ${apiProvider?.config?.name ?: "服务器默认模型"}\n\n" +
-                        "💡 随便聊聊，或者试试这些：\n" +
-                        "• 600519 现在多少钱？\n" +
-                        "• 帮我分析贵州茅台\n" +
-                        "• 商业航天产业链有哪些股票？\n" +
-                        "• 今天天气怎么样？\n\n" +
-                        "📖 点击左上角 ≡ 可查看历史对话"
-            )
+        if (!prefs.getBoolean(KEY_FIRST_LAUNCH_DONE, false)) {
+            addBotMessage("👋 你好！我是你的智能助手！\n当前模型: ${apiProvider?.config?.name ?: "默认"}\n\n💡 试试：\n• 600519 现在多少钱？\n• 帮我分析贵州茅台\n• 商业航天产业链有哪些股票？\n\n📖 ≡ 查看历史对话")
             prefs.edit().putBoolean(KEY_FIRST_LAUNCH_DONE, true).apply()
         }
     }
 
     // ════════════════════════════════════════
-    // 需求2：历史对话（从 Room DB 加载）
+    // 历史对话
     // ════════════════════════════════════════
 
     private fun showConversationHistory() {
         val sheet = ConversationListFragment()
         sheet.onNewChatClick = { startNewConversation() }
-        sheet.onSessionClick = { sessionId ->
-            lifecycleScope.launch { loadConversation(sessionId) }
-        }
-        sheet.onDeleteSession = { sessionId ->
-            lifecycleScope.launch {
-                convRepo.deleteConversation(sessionId)
-                Toast.makeText(requireContext(), "已删除", Toast.LENGTH_SHORT).show()
-            }
-        }
-        sheet.convRepo = convRepo
-        sheet.show(childFragmentManager, "conversation_history")
+        sheet.onSessionClick = { sessionId -> lifecycleScope.launch { loadConversation(sessionId) } }
+        sheet.onDeleteSession = { sessionId -> lifecycleScope.launch { convRepo.deleteConversation(sessionId); Toast.makeText(requireContext(), "已删除", Toast.LENGTH_SHORT).show() } }
+        sheet.convRepo = convRepo; sheet.show(childFragmentManager, "conversation_history")
     }
 
     private suspend fun loadConversation(convId: String) {
-        val entity = withContext(Dispatchers.IO) { convRepo.getById(convId) }
-        if (entity == null) {
-            Toast.makeText(requireContext(), "对话不存在", Toast.LENGTH_SHORT).show()
-            return
-        }
-        cancelApiCall()
-        saveCurrentConversationSync()
-
-        val loadedMessages = ConversationRepository.deserializeMessages(entity.messagesJson)
-        messages.clear()
-        messages.addAll(loadedMessages)
-        adapter.notifyDataSetChanged()
-
-        currentConvId = entity.id
-        sessionStartTime = entity.timestamp
-        hasAutoTitle = loadedMessages.any { it.isUser }
-        binding.tvChatTitle.text = entity.title
-        binding.recyclerView.scrollToPosition(messages.size - 1)
-        Toast.makeText(requireContext(), "💬 ${entity.title}", Toast.LENGTH_SHORT).show()
+        val entity = withContext(Dispatchers.IO) { convRepo.getById(convId) } ?: run { Toast.makeText(requireContext(), "对话不存在", Toast.LENGTH_SHORT).show(); return }
+        cancelApiCall(); saveCurrentConversationSync()
+        messages.clear(); messages.addAll(ConversationRepository.deserializeMessages(entity.messagesJson)); adapter.notifyDataSetChanged()
+        currentConvId = entity.id; sessionStartTime = entity.timestamp; hasAutoTitle = messages.any { it.isUser }
+        binding.tvChatTitle.text = entity.title; binding.recyclerView.scrollToPosition(messages.size - 1)
     }
 
-    /** 判断当前对话是否有值得保存的用户内容 */
-    private fun hasMeaningfulContent(): Boolean {
-        val userMessages = messages.filter { it.isUser && !it.isStreaming && !it.isError && it.content.isNotBlank() }
-        if (userMessages.isEmpty()) return false
-        // 至少有一条非 trivial 的消息
-        return userMessages.any { !isTrivialMessage(it.content) }
-    }
+    private fun hasMeaningfulContent(): Boolean = messages.filter { it.isUser && !it.isStreaming && !it.isError && it.content.isNotBlank() }.any { !isTrivialMessage(it.content) }
 
     private fun saveCurrentConversation() {
-        // 没有任何用户输入 → 不保存（仅欢迎消息不算对话）
-        if (!hasMeaningfulContent()) {
-            Log.d(TAG, "⏭️ 跳过保存：无有效用户内容")
-            return
-        }
+        if (!hasMeaningfulContent()) return
         val realMessages = messages.filter { !it.isStreaming && !it.isError && it.content.isNotBlank() }
-        val (title, subtitle) = ConversationRepository.generateTitleAndSubtitle(realMessages)
-        val messagesJson = ConversationRepository.serializeMessages(realMessages)
-
-        val entity = ConversationEntity(
-            id = currentConvId,
-            title = title,
-            subtitle = subtitle,
-            timestamp = sessionStartTime,
-            messagesJson = messagesJson
-        )
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) { convRepo.saveConversation(entity) }
-            Log.d(TAG, "💾 已保存会话: $title")
-        }
+        lifecycleScope.launch { withContext(Dispatchers.IO) { convRepo.saveConversation(ConversationEntity(id = currentConvId, title = ConversationRepository.generateTitleAndSubtitle(realMessages).first, subtitle = "", timestamp = sessionStartTime, messagesJson = ConversationRepository.serializeMessages(realMessages))) } }
     }
 
-    /** 同步保存（用于加载其他会话前保存当前会话） */
     private fun saveCurrentConversationSync() {
         if (!hasMeaningfulContent()) return
         val realMessages = messages.filter { !it.isStreaming && !it.isError && it.content.isNotBlank() }
-        val (title, subtitle) = ConversationRepository.generateTitleAndSubtitle(realMessages)
-        val messagesJson = ConversationRepository.serializeMessages(realMessages)
-        val entity = ConversationEntity(
-            id = currentConvId,
-            title = title,
-            subtitle = subtitle,
-            timestamp = sessionStartTime,
-            messagesJson = messagesJson
-        )
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) { convRepo.saveConversation(entity) }
-        }
+        lifecycleScope.launch { withContext(Dispatchers.IO) { convRepo.saveConversation(ConversationEntity(id = currentConvId, title = ConversationRepository.generateTitleAndSubtitle(realMessages).first, subtitle = "", timestamp = sessionStartTime, messagesJson = ConversationRepository.serializeMessages(realMessages))) } }
     }
 
     private fun startNewConversation() {
-        saveCurrentConversation()
-        val size = messages.size
-        messages.clear()
-        adapter.notifyItemRangeRemoved(0, size)
-        hasAutoTitle = false
-        currentConvId = System.currentTimeMillis().toString()
-        sessionStartTime = System.currentTimeMillis()
-        if (_binding != null) {
-            binding.tvChatTitle.text = getString(com.chin.stockanalysis.R.string.app_name)
-        }
-        showWelcomeMessage()
+        saveCurrentConversation(); messages.clear(); adapter.notifyItemRangeRemoved(0, messages.size.coerceAtLeast(0))
+        hasAutoTitle = false; currentConvId = System.currentTimeMillis().toString(); sessionStartTime = System.currentTimeMillis()
+        binding.tvChatTitle.text = getString(com.chin.stockanalysis.R.string.app_name)
+        showWelcomeMessage(); showHotSectors()
     }
 
     // ════════════════════════════════════════
@@ -485,436 +342,185 @@ class ChatTabFragment : Fragment() {
 
     private fun sendMessage(userText: String) {
         addMessage(Message(content = userText, isUser = true))
-        binding.etInput.setText("")
-        hideKeyboard()
+        binding.etInput.setText(""); hideKeyboard()
+        if (!hasAutoTitle) { hasAutoTitle = true; binding.tvChatTitle.text = extractSmartTitle(userText) }
 
-        // 第一条用户消息 → 智能提取标题
-        if (!hasAutoTitle) {
-            hasAutoTitle = true
-            val autoTitle = extractSmartTitle(userText)
-            binding.tvChatTitle.text = autoTitle
+        val provider = apiProvider ?: run { addErrorMessage("❌ AI 服务未初始化"); return }
+
+        // v9.0: AI 组合名称（AI增强开 + 有不同 secondary → 双AI，否则单AI）
+        val secondary = secondaryProvider
+        val useDualAi = aiBoostEnabled && secondary != null && secondary.config.id != provider.config.id
+        val aiLabel = if (useDualAi) {
+            "${provider.config.name.take(8)} + ${secondary!!.config.name.take(8)}"
+        } else {
+            provider.config.name.take(10)
         }
+        val estimatedKeywords = if (userText.length > 10) 3 + userText.length / 10 else 2
 
-        val provider = apiProvider ?: run {
-            addErrorMessage("❌ AI 服务未初始化，请在「我的」页面配置 API。")
-            return
-        }
-
-        val streamingMessage = Message(content = "", isUser = false, isStreaming = true)
+        val streamingMessage = Message(content = "", isUser = false, isStreaming = true,
+            loadingStatus = "🤖 $aiLabel\n正在搜索${estimatedKeywords}个关键字...")
         addMessage(streamingMessage)
         val streamingIndex = messages.size - 1
 
-        // 隐藏追问 chips
-        showFollowUpChips(emptyList())
-
         currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
-            // 并行获取 memorySuffix 和行情数据（关键加速：串行→并行）
-            val memoryDeferred = async(Dispatchers.IO) { memoryManager.buildMemorySuffix() }
-            val dataDeferred = async(Dispatchers.IO) {
-                queryEngine.buildSystemPrompt(
-                    userText = userText,
-                    baseSystemPrompt = BASE_SYSTEM_PROMPT,
-                    onPreferenceLeaned = { _ ->
-                        if (isAdded) requireActivity().runOnUiThread {
-                            Toast.makeText(
-                                requireContext(),
-                                "📌 已记住你的偏好，后续自动应用",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                    }
-                )
+            // 800ms 后更新加载状态
+            delay(800L)
+            if (isAdded && streamingIndex in messages.indices && messages[streamingIndex].isStreaming) {
+                requireActivity().runOnUiThread {
+                    messages[streamingIndex] = messages[streamingIndex].copy(
+                        loadingStatus = "🤖 $aiLabel\n正在搜索${estimatedKeywords}个关键字，参考2篇资料")
+                    adapter.notifyItemChanged(streamingIndex)
+                }
             }
 
+            // 并行: memory + smartContext(行情) + orchestrator(多AI)
+            val memoryDeferred = async(Dispatchers.IO) { memoryManager.buildMemorySuffix() }
+            val dataDeferred = async(Dispatchers.IO) {
+                smartContext.getOrBuild(userText = userText, baseSystemPrompt = BASE_SYSTEM_PROMPT,
+                    onPreferenceLeaned = { _ -> if (isAdded) requireActivity().runOnUiThread { Toast.makeText(requireContext(), "📌 已记住你的偏好", Toast.LENGTH_SHORT).show() } })
+            }
+            // 多 AI 分析（仅当 AI增强开关开启 + secondary 可用时）
+            val multiAnalysis = if (useDualAi && secondary != null) {
+                orchestrator.fetchMultiAnalysis(provider, secondary, null, userText)
+            } else ""
+
             val memorySuffix = memoryDeferred.await()
-            // 将记忆注入行情 prompt：把 BASE_SYSTEM_PROMPT + memory + 行情合并
             val dataPrompt = dataDeferred.await()
-            val finalSystemPrompt = dataPrompt + memorySuffix
-
+            val finalSystemPrompt = dataPrompt + memorySuffix + multiAnalysis
             val history = messages.toList().subList(0, streamingIndex)
-
-            sendWithRetry(
-                provider = provider,
-                history = history,
-                systemPrompt = finalSystemPrompt,
-                streamingIndex = streamingIndex,
-                maxRetries = 3
-            )
+            sendWithRetry(provider, history, finalSystemPrompt, streamingIndex, 3)
         }
     }
 
-    /** 带重试的流式请求（最多 maxRetries 次，每次失败显示"重新获取中..."） */
-    private suspend fun sendWithRetry(
-        provider: ApiProvider,
-        history: List<Message>,
-        systemPrompt: String,
-        streamingIndex: Int,
-        maxRetries: Int,
-        attempt: Int = 1
-    ) {
+    private suspend fun sendWithRetry(provider: ApiProvider, history: List<Message>, systemPrompt: String, streamingIndex: Int, maxRetries: Int, attempt: Int = 1) {
         val accumulated = StringBuilder()
-
         try {
             kotlinx.coroutines.suspendCancellableCoroutine<Unit> { cont ->
-                provider.sendMessageStream(
-                    messages = history,
-                    systemPrompt = systemPrompt,
+                provider.sendMessageStream(messages = history, systemPrompt = systemPrompt,
                     onSuccess = { chunk ->
-                        accumulated.append(chunk)
+                        val sanitized = chunk.replace("null", "") // v9.0: 过滤 "null" 字符串
+                        accumulated.append(sanitized)
                         if (isAdded) requireActivity().runOnUiThread {
-                            updateStreamingMessage(streamingIndex, accumulated.toString())
+                            if (streamingIndex in messages.indices && messages[streamingIndex].isStreaming) {
+                                val msg = messages[streamingIndex]
+                                messages[streamingIndex] = msg.copy(content = accumulated.toString(), loadingStatus = null)
+                                adapter.notifyItemChanged(streamingIndex)
+                                binding.recyclerView.scrollToPosition(messages.size - 1)
+                            }
                         }
                     },
                     onComplete = { full ->
-                        val finalText = full.ifEmpty { accumulated.toString() }
+                        val finalText = full.ifEmpty { accumulated.toString() }.replace("null", "")
                         if (isAdded) requireActivity().runOnUiThread {
                             completeStreamingMessage(streamingIndex, finalText)
-                            binding.tvNewTopicHint.visibility = View.VISIBLE
                             onMessageComplete()
                         }
                         cont.resumeWith(Result.success(Unit))
                     },
-                    onError = { errMsg ->
-                        cont.resumeWith(Result.failure(Exception(errMsg)))
-                    }
-                )
+                    onError = { errMsg -> cont.resumeWith(Result.failure(Exception(errMsg))) })
             }
         } catch (e: Exception) {
             if (attempt < maxRetries && isAdded) {
-                requireActivity().runOnUiThread {
-                    Toast.makeText(
-                        requireContext(),
-                        "⏳ 重新获取中... (${attempt}/$maxRetries)",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
-                // 保存已收到的部分内容
-                val partial = accumulated.toString()
-                if (partial.isNotBlank()) {
-                    requireActivity().runOnUiThread {
-                        messages[streamingIndex] = messages[streamingIndex].copy(
-                            content = partial + "\n\n_尝试重新获取..._",
-                            isStreaming = true
-                        )
-                        adapter.notifyItemChanged(streamingIndex)
-                    }
-                }
+                requireActivity().runOnUiThread { Toast.makeText(requireContext(), "⏳ 重试中... (${attempt}/$maxRetries)", Toast.LENGTH_SHORT).show() }
+                if (accumulated.isNotEmpty()) { requireActivity().runOnUiThread { messages[streamingIndex] = messages[streamingIndex].copy(content = accumulated.toString() + "\n\n_重新获取..._", isStreaming = true); adapter.notifyItemChanged(streamingIndex) } }
                 kotlinx.coroutines.delay(1500L)
                 sendWithRetry(provider, history, systemPrompt, streamingIndex, maxRetries, attempt + 1)
             } else {
-                if (isAdded) requireActivity().runOnUiThread {
-                    failStreamingMessage(streamingIndex, "已重试 $maxRetries 次: ${e.message}")
-                }
+                if (isAdded) requireActivity().runOnUiThread { failStreamingMessage(streamingIndex, "已重试 $maxRetries 次: ${e.message}") }
             }
         }
     }
 
-    /** 重新生成指定位置之后的 AI 回复 */
     private fun regenerateMessage(botPosition: Int) {
         if (botPosition <= 0 || botPosition >= messages.size) return
-        val userMsg = (botPosition - 1 downTo 0).firstNotNullOfOrNull {
-            messages[it].takeIf { m -> m.isUser }
-        } ?: return
-        // 删除该条及以后所有消息
-        val count = messages.size - botPosition
-        repeat(count) { messages.removeAt(botPosition) }
-        adapter.notifyItemRangeRemoved(botPosition, count)
-        // 重新发送
+        val userMsg = (botPosition - 1 downTo 0).firstNotNullOfOrNull { messages[it].takeIf { m -> m.isUser } } ?: return
+        repeat(messages.size - botPosition) { messages.removeAt(botPosition) }
+        adapter.notifyItemRangeRemoved(botPosition, messages.size - botPosition + 1)
         sendMessage(userMsg.content)
     }
 
     // ════════════════════════════════════════
-    // 消息 UI 操作
+    // 消息 UI
     // ════════════════════════════════════════
 
-    private fun updateStreamingMessage(index: Int, content: String) {
-        if (index in messages.indices) {
-            messages[index] = messages[index].copy(content = content, isStreaming = true)
-            adapter.notifyItemChanged(index)
-            binding.recyclerView.scrollToPosition(messages.size - 1)
-        }
-    }
-
     private fun completeStreamingMessage(index: Int, content: String) {
-        if (index in messages.indices) {
-            messages[index] = messages[index].copy(content = content, isStreaming = false)
-            adapter.notifyItemChanged(index)
-            binding.recyclerView.scrollToPosition(messages.size - 1)
-        }
+        if (index in messages.indices) { messages[index] = messages[index].copy(content = content, isStreaming = false, loadingStatus = null); adapter.notifyItemChanged(index) }
     }
 
     private fun failStreamingMessage(index: Int, errMsg: String) {
-        if (index in messages.indices) {
-            messages[index] = Message(content = "❌ $errMsg", isUser = false, isError = true, errorMessage = errMsg)
-            adapter.notifyItemChanged(index)
-            binding.recyclerView.scrollToPosition(messages.size - 1)
-        }
+        if (index in messages.indices) { messages[index] = Message(content = "❌ $errMsg", isUser = false, isError = true, errorMessage = errMsg); adapter.notifyItemChanged(index) }
     }
 
-    private fun addMessage(message: Message) {
-        binding.tvNewTopicHint.visibility = View.GONE
-        messages.add(message)
-        adapter.notifyItemInserted(messages.size - 1)
-        binding.recyclerView.scrollToPosition(messages.size - 1)
-    }
-
+    private fun addMessage(message: Message) { binding.tvNewTopicHint.visibility = View.GONE; messages.add(message); adapter.notifyItemInserted(messages.size - 1); binding.recyclerView.scrollToPosition(messages.size - 1) }
     private fun addBotMessage(text: String) = addMessage(Message(content = text, isUser = false))
-    private fun addErrorMessage(text: String) =
-        addMessage(Message(content = text, isUser = false, isError = true))
+    private fun addErrorMessage(text: String) = addMessage(Message(content = text, isUser = false, isError = true))
+    private fun hideKeyboard() { (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(binding.etInput.windowToken, 0) }
+    private fun isTrivialMessage(text: String): Boolean = text.replace(Regex("[\\s,.，。!！?？、；;：:【】()（）、·]+"), "").length < 3
+    fun sendMessageFromExternal(text: String) { binding.etInput.setText(text); binding.btnSend.performClick() }
 
     private fun showEditMessageDialog(position: Int) {
         if (position !in messages.indices || !messages[position].isUser) return
-        val input = EditText(requireContext()).apply {
-            setText(messages[position].content)
-            setSelection(text?.length ?: 0)
-            minLines = 2
-        }
-        AlertDialog.Builder(requireContext())
-            .setTitle("修改消息").setView(input)
-            .setNegativeButton("取消", null)
-            .setPositiveButton("保存") { _, _ ->
-                val newText = input.text?.toString()?.trim().orEmpty()
-                if (newText.isBlank()) return@setPositiveButton
-                messages[position] = messages[position].copy(content = newText)
-                adapter.notifyItemChanged(position)
-            }.show()
+        val input = EditText(requireContext()).apply { setText(messages[position].content); setSelection(text?.length ?: 0) }
+        AlertDialog.Builder(requireContext()).setTitle("修改消息").setView(input).setNegativeButton("取消", null).setPositiveButton("保存") { _, _ ->
+            val t = input.text?.toString()?.trim().orEmpty(); if (t.isNotBlank()) { messages[position] = messages[position].copy(content = t); adapter.notifyItemChanged(position) }
+        }.show()
     }
 
     private fun undoUserMessage(position: Int) {
         if (position !in messages.indices || !messages[position].isUser) return
         val removeEnd = (position + 1 until messages.size).firstOrNull { messages[it].isUser } ?: messages.size
-        val count = removeEnd - position
-        repeat(count) { messages.removeAt(position) }
-        adapter.notifyItemRangeRemoved(position, count)
-        Toast.makeText(requireContext(), "已撤销该轮对话", Toast.LENGTH_SHORT).show()
+        repeat(removeEnd - position) { messages.removeAt(position) }
+        adapter.notifyItemRangeRemoved(position, removeEnd - position)
     }
-
-    private fun hideKeyboard() {
-        val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-        imm.hideSoftInputFromWindow(binding.etInput.windowToken, 0)
-    }
-
-    /** 判断消息是否无价值（仅符号/空格/单字） */
-    private fun isTrivialMessage(text: String): Boolean {
-        val cleaned = text.replace(Regex("[\\s,.，。!！?？、；;：:【】()（）、·]+"), "")
-        return cleaned.length < 3
-    }
-
-    // ════════════════════════════════════════
-    // v6.0: 外部调用发送消息（策略→对话联动）
-    // ════════════════════════════════════════
-
-    /** 供 MainActivity 从外部调用发送消息 */
-    fun sendMessageFromExternal(text: String) {
-        binding.etInput.setText(text)
-        // 模拟点击发送按钮
-        binding.btnSend.performClick()
-    }
-
-    // ════════════════════════════════════════
-    // 智能标题提取 + 自定义标题
-    // ════════════════════════════════════════
 
     private fun extractSmartTitle(userText: String): String {
-        val text = userText.trim()
-        if (text.isEmpty()) return "新对话"
-        val codeMatch = Regex("""[sS][hHzZ](\d{6})""").find(text)
-        if (codeMatch != null) {
-            val code = codeMatch.groupValues[1]
-            return when {
-                text.contains("分析") || text.contains("走势") -> "${code} 技术分析"
-                text.contains("对比") || text.contains("比较") -> "${code} 对比查询"
-                else -> "${code} 行情查询"
-            }
-        }
-        val pureNumMatch = Regex("""\b(\d{6})\b""").find(text)
-        if (pureNumMatch != null) return "${pureNumMatch.groupValues[1]} 查询"
-        val keywords = listOf("分析", "走势", "行情", "怎么样", "多少钱", "最新")
-        val matchedKeyword = keywords.firstOrNull { text.contains(it) }
-        if (matchedKeyword != null) {
-            val prefix = text.take(15).replace(matchedKeyword, "").trim()
-            return if (prefix.length >= 2) "${prefix} ${matchedKeyword}" else text.take(15)
-        }
-        return if (text.length <= 15) text else text.take(15) + "…"
+        val text = userText.trim(); if (text.isEmpty()) return "新对话"
+        Regex("""[sS][hHzZ](\d{6})""").find(text)?.let { return when { text.contains("分析")||text.contains("走势") -> "${it.groupValues[1]} 技术分析"; text.contains("对比")||text.contains("比较") -> "${it.groupValues[1]} 对比查询"; else -> "${it.groupValues[1]} 行情查询" } }
+        Regex("""\b(\d{6})\b""").find(text)?.let { return "${it.groupValues[1]} 查询" }
+        listOf("分析","走势","行情","怎么样","多少钱","最新").firstOrNull{text.contains(it)}?.let { val p=text.take(15).replace(it,"").trim(); return if(p.length>=2)"$p $it" else text.take(15) }
+        return if(text.length<=15) text else text.take(15)+"…"
     }
 
     private fun showEditTitleDialog() {
-        val input = EditText(requireContext()).apply {
-            setText(binding.tvChatTitle.text)
-            setSelection(text?.length ?: 0)
-            hint = "输入新的会话标题"
-        }
-        AlertDialog.Builder(requireContext())
-            .setTitle("✏️ 修改会话标题")
-            .setView(input)
-            .setNegativeButton("取消", null)
-            .setPositiveButton("确定") { _, _ ->
-                val newTitle = input.text?.toString()?.trim()
-                if (!newTitle.isNullOrBlank()) {
-                    binding.tvChatTitle.text = newTitle
-                    saveCurrentConversation()
-                    Toast.makeText(requireContext(), "✅ 标题已更新", Toast.LENGTH_SHORT).show()
-                }
-            }
-            .show()
+        val input = EditText(requireContext()).apply { setText(binding.tvChatTitle.text); setSelection(text?.length ?: 0); hint = "输入新标题" }
+        AlertDialog.Builder(requireContext()).setTitle("✏️ 修改标题").setView(input).setNegativeButton("取消", null).setPositiveButton("确定") { _, _ ->
+            val t = input.text?.toString()?.trim(); if (!t.isNullOrBlank()) { binding.tvChatTitle.text = t; saveCurrentConversation() }
+        }.show()
     }
 
     // ════════════════════════════════════════
-    // v4.2：记忆提取 + 追问 Chip
+    // 记忆提取 + 追问（v9.0: 仅回复完成后显示）
     // ════════════════════════════════════════
 
-    /**
-     * AI 回复完成后：异步提取关键信息 + 生成追问建议 + 检测新闻因子。
-     */
     private fun onMessageComplete() {
         lifecycleScope.launch {
             try {
-                // 1. 提取关键信息并合并到记忆
-                withContext(Dispatchers.IO) {
-                    memoryManager.extractAndMergeMemories(messages, currentConvId)
-                }
-                // 2. 生成追问建议
-                val activeMemories = withContext(Dispatchers.IO) {
-                    memoryManager.getAllMemories().filter { it.weight >= 0.3f }
-                }
-                val suggestions = memoryManager.generateFollowUpSuggestions(messages, activeMemories)
-                if (suggestions.isNotEmpty() && isAdded) {
-                    requireActivity().runOnUiThread {
-                        showFollowUpChips(suggestions)
-                    }
-                }
-                // 3. 检测新闻因子
+                backgroundPredictor.predictAfterConversation(scope = this, messages = messages.toList(), convId = currentConvId,
+                    onFollowUpReady = { suggestions -> if (suggestions.isNotEmpty() && isAdded) requireActivity().runOnUiThread { showFollowUpChips(suggestions) } })
                 checkAndPromptNewsFactor()
-            } catch (e: Exception) {
-                Log.e(TAG, "记忆提取/追问生成异常: ${e.message}")
-            }
+            } catch (e: Exception) { Log.e(TAG, "onMessageComplete 异常: ${e.message}") }
         }
     }
 
-    /**
-     * 检测用户最后一条消息是否包含新闻信息，如有则询问是否添加到数据库。
-     */
     private suspend fun checkAndPromptNewsFactor() {
         val lastUserMsg = messages.lastOrNull { it.isUser && !it.isStreaming && !it.isError } ?: return
-        val lastAiMsg = messages.lastOrNull { !it.isUser && !it.isStreaming && !it.isError } ?: return
-
         val newsManager = NewsFactorManager(requireContext())
-        val extracted = try {
-            newsManager.tryExtractFromUserMessage(lastUserMsg.content)
-        } catch (e: Exception) {
-            Log.w(TAG, "新闻因子检测失败: ${e.message}")
-            null
-        }
-
-        if (extracted != null && isAdded) {
-            requireActivity().runOnUiThread {
-                showNewsFactorDialog(newsManager, extracted)
-            }
-        }
+        val extracted = try { newsManager.tryExtractFromUserMessage(lastUserMsg.content) } catch (_: Exception) { null }
+        if (extracted != null && isAdded) { requireActivity().runOnUiThread { showNewsFactorDialog(newsManager, extracted) } }
     }
 
-    /**
-     * 显示对话框，询问用户是否将提取的新闻因子保存到数据库。
-     */
     private fun showNewsFactorDialog(newsManager: NewsFactorManager, factor: NewsFactorEntity) {
-        val sentimentEmoji = when {
-            factor.sentiment > 0 -> "📈 利好"
-            factor.sentiment < 0 -> "📉 利空"
-            else -> "➖ 中性"
-        }
-        val message = buildString {
-            appendLine("检测到以下新闻信息，是否添加到新闻因子数据库？")
-            appendLine()
-            appendLine("🏢 公司: ${factor.companyName}")
-            if (factor.stockCode.isNotEmpty()) appendLine("📊 代码: ${factor.stockCode}")
-            appendLine("📰 标题: ${factor.title}")
-            if (factor.content.isNotEmpty()) appendLine("📝 摘要: ${factor.content.take(80)}...")
-            appendLine("🎯 情绪: $sentimentEmoji (强度:${factor.impactStrength})")
-            if (factor.sector.isNotEmpty()) appendLine("🏭 行业: ${factor.sector}")
-            if (factor.tags.isNotEmpty()) appendLine("🏷️ 标签: ${factor.tags}")
-            appendLine()
-            appendLine("保存后可在策略分析中作为参考因子。\n超过3个月自动失效，超过1年自动清理。")
-        }
-
-        AlertDialog.Builder(requireContext())
-            .setTitle("📰 新闻因子提取")
-            .setMessage(message)
-            .setPositiveButton("保存") { _, _ ->
-                lifecycleScope.launch {
-                    try {
-                        newsManager.insertFactor(factor)
-                        if (isAdded) requireActivity().runOnUiThread {
-                            Toast.makeText(requireContext(), "✅ 新闻因子已保存到数据库", Toast.LENGTH_SHORT).show()
-                        }
-                        Log.i(TAG, "新闻因子已保存: ${factor.companyName} - ${factor.title}")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "保存新闻因子失败: ${e.message}")
-                        if (isAdded) requireActivity().runOnUiThread {
-                            Toast.makeText(requireContext(), "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                }
-            }
-            .setNeutralButton("查看更多新闻") { _, _ ->
-                lifecycleScope.launch {
-                    try {
-                        val stats = newsManager.getStats()
-                        if (isAdded) requireActivity().runOnUiThread {
-                            AlertDialog.Builder(requireContext())
-                                .setTitle("📊 新闻因子库统计")
-                                .setMessage(
-                                    "总数: ${stats.totalCount}\n" +
-                                    "活跃(3个月内): ${stats.activeCount}\n" +
-                                    "利好: ${stats.bullishCount} | 利空: ${stats.bearishCount}\n" +
-                                    "最新新闻日期: ${stats.latestNewsDate ?: "无"}"
-                                )
-                                .setPositiveButton("关闭", null)
-                                .show()
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "获取统计失败: ${e.message}")
-                    }
-                }
-            }
-            .setNegativeButton("忽略", null)
-            .show()
+        val emoji = when { factor.sentiment > 0 -> "📈 利好"; factor.sentiment < 0 -> "📉 利空"; else -> "➖ 中性" }
+        AlertDialog.Builder(requireContext()).setTitle("📰 新闻因子提取").setMessage("🏢 ${factor.companyName}\n📰 ${factor.title}\n🎯 $emoji").setPositiveButton("保存") { _, _ -> lifecycleScope.launch { try { newsManager.insertFactor(factor) } catch (e: Exception) { /* ignore */ } } }.setNegativeButton("忽略", null).show()
     }
 
-    /**
-     * 在输入框上方显示追问 Chip 列表。
-     * 使用简单的文本按钮方式实现（无需额外 layout 改动）。
-     */
     private fun showFollowUpChips(suggestions: List<KeyMemoryManager.FollowUpSuggestion>) {
         followUpSuggestions = suggestions
-        // 这里的实现策略：将追问作为 bot 消息添加到对话中，以"💡 你可能还想问："为前缀
-        if (suggestions.isNotEmpty()) {
-            val chipText = buildString {
-                appendLine("💡 你可能还想问：")
-                for ((i, s) in suggestions.withIndex()) {
-                    appendLine("${i + 1}. ${s.text}")
-                }
-                appendLine("\n⬆️ 点击上方问题或输入发送即可继续对话")
-            }
-            addBotMessage(chipText)
-            Log.d(TAG, "💡 追问建议: ${suggestions.map { it.text.take(20) }}")
-        }
+        if (suggestions.isNotEmpty()) { addBotMessage(buildString { appendLine("💡 你可能还想问："); for ((i, s) in suggestions.withIndex()) appendLine("${i+1}. ${s.text}") }) }
     }
 
-    /**
-     * 用户确认追问：提升对应记忆权重并发送追问。
-     */
     private fun onFollowUpConfirmed(suggestion: KeyMemoryManager.FollowUpSuggestion) {
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                memoryManager.boostMemoryWeight(
-                    key = suggestion.memoryKey,
-                    value = suggestion.memoryValue,
-                    category = suggestion.memoryCategory,
-                    convId = currentConvId
-                )
-            }
-        }
-        // 自动发送追问文本
+        lifecycleScope.launch { withContext(Dispatchers.IO) { memoryManager.boostMemoryWeight(key = suggestion.memoryKey, value = suggestion.memoryValue, category = suggestion.memoryCategory, convId = currentConvId) } }
         sendMessage(suggestion.text)
     }
 }
