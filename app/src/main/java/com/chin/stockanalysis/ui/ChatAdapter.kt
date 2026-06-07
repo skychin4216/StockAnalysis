@@ -130,49 +130,24 @@ class ChatAdapter(
             }
         }
 
-        /** v9.0: 检测并渲染股票 CSV 表格 */
+        /** 检测并渲染简洁表格 */
         private fun renderStockTable(content: String) {
-            // 检测是否包含表格标记 (| 分隔的表格行)
             val lines = content.lines()
-            val tableStart = lines.indexOfFirst { it.trimStart().startsWith("|") && it.contains("---") }
-            if (tableStart < 0) {
-                binding.layoutStockTable.visibility = View.GONE
-                return
+            val sepIdx = lines.indexOfFirst { it.trimStart().startsWith("|") && it.contains("---") }
+            if (sepIdx < 0 || sepIdx < 1) { binding.layoutStockTable.visibility = View.GONE; return }
+            val tbl = mutableListOf<String>()
+            for (i in sepIdx - 1 until lines.size) {
+                val l = lines[i].trim()
+                if (l.startsWith("|")) tbl.add(l) else if (tbl.isNotEmpty()) break
             }
-
-            // 收集表格内容
-            val tableLines = mutableListOf<String>()
-            for (i in tableStart until lines.size) {
-                val line = lines[i].trim()
-                if (line.startsWith("|") && line.endsWith("|")) {
-                    tableLines.add(line)
-                } else if (tableLines.isNotEmpty()) break
-            }
-            if (tableLines.size < 3) {
-                binding.layoutStockTable.visibility = View.GONE
-                return
-            }
-
-            // 用 monospace 字体渲染对齐的表格
+            if (tbl.size < 2) { binding.layoutStockTable.visibility = View.GONE; return }
             val sb = StringBuilder()
-            val headerLine = tableLines[1] // --- 分隔行之后的第一个数据行从 index 2 开始
-            // 实际上：header, ---, data1, data2...
-            // 取表头行 + 数据行，跳过 ---
-
-            for (i in tableLines.indices) {
-                if (i == 1) continue // 跳过 --- 分隔行
-                val cells = tableLines[i].split("|").filter { it.isNotBlank() }.map { it.trim() }
-                if (cells.isEmpty()) continue
-                sb.appendLine(cells.joinToString(" │ "))
-                if (i == 0) sb.appendLine("─".repeat(sb.length - 1))
+            for (i in tbl.indices) {
+                if (i == 1) { sb.appendLine(tbl[i]); continue } // --- separator
+                sb.appendLine(tbl[i])
             }
-
-            if (sb.isNotEmpty()) {
-                binding.tvStockTable.text = sb.toString().trimEnd()
-                binding.layoutStockTable.visibility = View.VISIBLE
-            } else {
-                binding.layoutStockTable.visibility = View.GONE
-            }
+            binding.tvStockTable.text = sb.toString().trimEnd()
+            binding.layoutStockTable.visibility = View.VISIBLE
         }
 
         private fun showPopupMenu(anchor: View, position: Int, message: Message) {

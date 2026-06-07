@@ -33,6 +33,7 @@ import com.chin.stockanalysis.ai.IntentPredictionEngine
 import com.chin.stockanalysis.ai.BackgroundPredictor
 import com.chin.stockanalysis.ai.AiProbe
 import com.chin.stockanalysis.ai.AiOrchestrator
+import com.chin.stockanalysis.ai.DataCompletenessChecker
 import com.chin.stockanalysis.stock.StockQueryEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -62,7 +63,7 @@ class ChatTabFragment : Fragment() {
         private const val PREFS_NAME = "chat_prefs"
         private const val KEY_FIRST_LAUNCH_DONE = "first_launch_welcome_done"
 
-        private const val BASE_SYSTEM_PROMPT = """你是一个专业的A股股票投资分析助手（角色: 量化分析+投资顾问）。
+        private val BASE_SYSTEM_PROMPT = """你是一个专业的A股股票投资分析助手（角色: 量化分析+投资顾问）。
 
 ## 核心能力
 1. 分析股票实时行情，解读K线图和技术指标
@@ -81,10 +82,16 @@ class ChatTabFragment : Fragment() {
 - 【股票匹配结果】→ 直接展示匹配的股票信息
 - 无注入数据时基于训练知识回答
 
+## 交易日验证规则 (仅当用户隐含要求最新数据时执行)
+- 用户明确指定日期/历史分析（如"去年"、"2024年"、"近一月走势"）→ 直接基于注入数据回答，无需验证是否为最近交易日
+- 用户隐含要求实时/当前数据（如"现在多少钱"、"最近怎么样"、"分析一下"）→ 必须验证注入数据日期
+  - 如果数据日期 = 最近交易日 → 正常进行全面分析
+  - 如果数据日期 ≠ 最近交易日 → 回复: "📅 当前数据日期不是最近交易日，无法获取最新数据进行分析。"
+
 ## 输出格式规范
-- 多只股票对比时输出 Markdown 表格:
-  | 名称 | 代码 | 最新价 | 涨跌幅 | 核心逻辑 | 操作建议 |
-  |------|------|--------|--------|---------|---------|
+- 多只股票对比时输出简洁表格:
+| 名称 | 代码 | 价格 | 涨跌 | 核心逻辑 |
+|------|------|------|------|---------|
 - 程序化解析时输出 JSON
 
 ## 回复规范
@@ -126,6 +133,10 @@ class ChatTabFragment : Fragment() {
     private var tertiaryProvider: ApiProvider? = null
     /** ⚡ AI 增强开关 — 开启时使用双 AI，关闭时仅用用户选择的 AI */
     private var aiBoostEnabled = false
+
+    // HotSectors 缓存 — 30s 内不重复查 DB
+    private var cachedHotSectorsText: String? = null
+    private var cachedHotSectorsTime: Long = 0L
 
     // ════════════════════════════════════════
     // 生命周期
@@ -265,22 +276,68 @@ class ChatTabFragment : Fragment() {
         }
     }
 
+    /** 获取热门板块+交易日涨幅Top5。先用DB+硬编码秒出，后台AI更新并缓存30s。 */
     private fun showHotSectors() {
+        // 30s 缓存
+        val now = System.currentTimeMillis()
+        if (cachedHotSectorsText != null && (now - cachedHotSectorsTime) < 30_000L) {
+            binding.tvHotSectors.text = cachedHotSectorsText
+            binding.layoutHotSectors.visibility = View.VISIBLE
+            return
+        }
+
         lifecycleScope.launch(Dispatchers.IO) {
             try {
+                // 1. 热门板块 Top3（静态缓存，无网络请求）
+                val hotSectors = com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.conceptSectors
+                    .sortedByDescending { it.changePercent }.take(3)
+                val sectorLines = if (hotSectors.isNotEmpty()) {
+                    hotSectors.withIndex().joinToString("\n") { (i, s) ->
+                        val emoji = if (s.changePercent > 0) "📈" else "📉"
+                        val sign = if (s.changePercent > 0) "+" else ""
+                        "${i + 1}. $emoji ${s.name} $sign${"%.2f".format(s.changePercent)}%"
+                    }
+                } else "暂无实时板块数据"
+
+                // 2. 涨幅Top5（DB+硬编码秒出，后台AI更新）
                 val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(requireContext())
-                val today = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(java.util.Date())
-                val snapshots = db.dailySnapshotDao().getByDate(today)
-                if (snapshots.isEmpty()) return@launch
-                val top5 = snapshots.sortedByDescending { it.changePct }.take(5)
-                val text = top5.joinToString("  ") { snap ->
-                    val emoji = if (snap.changePct > 0) "📈" else "📉"
-                    val sign = if (snap.changePct > 0) "+" else ""
-                    "${emoji}${snap.name} $sign${"%.2f".format(snap.changePct)}%"
-                }
+                val recentTradingDay = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().toString()
+                val snapshots = db.dailySnapshotDao().getByDate(recentTradingDay)
+                val checker = DataCompletenessChecker(db)
+                val stockLines = if (snapshots.isNotEmpty()) {
+                    val top5 = snapshots.sortedByDescending { it.changePct }.take(5)
+                    val sectorCache = mutableMapOf<String, String>()
+                    for (snap in top5) {
+                        sectorCache[snap.code] = checker.ensureSectorFast(snap.code, snap.name)
+                    }
+                    top5.joinToString("\n") { snap ->
+                        val emoji = if (snap.changePct > 0) "📈" else "📉"
+                        val sign = if (snap.changePct > 0) "+" else ""
+                        val sector = sectorCache[snap.code] ?: "-"
+                        "$emoji ${snap.name} $sign${"%.2f".format(snap.changePct)}%  $sector"
+                    }
+                } else "暂无交易日数据"
+
+                val text = "$sectorLines\n\n🔥 最近交易日($recentTradingDay) 涨幅Top5:\n$stockLines"
+
+                // 缓存
+                cachedHotSectorsText = text
+                cachedHotSectorsTime = System.currentTimeMillis()
+
                 if (isAdded) requireActivity().runOnUiThread {
-                    binding.tvHotSectors.text = "🔥 今日涨幅Top5\n$text"
+                    binding.tvHotSectors.text = text
                     binding.layoutHotSectors.visibility = View.VISIBLE
+                }
+
+                // 后台用 AI 检查并更新板块数据（低优先级，不阻塞UI）
+                if (apiProvider != null) {
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        for (snap in snapshots.sortedByDescending { it.changePct }.take(5)) {
+                            checker.ensureSector(snap.code, snap.name, apiProvider)
+                        }
+                        // 清除缓存让下次显示时用最新数据
+                        cachedHotSectorsTime = 0L
+                    }
                 }
             } catch (e: Exception) { Log.w(TAG, "热门板块获取失败: ${e.message}") }
         }

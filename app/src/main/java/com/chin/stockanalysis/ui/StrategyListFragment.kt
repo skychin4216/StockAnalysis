@@ -175,9 +175,10 @@ class StrategyListFragment : Fragment() {
         layout.addView(header)
 
         val row2 = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(8,4,8,4); setBackgroundColor(Color.WHITE) }
-        scanBtn = Button(requireContext()).apply { text = "执行策略"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#E65100")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,48,1.5f).apply { marginEnd = 3 }; setOnClickListener { runSelectedStrategies() } }; row2.addView(scanBtn)
+        scanBtn = Button(requireContext()).apply { text = "执行策略"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#E65100")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,48,1.3f).apply { marginEnd = 3 }; setOnClickListener { runSelectedStrategies() } }; row2.addView(scanBtn)
+        val aiQuantBtn = Button(requireContext()).apply { text = "🤖AI量化选股"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#2266FF")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,48,1.5f).apply { marginEnd = 3 }; setOnClickListener { runAIPredict() } }; row2.addView(aiQuantBtn)
         tuneBtn = Button(requireContext()).apply { text = "调优(90%)"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#EF6C00")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,48,1.3f).apply { marginEnd = 3 }; setOnClickListener { runSelfTune() } }; row2.addView(tuneBtn)
-        val importBtn = Button(requireContext()).apply { text = "导入"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#2E7D32")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,48,1.0f).apply { marginEnd = 3 }; setOnClickListener { importHistoricalData() } }; row2.addView(importBtn)
+        val importBtn = Button(requireContext()).apply { text = "导入"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#2E7D32")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,48,1.2f).apply { marginEnd = 3 }; setOnClickListener { importHistoricalData() } }; row2.addView(importBtn)
         val addCustomBtn = Button(requireContext()).apply { text = "+策略"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#1565C0")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,48,1.0f); setOnClickListener { showAddDialog() } }; row2.addView(addCustomBtn)
         layout.addView(row2)
 
@@ -407,6 +408,31 @@ class StrategyListFragment : Fragment() {
         }
     }
 
+    /** 🤖AI量化选股: 单独调用 AIPredictionEngine，不依赖先执行策略 */
+    private fun runAIPredict() {
+        val eng = engine ?: return
+        progressBar.visibility = View.VISIBLE; statusTv.text = "  🤖 AI 量化选股预测中..."
+        lifecycleScope.launch {
+            try {
+                // 用最近交易日的缓存快照或实时扫描
+                val results = cachedResults ?: emptyList()
+                val ai = AIPredictionEngine(requireContext())
+                val pred = ai.predict(results, browsingDate.toString())
+                withContext(Dispatchers.Main) {
+                    progressBar.visibility = View.GONE
+                    if (pred != null && pred.topPicks.isNotEmpty()) {
+                        showResultsDialog(results)
+                        statusTv.text = "  ✅ AI 量化选股完成 · ${pred.mode}方案"
+                    } else {
+                        statusTv.text = "  ⚠️ 建议先执行策略获取扫描结果"
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { progressBar.visibility = View.GONE; statusTv.text = "  AI 预测失败: ${e.message?.take(30)}" }
+            }
+        }
+    }
+
     private fun showFullScreenTuneReport(text: String) {
         ScrollView(requireContext()).also { sv ->
             sv.addView(TextView(requireContext()).apply { this.text = text; setTextColor(Color.parseColor("#333333")); textSize = 10f; setPadding(dp(16), dp(12), dp(16), dp(12)); setLineSpacing(2f, 1.1f); setTypeface(Typeface.MONOSPACE); isVerticalScrollBarEnabled = true })
@@ -460,7 +486,7 @@ class StrategyListFragment : Fragment() {
             }; c.addView(t)
         }
         c.addView(View(requireContext()).apply { layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, 2).apply { topMargin = 16; bottomMargin = 8 }; setBackgroundColor(Color.parseColor("#DDDDDD")) })
-        c.addView(TextView(requireContext()).apply { text = "🤖 AI 综合预测（多策略+新闻因子+周期轮动）"; textSize = 16f; setTextColor(Color.parseColor("#1565C0")); setTypeface(null, Typeface.BOLD); setPadding(0, 8, 0, 8) })
+        c.addView(TextView(requireContext()).apply { text = "🤖 AI 量化预测（多策略+新闻因子+周期轮动）"; textSize = 16f; setTextColor(Color.parseColor("#1565C0")); setTypeface(null, Typeface.BOLD); setPadding(0, 8, 0, 8) })
         val ail = TextView(requireContext()).apply { text = "  ⏳ AI 正在分析中，请稍候..."; textSize = 12f; setTextColor(Color.parseColor("#999999")) }; c.addView(ail)
         // 动态标题：多日模式用label
         val dialogTitle = when {
