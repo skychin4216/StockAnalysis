@@ -94,6 +94,7 @@ gradlew assembleDebug && gradlew installDebug
 | 文档 | 说明 |
 |------|------|
 | **[strategy/trade/README.md](app/src/main/java/com/chin/stockanalysis/strategy/trade/README.md)** | ⭐ 模拟交易系统完整架构 |
+| **[Strategy_Architecture_Analysis.md](Strategy_Architecture_Analysis.md)** | 🔍 策略架构分析 — 调用链、重复执行诊断、AI选股对比 |
 | **[Github架构设计.md](Github_architecture.md)** | 总体架构设计 |
 | **[QUICKSTART.md](QUICKSTART.md)** | 5分钟上手 |
 | **[API_REFERENCE.md](API_REFERENCE.md)** | 数据源和API说明 |
@@ -207,5 +208,5 @@ MIT 许可证。
 
 ---
 
-**最后更新**: 2026-06-06  
-**版本**: v8.0 模拟交易版
+**最后更新**: 2026-06-07  
+**版本**: v9.0 AI量化选股+多AI编排版
