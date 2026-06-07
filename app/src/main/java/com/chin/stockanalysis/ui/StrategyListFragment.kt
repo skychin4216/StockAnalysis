@@ -388,23 +388,8 @@ class StrategyListFragment : Fragment() {
             val yc = if (snap.changePct != 0.0 && snap.close != 0.0) snap.close / (1.0 + snap.changePct / 100.0) else snap.close
             com.chin.stockanalysis.stock.StockRealtime(code = snap.code, name = dn, price = snap.close, open = snap.open, yestClose = yc, high = snap.high, low = snap.low, volume = snap.volume, amount = snap.amount, changePercent = snap.changePct, changeAmount = snap.close * snap.changePct / 100, timestamp = System.currentTimeMillis())
         }
-        val strategies = eng.getStrategies()
-        val nonAiResults = mutableListOf<ScreeningResult>()
-        var aiResult: ScreeningResult? = null
-        // 先执行非AI策略
-        for (s in strategies) {
-            if (!eng.isEnabled(s.id)) continue
-            if (s.id == "ai_prediction") continue  // AI策略稍后执行
-            try { s.screenWithData(stockList).getOrNull()?.let { nonAiResults.add(it) } } catch (e: Exception) { Log.w("SLF", "策略 ${s.id} 异常: ${e.message}") }
-        }
-        // 执行AI策略（注入其他策略结果）
-        val aiStrategy = strategies.find { it.id == "ai_prediction" }
-        if (aiStrategy != null && eng.isEnabled("ai_prediction") && aiStrategy is AIPredictionStrategy) {
-            aiStrategy.strategyResults = nonAiResults.toList()
-            aiStrategy.targetDate = selectedDate
-            try { aiResult = aiStrategy.screenWithData(stockList).getOrNull() } catch (e: Exception) { Log.w("SLF", "AI预测异常: ${e.message}") }
-        }
-        val results = (nonAiResults + listOfNotNull(aiResult)).toMutableList()
+        val results = mutableListOf<ScreeningResult>()
+        for (s in eng.getStrategies()) { if (!eng.isEnabled(s.id)) continue; if (s.id == "ai_prediction") continue; try { s.screenWithData(stockList).getOrNull()?.let { results.add(it) } } catch (e: Exception) { Log.w("SLF", "策略 ${s.id} 异常: ${e.message}") } }
         // 更新缓存
         cachedResults = results
         lastExecTimeMs = System.currentTimeMillis()
@@ -423,31 +408,6 @@ class StrategyListFragment : Fragment() {
         }
     }
 
-    /** 🤖AI量化选股: 单独调用 AIPredictionEngine，不依赖先执行策略 */
-    private fun runAIPredict() {
-        val eng = engine ?: return
-        progressBar.visibility = View.VISIBLE; statusTv.text = "  🤖 AI 量化选股预测中..."
-        lifecycleScope.launch {
-            try {
-                // 用最近交易日的缓存快照或实时扫描
-                val results = cachedResults ?: emptyList()
-                val ai = AIPredictionEngine(requireContext())
-                val pred = ai.predict(results, browsingDate.toString())
-                withContext(Dispatchers.Main) {
-                    progressBar.visibility = View.GONE
-                    if (pred != null && pred.topPicks.isNotEmpty()) {
-                        showResultsDialog(results)
-                        statusTv.text = "  ✅ AI 量化选股完成 · ${pred.mode}方案"
-                    } else {
-                        statusTv.text = "  ⚠️ 建议先执行策略获取扫描结果"
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) { progressBar.visibility = View.GONE; statusTv.text = "  AI 预测失败: ${e.message?.take(30)}" }
-            }
-        }
-    }
-
     private fun showFullScreenTuneReport(text: String) {
         ScrollView(requireContext()).also { sv ->
             sv.addView(TextView(requireContext()).apply { this.text = text; setTextColor(Color.parseColor("#333333")); textSize = 10f; setPadding(dp(16), dp(12), dp(16), dp(12)); setLineSpacing(2f, 1.1f); setTypeface(Typeface.MONOSPACE); isVerticalScrollBarEnabled = true })
@@ -459,23 +419,8 @@ class StrategyListFragment : Fragment() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val rts = screener?.scanFullMarket() ?: emptyList()
-                val strategies = eng.getStrategies()
-                val nonAiResults = mutableListOf<ScreeningResult>()
-                var aiResult: ScreeningResult? = null
-                if (rts.isNotEmpty()) {
-                    for (s in strategies) {
-                        if (!eng.isEnabled(s.id)) continue
-                        if (s.id == "ai_prediction") continue
-                        try { s.screenWithData(rts).getOrNull()?.let { nonAiResults.add(it) } } catch (e: Exception) { Log.w("SLF", "实时 ${s.id}: ${e.message}") }
-                    }
-                    val aiStrategy = strategies.find { it.id == "ai_prediction" }
-                    if (aiStrategy != null && eng.isEnabled("ai_prediction") && aiStrategy is AIPredictionStrategy) {
-                        aiStrategy.strategyResults = nonAiResults.toList()
-                        aiStrategy.targetDate = selectedDate
-                        try { aiResult = aiStrategy.screenWithData(rts).getOrNull() } catch (e: Exception) { Log.w("SLF", "AI预测实时异常: ${e.message}") }
-                    }
-                }
-                val results = (nonAiResults + listOfNotNull(aiResult)).toMutableList()
+                val results = mutableListOf<ScreeningResult>()
+                if (rts.isNotEmpty()) { for (s in eng.getStrategies()) { if (!eng.isEnabled(s.id)) continue; if (s.id == "ai_prediction") continue; try { s.screenWithData(rts).getOrNull()?.let { results.add(it) } } catch (e: Exception) { Log.w("SLF", "实时 ${s.id}: ${e.message}") } } }
                 // 更新缓存
                 cachedResults = results.takeIf { it.isNotEmpty() }
                 lastExecTimeMs = System.currentTimeMillis()
