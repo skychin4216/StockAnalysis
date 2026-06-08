@@ -62,8 +62,8 @@ class StrategyFragment : Fragment() {
         TabLayoutMediator(tabLayout, viewPager) { tab, position ->
             tab.text = when (position) {
                 0 -> "🎯 量化选股"
-                1 -> "🔥 热点新闻"
-                2 -> "💹 模拟交易"
+                1 -> "💹 模拟交易"
+                2 -> "🔥 热点新闻"
                 else -> ""
             }
         }.attach()
@@ -77,8 +77,8 @@ class StrategyFragment : Fragment() {
         override fun createFragment(position: Int): Fragment {
             return when (position) {
                 0 -> StrategyListFragment()
-                1 -> HotNewsFragment()
-                2 -> com.chin.stockanalysis.strategy.trade.SimulationTradeFragment()
+                1 -> com.chin.stockanalysis.strategy.trade.SimulationTradeFragment()
+                2 -> HotNewsFragment()
                 else -> StrategyListFragment()
             }
         }

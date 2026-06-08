@@ -8,6 +8,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
+import android.util.Log
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.chin.stockanalysis.stock.data.StockDataSourceFactory
@@ -333,12 +334,18 @@ class SimulationTradeFragment : Fragment() {
                 val report = tradeEngine!!.runTradeSession(strategies, config)
 
                 withContext(Dispatchers.Main) {
-                    showTradeReport(report)
-                    executeBtn.isEnabled = true
-                    executeBtn.text = "▶ 模拟交易"
-                    progressBar.visibility = View.GONE
-                    statusTv.text = "✅ 完成: ${report.summary.lines().firstOrNull()?.take(60) ?: "交易完成"}"
-                }
+                        try {
+                            showTradeReport(report)
+                            statusTv.text = "✅ 完成: ${report.summary.lines().firstOrNull()?.take(60) ?: "交易完成"}"
+                        } catch (uiEx: Exception) {
+                            Log.e("TradeUI", "UI update failed", uiEx)
+                            statusTv.text = "✅ 交易完成，但显示报告时出错"
+                        } finally {
+                            executeBtn.isEnabled = true
+                            executeBtn.text = "▶ 模拟交易"
+                            progressBar.visibility = View.GONE
+                        }
+                    }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     statusTv.text = "❌ 执行失败: ${e.message?.take(50)}"

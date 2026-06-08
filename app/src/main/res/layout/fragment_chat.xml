@@ -75,13 +75,51 @@
             android:contentDescription="更多"
             android:padding="6dp"
             android:src="@android:drawable/ic_menu_more"
-            android:tint="#666666" />
+            app:tint="#666666" />
     </LinearLayout>
 
     <View
         android:layout_width="match_parent"
         android:layout_height="0.5dp"
         android:background="#EEEEEE" />
+
+    <!-- ── 热门板块提示卡片 (顶部左上角) ── -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="8dp"
+        android:visibility="gone"
+        android:id="@+id/frameHotSectors"
+        android:elevation="4dp">
+
+        <LinearLayout
+            android:id="@+id/layoutHotSectors"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_hot_sector_card"
+            android:orientation="vertical"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="6dp">
+
+            <TextView
+                android:id="@+id/tvHotSectorsTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🔥 今日热门"
+                android:textColor="#333333"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvHotSectors"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textColor="#666666"
+                android:textSize="11sp"
+                android:lineSpacingExtra="1dp" />
+        </LinearLayout>
+    </FrameLayout>
 
     <!-- ── 消息列表 ── -->
     <androidx.recyclerview.widget.RecyclerView
@@ -96,35 +134,6 @@
         android:paddingEnd="12dp"
         android:paddingStart="12dp"
         android:paddingTop="8dp" />
-
-    <!-- ── 热门板块提示卡片 ── -->
-    <LinearLayout
-        android:id="@+id/layoutHotSectors"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="#F7F8FA"
-        android:orientation="vertical"
-        android:paddingHorizontal="16dp"
-        android:paddingVertical="8dp"
-        android:visibility="gone">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="🔥 今日热门"
-            android:textColor="#333333"
-            android:textSize="13sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/tvHotSectors"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:textColor="#666666"
-            android:textSize="13sp"
-            android:lineSpacingExtra="2dp" />
-    </LinearLayout>
 
     <!-- ── "聊聊新话题" 提示 ── -->
     <TextView
@@ -169,8 +178,8 @@
                 android:background="@drawable/bg_btn_circle"
                 android:contentDescription="AI增强"
                 android:padding="5dp"
-                android:src="@drawable/ic_ai_boost"
-                android:tint="#AAAAAA" />
+            android:src="@drawable/ic_ai_boost"
+            app:tint="#AAAAAA" />
 
             <!-- 输入框 -->
             <EditText
@@ -197,8 +206,8 @@
                 android:background="@drawable/bg_btn_circle"
                 android:contentDescription="语音输入"
                 android:padding="7dp"
-                android:src="@android:drawable/ic_btn_speak_now"
-                android:tint="#666666" />
+            android:src="@android:drawable/ic_btn_speak_now"
+            app:tint="#666666" />
 
             <!-- 发送按钮：空状态 ➕，有输入时 ↑ 箭头 -->
             <ImageButton

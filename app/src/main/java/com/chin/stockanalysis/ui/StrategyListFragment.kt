@@ -89,6 +89,9 @@ class StrategyListFragment : Fragment() {
         StrategyEngineHolder.init(ctx)
         engine = StrategyEngineHolder.get()
         strategyCount = engine?.getStrategies()?.size ?: 8
+        // 初始化 StockScreener（實時掃描用）
+        val repo = StockDataSourceFactory.createDefaultRepository(ctx)
+        screener = StockScreener(repo)
         lifecycleScope.launch(Dispatchers.IO) {
             engine?.getStrategies()?.forEach { strategy ->
                 StrategySelfTuner.loadLatestTunedWeights(requireContext(), strategy.id)?.let { tuned ->
@@ -425,7 +428,12 @@ class StrategyListFragment : Fragment() {
     private fun showResults(results: List<ScreeningResult>) {
         if (!isAdded) return
         val totalHits = results.sumOf { it.hitCount }; val totalScanned = results.sumOf { it.totalScanned }
-        if (results.isEmpty() || totalHits == 0) { statusTv.text = "  ⚠️ 扫描${totalScanned}只，未产生命中信号"; Log.i("SLF", "扫描${totalScanned}只，未产生命中信号"); return }
+        if (results.isEmpty() || totalHits == 0) { 
+            statusTv.text = "  ⚠️ 扫描${totalScanned}只，未产生命中信号"; 
+            Log.i("SLF", "扫描${totalScanned}只，未产生命中信号")
+            AlertDialog.Builder(requireContext()).setTitle("策略执行结果").setMessage("扫描 $totalScanned 只股票，未产生命中信号。\n\n可能原因:\n• 当前市场情绪偏弱\n• 策略阈值较高\n• 数据源未就绪").setPositiveButton("确定", null).show()
+            return 
+        }
         showResultsDialog(results)
     }
 

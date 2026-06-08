@@ -112,7 +112,7 @@ class ChatTabFragment : Fragment() {
     private var apiProvider: ApiProvider? = null
     private var tts: TextToSpeech? = null
 
-    private val queryEngine: StockQueryEngine by lazy { StockQueryEngine.create(requireContext()) }
+    private val queryEngine: StockQueryEngine by lazy { StockQueryEngine.create(requireContext(), skillOrchestrator) }
 
     private lateinit var convRepo: ConversationRepository
     private lateinit var memoryManager: KeyMemoryManager
@@ -128,6 +128,10 @@ class ChatTabFragment : Fragment() {
     private val backgroundPredictor by lazy { BackgroundPredictor(memoryManager, smartContext) }
     private val orchestrator = AiOrchestrator()
 
+    // ═══ v10.0: Skill 系統 ═══
+    private val skillEngine by lazy { com.chin.stockanalysis.skill.SkillEngine(requireContext()) }
+    private val skillOrchestrator by lazy { com.chin.stockanalysis.skill.SkillOrchestrator(skillEngine) }
+
     // 多 AI Provider（由 AiProbe 注入）
     private var secondaryProvider: ApiProvider? = null
     private var tertiaryProvider: ApiProvider? = null
@@ -137,6 +141,7 @@ class ChatTabFragment : Fragment() {
     // HotSectors 缓存 — 30s 内不重复查 DB
     private var cachedHotSectorsText: String? = null
     private var cachedHotSectorsTime: Long = 0L
+    private var hotSectorsHideJob: Job? = null
 
     // ════════════════════════════════════════
     // 生命周期
@@ -235,13 +240,14 @@ class ChatTabFragment : Fragment() {
         }
         binding.btnVoice.setOnClickListener { Toast.makeText(requireContext(), "🎤 语音输入开发中", Toast.LENGTH_SHORT).show() }
 
-        // v9.0: 输入时切换 +/🎤 → ↑
+        // 输入时隐藏热门板块 + 切换 +/🎤 → ↑
         binding.etInput.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: android.text.Editable?) {
                 val hasText = !s.isNullOrBlank()
                 if (hasText) {
+                    binding.frameHotSectors.visibility = View.GONE  // 用户输入后隐藏热门板块
                     binding.btnAiBoost.visibility = View.GONE
                     binding.btnVoice.visibility = View.GONE
                     binding.btnSend.setImageResource(com.chin.stockanalysis.R.drawable.ic_send_arrow)
@@ -251,6 +257,8 @@ class ChatTabFragment : Fragment() {
                     binding.btnVoice.visibility = View.VISIBLE
                     binding.btnSend.setImageResource(android.R.drawable.ic_input_add)
                     intentEngine.cancel()
+                    // 输入清空时重新显示热门板块（取消旧定时器，重新 10s 倒计时）
+                    showHotSectors()
                 }
             }
         })
@@ -276,13 +284,44 @@ class ChatTabFragment : Fragment() {
         }
     }
 
-    /** 获取热门板块+交易日涨幅Top5。先用DB+硬编码秒出，后台AI更新并缓存30s。 */
+    /**
+     * 动态控制今日热点 View 的显示/隐藏
+     * @param show true=显示（重新加载数据并启动10s倒计时），false=隐藏
+     */
+    fun toggleHotSectors(show: Boolean) {
+        if (show) {
+            showHotSectors()
+        } else {
+            hotSectorsHideJob?.cancel()
+            binding.frameHotSectors.visibility = View.GONE
+        }
+    }
+
+    /** 
+     * 获取热门板块+交易日涨幅Top5。显示 10s 后自动隐藏。
+     * 先用DB+硬编码秒出，后台AI更新并缓存30s。
+     */
     private fun showHotSectors() {
+        // 取消之前的隐藏任务
+        hotSectorsHideJob?.cancel()
+        
+        // 显示 frameHotSectors（外层容器），内部 layoutHotSectors 自动可见
+        binding.frameHotSectors.visibility = View.VISIBLE
+        binding.tvHotSectors.text = "📊 正在加载热门板块数据..."
+        
+        // 10s 后自动隐藏
+        hotSectorsHideJob = lifecycleScope.launch {
+            delay(10_000L)
+            if (isAdded) requireActivity().runOnUiThread {
+                binding.frameHotSectors.visibility = View.GONE
+            }
+        }
+        
         // 30s 缓存
         val now = System.currentTimeMillis()
+        
         if (cachedHotSectorsText != null && (now - cachedHotSectorsTime) < 30_000L) {
             binding.tvHotSectors.text = cachedHotSectorsText
-            binding.layoutHotSectors.visibility = View.VISIBLE
             return
         }
 
@@ -332,7 +371,6 @@ class ChatTabFragment : Fragment() {
 
                 if (isAdded) requireActivity().runOnUiThread {
                     binding.tvHotSectors.text = text
-                    binding.layoutHotSectors.visibility = View.VISIBLE
                 }
 
                 // 后台用 AI 检查并更新板块数据（低优先级，不阻塞UI）
@@ -345,7 +383,12 @@ class ChatTabFragment : Fragment() {
                         cachedHotSectorsTime = 0L
                     }
                 }
-            } catch (e: Exception) { Log.w(TAG, "热门板块获取失败: ${e.message}") }
+            } catch (e: Exception) { 
+                Log.w(TAG, "热门板块获取失败: ${e.message}") 
+                if (isAdded) requireActivity().runOnUiThread {
+                    binding.tvHotSectors.text = "获取热门板块失败: ${e.message?.take(30)}"
+                }
+            }
         }
     }
 
@@ -408,7 +451,20 @@ class ChatTabFragment : Fragment() {
         binding.etInput.setText(""); hideKeyboard()
         if (!hasAutoTitle) { hasAutoTitle = true; binding.tvChatTitle.text = extractSmartTitle(userText) }
 
-        val provider = apiProvider ?: run { addErrorMessage("❌ AI 服务未初始化"); return }
+        // ═══ v10.0: 動態建立 Skill 意圖處理 ═══
+        val skillCreationResult = skillOrchestrator.handleDynamicSkillCreation(userText)
+        if (skillCreationResult != null) {
+            addBotMessage(skillCreationResult)
+            Log.i(TAG, "🆕 動態 Skill 建立: $userText")
+            return
+        }
+
+        // 用户指定 AI 提供者（如 "用豆包分析"、"切换到deepseek"等）
+        var provider = detectAndSwitchProvider(userText) ?: apiProvider
+        if (provider == null) { addErrorMessage("❌ AI 服务未初始化"); return }
+
+        // 清除行情缓存确保获取实时数据
+        smartContext.invalidateAll()
 
         // v9.0: AI 组合名称（AI增强开 + 有不同 secondary → 双AI，否则单AI）
         val secondary = secondaryProvider
@@ -438,7 +494,7 @@ class ChatTabFragment : Fragment() {
 
             // 并行: memory + smartContext(行情) + orchestrator(多AI)
             val memoryDeferred = async(Dispatchers.IO) { memoryManager.buildMemorySuffix() }
-            val dataDeferred = async(Dispatchers.IO) {
+        val dataDeferred = async(Dispatchers.IO) {
                 smartContext.getOrBuild(userText = userText, baseSystemPrompt = BASE_SYSTEM_PROMPT,
                     onPreferenceLeaned = { _ -> if (isAdded) requireActivity().runOnUiThread { Toast.makeText(requireContext(), "📌 已记住你的偏好", Toast.LENGTH_SHORT).show() } })
             }
@@ -563,6 +619,30 @@ class ChatTabFragment : Fragment() {
                 checkAndPromptNewsFactor()
             } catch (e: Exception) { Log.e(TAG, "onMessageComplete 异常: ${e.message}") }
         }
+    }
+
+    /** 检测用户输入中的 AI 提供者关键词，切换对应的 Provider */
+    private fun detectAndSwitchProvider(userText: String): ApiProvider? {
+        val configManager = ApiConfigManager.getInstance(requireContext())
+        val text = userText.lowercase()
+        val targetId = when {
+            text.contains("豆包") || text.contains("doubao") -> "doubao"
+            text.contains("deepseek") || text.contains("深度求索") -> "deepseek"
+            text.contains("通义") || text.contains("qwen") -> "tongyi"
+            text.contains("阿里") || text.contains("ali") -> "ali"
+            text.contains("硅基") || text.contains("silicon") -> "silicon_flow"
+            else -> null
+        }
+        if (targetId != null) {
+            val config = configManager.getProviderConfig(targetId)
+            if (config != null) {
+                val newProvider = com.chin.stockanalysis.OpenAiCompatibleProvider(config)
+                apiProvider = newProvider
+                Log.i(TAG, "🔄 用户指定切换到: ${config.name}")
+                return newProvider
+            }
+        }
+        return null
     }
 
     private suspend fun checkAndPromptNewsFactor() {

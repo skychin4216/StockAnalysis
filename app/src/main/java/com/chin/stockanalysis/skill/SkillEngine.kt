@@ -3,16 +3,23 @@ package com.chin.stockanalysis.skill
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
+import com.chin.stockanalysis.skill.stock_picking.SkillConfigLoader
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
  * ## 技能引擎
  *
- * 管理 Skill 的 CRUD 和持久化（SharedPreferences JSON），
- * 以及自动触发逻辑。
+ * 管理 Skill 的 CRUD 和持久化，架構：
+ *
+ * - **設定檔** (assets/skills_config.json + files/skills_dynamic.json)
+ *   → Skill 定義（id, name, prompts, keywords）
+ * - **SharedPreferences** (skill_prefs)
+ *   → 執行時狀態（enabled, usageCount, createdAt）
+ *
+ * 兩者在 init 時合併：設定檔提供定義，SharedPreferences 覆蓋狀態。
  */
-class SkillEngine(context: Context) {
+class SkillEngine(private val context: Context) {
 
     companion object {
         private const val TAG = "SkillEngine"
@@ -52,6 +59,66 @@ class SkillEngine(context: Context) {
     fun getEnabled(): List<Skill> = skills.values.filter { it.enabled }
     fun getBySource(source: SkillSource): List<Skill> = skills.values.filter { it.source == source }
     fun getAutoTriggerSkills(): List<Skill> = skills.values.filter { it.enabled && it.autoTrigger }
+
+    fun recordUsage(id: String) {
+        skills[id]?.let { register(it.copy(usageCount = it.usageCount + 1)) }
+    }
+
+    /**
+     * 動態建立 Skill
+     *
+     * 同時寫入：
+     * 1. 記憶體 (skills map)
+     * 2. SharedPreferences (runtime state)
+     * 3. skills_dynamic.json (定義持久化，重啟後自動復原)
+     *
+     * @return 新建的 Skill，若 ID 衝突則回傳 null
+     */
+    fun createDynamicSkill(
+        id: String,
+        name: String,
+        description: String,
+        keywords: List<String>,
+        icon: String = "📝",
+        prompts: List<String>
+    ): Skill? {
+        if (skills.containsKey(id)) {
+            Log.w(TAG, "Skill ID $id 已存在，無法動態建立")
+            return null
+        }
+        val skill = Skill(
+            id = id,
+            name = name,
+            icon = icon,
+            description = description,
+            prompts = prompts,
+            autoTrigger = true,
+            triggerPrompt = keywords.joinToString(", "),
+            source = SkillSource.USER_CREATED,
+            createdAt = System.currentTimeMillis()
+        )
+        register(skill)
+
+        // 持久化到 skills_dynamic.json（重啟後仍存在）
+        try {
+            val config = SkillConfigLoader.SkillConfig(
+                id = skill.id,
+                name = skill.name,
+                icon = skill.icon,
+                description = skill.description,
+                keywords = keywords,
+                fullPrompt = prompts.getOrElse(0) { "" },
+                quickPrompt = prompts.getOrElse(1) { prompts.getOrElse(0) { "" } },
+                autoTrigger = skill.autoTrigger
+            )
+            SkillConfigLoader.addDynamicSkill(context, config)
+            Log.i(TAG, "🆕 動態 Skill 已存入設定檔: ${skill.id}")
+        } catch (e: Exception) {
+            Log.w(TAG, "動態 Skill 設定檔寫入失敗: ${e.message}")
+        }
+
+        return skill
+    }
 
     // ── 持久化 ──
 
@@ -106,7 +173,16 @@ class SkillEngine(context: Context) {
 
     // ── 内置默认 Skill ──
 
+    /**
+     * 從設定檔載入所有 Skill 定義，並註冊到引擎中
+     *
+     * 來源順序：
+     * 1. 硬編碼基礎 Skill（早盤關注、尾盤異動）
+     * 2. assets/skills_config.json（內建選股 Skill）
+     * 3. files/skills_dynamic.json（動態建立的 Skill）
+     */
     private fun registerDefaults() {
+        // 基礎 Skill（硬編碼，不適合放設定檔）
         register(Skill(
             id = "morning_check",
             name = "每日早盘关注",
@@ -129,5 +205,34 @@ class SkillEngine(context: Context) {
             triggerPrompt = "查看尾盘异动",
             source = SkillSource.AUTO_GENERATED
         ))
+
+        // 從設定檔載入選股 Skill（內建 + 動態）
+        try {
+            val allConfigs = SkillConfigLoader.loadAllSkills(context)
+            Log.i(TAG, "從設定檔載入 ${allConfigs.size} 個選股 Skill")
+            for (config in allConfigs) {
+                val skill = config.toSkill()
+                register(skill)
+                Log.d(TAG, "  📄 ${config.id} (${if (config.isDynamic) "動態" else "內建"})")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "從設定檔載入 Skill 失敗: ${e.message}")
+
+            // Fallback: 硬編碼 Skill（配置檔損壞或不存在時）
+            Log.w(TAG, "使用硬編碼 Fallback Skill")
+            val builtinSkills = listOf<com.chin.stockanalysis.skill.stock_picking.BaseStockPickingSkill>(
+                com.chin.stockanalysis.skill.stock_picking.StockPickingSkillDoubao1,
+                com.chin.stockanalysis.skill.stock_picking.StockPickingSkillDoubao2
+            )
+            for (skillDef in builtinSkills) {
+                try {
+                    val skill = skillDef.createSkill()
+                    register(skill)
+                    Log.i(TAG, "  硬編碼 Skill: ${skill.id} - ${skill.name}")
+                } catch (e2: Exception) {
+                    Log.w(TAG, "  硬編碼 Skill ${skillDef.tag} 失敗: ${e2.message}")
+                }
+            }
+        }
     }
 }

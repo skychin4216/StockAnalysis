@@ -2,6 +2,9 @@ package com.chin.stockanalysis.stock
 
 import android.content.Context
 import android.util.Log
+import com.chin.stockanalysis.news.NewsFactorManager
+import com.chin.stockanalysis.skill.SkillOrchestrator
+import com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource
 import com.chin.stockanalysis.stock.database.StockDatabaseManager
 import com.chin.stockanalysis.stock.data.MultiSourceStockRepository
 import com.chin.stockanalysis.stock.data.StockDataSourceFactory
@@ -75,7 +78,8 @@ import kotlinx.coroutines.launch
  */
 class StockQueryEngine private constructor(
     context: Context,
-    private val repository: MultiSourceStockRepository
+    private val repository: MultiSourceStockRepository,
+    private val skillOrchestrator: SkillOrchestrator? = null
 ) {
 
     companion object {
@@ -84,9 +88,9 @@ class StockQueryEngine private constructor(
         /**
          * 工厂方法（推荐使用）：自动创建多源仓储并初始化引擎
          */
-        fun create(context: Context): StockQueryEngine {
+        fun create(context: Context, skillOrchestrator: SkillOrchestrator? = null): StockQueryEngine {
             val repo = StockDataSourceFactory.createDefaultRepository(context.applicationContext)
-            return StockQueryEngine(context.applicationContext, repo)
+            return StockQueryEngine(context.applicationContext, repo, skillOrchestrator)
         }
 
         /**
@@ -111,6 +115,9 @@ class StockQueryEngine private constructor(
 
     /** v5.0 新增：本地数据库管理器（股票基本信息 + 板块映射）*/
     val dbManager: StockDatabaseManager = StockDatabaseManager.getInstance(context)
+
+    /** v6.0 新增：新闻因子管理器（利好/利空新闻）*/
+    val newsManager: NewsFactorManager = NewsFactorManager(context)
 
     /** 后台预取调度器（预热缓存，加速响应）*/
     val prefetchScheduler: StockPrefetchScheduler = StockPrefetchScheduler(
@@ -150,7 +157,7 @@ class StockQueryEngine private constructor(
      * @param onPreferenceLeaned 学到新偏好时的回调（在 IO 线程执行，UI 更新请 post 到主线程）
      * @return 完整的 system prompt 字符串（已注入实时数据 + 用户偏好）
      */
-    fun buildSystemPrompt(
+    suspend fun buildSystemPrompt(
         userText: String,
         baseSystemPrompt: String,
         onPreferenceLeaned: ((summary: String) -> Unit)? = null
@@ -214,12 +221,23 @@ class StockQueryEngine private constructor(
             if (ctx.hasStockData && ctx.promptPrefix.isNotBlank()) {
                 val cacheHint = if (elapsed < 50) "⚡缓存命中" else "🌐实时获取"
                 Log.w(TAG, "✅ [具体股票] ${ctx.intent.stockCodes} | ${elapsed}ms $cacheHint")
-                Log.d(TAG, "═══════════════════════════════════════")
 
                 // 记录查询，供下次预取使用
                 prefetchScheduler.recordQuery(ctx.intent.stockCodes)
 
-                "$baseSystemPrompt$prefPrompt\n\n【实时行情数据】\n${ctx.promptPrefix}"
+                // v10.0: 記錄用戶搜索的股票到 StockDataCenter
+                ctx.intent.stockCodes.forEach { code ->
+                    val name = ctx.promptPrefix.lines().firstOrNull { it.contains("名称") }
+                        ?.substringAfter("名称:")?.trim() ?: code
+                    com.chin.stockanalysis.stock.database.StockDataCenter.recordUserSearch(code, name)
+                }
+
+                // ========== v6.0 新增：个股 + 板块 + 新闻 综合分析 ==========
+                val enrichedPrompt = buildEnrichedStockPrompt(ctx)
+                // ========== v10.0: Skill 選股分析 ==========
+                val skillPrompt = buildSkillPrompt(ctx)
+                Log.d(TAG, "═══════════════════════════════════════")
+                "$baseSystemPrompt$prefPrompt$enrichedPrompt$skillPrompt"
             } else {
                 // ══════════════════════════════════════════════════
                 // 阶段 3：通用问答（无实时数据，AI 基于训练知识回答）
@@ -256,34 +274,205 @@ class StockQueryEngine private constructor(
      * 3. 匹配 6位纯数字 的股票代码（600519 / 000858 等）
      */
     private fun hasStockNameOrCode(userText: String): Boolean {
-        // 规则1：常见 A 股名称关键词（与 StockNameHandler 内置表对齐）
-        val commonNames = listOf(
-            "茅台", "五粮液", "宁德时代", "比亚迪", "工商银行", "建设银行",
-            "农业银行", "中国银行", "贵州茅台", "美的集团", "格力电器",
-            "立讯精密", "海康威视", "中芯国际", "长江电力", "中兴通讯",
-            "迈瑞医疗", "恒瑞医药", "药明康德", "科大讯飞", "紫金矿业",
-            "万华化学", "生益科技", "沪电股份", "韦尔股份", "深信服",
-            "广联达", "用友网络", "恒生电子", "赣锋锂业", "北方稀土",
-            "中科三环", "山东黄金", "中国铝业", "华勤技术", "汇顶科技",
-            "平安", "苹果"
-        )
-        if (commonNames.any { userText.contains(it) }) {
-            Log.d(TAG, "hasStockNameOrCode: 匹配到个股名称 → skip theme query")
-            return true
-        }
-
-        // 规则2：sh/sz + 6位数字的完整代码格式
+        // 规则1：sh/sz + 6位数字的完整代码格式
         if (Regex("""[sS][hHzZ]\d{6}""").containsMatchIn(userText)) {
             Log.d(TAG, "hasStockNameOrCode: 匹配到股票代码（sh/sz格式） → skip theme query")
             return true
         }
 
-        // 规则3：6位纯数字代码（可能是股票代码）
+        // 规则2：6位纯数字代码（可能是股票代码）
         if (Regex("""\b\d{6}\b""").containsMatchIn(userText)) {
             Log.d(TAG, "hasStockNameOrCode: 匹配到6位数字代码 → skip theme query")
             return true
         }
 
+        // 规则3：任何纯中文词（2-8字）都可能是股票名称！
+        // 这是一个股票分析软件！默认用户在问股票！
+        val chineseCandidates = Regex("""[\u4e00-\u9fff]{2,8}""").findAll(userText)
+            .map { it.value }
+            .filter { 
+                // 只排除极少数明显不是股票的词
+                it !in listOf(
+                    "今天", "今日", "最新", "现在", "行情", "价格", "股价", "走势", "分析", 
+                    "多少钱", "实时", "最新价格", "怎么样", "如何", "什么", "为什么",
+                    "可以", "能够", "应该", "可能", "大概", "也许", "或者", "还是",
+                    "和", "与", "跟", "同", "及", "以及", "还有", "但是", "不过",
+                    "因为", "所以", "因此", "于是", "那么", "这样", "那样", "这个",
+                    "那个", "哪个", "哪些", "怎么", "如何"
+                )
+            }
+            .toList()
+        
+        if (chineseCandidates.isNotEmpty()) {
+            Log.d(TAG, "hasStockNameOrCode: 检测到中文候选词 ${chineseCandidates} → 尝试个股查询（这是股票软件！）")
+            return true
+        }
+
         return false
+    }
+
+    /**
+     * v6.0 新增：构建个股 + 板块 + 新闻 综合分析的 prompt
+     *
+     * 当查询个股时，自动获取：
+     * 1. 个股实时行情数据
+     * 2. 该股票所属板块信息
+     * 3. 板块实时热度数据（涨跌幅、换手率、主力资金流入等）
+     * 4. 相关利好/利空新闻
+     *
+     * 然后注入到 AI prompt 中，让 AI 自动综合分析。
+     */
+    private suspend fun buildEnrichedStockPrompt(ctx: StockContext): String {
+        val promptBuilder = StringBuilder()
+
+        // ========== 1. 个股实时行情数据 ==========
+        promptBuilder.append("\n\n【个股实时行情数据】\n")
+        promptBuilder.append(ctx.promptPrefix)
+
+        val firstStockCode = ctx.intent.stockCodes.firstOrNull()
+        if (firstStockCode == null) {
+            return promptBuilder.toString()
+        }
+
+        try {
+
+            // ========== 2. 获取该股票所属板块 ==========
+            val sectors = dbManager.db.sectorStockDao().getSectorNamesByStockCode(firstStockCode)
+            if (sectors.isNotEmpty()) {
+                promptBuilder.append("\n【所属板块】\n")
+                sectors.forEachIndexed { i, sector ->
+                    promptBuilder.append("${i + 1}. ${sector}\n")
+                }
+
+                // ========== 3. 获取板块实时热度数据 ==========
+                val hotSectors = mutableListOf<EastMoneyHotSectorSource.HotSector>()
+                // 从 EastMoneyHotSectorSource 中查找匹配的板块
+                val industrySectors = EastMoneyHotSectorSource.industrySectors
+                val conceptSectors = EastMoneyHotSectorSource.conceptSectors
+
+                sectors.forEach { sectorName ->
+                    // 模糊匹配板块名称
+                    val matched = (industrySectors + conceptSectors)
+                        .firstOrNull { hs ->
+                            hs.name.contains(sectorName) || sectorName.contains(hs.name)
+                        }
+                    if (matched != null) {
+                        hotSectors.add(matched)
+                    }
+                }
+
+                if (hotSectors.isNotEmpty()) {
+                    promptBuilder.append("\n【板块实时热度】\n")
+                    hotSectors.take(3).forEachIndexed { i, hs ->
+                        val typeLabel = if (hs.sectorType == 2) "行业" else "概念"
+                        promptBuilder.append("${i + 1}. [${typeLabel}] ${hs.name}\n")
+                        promptBuilder.append("   涨跌幅: ${String.format("%.2f", hs.changePercent)}% | 换手率: ${String.format("%.2f", hs.turnoverRate)}%\n")
+                        promptBuilder.append("   主力资金净流入: ${String.format("%.2f", hs.mainNetInflow)}亿元 | 热度评分: ${String.format("%.2f", hs.hotScore)}\n")
+                        if (hs.top1StockName.isNotEmpty()) {
+                            promptBuilder.append("   领涨股: ${hs.top1StockName} (${hs.top1StockCode}) ${String.format("%.2f", hs.top1ChangePercent)}%\n")
+                        }
+                    }
+                }
+            }
+
+            // ========== 4. 获取相关新闻 ==========
+            val relatedNews = mutableListOf<String>()
+            try {
+                // 按股票代码搜索
+                val newsByCode = newsManager.searchByStockCode(firstStockCode, limit = 5)
+                // 按公司名称搜索（从 ctx 中提取）
+                val stockName = ctx.promptPrefix.lines().firstOrNull { it.contains("名称") }
+                    ?.substringAfter("名称:")?.trim() ?: ""
+                val newsByName = if (stockName.isNotEmpty()) {
+                    newsManager.searchByCompany(stockName, limit = 5)
+                } else {
+                    emptyList()
+                }
+                // 合并去重
+                val allNews = (newsByCode + newsByName).distinctBy { it.title }.take(8)
+                if (allNews.isNotEmpty()) {
+                    relatedNews.addAll(allNews.map { news ->
+                        val sentimentEmoji = when {
+                            news.sentiment > 0 -> "📈利好"
+                            news.sentiment < 0 -> "📉利空"
+                            else -> "📰中性"
+                        }
+                        "$sentimentEmoji【${news.title}】${news.content.take(50)}... (${news.newsDate}, 影响强度:${news.impactStrength})"
+                    })
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ 获取新闻失败: ${e.message}")
+            }
+
+            if (relatedNews.isNotEmpty()) {
+                promptBuilder.append("\n【相关利好/利空新闻】\n")
+                relatedNews.forEach { promptBuilder.append("$it\n") }
+            }
+
+            // ========== 5. 添加 AI 分析指令 ==========
+            promptBuilder.append("\n【AI 综合分析指令】\n")
+            promptBuilder.append("请基于以上【个股实时行情数据】+【所属板块】+【板块实时热度】+【相关利好/利空新闻】，为用户提供综合分析：\n")
+            promptBuilder.append("1. 个股当前走势分析（技术面）\n")
+            promptBuilder.append("2. 板块前景分析（当前是低位/高位？整体行情如何？）\n")
+            promptBuilder.append("3. 板块溢价情况和活跃度评估\n")
+            promptBuilder.append("4. 业绩预期和上下游供应链分析\n")
+            promptBuilder.append("5. 相关新闻对股价的潜在影响\n")
+            promptBuilder.append("6. 最后给出一个综合的投资参考评估\n")
+            promptBuilder.append("\n⚠️ 注意：不要给出具体的买卖建议，只提供分析参考。投资有风险，入市需谨慎。\n")
+
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ 构建综合分析 prompt 失败: ${e.message}")
+        }
+
+        return promptBuilder.toString()
+    }
+
+    /**
+     * v10.0: 构建 Skill 选股分析 prompt
+     *
+     * 当查询个股且有 SkillOrchestrator 时，执行所有匹配的 Skill，
+     * 并将结果注入到 AI prompt 中。
+     */
+    private suspend fun buildSkillPrompt(ctx: StockContext): String {
+        val orchestrator = skillOrchestrator ?: run {
+            Log.d(TAG, "🔧 SkillOrchestrator 未初始化，跳過 Skill 分析")
+            return ""
+        }
+        val firstStockCode = ctx.intent.stockCodes.firstOrNull() ?: run {
+            Log.d(TAG, "🔧 buildSkillPrompt: 無股票代碼，跳過")
+            return ""
+        }
+        val stockName = ctx.promptPrefix.lines().firstOrNull { it.contains("名称") }
+            ?.substringAfter("名称:")?.trim() ?: firstStockCode
+
+        Log.i(TAG, "🎯 buildSkillPrompt: 開始 Skill 分析 for $stockName ($firstStockCode)")
+
+        // 獲取板塊信息
+        val sectors = try {
+            dbManager.db.sectorStockDao().getSectorNamesByStockCode(firstStockCode)
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ 獲取板塊信息失敗: ${e.message}")
+            emptyList()
+        }
+        Log.d(TAG, "   板塊: ${sectors.ifEmpty { listOf("無") }.joinToString(", ")}")
+
+        return try {
+            val results = orchestrator.runSkills(
+                stockCode = firstStockCode,
+                stockName = stockName,
+                sectors = sectors
+            )
+            if (results.isEmpty()) {
+                Log.d(TAG, "📭 Skill 執行結果為空")
+                ""
+            } else {
+                val prompt = orchestrator.formatForPrompt(results)
+                Log.i(TAG, "📝 Skill prompt 已生成: ${prompt.length}字, ${results.size}個 Skill")
+                prompt
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "❌ Skill 分析失败: ${e.message}")
+            ""
+        }
     }
 }
