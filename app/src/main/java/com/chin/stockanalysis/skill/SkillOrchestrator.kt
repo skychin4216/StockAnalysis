@@ -180,20 +180,25 @@ class SkillOrchestrator(private val skillEngine: SkillEngine) {
     }
 
     /**
-     * 將 Skill 結果格式化為 AI prompt 注入片段
+     * 將選股 Skill 結果格式化為 AI prompt 注入片段
+     *
+     * 過濾掉基礎 Skill（早盤關注、尾盤異動等），只保留選股相關 Skill，
+     * 每個選股 Skill 單獨輸出一個分析區塊，方便 AI 逐一分析。
      */
     fun formatForPrompt(results: List<SkillExecutionResult>): String {
-        if (results.isEmpty()) return ""
+        // 過濾：只保留選股相關 Skill（排除 morning_check, afternoon_review 等）
+        val pickingSkills = results.filter { it.skillId.startsWith("stock_picking_") }
+        if (pickingSkills.isEmpty()) return ""
 
         val sb = StringBuilder()
         sb.appendLine()
         sb.appendLine("【精选选股分析】")
-        sb.appendLine("以下为多套选股方法对当前股票的分析，请基于每种方法逐一给出详细的选股分析，并尽量表格对比。")
+        sb.appendLine("以下为多套选股方法对当前股票的分析，请基于每种方法**逐一**给出详细的选股分析，并尽量表格对比。")
         sb.appendLine("如果是选股方法，请列出你的筛选过程和最终挑选的股票。")
         sb.appendLine()
 
-        for ((index, result) in results.withIndex()) {
-            sb.appendLine("## ${index + 1}. ${result.skillName}")
+        for ((index, result) in pickingSkills.withIndex()) {
+            sb.appendLine("## Skill ${index + 1}: ${result.skillName}")
             sb.appendLine()
             sb.appendLine(result.prompt)
             sb.appendLine()
@@ -202,7 +207,7 @@ class SkillOrchestrator(private val skillEngine: SkillEngine) {
         }
 
         sb.appendLine("【输出要求】")
-        sb.appendLine("1. 对每套方法，给出该方法的筛选过程和最终挑选的股票（含分析理由）")
+        sb.appendLine("1. 对每套选股方法，**单独**给出该方法的筛选过程和最终挑选的股票（含分析理由）")
         sb.appendLine("2. 如果有多种方法选出了相同的股票，请特别说明")
         sb.appendLine("3. 最后给出综合推荐排序（考虑买入信号、行业趋势、个股基本面等）")
         sb.appendLine()

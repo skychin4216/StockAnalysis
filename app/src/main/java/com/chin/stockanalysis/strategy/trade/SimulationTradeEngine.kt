@@ -688,14 +688,25 @@ class SimulationTradeEngine(private val context: Context) {
         rotationPenalty: Int,
         tradeDate: String
     ): List<StrategySignal> {
-        // 根据新闻力度和轮动惩罚重新计算评分
+        // 獲取用戶搜索股票加分池
+        val userStockCodes = StockDataCenter.getUserSearchStockCodes()
+        val hasUserStocks = userStockCodes.isNotEmpty()
+        if (hasUserStocks) {
+            Log.i(TAG, "👤 用戶搜索股票加分池: ${userStockCodes.size}隻")
+        }
+
+        // 根据新闻力度、轮动惩罚、用戶關注度重新计算评分
         val adjusted = signals.map { signal ->
             val newsBoost = (newsStrength - 50) / 100.0 * NEWS_WEIGHT_BOOST
             val rotationAdj = rotationPenalty / 100.0 * ROTATION_PENALTY
-            val newStrength = (signal.strength * (1.0 + newsBoost + rotationAdj)).roundToInt()
+            val userBoost = if (signal.stockCode in userStockCodes) {
+                StockDataCenter.getUserStockBoost(signal.stockCode) / 100.0
+            } else 0.0
+            val newStrength = (signal.strength * (1.0 + newsBoost + rotationAdj + userBoost)).roundToInt()
                 .coerceIn(0, 100)
+            val userLabel = if (signal.stockCode in userStockCodes) " 👤用戶關注" else ""
             signal.copy(strength = newStrength,
-                reason = "${signal.reason} | 新闻力度:${newsStrength} 轮动:${rotationPenalty}")
+                reason = "${signal.reason} | 新聞力度:${newsStrength} 輪動:${rotationPenalty}$userLabel")
         }.sortedByDescending { it.strength }
 
         return adjusted.take(FINAL_TOP3)

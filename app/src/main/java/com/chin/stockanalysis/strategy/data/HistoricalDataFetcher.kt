@@ -81,9 +81,18 @@ class HistoricalDataFetcher(private val context: Context) {
         val todayStr = LocalDate.now().format(STORE_FMT)
         val alreadyImported = existingDates.contains(todayStr)
 
-        if (alreadyImported && existingDates.size > 10) {
-            Log.i(TAG, "✅ 已有 ${existingDates.size} 个交易日数据，跳过重复导入")
+        // 檢查今天數據是否完整（至少要有 TOP_STOCKS 中 80% 的數據才算完整）
+        val todayDataCount = try {
+            db.dailySnapshotDao().getByDate(todayStr).size
+        } catch (_: Exception) { 0 }
+        val isComplete = todayDataCount >= (TOP_STOCKS.size * 0.8).toInt()
+
+        if (alreadyImported && existingDates.size > 10 && isComplete) {
+            Log.i(TAG, "✅ 已有 ${existingDates.size} 个交易日数据 (今日${todayDataCount}只, 完整)，跳过重复导入")
             return@withContext 0
+        }
+        if (alreadyImported && !isComplete) {
+            Log.i(TAG, "⚠️ 今日数据不完整 (${todayDataCount}/${TOP_STOCKS.size}隻)，重新拉取")
         }
 
         var totalRecords = 0

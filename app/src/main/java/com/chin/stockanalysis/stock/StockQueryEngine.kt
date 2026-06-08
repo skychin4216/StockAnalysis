@@ -225,17 +225,28 @@ class StockQueryEngine private constructor(
                 // 记录查询，供下次预取使用
                 prefetchScheduler.recordQuery(ctx.intent.stockCodes)
 
-                // v10.0: 記錄用戶搜索的股票到 StockDataCenter
+                // v10.1: 記錄用戶搜索的股票到 StockDataCenter（含價格）
                 ctx.intent.stockCodes.forEach { code ->
                     val name = ctx.promptPrefix.lines().firstOrNull { it.contains("名称") }
                         ?.substringAfter("名称:")?.trim() ?: code
-                    com.chin.stockanalysis.stock.database.StockDataCenter.recordUserSearch(code, name)
+                    val rt = ctx.realtimeData[code]
+                    val price = rt?.price ?: -1.0
+                    val changePct = rt?.changePercent ?: 0.0
+                    com.chin.stockanalysis.stock.database.StockDataCenter.recordUserSearch(
+                        stockCode = code,
+                        stockName = name,
+                        price = price,
+                        changePct = changePct
+                    )
                 }
+
+                // v10.1: 將即時行情持久化到 daily_snapshot 表（供模擬交易使用）
+                saveRealtimeToSnapshot(ctx)
 
                 // ========== v6.0 新增：个股 + 板块 + 新闻 综合分析 ==========
                 val enrichedPrompt = buildEnrichedStockPrompt(ctx)
                 // ========== v10.0: Skill 選股分析 ==========
-                val skillPrompt = buildSkillPrompt(ctx)
+                val skillPrompt = buildSkillPrompt(ctx, userText)
                 Log.d(TAG, "═══════════════════════════════════════")
                 "$baseSystemPrompt$prefPrompt$enrichedPrompt$skillPrompt"
             } else {
@@ -375,49 +386,47 @@ class StockQueryEngine private constructor(
                 }
             }
 
-            // ========== 4. 获取相关新闻 ==========
-            val relatedNews = mutableListOf<String>()
+            // ========== 4. 获取即時公告、新聞、資金流向（從權威來源） ==========
+            promptBuilder.append("\n【实时市场数据】(以下数据为系统实时从权威来源获取，非训练数据)")
+            val stockName = ctx.promptPrefix.lines().firstOrNull { it.contains("名称") }
+                ?.substringAfter("名称:")?.trim() ?: firstStockCode
             try {
-                // 按股票代码搜索
-                val newsByCode = newsManager.searchByStockCode(firstStockCode, limit = 5)
-                // 按公司名称搜索（从 ctx 中提取）
-                val stockName = ctx.promptPrefix.lines().firstOrNull { it.contains("名称") }
-                    ?.substringAfter("名称:")?.trim() ?: ""
-                val newsByName = if (stockName.isNotEmpty()) {
-                    newsManager.searchByCompany(stockName, limit = 5)
-                } else {
-                    emptyList()
-                }
-                // 合并去重
-                val allNews = (newsByCode + newsByName).distinctBy { it.title }.take(8)
-                if (allNews.isNotEmpty()) {
-                    relatedNews.addAll(allNews.map { news ->
-                        val sentimentEmoji = when {
-                            news.sentiment > 0 -> "📈利好"
-                            news.sentiment < 0 -> "📉利空"
-                            else -> "📰中性"
-                        }
-                        "$sentimentEmoji【${news.title}】${news.content.take(50)}... (${news.newsDate}, 影响强度:${news.impactStrength})"
-                    })
-                }
+                val newsFetcher = com.chin.stockanalysis.stock.data.sources.StockNewsFetcher()
+                val newsContext = newsFetcher.fetchStockContext(firstStockCode, stockName)
+                promptBuilder.append(newsContext.toPromptInjection())
             } catch (e: Exception) {
-                Log.w(TAG, "⚠️ 获取新闻失败: ${e.message}")
-            }
-
-            if (relatedNews.isNotEmpty()) {
-                promptBuilder.append("\n【相关利好/利空新闻】\n")
-                relatedNews.forEach { promptBuilder.append("$it\n") }
+                Log.w(TAG, "⚠️ StockNewsFetcher 失败: ${e.message}")
+                // Fallback: 使用本地新聞數據庫
+                try {
+                    val relatedNews = mutableListOf<String>()
+                    val newsByCode = newsManager.searchByStockCode(firstStockCode, limit = 5)
+                    val newsByName = if (stockName.isNotEmpty()) {
+                        newsManager.searchByCompany(stockName, limit = 5)
+                    } else emptyList()
+                    val allNews = (newsByCode + newsByName).distinctBy { it.title }.take(8)
+                    if (allNews.isNotEmpty()) {
+                        promptBuilder.append("\n【相关利好/利空新闻】(本地缓存)\n")
+                        allNews.forEach { news ->
+                            val emoji = when { news.sentiment > 0 -> "📈利好"; news.sentiment < 0 -> "📉利空"; else -> "📰中性" }
+                            promptBuilder.append("$emoji【${news.title}】${news.content.take(50)}... (${news.newsDate})\n")
+                        }
+                    }
+                } catch (e2: Exception) {
+                    Log.w(TAG, "⚠️ 本地新闻也失败: ${e2.message}")
+                }
             }
 
             // ========== 5. 添加 AI 分析指令 ==========
-            promptBuilder.append("\n【AI 综合分析指令】\n")
-            promptBuilder.append("请基于以上【个股实时行情数据】+【所属板块】+【板块实时热度】+【相关利好/利空新闻】，为用户提供综合分析：\n")
-            promptBuilder.append("1. 个股当前走势分析（技术面）\n")
-            promptBuilder.append("2. 板块前景分析（当前是低位/高位？整体行情如何？）\n")
-            promptBuilder.append("3. 板块溢价情况和活跃度评估\n")
-            promptBuilder.append("4. 业绩预期和上下游供应链分析\n")
-            promptBuilder.append("5. 相关新闻对股价的潜在影响\n")
-            promptBuilder.append("6. 最后给出一个综合的投资参考评估\n")
+            promptBuilder.append("\n【综合分析指令】")
+            promptBuilder.append("\n请基于以上全部实时数据进行综合分析。所有价格、走势、公告、新闻均已由系统实时获取。")
+            promptBuilder.append("\n禁止使用训练数据中的旧信息。如果某项数据未获取到，直接说明「该数据暂未获取到」。")
+            promptBuilder.append("\n1. 个股当前走势分析（技术面：换手率、量价关系、主力资金动向）")
+            promptBuilder.append("\n2. 板块前景分析（当前是低位/高位？整体行情如何？）")
+            promptBuilder.append("\n3. 板块溢价情况和活跃度评估")
+            promptBuilder.append("\n4. 业绩预期和上下游供应链分析")
+            promptBuilder.append("\n5. 相关新闻和公告对股价的潜在影响")
+            promptBuilder.append("\n6. 最后给出一个综合的投资参考评估")
+            promptBuilder.append("\n\n请将以上分析以清晰的标题「综合分析」开头输出。")
             promptBuilder.append("\n⚠️ 注意：不要给出具体的买卖建议，只提供分析参考。投资有风险，入市需谨慎。\n")
 
         } catch (e: Exception) {
@@ -433,7 +442,7 @@ class StockQueryEngine private constructor(
      * 当查询个股且有 SkillOrchestrator 时，执行所有匹配的 Skill，
      * 并将结果注入到 AI prompt 中。
      */
-    private suspend fun buildSkillPrompt(ctx: StockContext): String {
+    private suspend fun buildSkillPrompt(ctx: StockContext, userInput: String = ""): String {
         val orchestrator = skillOrchestrator ?: run {
             Log.d(TAG, "🔧 SkillOrchestrator 未初始化，跳過 Skill 分析")
             return ""
@@ -460,6 +469,7 @@ class StockQueryEngine private constructor(
             val results = orchestrator.runSkills(
                 stockCode = firstStockCode,
                 stockName = stockName,
+                userInput = userInput,
                 sectors = sectors
             )
             if (results.isEmpty()) {
@@ -473,6 +483,50 @@ class StockQueryEngine private constructor(
         } catch (e: Exception) {
             Log.w(TAG, "❌ Skill 分析失败: ${e.message}")
             ""
+        }
+    }
+
+    /**
+     * v10.1: 將即時行情數據持久化到 daily_snapshot 表
+     *
+     * 用戶在 AI 對話中查詢個股時，StockService 從網路即時拉取了行情數據，
+     * 這些數據在此寫入 daily_snapshot 表，供模擬交易引擎使用。
+     *
+     * 如果當日數據已存在則跳過（避免重複寫入）。
+     */
+    private suspend fun saveRealtimeToSnapshot(ctx: StockContext) {
+        if (ctx.realtimeData.isEmpty()) return
+        val today = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+        try {
+            val db = dbManager.db
+            val existingCodes = try {
+                db.dailySnapshotDao().getByDate(today).map { it.code }.toSet()
+            } catch (_: Exception) { emptySet() }
+
+            val entities = ctx.realtimeData.values
+                .filter { it.code !in existingCodes }
+                .map { stock ->
+                    com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity(
+                        code = stock.code,
+                        name = stock.name,
+                        date = today,
+                        open = stock.open,
+                        close = stock.price,
+                        high = stock.high,
+                        low = stock.low,
+                        volume = stock.volume,
+                        amount = stock.amount,
+                        changePct = stock.changePercent,
+                        turnoverRate = 0.0,
+                        mainNetInflow = 0.0
+                    )
+                }
+            if (entities.isNotEmpty()) {
+                db.dailySnapshotDao().insertAll(entities)
+                Log.i(TAG, "💾 已寫入 ${entities.size} 條即時行情到 daily_snapshot ($today)")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ 寫入 daily_snapshot 失敗: ${e.message}")
         }
     }
 }

@@ -66,101 +66,7 @@ class ApiConfigManager(context: Context) {
 
     val builtInProviders: List<ApiProviderConfig> = listOf(
         // ═══════════════════════════════════════════════════════════════
-        // 🆓 免费 API（无需充值，有免费额度）
-        // ═══════════════════════════════════════════════════════════════
-
-        // ⭐⭐⭐ 强烈推荐：硅基流动 - DeepSeek V3 Flash（免费，最新最快）
-        ApiProviderConfig(
-            id = "siliconflow-v3-flash",
-            name = "硅基流动 V3 Flash (免费)",
-            baseUrl = "https://api.siliconflow.cn/v1/",
-            model = "Pro/deepseek-ai/DeepSeek-V3",
-            description = "⭐⭐⭐ 强烈推荐！DeepSeek-V3 Flash 版本，比标准版更快，免费使用",
-            isFree = true,
-            supportedModels = listOf(
-                "Pro/deepseek-ai/DeepSeek-V3",
-                "deepseek-ai/DeepSeek-V3",
-                "deepseek-ai/DeepSeek-R1",
-                "Qwen/Qwen2.5-72B-Instruct-128K",
-                "meta-llama/Llama-3.3-70B-Instruct"
-            )
-        ),
-
-        // ⭐⭐⭐ 推荐：硅基流动 - DeepSeek V3（免费，稳定）
-        ApiProviderConfig(
-            id = "siliconflow-v3",
-            name = "硅基流动 V3 (免费)",
-            baseUrl = "https://api.siliconflow.cn/v1/",
-            model = "deepseek-ai/DeepSeek-V3",
-            description = "DeepSeek-V3 标准版，免费使用，每月几百万 tokens 免费额度",
-            isFree = true,
-            supportedModels = listOf(
-                "deepseek-ai/DeepSeek-V3",
-                "Pro/deepseek-ai/DeepSeek-V3",
-                "deepseek-ai/DeepSeek-R1",
-                "deepseek-ai/DeepSeek-V2.5",
-                "Qwen/Qwen2.5-72B-Instruct-128K"
-            )
-        ),
-
-        // ⭐⭐⭐ 强烈推荐：硅基流动 - DeepSeek R1（免费，推理能力强）
-        ApiProviderConfig(
-            id = "siliconflow-r1",
-            name = "硅基流动 R1 (免费)",
-            baseUrl = "https://api.siliconflow.cn/v1/",
-            model = "deepseek-ai/DeepSeek-R1",
-            description = "DeepSeek-R1 推理模型，硅基流动免费使用，适合复杂分析任务",
-            isFree = true,
-            supportedModels = listOf(
-                "deepseek-ai/DeepSeek-R1",
-                "deepseek-ai/DeepSeek-V3",
-                "Pro/deepseek-ai/DeepSeek-V3",
-                "Qwen/Qwen2.5-72B-Instruct-128K"
-            )
-        ),
-
-        // ⭐⭐ 推荐：硅基流动 - Qwen2.5（阿里通义千问，免费）
-        ApiProviderConfig(
-            id = "siliconflow-qwen",
-            name = "硅基流动 Qwen (免费)",
-            baseUrl = "https://api.siliconflow.cn/v1/",
-            model = "Qwen/Qwen2.5-72B-Instruct-128K",
-            description = "阿里通义千问 Qwen2.5-72B，128K 上下文，免费使用",
-            isFree = true
-        ),
-
-        // ⭐⭐ 推荐：硅基流动 - Llama 3.3（Meta，免费）
-        ApiProviderConfig(
-            id = "siliconflow-llama",
-            name = "硅基流动 Llama (免费)",
-            baseUrl = "https://api.siliconflow.cn/v1/",
-            model = "meta-llama/Llama-3.3-70B-Instruct",
-            description = "Meta Llama-3.3-70B，开源最强模型，免费使用",
-            isFree = true
-        ),
-
-        // ⭐⭐ 推荐：硅基流动 - DeepSeek V2.5（免费，备用）
-        ApiProviderConfig(
-            id = "siliconflow-v25",
-            name = "硅基流动 V2.5 (免费)",
-            baseUrl = "https://api.siliconflow.cn/v1/",
-            model = "deepseek-ai/DeepSeek-V2.5",
-            description = "DeepSeek-V2.5 备用模型，免费使用",
-            isFree = true
-        ),
-
-        // GroqCloud - Llama 3.3（免费，无需国内手机号，速度快）
-        ApiProviderConfig(
-            id = "groq",
-            name = "GroqCloud Llama (免费)",
-            baseUrl = "https://api.groq.com/openai/v1/",
-            model = "llama-3.3-70b-versatile",
-            description = "GroqCloud 免费 LLM，无需在 App 端配置 API Key，密钥由服务器统一管理",
-            isFree = true
-        ),
-
-        // ═══════════════════════════════════════════════════════════════
-        // 💳 付费 API（需要充值，但通常有免费额度）
+        // ⭐ 優先級 1：高品質付費模型（豆包、千問）
         // ═══════════════════════════════════════════════════════════════
 
         // 火山引擎 - 豆包大模型（字节跳动官方，付费，推荐使用）
@@ -195,6 +101,52 @@ class ApiConfigManager(context: Context) {
                 "doubao-seed-2-0-code-preview-260215",
                 "doubao-seed-2-0-mini-260428",
                 "doubao-1-5-pro-32k-250115"
+            )
+        ),
+
+        // 阿里云百炼 - Qwen3 全系列（2025年5月最新发布，推荐使用）
+        ApiProviderConfig(
+            id = "dashscope-qwen3",
+            name = "⭐ 阿里云 Qwen3 (付费)",
+            baseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1/",
+            model = "qwen3-235b-a22b",
+            description = "Qwen3 最新旗舰系列，支持 235B MoE 超大模型和 32B/14B/8B 多个尺寸，thinking 模式可切换",
+            isFree = false,
+            supportedModels = listOf(
+                // MoE 系列（参数量大，性价比高）
+                "qwen3-235b-a22b",     // 最强 MoE，旗舰 ⭐
+                "qwen3-30b-a3b",       // 轻量 MoE，速度快
+                // Dense 系列（稳定，适合生产）
+                "qwen3-32b",           // 最强 Dense ⭐推荐
+                "qwen3-14b",           // 均衡
+                "qwen3-8b",            // 轻量
+                "qwen3-4b",            // 极速
+                // 向后兼容：Qwen2.5 系列
+                "qwen-max",
+                "qwen-plus",
+                "qwen-turbo"
+            ),
+            fallbackModels = listOf("qwen3-32b", "qwen-plus")
+        ),
+
+        // ═══════════════════════════════════════════════════════════════
+        // 優先級 2：免費備用（矽基流動等）
+        // ═══════════════════════════════════════════════════════════════
+
+        // ⭐⭐⭐ 强烈推荐：硅基流动 - DeepSeek V3 Flash（免费，最新最快）
+        ApiProviderConfig(
+            id = "siliconflow-v3-flash",
+            name = "硅基流动 V3 Flash (免费)",
+            baseUrl = "https://api.siliconflow.cn/v1/",
+            model = "Pro/deepseek-ai/DeepSeek-V3",
+            description = "DeepSeek-V3 Flash 版本，免费备用",
+            isFree = true,
+            supportedModels = listOf(
+                "Pro/deepseek-ai/DeepSeek-V3",
+                "deepseek-ai/DeepSeek-V3",
+                "deepseek-ai/DeepSeek-R1",
+                "Qwen/Qwen2.5-72B-Instruct-128K",
+                "meta-llama/Llama-3.3-70B-Instruct"
             )
         ),
 

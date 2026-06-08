@@ -9,6 +9,7 @@ import com.chin.stockanalysis.stock.intent.IntentResult
 data class StockContext(
     val intent: IntentResult,
     val hasStockData: Boolean,
-    val promptPrefix: String  // 注入到 system prompt 的文本
+    val promptPrefix: String,  // 注入到 system prompt 的文本
+    val realtimeData: Map<String, StockRealtime> = emptyMap()  // v10.1: 即時行情原始數據（供持久化）
 )
 

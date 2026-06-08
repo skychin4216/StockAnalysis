@@ -331,6 +331,21 @@ class SimulationTradeFragment : Fragment() {
                     return@launch
                 }
 
+                // 執行前先確保今天歷史數據已拉取
+                if (tradeEngine == null) tradeEngine = SimulationTradeEngine(requireContext())
+                val todayHasData = try {
+                    StockDatabase.getInstance(requireContext()).dailySnapshotDao()
+                        .getByDate(config.tradeDate).isNotEmpty()
+                } catch (_: Exception) { false }
+                if (!todayHasData) {
+                    withContext(Dispatchers.Main) {
+                        statusTv.text = "📥 正在下载今日数据..."
+                    }
+                    val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
+                    val fetched = fetcher.fetchAllHistoricalData(days = 1)
+                    Log.i("SimTradeFragment", "历史数据加载: $fetched 条")
+                }
+
                 val report = tradeEngine!!.runTradeSession(strategies, config)
 
                 withContext(Dispatchers.Main) {

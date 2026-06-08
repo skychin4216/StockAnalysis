@@ -63,43 +63,7 @@ class ChatTabFragment : Fragment() {
         private const val PREFS_NAME = "chat_prefs"
         private const val KEY_FIRST_LAUNCH_DONE = "first_launch_welcome_done"
 
-        private val BASE_SYSTEM_PROMPT = """你是一个专业的A股股票投资分析助手（角色: 量化分析+投资顾问）。
-
-## 核心能力
-1. 分析股票实时行情，解读K线图和技术指标
-2. 提供量化策略和基本面分析，输出结构化数据 (JSON/表格)
-3. 解释股票术语和交易规则 (T+1, 涨跌停10%等)
-4. 识别股票代码、名称、拼音搜索
-5. 主动建议备选方案: 给出分析同时列出1-2个可操作的后续方向
-
-## 股票敏感度规则
-- 6位数字 → 极可能是股票代码，优先查询
-- 中文名称/拼音缩写 → 优先匹配股票池
-- 模糊输入时主动提示正确名称
-
-## 注入数据使用规则
-- 【实时行情数据】中的最新价是实时数据，严格基于此分析
-- 【股票匹配结果】→ 直接展示匹配的股票信息
-- 无注入数据时基于训练知识回答
-
-## 交易日验证规则 (仅当用户隐含要求最新数据时执行)
-- 用户明确指定日期/历史分析（如"去年"、"2024年"、"近一月走势"）→ 直接基于注入数据回答，无需验证是否为最近交易日
-- 用户隐含要求实时/当前数据（如"现在多少钱"、"最近怎么样"、"分析一下"）→ 必须验证注入数据日期
-  - 如果数据日期 = 最近交易日 → 正常进行全面分析
-  - 如果数据日期 ≠ 最近交易日 → 回复: "📅 当前数据日期不是最近交易日，无法获取最新数据进行分析。"
-
-## 输出格式规范
-- 多只股票对比时输出简洁表格:
-| 名称 | 代码 | 价格 | 涨跌 | 核心逻辑 |
-|------|------|------|------|---------|
-- 程序化解析时输出 JSON
-
-## 回复规范
-- 中文回答，专业易懂，适当emoji
-- 投资有风险，入市需谨慎
-- 提及个股必须输出最新价格: "贵州茅台(600519) 最新价 1680.50 元"
-- 分段引导: 复杂分析拆成小步，每步给出明确结论
-- 透明可解释: 给出建议时附简短理由"""
+        private val BASE_SYSTEM_PROMPT = com.chin.stockanalysis.ai.StockAIPromptBuilder.buildBaseSystemPrompt()
     }
 
     private var _binding: FragmentChatBinding? = null
@@ -164,6 +128,8 @@ class ChatTabFragment : Fragment() {
         initTts()
         showWelcomeMessage()
         showHotSectors()
+        // App 啟動時後台預取全市場日線數據（不阻塞 UI）
+        preloadMarketData()
     }
 
     override fun onResume() { super.onResume(); initProvider() }
@@ -202,6 +168,32 @@ class ChatTabFragment : Fragment() {
     }
 
     private fun initTts() { tts = TextToSpeech(requireContext()) { if (it == TextToSpeech.SUCCESS) tts?.language = Locale.CHINESE } }
+
+    /**
+     * App 啟動時後台預取全市場日線數據（TOP 40 只熱門股票）
+     * 不阻塞 UI，數據就緒後自動刷新今日熱點
+     */
+    private fun preloadMarketData() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(requireContext())
+                val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().toString()
+                val existingCount = db.dailySnapshotDao().getByDate(today).size
+                if (existingCount >= 30) {
+                    Log.i(TAG, "📊 今日數據已完整 (${existingCount}隻)，跳過預取")
+                    return@launch
+                }
+                Log.i(TAG, "📊 後台預取全市場數據 (現有${existingCount}隻)...")
+                val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
+                val count = fetcher.fetchAllHistoricalData(days = 1)
+                Log.i(TAG, "📊 預取完成: $count 條")
+                // 清除緩存，讓下次 showHotSectors 用最新數據
+                cachedHotSectorsTime = 0L
+            } catch (e: Exception) {
+                Log.w(TAG, "預取數據失敗: ${e.message}")
+            }
+        }
+    }
 
     // ════════════════════════════════════════
     // UI 设置
@@ -344,13 +336,27 @@ class ChatTabFragment : Fragment() {
                     }
                 } else "暂无实时板块数据"
 
-                // 2. 涨幅Top5（DB+硬编码秒出，后台AI更新）
+                // 2. 涨幅Top5（DB优先，不足5只时后台拉取全市场数据）
                 val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(requireContext())
                 val recentTradingDay = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().toString()
                 val snapshots = db.dailySnapshotDao().getByDate(recentTradingDay)
                 val checker = DataCompletenessChecker(db)
+                val hasEnoughData = snapshots.size >= 5
                 val stockLines = if (snapshots.isNotEmpty()) {
                     val top5 = snapshots.sortedByDescending { it.changePct }.take(5)
+                    if (!hasEnoughData) {
+                        // 數據不足，後台觸發全市場數據拉取
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            try {
+                                val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
+                                val count = fetcher.fetchAllHistoricalData(days = 1)
+                                Log.i(TAG, "🔥 後台拉取全市場數據: $count 条")
+                                cachedHotSectorsTime = 0L // 下次顯示時用最新數據
+                            } catch (e: Exception) {
+                                Log.w(TAG, "後台拉取數據失敗: ${e.message}")
+                            }
+                        }
+                    }
                     val sectorCache = mutableMapOf<String, String>()
                     for (snap in top5) {
                         sectorCache[snap.code] = checker.ensureSectorFast(snap.code, snap.name)
@@ -361,25 +367,42 @@ class ChatTabFragment : Fragment() {
                         val sector = (sectorCache[snap.code] ?: "-").replace("null", "")
                         "$emoji ${snap.name} $sign${"%.2f".format(snap.changePct)}%  $sector"
                     }
-                } else "暂无交易日数据"
+                } else {
+                    // 完全沒有數據，後台觸發拉取
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        try {
+                            val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
+                            fetcher.fetchAllHistoricalData(days = 1)
+                            cachedHotSectorsTime = 0L
+                        } catch (_: Exception) {}
+                    }
+                    "暂无交易日数据（后台拉取中...）"
+                }
 
-                val text = "$sectorLines\n\n🔥 最近交易日($recentTradingDay) 涨幅Top5:\n$stockLines"
+                val text = if (!hasEnoughData) {
+                    "$sectorLines\n\n🔥 最近交易日($recentTradingDay) 涨幅Top5:\n$stockLines\n\n📥 数据拉取中，稍后将显示完整Top5"
+                } else {
+                    "$sectorLines\n\n🔥 最近交易日($recentTradingDay) 涨幅Top5:\n$stockLines"
+                }
 
-                // 缓存
-                cachedHotSectorsText = text
-                cachedHotSectorsTime = System.currentTimeMillis()
+                // 缓存（仅数据完整时缓存，否则下次再试）
+                if (hasEnoughData) {
+                    cachedHotSectorsText = text
+                    cachedHotSectorsTime = System.currentTimeMillis()
+                }
 
                 if (isAdded) requireActivity().runOnUiThread {
                     binding.tvHotSectors.text = text
+                    binding.tvHotSectors.minHeight = dpToPx(160)
+                    binding.tvHotSectors.requestLayout()
                 }
 
                 // 后台用 AI 检查并更新板块数据（低优先级，不阻塞UI）
-                if (apiProvider != null) {
+                if (apiProvider != null && snapshots.isNotEmpty()) {
                     lifecycleScope.launch(Dispatchers.IO) {
                         for (snap in snapshots.sortedByDescending { it.changePct }.take(5)) {
                             checker.ensureSector(snap.code, snap.name, apiProvider)
                         }
-                        // 清除缓存让下次显示时用最新数据
                         cachedHotSectorsTime = 0L
                     }
                 }
@@ -575,6 +598,7 @@ class ChatTabFragment : Fragment() {
     private fun addErrorMessage(text: String) = addMessage(Message(content = text, isUser = false, isError = true))
     private fun hideKeyboard() { (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(binding.etInput.windowToken, 0) }
     private fun isTrivialMessage(text: String): Boolean = text.replace(Regex("[\\s,.，。!！?？、；;：:【】()（）、·]+"), "").length < 3
+    private fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density + 0.5f).toInt()
     fun sendMessageFromExternal(text: String) { binding.etInput.setText(text); binding.btnSend.performClick() }
 
     private fun showEditMessageDialog(position: Int) {

@@ -33,7 +33,8 @@ class SkillEngine(private val context: Context) {
 
     init {
         loadFromPrefs()
-        if (skills.isEmpty()) registerDefaults()
+        // 每次啟動都同步設定檔，確保新增的 Skill 能自動載入
+        syncFromConfig()
     }
 
     // ── CRUD ──
@@ -171,50 +172,88 @@ class SkillEngine(private val context: Context) {
         prefs.edit().putString(PREFS_KEY, arr.toString()).apply()
     }
 
-    // ── 内置默认 Skill ──
+    // ── 設定檔同步 + 預設 Skill ──
 
     /**
-     * 從設定檔載入所有 Skill 定義，並註冊到引擎中
+     * 每次啟動時同步設定檔中的 Skill 定義
      *
-     * 來源順序：
-     * 1. 硬編碼基礎 Skill（早盤關注、尾盤異動）
-     * 2. assets/skills_config.json（內建選股 Skill）
-     * 3. files/skills_dynamic.json（動態建立的 Skill）
+     * 與舊版 `registerDefaults()` 不同，此方法**始終執行**（不限於首次啟動）：
+     * 1. 確保硬編碼基礎 Skill（早盤、尾盤）始終存在
+     * 2. 從設定檔載入所有選股 Skill，對已存在於 SharedPreferences 的 Skill 保留其狀態
+     *    （enabled / usageCount / createdAt），僅補充分不存在的新 Skill
+     * 3. 設定檔載入失敗時 fallback 到硬編碼 Skill
      */
-    private fun registerDefaults() {
-        // 基礎 Skill（硬編碼，不適合放設定檔）
-        register(Skill(
-            id = "morning_check",
-            name = "每日早盘关注",
-            icon = "🌅",
-            description = "查看自选股价格+ETF竞价+板块热度",
-            prompts = listOf("查看我的自选股最新价格", "哪些板块今天竞价最强"),
-            autoTrigger = true,
-            triggerTime = "09:00-09:30",
-            triggerPrompt = "查看今日早盘关注",
-            source = SkillSource.AUTO_GENERATED
-        ))
-        register(Skill(
-            id = "afternoon_review",
-            name = "尾盘异动监控",
-            icon = "🔔",
-            description = "尾盘15分钟内涨跌幅超过3%的股票",
-            prompts = listOf("尾盘异动股票有哪些"),
-            autoTrigger = true,
-            triggerTime = "14:45-15:00",
-            triggerPrompt = "查看尾盘异动",
-            source = SkillSource.AUTO_GENERATED
-        ))
+    private fun syncFromConfig() {
+        // 確保硬編碼基礎 Skill 始終存在（若已由 SharedPreferences 載入則保留狀態）
+        val existingIds = skills.keys
+        if ("morning_check" !in existingIds) {
+            register(Skill(
+                id = "morning_check",
+                name = "每日早盘关注",
+                icon = "🌅",
+                description = "查看自选股价格+ETF竞价+板块热度",
+                prompts = listOf("查看我的自选股最新价格", "哪些板块今天竞价最强"),
+                autoTrigger = true,
+                triggerTime = "09:00-09:30",
+                triggerPrompt = "查看今日早盘关注",
+                source = SkillSource.AUTO_GENERATED
+            ))
+        }
+        if ("afternoon_review" !in existingIds) {
+            register(Skill(
+                id = "afternoon_review",
+                name = "尾盘异动监控",
+                icon = "🔔",
+                description = "尾盘15分钟内涨跌幅超过3%的股票",
+                prompts = listOf("尾盘异动股票有哪些"),
+                autoTrigger = true,
+                triggerTime = "14:45-15:00",
+                triggerPrompt = "查看尾盘异动",
+                source = SkillSource.AUTO_GENERATED
+            ))
+        }
 
         // 從設定檔載入選股 Skill（內建 + 動態）
         try {
             val allConfigs = SkillConfigLoader.loadAllSkills(context)
-            Log.i(TAG, "從設定檔載入 ${allConfigs.size} 個選股 Skill")
+            var newCount = 0
+            var existCount = 0
             for (config in allConfigs) {
-                val skill = config.toSkill()
-                register(skill)
-                Log.d(TAG, "  📄 ${config.id} (${if (config.isDynamic) "動態" else "內建"})")
+                if (config.id !in skills) {
+                    // 新 Skill：從設定檔載入定義
+                    val skill = config.toSkill()
+                    register(skill)
+                    newCount++
+                    Log.i(TAG, "  📄 新增: ${config.id} (${if (config.isDynamic) "動態" else "內建"})")
+                } else {
+                    // 已存在的 Skill：保留 SharedPreferences 中的狀態，僅更新定義
+                    val existing = skills[config.id]!!
+                    val updatedPrompt = config.toSkill().prompts
+                    val updatedTrigger = config.toSkill().triggerPrompt
+                    val updatedName = config.toSkill().name
+                    val updatedDesc = config.toSkill().description
+                    val updatedIcon = config.toSkill().icon
+                    val needsUpdate = existing.prompts != updatedPrompt ||
+                        existing.triggerPrompt != updatedTrigger ||
+                        existing.name != updatedName ||
+                        existing.description != updatedDesc ||
+                        existing.icon != updatedIcon
+                    if (needsUpdate) {
+                        val refreshed = existing.copy(
+                            prompts = updatedPrompt,
+                            triggerPrompt = updatedTrigger,
+                            name = updatedName,
+                            description = updatedDesc,
+                            icon = updatedIcon
+                        )
+                        skills[config.id] = refreshed
+                        saveToPrefs()
+                        Log.i(TAG, "  🔄 更新: ${config.id} (定義已變更)")
+                    }
+                    existCount++
+                }
             }
+            Log.i(TAG, "📋 同步完成: ${existCount}個保留 + ${newCount}個新增 (來自設定檔)")
         } catch (e: Exception) {
             Log.w(TAG, "從設定檔載入 Skill 失敗: ${e.message}")
 
@@ -225,12 +264,14 @@ class SkillEngine(private val context: Context) {
                 com.chin.stockanalysis.skill.stock_picking.StockPickingSkillDoubao2
             )
             for (skillDef in builtinSkills) {
-                try {
-                    val skill = skillDef.createSkill()
-                    register(skill)
-                    Log.i(TAG, "  硬編碼 Skill: ${skill.id} - ${skill.name}")
-                } catch (e2: Exception) {
-                    Log.w(TAG, "  硬編碼 Skill ${skillDef.tag} 失敗: ${e2.message}")
+                if (skillDef.skillId !in skills) {
+                    try {
+                        val skill = skillDef.createSkill()
+                        register(skill)
+                        Log.i(TAG, "  硬編碼 Skill: ${skill.id} - ${skill.name}")
+                    } catch (e2: Exception) {
+                        Log.w(TAG, "  硬編碼 Skill ${skillDef.tag} 失敗: ${e2.message}")
+                    }
                 }
             }
         }

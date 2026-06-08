@@ -12,19 +12,6 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * ## 股票数据中心（v2.0 — 共享股票池 + 历史统计）
- *
- * 所有页面（策略/板块/对话）共享此中心获取：
- * - 板块 → 子板块 → 个股 的完整映射
- * - 股票代码 → 所属板块的反向查询
- * - 实时行情数据缓存
- * - **历史热门板块统计（当日/近10日/近100日）**
- *
- * 设计原则：
- * 1. 单例模式，整个 App 共享一个实例
- * 2. 股票池数据持久化到 Room DB（sector_stocks 表）
- * 3. 实时行情来自 EastMoneyHotSectorSource 全局缓存
- * 4. 自动按市场交易时段调整刷新频率
- * 5. 所有板块/股票数据统计统一归口到这里
  */
 object StockDataCenter {
 
@@ -40,9 +27,40 @@ object StockDataCenter {
     private val _marketStatus = MutableStateFlow(A股TradingHours.获取状态摘要())
     val marketStatus: StateFlow<String> = _marketStatus.asStateFlow()
 
-    /** v10.0: AI 對話中用戶搜索過的股票（供模擬交易 Skill 篩選用） */
+    // ═══════════════════════════════════════════════════════
+    // v10.1: 用戶搜索記錄（重點關注股票池）
+    // ═══════════════════════════════════════════════════════
+
+    /** 用戶搜索過的股票完整記錄（含價格連結、搜索次數） */
+    data class UserStockEntry(
+        val stockCode: String,
+        val stockName: String,
+        val lastPrice: Double = -1.0,
+        val lastChangePct: Double = 0.0,
+        val searchCount: Int = 1,
+        val firstSearchedAt: Long = System.currentTimeMillis(),
+        val lastSearchedAt: Long = System.currentTimeMillis()
+    )
+
+    /** 來自 AI Skill 分析的精選股票記錄 */
+    data class SkillPickEntry(
+        val rank: Int,
+        val stockCode: String,
+        val stockName: String,
+        val reason: String,
+        val confidence: Float = 0.5f,
+        val sourceSkillId: String,
+        val createdAt: Long = System.currentTimeMillis()
+    )
+
+    /** v10.0: AI 對話中用戶搜索過的股票（向後兼容） */
     @Volatile
     var userSearchHistory: List<Pair<String, String>> = emptyList()
+        private set
+
+    /** v10.1: 用戶搜索股票完整記錄（含價格、搜索次數） */
+    @Volatile
+    var userSearchHistoryEntries: List<UserStockEntry> = emptyList()
         private set
 
     /** v10.0: AI 對話中 Skill 精選出的股票（供模擬交易使用） */
@@ -59,13 +77,9 @@ object StockDataCenter {
         if (started) return
         started = true
         appContext = context.applicationContext
-
         refreshJob = scope.launch(Dispatchers.IO) {
             while (isActive) {
-                try {
-                    refreshMarketStatus()
-                    loadSectorMappingsFromDB()
-                } catch (_: Exception) {}
+                try { refreshMarketStatus(); loadSectorMappingsFromDB() } catch (_: Exception) {}
                 delay(A股TradingHours.获取刷新间隔())
             }
         }
@@ -100,10 +114,6 @@ object StockDataCenter {
         return emptyList()
     }
 
-    // ═══════════════════════════════════════════════════════
-    // 股票→板块 反向查询
-    // ═══════════════════════════════════════════════════════
-
     suspend fun getSectorsByStock(stockCode: String): List<String> {
         stockSectorCache[stockCode]?.let { return it }
         val ctx = appContext ?: return emptyList()
@@ -122,10 +132,6 @@ object StockDataCenter {
             ?: sectors.first().take(8)
     }
 
-    // ═══════════════════════════════════════════════════════
-    // 全量板块列表
-    // ═══════════════════════════════════════════════════════
-
     suspend fun getAllSectors(): List<String> {
         val live = (EastMoneyHotSectorSource.industrySectors + EastMoneyHotSectorSource.conceptSectors).map { it.name }.toSet()
         val ctx = appContext ?: return live.toList().sorted()
@@ -134,75 +140,48 @@ object StockDataCenter {
         return (live + dbSectors.toSet()).toList().sorted()
     }
 
-    // ═══════════════════════════════════════════════════════
-    // 历史热门板块统计 (v2.0 — 供策略选择)
-    // ═══════════════════════════════════════════════════════
-
-    /**
-     * 获取指定时间段内的热门板块（按活跃度和涨幅排序）
-     * @param days 回溯天数（1=当日, 10=近10日, 100=近100日）
-     * @return 板块名称列表（Top 10）
-     */
     suspend fun getHotSectorsByPeriod(days: Int): List<String> {
         val ctx = appContext ?: return emptyList()
         if (days <= 1) {
-            // 当日：直接取实时概念板块
             val live = EastMoneyHotSectorSource.conceptSectors
             if (live.isNotEmpty()) return live.map { it.name }.take(10)
         }
         try {
             val db = StockDatabase.getInstance(ctx)
             val records = db.sectorDailyRecordDao().getRecentDays(days)
-            // 按板块名聚合，统计出现频次和平均涨幅
             val sectorStats = records.groupBy { it.sectorName }
                 .mapValues { (_, recs) ->
                     val avgPct = recs.map { it.changePct }.average()
                     val totalHot = recs.sumOf { it.hotScore.toDouble() }
                     val freq = recs.size
-                    avgPct * 0.4 + totalHot * 0.3 + freq * 0.3 // 综合评分
+                    avgPct * 0.4 + totalHot * 0.3 + freq * 0.3
                 }
-                .entries
-                .sortedByDescending { it.value }
-                .map { it.key }
-                .filter { it.isNotBlank() }
-                .take(10)
+                .entries.sortedByDescending { it.value }.map { it.key }.filter { it.isNotBlank() }.take(10)
             if (sectorStats.isNotEmpty()) return sectorStats
         } catch (_: Exception) {}
-        // Fallback: 实时板块
         return EastMoneyHotSectorSource.conceptSectors.map { it.name }.take(10)
     }
 
-    /**
-     * 获取某板块在指定时间段内的Top个股（按平均涨幅排序）
-     */
     suspend fun getTopStocksBySector(sectorName: String, days: Int, topN: Int = 5): List<Pair<String, String>> {
         val stockCodes = getStocksBySector(sectorName)
         if (stockCodes.isEmpty()) return emptyList()
         val ctx = appContext ?: return emptyList()
         try {
             val db = StockDatabase.getInstance(ctx)
-            // 用 getRecentDays 获取近N天所有快照，然后按代码过滤
             val allSnapshots = db.dailySnapshotDao().getRecentDays(days)
             val codeSet = stockCodes.toSet()
             val filtered = allSnapshots.filter { it.code in codeSet }
-            // 按code聚合平均涨幅
-            val grouped: Map<String, List<com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity>> = filtered.groupBy { snap -> snap.code }
+            val grouped: Map<String, List<com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity>> = filtered.groupBy { it.code }
             val ranked = grouped.map { (code, snaps) ->
-                val avgPct = snaps.map { s -> s.changePct }.average()
+                val avgPct = snaps.map { it.changePct }.average()
                 code to avgPct
             }.sortedByDescending { (_, avg) -> avg }.take(topN)
             return ranked.map { (code, _) ->
                 val name = db.stockBasicDao().getByCode(code)?.name ?: code
                 code to name
             }
-        } catch (_: Exception) {
-            return stockCodes.take(topN).map { it to it }
-        }
+        } catch (_: Exception) { return stockCodes.take(topN).map { it to it } }
     }
-
-    // ═══════════════════════════════════════════════════════
-    // 数据库加载
-    // ═══════════════════════════════════════════════════════
 
     private suspend fun loadSectorMappingsFromDB() {
         val ctx = appContext ?: return
@@ -220,74 +199,92 @@ object StockDataCenter {
     }
 
     fun clearCache() { sectorStockCache.clear(); stockSectorCache.clear() }
-
     fun getStatus(): String = "数据: ${sectorStockCache.size}个板块, ${stockSectorCache.size}只股票已索引"
 
     // ═══════════════════════════════════════════════════════
-    // v10.0: 用戶搜索記錄
+    // v10.1: 用戶搜索記錄 API
     // ═══════════════════════════════════════════════════════
 
-    /**
-     * 記錄用戶在 AI 對話中搜索過的股票
-     * @param stockCode 股票代碼（如 "603986"）
-     * @param stockName 股票名稱（如 "兆易創新"）
-     */
-    fun recordUserSearch(stockCode: String, stockName: String) {
-        val current = userSearchHistory.toMutableList()
-        // 去重：如果已存在則移到最前面
-        current.removeAll { it.first == stockCode }
-        current.add(0, stockCode to stockName)
-        // 最多保留 30 隻
+    fun recordUserSearch(
+        stockCode: String,
+        stockName: String,
+        price: Double = -1.0,
+        changePct: Double = 0.0
+    ) {
+        val current = userSearchHistoryEntries.toMutableList()
+        val existing = current.indexOfFirst { it.stockCode == stockCode }
+        val now = System.currentTimeMillis()
+        if (existing >= 0) {
+            val old = current[existing]
+            current.removeAt(existing)
+            current.add(0, old.copy(
+                lastPrice = if (price > 0) price else old.lastPrice,
+                lastChangePct = if (changePct != 0.0) changePct else old.lastChangePct,
+                searchCount = old.searchCount + 1,
+                lastSearchedAt = now
+            ))
+        } else {
+            current.add(0, UserStockEntry(
+                stockCode = stockCode, stockName = stockName,
+                lastPrice = price, lastChangePct = changePct,
+                searchCount = 1, firstSearchedAt = now, lastSearchedAt = now
+            ))
+            Log.i(TAG, "👤 用戶搜索新股票: $stockName ($stockCode)")
+        }
         if (current.size > 30) current.removeAt(current.size - 1)
-        userSearchHistory = current
+        userSearchHistoryEntries = current.toList()
+        userSearchHistory = current.map { entry -> entry.stockCode to entry.stockName }
     }
 
-    /** 獲取最近搜索的股票列表 */
     fun getRecentSearches(limit: Int = 10): List<Pair<String, String>> {
-        return userSearchHistory.take(limit)
+        return userSearchHistoryEntries.take(limit).map { entry -> entry.stockCode to entry.stockName }
+    }
+
+    fun getUserStockEntries(): List<UserStockEntry> = userSearchHistoryEntries
+
+    fun getUserSearchStockCodes(): Set<String> {
+        return userSearchHistoryEntries.map { entry -> entry.stockCode }.toSet()
+    }
+
+    fun getUserStockBoost(stockCode: String): Int {
+        val entry = userSearchHistoryEntries.find { it.stockCode == stockCode } ?: return 0
+        return (8 + (entry.searchCount - 1) * 2).coerceAtMost(15)
+    }
+
+    suspend fun refreshUserStockPrices() {
+        val ctx = appContext ?: return
+        try {
+            val db = StockDatabase.getInstance(ctx)
+            val today = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+            val snapshots = try { db.dailySnapshotDao().getByDate(today) } catch (_: Exception) { emptyList() }
+            if (snapshots.isEmpty()) return
+            val priceMap: Map<String, Pair<Double, Double>> = snapshots.associate { snap ->
+                snap.code to (snap.close to snap.changePct)
+            }
+            val updated = userSearchHistoryEntries.map { entry ->
+                val (price, pct) = priceMap[entry.stockCode] ?: (entry.lastPrice to entry.lastChangePct)
+                entry.copy(lastPrice = price, lastChangePct = pct)
+            }
+            userSearchHistoryEntries = updated
+        } catch (_: Exception) {}
     }
 
     // ═══════════════════════════════════════════════════════
-    // v10.0: Skill 精選股票池（供模擬交易使用）
+    // v10.0: Skill 精選股票池
     // ═══════════════════════════════════════════════════════
 
-    /** 來自 AI Skill 分析的精選股票記錄 */
-    data class SkillPickEntry(
-        val rank: Int,
-        val stockCode: String,
-        val stockName: String,
-        val reason: String,
-        val confidence: Float = 0.5f,
-        val sourceSkillId: String,
-        val createdAt: Long = System.currentTimeMillis()
-    )
-
-    /**
-     * 添加 Skill 精選股票到數據中心
-     * 供模擬交易讀取使用
-     */
     fun addSkillPicks(picks: List<SkillPickEntry>) {
         if (picks.isEmpty()) return
         val current = skillPicks.toMutableList()
-        // 去重：同 sourceSkillId 的舊記錄移除
         val sourceIds = picks.map { it.sourceSkillId }.toSet()
         current.removeAll { it.sourceSkillId in sourceIds }
         current.addAll(0, picks)
-        // 最多保留 50 條
-        if (current.size > 50) {
-            skillPicks = current.take(50)
-        } else {
-            skillPicks = current
-        }
+        skillPicks = if (current.size > 50) current.take(50) else current.toList()
         Log.i(TAG, "📌 SkillPick 已存入: ${picks.size}隻 (Skill: ${sourceIds.joinToString()}), 總計: ${skillPicks.size}隻")
     }
 
-    /** 獲取最近 Skill 精選股票 */
-    fun getRecentSkillPicks(limit: Int = 20): List<SkillPickEntry> {
-        return skillPicks.take(limit)
-    }
+    fun getRecentSkillPicks(limit: Int = 20): List<SkillPickEntry> = skillPicks.take(limit)
 
-    /** 按 Skill ID 獲取對應的精選股票 */
     fun getSkillPicksBySkillId(skillId: String): List<SkillPickEntry> {
         return skillPicks.filter { it.sourceSkillId == skillId }
     }

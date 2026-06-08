@@ -440,7 +440,7 @@ class StrategyListFragment : Fragment() {
     private fun showResultsDialog(results: List<ScreeningResult>) {
         if (!isAdded || results.isEmpty()) return
         val sv = ScrollView(requireContext()); val c = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 24, 24, 24) }
-        val rm = results.associateBy { it.strategyId }; val all = engine?.getStrategies()?.filter { engine!!.isEnabled(it.id) } ?: emptyList()
+        val rm = results.associateBy { it.strategyId }; val all = engine?.getStrategies()?.filter { engine!!.isEnabled(it.id) && it.id != "ai_prediction" } ?: emptyList()
         for (r in all.map { s -> rm[s.id] ?: ScreeningResult(strategyId = s.id, strategyName = s.name, category = s.category, signals = emptyList(), totalScanned = 0, scanTimeMs = 0) }) {
             c.addView(TextView(requireContext()).apply { text = "${r.category.icon} ${r.strategyName}  (${r.hitCount}只 / ${r.scanTimeMs}ms)"; textSize = 15f; setTextColor(Color.parseColor("#333333")); setTypeface(null, Typeface.BOLD); setPadding(0, 16, 0, 8); setOnClickListener { if (r.signals.isNotEmpty()) openResultDialog(r) } })
             if (r.signals.isEmpty()) { c.addView(TextView(requireContext()).apply { text = "  ⚠️ 无命中信号"; textSize = 12f; setTextColor(Color.parseColor("#999999")); setPadding(0, 0, 0, 8) }); continue }
@@ -459,7 +459,7 @@ class StrategyListFragment : Fragment() {
             }; c.addView(t)
         }
         c.addView(View(requireContext()).apply { layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, 2).apply { topMargin = 16; bottomMargin = 8 }; setBackgroundColor(Color.parseColor("#DDDDDD")) })
-        c.addView(TextView(requireContext()).apply { text = "🤖 AI 量化预测（多策略+新闻因子+周期轮动）"; textSize = 16f; setTextColor(Color.parseColor("#1565C0")); setTypeface(null, Typeface.BOLD); setPadding(0, 8, 0, 8) })
+        c.addView(TextView(requireContext()).apply { text = "🤖 AI 量化选股（多策略+新闻因子+周期轮动）"; textSize = 16f; setTextColor(Color.parseColor("#1565C0")); setTypeface(null, Typeface.BOLD); setPadding(0, 8, 0, 8) })
         val ail = TextView(requireContext()).apply { text = "  ⏳ AI 正在分析中，请稍候..."; textSize = 12f; setTextColor(Color.parseColor("#999999")) }; c.addView(ail)
         // 动态标题：多日模式用label
         val dialogTitle = when {
@@ -467,7 +467,10 @@ class StrategyListFragment : Fragment() {
             selectedHotPeriod > 0 -> { val label = when(selectedHotPeriod){1->"近三日";2->"近10日";3->"近30日";4->"近50日";5->"近100日"; else->"当日"}; "扫描结果 ($label)" }
             else -> "扫描结果 ($browsingDate)"
         }
-        sv.addView(c); AlertDialog.Builder(requireContext()).setTitle(dialogTitle).setView(sv).setPositiveButton("关闭", null).show()
+        sv.addView(c)
+        val dialog = AlertDialog.Builder(requireContext()).setTitle(dialogTitle).setView(sv).setPositiveButton("关闭", null).create()
+        dialog.show()
+        dialog.window?.setLayout(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT)
         lifecycleScope.launch { try { val ai = AIPredictionEngine(requireContext()); val pr = ai.predict(results, browsingDate.toString()); requireActivity().runOnUiThread { if (pr != null && pr.topPicks.isNotEmpty()) { ail.text = ""; c.addView(TextView(requireContext()).apply { text = "  📋 方案${pr.mode}: ${pr.modeReason}"; textSize = 11f; setTextColor(Color.parseColor("#E65100")); setPadding(0, 4, 0, 8) }); c.addView(TextView(requireContext()).apply { text = "  📊 市场判断: ${pr.marketOutlook}"; textSize = 11f; setTextColor(Color.parseColor("#666666")); setPadding(0, 0, 0, 4) }); c.addView(TextView(requireContext()).apply { text = "  ⚠ ${pr.riskWarning}"; textSize = 11f; setTextColor(Color.parseColor("#EF6C00")); setPadding(0, 0, 0, 8) }); val tpTable = TableLayout(requireContext()).apply { isStretchAllColumns = true }; val tpHr = TableRow(requireContext()); for (h in listOf("排名", "名称", "代码", "综分", "概率", "建议")) tpHr.addView(TextView(requireContext()).apply { text = h; textSize = 10f; setTextColor(Color.parseColor("#999999")); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER; setPadding(2, 4, 2, 4) }); tpTable.addView(tpHr); for (p in pr.topPicks) { val tpRow = TableRow(requireContext()); for (cell in listOf("#${p.rank}", p.stockName, p.stockCode.takeLast(6), "${p.compositeScore}", "${p.upProbability}%", p.actionSuggestion)) tpRow.addView(TextView(requireContext()).apply { text = cell; textSize = 10f; setTextColor(Color.parseColor("#333333")); gravity = Gravity.CENTER; setPadding(2, 4, 2, 4) }); tpTable.addView(tpRow) }; c.addView(tpTable) } else { ail.text = "  ⚠️ AI 预测暂不可用" } } } catch (e: Exception) { requireActivity().runOnUiThread { ail.text = "  ⚠️ AI 预测失败: ${e.message?.take(30)}" } } }
     }
 

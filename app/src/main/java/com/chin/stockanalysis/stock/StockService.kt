@@ -83,11 +83,12 @@ class StockService(
         Log.d(tag, "  ➡ StockDataFormatter.format: ${formattedData.length} chars")
         Log.d(tag, "  ➡ 前100字: ${formattedData.take(100)}")
 
-        // 4. 返回上下文
+        // 4. 返回上下文（附帶即時行情原始數據供持久化）
         val result = StockContext(
             intent = intent,
             hasStockData = data.isNotEmpty(),
-            promptPrefix = formattedData
+            promptPrefix = formattedData,
+            realtimeData = data  // v10.1: 保存原始數據供寫入 daily_snapshot
         )
         Log.d(tag, "📤 StockService.processUserInput 结束: hasStockData=${result.hasStockData}")
         Log.d(tag, "═══════════════════════════════════════")
