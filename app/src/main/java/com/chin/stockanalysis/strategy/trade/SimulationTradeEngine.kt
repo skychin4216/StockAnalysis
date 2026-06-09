@@ -695,18 +695,34 @@ class SimulationTradeEngine(private val context: Context) {
             Log.i(TAG, "👤 用戶搜索股票加分池: ${userStockCodes.size}隻")
         }
 
-        // 根据新闻力度、轮动惩罚、用戶關注度重新计算评分
+        // v11.0: 獲取 Skill/Agent 精選股票加分池
+        val skillPickCodes = StockDataCenter.getSkillPickStockCodes()
+        val hasSkillPicks = skillPickCodes.isNotEmpty()
+        if (hasSkillPicks) {
+            Log.i(TAG, "🤖 智能体精选股票加分池: ${skillPickCodes.size}隻")
+        }
+
+        // 根据新闻力度、轮动惩罚、用戶關注度、智能体精選度重新计算评分
         val adjusted = signals.map { signal ->
             val newsBoost = (newsStrength - 50) / 100.0 * NEWS_WEIGHT_BOOST
             val rotationAdj = rotationPenalty / 100.0 * ROTATION_PENALTY
             val userBoost = if (signal.stockCode in userStockCodes) {
                 StockDataCenter.getUserStockBoost(signal.stockCode) / 100.0
             } else 0.0
-            val newStrength = (signal.strength * (1.0 + newsBoost + rotationAdj + userBoost)).roundToInt()
+            // v11.0: 智能体精选加权（优先于用户关注）
+            val skillBoost = if (signal.stockCode in skillPickCodes) {
+                StockDataCenter.getSkillPickBoost(signal.stockCode) / 100.0
+            } else 0.0
+            val totalBoost = 1.0 + newsBoost + rotationAdj + userBoost + skillBoost
+            val newStrength = (signal.strength * totalBoost).roundToInt()
                 .coerceIn(0, 100)
-            val userLabel = if (signal.stockCode in userStockCodes) " 👤用戶關注" else ""
+            val labels = mutableListOf<String>()
+            labels.add("新聞力度:${newsStrength}")
+            labels.add("輪動:${rotationPenalty}")
+            if (signal.stockCode in userStockCodes) labels.add("👤用戶關注")
+            if (signal.stockCode in skillPickCodes) labels.add("🤖智能体精选")
             signal.copy(strength = newStrength,
-                reason = "${signal.reason} | 新聞力度:${newsStrength} 輪動:${rotationPenalty}$userLabel")
+                reason = "${signal.reason} | ${labels.joinToString(" ")}")
         }.sortedByDescending { it.strength }
 
         return adjusted.take(FINAL_TOP3)

@@ -48,6 +48,7 @@
                 android:longClickable="true" />
         </LinearLayout>
 
+        <!-- 用户消息操作栏 (id 带 User 后缀避免与 AI 操作栏冲突) -->
         <LinearLayout
             android:id="@+id/layoutUserActions"
             android:layout_width="wrap_content"
@@ -61,39 +62,65 @@
                 android:id="@+id/btnCopyUser"
                 android:layout_width="wrap_content"
                 android:layout_height="28dp"
-                android:paddingHorizontal="12dp"
+                android:paddingHorizontal="10dp"
                 android:paddingVertical="2dp"
                 android:gravity="center"
                 android:text="复制"
                 android:textSize="12sp"
                 android:textColor="#666666"
                 android:background="@drawable/bg_action_btn"
-                android:layout_marginEnd="6dp" />
+                android:layout_marginEnd="5dp" />
 
             <TextView
-                android:id="@+id/btnEditUser"
+                android:id="@+id/btnPlayVoiceUser"
                 android:layout_width="wrap_content"
                 android:layout_height="28dp"
-                android:paddingHorizontal="12dp"
+                android:paddingHorizontal="10dp"
                 android:paddingVertical="2dp"
                 android:gravity="center"
-                android:text="编辑"
+                android:text="🔊"
+                android:textSize="14sp"
+                android:textColor="#666666"
+                android:background="@drawable/bg_action_btn"
+                android:layout_marginEnd="5dp" />
+
+            <TextView
+                android:id="@+id/btnFavoriteUser"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="2dp"
+                android:gravity="center"
+                android:text="⭐"
+                android:textSize="14sp"
+                android:textColor="#666666"
+                android:background="@drawable/bg_action_btn"
+                android:layout_marginEnd="5dp" />
+
+            <TextView
+                android:id="@+id/btnShareUser"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="2dp"
+                android:gravity="center"
+                android:text="转发"
                 android:textSize="12sp"
                 android:textColor="#666666"
-                android:background="@drawable/bg_action_btn" />
+                android:background="@drawable/bg_action_btn"
+                android:layout_marginEnd="5dp" />
 
             <TextView
-                android:id="@+id/btnDeleteUser"
+                android:id="@+id/btnRegenerateUser"
                 android:layout_width="wrap_content"
                 android:layout_height="28dp"
-                android:paddingHorizontal="12dp"
+                android:paddingHorizontal="10dp"
                 android:paddingVertical="2dp"
                 android:gravity="center"
-                android:text="删除"
+                android:text="🔄重新生成"
                 android:textSize="12sp"
-                android:textColor="#FF5252"
-                android:background="@drawable/bg_action_btn"
-                android:layout_marginStart="6dp" />
+                android:textColor="#1E88E5"
+                android:background="@drawable/bg_action_btn" />
         </LinearLayout>
     </LinearLayout>
 
@@ -121,7 +148,6 @@
             android:focusable="true"
             android:longClickable="true" />
 
-        <!-- v9.0: 加载状态文字替代 "..." -->
         <TextView
             android:id="@+id/tvLoadingStatus"
             android:layout_width="wrap_content"
@@ -145,7 +171,6 @@
             android:textStyle="bold"
             android:visibility="gone" />
 
-        <!-- v9.0: 股票表格容器 (内嵌 HTML 表格) -->
         <LinearLayout
             android:id="@+id/layoutStockTable"
             android:layout_width="match_parent"
@@ -189,7 +214,7 @@
                 android:layout_marginEnd="5dp" />
 
             <TextView
-                android:id="@+id/btnPlayVoice"
+                android:id="@+id/btnPlayVoiceBot"
                 android:layout_width="wrap_content"
                 android:layout_height="28dp"
                 android:paddingHorizontal="10dp"
@@ -202,7 +227,7 @@
                 android:layout_marginEnd="5dp" />
 
             <TextView
-                android:id="@+id/btnFavorite"
+                android:id="@+id/btnFavoriteBot"
                 android:layout_width="wrap_content"
                 android:layout_height="28dp"
                 android:paddingHorizontal="10dp"
@@ -215,7 +240,7 @@
                 android:layout_marginEnd="5dp" />
 
             <TextView
-                android:id="@+id/btnShare"
+                android:id="@+id/btnShareBot"
                 android:layout_width="wrap_content"
                 android:layout_height="28dp"
                 android:paddingHorizontal="10dp"
@@ -228,7 +253,7 @@
                 android:layout_marginEnd="5dp" />
 
             <TextView
-                android:id="@+id/btnRegenerate"
+                android:id="@+id/btnRegenerateBot"
                 android:layout_width="wrap_content"
                 android:layout_height="28dp"
                 android:paddingHorizontal="10dp"

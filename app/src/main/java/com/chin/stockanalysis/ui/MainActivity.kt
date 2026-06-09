@@ -22,9 +22,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 主 Activity — 豆包风格四 Tab 布局
+ * 主 Activity — 豆包风格五 Tab 布局
  *
- * 对话(0) | 股票(1) | 策略(2) | 我的(3)
+ * 对话(0) | 智能体(1) | 股票(2) | 策略(3) | 我的(4)
  */
 class MainActivity : AppCompatActivity() {
 
@@ -35,9 +35,10 @@ class MainActivity : AppCompatActivity() {
     private val tabFragments: List<Fragment> by lazy {
         listOf(
             ChatTabFragment(),    // 0 - 对话
-            StockTabFragment(),   // 1 - 股票
-            StrategyFragment(),   // 2 - 策略
-            SettingsFragment()    // 3 - 我的
+            AgentTabFragment(),   // 1 - 智能体
+            StockTabFragment(),   // 2 - 股票
+            StrategyFragment(),   // 3 - 策略
+            SettingsFragment()    // 4 - 我的
         )
     }
 
@@ -107,9 +108,10 @@ class MainActivity : AppCompatActivity() {
         bottomNav.setOnItemSelectedListener { item ->
             val pageIndex = when (item.itemId) {
                 R.id.nav_chat     -> 0
-                R.id.nav_stock    -> 1
-                R.id.nav_strategy -> 2
-                R.id.nav_mine     -> 3
+                R.id.nav_agent    -> 1
+                R.id.nav_stock    -> 2
+                R.id.nav_strategy -> 3
+                R.id.nav_mine     -> 4
                 else -> -1
             }
             if (pageIndex >= 0) {
@@ -122,9 +124,10 @@ class MainActivity : AppCompatActivity() {
             override fun onPageSelected(position: Int) {
                 val itemId = when (position) {
                     0 -> R.id.nav_chat
-                    1 -> R.id.nav_stock
-                    2 -> R.id.nav_strategy
-                    3 -> R.id.nav_mine
+                    1 -> R.id.nav_agent
+                    2 -> R.id.nav_stock
+                    3 -> R.id.nav_strategy
+                    4 -> R.id.nav_mine
                     else -> R.id.nav_chat
                 }
                 if (bottomNav.selectedItemId != itemId) {

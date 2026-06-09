@@ -7,6 +7,11 @@
         android:title="对话" />
 
     <item
+        android:id="@+id/nav_agent"
+        android:icon="@drawable/ic_nav_agent"
+        android:title="智能体" />
+
+    <item
         android:id="@+id/nav_stock"
         android:icon="@drawable/ic_nav_stock"
         android:title="股票" />

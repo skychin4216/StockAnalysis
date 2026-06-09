@@ -1,17 +1,10 @@
 package com.chin.stockanalysis.ui
 
-import android.text.SpannableStringBuilder
-import android.text.Spanned
-import android.text.style.ForegroundColorSpan
-import android.text.style.TypefaceSpan
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.PopupMenu
 import androidx.recyclerview.widget.RecyclerView
 import com.chin.stockanalysis.databinding.ItemMessageBinding
-import java.text.SimpleDateFormat
-import java.util.*
 
 class ChatAdapter(
     private val messages: MutableList<Message>
@@ -25,9 +18,6 @@ class ChatAdapter(
     }
 
     var onCopyMessage: ((String) -> Unit)? = null
-    var onEditMessage: ((Int, String) -> Unit)? = null
-    var onDeleteMessage: ((Int) -> Unit)? = null
-    var onUndoMessage: ((Int) -> Unit)? = null
     var onPlayVoice: ((String) -> Unit)? = null
     var onFavorite: ((String) -> Unit)? = null
     var onShare: ((String) -> Unit)? = null
@@ -55,13 +45,16 @@ class ChatAdapter(
                 layoutUser.visibility = View.VISIBLE
                 tvUserMessage.text = message.content
 
-                tvUserMessage.setOnLongClickListener {
-                    showPopupMenu(it, position, message)
-                    true
+                tvUserMessage.setOnClickListener {
+                    val visible = layoutUserActions.visibility == View.VISIBLE
+                    layoutUserActions.visibility = if (visible) View.GONE else View.VISIBLE
                 }
+
                 btnCopyUser.setOnClickListener { onCopyMessage?.invoke(message.content) }
-                btnEditUser.setOnClickListener { onEditMessage?.invoke(position, message.content) }
-                btnDeleteUser.setOnClickListener { onDeleteMessage?.invoke(position) }
+                btnPlayVoiceUser.setOnClickListener { onPlayVoice?.invoke(message.content) }
+                btnFavoriteUser.setOnClickListener { onFavorite?.invoke(message.content) }
+                btnShareUser.setOnClickListener { onShare?.invoke(message.content) }
+                btnRegenerateUser.setOnClickListener { onRegenerate?.invoke(position) }
             }
         }
 
@@ -75,23 +68,18 @@ class ChatAdapter(
                 tvLoadingStatus.visibility = View.GONE
                 tvErrorHint.visibility = View.GONE
 
-                // v9.0: 股票表格检测
                 renderStockTable(message.content)
 
                 tvBotMessage.setOnClickListener {
                     val visible = layoutBotActions.visibility == View.VISIBLE
                     layoutBotActions.visibility = if (visible) View.GONE else View.VISIBLE
                 }
-                tvBotMessage.setOnLongClickListener {
-                    showPopupMenu(it, position, message)
-                    true
-                }
 
                 btnCopyBot.setOnClickListener { onCopyMessage?.invoke(message.content) }
-                btnPlayVoice.setOnClickListener { onPlayVoice?.invoke(message.content) }
-                btnFavorite.setOnClickListener { onFavorite?.invoke(message.content) }
-                btnShare.setOnClickListener { onShare?.invoke(message.content) }
-                btnRegenerate.setOnClickListener { onRegenerate?.invoke(position) }
+                btnPlayVoiceBot.setOnClickListener { onPlayVoice?.invoke(message.content) }
+                btnFavoriteBot.setOnClickListener { onFavorite?.invoke(message.content) }
+                btnShareBot.setOnClickListener { onShare?.invoke(message.content) }
+                btnRegenerateBot.setOnClickListener { onRegenerate?.invoke(position) }
             }
         }
 
@@ -101,7 +89,6 @@ class ChatAdapter(
                 layoutUser.visibility = View.GONE
                 tvBotMessage.text = message.content
 
-                // v9.0: 加载状态文字优先于 "..."
                 if (message.loadingStatus != null) {
                     tvLoadingStatus.text = message.loadingStatus
                     tvLoadingStatus.visibility = View.VISIBLE
@@ -111,6 +98,7 @@ class ChatAdapter(
                     tvTypingIndicator.visibility = if (message.content.isEmpty()) View.VISIBLE else View.GONE
                 }
                 layoutBotActions.visibility = View.GONE
+                layoutUserActions.visibility = View.GONE
                 layoutStockTable.visibility = View.GONE
                 tvErrorHint.visibility = View.GONE
             }
@@ -126,11 +114,11 @@ class ChatAdapter(
                 tvTypingIndicator.visibility = View.GONE
                 tvLoadingStatus.visibility = View.GONE
                 layoutBotActions.visibility = View.GONE
+                layoutUserActions.visibility = View.GONE
                 layoutStockTable.visibility = View.GONE
             }
         }
 
-        /** 检测并渲染简洁表格 */
         private fun renderStockTable(content: String) {
             val lines = content.lines()
             val sepIdx = lines.indexOfFirst { it.trimStart().startsWith("|") && it.contains("---") }
@@ -143,48 +131,23 @@ class ChatAdapter(
             if (tbl.size < 2) { binding.layoutStockTable.visibility = View.GONE; return }
             val sb = StringBuilder()
             for (i in tbl.indices) {
-                if (i == 1) { sb.appendLine(tbl[i]); continue } // --- separator
+                if (i == 1) { sb.appendLine(tbl[i]); continue }
                 sb.appendLine(tbl[i])
             }
             binding.tvStockTable.text = sb.toString().trimEnd()
             binding.layoutStockTable.visibility = View.VISIBLE
         }
 
-        private fun showPopupMenu(anchor: View, position: Int, message: Message) {
-            val popup = PopupMenu(anchor.context, anchor)
-            popup.menu.add("选取文字")
-            popup.menu.add("复制")
-            if (message.isUser) popup.menu.add("编辑")
-            if (message.isUser) popup.menu.add("撤销")
-
-            popup.setOnMenuItemClickListener { item ->
-                when (item.title) {
-                    "选取文字" -> {
-                        val tv = if (message.isUser) binding.tvUserMessage else binding.tvBotMessage
-                        tv.setTextIsSelectable(true)
-                        android.widget.Toast.makeText(anchor.context, "已启用文本选择，长按文字即可选取", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                    "复制" -> onCopyMessage?.invoke(message.content)
-                    "编辑" -> onEditMessage?.invoke(position, message.content)
-                    "撤销" -> onUndoMessage?.invoke(position)
-                }
-                true
-            }
-            popup.show()
-        }
-
         private fun formatTime(timestamp: Long): String {
-            val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
-            return sdf.format(Date(timestamp))
+            return java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(timestamp))
         }
     }
 
     override fun getItemViewType(position: Int): Int {
-        val msg = messages[position]
         return when {
-            msg.isError -> VIEW_TYPE_ERROR
-            msg.isStreaming -> VIEW_TYPE_STREAMING
-            msg.isUser -> VIEW_TYPE_USER
+            messages[position].isError -> VIEW_TYPE_ERROR
+            messages[position].isStreaming -> VIEW_TYPE_STREAMING
+            messages[position].isUser -> VIEW_TYPE_USER
             else -> VIEW_TYPE_AI
         }
     }

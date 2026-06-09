@@ -47,7 +47,7 @@ object SkillConfigLoader {
         val icon: String = "🎯",
         val description: String = "",
         val keywords: List<String> = emptyList(),
-        val fullPrompt: String = "",
+        val systemPrompt: String = "",
         val quickPrompt: String = "",
         val autoTrigger: Boolean = true,
         val isDynamic: Boolean = false  // true = 來自動態設定, false = 內建
@@ -59,7 +59,7 @@ object SkillConfigLoader {
                 name = name,
                 icon = icon,
                 description = description,
-                prompts = listOf(fullPrompt, quickPrompt),
+                prompts = listOf(systemPrompt, quickPrompt),
                 autoTrigger = autoTrigger,
                 triggerPrompt = keywords.joinToString(", "),
                 source = SkillSource.USER_CREATED
@@ -69,9 +69,9 @@ object SkillConfigLoader {
         /** 將 prompt 中的佔位符替換為實際值 */
         fun getFullPrompt(stockCode: String? = null): String {
             return if (stockCode != null) {
-                fullPrompt.replace("{stockCode}", stockCode)
+                systemPrompt.replace("{stockCode}", stockCode)
             } else {
-                fullPrompt
+                systemPrompt
             }
         }
 
@@ -190,7 +190,7 @@ object SkillConfigLoader {
                 icon = obj.optString("icon", "🎯"),
                 description = obj.optString("description", ""),
                 keywords = keywords,
-                fullPrompt = obj.optString("fullPrompt", ""),
+                systemPrompt = obj.optString("systemPrompt", obj.optString("fullPrompt", "")),
                 quickPrompt = obj.optString("quickPrompt", ""),
                 autoTrigger = obj.optBoolean("autoTrigger", true)
             ))
@@ -208,7 +208,7 @@ object SkillConfigLoader {
                 put("icon", config.icon)
                 put("description", config.description)
                 put("keywords", JSONArray(config.keywords))
-                put("fullPrompt", config.fullPrompt)
+                put("systemPrompt", config.systemPrompt)
                 put("quickPrompt", config.quickPrompt)
                 put("autoTrigger", config.autoTrigger)
             }

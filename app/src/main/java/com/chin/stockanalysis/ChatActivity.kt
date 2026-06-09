@@ -163,8 +163,6 @@ class ChatActivity : AppCompatActivity() {
     private fun setupRecyclerView() {
         adapter = ChatAdapter(messages)
         adapter.onCopyMessage = { text -> copyToClipboard(text) }
-        adapter.onEditMessage = { position, oldText -> showEditDialog(position, oldText) }
-        adapter.onDeleteMessage = { position -> deleteMessage(position) }
         binding.recyclerView.layoutManager = LinearLayoutManager(this).apply {
             stackFromEnd = true
         }

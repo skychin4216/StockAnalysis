@@ -33,7 +33,10 @@ import com.chin.stockanalysis.ai.IntentPredictionEngine
 import com.chin.stockanalysis.ai.BackgroundPredictor
 import com.chin.stockanalysis.ai.AiProbe
 import com.chin.stockanalysis.ai.AiOrchestrator
+import com.chin.stockanalysis.ai.AiProviderPool
 import com.chin.stockanalysis.ai.DataCompletenessChecker
+import com.chin.stockanalysis.skill.SkillEngine
+import com.chin.stockanalysis.skill.SkillOrchestrator
 import com.chin.stockanalysis.stock.StockQueryEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -55,6 +58,10 @@ import java.util.Locale
  * - 追问延迟到回复完成后
  * - 过滤 "null" 字符串
  * - 基于 dialog_techniques 改进的 system prompt
+ *
+ * v12.0 变更:
+ * - 接入 AiProviderPool 共享 AI 分配
+ * - 接入 SkillEngine/SkillOrchestrator 关键词动态触发选股技巧
  */
 class ChatTabFragment : Fragment() {
 
@@ -74,8 +81,13 @@ class ChatTabFragment : Fragment() {
 
     private var currentStreamingJob: Job? = null
     private var apiProvider: ApiProvider? = null
+    private var aiSlot: AiProviderPool.Slot? = null
     private var tts: TextToSpeech? = null
+    private var providerInitDone = false
+    private var providerLoading = false
 
+    private val skillEngine: SkillEngine by lazy { SkillEngine(requireContext()) }
+    private val skillOrchestrator: SkillOrchestrator by lazy { SkillOrchestrator(skillEngine) }
     private val queryEngine: StockQueryEngine by lazy { StockQueryEngine.create(requireContext(), skillOrchestrator) }
 
     private lateinit var convRepo: ConversationRepository
@@ -92,11 +104,7 @@ class ChatTabFragment : Fragment() {
     private val backgroundPredictor by lazy { BackgroundPredictor(memoryManager, smartContext) }
     private val orchestrator = AiOrchestrator()
 
-    // ═══ v10.0: Skill 系統 ═══
-    private val skillEngine by lazy { com.chin.stockanalysis.skill.SkillEngine(requireContext()) }
-    private val skillOrchestrator by lazy { com.chin.stockanalysis.skill.SkillOrchestrator(skillEngine) }
-
-    // 多 AI Provider（由 AiProbe 注入）
+    // 多 AI Provider（由 AiProbe 注入 — 仅用于 secondary，primary 由池管理）
     private var secondaryProvider: ApiProvider? = null
     private var tertiaryProvider: ApiProvider? = null
     /** ⚡ AI 增强开关 — 开启时使用双 AI，关闭时仅用用户选择的 AI */
@@ -128,7 +136,6 @@ class ChatTabFragment : Fragment() {
         initTts()
         showWelcomeMessage()
         showHotSectors()
-        // App 啟動時後台預取全市場日線數據（不阻塞 UI）
         preloadMarketData()
     }
 
@@ -136,7 +143,12 @@ class ChatTabFragment : Fragment() {
     override fun onPause() { super.onPause(); cancelApiCall() }
     override fun onStop() { super.onStop(); cancelApiCall(); saveCurrentConversation() }
     override fun onDestroyView() { super.onDestroyView(); _binding = null }
-    override fun onDestroy() { super.onDestroy(); cancelApiCall(); tts?.shutdown() }
+    override fun onDestroy() {
+        super.onDestroy()
+        cancelApiCall()
+        tts?.shutdown()
+        aiSlot?.let { AiProviderPool.releaseNonBlocking(it) }
+    }
 
     private fun cancelApiCall() { currentStreamingJob?.cancel(); currentStreamingJob = null; apiProvider?.cancel() }
 
@@ -144,24 +156,37 @@ class ChatTabFragment : Fragment() {
     // 初始化
     // ════════════════════════════════════════
 
-    private fun initProvider() { apiProvider = ApiConfigManager.getInstance(requireContext()).createCurrentProvider() }
+    private fun initProvider() {
+        if (providerInitDone || providerLoading) return
+        providerLoading = true
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                aiSlot = AiProviderPool.acquire(requireContext())
+                if (isAdded) requireActivity().runOnUiThread {
+                    apiProvider = aiSlot?.provider
+                    providerInitDone = true
+                    Log.i(TAG, "🤖 AI: ${aiSlot?.configName ?: "无"}")
+                }
+            } finally {
+                providerLoading = false
+            }
+        }
+    }
 
+    /** AiProbe 仅用于发现 secondary Provider，不覆盖池分配的 primary */
     private fun initAiProbe() {
         val configManager = ApiConfigManager.getInstance(requireContext())
         lifecycleScope.launch(Dispatchers.IO) {
             AiProbe.runProbe(configManager) { result ->
                 when (result) {
                     is AiProbe.Result.Ready -> {
-                        apiProvider = result.primary.provider
-                        // 仅当 secondary 与 primary 是不同 Provider 时才赋值
+                        // 不覆盖 apiProvider（池已分配）
                         if (result.secondary != null && result.secondary.config.id != result.primary.config.id) {
                             secondaryProvider = result.secondary.provider
-                            Log.i(TAG, "🎯 AI探针: 前台=${result.primary.config.name} | 后台=${result.secondary.config.name}")
-                        } else {
-                            Log.i(TAG, "🎯 AI探针: 单AI模式 — ${result.primary.config.name}")
+                            Log.i(TAG, "🎯 AI探针: 辅助=${result.secondary.config.name}")
                         }
                     }
-                    is AiProbe.Result.None -> Log.w(TAG, "AI探针: 无可用 Provider")
+                    is AiProbe.Result.None -> Log.w(TAG, "AI探针: 无辅助 Provider")
                 }
             }
         }
@@ -169,29 +194,19 @@ class ChatTabFragment : Fragment() {
 
     private fun initTts() { tts = TextToSpeech(requireContext()) { if (it == TextToSpeech.SUCCESS) tts?.language = Locale.CHINESE } }
 
-    /**
-     * App 啟動時後台預取全市場日線數據（TOP 40 只熱門股票）
-     * 不阻塞 UI，數據就緒後自動刷新今日熱點
-     */
     private fun preloadMarketData() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(requireContext())
                 val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().toString()
                 val existingCount = db.dailySnapshotDao().getByDate(today).size
-                if (existingCount >= 30) {
-                    Log.i(TAG, "📊 今日數據已完整 (${existingCount}隻)，跳過預取")
-                    return@launch
-                }
+                if (existingCount >= 30) { Log.i(TAG, "📊 今日數據已完整 (${existingCount}隻)"); return@launch }
                 Log.i(TAG, "📊 後台預取全市場數據 (現有${existingCount}隻)...")
                 val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
                 val count = fetcher.fetchAllHistoricalData(days = 1)
                 Log.i(TAG, "📊 預取完成: $count 條")
-                // 清除緩存，讓下次 showHotSectors 用最新數據
                 cachedHotSectorsTime = 0L
-            } catch (e: Exception) {
-                Log.w(TAG, "預取數據失敗: ${e.message}")
-            }
+            } catch (e: Exception) { Log.w(TAG, "預取失敗: ${e.message}") }
         }
     }
 
@@ -202,9 +217,6 @@ class ChatTabFragment : Fragment() {
     private fun setupRecyclerView() {
         adapter = ChatAdapter(messages)
         adapter.onCopyMessage = { text -> (requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("msg", text)); Toast.makeText(requireContext(), "✅ 已复制", Toast.LENGTH_SHORT).show() }
-        adapter.onEditMessage = { position, _ -> showEditMessageDialog(position) }
-        adapter.onDeleteMessage = { position -> if (position in messages.indices) { messages.removeAt(position); adapter.notifyItemRemoved(position) } }
-        adapter.onUndoMessage = { position -> undoUserMessage(position) }
         adapter.onPlayVoice = { text -> tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "play") }
         adapter.onFavorite = { text -> Toast.makeText(requireContext(), "⭐ 已收藏", Toast.LENGTH_SHORT).show() }
         adapter.onShare = { text -> startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(android.content.Intent.EXTRA_TEXT, text) }, "分享到")) }
@@ -214,14 +226,11 @@ class ChatTabFragment : Fragment() {
     }
 
     private fun setupInput() {
-        // ⚡ AI 增强开关
         binding.btnAiBoost.setOnClickListener {
             aiBoostEnabled = !aiBoostEnabled
             val color = if (aiBoostEnabled) "#FF6600" else "#AAAAAA"
             binding.btnAiBoost.setColorFilter(android.graphics.Color.parseColor(color))
-            Log.d(TAG, "⚡ AI增强: ${if (aiBoostEnabled) "开 — 双AI模式" else "关 — 单AI模式"}")
         }
-        // 发送按钮点击
         binding.btnSend.setOnClickListener {
             val text = binding.etInput.text.toString().trim()
             if (text.isEmpty()) { Toast.makeText(requireContext(), "请输入内容", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
@@ -232,14 +241,13 @@ class ChatTabFragment : Fragment() {
         }
         binding.btnVoice.setOnClickListener { Toast.makeText(requireContext(), "🎤 语音输入开发中", Toast.LENGTH_SHORT).show() }
 
-        // 输入时隐藏热门板块 + 切换 +/🎤 → ↑
         binding.etInput.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: android.text.Editable?) {
                 val hasText = !s.isNullOrBlank()
                 if (hasText) {
-                    binding.frameHotSectors.visibility = View.GONE  // 用户输入后隐藏热门板块
+                    binding.frameHotSectors.visibility = View.GONE
                     binding.btnAiBoost.visibility = View.GONE
                     binding.btnVoice.visibility = View.GONE
                     binding.btnSend.setImageResource(com.chin.stockanalysis.R.drawable.ic_send_arrow)
@@ -249,7 +257,6 @@ class ChatTabFragment : Fragment() {
                     binding.btnVoice.visibility = View.VISIBLE
                     binding.btnSend.setImageResource(android.R.drawable.ic_input_add)
                     intentEngine.cancel()
-                    // 输入清空时重新显示热门板块（取消旧定时器，重新 10s 倒计时）
                     showHotSectors()
                 }
             }
@@ -276,67 +283,33 @@ class ChatTabFragment : Fragment() {
         }
     }
 
-    /**
-     * 动态控制今日热点 View 的显示/隐藏
-     * @param show true=显示（重新加载数据并启动10s倒计时），false=隐藏
-     */
     fun toggleHotSectors(show: Boolean) {
-        if (show) {
-            showHotSectors()
-        } else {
-            hotSectorsHideJob?.cancel()
-            binding.frameHotSectors.visibility = View.GONE
-        }
+        if (show) showHotSectors() else { hotSectorsHideJob?.cancel(); binding.frameHotSectors.visibility = View.GONE }
     }
 
-    /** 
-     * 获取热门板块+交易日涨幅Top5。显示 10s 后自动隐藏。
-     * 先用DB+硬编码秒出，后台AI更新并缓存30s。
-     */
     private fun showHotSectors() {
-        // 取消之前的隐藏任务
         hotSectorsHideJob?.cancel()
-        
-        // 显示 frameHotSectors（外层容器），内部 layoutHotSectors 自动可见
         binding.frameHotSectors.visibility = View.VISIBLE
         binding.tvHotSectors.text = "📊 正在加载热门板块数据..."
-        
-        // 10s 后自动隐藏
         hotSectorsHideJob = lifecycleScope.launch {
             delay(10_000L)
-            if (isAdded) requireActivity().runOnUiThread {
-                binding.frameHotSectors.visibility = View.GONE
-            }
+            if (isAdded) requireActivity().runOnUiThread { binding.frameHotSectors.visibility = View.GONE }
         }
-        
-        // 30s 缓存
         val now = System.currentTimeMillis()
-        
-        if (cachedHotSectorsText != null && (now - cachedHotSectorsTime) < 30_000L) {
-            binding.tvHotSectors.text = cachedHotSectorsText
-            return
-        }
+        if (cachedHotSectorsText != null && (now - cachedHotSectorsTime) < 30_000L) { binding.tvHotSectors.text = cachedHotSectorsText; return }
 
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                // 1. 热门板块 Top3（优先用全局缓存，缓存空时直接网络请求兜底）
                 var hotSectors = com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.conceptSectors
                     .sortedByDescending { it.changePercent }.take(3)
                 if (hotSectors.isEmpty()) {
-                    // 缓存未就绪，直接网络请求兜底
                     val source = com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource()
-                    hotSectors = source.fetchSectorsByTypeDirect(type = 3, topN = 3)
-                        .sortedByDescending { it.changePercent }.take(3)
+                    hotSectors = source.fetchSectorsByTypeDirect(type = 3, topN = 3).sortedByDescending { it.changePercent }.take(3)
                 }
                 val sectorLines = if (hotSectors.isNotEmpty()) {
-                    hotSectors.withIndex().joinToString("\n") { (i, s) ->
-                        val emoji = if (s.changePercent > 0) "📈" else "📉"
-                        val sign = if (s.changePercent > 0) "+" else ""
-                        "${i + 1}. $emoji ${s.name} $sign${"%.2f".format(s.changePercent)}%"
-                    }
+                    hotSectors.withIndex().joinToString("\n") { (i, s) -> val emoji = if (s.changePercent > 0) "📈" else "📉"; val sign = if (s.changePercent > 0) "+" else ""; "${i + 1}. $emoji ${s.name} $sign${"%.2f".format(s.changePercent)}%" }
                 } else "暂无实时板块数据"
 
-                // 2. 涨幅Top5（DB优先，不足5只时后台拉取全市场数据）
                 val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(requireContext())
                 val recentTradingDay = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().toString()
                 val snapshots = db.dailySnapshotDao().getByDate(recentTradingDay)
@@ -345,73 +318,19 @@ class ChatTabFragment : Fragment() {
                 val stockLines = if (snapshots.isNotEmpty()) {
                     val top5 = snapshots.sortedByDescending { it.changePct }.take(5)
                     if (!hasEnoughData) {
-                        // 數據不足，後台觸發全市場數據拉取
                         lifecycleScope.launch(Dispatchers.IO) {
-                            try {
-                                val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
-                                val count = fetcher.fetchAllHistoricalData(days = 1)
-                                Log.i(TAG, "🔥 後台拉取全市場數據: $count 条")
-                                cachedHotSectorsTime = 0L // 下次顯示時用最新數據
-                            } catch (e: Exception) {
-                                Log.w(TAG, "後台拉取數據失敗: ${e.message}")
-                            }
+                            try { com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext()).fetchAllHistoricalData(days = 1); cachedHotSectorsTime = 0L } catch (_: Exception) {}
                         }
                     }
                     val sectorCache = mutableMapOf<String, String>()
-                    for (snap in top5) {
-                        sectorCache[snap.code] = checker.ensureSectorFast(snap.code, snap.name)
-                    }
-                    top5.joinToString("\n") { snap ->
-                        val emoji = if (snap.changePct > 0) "📈" else "📉"
-                        val sign = if (snap.changePct > 0) "+" else ""
-                        val sector = (sectorCache[snap.code] ?: "-").replace("null", "")
-                        "$emoji ${snap.name} $sign${"%.2f".format(snap.changePct)}%  $sector"
-                    }
-                } else {
-                    // 完全沒有數據，後台觸發拉取
-                    lifecycleScope.launch(Dispatchers.IO) {
-                        try {
-                            val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
-                            fetcher.fetchAllHistoricalData(days = 1)
-                            cachedHotSectorsTime = 0L
-                        } catch (_: Exception) {}
-                    }
-                    "暂无交易日数据（后台拉取中...）"
-                }
+                    for (snap in top5) { sectorCache[snap.code] = checker.ensureSectorFast(snap.code, snap.name) }
+                    top5.joinToString("\n") { snap -> val emoji = if (snap.changePct > 0) "📈" else "📉"; val sign = if (snap.changePct > 0) "+" else ""; val sector = (sectorCache[snap.code] ?: "-").replace("null", ""); "$emoji ${snap.name} $sign${"%.2f".format(snap.changePct)}%  $sector" }
+                } else { lifecycleScope.launch(Dispatchers.IO) { try { com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext()).fetchAllHistoricalData(days = 1); cachedHotSectorsTime = 0L } catch (_: Exception) {} }; "暂无交易日数据（后台拉取中...）" }
 
-                val text = if (!hasEnoughData) {
-                    "$sectorLines\n\n🔥 最近交易日($recentTradingDay) 涨幅Top5:\n$stockLines\n\n📥 数据拉取中，稍后将显示完整Top5"
-                } else {
-                    "$sectorLines\n\n🔥 最近交易日($recentTradingDay) 涨幅Top5:\n$stockLines"
-                }
-
-                // 缓存（仅数据完整时缓存，否则下次再试）
-                if (hasEnoughData) {
-                    cachedHotSectorsText = text
-                    cachedHotSectorsTime = System.currentTimeMillis()
-                }
-
-                if (isAdded) requireActivity().runOnUiThread {
-                    binding.tvHotSectors.text = text
-                    binding.tvHotSectors.minHeight = dpToPx(160)
-                    binding.tvHotSectors.requestLayout()
-                }
-
-                // 后台用 AI 检查并更新板块数据（低优先级，不阻塞UI）
-                if (apiProvider != null && snapshots.isNotEmpty()) {
-                    lifecycleScope.launch(Dispatchers.IO) {
-                        for (snap in snapshots.sortedByDescending { it.changePct }.take(5)) {
-                            checker.ensureSector(snap.code, snap.name, apiProvider)
-                        }
-                        cachedHotSectorsTime = 0L
-                    }
-                }
-            } catch (e: Exception) { 
-                Log.w(TAG, "热门板块获取失败: ${e.message}") 
-                if (isAdded) requireActivity().runOnUiThread {
-                    binding.tvHotSectors.text = "获取热门板块失败: ${e.message?.take(30)}"
-                }
-            }
+                val text = if (!hasEnoughData) "$sectorLines\n\n🔥 最近交易日($recentTradingDay) 涨幅Top5:\n$stockLines\n\n📥 数据拉取中" else "$sectorLines\n\n🔥 最近交易日($recentTradingDay) 涨幅Top5:\n$stockLines"
+                if (hasEnoughData) { cachedHotSectorsText = text; cachedHotSectorsTime = System.currentTimeMillis() }
+                if (isAdded) requireActivity().runOnUiThread { binding.tvHotSectors.text = text; binding.tvHotSectors.minHeight = dpToPx(160); binding.tvHotSectors.requestLayout() }
+            } catch (e: Exception) { Log.w(TAG, "热门板块获取失败: ${e.message}") }
         }
     }
 
@@ -445,18 +364,8 @@ class ChatTabFragment : Fragment() {
     }
 
     private fun hasMeaningfulContent(): Boolean = messages.filter { it.isUser && !it.isStreaming && !it.isError && it.content.isNotBlank() }.any { !isTrivialMessage(it.content) }
-
-    private fun saveCurrentConversation() {
-        if (!hasMeaningfulContent()) return
-        val realMessages = messages.filter { !it.isStreaming && !it.isError && it.content.isNotBlank() }
-        lifecycleScope.launch { withContext(Dispatchers.IO) { convRepo.saveConversation(ConversationEntity(id = currentConvId, title = ConversationRepository.generateTitleAndSubtitle(realMessages).first, subtitle = "", timestamp = sessionStartTime, messagesJson = ConversationRepository.serializeMessages(realMessages))) } }
-    }
-
-    private fun saveCurrentConversationSync() {
-        if (!hasMeaningfulContent()) return
-        val realMessages = messages.filter { !it.isStreaming && !it.isError && it.content.isNotBlank() }
-        lifecycleScope.launch { withContext(Dispatchers.IO) { convRepo.saveConversation(ConversationEntity(id = currentConvId, title = ConversationRepository.generateTitleAndSubtitle(realMessages).first, subtitle = "", timestamp = sessionStartTime, messagesJson = ConversationRepository.serializeMessages(realMessages))) } }
-    }
+    private fun saveCurrentConversation() { if (!hasMeaningfulContent()) return; val realMessages = messages.filter { !it.isStreaming && !it.isError && it.content.isNotBlank() }; lifecycleScope.launch { withContext(Dispatchers.IO) { convRepo.saveConversation(ConversationEntity(id = currentConvId, title = ConversationRepository.generateTitleAndSubtitle(realMessages).first, subtitle = "", timestamp = sessionStartTime, messagesJson = ConversationRepository.serializeMessages(realMessages))) } } }
+    private fun saveCurrentConversationSync() { if (!hasMeaningfulContent()) return; val realMessages = messages.filter { !it.isStreaming && !it.isError && it.content.isNotBlank() }; lifecycleScope.launch { withContext(Dispatchers.IO) { convRepo.saveConversation(ConversationEntity(id = currentConvId, title = ConversationRepository.generateTitleAndSubtitle(realMessages).first, subtitle = "", timestamp = sessionStartTime, messagesJson = ConversationRepository.serializeMessages(realMessages))) } } }
 
     private fun startNewConversation() {
         saveCurrentConversation(); messages.clear(); adapter.notifyItemRangeRemoved(0, messages.size.coerceAtLeast(0))
@@ -474,29 +383,43 @@ class ChatTabFragment : Fragment() {
         binding.etInput.setText(""); hideKeyboard()
         if (!hasAutoTitle) { hasAutoTitle = true; binding.tvChatTitle.text = extractSmartTitle(userText) }
 
-        // ═══ v10.0: 動態建立 Skill 意圖處理 ═══
-        val skillCreationResult = skillOrchestrator.handleDynamicSkillCreation(userText)
-        if (skillCreationResult != null) {
-            addBotMessage(skillCreationResult)
-            Log.i(TAG, "🆕 動態 Skill 建立: $userText")
+        val provider = apiProvider
+        if (provider == null) {
+            // Provider 尚未就绪，等待初始化完成
+            currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
+                addBotMessage("⏳ AI 正在连接...")
+                var waited = 0
+                while (apiProvider == null && waited < 50) {
+                    kotlinx.coroutines.delay(200L)
+                    waited++
+                }
+                if (apiProvider != null) {
+                    // 移除"连接中"消息
+                    if (messages.isNotEmpty() && !messages.last().isUser) {
+                        messages.removeLast()
+                        adapter.notifyItemRemoved(messages.size)
+                    }
+                    sendMessageInternal(userText, apiProvider!!, isRetry = true)
+                } else {
+                    addErrorMessage("❌ AI 连接超时，请稍候重试")
+                }
+            }
             return
         }
 
-        // 用户指定 AI 提供者（如 "用豆包分析"、"切换到deepseek"等）
-        var provider = detectAndSwitchProvider(userText) ?: apiProvider
-        if (provider == null) { addErrorMessage("❌ AI 服务未初始化"); return }
+        sendMessageInternal(userText, provider, isRetry = false)
+    }
 
-        // 清除行情缓存确保获取实时数据
+    private fun sendMessageInternal(userText: String, provider: ApiProvider, isRetry: Boolean) {
+        if (!isRetry) { } // already added user message
+        binding.etInput.setText(""); hideKeyboard()
+        if (!hasAutoTitle) { hasAutoTitle = true; binding.tvChatTitle.text = extractSmartTitle(userText) }
+
         smartContext.invalidateAll()
 
-        // v9.0: AI 组合名称（AI增强开 + 有不同 secondary → 双AI，否则单AI）
         val secondary = secondaryProvider
         val useDualAi = aiBoostEnabled && secondary != null && secondary.config.id != provider.config.id
-        val aiLabel = if (useDualAi) {
-            "${provider.config.name.take(8)} + ${secondary!!.config.name.take(8)}"
-        } else {
-            provider.config.name.take(10)
-        }
+        val aiLabel = if (useDualAi) "${provider.config.name.take(8)} + ${secondary!!.config.name.take(8)}" else provider.config.name.take(10)
         val estimatedKeywords = if (userText.length > 10) 3 + userText.length / 10 else 2
 
         val streamingMessage = Message(content = "", isUser = false, isStreaming = true,
@@ -505,7 +428,6 @@ class ChatTabFragment : Fragment() {
         val streamingIndex = messages.size - 1
 
         currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
-            // 800ms 后更新加载状态
             delay(800L)
             if (isAdded && streamingIndex in messages.indices && messages[streamingIndex].isStreaming) {
                 requireActivity().runOnUiThread {
@@ -515,20 +437,14 @@ class ChatTabFragment : Fragment() {
                 }
             }
 
-            // 并行: memory + smartContext(行情) + orchestrator(多AI)
             val memoryDeferred = async(Dispatchers.IO) { memoryManager.buildMemorySuffix() }
-        val dataDeferred = async(Dispatchers.IO) {
+            val dataDeferred = async(Dispatchers.IO) {
                 smartContext.getOrBuild(userText = userText, baseSystemPrompt = BASE_SYSTEM_PROMPT,
                     onPreferenceLeaned = { _ -> if (isAdded) requireActivity().runOnUiThread { Toast.makeText(requireContext(), "📌 已记住你的偏好", Toast.LENGTH_SHORT).show() } })
             }
-            // 多 AI 分析（仅当 AI增强开关开启 + secondary 可用时）
-            val multiAnalysis = if (useDualAi && secondary != null) {
-                orchestrator.fetchMultiAnalysis(provider, secondary, null, userText)
-            } else ""
+            val multiAnalysis = if (useDualAi && secondary != null) orchestrator.fetchMultiAnalysis(provider, secondary, null, userText) else ""
 
-            val memorySuffix = memoryDeferred.await()
-            val dataPrompt = dataDeferred.await()
-            val finalSystemPrompt = dataPrompt + memorySuffix + multiAnalysis
+            val finalSystemPrompt = dataDeferred.await() + memoryDeferred.await() + multiAnalysis
             val history = messages.toList().subList(0, streamingIndex)
             sendWithRetry(provider, history, finalSystemPrompt, streamingIndex, 3)
         }
@@ -540,12 +456,11 @@ class ChatTabFragment : Fragment() {
             kotlinx.coroutines.suspendCancellableCoroutine<Unit> { cont ->
                 provider.sendMessageStream(messages = history, systemPrompt = systemPrompt,
                     onSuccess = { chunk ->
-                        val sanitized = chunk.replace("null", "") // v9.0: 过滤 "null" 字符串
+                        val sanitized = chunk.replace("null", "")
                         accumulated.append(sanitized)
                         if (isAdded) requireActivity().runOnUiThread {
                             if (streamingIndex in messages.indices && messages[streamingIndex].isStreaming) {
-                                val msg = messages[streamingIndex]
-                                messages[streamingIndex] = msg.copy(content = accumulated.toString(), loadingStatus = null)
+                                messages[streamingIndex] = messages[streamingIndex].copy(content = accumulated.toString(), loadingStatus = null)
                                 adapter.notifyItemChanged(streamingIndex)
                                 binding.recyclerView.scrollToPosition(messages.size - 1)
                             }
@@ -553,10 +468,7 @@ class ChatTabFragment : Fragment() {
                     },
                     onComplete = { full ->
                         val finalText = full.ifEmpty { accumulated.toString() }.replace("null", "")
-                        if (isAdded) requireActivity().runOnUiThread {
-                            completeStreamingMessage(streamingIndex, finalText)
-                            onMessageComplete()
-                        }
+                        if (isAdded) requireActivity().runOnUiThread { completeStreamingMessage(streamingIndex, finalText); onMessageComplete() }
                         cont.resumeWith(Result.success(Unit))
                     },
                     onError = { errMsg -> cont.resumeWith(Result.failure(Exception(errMsg))) })
@@ -585,14 +497,8 @@ class ChatTabFragment : Fragment() {
     // 消息 UI
     // ════════════════════════════════════════
 
-    private fun completeStreamingMessage(index: Int, content: String) {
-        if (index in messages.indices) { messages[index] = messages[index].copy(content = content, isStreaming = false, loadingStatus = null); adapter.notifyItemChanged(index) }
-    }
-
-    private fun failStreamingMessage(index: Int, errMsg: String) {
-        if (index in messages.indices) { messages[index] = Message(content = "❌ $errMsg", isUser = false, isError = true, errorMessage = errMsg); adapter.notifyItemChanged(index) }
-    }
-
+    private fun completeStreamingMessage(index: Int, content: String) { if (index in messages.indices) { messages[index] = messages[index].copy(content = content, isStreaming = false, loadingStatus = null); adapter.notifyItemChanged(index) } }
+    private fun failStreamingMessage(index: Int, errMsg: String) { if (index in messages.indices) { messages[index] = Message(content = "❌ $errMsg", isUser = false, isError = true, errorMessage = errMsg); adapter.notifyItemChanged(index) } }
     private fun addMessage(message: Message) { binding.tvNewTopicHint.visibility = View.GONE; messages.add(message); adapter.notifyItemInserted(messages.size - 1); binding.recyclerView.scrollToPosition(messages.size - 1) }
     private fun addBotMessage(text: String) = addMessage(Message(content = text, isUser = false))
     private fun addErrorMessage(text: String) = addMessage(Message(content = text, isUser = false, isError = true))
@@ -604,9 +510,7 @@ class ChatTabFragment : Fragment() {
     private fun showEditMessageDialog(position: Int) {
         if (position !in messages.indices || !messages[position].isUser) return
         val input = EditText(requireContext()).apply { setText(messages[position].content); setSelection(text?.length ?: 0) }
-        AlertDialog.Builder(requireContext()).setTitle("修改消息").setView(input).setNegativeButton("取消", null).setPositiveButton("保存") { _, _ ->
-            val t = input.text?.toString()?.trim().orEmpty(); if (t.isNotBlank()) { messages[position] = messages[position].copy(content = t); adapter.notifyItemChanged(position) }
-        }.show()
+        AlertDialog.Builder(requireContext()).setTitle("修改消息").setView(input).setNegativeButton("取消", null).setPositiveButton("保存") { _, _ -> val t = input.text?.toString()?.trim().orEmpty(); if (t.isNotBlank()) { messages[position] = messages[position].copy(content = t); adapter.notifyItemChanged(position) } }.show()
     }
 
     private fun undoUserMessage(position: Int) {
@@ -626,13 +530,11 @@ class ChatTabFragment : Fragment() {
 
     private fun showEditTitleDialog() {
         val input = EditText(requireContext()).apply { setText(binding.tvChatTitle.text); setSelection(text?.length ?: 0); hint = "输入新标题" }
-        AlertDialog.Builder(requireContext()).setTitle("✏️ 修改标题").setView(input).setNegativeButton("取消", null).setPositiveButton("确定") { _, _ ->
-            val t = input.text?.toString()?.trim(); if (!t.isNullOrBlank()) { binding.tvChatTitle.text = t; saveCurrentConversation() }
-        }.show()
+        AlertDialog.Builder(requireContext()).setTitle("✏️ 修改标题").setView(input).setNegativeButton("取消", null).setPositiveButton("确定") { _, _ -> val t = input.text?.toString()?.trim(); if (!t.isNullOrBlank()) { binding.tvChatTitle.text = t; saveCurrentConversation() } }.show()
     }
 
     // ════════════════════════════════════════
-    // 记忆提取 + 追问（v9.0: 仅回复完成后显示）
+    // 记忆提取 + 追问
     // ════════════════════════════════════════
 
     private fun onMessageComplete() {
@@ -645,28 +547,9 @@ class ChatTabFragment : Fragment() {
         }
     }
 
-    /** 检测用户输入中的 AI 提供者关键词，切换对应的 Provider */
+    /** 检测用户输入中的 AI 提供者关键词 — 仅记录，不绕过池创建 Provider */
     private fun detectAndSwitchProvider(userText: String): ApiProvider? {
-        val configManager = ApiConfigManager.getInstance(requireContext())
-        val text = userText.lowercase()
-        val targetId = when {
-            text.contains("豆包") || text.contains("doubao") -> "doubao"
-            text.contains("deepseek") || text.contains("深度求索") -> "deepseek"
-            text.contains("通义") || text.contains("qwen") -> "tongyi"
-            text.contains("阿里") || text.contains("ali") -> "ali"
-            text.contains("硅基") || text.contains("silicon") -> "silicon_flow"
-            else -> null
-        }
-        if (targetId != null) {
-            val config = configManager.getProviderConfig(targetId)
-            if (config != null) {
-                val newProvider = com.chin.stockanalysis.OpenAiCompatibleProvider(config)
-                apiProvider = newProvider
-                Log.i(TAG, "🔄 用户指定切换到: ${config.name}")
-                return newProvider
-            }
-        }
-        return null
+        return null // 统一由池管理，不单独创建
     }
 
     private suspend fun checkAndPromptNewsFactor() {

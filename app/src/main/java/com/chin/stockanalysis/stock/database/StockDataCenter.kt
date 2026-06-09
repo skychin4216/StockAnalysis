@@ -289,6 +289,22 @@ object StockDataCenter {
         return skillPicks.filter { it.sourceSkillId == skillId }
     }
 
+    /** v11.0: 取得 Skill/Agent 精選池中的所有股票代碼（供模擬交易優先考慮） */
+    fun getSkillPickStockCodes(): Set<String> {
+        return skillPicks.map { it.stockCode }.toSet()
+    }
+
+    /** v11.0: Skill/Agent 精選股票加權分數（基於信心度和排序） */
+    fun getSkillPickBoost(stockCode: String): Int {
+        val picks = skillPicks.filter { it.stockCode == stockCode }
+        if (picks.isEmpty()) return 0
+        // 取最高信心度 + 多次出現加分
+        val maxConfidence = picks.maxOf { it.confidence }
+        val frequencyBonus = (picks.size - 1) * 5
+        val rankBonus = picks.minOf { it.rank }.let { if (it <= 3) 10 else if (it <= 5) 5 else 0 }
+        return (maxConfidence * 15 + frequencyBonus + rankBonus).toInt().coerceIn(5, 30)
+    }
+
     // ═══════════════════════════════════════════════════════
     // 拼音搜索
     // ═══════════════════════════════════════════════════════

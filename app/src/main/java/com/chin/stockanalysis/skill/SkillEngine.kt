@@ -108,7 +108,7 @@ class SkillEngine(private val context: Context) {
                 icon = skill.icon,
                 description = skill.description,
                 keywords = keywords,
-                fullPrompt = prompts.getOrElse(0) { "" },
+                systemPrompt = prompts.getOrElse(0) { "" },
                 quickPrompt = prompts.getOrElse(1) { prompts.getOrElse(0) { "" } },
                 autoTrigger = skill.autoTrigger
             )
@@ -255,25 +255,7 @@ class SkillEngine(private val context: Context) {
             }
             Log.i(TAG, "📋 同步完成: ${existCount}個保留 + ${newCount}個新增 (來自設定檔)")
         } catch (e: Exception) {
-            Log.w(TAG, "從設定檔載入 Skill 失敗: ${e.message}")
-
-            // Fallback: 硬編碼 Skill（配置檔損壞或不存在時）
-            Log.w(TAG, "使用硬編碼 Fallback Skill")
-            val builtinSkills = listOf<com.chin.stockanalysis.skill.stock_picking.BaseStockPickingSkill>(
-                com.chin.stockanalysis.skill.stock_picking.StockPickingSkillDoubao1,
-                com.chin.stockanalysis.skill.stock_picking.StockPickingSkillDoubao2
-            )
-            for (skillDef in builtinSkills) {
-                if (skillDef.skillId !in skills) {
-                    try {
-                        val skill = skillDef.createSkill()
-                        register(skill)
-                        Log.i(TAG, "  硬編碼 Skill: ${skill.id} - ${skill.name}")
-                    } catch (e2: Exception) {
-                        Log.w(TAG, "  硬編碼 Skill ${skillDef.tag} 失敗: ${e2.message}")
-                    }
-                }
-            }
+            Log.w(TAG, "從設定檔載入 Skill 失敗: ${e.message}", e)
         }
     }
 }
