@@ -19,6 +19,7 @@ import com.chin.stockanalysis.ai.AiProviderPool
 import com.chin.stockanalysis.agent.Agent
 import com.chin.stockanalysis.agent.AgentPickParser
 import com.chin.stockanalysis.agent.AgentPick
+import com.chin.stockanalysis.conversation.ConversationRepository
 import com.chin.stockanalysis.databinding.FragmentAgentChatBinding
 import com.chin.stockanalysis.stock.database.StockDataCenter
 import kotlinx.coroutines.Dispatchers
@@ -27,12 +28,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/**
- * ## 智能体对话 Fragment
- *
- * 每个智能体拥有独立的对话上下文，
- * AI 回复后自动解析选股结果并存入 StockDataCenter.skillPicks。
- */
 class AgentChatFragment : Fragment() {
 
     companion object {
@@ -42,6 +37,7 @@ class AgentChatFragment : Fragment() {
         private const val ARG_AGENT_ICON = "agentIcon"
         private const val ARG_AGENT_QUICK_PROMPT = "agentQuickPrompt"
         private const val ARG_AGENT_SYSTEM_PROMPT = "agentSystemPrompt"
+        private const val PREFS_AGENT_CHAT = "agent_chats"
 
         fun newInstance(agent: Agent): AgentChatFragment {
             return AgentChatFragment().apply {
@@ -71,6 +67,8 @@ class AgentChatFragment : Fragment() {
     private var currentStreamingJob: Job? = null
     private var apiProvider: ApiProvider? = null
     private var aiSlot: AiProviderPool.Slot? = null
+    private var providerInitDone = false
+    private var providerLoading = false
 
     var onBackClick: (() -> Unit)? = null
     var onSettingsClick: ((Agent) -> Unit)? = null
@@ -84,12 +82,6 @@ class AgentChatFragment : Fragment() {
             agentQuickPrompt = it.getString(ARG_AGENT_QUICK_PROMPT, "")
             agentSystemPrompt = it.getString(ARG_AGENT_SYSTEM_PROMPT, "")
         }
-        Log.d("AgentChat", "========== AgentChatFragment onCreate ==========")
-        Log.d("AgentChat", "agentId         = $agentId")
-        Log.d("AgentChat", "agentName       = $agentName")
-        Log.d("AgentChat", "agentQuickPrompt= $agentQuickPrompt")
-        Log.d("AgentChat", "agentSystemPrompt = $agentSystemPrompt")
-        Log.d("AgentChat", "================================================")
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -103,30 +95,33 @@ class AgentChatFragment : Fragment() {
         setupRecyclerView()
         setupInput()
         setupTitleBar()
-        showWelcomeMessage()
+        loadAndRestoreConversation()
     }
 
-    override fun onPause() { super.onPause(); cancelApiCall() }
+    override fun onPause() { super.onPause(); saveAgentConversation() }
     override fun onDestroyView() { super.onDestroyView(); _binding = null }
     override fun onDestroy() {
         super.onDestroy()
         cancelApiCall()
+        saveAgentConversation()
         aiSlot?.let { AiProviderPool.releaseNonBlocking(it) }
     }
 
     private fun cancelApiCall() { currentStreamingJob?.cancel(); currentStreamingJob = null; apiProvider?.cancel() }
 
-    // ═══════════════════════════════════════
-    // 初始化
-    // ═══════════════════════════════════════
-
     private fun initProvider() {
+        if (providerInitDone || providerLoading) return
+        providerLoading = true
         lifecycleScope.launch(Dispatchers.IO) {
-            aiSlot?.let { AiProviderPool.release(it) }
-            aiSlot = AiProviderPool.acquire(requireContext())
-            if (isAdded) requireActivity().runOnUiThread {
-                apiProvider = aiSlot?.provider
-                Log.d(TAG, "Agent AI: ${aiSlot?.configName ?: "无"}")
+            try {
+                aiSlot = AiProviderPool.acquire(requireContext())
+                if (isAdded) requireActivity().runOnUiThread {
+                    apiProvider = aiSlot?.provider
+                    if (apiProvider != null) providerInitDone = true
+                    Log.d(TAG, "Agent AI: ${aiSlot?.configName ?: "无"}")
+                }
+            } finally {
+                providerLoading = false
             }
         }
     }
@@ -160,25 +155,45 @@ class AgentChatFragment : Fragment() {
     private fun setupTitleBar() {
         binding.tvAgentChatTitle.text = "$agentIcon $agentName"
         binding.btnBack.setOnClickListener { onBackClick?.invoke() }
-        // 点击标题 → 打开智能体设定编辑
         binding.tvAgentChatTitle.setOnClickListener { openSettings() }
         binding.btnAgentInfo.setOnClickListener { openSettings() }
     }
 
     private fun openSettings() {
-        Log.d("AgentChat", "========== openSettings -> Agent ==========")
-        Log.d("AgentChat", "agentQuickPrompt= $agentQuickPrompt")
-        Log.d("AgentChat", "agentSystemPrompt = $agentSystemPrompt")
-        Log.d("AgentChat", "============================================")
         val agt = com.chin.stockanalysis.agent.Agent(
-            id = agentId,
-            name = agentName,
-            icon = agentIcon,
-            description = "",
-            quickPrompt = agentQuickPrompt,
-            systemPrompt = agentSystemPrompt
+            id = agentId, name = agentName, icon = agentIcon,
+            description = "", quickPrompt = agentQuickPrompt, systemPrompt = agentSystemPrompt
         )
         onSettingsClick?.invoke(agt)
+    }
+
+    private fun saveAgentConversation() {
+        if (agentId.isEmpty()) return
+        try {
+            val prefs = requireContext().getSharedPreferences(PREFS_AGENT_CHAT, Context.MODE_PRIVATE)
+            val json = ConversationRepository.serializeMessages(messages)
+            prefs.edit().putString("chat_$agentId", json).apply()
+        } catch (e: Exception) { Log.w(TAG, "保存聊天记录失败: ${e.message}") }
+    }
+
+    private fun loadAndRestoreConversation() {
+        val prefs = requireContext().getSharedPreferences(PREFS_AGENT_CHAT, Context.MODE_PRIVATE)
+        val json = prefs.getString("chat_$agentId", null)
+        if (json.isNullOrBlank()) {
+            showWelcomeMessage()
+            return
+        }
+        try {
+            val restored = ConversationRepository.deserializeMessages(json)
+            if (restored.isNotEmpty()) {
+                messages.clear()
+                messages.addAll(restored)
+                adapter.notifyDataSetChanged()
+                binding.rvAgentMessages.scrollToPosition(messages.size - 1)
+                return
+            }
+        } catch (e: Exception) { Log.w(TAG, "加载聊天记录失败: ${e.message}") }
+        showWelcomeMessage()
     }
 
     private fun showWelcomeMessage() {
@@ -192,31 +207,36 @@ class AgentChatFragment : Fragment() {
         addBotMessage(intro)
     }
 
-    private fun showAgentInfo() {
-        val info = buildString {
-            appendLine("📋 輸入指令描述（quickPrompt）:")
-            appendLine(agentQuickPrompt)
-            if (agentSystemPrompt.isNotBlank()) {
-                appendLine()
-            appendLine("⚡ 全自动执行规则描述（systemPrompt）:")
-            appendLine(agentSystemPrompt)
-            }
-        }
-        android.app.AlertDialog.Builder(requireContext())
-            .setTitle("$agentIcon $agentName")
-            .setMessage(info.toString())
-            .setPositiveButton("确定", null)
-            .show()
-    }
-
-    // ═══════════════════════════════════════
-    // 消息发送
-    // ═══════════════════════════════════════
-
     private fun sendMessage(userText: String) {
         val provider = apiProvider
-        if (provider == null) { addErrorMessage("❌ AI 服务未初始化"); return }
+        if (provider == null) {
+            // Provider 尚未就绪，等待初始化完成
+            addMessage(com.chin.stockanalysis.ui.Message(content = userText, isUser = true))
+            currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
+                addBotMessage("⏳ AI 正在连接...")
+                var waited = 0
+                while (apiProvider == null && waited < 50) {
+                    kotlinx.coroutines.delay(200L)
+                    waited++
+                }
+                // 移除"连接中"消息
+                if (messages.isNotEmpty() && !messages.last().isUser) {
+                    messages.removeLast()
+                    adapter.notifyItemRemoved(messages.size)
+                }
+                if (apiProvider != null) {
+                    doSendMessage(userText, apiProvider!!)
+                } else {
+                    addErrorMessage("❌ AI 连接超时，请稍候重试")
+                }
+            }
+            return
+        }
 
+        doSendMessage(userText, provider)
+    }
+
+    private fun doSendMessage(userText: String, provider: ApiProvider) {
         addMessage(com.chin.stockanalysis.ui.Message(content = userText, isUser = true))
         binding.etAgentInput.setText(""); hideKeyboard()
 
@@ -228,7 +248,6 @@ class AgentChatFragment : Fragment() {
         val streamingIndex = messages.size - 1
 
         currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
-            // 构建智能体专用 system prompt（全自动指令源码优先）
             val systemPrompt = if (agentSystemPrompt.isNotBlank()) {
                 buildString {
                     appendLine(agentSystemPrompt)
@@ -264,8 +283,7 @@ class AgentChatFragment : Fragment() {
             val history = messages.toList().subList(0, streamingIndex)
             kotlinx.coroutines.suspendCancellableCoroutine<Unit> { cont ->
                 provider.sendMessageStream(
-                    messages = history,
-                    systemPrompt = systemPrompt,
+                    messages = history, systemPrompt = systemPrompt,
                     onSuccess = { chunk ->
                         val sanitized = chunk.replace("null", "")
                         accumulated.append(sanitized)
@@ -302,31 +320,20 @@ class AgentChatFragment : Fragment() {
         }
     }
 
-    // ═══════════════════════════════════════
-    // 选股解析 & 存储
-    // ═══════════════════════════════════════
-
     private fun onMessageComplete(aiResponse: String) {
+        saveAgentConversation()
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                // 解析 AI 回复中的选股结果
                 val picks = AgentPickParser.parse(aiResponse, agentId)
                 if (picks.isNotEmpty()) {
-                    // 转换为 StockDataCenter.SkillPickEntry 并存储
                     val entries = picks.map { pick ->
                         StockDataCenter.SkillPickEntry(
-                            rank = pick.rank,
-                            stockCode = pick.stockCode,
-                            stockName = pick.stockName,
-                            reason = pick.reason,
-                            confidence = pick.confidence,
-                            sourceSkillId = pick.sourceAgentId,
-                            createdAt = pick.createdAt
+                            rank = pick.rank, stockCode = pick.stockCode, stockName = pick.stockName,
+                            reason = pick.reason, confidence = pick.confidence,
+                            sourceSkillId = pick.sourceAgentId, createdAt = pick.createdAt
                         )
                     }
                     StockDataCenter.addSkillPicks(entries)
-
-                    // 通知用户
                     if (isAdded) requireActivity().runOnUiThread {
                         val stockSummary = picks.take(5).joinToString("\n") { pick ->
                             "${pick.rank}. ${pick.stockName}(${pick.stockCode}) — 信心:${"%.0f".format(pick.confidence * 100)}%"
@@ -334,15 +341,9 @@ class AgentChatFragment : Fragment() {
                         addBotMessage("📌 智能体「$agentName」已选出 ${picks.size} 只股票并存入精选池:\n$stockSummary\n\n这些股票将在策略和模拟交易中优先考虑。")
                     }
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "选股解析失败: ${e.message}")
-            }
+            } catch (e: Exception) { Log.w(TAG, "选股解析失败: ${e.message}") }
         }
     }
-
-    // ═══════════════════════════════════════
-    // 消息 UI 辅助
-    // ═══════════════════════════════════════
 
     private fun completeStreamingMessage(index: Int, content: String) {
         if (index in messages.indices) {

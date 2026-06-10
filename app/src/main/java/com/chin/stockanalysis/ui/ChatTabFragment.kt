@@ -140,8 +140,8 @@ class ChatTabFragment : Fragment() {
     }
 
     override fun onResume() { super.onResume(); initProvider() }
-    override fun onPause() { super.onPause(); cancelApiCall() }
-    override fun onStop() { super.onStop(); cancelApiCall(); saveCurrentConversation() }
+    override fun onPause() { super.onPause(); saveCurrentConversation() }
+    override fun onStop() { super.onStop(); saveCurrentConversation() }
     override fun onDestroyView() { super.onDestroyView(); _binding = null }
     override fun onDestroy() {
         super.onDestroy()
@@ -191,7 +191,6 @@ class ChatTabFragment : Fragment() {
             }
         }
     }
-
     private fun initTts() { tts = TextToSpeech(requireContext()) { if (it == TextToSpeech.SUCCESS) tts?.language = Locale.CHINESE } }
 
     private fun preloadMarketData() {

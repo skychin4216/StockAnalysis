@@ -404,7 +404,7 @@ class StrategyListFragment : Fragment() {
     private fun showFullScreenTuneReport(text: String) {
         ScrollView(requireContext()).also { sv ->
             sv.addView(TextView(requireContext()).apply { this.text = text; setTextColor(Color.parseColor("#333333")); textSize = 10f; setPadding(dp(16), dp(12), dp(16), dp(12)); setLineSpacing(2f, 1.1f); setTypeface(Typeface.MONOSPACE); isVerticalScrollBarEnabled = true })
-            AlertDialog.Builder(requireContext()).setTitle("策略自测调优报告(目标90%)").setView(sv).setPositiveButton("关闭", null).create().apply { show(); window?.setLayout(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT) }
+            AlertDialog.Builder(requireContext()).setTitle("策略自测调优报告(目标90%)").setView(sv).setPositiveButton("关闭") { d, _ -> d.dismiss() }.create().apply { show(); window?.setLayout(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT); getButton(AlertDialog.BUTTON_POSITIVE)?.apply { gravity = Gravity.END or Gravity.BOTTOM } }
         }
     }
 
@@ -468,9 +468,10 @@ class StrategyListFragment : Fragment() {
             else -> "扫描结果 ($browsingDate)"
         }
         sv.addView(c)
-        val dialog = AlertDialog.Builder(requireContext()).setTitle(dialogTitle).setView(sv).setPositiveButton("关闭", null).create()
+        val dialog = AlertDialog.Builder(requireContext()).setTitle(dialogTitle).setView(sv).setPositiveButton("关闭") { d, _ -> d.dismiss() }.create()
         dialog.show()
         dialog.window?.setLayout(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT)
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.apply { gravity = Gravity.END or Gravity.BOTTOM }
         lifecycleScope.launch { try { val ai = AIPredictionEngine(requireContext()); val pr = ai.predict(results, browsingDate.toString()); requireActivity().runOnUiThread { if (pr != null && pr.topPicks.isNotEmpty()) { ail.text = ""; c.addView(TextView(requireContext()).apply { text = "  📋 方案${pr.mode}: ${pr.modeReason}"; textSize = 11f; setTextColor(Color.parseColor("#E65100")); setPadding(0, 4, 0, 8) }); c.addView(TextView(requireContext()).apply { text = "  📊 市场判断: ${pr.marketOutlook}"; textSize = 11f; setTextColor(Color.parseColor("#666666")); setPadding(0, 0, 0, 4) }); c.addView(TextView(requireContext()).apply { text = "  ⚠ ${pr.riskWarning}"; textSize = 11f; setTextColor(Color.parseColor("#EF6C00")); setPadding(0, 0, 0, 8) }); val tpTable = TableLayout(requireContext()).apply { isStretchAllColumns = true }; val tpHr = TableRow(requireContext()); for (h in listOf("排名", "名称", "代码", "综分", "概率", "建议")) tpHr.addView(TextView(requireContext()).apply { text = h; textSize = 10f; setTextColor(Color.parseColor("#999999")); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER; setPadding(2, 4, 2, 4) }); tpTable.addView(tpHr); for (p in pr.topPicks) { val tpRow = TableRow(requireContext()); for (cell in listOf("#${p.rank}", p.stockName, p.stockCode.takeLast(6), "${p.compositeScore}", "${p.upProbability}%", p.actionSuggestion)) tpRow.addView(TextView(requireContext()).apply { text = cell; textSize = 10f; setTextColor(Color.parseColor("#333333")); gravity = Gravity.CENTER; setPadding(2, 4, 2, 4) }); tpTable.addView(tpRow) }; c.addView(tpTable) } else { ail.text = "  ⚠️ AI 预测暂不可用" } } } catch (e: Exception) { requireActivity().runOnUiThread { ail.text = "  ⚠️ AI 预测失败: ${e.message?.take(30)}" } } }
     }
 
