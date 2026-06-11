@@ -31,7 +31,7 @@ class StrategyBacktestTest {
         // 模拟一只符合条件的早盘股票
         val stock = StockRealtime(
             "sh600519", "贵州茅台", 1550.0, 1530.0, 1520.0, 1560.0, 1525.0,
-            10000000L, 5000000000.0, 1.5, 20.0, System.currentTimeMillis()
+            10000000L, 5000000000.0, 1.5, 20.0, turnoverRate = 0.0, timestamp = System.currentTimeMillis()
         )
 
         // 验证基础过滤条件
@@ -49,7 +49,7 @@ class StrategyBacktestTest {
         // 模拟创业板股票
         val stock = StockRealtime(
             "sz300750", "宁德时代", 180.0, 178.0, 177.0, 182.0, 176.0,
-            8000000L, 500000000.0, 1.2, 2.0, System.currentTimeMillis()
+            8000000L, 500000000.0, 1.2, 2.0, 0.0, System.currentTimeMillis()
         )
 
         val pureCode = stock.code.removePrefix("sh").removePrefix("sz")
@@ -66,7 +66,7 @@ class StrategyBacktestTest {
         // 模拟金叉股票
         val stock1 = StockRealtime(
             "sh600183", "生益科技", 25.0, 24.5, 24.3, 25.3, 24.2,
-            5000000L, 300000000.0, 1.5, 0.8, System.currentTimeMillis()
+            5000000L, 300000000.0, 1.5, 0.8, 0.0, System.currentTimeMillis()
         )
         // MACD分数计算: changePercent>1 && price>open && price>yestClose → 50分
         val macdScore = when {
@@ -84,7 +84,7 @@ class StrategyBacktestTest {
         // 模拟主力大额流出
         val stock = StockRealtime(
             "sh600000", "测试股", 10.0, 11.0, 11.5, 11.5, 9.5,
-            100000000L, 2000000000.0, -4.0, -0.5, System.currentTimeMillis()
+            100000000L, 2000000000.0, -4.0, -0.5, 0.0, System.currentTimeMillis()
         )
         // 跌幅>3%+大量成交 → -20
         val penalty = when {
@@ -105,7 +105,7 @@ class StrategyBacktestTest {
         // 模拟直线拉升无回踩的股票
         val stock = StockRealtime(
             "sh600100", "测试急速", 55.0, 45.0, 45.0, 55.0, 44.0,
-            20000000L, 1000000000.0, 9.5, 10.0, System.currentTimeMillis()
+            20000000L, 1000000000.0, 9.5, 10.0, 0.0, System.currentTimeMillis()
         )
         // 涨超8% → 剔除
         assertTrue("涨超8%应被剔除", stock.changePercent > 8)
@@ -117,7 +117,7 @@ class StrategyBacktestTest {
         // 模拟低开高走回踩企稳
         val stock = StockRealtime(
             "sh600200", "企稳股", 30.0, 29.5, 30.0, 30.5, 29.0,
-            5000000L, 200000000.0, 0.8, 0.5, System.currentTimeMillis()
+            5000000L, 200000000.0, 0.8, 0.5, 0.0, System.currentTimeMillis()
         )
         // 低开高走: open<yestClose && price>open && changePercent>0 → 20分
         val techScore = when {

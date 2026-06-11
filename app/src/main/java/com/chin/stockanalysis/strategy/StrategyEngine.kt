@@ -274,6 +274,14 @@ class StrategyEngine(
                 lastResults[strategy.id] = result
                 val elapsed = System.currentTimeMillis() - startTime
                 Log.i(TAG, "  ✅ ${strategy.id}: 扫描${result.totalScanned}只 命中${result.hitCount}只 / ${elapsed}ms")
+                // 📊 数据验证日志：打印前5个信号的详情
+                if (result.hitCount > 0) {
+                    val topSignals = result.signals.take(5)
+                    Log.i(TAG, "  📊 [数据验证] ${strategy.id} Top5信号:")
+                    topSignals.forEachIndexed { i, s ->
+                        Log.i(TAG, "    [${i+1}] ${s.stockCode} ${s.stockName} strength=${s.strength}% action=${s.action} price=${"%.2f".format(s.currentPrice)} reason=${s.reason.take(50)}")
+                    }
+                }
                 if (result.hitCount == 0 && result.totalScanned > 0) {
                     Log.w(TAG, "  🔍 ${strategy.id}: 扫描了${result.totalScanned}只但零命中，检查筛选条件")
                 }
@@ -311,7 +319,15 @@ class StrategyEngine(
                 lastResults[strategy.id] = result
                 val elapsed = System.currentTimeMillis() - startTime
                 Log.i(TAG, "  ✅ ${strategy.id}: 命中 ${result.hitCount} 只 / ${elapsed}ms (预加载数据)")
+                if (result.hitCount > 0) {
+                    Log.i(TAG, "  📊 [预加载数据验证] ${strategy.id} 输入${preloadedStocks.size}只, Top3信号:")
+                    result.signals.take(3).forEachIndexed { i, s ->
+                        Log.i(TAG, "    [${i+1}] ${s.stockCode} ${s.stockName} strength=${s.strength}% action=${s.action} price=${"%.2f".format(s.currentPrice)}")
+                    }
+                }
                 onProgress?.invoke(result)
+            } else {
+                Log.w(TAG, "  ⚠️ ${strategy.id}: 预加载超时（30s无响应）")
             }
 
             result

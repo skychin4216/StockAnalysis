@@ -56,12 +56,14 @@ class SimulationTradeFragment : Fragment() {
     private lateinit var periodCheckboxes: LinearLayout
     private lateinit var mainBoardSwitch: Switch
     private lateinit var resultsContainer: LinearLayout
+    private lateinit var positionContainer: LinearLayout
 
     private var engine: StrategyEngine? = null
     private var screener: StockScreener? = null
     private var browsingDate: LocalDate = TradingDayPickerView.recentTradingDay()
     private var selectedPeriods: Set<Int> = setOf(1)
     private var tradeEngine: SimulationTradeEngine? = null
+    private var db: StockDatabase? = null
 
     companion object {
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
@@ -136,16 +138,38 @@ class SimulationTradeFragment : Fragment() {
             setBackgroundColor(Color.parseColor("#DDDDDD"))
         })
 
-        // 结果区
+        // ═══ 持仓视图（与结果区等高，各占 50%） ═══
+        positionContainer = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0, 1f  // 占50%高度
+            )
+            setPadding(8, 4, 8, 4)
+        }
+        rootLayout.addView(positionContainer)
+
+        // 分割线
+        rootLayout.addView(View(requireContext()).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 1
+            ).apply { topMargin = 4 }
+            setBackgroundColor(Color.parseColor("#DDDDDD"))
+        })
+
+        // 结果区（与持仓视图等高）
         resultsContainer = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                0, 1f
+                0, 1f  // 占50%高度
             )
             setPadding(8, 4, 8, 4)
         }
         rootLayout.addView(resultsContainer)
+
+        // 加载持仓数据
+        refreshPositions()
     }
 
     private fun createConfigSection(): View {
@@ -210,22 +234,26 @@ class SimulationTradeFragment : Fragment() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, 0, 0, 0)
         }
+        val radioGroup = RadioGroup(requireContext()).apply {
+            orientation = RadioGroup.HORIZONTAL
+        }
         for ((period, label) in PERIOD_LABELS) {
-            val cb = CheckBox(requireContext()).apply {
+            val rb = RadioButton(requireContext()).apply {
                 text = label
                 textSize = 11f
-                isChecked = period in selectedPeriods
+                id = period
+                isChecked = period == selectedPeriods.firstOrNull()
                 setOnCheckedChangeListener { _, isChecked ->
-                    if (isChecked) selectedPeriods = selectedPeriods + period
-                    else selectedPeriods = selectedPeriods - period
+                    if (isChecked) selectedPeriods = setOf(period)
                 }
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 ).apply { marginEnd = -4; marginStart = -4 }
             }
-            periodCheckboxes.addView(cb)
+            radioGroup.addView(rb)
         }
+        periodCheckboxes.addView(radioGroup)
         container.addView(periodCheckboxes)
 
         return container
@@ -331,26 +359,17 @@ class SimulationTradeFragment : Fragment() {
                     return@launch
                 }
 
-                // 執行前先確保今天歷史數據已拉取
+                // 引擎内部已自动处理：当天实时拉取，历史日期用K线API
                 if (tradeEngine == null) tradeEngine = SimulationTradeEngine(requireContext())
-                val todayHasData = try {
-                    StockDatabase.getInstance(requireContext()).dailySnapshotDao()
-                        .getByDate(config.tradeDate).isNotEmpty()
-                } catch (_: Exception) { false }
-                if (!todayHasData) {
-                    withContext(Dispatchers.Main) {
-                        statusTv.text = "📥 正在下载今日数据..."
-                    }
-                    val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
-                    val fetched = fetcher.fetchAllHistoricalData(days = 1)
-                    Log.i("SimTradeFragment", "历史数据加载: $fetched 条")
-                }
 
                 val report = tradeEngine!!.runTradeSession(strategies, config)
 
                 withContext(Dispatchers.Main) {
                         try {
+                            // 保存买入订单到数据库
+                            saveBuyOrdersToDb(report)
                             showTradeReport(report)
+                            refreshPositions() // 刷新持仓视图
                             statusTv.text = "✅ 完成: ${report.summary.lines().firstOrNull()?.take(60) ?: "交易完成"}"
                         } catch (uiEx: Exception) {
                             Log.e("TradeUI", "UI update failed", uiEx)
@@ -408,7 +427,7 @@ class SimulationTradeFragment : Fragment() {
                 val periodLabel = PERIOD_LABELS[period] ?: "${period}日"
                 val hasResults = pr != null && pr.finalTop3.isNotEmpty()
                 val top3Text = if (hasResults) {
-                    pr!!.finalTop3.joinToString("\n") { "${it.stockName}(${it.stockCode.takeLast(6)}) ${"%.1f".format(it.strength)}%" }
+                    pr!!.finalTop3.joinToString("\n") { "${it.stockName}(${it.stockCode.takeLast(6)}) ${it.strength}%" }
                 } else "⚠ 无信号"
                 val row = TableRow(requireContext())
                 if (hasResults && pr != null) { row.setOnClickListener { showDetailDialog(report, pr!!) } }
@@ -944,6 +963,237 @@ class SimulationTradeFragment : Fragment() {
             }
         }
     }
+
+    // ═══════════════════════════════════════
+    // 保存订单
+    // ═══════════════════════════════════════
+
+    private suspend fun saveBuyOrdersToDb(report: SimulationTradeEngine.TradeSessionReport) {
+        if (report.buyOrders.isEmpty()) return
+        val db = StockDatabase.getInstance(requireContext())
+        try {
+            val entities = report.buyOrders.map { order ->
+                StrategyTradeOrderEntity(
+                    strategyId = order.strategyId,
+                    stockCode = order.stockCode,
+                    stockName = order.stockName,
+                    tradeDate = order.tradeDate,
+                    buyPrice = order.buyPrice,
+                    buyTime = order.buyTime,
+                    quantity = order.quantity,
+                    orderType = order.orderType,
+                    status = "BUYING",
+                    reason = order.reason,
+                    scoreAtBuy = order.scoreAtBuy,
+                    createdAt = System.currentTimeMillis()
+                )
+            }
+            db.strategyTradeOrderDao().insertAll(entities)
+            Log.i("SimTradeFragment", "💾 已保存 ${entities.size} 笔买入订单到数据库")
+        } catch (e: Exception) {
+            Log.w("SimTradeFragment", "保存订单失败: ${e.message}")
+        }
+    }
+
+    // ═══════════════════════════════════════
+    // 持仓视图
+    // ═══════════════════════════════════════
+
+    private fun refreshPositions() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val orders = db.strategyTradeOrderDao().getRecent(50)
+                    .filter { it.status == "BUYING" || it.status == "PENDING" }
+                    .sortedByDescending { it.tradeDate }
+
+                if (orders.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        positionContainer.removeAllViews()
+                        positionContainer.addView(TextView(requireContext()).apply {
+                            text = "📌 暂无持仓记录"
+                            textSize = 11f
+                            setTextColor(Color.parseColor("#999999"))
+                            setPadding(0, 4, 0, 4)
+                        })
+                    }
+                    return@launch
+                }
+
+                // 获取最近3个交易日的快照数据
+                val today = LocalDate.now().format(DATE_FMT)
+                val dates = db.dailySnapshotDao().getAvailableDates(10)
+                    .filter { it >= orders.minOf { it.tradeDate } }
+                    .sorted()
+                    .takeLast(4) // 最多显示4天
+
+                val priceMap = mutableMapOf<String, MutableMap<String, Double>>()
+                for (date in dates) {
+                    val snaps = db.dailySnapshotDao().getByDate(date)
+                    for (snap in snaps) {
+                        priceMap.getOrPut(snap.code) { mutableMapOf() }[date] = snap.close
+                    }
+                }
+
+                withContext(Dispatchers.Main) { renderPositionTable(orders, dates, priceMap) }
+            } catch (e: Exception) {
+                Log.e("SimTradePos", "加载持仓失败: ${e.message}", e)
+            }
+        }
+    }
+
+    private fun renderPositionTable(
+        orders: List<StrategyTradeOrderEntity>,
+        dates: List<String>,
+        priceMap: Map<String, Map<String, Double>>
+    ) {
+        positionContainer.removeAllViews()
+
+        // 标题
+        positionContainer.addView(TextView(requireContext()).apply {
+            text = "📌 持仓明细 (最近交易日价格)"
+            textSize = 12f
+            setTextColor(Color.parseColor("#1A1A2E"))
+            setTypeface(null, Typeface.BOLD)
+            setPadding(0, 4, 0, 6)
+        })
+
+        // 水平滚动容器
+        val scroll = HorizontalScrollView(requireContext())
+        val table = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL }
+
+        // ═══ 表头 ═══
+        val headerRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 2, 0, 4)
+            setBackgroundColor(Color.parseColor("#EEEEEE"))
+        }
+        // 固定列
+        for (header in listOf("股票", "建仓日", "成本")) {
+            headerRow.addView(createCell(header, 60, "#666666", 10f, bold = true))
+        }
+        // 日期列
+        for (date in dates) {
+            val label = date.takeLast(5) // MM-DD
+            headerRow.addView(createCell(label, 72, "#666666", 10f, bold = true))
+        }
+        table.addView(headerRow)
+
+        // ═══ 数据行 ═══
+        for (order in orders) {
+            val row = LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, 2, 0, 2)
+            }
+
+            // 股票名称 + 代码
+            val nameCell = LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(dpToPx(60), LinearLayout.LayoutParams.WRAP_CONTENT)
+                gravity = Gravity.CENTER
+            }
+            nameCell.addView(TextView(requireContext()).apply {
+                text = order.stockName.take(6)
+                textSize = 11f; setTextColor(Color.parseColor("#222222")); gravity = Gravity.CENTER
+                setTypeface(null, Typeface.BOLD)
+            })
+            nameCell.addView(TextView(requireContext()).apply {
+                text = order.stockCode.takeLast(6)
+                textSize = 8f; setTextColor(Color.parseColor("#AAAAAA")); gravity = Gravity.CENTER
+            })
+            row.addView(nameCell)
+
+            // 建仓日
+            row.addView(createCell(order.tradeDate.takeLast(5), 60, "#333333", 10f))
+
+            // 成本价
+            row.addView(createCell("¥${"%.2f".format(order.buyPrice)}", 60, "#333333", 10f))
+
+            // 每日价格 + 累计盈亏
+            var accumulatedPnl = 0.0
+            for (date in dates) {
+                val price = priceMap[order.stockCode]?.get(date)
+                val cellText: String
+                val cellColor: String
+
+                if (price == null || date < order.tradeDate) {
+                    cellText = "—"
+                    cellColor = "#999999"
+                } else {
+                    val pnl = (price - order.buyPrice) / order.buyPrice * 100
+                    accumulatedPnl = pnl
+                    cellText = "¥${"%.2f".format(price)}\n${if (pnl >= 0) "+" else ""}${"%.2f".format(pnl)}%"
+                    cellColor = if (pnl >= 0) "#D32F2F" else "#2E7D32"
+                }
+
+                val dateCell = TextView(requireContext()).apply {
+                    text = cellText
+                    textSize = 9f
+                    setTextColor(Color.parseColor(cellColor))
+                    gravity = Gravity.CENTER
+                    layoutParams = LinearLayout.LayoutParams(dpToPx(72), LinearLayout.LayoutParams.WRAP_CONTENT)
+                    setPadding(2, 4, 2, 4)
+                    setLineSpacing(2f, 1f)
+                }
+                row.addView(dateCell)
+            }
+
+            // 点击行触发拟合
+            row.setOnClickListener {
+                statusTv.text = "⏳ 正在拟合 ${order.stockName}..."
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val eng = engine ?: return@launch
+                        val te = tradeEngine ?: return@launch
+                        val strategies = eng.getStrategies().filter { eng.isEnabled(it.id) }
+                        val config = SimulationTradeEngine.TradeSessionConfig(
+                            tradeDate = order.tradeDate,
+                            periods = selectedPeriods.toList().sorted().ifEmpty { listOf(1) },
+                            onlyMainBoard = true,
+                            maxFitRounds = 50
+                        )
+                        val report = te.backtrackAndOptimize(
+                            strategies = strategies, config = config,
+                            oldSessionResults = emptyList(),
+                            boughtStocks = setOf(order.stockCode)
+                        )
+                        withContext(Dispatchers.Main) {
+                            showDialog("${order.stockName} 拟合报告", report.summary)
+                            statusTv.text = "✅ 拟合完成"
+                            refreshPositions()
+                        }
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) {
+                            statusTv.text = "❌ 拟合失败: ${e.message?.take(40)}"
+                        }
+                    }
+                }
+            }
+
+            table.addView(row)
+        }
+
+        scroll.addView(table)
+
+        // 包裹在 VerticalScrollView 中以支持上下+左右滚动
+        val verticalScroll = ScrollView(requireContext())
+        verticalScroll.addView(scroll)
+        positionContainer.addView(verticalScroll)
+    }
+
+    private fun createCell(text: String, widthDp: Int, colorHex: String, fontSize: Float, bold: Boolean = false): TextView {
+        return TextView(requireContext()).apply {
+            this.text = text
+            textSize = fontSize
+            setTextColor(Color.parseColor(colorHex))
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(dpToPx(widthDp), LinearLayout.LayoutParams.WRAP_CONTENT)
+            setPadding(2, 4, 2, 4)
+            if (bold) setTypeface(null, Typeface.BOLD)
+        }
+    }
+
+    private fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density + 0.5f).toInt()
 
     // ═══════════════════════════════════════
     // 工具

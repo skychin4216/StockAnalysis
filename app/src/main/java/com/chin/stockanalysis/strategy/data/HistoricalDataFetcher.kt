@@ -39,7 +39,7 @@ class HistoricalDataFetcher(private val context: Context) {
         private val STORE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
         /** 全市场前200只热门股票代码 */
-        private val TOP_STOCKS = listOf(
+        internal val TOP_STOCKS = listOf(
             "sh600519", "sz000858", "sh600183", "sz002594", "sz300750",
             "sh601318", "sz002463", "sh688981", "sh600030", "sz000001",
             "sh600036", "sz000002", "sh601398", "sh600900", "sh601857",
@@ -185,14 +185,14 @@ class HistoricalDataFetcher(private val context: Context) {
     /**
      * 拉取单只股票的历史K线
      */
-    private suspend fun fetchOneStock(
+    internal suspend fun fetchOneStock(
         code: String,
         startDate: LocalDate,
         endDate: LocalDate
     ): Pair<List<DailySnapshotEntity>, String> {
         try {
-        val market = if (code.startsWith("sh")) 1 else 0
-        val pureCode = code.removePrefix("sh").removePrefix("sz")
+        val market = if (code.startsWith("sh")) 1 else if (code.startsWith("bj")) 1 else 0
+        val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
         val beg = startDate.format(DATE_FMT)
         val end = endDate.format(DATE_FMT)
 
@@ -202,7 +202,8 @@ class HistoricalDataFetcher(private val context: Context) {
                 "&fqt=1" +            // 前复权
                 "&fields1=f1,f2,f3" +
                 "&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f61" +
-                "&beg=$beg&end=$end&lmt=150"
+                "&beg=$beg&end=$end&lmt=300"
+        Log.d(TAG, "🌐 K线请求: $code beg=$beg end=$end market=$market")
 
         val req = Request.Builder().url(url)
             .addHeader("User-Agent", "Mozilla/5.0")
@@ -216,9 +217,11 @@ class HistoricalDataFetcher(private val context: Context) {
         val data = JSONObject(body).optJSONObject("data")
         val klines = data?.optJSONArray("klines") ?: return Pair(emptyList(), "")
 
-        // 从顶层 data JSON 提取股票名称
-        val stockName = data.optString("name", "").trim()
-            .takeIf { it.isNotBlank() && it.length < 20 } ?: ""
+        // 从顶层 data JSON 提取股票名称，去除除权除息前缀 XD/XR/DR
+        val rawName = data.optString("name", "").trim()
+        val stockName = if (rawName.startsWith("XD") || rawName.startsWith("XR") || rawName.startsWith("DR")) {
+            rawName.removePrefix("XD").removePrefix("XR").removePrefix("DR").trim()
+        } else rawName.takeIf { it.isNotBlank() && it.length < 20 } ?: ""
 
         val results = mutableListOf<DailySnapshotEntity>()
 

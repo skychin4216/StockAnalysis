@@ -32,7 +32,7 @@ class StockScreener(
         private const val FULL_MARKET_URL =
             "https://push2.eastmoney.com/api/qt/clist/get?" +
                     "pn=1&pz=200&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23" +
-                    "&fields=f2,f3,f4,f5,f6,f7,f8,f9,f10,f12,f14,f15,f16,f17,f18,f20"
+                    "&fields=f2,f3,f4,f5,f6,f7,f8,f9,f10,f12,f14,f15,f16,f17,f18,f20,f8"
     }
 
     private val client = OkHttpClient.Builder()
@@ -110,7 +110,11 @@ class StockScreener(
                 results.add(
                     StockRealtime(
                         code = "$prefix$code",
-                        name = item.optString("f14", ""),
+                        name = item.optString("f14", "").let { raw ->
+                            if (raw.startsWith("XD") || raw.startsWith("XR") || raw.startsWith("DR"))
+                                raw.removePrefix("XD").removePrefix("XR").removePrefix("DR").trim()
+                            else raw
+                        },
                         price = item.optDouble("f2", 0.0),
                         open = item.optDouble("f17", 0.0),
                         yestClose = item.optDouble("f18", 0.0),
@@ -120,6 +124,7 @@ class StockScreener(
                         amount = item.optDouble("f6", 0.0) * 10000,  // 东方财富万元→元
                         changePercent = item.optDouble("f3", 0.0),
                         changeAmount = item.optDouble("f4", 0.0),
+                        turnoverRate = item.optDouble("f8", 0.0),
                         timestamp = System.currentTimeMillis()
                     )
                 )

@@ -21,9 +21,14 @@ import com.chin.stockanalysis.agent.AgentPickParser
 import com.chin.stockanalysis.agent.AgentPick
 import com.chin.stockanalysis.conversation.ConversationRepository
 import com.chin.stockanalysis.databinding.FragmentAgentChatBinding
+import com.chin.stockanalysis.ai.StockAIPromptBuilder
+import com.chin.stockanalysis.stock.StockQueryEngine
 import com.chin.stockanalysis.stock.database.StockDataCenter
+import com.chin.stockanalysis.skill.SkillEngine
+import com.chin.stockanalysis.skill.SkillOrchestrator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -133,8 +138,30 @@ class AgentChatFragment : Fragment() {
                 .setPrimaryClip(ClipData.newPlainText("msg", text))
             Toast.makeText(requireContext(), "✅ 已复制", Toast.LENGTH_SHORT).show()
         }
+        adapter.onPlayVoice = { text -> Toast.makeText(requireContext(), "🔊 语音播放: ${text.take(30)}...", Toast.LENGTH_SHORT).show() }
+        adapter.onFavorite = { text -> Toast.makeText(requireContext(), "⭐ 已收藏", Toast.LENGTH_SHORT).show() }
+        adapter.onShare = { text ->
+            startActivity(android.content.Intent.createChooser(
+                android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                    type = "text/plain"; putExtra(android.content.Intent.EXTRA_TEXT, text)
+                }, "分享到"))
+        }
+        adapter.onRegenerate = { position -> regenerateMessage(position) }
         binding.rvAgentMessages.layoutManager = LinearLayoutManager(requireContext()).apply { stackFromEnd = true }
         binding.rvAgentMessages.adapter = adapter
+    }
+
+    /** 重新生成某个 AI 回复 */
+    private fun regenerateMessage(botPosition: Int) {
+        if (botPosition <= 0 || botPosition >= messages.size) return
+        val userMsg = (botPosition - 1 downTo 0).firstNotNullOfOrNull {
+            messages[it].takeIf { m -> m.isUser }
+        } ?: return
+        val removeCount = messages.size - botPosition
+        repeat(removeCount) { messages.removeAt(botPosition) }
+        adapter.notifyItemRangeRemoved(botPosition, removeCount)
+        adapter.notifyItemRangeChanged(0, messages.size)
+        sendMessage(userMsg.content)
     }
 
     private fun setupInput() {
@@ -236,6 +263,62 @@ class AgentChatFragment : Fragment() {
         doSendMessage(userText, provider)
     }
 
+    private val skillEngine: SkillEngine by lazy { SkillEngine(requireContext()) }
+    private val skillOrchestrator: SkillOrchestrator by lazy { SkillOrchestrator(skillEngine) }
+    private val queryEngine: StockQueryEngine by lazy { StockQueryEngine.create(requireContext(), skillOrchestrator) }
+    private val agentManager: com.chin.stockanalysis.agent.AgentManager by lazy {
+        com.chin.stockanalysis.agent.AgentManager(requireContext())
+    }
+
+    /**
+     * 模糊匹配智能体触发关键词
+     *
+     * 从三个维度收集候选词进行匹配：
+     * 1. agent name 中拆分出的有意义的词（如 "隐形冠军BOM选股" → ["隐形冠军", "BOM"]）
+     * 2. skills_config 中定义的 keywords
+     * 3. quickPrompt 中的触发命令（BOM、选股、财报、空报...）
+     *
+     * 用户只需输入包含这些词的模糊描述即可触发，如：
+     *   "隐形冠军选股" → 匹配 "隐形冠军BOM选股"
+     *   "BOM选股技巧" → 匹配 BOM + 选股
+     *   "卡脖子技巧"   → 匹配 "卡脖子四阶选股"
+     */
+    private fun matchesAgentTrigger(userText: String): Boolean {
+        if (agentName.isBlank()) return false
+        val agent = agentManager.get(agentId) ?: return false
+
+        // 1. 从 agent name 中提取中文短语和英文缩写
+        //    "隐形冠军BOM选股" → ["隐形冠军", "BOM"]
+        val nameTokens = agentName
+            .split(Regex("[\\s\\-_,.，。、；;：:（）()]+"))
+            .flatMap { segment ->
+                Regex("[\u4e00-\u9fff]+|[A-Za-z0-9]+")
+                    .findAll(segment).map { it.value }.toList()
+            }
+            .filter { it.length in 2..12 && it !in listOf("选股", "技巧", "选股技巧") }
+            .toSet()
+
+        // 2. 从 skills_config keywords 获取关键词
+        val keywordTokens = agent.triggerKeywords.toSet()
+
+        // 3. 从 quickPrompt 提取每行的第一个命令词
+        val commandTriggers = if (agentQuickPrompt.isNotBlank()) {
+            agentQuickPrompt.lines()
+                .mapNotNull { it.trim().split(Regex("[\\s　]+")).firstOrNull() }
+                .filter { it.isNotBlank() && it.length >= 2 }
+                .toSet()
+        } else emptySet()
+
+        val allTriggers = nameTokens + keywordTokens + commandTriggers
+        if (allTriggers.isEmpty()) return false
+
+        val matched = allTriggers.any { trigger ->
+            userText.contains(trigger, ignoreCase = true)
+        }
+        Log.d(TAG, "Agent trigger: nameTokens=$nameTokens, keywords=${keywordTokens.take(4)}, commands=${commandTriggers.take(4)}, matched=$matched, input='${userText.take(40)}'")
+        return matched
+    }
+
     private fun doSendMessage(userText: String, provider: ApiProvider) {
         addMessage(com.chin.stockanalysis.ui.Message(content = userText, isUser = true))
         binding.etAgentInput.setText(""); hideKeyboard()
@@ -247,33 +330,57 @@ class AgentChatFragment : Fragment() {
         addMessage(streamingMessage)
         val streamingIndex = messages.size - 1
 
+        // 检测是否触发了智能体的选股命令
+        val isSkillTriggered = matchesAgentTrigger(userText)
+
         currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
-            val systemPrompt = if (agentSystemPrompt.isNotBlank()) {
-                buildString {
-                    appendLine(agentSystemPrompt)
-                    appendLine()
-                    appendLine("【补充指令】")
-                    appendLine(agentQuickPrompt)
+            // ═══ 获取实时行情数据并注入 prompt ═══
+            val stockDataDeferred = async(Dispatchers.IO) {
+                try {
+                    queryEngine.buildSystemPrompt(userText = userText, baseSystemPrompt = "")
+                } catch (e: Exception) {
+                    Log.w(TAG, "获取实时行情数据失败: ${e.message}")
+                    ""
+                }
+            }
+
+            // ✅ 基础分析 prompt：始终注入，确保 AI 能正确使用实时行情数据
+            val basePrompt = StockAIPromptBuilder.buildBaseSystemPrompt()
+
+            val prompt: String = if (isSkillTriggered) {
+                // ✅ 触发关键词匹配 → 基础分析 prompt + 智能体的完整选股框架
+                val skillPart = buildString {
+                    if (agentSystemPrompt.isNotBlank()) {
+                        appendLine(agentSystemPrompt)
+                        appendLine()
+                        appendLine("【补充指令】")
+                        appendLine(agentQuickPrompt)
+                    } else {
+                        appendLine(agentQuickPrompt)
+                    }
                     appendLine()
                     appendLine("【输出要求】")
                     appendLine("分析结束后，请明确列出你推荐的股票，格式如：")
                     appendLine("推荐股票：600519 贵州茅台 — 理由：XXX")
                     appendLine("推荐股票：sz000858 五粮液 — 理由：XXX")
                 }
+                Log.d(TAG, "🎯 Agent skill triggered → base analysis + agent skill prompt")
+                // 基础 prompt 在前，agent skill 在后（实时数据规则优先）
+                "$basePrompt\n\n---\n\n$skillPart"
             } else {
-                buildString {
-                    appendLine(agentQuickPrompt)
-                    appendLine()
-                    appendLine("【重要输出要求】")
-                    appendLine("1. 请按照上述方法进行系统性的选股分析")
-                    appendLine("2. 分析结束后，请明确列出你推荐的股票，格式如：")
-                    appendLine("   推荐股票：600519 贵州茅台 — 理由：XXX")
-                    appendLine("   推荐股票：sz000858 五粮液 — 理由：XXX")
-                    appendLine("3. 对每只推荐股票给出信心评级（高/中/低）")
-                }
+                Log.d(TAG, "📊 General stock query → base analysis prompt only")
+                basePrompt
             }
 
-            sendWithRetry(provider, systemPrompt, streamingIndex, 3)
+            val stockData = stockDataDeferred.await()
+            val finalSystemPrompt = if (stockData.isNotBlank()) {
+                "$stockData\n\n$prompt"
+            } else {
+                prompt
+            }
+            Log.d(TAG, "System prompt length: ${finalSystemPrompt.length}, stockData: ${stockData.isNotBlank()}, skillTriggered=$isSkillTriggered")
+
+            sendWithRetry(provider, finalSystemPrompt, streamingIndex, 3)
         }
     }
 

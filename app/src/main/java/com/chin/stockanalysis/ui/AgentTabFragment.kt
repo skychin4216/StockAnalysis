@@ -102,7 +102,7 @@ class AgentTabFragment : Fragment() {
         binding.layoutAgentChat.visibility = View.VISIBLE
     }
 
-    private fun closeAgentChat() {
+    internal fun closeAgentChat() {
         parentFragmentManager.findFragmentByTag("agent_chat")?.let { parentFragmentManager.beginTransaction().remove(it).commit() }
         binding.layoutAgentChat.visibility = View.GONE
         binding.layoutAgentList.visibility = View.VISIBLE

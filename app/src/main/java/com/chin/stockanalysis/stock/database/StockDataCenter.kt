@@ -246,9 +246,25 @@ object StockDataCenter {
         return userSearchHistoryEntries.map { entry -> entry.stockCode }.toSet()
     }
 
+    /**
+     * 用戶搜索加權分數（基於對數衰減 + 上限 10 分的階梯式設計）
+     *
+     * 設計原理：
+     * - 第1次搜索：+3 分（首次關注信號）
+     * - 第2次搜索：+5 分（重複關注，信心提升）
+     * - 第3次搜索：+7 分（持續關注，高分信號）
+     * - 第4次搜索：+8 分
+     * - 第5次+    ：+9~10 分區間趨近（邊際遞減，避免氾濫）
+     *
+     * 公式：3 + floor(ln(searchCount) * 3.0)，上限 10
+     */
     fun getUserStockBoost(stockCode: String): Int {
         val entry = userSearchHistoryEntries.find { it.stockCode == stockCode } ?: return 0
-        return (8 + (entry.searchCount - 1) * 2).coerceAtMost(15)
+        val n = entry.searchCount.coerceIn(1, 100)
+        return if (n == 1) 3
+        else if (n == 2) 5
+        else if (n == 3) 7
+        else (7 + kotlin.math.ln((n - 2).toDouble()).toInt()).coerceAtMost(10)
     }
 
     suspend fun refreshUserStockPrices() {
@@ -294,15 +310,212 @@ object StockDataCenter {
         return skillPicks.map { it.stockCode }.toSet()
     }
 
-    /** v11.0: Skill/Agent 精選股票加權分數（基於信心度和排序） */
+    /**
+     * Skill/Agent 精選股票加權分數（上限 10 分）
+     *
+     * 設計原理：
+     * - 基於 AI 信心度（confidence）× 8 分
+     * - 排名加分：rank=1 +2分, rank≤3 +1分
+     * - 多次精選加分：每多一次 +0.5分（邊際遞減）
+     * - 上限 10 分，確保用戶搜索和智能體精選在同一尺度
+     */
     fun getSkillPickBoost(stockCode: String): Int {
         val picks = skillPicks.filter { it.stockCode == stockCode }
         if (picks.isEmpty()) return 0
-        // 取最高信心度 + 多次出現加分
         val maxConfidence = picks.maxOf { it.confidence }
-        val frequencyBonus = (picks.size - 1) * 5
-        val rankBonus = picks.minOf { it.rank }.let { if (it <= 3) 10 else if (it <= 5) 5 else 0 }
-        return (maxConfidence * 15 + frequencyBonus + rankBonus).toInt().coerceIn(5, 30)
+        val rankBonus = picks.minOf { it.rank }.let { if (it == 1) 2 else if (it <= 3) 1 else 0 }
+        val frequencyBonus = if (picks.size > 1) ((picks.size - 1) * 0.5).toInt().coerceAtMost(3) else 0
+        return (maxConfidence * 8 + rankBonus + frequencyBonus).toInt().coerceIn(2, 10)
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // 綜合股票熱度評分 (v12.0)
+    // ═══════════════════════════════════════════════════════
+
+    /**
+     * 技術壁壘核心概念板塊 — 科技類中具有高護城河的子行業
+     */
+    private val TECH_MOAT_SECTORS = setOf(
+        "光刻机", "光刻胶", "芯片设计", "芯片制造", "先进封装", "EDA",
+        "半导体设备", "半导体材料", "第三代半导体", "IGBT",
+        "碳化硅", "氮化镓", "光模块", "CPO", "算力租赁",
+        "量子计算", "卫星互联网", "商业航天", "航空发动机",
+        "工业母机", "高端数控机床", "机器人", "机器视觉",
+        "新材料", "稀土永磁", "碳纤维", "石墨烯",
+        "创新药", "CXO", "基因编辑", "合成生物"
+    )
+
+    /**
+     * 計算一隻股票的綜合熱度分數 (0-100 分)
+     *
+     * 五個維度：
+     * 1. 交易量能 (30分) — 換手率 + 成交額佔比 + 量比
+     * 2. 資金動向 (20分) — 主力淨流入 + 板塊資金強度
+     * 3. 板塊歷史熱度 (20分) — 近60天板塊上榜次數 + 綜合評分
+     * 4. 價格位置 (15分) — 漲跌幅歷史分位 + 是否階段新高
+     * 5. 概念壁壘 (15分) — 是否核心科技概念 + 是否技術壁壘板塊
+     *
+     * @param stockCode 股票代碼 (如 sh600519)
+     * @param todaySnapshots 當日全市場快照 (用於計算全市場統計)
+     * @return 0-100 分，越高越熱門
+     */
+    suspend fun calculateStockHeatScore(
+        stockCode: String,
+        todaySnapshots: List<com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity>
+    ): Int {
+        val ctx = appContext ?: return 25
+        val db = StockDatabase.getInstance(ctx)
+        val today = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+
+        // 找當前股票的當日數據
+        val selfSnap = todaySnapshots.find { it.code == stockCode } ?: return 15
+
+        var score = 0
+
+        // ════════════════════════════════════════════
+        // 維度1: 交易量能 (0-30分)
+        // ════════════════════════════════════════════
+
+        // 1a. 換手率評分 (0-10分) — 越活躍越高，但極高會警示
+        val turnoverRate = selfSnap.turnoverRate.coerceIn(0.0, 50.0)
+        val turnoverScore = when {
+            turnoverRate >= 8 -> 10  // 8%+ 極活躍
+            turnoverRate >= 5 -> 8
+            turnoverRate >= 3 -> 6
+            turnoverRate >= 1 -> 3
+            else -> 1
+        }
+        score += turnoverScore
+
+        // 1b. 成交額佔全市場排名 (0-10分)
+        if (todaySnapshots.isNotEmpty()) {
+            val totalAmount = todaySnapshots.sumOf { it.amount }
+            if (totalAmount > 0) {
+                val pct = selfSnap.amount / totalAmount
+                val amountScore = when {
+                    pct >= 0.03 -> 10 // 佔全市場3%+
+                    pct >= 0.01 -> 7
+                    pct >= 0.005 -> 5
+                    pct >= 0.001 -> 3
+                    else -> 1
+                }
+                score += amountScore
+            }
+        }
+
+        // 1c. 量比（近5日均量對比，0-10分）
+        try {
+            val recentDates = db.dailySnapshotDao().getAvailableDates(5)
+                .filter { it <= today }.sorted().takeLast(5)
+            if (recentDates.size >= 5) {
+                val avgVolume = recentDates.dropLast(1)
+                    .mapNotNull { date -> db.dailySnapshotDao().getByDate(date).find { it.code == stockCode }?.volume }
+                    .average()
+                if (avgVolume > 0) {
+                    val volumeRatio = selfSnap.volume / avgVolume
+                    val volScore = when {
+                        volumeRatio >= 3.0 -> 10
+                        volumeRatio >= 2.0 -> 7
+                        volumeRatio >= 1.5 -> 5
+                        volumeRatio >= 1.0 -> 3
+                        else -> 1
+                    }
+                    score += volScore
+                }
+            }
+        } catch (_: Exception) { score += 3 }
+
+        // ════════════════════════════════════════════
+        // 維度2: 資金動向 (0-20分)
+        // ════════════════════════════════════════════
+
+        // 2a. 所屬板塊的主力資金淨流入
+        try {
+            val sectors = db.sectorStockDao().getSectorNamesByStockCode(stockCode)
+            val allSectors = EastMoneyHotSectorSource.industrySectors + EastMoneyHotSectorSource.conceptSectors
+            val matchedSectors = allSectors.filter { hs -> sectors.any { s -> hs.name.contains(s) || s.contains(hs.name) } }
+            if (matchedSectors.isNotEmpty()) {
+                val maxInflow = matchedSectors.maxOf { it.mainNetInflow }
+                val avgComposite = matchedSectors.map { it.compositeScore }.average()
+                val inflowScore = when {
+                    maxInflow >= 10 -> 10  // 主力淨流入 >= 10億
+                    maxInflow >= 5 -> 7
+                    maxInflow >= 1 -> 5
+                    maxInflow > 0 -> 3
+                    else -> 0
+                }
+                val compositeScore = (avgComposite / 20.0).toInt().coerceIn(0, 10)
+                score += inflowScore + compositeScore
+            } else {
+                score += 5  // 無板塊歸屬，給基礎分
+            }
+        } catch (_: Exception) { score += 5 }
+
+        // ════════════════════════════════════════════
+        // 維度3: 板塊歷史熱度 (0-20分)
+        // ════════════════════════════════════════════
+        try {
+            val sectors = db.sectorStockDao().getSectorNamesByStockCode(stockCode)
+            val recentRecords = db.sectorDailyRecordDao().getRecentDays(60)
+            val sectorRecordCount = recentRecords.count { r -> sectors.any { r.sectorName.contains(it) || it.contains(r.sectorName) } }
+            val sectorHotCount = recentRecords.count { r ->
+                sectors.any { s -> r.sectorName.contains(s) || s.contains(r.sectorName) } && r.isHot in listOf("S", "A")
+            }
+            val historyScore = when {
+                sectorHotCount >= 20 -> 20
+                sectorHotCount >= 10 -> 15
+                sectorHotCount >= 5 -> 10
+                sectorRecordCount >= 10 -> 5
+                else -> 2
+            }
+            score += historyScore
+        } catch (_: Exception) { score += 5 }
+
+        // ════════════════════════════════════════════
+        // 維度4: 價格位置 (0-15分)
+        // ════════════════════════════════════════════
+
+        // 4a. 當前漲跌幅動能 (0-8分)
+        val changePct = kotlin.math.abs(selfSnap.changePct)
+        val changeScore = when {
+            changePct >= 9.5 -> 8  // 漲停/跌停
+            changePct >= 7 -> 6
+            changePct >= 5 -> 5
+            changePct >= 3 -> 3
+            changePct >= 1 -> 1
+            else -> 0
+        }
+        score += changeScore
+
+        // 4b. 是否階段新高（近30日最高收盤價）(0-7分)
+        try {
+            val recent30 = db.dailySnapshotDao().getAvailableDates(30)
+                .filter { it <= today }.sorted().takeLast(30)
+            val recentHighs = recent30.mapNotNull { date ->
+                db.dailySnapshotDao().getByDate(date).find { it.code == stockCode }?.close
+            }
+            if (recentHighs.isNotEmpty()) {
+                val maxClose = recentHighs.max()
+                val isNewHigh = selfSnap.close >= maxClose * 0.98  // 2% 誤差容忍
+                score += if (isNewHigh) 7 else 3
+            }
+        } catch (_: Exception) { score += 3 }
+
+        // ════════════════════════════════════════════
+        // 維度5: 概念壁壘 (0-15分)
+        // ════════════════════════════════════════════
+        try {
+            val stockSectors = db.sectorStockDao().getSectorNamesByStockCode(stockCode)
+            val hasMoat = stockSectors.any { s -> TECH_MOAT_SECTORS.any { ts -> s.contains(ts) || ts.contains(s) } }
+            score += if (hasMoat) 15 else 5
+        } catch (_: Exception) { score += 5 }
+
+        val finalScore = score.coerceIn(0, 100)
+        if (selfSnap.name.isNotBlank()) {
+            Log.d(TAG, "🔥 [热度评分] ${selfSnap.name}($stockCode): $finalScore/100 " +
+                    "(量能30/${turnoverScore} 资金20 历史20 价格15 壁垒15)")
+        }
+        return finalScore
     }
 
     // ═══════════════════════════════════════════════════════

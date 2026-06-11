@@ -15,6 +15,7 @@ data class StockRealtime(
     val amount: Double,         // 成交额
     val changePercent: Double,  // 涨跌幅 %
     val changeAmount: Double,   // 涨跌额
+    val turnoverRate: Double = 0.0, // 换手率 %
     val timestamp: Long         // 时间戳
 )
 

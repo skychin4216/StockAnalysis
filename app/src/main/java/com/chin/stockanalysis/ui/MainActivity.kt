@@ -98,6 +98,20 @@ class MainActivity : AppCompatActivity() {
         viewPager.setCurrentItem(0, false)   // 默认「对话」tab
     }
 
+    override fun onBackPressed() {
+        // Bug fix: 在智能体对话页面按返回键应返回智能体列表，而不是退出app
+        val agentChatFragment = supportFragmentManager.findFragmentByTag("agent_chat")
+        if (agentChatFragment != null) {
+            val agentTab = supportFragmentManager.fragments
+                .firstOrNull { it is AgentTabFragment } as? AgentTabFragment
+            if (agentTab != null) {
+                agentTab.closeAgentChat()
+                return
+            }
+        }
+        super.onBackPressed()
+    }
+
     private fun setupBottomNavigation() {
         bottomNav = binding.bottomNav
         // 东方财富风格：选中项橙红色

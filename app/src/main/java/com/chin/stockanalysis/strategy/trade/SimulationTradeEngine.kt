@@ -418,7 +418,7 @@ class SimulationTradeEngine(private val context: Context) {
             )
         }
 
-        val stockList = snapshots.map { snap ->
+        var stockList = snapshots.map { snap ->
             val yc = if (snap.changePct != 0.0 && snap.close != 0.0) snap.close / (1.0 + snap.changePct / 100.0) else snap.close
             StockRealtime(
                 code = snap.code, name = snap.name,
@@ -430,6 +430,34 @@ class SimulationTradeEngine(private val context: Context) {
                 timestamp = System.currentTimeMillis()
             )
         }
+
+        // ═══ 主板过滤：在策略执行前过滤，确保策略只分析主板股票 ═══
+        if (config.onlyMainBoard) {
+            val beforeCount = stockList.size
+            stockList = stockList.filter { isMainBoard(it.code) }
+            val removed = beforeCount - stockList.size
+            Log.i(TAG, "🔒 [主板过滤] $beforeCount 只 → ${stockList.size} 只 (排除$removed 只创业板/科创板/北交所)")
+        }
+
+        // ═══ 优先用户/智能体关注的股票：排在前15位，确保策略优先评估 ═══
+        val userStockCodes = StockDataCenter.getUserSearchStockCodes()
+        val skillPickCodes = StockDataCenter.getSkillPickStockCodes()
+        val priorityCodes = userStockCodes + skillPickCodes
+        if (priorityCodes.isNotEmpty()) {
+            val priorityStocks = stockList.filter { it.code in priorityCodes }
+            val otherStocks = stockList.filter { it.code !in priorityCodes }
+            stockList = (priorityStocks + otherStocks).toMutableList()
+            Log.i(TAG, "🎯 [优先扫描] 用户关注${userStockCodes.size}只 + 智能体精选${skillPickCodes.size}只 → 优先${priorityStocks.size}只排在${otherStocks.size}只之前")
+        }
+
+        // ═══ 综合热度评分排序：多维评估股票热度（量能/资金/板块/价格/壁垒） ═══
+        val heatScores = mutableMapOf<String, Int>()
+        stockList.forEach { stock ->
+            heatScores[stock.code] = StockDataCenter.calculateStockHeatScore(stock.code, snapshots)
+        }
+        stockList = stockList.sortedByDescending { heatScores[it.code] ?: 0 }
+        val topHeat = stockList.take(5).joinToString(", ") { "${it.name}(${it.code}):🔥${heatScores[it.code] ?: 0}" }
+        Log.i(TAG, "🔥 [综合热度] Top5热门: $topHeat")
 
         val allPeriodResults = mutableListOf<StrategyPeriodResult>()
 
@@ -530,12 +558,85 @@ class SimulationTradeEngine(private val context: Context) {
     // 2. 数据获取
     // ═══════════════════════════════════════
 
+    /**
+     * 获取交易日快照数据
+     * - 当天：实时从东方财富全市场API拉取
+     * - 历史日期：用 HistoricalDataFetcher 拉取 K 线数据
+     */
     private suspend fun getTradingDayData(date: String): List<DailySnapshotEntity> {
-        return try {
+        val local = try {
             db.dailySnapshotDao().getByDate(date)
         } catch (e: Exception) {
             Log.w(TAG, "获取交易日数据失败: ${e.message}")
             emptyList()
+        }
+        if (local.size >= 100) {
+            Log.i(TAG, "📊 [本地数据] ${local.size} 只，充足")
+            return local
+        }
+
+        val today = LocalDate.now().format(DATE_FMT)
+        val isToday = date == today
+
+        if (isToday) {
+            Log.i(TAG, "🌐 [实时拉取] 本地仅 ${local.size} 只，从东方财富拉取实时数据...")
+            try {
+                val screener = com.chin.stockanalysis.strategy.data.StockScreener(
+                    com.chin.stockanalysis.stock.data.StockDataSourceFactory.createDefaultRepository(context.applicationContext))
+                val realtimeStocks = screener.scanFullMarket()
+                if (realtimeStocks.isEmpty()) return local
+                Log.i(TAG, "🌐 东方财富返回 ${realtimeStocks.size} 只")
+                val entities = realtimeStocks.map { stock ->
+                    DailySnapshotEntity(code = stock.code, name = stock.name, date = date,
+                        open = stock.open, close = stock.price, high = stock.high, low = stock.low,
+                        volume = stock.volume, amount = stock.amount,
+                        changePct = stock.changePercent, turnoverRate = stock.turnoverRate, mainNetInflow = 0.0)
+                }
+                db.dailySnapshotDao().insertAll(entities)
+                Log.i(TAG, "💾 已保存 ${entities.size} 只 → daily_snapshot ($date)")
+                val localCodes = local.map { it.code }.toSet()
+                return local + entities.filter { it.code !in localCodes }
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ 实时拉取失败: ${e.message}，回退到本地")
+                return local
+            }
+        } else {
+            val topStocks = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher.TOP_STOCKS
+            Log.i(TAG, "📅 [历史拉取] $date, 拉取${topStocks.size}只热门股K线...")
+            try {
+                val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(context)
+                val parsedDate = LocalDate.parse(date)
+                val rangeStart = parsedDate.minusDays(5)
+                val rangeEnd = parsedDate.plusDays(1)
+                var fetched = 0
+                var firstError = ""
+                for (code in topStocks) {
+                    try {
+                        val (records, _) = fetcher.fetchOneStock(code, rangeStart, rangeEnd)
+                        if (records.isNotEmpty()) {
+                            val dateRecords = records.filter { it.date == date }
+                            if (dateRecords.isNotEmpty()) {
+                                db.dailySnapshotDao().insertAll(dateRecords)
+                                fetched += dateRecords.size
+                            }
+                        }
+                    } catch (e: Exception) {
+                        if (firstError.isEmpty()) firstError = "${code}: ${e.message}"
+                    }
+                }
+                if (fetched > 0) {
+                    Log.i(TAG, "📅 K线拉取完成 $date: ${fetched} 只")
+                } else {
+                    Log.w(TAG, "📅 K线拉取全部失败 $date (首错: $firstError)，回退到 fetchAllHistoricalData")
+                    val daysAgo = java.time.temporal.ChronoUnit.DAYS.between(parsedDate, LocalDate.now()).toInt()
+                    fetcher.fetchAllHistoricalData(days = (daysAgo + 3).coerceAtLeast(5))
+                }
+                val result = db.dailySnapshotDao().getByDate(date)
+                return result.ifEmpty { local }
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ 历史数据拉取失败: ${e.message}")
+                return local
+            }
         }
     }
 
@@ -824,15 +925,19 @@ class SimulationTradeEngine(private val context: Context) {
                 if (periodResults.isEmpty()) continue
 
                 val tradeDate = periodResults.first().tradeDate
-                val nextDate = getNextTradingDay(tradeDate)
+                val nextDate = getNextTradingDay(tradeDate) ?: try {
+                    LocalDate.parse(tradeDate).plusDays(1).format(DATE_FMT)
+                } catch (_: Exception) { null }
 
-                // 获取次日数据验证
-                val nextDayData = if (nextDate != null) {
-                    try { db.dailySnapshotDao().getByDate(nextDate) } catch (_: Exception) { emptyList() }
-                } else emptyList()
+                if (nextDate == null) {
+                    Log.d(TAG, "${strategy.id}[${period}日]: 无法确定次日日期，跳过拟合")
+                    continue
+                }
 
+                // 获取次日数据验证（自动从东方财富拉取历史数据）
+                val nextDayData = getTradingDayData(nextDate)
                 if (nextDayData.isEmpty()) {
-                    Log.d(TAG, "${strategy.id}[${period}日]: 无次日数据，跳过拟合")
+                    Log.i(TAG, "${strategy.id}[${period}日]: 次日(${nextDate})无数据，跳过拟合")
                     continue
                 }
 
