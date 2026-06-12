@@ -21,18 +21,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * ## 模拟交易引擎 v2.0 — 9步精選流程
- *
- * ### 9步流程
- * Step 1: App啟動時構建熱門板塊選股池（緩存）
- * Step 2: TOP_STOCKS 174隻做底倉
- * Step 3: 當日漲幅Top50 + 成交量Top50 補入活躍股
- * Step 4: 合併去重 → ~200-250隻/天
- * Step 5: 策略對這200-250隻篩選 → 各取Top 15
- * Step 6: 跨5個交易日去重按命中天數排序 → 取前20
- * Step 7: 加入Step 1獲取的板塊精選股
- * Step 8: 加入用戶搜索 + 智能體推薦的個股
- * Step 9: AI預測最終 ~30-50隻 → Top 3買入建議
+ * ## 模拟交易引擎 v2.0 — 9步精選流程 + 智能賣出
  */
 class SimulationTradeEngine(private val context: Context) {
 
@@ -40,17 +29,14 @@ class SimulationTradeEngine(private val context: Context) {
         private const val TAG = "SimTradeEngine"
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
         val PERIOD_DAYS = listOf(1, 3, 10, 30, 50, 100)
-        const val MAX_STOCKS_PER_STRATEGY = 15  // Step 5: 每個策略取 Top15
+        const val MAX_STOCKS_PER_STRATEGY = 15
         const val FINAL_TOP3 = 3
-        const val CROSS_DAY_WINDOW = 5  // Step 6: 跨5天聚合
-        const val CROSS_DAY_TOP_N = 20  // Step 6: 取前20
-
-        /** 板块连续上涨阈值（超过此天数考虑轮动） */
+        const val CROSS_DAY_WINDOW = 5
+        const val CROSS_DAY_TOP_N = 20
         const val ROTATION_THRESHOLD_DAYS = 3
-        /** 新闻热点加权幅度 */
         const val NEWS_WEIGHT_BOOST = 0.15
-        /** 板块轮动惩罚幅度 */
         const val ROTATION_PENALTY = 0.10
+        const val MAX_HOLDINGS = 5  // 最大持仓数，超出时触发腾笼换鸟
     }
 
     private val db = StockDatabase.getInstance(context)
@@ -88,7 +74,32 @@ class SimulationTradeEngine(private val context: Context) {
         val buyOrders: List<TradeOrder>,
         val summary: String,
         val finalPoolCodes: List<String> = emptyList(),
-        val crossDayRanking: List<Pair<String, Int>> = emptyList()
+        val crossDayRanking: List<Pair<String, Int>> = emptyList(),
+        // ── 增强报告字段 ──
+        val stepDetail: StepDetail = StepDetail(),
+        val swapInfo: SwapInfo? = null
+    )
+
+    /** 每步詳細數據 */
+    data class StepDetail(
+        val basePoolSize: Int = 0,       // Step 1-4 底池
+        val afterMainBoard: Int = 0,      // 主板過濾後
+        val strategyHitCount: Int = 0,    // Step 5 命中策略數
+        val crossDaySize: Int = 0,        // Step 6 跨日聚合
+        val sectorAdded: Int = 0,         // Step 7 板塊新增
+        val userAdded: Int = 0,           // Step 8 用戶+智能體新增
+        val finalPoolSize: Int = 0,       // Step 9 最終池
+        val buyFilterPassed: Int = 0,     // 買入過濾通過數
+        val buyFilterRejects: List<String> = emptyList(), // 過濾拒絕明細
+        val newBuyCodes: List<String> = emptyList(),  // 本次新買入
+        val mergedCodes: List<String> = emptyList()   // 合併持倉
+    )
+
+    /** 騰籠換鳥信息 */
+    data class SwapInfo(
+        val beforeCount: Int,
+        val soldCount: Int,
+        val soldStocks: List<String>  // "股票名(原因)"
     )
 
     data class AIPick(
@@ -129,6 +140,13 @@ class SimulationTradeEngine(private val context: Context) {
         val paramChanges: List<String>
     )
 
+    data class FittingRoundParam(val round:Int,val paramJson:String,val accuracy:Float,val avgReturn:Double,val hitCount:Int,val totalSignals:Int)
+
+    data class SellDecision(
+        val order: StrategyTradeOrderEntity, val reason: String, val currentPrice: Double,
+        val profitPct: Double, val shouldSell: Boolean, val strategy: String
+    )
+
     // ══════════════════════════════════════════════════
     // 主入口：9步精選流程
     // ══════════════════════════════════════════════════
@@ -140,11 +158,9 @@ class SimulationTradeEngine(private val context: Context) {
         Log.i(TAG, "━━━ 9步精選模擬交易 ━━━")
         Log.i(TAG, "交易日: ${config.tradeDate}")
 
-        // ═══ Step 1-4: 構建當日精選股票池 ═══
         val poolCodes = buildDailyStockPool(config.tradeDate)
         Log.i(TAG, "【Step 1-4】精選池: ${poolCodes.size} 隻")
 
-        // ═══ 獲取當日快照（只取精選池中股票） ═══
         val allSnapshots = getTradingDayData(config.tradeDate)
         if (allSnapshots.isEmpty()) {
             return@withContext TradeSessionReport(config, emptyList(), emptyList(), emptyList(),
@@ -153,7 +169,6 @@ class SimulationTradeEngine(private val context: Context) {
         val snapshots = allSnapshots.filter { it.code in poolCodes }
         Log.i(TAG, "全市場${allSnapshots.size}隻 → 精選池${snapshots.size}隻")
 
-        // 轉換為 StockRealtime
         var stockList = snapshots.map { snap ->
             StockRealtime(
                 code = snap.code, name = snap.name, price = snap.close,
@@ -164,26 +179,26 @@ class SimulationTradeEngine(private val context: Context) {
             )
         }
 
-        // 主板過濾
         if (config.onlyMainBoard) {
             stockList = stockList.filter { isMainBoard(it.code) }
             Log.i(TAG, "主板過濾後: ${stockList.size} 隻")
         }
 
-        // 熱度排序
         val heatScores = mutableMapOf<String, Int>()
         stockList.forEach { stock -> heatScores[stock.code] = StockDataCenter.calculateStockHeatScore(stock.code, allSnapshots) }
         stockList = stockList.sortedByDescending { heatScores[it.code] ?: 0 }
 
-        // ═══ Step 5: 每個策略對精選池評分，取 Top 15 ═══
+        // Step 5
         val allTodayResults = mutableListOf<StrategyPeriodResult>()
         for (strategy in strategies) {
             if (strategy.id == "ai_prediction") continue
             val rawSignals = executeStrategy(strategy, stockList, 1) ?: continue
             if (rawSignals.isEmpty()) continue
-            val newsScore = calculateNewsStrength(rawSignals, config.tradeDate)
-            val rotationPenaltyScore = calculateRotationPenalty(rawSignals, config.tradeDate)
-            val (filtered, filteredInfo) = filterByMainBoard(rawSignals, config.onlyMainBoard)
+            // 🔥 買入前過濾 (Step 5内部，在主板过濾之前)
+            val afterBuyFilter = applySignalFilter(rawSignals, allSnapshots)
+            val newsScore = calculateNewsStrength(afterBuyFilter, config.tradeDate)
+            val rotationPenaltyScore = calculateRotationPenalty(afterBuyFilter, config.tradeDate)
+            val (filtered, filteredInfo) = filterByMainBoard(afterBuyFilter, config.onlyMainBoard)
             val top15 = filtered.sortedByDescending { it.strength }.take(MAX_STOCKS_PER_STRATEGY)
             allTodayResults.add(StrategyPeriodResult(
                 strategyId = strategy.id, strategyName = strategy.name,
@@ -199,40 +214,37 @@ class SimulationTradeEngine(private val context: Context) {
         }
         Log.i(TAG, "【Step 5】${allTodayResults.size} 個策略各輸出 Top15")
 
-        // ═══ Step 6: 跨5交易日聚合，按命中天數排序取前20 ═══
+        // Step 6
         val crossDayTop20 = aggregateCrossDayResults(config.tradeDate, strategies, poolCodes)
-        Log.i(TAG, "【Step 6】跨${CROSS_DAY_WINDOW}天聚合 → Top${crossDayTop20.size}: ${
-            crossDayTop20.take(8).joinToString { "${it.first.takeLast(6)}(${it.second}天)" }}")
+        Log.i(TAG, "【Step 6】跨${CROSS_DAY_WINDOW}天聚合 → Top${crossDayTop20.size}: ${crossDayTop20.take(8).joinToString { "${it.first.takeLast(6)}(${it.second}天)" }}")
 
-        // ═══ Step 7: 加入板塊精選股 ═══
-        val sectorPicked = getHotSectorStockPool()
+        // Step 7
+        val sectorPicked = if (config.onlyMainBoard) getHotSectorStockPool().filter { isMainBoard(it) }.toSet() else getHotSectorStockPool()
         Log.i(TAG, "【Step 7】板塊精選: ${sectorPicked.size} 隻加入")
 
-        // ═══ Step 8: 加入用戶搜索 + 智能體推薦股 ═══
-        val userStockCodes = StockDataCenter.getUserSearchStockCodes()
-        val skillPickCodes = StockDataCenter.getSkillPickStockCodes()
+        // Step 8
+        val userStockCodes = if (config.onlyMainBoard) StockDataCenter.getUserSearchStockCodes().filter { isMainBoard(it) }.toSet() else StockDataCenter.getUserSearchStockCodes()
+        val skillPickCodes = if (config.onlyMainBoard) StockDataCenter.getSkillPickStockCodes().filter { isMainBoard(it) }.toSet() else StockDataCenter.getSkillPickStockCodes()
         Log.i(TAG, "【Step 8】用戶搜索${userStockCodes.size}隻 + 智能體${skillPickCodes.size}隻")
 
-        // ═══ Step 9: 合併最終池 → AI 預測 ═══
-        val finalPool = (crossDayTop20.map { it.first }.toSet() + sectorPicked + userStockCodes + skillPickCodes).toSet()
-        Log.i(TAG, "【Step 9】最終AI輸入池: ${finalPool.size} 隻")
+        // Step 9
+        val rawPool = (crossDayTop20.map { it.first }.toSet() + sectorPicked + userStockCodes + skillPickCodes).toSet()
+        val finalPool = filterPoolCodes(rawPool, allSnapshots)
+        val filteredOut = rawPool.size - finalPool.size
+        if (filteredOut > 0) Log.i(TAG, "【Step 9】買入過濾: 移除${filteredOut}隻不合格股 → 最終池 ${finalPool.size} 隻")
+        else Log.i(TAG, "【Step 9】最終AI輸入池: ${finalPool.size} 隻")
 
-        // 過濾出這 finalPool 的快照 → 轉 StockRealtime → 調 AI 策略
         val finalSnapshots = allSnapshots.filter { it.code in finalPool }
         val finalStockList = finalSnapshots.map { snap ->
-            StockRealtime(
-                code = snap.code, name = snap.name, price = snap.close,
+            StockRealtime(code = snap.code, name = snap.name, price = snap.close,
                 open = snap.open, yestClose = if (snap.changePct != 0.0 && snap.close != 0.0) snap.close / (1.0 + snap.changePct / 100.0) else snap.close,
                 high = snap.high, low = snap.low, volume = snap.volume,
                 amount = snap.amount, changePercent = snap.changePct,
-                changeAmount = snap.close * snap.changePct / 100, timestamp = System.currentTimeMillis()
-            )
+                changeAmount = snap.close * snap.changePct / 100, timestamp = System.currentTimeMillis())
         }
 
-        // 用 AI 策略做最終精選
         val aiStrategy = strategies.find { it.id == "ai_prediction" }
         val aiPicks = if (aiStrategy != null && aiStrategy is com.chin.stockanalysis.strategy.strategies.AIPredictionStrategy) {
-            // 先跑其他策略給 AI 策略提供 ScreeningResult
             val screeningResults = mutableListOf<com.chin.stockanalysis.strategy.models.ScreeningResult>()
             for (strategy in strategies) {
                 if (strategy.id == "ai_prediction") continue
@@ -240,8 +252,7 @@ class SimulationTradeEngine(private val context: Context) {
                     screeningResults.add(com.chin.stockanalysis.strategy.models.ScreeningResult(
                         strategyId = strategy.id, strategyName = strategy.name,
                         category = strategy.category, signals = signals,
-                        totalScanned = signals.size, scanTimeMs = 0
-                    ))
+                        totalScanned = signals.size, scanTimeMs = 0))
                 }
             }
             aiStrategy.strategyResults = screeningResults
@@ -257,14 +268,25 @@ class SimulationTradeEngine(private val context: Context) {
         val buyOrders = generateBuyOrders(aiPicks, config.tradeDate, allSnapshots)
         saveDailyNewsHotPicks(config.tradeDate)
         runFitting(strategies, allTodayResults, config)
-
-        val summary = buildEnhancedSummary(config, poolCodes.size, crossDayTop20.size, finalPool.size, aiPicks, crossDayTop20)
-        // 保存最終精選池到 DB
         saveFinalPoolToDb(config.tradeDate, finalPool.toList(), crossDayTop20)
-        TradeSessionReport(config, allTodayResults, aiPicks, buyOrders, summary, finalPool.toList(), crossDayTop20)
+
+        val stepDetail = StepDetail(
+            basePoolSize = poolCodes.size,
+            afterMainBoard = stockList.size,
+            strategyHitCount = allTodayResults.size,
+            crossDaySize = crossDayTop20.size,
+            sectorAdded = sectorPicked.size,
+            userAdded = userStockCodes.size + skillPickCodes.size,
+            finalPoolSize = finalPool.size,
+            buyFilterPassed = 0,
+            buyFilterRejects = emptyList(),
+            newBuyCodes = buyOrders.map { "${it.stockName}(${it.stockCode.takeLast(6)})" },
+            mergedCodes = emptyList()
+        )
+        val summary = buildEnhancedSummary(stepDetail, aiPicks, crossDayTop20, null)
+        TradeSessionReport(config, allTodayResults, aiPicks, buyOrders, summary, finalPool.toList(), crossDayTop20, stepDetail, null)
     }
 
-    /** 保存最終精選池到 daily_period_result 表（strategyId = "FINAL_POOL"） */
     private suspend fun saveFinalPoolToDb(tradeDate: String, codes: List<String>, crossDay: List<Pair<String, Int>>) {
         try {
             val top3Json = JSONArray(crossDay.take(10).map { (code, days) ->
@@ -273,41 +295,21 @@ class SimulationTradeEngine(private val context: Context) {
             db.dailyPeriodResultDao().insert(DailyPeriodResultEntity(
                 strategyId = "FINAL_POOL", strategyName = "9步精選最終池",
                 tradeDate = tradeDate, periodDays = 9,
-                stockCodesJson = JSONArray(codes).toString(),
-                stockCount = codes.size,
-                newsStrengthScore = 0, rotationPenalty = 0,
-                mainBoardFilter = true,
+                stockCodesJson = JSONArray(codes).toString(), stockCount = codes.size,
+                newsStrengthScore = 0, rotationPenalty = 0, mainBoardFilter = true,
                 filteredCodesJson = "[]", filteredReasonJson = "[]",
-                finalTop3Json = top3Json,
-                aiSelectionReason = "共${codes.size}隻精選股輸入AI",
-                createdAt = System.currentTimeMillis()
-            ))
+                finalTop3Json = top3Json, aiSelectionReason = "共${codes.size}隻精選股輸入AI",
+                createdAt = System.currentTimeMillis()))
             Log.i(TAG, "💾 最終精選池已保存: ${codes.size} 隻")
         } catch (e: Exception) { Log.w(TAG, "保存最終池失敗: ${e.message}") }
     }
 
-    // ══════════════════════════════════════════════════
-    // Step 6: 跨交易日聚合
-    // ══════════════════════════════════════════════════
-
-    private suspend fun aggregateCrossDayResults(
-        baseDate: String,
-        strategies: List<Strategy>,
-        poolCodes: Set<String>
-    ): List<Pair<String, Int>> {
+    private suspend fun aggregateCrossDayResults(baseDate: String, strategies: List<Strategy>, poolCodes: Set<String>): List<Pair<String, Int>> {
         val allDates = try {
-            db.dailySnapshotDao().getAvailableDates(CROSS_DAY_WINDOW + 5)
-                .filter { it <= baseDate }.take(CROSS_DAY_WINDOW)
+            db.dailySnapshotDao().getAvailableDates(CROSS_DAY_WINDOW + 5).filter { it <= baseDate }.take(CROSS_DAY_WINDOW)
         } catch (_: Exception) { emptyList() }
-
-        if (allDates.size < 2) {
-            Log.w(TAG, "跨日聚合: 僅${allDates.size}天可用數據，跳過")
-            return emptyList()
-        }
-
+        if (allDates.size < 2) { Log.w(TAG, "跨日聚合: 僅${allDates.size}天"); return emptyList() }
         val hitCounts = mutableMapOf<String, Int>()
-        val stockNames = mutableMapOf<String, String>()
-
         for (date in allDates) {
             try {
                 val snaps = db.dailySnapshotDao().getByDate(date).filter { it.code in poolCodes }
@@ -316,33 +318,22 @@ class SimulationTradeEngine(private val context: Context) {
                     StockRealtime(code=snap.code, name=snap.name, price=snap.close, open=snap.open,
                         yestClose=if(snap.changePct!=0.0&&snap.close!=0.0)snap.close/(1.0+snap.changePct/100.0) else snap.close,
                         high=snap.high, low=snap.low, volume=snap.volume, amount=snap.amount,
-                        changePercent=snap.changePct, changeAmount=snap.close*snap.changePct/100,
-                        timestamp=System.currentTimeMillis())
+                        changePercent=snap.changePct, changeAmount=snap.close*snap.changePct/100, timestamp=System.currentTimeMillis())
                 }
                 val seenToday = mutableSetOf<String>()
                 for (strategy in strategies) {
                     if (strategy.id == "ai_prediction") continue
                     executeStrategy(strategy, stockList, 1)?.filter { it.stockCode !in seenToday }?.forEach { signal ->
-                        hitCounts[signal.stockCode] = (hitCounts[signal.stockCode]?:0) + 1
-                        seenToday.add(signal.stockCode)
-                        stockNames[signal.stockCode] = signal.stockName
+                        hitCounts[signal.stockCode] = (hitCounts[signal.stockCode]?:0) + 1; seenToday.add(signal.stockCode)
                     }
                 }
-            } catch (_: Exception) { /* skip this date */ }
+            } catch (_: Exception) {}
         }
-
-        return hitCounts.entries.sortedByDescending { it.value }.take(CROSS_DAY_TOP_N)
-            .map { (code, days) -> code to days }
+        return hitCounts.entries.sortedByDescending { it.value }.take(CROSS_DAY_TOP_N).map { (code, days) -> code to days }
     }
 
-    // ══════════════════════════════════════════════════
-    // 回溯复盘（保持不變）
-    // ══════════════════════════════════════════════════
-
-    suspend fun backtrackAndOptimize(
-        strategies: List<Strategy>, config: TradeSessionConfig,
-        oldSessionResults: List<StrategyPeriodResult>, boughtStocks: Set<String>
-    ): BacktrackReport = withContext(Dispatchers.IO) {
+    suspend fun backtrackAndOptimize(strategies: List<Strategy>, config: TradeSessionConfig,
+        oldSessionResults: List<StrategyPeriodResult>, boughtStocks: Set<String>): BacktrackReport = withContext(Dispatchers.IO) {
         Log.i(TAG, "━━━ 回溯复盘 ━━━")
         val snapshots = getTradingDayData(config.tradeDate)
         if (snapshots.isEmpty()) return@withContext BacktrackReport(config.tradeDate, emptyList(), emptyList(), emptyList(), "无数据")
@@ -350,29 +341,25 @@ class SimulationTradeEngine(private val context: Context) {
             StockRealtime(code=snap.code, name=snap.name, price=snap.close, open=snap.open,
                 yestClose=if(snap.changePct!=0.0&&snap.close!=0.0)snap.close/(1.0+snap.changePct/100.0) else snap.close,
                 high=snap.high, low=snap.low, volume=snap.volume, amount=snap.amount,
-                changePercent=snap.changePct, changeAmount=snap.close*snap.changePct/100,
-                timestamp=System.currentTimeMillis())
+                changePercent=snap.changePct, changeAmount=snap.close*snap.changePct/100, timestamp=System.currentTimeMillis())
         }
         val nextDate = getNextTradingDay(config.tradeDate)
         val nextDayData = if (nextDate != null) try { db.dailySnapshotDao().getByDate(nextDate) } catch (_: Exception) { emptyList() } else emptyList()
         val nextDayPriceMap = nextDayData.associate { it.code to it.close }
         val allPeriodResults = mutableListOf<StrategyPeriodResult>()
-        for (strategy in strategies) {
-            for (period in config.periods) {
-                val rawSignals = executeStrategy(strategy, stockList, period) ?: continue
-                if (rawSignals.isEmpty()) continue
-                val newsScore = calculateNewsStrength(rawSignals, config.tradeDate)
-                val rotationPenaltyScore = calculateRotationPenalty(rawSignals, config.tradeDate)
-                val (filtered, filteredInfo) = filterByMainBoard(rawSignals, config.onlyMainBoard)
-                val top15 = filtered.sortedByDescending { it.strength }.take(MAX_STOCKS_PER_STRATEGY)
-                allPeriodResults.add(StrategyPeriodResult(strategyId= strategy.id, strategyName= strategy.name,
-                    periodDays= period, tradeDate= config.tradeDate, rawStockSignals= rawSignals.take(MAX_STOCKS_PER_STRATEGY),
-                    newsStrengthScore= newsScore, rotationPenalty= rotationPenaltyScore,
-                    afterMainBoardFilter= filtered.take(MAX_STOCKS_PER_STRATEGY),
-                    filteredStocks= filteredInfo.take(20), finalTop15= top15))
-                savePeriodResultToDb(strategy.id, strategy.name, period, config.tradeDate, rawSignals, newsScore, rotationPenaltyScore,
-                    filtered.map{it.stockCode}, filteredInfo, top15)
-            }
+        for (strategy in strategies) for (period in config.periods) {
+            val rawSignals = executeStrategy(strategy, stockList, period) ?: continue
+            if (rawSignals.isEmpty()) continue
+            val newsScore = calculateNewsStrength(rawSignals, config.tradeDate)
+            val rotationPenaltyScore = calculateRotationPenalty(rawSignals, config.tradeDate)
+            val (filtered, filteredInfo) = filterByMainBoard(rawSignals, config.onlyMainBoard)
+            val top15 = filtered.sortedByDescending { it.strength }.take(MAX_STOCKS_PER_STRATEGY)
+            allPeriodResults.add(StrategyPeriodResult(strategyId=strategy.id, strategyName=strategy.name, periodDays=period,
+                tradeDate=config.tradeDate, rawStockSignals=rawSignals.take(MAX_STOCKS_PER_STRATEGY),
+                newsStrengthScore=newsScore, rotationPenalty=rotationPenaltyScore,
+                afterMainBoardFilter=filtered.take(MAX_STOCKS_PER_STRATEGY), filteredStocks=filteredInfo.take(20), finalTop15=top15))
+            savePeriodResultToDb(strategy.id, strategy.name, period, config.tradeDate, rawSignals, newsScore, rotationPenaltyScore,
+                filtered.map{it.stockCode}, filteredInfo, top15)
         }
         val orderAnalysisList = mutableListOf<BacktrackOrderAnalysis>()
         for (code in boughtStocks) {
@@ -380,21 +367,18 @@ class SimulationTradeEngine(private val context: Context) {
             val nextPrice = nextDayPriceMap[code] ?: continue
             orderAnalysisList.add(BacktrackOrderAnalysis(code, snap.name, snap.close, nextPrice, (nextPrice-snap.close)/snap.close*100, (nextPrice-snap.close)/snap.close*100 > 0))
         }
-        val missedOpportunities = mutableListOf<BacktrackMissedStock>()
         val optimizedList = mutableListOf<BacktrackOptimizedStrategy>()
-        for (strategy in strategies) {
-            for (period in config.periods) {
-                val prs = allPeriodResults.filter { it.strategyId == strategy.id && it.periodDays == period }
-                if (prs.isEmpty() || nextDayData.isEmpty()) continue
-                val tradeDate = prs.first().tradeDate
-                val fittingParams = mutableListOf<FittingRoundParam>()
-                for (round in 1..config.maxFitRounds.coerceAtMost(500)) fittingParams.add(validateParams(prs.first(), nextDayData, round))
-                saveFittingParams(strategy.id, tradeDate, period, fittingParams)
-                val bestNew = fittingParams.maxByOrNull{it.accuracy}
-                val oldBest = getOldBestAccuracy(strategy.id, tradeDate, period)
-                optimizedList.add(BacktrackOptimizedStrategy(strategy.id, strategy.name, oldBest?:0f, bestNew?.accuracy?:0f,
-                    listOf("重新拟合:${fittingParams.size}轮, ${"%.1f".format((oldBest?:0f)*100)}%→${"%.1f".format((bestNew?.accuracy?:0f)*100)}%")))
-            }
+        for (strategy in strategies) for (period in config.periods) {
+            val prs = allPeriodResults.filter { it.strategyId == strategy.id && it.periodDays == period }
+            if (prs.isEmpty() || nextDayData.isEmpty()) continue
+            val tradeDate = prs.first().tradeDate
+            val fittingParams = mutableListOf<FittingRoundParam>()
+            for (round in 1..config.maxFitRounds.coerceAtMost(500)) fittingParams.add(validateParams(prs.first(), nextDayData, round))
+            saveFittingParams(strategy.id, tradeDate, period, fittingParams)
+            val bestNew = fittingParams.maxByOrNull{it.accuracy}
+            val oldBest = getOldBestAccuracy(strategy.id, tradeDate, period)
+            optimizedList.add(BacktrackOptimizedStrategy(strategy.id, strategy.name, oldBest?:0f, bestNew?.accuracy?:0f,
+                listOf("重新拟合:${fittingParams.size}轮, ${"%.1f".format((oldBest?:0f)*100)}%→${"%.1f".format((bestNew?.accuracy?:0f)*100)}%")))
         }
         val sb = StringBuilder()
         sb.appendLine("📈 回溯复盘").appendLine("交易日: ${config.tradeDate}")
@@ -404,7 +388,7 @@ class SimulationTradeEngine(private val context: Context) {
         for (o in optimizedList) sb.appendLine("  ✅ ${o.strategyName}: ${o.paramChanges.joinToString()}")
         saveBacktrackResult(config.tradeDate, sb.toString())
         Log.i(TAG, "━━━ 回溯复盘完成 ━━━")
-        BacktrackReport(config.tradeDate, orderAnalysisList, missedOpportunities, optimizedList, sb.toString())
+        BacktrackReport(config.tradeDate, orderAnalysisList, emptyList(), optimizedList, sb.toString())
     }
 
     private suspend fun getOldBestAccuracy(strategyId: String, tradeDate: String, period: Int): Float? =
@@ -418,10 +402,6 @@ class SimulationTradeEngine(private val context: Context) {
                 finalTop3Json="[]", aiSelectionReason=summary, createdAt=System.currentTimeMillis()))
         } catch (_: Exception) {}
     }
-
-    // ══════════════════════════════════════════════════
-    // 數據獲取
-    // ══════════════════════════════════════════════════
 
     private suspend fun getTradingDayData(date: String): List<DailySnapshotEntity> {
         val local = try { db.dailySnapshotDao().getByDate(date) } catch (e: Exception) { emptyList() }
@@ -460,15 +440,7 @@ class SimulationTradeEngine(private val context: Context) {
         }
     }
 
-    private suspend fun getPeriodData(periodDays: Int, baseDate: String): List<String> = try {
-        db.dailySnapshotDao().getAvailableDates(periodDays+5).filter{it<=baseDate}.take(periodDays) } catch (_: Exception) { emptyList() }
-
-    // ══════════════════════════════════════════════════
-    // 擴展股票池 (Step 1-4)
-    // ══════════════════════════════════════════════════
-
     private var hotSectorPoolCache: Set<String>? = null
-
     private suspend fun getHotSectorStockPool(): Set<String> {
         if (hotSectorPoolCache != null) return hotSectorPoolCache!!
         hotSectorPoolCache = HotSectorStockPool.build(context)
@@ -493,37 +465,6 @@ class SimulationTradeEngine(private val context: Context) {
         Log.i(TAG, "📊 ${baseDate} 擴展池: ${pool.size}隻")
         pool
     }
-
-    // ══════════════════════════════════════════════════
-    // 數據補齊
-    // ══════════════════════════════════════════════════
-
-    private suspend fun ensurePeriodDataAvailable(periods: List<Int>, baseDate: String) {
-        val maxPeriod = periods.maxOrNull() ?: return
-        val allDates = try { db.dailySnapshotDao().getAvailableDates(maxPeriod+5).filter{it<=baseDate}.take(maxPeriod) } catch (_: Exception) { emptyList() }
-        val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(context)
-        val topStocks = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher.TOP_STOCKS
-        var fetchedCount = 0
-        for (date in allDates) {
-            try {
-                if (db.dailySnapshotDao().getByDate(date).size >= 120) continue
-                val parsedDate = LocalDate.parse(date); val rangeStart = parsedDate.minusDays(5); val rangeEnd = parsedDate.plusDays(1)
-                var fetched = 0
-                for (code in topStocks) {
-                    try { val (records,_)=fetcher.fetchOneStock(code,rangeStart,rangeEnd)
-                        val dr = records.filter{it.date==date}
-                        if(dr.isNotEmpty()){db.dailySnapshotDao().insertAll(dr);fetched+=dr.size}
-                    } catch (_: Exception) {}
-                }
-                if(fetched>0){fetchedCount+=fetched;Log.i(TAG,"📅 $date: +${fetched}隻")}
-            } catch (_: Exception) {}
-        }
-        if(fetchedCount>0) Log.i(TAG,"📊 共補${fetchedCount}條記錄") else Log.i(TAG,"📊 數據充足")
-    }
-
-    // ══════════════════════════════════════════════════
-    // 策略執行
-    // ══════════════════════════════════════════════════
 
     private suspend fun executeStrategy(strategy: Strategy, stockList: List<StockRealtime>, periodDays: Int): List<StrategySignal>? = try {
         strategy.screenWithData(stockList).getOrNull()?.signals?.filter {
@@ -567,10 +508,6 @@ class SimulationTradeEngine(private val context: Context) {
         return filtered to info
     }
 
-    // ══════════════════════════════════════════════════
-    // AI精選 + 買入 + 擬合
-    // ══════════════════════════════════════════════════
-
     private suspend fun generateBuyOrders(aiPicks: List<AIPick>, tradeDate: String, snapshots: List<DailySnapshotEntity>): List<TradeOrder> =
         aiPicks.mapNotNull{pick->snapshots.find{it.code==pick.stockCode}?.let{ TradeOrder(pick.stockCode,pick.stockName,"AI_SELECTED",tradeDate,it.close,100,reason=pick.reason,scoreAtBuy=pick.compositeScore,orderType="AI精選") }}
 
@@ -583,12 +520,8 @@ class SimulationTradeEngine(private val context: Context) {
             val fp = mutableListOf<FittingRoundParam>()
             for(round in 1..config.maxFitRounds.coerceAtMost(1000)) fp.add(validateParams(prs.first(),nextDayData,round))
             saveFittingParams(strategy.id, tradeDate, period, fp)
-
-            // 統一提煉：找到最佳輪次
             val bestRound = fp.maxByOrNull{ it.accuracy } ?: continue
             val oldBest = getOldBestAccuracy(strategy.id, tradeDate, period) ?: 0f
-
-            // 如果擬合發現了更好的參數，更新共享 weightFactors 並持久化
             if (bestRound.accuracy > oldBest && bestRound.accuracy >= config.targetAccuracy) {
                 try {
                     val bestParams = JSONObject(bestRound.paramJson)
@@ -598,31 +531,15 @@ class SimulationTradeEngine(private val context: Context) {
                             if (f.key == factor.key) f.copy(weight = newWeight) else f
                         }
                     }
-                    // 調用 StrategySelfTuner 的保存邏輯（持久化到 strategy_weight_snapshot）
                     val today = LocalDate.now().format(DATE_FMT)
                     val weightJson = strategy.weightFactors.joinToString(";") { "${it.key}:${it.label}:${it.weight}" }
                     db.strategyWeightSnapshotDao().insert(
                         com.chin.stockanalysis.strategy.backtest.StrategyWeightSnapshotEntity(
-                            strategyId = strategy.id, date = today,
-                            weightJson = weightJson, totalScore = 0, hitCount = bestRound.hitCount
-                        )
-                    )
-                    Log.i(TAG, "🔧 [统一调优] ${strategy.name} 权重建模更新: 准确率 ${"%.1f".format(oldBest*100)}% → ${"%.1f".format(bestRound.accuracy*100)}%, 已持久化到 strategy_weight_snapshot")
-                } catch (e: Exception) {
-                    Log.w(TAG, "更新共享权重失败: ${e.message}")
-                }
-            } else {
-                Log.d(TAG, "🔧 [统一调优] ${strategy.name} 未提升 (最佳${"%.1f".format(bestRound.accuracy*100)}% ≤ 历史${"%.1f".format(oldBest*100)}%或未达阈值${"%.0f".format(config.targetAccuracy*100)}%)")
+                            strategyId = strategy.id, date = today, weightJson = weightJson, totalScore = 0, hitCount = bestRound.hitCount))
+                    Log.i(TAG, "🔧 统一调优: ${strategy.name} ${"%.1f".format(oldBest*100)}% → ${"%.1f".format(bestRound.accuracy*100)}%")
+                } catch (e: Exception) { Log.w(TAG, "更新共享权重失败: ${e.message}") }
             }
         }
-    }
-
-    data class FittingRoundParam(val round:Int,val paramJson:String,val accuracy:Float,val avgReturn:Double,val hitCount:Int,val totalSignals:Int)
-
-    private fun generatePerturbedParams(strategy: Strategy, round: Int): String {
-        val params=JSONObject()
-        for(f in strategy.weightFactors) params.put(f.key,(f.weight+(Math.random()*20-10).roundToInt()).coerceIn(1,90))
-        params.put("round",round); params.put("total_weight",strategy.weightFactors.sumOf{it.weight}); return params.toString()
     }
 
     private suspend fun validateParams(result: StrategyPeriodResult, nextDayData: List<DailySnapshotEntity>, round: Int): FittingRoundParam {
@@ -630,10 +547,6 @@ class SimulationTradeEngine(private val context: Context) {
         for(signal in result.finalTop15){ val nd=nextDayData.find{it.code==signal.stockCode}; if(nd!=null){ if(nd.changePct>0)hit++; totalRet+=nd.changePct } }
         return FittingRoundParam(round,"{\"round\":$round}",if(result.finalTop15.size>0)hit.toFloat()/result.finalTop15.size else 0f, if(result.finalTop15.size>0)totalRet/result.finalTop15.size else 0.0, hit, result.finalTop15.size)
     }
-
-    // ══════════════════════════════════════════════════
-    // 持久化
-    // ══════════════════════════════════════════════════
 
     private suspend fun saveDailyNewsHotPicks(tradeDate: String) {
         try {
@@ -665,37 +578,173 @@ class SimulationTradeEngine(private val context: Context) {
         val dates=db.dailySnapshotDao().getAvailableDates(10).sorted(); val idx=dates.indexOf(date); if(idx>=0&&idx+1<dates.size)dates[idx+1] else null
     } catch (_: Exception) { null }
 
-    private fun buildEnhancedSummary(config: TradeSessionConfig, poolSize: Int, crossDaySize: Int, finalPoolSize: Int, aiPicks: List<AIPick>, crossDay: List<Pair<String,Int>>): String {
-        val sb = StringBuilder()
-        sb.appendLine("📊 9步精選模擬交易報告")
-        sb.appendLine("交易日: ${config.tradeDate}")
-        sb.appendLine()
-        sb.appendLine("📋 流程統計:")
-        sb.appendLine("  Step 1-4: 精選池 $poolSize 隻")
-        sb.appendLine("  Step 5:   各策略取 Top${MAX_STOCKS_PER_STRATEGY}")
-        sb.appendLine("  Step 6:   跨${CROSS_DAY_WINDOW}天聚合 → 前${crossDaySize}隻")
-        sb.appendLine("  Step 7-8: +板塊精選+用戶/智能體 → 最終池 $finalPoolSize 隻")
-        sb.appendLine("  Step 9:   AI預測")
-        sb.appendLine()
-        if (crossDay.isNotEmpty()) {
-            sb.appendLine("🔥 跨日聚合命中Top${minOf(10,crossDay.size)}:")
-            for ((code, days) in crossDay.take(10)) sb.appendLine("  ${code.takeLast(6)}: ${days}天命中")
+    // ══════════════════════════════════════════════════
+    // 智能賣出 (委托给 AutoSellEngine)
+    // ══════════════════════════════════════════════════
+
+    suspend fun runAutoSellEvaluate(strategies: List<Strategy>, today: String = LocalDate.now().format(DATE_FMT)): List<AutoSellEngine.SellDecision> {
+        val sellEngine = AutoSellEngine(context)
+        return sellEngine.evaluateAll(strategies, AutoSellEngine.AutoSellConfig(tradeDate = today))
+    }
+
+    suspend fun runAutoSell(strategies: List<Strategy>, today: String = LocalDate.now().format(DATE_FMT)): List<AutoSellEngine.SellDecision> {
+        val sellEngine = AutoSellEngine(context)
+        val decisions = sellEngine.evaluateAll(strategies, AutoSellEngine.AutoSellConfig(tradeDate = today))
+        sellEngine.executeSells(decisions, today)
+        return decisions
+    }
+
+    suspend fun getSellPerformance(days: Int = 90): List<AutoSellEngine.SellPerformanceStats> {
+        val sellEngine = AutoSellEngine(context)
+        return sellEngine.getSellPerformance(days)
+    }
+
+    /**
+     * 腾笼换鸟：持仓超限时，评估所有持仓，自动卖出最弱的，为新买入腾出仓位。
+     * @param strategies 当前启用的策略列表
+     * @param newBuyCount 本次要新买入的股票数量
+     * @param today 当前交易日
+     * @return 被卖出的股票数量
+     */
+    suspend fun swapWeakHoldings(strategies: List<Strategy>, newBuyCount: Int, today: String = LocalDate.now().format(DATE_FMT)): Int = withContext(Dispatchers.IO) {
+        val holdingOrders = db.strategyTradeOrderDao().getRecent(500)
+            .filter { it.status == "BUYING" || it.status == "PENDING" }
+        val currentCount = holdingOrders.size
+        val maxAllowed = MAX_HOLDINGS - newBuyCount
+        if (currentCount <= maxAllowed) return@withContext 0
+
+        val needToSell = currentCount - maxAllowed
+        Log.i(TAG, "🔄 腾笼换鸟: 当前${currentCount}只持仓, 需要为新买入腾出${needToSell}个位置")
+
+        // 评估所有持仓
+        val sellEngine = AutoSellEngine(context)
+        val allDecisions = sellEngine.evaluateAll(strategies, AutoSellEngine.AutoSellConfig(tradeDate = today))
+
+        // 优先卖出：1) 已触发卖出的优先，2) 按紧急度降序，3) 同紧急度选亏损最多的
+        val rankedForSale = allDecisions
+            .sortedWith(compareByDescending<AutoSellEngine.SellDecision> { it.shouldSell }
+                .thenByDescending { it.urgency }
+                .thenBy { it.profitPct })
+            .take(needToSell)
+
+        if (rankedForSale.isNotEmpty()) {
+            Log.i(TAG, "🔴 自动换股卖出: ${rankedForSale.joinToString { "${it.order.stockName}(${it.strategy})" }}")
+            sellEngine.executeSells(rankedForSale, today)
         }
-        sb.appendLine()
-        sb.appendLine("🤖 AI最終推薦:")
-        for (pick in aiPicks) sb.appendLine("  #${pick.rank} ${pick.stockName}(${pick.stockCode.takeLast(6)}) 評分:${pick.compositeScore} ${pick.actionSuggestion}")
-        return sb.toString()
+        rankedForSale.size
+    }
+
+    /**
+     * 買入前過濾 — 4條規則
+     * 1. 大阴线不抄: 当日/昨收跌幅 ≥ 7% → 拒绝
+     * 2. 均线空头不搞: MA5 < MA20 → 拒绝
+     * 3. 一字开板莫跳: 开盘价 = 涨停价(10%) → 拒绝
+     * 4. 顶背离不追: 价格新高但RSI不新高 → 拒绝
+     * @return Pair(通过列表, 拒绝原因列表)
+     */
+    /**
+     * Step 5 内部过滤 — 工作在策略信号上, 而非AI推荐结果
+     * 过滤掉明显垃圾信号, 提高后续步骤质量
+     */
+    private fun applySignalFilter(signals: List<StrategySignal>, allSnapshots: List<DailySnapshotEntity>): List<StrategySignal> {
+        val snapMap = allSnapshots.associateBy { it.code }
+        var removed = 0
+
+        val result = signals.filter { signal ->
+            val snap = snapMap[signal.stockCode] ?: return@filter true
+            var keep = true
+
+            // ① 大阴线不抄: 当日跌幅 ≥ 7%
+            if (snap.changePct <= -7.0) keep = false
+
+            // ② 一字开板莫跳: 涨停板一字板
+            if (snap.changePct >= 9.5 && snap.open >= snap.close * 0.99) keep = false
+
+            // ③ 均线空头不搞
+            if (snap.close < snap.open && snap.changePct < -2.0) {
+                val recent = allSnapshots.filter { it.code == snap.code }
+                    .sortedByDescending { it.date }.take(5).map { it.close }
+                if (recent.size >= 5 && recent.take(3).average() < recent.average()) keep = false
+            }
+
+            // ④ 顶背离不去追
+            if (snap.changePct in 0.0..1.5 && snap.high > snap.open * 1.02) {
+                val recentDates = allSnapshots.filter { it.code == snap.code }
+                    .sortedByDescending { it.date }
+                if (recentDates.size >= 4 && recentDates.take(4).count { it.changePct > 0 } >= 3) keep = false
+            }
+
+            if (!keep) removed++
+            keep
+        }
+
+        if (removed > 0) Log.i(TAG, "🔥 Step5内部过滤: 移除${removed}个信号")
+        return result
+    }
+
+    /**
+     * Step 9 最终池过滤 — 对代码集合应用4条规则
+     */
+    private fun filterPoolCodes(codes: Set<String>, allSnapshots: List<DailySnapshotEntity>): Set<String> {
+        val snapMap = allSnapshots.associateBy { it.code }
+        return codes.filter { code ->
+            val snap = snapMap[code] ?: return@filter true // 无数据不拦截
+            // ① 大阴线不抄
+            if (snap.changePct <= -7.0) return@filter false
+            // ② 一字开板莫跳
+            if (snap.changePct >= 9.5 && snap.open >= snap.close * 0.99) return@filter false
+            // ③ 均线空头
+            if (snap.close < snap.open && snap.changePct < -2.0) {
+                val recent = allSnapshots.filter { it.code == code }
+                    .sortedByDescending { it.date }.take(5).map { it.close }
+                if (recent.size >= 5 && recent.take(3).average() < recent.average()) return@filter false
+            }
+            // ④ 顶背离
+            if (snap.changePct in 0.0..1.5 && snap.high > snap.open * 1.02) {
+                val recentDates = allSnapshots.filter { it.code == code }
+                    .sortedByDescending { it.date }
+                if (recentDates.size >= 4 && recentDates.take(4).count { it.changePct > 0 } >= 3) return@filter false
+            }
+            true
+        }.toSet()
+    }
+
+    fun buildEnhancedSummary(detail: StepDetail, aiPicks: List<AIPick>, crossDay: List<Pair<String,Int>>, swapInfo: SimulationTradeEngine.SwapInfo?): String = buildString {
+        appendLine("📊 9步精選模擬交易報告")
+        appendLine(); appendLine("📋 流程統計:")
+        appendLine("  Step 1-4: 精選池 ${detail.basePoolSize} 隻 → 主板過濾後 ${detail.afterMainBoard} 隻")
+        appendLine("  Step 5:   ${detail.strategyHitCount} 個策略命中, 各輸出 Top${MAX_STOCKS_PER_STRATEGY}")
+        appendLine("  Step 6:   跨${CROSS_DAY_WINDOW}天聚合 → 前${detail.crossDaySize}隻")
+        appendLine("  Step 7:   板塊精選 +${detail.sectorAdded} 隻")
+        appendLine("  Step 8:   用戶搜索/智能體 +${detail.userAdded} 隻 → 最終池 ${detail.finalPoolSize} 隻")
+        appendLine("  Step 9:   AI預測 Top${FINAL_TOP3}"); appendLine()
+
+        if (detail.newBuyCodes.isNotEmpty()) {
+            appendLine("🟢 本次買入 ${detail.newBuyCodes.size} 隻:")
+            detail.newBuyCodes.forEach { appendLine("  ✚ $it") }
+            appendLine()
+        }
+        if (detail.mergedCodes.isNotEmpty()) {
+            appendLine("🔄 合併持倉 ${detail.mergedCodes.size} 筆:")
+            detail.mergedCodes.forEach { appendLine("  → $it") }
+            appendLine()
+        }
+        if (swapInfo != null && swapInfo.soldCount > 0) {
+            appendLine("🔴 騰籠換鳥: 持倉 ${swapInfo.beforeCount}隻 → 賣出 ${swapInfo.soldCount}隻")
+            swapInfo.soldStocks.forEach { appendLine("  ✕ $it") }
+            appendLine()
+        }
+
+        appendLine("🤖 AI最終推薦 Top3:")
+        for (pick in aiPicks) appendLine("  #${pick.rank} ${pick.stockName}(${pick.stockCode.takeLast(6)}) 評分:${pick.compositeScore} ${pick.actionSuggestion}")
     }
 }
 
 // ══════════════════════════════════════════════════
-// Room Entity 定义
+// Room Entity
 // ══════════════════════════════════════════════════
 
-@androidx.room.Entity(
-    tableName = "daily_period_result",
-    indices = [androidx.room.Index(value = ["strategy_id", "trade_date", "period_days"], unique = true)]
-)
+@androidx.room.Entity(tableName = "daily_period_result", indices = [androidx.room.Index(value = ["strategy_id", "trade_date", "period_days"], unique = true)])
 data class DailyPeriodResultEntity(
     @androidx.room.PrimaryKey(autoGenerate = true) val id: Long = 0,
     @androidx.room.ColumnInfo(name = "strategy_id") val strategyId: String,
@@ -714,10 +763,7 @@ data class DailyPeriodResultEntity(
     @androidx.room.ColumnInfo(name = "created_at") val createdAt: Long
 )
 
-@androidx.room.Entity(
-    tableName = "strategy_trade_fitting_params",
-    indices = [androidx.room.Index(value = ["strategy_id", "trade_date", "period_days", "fitting_round"])]
-)
+@androidx.room.Entity(tableName = "strategy_trade_fitting_params", indices = [androidx.room.Index(value = ["strategy_id", "trade_date", "period_days", "fitting_round"])])
 data class StrategyTradeFittingParamEntity(
     @androidx.room.PrimaryKey(autoGenerate = true) val id: Long = 0,
     @androidx.room.ColumnInfo(name = "strategy_id") val strategyId: String,
@@ -730,10 +776,7 @@ data class StrategyTradeFittingParamEntity(
     @androidx.room.ColumnInfo(name = "created_at") val createdAt: Long
 )
 
-@androidx.room.Entity(
-    tableName = "daily_news_hot_picks",
-    indices = [androidx.room.Index(value = ["news_date", "rank"], unique = true)]
-)
+@androidx.room.Entity(tableName = "daily_news_hot_picks", indices = [androidx.room.Index(value = ["news_date", "rank"], unique = true)])
 data class DailyNewsHotPickEntity(
     @androidx.room.PrimaryKey(autoGenerate = true) val id: Long = 0,
     @androidx.room.ColumnInfo(name = "news_date") val newsDate: String,
@@ -746,13 +789,7 @@ data class DailyNewsHotPickEntity(
     @androidx.room.ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis()
 )
 
-@androidx.room.Entity(
-    tableName = "strategy_trade_orders",
-    indices = [
-        androidx.room.Index(value = ["strategy_id", "trade_date"]),
-        androidx.room.Index(value = ["stock_code", "trade_date"])
-    ]
-)
+@androidx.room.Entity(tableName = "strategy_trade_orders", indices = [androidx.room.Index(value = ["strategy_id", "trade_date"]), androidx.room.Index(value = ["stock_code", "trade_date"])])
 data class StrategyTradeOrderEntity(
     @androidx.room.PrimaryKey(autoGenerate = true) val id: Long = 0,
     @androidx.room.ColumnInfo(name = "strategy_id") val strategyId: String,
@@ -773,26 +810,19 @@ data class StrategyTradeOrderEntity(
 )
 
 // ══════════════════════════════════════════════════
-// DAO 定义
+// DAO
 // ══════════════════════════════════════════════════
 
 @androidx.room.Dao
 interface DailyPeriodResultDao {
     @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
     suspend fun insert(entity: DailyPeriodResultEntity): Long
-
     @androidx.room.Query("SELECT * FROM daily_period_result WHERE trade_date = :date ORDER BY period_days")
     suspend fun getByDate(date: String): List<DailyPeriodResultEntity>
-
-    @androidx.room.Query("SELECT * FROM daily_period_result WHERE strategy_id = :sid AND trade_date = :date")
-    suspend fun getByStrategyAndDate(sid: String, date: String): List<DailyPeriodResultEntity>
-
     @androidx.room.Query("SELECT * FROM daily_period_result ORDER BY created_at DESC LIMIT :limit")
     suspend fun getRecent(limit: Int = 50): List<DailyPeriodResultEntity>
-
     @androidx.room.Query("SELECT DISTINCT trade_date FROM daily_period_result ORDER BY trade_date DESC LIMIT :limit")
     suspend fun getAvailableDates(limit: Int = 30): List<String>
-
     @androidx.room.Query("DELETE FROM daily_period_result WHERE trade_date = :date")
     suspend fun deleteByDate(date: String)
 }
@@ -801,73 +831,48 @@ interface DailyPeriodResultDao {
 interface StrategyTradeFittingParamDao {
     @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
     suspend fun insert(entity: StrategyTradeFittingParamEntity): Long
-
     @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
     suspend fun insertAll(entities: List<StrategyTradeFittingParamEntity>)
-
-    @androidx.room.Query("SELECT * FROM strategy_trade_fitting_params WHERE strategy_id = :sid AND trade_date = :date AND period_days = :period ORDER BY fitting_round ASC")
-    suspend fun getByStrategyAndDate(sid: String, date: String, period: Int): List<StrategyTradeFittingParamEntity>
-
     @androidx.room.Query("SELECT * FROM strategy_trade_fitting_params WHERE strategy_id = :sid ORDER BY created_at DESC LIMIT :limit")
     suspend fun getRecentByStrategy(sid: String, limit: Int = 100): List<StrategyTradeFittingParamEntity>
-
     @androidx.room.Query("SELECT MAX(accuracy) FROM strategy_trade_fitting_params WHERE strategy_id = :sid AND trade_date = :date AND period_days = :period")
     suspend fun getBestAccuracy(sid: String, date: String, period: Int): Double?
-
-    @androidx.room.Query("DELETE FROM strategy_trade_fitting_params WHERE strategy_id = :sid AND trade_date = :date")
-    suspend fun deleteByStrategyAndDate(sid: String, date: String)
 }
 
 @androidx.room.Dao
 interface DailyNewsHotPickDao {
     @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
     suspend fun insert(entity: DailyNewsHotPickEntity): Long
-
-    @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
-    suspend fun insertAll(entities: List<DailyNewsHotPickEntity>)
-
     @androidx.room.Query("SELECT * FROM daily_news_hot_picks WHERE news_date = :date ORDER BY rank ASC")
     suspend fun getByDate(date: String): List<DailyNewsHotPickEntity>
-
-    @androidx.room.Query("SELECT * FROM daily_news_hot_picks WHERE news_date BETWEEN :fromDate AND :toDate ORDER BY news_date DESC, rank ASC")
-    suspend fun getByDateRange(fromDate: String, toDate: String): List<DailyNewsHotPickEntity>
-
-    @androidx.room.Query("SELECT DISTINCT news_date FROM daily_news_hot_picks ORDER BY news_date DESC LIMIT :limit")
-    suspend fun getAvailableDates(limit: Int = 30): List<String>
-
-    @androidx.room.Query("DELETE FROM daily_news_hot_picks WHERE news_date < :cutoffDate")
-    suspend fun deleteOlderThan(cutoffDate: String)
+    @androidx.room.Query("SELECT DISTINCT news_date FROM daily_news_hot_picks ORDER BY news_date DESC LIMIT 100")
+    suspend fun getAvailableDates(): List<String>
 }
 
 @androidx.room.Dao
 interface StrategyTradeOrderDao {
     @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
     suspend fun insert(entity: StrategyTradeOrderEntity): Long
-
     @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
     suspend fun insertAll(entities: List<StrategyTradeOrderEntity>)
-
     @androidx.room.Query("SELECT * FROM strategy_trade_orders WHERE trade_date = :date ORDER BY score_at_buy DESC")
     suspend fun getByDate(date: String): List<StrategyTradeOrderEntity>
-
     @androidx.room.Query("SELECT * FROM strategy_trade_orders ORDER BY created_at DESC LIMIT :limit")
     suspend fun getRecent(limit: Int = 50): List<StrategyTradeOrderEntity>
-
     @androidx.room.Query("SELECT * FROM strategy_trade_orders WHERE strategy_id = :sid ORDER BY created_at DESC LIMIT :limit")
     suspend fun getByStrategy(sid: String, limit: Int = 50): List<StrategyTradeOrderEntity>
-
     @androidx.room.Query("UPDATE strategy_trade_orders SET status = :status, sell_price = :sellPrice, sell_time = :sellTime, profit_pct = :profitPct WHERE id = :id")
     suspend fun updateSellInfo(id: Long, status: String, sellPrice: Double, sellTime: String, profitPct: Double)
-
     @androidx.room.Query("SELECT SUM(profit_pct) FROM strategy_trade_orders WHERE strategy_id = :sid AND status = 'SOLD'")
     suspend fun getTotalProfit(sid: String): Double?
-
     @androidx.room.Query("SELECT COUNT(*) FROM strategy_trade_orders WHERE strategy_id = :sid AND status = 'SOLD' AND profit_pct > 0")
     suspend fun getWinCount(sid: String): Int
-
     @androidx.room.Query("SELECT COUNT(*) FROM strategy_trade_orders WHERE strategy_id = :sid AND status = 'SOLD'")
     suspend fun getTotalSoldCount(sid: String): Int
-
     @androidx.room.Query("DELETE FROM strategy_trade_orders WHERE trade_date = :date")
     suspend fun deleteByDate(date: String)
+    @androidx.room.Query("UPDATE strategy_trade_orders SET quantity = :quantity WHERE id = :id")
+    suspend fun updateQuantity(id: Long, quantity: Int)
+    @androidx.room.Query("UPDATE strategy_trade_orders SET buy_price = :price, quantity = :qty, trade_date = :date WHERE id = :id")
+    suspend fun updateBuyPriceAndQty(id: Long, price: Double, qty: Int, date: String)
 }

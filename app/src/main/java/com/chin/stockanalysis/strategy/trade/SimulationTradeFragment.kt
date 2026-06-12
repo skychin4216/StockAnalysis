@@ -1,6 +1,7 @@
 package com.chin.stockanalysis.strategy.trade
 
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.graphics.Typeface
 import android.os.Bundle
 import android.view.Gravity
@@ -30,19 +31,12 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 /**
- * ## 模拟交易面板
+ * ## 模拟交易面板 v2.0
  *
- * 在策略页面新增"模拟交易"Tab
- * 提供：
- * 1. 选择交易日
- * 2. 勾选使用的策略
- * 3. 选择数据周期（当日/近3/10/30/50/100日）
- * 4. 主板过滤开关
- * 5. AI精选 Top3
- * 6. 执行模拟买入/卖出
- * 7. 查看历史交易记录
- * 8. 调优拟合参数查看
- * 9. 交易记录导出
+ * 新增:
+ * - 自动卖出评估（10维智能卖出引擎）
+ * - 卖出策略绩效统计
+ * - 一键执行卖出
  */
 class SimulationTradeFragment : Fragment() {
 
@@ -58,6 +52,7 @@ class SimulationTradeFragment : Fragment() {
     private lateinit var mainBoardSwitch: Switch
     private lateinit var resultsContainer: LinearLayout
     private lateinit var positionContainer: LinearLayout
+    private lateinit var reportDivider: View
 
     private var engine: StrategyEngine? = null
     private var screener: StockScreener? = null
@@ -65,9 +60,13 @@ class SimulationTradeFragment : Fragment() {
     private var selectedPeriods: Set<Int> = setOf(1)
     private var tradeEngine: SimulationTradeEngine? = null
     private var db: StockDatabase? = null
-    private var clearMode: Boolean = false  // 清空按钮状态：false=普通, true=可选中日期
-    private var selectedDateForClear: String? = null  // 选中的待清除日期
-    private var positionOrderDates: MutableMap<View, String> = mutableMapOf()  // 订单行 -> 日期映射
+    private var clearMode: Boolean = false
+    private var selectedDateForClear: String? = null
+    private var positionOrderDates: MutableMap<View, String> = mutableMapOf()
+    private var hasTradeReport: Boolean = false
+
+    // 卖出决策缓存
+    private var sellDecisionsCache: List<AutoSellEngine.SellDecision> = emptyList()
 
     companion object {
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
@@ -99,7 +98,7 @@ class SimulationTradeFragment : Fragment() {
     private fun buildUI() {
         // 标题
         rootLayout.addView(TextView(requireContext()).apply {
-            text = "🤖 模拟交易系统 v1.0"
+            text = "🤖 模拟交易系统 v2.0 (含智能卖出)"
             textSize = 18f
             setTextColor(Color.parseColor("#1A1A2E"))
             setTypeface(null, Typeface.BOLD)
@@ -131,7 +130,7 @@ class SimulationTradeFragment : Fragment() {
         progressRow.addView(statusTv)
         rootLayout.addView(progressRow)
 
-        // 操作按钮区
+        // 操作按钮区（模拟交易 + 智能卖出 合并一行）
         rootLayout.addView(createActionButtons())
 
         // 分割线
@@ -142,38 +141,53 @@ class SimulationTradeFragment : Fragment() {
             setBackgroundColor(Color.parseColor("#DDDDDD"))
         })
 
-        // ═══ 持仓视图（与结果区等高，各占 50%） ═══
+        // 持仓视图
         positionContainer = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                0, 1f  // 占50%高度
+                0, 1f
             )
             setPadding(8, 4, 8, 4)
         }
         rootLayout.addView(positionContainer)
 
-        // 分割线
-        rootLayout.addView(View(requireContext()).apply {
+        // 分割线（初始隐藏，有报告时显示）
+        reportDivider = View(requireContext()).apply {
+            visibility = View.GONE
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 1
             ).apply { topMargin = 4 }
             setBackgroundColor(Color.parseColor("#DDDDDD"))
-        })
+        }
+        rootLayout.addView(reportDivider)
 
-        // 结果区（与持仓视图等高）
+        // 结果区（初始隐藏，有报告时显示）
         resultsContainer = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0, 1f  // 占50%高度
-            )
+            visibility = View.GONE
             setPadding(8, 4, 8, 4)
         }
         rootLayout.addView(resultsContainer)
 
-        // 加载持仓数据
         refreshPositions()
+    }
+
+    private fun updateViewSplit() {
+        if (hasTradeReport) {
+            positionContainer.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            resultsContainer.visibility = View.VISIBLE
+            resultsContainer.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            reportDivider.visibility = View.VISIBLE
+        } else {
+            positionContainer.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            resultsContainer.visibility = View.GONE
+            reportDivider.visibility = View.GONE
+        }
+        rootLayout.requestLayout()
     }
 
     private fun createConfigSection(): View {
@@ -187,7 +201,6 @@ class SimulationTradeFragment : Fragment() {
             )
         }
 
-        // 第一行：交易日 + 主板过滤
         val row1 = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -223,186 +236,90 @@ class SimulationTradeFragment : Fragment() {
         row1.addView(mainBoardSwitch)
         container.addView(row1)
 
-        // 第二行：周期选择标签
         container.addView(TextView(requireContext()).apply {
             text = "📊 数据周期:"
-            textSize = 11f
-            setTextColor(Color.parseColor("#333333"))
-            setTypeface(null, Typeface.BOLD)
-            setPadding(0, 4, 0, 2)
+            textSize = 11f; setTextColor(Color.parseColor("#333333"))
+            setTypeface(null, Typeface.BOLD); setPadding(0, 4, 0, 2)
         })
 
-        // 第三行：周期选项
         periodCheckboxes = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, 0)
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, 0, 0, 0)
         }
-        val radioGroup = RadioGroup(requireContext()).apply {
-            orientation = RadioGroup.HORIZONTAL
-        }
+        val radioGroup = RadioGroup(requireContext()).apply { orientation = RadioGroup.HORIZONTAL }
         for ((period, label) in PERIOD_LABELS) {
             val rb = RadioButton(requireContext()).apply {
-                text = label
-                textSize = 11f
-                id = period
+                text = label; textSize = 11f; id = period
                 isChecked = period == selectedPeriods.firstOrNull()
-                setOnCheckedChangeListener { _, isChecked ->
-                    if (isChecked) selectedPeriods = setOf(period)
-                }
+                setOnCheckedChangeListener { _, isChecked -> if (isChecked) selectedPeriods = setOf(period) }
                 layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
+                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
                 ).apply { marginEnd = -4; marginStart = -4 }
             }
             radioGroup.addView(rb)
         }
         periodCheckboxes.addView(radioGroup)
         container.addView(periodCheckboxes)
-
         return container
     }
 
     private fun createActionButtons(): View {
         val row = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(8, 6, 8, 6)
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(4, 1, 4, 1)
         }
 
         executeBtn = Button(requireContext()).apply {
-            text = "▶ 模拟交易"
-            textSize = 12f
-            setTextColor(Color.WHITE)
+            text = "▶ 买入"; textSize = 10f; setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#E65100"))
-            setPadding(10, 6, 10, 6)
-            setMinWidth(0)
-            setMinimumWidth(0)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.2f).apply { marginEnd = 4 }
+            setPadding(4, 1, 4, 1); setMinWidth(0); setMinimumWidth(0)
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 1f).apply { marginEnd = 1 }
             setOnClickListener { executeTrade() }
-        }
-        row.addView(executeBtn)
+        }; row.addView(executeBtn)
 
         fittingBtn = Button(requireContext()).apply {
-            text = "🔧 调优(90%)"
-            textSize = 11f
-            setTextColor(Color.WHITE)
+            text = "🔧 调优"; textSize = 10f; setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#EF6C00"))
-            setPadding(8, 6, 8, 6)
-            setMinWidth(0)
-            setMinimumWidth(0)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.5f).apply { marginEnd = 4 }
-            setOnClickListener { showFittingParams() }  // 显示拟合历史数据
-        }
-        row.addView(fittingBtn)
+            setPadding(4, 1, 4, 1); setMinWidth(0); setMinimumWidth(0)
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.9f).apply { marginEnd = 1 }
+            setOnClickListener { showFittingParams() }
+        }; row.addView(fittingBtn)
 
-        // "回溯"按钮
         val backtrackBtn = Button(requireContext()).apply {
-            text = "📈 回溯"
-            textSize = 11f
-            setTextColor(Color.WHITE)
+            text = "📈 回溯"; textSize = 10f; setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#7B1FA2"))
-            setPadding(8, 6, 8, 6)
-            setMinWidth(0)
-            setMinimumWidth(0)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 4 }
+            setPadding(4, 1, 4, 1); setMinWidth(0); setMinimumWidth(0)
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.9f).apply { marginEnd = 1 }
             setOnClickListener { runNextDayBacktrack() }
-        }
-        row.addView(backtrackBtn)
+        }; row.addView(backtrackBtn)
 
-        // "数据"按钮（记录/导出/导入/统计）
         val dataBtn = Button(requireContext()).apply {
-            text = "🗄️ 数据"
-            textSize = 11f
-            setTextColor(Color.WHITE)
+            text = "🗄️ 数据"; textSize = 10f; setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#455A64"))
-            setPadding(8, 6, 8, 6)
-            setMinWidth(0)
-            setMinimumWidth(0)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 4 }
+            setPadding(4, 1, 4, 1); setMinWidth(0); setMinimumWidth(0)
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.9f).apply { marginEnd = 1 }
             setOnClickListener { showDataMenu() }
-        }
-        row.addView(dataBtn)
+        }; row.addView(dataBtn)
 
-        // "精选池"按钮 — 查看最终精选池
-        val poolBtn = Button(requireContext()).apply {
-            text = "📋 精选池"
-            textSize = 11f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#1565C0"))
-            setPadding(4, 6, 4, 6)
-            setMinWidth(0)
-            setMinimumWidth(0)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 2 }
-            setOnClickListener { showFinalPool() }
-        }
-        row.addView(poolBtn)
+        val sellMenuBtn = Button(requireContext()).apply {
+            text = "💰 卖出 ▾"; textSize = 10f; setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#00897B"))
+            setPadding(4, 1, 4, 1); setMinWidth(0); setMinimumWidth(0)
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 1.5f).apply { marginEnd = 1 }
+            setOnClickListener { showSellMenu(it) }
+        }; row.addView(sellMenuBtn)
 
-        // "清空"按钮（两击模式：一击进入日期选择, 再击清空）
         clearBtn = Button(requireContext()).apply {
-            text = "🗑️ 清空"
-            textSize = 11f
-            setTextColor(Color.WHITE)
+            text = "🗑️ 清除数据"; textSize = 9f; setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#C62828"))
-            setPadding(8, 6, 8, 6)
-            setMinWidth(0)
-            setMinimumWidth(0)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setPadding(4, 1, 4, 1); setMinWidth(0); setMinimumWidth(0)
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 1.2f)
             setOnClickListener { handleClearClick() }
-        }
-        row.addView(clearBtn)
+        }; row.addView(clearBtn)
 
         return row
     }
 
-    /** 查看最終精選池（從 DB 載入 strategyId="FINAL_POOL" 的記錄） */
-    private fun showFinalPool() {
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val db = StockDatabase.getInstance(requireContext())
-                val entities = db.dailyPeriodResultDao().getRecent(100)
-                    .filter { it.strategyId == "FINAL_POOL" }
-                    .sortedByDescending { it.tradeDate }
-                if (entities.isEmpty()) {
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(requireContext(), "暫無精選池記錄，請先執行模擬交易", Toast.LENGTH_SHORT).show()
-                    }
-                    return@launch
-                }
-                // 取最新一條
-                val latest = entities.first()
-                val codes = try { JSONArray(latest.stockCodesJson) } catch (_: Exception) { JSONArray() }
-                val crossDayJson = try { JSONArray(latest.finalTop3Json) } catch (_: Exception) { JSONArray() }
-                val sb = StringBuilder()
-                sb.appendLine("📋 9步精選最終池")
-                sb.appendLine("交易日: ${latest.tradeDate}")
-                sb.appendLine("共 ${latest.stockCount} 隻股票輸入AI")
-                sb.appendLine()
-                sb.appendLine("🔥 跨日聚合命中 Top10:")
-                for (i in 0 until crossDayJson.length()) {
-                    val obj = crossDayJson.getJSONObject(i)
-                    sb.appendLine("  ${obj.optString("code").takeLast(6)}: ${obj.optInt("days")}天命中")
-                }
-                sb.appendLine()
-                sb.appendLine("📊 完整精選池 (${codes.length()} 隻):")
-                for (i in 0 until minOf(codes.length(), 60)) {
-                    val code = codes.optString(i)
-                    sb.appendLine("  ${i+1}. $code")
-                }
-                if (codes.length() > 60) sb.appendLine("  ... 共 ${codes.length()} 隻，僅顯示前60")
-                withContext(Dispatchers.Main) {
-                    showDialog("精選池 - ${latest.tradeDate}", sb.toString())
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(requireContext(), "載入精選池失敗: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-    }
-
     // ═══════════════════════════════════════
-    // 核心功能
+    // 核心功能 - 模拟交易
     // ═══════════════════════════════════════
 
     private fun executeTrade() {
@@ -412,10 +329,8 @@ class SimulationTradeFragment : Fragment() {
             return
         }
 
-        executeBtn.isEnabled = false
-        executeBtn.text = "⏳ 执行中..."
-        progressBar.visibility = View.VISIBLE
-        statusTv.text = "正在执行模拟交易..."
+        executeBtn.isEnabled = false; executeBtn.text = "⏳ 执行中..."
+        progressBar.visibility = View.VISIBLE; statusTv.text = "正在执行模拟交易..."
 
         lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -423,46 +338,49 @@ class SimulationTradeFragment : Fragment() {
                     tradeDate = browsingDate.format(DATE_FMT),
                     periods = selectedPeriods.toList().sorted(),
                     onlyMainBoard = mainBoardSwitch.isChecked,
-                    maxFitRounds = 20 // 快速拟合
+                    maxFitRounds = 20
                 )
                 val strategies = eng.getStrategies().filter { eng.isEnabled(it.id) }
-
                 if (strategies.isEmpty()) {
                     withContext(Dispatchers.Main) {
-                    statusTv.text = "没有启用的策略"
-                        executeBtn.isEnabled = true
-                        executeBtn.text = "▶ 模拟交易"
+                        statusTv.text = "没有启用的策略"; executeBtn.isEnabled = true
+                        executeBtn.text = "▶ 模拟交易"; progressBar.visibility = View.GONE
+                    }; return@launch
+                }
+                if (tradeEngine == null) tradeEngine = SimulationTradeEngine(requireContext())
+                val report = tradeEngine!!.runTradeSession(strategies, config)
+                // 腾笼换鸟：买入前检查持仓数量，超过上限自动卖出最弱持股
+                val swappedCount = tradeEngine!!.swapWeakHoldings(strategies, report.buyOrders.size, browsingDate.format(DATE_FMT))
+                // 合并报告：把换股信息注入 summary
+                val finalReport = if (swappedCount > 0) {
+                    val holdingOrders = db?.strategyTradeOrderDao()?.getRecent(200)?.filter { it.status == "BUYING" }
+                    val soldStocks = db?.strategyTradeOrderDao()?.getRecent(300)?.filter { it.status == "SOLD" && it.sellTime.take(10) == browsingDate.format(DATE_FMT) }
+                    val swapInfo = SimulationTradeEngine.SwapInfo(
+                        beforeCount = (holdingOrders?.size ?: 0) + swappedCount,
+                        soldCount = swappedCount,
+                        soldStocks = soldStocks?.map { "${it.stockName}(${it.stockCode.takeLast(6)})${"%.2f".format(it.profitPct)}%" } ?: emptyList()
+                    )
+                    val newSummary = tradeEngine!!.buildEnhancedSummary(report.stepDetail, report.aiTop3, report.crossDayRanking, swapInfo)
+                    report.copy(summary = newSummary)
+                } else report
+                withContext(Dispatchers.Main) {
+                    try {
+                        saveBuyOrdersToDb(finalReport)
+                        showTradeReport(finalReport)
+                        refreshPositions()
+                        statusTv.text = "✅ 完成: ${report.summary.lines().firstOrNull()?.take(60) ?: "交易完成"}"
+                    } catch (uiEx: Exception) {
+                        Log.e("TradeUI", "UI update failed", uiEx)
+                        statusTv.text = "✅ 交易完成，但显示报告时出错"
+                    } finally {
+                        executeBtn.isEnabled = true; executeBtn.text = "▶ 模拟交易"
                         progressBar.visibility = View.GONE
                     }
-                    return@launch
                 }
-
-                // 引擎内部已自动处理：当天实时拉取，历史日期用K线API
-                if (tradeEngine == null) tradeEngine = SimulationTradeEngine(requireContext())
-
-                val report = tradeEngine!!.runTradeSession(strategies, config)
-
-                withContext(Dispatchers.Main) {
-                        try {
-                            // 保存买入订单到数据库
-                            saveBuyOrdersToDb(report)
-                            showTradeReport(report)
-                            refreshPositions() // 刷新持仓视图
-                            statusTv.text = "✅ 完成: ${report.summary.lines().firstOrNull()?.take(60) ?: "交易完成"}"
-                        } catch (uiEx: Exception) {
-                            Log.e("TradeUI", "UI update failed", uiEx)
-                            statusTv.text = "✅ 交易完成，但显示报告时出错"
-                        } finally {
-                            executeBtn.isEnabled = true
-                            executeBtn.text = "▶ 模拟交易"
-                            progressBar.visibility = View.GONE
-                        }
-                    }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     statusTv.text = "❌ 执行失败: ${e.message?.take(50)}"
-                    executeBtn.isEnabled = true
-                    executeBtn.text = "▶ 模拟交易"
+                    executeBtn.isEnabled = true; executeBtn.text = "▶ 模拟交易"
                     progressBar.visibility = View.GONE
                     Toast.makeText(requireContext(), "执行失败: ${e.message?.take(100)}", Toast.LENGTH_LONG).show()
                 }
@@ -472,19 +390,18 @@ class SimulationTradeFragment : Fragment() {
 
     private fun showTradeReport(report: SimulationTradeEngine.TradeSessionReport) {
         resultsContainer.removeAllViews()
-        val PERIOD_LABELS = mapOf(1 to "当日", 3 to "近3日", 10 to "近10日", 30 to "近30日", 50 to "近50日", 100 to "近100日")
+        hasTradeReport = true
+        updateViewSplit()
 
         val sv = ScrollView(requireContext())
         val c = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL; setPadding(8, 8, 8, 8) }
 
-        // 标题行
         c.addView(TextView(requireContext()).apply {
             text = "📊 模拟交易报告  ${report.config.tradeDate}"
             textSize = 15f; setTextColor(Color.parseColor("#1A1A2E")); setTypeface(null, Typeface.BOLD)
             setPadding(0, 8, 0, 8)
         })
 
-        // 表格: 策略|周期|精选3只|买入价|卖出价|收益
         val table = TableLayout(requireContext()).apply { isStretchAllColumns = true }
         val hr = TableRow(requireContext())
         for (h in listOf("策略", "周期", "精选3只", "买入价", "卖出价", "收益")) {
@@ -495,7 +412,6 @@ class SimulationTradeFragment : Fragment() {
         }
         table.addView(hr)
 
-        // 显示所有启用的策略 × 所有周期（含无信号的结果）
         val resultMap = report.periodResults.groupBy { it.strategyId to it.periodDays }
         val enabledStrategies = engine?.getStrategies()?.filter { engine!!.isEnabled(it.id) } ?: emptyList()
         for (strategy in enabledStrategies) {
@@ -509,14 +425,13 @@ class SimulationTradeFragment : Fragment() {
                 } else "⚠ 无信号"
                 val row = TableRow(requireContext())
                 if (hasResults && pr != null) { row.setOnClickListener { showDetailDialog(report, pr!!) } }
-
                 row.addView(TextView(requireContext()).apply {
                     text = name; textSize = 10f; setTextColor(Color.parseColor("#222222"))
                     setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER_VERTICAL; setPadding(1, 4, 1, 4)
                 })
                 row.addView(TextView(requireContext()).apply {
-                    text = periodLabel; textSize = 10f
-                    setTextColor(Color.parseColor("#333333")); gravity = Gravity.CENTER; setPadding(1, 4, 1, 4)
+                    text = periodLabel; textSize = 10f; setTextColor(Color.parseColor("#333333"))
+                    gravity = Gravity.CENTER; setPadding(1, 4, 1, 4)
                 })
                 row.addView(TextView(requireContext()).apply {
                     text = top3Text; textSize = 8f; setTextColor(Color.parseColor("#666666"))
@@ -539,15 +454,6 @@ class SimulationTradeFragment : Fragment() {
         }
         c.addView(table)
 
-        // 统计摘要
-        val totalSignals = report.periodResults.sumOf { it.rawStockSignals.size }
-        val totalTop3 = report.periodResults.sumOf { it.finalTop15.size }
-        c.addView(TextView(requireContext()).apply {
-            text = "\n📋 执行${report.periodResults.map { it.strategyId }.distinct().size}个策略/${report.periodResults.size}个周期结果，原始信号${totalSignals}只，精选${totalTop3}只"
-            textSize = 10f; setTextColor(Color.parseColor("#999999")); setPadding(0, 8, 0, 4)
-        })
-
-        // AI精选
         if (report.aiTop3.isNotEmpty()) {
             c.addView(View(requireContext()).apply {
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1).apply { topMargin = 8; bottomMargin = 4 }
@@ -587,13 +493,185 @@ class SimulationTradeFragment : Fragment() {
             }
         }
         if (pr.filteredStocks.isNotEmpty()) {
-            s.appendLine()
-            s.appendLine("🚫 被过滤(${pr.filteredStocks.size}只):")
-            for (f in pr.filteredStocks.take(5)) {
-                s.appendLine("  ${f.stockName}: ${f.reason}")
-            }
+            s.appendLine(); s.appendLine("🚫 被过滤(${pr.filteredStocks.size}只):")
+            for (f in pr.filteredStocks.take(5)) s.appendLine("  ${f.stockName}: ${f.reason}")
         }
         showDialog(pr.strategyName, s.toString())
+    }
+
+    // ═══════════════════════════════════════
+    // 自动卖出
+    // ═══════════════════════════════════════
+
+    /** 卖出下拉菜单 */
+    private fun showSellMenu(anchor: View) {
+        val popup = PopupMenu(requireContext(), anchor, Gravity.END)
+        popup.menu.add(0, 1, 0, "💰 卖出评估")
+        popup.menu.add(0, 2, 0, "📊 卖出绩效")
+        popup.menu.add(0, 3, 0, "⚡ 执行卖出")
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                1 -> runAutoSellEvaluation()
+                2 -> showSellPerformance()
+                3 -> executeAutoSell()
+            }
+            true
+        }
+        popup.show()
+    }
+
+    /** 仅评估卖出信号（不执行） */
+    private fun runAutoSellEvaluation() {
+        val eng = engine ?: return
+        progressBar.visibility = View.VISIBLE; statusTv.text = "正在评估卖出信号..."
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val strategies = eng.getStrategies().filter { eng.isEnabled(it.id) }
+                val te = tradeEngine ?: return@launch
+                val decisions = te.runAutoSellEvaluate(strategies, browsingDate.format(DATE_FMT))
+                sellDecisionsCache = decisions
+                withContext(Dispatchers.Main) {
+                    progressBar.visibility = View.GONE
+                    val shouldSell = decisions.count { it.shouldSell }
+                    val holding = decisions.size
+                    statusTv.text = "💰 卖出评估: $holding 持仓, $shouldSell 触发卖出"
+                    showSellDecisionsDialog(decisions)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    progressBar.visibility = View.GONE
+                    statusTv.text = "❌ 卖出评估失败: ${e.message?.take(40)}"
+                }
+            }
+        }
+    }
+
+    /** 执行卖出（使用缓存的决策） */
+    private fun executeAutoSell() {
+        if (sellDecisionsCache.isEmpty()) {
+            // 没有缓存，先评估
+            runAutoSellEvaluation()
+            // 简单提示用户等待评估完成后再点击执行
+            Toast.makeText(requireContext(), "请等待评估完成后再次点击「执行卖出」", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val shouldSell = sellDecisionsCache.filter { it.shouldSell }
+        if (shouldSell.isEmpty()) {
+            Toast.makeText(requireContext(), "当前没有需要卖出的持仓", Toast.LENGTH_SHORT).show()
+            return
+        }
+        progressBar.visibility = View.VISIBLE; statusTv.text = "正在执行卖出..."
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val te = tradeEngine ?: return@launch
+                te.runAutoSell(engine?.getStrategies()?.filter { engine!!.isEnabled(it.id) } ?: emptyList(),
+                    browsingDate.format(DATE_FMT))
+                withContext(Dispatchers.Main) {
+                    progressBar.visibility = View.GONE
+                    statusTv.text = "✅ 已执行 ${shouldSell.size} 笔卖出"
+                    refreshPositions()
+                    sellDecisionsCache = emptyList()
+                    Toast.makeText(requireContext(), "已卖出 ${shouldSell.size} 笔订单", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    progressBar.visibility = View.GONE
+                    statusTv.text = "❌ 卖出执行失败: ${e.message?.take(40)}"
+                }
+            }
+        }
+    }
+
+    private fun showSellDecisionsDialog(decisions: List<AutoSellEngine.SellDecision>) {
+        val sb = StringBuilder()
+        sb.appendLine("💰 智能卖出评估报告"); sb.appendLine("交易日: ${browsingDate.format(DATE_FMT)}")
+        sb.appendLine("共 ${decisions.size} 个持仓评估"); sb.appendLine()
+
+        val sellList = decisions.filter { it.shouldSell }.sortedByDescending { it.urgency }
+        val holdList = decisions.filter { !it.shouldSell }
+
+        if (sellList.isNotEmpty()) {
+            sb.appendLine("🔴 卖出信号 (${sellList.size}个):")
+            for (d in sellList) {
+                val emoji = when {
+                    d.urgency >= 9 -> "🚨"
+                    d.urgency >= 7 -> "⚠️"
+                    d.urgency >= 5 -> "📢"
+                    else -> "🔔"
+                }
+                sb.appendLine("  $emoji ${d.order.stockName}(${d.order.stockCode.takeLast(6)})")
+                sb.appendLine("    触发: ${d.strategy} | 盈亏: ${"%.2f".format(d.profitPct)}% | 卖出比例: ${(d.sellRatio * 100).toInt()}%")
+                sb.appendLine("    原因: ${d.reason.take(80)}")
+                if (d.technicalDetails.isNotEmpty()) {
+                    d.technicalDetails.forEach { (k, v) -> sb.appendLine("    $k=$v") }
+                }
+                sb.appendLine()
+            }
+        }
+
+        if (holdList.isNotEmpty()) {
+            sb.appendLine("🟢 继续持有 (${holdList.size}个):")
+            for (d in holdList) {
+                sb.appendLine("  ✅ ${d.order.stockName}(${d.order.stockCode.takeLast(6)}) 盈亏: ${"%.2f".format(d.profitPct)}%")
+                if (d.technicalDetails.isNotEmpty()) {
+                    val tech = d.technicalDetails
+                    sb.append("    MA5:${tech["ma5"] ?: "N/A"} MA20:${tech["ma20"] ?: "N/A"} RSI:${tech["rsi"] ?: "N/A"} ATR:${tech["atr"] ?: "N/A"}")
+                    sb.appendLine()
+                }
+            }
+        }
+
+        showDialog("卖出评估报告", sb.toString())
+    }
+
+    /** 查看卖出策略历史绩效 */
+    private fun showSellPerformance() {
+        progressBar.visibility = View.VISIBLE; statusTv.text = "正在统计卖出绩效..."
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val te = tradeEngine ?: return@launch
+                val stats = te.getSellPerformance(90)
+                withContext(Dispatchers.Main) {
+                    progressBar.visibility = View.GONE; statusTv.text = "✅ 卖出绩效已加载"
+                    if (stats.isEmpty()) {
+                        showDialog("卖出绩效", "暂无卖出记录，无法统计绩效")
+                        return@withContext
+                    }
+                    val sb = StringBuilder()
+                    sb.appendLine("📊 卖出策略绩效统计 (最近90天)"); sb.appendLine()
+                    sb.appendLine("策略            卖出数  均收益   胜率    最大赢   最大亏   均持仓")
+                    sb.appendLine("──────────────────────────────────────────────────────")
+                    for (s in stats) {
+                        val name = when (s.strategyName) {
+                            "HardStop" -> "硬止损"
+                            "MaxDrawdown" -> "最大回撤"
+                            "TimeForceClose" -> "时间强平"
+                            "TimeNoProgress" -> "时间无进展"
+                            "TieredTP" -> "阶梯止盈"
+                            "ChandelierExit" -> "吊灯止损"
+                            "TrailProfit" -> "移动止盈"
+                            "MADeathCross" -> "MA死叉"
+                            "VolumeClimax" -> "放量滞涨"
+                            "RSIOverbought" -> "RSI超买"
+                            "SectorWeakness" -> "板块弱势"
+                            "TakeProfit" -> "目标止盈"
+                            "ATRStop" -> "ATR止损"
+                            "MomentumDecay" -> "动量衰竭"
+                            "Other" -> "其他"
+                            else -> s.strategyName.take(6)
+                        }
+                        sb.appendLine("${name.padEnd(10)} ${s.totalSells.toString().padEnd(6)} ${"%.2f".format(s.avgProfitPct).padStart(7)}% ${"%.0f".format(s.winRate * 100).padStart(5)}% ${"%.2f".format(s.maxProfitPct).padStart(7)}% ${"%.2f".format(s.maxLossPct).padStart(7)}% ${"%.1f".format(s.avgDaysHeld).padStart(4)}天")
+                    }
+                    sb.appendLine(); sb.appendLine("💡 综合表现排名基于: 胜率 × 平均收益")
+                    showDialog("卖出绩效", sb.toString())
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    progressBar.visibility = View.GONE
+                    statusTv.text = "❌ 绩效统计失败: ${e.message?.take(40)}"
+                }
+            }
+        }
     }
 
     // ═══════════════════════════════════════
@@ -606,43 +684,26 @@ class SimulationTradeFragment : Fragment() {
                 val db = StockDatabase.getInstance(requireContext())
                 val orders = db.strategyTradeOrderDao().getRecent(100)
                 val periodResults = db.dailyPeriodResultDao().getAvailableDates(30)
-
                 withContext(Dispatchers.Main) {
                     val sb = StringBuilder()
-                    sb.appendLine("📋 交易记录 (最近100条)")
-                    sb.appendLine()
-
-                    if (orders.isEmpty()) {
-                        sb.appendLine("暂无交易记录")
-                    } else {
-                        for (order in orders) {
-                            val statusEmoji = when (order.status) {
-                                "SOLD" -> "✅"
-                                "BUYING" -> "🟢"
-                                "FAILED" -> "❌"
-                                else -> "⏳"
-                            }
-                            sb.appendLine("$statusEmoji ${order.stockName}(${order.stockCode.takeLast(6)})")
-                            sb.appendLine("   买入: ${order.tradeDate} ¥${"%.2f".format(order.buyPrice)} x${order.quantity}")
-                            if (order.status == "SOLD") {
-                                val profitStr = if (order.profitPct >= 0) "+${"%.2f".format(order.profitPct)}%" else "${"%.2f".format(order.profitPct)}%"
-                                sb.appendLine("   卖出: ¥${"%.2f".format(order.sellPrice)} 收益: $profitStr")
-                            } else {
-                                sb.appendLine("   状态: ${order.status}")
-                            }
-                            sb.appendLine()
-                        }
+                    sb.appendLine("📋 交易记录 (最近100条)"); sb.appendLine()
+                    if (orders.isEmpty()) sb.appendLine("暂无交易记录")
+                    else for (order in orders) {
+                        val statusEmoji = when (order.status) { "SOLD"->"✅"; "BUYING"->"🟢"; "FAILED"->"❌"; else->"⏳" }
+                        sb.appendLine("$statusEmoji ${order.stockName}(${order.stockCode.takeLast(6)})")
+                        sb.appendLine("   买入: ${order.tradeDate} ¥${"%.2f".format(order.buyPrice)} x${order.quantity}")
+                        if (order.status == "SOLD") {
+                            val profitStr = if (order.profitPct >= 0) "+${"%.2f".format(order.profitPct)}%" else "${"%.2f".format(order.profitPct)}%"
+                            sb.appendLine("   卖出: ¥${"%.2f".format(order.sellPrice)} 收益: $profitStr")
+                        } else sb.appendLine("   状态: ${order.status}")
+                        sb.appendLine()
                     }
-
                     sb.appendLine("📊 策略周期结果 (最近30天)")
                     sb.appendLine("可查看的交易日: ${periodResults.joinToString(", ").take(100)}...")
-
                     showDialog("交易记录", sb.toString())
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(requireContext(), "加载失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
+                withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "加载失败: ${e.message}", Toast.LENGTH_SHORT).show() }
             }
         }
     }
@@ -654,272 +715,38 @@ class SimulationTradeFragment : Fragment() {
     private fun showFittingParams() {
         val eng = engine ?: return
         val strategies = eng.getStrategies()
-
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val db = StockDatabase.getInstance(requireContext())
                 val sb = StringBuilder()
-                sb.appendLine("🔧 调优拟合参数")
-                sb.appendLine()
-
+                sb.appendLine("🔧 调优拟合参数"); sb.appendLine()
                 for (strategy in strategies) {
                     sb.appendLine("【${strategy.name}】")
-                    val params = db.strategyTradeFittingParamDao()
-                        .getRecentByStrategy(strategy.id, 50)
-                    if (params.isEmpty()) {
-                        sb.appendLine("  暂无拟合数据")
-                    } else {
-                        // 按周期分组
+                    val params = db.strategyTradeFittingParamDao().getRecentByStrategy(strategy.id, 50)
+                    if (params.isEmpty()) sb.appendLine("  暂无拟合数据")
+                    else {
                         val byPeriod = params.groupBy { it.periodDays }
                         for ((period, items) in byPeriod) {
-                            val best = items.maxByOrNull { it.accuracy }
-                            val worst = items.minByOrNull { it.accuracy }
+                            val best = items.maxByOrNull { it.accuracy }; val worst = items.minByOrNull { it.accuracy }
                             sb.appendLine("  [${period}日] ${items.size}条")
-                            if (best != null) {
-                                sb.appendLine("    最佳: 准确率${"%.2f".format(best.accuracy * 100)}% 平均收益${"%.2f".format(best.avgReturn)}%")
-                            }
-                            if (worst != null) {
-                                sb.appendLine("    最差: 准确率${"%.2f".format(worst.accuracy * 100)}% 平均收益${"%.2f".format(worst.avgReturn)}%")
-                            }
+                            if (best != null) sb.appendLine("    最佳: 准确率${"%.2f".format(best.accuracy * 100)}% 平均收益${"%.2f".format(best.avgReturn)}%")
+                            if (worst != null) sb.appendLine("    最差: 准确率${"%.2f".format(worst.accuracy * 100)}% 平均收益${"%.2f".format(worst.avgReturn)}%")
                         }
                     }
                     sb.appendLine()
                 }
-
-                withContext(Dispatchers.Main) {
-                    showDialog("拟合参数", sb.toString())
-                }
+                withContext(Dispatchers.Main) { showDialog("拟合参数", sb.toString()) }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(requireContext(), "加载失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
+                withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "加载失败: ${e.message}", Toast.LENGTH_SHORT).show() }
             }
         }
     }
-
-    // ═══════════════════════════════════════
-    // 导出数据
-    // ═══════════════════════════════════════
-
-    private fun exportTradeData() {
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val db = StockDatabase.getInstance(requireContext())
-                val orders = db.strategyTradeOrderDao().getRecent(1000)
-                val periodResults = db.dailyPeriodResultDao().getRecent(200)
-
-                val sb = StringBuilder()
-                sb.appendLine("模拟交易数据导出")
-                sb.appendLine("导出时间: ${LocalDate.now()}")
-                sb.appendLine()
-
-                sb.appendLine("=== 交易订单 ===")
-                sb.appendLine("日期,策略,股票代码,股票名称,买入价,数量,状态,卖出价,收益%")
-                for (order in orders) {
-                    sb.appendLine("${order.tradeDate},${order.strategyId},${order.stockCode},${order.stockName},${order.buyPrice},${order.quantity},${order.status},${order.sellPrice},${order.profitPct}")
-                }
-
-                sb.appendLine()
-                sb.appendLine("=== 策略周期结果 ===")
-                for (result in periodResults) {
-                    val top3 = try {
-                        val arr = JSONArray(result.finalTop3Json)
-                        (0 until arr.length()).joinToString(", ") { arr.optString(it, "") }
-                    } catch (_: Exception) { "" }
-                    sb.appendLine("${result.tradeDate},${result.strategyName}[${result.periodDays}日],${result.stockCount}只,${result.newsStrengthScore},${result.rotationPenalty},${top3.take(100)}")
-                }
-
-                // 加入最終精選池數據
-                sb.appendLine()
-                sb.appendLine("=== 9步精選最終池 ===")
-                val finalPoolEntities = db.dailyPeriodResultDao().getRecent(50)
-                    .filter { it.strategyId == "FINAL_POOL" }
-                for (entity in finalPoolEntities) {
-                    val codes = try { JSONArray(entity.stockCodesJson).length() } catch (_: Exception) { 0 }
-                    val crossDayJson = try { JSONArray(entity.finalTop3Json) } catch (_: Exception) { JSONArray() }
-                    val crossDayStr = (0 until crossDayJson.length()).joinToString("; ") { i ->
-                        val obj = crossDayJson.getJSONObject(i)
-                        "${obj.optString("code").takeLast(6)}:${obj.optInt("days")}天"
-                    }
-                    sb.appendLine("${entity.tradeDate},FINAL_POOL,${codes}隻,${crossDayStr}")
-                }
-
-                // 显示导出内容
-                withContext(Dispatchers.Main) {
-                    showDialog("导出数据", sb.toString())
-                    Toast.makeText(requireContext(), "数据已生成（可复制）", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(requireContext(), "导出失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-    }
-
-    // ═══════════════════════════════════════
-    // 次日回溯 - 检查昨日买入股票的涨跌
-    // ═══════════════════════════════════════
-
-    /**
-     * 运行次日回溯复盘
-     * 
-     * 增强功能：
-     * 1. 检查所有 BUYING 订单在次日的涨跌，自动更新卖出状态
-     * 2. 对亏损订单：重新执行全部策略筛选，分析落选股中次日表现优异的
-     * 3. 分析过滤原因并重新调优拟合参数
-     * 4. 将优化参数和数据固化到数据库
-     */
-    private fun runNextDayBacktrack() {
-        val eng = engine ?: return
-        val te = tradeEngine ?: return
-
-        executeBtn.isEnabled = false
-        executeBtn.text = "⏳ 回溯中..."
-        progressBar.visibility = View.VISIBLE
-        statusTv.text = "正在执行回溯复盘..."
-
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val db = StockDatabase.getInstance(requireContext())
-                val strategies = eng.getStrategies().filter { eng.isEnabled(it.id) }
-
-                // 获取所有 BUYING 状态的订单
-                val buyingOrders = getBuyingOrders(db)
-                val boughtStocks = buyingOrders.map { it.stockCode }.toSet()
-
-                // 更新每个订单的卖出状态
-                for (order in buyingOrders) {
-                    val nextDate = getNextTradingDayFromDB(order.tradeDate)
-                    if (nextDate == null) continue
-                    val nextDaySnaps = db.dailySnapshotDao().getByDate(nextDate)
-                    val nextDayStock = nextDaySnaps.find { it.code == order.stockCode }
-                    if (nextDayStock != null) {
-                        val sellPrice = nextDayStock.close
-                        val profitPct = (sellPrice - order.buyPrice) / order.buyPrice * 100
-                        db.strategyTradeOrderDao().updateSellInfo(
-                            id = order.id,
-                            status = "SOLD",
-                            sellPrice = sellPrice,
-                            sellTime = "$nextDate 15:00",
-                            profitPct = profitPct
-                        )
-                    }
-                }
-
-                // 获取原始交易会话的结果（用于对比落选股）
-                val oldSessionResults = buyingOrders
-                    .map { it.tradeDate }
-                    .distinct()
-                    .flatMap { db.dailyPeriodResultDao().getByDate(it) }
-
-                // 构建旧结果对象
-                val oldResults = oldSessionResults.mapNotNull { entity ->
-                    if (entity.strategyId == "BACKTRACK") return@mapNotNull null
-                    SimulationTradeEngine.StrategyPeriodResult(
-                        strategyId = entity.strategyId,
-                        strategyName = entity.strategyName,
-                        periodDays = entity.periodDays,
-                        tradeDate = entity.tradeDate,
-                        rawStockSignals = emptyList(),
-                        newsStrengthScore = entity.newsStrengthScore,
-                        rotationPenalty = entity.rotationPenalty,
-                        afterMainBoardFilter = emptyList(),
-                        filteredStocks = emptyList(),
-                        finalTop15 = try {
-                            val arr = JSONArray(entity.finalTop3Json)
-                            (0 until arr.length()).map { i ->
-                                val obj = arr.getJSONObject(i)
-                                com.chin.stockanalysis.strategy.models.StrategySignal(
-                                    strategyId = entity.strategyId,
-                                    category = com.chin.stockanalysis.strategy.StrategyCategory.CUSTOM,
-                                    stockCode = obj.optString("code"),
-                                    stockName = obj.optString("name"),
-                                    strength = obj.optInt("score"),
-                                    reason = obj.optString("reason"),
-                                    action = com.chin.stockanalysis.strategy.models.SignalAction.BUY
-                                )
-                            }
-                        } catch (_: Exception) { emptyList() }
-                    )
-                }
-
-                // 按交易日分组执行回溯
-                val tradeDates = buyingOrders.map { it.tradeDate }.distinct()
-                val allReports = mutableListOf<SimulationTradeEngine.BacktrackReport>()
-
-                for (tradeDate in tradeDates) {
-                    val config = SimulationTradeEngine.TradeSessionConfig(
-                        tradeDate = tradeDate,
-                        periods = selectedPeriods.toList().sorted().ifEmpty { listOf(1) },
-                        onlyMainBoard = mainBoardSwitch.isChecked,
-                        maxFitRounds = 100
-                    )
-                    val report = te.backtrackAndOptimize(
-                        strategies = strategies,
-                        config = config,
-                        oldSessionResults = oldResults.filter { it.tradeDate == tradeDate },
-                        boughtStocks = boughtStocks
-                    )
-                    allReports.add(report)
-                }
-
-                // 汇总显示
-                withContext(Dispatchers.Main) {
-                    val sb = StringBuilder()
-                    sb.appendLine("📈 回溯复盘优化报告")
-                    sb.appendLine("回溯日期: ${LocalDate.now().format(DATE_FMT)}")
-                    sb.appendLine("处理交易日: ${tradeDates.joinToString(", ")}")
-                    sb.appendLine()
-
-                    for (report in allReports) {
-                        sb.appendLine(report.summary)
-                        sb.appendLine()
-                    }
-
-                    showDialog("回溯复盘", sb.toString())
-                    executeBtn.isEnabled = true
-                    executeBtn.text = "▶ 模拟交易"
-                    progressBar.visibility = View.GONE
-                    statusTv.text = "✅ 回溯完成: ${allReports.sumOf { it.buyOrdersAnalyzed.size }}笔订单, " +
-                            "${allReports.sumOf { it.missedOpportunities.size }}个遗漏机会"
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    executeBtn.isEnabled = true
-                    executeBtn.text = "▶ 模拟交易"
-                    progressBar.visibility = View.GONE
-                    statusTv.text = "❌ 回溯失败: ${e.message?.take(50)}"
-                    Toast.makeText(requireContext(), "回溯失败: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            }
-        }
-    }
-
-    private suspend fun getBuyingOrders(db: StockDatabase): List<StrategyTradeOrderEntity> {
-        val all = db.strategyTradeOrderDao().getRecent(100)
-        return all.filter { it.status == "BUYING" }
-    }
-
-    private suspend fun getNextTradingDayFromDB(date: String): String? {
-        return try {
-            val db = StockDatabase.getInstance(requireContext())
-            val dates = db.dailySnapshotDao().getAvailableDates(10)
-            val sorted = dates.sorted()
-            val idx = sorted.indexOf(date)
-            if (idx >= 0 && idx + 1 < sorted.size) sorted[idx + 1] else null
-        } catch (_: Exception) { null }
-    }
-
-    // ═══════════════════════════════════════
-    // 导入/导出
-    // ═══════════════════════════════════════
 
     private fun showDataMenu() {
         val exporter = DataExportImport(requireContext())
-
         val options = arrayOf(
             "📋 查看交易记录",
+            "📊 模拟交易报告 (历史)",
             "📊 查看精選池",
             "📤 导出交易数据 (CSV文本)",
             "📤 导出 JSON (全部数据)",
@@ -928,171 +755,208 @@ class SimulationTradeFragment : Fragment() {
             "📥 导入 JSON 数据",
             "📊 数据库统计信息"
         )
-
         androidx.appcompat.app.AlertDialog.Builder(requireContext())
             .setTitle("数据中心")
             .setItems(options) { _, which ->
                 when (which) {
                     0 -> showTradeHistory()
-                    1 -> showFinalPool()
-                    2 -> exportTradeData()
-                    3 -> exportToJson(exporter)
-                    4 -> exportToCsv(exporter)
-                    5 -> showExportFiles(exporter)
-                    6 -> showImportDialog(exporter)
-                    7 -> showDbStats(exporter)
+                    1 -> showTradeReportsHistory()
+                    2 -> showFinalPool()
+                    3 -> exportTradeData()
+                    4 -> exportToJson(exporter)
+                    5 -> exportToCsv(exporter)
+                    6 -> showExportFiles(exporter)
+                    7 -> showImportDialog(exporter)
+                    8 -> showDbStats(exporter)
                 }
             }
-            .setNegativeButton("关闭", null)
-            .show()
+            .setNegativeButton("关闭", null).show()
     }
+
+    /** 查看历史模拟交易报告 */
+    private fun showTradeReportsHistory() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val entities = db.dailyPeriodResultDao().getRecent(100)
+                    .filter { it.strategyId != "FINAL_POOL" && it.strategyId != "BACKTRACK" }
+                if (entities.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(requireContext(), "暂无模拟交易报告记录", Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+                val grouped = entities.groupBy { it.tradeDate }
+                val sb = StringBuilder()
+                sb.appendLine("📊 模拟交易报告历史 (共 ${entities.size} 条)")
+                sb.appendLine()
+                for ((date, items) in grouped.toSortedMap().entries.reversed().take(10)) {
+                    sb.appendLine("━━━ ${date} ━━━")
+                    for (item in items) {
+                        val top3Json = try {
+                            JSONArray(item.finalTop3Json)
+                        } catch (_: Exception) { JSONArray() }
+                        sb.appendLine("  ${item.strategyName}[${item.periodDays}日]: ${item.stockCount}只信号")
+                        if (top3Json.length() > 0) {
+                            for (i in 0 until minOf(top3Json.length(), 3)) {
+                                val obj = top3Json.optJSONObject(i) ?: continue
+                                sb.appendLine("    Top${i+1}: ${obj.optString("code").takeLast(6)} 得分:${obj.optInt("score")}")
+                            }
+                        }
+                    }
+                    sb.appendLine()
+                }
+                withContext(Dispatchers.Main) { showDialog("模拟交易报告历史", sb.toString()) }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "加载失败: ${e.message}", Toast.LENGTH_SHORT).show() }
+            }
+        }
+    }
+
+    private fun exportTradeData() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val orders = db.strategyTradeOrderDao().getRecent(1000)
+                val periodResults = db.dailyPeriodResultDao().getRecent(200)
+                val sb = StringBuilder()
+                sb.appendLine("模拟交易数据导出"); sb.appendLine("导出时间: ${LocalDate.now()}"); sb.appendLine()
+                sb.appendLine("=== 交易订单 ===")
+                sb.appendLine("日期,策略,股票代码,股票名称,买入价,数量,状态,卖出价,收益%")
+                for (order in orders) sb.appendLine("${order.tradeDate},${order.strategyId},${order.stockCode},${order.stockName},${order.buyPrice},${order.quantity},${order.status},${order.sellPrice},${order.profitPct}")
+                sb.appendLine(); sb.appendLine("=== 策略周期结果 ===")
+                for (result in periodResults) {
+                    val top3 = try { val arr = JSONArray(result.finalTop3Json); (0 until arr.length()).joinToString(", ") { arr.optString(it, "") } } catch (_: Exception) { "" }
+                    sb.appendLine("${result.tradeDate},${result.strategyName}[${result.periodDays}日],${result.stockCount}只,${result.newsStrengthScore},${result.rotationPenalty},${top3.take(100)}")
+                }
+                sb.appendLine(); sb.appendLine("=== 9步精選最終池 ===")
+                val finalPoolEntities = db.dailyPeriodResultDao().getRecent(50).filter { it.strategyId == "FINAL_POOL" }
+                for (entity in finalPoolEntities) {
+                    val codes = try { JSONArray(entity.stockCodesJson).length() } catch (_: Exception) { 0 }
+                    val crossDayJson = try { JSONArray(entity.finalTop3Json) } catch (_: Exception) { JSONArray() }
+                    val crossDayStr = (0 until crossDayJson.length()).joinToString("; ") { i -> val obj = crossDayJson.getJSONObject(i); "${obj.optString("code").takeLast(6)}:${obj.optInt("days")}天" }
+                    sb.appendLine("${entity.tradeDate},FINAL_POOL,${codes}隻,${crossDayStr}")
+                }
+                withContext(Dispatchers.Main) { showDialog("导出数据", sb.toString()); Toast.makeText(requireContext(), "数据已生成（可复制）", Toast.LENGTH_SHORT).show() }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "导出失败: ${e.message}", Toast.LENGTH_SHORT).show() }
+            }
+        }
+    }
+
+    private fun runNextDayBacktrack() {
+        val eng = engine ?: return; val te = tradeEngine ?: return
+        executeBtn.isEnabled = false; executeBtn.text = "⏳ 回溯中..."
+        progressBar.visibility = View.VISIBLE; statusTv.text = "正在执行回溯复盘..."
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val strategies = eng.getStrategies().filter { eng.isEnabled(it.id) }
+                val buyingOrders = getBuyingOrders(db)
+                val boughtStocks = buyingOrders.map { it.stockCode }.toSet()
+                for (order in buyingOrders) {
+                    val nextDate = getNextTradingDayFromDB(order.tradeDate) ?: continue
+                    val nextDaySnaps = db.dailySnapshotDao().getByDate(nextDate)
+                    val nextDayStock = nextDaySnaps.find { it.code == order.stockCode }
+                    if (nextDayStock != null) {
+                        val sellPrice = nextDayStock.close
+                        val profitPct = (sellPrice - order.buyPrice) / order.buyPrice * 100
+                        db.strategyTradeOrderDao().updateSellInfo(id = order.id, status = "SOLD", sellPrice = sellPrice, sellTime = "$nextDate 15:00", profitPct = profitPct)
+                    }
+                }
+                val oldSessionResults = buyingOrders.map { it.tradeDate }.distinct().flatMap { db.dailyPeriodResultDao().getByDate(it) }
+                val oldResults = oldSessionResults.mapNotNull { entity ->
+                    if (entity.strategyId == "BACKTRACK") return@mapNotNull null
+                    SimulationTradeEngine.StrategyPeriodResult(strategyId = entity.strategyId, strategyName = entity.strategyName, periodDays = entity.periodDays, tradeDate = entity.tradeDate, rawStockSignals = emptyList(), newsStrengthScore = entity.newsStrengthScore, rotationPenalty = entity.rotationPenalty, afterMainBoardFilter = emptyList(), filteredStocks = emptyList(), finalTop15 = try { val arr = JSONArray(entity.finalTop3Json); (0 until arr.length()).map { i -> val obj = arr.getJSONObject(i); com.chin.stockanalysis.strategy.models.StrategySignal(strategyId = entity.strategyId, category = com.chin.stockanalysis.strategy.StrategyCategory.CUSTOM, stockCode = obj.optString("code"), stockName = obj.optString("name"), strength = obj.optInt("score"), reason = obj.optString("reason"), action = com.chin.stockanalysis.strategy.models.SignalAction.BUY) } } catch (_: Exception) { emptyList() })
+                }
+                val tradeDates = buyingOrders.map { it.tradeDate }.distinct()
+                val allReports = mutableListOf<SimulationTradeEngine.BacktrackReport>()
+                for (tradeDate in tradeDates) {
+                    val config = SimulationTradeEngine.TradeSessionConfig(tradeDate = tradeDate, periods = selectedPeriods.toList().sorted().ifEmpty { listOf(1) }, onlyMainBoard = mainBoardSwitch.isChecked, maxFitRounds = 100)
+                    allReports.add(te.backtrackAndOptimize(strategies = strategies, config = config, oldSessionResults = oldResults.filter { it.tradeDate == tradeDate }, boughtStocks = boughtStocks))
+                }
+                withContext(Dispatchers.Main) {
+                    val sb = StringBuilder()
+                    sb.appendLine("📈 回溯复盘优化报告"); sb.appendLine("回溯日期: ${LocalDate.now().format(DATE_FMT)}")
+                    sb.appendLine("处理交易日: ${tradeDates.joinToString(", ")}"); sb.appendLine()
+                    for (report in allReports) { sb.appendLine(report.summary); sb.appendLine() }
+                    showDialog("回溯复盘", sb.toString())
+                    executeBtn.isEnabled = true; executeBtn.text = "▶ 模拟交易"; progressBar.visibility = View.GONE
+                    statusTv.text = "✅ 回溯完成: ${allReports.sumOf { it.buyOrdersAnalyzed.size }}笔订单, ${allReports.sumOf { it.missedOpportunities.size }}个遗漏机会"
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { executeBtn.isEnabled = true; executeBtn.text = "▶ 模拟交易"; progressBar.visibility = View.GONE; statusTv.text = "❌ 回溯失败: ${e.message?.take(50)}"; Toast.makeText(requireContext(), "回溯失败: ${e.message}", Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
+
+    private suspend fun getBuyingOrders(db: StockDatabase): List<StrategyTradeOrderEntity> = db.strategyTradeOrderDao().getRecent(100).filter { it.status == "BUYING" }
+
+    private suspend fun getNextTradingDayFromDB(date: String): String? = try {
+        val db = StockDatabase.getInstance(requireContext()); val dates = db.dailySnapshotDao().getAvailableDates(10).sorted(); val idx = dates.indexOf(date); if (idx >= 0 && idx + 1 < dates.size) dates[idx + 1] else null
+    } catch (_: Exception) { null }
 
     private fun exportToJson(exporter: DataExportImport) {
         lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val path = exporter.exportAllToJson()
-                withContext(Dispatchers.Main) {
-                    showDialog("导出成功", "文件已保存到:\n$path\n\n可以通过文件管理器复制到电脑/其他手机使用")
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(requireContext(), "导出失败: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            }
+            try { val path = exporter.exportAllToJson(); withContext(Dispatchers.Main) { showDialog("导出成功", "文件已保存到:\n$path\n\n可以通过文件管理器复制到电脑/其他手机使用") } }
+            catch (e: Exception) { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "导出失败: ${e.message}", Toast.LENGTH_LONG).show() } }
         }
     }
-
     private fun exportToCsv(exporter: DataExportImport) {
         lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val files = exporter.exportAllToCsv()
-                val sb = StringBuilder()
-                sb.appendLine("CSV 文件已保存:")
-                for (f in files) {
-                    sb.appendLine("- $f")
-                }
-                sb.appendLine("\n每个文件可以用 Excel 打开")
-                withContext(Dispatchers.Main) {
-                    showDialog("CSV导出成功", sb.toString())
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(requireContext(), "导出失败: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            }
+            try { val files = exporter.exportAllToCsv(); val sb = StringBuilder(); sb.appendLine("CSV 文件已保存:"); for (f in files) sb.appendLine("- $f"); sb.appendLine("\n每个文件可以用 Excel 打开"); withContext(Dispatchers.Main) { showDialog("CSV导出成功", sb.toString()) } }
+            catch (e: Exception) { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "导出失败: ${e.message}", Toast.LENGTH_LONG).show() } }
         }
     }
-
     private fun showExportFiles(exporter: DataExportImport) {
         val files = exporter.getExportFiles()
-        if (files.isEmpty()) {
-            Toast.makeText(requireContext(), "暂无导出文件", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val sb = StringBuilder()
-        sb.appendLine("📂 已导出的文件:")
-        sb.appendLine()
-        for (f in files) {
-            val sizeKb = f.length() / 1024
-            sb.appendLine("${f.name} (${sizeKb}KB)")
-            sb.appendLine("  修改时间: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(f.lastModified()))}")
-            sb.appendLine("  路径: ${f.absolutePath}")
-            sb.appendLine()
-        }
+        if (files.isEmpty()) { Toast.makeText(requireContext(), "暂无导出文件", Toast.LENGTH_SHORT).show(); return }
+        val sb = StringBuilder(); sb.appendLine("📂 已导出的文件:"); sb.appendLine()
+        for (f in files) { val sizeKb = f.length() / 1024; sb.appendLine("${f.name} (${sizeKb}KB)"); sb.appendLine("  修改时间: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(f.lastModified()))}"); sb.appendLine("  路径: ${f.absolutePath}"); sb.appendLine() }
         showDialog("导出文件列表", sb.toString())
     }
-
     private fun showImportDialog(exporter: DataExportImport) {
-        val input = EditText(requireContext()).apply {
-            hint = "输入JSON文件完整路径"
-            setSingleLine()
-            // 默认显示导出目录路径
-            val exportDir = File(requireContext().getExternalFilesDir(null), "StockAnalysis_exports")
-            if (exportDir.exists()) {
-                val files = exportDir.listFiles()?.filter { it.name.endsWith(".json") }
-                if (files?.isNotEmpty() == true) {
-                    setText(files.first().absolutePath)
-                }
-            }
-        }
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
-            .setTitle("导入数据")
-            .setMessage("从JSON文件导入数据到数据库")
-            .setView(input)
-            .setPositiveButton("导入") { _, _ ->
-                val path = input.text.toString().trim()
-                if (path.isNotEmpty()) {
-                    doImport(exporter, path)
-                } else {
-                    Toast.makeText(requireContext(), "请指定文件路径", Toast.LENGTH_SHORT).show()
-                }
-            }
-            .setNegativeButton("取消", null)
-            .show()
+        val input = EditText(requireContext()).apply { hint = "输入JSON文件完整路径"; setSingleLine(); val exportDir = File(requireContext().getExternalFilesDir(null), "StockAnalysis_exports"); if (exportDir.exists()) { val files = exportDir.listFiles()?.filter { it.name.endsWith(".json") }; if (files?.isNotEmpty() == true) setText(files.first().absolutePath) } }
+        androidx.appcompat.app.AlertDialog.Builder(requireContext()).setTitle("导入数据").setMessage("从JSON文件导入数据到数据库").setView(input).setPositiveButton("导入") { _, _ -> val path = input.text.toString().trim(); if (path.isNotEmpty()) doImport(exporter, path) else Toast.makeText(requireContext(), "请指定文件路径", Toast.LENGTH_SHORT).show() }.setNegativeButton("取消", null).show()
     }
-
     private fun doImport(exporter: DataExportImport, path: String) {
         lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val report = exporter.importFromJson(path)
-                withContext(Dispatchers.Main) {
-                    if (report.success) {
-                        showDialog("导入成功", report.message)
-                    } else {
-                        Toast.makeText(requireContext(), "导入失败: ${report.message}", Toast.LENGTH_LONG).show()
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(requireContext(), "导入异常: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            }
+            try { val report = exporter.importFromJson(path); withContext(Dispatchers.Main) { if (report.success) showDialog("导入成功", report.message) else Toast.makeText(requireContext(), "导入失败: ${report.message}", Toast.LENGTH_LONG).show() } }
+            catch (e: Exception) { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "导入异常: ${e.message}", Toast.LENGTH_LONG).show() } }
         }
     }
-
     private fun showDbStats(exporter: DataExportImport) {
-        lifecycleScope.launch(Dispatchers.IO) {
-            val stats = exporter.getDatabaseStats()
-            withContext(Dispatchers.Main) {
-                showDialog("数据库统计", stats)
-            }
-        }
+        lifecycleScope.launch(Dispatchers.IO) { val stats = exporter.getDatabaseStats(); withContext(Dispatchers.Main) { showDialog("数据库统计", stats) } }
     }
-
-    // ═══════════════════════════════════════
-    // 保存订单
-    // ═══════════════════════════════════════
 
     private suspend fun saveBuyOrdersToDb(report: SimulationTradeEngine.TradeSessionReport) {
         if (report.buyOrders.isEmpty()) return
         val db = StockDatabase.getInstance(requireContext())
         try {
-            val entities = report.buyOrders.map { order ->
-                StrategyTradeOrderEntity(
-                    strategyId = order.strategyId,
-                    stockCode = order.stockCode,
-                    stockName = order.stockName,
-                    tradeDate = order.tradeDate,
-                    buyPrice = order.buyPrice,
-                    buyTime = order.buyTime,
-                    quantity = order.quantity,
-                    orderType = order.orderType,
-                    status = "BUYING",
-                    reason = order.reason,
-                    scoreAtBuy = order.scoreAtBuy,
-                    createdAt = System.currentTimeMillis()
-                )
+            // 同花顺模式：重复买入同一股票时，合并持仓（加权平均成本）
+            val existingOrders = db.strategyTradeOrderDao().getRecent(200).filter { it.status == "BUYING" }
+            val toInsert = mutableListOf<StrategyTradeOrderEntity>()
+            var merged = 0
+            for (order in report.buyOrders) {
+                val existing = existingOrders.firstOrNull { it.stockCode == order.stockCode }
+                if (existing != null) {
+                    val totalQty = existing.quantity + order.quantity
+                    val weightedAvgPrice = (existing.buyPrice * existing.quantity + order.buyPrice * order.quantity) / totalQty
+                    db.strategyTradeOrderDao().updateBuyPriceAndQty(existing.id, weightedAvgPrice, totalQty, order.tradeDate)
+                    Log.i("SimTradeFragment", "🔄 合并持仓: ${order.stockName} $${"%.2f".format(existing.buyPrice)}×${existing.quantity} → $${"%.2f".format(weightedAvgPrice)}×${totalQty}")
+                    merged++
+                } else {
+                    toInsert.add(StrategyTradeOrderEntity(
+                        strategyId = order.strategyId, stockCode = order.stockCode, stockName = order.stockName,
+                        tradeDate = order.tradeDate, buyPrice = order.buyPrice, buyTime = order.buyTime,
+                        quantity = order.quantity, orderType = order.orderType, status = "BUYING",
+                        reason = order.reason, scoreAtBuy = order.scoreAtBuy, createdAt = System.currentTimeMillis()))
+                }
             }
-            db.strategyTradeOrderDao().insertAll(entities)
-            Log.i("SimTradeFragment", "💾 已保存 ${entities.size} 笔买入订单到数据库")
-        } catch (e: Exception) {
-            Log.w("SimTradeFragment", "保存订单失败: ${e.message}")
-        }
+            if (toInsert.isNotEmpty()) db.strategyTradeOrderDao().insertAll(toInsert)
+            Log.i("SimTradeFragment", "💾 新增${toInsert.size}笔, 合并${merged}笔")
+        } catch (e: Exception) { Log.w("SimTradeFragment", "保存订单失败: ${e.message}") }
     }
-
-    // ═══════════════════════════════════════
-    // 持仓视图
-    // ═══════════════════════════════════════
 
     private fun refreshPositions() {
         lifecycleScope.launch(Dispatchers.IO) {
@@ -1101,316 +965,158 @@ class SimulationTradeFragment : Fragment() {
                 val orders = db.strategyTradeOrderDao().getRecent(50)
                     .filter { it.status == "BUYING" || it.status == "PENDING" }
                     .sortedByDescending { it.tradeDate }
-
                 if (orders.isEmpty()) {
                     withContext(Dispatchers.Main) {
                         positionContainer.removeAllViews()
-                        positionContainer.addView(TextView(requireContext()).apply {
-                            text = "📌 暂无持仓记录"
-                            textSize = 11f
-                            setTextColor(Color.parseColor("#999999"))
-                            setPadding(0, 4, 0, 4)
-                        })
-                    }
-                    return@launch
+                        positionContainer.addView(TextView(requireContext()).apply { text = "📌 暂无持仓记录"; textSize = 11f; setTextColor(Color.parseColor("#999999")); setPadding(0, 4, 0, 4) })
+                    }; return@launch
                 }
-
-                // 获取从建仓日到浏览日之间的快照数据（不超出选择的交易日）
                 val browsingDateStr = browsingDate.format(DATE_FMT)
-                val dates = db.dailySnapshotDao().getAvailableDates(10)
+                val dates = db.dailySnapshotDao().getAvailableDates(15)
                     .filter { it >= orders.minOf { it.tradeDate } && it <= browsingDateStr }
-                    .sorted()
-                    .takeLast(4) // 最多显示4天
-
+                    .sorted().takeLast(10)
                 val priceMap = mutableMapOf<String, MutableMap<String, Double>>()
-                for (date in dates) {
-                    val snaps = db.dailySnapshotDao().getByDate(date)
-                    for (snap in snaps) {
-                        priceMap.getOrPut(snap.code) { mutableMapOf() }[date] = snap.close
-                    }
-                }
-
+                for (date in dates) { val snaps = db.dailySnapshotDao().getByDate(date); for (snap in snaps) priceMap.getOrPut(snap.code) { mutableMapOf() }[date] = snap.close }
                 withContext(Dispatchers.Main) { renderPositionTable(orders, dates, priceMap) }
-            } catch (e: Exception) {
-                Log.e("SimTradePos", "加载持仓失败: ${e.message}", e)
-            }
+            } catch (e: Exception) { Log.e("SimTradePos", "加载持仓失败: ${e.message}", e) }
         }
     }
 
-    private fun renderPositionTable(
-        orders: List<StrategyTradeOrderEntity>,
-        dates: List<String>,
-        priceMap: Map<String, Map<String, Double>>
-    ) {
+    private fun renderPositionTable(orders: List<StrategyTradeOrderEntity>, dates: List<String>, priceMap: Map<String, Map<String, Double>>) {
         positionContainer.removeAllViews()
 
-        // 标题
-        positionContainer.addView(TextView(requireContext()).apply {
-            text = "📌 持仓明细 (最近交易日价格)"
-            textSize = 12f
-            setTextColor(Color.parseColor("#1A1A2E"))
-            setTypeface(null, Typeface.BOLD)
-            setPadding(0, 4, 0, 6)
-        })
+        // ── 持倉標題行（含匯總） ──
+        val lastDate = dates.lastOrNull() ?: browsingDate.format(DATE_FMT)
+        var totalCost = 0.0; var totalValue = 0.0
+        for (order in orders) {
+            totalCost += order.buyPrice * order.quantity
+            val lastPrice = priceMap[order.stockCode]?.get(lastDate) ?: order.buyPrice
+            totalValue += lastPrice * order.quantity
+        }
+        val totalPnl = totalValue - totalCost
+        val totalPnlPct = if (totalCost > 0) (totalPnl / totalCost * 100) else 0.0
+        val pnlColor = if (totalPnl >= 0) "#D32F2F" else "#2E7D32"
+        val pnlStr = "${if (totalPnl >= 0) "+" else ""}¥${"%.0f".format(totalPnl)} (${"%.2f".format(totalPnlPct)}%)"
 
-        // 水平滚动容器
+        val titleRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, 2, 0, 2)
+        }
+        titleRow.addView(TextView(requireContext()).apply {
+            text = "📌 持仓明细 (启动资金 ¥1,000,000)"; textSize = 12f; setTextColor(Color.parseColor("#1A1A2E"))
+            setTypeface(null, Typeface.BOLD); layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        titleRow.addView(TextView(requireContext()).apply {
+            text = "总持仓 ${orders.size} 只  |  "; textSize = 10f
+            setTextColor(Color.parseColor("#666666")); gravity = Gravity.END
+        })
+        titleRow.addView(TextView(requireContext()).apply {
+            text = "总盈亏 $pnlStr"; textSize = 10f; setTextColor(Color.parseColor(pnlColor))
+            gravity = Gravity.END
+        })
+        positionContainer.addView(titleRow)
         val scroll = HorizontalScrollView(requireContext())
         val table = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL }
-
-        // ═══ 表头 ═══
-        val headerRow = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 2, 0, 4)
-            setBackgroundColor(Color.parseColor("#EEEEEE"))
-        }
-        // 固定列
-        for (header in listOf("股票", "建仓日", "成本")) {
-            headerRow.addView(createCell(header, 60, "#666666", 10f, bold = true))
-        }
-        // 日期列
-        for (date in dates) {
-            val label = date.takeLast(5) // MM-DD
-            headerRow.addView(createCell(label, 72, "#666666", 10f, bold = true))
-        }
+        val headerRow = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 2, 0, 4); setBackgroundColor(Color.parseColor("#EEEEEE")) }
+        for (header in listOf("股票", "建仓日", "成本")) headerRow.addView(createCell(header, 60, "#666666", 10f, bold = true))
+        for (date in dates) { val label = date.takeLast(5); headerRow.addView(createCell(label, 72, "#666666", 10f, bold = true)) }
         table.addView(headerRow)
-
-        // ═══ 数据行 ═══
         for (order in orders) {
-            val row = LinearLayout(requireContext()).apply {
-                orientation = LinearLayout.HORIZONTAL
-                setPadding(0, 2, 0, 2)
-            }
-
-            // 股票名称 + 代码
-            val nameCell = LinearLayout(requireContext()).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(dpToPx(60), LinearLayout.LayoutParams.WRAP_CONTENT)
-                gravity = Gravity.CENTER
-            }
-            nameCell.addView(TextView(requireContext()).apply {
-                text = order.stockName.take(6)
-                textSize = 11f; setTextColor(Color.parseColor("#222222")); gravity = Gravity.CENTER
-                setTypeface(null, Typeface.BOLD)
-            })
-            nameCell.addView(TextView(requireContext()).apply {
-                text = order.stockCode.takeLast(6)
-                textSize = 8f; setTextColor(Color.parseColor("#AAAAAA")); gravity = Gravity.CENTER
-            })
+            val row = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 2, 0, 2) }
+            val nameCell = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL; layoutParams = LinearLayout.LayoutParams(dpToPx(60), LinearLayout.LayoutParams.WRAP_CONTENT); gravity = Gravity.CENTER }
+            nameCell.addView(TextView(requireContext()).apply { text = order.stockName.take(6); textSize = 11f; setTextColor(Color.parseColor("#222222")); gravity = Gravity.CENTER; setTypeface(null, Typeface.BOLD) })
+            nameCell.addView(TextView(requireContext()).apply { text = order.stockCode.takeLast(6); textSize = 8f; setTextColor(Color.parseColor("#AAAAAA")); gravity = Gravity.CENTER })
             row.addView(nameCell)
-
-            // 建仓日
             row.addView(createCell(order.tradeDate.takeLast(5), 60, "#333333", 10f))
-
-            // 成本价
             row.addView(createCell("¥${"%.2f".format(order.buyPrice)}", 60, "#333333", 10f))
-
-            // 每日价格 + 累计盈亏
-            var accumulatedPnl = 0.0
             for (date in dates) {
                 val price = priceMap[order.stockCode]?.get(date)
-                val cellText: String
-                val cellColor: String
-
-                if (price == null || date < order.tradeDate) {
-                    cellText = "—"
-                    cellColor = "#999999"
-                } else {
-                    val pnl = (price - order.buyPrice) / order.buyPrice * 100
-                    accumulatedPnl = pnl
-                    cellText = "¥${"%.2f".format(price)}\n${if (pnl >= 0) "+" else ""}${"%.2f".format(pnl)}%"
-                    cellColor = if (pnl >= 0) "#D32F2F" else "#2E7D32"
-                }
-
-                val dateCell = TextView(requireContext()).apply {
-                    text = cellText
-                    textSize = 9f
-                    setTextColor(Color.parseColor(cellColor))
-                    gravity = Gravity.CENTER
-                    layoutParams = LinearLayout.LayoutParams(dpToPx(72), LinearLayout.LayoutParams.WRAP_CONTENT)
-                    setPadding(2, 4, 2, 4)
-                    setLineSpacing(2f, 1f)
-                }
-                row.addView(dateCell)
+                val cellText: String; val cellColor: String
+                if (price == null) { cellText = "—"; cellColor = "#999999" }
+                else if (date < order.tradeDate) { cellText = "¥${"%.2f".format(price)}"; cellColor = "#000000" }
+                else { val pnl = (price - order.buyPrice) / order.buyPrice * 100; cellText = "¥${"%.2f".format(price)}\n${if (pnl >= 0) "+" else ""}${"%.2f".format(pnl)}%"; cellColor = if (pnl >= 0) "#D32F2F" else "#2E7D32" }
+                row.addView(TextView(requireContext()).apply { text = cellText; textSize = 9f; setTextColor(Color.parseColor(cellColor)); gravity = Gravity.CENTER; layoutParams = LinearLayout.LayoutParams(dpToPx(72), LinearLayout.LayoutParams.WRAP_CONTENT); setPadding(2, 4, 2, 4); setLineSpacing(2f, 1f) })
             }
-
-            // 点击行：clearMode下选日期，否则触发拟合
             if (clearMode) {
-                row.setBackgroundColor(Color.parseColor("#FFEBEE"))
-                val orderDate = order.tradeDate
-                row.setOnClickListener {
-                    selectedDateForClear = orderDate
-                    statusTv.text = "✅ 已选中交易日: $orderDate — 再次点击「确认清除」按钮执行删除"
-                    Toast.makeText(requireContext(), "已选中: $orderDate", Toast.LENGTH_SHORT).show()
-                    refreshPositions()  // 刷新高亮
-                }
+                row.setBackgroundColor(Color.parseColor("#FFEBEE")); val orderDate = order.tradeDate
+                row.setOnClickListener { selectedDateForClear = orderDate; statusTv.text = "✅ 已选中交易日: $orderDate — 再次点击「确认清除」按钮执行删除"; Toast.makeText(requireContext(), "已选中: $orderDate", Toast.LENGTH_SHORT).show(); refreshPositions() }
             } else {
                 row.setBackgroundColor(Color.TRANSPARENT)
                 row.setOnClickListener {
                     statusTv.text = "⏳ 正在拟合 ${order.stockName}..."
                     lifecycleScope.launch(Dispatchers.IO) {
                         try {
-                            val eng = engine ?: return@launch
-                            val te = tradeEngine ?: return@launch
+                            val eng = engine ?: return@launch; val te = tradeEngine ?: return@launch
                             val strategies = eng.getStrategies().filter { eng.isEnabled(it.id) }
-                            val config = SimulationTradeEngine.TradeSessionConfig(
-                                tradeDate = order.tradeDate,
-                                periods = selectedPeriods.toList().sorted().ifEmpty { listOf(1) },
-                                onlyMainBoard = true,
-                                maxFitRounds = 50
-                            )
-                            val report = te.backtrackAndOptimize(
-                                strategies = strategies, config = config,
-                                oldSessionResults = emptyList(),
-                                boughtStocks = setOf(order.stockCode)
-                            )
-                            withContext(Dispatchers.Main) {
-                                showDialog("${order.stockName} 拟合报告", report.summary)
-                                statusTv.text = "✅ 拟合完成"
-                                refreshPositions()
-                            }
-                        } catch (e: Exception) {
-                            withContext(Dispatchers.Main) {
-                                statusTv.text = "❌ 拟合失败: ${e.message?.take(40)}"
-                            }
-                        }
+                            val config = SimulationTradeEngine.TradeSessionConfig(tradeDate = order.tradeDate, periods = selectedPeriods.toList().sorted().ifEmpty { listOf(1) }, onlyMainBoard = true, maxFitRounds = 50)
+                            val report = te.backtrackAndOptimize(strategies = strategies, config = config, oldSessionResults = emptyList(), boughtStocks = setOf(order.stockCode))
+                            withContext(Dispatchers.Main) { showDialog("${order.stockName} 拟合报告", report.summary); statusTv.text = "✅ 拟合完成"; refreshPositions() }
+                        } catch (e: Exception) { withContext(Dispatchers.Main) { statusTv.text = "❌ 拟合失败: ${e.message?.take(40)}" } }
                     }
                 }
             }
-
             table.addView(row)
         }
-
         scroll.addView(table)
-
-        // 包裹在 VerticalScrollView 中以支持上下+左右滚动
-        val verticalScroll = ScrollView(requireContext())
-        verticalScroll.addView(scroll)
-        positionContainer.addView(verticalScroll)
+        val verticalScroll = ScrollView(requireContext()); verticalScroll.addView(scroll); positionContainer.addView(verticalScroll)
     }
 
-    private fun createCell(text: String, widthDp: Int, colorHex: String, fontSize: Float, bold: Boolean = false): TextView {
-        return TextView(requireContext()).apply {
-            this.text = text
-            textSize = fontSize
-            setTextColor(Color.parseColor(colorHex))
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(dpToPx(widthDp), LinearLayout.LayoutParams.WRAP_CONTENT)
-            setPadding(2, 4, 2, 4)
-            if (bold) setTypeface(null, Typeface.BOLD)
-        }
-    }
+    private fun createCell(text: String, widthDp: Int, colorHex: String, fontSize: Float, bold: Boolean = false): TextView =
+        TextView(requireContext()).apply { this.text = text; textSize = fontSize; setTextColor(Color.parseColor(colorHex)); gravity = Gravity.CENTER; layoutParams = LinearLayout.LayoutParams(dpToPx(widthDp), LinearLayout.LayoutParams.WRAP_CONTENT); setPadding(2, 4, 2, 4); if (bold) setTypeface(null, Typeface.BOLD) }
 
     private fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density + 0.5f).toInt()
 
-    // ═══════════════════════════════════════
-    // 清空功能（两击模式）
-    // ═══════════════════════════════════════
-
-    /**
-     * 清空按钮点击逻辑：
-     * - 第一次点击：进入"日期选择模式"，持仓表中每行变为可点击（按建仓日选中）
-     * - 第二次点击（已有选中日期）：清除该日期的所有持仓数据（订单+周期结果+快照）
-     */
-    private fun handleClearClick() {
-        if (clearMode && selectedDateForClear != null) {
-            // 第二次点击：执行清空
-            confirmAndClear()
-        } else {
-            // 第一次点击：进入日期选择模式
-            enterClearMode()
-        }
-    }
+    private fun handleClearClick() { if (clearMode && selectedDateForClear != null) confirmAndClear() else enterClearMode() }
 
     private fun enterClearMode() {
-        clearMode = true
-        selectedDateForClear = null
-        clearBtn.text = "🗑️ 确认清除"
-        clearBtn.setBackgroundColor(Color.parseColor("#B71C1C"))
-        statusTv.text = "📌 请点击持仓行选中要清除的交易日"
-        Toast.makeText(requireContext(), "请点击持仓中的建仓日以选中交易日", Toast.LENGTH_SHORT).show()
-        refreshPositions()  // 刷新以应用clearMode样式
+        clearMode = true; selectedDateForClear = null; clearBtn.text = "🗑️ 确认清除"
+        clearBtn.setBackgroundColor(Color.parseColor("#B71C1C")); statusTv.text = "📌 请点击持仓行选中要清除的交易日"
+        Toast.makeText(requireContext(), "请点击持仓中的建仓日以选中交易日", Toast.LENGTH_SHORT).show(); refreshPositions()
     }
 
     private fun confirmAndClear() {
         val date = selectedDateForClear ?: return
-
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val db = StockDatabase.getInstance(requireContext())
-
-                // 统计待删除数量
-                val orders = db.strategyTradeOrderDao().getByDate(date)
-                val orderCount = orders.size
-                val periodResults = db.dailyPeriodResultDao().getByDate(date)
-                val resultCount = periodResults.size
-                val snaps = db.dailySnapshotDao().getByDate(date)
-                val snapCount = snaps.size
-
-                // 删除该日期的交易订单
-                db.strategyTradeOrderDao().deleteByDate(date)
-
-                // 删除该日期的每日周期结果
-                db.dailyPeriodResultDao().deleteByDate(date)
-
-                // 删除该日期的快照数据（deleteOlderThan 是 < beforeDate，传次日即可删 date）
-                if (snapCount > 0) {
-                    val nextDay = java.time.LocalDate.parse(date).plusDays(1)
-                        .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
-                    db.dailySnapshotDao().deleteOlderThan(nextDay)
-                }
-                val afterSnaps = db.dailySnapshotDao().getByDate(date)
-                val deletedSnapCount = snapCount - afterSnaps.size
-
+                val orders = db.strategyTradeOrderDao().getByDate(date); val orderCount = orders.size
+                val periodResults = db.dailyPeriodResultDao().getByDate(date); val resultCount = periodResults.size
+                val snaps = db.dailySnapshotDao().getByDate(date); val snapCount = snaps.size
+                db.strategyTradeOrderDao().deleteByDate(date); db.dailyPeriodResultDao().deleteByDate(date)
+                if (snapCount > 0) { val nextDay = java.time.LocalDate.parse(date).plusDays(1).format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd")); db.dailySnapshotDao().deleteOlderThan(nextDay) }
+                val afterSnaps = db.dailySnapshotDao().getByDate(date); val deletedSnapCount = snapCount - afterSnaps.size
                 val deletedCount = orderCount + resultCount + deletedSnapCount
                 Log.i("SimTradeFragment", "🗑️ 已清除 $date 的数据: 订单=${orderCount}, 周期结果=${resultCount}, 快照=${deletedSnapCount}")
-
-                withContext(Dispatchers.Main) {
-                    exitClearMode()
-                    refreshPositions()
-                    statusTv.text = "✅ 已清除 $date 数据 ($deletedCount 条)"
-                    Toast.makeText(requireContext(), "已清除 $date ($deletedCount 条记录)", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    exitClearMode()
-                    statusTv.text = "❌ 清除失败: ${e.message?.take(40)}"
-                    Toast.makeText(requireContext(), "清除失败: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            }
+                withContext(Dispatchers.Main) { exitClearMode(); refreshPositions(); statusTv.text = "✅ 已清除 $date 数据 ($deletedCount 条)"; Toast.makeText(requireContext(), "已清除 $date ($deletedCount 条记录)", Toast.LENGTH_SHORT).show() }
+            } catch (e: Exception) { withContext(Dispatchers.Main) { exitClearMode(); statusTv.text = "❌ 清除失败: ${e.message?.take(40)}"; Toast.makeText(requireContext(), "清除失败: ${e.message}", Toast.LENGTH_LONG).show() } }
         }
     }
 
-    private fun exitClearMode() {
-        clearMode = false
-        selectedDateForClear = null
-        clearBtn.text = "🗑️ 清空"
-        clearBtn.setBackgroundColor(Color.parseColor("#C62828"))
-    }
+    private fun exitClearMode() { clearMode = false; selectedDateForClear = null; clearBtn.text = "🗑️ 清除数据"; clearBtn.setBackgroundColor(Color.parseColor("#C62828")) }
 
-    // ═══════════════════════════════════════
-    // 工具
-    // ═══════════════════════════════════════
+    private fun showFinalPool() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val entities = db.dailyPeriodResultDao().getRecent(100).filter { it.strategyId == "FINAL_POOL" }.sortedByDescending { it.tradeDate }
+                if (entities.isEmpty()) { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "暂无精选池记录", Toast.LENGTH_SHORT).show() }; return@launch }
+                val latest = entities.first()
+                val codes = try { JSONArray(latest.stockCodesJson) } catch (_: Exception) { JSONArray() }
+                val crossDayJson = try { JSONArray(latest.finalTop3Json) } catch (_: Exception) { JSONArray() }
+                val sb = StringBuilder()
+                sb.appendLine("📋 9步精选最终池"); sb.appendLine("交易日: ${latest.tradeDate}"); sb.appendLine("共 ${latest.stockCount} 只股票输入AI"); sb.appendLine()
+                sb.appendLine("🔥 跨日聚合命中 Top10:")
+                for (i in 0 until crossDayJson.length()) { val obj = crossDayJson.getJSONObject(i); sb.appendLine("  ${obj.optString("code").takeLast(6)}: ${obj.optInt("days")}天命中") }
+                sb.appendLine(); sb.appendLine("📊 完整精选池 (${codes.length()} 只):")
+                for (i in 0 until minOf(codes.length(), 60)) sb.appendLine("  ${i+1}. ${codes.optString(i)}")
+                if (codes.length() > 60) sb.appendLine("  ... 共 ${codes.length()} 只，仅显示前60")
+                withContext(Dispatchers.Main) { showDialog("FinalPool_${latest.tradeDate}", sb.toString()) }
+            } catch (e: Exception) { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "载入精选池失败: ${e.message}", Toast.LENGTH_SHORT).show() } }
+        }
+    }
 
     private fun showDialog(title: String, content: String) {
         val sv = ScrollView(requireContext())
-        sv.addView(TextView(requireContext()).apply {
-            text = content
-            textSize = 10f
-            setTextColor(Color.parseColor("#333333"))
-            setPadding(16, 12, 16, 12)
-            setLineSpacing(2f, 1.1f)
-            setTypeface(Typeface.MONOSPACE)
-        })
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
-            .setTitle(title)
-            .setView(sv)
-            .setPositiveButton("关闭", null)
-            .create().apply {
-                show()
-                window?.setLayout(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.MATCH_PARENT
-                )
-            }
+        sv.addView(TextView(requireContext()).apply { text = content; textSize = 10f; setTextColor(Color.parseColor("#333333")); setPadding(16, 12, 16, 12); setLineSpacing(2f, 1.1f); setTypeface(Typeface.MONOSPACE) })
+        androidx.appcompat.app.AlertDialog.Builder(requireContext()).setTitle(title).setView(sv).setPositiveButton("关闭", null).create().apply { show(); window?.setLayout(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT) }
     }
 }

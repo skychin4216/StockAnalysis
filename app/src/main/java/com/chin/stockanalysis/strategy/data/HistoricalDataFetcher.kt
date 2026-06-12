@@ -283,7 +283,13 @@ class HistoricalDataFetcher(private val context: Context) {
         startDate: LocalDate,
         endDate: LocalDate
     ): Pair<List<DailySnapshotEntity>, String> {
-        // 主API: 东方财富历史K线
+        // 主API: 新浪财经（更稳定，无需Referer防爬）
+        val sinaResults = fetchFromSina(code, startDate, endDate)
+        if (sinaResults.isNotEmpty()) {
+            val name = sinaResults.firstOrNull()?.name ?: ""
+            return Pair(sinaResults, name)
+        }
+        // 备选: 东方财富历史K线
         try {
             val market = if (code.startsWith("sh")) 1 else if (code.startsWith("bj")) 1 else 0
             val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
