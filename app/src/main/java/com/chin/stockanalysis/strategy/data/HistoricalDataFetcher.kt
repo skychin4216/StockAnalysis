@@ -7,8 +7,11 @@ import com.chin.stockanalysis.stock.database.StockBasicEntity
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
 import com.chin.stockanalysis.stock.database.StockDatabase
 import kotlinx.coroutines.*
+import okhttp3.ConnectionPool
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
@@ -38,20 +41,71 @@ class HistoricalDataFetcher(private val context: Context) {
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyyMMdd")
         private val STORE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
-        /** 全市场前200只热门股票代码 */
+        /** A股精選股票池 (~200只)：覆蓋各行業龍頭 + 成交活躍股
+         *  理念：全市場5000只 → 篩選200只值得投資的 → 每次按熱門板塊選前100只
+         *  符合梁文峰量化策略 — 專注少數優質股，多因子+動態調權+跨行業分散
+         */
         internal val TOP_STOCKS = listOf(
-            "sh600519", "sz000858", "sh600183", "sz002594", "sz300750",
-            "sh601318", "sz002463", "sh688981", "sh600030", "sz000001",
-            "sh600036", "sz000002", "sh601398", "sh600900", "sh601857",
-            "sz002475", "sh600276", "sz000651", "sz002415", "sh600809",
-            "sh601012", "sz300059", "sh600887", "sz002230", "sz000333",
-            "sh601166", "sz300015", "sh600585", "sz002714", "sh600104",
-            "sz000725", "sh600031", "sz000063", "sh601088", "sz002241",
-            "sh600050", "sz300433", "sh601899", "sz002049", "sh601728"
+            // ═══ 金融 (銀行/保險/券商) ═══ 18只
+            "sh601398", "sh601939", "sh601288", "sh600036", "sh600016", "sh600000",
+            "sh601318", "sh601628", "sh601601", "sh600030", "sh601688", "sh600837",
+            "sh601066", "sh600999", "sz000001", "sz002142", "sz002736", "sz000776",
+            // ═══ 白酒/食品飲料 ═══ 15只
+            "sh600519", "sz000858", "sz000568", "sh600809", "sz002304", "sh600600",
+            "sh603369", "sz000596", "sh600132", "sz000799", "sz002568", "sh600779",
+            "sz000895", "sh603288", "sz002557",
+            // ═══ 醫藥/醫療 ═══ 20只
+            "sh600276", "sz300760", "sh603259", "sz002007", "sz300122", "sh600085",
+            "sz000538", "sz300015", "sh600196", "sh688180", "sz300003", "sz300347",
+            "sh603392", "sz002821", "sh688271", "sz300529", "sz000963", "sh600511",
+            "sh600436", "sz002001",
+            // ═══ 新能源/光伏/鋰電 ═══ 18只
+            "sz300750", "sz002594", "sh601012", "sh600438", "sz002459", "sz300274",
+            "sh688599", "sz002460", "sz000591", "sh600875", "sz300763", "sh605117",
+            "sz002506", "sh600732", "sz300118", "sh688223", "sz002340", "sh600885",
+            // ═══ 半導體/芯片 ═══ 15只
+            "sh688981", "sz002371", "sh603501", "sz300661", "sh688012", "sh688036",
+            "sz002049", "sh600703", "sz300782", "sh688256", "sh688008", "sz300474",
+            "sh688396", "sz002156", "sh600584",
+            // ═══ 消費電子/汽車 ═══ 18只
+            "sz002475", "sh600104", "sz000725", "sz002594", "sh601238", "sh600660",
+            "sz300433", "sz002241", "sh600031", "sz000333", "sh600183", "sz002230",
+            "sh601138", "sz000625", "sh600418", "sz002050", "sh600741", "sz002920",
+            // ═══ 通信/5G/算力 ═══ 15只
+            "sh600050", "sz000063", "sh601728", "sz002463", "sh600498", "sz300308",
+            "sh688041", "sz300502", "sh603236", "sz300394", "sh600745", "sz002281",
+            "sh688313", "sz000988", "sh600105",
+            // ═══ 有色/煤炭/材料 ═══ 15只
+            "sz002415", "sh601899", "sz000651", "sz000002", "sh600585", "sh600188",
+            "sh601088", "sh600362", "sz000630", "sz000983", "sh600489", "sh601600",
+            "sz002460", "sh601168", "sz002756",
+            // ═══ 基建/地產/建材 ═══ 12只
+            "sh601390", "sh601668", "sh600048", "sz001979", "sh600383", "sh600325",
+            "sh600585", "sh600031", "sh600176", "sh600801", "sh600886", "sz002271",
+            // ═══ 交通運輸/物流 ═══ 10只
+            "sh601111", "sh600029", "sh601919", "sz002352", "sh600009", "sh600115",
+            "sz002120", "sh603128", "sh600233", "sz002468",
+            // ═══ 公用事業/環保 ═══ 8只
+            "sh600900", "sh601857", "sh600025", "sz000027", "sh600886",
+            "sh600011", "sz003816", "sh600674",
+            // ═══ 軟件/互聯網 ═══ 10只
+            "sz002230", "sz300059", "sh600536", "sz300033", "sh688111",
+            "sz300454", "sh688561", "sz002602", "sz300624", "sh600570"
         )
     }
 
-    private val client = HttpClientProvider.realtimeClient
+    /** 历史K线专用客户端：更长超时，适应大批量数据 */
+    private val client by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(10, TimeUnit.SECONDS)
+            .connectionPool(ConnectionPool(5, 120, TimeUnit.SECONDS))
+            .retryOnConnectionFailure(true)
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .build()
+    }
     private val db = StockDatabase.getInstance(context)
 
     data class FetchProgress(
@@ -185,75 +239,112 @@ class HistoricalDataFetcher(private val context: Context) {
     /**
      * 拉取单只股票的历史K线
      */
+    /** 備選API: 新浪財經 (無需Referer, 返回JSON格式不同) */
+    private suspend fun fetchFromSina(code: String, startDate: LocalDate, endDate: LocalDate): List<DailySnapshotEntity> {
+        val prefix = if (code.startsWith("sh")) "sh" else "sz"
+        val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
+        val url = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?" +
+                "symbol=${prefix}$pureCode&scale=240&ma=no&datalen=300"
+        try {
+            val req = Request.Builder().url(url)
+                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                .build()
+            val resp = client.newCall(req).execute()
+            if (!resp.isSuccessful) return emptyList()
+            val body = resp.body?.string() ?: return emptyList()
+            val arr = org.json.JSONArray(body)
+            val results = mutableListOf<DailySnapshotEntity>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val dateStr = obj.optString("day", "").replace("-", "")
+                if (dateStr.isEmpty()) continue
+                val date = try { LocalDate.parse(dateStr, DATE_FMT).format(STORE_FMT) } catch (_: Exception) { continue }
+                if (date < startDate.format(STORE_FMT) || date > endDate.format(STORE_FMT)) continue
+                results.add(DailySnapshotEntity(
+                    code = code, name = "", date = date,
+                    open = obj.optDouble("open", 0.0),
+                    close = obj.optDouble("close", 0.0),
+                    high = obj.optDouble("high", 0.0),
+                    low = obj.optDouble("low", 0.0),
+                    volume = obj.optLong("volume", 0),
+                    amount = 0.0, changePct = 0.0,
+                    turnoverRate = 0.0, mainNetInflow = 0.0
+                ))
+            }
+            return results
+        } catch (e: Exception) {
+            Log.w(TAG, "新浪备选API拉取 $code 失败: ${e.message}")
+            return emptyList()
+        }
+    }
+
     internal suspend fun fetchOneStock(
         code: String,
         startDate: LocalDate,
         endDate: LocalDate
     ): Pair<List<DailySnapshotEntity>, String> {
+        // 主API: 东方财富历史K线
         try {
-        val market = if (code.startsWith("sh")) 1 else if (code.startsWith("bj")) 1 else 0
-        val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
-        val beg = startDate.format(DATE_FMT)
-        val end = endDate.format(DATE_FMT)
+            val market = if (code.startsWith("sh")) 1 else if (code.startsWith("bj")) 1 else 0
+            val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
+            val beg = startDate.format(DATE_FMT)
+            val end = endDate.format(DATE_FMT)
 
-        val url = "https://push2his.eastmoney.com/api/qt/stock/kline/get?" +
-                "secid=$market.$pureCode" +
-                "&klt=101" +          // 日K
-                "&fqt=1" +            // 前复权
-                "&fields1=f1,f2,f3" +
-                "&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f61" +
-                "&beg=$beg&end=$end&lmt=300"
-        Log.d(TAG, "🌐 K线请求: $code beg=$beg end=$end market=$market")
+            val url = "https://push2his.eastmoney.com/api/qt/stock/kline/get?" +
+                    "secid=$market.$pureCode" +
+                    "&klt=101" +          // 日K
+                    "&fqt=1" +            // 前复权
+                    "&fields1=f1,f2,f3" +
+                    "&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f61" +
+                    "&beg=$beg&end=$end&lmt=300"
+            Log.d(TAG, "🌐 K线请求: $code beg=$beg end=$end market=$market")
 
-        val req = Request.Builder().url(url)
-            .addHeader("User-Agent", "Mozilla/5.0")
-            .addHeader("Referer", "https://quote.eastmoney.com/")
-            .build()
+            val req = Request.Builder().url(url)
+                .addHeader("User-Agent", "Mozilla/5.0")
+                .addHeader("Referer", "https://quote.eastmoney.com/")
+                .build()
 
-        val resp = client.newCall(req).execute()
-        if (!resp.isSuccessful) return Pair(emptyList(), "")
+            val resp = client.newCall(req).execute()
+            if (!resp.isSuccessful) throw Exception("HTTP ${resp.code}")
 
-        val body = resp.body?.string() ?: return Pair(emptyList(), "")
-        val data = JSONObject(body).optJSONObject("data")
-        val klines = data?.optJSONArray("klines") ?: return Pair(emptyList(), "")
+            val body = resp.body?.string() ?: throw Exception("empty body")
+            val data = JSONObject(body).optJSONObject("data") ?: throw Exception("no data field")
+            val klines = data.optJSONArray("klines") ?: throw Exception("no klines field")
 
-        // 从顶层 data JSON 提取股票名称，去除除权除息前缀 XD/XR/DR
-        val rawName = data.optString("name", "").trim()
-        val stockName = if (rawName.startsWith("XD") || rawName.startsWith("XR") || rawName.startsWith("DR")) {
-            rawName.removePrefix("XD").removePrefix("XR").removePrefix("DR").trim()
-        } else rawName.takeIf { it.isNotBlank() && it.length < 20 } ?: ""
+            // 从顶层 data JSON 提取股票名称，去除除权除息前缀 XD/XR/DR
+            val rawName = data.optString("name", "").trim()
+            val stockName = if (rawName.startsWith("XD") || rawName.startsWith("XR") || rawName.startsWith("DR")) {
+                rawName.removePrefix("XD").removePrefix("XR").removePrefix("DR").trim()
+            } else rawName.takeIf { it.isNotBlank() && it.length < 20 } ?: ""
 
-        val results = mutableListOf<DailySnapshotEntity>()
+            val results = mutableListOf<DailySnapshotEntity>()
+            for (i in 0 until klines.length()) {
+                val line = klines.getString(i)
+                val parts = line.split(",")
+                if (parts.size < 9) continue
 
-        for (i in 0 until klines.length()) {
-            val line = klines.getString(i)
-            val parts = line.split(",")
-            if (parts.size < 9) continue
+                val dateStr = parts[0].replace("-", "")
+                val date = try { LocalDate.parse(dateStr, DATE_FMT).format(STORE_FMT) } catch (_: Exception) { continue }
 
-            // f51:日期 f52:开盘 f53:收盘 f54:最高 f55:最低 f56:成交量 f57:成交额 f58:振幅 f61:涨跌幅
-            val dateStr = parts[0].replace("-", "")
-            val date = try { LocalDate.parse(dateStr, DATE_FMT).format(STORE_FMT) } catch (_: Exception) { continue }
-
-            results.add(DailySnapshotEntity(
-                code = code,
-                name = stockName,
-                date = date,
-                open = parts[1].toDoubleOrNull() ?: 0.0,
-                close = parts[2].toDoubleOrNull() ?: 0.0,
-                high = parts[3].toDoubleOrNull() ?: 0.0,
-                low = parts[4].toDoubleOrNull() ?: 0.0,
-                volume = parts[5].toLongOrNull() ?: 0L,
-                amount = parts[6].toDoubleOrNull() ?: 0.0,
-                changePct = parts[8].toDoubleOrNull() ?: 0.0,
-                turnoverRate = 0.0,
-                mainNetInflow = 0.0
-            ))
-        }
-
+                results.add(DailySnapshotEntity(
+                    code = code, name = stockName, date = date,
+                    open = parts[1].toDoubleOrNull() ?: 0.0,
+                    close = parts[2].toDoubleOrNull() ?: 0.0,
+                    high = parts[3].toDoubleOrNull() ?: 0.0,
+                    low = parts[4].toDoubleOrNull() ?: 0.0,
+                    volume = parts[5].toLongOrNull() ?: 0L,
+                    amount = parts[6].toDoubleOrNull() ?: 0.0,
+                    changePct = parts[8].toDoubleOrNull() ?: 0.0,
+                    turnoverRate = 0.0, mainNetInflow = 0.0
+                ))
+            }
             return Pair(results, stockName)
         } catch (e: Exception) {
-            Log.w(TAG, "拉取 $code 失败: ${e.message}")
-            return Pair(emptyList(), "")
+            Log.w(TAG, "东方财富K线 $code 失败: ${e.message}，尝试新浪备选...")
+            // 备选: 新浪财经API
+            val sinaResults = fetchFromSina(code, startDate, endDate)
+            val name = sinaResults.firstOrNull()?.name ?: ""
+            return Pair(sinaResults, name)
         }
     }
 }

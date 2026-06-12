@@ -469,6 +469,14 @@ object SectorSubDivision {
     )
 
     /** 获取某板块的子板块列表 */
+    /** 判斷名稱是否為某個大板塊的子板塊 */
+    fun isSubSectorName(name: String): Boolean {
+        for (subList in ALL_SECTORS.values) {
+            if (subList.any { it.name == name }) return true
+        }
+        return false
+    }
+
     fun getSubSectors(sectorName: String): List<SubSector> {
         // 精确匹配
         ALL_SECTORS[sectorName]?.let { return it }

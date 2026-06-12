@@ -108,9 +108,12 @@ class HotNewsFragment : Fragment() {
                 .map { it.sector }.filter { it.isNotBlank() }.distinct().take(5)
             if (newsSectors.size >= 3) return newsSectors
         } catch (_: Exception) {}
-        // 实时板块热度排序
-        val live = (EastMoneyHotSectorSource.conceptSectors + EastMoneyHotSectorSource.industrySectors)
-            .sortedByDescending { it.compositeScore }.map { it.name }.distinct().take(5)
+        // 实时板块热度排序（过滤子板块：不显示属于其他大板块下的细分概念）
+        val allNames = (EastMoneyHotSectorSource.conceptSectors + EastMoneyHotSectorSource.industrySectors)
+            .sortedByDescending { it.compositeScore }.map { it.name }.distinct()
+        val live = allNames.filter { name ->
+            !com.chin.stockanalysis.stock.data.sources.SectorSubDivision.isSubSectorName(name)
+        }.take(5)
         if (live.isNotEmpty()) return live
         // Fallback
         return StockDataCenter.getHotSectorsByPeriod(1).take(5)
@@ -144,33 +147,71 @@ class HotNewsFragment : Fragment() {
                 root.addView(View(ctx).apply { layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, 1).apply { setMargins(0, dp(6), 0, dp(4)) }; setBackgroundColor(Color.parseColor("#DDDDDD")) })
                 root.addView(TextView(ctx).apply { text = "今日热门板块 (Top 5)"; textSize = 11f; setTextColor(Color.parseColor("#888888")); setTypeface(null, Typeface.BOLD); setPadding(dp(4), dp(2), dp(4), dp(4)) })
 
-                // Top5 板块选项
+                val popup = PopupWindow(root, dp(240), LayoutParams.WRAP_CONTENT, true).apply { setBackgroundDrawable(ColorDrawable(Color.WHITE)); elevation = 8f }
+
+                // Top5 板块选项（点击展开子板块）
                 if (top5.isEmpty()) {
                     root.addView(TextView(ctx).apply { text = "  暂无板块数据"; textSize = 11f; setTextColor(Color.parseColor("#AAAAAA")); setPadding(dp(4), dp(2), dp(4), dp(2)) })
                 } else {
                     for ((idx, sectorName) in top5.withIndex()) {
-                        val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(4), dp(2), dp(4), dp(2)); setBackgroundColor(if (selectedSectorFilter == sectorName) Color.parseColor("#FFF3E0") else Color.TRANSPARENT) }
+                        val parentRow = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(if (selectedSectorFilter == sectorName) Color.parseColor("#FFF3E0") else Color.TRANSPARENT) }
+                        val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(4), dp(2), dp(4), dp(2)) }
                         row.addView(TextView(ctx).apply { text = if (selectedSectorFilter == sectorName) "●" else "○"; textSize = 13f; setTextColor(Color.parseColor("#E65100")); setPadding(0, 0, dp(8), 0) })
-                        row.addView(TextView(ctx).apply { text = "#${idx + 1} $sectorName"; textSize = 13f; setTextColor(Color.parseColor("#222222")) })
-                        root.addView(row)
+
+                        // 判断是否有子板块
+                        val subSectors = try { com.chin.stockanalysis.stock.data.sources.SectorSubDivision.getSubSectors(sectorName) } catch (_: Exception) { emptyList() }
+                        val hasSubs = subSectors.isNotEmpty()
+                        row.addView(TextView(ctx).apply {
+                            text = "#${idx + 1} $sectorName ${if (hasSubs) "▶" else ""}"
+                            textSize = 13f; setTextColor(Color.parseColor("#222222"))
+                        })
+                        parentRow.addView(row)
+
+                        // 子板块列表（默认折叠）
+                        val subContainer = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(2), 0, 0, 0); visibility = View.GONE }
+                        if (hasSubs) {
+                            for (sub in subSectors.take(5)) {
+                                val subRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(20), dp(2), dp(4), dp(2)); setBackgroundColor(if (selectedSectorFilter == "${sectorName}·${sub.name}") Color.parseColor("#FFF3E0") else Color.TRANSPARENT) }
+                                val subFilter = "${sectorName}·${sub.name}"
+                                subRow.addView(TextView(ctx).apply { text = if (selectedSectorFilter == subFilter) "●" else "○"; textSize = 11f; setTextColor(Color.parseColor("#888888")); setPadding(0, 0, dp(6), 0) })
+                                subRow.addView(TextView(ctx).apply { text = "  ${sub.name}"; textSize = 12f; setTextColor(Color.parseColor("#555555")) })
+                                subRow.setOnClickListener {
+                                    selectedLabel = "${sectorName}·${sub.name}"; selectedSectorFilter = subFilter
+                                    hotSectorDropBtn.text = "${sub.name} ▼"
+                                    updateTitleBySelection()
+                                    popup.dismiss()
+                                    loadNews(forceRefresh = true)
+                                }
+                                subContainer.addView(subRow)
+                            }
+                        }
+                        parentRow.addView(subContainer)
+                        root.addView(parentRow)
+
+                        // 点击父行：展开/折叠 或 直接选中
+                        row.setOnClickListener {
+                            if (hasSubs) {
+                                // 有子板块：切换展开/折叠
+                                subContainer.visibility = if (subContainer.visibility == View.GONE) View.VISIBLE else View.GONE
+                            } else {
+                                // 没有子板块：直接选中
+                                selectedLabel = sectorName; selectedSectorFilter = sectorName
+                                hotSectorDropBtn.text = "$sectorName ▼"
+                                updateTitleBySelection()
+                                popup.dismiss()
+                                loadNews(forceRefresh = true)
+                            }
+                        }
                     }
                 }
 
-                val popup = PopupWindow(root, dp(200), LayoutParams.WRAP_CONTENT, true).apply { setBackgroundDrawable(ColorDrawable(Color.WHITE)); elevation = 8f }
-
-                // 点击逻辑：绑定每个 row
-                var idx2 = 0
-                for (i in 0 until root.childCount) {
-                    val child = root.getChildAt(i)
-                    val tag = when {
-                        i in 1..3 -> timeItems[i - 1] to (null as String?)
-                        i >= 6 && i < 6 + top5.size -> top5[i - 6] to top5[i - 6]
-                        else -> continue
-                    }
-                    val (lbl, sectorFilter) = tag
+                // 绑定时间范围选项的点击
+                for (i in 1..3) {
+                    val child = root.getChildAt(i - 1)
+                    val t = timeItems[i - 1]
                     child.setOnClickListener {
-                        selectedLabel = lbl; selectedSectorFilter = sectorFilter
-                        hotSectorDropBtn.text = "$lbl ▼"
+                        selectedLabel = t; selectedSectorFilter = null
+                        hotSectorDropBtn.text = "$t ▼"
                         updateTitleBySelection()
                         popup.dismiss()
                         loadNews(forceRefresh = true)
