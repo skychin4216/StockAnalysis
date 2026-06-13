@@ -20,6 +20,7 @@ import com.chin.stockanalysis.strategy.models.StrategySignal
 import com.chin.stockanalysis.strategy.data.StrategyDataFeed
 import com.chin.stockanalysis.strategy.data.ZiplinePipeline
 import com.chin.stockanalysis.strategy.predict.AIPredictionEngine
+import com.chin.stockanalysis.ui.CrossTabBus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -181,6 +182,10 @@ class AutoQuantFragment : Fragment() {
                 mergedStockNames = pool.keys.associateWith { c -> screenings.values.firstNotNullOfOrNull { sc->sc.signals.find{it.stockCode==c}?.stockName } ?: codeToName[c] ?: c }
                 // AI 精选
                 if (screeningList.isNotEmpty()) { withContext(Dispatchers.Main) { statusTv.text = "🤖 AI 正在精选..." }; try { val p = AIPredictionEngine(requireContext()).predict(screeningList, today); if (p!=null && p.topPicks.isNotEmpty()) aiPicks = p.topPicks else aiPicks = emptyList() } catch (_: Exception) { aiPicks = emptyList() } }
+                // 发布到跨Tab总线
+                CrossTabBus.postMergedPool(mergedPool)
+                CrossTabBus.postAiTopPicks(aiPicks)
+                CrossTabBus.postStrategyResults(screeningList)
                 withContext(Dispatchers.Main) {
                     showPipelineTable(screenings, factors, today); hasPipelineResult = true; updateViewSplit()
                     statusTv.text = "✅ Pipeline 完成 (${factors.ma5.size} 只有效)"; runPipelineBtn.isEnabled = true; runPipelineBtn.text = "▶ Pipeline"; progressBar.visibility = View.GONE

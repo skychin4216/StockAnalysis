@@ -382,6 +382,8 @@ class StrategyListFragment : Fragment() {
         val stockList = if (sectorStockCodes.isEmpty()) allStocks else allStocks.filter { it.code in sectorStockCodes }
         val results = mutableListOf<ScreeningResult>()
         for (s in eng.getStrategies()) { if (!eng.isEnabled(s.id)) continue; if (s.id == "ai_prediction") continue; try { s.screenWithData(stockList).getOrNull()?.let { results.add(it) } } catch (e: Exception) { Log.w("SLF", "策略 ${s.id} 异常: ${e.message}") } }
+        // 发布到跨Tab总线
+        CrossTabBus.postStrategyResults(results)
         // 更新缓存
         cachedResults = results
         lastExecTimeMs = System.currentTimeMillis()

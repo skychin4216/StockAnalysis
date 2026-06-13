@@ -71,7 +71,7 @@ class SmartContextWindow(private val queryEngine: StockQueryEngine) {
             userText = userText,
             baseSystemPrompt = baseSystemPrompt,
             onPreferenceLeaned = onPreferenceLeaned
-        )
+        ) + "\n\n" + com.chin.stockanalysis.ui.CrossTabBus.buildAiContext()
 
         // 存入缓存
         cache[key] = CachedContext(

@@ -35,6 +35,7 @@ import com.chin.stockanalysis.ai.AiProbe
 import com.chin.stockanalysis.ai.AiOrchestrator
 import com.chin.stockanalysis.ai.AiProviderPool
 import com.chin.stockanalysis.ai.DataCompletenessChecker
+import com.chin.stockanalysis.ui.CrossTabBus
 import com.chin.stockanalysis.skill.SkillEngine
 import com.chin.stockanalysis.skill.SkillOrchestrator
 import com.chin.stockanalysis.stock.StockQueryEngine
@@ -137,6 +138,7 @@ class ChatTabFragment : Fragment() {
         showWelcomeMessage()
         showHotSectors()
         preloadMarketData()
+        observeCrossTabBus()
     }
 
     override fun onResume() { super.onResume(); initProvider() }
@@ -566,6 +568,44 @@ class ChatTabFragment : Fragment() {
     private fun showFollowUpChips(suggestions: List<KeyMemoryManager.FollowUpSuggestion>) {
         followUpSuggestions = suggestions
         if (suggestions.isNotEmpty()) { addBotMessage(buildString { appendLine("💡 你可能还想问："); for ((i, s) in suggestions.withIndex()) appendLine("${i+1}. ${s.text}") }) }
+    }
+
+    // ════════════════════════════════════════
+    // 跨Tab数据总线
+    // ════════════════════════════════════════
+
+    private fun observeCrossTabBus() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            CrossTabBus.strategyResults.collect { results ->
+                if (results.isNotEmpty()) {
+                    Log.i(TAG, "📊 收到跨Tab策略结果: ${results.size}个策略")
+                    // 注入到 AI 上下文（下次对话时生效）
+                    smartContext.invalidateAll()
+                }
+            }
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            CrossTabBus.aiTopPicks.collect { picks ->
+                if (picks.isNotEmpty()) {
+                    Log.i(TAG, "🤖 收到跨Tab AI精选: ${picks.size}只")
+                    smartContext.invalidateAll()
+                }
+            }
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            CrossTabBus.command.collect { cmd ->
+                if (cmd != null) {
+                    Log.i(TAG, "📢 收到跨Tab指令: ${cmd.action}")
+                    val ctx = CrossTabBus.buildAiContext()
+                    if (ctx.isNotBlank()) {
+                        withContext(Dispatchers.Main) {
+                            sendMessageFromExternal("请分析最新策略选股结果：\n\n$ctx")
+                        }
+                    }
+                    CrossTabBus.consumeCommand()
+                }
+            }
+        }
     }
 
     private fun onFollowUpConfirmed(suggestion: KeyMemoryManager.FollowUpSuggestion) {
