@@ -36,10 +36,10 @@ object StrategyEngineHolder {
             registerStrategy(LowValuationStrategy(screener))
             registerStrategy(GapUpMomentumStrategy(screener))
             registerStrategy(TurnoverFilterStrategy(screener))
-            registerStrategy(EarlyMorningChaseStrategy(screener))
-            registerStrategy(TailLowPickStrategy(screener))
             registerStrategy(BollingerBandStrategy(screener))
             registerStrategy(RSIDivergenceStrategy(screener))
+            registerStrategy(EarlyMorningChaseStrategy(screener))
+            registerStrategy(TailLowPickStrategy(screener))
             registerStrategy(AIPredictionStrategy(context.applicationContext))
         }
     }

@@ -318,6 +318,11 @@ class SimulationTradeFragment : Fragment() {
         return row
     }
 
+    /** 供外部调用的自动执行模拟交易 */
+    fun autoExecuteTrade() {
+        if (executeBtn.isEnabled) executeTrade()
+    }
+
     // ═══════════════════════════════════════
     // 核心功能 - 模拟交易
     // ═══════════════════════════════════════

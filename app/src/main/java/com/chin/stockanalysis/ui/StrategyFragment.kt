@@ -11,6 +11,11 @@ import androidx.viewpager2.adapter.FragmentStateAdapter
 import androidx.viewpager2.widget.ViewPager2
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import android.util.Log
 
 /**
  * ## 策略栏目 — v9.0 改版
@@ -58,6 +63,9 @@ class StrategyFragment : Fragment() {
             0, 1f
         ))
 
+        // 监听跨Tab指令
+        observeCommands()
+
         // 绑定
         TabLayoutMediator(tabLayout, viewPager) { tab, position ->
             tab.text = when (position) {
@@ -69,6 +77,47 @@ class StrategyFragment : Fragment() {
         }.attach()
 
         return root
+    }
+
+    private fun observeCommands() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            com.chin.stockanalysis.ui.CrossTabBus.command.collect { cmd ->
+                if (cmd != null) {
+                    Log.i("StrategyFragment", "📢 收到指令: ${cmd.action}")
+                    when (cmd.action) {
+                        "EXECUTE_SIMULATE_TRADE" -> {
+                            // 切换到模拟交易Tab并自动触发买入
+                            withContext(Dispatchers.Main) {
+                                viewPager.setCurrentItem(1, true)  // Tab 1 = 模拟交易
+                                viewPager.postDelayed({
+                                    val frag = childFragmentManager.fragments
+                                        .firstOrNull { it is com.chin.stockanalysis.strategy.trade.SimulationTradeFragment }
+                                        as? com.chin.stockanalysis.strategy.trade.SimulationTradeFragment
+                                    frag?.autoExecuteTrade()
+                                }, 500)
+                            }
+                        }
+                        "RUN_PIPELINE" -> {
+                            withContext(Dispatchers.Main) {
+                                viewPager.setCurrentItem(2, true)  // Tab 2 = 自动量化
+                                viewPager.postDelayed({
+                                    val frag = childFragmentManager.fragments
+                                        .firstOrNull { it is com.chin.stockanalysis.strategy.trade.AutoQuantFragment }
+                                        as? com.chin.stockanalysis.strategy.trade.AutoQuantFragment
+                                    frag?.autoRunPipeline()
+                                }, 500)
+                            }
+                        }
+                        "SWITCH_TO_STRATEGY_TAB" -> {
+                            withContext(Dispatchers.Main) {
+                                (activity as? MainActivity)?.switchToStrategyTab()
+                            }
+                        }
+                    }
+                    com.chin.stockanalysis.ui.CrossTabBus.consumeCommand()
+                }
+            }
+        }
     }
 
     private class StrategyTabAdapter(fragment: Fragment) : FragmentStateAdapter(fragment) {

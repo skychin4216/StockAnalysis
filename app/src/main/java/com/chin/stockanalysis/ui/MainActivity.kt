@@ -154,6 +154,11 @@ class MainActivity : AppCompatActivity() {
     /**
      * 从策略页面等非对话Tab切换到对话Tab并发送消息
      */
+    fun switchToStrategyTab() {
+        viewPager.setCurrentItem(3, false)
+        bottomNav.selectedItemId = R.id.nav_strategy
+    }
+
     fun switchToChatAndSend(message: String) {
         // 切换到对话 Tab
         viewPager.setCurrentItem(0, false)

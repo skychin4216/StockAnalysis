@@ -319,6 +319,11 @@ class AutoQuantFragment : Fragment() {
 
     private fun sellAllAutoQuant() { lifecycleScope.launch(Dispatchers.IO) { try { val db=StockDatabase.getInstance(requireContext()); val orders=db.strategyTradeOrderDao().getRecent(200).filter{it.orderType=="AutoQuant"&&it.status=="BUYING"}; for(o in orders) db.strategyTradeOrderDao().updateSellInfo(o.id,"SOLD",o.buyPrice,LocalDate.now().format(DATE_FMT)+" 15:00",0.0); withContext(Dispatchers.Main){refreshPositions(); statusTv.text="✅ 已卖出 ${orders.size} 只"; Toast.makeText(requireContext(),"已卖出 ${orders.size} 只",Toast.LENGTH_SHORT).show()} } catch(_:Exception){} } }
 
+    /** 供外部调用的自动触发 Pipeline */
+    fun autoRunPipeline() {
+        if (runPipelineBtn.isEnabled) runPipeline()
+    }
+
     private fun clearAutoQuantData() { lifecycleScope.launch(Dispatchers.IO) { try { val db=StockDatabase.getInstance(requireContext()); db.strategyTradeOrderDao().deleteByDate(LocalDate.now().format(DATE_FMT)); withContext(Dispatchers.Main){resultsContainer.removeAllViews(); hasPipelineResult=false; updateViewSplit(); refreshPositions(); statusTv.text="✅ 已清除今日AutoQuant数据"; Toast.makeText(requireContext(),"已清除",Toast.LENGTH_SHORT).show()} } catch(_:Exception){} } }
 
     private fun showDialog(title: String, content: String) {

@@ -380,6 +380,13 @@ class ChatTabFragment : Fragment() {
     // ════════════════════════════════════════
 
     private fun sendMessage(userText: String) {
+        // 先尝试意图分发
+        if (com.chin.stockanalysis.ai.IntentDispatcher.dispatch(userText, requireContext())) {
+            addMessage(Message(content = userText, isUser = true))
+            binding.etInput.setText(""); hideKeyboard()
+            addBotMessage("✅ 指令已执行，正在切换...")
+            return
+        }
         addMessage(Message(content = userText, isUser = true))
         binding.etInput.setText(""); hideKeyboard()
         if (!hasAutoTitle) { hasAutoTitle = true; binding.tvChatTitle.text = extractSmartTitle(userText) }
@@ -596,10 +603,45 @@ class ChatTabFragment : Fragment() {
             CrossTabBus.command.collect { cmd ->
                 if (cmd != null) {
                     Log.i(TAG, "📢 收到跨Tab指令: ${cmd.action}")
-                    val ctx = CrossTabBus.buildAiContext()
-                    if (ctx.isNotBlank()) {
-                        withContext(Dispatchers.Main) {
-                            sendMessageFromExternal("请分析最新策略选股结果：\n\n$ctx")
+                    when (cmd.action) {
+                        "ANALYZE_SINGLE_STOCK" -> {
+                            // 在对话框内跑完整分析流程
+                            withContext(Dispatchers.Main) {
+                                addBotMessage("🔍 开始分析 ${cmd.stockName.ifBlank { cmd.stockCode.takeLast(6) }}...")
+                            }
+                            val streamingIdx = messages.size - 1
+                            try {
+                                val analyzer = com.chin.stockanalysis.ai.StockAnalyzerService(requireContext())
+                                val result = analyzer.analyze(
+                                    stockCode = cmd.stockCode,
+                                    stockNameHint = cmd.stockName,
+                                    onProgress = { msg ->
+                                        withContext(Dispatchers.Main) {
+                                            if (streamingIdx in messages.indices) {
+                                                messages[streamingIdx] = msg
+                                                adapter.notifyItemChanged(streamingIdx)
+                                                binding.recyclerView.scrollToPosition(messages.size - 1)
+                                            }
+                                        }
+                                    }
+                                )
+                                // 最终结果
+                                withContext(Dispatchers.Main) {
+                                    completeStreamingMessage(streamingIdx, result.finalRecommendation)
+                                }
+                            } catch (e: Exception) {
+                                withContext(Dispatchers.Main) {
+                                    failStreamingMessage(streamingIdx, "分析失败: ${e.message?.take(50)}")
+                                }
+                            }
+                        }
+                        else -> {
+                            val ctx = CrossTabBus.buildAiContext()
+                            if (ctx.isNotBlank()) {
+                                withContext(Dispatchers.Main) {
+                                    sendMessageFromExternal("请分析最新策略选股结果：\n\n$ctx")
+                                }
+                            }
                         }
                     }
                     CrossTabBus.consumeCommand()
