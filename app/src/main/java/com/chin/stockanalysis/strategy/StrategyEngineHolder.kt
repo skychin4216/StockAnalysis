@@ -38,6 +38,8 @@ object StrategyEngineHolder {
             registerStrategy(TurnoverFilterStrategy(screener))
             registerStrategy(EarlyMorningChaseStrategy(screener))
             registerStrategy(TailLowPickStrategy(screener))
+            registerStrategy(BollingerBandStrategy(screener))
+            registerStrategy(RSIDivergenceStrategy(screener))
             registerStrategy(AIPredictionStrategy(context.applicationContext))
         }
     }

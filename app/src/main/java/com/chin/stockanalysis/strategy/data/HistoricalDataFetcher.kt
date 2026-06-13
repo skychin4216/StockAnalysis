@@ -240,18 +240,34 @@ class HistoricalDataFetcher(private val context: Context) {
      * 拉取单只股票的历史K线
      */
     /** 備選API: 新浪財經 (無需Referer, 返回JSON格式不同) */
+    private suspend fun retryHttp(url: String, maxRetries: Int, delayMs: Long): String? {
+        for (i in 0..maxRetries) {
+            try {
+                if (i > 0) kotlinx.coroutines.delay(delayMs * (i.toLong() + 1))
+                val req = Request.Builder().url(url)
+                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .build()
+                val resp = client.newCall(req).execute()
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string() ?: continue
+                    return body
+                }
+                Log.d(TAG, "  重试 #$i: HTTP ${resp.code}")
+            } catch (e: Exception) {
+                Log.d(TAG, "  重试 #$i: ${e.message?.take(40)}")
+            }
+        }
+        return null
+    }
+
+    /** 備選API: 新浪財經 (無需Referer, 返回JSON格式不同) */
     private suspend fun fetchFromSina(code: String, startDate: LocalDate, endDate: LocalDate): List<DailySnapshotEntity> {
         val prefix = if (code.startsWith("sh")) "sh" else "sz"
         val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
         val url = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?" +
                 "symbol=${prefix}$pureCode&scale=240&ma=no&datalen=300"
+        val body = retryHttp(url, maxRetries = 2, delayMs = 500) ?: return emptyList()
         try {
-            val req = Request.Builder().url(url)
-                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-                .build()
-            val resp = client.newCall(req).execute()
-            if (!resp.isSuccessful) return emptyList()
-            val body = resp.body?.string() ?: return emptyList()
             val arr = org.json.JSONArray(body)
             val results = mutableListOf<DailySnapshotEntity>()
             for (i in 0 until arr.length()) {
@@ -260,17 +276,23 @@ class HistoricalDataFetcher(private val context: Context) {
                 if (dateStr.isEmpty()) continue
                 val date = try { LocalDate.parse(dateStr, DATE_FMT).format(STORE_FMT) } catch (_: Exception) { continue }
                 if (date < startDate.format(STORE_FMT) || date > endDate.format(STORE_FMT)) continue
+                val close = obj.optDouble("close", 0.0)
+                val open = obj.optDouble("open", 0.0)
+                val volume = obj.optLong("volume", 0)
+                // 补全缺失字段：amount ≈ close * volume, changePct = (close - open) / open * 100
+                val amount = if (close > 0 && volume > 0) close * volume else 0.0
+                val changePct = if (open > 0 && close > 0) (close - open) / open * 100 else 0.0
                 results.add(DailySnapshotEntity(
                     code = code, name = "", date = date,
-                    open = obj.optDouble("open", 0.0),
-                    close = obj.optDouble("close", 0.0),
+                    open = open, close = close,
                     high = obj.optDouble("high", 0.0),
                     low = obj.optDouble("low", 0.0),
-                    volume = obj.optLong("volume", 0),
-                    amount = 0.0, changePct = 0.0,
+                    volume = volume,
+                    amount = amount, changePct = changePct,
                     turnoverRate = 0.0, mainNetInflow = 0.0
                 ))
             }
+            Log.d(TAG, "新浪 $code: ${results.size}条, amount补全=${results.count{it.amount>0}}条")
             return results
         } catch (e: Exception) {
             Log.w(TAG, "新浪备选API拉取 $code 失败: ${e.message}")
@@ -283,74 +305,71 @@ class HistoricalDataFetcher(private val context: Context) {
         startDate: LocalDate,
         endDate: LocalDate
     ): Pair<List<DailySnapshotEntity>, String> {
-        // 主API: 新浪财经（更稳定，无需Referer防爬）
+        // 主API: 东方财富历史K线（含amount/changePct/turnoverRate） — 带重试
+        val emResults = fetchFromEastMoney(code, startDate, endDate)
+        if (emResults != null) return emResults
+
+        // 备选: 新浪财经API（补全了amount和changePct） — 带重试
         val sinaResults = fetchFromSina(code, startDate, endDate)
         if (sinaResults.isNotEmpty()) {
             val name = sinaResults.firstOrNull()?.name ?: ""
             return Pair(sinaResults, name)
         }
-        // 备选: 东方财富历史K线
-        try {
-            val market = if (code.startsWith("sh")) 1 else if (code.startsWith("bj")) 1 else 0
-            val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
-            val beg = startDate.format(DATE_FMT)
-            val end = endDate.format(DATE_FMT)
+        Log.w(TAG, "❌ $code: 东方财富+新浪 均失败，已尽力重试")
+        return Pair(emptyList(), "")
+    }
 
-            val url = "https://push2his.eastmoney.com/api/qt/stock/kline/get?" +
-                    "secid=$market.$pureCode" +
-                    "&klt=101" +          // 日K
-                    "&fqt=1" +            // 前复权
-                    "&fields1=f1,f2,f3" +
-                    "&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f61" +
-                    "&beg=$beg&end=$end&lmt=300"
-            Log.d(TAG, "🌐 K线请求: $code beg=$beg end=$end market=$market")
+    /** 东方财富 K线 API — 带重试降级 */
+    private suspend fun fetchFromEastMoney(code: String, startDate: LocalDate, endDate: LocalDate): Pair<List<DailySnapshotEntity>, String>? {
+        val market = if (code.startsWith("sh")) 1 else if (code.startsWith("bj")) 1 else 0
+        val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
+        val beg = startDate.format(DATE_FMT)
+        val end = endDate.format(DATE_FMT)
+        val url = "https://push2his.eastmoney.com/api/qt/stock/kline/get?" +
+                "secid=$market.$pureCode" +
+                "&klt=101&fqt=1" +
+                "&fields1=f1,f2,f3" +
+                "&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f61" +
+                "&beg=$beg&end=$end&lmt=300"
 
-            val req = Request.Builder().url(url)
-                .addHeader("User-Agent", "Mozilla/5.0")
-                .addHeader("Referer", "https://quote.eastmoney.com/")
-                .build()
-
-            val resp = client.newCall(req).execute()
-            if (!resp.isSuccessful) throw Exception("HTTP ${resp.code}")
-
-            val body = resp.body?.string() ?: throw Exception("empty body")
-            val data = JSONObject(body).optJSONObject("data") ?: throw Exception("no data field")
-            val klines = data.optJSONArray("klines") ?: throw Exception("no klines field")
-
-            // 从顶层 data JSON 提取股票名称，去除除权除息前缀 XD/XR/DR
-            val rawName = data.optString("name", "").trim()
-            val stockName = if (rawName.startsWith("XD") || rawName.startsWith("XR") || rawName.startsWith("DR")) {
-                rawName.removePrefix("XD").removePrefix("XR").removePrefix("DR").trim()
-            } else rawName.takeIf { it.isNotBlank() && it.length < 20 } ?: ""
-
-            val results = mutableListOf<DailySnapshotEntity>()
-            for (i in 0 until klines.length()) {
-                val line = klines.getString(i)
-                val parts = line.split(",")
-                if (parts.size < 9) continue
-
-                val dateStr = parts[0].replace("-", "")
-                val date = try { LocalDate.parse(dateStr, DATE_FMT).format(STORE_FMT) } catch (_: Exception) { continue }
-
-                results.add(DailySnapshotEntity(
-                    code = code, name = stockName, date = date,
-                    open = parts[1].toDoubleOrNull() ?: 0.0,
-                    close = parts[2].toDoubleOrNull() ?: 0.0,
-                    high = parts[3].toDoubleOrNull() ?: 0.0,
-                    low = parts[4].toDoubleOrNull() ?: 0.0,
-                    volume = parts[5].toLongOrNull() ?: 0L,
-                    amount = parts[6].toDoubleOrNull() ?: 0.0,
-                    changePct = parts[8].toDoubleOrNull() ?: 0.0,
-                    turnoverRate = 0.0, mainNetInflow = 0.0
-                ))
-            }
-            return Pair(results, stockName)
-        } catch (e: Exception) {
-            Log.w(TAG, "东方财富K线 $code 失败: ${e.message}，尝试新浪备选...")
-            // 备选: 新浪财经API
-            val sinaResults = fetchFromSina(code, startDate, endDate)
-            val name = sinaResults.firstOrNull()?.name ?: ""
-            return Pair(sinaResults, name)
+        for (attempt in 0..2) {
+            try {
+                if (attempt > 0) kotlinx.coroutines.delay(600L * attempt)
+                val req = Request.Builder().url(url)
+                    .addHeader("User-Agent", "Mozilla/5.0")
+                    .addHeader("Referer", "https://quote.eastmoney.com/")
+                    .build()
+                val resp = client.newCall(req).execute()
+                if (!resp.isSuccessful) { Log.d(TAG, "  东方财富 #$attempt HTTP ${resp.code}"); continue }
+                val body = resp.body?.string() ?: continue
+                val data = JSONObject(body).optJSONObject("data") ?: continue
+                val klines = data.optJSONArray("klines") ?: continue
+                val rawName = data.optString("name", "").trim()
+                val stockName = if (rawName.startsWith("XD") || rawName.startsWith("XR") || rawName.startsWith("DR")) {
+                    rawName.removePrefix("XD").removePrefix("XR").removePrefix("DR").trim()
+                } else rawName.takeIf { it.isNotBlank() && it.length < 20 } ?: ""
+                val results = mutableListOf<DailySnapshotEntity>()
+                for (i in 0 until klines.length()) {
+                    val line = klines.getString(i)
+                    val parts = line.split(",")
+                    if (parts.size < 9) continue
+                    val dateStr = parts[0].replace("-", "")
+                    val date = try { LocalDate.parse(dateStr, DATE_FMT).format(STORE_FMT) } catch (_: Exception) { continue }
+                    results.add(DailySnapshotEntity(
+                        code = code, name = stockName, date = date,
+                        open = parts[1].toDoubleOrNull() ?: 0.0,
+                        close = parts[2].toDoubleOrNull() ?: 0.0,
+                        high = parts[3].toDoubleOrNull() ?: 0.0,
+                        low = parts[4].toDoubleOrNull() ?: 0.0,
+                        volume = parts[5].toLongOrNull() ?: 0L,
+                        amount = parts[6].toDoubleOrNull() ?: 0.0,
+                        changePct = parts[8].toDoubleOrNull() ?: 0.0,
+                        turnoverRate = 0.0, mainNetInflow = 0.0
+                    ))
+                }
+                return Pair(results, stockName)
+            } catch (e: Exception) { Log.d(TAG, "  东方财富 #$attempt: ${e.message?.take(40)}") }
         }
+        return null
     }
 }

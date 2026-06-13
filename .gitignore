@@ -1,4 +1,6 @@
-app/build.gradle.kts 
+app/build.gradle.kts
+# API Keys
+**/api_keys_local.properties
 *.class
 *.log
 .gradle/

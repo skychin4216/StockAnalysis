@@ -15,11 +15,12 @@ import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
 
 /**
- * ## 股票栏目 — v6.0 改版
+ * ## 股票栏目 — v7.0 改版
  *
- * 顶部双 Tab 切换：
- * - Tab 0：热门行情（MarketHotFragment — 全球指数 + A 股热门板块，每 60s 刷新）
+ * 顶部三 Tab 切换：
+ * - Tab 0：热门行情（MarketHotFragment — 全球指数 + A 股热门板块）
  * - Tab 1：我的自选（WatchlistGroupFragment — 自选组管理）
+ * - Tab 2：热点新闻（HotNewsFragment — 板块新闻分析）
  */
 class StockTabFragment : Fragment() {
 
@@ -58,11 +59,11 @@ class StockTabFragment : Fragment() {
             0, 1f
         ))
 
-        // 绑定 TabLayout 和 ViewPager2
         TabLayoutMediator(tabLayout, viewPager) { tab, position ->
             tab.text = when (position) {
                 0 -> "🔥 热门行情"
                 1 -> "⭐ 我的自选"
+                2 -> "📰 热点新闻"
                 else -> ""
             }
         }.attach()
@@ -72,12 +73,13 @@ class StockTabFragment : Fragment() {
 
     private class StockTabAdapter(fragment: Fragment) : FragmentStateAdapter(fragment) {
 
-        override fun getItemCount() = 2
+        override fun getItemCount() = 3
 
         override fun createFragment(position: Int): Fragment {
             return when (position) {
                 0 -> MarketHotFragment()
                 1 -> WatchlistGroupFragment()
+                2 -> HotNewsFragment()
                 else -> MarketHotFragment()
             }
         }

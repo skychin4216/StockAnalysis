@@ -17,7 +17,12 @@ class StrategyAdapter(
     private val onToggle: (Strategy) -> Unit
 ) : RecyclerView.Adapter<StrategyAdapter.VH>() {
 
-    fun update(newItems: List<Strategy>) { items = newItems; notifyDataSetChanged() }
+    fun update(newItems: List<Strategy>) {
+        items = newItems.sortedWith(compareBy<Strategy> {
+            if (it.source == StrategySource.BUILTIN) 0 else 1
+        }.thenBy { it.name })
+        notifyDataSetChanged()
+    }
 
     override fun onCreateViewHolder(parent: ViewGroup, vt: Int): VH = VH(createCard(parent))
     override fun onBindViewHolder(h: VH, i: Int) = h.bind(items[i], onItemClick, onToggle)

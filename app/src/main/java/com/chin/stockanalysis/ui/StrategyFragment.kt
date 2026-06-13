@@ -13,12 +13,12 @@ import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
 
 /**
- * ## 策略栏目 — v8.0 改版
+ * ## 策略栏目 — v9.0 改版
  *
  * 顶部三 Tab：
  * - Tab 0：量化选股 (StrategyListFragment)
- * - Tab 1：热点新闻 (HotNewsFragment)
- * - Tab 2：模拟交易 (SimulationTradeFragment)
+ * - Tab 1：模拟交易 (SimulationTradeFragment)
+ * - Tab 2：自动量化 (AutoQuantFragment)
  */
 class StrategyFragment : Fragment() {
 
@@ -63,7 +63,7 @@ class StrategyFragment : Fragment() {
             tab.text = when (position) {
                 0 -> "🎯 量化选股"
                 1 -> "💹 模拟交易"
-                2 -> "🔥 热点新闻"
+                2 -> "🤖 自动量化"
                 else -> ""
             }
         }.attach()
@@ -78,7 +78,7 @@ class StrategyFragment : Fragment() {
             return when (position) {
                 0 -> StrategyListFragment()
                 1 -> com.chin.stockanalysis.strategy.trade.SimulationTradeFragment()
-                2 -> HotNewsFragment()
+                2 -> com.chin.stockanalysis.strategy.trade.AutoQuantFragment()
                 else -> StrategyListFragment()
             }
         }

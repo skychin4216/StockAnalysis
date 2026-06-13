@@ -790,17 +790,34 @@ class SimulationTradeFragment : Fragment() {
                 val sb = StringBuilder()
                 sb.appendLine("📊 模拟交易报告历史 (共 ${entities.size} 条)")
                 sb.appendLine()
+                val codeToName = try { db.stockBasicDao().getAll().associate { it.code to it.name } } catch (_: Exception) { emptyMap() }
                 for ((date, items) in grouped.toSortedMap().entries.reversed().take(10)) {
                     sb.appendLine("━━━ ${date} ━━━")
                     for (item in items) {
                         val top3Json = try {
                             JSONArray(item.finalTop3Json)
                         } catch (_: Exception) { JSONArray() }
-                        sb.appendLine("  ${item.strategyName}[${item.periodDays}日]: ${item.stockCount}只信号")
+                        val mainBoardLabel = if (item.mainBoardFilter) " 主板" else ""
+                        sb.appendLine("  ${item.strategyName}[${item.periodDays}日]$mainBoardLabel: ${item.stockCount}只信号")
+                        if (item.newsStrengthScore > 0) sb.appendLine("    新闻力度:${item.newsStrengthScore} 轮动惩罚:${item.rotationPenalty}")
+                        // 显示失败原因（过滤原因）
+                        try {
+                            val reasonJson = JSONArray(item.filteredReasonJson)
+                            if (reasonJson.length() > 0) {
+                                val sampleReason = reasonJson.optJSONObject(0)
+                                if (sampleReason != null) {
+                                    sb.appendLine("    ⚠️ 过滤: ${sampleReason.optString("name")}(${sampleReason.optString("reason")}) 等${reasonJson.length()}只")
+                                }
+                            }
+                        } catch (_: Exception) {}
                         if (top3Json.length() > 0) {
                             for (i in 0 until minOf(top3Json.length(), 3)) {
                                 val obj = top3Json.optJSONObject(i) ?: continue
-                                sb.appendLine("    Top${i+1}: ${obj.optString("code").takeLast(6)} 得分:${obj.optInt("score")}")
+                                val code = obj.optString("code")
+                                val name = obj.optString("name").takeIf { it.isNotBlank() } ?: codeToName[code] ?: code.takeLast(6)
+                                val sector = try { com.chin.stockanalysis.stock.database.StockDataCenter.getSectorsByStock(code).firstOrNull() ?: "" } catch (_: Exception) { "" }
+                                val sectorStr = if (sector.isNotBlank()) " [$sector]" else ""
+                                sb.appendLine("    Top${i+1}: $name(${code.takeLast(6)})$sectorStr 得分:${obj.optInt("score")}")
                             }
                         }
                     }
