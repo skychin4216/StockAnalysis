@@ -1018,6 +1018,7 @@ class SimulationTradeFragment : Fragment() {
         val table = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL }
         val headerRow = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 2, 0, 4); setBackgroundColor(Color.parseColor("#EEEEEE")) }
         for (header in listOf("股票", "建仓日", "成本")) headerRow.addView(createCell(header, 60, "#666666", 10f, bold = true))
+        headerRow.addView(createCell("持仓/可用", 55, "#666666", 9f, bold = true))
         for (date in dates) { val label = date.takeLast(5); headerRow.addView(createCell(label, 72, "#666666", 10f, bold = true)) }
         table.addView(headerRow)
         for (order in orders) {
@@ -1028,6 +1029,7 @@ class SimulationTradeFragment : Fragment() {
             row.addView(nameCell)
             row.addView(createCell(order.tradeDate.takeLast(5), 60, "#333333", 10f))
             row.addView(createCell("¥${"%.2f".format(order.buyPrice)}", 60, "#333333", 10f))
+            row.addView(createCell("${order.quantity}/100", 55, "#1565C0", 9f))
             for (date in dates) {
                 val price = priceMap[order.stockCode]?.get(date)
                 val cellText: String; val cellColor: String

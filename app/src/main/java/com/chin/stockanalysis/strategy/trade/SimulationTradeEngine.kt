@@ -166,36 +166,31 @@ class SimulationTradeEngine(private val context: Context) {
             return@withContext TradeSessionReport(config, emptyList(), emptyList(), emptyList(),
                 "交易日 ${config.tradeDate} 无可用数据")
         }
-        val snapshots = allSnapshots.filter { it.code in poolCodes }
-        Log.i(TAG, "全市場${allSnapshots.size}隻 → 精選池${snapshots.size}隻")
-
-        var stockList = snapshots.map { snap ->
-            StockRealtime(
-                code = snap.code, name = snap.name, price = snap.close,
-                open = snap.open, yestClose = if (snap.changePct != 0.0 && snap.close != 0.0) snap.close / (1.0 + snap.changePct / 100.0) else snap.close,
-                high = snap.high, low = snap.low, volume = snap.volume,
-                amount = snap.amount, changePercent = snap.changePct,
-                changeAmount = snap.close * snap.changePct / 100, timestamp = System.currentTimeMillis()
-            )
-        }
-
-        if (config.onlyMainBoard) {
-            stockList = stockList.filter { isMainBoard(it.code) }
-            Log.i(TAG, "主板過濾後: ${stockList.size} 隻")
-        }
+        // 统一数据层: 使用 StrategyDataFeed 构建 StockRealtime
+        val dataFeed = com.chin.stockanalysis.strategy.data.StrategyDataFeed(context)
+        val feedConfig = com.chin.stockanalysis.strategy.data.StrategyDataFeed.DataFeedConfig(
+            onlyMainBoard = config.onlyMainBoard,
+            stockCodes = poolCodes
+        )
+        var stockList = dataFeed.convertSnapshots(allSnapshots, feedConfig)
+        Log.i(TAG, "統一數據層: ${allSnapshots.size}隻 → ${stockList.size}隻 (主板=${config.onlyMainBoard})")
 
         val heatScores = mutableMapOf<String, Int>()
         stockList.forEach { stock -> heatScores[stock.code] = StockDataCenter.calculateStockHeatScore(stock.code, allSnapshots) }
         stockList = stockList.sortedByDescending { heatScores[it.code] ?: 0 }
 
-        // Step 5
+        // Step 5: 策略信號生成
         val allTodayResults = mutableListOf<StrategyPeriodResult>()
         for (strategy in strategies) {
             if (strategy.id == "ai_prediction") continue
+            Log.d(TAG, "【Step 5】执行策略: ${strategy.name} 输入${stockList.size}只")
             val rawSignals = executeStrategy(strategy, stockList, 1) ?: continue
+            if (rawSignals.isEmpty()) { Log.d(TAG, "  ${strategy.name}: 无信号"); continue }
+            Log.d(TAG, "  ${strategy.name}: 原始信號${rawSignals.size}個")
             if (rawSignals.isEmpty()) continue
             // 🔥 買入前過濾 (Step 5内部，在主板过濾之前)
             val afterBuyFilter = applySignalFilter(rawSignals, allSnapshots)
+            Log.d(TAG, "  ${strategy.name}: 4条过滤后${afterBuyFilter.size}個")
             val newsScore = calculateNewsStrength(afterBuyFilter, config.tradeDate)
             val rotationPenaltyScore = calculateRotationPenalty(afterBuyFilter, config.tradeDate)
             val (filtered, filteredInfo) = filterByMainBoard(afterBuyFilter, config.onlyMainBoard)
@@ -208,40 +203,44 @@ class SimulationTradeEngine(private val context: Context) {
                 afterMainBoardFilter = filtered.take(MAX_STOCKS_PER_STRATEGY),
                 filteredStocks = filteredInfo.take(20), finalTop15 = top15
             ))
-            Log.d(TAG, "  ${strategy.name}: Top15 = ${top15.take(5).joinToString { it.stockName }}...")
+            Log.i(TAG, "  ${strategy.name}: 输出Top15 — ${top15.take(5).joinToString { "${it.stockName}(${it.strength}%)" }}")
             savePeriodResultToDb(strategy.id, strategy.name, 1, config.tradeDate, rawSignals, newsScore, rotationPenaltyScore,
                 filtered.map { it.stockCode }, filteredInfo, top15)
         }
-        Log.i(TAG, "【Step 5】${allTodayResults.size} 個策略各輸出 Top15")
+        Log.i(TAG, "【Step 5】${allTodayResults.size} 個策略命中，输入${stockList.size}只 → 输出策略结果")
 
-        // Step 6
+        // Step 6: 跨日聚合 + 多周期热门股
         val crossDayTop20 = aggregateCrossDayResults(config.tradeDate, strategies, poolCodes)
-        Log.i(TAG, "【Step 6】跨${CROSS_DAY_WINDOW}天聚合 → Top${crossDayTop20.size}: ${crossDayTop20.take(8).joinToString { "${it.first.takeLast(6)}(${it.second}天)" }}")
+        Log.i(TAG, "【Step 6a】跨${CROSS_DAY_WINDOW}天聚合 → Top${crossDayTop20.size}: ${crossDayTop20.take(8).joinToString { "${it.first.takeLast(6)}(${it.second}天)" }}")
+        val hotStocks = addMultiPeriodHotStocks(config.tradeDate, config.onlyMainBoard)
+        Log.i(TAG, "【Step 6b】多周期热门股: +${hotStocks.size}隻 — ${hotStocks.take(5).joinToString()}")
 
-        // Step 7
+        // Step 7: 板块精选
         val sectorPicked = if (config.onlyMainBoard) getHotSectorStockPool().filter { isMainBoard(it) }.toSet() else getHotSectorStockPool()
-        Log.i(TAG, "【Step 7】板塊精選: ${sectorPicked.size} 隻加入")
+        Log.i(TAG, "【Step 7】板塊精選: +${sectorPicked.size} 隻")
 
-        // Step 8
+        // Step 8: 用户搜索/智能体
         val userStockCodes = if (config.onlyMainBoard) StockDataCenter.getUserSearchStockCodes().filter { isMainBoard(it) }.toSet() else StockDataCenter.getUserSearchStockCodes()
         val skillPickCodes = if (config.onlyMainBoard) StockDataCenter.getSkillPickStockCodes().filter { isMainBoard(it) }.toSet() else StockDataCenter.getSkillPickStockCodes()
         Log.i(TAG, "【Step 8】用戶搜索${userStockCodes.size}隻 + 智能體${skillPickCodes.size}隻")
 
-        // Step 9
-        val rawPool = (crossDayTop20.map { it.first }.toSet() + sectorPicked + userStockCodes + skillPickCodes).toSet()
+        // Step 9: 组装+过滤
+        val rawPool = (crossDayTop20.map { it.first }.toSet() + hotStocks + sectorPicked + userStockCodes + skillPickCodes).toSet()
+        Log.i(TAG, "【Step 9a】rawPool: ${rawPool.size}隻")
         val finalPool = filterPoolCodes(rawPool, allSnapshots)
         val filteredOut = rawPool.size - finalPool.size
-        if (filteredOut > 0) Log.i(TAG, "【Step 9】買入過濾: 移除${filteredOut}隻不合格股 → 最終池 ${finalPool.size} 隻")
-        else Log.i(TAG, "【Step 9】最終AI輸入池: ${finalPool.size} 隻")
+        if (filteredOut > 0) Log.i(TAG, "【Step 9b】買入過濾: 移除${filteredOut}隻不合格股 → 最終池 ${finalPool.size} 隻")
+        else Log.i(TAG, "【Step 9b】最終AI輸入池: ${finalPool.size} 隻")
 
-        val finalSnapshots = allSnapshots.filter { it.code in finalPool }
-        val finalStockList = finalSnapshots.map { snap ->
-            StockRealtime(code = snap.code, name = snap.name, price = snap.close,
-                open = snap.open, yestClose = if (snap.changePct != 0.0 && snap.close != 0.0) snap.close / (1.0 + snap.changePct / 100.0) else snap.close,
-                high = snap.high, low = snap.low, volume = snap.volume,
-                amount = snap.amount, changePercent = snap.changePct,
-                changeAmount = snap.close * snap.changePct / 100, timestamp = System.currentTimeMillis())
-        }
+        // Step 9c: 新聞檢查
+        val newsBlocked = checkNewsBeforeBuy(config.tradeDate, allSnapshots)
+        if (newsBlocked.isNotEmpty()) Log.i(TAG, "【Step 9c】新聞攔截: ${newsBlocked.size}隻有重大利空 — ${newsBlocked.joinToString { "${it.stockName}(${it.reason})" }}")
+        val safePool = finalPool.filter { code -> newsBlocked.none { it.code == code } }
+        if (safePool.size < finalPool.size) Log.i(TAG, "【Step 9c】安全池: ${safePool.size}隻")
+
+        val finalPoolSafe = safePool.toSet()
+        val finalSnapshots = allSnapshots.filter { it.code in finalPoolSafe }
+        val finalStockList = dataFeed.convertSnapshots(finalSnapshots, com.chin.stockanalysis.strategy.data.StrategyDataFeed.DataFeedConfig(onlyMainBoard = false))
 
         val aiStrategy = strategies.find { it.id == "ai_prediction" }
         val aiPicks = if (aiStrategy != null && aiStrategy is com.chin.stockanalysis.strategy.strategies.AIPredictionStrategy) {
@@ -268,7 +267,7 @@ class SimulationTradeEngine(private val context: Context) {
         val buyOrders = generateBuyOrders(aiPicks, config.tradeDate, allSnapshots)
         saveDailyNewsHotPicks(config.tradeDate)
         runFitting(strategies, allTodayResults, config)
-        saveFinalPoolToDb(config.tradeDate, finalPool.toList(), crossDayTop20)
+        saveFinalPoolToDb(config.tradeDate, finalPoolSafe.toList(), crossDayTop20)
 
         val stepDetail = StepDetail(
             basePoolSize = poolCodes.size,
@@ -407,6 +406,23 @@ class SimulationTradeEngine(private val context: Context) {
         val local = try { db.dailySnapshotDao().getByDate(date) } catch (e: Exception) { emptyList() }
         if (local.size >= 100) return local
         val today = LocalDate.now().format(DATE_FMT)
+        // 强制导入：如果已有数据太少，直接拉取全部历史数据
+        if (local.size < 50) {
+            try {
+                val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(context)
+                val todayStr = LocalDate.now().format(DATE_FMT)
+                val fetchEnd = if (date > todayStr) todayStr else date
+                val parsedEnd = LocalDate.parse(fetchEnd)
+                val parsedStart = parsedEnd.minusDays(90)
+                val daysDelta = java.time.temporal.ChronoUnit.DAYS.between(parsedStart, parsedEnd).toInt().coerceIn(5, 120)
+                fetcher.fetchAllHistoricalData(days = daysDelta)
+                val afterFetch = try { db.dailySnapshotDao().getByDate(date) } catch (_: Exception) { emptyList() }
+                if (afterFetch.size > local.size) {
+                    Log.i(TAG, "强制自动导入完成: ${afterFetch.size}条 (之前${local.size}条)")
+                    return afterFetch
+                }
+            } catch (_: Exception) { /* fallback to original logic */ }
+        }
         if (date == today) {
             try {
                 val screener = com.chin.stockanalysis.strategy.data.StockScreener(
@@ -707,6 +723,48 @@ class SimulationTradeEngine(private val context: Context) {
             }
             true
         }.toSet()
+    }
+
+    /** Step 6b: 多周期热门股 — 近3/5/10/30/50/100天各Top3涨幅股去重 */
+    private suspend fun addMultiPeriodHotStocks(tradeDate: String, onlyMainBoard: Boolean = true): Set<String> {
+        val periods = listOf(3, 5, 10, 30, 50, 100)
+        val allDates = try { db.dailySnapshotDao().getAvailableDates(120).sorted() } catch (_: Exception) { emptyList() }
+        val hotSet = mutableSetOf<String>()
+        for (days in periods) {
+            val startIdx = allDates.indexOf(tradeDate) - days
+            if (startIdx < 0) continue
+            val slices = allDates.subList(startIdx.coerceAtLeast(0), allDates.size)
+            val sliceMap = mutableMapOf<String, Double>()
+            for (date in slices) {
+                try {
+                    val snaps = db.dailySnapshotDao().getByDate(date)
+                    for (snap in snaps) {
+                        if (onlyMainBoard && !isMainBoard(snap.code)) continue
+                        sliceMap[snap.code] = (sliceMap[snap.code] ?: 0.0) + snap.changePct
+                    }
+                } catch (_: Exception) { continue }
+            }
+            sliceMap.entries.sortedByDescending { it.value }.take(3).mapTo(hotSet) { it.key }
+        }
+        return hotSet
+    }
+
+    /** Step 9c: 买入前新闻拦截 — 高位负面消息拒绝买入 */
+    data class NewsBlockedStock(val code: String, val stockName: String, val reason: String)
+    private suspend fun checkNewsBeforeBuy(tradeDate: String, allSnapshots: List<DailySnapshotEntity>): List<NewsBlockedStock> {
+        val fromDate = try { LocalDate.parse(tradeDate).minusDays(3).format(DATE_FMT) } catch (_: Exception) { tradeDate }
+        val newsList = try { db.newsFactorDao().getActiveByDateRange(fromDate, tradeDate) } catch (_: Exception) { emptyList() }
+        if (newsList.isEmpty()) return emptyList()
+        val snapMap = allSnapshots.associateBy { it.code }
+        val blocked = mutableListOf<NewsBlockedStock>()
+        for (news in newsList) {
+            if (news.stockCode.isBlank()) continue
+            if (news.impactStrength >= 75 && news.sentiment < -30) {
+                val snap = snapMap[news.stockCode] ?: continue
+                blocked.add(NewsBlockedStock(news.stockCode, snap.name, "${news.title.take(40)}"))
+            }
+        }
+        return blocked
     }
 
     fun buildEnhancedSummary(detail: StepDetail, aiPicks: List<AIPick>, crossDay: List<Pair<String,Int>>, swapInfo: SimulationTradeEngine.SwapInfo?): String = buildString {

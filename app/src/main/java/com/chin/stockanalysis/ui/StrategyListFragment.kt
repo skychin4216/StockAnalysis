@@ -375,13 +375,11 @@ class StrategyListFragment : Fragment() {
         for (code in effectiveSnapshots.map { it.code }.distinct()) StockDataCenter.getSectorsByStock(code)
         val sectorStockCodes = if (currentHotSectors.isEmpty()) emptySet()
         else { val codes = mutableSetOf<String>(); for (name in currentHotSectors) codes.addAll(db.sectorStockDao().getStockCodesBySector(name)); codes }
-        val codeToName = db.stockBasicDao().getAll().associate { it.code to it.name }
         val onlyMainBoard = (view?.findViewWithTag<Switch>("mainBoardSwitch")?.isChecked == true)
-        val stockList = effectiveSnapshots.filter { (sectorStockCodes.isEmpty() || it.code in sectorStockCodes) && (!onlyMainBoard || isMainBoard(it.code)) }.map { snap ->
-            val dn = snap.name.takeIf { it.isNotBlank() } ?: codeToName[snap.code] ?: snap.code
-            val yc = if (snap.changePct != 0.0 && snap.close != 0.0) snap.close / (1.0 + snap.changePct / 100.0) else snap.close
-            com.chin.stockanalysis.stock.StockRealtime(code = snap.code, name = dn, price = snap.close, open = snap.open, yestClose = yc, high = snap.high, low = snap.low, volume = snap.volume, amount = snap.amount, changePercent = snap.changePct, changeAmount = snap.close * snap.changePct / 100, timestamp = System.currentTimeMillis())
-        }
+        // 统一数据层: 使用 StrategyDataFeed 构建 StockRealtime
+        val feed = com.chin.stockanalysis.strategy.data.StrategyDataFeed(requireContext())
+        val allStocks = feed.convertSnapshots(effectiveSnapshots, com.chin.stockanalysis.strategy.data.StrategyDataFeed.DataFeedConfig(onlyMainBoard = onlyMainBoard))
+        val stockList = if (sectorStockCodes.isEmpty()) allStocks else allStocks.filter { it.code in sectorStockCodes }
         val results = mutableListOf<ScreeningResult>()
         for (s in eng.getStrategies()) { if (!eng.isEnabled(s.id)) continue; if (s.id == "ai_prediction") continue; try { s.screenWithData(stockList).getOrNull()?.let { results.add(it) } } catch (e: Exception) { Log.w("SLF", "策略 ${s.id} 异常: ${e.message}") } }
         // 更新缓存
