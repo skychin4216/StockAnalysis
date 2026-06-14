@@ -57,20 +57,24 @@ class StockAnalyzerService(private val context: Context) {
         strategyEngine: StrategyEngine? = null,
         onProgress: suspend (Message) -> Unit
     ): AnalysisResult = withContext(Dispatchers.IO) {
+        Log.i(TAG, "🚀 analyze() started: code=$stockCode name=$stockNameHint")
         val today = LocalDate.now().format(DATE_FMT)
 
-        // ── Step 1: 获取最新数据 ──
-        onProgress(Message(content = "📊 正在获取 $stockCode 最新行情数据...", isUser = false))
+        // ── Step 1: 获取最新数据 (合并到一个泡泡) ──
+        val initMsg = StringBuilder("🔍 分析 ${stockNameHint.ifBlank { stockCode.takeLast(6) }}\n")
         val feed = StrategyDataFeed(context)
         val allStocks = feed.prepareFromDb(today, StrategyDataFeed.DataFeedConfig(onlyMainBoard = false))
+        Log.i(TAG, "  全市场数据: ${allStocks.size}只, 目标代码=$stockCode")
         var targetStock = allStocks.find { it.code == stockCode }
         if (targetStock == null) {
+            Log.i(TAG, "  ⚠️ 全市场数据中未找到 $stockCode, 尝试单独拉取...")
             // 尝试只拉取这只股票的数据
             try {
                 val db = StockDatabase.getInstance(context)
                 val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(context)
                 val todayDate = LocalDate.now()
                 val (records, name) = fetcher.fetchOneStock(stockCode, todayDate.minusDays(5), todayDate)
+                Log.i(TAG, "  单独拉取结果: ${records.size}条, 名称=$name")
                 if (records.isNotEmpty()) {
                     db.dailySnapshotDao().insertAll(records)
                     val close = records.lastOrNull()?.close ?: 0.0
@@ -88,24 +92,28 @@ class StockAnalyzerService(private val context: Context) {
                         timestamp = System.currentTimeMillis()
                     )
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) { Log.w(TAG, "  单独拉取异常: ${e.message}") }
         }
         if (targetStock == null) {
             throw Exception("未找到 $stockCode 的行情数据，请先导入历史数据")
         }
         val stock = targetStock
         val stockName = stock.name.takeIf { it.isNotBlank() } ?: stockNameHint
-        onProgress(Message(content = "✅ 数据就绪: $stockName(${stockCode.takeLast(6)}) 现价 ¥${"%.2f".format(stock.price)} ${if(stock.changePercent>=0)"+" else ""}${"%.2f".format(stock.changePercent)}%", isUser = false))
+        Log.i(TAG, "  ✅ 数据就绪: $stockName price=${stock.price} chg=${stock.changePercent}")
+        initMsg.append("✅ $stockName · ¥${"%.2f".format(stock.price)} · 涨${if(stock.changePercent>=0)"+" else ""}${"%.2f".format(stock.changePercent)}%\n")
 
         // ── Step 2: 记录到 userSearchHistory ──
         com.chin.stockanalysis.stock.database.StockDataCenter.recordUserSearch(stockCode, stockName, stock.price, stock.changePercent)
 
-        // ── Step 3: 执行所有策略（每个策略单独显示） ──
-        onProgress(Message(content = "📈 多策略分析 (${if(strategyEngine!=null) "自定义引擎" else "全部启用策略"}):", isUser = false))
+        // ── Step 3: 执行所有策略 (合并到一个泡泡) ──
         val eng = strategyEngine ?: StrategyEngineHolder.get()
+        val enabledCount = eng.getStrategies().count { eng.isEnabled(it.id) && it.id != "ai_prediction" }
+        Log.i(TAG, "  📈 开始执行 $enabledCount 个策略...")
+        initMsg.append("📈 多策略分析 (${enabledCount}个策略):\n")
         val singleStockList = listOf(stock)
         val hits = mutableListOf<StrategyHit>()
         val screeningList = mutableListOf<ScreeningResult>()
+        var hitIdx = 1
         for (strategy in eng.getStrategies()) {
             if (!eng.isEnabled(strategy.id) || strategy.id == "ai_prediction") continue
             try {
@@ -116,29 +124,37 @@ class StockAnalyzerService(private val context: Context) {
                     val sig = screening.signals.firstOrNull()
                     if (sig != null) {
                         hits.add(StrategyHit(strategy.name, sig.strength, sig.reason))
-                        onProgress(Message(content = "  ${strategy.category.icon} ${strategy.name}: ✅ 命中 (强度${sig.strength}%) — ${sig.reason.take(50)}", isUser = false))
+                        initMsg.append("  $hitIdx. ${strategy.category.icon} ${strategy.name}: ✅ 命中 (${sig.strength}%)\n")
                     } else {
-                        onProgress(Message(content = "  ${strategy.category.icon} ${strategy.name}: ❌ 未命中", isUser = false))
+                        initMsg.append("  $hitIdx. ${strategy.category.icon} ${strategy.name}: ❌ 未命中\n")
                     }
                 }
             } catch (_: Exception) {
-                onProgress(Message(content = "  ${strategy.category.icon} ${strategy.name}: ⚠️ 执行异常", isUser = false))
+                initMsg.append("  $hitIdx. ${strategy.category.icon} ${strategy.name}: ⚠️ 异常\n")
             }
+            hitIdx++
         }
-        onProgress(Message(content = "策略命中: ${hits.size}/${eng.getStrategies().count { eng.isEnabled(it.id) && it.id != "ai_prediction" }} 个策略", isUser = false))
+        initMsg.append("\n策略命中: ${hits.size}/$enabledCount 个策略")
+        onProgress(Message(content = initMsg.toString(), isUser = false))
 
-        // ── Step 4: 智能体分析 ──
-        onProgress(Message(content = "🤖 智能体技术分析:", isUser = false))
-        onProgress(Message(content = "━━ 技术指标 ━━\n现价: ¥${"%.2f".format(stock.price)} | 涨跌: ${if(stock.changePercent>=0)"+" else ""}${"%.2f".format(stock.changePercent)}%\n成交量: ${formatVolume(stock.volume)} | 开盘: ¥${"%.2f".format(stock.open)} | 昨收: ¥${"%.2f".format(stock.yestClose)}", isUser = false))
-        if (hits.isNotEmpty()) {
-            onProgress(Message(content = "命中策略 (${hits.size}个):", isUser = false))
-            for (h in hits) {
-                onProgress(Message(content = "  · ${h.strategyName}: ${h.strength}%", isUser = false))
+        // ── Step 4: 智能体技术分析 (独立泡泡) ──
+        onProgress(Message(content = buildString {
+            appendLine("🤖 智能体技术分析")
+            appendLine("━━━━━━━━━━━━━━━━━━")
+            appendLine("现价: ¥${"%.2f".format(stock.price)} | 涨跌: ${if(stock.changePercent>=0)"+" else ""}${"%.2f".format(stock.changePercent)}%")
+            appendLine("成交量: ${formatVolume(stock.volume)} | 开盘: ¥${"%.2f".format(stock.open)} | 昨收: ¥${"%.2f".format(stock.yestClose)}")
+            if (hits.isNotEmpty()) {
+                appendLine("策略命中 (${hits.size}个):")
+                for (h in hits) {
+                    appendLine("  · ${h.strategyName}: ${h.strength}%")
+                }
+            } else {
+                appendLine("⚠️ 无策略命中")
             }
-        }
+            append("━━━━━━━━━━━━━━━━━━")
+        }, isUser = false))
 
-        // ── Step 5: AI 预测 ──
-        onProgress(Message(content = "🧠 AI 综合评估 (AIPredictionEngine)...", isUser = false))
+        // ── Step 5: AI 预测 (独立泡泡) ──
         val aiPicks = mutableListOf<AIPredictionEngine.AIPick>()
         var finalRecommendation: String
         if (screeningList.isNotEmpty()) {
@@ -154,15 +170,14 @@ class StockAnalyzerService(private val context: Context) {
                         else -> "🔴 建议观望"
                     }
                     finalRecommendation = buildString {
-                        appendLine("━━━━━━━━━━━━━━━━━━")
                         appendLine("🧠 AI 综合评估报告")
+                        appendLine("━━━━━━━━━━━━━━━━━━")
                         appendLine("股票: $stockName (${stockCode.takeLast(6)})")
                         appendLine("价格: ¥${"%.2f".format(stock.price)} (${if(stock.changePercent>=0)"+" else ""}${"%.2f".format(stock.changePercent)}%)")
                         appendLine("综合评分: ${topPick.compositeScore}分")
                         appendLine("上涨概率: ${topPick.upProbability}%")
                         appendLine("建议: $actionEmoji")
                         appendLine("理由: ${topPick.reason}")
-                        appendLine("策略命中: ${hits.joinToString { "${it.strategyName.take(4)}(${it.strength})" }}")
                         if (hits.isEmpty()) appendLine("⚠️ 无策略命中，请谨慎操作")
                         appendLine("━━━━━━━━━━━━━━━━━━")
                     }

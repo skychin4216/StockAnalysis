@@ -757,6 +757,7 @@ class ChatTabFragment : Fragment() {
                             )
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(requireContext(), "✅ 已买入 ${result.stockName}", Toast.LENGTH_SHORT).show()
+                                // 持仓已更新，下次切换到模拟交易Tab时会自动刷新
                             }
                         } catch (_: Exception) {}
                     }

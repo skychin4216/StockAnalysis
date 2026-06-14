@@ -489,7 +489,7 @@ class StrategyListFragment : Fragment() {
         lifecycleScope.launch {
             try {
                 val f = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
-                val t = f.fetchAllHistoricalData(days) { p ->
+                val t = f.fetchAllHistoricalData(days, force = true) { p ->
                     lifecycleScope.launch(Dispatchers.Main) {
                         statusTv.text = "  进度: ${p.completedStocks}/${p.totalStocks} 只 · ${p.totalRecords} 条"
                     }

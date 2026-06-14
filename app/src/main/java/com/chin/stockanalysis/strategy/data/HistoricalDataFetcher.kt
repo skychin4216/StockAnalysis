@@ -45,7 +45,10 @@ class HistoricalDataFetcher(private val context: Context) {
          *  理念：全市場5000只 → 篩選200只值得投資的 → 每次按熱門板塊選前100只
          *  符合梁文峰量化策略 — 專注少數優質股，多因子+動態調權+跨行業分散
          */
-        internal val TOP_STOCKS = listOf(
+        /** 使用 LeaderStockPool 中的龙头股代码（10大板块 × 41子板块） */
+        internal val TOP_STOCKS get() = LeaderStockPool.ALL_LEADER_CODES.toList()
+        @Deprecated("使用 LeaderStockPool.ALL_LEADER_CODES", ReplaceWith("LeaderStockPool.ALL_LEADER_CODES.toList()"))
+        private val OLD_TOP_STOCKS = listOf(
             // ═══ 金融 (銀行/保險/券商) ═══ 18只
             "sh601398", "sh601939", "sh601288", "sh600036", "sh600016", "sh600000",
             "sh601318", "sh601628", "sh601601", "sh600030", "sh601688", "sh600837",
@@ -123,37 +126,54 @@ class HistoricalDataFetcher(private val context: Context) {
      */
     suspend fun fetchAllHistoricalData(
         days: Int = 60,
+        force: Boolean = false,
         onProgress: ((FetchProgress) -> Unit)? = null
     ): Int = withContext(Dispatchers.IO) {
         val endDate = LocalDate.now()
-        val startDate = endDate.minusDays((days * 1.5).toLong())  // 多拉一些，过滤非交易日
+        var startDate = if (force && days < 500) LocalDate.of(2024, 1, 1) else endDate.minusDays((days * 1.5).toLong())
 
-        Log.i(TAG, "━━━ 开始拉取历史数据: ${startDate.format(STORE_FMT)} ~ ${endDate.format(STORE_FMT)} ━━━")
+        Log.i(TAG, "━━━ 开始拉取历史数据: ${startDate.format(STORE_FMT)} ~ ${endDate.format(STORE_FMT)} ━━━ 强制=$force days=$days")
 
-        // 已有数据日期去重：跳过已存在数据的日期
-        val existingDates = db.dailySnapshotDao().getAvailableDates(500).toSet()
-        val todayStr = LocalDate.now().format(STORE_FMT)
-        val alreadyImported = existingDates.contains(todayStr)
+        val prefs = context.getSharedPreferences("data_import", Context.MODE_PRIVATE)
+        val leaderFetched = prefs.getBoolean("leader_stocks_fetched", false)
+        val lastFetchedDate = prefs.getString("last_fetched_date", "") ?: ""
+        val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay()
+        val todayStr = today.format(STORE_FMT)
+        val isNonTrading = today.dayOfWeek == java.time.DayOfWeek.SATURDAY ||
+                today.dayOfWeek == java.time.DayOfWeek.SUNDAY ||
+                today in com.chin.stockanalysis.ui.TradingDayPickerView.CHINESE_HOLIDAYS
+        Log.i(TAG, "📅 今日=${todayStr} 非交易日=${isNonTrading} 龙头已获取=${leaderFetched} 上次获取=${lastFetchedDate} force=$force")
 
-        // 檢查今天數據是否完整（至少要有 TOP_STOCKS 中 80% 的數據才算完整）
-        val todayDataCount = try {
-            db.dailySnapshotDao().getByDate(todayStr).size
-        } catch (_: Exception) { 0 }
-        val isComplete = todayDataCount >= (TOP_STOCKS.size * 0.8).toInt()
-
-        if (alreadyImported && existingDates.size > 10 && isComplete) {
-            Log.i(TAG, "✅ 已有 ${existingDates.size} 个交易日数据 (今日${todayDataCount}只, 完整)，跳过重复导入")
+        // ── 三级判断逻辑 ──
+        // ① 首次导入：2024-01-01 至今的全量龙头股（一次性）
+        if (!leaderFetched) {
+            Log.i(TAG, "🚀 首次导入：拉取 2024-01-01 至今的全部龙头股")
+            startDate = LocalDate.of(2024, 1, 1)
+        }
+        // ② 非交易日：跳过（数据已是最近交易日的）
+        else if (isNonTrading && !force) {
+            Log.i(TAG, "✅ 非交易日，跳过导入 (最近交易日数据: $lastFetchedDate)")
             return@withContext 0
         }
-        if (alreadyImported && !isComplete) {
-            Log.i(TAG, "⚠️ 今日数据不完整 (${todayDataCount}/${TOP_STOCKS.size}隻)，重新拉取")
+        // ③ 交易日且数据已完整：非强制跳过，强制时拉取增量
+        else {
+            val todayDataCount = try { db.dailySnapshotDao().getByDate(todayStr).size } catch (_: Exception) { 0 }
+            val isComplete = todayDataCount >= (TOP_STOCKS.size * 0.8).toInt()
+            if (isComplete && !force) {
+                Log.i(TAG, "✅ 今日数据完整 (${todayDataCount}只)，跳过导入")
+                return@withContext 0
+            }
+            if (isComplete && force) {
+                Log.i(TAG, "📥 用户强制导入，拉取最新数据 (增量)")
+                startDate = if (lastFetchedDate.isNotEmpty()) LocalDate.parse(lastFetchedDate, STORE_FMT).minusDays(1) else LocalDate.now().minusDays(3)
+            }
         }
 
         var totalRecords = 0
         val totalStocks = TOP_STOCKS.size
 
-        // 控制并发，每次5只
-        TOP_STOCKS.chunked(5).forEach { batch ->
+        // 控制并发，每次10只（优化：从5提升到10，减少总批次数）
+        TOP_STOCKS.chunked(10).forEach { batch ->
             val jobs = batch.map { code ->
                 async {
                     fetchOneStock(code, startDate, endDate)
@@ -183,6 +203,10 @@ class HistoricalDataFetcher(private val context: Context) {
                 ))
             }
         }
+
+        // 标记导入完成
+        prefs.edit().putBoolean("leader_stocks_fetched", true).putString("last_fetched_date", todayStr).apply()
+        Log.i(TAG, "💾 导入标记: 龙头=true 日期=${todayStr}")
 
         // 补齐缺失的股票名称（旧数据可能为空）
         val filledCount = fillMissingNames()
@@ -332,7 +356,7 @@ class HistoricalDataFetcher(private val context: Context) {
                 "&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f61" +
                 "&beg=$beg&end=$end&lmt=300"
 
-        for (attempt in 0..2) {
+        for (attempt in 0..0) {
             try {
                 if (attempt > 0) kotlinx.coroutines.delay(600L * attempt)
                 val req = Request.Builder().url(url)

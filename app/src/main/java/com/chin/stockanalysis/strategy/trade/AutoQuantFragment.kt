@@ -45,7 +45,7 @@ class AutoQuantFragment : Fragment() {
     private lateinit var positionContainer: LinearLayout
     private lateinit var reportDivider: View
     private lateinit var resultsContainer: LinearLayout
-    private lateinit var autoCheckBox: CheckBox
+    private var browsingDate: LocalDate = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay()
 
     private var engine: StrategyEngine? = null
     private var pipelineFactors: ZiplinePipeline.FactorSet? = null
@@ -77,9 +77,21 @@ class AutoQuantFragment : Fragment() {
             text = "🤖 自动量化系统 (Zipline Pipeline + AI精选)"
             textSize = 16f; setTextColor(Color.parseColor("#1A1A2E")); setTypeface(null, Typeface.BOLD); setPadding(16, 16, 16, 8)
         })
-        val configRow = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(16, 8, 16, 8); setBackgroundColor(Color.WHITE) }
-        autoCheckBox = CheckBox(requireContext()).apply { text = "定时自动选股 (每个交易日)"; textSize = 12f; setTextColor(Color.parseColor("#333333")) }
-        configRow.addView(autoCheckBox); rootLayout.addView(configRow)
+        val configRow = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(8, 6, 8, 6); setBackgroundColor(Color.WHITE) }
+        val dateLabelTv = TextView(requireContext()).apply { text = "📅 交易日:"; textSize = 12f; setTextColor(Color.parseColor("#333333")); setTypeface(null, Typeface.BOLD) }
+        configRow.addView(dateLabelTv)
+        val datePicker = com.chin.stockanalysis.ui.TradingDayPickerView(requireContext()).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = 4; marginEnd = 6 }
+            onDateChanged = { d ->
+                browsingDate = d
+                val isNonTrading = d.dayOfWeek == java.time.DayOfWeek.SATURDAY || d.dayOfWeek == java.time.DayOfWeek.SUNDAY || d in com.chin.stockanalysis.ui.TradingDayPickerView.CHINESE_HOLIDAYS
+                dateLabelTv.text = if (isNonTrading) "📅 非交易日:" else "📅 交易日:"
+            }
+        }
+        configRow.addView(datePicker)
+        val mainBoardSwitch = Switch(requireContext()).apply { text = "仅主板"; textSize = 11f; isChecked = true; setTextColor(Color.parseColor("#333333")) }
+        configRow.addView(mainBoardSwitch)
+        rootLayout.addView(configRow)
 
         // ── 按钮行 ──
         val btnRow = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(4, 1, 4, 1) }

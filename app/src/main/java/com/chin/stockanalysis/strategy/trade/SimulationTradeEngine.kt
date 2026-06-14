@@ -156,12 +156,14 @@ class SimulationTradeEngine(private val context: Context) {
         config: TradeSessionConfig = TradeSessionConfig()
     ): TradeSessionReport = withContext(Dispatchers.IO) {
         Log.i(TAG, "━━━ 9步精選模擬交易 ━━━")
-        Log.i(TAG, "交易日: ${config.tradeDate}")
+        Log.i(TAG, "交易日: ${config.tradeDate}  主板: ${config.onlyMainBoard}  周期: ${config.periods}")
+        Log.i(TAG, "策略数: ${strategies.size}  最大持仓: ${MAX_HOLDINGS}")
 
         val poolCodes = buildDailyStockPool(config.tradeDate)
         Log.i(TAG, "【Step 1-4】精選池: ${poolCodes.size} 隻")
 
         val allSnapshots = getTradingDayData(config.tradeDate)
+        Log.i(TAG, "获取交易日数据: ${allSnapshots.size}只")
         if (allSnapshots.isEmpty()) {
             return@withContext TradeSessionReport(config, emptyList(), emptyList(), emptyList(),
                 "交易日 ${config.tradeDate} 无可用数据")
@@ -265,9 +267,11 @@ class SimulationTradeEngine(private val context: Context) {
         } else emptyList()
 
         val buyOrders = generateBuyOrders(aiPicks, config.tradeDate, allSnapshots)
+        Log.i(TAG, "生成买入订单: ${buyOrders.size}只")
         saveDailyNewsHotPicks(config.tradeDate)
         runFitting(strategies, allTodayResults, config)
         saveFinalPoolToDb(config.tradeDate, finalPoolSafe.toList(), crossDayTop20)
+        Log.i(TAG, "━━━ 9步精選完成 ━━━")
 
         val stepDetail = StepDetail(
             basePoolSize = poolCodes.size,
