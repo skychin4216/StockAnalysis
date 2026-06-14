@@ -84,7 +84,7 @@ class AutoQuantFragment : Fragment() {
         // ── 按钮行 ──
         val btnRow = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(4, 1, 4, 1) }
         runPipelineBtn = Button(requireContext()).apply { text = "▶ Pipeline"; textSize = 10f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#1565C0")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 1f).apply { marginEnd = 1 }; setOnClickListener { runPipeline() } }; btnRow.addView(runPipelineBtn)
-        val importBtn = Button(requireContext()).apply { text = "📥 导入"; textSize = 10f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#2E7D32")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.9f).apply { marginEnd = 1 }; setOnClickListener { importData() } }; btnRow.addView(importBtn)
+        val fitBtn = Button(requireContext()).apply { text = "🔧 拟合"; textSize = 10f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#EF6C00")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.9f).apply { marginEnd = 1 }; setOnClickListener { autoFit() } }; btnRow.addView(fitBtn)
         val buyBtn = Button(requireContext()).apply { text = "▶ 买入"; textSize = 10f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#E65100")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 1f).apply { marginEnd = 1 }; setOnClickListener { buyAiPicks() } }; btnRow.addView(buyBtn)
         val sellBtn = Button(requireContext()).apply { text = "💰 卖出 ▾"; textSize = 10f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#00897B")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 1.3f).apply { marginEnd = 1 }; setOnClickListener { showSellMenu(it) } }; btnRow.addView(sellBtn)
         val dataBtn = Button(requireContext()).apply { text = "🗄️ 数据"; textSize = 10f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#455A64")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.9f).apply { marginEnd = 1 }; setOnClickListener { showDataMenu() } }; btnRow.addView(dataBtn)
@@ -162,10 +162,28 @@ class AutoQuantFragment : Fragment() {
 
     private fun runPipeline() {
         val eng = engine ?: return
-        runPipelineBtn.isEnabled = false; runPipelineBtn.text = "⏳"; progressBar.visibility = View.VISIBLE; statusTv.text = "Pipeline 因子计算中..."
+        runPipelineBtn.isEnabled = false; runPipelineBtn.text = "⏳"; progressBar.visibility = View.VISIBLE; statusTv.text = "检查数据..."
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val today = LocalDate.now().format(DATE_FMT); lastTradeDate = today
+                // 检查是否需要先导入数据
+                val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().format(DATE_FMT)
+                val prefs = requireContext().getSharedPreferences("data_import", android.content.Context.MODE_PRIVATE)
+                val lastImport = prefs.getString("last_import_date", "") ?: ""
+                val db = StockDatabase.getInstance(requireContext())
+                val todaySnaps = db.dailySnapshotDao().getByDate(today)
+                val needImport = todaySnaps.size < 100 || lastImport != today
+                if (needImport) {
+                    withContext(Dispatchers.Main) { statusTv.text = "📥 数据不足，自动导入..." }
+                    val f = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
+                    f.fetchAllHistoricalData(60) { p ->
+                        lifecycleScope.launch(Dispatchers.Main) { statusTv.text = "📥 导入: ${p.completedStocks}/${p.totalStocks}" }
+                    }
+                    prefs.edit().putString("last_import_date", today).apply()
+                    withContext(Dispatchers.Main) { statusTv.text = "✅ 导入完成，开始 Pipeline" }
+                }
+                // 建仓日使用最近的交易日（避免非交易日）
+                val tradeDay = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().format(DATE_FMT)
+                lastTradeDate = tradeDay
                 val feed = StrategyDataFeed(requireContext())
                 val stocks = feed.prepareFromDb(today, StrategyDataFeed.DataFeedConfig(onlyMainBoard = true))
                 todayStocks = stocks
@@ -318,6 +336,30 @@ class AutoQuantFragment : Fragment() {
     private fun showSellMenu(anchor: View) { val popup=PopupMenu(requireContext(), anchor, Gravity.END); popup.menu.add(0,1,0,"💰 卖出评估"); popup.menu.add(0,2,0,"⚡ 一键全卖"); popup.setOnMenuItemClickListener { when(it.itemId){1->Toast.makeText(requireContext(),"卖出评估功能开发中",Toast.LENGTH_SHORT).show(); 2->sellAllAutoQuant()}; true }; popup.show() }
 
     private fun sellAllAutoQuant() { lifecycleScope.launch(Dispatchers.IO) { try { val db=StockDatabase.getInstance(requireContext()); val orders=db.strategyTradeOrderDao().getRecent(200).filter{it.orderType=="AutoQuant"&&it.status=="BUYING"}; for(o in orders) db.strategyTradeOrderDao().updateSellInfo(o.id,"SOLD",o.buyPrice,LocalDate.now().format(DATE_FMT)+" 15:00",0.0); withContext(Dispatchers.Main){refreshPositions(); statusTv.text="✅ 已卖出 ${orders.size} 只"; Toast.makeText(requireContext(),"已卖出 ${orders.size} 只",Toast.LENGTH_SHORT).show()} } catch(_:Exception){} } }
+
+    /** 自动拟合 — 遍历最近交易日，验证预测准确率并更新策略权重 */
+    private fun autoFit() {
+        val eng = engine ?: return
+        runPipelineBtn.isEnabled = false; runPipelineBtn.text = "⏳"; progressBar.visibility = View.VISIBLE; statusTv.text = "🔧 自动拟合中..."
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val te = SimulationTradeEngine(requireContext())
+                val strategies = eng.getStrategies().filter { eng.isEnabled(it.id) }
+                val recentDates = StockDatabase.getInstance(requireContext()).dailySnapshotDao().getAvailableDates(30).sorted()
+                if (recentDates.size < 2) {
+                    withContext(Dispatchers.Main) { statusTv.text = "⚠️ 数据不足"; runPipelineBtn.isEnabled = true; runPipelineBtn.text = "▶ Pipeline"; progressBar.visibility = View.GONE }
+                    return@launch
+                }
+                val results = te.autoFit(strategies, recentDates)
+                withContext(Dispatchers.Main) {
+                    statusTv.text = "✅ 拟合完成: ${results.size} 策略优化"; runPipelineBtn.isEnabled = true; runPipelineBtn.text = "▶ Pipeline"; progressBar.visibility = View.GONE
+                    Toast.makeText(requireContext(), "拟合完成", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { statusTv.text = "❌ 拟合失败: ${e.message?.take(30)}"; runPipelineBtn.isEnabled = true; runPipelineBtn.text = "▶ Pipeline"; progressBar.visibility = View.GONE }
+            }
+        }
+    }
 
     /** 供外部调用的自动触发 Pipeline */
     fun autoRunPipeline() {

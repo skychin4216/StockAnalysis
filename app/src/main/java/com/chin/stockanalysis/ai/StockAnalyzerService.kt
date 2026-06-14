@@ -100,14 +100,12 @@ class StockAnalyzerService(private val context: Context) {
         // ── Step 2: 记录到 userSearchHistory ──
         com.chin.stockanalysis.stock.database.StockDataCenter.recordUserSearch(stockCode, stockName, stock.price, stock.changePercent)
 
-        // ── Step 3: 执行所有策略 ──
-        onProgress(Message(content = "📈 正在执行多策略分析...", isUser = false))
+        // ── Step 3: 执行所有策略（每个策略单独显示） ──
+        onProgress(Message(content = "📈 多策略分析 (${if(strategyEngine!=null) "自定义引擎" else "全部启用策略"}):", isUser = false))
         val eng = strategyEngine ?: StrategyEngineHolder.get()
         val singleStockList = listOf(stock)
         val hits = mutableListOf<StrategyHit>()
         val screeningList = mutableListOf<ScreeningResult>()
-        val strategyHitDetail = StringBuilder()
-        strategyHitDetail.appendLine("策略分析结果:")
         for (strategy in eng.getStrategies()) {
             if (!eng.isEnabled(strategy.id) || strategy.id == "ai_prediction") continue
             try {
@@ -118,24 +116,29 @@ class StockAnalyzerService(private val context: Context) {
                     val sig = screening.signals.firstOrNull()
                     if (sig != null) {
                         hits.add(StrategyHit(strategy.name, sig.strength, sig.reason))
-                        strategyHitDetail.appendLine("  ✅ ${strategy.name}: 命中! 强度=${sig.strength}% 原因=${sig.reason.take(50)}")
+                        onProgress(Message(content = "  ${strategy.category.icon} ${strategy.name}: ✅ 命中 (强度${sig.strength}%) — ${sig.reason.take(50)}", isUser = false))
                     } else {
-                        strategyHitDetail.appendLine("  ❌ ${strategy.name}: 未命中")
+                        onProgress(Message(content = "  ${strategy.category.icon} ${strategy.name}: ❌ 未命中", isUser = false))
                     }
                 }
             } catch (_: Exception) {
-                strategyHitDetail.appendLine("  ⚠️ ${strategy.name}: 执行异常")
+                onProgress(Message(content = "  ${strategy.category.icon} ${strategy.name}: ⚠️ 执行异常", isUser = false))
             }
         }
-        onProgress(Message(content = strategyHitDetail.toString(), isUser = false))
+        onProgress(Message(content = "策略命中: ${hits.size}/${eng.getStrategies().count { eng.isEnabled(it.id) && it.id != "ai_prediction" }} 个策略", isUser = false))
 
         // ── Step 4: 智能体分析 ──
-        onProgress(Message(content = "🤖 智能体正在分析技术指标...", isUser = false))
-        val agentAnalysis = buildAgentAnalysis(stock, hits)
-        onProgress(Message(content = agentAnalysis, isUser = false))
+        onProgress(Message(content = "🤖 智能体技术分析:", isUser = false))
+        onProgress(Message(content = "━━ 技术指标 ━━\n现价: ¥${"%.2f".format(stock.price)} | 涨跌: ${if(stock.changePercent>=0)"+" else ""}${"%.2f".format(stock.changePercent)}%\n成交量: ${formatVolume(stock.volume)} | 开盘: ¥${"%.2f".format(stock.open)} | 昨收: ¥${"%.2f".format(stock.yestClose)}", isUser = false))
+        if (hits.isNotEmpty()) {
+            onProgress(Message(content = "命中策略 (${hits.size}个):", isUser = false))
+            for (h in hits) {
+                onProgress(Message(content = "  · ${h.strategyName}: ${h.strength}%", isUser = false))
+            }
+        }
 
         // ── Step 5: AI 预测 ──
-        onProgress(Message(content = "🧠 AI 正在综合评估...", isUser = false))
+        onProgress(Message(content = "🧠 AI 综合评估 (AIPredictionEngine)...", isUser = false))
         val aiPicks = mutableListOf<AIPredictionEngine.AIPick>()
         var finalRecommendation: String
         if (screeningList.isNotEmpty()) {
@@ -185,7 +188,7 @@ class StockAnalyzerService(private val context: Context) {
         }
         onProgress(Message(content = finalRecommendation, isUser = false))
 
-        AnalysisResult(stockCode, stockName, stock.price, stock.changePercent, hits, agentAnalysis, aiPicks, finalRecommendation)
+        AnalysisResult(stockCode, stockName, stock.price, stock.changePercent, hits, "智能体分析已完成", aiPicks, finalRecommendation)
     }
 
     private fun buildAgentAnalysis(stock: StockRealtime, hits: List<StrategyHit>): String = buildString {

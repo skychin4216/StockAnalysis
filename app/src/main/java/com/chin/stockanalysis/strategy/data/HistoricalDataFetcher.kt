@@ -175,12 +175,12 @@ class HistoricalDataFetcher(private val context: Context) {
                         } catch (_: Exception) { /* 已存在则忽略 */ }
                     }
                 }
+                val done = doneCount.addAndGet(1)
                 onProgress?.invoke(FetchProgress(
                     totalStocks = totalStocks,
-                    completedStocks = minOf(TOTAL_COMPLETE + batch.size, totalStocks),
+                    completedStocks = done * batch.size,
                     totalRecords = totalRecords
                 ))
-                TOTAL_COMPLETE++
             }
         }
 
@@ -194,7 +194,7 @@ class HistoricalDataFetcher(private val context: Context) {
         totalRecords
     }
 
-    private var TOTAL_COMPLETE = 0  // 线程安全的计数器简化
+    private val doneCount = java.util.concurrent.atomic.AtomicInteger(0)
 
     /**
      * 修正所有股票名称（包括空名和错名）。

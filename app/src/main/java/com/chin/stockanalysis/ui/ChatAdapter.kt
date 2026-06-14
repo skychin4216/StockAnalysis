@@ -1,8 +1,13 @@
 package com.chin.stockanalysis.ui
 
+import android.graphics.Color
+import android.os.Build
+import android.text.Html
+import android.text.Spanned
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import androidx.core.text.HtmlCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.chin.stockanalysis.databinding.ItemMessageBinding
 
@@ -44,17 +49,11 @@ class ChatAdapter(
                 layoutBot.visibility = View.GONE
                 layoutUser.visibility = View.VISIBLE
                 tvUserMessage.text = message.content
-
                 tvUserMessage.setOnClickListener {
-                    val visible = layoutUserActions.visibility == View.VISIBLE
-                    layoutUserActions.visibility = if (visible) View.GONE else View.VISIBLE
+                    layoutUserActions.visibility =
+                        if (layoutUserActions.visibility == View.VISIBLE) View.GONE else View.VISIBLE
                 }
-
                 btnCopyUser.setOnClickListener { onCopyMessage?.invoke(message.content) }
-                btnPlayVoiceUser.setOnClickListener { onPlayVoice?.invoke(message.content) }
-                btnFavoriteUser.setOnClickListener { onFavorite?.invoke(message.content) }
-                btnShareUser.setOnClickListener { onShare?.invoke(message.content) }
-                btnRegenerateUser.setOnClickListener { onRegenerate?.invoke(position) }
             }
         }
 
@@ -62,25 +61,73 @@ class ChatAdapter(
             binding.apply {
                 layoutUser.visibility = View.GONE
                 layoutBot.visibility = View.VISIBLE
-                tvBotMessage.text = message.content
+                tvBotMessage.text = parseContent(message.content)
                 tvBotMessage.visibility = View.VISIBLE
                 tvTypingIndicator.visibility = View.GONE
                 tvLoadingStatus.visibility = View.GONE
                 tvErrorHint.visibility = View.GONE
-
                 renderStockTable(message.content)
-
                 tvBotMessage.setOnClickListener {
-                    val visible = layoutBotActions.visibility == View.VISIBLE
-                    layoutBotActions.visibility = if (visible) View.GONE else View.VISIBLE
+                    layoutBotActions.visibility =
+                        if (layoutBotActions.visibility == View.VISIBLE) View.GONE else View.VISIBLE
                 }
-
-                btnCopyBot.setOnClickListener { onCopyMessage?.invoke(message.content) }
-                btnPlayVoiceBot.setOnClickListener { onPlayVoice?.invoke(message.content) }
-                btnFavoriteBot.setOnClickListener { onFavorite?.invoke(message.content) }
-                btnShareBot.setOnClickListener { onShare?.invoke(message.content) }
+                btnCopyBot.setOnClickListener {
+                    val tableText = extractTableText(message.content)
+                    onCopyMessage?.invoke(if (tableText.isNotEmpty()) tableText else message.content)
+                }
                 btnRegenerateBot.setOnClickListener { onRegenerate?.invoke(position) }
             }
+        }
+
+        /** 支持 HTML 表格渲染 */
+        private fun parseContent(content: String): Spanned {
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                HtmlCompat.fromHtml(content, HtmlCompat.FROM_HTML_MODE_LEGACY)
+            } else {
+                @Suppress("DEPRECATION")
+                Html.fromHtml(content)
+            }
+        }
+
+        /** 提取表格文本（制表符分隔，方便粘贴到 Excel） */
+        private fun extractTableText(content: String): String {
+            val lines = content.lines()
+            var tableStart = -1; var tableEnd = -1
+            for (i in lines.indices) {
+                val line = lines[i].trim()
+                if (line.startsWith("|") && !line.startsWith("|---")) {
+                    if (tableStart < 0) tableStart = i
+                    tableEnd = i
+                } else if (tableStart >= 0 && !line.startsWith("|")) { break }
+            }
+            if (tableStart < 0 || tableEnd < tableStart) return ""
+            val sb = StringBuilder()
+            for (i in tableStart..tableEnd) {
+                val line = lines[i].trim()
+                if (line.startsWith("|---")) continue
+                val cells = line.split("|").map { it.trim() }.filter { it.isNotEmpty() }
+                sb.appendLine(cells.joinToString("\t"))
+            }
+            return sb.toString().trimEnd()
+        }
+
+        private fun renderStockTable(content: String) {
+            val lines = content.lines()
+            val sepIdx = lines.indexOfFirst { it.trimStart().startsWith("|") && it.contains("---") }
+            if (sepIdx < 0 || sepIdx < 1) { binding.layoutStockTable.visibility = View.GONE; return }
+            val tbl = mutableListOf<String>()
+            for (i in sepIdx - 1 until lines.size) {
+                val l = lines[i].trim()
+                if (l.startsWith("|")) tbl.add(l) else if (tbl.isNotEmpty()) break
+            }
+            if (tbl.size < 2) { binding.layoutStockTable.visibility = View.GONE; return }
+            val sb = StringBuilder()
+            for (i in tbl.indices) {
+                if (i == 1) { sb.appendLine(tbl[i]); continue }
+                sb.appendLine(tbl[i])
+            }
+            binding.tvStockTable.text = sb.toString().trimEnd()
+            binding.layoutStockTable.visibility = View.VISIBLE
         }
 
         private fun bindStreaming(message: Message) {
@@ -88,7 +135,6 @@ class ChatAdapter(
                 layoutBot.visibility = View.VISIBLE
                 layoutUser.visibility = View.GONE
                 tvBotMessage.text = message.content
-
                 if (message.loadingStatus != null) {
                     tvLoadingStatus.text = message.loadingStatus
                     tvLoadingStatus.visibility = View.VISIBLE
@@ -117,25 +163,6 @@ class ChatAdapter(
                 layoutUserActions.visibility = View.GONE
                 layoutStockTable.visibility = View.GONE
             }
-        }
-
-        private fun renderStockTable(content: String) {
-            val lines = content.lines()
-            val sepIdx = lines.indexOfFirst { it.trimStart().startsWith("|") && it.contains("---") }
-            if (sepIdx < 0 || sepIdx < 1) { binding.layoutStockTable.visibility = View.GONE; return }
-            val tbl = mutableListOf<String>()
-            for (i in sepIdx - 1 until lines.size) {
-                val l = lines[i].trim()
-                if (l.startsWith("|")) tbl.add(l) else if (tbl.isNotEmpty()) break
-            }
-            if (tbl.size < 2) { binding.layoutStockTable.visibility = View.GONE; return }
-            val sb = StringBuilder()
-            for (i in tbl.indices) {
-                if (i == 1) { sb.appendLine(tbl[i]); continue }
-                sb.appendLine(tbl[i])
-            }
-            binding.tvStockTable.text = sb.toString().trimEnd()
-            binding.layoutStockTable.visibility = View.VISIBLE
         }
 
         private fun formatTime(timestamp: Long): String {

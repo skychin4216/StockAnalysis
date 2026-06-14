@@ -293,7 +293,7 @@ class ChatTabFragment : Fragment() {
         binding.frameHotSectors.visibility = View.VISIBLE
         binding.tvHotSectors.text = "📊 正在加载热门板块数据..."
         hotSectorsHideJob = lifecycleScope.launch {
-            delay(10_000L)
+            delay(30_000L)
             if (isAdded) requireActivity().runOnUiThread { binding.frameHotSectors.visibility = View.GONE }
         }
         val now = System.currentTimeMillis()
@@ -313,7 +313,11 @@ class ChatTabFragment : Fragment() {
 
                 val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(requireContext())
                 val recentTradingDay = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().toString()
-                val snapshots = db.dailySnapshotDao().getByDate(recentTradingDay)
+                val allDates = db.dailySnapshotDao().getAvailableDates(5).sorted()
+                val effectiveDate = if (allDates.contains(recentTradingDay)) recentTradingDay else allDates.lastOrNull() ?: recentTradingDay
+                Log.i(TAG, "📊 showHotSectors: recentTradingDay=$recentTradingDay, effectiveDate=$effectiveDate, availableDates=${allDates.take(5)}")
+                val snapshots = db.dailySnapshotDao().getByDate(effectiveDate)
+                Log.i(TAG, "📊 showHotSectors: snapshots.size=${snapshots.size}, effectiveDate=$effectiveDate")
                 val checker = DataCompletenessChecker(db)
                 val hasEnoughData = snapshots.size >= 5
                 val stockLines = if (snapshots.isNotEmpty()) {
@@ -324,11 +328,20 @@ class ChatTabFragment : Fragment() {
                         }
                     }
                     val sectorCache = mutableMapOf<String, String>()
-                    for (snap in top5) { sectorCache[snap.code] = checker.ensureSectorFast(snap.code, snap.name) }
-                    top5.joinToString("\n") { snap -> val emoji = if (snap.changePct > 0) "📈" else "📉"; val sign = if (snap.changePct > 0) "+" else ""; val sector = (sectorCache[snap.code] ?: "-").replace("null", ""); "$emoji ${snap.name} $sign${"%.2f".format(snap.changePct)}%  $sector" }
+                    for (snap in top5) {
+                        sectorCache[snap.code] = lookupSectorLabel(snap.code, snap.name, db)
+                    }
+                    top5.joinToString("\n") { snap ->
+                        val emoji = if (snap.changePct > 0) "📈" else "📉"
+                        val sign = if (snap.changePct > 0) "+" else ""
+                        val sector = (sectorCache[snap.code] ?: "").replace("null", "").trim()
+                        val sectorSuffix = if (sector.isNotEmpty()) " [$sector]" else ""
+                        "$emoji ${snap.name} $sign${"%.2f".format(snap.changePct)}%$sectorSuffix"
+                    }
                 } else { lifecycleScope.launch(Dispatchers.IO) { try { com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext()).fetchAllHistoricalData(days = 1); cachedHotSectorsTime = 0L } catch (_: Exception) {} }; "暂无交易日数据（后台拉取中...）" }
 
-                val text = if (!hasEnoughData) "$sectorLines\n\n🔥 最近交易日($recentTradingDay) 涨幅Top5:\n$stockLines\n\n📥 数据拉取中" else "$sectorLines\n\n🔥 最近交易日($recentTradingDay) 涨幅Top5:\n$stockLines"
+                val text = if (!hasEnoughData) "$sectorLines\n\n🔥 最近交易日($effectiveDate) 涨幅Top5:\n$stockLines\n\n📥 数据拉取中" else "$sectorLines\n\n🔥 最近交易日($effectiveDate) 涨幅Top5:\n$stockLines"
+                Log.i(TAG, "📊 showHotSectors: effectiveDate=$effectiveDate, top5Snapshot: $stockLines")
                 if (hasEnoughData) { cachedHotSectorsText = text; cachedHotSectorsTime = System.currentTimeMillis() }
                 if (isAdded) requireActivity().runOnUiThread { binding.tvHotSectors.text = text; binding.tvHotSectors.minHeight = dpToPx(160); binding.tvHotSectors.requestLayout() }
             } catch (e: Exception) { Log.w(TAG, "热门板块获取失败: ${e.message}") }
@@ -379,7 +392,16 @@ class ChatTabFragment : Fragment() {
     // 消息发送
     // ════════════════════════════════════════
 
+    private var lastUserText: String = ""
+
     private fun sendMessage(userText: String) {
+        // 去重：连续两次相同输入不重复处理
+        if (userText == lastUserText && messages.lastOrNull()?.isUser == true) {
+            Toast.makeText(requireContext(), "已发送，请勿重复输入", Toast.LENGTH_SHORT).show()
+            return
+        }
+        lastUserText = userText
+
         // 先尝试意图分发
         if (com.chin.stockanalysis.ai.IntentDispatcher.dispatch(userText, requireContext())) {
             addMessage(Message(content = userText, isUser = true))
@@ -496,8 +518,10 @@ class ChatTabFragment : Fragment() {
     private fun regenerateMessage(botPosition: Int) {
         if (botPosition <= 0 || botPosition >= messages.size) return
         val userMsg = (botPosition - 1 downTo 0).firstNotNullOfOrNull { messages[it].takeIf { m -> m.isUser } } ?: return
-        repeat(messages.size - botPosition) { messages.removeAt(botPosition) }
-        adapter.notifyItemRangeRemoved(botPosition, messages.size - botPosition + 1)
+        val removeCount = messages.size - botPosition
+        if (removeCount <= 0) return
+        repeat(removeCount) { messages.removeAt(botPosition) }
+        adapter.notifyItemRangeRemoved(botPosition, removeCount)
         sendMessage(userMsg.content)
     }
 
@@ -609,7 +633,10 @@ class ChatTabFragment : Fragment() {
                             withContext(Dispatchers.Main) {
                                 addBotMessage("🔍 开始分析 ${cmd.stockName.ifBlank { cmd.stockCode.takeLast(6) }}...")
                             }
-                            val streamingIdx = messages.size - 1
+                            val baseIdx = messages.size  // 所有进度消息从这个位置开始
+                            withContext(Dispatchers.Main) {
+                                addBotMessage("⏳ 正在分析...")
+                            }
                             try {
                                 val analyzer = com.chin.stockanalysis.ai.StockAnalyzerService(requireContext())
                                 val result = analyzer.analyze(
@@ -617,37 +644,145 @@ class ChatTabFragment : Fragment() {
                                     stockNameHint = cmd.stockName,
                                     onProgress = { msg ->
                                         withContext(Dispatchers.Main) {
-                                            if (streamingIdx in messages.indices) {
-                                                messages[streamingIdx] = msg
-                                                adapter.notifyItemChanged(streamingIdx)
-                                                binding.recyclerView.scrollToPosition(messages.size - 1)
-                                            }
+                                            // 为每个进度步骤添加独立的消息
+                                            if (messages.isNotEmpty() && messages.last().isUser) return@withContext
+                                            addBotMessage(msg.content)
                                         }
                                     }
                                 )
                                 // 最终结果
                                 withContext(Dispatchers.Main) {
-                                    completeStreamingMessage(streamingIdx, result.finalRecommendation)
+                                    addBotMessage(result.finalRecommendation)
+                                    // 如果策略有命中，询问用户是否买入
+                                    if (result.strategyHits.isNotEmpty()) {
+                                        showBuyConfirmationDialog(result)
+                                    }
                                 }
                             } catch (e: Exception) {
                                 withContext(Dispatchers.Main) {
-                                    failStreamingMessage(streamingIdx, "分析失败: ${e.message?.take(50)}")
+                                    addErrorMessage("分析失败: ${e.message?.take(50)}")
                                 }
                             }
                         }
-                        else -> {
-                            val ctx = CrossTabBus.buildAiContext()
-                            if (ctx.isNotBlank()) {
+                        "CREATE_STRATEGY" -> {
+                            withContext(Dispatchers.Main) {
+                                addBotMessage("🤖 AI 正在生成策略配置...")
+                            }
+                            try {
+                                val gen = com.chin.stockanalysis.ai.StrategyConfigGenerator(requireContext())
+                                val generated = gen.generate(cmd.stockName)
+                                if (generated != null) {
+                                    gen.registerToEngine(generated)
+                                    withContext(Dispatchers.Main) {
+                                        addBotMessage("✅ 策略「${generated.name}」已创建！\n\n" +
+                                            "分类: ${generated.category.label}\n" +
+                                            "因子: ${generated.weightFactors.joinToString { "${it.label}(${it.weight}%)" }}")
+                                        Toast.makeText(requireContext(), "新策略已就绪", Toast.LENGTH_SHORT).show()
+                                    }
+                                } else {
+                                    withContext(Dispatchers.Main) {
+                                        addErrorMessage("⚠️ 策略生成失败，请用更具体的选股逻辑描述")
+                                    }
+                                }
+                            } catch (e: Exception) {
                                 withContext(Dispatchers.Main) {
-                                    sendMessageFromExternal("请分析最新策略选股结果：\n\n$ctx")
+                                    addErrorMessage("⚠️ 策略生成异常: ${e.message?.take(40)}")
                                 }
                             }
                         }
+                        // 未知命令不处理
                     }
                     CrossTabBus.consumeCommand()
                 }
             }
         }
+    }
+
+    // ════════════════════════════════════════
+    // 分析结果 → 买入确认
+    // ════════════════════════════════════════
+
+    private fun showBuyConfirmationDialog(result: com.chin.stockanalysis.ai.StockAnalyzerService.AnalysisResult) {
+        if (!isAdded || result.strategyHits.isEmpty()) return
+
+        val score = result.aiPicks.firstOrNull()?.compositeScore ?: (result.strategyHits.maxOfOrNull { it.strength } ?: 0)
+        val actionEmoji = when {
+            score >= 75 -> "🟢 推荐买入"
+            score >= 60 -> "🟡 可关注"
+            else -> "🔴 建议观望"
+        }
+        val msg = "${result.stockName}(${result.stockCode.takeLast(6)})\n" +
+            "现价 ¥${"%.2f".format(result.currentPrice)} (${if(result.changePct>=0)"+" else ""}${"%.2f".format(result.changePct)}%)\n" +
+            "策略命中: ${result.strategyHits.joinToString { "${it.strategyName.take(4)}(${it.strength})" }}\n" +
+            "建议: $actionEmoji\n\n" +
+            "是否买入该股票？"
+
+        if (score >= 50) {
+            androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                .setTitle("📌 买入确认")
+                .setMessage(msg)
+                .setPositiveButton("▶ 买入") { _, _ ->
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        try {
+                            val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(requireContext())
+                            val existing = db.strategyTradeOrderDao().getRecent(200)
+                                .filter { it.status == "BUYING" || it.status == "PENDING" }
+                            // 最大持仓 5 只，已满时强制对比优先级
+                            val maxHoldings = 5
+                            if (existing.size >= maxHoldings) {
+                                val toSell = existing.minByOrNull { it.scoreAtBuy }
+                                if (toSell != null && score > (toSell.scoreAtBuy ?: 0)) {
+                                    db.strategyTradeOrderDao().updateSellInfo(
+                                        toSell.id, "SOLD", toSell.buyPrice,
+                                        java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd")) + " 15:00", 0.0
+                                    )
+                                    Log.i(TAG, "🔄 持仓已满，替换: ${toSell.stockName}(${toSell.scoreAtBuy}分) → ${result.stockName}(${score}分)")
+                                } else {
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(requireContext(), "持仓已满5只，当前股票优先级不高", Toast.LENGTH_SHORT).show()
+                                    }; return@launch
+                                }
+                            }
+                            val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay()
+                                .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+                            db.strategyTradeOrderDao().insert(
+                                com.chin.stockanalysis.strategy.trade.StrategyTradeOrderEntity(
+                                    strategyId = "AI_Recommend", stockCode = result.stockCode,
+                                    stockName = result.stockName, tradeDate = today,
+                                    buyPrice = result.currentPrice, buyTime = "",
+                                    quantity = 100, orderType = "对话买入",
+                                    status = "BUYING", reason = "AI分析推荐: ${result.strategyHits.joinToString()}",
+                                    scoreAtBuy = score, createdAt = System.currentTimeMillis()
+                                )
+                            )
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(requireContext(), "✅ 已买入 ${result.stockName}", Toast.LENGTH_SHORT).show()
+                            }
+                        } catch (_: Exception) {}
+                    }
+                }
+                .setNegativeButton("取消", null)
+                .setNeutralButton("🗑️ 不感兴趣") { _, _ -> /* 标记为不感兴趣 */ }
+                .show()
+        }
+    }
+
+    /** 板块标签三级 fallback: DB → hardcoded → StockDataCenter */
+    private fun lookupSectorLabel(code: String, name: String, db: com.chin.stockanalysis.stock.database.StockDatabase): String {
+        try {
+            val existing = kotlinx.coroutines.runBlocking { db.sectorStockDao().getSectorNamesByStockCode(code) }
+            if (existing.isNotEmpty()) {
+                val sect = existing.first()
+                if (sect != "null" && !sect.contains("null", ignoreCase = true)) return sect
+            }
+        } catch (_: Exception) {}
+        val fallback = com.chin.stockanalysis.ai.DataCompletenessChecker(db).hardcodedSector(name)
+        if (fallback != "-") return fallback
+        try {
+            val sectors = kotlinx.coroutines.runBlocking { com.chin.stockanalysis.stock.database.StockDataCenter.getSectorsByStock(code) }
+            if (sectors.isNotEmpty()) return sectors.first()
+        } catch (_: Exception) {}
+        return ""
     }
 
     private fun onFollowUpConfirmed(suggestion: KeyMemoryManager.FollowUpSuggestion) {
