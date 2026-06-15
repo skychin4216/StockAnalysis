@@ -440,7 +440,7 @@ class SimulationTradeEngine(private val context: Context) {
                 return local + entities.filter { it.code !in local.map{l->l.code}.toSet() }
             } catch (e: Exception) { return local }
         } else {
-            val topStocks = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher.TOP_STOCKS
+            val topStocks = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher.getTopStocks(context)
             try {
                 val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(context)
                 val parsedDate = LocalDate.parse(date)
@@ -469,7 +469,7 @@ class SimulationTradeEngine(private val context: Context) {
 
     suspend fun buildDailyStockPool(baseDate: String): Set<String> = withContext(Dispatchers.IO) {
         val pool = mutableSetOf<String>()
-        pool.addAll(com.chin.stockanalysis.strategy.data.HistoricalDataFetcher.TOP_STOCKS)
+        pool.addAll(com.chin.stockanalysis.strategy.data.HistoricalDataFetcher.getTopStocks(context))
         Log.d(TAG, "底倉: ${pool.size}隻")
         val sectorPool = getHotSectorStockPool(); pool.addAll(sectorPool)
         Log.d(TAG, "+板塊: ${sectorPool.size}隻 → ${pool.size}隻")

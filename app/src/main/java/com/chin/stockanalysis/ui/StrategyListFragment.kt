@@ -485,11 +485,13 @@ class StrategyListFragment : Fragment() {
         scanBtn.isEnabled = false; scanBtn.text = "⏳"; progressBar.visibility = View.VISIBLE
         val days = when (selectedHotPeriod) { 0->1; 1->3; 2->10; 3->30; 4->50; 5->100; else->60 }
         val label = when (selectedHotPeriod) { 0->"当日"; 1->"近3日"; 2->"近10日"; 3->"近30日"; 4->"近50日"; 5->"近100日"; else->"历史" }
-        statusTv.text = "  正在从东方财富拉取${label}K线..."
+        // Use the selected browsing date as the start date for import
+        val useStartDate = browsingDate
+        statusTv.text = "  正在从东方财富拉取 $browsingDate ~ 至今 的${label}K线..."
         lifecycleScope.launch {
             try {
                 val f = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
-                val t = f.fetchAllHistoricalData(days, force = true) { p ->
+                val t = f.fetchAllHistoricalData(days, force = true, startDateOverride = useStartDate) { p ->
                     lifecycleScope.launch(Dispatchers.Main) {
                         statusTv.text = "  进度: ${p.completedStocks}/${p.totalStocks} 只 · ${p.totalRecords} 条"
                     }
@@ -497,6 +499,14 @@ class StrategyListFragment : Fragment() {
                 withContext(Dispatchers.Main) {
                     scanBtn.isEnabled = true; scanBtn.text = "执行策略"; progressBar.visibility = View.GONE
                     statusTv.text = "  ✅ 导入完成 · $t 条历史记录"
+                    // Auto reset date picker to the most recent trading day
+                    val recent = TradingDayPickerView.recentTradingDay()
+                    if (browsingDate != recent) {
+                        browsingDate = recent
+                        isBrowsing = false
+                        datePicker.selectedDate = recent
+                        refreshDateUI()
+                    }
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {

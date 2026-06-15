@@ -32,7 +32,7 @@ class StockScreener(
         private const val FULL_MARKET_URL =
             "https://push2.eastmoney.com/api/qt/clist/get?" +
                     "pn=1&pz=200&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23" +
-                    "&fields=f2,f3,f4,f5,f6,f7,f8,f9,f10,f12,f14,f15,f16,f17,f18,f20,f8"
+                    "&fields=f2,f3,f4,f5,f6,f7,f8,f9,f10,f12,f14,f15,f16,f17,f18,f20,f23"
     }
 
     private val client = OkHttpClient.Builder()
@@ -107,6 +107,11 @@ class StockScreener(
                     else -> "sz"
                 }
 
+                // f9=市盈率(动态PE), f20=总市值(元), f23=市净率(PB)
+                val rawPE = item.optDouble("f9", -999.0)
+                val rawMC = item.optDouble("f20", -999.0)  // 东方财富返回的是"元"还是其他单位需看实际
+                val rawPB = item.optDouble("f23", -999.0)
+
                 results.add(
                     StockRealtime(
                         code = "$prefix$code",
@@ -125,6 +130,9 @@ class StockScreener(
                         changePercent = item.optDouble("f3", 0.0),
                         changeAmount = item.optDouble("f4", 0.0),
                         turnoverRate = item.optDouble("f8", 0.0),
+                        pe = if (rawPE > -900.0 && !rawPE.isNaN() && !rawPE.isInfinite()) rawPE else 0.0,
+                        marketCap = if (rawMC > -900.0 && !rawMC.isNaN() && !rawMC.isInfinite()) rawMC else 0.0,
+                        pb = if (rawPB > -900.0 && !rawPB.isNaN() && !rawPB.isInfinite()) rawPB else 0.0,
                         timestamp = System.currentTimeMillis()
                     )
                 )

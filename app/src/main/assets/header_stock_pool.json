@@ -1,0 +1,4 @@
+{
+  "description": "HEADER_STOCK_POOL - hot leader stocks collected by weekly iteration. Live version is in SharedPreferences.",
+  "stocks": []
+}

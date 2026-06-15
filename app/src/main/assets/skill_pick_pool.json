@@ -1,0 +1,4 @@
+{"description":"USER_SEARCH_POOL — stocks discovered via user dialog search, validated by 3-layer screening. Live in SharedPreferences.","stocks":[]}</content>
+<write_to_file>
+<path>app/src/main/assets/skill_pick_pool.json</path>
+<content>{"description":"SKILL_PICK_POOL — stocks recommended by agent/skill, validated by 3-layer screening. Live in SharedPreferences.","stocks":[]}
