@@ -6,27 +6,25 @@ import java.io.FileInputStream
 import java.util.Properties
 
 /**
- * API 密钥加载器 — 多源回退
+ * API 密钥加载器 — 从 apk 内置 assets 或本地配置文件读取密钥
  *
  * 加载顺序（首次命中即返回）：
- * 0. BuildConfig 编译时常量 (highest priority for debug builds)
- * 1. apk 内置 assets/api_keys_local.properties
+ * 1. apk 内置 assets/api_keys_local.properties（Context.assets.open）
  * 2. App 内部存储：/data/data/{package}/files/api_keys_local.properties
  * 3. 外部存储根目录：/sdcard/api_keys_local.properties
  * 4. 纯 JVM 文件系统（单元测试场景）
+ *
+ * 优先级链：用户设置(SharedPreferences) > 本配置文件 > 空字符串
+ * 本文件不包含任何硬编码的 API Key。
  */
 object ApiKeysLoader {
 
     private const val CONFIG_FILE_NAME = "api_keys_local.properties"
     private const val TAG = "ApiKeysLoader"
 
-    const val KEY_SILICONFLOW = "SILICONFLOW_KEY"
-    const val KEY_DOUBAO = "DOUBAO_KEY"
-    const val KEY_DEEPSEEK = "DEEPSEEK_KEY"
-    const val KEY_ALIYUN_MAAS = "ALIYUN_MAAS_KEY"
-
     private var loadedProps: Properties? = null
 
+    /** 必须在 Application 或首次使用前调用，提供 Context 以读取 assets */
     @Volatile private var appContext: Context? = null
 
     fun init(context: Context) {
@@ -36,28 +34,7 @@ object ApiKeysLoader {
     }
 
     fun get(key: String): String {
-        // ── 0. BuildConfig 编译时常量 (debug 构建自动注入) ──
-        val bcVal = getFromBuildConfig(key)
-        if (bcVal.isNotBlank()) {
-            android.util.Log.d(TAG, "✅ 使用 BuildConfig Key: $key")
-            return bcVal
-        }
-
-        // ── 1-4. Properties 文件回退 ──
         return getProperties()?.getProperty(key, "")?.trim() ?: ""
-    }
-
-    /** 从 BuildConfig 读取编译时注入的 Key（debug 版本自动填充） */
-    private fun getFromBuildConfig(key: String): String {
-        return try {
-            when (key) {
-                KEY_DOUBAO -> com.chin.stockanalysis.BuildConfig.DOUBAO_KEY
-                KEY_SILICONFLOW -> com.chin.stockanalysis.BuildConfig.SILICONFLOW_KEY
-                KEY_DEEPSEEK -> com.chin.stockanalysis.BuildConfig.DEEPSEEK_KEY
-                KEY_ALIYUN_MAAS -> com.chin.stockanalysis.BuildConfig.ALIYUN_MAAS_KEY
-                else -> ""
-            }
-        } catch (_: Exception) { "" }
     }
 
     private fun getProperties(): Properties? {
@@ -123,6 +100,7 @@ object ApiKeysLoader {
             }
         }
 
+        android.util.Log.d(TAG, "ℹ️ 未找到 $CONFIG_FILE_NAME，使用空配置")
         loadedProps = props
         return props
     }
@@ -131,8 +109,14 @@ object ApiKeysLoader {
         loadedProps = null
     }
 
+    const val KEY_SILICONFLOW = "SILICONFLOW_KEY"
+    const val KEY_DOUBAO = "DOUBAO_KEY"
+    const val KEY_DEEPSEEK = "DEEPSEEK_KEY"
+    const val KEY_ALIYUN_MAAS = "ALIYUN_MAAS_KEY"
+
     fun siliconflowKey(): String = get(KEY_SILICONFLOW)
     fun doubaoKey(): String = get(KEY_DOUBAO)
     fun deepseekKey(): String = get(KEY_DEEPSEEK)
     fun aliyunMaasKey(): String = get(KEY_ALIYUN_MAAS)
+
 }
