@@ -70,6 +70,8 @@ class ChatTabFragment : Fragment() {
         private const val TAG = "ChatTabFragment"
         private const val PREFS_NAME = "chat_prefs"
         private const val KEY_FIRST_LAUNCH_DONE = "first_launch_welcome_done"
+        /** P1: 串流渲染節流閥值 (ms) — 避免頻繁 UI 更新導致卡頓 */
+        private const val STREAMING_THROTTLE_MS = 80L
 
         private val BASE_SYSTEM_PROMPT = com.chin.stockanalysis.ai.StockAIPromptBuilder.buildBaseSystemPrompt()
     }
@@ -482,23 +484,33 @@ class ChatTabFragment : Fragment() {
 
     private suspend fun sendWithRetry(provider: ApiProvider, history: List<Message>, systemPrompt: String, streamingIndex: Int, maxRetries: Int, attempt: Int = 1) {
         val accumulated = StringBuilder()
+        var lastUiUpdate = 0L
         try {
             kotlinx.coroutines.suspendCancellableCoroutine<Unit> { cont ->
                 provider.sendMessageStream(messages = history, systemPrompt = systemPrompt,
                     onSuccess = { chunk ->
                         val sanitized = chunk.replace("null", "")
                         accumulated.append(sanitized)
-                        if (isAdded) requireActivity().runOnUiThread {
-                            if (streamingIndex in messages.indices && messages[streamingIndex].isStreaming) {
-                                messages[streamingIndex] = messages[streamingIndex].copy(content = accumulated.toString(), loadingStatus = null)
-                                adapter.notifyItemChanged(streamingIndex)
-                                binding.recyclerView.scrollToPosition(messages.size - 1)
+                        val now = System.currentTimeMillis()
+                        // P1: 80ms 節流，避免串流期間過度刷新
+                        if (isAdded && (now - lastUiUpdate >= STREAMING_THROTTLE_MS)) {
+                            lastUiUpdate = now
+                            requireActivity().runOnUiThread {
+                                if (streamingIndex in messages.indices && messages[streamingIndex].isStreaming) {
+                                    messages[streamingIndex] = messages[streamingIndex].copy(content = accumulated.toString(), loadingStatus = null)
+                                    adapter.notifyItemChanged(streamingIndex)
+                                    binding.recyclerView.scrollToPosition(messages.size - 1)
+                                }
                             }
                         }
                     },
                     onComplete = { full ->
+                        // 完成時強制刷新最後一次（確保最後的內容完整顯示）
                         val finalText = full.ifEmpty { accumulated.toString() }.replace("null", "")
-                        if (isAdded) requireActivity().runOnUiThread { completeStreamingMessage(streamingIndex, finalText); onMessageComplete() }
+                        if (isAdded) requireActivity().runOnUiThread {
+                            completeStreamingMessage(streamingIndex, finalText)
+                            onMessageComplete()
+                        }
                         cont.resumeWith(Result.success(Unit))
                     },
                     onError = { errMsg -> cont.resumeWith(Result.failure(Exception(errMsg))) })

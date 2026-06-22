@@ -81,6 +81,15 @@ dependencies {
     // 独立 org.json 库，确保单元测试环境中 JSONObject 可用（Android 系统的 org.json 在纯 JVM 测试中不可用）
     implementation("org.json:json:20240303")
 
+    // Markdown 渲染（Markwon v4.6.2）
+    implementation("io.noties.markwon:core:4.6.2")
+    implementation("io.noties.markwon:ext-tables:4.6.2")
+    implementation("io.noties.markwon:ext-strikethrough:4.6.2")
+    implementation("io.noties.markwon:syntax-highlight:4.6.2") {
+        exclude(group = "org.jetbrains", module = "annotations-java5")
+    }
+    implementation("io.noties.markwon:ext-latex:4.6.2")
+
     // 协程（由 fragment-ktx 等 AndroidX 库间接依赖，无需显式声明版本）
     // 如果需要显式指定，可取消下面两行注释，并确保网络能访问 Maven Central
     // implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")

@@ -171,26 +171,6 @@
             android:textStyle="bold"
             android:visibility="gone" />
 
-        <LinearLayout
-            android:id="@+id/layoutStockTable"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:background="@drawable/bg_message_bot"
-            android:padding="8dp"
-            android:orientation="vertical"
-            android:visibility="gone">
-
-            <TextView
-                android:id="@+id/tvStockTable"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:textColor="#333333"
-                android:textSize="13sp"
-                android:fontFamily="monospace"
-                android:lineSpacingExtra="2dp" />
-        </LinearLayout>
-
         <!-- AI 消息操作栏 -->
         <LinearLayout
             android:id="@+id/layoutBotActions"

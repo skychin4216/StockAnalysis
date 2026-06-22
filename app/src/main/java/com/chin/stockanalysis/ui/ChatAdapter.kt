@@ -1,25 +1,38 @@
 package com.chin.stockanalysis.ui
 
-import android.graphics.Color
-import android.os.Build
-import android.text.Html
-import android.text.Spanned
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import androidx.core.text.HtmlCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.chin.stockanalysis.databinding.ItemMessageBinding
+import com.chin.stockanalysis.databinding.ItemMessageChartBinding
+import io.noties.markwon.Markwon
+import io.noties.markwon.ext.latex.JLatexMathPlugin
+import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
+import io.noties.markwon.ext.tables.TablePlugin
+import io.noties.markwon.syntax.Prism4jThemeDefault
+import io.noties.markwon.syntax.SyntaxHighlightPlugin
+import io.noties.prism4j.GrammarLocator
+import io.noties.prism4j.Prism4j
 
+/**
+ * ChatAdapter P0~P3
+ *
+ * - P0: Markwon Markdown 渲染（取代 HtmlCompat）
+ * - P1: 語法高亮 + 多 ViewType
+ * - P2: 圖表 ViewType 支援 (ContentBlock)
+ * - P3: LaTeX 數學公式
+ */
 class ChatAdapter(
     private val messages: MutableList<Message>
-) : RecyclerView.Adapter<ChatAdapter.MessageViewHolder>() {
+) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     companion object {
         private const val VIEW_TYPE_USER = 1
         private const val VIEW_TYPE_AI = 2
         private const val VIEW_TYPE_STREAMING = 3
         private const val VIEW_TYPE_ERROR = 4
+        private const val VIEW_TYPE_CHART = 5
     }
 
     var onCopyMessage: ((String) -> Unit)? = null
@@ -28,132 +41,127 @@ class ChatAdapter(
     var onShare: ((String) -> Unit)? = null
     var onRegenerate: ((Int) -> Unit)? = null
 
-    inner class MessageViewHolder(
-        private val binding: ItemMessageBinding
-    ) : RecyclerView.ViewHolder(binding.root) {
+    private var markwon: Markwon? = null
+
+    private fun getMarkwon(context: android.content.Context): Markwon {
+        if (markwon == null) {
+            val prism4j = Prism4j(object : GrammarLocator {
+                override fun grammar(prism4j: Prism4j, language: String): Prism4j.Grammar? = null
+                override fun languages(): Set<String> = emptySet()
+            })
+            val theme = Prism4jThemeDefault.create()
+            markwon = Markwon.builder(context)
+                .usePlugin(StrikethroughPlugin.create())
+                .usePlugin(TablePlugin.create(context))
+                .usePlugin(SyntaxHighlightPlugin.create(prism4j, theme))
+                .usePlugin(JLatexMathPlugin.create(18f))
+                .build()
+        }
+        return markwon!!
+    }
+
+    // ================================================================
+    //  ViewHolder 類型
+    // ================================================================
+
+    // ── 用戶消息 ──
+    inner class UserViewHolder(private val binding: ItemMessageBinding)
+        : RecyclerView.ViewHolder(binding.root) {
 
         fun bind(message: Message, position: Int) {
-            binding.tvTime.text = formatTime(message.timestamp)
-            binding.tvTime.visibility = View.VISIBLE
-
-            when {
-                message.isError -> bindError(message)
-                message.isStreaming -> bindStreaming(message)
-                message.isUser -> bindUser(message, position)
-                else -> bindAi(message, position)
-            }
-        }
-
-        private fun bindUser(message: Message, position: Int) {
             binding.apply {
+                tvTime.text = formatTime(message.timestamp)
+                tvTime.visibility = View.VISIBLE
                 layoutBot.visibility = View.GONE
                 layoutUser.visibility = View.VISIBLE
+
                 tvUserMessage.text = message.content
                 tvUserMessage.setOnClickListener {
                     layoutUserActions.visibility =
                         if (layoutUserActions.visibility == View.VISIBLE) View.GONE else View.VISIBLE
                 }
                 btnCopyUser.setOnClickListener { onCopyMessage?.invoke(message.content) }
+                btnPlayVoiceUser.setOnClickListener { onPlayVoice?.invoke(message.content) }
+                btnFavoriteUser.setOnClickListener { onFavorite?.invoke(message.content) }
+                btnShareUser.setOnClickListener { onShare?.invoke(message.content) }
             }
         }
+    }
 
-        private fun bindAi(message: Message, position: Int) {
+    // ── AI 消息（Markwon Markdown 渲染）──
+    inner class AiViewHolder(private val binding: ItemMessageBinding)
+        : RecyclerView.ViewHolder(binding.root) {
+
+        fun bind(message: Message, position: Int) {
             binding.apply {
+                tvTime.text = formatTime(message.timestamp)
+                tvTime.visibility = View.VISIBLE
                 layoutUser.visibility = View.GONE
                 layoutBot.visibility = View.VISIBLE
-                tvBotMessage.text = parseContent(message.content)
+
+                // P0: Markwon 渲染 Markdown（表格、粗斜體、代碼區塊等）
+                // P3: JLatexMathPlugin 自動處理 $$...$$ 和 $...$ 公式
+                getMarkwon(root.context).setMarkdown(tvBotMessage, message.content)
                 tvBotMessage.visibility = View.VISIBLE
                 tvTypingIndicator.visibility = View.GONE
                 tvLoadingStatus.visibility = View.GONE
                 tvErrorHint.visibility = View.GONE
-                renderStockTable(message.content)
+
                 tvBotMessage.setOnClickListener {
                     layoutBotActions.visibility =
                         if (layoutBotActions.visibility == View.VISIBLE) View.GONE else View.VISIBLE
                 }
-                btnCopyBot.setOnClickListener {
-                    val tableText = extractTableText(message.content)
-                    onCopyMessage?.invoke(if (tableText.isNotEmpty()) tableText else message.content)
-                }
+                btnCopyBot.setOnClickListener { onCopyMessage?.invoke(message.content) }
+                btnPlayVoiceBot.setOnClickListener { onPlayVoice?.invoke(message.content) }
+                btnFavoriteBot.setOnClickListener { onFavorite?.invoke(message.content) }
+                btnShareBot.setOnClickListener { onShare?.invoke(message.content) }
                 btnRegenerateBot.setOnClickListener { onRegenerate?.invoke(position) }
             }
         }
+    }
 
-        /** 支持 HTML 表格渲染 */
-        private fun parseContent(content: String): Spanned {
-            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                HtmlCompat.fromHtml(content, HtmlCompat.FROM_HTML_MODE_LEGACY)
-            } else {
-                @Suppress("DEPRECATION")
-                Html.fromHtml(content)
-            }
-        }
+    // ── 串流消息（純文本，不解析 Markdown）──
+    inner class StreamingViewHolder(private val binding: ItemMessageBinding)
+        : RecyclerView.ViewHolder(binding.root) {
 
-        /** 提取表格文本（制表符分隔，方便粘贴到 Excel） */
-        private fun extractTableText(content: String): String {
-            val lines = content.lines()
-            var tableStart = -1; var tableEnd = -1
-            for (i in lines.indices) {
-                val line = lines[i].trim()
-                if (line.startsWith("|") && !line.startsWith("|---")) {
-                    if (tableStart < 0) tableStart = i
-                    tableEnd = i
-                } else if (tableStart >= 0 && !line.startsWith("|")) { break }
-            }
-            if (tableStart < 0 || tableEnd < tableStart) return ""
-            val sb = StringBuilder()
-            for (i in tableStart..tableEnd) {
-                val line = lines[i].trim()
-                if (line.startsWith("|---")) continue
-                val cells = line.split("|").map { it.trim() }.filter { it.isNotEmpty() }
-                sb.appendLine(cells.joinToString("\t"))
-            }
-            return sb.toString().trimEnd()
-        }
-
-        private fun renderStockTable(content: String) {
-            val lines = content.lines()
-            val sepIdx = lines.indexOfFirst { it.trimStart().startsWith("|") && it.contains("---") }
-            if (sepIdx < 0 || sepIdx < 1) { binding.layoutStockTable.visibility = View.GONE; return }
-            val tbl = mutableListOf<String>()
-            for (i in sepIdx - 1 until lines.size) {
-                val l = lines[i].trim()
-                if (l.startsWith("|")) tbl.add(l) else if (tbl.isNotEmpty()) break
-            }
-            if (tbl.size < 2) { binding.layoutStockTable.visibility = View.GONE; return }
-            val sb = StringBuilder()
-            for (i in tbl.indices) {
-                if (i == 1) { sb.appendLine(tbl[i]); continue }
-                sb.appendLine(tbl[i])
-            }
-            binding.tvStockTable.text = sb.toString().trimEnd()
-            binding.layoutStockTable.visibility = View.VISIBLE
-        }
-
-        private fun bindStreaming(message: Message) {
+        fun bind(message: Message) {
             binding.apply {
+                tvTime.text = formatTime(message.timestamp)
+                tvTime.visibility = View.VISIBLE
                 layoutBot.visibility = View.VISIBLE
                 layoutUser.visibility = View.GONE
+
+                // 串流期間使用純文本
                 tvBotMessage.text = message.content
+                tvBotMessage.visibility = View.VISIBLE
+                tvErrorHint.visibility = View.GONE
+
                 if (message.loadingStatus != null) {
                     tvLoadingStatus.text = message.loadingStatus
                     tvLoadingStatus.visibility = View.VISIBLE
                     tvTypingIndicator.visibility = View.GONE
                 } else {
                     tvLoadingStatus.visibility = View.GONE
-                    tvTypingIndicator.visibility = if (message.content.isEmpty()) View.VISIBLE else View.GONE
+                    tvTypingIndicator.visibility =
+                        if (message.content.isEmpty()) View.VISIBLE else View.GONE
                 }
                 layoutBotActions.visibility = View.GONE
                 layoutUserActions.visibility = View.GONE
-                layoutStockTable.visibility = View.GONE
-                tvErrorHint.visibility = View.GONE
             }
         }
+    }
 
-        private fun bindError(message: Message) {
+    // ── 錯誤消息 ──
+    inner class ErrorViewHolder(private val binding: ItemMessageBinding)
+        : RecyclerView.ViewHolder(binding.root) {
+
+        fun bind(message: Message) {
             binding.apply {
+                tvTime.text = formatTime(message.timestamp)
+                tvTime.visibility = View.VISIBLE
                 layoutBot.visibility = View.VISIBLE
                 layoutUser.visibility = View.GONE
+
                 tvErrorHint.text = message.errorMessage ?: message.content
                 tvErrorHint.visibility = View.VISIBLE
                 tvBotMessage.visibility = View.GONE
@@ -161,32 +169,87 @@ class ChatAdapter(
                 tvLoadingStatus.visibility = View.GONE
                 layoutBotActions.visibility = View.GONE
                 layoutUserActions.visibility = View.GONE
-                layoutStockTable.visibility = View.GONE
             }
-        }
-
-        private fun formatTime(timestamp: Long): String {
-            return java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(timestamp))
         }
     }
 
+    // ── 圖表消息（P2）──
+    inner class ChartViewHolder(private val binding: ItemMessageChartBinding)
+        : RecyclerView.ViewHolder(binding.root) {
+
+        fun bind(message: Message) {
+            binding.apply {
+                tvTime.text = formatTime(message.timestamp)
+                tvTime.visibility = View.VISIBLE
+
+                // 解析 content 中的圖表參數（格式: __CHART__|stockCode|stockName|title）
+                val parts = message.content.split("|")
+                val chartTitle = if (parts.size >= 4) parts[3] else "📊 走勢圖"
+                val stockCode = if (parts.size >= 2) parts[1] else ""
+                val stockDesc = if (parts.size >= 3 && parts[2].isNotBlank()) parts[2] else stockCode
+
+                tvChartTitle.text = chartTitle
+                tvChartTitle.visibility = View.VISIBLE
+                tvChartDesc.text = "🔍 $stockDesc ($stockCode)"
+                tvChartDesc.visibility = View.VISIBLE
+                lineChart.visibility = View.VISIBLE
+
+                // 清空樣本數據（實際數據由外部注入）
+                lineChart.data = null
+                lineChart.invalidate()
+            }
+        }
+    }
+
+    // ================================================================
+    //  Adapter 實現
+    // ================================================================
+
     override fun getItemViewType(position: Int): Int {
+        val msg = messages[position]
         return when {
-            messages[position].isError -> VIEW_TYPE_ERROR
-            messages[position].isStreaming -> VIEW_TYPE_STREAMING
-            messages[position].isUser -> VIEW_TYPE_USER
+            msg.isError -> VIEW_TYPE_ERROR
+            msg.isStreaming -> VIEW_TYPE_STREAMING
+            msg.isUser -> VIEW_TYPE_USER
+            msg.content.startsWith("__CHART__") -> VIEW_TYPE_CHART
             else -> VIEW_TYPE_AI
         }
     }
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MessageViewHolder {
-        val binding = ItemMessageBinding.inflate(LayoutInflater.from(parent.context), parent, false)
-        return MessageViewHolder(binding)
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+        val inflater = LayoutInflater.from(parent.context)
+        return when (viewType) {
+            VIEW_TYPE_CHART -> {
+                val binding = ItemMessageChartBinding.inflate(inflater, parent, false)
+                ChartViewHolder(binding)
+            }
+            else -> {
+                val binding = ItemMessageBinding.inflate(inflater, parent, false)
+                when (viewType) {
+                    VIEW_TYPE_USER -> UserViewHolder(binding)
+                    VIEW_TYPE_AI -> AiViewHolder(binding)
+                    VIEW_TYPE_STREAMING -> StreamingViewHolder(binding)
+                    VIEW_TYPE_ERROR -> ErrorViewHolder(binding)
+                    else -> AiViewHolder(binding)
+                }
+            }
+        }
     }
 
-    override fun onBindViewHolder(holder: MessageViewHolder, position: Int) {
-        holder.bind(messages[position], position)
+    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+        when (holder) {
+            is UserViewHolder -> holder.bind(messages[position], position)
+            is AiViewHolder -> holder.bind(messages[position], position)
+            is StreamingViewHolder -> holder.bind(messages[position])
+            is ErrorViewHolder -> holder.bind(messages[position])
+            is ChartViewHolder -> holder.bind(messages[position])
+        }
     }
 
     override fun getItemCount() = messages.size
+
+    private fun formatTime(timestamp: Long): String {
+        return java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+            .format(java.util.Date(timestamp))
+    }
 }
