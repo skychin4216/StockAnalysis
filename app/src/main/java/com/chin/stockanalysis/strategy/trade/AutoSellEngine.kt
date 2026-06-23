@@ -146,7 +146,7 @@ class AutoSellEngine(private val context: Context) {
 
             for (order in holdingOrders) {
                 val currentPrice = todayPriceMap[order.stockCode] ?: continue
-                val profitPct = (currentPrice - order.buyPrice) / order.buyPrice * 100
+                val profitPct = if (order.buyPrice > 0) (currentPrice - order.buyPrice) / order.buyPrice * 100 else 0.0
                 val daysHeld = calculateDaysHeld(order.tradeDate, config.tradeDate)
                 val prices = priceHistory[order.stockCode] ?: listOf(currentPrice)
                 val volumes = volumeHistory[order.stockCode] ?: listOf(todayVolumeMap[order.stockCode] ?: 0L)

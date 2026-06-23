@@ -129,9 +129,9 @@ class IntentPredictionEngine {
             return UserIntent.StrategyAdvice(type = type, confidence = 0.80f)
         }
 
-        // 4. 模拟交易关键词
+        // 4. 量化交易关键词
         val tradeKeywords = mapOf(
-            "买入" to "buy", "买" to "buy",
+            "买入" to "buy", "买" to "buy", "建仓" to "buy",
             "卖出" to "sell", "卖" to "sell",
             "持仓" to "hold", "仓位" to "hold",
             "调仓" to "rebalance"

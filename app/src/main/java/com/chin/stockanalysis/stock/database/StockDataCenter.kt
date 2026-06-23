@@ -310,6 +310,28 @@ object StockDataCenter {
         return skillPicks.map { it.stockCode }.toSet()
     }
 
+    // ═══════════════════════════════════════════════════════
+    // v13.0: 自選股票池（作為額外信號源，不加分不過濾）
+    // ═══════════════════════════════════════════════════════
+
+    /** 從 SharedPreferences 讀取自選股票代碼 */
+    fun getWatchlistStockCodes(context: Context): Set<String> {
+        val prefs = context.getSharedPreferences("watchlist_prefs", Context.MODE_PRIVATE)
+        val json = prefs.getString("groups", "[]") ?: "[]"
+        val codes = mutableSetOf<String>()
+        try {
+            val arr = org.json.JSONArray(json)
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val stocksArr = obj.optJSONArray("stocks") ?: org.json.JSONArray()
+                for (j in 0 until stocksArr.length()) {
+                    codes.add(stocksArr.getJSONObject(j).getString("code"))
+                }
+            }
+        } catch (_: Exception) {}
+        return codes
+    }
+
     /**
      * Skill/Agent 精選股票加權分數（上限 10 分）
      *

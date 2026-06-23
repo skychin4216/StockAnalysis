@@ -28,6 +28,7 @@ class AgentManager(private val context: Context) {
         private const val PREFS_NAME = "agent_prefs"
         private const val KEY_AGENTS = "agents_json"
         private const val KEY_INITIALIZED = "agents_initialized_v2"
+        private const val KEY_V3_MIGRATED = "agents_migrated_v3"
     }
 
     private val prefs: SharedPreferences =
@@ -36,15 +37,14 @@ class AgentManager(private val context: Context) {
     private val agents = mutableMapOf<String, Agent>()
 
     init {
-        val isV2Migrated = prefs.getBoolean("agents_migrated_v2", false)
         loadFromPrefs()
         if (!prefs.getBoolean(KEY_INITIALIZED, false)) {
             initializeDefaultAgents()
-            prefs.edit().putBoolean(KEY_INITIALIZED, true).putBoolean("agents_migrated_v2", true).apply()
-        } else if (!isV2Migrated) {
-            // v2 升级：用 skill_config.json 正确值强制覆寫舊髒數據
+            prefs.edit().putBoolean(KEY_INITIALIZED, true).putBoolean("agents_migrated_v2", true).putBoolean(KEY_V3_MIGRATED, true).apply()
+        } else if (!prefs.getBoolean(KEY_V3_MIGRATED, false)) {
+            // v3 升级：修正 description + 添加缺失的 pipeline agents
             reMigrateFromSkills()
-            prefs.edit().putBoolean("agents_migrated_v2", true).apply()
+            prefs.edit().putBoolean(KEY_V3_MIGRATED, true).apply()
         }
     }
 
@@ -173,29 +173,51 @@ class AgentManager(private val context: Context) {
 
     /**
      * v2 升级迁移：用 skill_config.json 正确值覆寫 FROM_SKILL 來源的舊髒數據
+     * v3 擴展：同時修正 description + 添加缺失的 pipeline agents
      */
     private fun reMigrateFromSkills() {
-        Log.i(TAG, "🔄 v2 升级：重新修正 FROM_SKILL 智能体的 quickPrompt/systemPrompt...")
+        Log.i(TAG, "🔄 v2 升级：重新修正 FROM_SKILL 智能体的 quickPrompt/systemPrompt/description...")
         try {
             val skillConfigs = com.chin.stockanalysis.skill.stock_picking.SkillConfigLoader.loadAllSkills(context)
             var fixed = 0
+            var added = 0
             for (config in skillConfigs) {
-                val existing = agents[config.id] ?: continue
-                // 只修正來源為 FROM_SKILL 的，保留用戶親手創建/編輯過的
-                if (existing.source != AgentSource.FROM_SKILL) continue
-                // 只修正 quickPrompt 為空 或 systemPrompt 為空 的髒數據
-                if (existing.quickPrompt.isNotBlank() && existing.systemPrompt.isNotBlank()) continue
-                val corrected = existing.copy(
-                    quickPrompt = config.quickPrompt,
-                    systemPrompt = config.systemPrompt
-                )
-                agents[corrected.id] = corrected
-                fixed++
-                Log.d(TAG, "  ✅ 修正 ${existing.id}: quickPrompt=${config.quickPrompt.take(50)}... / systemPrompt=${config.systemPrompt.take(50)}...")
+                val existing = agents[config.id]
+                if (existing != null) {
+                    // 只修正來源為 FROM_SKILL 的，保留用戶親手創建/編輯過的
+                    if (existing.source != AgentSource.FROM_SKILL) continue
+                    // 修正空字段
+                    val needsFix = existing.quickPrompt.isBlank() || existing.systemPrompt.isBlank() || existing.description.isBlank()
+                    if (!needsFix) continue
+                    val corrected = existing.copy(
+                        quickPrompt = if (existing.quickPrompt.isBlank()) config.quickPrompt else existing.quickPrompt,
+                        systemPrompt = if (existing.systemPrompt.isBlank()) config.systemPrompt else existing.systemPrompt,
+                        description = if (existing.description.isBlank()) config.description else existing.description
+                    )
+                    agents[corrected.id] = corrected
+                    fixed++
+                    Log.d(TAG, "  ✅ 修正 ${existing.id}: description=${config.description.take(30)}...")
+                } else {
+                    // 添加缺失的 pipeline agents（用戶升級後首次啟動時）
+                    val agent = Agent(
+                        id = config.id,
+                        name = config.name,
+                        icon = config.icon.ifBlank { "🎯" },
+                        description = config.description,
+                        quickPrompt = config.quickPrompt,
+                        systemPrompt = config.systemPrompt,
+                        triggerKeywords = config.keywords,
+                        source = if (config.isDynamic) AgentSource.USER_CREATED else AgentSource.FROM_SKILL,
+                        createdAt = System.currentTimeMillis()
+                    )
+                    agents[agent.id] = agent
+                    added++
+                    Log.d(TAG, "  ➕ 新增缺失智能体: ${config.id} - ${config.name}")
+                }
             }
-            if (fixed > 0) {
+            if (fixed > 0 || added > 0) {
                 saveToPrefs()
-                Log.i(TAG, "✅ v2 升级完成：修正了 $fixed 个智能体")
+                Log.i(TAG, "✅ v2 升级完成：修正了 $fixed 个，新增了 $added 个智能体")
             } else {
                 Log.i(TAG, "✅ v2 升级：无需修正")
             }

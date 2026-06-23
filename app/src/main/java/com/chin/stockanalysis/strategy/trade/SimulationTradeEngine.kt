@@ -21,7 +21,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * ## 模拟交易引擎 v2.0 — 9步精選流程 + 智能賣出
+ * ## 中线量化引擎 v2.0 — 9步精選流程 + 智能賣出
  */
 class SimulationTradeEngine(private val context: Context) {
 
@@ -46,7 +46,8 @@ class SimulationTradeEngine(private val context: Context) {
         val periods: List<Int> = PERIOD_DAYS,
         val onlyMainBoard: Boolean = true,
         val maxFitRounds: Int = 1000,
-        val targetAccuracy: Float = 0.55f
+        val targetAccuracy: Float = 0.55f,
+        val holdingPeriod: Int = 10  // 中线默认持仓10天
     )
 
     data class StrategyPeriodResult(
@@ -221,13 +222,14 @@ class SimulationTradeEngine(private val context: Context) {
         val sectorPicked = if (config.onlyMainBoard) getHotSectorStockPool().filter { isMainBoard(it) }.toSet() else getHotSectorStockPool()
         Log.i(TAG, "【Step 7】板塊精選: +${sectorPicked.size} 隻")
 
-        // Step 8: 用户搜索/智能体
+        // Step 8: 用户搜索/智能体/自选股
         val userStockCodes = if (config.onlyMainBoard) StockDataCenter.getUserSearchStockCodes().filter { isMainBoard(it) }.toSet() else StockDataCenter.getUserSearchStockCodes()
         val skillPickCodes = if (config.onlyMainBoard) StockDataCenter.getSkillPickStockCodes().filter { isMainBoard(it) }.toSet() else StockDataCenter.getSkillPickStockCodes()
-        Log.i(TAG, "【Step 8】用戶搜索${userStockCodes.size}隻 + 智能體${skillPickCodes.size}隻")
+        val watchlistCodes = if (config.onlyMainBoard) StockDataCenter.getWatchlistStockCodes(context).filter { isMainBoard(it) }.toSet() else StockDataCenter.getWatchlistStockCodes(context)
+        Log.i(TAG, "【Step 8】用戶搜索${userStockCodes.size}隻 + 智能體${skillPickCodes.size}隻 + 自選${watchlistCodes.size}隻")
 
         // Step 9: 组装+过滤
-        val rawPool = (crossDayTop20.map { it.first }.toSet() + hotStocks + sectorPicked + userStockCodes + skillPickCodes).toSet()
+        val rawPool = (crossDayTop20.map { it.first }.toSet() + hotStocks + sectorPicked + userStockCodes + skillPickCodes + watchlistCodes).toSet()
         Log.i(TAG, "【Step 9a】rawPool: ${rawPool.size}隻")
         val finalPool = filterPoolCodes(rawPool, allSnapshots)
         val filteredOut = rawPool.size - finalPool.size

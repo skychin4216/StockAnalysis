@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 豆包风格 聊天窗口 v9.0 -->
+<!-- 豆包风格 聊天窗口 v13.0 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
@@ -149,7 +149,7 @@
         android:textSize="12sp"
         android:visibility="gone" />
 
-    <!-- ── 底部输入区 v9.0 圆润风格 ── -->
+    <!-- ── 底部输入区 v13.0 紧凑设计 ── -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -159,6 +159,53 @@
         android:paddingBottom="8dp"
         android:paddingTop="6dp">
 
+        <!-- 模式选择栏：快速 / 深度 / 专家（紧凑） -->
+        <LinearLayout
+            android:id="@+id/modeSelectorBar"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:layout_marginStart="12dp"
+            android:layout_marginBottom="4dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/btnModeQuick"
+                android:layout_width="wrap_content"
+                android:layout_height="26dp"
+                android:gravity="center"
+                android:paddingHorizontal="10dp"
+                android:text="⚡ 快速"
+                android:textSize="11sp"
+                android:textColor="#FFFFFF"
+                android:background="@drawable/bg_mode_active"
+                android:layout_marginEnd="6dp" />
+
+            <TextView
+                android:id="@+id/btnModeDeep"
+                android:layout_width="wrap_content"
+                android:layout_height="26dp"
+                android:gravity="center"
+                android:paddingHorizontal="10dp"
+                android:text="🔍 深度"
+                android:textSize="11sp"
+                android:textColor="#666666"
+                android:background="@drawable/bg_mode_inactive"
+                android:layout_marginEnd="6dp" />
+
+            <TextView
+                android:id="@+id/btnModeExpert"
+                android:layout_width="wrap_content"
+                android:layout_height="26dp"
+                android:gravity="center"
+                android:paddingHorizontal="10dp"
+                android:text="🧠 专家"
+                android:textSize="11sp"
+                android:textColor="#666666"
+                android:background="@drawable/bg_mode_inactive" />
+        </LinearLayout>
+
+        <!-- 输入行：⚡ | 输入框 | 🎤 | +/↑ -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="48dp"
@@ -170,18 +217,18 @@
             android:paddingEnd="4dp"
             android:paddingStart="4dp">
 
-            <!-- ⚡ AI增强开关 (v9.0) -->
+            <!-- ⚡ AI增强按钮（左侧） -->
             <ImageButton
                 android:id="@+id/btnAiBoost"
-                android:layout_width="28dp"
-                android:layout_height="28dp"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
                 android:layout_marginStart="3dp"
                 android:layout_marginEnd="2dp"
                 android:background="@drawable/bg_btn_circle"
                 android:contentDescription="AI增强"
-                android:padding="5dp"
-            android:src="@drawable/ic_ai_boost"
-            app:tint="#AAAAAA" />
+                android:padding="6dp"
+                android:src="@drawable/ic_ai_boost"
+                app:tint="#AAAAAA" />
 
             <!-- 输入框 -->
             <EditText
@@ -190,7 +237,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:background="@null"
-                android:hint="发消息或按住说话..."
+                android:hint="发消息..."
                 android:imeOptions="actionSend"
                 android:inputType="textMultiLine"
                 android:maxLines="4"
@@ -200,25 +247,26 @@
                 android:textColorHint="#BBBBBB"
                 android:textSize="15sp" />
 
-            <!-- 🎤 语音按钮 (圆润，空输入时显示) -->
+            <!-- 语音按钮（播放喇叭图标） -->
             <ImageButton
                 android:id="@+id/btnVoice"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:layout_marginEnd="2dp"
                 android:background="@drawable/bg_btn_circle"
                 android:contentDescription="语音输入"
-                android:padding="7dp"
-            android:src="@android:drawable/ic_btn_speak_now"
-            app:tint="#666666" />
+                android:padding="5dp"
+                android:src="@drawable/ic_voice_speaker" />
 
-            <!-- 发送按钮：空状态 ➕，有输入时 ↑ 箭头 -->
+            <!-- + 按钮（默认）/ 发送↑按钮（有输入时） -->
             <ImageButton
                 android:id="@+id/btnSend"
                 android:layout_width="32dp"
                 android:layout_height="32dp"
+                android:layout_marginEnd="3dp"
                 android:background="@drawable/bg_send"
-                android:contentDescription="发送"
-                android:padding="8dp"
+                android:contentDescription="更多/发送"
+                android:padding="6dp"
                 android:src="@android:drawable/ic_input_add"
                 app:tint="#FFFFFF" />
         </LinearLayout>

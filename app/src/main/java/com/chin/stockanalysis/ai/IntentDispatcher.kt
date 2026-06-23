@@ -18,18 +18,18 @@ object IntentDispatcher {
     fun dispatch(userText: String, context: Context): Boolean {
         val text = userText.trim()
 
-        // ── 模拟交易指令 ──
-        if (text.contains("执行模拟交易") || text.contains("开始模拟交易") || text.contains("模拟交易")) {
+        // ── 中线量化指令 ──
+        if (text.contains("执行中线量化") || text.contains("开始中线量化") || text.contains("中线量化")) {
             CrossTabBus.postCommand(CrossTabCommand(action = "EXECUTE_SIMULATE_TRADE"))
-            Log.i(TAG, "📢 分发指令: 执行模拟交易"); return true
+            Log.i(TAG, "📢 分发指令: 执行中线量化"); return true
         }
         if (text.contains("一键买入") || text.contains("自动买入") || text.contains("全部买入")) {
             CrossTabBus.postCommand(CrossTabCommand(action = "BUY_ALL"))
             Log.i(TAG, "📢 分发指令: 一键买入"); return true
         }
-        if (text.contains("运行pipeline") || text.contains("运行Pipeline") || text.contains("pipeline")) {
+        if (text.contains("运行短线选股") || text.contains("运行短线量化") || text.contains("短线量化")) {
             CrossTabBus.postCommand(CrossTabCommand(action = "RUN_PIPELINE"))
-            Log.i(TAG, "📢 分发指令: 运行Pipeline"); return true
+            Log.i(TAG, "📢 分发指令: 运行短线量化"); return true
         }
         if (text.contains("打开量化选股") || text.contains("量化选股") || text.contains("执行策略")) {
             CrossTabBus.postCommand(CrossTabCommand(action = "SWITCH_TO_STRATEGY_TAB"))

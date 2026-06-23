@@ -4,8 +4,12 @@ import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
+import android.net.Uri
 import android.os.Bundle
+import android.provider.DocumentsContract
+import android.provider.MediaStore
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import android.view.LayoutInflater
@@ -15,6 +19,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.PopupMenu
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -113,10 +118,37 @@ class ChatTabFragment : Fragment() {
     /** ⚡ AI 增强开关 — 开启时使用双 AI，关闭时仅用用户选择的 AI */
     private var aiBoostEnabled = false
 
+    /** 🎯 分析模式：QUICK=快速, DEEP=深度, EXPERT=专家 */
+    private var analysisMode = AnalysisMode.QUICK
+
     // HotSectors 缓存 — 30s 内不重复查 DB
     private var cachedHotSectorsText: String? = null
     private var cachedHotSectorsTime: Long = 0L
     private var hotSectorsHideJob: Job? = null
+
+    // ═══ 媒體與檔案選擇器 ═══
+    private var photoUri: Uri? = null
+
+    private val cameraLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            photoUri?.let { sendMessage("[圖片]") }
+        }
+    }
+
+    private val galleryLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            result.data?.data?.let { sendMessage("[圖片]") }
+        }
+    }
+
+    private val fileLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            result.data?.data?.let { uri ->
+                val fileName = getFileNameFromUri(uri) ?: "未知檔案"
+                sendMessage("📎 $fileName")
+            }
+        }
+    }
 
     // ════════════════════════════════════════
     // 生命周期
@@ -155,6 +187,36 @@ class ChatTabFragment : Fragment() {
     }
 
     private fun cancelApiCall() { currentStreamingJob?.cancel(); currentStreamingJob = null; apiProvider?.cancel() }
+
+    /** 设置分析模式并更新UI */
+    private fun setAnalysisMode(mode: AnalysisMode) {
+        analysisMode = mode
+        val activeColor = "#1565C0"
+        val inactiveColor = "#666666"
+        val activeBg = com.chin.stockanalysis.R.drawable.bg_mode_active
+        val inactiveBg = com.chin.stockanalysis.R.drawable.bg_mode_inactive
+
+        binding.btnModeQuick.apply {
+            setTextColor(android.graphics.Color.parseColor(if (mode == AnalysisMode.QUICK) "#FFFFFF" else inactiveColor))
+            background = if (mode == AnalysisMode.QUICK) requireContext().getDrawable(activeBg) else requireContext().getDrawable(inactiveBg)
+        }
+        binding.btnModeDeep.apply {
+            setTextColor(android.graphics.Color.parseColor(if (mode == AnalysisMode.DEEP) "#FFFFFF" else inactiveColor))
+            background = if (mode == AnalysisMode.DEEP) requireContext().getDrawable(activeBg) else requireContext().getDrawable(inactiveBg)
+        }
+        binding.btnModeExpert.apply {
+            setTextColor(android.graphics.Color.parseColor(if (mode == AnalysisMode.EXPERT) "#FFFFFF" else inactiveColor))
+            background = if (mode == AnalysisMode.EXPERT) requireContext().getDrawable(activeBg) else requireContext().getDrawable(inactiveBg)
+        }
+
+        val modeHint = when (mode) {
+            AnalysisMode.QUICK -> "⚡ 快速模式：实时行情+情绪分析"
+            AnalysisMode.DEEP -> "🔍 深度模式：多策略量化筛选+板块对比"
+            AnalysisMode.EXPERT -> "🧠 专家模式：7步AI智能体流水线"
+        }
+        binding.etInput.hint = modeHint
+        Toast.makeText(requireContext(), modeHint, Toast.LENGTH_SHORT).show()
+    }
 
     // ════════════════════════════════════════
     // 初始化
@@ -229,20 +291,33 @@ class ChatTabFragment : Fragment() {
     }
 
     private fun setupInput() {
+        // 模式选择按钮
+        binding.btnModeQuick.setOnClickListener { setAnalysisMode(AnalysisMode.QUICK) }
+        binding.btnModeDeep.setOnClickListener { setAnalysisMode(AnalysisMode.DEEP) }
+        binding.btnModeExpert.setOnClickListener { setAnalysisMode(AnalysisMode.EXPERT) }
+
+        // ⚡ AI增强按钮
         binding.btnAiBoost.setOnClickListener {
             aiBoostEnabled = !aiBoostEnabled
             val color = if (aiBoostEnabled) "#FF6600" else "#AAAAAA"
             binding.btnAiBoost.setColorFilter(android.graphics.Color.parseColor(color))
+            Toast.makeText(requireContext(), if (aiBoostEnabled) "⚡ AI增强已开启" else "⚡ AI增强已关闭", Toast.LENGTH_SHORT).show()
         }
+
+        // btnSend: 默认=+菜单，有输入=发送↑
         binding.btnSend.setOnClickListener {
             val text = binding.etInput.text.toString().trim()
-            if (text.isEmpty()) { Toast.makeText(requireContext(), "请输入内容", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
-            sendMessage(text)
+            if (text.isEmpty()) {
+                // 没有输入 → 展开菜单
+                showPlusMenu(it)
+            } else {
+                sendMessage(text)
+            }
         }
         binding.etInput.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEND) { val t = binding.etInput.text.toString().trim(); if (t.isNotEmpty()) sendMessage(t); true } else false
         }
-        binding.btnVoice.setOnClickListener { Toast.makeText(requireContext(), "🎤 语音输入开发中", Toast.LENGTH_SHORT).show() }
+        binding.btnVoice.setOnClickListener { startVoiceInput() }
 
         binding.etInput.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -251,14 +326,16 @@ class ChatTabFragment : Fragment() {
                 val hasText = !s.isNullOrBlank()
                 if (hasText) {
                     binding.frameHotSectors.visibility = View.GONE
-                    binding.btnAiBoost.visibility = View.GONE
+                    // 有输入：隐藏🎤，+变成↑发送箭头
                     binding.btnVoice.visibility = View.GONE
-                    binding.btnSend.setImageResource(com.chin.stockanalysis.R.drawable.ic_send_arrow)
+                    binding.btnSend.setImageResource(com.chin.stockanalysis.R.drawable.ic_send_arrow_up)
+                    binding.btnSend.imageTintList = null
                     intentEngine.onInputChanged(s.toString(), viewLifecycleOwner.lifecycleScope) { intent -> Log.d(TAG, "🔮 $intent") }
                 } else {
-                    binding.btnAiBoost.visibility = View.VISIBLE
+                    // 无输入：显示🎤，恢复+图标
                     binding.btnVoice.visibility = View.VISIBLE
                     binding.btnSend.setImageResource(android.R.drawable.ic_input_add)
+                    binding.btnSend.setColorFilter(android.graphics.Color.parseColor("#FFFFFF"))
                     intentEngine.cancel()
                     showHotSectors()
                 }
@@ -447,38 +524,183 @@ class ChatTabFragment : Fragment() {
         binding.etInput.setText(""); hideKeyboard()
         if (!hasAutoTitle) { hasAutoTitle = true; binding.tvChatTitle.text = extractSmartTitle(userText) }
 
-        smartContext.invalidateAll()
+        // 🎯 根据分析模式分流处理
+        when (analysisMode) {
+            AnalysisMode.QUICK -> runQuickAnalysis(userText, provider)
+            AnalysisMode.DEEP -> runDeepAnalysis(userText, provider)
+            AnalysisMode.EXPERT -> runExpertAnalysis(userText, provider)
+        }
+    }
 
-        val secondary = secondaryProvider
-        val useDualAi = aiBoostEnabled && secondary != null && secondary.config.id != provider.config.id
-        val aiLabel = if (useDualAi) "${provider.config.name.take(8)} + ${secondary!!.config.name.take(8)}" else provider.config.name.take(10)
-        val estimatedKeywords = if (userText.length > 10) 3 + userText.length / 10 else 2
-
+    /** ⚡ 快速模式：AI 深度分析（參考豆包風格，簡潔但全面） */
+    private fun runQuickAnalysis(userText: String, provider: ApiProvider) {
         val streamingMessage = Message(content = "", isUser = false, isStreaming = true,
-            loadingStatus = "🤖 $aiLabel\n正在搜索${estimatedKeywords}个关键字...")
+            loadingStatus = "⚡ AI 快速分析中...")
         addMessage(streamingMessage)
         val streamingIndex = messages.size - 1
 
         currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
-            delay(800L)
-            if (isAdded && streamingIndex in messages.indices && messages[streamingIndex].isStreaming) {
-                requireActivity().runOnUiThread {
-                    messages[streamingIndex] = messages[streamingIndex].copy(
-                        loadingStatus = "🤖 $aiLabel\n正在搜索${estimatedKeywords}个关键字，参考2篇资料")
-                    adapter.notifyItemChanged(streamingIndex)
+            try {
+                val stockInfo = withContext(Dispatchers.IO) {
+                    smartContext.getOrBuild(userText = userText, baseSystemPrompt = BASE_SYSTEM_PROMPT, onPreferenceLeaned = {})
+                }
+                val memory = withContext(Dispatchers.IO) { memoryManager.buildMemorySuffix() }
+                // 快速模式也調用 AI，但要求結構化簡潔輸出
+                val prompt = """【⚡ AI 快速分析】
+用戶問題：$userText
+
+$stockInfo
+$memory
+
+請以簡潔專業的方式分析，包含以下 5 個部分（每部分 2-3 句話）：
+
+一、公司基本概況
+- 主營業務、行業地位、核心競爭力
+
+二、最新財務表現
+- 最新季度營收/利潤增速、毛利率變化
+
+三、核心上漲邏輯
+- 當前最強的 2-3 個驅動因素
+
+四、核心風險
+- 當前最大的 2-3 個風險點
+
+五、短期 & 中長期總結
+- 短期（1-3個月）看法
+- 中長期（1-2年）看法
+
+注意：
+1. 總字數控制在 400-600 字
+2. 用簡潔的 bullet points
+3. 最後加一句免責聲明：「以上分析不構成投資建議」"""
+                val history = messages.toList().subList(0, streamingIndex)
+                sendWithRetry(provider, history, prompt, streamingIndex, 2)
+            } catch (e: Exception) {
+                if (isAdded) requireActivity().runOnUiThread {
+                    failStreamingMessage(streamingIndex, "快速分析失败: ${e.message}")
                 }
             }
+        }
+    }
 
-            val memoryDeferred = async(Dispatchers.IO) { memoryManager.buildMemorySuffix() }
-            val dataDeferred = async(Dispatchers.IO) {
-                smartContext.getOrBuild(userText = userText, baseSystemPrompt = BASE_SYSTEM_PROMPT,
-                    onPreferenceLeaned = { _ -> if (isAdded) requireActivity().runOnUiThread { Toast.makeText(requireContext(), "📌 已记住你的偏好", Toast.LENGTH_SHORT).show() } })
+    /** 🔍 深度模式：多策略量化筛选 + 板块对比 + AI Predict */
+    private fun runDeepAnalysis(userText: String, provider: ApiProvider) {
+        val streamingMessage = Message(content = "", isUser = false, isStreaming = true,
+            loadingStatus = "🔍 深度分析：量化策略扫描 + 板块筛选中...")
+        addMessage(streamingMessage)
+        val streamingIndex = messages.size - 1
+
+        currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                // Step 1: 获取同板块股票
+                val sectorAnalysis = withContext(Dispatchers.IO) {
+                    buildSectorAnalysis(userText)
+                }
+
+                // Step 2: 构建深度分析 prompt
+                val memory = withContext(Dispatchers.IO) { memoryManager.buildMemorySuffix() }
+                val prompt = "【🔍 深度分析模式】\n$userText\n\n$sectorAnalysis\n$memory\n\n请执行：1)分析该股票所属板块热度 2)同板块Top5对比 3)量化策略信号综合评估 4)给出买入/观望/回避建议。"
+                val history = messages.toList().subList(0, streamingIndex)
+                sendWithRetry(provider, history, prompt, streamingIndex, 2)
+            } catch (e: Exception) {
+                if (isAdded) requireActivity().runOnUiThread {
+                    failStreamingMessage(streamingIndex, "深度分析失败: ${e.message}")
+                }
             }
-            val multiAnalysis = if (useDualAi && secondary != null) orchestrator.fetchMultiAnalysis(provider, secondary, null, userText) else ""
+        }
+    }
 
-            val finalSystemPrompt = dataDeferred.await() + memoryDeferred.await() + multiAnalysis
-            val history = messages.toList().subList(0, streamingIndex)
-            sendWithRetry(provider, history, finalSystemPrompt, streamingIndex, 3)
+    /** 🧠 专家模式：7步AI智能体流水线 */
+    private fun runExpertAnalysis(userText: String, provider: ApiProvider) {
+        val streamingMessage = Message(content = "", isUser = false, isStreaming = true,
+            loadingStatus = "🧠 专家模式：启动7步AI智能体流水线...")
+        addMessage(streamingMessage)
+        val streamingIndex = messages.size - 1
+
+        currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val orchestrator = com.chin.stockanalysis.agent.pipeline.AgentPipelineOrchestrator(requireContext())
+                var stepResults = StringBuilder()
+
+                orchestrator.onStepStart = { index, step ->
+                    if (isAdded) requireActivity().runOnUiThread {
+                        messages[streamingIndex] = messages[streamingIndex].copy(
+                            loadingStatus = "🧠 ${step.name} 执行中... (${index + 1}/7)")
+                        adapter.notifyItemChanged(streamingIndex)
+                    }
+                }
+
+                orchestrator.onStepComplete = { index, step, ctx ->
+                    if (isAdded) requireActivity().runOnUiThread {
+                        val summary = ctx.stepAnalyses[index]?.take(60) ?: "完成"
+                        stepResults.append("✅ ${step.name}: $summary\n")
+                        messages[streamingIndex] = messages[streamingIndex].copy(
+                            content = stepResults.toString(),
+                            loadingStatus = "🧠 ${step.name} 完成 (${index + 1}/7)")
+                        adapter.notifyItemChanged(streamingIndex)
+                    }
+                }
+
+                val result = orchestrator.execute(userText)
+
+                if (isAdded) requireActivity().runOnUiThread {
+                    val finalText = buildString {
+                        append("🧠 7步AI智能体流水线分析完成\n\n")
+                        append(stepResults.toString())
+                        append("\n📊 最终结果:\n")
+                        result.stocks.firstOrNull()?.let { stock ->
+                            append("股票: ${stock.stockName} (${stock.stockCode})\n")
+                            stock.chainScore?.let { append("产业链打分: ${it.totalScore}/100 (${it.barrierLevel}壁垒)\n") }
+                            stock.riskResult?.let { append("风控等级: ${it.riskLevel}\n") }
+                            stock.sentimentResult?.let { append("仓位微调: ${it.positionAdjust}\n") }
+                            stock.tradePlan?.let { append("交易方案: ${it.stopLoss}止损 / ${it.targets.joinToString(", ")}止盈\n") }
+                            append("通过判定: ${if (stock.passed) "✅ 通过" else "❌ 未通过"}")
+                        } ?: append("无有效结果")
+                    }
+                    completeStreamingMessage(streamingIndex, finalText)
+                    onMessageComplete()
+                }
+            } catch (e: Exception) {
+                if (isAdded) requireActivity().runOnUiThread {
+                    failStreamingMessage(streamingIndex, "专家模式失败: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /** 构建同板块分析文本 */
+    private suspend fun buildSectorAnalysis(userText: String): String {
+        return withContext(Dispatchers.IO) {
+            val sb = StringBuilder()
+            try {
+                // 尝试从用户输入提取股票代码
+                val codeMatch = Regex("(sh|sz|bj)?\\d{6}").find(userText)
+                val stockCode = codeMatch?.value
+                if (stockCode != null) {
+                    val sectors = com.chin.stockanalysis.stock.database.StockDataCenter.getSectorsByStock(stockCode)
+                    if (sectors.isNotEmpty()) {
+                        sb.append("【所属板块】${sectors.joinToString(", ")}\n")
+                        for (sector in sectors.take(2)) {
+                            val topStocks = com.chin.stockanalysis.stock.database.StockDataCenter.getTopStocksBySector(sector, 5, 5)
+                            if (topStocks.isNotEmpty()) {
+                                sb.append("【$sector 板块Top5】\n")
+                                topStocks.forEachIndexed { i, pair ->
+                                    val (code, name) = pair
+                                    val snap = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(requireContext()).dailySnapshotDao().getByDateAndCode(
+                                        java.time.LocalDate.now().toString(), code)
+                                    if (snap != null) {
+                                        val chg = snap.changePct
+                                        sb.append("${i + 1}. $name $code ¥${"%.2f".format(snap.close)} ${if (chg >= 0) "+" else ""}${"%.2f".format(chg)}%\n")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) { }
+            if (sb.isEmpty()) sb.append("【板块分析】未能获取板块数据，将基于通用分析。\n")
+            sb.toString()
         }
     }
 
@@ -575,6 +797,101 @@ class ChatTabFragment : Fragment() {
     private fun showEditTitleDialog() {
         val input = EditText(requireContext()).apply { setText(binding.tvChatTitle.text); setSelection(text?.length ?: 0); hint = "输入新标题" }
         AlertDialog.Builder(requireContext()).setTitle("✏️ 修改标题").setView(input).setNegativeButton("取消", null).setPositiveButton("确定") { _, _ -> val t = input.text?.toString()?.trim(); if (!t.isNullOrBlank()) { binding.tvChatTitle.text = t; saveCurrentConversation() } }.show()
+    }
+
+    // ════════════════════════════════════════
+    // 相機 / 相簿 / 檔案 / 語音
+    // ════════════════════════════════════════
+
+    // ════════════════════════════════════════
+    // + 菜单：相机 / 相册 / 文件
+    // ════════════════════════════════════════
+
+    private fun showPlusMenu(anchor: View) {
+        val popup = PopupMenu(requireContext(), anchor)
+        popup.menu.add(0, 1, 0, "📷 拍照")
+        popup.menu.add(0, 2, 1, "🖼️ 相册")
+        popup.menu.add(0, 3, 2, "📎 文件")
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                1 -> openCamera()
+                2 -> openGallery()
+                3 -> openFilePicker()
+            }
+            true
+        }
+        popup.show()
+    }
+
+    private fun openCamera() {
+        val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+        if (intent.resolveActivity(requireContext().packageManager) != null) {
+            val contentValues = android.content.ContentValues().apply {
+                put(MediaStore.Images.Media.TITLE, "camera_${System.currentTimeMillis()}")
+                put(MediaStore.Images.Media.DESCRIPTION, "Chat capture")
+            }
+            photoUri = requireContext().contentResolver.insert(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues
+            )
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, photoUri)
+            cameraLauncher.launch(intent)
+        } else {
+            Toast.makeText(requireContext(), "無法啟動相機", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun openGallery() {
+        val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+        galleryLauncher.launch(intent)
+    }
+
+    private fun openFilePicker() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+        }
+        fileLauncher.launch(intent)
+    }
+
+    private fun getFileNameFromUri(uri: Uri): String? {
+        var result: String? = null
+        if (uri.scheme == "content") {
+            requireContext().contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idx = cursor.getColumnIndex(MediaStore.Images.Media.DISPLAY_NAME)
+                    if (idx >= 0) result = cursor.getString(idx)
+                }
+            }
+        }
+        if (result == null) {
+            result = uri.path
+            val cut = result?.lastIndexOf('/') ?: -1
+            if (cut != -1) result = result?.substring(cut + 1)
+        }
+        return result
+    }
+
+    private fun startVoiceInput() {
+        val dialog = AlertDialog.Builder(requireContext())
+            .setTitle("🎤 語音輸入")
+            .setMessage("錄音中...")
+            .setNegativeButton("取消") { d, _ -> d.dismiss() }
+            .setCancelable(false)
+            .show()
+
+        lifecycleScope.launch {
+            delay(3000L)
+            if (isAdded) {
+                requireActivity().runOnUiThread {
+                    dialog.dismiss()
+                    Toast.makeText(
+                        requireContext(),
+                        "語音轉文字功能需要整合語音辨識SDK",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
     }
 
     // ════════════════════════════════════════
@@ -802,4 +1119,7 @@ class ChatTabFragment : Fragment() {
         lifecycleScope.launch { withContext(Dispatchers.IO) { memoryManager.boostMemoryWeight(key = suggestion.memoryKey, value = suggestion.memoryValue, category = suggestion.memoryCategory, convId = currentConvId) } }
         sendMessage(suggestion.text)
     }
+
+    /** 分析模式枚举 */
+    enum class AnalysisMode { QUICK, DEEP, EXPERT }
 }

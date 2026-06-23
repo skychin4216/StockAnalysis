@@ -22,8 +22,8 @@ import android.util.Log
  *
  * 顶部三 Tab：
  * - Tab 0：量化选股 (StrategyListFragment)
- * - Tab 1：模拟交易 (SimulationTradeFragment)
- * - Tab 2：自动量化 (AutoQuantFragment)
+ * - Tab 1：中线量化 (SimulationTradeFragment)
+ * - Tab 2：短线量化 (AutoQuantFragment)
  */
 class StrategyFragment : Fragment() {
 
@@ -70,8 +70,8 @@ class StrategyFragment : Fragment() {
         TabLayoutMediator(tabLayout, viewPager) { tab, position ->
             tab.text = when (position) {
                 0 -> "🎯 量化选股"
-                1 -> "💹 模拟交易"
-                2 -> "🤖 自动量化"
+                1 -> "💹 中线量化"
+                2 -> "🤖 短线量化"
                 else -> ""
             }
         }.attach()
@@ -86,9 +86,9 @@ class StrategyFragment : Fragment() {
                     Log.i("StrategyFragment", "📢 收到指令: ${cmd.action}")
                     when (cmd.action) {
                         "EXECUTE_SIMULATE_TRADE" -> {
-                            // 切换到模拟交易Tab并自动触发买入
+                            // 切换到中线量化Tab并自动触发买入
                             withContext(Dispatchers.Main) {
-                                viewPager.setCurrentItem(1, true)  // Tab 1 = 模拟交易
+                                viewPager.setCurrentItem(1, true)  // Tab 1 = 中线量化
                                 viewPager.postDelayed({
                                     val frag = childFragmentManager.fragments
                                         .firstOrNull { it is com.chin.stockanalysis.strategy.trade.SimulationTradeFragment }
@@ -99,7 +99,7 @@ class StrategyFragment : Fragment() {
                         }
                         "RUN_PIPELINE" -> {
                             withContext(Dispatchers.Main) {
-                                viewPager.setCurrentItem(2, true)  // Tab 2 = 自动量化
+                                viewPager.setCurrentItem(2, true)  // Tab 2 = 短线量化
                                 viewPager.postDelayed({
                                     val frag = childFragmentManager.fragments
                                         .firstOrNull { it is com.chin.stockanalysis.strategy.trade.AutoQuantFragment }

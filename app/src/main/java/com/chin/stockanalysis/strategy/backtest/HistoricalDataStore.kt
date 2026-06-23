@@ -138,6 +138,10 @@ interface DailySnapshotDao {
     @Query("SELECT * FROM daily_snapshot WHERE date = :date")
     suspend fun getByDate(date: String): List<DailySnapshotEntity>
 
+    /** 获取某日某只股票的快照 */
+    @Query("SELECT * FROM daily_snapshot WHERE date = :date AND code = :code LIMIT 1")
+    suspend fun getByDateAndCode(date: String, code: String): DailySnapshotEntity?
+
     /** 获取某只股票的历史数据 */
     @Query("SELECT * FROM daily_snapshot WHERE code = :code ORDER BY date DESC LIMIT :limit")
     suspend fun getByCode(code: String, limit: Int = 100): List<DailySnapshotEntity>

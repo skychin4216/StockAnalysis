@@ -186,7 +186,8 @@ class StockBrowserFragment : BottomSheetDialogFragment() {
             StockListFragment.Type.ETF      to "ETF",
             StockListFragment.Type.HOT      to "热门",
             StockListFragment.Type.GAIN     to "涨幅",
-            StockListFragment.Type.LOSE     to "跌幅"
+            StockListFragment.Type.LOSE     to "跌幅",
+            StockListFragment.Type.MAINLINE to "主线"
         )
 
         tabDefs.forEach { (type, title) ->

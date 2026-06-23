@@ -26,7 +26,8 @@ class StockListFragment : Fragment() {
         ETF,        // ETF 基金
         HOT,        // 热门股票
         GAIN,       // 涨幅排行
-        LOSE        // 跌幅排行
+        LOSE,       // 跌幅排行
+        MAINLINE    // 日/周/月主线
     }
 
     /** 股票被点击时的回调（由 StockBrowserFragment 设置）*/
@@ -79,6 +80,7 @@ class StockListFragment : Fragment() {
             Type.HOT     -> hotSampleData()
             Type.GAIN    -> gainSampleData()
             Type.LOSE    -> loseSampleData()
+            Type.MAINLINE -> mainlineSampleData()
         }
 
         recyclerView.adapter = StockListAdapter(data) { stock ->
@@ -158,6 +160,20 @@ class StockListFragment : Fragment() {
         StockItem("sh512010", "医疗ETF", "0.891", "-0.55%", "🔴"),
         StockItem("sh600276", "恒瑞医药", "34.20", "-0.45%", "🔴"),
         StockItem("sz000001", "平安银行", "10.75", "-0.28%", "🔴"),
+    )
+
+    // 日/周/月主線（指數 + ETF 板塊）
+    private fun mainlineSampleData() = listOf(
+        StockItem("INDEX", "📈 上证指数", "3387.12", "+0.65%", "🟢"),
+        StockItem("INDEX", "📉 深证成指", "10972.85", "-0.42%", "🔴"),
+        StockItem("INDEX", "📊 创业板指", "2213.50", "+1.23%", "🟢"),
+        StockItem("ETF", "🎯 日主线: 证券ETF", "0.854", "+2.10%", "🟢"),
+        StockItem("ETF", "🎯 日主线: 芯片ETF", "1.023", "+1.85%", "🟢"),
+        StockItem("ETF", "🎯 周主线: 光伏ETF", "0.912", "+3.45%", "🟢"),
+        StockItem("ETF", "🎯 周主线: 新能源ETF", "1.156", "+2.78%", "🟢"),
+        StockItem("ETF", "🎯 月主线: 人工智能ETF", "0.987", "+5.60%", "🟢"),
+        StockItem("ETF", "🎯 月主线: 机器人ETF", "1.234", "+4.20%", "🟢"),
+        StockItem("ETF", "🎯 月主线: 半导体ETF", "0.876", "+3.90%", "🟢"),
     )
 
     // ─────────────────────────────────────────────

@@ -31,7 +31,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 /**
- * ## 模拟交易面板 v2.0
+ * ## 中线量化面板 v2.0
  *
  * 新增:
  * - 自动卖出评估（10维智能卖出引擎）
@@ -98,7 +98,7 @@ class SimulationTradeFragment : Fragment() {
     private fun buildUI() {
         // 标题
         rootLayout.addView(TextView(requireContext()).apply {
-            text = "🤖 模拟交易系统 v2.0 (含智能卖出)"
+            text = "🤖 中线量化系统 v2.0 (含智能卖出)"
             textSize = 18f
             setTextColor(Color.parseColor("#1A1A2E"))
             setTypeface(null, Typeface.BOLD)
@@ -130,7 +130,7 @@ class SimulationTradeFragment : Fragment() {
         progressRow.addView(statusTv)
         rootLayout.addView(progressRow)
 
-        // 操作按钮区（模拟交易 + 智能卖出 合并一行）
+        // 操作按钮区（中线量化 + 智能卖出 合并一行）
         rootLayout.addView(createActionButtons())
 
         // 分割线
@@ -268,7 +268,7 @@ class SimulationTradeFragment : Fragment() {
         }
 
         executeBtn = Button(requireContext()).apply {
-            text = "▶ 买入"; textSize = 10f; setTextColor(Color.WHITE)
+            text = "▶ 建仓"; textSize = 10f; setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#E65100"))
             setPadding(4, 1, 4, 1); setMinWidth(0); setMinimumWidth(0)
             layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 1f).apply { marginEnd = 1 }
@@ -318,13 +318,13 @@ class SimulationTradeFragment : Fragment() {
         return row
     }
 
-    /** 供外部调用的自动执行模拟交易 */
+    /** 供外部调用的自动执行中线量化 */
     fun autoExecuteTrade() {
         if (executeBtn.isEnabled) executeTrade()
     }
 
     // ═══════════════════════════════════════
-    // 核心功能 - 模拟交易
+    // 核心功能 - 中线量化
     // ═══════════════════════════════════════
 
     private fun executeTrade() {
@@ -335,7 +335,7 @@ class SimulationTradeFragment : Fragment() {
         }
 
         executeBtn.isEnabled = false; executeBtn.text = "⏳ 执行中..."
-        progressBar.visibility = View.VISIBLE; statusTv.text = "正在执行模拟交易..."
+        progressBar.visibility = View.VISIBLE; statusTv.text = "正在执行中线量化..."
 
         lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -349,7 +349,7 @@ class SimulationTradeFragment : Fragment() {
                 if (strategies.isEmpty()) {
                     withContext(Dispatchers.Main) {
                         statusTv.text = "没有启用的策略"; executeBtn.isEnabled = true
-                        executeBtn.text = "▶ 模拟交易"; progressBar.visibility = View.GONE
+                        executeBtn.text = "▶ 建仓"; progressBar.visibility = View.GONE
                     }; return@launch
                 }
                 if (tradeEngine == null) tradeEngine = SimulationTradeEngine(requireContext())
@@ -378,14 +378,14 @@ class SimulationTradeFragment : Fragment() {
                         Log.e("TradeUI", "UI update failed", uiEx)
                         statusTv.text = "✅ 交易完成，但显示报告时出错"
                     } finally {
-                        executeBtn.isEnabled = true; executeBtn.text = "▶ 模拟交易"
+                        executeBtn.isEnabled = true; executeBtn.text = "▶ 建仓"
                         progressBar.visibility = View.GONE
                     }
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     statusTv.text = "❌ 执行失败: ${e.message?.take(50)}"
-                    executeBtn.isEnabled = true; executeBtn.text = "▶ 模拟交易"
+                    executeBtn.isEnabled = true; executeBtn.text = "▶ 建仓"
                     progressBar.visibility = View.GONE
                     Toast.makeText(requireContext(), "执行失败: ${e.message?.take(100)}", Toast.LENGTH_LONG).show()
                 }
@@ -402,7 +402,7 @@ class SimulationTradeFragment : Fragment() {
         val c = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL; setPadding(8, 8, 8, 8) }
 
         c.addView(TextView(requireContext()).apply {
-            text = "📊 模拟交易报告  ${report.config.tradeDate}"
+            text = "📊 中线量化报告  ${report.config.tradeDate}"
             textSize = 15f; setTextColor(Color.parseColor("#1A1A2E")); setTypeface(null, Typeface.BOLD)
             setPadding(0, 8, 0, 8)
         })
@@ -751,7 +751,7 @@ class SimulationTradeFragment : Fragment() {
         val exporter = DataExportImport(requireContext())
         val options = arrayOf(
             "📋 查看交易记录",
-            "📊 模拟交易报告 (历史)",
+            "📊 中线量化报告 (历史)",
             "📊 查看精選池",
             "📤 导出交易数据 (CSV文本)",
             "📤 导出 JSON (全部数据)",
@@ -778,7 +778,7 @@ class SimulationTradeFragment : Fragment() {
             .setNegativeButton("关闭", null).show()
     }
 
-    /** 查看历史模拟交易报告 */
+    /** 查看历史中线量化报告 */
     private fun showTradeReportsHistory() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -787,13 +787,13 @@ class SimulationTradeFragment : Fragment() {
                     .filter { it.strategyId != "FINAL_POOL" && it.strategyId != "BACKTRACK" }
                 if (entities.isEmpty()) {
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(requireContext(), "暂无模拟交易报告记录", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), "暂无中线量化报告记录", Toast.LENGTH_SHORT).show()
                     }
                     return@launch
                 }
                 val grouped = entities.groupBy { it.tradeDate }
                 val sb = StringBuilder()
-                sb.appendLine("📊 模拟交易报告历史 (共 ${entities.size} 条)")
+                sb.appendLine("📊 中线量化报告历史 (共 ${entities.size} 条)")
                 sb.appendLine()
                 val codeToName = try { db.stockBasicDao().getAll().associate { it.code to it.name } } catch (_: Exception) { emptyMap() }
                 for ((date, items) in grouped.toSortedMap().entries.reversed().take(10)) {
@@ -828,7 +828,7 @@ class SimulationTradeFragment : Fragment() {
                     }
                     sb.appendLine()
                 }
-                withContext(Dispatchers.Main) { showDialog("模拟交易报告历史", sb.toString()) }
+                withContext(Dispatchers.Main) { showDialog("中线量化报告历史", sb.toString()) }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "加载失败: ${e.message}", Toast.LENGTH_SHORT).show() }
             }
@@ -842,7 +842,7 @@ class SimulationTradeFragment : Fragment() {
                 val orders = db.strategyTradeOrderDao().getRecent(1000)
                 val periodResults = db.dailyPeriodResultDao().getRecent(200)
                 val sb = StringBuilder()
-                sb.appendLine("模拟交易数据导出"); sb.appendLine("导出时间: ${LocalDate.now()}"); sb.appendLine()
+                sb.appendLine("中线量化数据导出"); sb.appendLine("导出时间: ${LocalDate.now()}"); sb.appendLine()
                 sb.appendLine("=== 交易订单 ===")
                 sb.appendLine("日期,策略,股票代码,股票名称,买入价,数量,状态,卖出价,收益%")
                 for (order in orders) sb.appendLine("${order.tradeDate},${order.strategyId},${order.stockCode},${order.stockName},${order.buyPrice},${order.quantity},${order.status},${order.sellPrice},${order.profitPct}")
@@ -903,11 +903,11 @@ class SimulationTradeFragment : Fragment() {
                     sb.appendLine("处理交易日: ${tradeDates.joinToString(", ")}"); sb.appendLine()
                     for (report in allReports) { sb.appendLine(report.summary); sb.appendLine() }
                     showDialog("回溯复盘", sb.toString())
-                    executeBtn.isEnabled = true; executeBtn.text = "▶ 模拟交易"; progressBar.visibility = View.GONE
+                    executeBtn.isEnabled = true; executeBtn.text = "▶ 建仓"; progressBar.visibility = View.GONE
                     statusTv.text = "✅ 回溯完成: ${allReports.sumOf { it.buyOrdersAnalyzed.size }}笔订单, ${allReports.sumOf { it.missedOpportunities.size }}个遗漏机会"
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { executeBtn.isEnabled = true; executeBtn.text = "▶ 模拟交易"; progressBar.visibility = View.GONE; statusTv.text = "❌ 回溯失败: ${e.message?.take(50)}"; Toast.makeText(requireContext(), "回溯失败: ${e.message}", Toast.LENGTH_LONG).show() }
+                withContext(Dispatchers.Main) { executeBtn.isEnabled = true; executeBtn.text = "▶ 建仓"; progressBar.visibility = View.GONE; statusTv.text = "❌ 回溯失败: ${e.message?.take(50)}"; Toast.makeText(requireContext(), "回溯失败: ${e.message}", Toast.LENGTH_LONG).show() }
             }
         }
     }
@@ -1042,6 +1042,7 @@ class SimulationTradeFragment : Fragment() {
         for (header in listOf("股票", "建仓日", "成本")) headerRow.addView(createCell(header, 60, "#666666", 10f, bold = true))
         headerRow.addView(createCell("持仓/可用", 55, "#666666", 9f, bold = true))
         for (date in dates) { val label = date.takeLast(5); headerRow.addView(createCell(label, 72, "#666666", 10f, bold = true)) }
+        headerRow.addView(createCell("💰 卖出", 50, "#666666", 9f, bold = true))
         table.addView(headerRow)
         for (order in orders) {
             val row = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 2, 0, 2) }
@@ -1057,15 +1058,37 @@ class SimulationTradeFragment : Fragment() {
                 val cellText: String; val cellColor: String
                 if (price == null) { cellText = "—"; cellColor = "#999999" }
                 else if (date < order.tradeDate) { cellText = "¥${"%.2f".format(price)}"; cellColor = "#000000" }
-                else { val pnl = (price - order.buyPrice) / order.buyPrice * 100; cellText = "¥${"%.2f".format(price)}\n${if (pnl >= 0) "+" else ""}${"%.2f".format(pnl)}%"; cellColor = if (pnl >= 0) "#D32F2F" else "#2E7D32" }
+                else if (date == order.tradeDate) { cellText = "¥${"%.2f".format(price)}\n0.00%"; cellColor = "#999999" }
+                else {
+                    val pnl = if (order.buyPrice > 0) (price - order.buyPrice) / order.buyPrice * 100 else 0.0
+                    cellText = "¥${"%.2f".format(price)}\n${if (pnl >= 0) "+" else ""}${"%.2f".format(pnl)}%"
+                    cellColor = if (pnl >= 0) "#D32F2F" else "#2E7D32"
+                }
                 row.addView(TextView(requireContext()).apply { text = cellText; textSize = 9f; setTextColor(Color.parseColor(cellColor)); gravity = Gravity.CENTER; layoutParams = LinearLayout.LayoutParams(dpToPx(72), LinearLayout.LayoutParams.WRAP_CONTENT); setPadding(2, 4, 2, 4); setLineSpacing(2f, 1f) })
             }
+            // 賣出按鈕
+            val lastPrice = priceMap[order.stockCode]?.get(dates.lastOrNull())
+            val sellBtn = Button(requireContext()).apply {
+                text = "賣"
+                textSize = 9f
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.parseColor("#C62828"))
+                layoutParams = LinearLayout.LayoutParams(dpToPx(50), dpToPx(28))
+                setPadding(2, 0, 2, 0)
+                isEnabled = !clearMode && lastPrice != null
+                setOnClickListener {
+                    showSellConfirmDialog(order, lastPrice ?: order.buyPrice)
+                }
+            }
+            row.addView(sellBtn)
+
             if (clearMode) {
                 row.setBackgroundColor(Color.parseColor("#FFEBEE")); val orderDate = order.tradeDate
                 row.setOnClickListener { selectedDateForClear = orderDate; statusTv.text = "✅ 已选中交易日: $orderDate — 再次点击「确认清除」按钮执行删除"; Toast.makeText(requireContext(), "已选中: $orderDate", Toast.LENGTH_SHORT).show(); refreshPositions() }
             } else {
                 row.setBackgroundColor(Color.TRANSPARENT)
-                row.setOnClickListener {
+                // 長按顯示擬合報告（替代原來的單擊）
+                row.setOnLongClickListener {
                     statusTv.text = "⏳ 正在拟合 ${order.stockName}..."
                     lifecycleScope.launch(Dispatchers.IO) {
                         try {
@@ -1076,6 +1099,7 @@ class SimulationTradeFragment : Fragment() {
                             withContext(Dispatchers.Main) { showDialog("${order.stockName} 拟合报告", report.summary); statusTv.text = "✅ 拟合完成"; refreshPositions() }
                         } catch (e: Exception) { withContext(Dispatchers.Main) { statusTv.text = "❌ 拟合失败: ${e.message?.take(40)}" } }
                     }
+                    true
                 }
             }
             table.addView(row)
@@ -1088,6 +1112,66 @@ class SimulationTradeFragment : Fragment() {
         TextView(requireContext()).apply { this.text = text; textSize = fontSize; setTextColor(Color.parseColor(colorHex)); gravity = Gravity.CENTER; layoutParams = LinearLayout.LayoutParams(dpToPx(widthDp), LinearLayout.LayoutParams.WRAP_CONTENT); setPadding(2, 4, 2, 4); if (bold) setTypeface(null, Typeface.BOLD) }
 
     private fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density + 0.5f).toInt()
+
+    /**
+     * 顯示單筆賣出確認對話框
+     */
+    private fun showSellConfirmDialog(order: StrategyTradeOrderEntity, currentPrice: Double) {
+        val profitPct = if (order.buyPrice > 0) (currentPrice - order.buyPrice) / order.buyPrice * 100 else 0.0
+        val profitStr = if (profitPct >= 0) "+${"%.2f".format(profitPct)}%" else "${"%.2f".format(profitPct)}%"
+        val profitColor = if (profitPct >= 0) "#D32F2F" else "#2E7D32"
+
+        val message = """
+            股票: ${order.stockName} (${order.stockCode})
+            買入價: ¥${"%.2f".format(order.buyPrice)}
+            當前價: ¥${"%.2f".format(currentPrice)}
+            盈虧: $profitStr
+            數量: ${order.quantity} 股
+            
+            確認賣出？
+        """.trimIndent()
+
+        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle("💰 確認賣出")
+            .setMessage(message)
+            .setPositiveButton("確認賣出") { _, _ ->
+                executeSingleSell(order, currentPrice)
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /**
+     * 執行單筆賣出
+     */
+    private fun executeSingleSell(order: StrategyTradeOrderEntity, sellPrice: Double) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val dao = db.strategyTradeOrderDao()
+                val profitPct = (sellPrice - order.buyPrice) / order.buyPrice * 100
+
+                dao.updateSellInfo(
+                    id = order.id,
+                    status = "SOLD",
+                    sellPrice = sellPrice,
+                    sellTime = java.time.LocalDate.now().toString() + " " + java.time.LocalTime.now().toString().take(8),
+                    profitPct = profitPct
+                )
+
+                withContext(Dispatchers.Main) {
+                    statusTv.text = "✅ 已賣出 ${order.stockName} @ ¥${"%.2f".format(sellPrice)} (${"%.2f".format(profitPct)}%)"
+                    Toast.makeText(requireContext(), "賣出成功: ${order.stockName}", Toast.LENGTH_SHORT).show()
+                    refreshPositions()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    statusTv.text = "❌ 賣出失敗: ${e.message?.take(40)}"
+                    Toast.makeText(requireContext(), "賣出失敗", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
 
     private fun handleClearClick() { if (clearMode && selectedDateForClear != null) confirmAndClear() else enterClearMode() }
 
