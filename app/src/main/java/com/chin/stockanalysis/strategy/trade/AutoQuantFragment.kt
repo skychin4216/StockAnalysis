@@ -43,7 +43,8 @@ class AutoQuantFragment : QuantFragmentBase() {
     private lateinit var runPipelineBtn: Button
     private lateinit var pipelineProgressView: PipelineProgressView
     private lateinit var aiPipelineBtn: Button
-    private var browsingDate: LocalDate = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay()
+    private lateinit var reportDivider: View
+    private lateinit var resultsContainer: LinearLayout
 
     // 短线量化配置 (持仓周期3天)
     private val shortTermConfig = SimulationTradeEngine.TradeSessionConfig(
@@ -55,7 +56,6 @@ class AutoQuantFragment : QuantFragmentBase() {
         holdingPeriod = 3
     )
 
-    private var engine: StrategyEngine? = null
     private var pipelineFactors: ZiplinePipeline.FactorSet? = null
     private var allScreenings: Map<Strategy, ScreeningResult> = emptyMap()
     private var todayStocks: List<com.chin.stockanalysis.stock.StockRealtime> = emptyList()
@@ -71,8 +71,11 @@ class AutoQuantFragment : QuantFragmentBase() {
     override fun getQuantType() = "ShortTermQuant"
 
     override fun onFittingClick() = autoFit()
-    override fun onBacktrackClick() = backtrack()
-    override fun onClearClick() = clearAutoQuantData()
+    override fun onBacktrackClick() {
+        // 短線量化暫無回調功能，顯示提示
+        Toast.makeText(requireContext(), "短線量化暫無回調功能", Toast.LENGTH_SHORT).show()
+    }
+    override fun onClearClick() = clearData()
     override fun loadPositions() = refreshPositions()
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -83,7 +86,7 @@ class AutoQuantFragment : QuantFragmentBase() {
         initEngine(); buildUI(); refreshPositions(); return rootLayout
     }
 
-    private fun initEngine() {
+    override fun initEngine() {
         val ctx = requireContext().applicationContext; StrategyEngineHolder.init(ctx); engine = StrategyEngineHolder.get()
     }
 
@@ -115,7 +118,7 @@ class AutoQuantFragment : QuantFragmentBase() {
         val fitBtn = Button(requireContext()).apply { text = "🔧 拟合"; textSize = 10f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#EF6C00")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.9f).apply { marginEnd = 1 }; setOnClickListener { autoFit() } }; btnRow.addView(fitBtn)
         val sellBtn = Button(requireContext()).apply { text = "💰 卖出 ▾"; textSize = 10f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#00897B")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 1f).apply { marginEnd = 1 }; setOnClickListener { showSellMenu(it) } }; btnRow.addView(sellBtn)
         val dataBtn = Button(requireContext()).apply { text = "🗄️ 数据"; textSize = 10f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#455A64")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.9f).apply { marginEnd = 1 }; setOnClickListener { showDataMenuLocal() } }; btnRow.addView(dataBtn)
-        val clearBtn = Button(requireContext()).apply { text = "🗑️ 清除"; textSize = 9f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#C62828")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.7f); setOnClickListener { clearAutoQuantData() } }; btnRow.addView(clearBtn)
+        val clearBtnLocal = Button(requireContext()).apply { text = "🗑️ 清除"; textSize = 9f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#C62828")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.7f); setOnClickListener { clearData() } }; btnRow.addView(clearBtnLocal)
         rootLayout.addView(btnRow)
 
         val progressRow = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(16, 4, 16, 4) }
@@ -154,7 +157,7 @@ class AutoQuantFragment : QuantFragmentBase() {
     // 持仓
     // ═══════════════════════════════════════
 
-    private fun refreshPositions() {
+    override fun refreshPositions() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val db = StockDatabase.getInstance(requireContext())
@@ -249,62 +252,7 @@ class AutoQuantFragment : QuantFragmentBase() {
         val verticalScroll = ScrollView(requireContext()); verticalScroll.addView(scroll); positionContainer.addView(verticalScroll)
     }
 
-    private fun createCell(text: String, widthDp: Int, colorHex: String, fontSize: Float, bold: Boolean = false): TextView =
-        TextView(requireContext()).apply { this.text = text; textSize = fontSize; setTextColor(Color.parseColor(colorHex)); gravity = Gravity.CENTER; layoutParams = LinearLayout.LayoutParams(dpToPx(widthDp), LinearLayout.LayoutParams.WRAP_CONTENT); setPadding(2, 4, 2, 4); if (bold) setTypeface(null, Typeface.BOLD) }
-
-    private fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density + 0.5f).toInt()
-
-    /**
-     * 顯示單筆賣出確認對話框
-     */
-    private fun showSellConfirmDialog(order: StrategyTradeOrderEntity, currentPrice: Double) {
-        val profitPct = if (order.buyPrice > 0) (currentPrice - order.buyPrice) / order.buyPrice * 100 else 0.0
-        val profitStr = if (profitPct >= 0) "+${"%.2f".format(profitPct)}%" else "${"%.2f".format(profitPct)}%"
-        val message = """
-            股票: ${order.stockName} (${order.stockCode})
-            買入價: ¥${"%.2f".format(order.buyPrice)}
-            當前價: ¥${"%.2f".format(currentPrice)}
-            盈虧: $profitStr
-            數量: ${order.quantity} 股
-            
-            確認賣出？
-        """.trimIndent()
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
-            .setTitle("💰 確認賣出")
-            .setMessage(message)
-            .setPositiveButton("確認賣出") { _, _ -> executeSingleSell(order, currentPrice) }
-            .setNegativeButton("取消", null)
-            .show()
-    }
-
-    /**
-     * 執行單筆賣出
-     */
-    private fun executeSingleSell(order: StrategyTradeOrderEntity, sellPrice: Double) {
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val db = StockDatabase.getInstance(requireContext())
-                val dao = db.strategyTradeOrderDao()
-                val profitPct = (sellPrice - order.buyPrice) / order.buyPrice * 100
-                dao.updateSellInfo(
-                    id = order.id,
-                    status = "SOLD",
-                    sellPrice = sellPrice,
-                    sellTime = java.time.LocalDate.now().toString() + " " + java.time.LocalTime.now().toString().take(8),
-                    profitPct = profitPct
-                )
-                withContext(Dispatchers.Main) {
-                    statusTv.text = "✅ 已賣出 ${order.stockName} @ ¥${"%.2f".format(sellPrice)} (${"%.2f".format(profitPct)}%)"
-                    Toast.makeText(requireContext(), "賣出成功: ${order.stockName}", Toast.LENGTH_SHORT).show()
-                    refreshPositions()
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    statusTv.text = "❌ 賣出失敗: ${e.message?.take(40)}"
-                }
-            }
-        }
-    }
+    // createCell, dpToPx, showSellConfirmDialog, executeSingleSell 已由基類 QuantFragmentBase 提供
 
     // ═══════════════════════════════════════
     // 建倉（智能分流：Agent結果 vs zipline）
@@ -795,7 +743,7 @@ class AutoQuantFragment : QuantFragmentBase() {
     // 清除功能已由基類 QuantFragmentBase 提供（clearData / clearDataByDate）
     // 短線量化使用基類的清除功能
 
-    private fun showDialog(title: String, content: String) {
+    override fun showDialog(title: String, content: String) {
         val sv = ScrollView(requireContext()); sv.addView(TextView(requireContext()).apply { text=content; textSize=10f; setTextColor(Color.parseColor("#333333")); setPadding(16,12,16,12); setLineSpacing(2f,1.1f); setTypeface(Typeface.MONOSPACE) })
         androidx.appcompat.app.AlertDialog.Builder(requireContext()).setTitle(title).setView(sv).setPositiveButton("关闭",null).create().apply { show(); window?.setLayout(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT) }
     }

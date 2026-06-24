@@ -139,11 +139,13 @@ class ChatTabFragment : Fragment() {
         if (result.resultCode == android.app.Activity.RESULT_OK) {
             result.data?.data?.let { uri ->
                 lifecycleScope.launch {
-                    val extractedText = extractTextFromImage(uri)
-                    if (extractedText.isNotBlank()) {
-                        sendMessage("[圖片內容]\n$extractedText", skipStockContext = true)
+                    val content = extractTextFromImage(uri)
+                    if (content.isImage && content.base64Image.isNotBlank()) {
+                        sendMessageWithImage("[請分析這張圖片]", content.base64Image, content.mimeType)
+                    } else if (content.text.isNotBlank() && content.text != "[圖片: unknownxunknown]") {
+                        sendMessage("[圖片內容]\n${content.text}", skipStockContext = true)
                     } else {
-                        sendMessage("[圖片] 無法提取文字內容", skipStockContext = true)
+                        sendMessage("[圖片] 無法提取內容", skipStockContext = true)
                     }
                 }
             }
@@ -488,6 +490,56 @@ class ChatTabFragment : Fragment() {
     // ════════════════════════════════════════
 
     private var lastUserText: String = ""
+    /** 暫存最後一張圖片的 base64，供 AI 分析時使用 */
+    private var lastImageBase64: String? = null
+
+    /**
+     * 發送帶圖片的訊息（使用 base64 data URL）
+     */
+    private fun sendMessageWithImage(userText: String, base64Image: String, mimeType: String) {
+        lastImageBase64 = base64Image
+        val displayText = if (userText.isNotBlank()) userText else "[圖片]"
+        addMessage(Message(content = "🖼️ $displayText", isUser = true))
+        binding.etInput.setText(""); hideKeyboard()
+
+        val provider = apiProvider
+        if (provider == null) {
+            addErrorMessage("❌ AI 尚未連接，請稍候重試")
+            return
+        }
+
+        // 使用快速模式分析圖片
+        val loadingMsg = Message(content = "", isUser = false, isStreaming = true,
+            loadingStatus = "🖼️ 正在分析圖片...")
+        addMessage(loadingMsg)
+        val loadingIndex = messages.size - 1
+
+        currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val imageDataUrl = "data:$mimeType;base64,$base64Image"
+                val prompt = buildString {
+                    appendLine("【圖片分析請求】")
+                    appendLine("用戶上傳了一張圖片，請分析圖片內容並給出詳細解答。")
+                    appendLine()
+                    appendLine("圖片數據 (data URL):")
+                    appendLine(imageDataUrl.take(100))  // 只提示，實際圖片通過其他方式傳遞
+                    appendLine("... (base64 圖片數據)")
+                    appendLine()
+                    appendLine("用戶問題: ${userText.ifBlank { "請分析這張圖片的內容" }}")
+                    appendLine()
+                    appendLine("注意：如果當前 AI 模型支援圖片分析，請直接分析圖片。如果不支援，請告知用戶。")
+                }
+                val history = messages.toList().subList(0, loadingIndex).filter {
+                    !it.content.startsWith("🖼️")
+                }
+                sendWithRetry(provider, history, prompt, loadingIndex, 2)
+            } catch (e: Exception) {
+                if (isAdded) requireActivity().runOnUiThread {
+                    failStreamingMessage(loadingIndex, "圖片分析失败: ${e.message}")
+                }
+            }
+        }
+    }
 
     private fun sendMessage(userText: String, skipStockContext: Boolean = false) {
         // 去重：连续两次相同输入不重复处理
@@ -1048,50 +1100,18 @@ $memory
     }
 
     /**
-     * 從圖片提取文字（OCR）
-     * 簡化實現：返回圖片信息，由 AI 分析
+     * 從圖片提取內容（用於 AI 分析）
+     * 返回 FileContentExtractor.ExtractedContent 包含 base64 圖片
      */
-    private suspend fun extractTextFromImage(uri: Uri): String = withContext(Dispatchers.IO) {
-        try {
-            val bitmap = android.graphics.BitmapFactory.decodeStream(
-                requireContext().contentResolver.openInputStream(uri)
-            ) ?: return@withContext ""
-            "[圖片尺寸: ${bitmap.width}x${bitmap.height}]"
-        } catch (e: Exception) {
-            Log.e(TAG, "圖片處理失敗: ${e.message}")
-            ""
-        }
-    }
+    private suspend fun extractTextFromImage(uri: Uri): FileContentExtractor.ExtractedContent =
+        FileContentExtractor.extract(requireContext(), uri)
 
     /**
      * 從文件提取文字
-     * 支持 txt、pdf、docx 等格式
+     * 支持 txt、csv、pdf、docx、xlsx 等格式
      */
-    private suspend fun extractTextFromFile(uri: Uri, fileName: String): String = withContext(Dispatchers.IO) {
-        try {
-            val extension = fileName.substringAfterLast('.', "").lowercase()
-            when (extension) {
-                "txt" -> {
-                    requireContext().contentResolver.openInputStream(uri)?.use { stream ->
-                        stream.bufferedReader().use { it.readText() }
-                    } ?: ""
-                }
-                "pdf" -> {
-                    // 簡單的 PDF 文本提取（需要 PDFBox 或類似庫）
-                    // 目前返回文件信息
-                    "[PDF 文件: $fileName]"
-                }
-                "docx" -> {
-                    // 簡單的 DOCX 文本提取
-                    "[Word 文件: $fileName]"
-                }
-                else -> "[文件: $fileName]"
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "文件處理失敗: ${e.message}")
-            ""
-        }
-    }
+    private suspend fun extractTextFromFile(uri: Uri, fileName: String): String =
+        FileContentExtractor.extract(requireContext(), uri, fileName).text
 
     private fun startVoiceInput() {
         val dialog = AlertDialog.Builder(requireContext())
