@@ -38,15 +38,9 @@ import java.time.format.DateTimeFormatter
  *   3. AI 精选 Top3-5 → 最终推荐
  *   4. 独立持仓 (orderType="ShortTermQuant")  顶部显示
  */
-class AutoQuantFragment : Fragment() {
+class AutoQuantFragment : QuantFragmentBase() {
 
-    private lateinit var rootLayout: LinearLayout
-    private lateinit var statusTv: TextView
-    private lateinit var progressBar: ProgressBar
     private lateinit var runPipelineBtn: Button
-    private lateinit var positionContainer: LinearLayout
-    private lateinit var reportDivider: View
-    private lateinit var resultsContainer: LinearLayout
     private lateinit var pipelineProgressView: PipelineProgressView
     private lateinit var aiPipelineBtn: Button
     private var browsingDate: LocalDate = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay()
@@ -74,6 +68,13 @@ class AutoQuantFragment : Fragment() {
 
     companion object { private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd") }
 
+    override fun getQuantType() = "ShortTermQuant"
+
+    override fun onFittingClick() = autoFit()
+    override fun onBacktrackClick() = backtrack()
+    override fun onClearClick() = clearAutoQuantData()
+    override fun loadPositions() = refreshPositions()
+
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         rootLayout = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.parseColor("#F5F6FA"))
@@ -86,7 +87,7 @@ class AutoQuantFragment : Fragment() {
         val ctx = requireContext().applicationContext; StrategyEngineHolder.init(ctx); engine = StrategyEngineHolder.get()
     }
 
-    private fun buildUI() {
+    override fun buildUI() {
         rootLayout.addView(TextView(requireContext()).apply {
             text = "🤖 短线量化系统 (Zipline Pipeline + AI精选)"
             textSize = 16f; setTextColor(Color.parseColor("#1A1A2E")); setTypeface(null, Typeface.BOLD); setPadding(16, 16, 16, 8)
@@ -107,20 +108,15 @@ class AutoQuantFragment : Fragment() {
         configRow.addView(mainBoardSwitch)
         rootLayout.addView(configRow)
 
-        // ── 按钮行 ──
+        // ── 按钮行（一行 6 個按鈕） ──
         val btnRow = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(4, 1, 4, 1) }
-        runPipelineBtn = Button(requireContext()).apply { text = "▶ 短线选股"; textSize = 10f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#1565C0")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 1f).apply { marginEnd = 1 }; setOnClickListener { runPipeline() } }; btnRow.addView(runPipelineBtn)
+        aiPipelineBtn = Button(requireContext()).apply { text = "🧠 Agent分析"; textSize = 10f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#6A1B9A")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 1.2f).apply { marginEnd = 1 }; setOnClickListener { runAIPipeline() } }; btnRow.addView(aiPipelineBtn)
+        runPipelineBtn = Button(requireContext()).apply { text = "▶ 建仓"; textSize = 10f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#1565C0")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 1f).apply { marginEnd = 1 }; setOnClickListener { runBuildAndBuy() } }; btnRow.addView(runPipelineBtn)
         val fitBtn = Button(requireContext()).apply { text = "🔧 拟合"; textSize = 10f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#EF6C00")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.9f).apply { marginEnd = 1 }; setOnClickListener { autoFit() } }; btnRow.addView(fitBtn)
-        val buyBtn = Button(requireContext()).apply { text = "▶ 建仓"; textSize = 10f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#E65100")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 1f).apply { marginEnd = 1 }; setOnClickListener { buyAiPicks() } }; btnRow.addView(buyBtn)
-        val sellBtn = Button(requireContext()).apply { text = "💰 卖出 ▾"; textSize = 10f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#00897B")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 1.3f).apply { marginEnd = 1 }; setOnClickListener { showSellMenu(it) } }; btnRow.addView(sellBtn)
-        val dataBtn = Button(requireContext()).apply { text = "🗄️ 数据"; textSize = 10f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#455A64")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.9f).apply { marginEnd = 1 }; setOnClickListener { showDataMenu() } }; btnRow.addView(dataBtn)
-        val clearBtn = Button(requireContext()).apply { text = "🗑️ 清除"; textSize = 9f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#C62828")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.8f); setOnClickListener { clearAutoQuantData() } }; btnRow.addView(clearBtn)
+        val sellBtn = Button(requireContext()).apply { text = "💰 卖出 ▾"; textSize = 10f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#00897B")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 1f).apply { marginEnd = 1 }; setOnClickListener { showSellMenu(it) } }; btnRow.addView(sellBtn)
+        val dataBtn = Button(requireContext()).apply { text = "🗄️ 数据"; textSize = 10f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#455A64")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.9f).apply { marginEnd = 1 }; setOnClickListener { showDataMenuLocal() } }; btnRow.addView(dataBtn)
+        val clearBtn = Button(requireContext()).apply { text = "🗑️ 清除"; textSize = 9f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#C62828")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.7f); setOnClickListener { clearAutoQuantData() } }; btnRow.addView(clearBtn)
         rootLayout.addView(btnRow)
-
-        // ── 第二行按鈕 ──
-        val btnRow2 = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(4, 1, 4, 1) }
-        aiPipelineBtn = Button(requireContext()).apply { text = "🧠 AI智能体分析筛选"; textSize = 10f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#6A1B9A")); setPadding(4,1,4,1); setMinWidth(0); setMinimumWidth(0); layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 1f).apply { marginEnd = 1 }; setOnClickListener { runAIPipeline() } }; btnRow2.addView(aiPipelineBtn)
-        rootLayout.addView(btnRow2)
 
         val progressRow = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(16, 4, 16, 4) }
         progressBar = ProgressBar(requireContext()).apply { visibility = View.GONE; layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginEnd = 8 } }
@@ -311,7 +307,43 @@ class AutoQuantFragment : Fragment() {
     }
 
     // ═══════════════════════════════════════
-    // 短线选股
+    // 建倉（智能分流：Agent結果 vs zipline）
+    // ═══════════════════════════════════════
+
+    /**
+     * 建倉按鈕點擊：
+     * - 如果有 Agent 分析結果 → 從結果中買入合適買點的股票
+     * - 否則 → 執行 zipline 然後尋找可買入且符合騰籠換鳥的股票
+     */
+    private fun runBuildAndBuy() {
+        if (hasAgentResult && aiPicks.isNotEmpty()) {
+            // 有 Agent 分析結果，直接從結果中建倉
+            statusTv.text = "🔄 從 Agent 分析結果中建倉..."
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    buyAiPicksInternal()
+                    analyzeSwapCandidates()
+                    withContext(Dispatchers.Main) {
+                        statusTv.text = "✅ 建倉完成（${aiPicks.size} 只 Agent 精選股）"
+                        refreshPositions()
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        statusTv.text = "❌ 建倉失敗: ${e.message?.take(30)}"
+                    }
+                }
+            }
+        } else {
+            // 沒有 Agent 結果，執行 zipline 選股 + 建倉 + 騰籠換鳥
+            runPipeline()
+        }
+    }
+
+    /** 標記是否有 Agent 分析結果 */
+    private var hasAgentResult = false
+
+    // ═══════════════════════════════════════
+    // 短线选股（zipline 全流程）
     // ═══════════════════════════════════════
 
     private fun runPipeline() {
@@ -339,7 +371,13 @@ class AutoQuantFragment : Fragment() {
                 val tradeDay = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().format(DATE_FMT)
                 lastTradeDate = tradeDay
                 val feed = StrategyDataFeed(requireContext())
-                val stocks = feed.prepareFromDb(today, StrategyDataFeed.DataFeedConfig(onlyMainBoard = true))
+                // 使用備選池而非全部A股，大幅提升速度
+                val poolCodes = try { com.chin.stockanalysis.strategy.data.CandidatePool.getPoolCodes(requireContext()) } catch (_: Exception) { emptyList() }
+                val stocks = if (poolCodes.isNotEmpty()) {
+                    feed.prepareFromDb(today, StrategyDataFeed.DataFeedConfig(onlyMainBoard = true, stockCodes = poolCodes.toSet()))
+                } else {
+                    feed.prepareFromDb(today, StrategyDataFeed.DataFeedConfig(onlyMainBoard = true))
+                }
                 todayStocks = stocks
                 if (stocks.isEmpty()) { withContext(Dispatchers.Main) { statusTv.text="⚠️ 无交易日数据"; runPipelineBtn.isEnabled=true; runPipelineBtn.text="▶ 短线选股"; progressBar.visibility=View.GONE }; return@launch }
                 val pipeline = ZiplinePipeline(requireContext()); val factors = pipeline.computeAll(stocks, today, 30); pipelineFactors = factors
@@ -361,6 +399,24 @@ class AutoQuantFragment : Fragment() {
                 withContext(Dispatchers.Main) {
                     showPipelineTable(screenings, factors, today); hasPipelineResult = true; updateViewSplit()
                     statusTv.text = "✅ 短线选股完成 (${factors.ma5.size} 只有效)"; runPipelineBtn.isEnabled = true; runPipelineBtn.text = "▶ 短线选股"; progressBar.visibility = View.GONE
+                    // 自動觸發建倉 + 騰龍換鳥分析
+                    if (aiPicks.isNotEmpty()) {
+                        statusTv.text = "🔄 正在自動建倉 + 騰龍換鳥分析..."
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            try {
+                                buyAiPicksInternal()
+                                analyzeSwapCandidates()
+                                withContext(Dispatchers.Main) {
+                                    statusTv.text = "✅ 短线选股 + 建仓 + 騰龍換鳥分析完成"
+                                    refreshPositions()
+                                }
+                            } catch (e: Exception) {
+                                withContext(Dispatchers.Main) {
+                                    statusTv.text = "✅ 短线选股完成 (建倉分析失敗: ${e.message?.take(30)})"
+                                }
+                            }
+                        }
+                    }
                 }
             } catch (e: Exception) { withContext(Dispatchers.Main) { statusTv.text="❌ 短线选股失败: ${e.message?.take(40)}"; runPipelineBtn.isEnabled=true; runPipelineBtn.text="▶ 短线选股"; progressBar.visibility=View.GONE } }
         }
@@ -402,6 +458,57 @@ class AutoQuantFragment : Fragment() {
                     withContext(Dispatchers.Main) { statusTv.text = "⚠️ AI精选股已全部持仓或無即時價格" }
                 }
             } catch (e: Exception) { withContext(Dispatchers.Main) { statusTv.text = "❌ 买入失败: ${e.message?.take(30)}" } }
+        }
+    }
+
+    // ═══════════════════════════════════════
+    // 內部建倉 + 騰龍換鳥（不顯示 Toast，用於自動流程）
+    // ═══════════════════════════════════════
+
+    private suspend fun buyAiPicksInternal() {
+        if (aiPicks.isEmpty()) return
+        val db = StockDatabase.getInstance(requireContext())
+        val existingCodes = db.strategyTradeOrderDao().getRecent(200)
+            .filter { it.orderType == "ShortTermQuant" && (it.status == "BUYING" || it.status == "PENDING") }
+            .map { it.stockCode }.toSet()
+        val toInsert = mutableListOf<StrategyTradeOrderEntity>()
+        for (pick in aiPicks) {
+            if (pick.stockCode in existingCodes) continue
+            val snap = todayStocks.find { it.code == pick.stockCode }
+            val buyPrice = snap?.price ?: 0.0
+            if (buyPrice <= 0) continue
+            toInsert.add(StrategyTradeOrderEntity(
+                strategyId = "AI_Selected", stockCode = pick.stockCode, stockName = pick.stockName,
+                tradeDate = lastTradeDate, buyPrice = buyPrice,
+                buyTime = java.time.LocalTime.now().toString().take(8),
+                quantity = 100, orderType = "ShortTermQuant", status = "BUYING",
+                reason = "AI精选: ${pick.reason.take(60)}", scoreAtBuy = pick.compositeScore,
+                createdAt = System.currentTimeMillis()
+            ))
+        }
+        if (toInsert.isNotEmpty()) {
+            db.strategyTradeOrderDao().insertAll(toInsert)
+            Log.i("AutoQuant", "✅ 自動建倉 ${toInsert.size} 只")
+        }
+    }
+
+    /**
+     * 騰龍換鳥分析：比較現有持倉和新選股的強度，
+     * 如果新選股強度明顯高於現有持倉，建議換股
+     */
+    private suspend fun analyzeSwapCandidates() {
+        if (aiPicks.isEmpty()) return
+        val db = StockDatabase.getInstance(requireContext())
+        val existing = db.strategyTradeOrderDao().getRecent(200)
+            .filter { it.orderType == "ShortTermQuant" && it.status == "BUYING" }
+        if (existing.isEmpty()) return
+
+        // 找出現有持倉中強度最低的股票
+        val weakest = existing.minByOrNull { it.scoreAtBuy }
+        // 找出新選股中強度最高的股票
+        val strongest = aiPicks.maxByOrNull { it.compositeScore }
+        if (weakest != null && strongest != null && strongest.compositeScore > weakest.scoreAtBuy * 1.3f) {
+            Log.i("AutoQuant", "🔄 騰龍換鳥建議: 賣出 ${weakest.stockName}(${weakest.scoreAtBuy}) → 買入 ${strongest.stockName}(${strongest.compositeScore})")
         }
     }
 
@@ -473,7 +580,9 @@ class AutoQuantFragment : Fragment() {
     // 数据查看
     // ═══════════════════════════════════════
 
-    private fun showDataMenu() {
+    // 數據菜單已由基類 QuantFragmentBase 提供（showDataMenu）
+    // 短線量化使用基類的數據菜單功能
+    private fun showDataMenuLocal() {
         if (allScreenings.isEmpty() && mergedPool.isEmpty()) { Toast.makeText(requireContext(), "请先运行短线选股", Toast.LENGTH_SHORT).show(); return }
         val options = arrayOf("📊 策略明细 (${allScreenings.size}个)", "📋 合并池 (${mergedPool.size}只)", "🤖 AI精选 (${aiPicks.size}只)")
         androidx.appcompat.app.AlertDialog.Builder(requireContext()).setTitle("短线选股数据查看").setItems(options) { _, which ->
@@ -512,9 +621,8 @@ class AutoQuantFragment : Fragment() {
         lifecycleScope.launch(Dispatchers.IO) { try { val f=com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext()); val total=f.fetchAllHistoricalData(60){p-> lifecycleScope.launch(Dispatchers.Main){statusTv.text="进度: ${p.completedStocks}/${p.totalStocks} 只 · ${p.totalRecords} 条"} }; withContext(Dispatchers.Main){runPipelineBtn.isEnabled=true; runPipelineBtn.text="▶ 短线选股"; progressBar.visibility=View.GONE; statusTv.text="✅ 导入完成 · $total 条历史记录"} } catch (e:Exception){withContext(Dispatchers.Main){runPipelineBtn.isEnabled=true; runPipelineBtn.text="▶ 短线选股"; progressBar.visibility=View.GONE; statusTv.text="导入失败: ${e.message}"} } }
     }
 
-    private fun showSellMenu(anchor: View) { val popup=PopupMenu(requireContext(), anchor, Gravity.END); popup.menu.add(0,1,0,"💰 卖出评估"); popup.menu.add(0,2,0,"⚡ 一键全卖"); popup.setOnMenuItemClickListener { when(it.itemId){1->Toast.makeText(requireContext(),"卖出评估功能开发中",Toast.LENGTH_SHORT).show(); 2->sellAllAutoQuant()}; true }; popup.show() }
-
-    private fun sellAllAutoQuant() { lifecycleScope.launch(Dispatchers.IO) { try { val db=StockDatabase.getInstance(requireContext()); val orders=db.strategyTradeOrderDao().getRecent(200).filter{it.orderType=="ShortTermQuant"&&it.status=="BUYING"}; for(o in orders) db.strategyTradeOrderDao().updateSellInfo(o.id,"SOLD",o.buyPrice,LocalDate.now().format(DATE_FMT)+" 15:00",0.0); withContext(Dispatchers.Main){refreshPositions(); statusTv.text="✅ 已卖出 ${orders.size} 只"; Toast.makeText(requireContext(),"已卖出 ${orders.size} 只",Toast.LENGTH_SHORT).show()} } catch(_:Exception){} } }
+    // 賣出功能已由基類 QuantFragmentBase 提供（showSellMenu / runAutoSellEvaluation / executeAutoSell）
+    // 短線量化使用基類的完整賣出評估和執行功能
 
     /** 自动拟合 — 遍历最近交易日，验证预测准确率并更新策略权重 */
     private fun autoFit() {
@@ -546,10 +654,9 @@ class AutoQuantFragment : Fragment() {
     }
 
     /**
-     * 🧠 AI 智能体分析筛选（7步串行 F→3→1→2→5→D→4）
+     * 🧠 Agent 分析（AI 動態選擇模式：六智體/七智體/精簡版）
      */
     private fun runAIPipeline() {
-        // 顯示輸入框讓用戶輸入標的
         val inputEt = EditText(requireContext()).apply {
             hint = "輸入標的（如：生益科技、光通信板塊、半導體）"
             textSize = 13f
@@ -557,8 +664,8 @@ class AutoQuantFragment : Fragment() {
             setSingleLine(true)
         }
         androidx.appcompat.app.AlertDialog.Builder(requireContext())
-            .setTitle("🧠 AI 智能体分析筛选")
-            .setMessage("輸入要分析的標的或板塊，將依次執行 7 個智能體分析。")
+            .setTitle("🧠 Agent 分析")
+            .setMessage("輸入要分析的標的或板塊，AI 將根據賽道自動選擇分析模式：\n• 六智體通用（消費/醫藥/周期）\n• 七智體賣水人（光通信/半導體）\n• 精簡版 5+1（默認）")
             .setView(inputEt)
             .setPositiveButton("開始分析") { _, _ ->
                 val target = inputEt.text.toString().trim()
@@ -577,6 +684,7 @@ class AutoQuantFragment : Fragment() {
         aiPipelineBtn.text = "⏳ 分析中..."
         pipelineProgressView.visibility = View.VISIBLE
         pipelineProgressView.reset()
+        statusTv.text = "🧠 正在獲取股票數據..."
 
         val orchestrator = AgentPipelineOrchestrator(requireContext())
 
@@ -599,11 +707,22 @@ class AutoQuantFragment : Fragment() {
             } catch (_: Exception) { emptyList() }
         }
 
+        // 豆包風格動態進度文字（F→3→1→2→5→D→4）
+        val stepProgressTexts = listOf(
+            "🧠 正在啟動 Agent F（市場情緒）...",
+            "🧠 正在啟動 Agent 3（資金面）...",
+            "🧠 正在啟動 Agent 1（基本面拐點）...",
+            "🧠 正在啟動 Agent 2（技術面）...",
+            "🧠 正在啟動 Agent 5（風控終審）...",
+            "🧠 正在啟動 Agent D（風險排雷）...",
+            "🧠 正在啟動 Agent 4（技術交易執行）..."
+        )
+
         // 設置回調
         orchestrator.onStepStart = { index, step ->
             lifecycleScope.launch(Dispatchers.Main) {
                 pipelineProgressView.markStepStart(index, step)
-                statusTv.text = "🧠 ${step.name}..."
+                statusTv.text = stepProgressTexts.getOrElse(index) { "🧠 正在啟動 ${step.name}..." }
             }
         }
 
@@ -620,20 +739,30 @@ class AutoQuantFragment : Fragment() {
             }
         }
 
+        // AI 動態選擇模式回調
+        orchestrator.onModeSelected = { mode, reason ->
+            lifecycleScope.launch(Dispatchers.Main) {
+                statusTv.text = "🧠 $reason"
+                pipelineProgressView.updateSteps(AgentPipelineOrchestrator.getStepsByName(mode.label))
+            }
+        }
+
         lifecycleScope.launch(Dispatchers.IO) {
             try {
+                withContext(Dispatchers.Main) { statusTv.text = "🧠 正在綜合評估..." }
                 val result = orchestrator.execute(target)
 
                 withContext(Dispatchers.Main) {
                     pipelineProgressView.showResult(result)
                     statusTv.text = if (result.errorMessage != null) {
-                        "❌ 分析筛选失敗"
+                        "❌ 分析失敗"
                     } else {
                         val passed = result.stocks.count { it.passed }
-                        "✅ AI 智能体分析筛选完成 (${result.stepsCompleted}/7 步, ${passed} 只通過)"
+                        "✅ Agent 分析完成 [${result.analysisMode}] (${result.stepsCompleted}/${result.totalSteps} 步, ${passed} 只通過)"
                     }
                     aiPipelineBtn.isEnabled = true
-                    aiPipelineBtn.text = "🧠 AI智能体分析筛选"
+                    aiPipelineBtn.text = "🧠 Agent分析"
+                    hasAgentResult = true
 
                     // 發布到跨 Tab 總線
                     if (result.stocks.isNotEmpty()) {
@@ -657,13 +786,14 @@ class AutoQuantFragment : Fragment() {
                 withContext(Dispatchers.Main) {
                     statusTv.text = "❌ AI 智能体分析筛选異常: ${e.message?.take(40)}"
                     aiPipelineBtn.isEnabled = true
-                    aiPipelineBtn.text = "🧠 AI智能体分析筛选"
+                    aiPipelineBtn.text = "🧠 Agent分析"
                 }
             }
         }
     }
 
-    private fun clearAutoQuantData() { lifecycleScope.launch(Dispatchers.IO) { try { val db=StockDatabase.getInstance(requireContext()); db.strategyTradeOrderDao().deleteByDate(LocalDate.now().format(DATE_FMT)); withContext(Dispatchers.Main){resultsContainer.removeAllViews(); hasPipelineResult=false; updateViewSplit(); refreshPositions(); statusTv.text="✅ 已清除今日短线量化数据"; Toast.makeText(requireContext(),"已清除",Toast.LENGTH_SHORT).show()} } catch(_:Exception){} } }
+    // 清除功能已由基類 QuantFragmentBase 提供（clearData / clearDataByDate）
+    // 短線量化使用基類的清除功能
 
     private fun showDialog(title: String, content: String) {
         val sv = ScrollView(requireContext()); sv.addView(TextView(requireContext()).apply { text=content; textSize=10f; setTextColor(Color.parseColor("#333333")); setPadding(16,12,16,12); setLineSpacing(2f,1.1f); setTypeface(Typeface.MONOSPACE) })

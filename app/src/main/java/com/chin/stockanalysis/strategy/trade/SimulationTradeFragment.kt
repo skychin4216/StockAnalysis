@@ -276,7 +276,7 @@ class SimulationTradeFragment : Fragment() {
         }; row.addView(executeBtn)
 
         fittingBtn = Button(requireContext()).apply {
-            text = "🔧 调优"; textSize = 10f; setTextColor(Color.WHITE)
+            text = "🔧 拟合"; textSize = 10f; setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#EF6C00"))
             setPadding(4, 1, 4, 1); setMinWidth(0); setMinimumWidth(0)
             layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.9f).apply { marginEnd = 1 }
@@ -308,7 +308,7 @@ class SimulationTradeFragment : Fragment() {
         }; row.addView(sellMenuBtn)
 
         clearBtn = Button(requireContext()).apply {
-            text = "🗑️ 清除数据"; textSize = 9f; setTextColor(Color.WHITE)
+            text = "🗑️ 清除"; textSize = 9f; setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#C62828"))
             setPadding(4, 1, 4, 1); setMinWidth(0); setMinimumWidth(0)
             layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 1.2f)
@@ -1199,7 +1199,7 @@ class SimulationTradeFragment : Fragment() {
         }
     }
 
-    private fun exitClearMode() { clearMode = false; selectedDateForClear = null; clearBtn.text = "🗑️ 清除数据"; clearBtn.setBackgroundColor(Color.parseColor("#C62828")) }
+    private fun exitClearMode() { clearMode = false; selectedDateForClear = null; clearBtn.text = "🗑️ 清除"; clearBtn.setBackgroundColor(Color.parseColor("#C62828")) }
 
     private fun showFinalPool() {
         lifecycleScope.launch(Dispatchers.IO) {

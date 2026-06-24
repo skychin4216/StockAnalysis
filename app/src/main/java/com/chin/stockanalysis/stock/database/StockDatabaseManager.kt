@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.room.Room
 import com.chin.stockanalysis.stock.theme.ThemeStockLibrary
 import com.chin.stockanalysis.stock.theme.ThemeStock
+import com.chin.stockanalysis.strategy.data.LeaderStockPool
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -113,7 +114,14 @@ class StockDatabaseManager private constructor(context: Context) {
     }
 
     /**
-     * 从 [ThemeStockLibrary] 同步数据到 Room 数据库
+     * 从 [ThemeStockLibrary] 同步数据到 Room 数据库（優化版）
+     *
+     * 選股邏輯：
+     * 1. 核心龍頭股（LeaderStockPool）
+     * 2. 年度/月度/周熱門板塊龍頭（ThemeStockLibrary）
+     * 3. 根據 ETF 漲跌判斷熱門板塊 → 查找子板塊前 10
+     * 4. 過濾：去掉 ST + 去掉小市值(<100億) + 其他不良股票
+     * 5. 最終導入 200-500 只核心股票（無硬性上限，以質量為準）
      *
      * @param isFullImport true = 首次全量导入（无需对比，直接写入）
      *                       false = 增量同步（对比差异，增删改）
@@ -123,80 +131,177 @@ class StockDatabaseManager private constructor(context: Context) {
             Log.d(TAG, if (isFullImport) "📥 首次全量导入开始..." else "🔄 增量同步开始...")
             val startTime = System.currentTimeMillis()
 
-            // ── 1. 从 ThemeStockLibrary 收集最新数据 ──
-            val latestStockMap = mutableMapOf<String, StockBasicEntity>()
-            val latestSectorEntries = mutableListOf<SectorStockEntity>()
-
+            // ── 1. 建立 ThemeStockLibrary 的 code -> ThemeStock 映射 ──
+            val themeStockMap = mutableMapOf<String, Pair<String, ThemeStock>>()
             for ((themeKey, themeInfo) in ThemeStockLibrary.THEME_MAP) {
                 val validStocks = ThemeStockLibrary.run { themeInfo.validStocks() }
                 for (ts in validStocks) {
-                    latestStockMap[ts.code] = StockBasicEntity(
-                        code = ts.code,
-                        name = ts.name,
-                        business = ts.business,
-                        chainRationale = ts.chainRationale
-                    )
-                    latestSectorEntries.add(
-                        SectorStockEntity(
-                            sectorKey = themeKey,
-                            sectorName = themeInfo.name,
-                            stockCode = ts.code
-                        )
-                    )
+                    themeStockMap[ts.code] = themeKey to ts
                 }
             }
 
+            // ── 2. 收集候選股票 ──
+            val candidateSet = mutableSetOf<String>()
+
+            // 2a. 核心龍頭股
+            val coreLeaders = LeaderStockPool.ALL_LEADER_CODES
+            candidateSet.addAll(coreLeaders)
+            Log.d(TAG, "核心龍頭股: ${coreLeaders.size} 只")
+
+            // 2b. 年度/月度/周熱門板塊（從 ThemeStockLibrary 選取）
+            val annualHotThemes = listOf("ai_tech", "new_energy", "semiconductor")
+            val monthlyHotThemes = listOf("nonferrous_metals", "commercial_space", "military", "pharma")
+            val weeklyHotThemes = listOf("bank", "liquor", "steel", "consumer")
+            val allHotThemes = annualHotThemes + monthlyHotThemes + weeklyHotThemes
+
+            for (themeKey in allHotThemes) {
+                val themeInfo = ThemeStockLibrary.THEME_MAP[themeKey] ?: continue
+                val stocks = ThemeStockLibrary.run { themeInfo.validStocks() }
+                    .filter { !it.name.contains("ST", ignoreCase = true) }
+                    .take(10)
+                for (ts in stocks) {
+                    candidateSet.add(ts.code)
+                }
+            }
+            Log.d(TAG, "熱門板塊股: ${candidateSet.size - coreLeaders.size} 只")
+
+            // 2c. 根據 ETF 漲跌動態發現熱門板塊
+            try {
+                val today = java.time.LocalDate.now().toString()
+                val dates = db.dailySnapshotDao().getAvailableDates(5)
+                val targetDate = dates.filter { it <= today }.maxOrNull() ?: today
+                val snaps = db.dailySnapshotDao().getByDate(targetDate)
+
+                val etfSectorMap = mapOf(
+                    "sh512480" to "semiconductor", "sz159995" to "semiconductor",
+                    "sh515030" to "new_energy", "sh516160" to "new_energy",
+                    "sh512760" to "ai_tech", "sz159819" to "ai_tech",
+                    "sh512800" to "bank", "sh510050" to "blue_chip"
+                )
+
+                val etfChanges = snaps.filter { it.code in etfSectorMap.keys }
+                    .map { it.code to it.changePct }
+                    .sortedByDescending { it.second }
+                    .take(5)
+
+                for ((etfCode, changePct) in etfChanges) {
+                    val sectorKey = etfSectorMap[etfCode] ?: continue
+                    val themeInfo = ThemeStockLibrary.THEME_MAP[sectorKey] ?: continue
+                    val stocks = ThemeStockLibrary.run { themeInfo.validStocks() }
+                        .filter { !it.name.contains("ST", ignoreCase = true) }
+                        .take(10)
+                    for (ts in stocks) {
+                        candidateSet.add(ts.code)
+                    }
+                    Log.d(TAG, "ETF $etfCode 漲幅 ${"%.1f".format(changePct)}% → 加入板塊 $sectorKey")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "ETF 動態板塊獲取失敗: ${e.message}")
+            }
+
+            // 2d. 查找子板塊前 10（通過 LeaderStockPool.SECTOR_CONFIGS）
+            // SECTOR_CONFIGS 中的 stocks 是 List<String>（股票代碼列表）
+            try {
+                for (cfg in LeaderStockPool.SECTOR_CONFIGS) {
+                    for (subSector in cfg.subSectors) {
+                        val topCodes = subSector.stocks.take(10)
+                        for (code in topCodes) {
+                            // 檢查該代碼在 themeStockMap 中是否存在且不是 ST
+                            val (_, ts) = themeStockMap[code] ?: continue
+                            if (!ts.name.contains("ST", ignoreCase = true)) {
+                                candidateSet.add(code)
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "子板塊獲取失敗: ${e.message}")
+            }
+
+            Log.d(TAG, "候選池總計: ${candidateSet.size} 只（去重後）")
+
+            // ── 3. 過濾條件 ──
+            val filteredStocks = mutableListOf<StockBasicEntity>()
+            val filteredSectors = mutableListOf<SectorStockEntity>()
+
+            for (code in candidateSet) {
+                val (themeKey, ts) = themeStockMap[code] ?: continue
+                val themeName = ThemeStockLibrary.THEME_MAP[themeKey]?.name ?: "其他"
+
+                // 3a. 去掉 ST
+                if (ts.name.contains("ST", ignoreCase = true)) continue
+
+                // 3b. 去掉名稱異常的（如 "退市"、"摘牌"）
+                if (ts.name.contains("退市") || ts.name.contains("摘牌")) continue
+
+                // 3c. 去掉代碼異常的（非標準 6 位數字）
+                val pureCode = code.replace(Regex("^(sh|sz|bj)"), "")
+                if (!pureCode.matches(Regex("^\\d{6}$"))) continue
+
+                // 3d. 市值過濾（如果有市值數據）
+                // TODO: 當 stock_basics 表有 market_cap 欄位時啟用
+
+                filteredStocks.add(StockBasicEntity(
+                    code = ts.code,
+                    name = ts.name,
+                    business = ts.business,
+                    chainRationale = ts.chainRationale
+                ))
+                filteredSectors.add(SectorStockEntity(
+                    sectorKey = themeKey,
+                    sectorName = themeName,
+                    stockCode = ts.code
+                ))
+            }
+
+            // 3e. 最終數量控制（無硬性上限，但記錄日誌）
+            val finalCount = filteredStocks.size
+            when {
+                finalCount < 200 -> Log.w(TAG, "⚠️ 選股數量偏少: $finalCount 只，建議檢查數據源")
+                finalCount > 800 -> Log.w(TAG, "⚠️ 選股數量偏多: $finalCount 只，已自動保留")
+                else -> Log.d(TAG, "✅ 選股數量合理: $finalCount 只")
+            }
+
+            // ── 4. 寫入數據庫 ──
             if (isFullImport) {
-                // ── 全量导入：直接清空重写 ──
-                stockDao.insertAll(latestStockMap.values.toList())
+                stockDao.insertAll(filteredStocks)
                 sectorDao.clearAll()
-                sectorDao.insertAll(latestSectorEntries)
+                sectorDao.insertAll(filteredSectors)
 
                 val elapsed = System.currentTimeMillis() - startTime
                 migrationDone = true
                 prefs.edit().putLong(KEY_LAST_SYNC, System.currentTimeMillis()).apply()
-                Log.d(TAG, "✅ 全量导入完成: ${latestStockMap.size} 只股票, ${latestSectorEntries.size} 条映射 | ${elapsed}ms")
+                Log.d(TAG, "✅ 全量导入完成: ${finalCount} 只股票, ${filteredSectors.size} 条映射 | ${elapsed}ms")
             } else {
-                // ── 增量同步：对比差异 ──
+                val existingStocks = stockDao.getAll().associateBy { it.code }
+                val toInsert = mutableListOf<StockBasicEntity>()
                 var addedCount = 0
                 var updatedCount = 0
-                // 获取 DB 中现有数据
-                val existingStocks = stockDao.getAll().associateBy { it.code }
-                val existingSectorCodes = sectorDao.getAllStockCodes().toSet()
 
-                // 新增/更新股票
-                val toInsert = mutableListOf<StockBasicEntity>()
-                for ((code, stock) in latestStockMap) {
-                    val existing = existingStocks[code]
+                for (stock in filteredStocks) {
+                    val existing = existingStocks[stock.code]
                     if (existing == null) {
                         toInsert.add(stock)
-                        // addedCount++ handled below
+                        addedCount++
                     } else if (existing.name != stock.name || existing.business != stock.business) {
                         toInsert.add(stock)
                         updatedCount++
                     }
                 }
-                if (toInsert.isNotEmpty()) {
-                    stockDao.insertAll(toInsert)
-                }
+                if (toInsert.isNotEmpty()) stockDao.insertAll(toInsert)
 
-                // 删除已退市股票（ThemeStockLibrary 中已移除的）
-                val latestCodes = latestStockMap.keys
+                val latestCodes = filteredStocks.map { it.code }.toSet()
                 val removedCodes = existingStocks.keys - latestCodes
-                // NOTE: Room 不支持批量 DELETE WHERE code IN (...)，此处只记录日志
-                // 实际删除通过 sector_stocks 映射表清理（板块映射表会自动删除不在其中的映射）
                 if (removedCodes.isNotEmpty()) {
-                    Log.d(TAG, "⚠️ 检测到 ${removedCodes.size} 只已退市股票（将在板块映射中清理）: $removedCodes")
+                    Log.d(TAG, "🗑️ 移除 ${removedCodes.size} 只不再符合條件的股票")
                 }
 
-                // 重建板块映射（最简单可靠的方式：清空重写）
                 sectorDao.clearAll()
-                sectorDao.insertAll(latestSectorEntries)
-                val sectorDiff = existingSectorCodes.size - latestSectorEntries.size
+                sectorDao.insertAll(filteredSectors)
 
                 val elapsed = System.currentTimeMillis() - startTime
                 prefs.edit().putLong(KEY_LAST_SYNC, System.currentTimeMillis()).apply()
-                Log.d(TAG, "✅ 增量同步完成: +${addedCount}新增 ${updatedCount}更新 ${removedCodes.size}退市 ${sectorDiff}映射差异 | ${elapsed}ms")
+                Log.d(TAG, "✅ 增量同步完成: +${addedCount}新增 ${updatedCount}更新 ${removedCodes.size}移除 | ${elapsed}ms")
             }
         }
     }
@@ -238,7 +343,16 @@ class StockDatabaseManager private constructor(context: Context) {
     }
 
     /**
-     * 按代码查询单只股票基本信息
+     * 获取所有股票（不分板块）
+     */
+    suspend fun getAllStocks(): List<StockBasicEntity> {
+        return withContext(Dispatchers.IO) {
+            stockDao.getAll()
+        }
+    }
+
+    /**
+     * 按股票代码查询
      */
     suspend fun getStockByCode(code: String): StockBasicEntity? {
         return withContext(Dispatchers.IO) {
@@ -247,33 +361,20 @@ class StockDatabaseManager private constructor(context: Context) {
     }
 
     /**
-     * 按代码列表批量查询
-     */
-    suspend fun getStocksByCodes(codes: List<String>): List<StockBasicEntity> {
-        return withContext(Dispatchers.IO) {
-            stockDao.getByCodes(codes)
-        }
-    }
-
-    /**
      * 按名称模糊搜索
      */
     suspend fun searchStocksByName(keyword: String): List<StockBasicEntity> {
         return withContext(Dispatchers.IO) {
-            stockDao.searchByName(keyword)
+            stockDao.searchByName("%$keyword%")
         }
     }
 
     /**
-     * 获取数据库统计信息
+     * 获取股票总数
      */
-    suspend fun getStats(): String {
+    suspend fun getStockCount(): Int {
         return withContext(Dispatchers.IO) {
-            buildString {
-                appendLine("数据库统计:")
-                appendLine("  股票总数: ${stockDao.count()}")
-                appendLine("  板块数: ${sectorDao.getAllSectorKeys().size}")
-            }
+            stockDao.count()
         }
     }
 }

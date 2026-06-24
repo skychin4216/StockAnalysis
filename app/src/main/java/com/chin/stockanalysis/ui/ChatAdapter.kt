@@ -131,20 +131,20 @@ class ChatAdapter(
                 layoutBot.visibility = View.VISIBLE
                 layoutUser.visibility = View.GONE
 
-                // 串流期間使用純文本
-                tvBotMessage.text = message.content
-                tvBotMessage.visibility = View.VISIBLE
-                tvErrorHint.visibility = View.GONE
-
                 if (message.loadingStatus != null) {
+                    // Loading 狀態：只顯示 loading 文字，不顯示空的 streaming view
                     tvLoadingStatus.text = message.loadingStatus
                     tvLoadingStatus.visibility = View.VISIBLE
-                    tvTypingIndicator.visibility = View.GONE
+                    tvBotMessage.visibility = View.GONE
+                    tvTypingIndicator.visibility = View.VISIBLE
                 } else {
+                    // 正常顯示內容
                     tvLoadingStatus.visibility = View.GONE
-                    tvTypingIndicator.visibility =
-                        if (message.content.isEmpty()) View.VISIBLE else View.GONE
+                    tvBotMessage.text = message.content
+                    tvBotMessage.visibility = if (message.content.isNotEmpty()) View.VISIBLE else View.GONE
+                    tvTypingIndicator.visibility = View.GONE
                 }
+                tvErrorHint.visibility = View.GONE
                 layoutBotActions.visibility = View.GONE
                 layoutUserActions.visibility = View.GONE
             }

@@ -465,26 +465,32 @@ class SimulationTradeEngine(private val context: Context) {
     private var hotSectorPoolCache: Set<String>? = null
     private suspend fun getHotSectorStockPool(): Set<String> {
         if (hotSectorPoolCache != null) return hotSectorPoolCache!!
-        hotSectorPoolCache = HotSectorStockPool.build(context)
+
+        // v2.0: 先查 AI 熱門板塊名稱，再傳給 HotSectorStockPool
+        val aiSectorNames = try {
+            com.chin.stockanalysis.strategy.data.AIHotSectorProvider.getHotSectors(context).allSectors.toSet()
+        } catch (e: Exception) {
+            Log.w(TAG, "AI 熱門板塊查詢失敗，使用 fallback: ${e.message}")
+            emptySet()
+        }
+        hotSectorPoolCache = HotSectorStockPool.build(context, aiSectorNames)
         return hotSectorPoolCache!!
     }
 
     suspend fun buildDailyStockPool(baseDate: String): Set<String> = withContext(Dispatchers.IO) {
-        val pool = mutableSetOf<String>()
-        pool.addAll(com.chin.stockanalysis.strategy.data.HistoricalDataFetcher.getTopStocks(context))
-        Log.d(TAG, "底倉: ${pool.size}隻")
-        val sectorPool = getHotSectorStockPool(); pool.addAll(sectorPool)
-        Log.d(TAG, "+板塊: ${sectorPool.size}隻 → ${pool.size}隻")
-        try {
-            val snaps = db.dailySnapshotDao().getByDate(baseDate)
-            if(snaps.isNotEmpty()) {
-                val gainers = snaps.sortedByDescending{it.changePct}.take(50).map{it.code}
-                val volumeLeaders = snaps.sortedByDescending{it.volume}.take(50).map{it.code}
-                pool.addAll(gainers); pool.addAll(volumeLeaders)
-                Log.d(TAG, "+活躍: +${gainers.size}+${volumeLeaders.size} → ${pool.size}隻")
+        // 使用新的 CandidatePool（備選池）替代舊的 HotSectorStockPool
+        // 備選池包含：核心龍頭 + ETF熱門板塊龍頭 + 東方財富熱門板塊龍頭
+        val pool = try {
+            val candidatePool = com.chin.stockanalysis.strategy.data.CandidatePool.getPool(context)
+            candidatePool.stocks.map { it.code }.toMutableSet()
+        } catch (e: Exception) {
+            Log.w(TAG, "CandidatePool 獲取失敗，使用備用方案: ${e.message}")
+            mutableSetOf<String>().apply {
+                addAll(com.chin.stockanalysis.strategy.data.HistoricalDataFetcher.getTopStocks(context))
+                addAll(getHotSectorStockPool())
             }
-        } catch (_: Exception) {}
-        Log.i(TAG, "📊 ${baseDate} 擴展池: ${pool.size}隻")
+        }
+        Log.i(TAG, "📊 ${baseDate} 備選池: ${pool.size}隻")
         pool
     }
 

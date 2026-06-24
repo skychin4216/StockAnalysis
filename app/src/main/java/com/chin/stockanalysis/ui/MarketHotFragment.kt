@@ -77,7 +77,7 @@ class MarketHotFragment : Fragment() {
         }
         root.addView(viewPager, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
         TabLayoutMediator(tabLayout, viewPager) { tab, pos ->
-            tab.text = when(pos) { 0 -> "🏭 行业" 1 -> "💡 概念" 2 -> "📈 指数" else -> "" }
+            tab.text = when(pos) { 0 -> "🏭 行业" 1 -> "💡 概念" 2 -> "📈 指数" 3 -> "🎯 备选池" else -> "" }
         }.attach()
 
         startPoolScheduler(lifecycleScope)
@@ -86,8 +86,12 @@ class MarketHotFragment : Fragment() {
     }
 
     private class SectorTabAdapter(f: Fragment) : FragmentStateAdapter(f) {
-        override fun getItemCount() = 3
-        override fun createFragment(pos: Int) = SectorTabFragment.newInstance(when(pos) { 0->2 1->3 2->1 else->2 })
+        override fun getItemCount() = 4
+        override fun createFragment(pos: Int) = when(pos) {
+            0, 1, 2 -> SectorTabFragment.newInstance(when(pos) { 0->2 1->3 2->1 else->2 })
+            3 -> CandidatePoolFragment()
+            else -> SectorTabFragment.newInstance(2)
+        }
     }
 
     private fun startAutoRefresh() {

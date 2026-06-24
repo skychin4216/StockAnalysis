@@ -132,6 +132,65 @@ object StockDataCenter {
             ?: sectors.first().take(8)
     }
 
+    // ═══════════════════════════════════════════════════════
+    // code-to-name + 股價查詢
+    // ═══════════════════════════════════════════════════════
+
+    data class StockQuote(
+        val code: String,
+        val name: String,
+        val price: Double,
+        val changePct: Double,
+        val date: String
+    )
+
+    /**
+     * 根據股票代碼查詢名稱 + 最近交易日股價
+     * 優先從緩存獲取，緩存未命中則查數據庫
+     */
+    suspend fun getStockQuote(stockCode: String): StockQuote? {
+        val ctx = appContext ?: return null
+        val db = StockDatabase.getInstance(ctx)
+
+        // 1. 從 stock_basics 獲取名稱
+        val basic = try { db.stockBasicDao().getByCode(stockCode) } catch (_: Exception) { null }
+
+        // 2. 獲取最近交易日
+        val today = java.time.LocalDate.now().toString()
+        val dates = try { db.dailySnapshotDao().getAvailableDates(5) } catch (_: Exception) { emptyList() }
+        val targetDate = dates.filter { it <= today }.maxOrNull() ?: today
+
+        // 3. 從日快照獲取股價
+        val snaps = try { db.dailySnapshotDao().getByDate(targetDate) } catch (_: Exception) { emptyList() }
+        val snap = snaps.find { it.code == stockCode }
+
+        return if (snap != null) {
+            StockQuote(code = stockCode, name = snap.name, price = snap.close, changePct = snap.changePct, date = targetDate)
+        } else if (basic != null) {
+            StockQuote(code = stockCode, name = basic.name, price = -1.0, changePct = 0.0, date = targetDate)
+        } else {
+            null
+        }
+    }
+
+    /**
+     * 批量查詢股票名稱（從 stock_basics 緩存）
+     */
+    suspend fun getStockNames(codes: Collection<String>): Map<String, String> {
+        val ctx = appContext ?: return emptyMap()
+        val db = StockDatabase.getInstance(ctx)
+        return try {
+            db.stockBasicDao().getByCodes(codes.toList()).associate { it.code to it.name }
+        } catch (_: Exception) { emptyMap() }
+    }
+
+    /**
+     * 根據股票代碼查詢名稱（簡化版）
+     */
+    suspend fun getStockName(stockCode: String): String {
+        return getStockQuote(stockCode)?.name ?: stockCode
+    }
+
     suspend fun getAllSectors(): List<String> {
         val live = (EastMoneyHotSectorSource.industrySectors + EastMoneyHotSectorSource.conceptSectors).map { it.name }.toSet()
         val ctx = appContext ?: return live.toList().sorted()

@@ -13,11 +13,12 @@ import com.chin.stockanalysis.agent.pipeline.PipelineResult
 import com.chin.stockanalysis.agent.pipeline.PipelineStep
 
 /**
- * 7 步流水線進度面板
+ * 智能體流水線進度面板
  *
- * 展示 F → 3 → 1 → 2 → 5 → D → 4 的執行進度，
- * 每步顯示狀態圖標、名稱、分析摘要。
- * Agent 2 完成後顯示打分徽章，Agent 5 顯示風控徽章，Agent D 顯示倉位微調。
+ * 支持三種模式動態切換：
+ * - 六智體通用（消費/醫藥/周期）
+ * - 七智體賣水人（光通信/半導體）
+ * - 精簡版 5+1（默認）
  */
 class PipelineProgressView(context: Context) : LinearLayout(context) {
 
@@ -36,6 +37,9 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
 
     private val stepViews = mutableMapOf<Int, StepCard>()
     private val resultContainer: LinearLayout
+    private val stepsContainer: LinearLayout
+    private val titleTv: TextView
+    private var currentSteps: List<PipelineStep> = AgentPipelineOrchestrator.getStepsByName("精簡版")
 
     init {
         orientation = LinearLayout.VERTICAL
@@ -43,19 +47,20 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
         setBackgroundColor(Color.parseColor("#FAFAFA"))
 
         // 標題
-        addView(TextView(context).apply {
-            text = "🧠 AI 智能體流水線 (F→3→1→2→5→D→4)"
+        titleTv = TextView(context).apply {
+            text = "🧠 Agent 流水線（精簡版 5+1）"
             textSize = 14f
             setTextColor(Color.parseColor("#1A1A2E"))
             setTypeface(null, Typeface.BOLD)
             setPadding(0, 0, 0, 8)
-        })
+        }
+        addView(titleTv)
 
         // 步驟卡片容器
-        val stepsContainer = LinearLayout(context).apply {
+        stepsContainer = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
         }
-        for (step in AgentPipelineOrchestrator.STEPS) {
+        for (step in AgentPipelineOrchestrator.getStepsByName("精簡版")) {
             val card = StepCard(context, step)
             stepViews[step.order] = card
             stepsContainer.addView(card)
@@ -82,6 +87,27 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
      */
     fun markStepStart(_stepIndex: Int, step: PipelineStep) {
         stepViews[step.order]?.markRunning()
+    }
+
+    /**
+     * 動態更新步驟列表（AI 選擇模式後調用）
+     */
+    fun updateSteps(steps: List<PipelineStep>) {
+        currentSteps = steps
+        stepViews.clear()
+        stepsContainer.removeAllViews()
+        for (step in steps) {
+            val card = StepCard(context, step)
+            stepViews[step.order] = card
+            stepsContainer.addView(card)
+        }
+        // 更新標題
+        val modeLabel = when (steps.size) {
+            6 -> if (steps.any { it.agentId == "pipeline_agent_competition" }) "六智體通用" else "精簡版 5+1"
+            7 -> "七智體賣水人"
+            else -> "${steps.size} 步"
+        }
+        titleTv.text = "🧠 Agent 流水線（$modeLabel）"
     }
 
     /**
@@ -113,7 +139,7 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
      * 標記步驟錯誤
      */
     fun markStepError(stepIndex: Int, error: String) {
-        val order = AgentPipelineOrchestrator.STEPS.getOrNull(stepIndex)?.order ?: return
+        val order = AgentPipelineOrchestrator.getStepsByName("精簡版").getOrNull(stepIndex)?.order ?: return
         stepViews[order]?.markError(error)
     }
 

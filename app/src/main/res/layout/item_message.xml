@@ -3,7 +3,8 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:paddingHorizontal="8dp"
+    android:background="@android:color/transparent"
+    android:paddingHorizontal="4dp"
     android:paddingVertical="3dp">
 
     <!-- 时间戳 -->
@@ -41,7 +42,7 @@
                 android:paddingHorizontal="16dp"
                 android:paddingVertical="12dp"
                 android:textColor="#FFFFFF"
-                android:textSize="15sp"
+                android:textSize="13sp"
                 android:lineSpacingExtra="3dp"
                 android:clickable="true"
                 android:focusable="true"
@@ -141,7 +142,7 @@
             android:paddingHorizontal="14dp"
             android:paddingVertical="10dp"
             android:textColor="#333333"
-            android:textSize="15sp"
+            android:textSize="13sp"
             android:lineSpacingExtra="3dp"
             android:visibility="visible"
             android:clickable="true"

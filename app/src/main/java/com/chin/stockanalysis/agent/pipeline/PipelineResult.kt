@@ -8,6 +8,8 @@ data class PipelineContext(
     val target: String,
     /** 動態識別的板塊/賽道（可由用戶輸入推斷，默認為科技板塊） */
     var sector: String = "科技",
+    /** 當前分析模式（使用 String 避免循環引用） */
+    var analysisModeName: String = "精簡版",
     /** Agent F 採集的標準化情報 */
     var intelligence: DataFeederResult? = null,
     /** Agent 3 的賽道熱度評級 */
@@ -104,7 +106,9 @@ data class PipelineResult(
     val stepsCompleted: Int = 0,
     val totalSteps: Int = 7,
     val stocks: List<PipelineStockResult> = emptyList(),
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val analysisMode: String = "精簡版",
+    val weightFormula: String = ""
 )
 
 /** 單只股票的最終流水線結果 */

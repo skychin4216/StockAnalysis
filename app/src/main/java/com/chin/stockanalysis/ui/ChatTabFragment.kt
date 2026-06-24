@@ -137,15 +137,31 @@ class ChatTabFragment : Fragment() {
 
     private val galleryLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK) {
-            result.data?.data?.let { sendMessage("[圖片]") }
+            result.data?.data?.let { uri ->
+                lifecycleScope.launch {
+                    val extractedText = extractTextFromImage(uri)
+                    if (extractedText.isNotBlank()) {
+                        sendMessage("[圖片內容]\n$extractedText", skipStockContext = true)
+                    } else {
+                        sendMessage("[圖片] 無法提取文字內容", skipStockContext = true)
+                    }
+                }
+            }
         }
     }
 
     private val fileLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK) {
             result.data?.data?.let { uri ->
-                val fileName = getFileNameFromUri(uri) ?: "未知檔案"
-                sendMessage("📎 $fileName")
+                lifecycleScope.launch {
+                    val fileName = getFileNameFromUri(uri) ?: "未知檔案"
+                    val extractedText = extractTextFromFile(uri, fileName)
+                    if (extractedText.isNotBlank()) {
+                        sendMessage("[文件: $fileName]\n$extractedText", skipStockContext = true)
+                    } else {
+                        sendMessage("📎 $fileName", skipStockContext = true)
+                    }
+                }
             }
         }
     }
@@ -212,10 +228,9 @@ class ChatTabFragment : Fragment() {
         val modeHint = when (mode) {
             AnalysisMode.QUICK -> "⚡ 快速模式：实时行情+情绪分析"
             AnalysisMode.DEEP -> "🔍 深度模式：多策略量化筛选+板块对比"
-            AnalysisMode.EXPERT -> "🧠 专家模式：7步AI智能体流水线"
+            AnalysisMode.EXPERT -> "🧠 专家模式：使用 AI智能体流水线"
         }
         binding.etInput.hint = modeHint
-        Toast.makeText(requireContext(), modeHint, Toast.LENGTH_SHORT).show()
     }
 
     // ════════════════════════════════════════
@@ -287,6 +302,7 @@ class ChatTabFragment : Fragment() {
         adapter.onShare = { text -> startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(android.content.Intent.EXTRA_TEXT, text) }, "分享到")) }
         adapter.onRegenerate = { position -> regenerateMessage(position) }
         binding.recyclerView.layoutManager = LinearLayoutManager(requireContext()).apply { stackFromEnd = true }
+        binding.recyclerView.itemAnimator = null // 禁用動畫，避免 loading view 閃現
         binding.recyclerView.adapter = adapter
     }
 
@@ -473,7 +489,7 @@ class ChatTabFragment : Fragment() {
 
     private var lastUserText: String = ""
 
-    private fun sendMessage(userText: String) {
+    private fun sendMessage(userText: String, skipStockContext: Boolean = false) {
         // 去重：连续两次相同输入不重复处理
         if (userText == lastUserText && messages.lastOrNull()?.isUser == true) {
             Toast.makeText(requireContext(), "已发送，请勿重复输入", Toast.LENGTH_SHORT).show()
@@ -482,10 +498,10 @@ class ChatTabFragment : Fragment() {
         lastUserText = userText
 
         // 先尝试意图分发
-        if (com.chin.stockanalysis.ai.IntentDispatcher.dispatch(userText, requireContext())) {
+        if (!skipStockContext && com.chin.stockanalysis.ai.IntentDispatcher.dispatch(userText, requireContext())) {
             addMessage(Message(content = userText, isUser = true))
             binding.etInput.setText(""); hideKeyboard()
-            addBotMessage("✅ 指令已执行，正在切换...")
+            addBotMessage("✅ 指令已执行，正在分析...")
             return
         }
         addMessage(Message(content = userText, isUser = true))
@@ -508,7 +524,7 @@ class ChatTabFragment : Fragment() {
                         messages.removeLast()
                         adapter.notifyItemRemoved(messages.size)
                     }
-                    sendMessageInternal(userText, apiProvider!!, isRetry = true)
+                    sendMessageInternal(userText, apiProvider!!, isRetry = true, skipStockContext = skipStockContext)
                 } else {
                     addErrorMessage("❌ AI 连接超时，请稍候重试")
                 }
@@ -516,154 +532,307 @@ class ChatTabFragment : Fragment() {
             return
         }
 
-        sendMessageInternal(userText, provider, isRetry = false)
+        sendMessageInternal(userText, provider, isRetry = false, skipStockContext = skipStockContext)
     }
 
-    private fun sendMessageInternal(userText: String, provider: ApiProvider, isRetry: Boolean) {
+    private fun sendMessageInternal(userText: String, provider: ApiProvider, isRetry: Boolean, skipStockContext: Boolean = false) {
         if (!isRetry) { } // already added user message
         binding.etInput.setText(""); hideKeyboard()
         if (!hasAutoTitle) { hasAutoTitle = true; binding.tvChatTitle.text = extractSmartTitle(userText) }
 
         // 🎯 根据分析模式分流处理
         when (analysisMode) {
-            AnalysisMode.QUICK -> runQuickAnalysis(userText, provider)
-            AnalysisMode.DEEP -> runDeepAnalysis(userText, provider)
-            AnalysisMode.EXPERT -> runExpertAnalysis(userText, provider)
+            AnalysisMode.QUICK -> runQuickAnalysis(userText, provider, skipStockContext)
+            AnalysisMode.DEEP -> runDeepAnalysis(userText, provider, skipStockContext)
+            AnalysisMode.EXPERT -> runExpertAnalysis(userText, provider, skipStockContext)
         }
     }
 
-    /** ⚡ 快速模式：AI 深度分析（參考豆包風格，簡潔但全面） */
-    private fun runQuickAnalysis(userText: String, provider: ApiProvider) {
-        val streamingMessage = Message(content = "", isUser = false, isStreaming = true,
-            loadingStatus = "⚡ AI 快速分析中...")
-        addMessage(streamingMessage)
-        val streamingIndex = messages.size - 1
+    /** ⚡ 快速模式：AI 智能解析 + 結構化輸出 */
+    private fun runQuickAnalysis(userText: String, provider: ApiProvider, skipStockContext: Boolean = false) {
+        val loadingMsg = Message(content = "", isUser = false, isStreaming = true,
+            loadingStatus = "⚡ 正在思考...")
+        addMessage(loadingMsg)
+        val loadingIndex = messages.size - 1
 
         currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val stockInfo = withContext(Dispatchers.IO) {
-                    smartContext.getOrBuild(userText = userText, baseSystemPrompt = BASE_SYSTEM_PROMPT, onPreferenceLeaned = {})
+                // 動態更新 loading 狀態
+                val stockInfo = if (skipStockContext) {
+                    ""
+                } else {
+                    updateLoadingStatus(loadingIndex, "⚡ 正在搜索相關數據...")
+                    withContext(Dispatchers.IO) {
+                        smartContext.getOrBuild(userText = userText, baseSystemPrompt = BASE_SYSTEM_PROMPT, onPreferenceLeaned = {})
+                    }
                 }
+                updateLoadingStatus(loadingIndex, "⚡ 正在分析...")
                 val memory = withContext(Dispatchers.IO) { memoryManager.buildMemorySuffix() }
-                // 快速模式也調用 AI，但要求結構化簡潔輸出
+
+                // AI 先判斷用戶意圖，再決定輸出格式
                 val prompt = """【⚡ AI 快速分析】
-用戶問題：$userText
+用戶輸入：$userText
 
 $stockInfo
 $memory
 
-請以簡潔專業的方式分析，包含以下 5 個部分（每部分 2-3 句話）：
+請先判斷用戶意圖，然後按對應格式輸出：
 
-一、公司基本概況
-- 主營業務、行業地位、核心競爭力
+【意圖判斷】
+1. 如果用戶要求「對比」多只股票 → 輸出「多股對比格式」
+2. 如果用戶問單只股票 → 輸出「單股分析格式」
+3. 如果用戶問非股票問題（生活/技術/其他）→ 輸出「通用問答格式」
 
-二、最新財務表現
-- 最新季度營收/利潤增速、毛利率變化
-
-三、核心上漲邏輯
-- 當前最強的 2-3 個驅動因素
-
-四、核心風險
-- 當前最大的 2-3 個風險點
-
+【單股分析格式】（參考豆包風格，簡潔全面）
+一、公司基本概況（主營業務、行業地位、核心競爭力）
+二、最新財務表現（營收/利潤增速、毛利率）
+三、核心上漲邏輯（2-3個驅動因素）
+四、核心風險（2-3個風險點）
 五、短期 & 中長期總結
-- 短期（1-3個月）看法
-- 中長期（1-2年）看法
+
+【多股對比格式】（參考豆包風格）
+一、先理清產業鏈位置（各公司在產業鏈中的位置）
+二、基礎信息 & 主營業務對比（表格形式）
+三、最新財務對比（營收、利潤、增速）
+四、核心壁壘 & 競爭優勢對比（每家公司 ✅優勢 / ❌劣勢）
+五、估值 & 成長屬性對比
+六、風險總結
+七、極簡選股建議（針對不同風格投資者）
+
+【通用問答格式】
+- 直接回答用戶問題，保持專業簡潔
 
 注意：
-1. 總字數控制在 400-600 字
-2. 用簡潔的 bullet points
+1. 總字數控制在 500-800 字
+2. 用簡潔的 bullet points 和表格
 3. 最後加一句免責聲明：「以上分析不構成投資建議」"""
-                val history = messages.toList().subList(0, streamingIndex)
-                sendWithRetry(provider, history, prompt, streamingIndex, 2)
+                val history = messages.toList().subList(0, loadingIndex)
+                sendWithRetry(provider, history, prompt, loadingIndex, 2)
             } catch (e: Exception) {
                 if (isAdded) requireActivity().runOnUiThread {
-                    failStreamingMessage(streamingIndex, "快速分析失败: ${e.message}")
+                    failStreamingMessage(loadingIndex, "快速分析失败: ${e.message}")
                 }
             }
         }
     }
 
     /** 🔍 深度模式：多策略量化筛选 + 板块对比 + AI Predict */
-    private fun runDeepAnalysis(userText: String, provider: ApiProvider) {
-        val streamingMessage = Message(content = "", isUser = false, isStreaming = true,
-            loadingStatus = "🔍 深度分析：量化策略扫描 + 板块筛选中...")
-        addMessage(streamingMessage)
-        val streamingIndex = messages.size - 1
+    private fun runDeepAnalysis(userText: String, provider: ApiProvider, skipStockContext: Boolean = false) {
+        val loadingMsg = Message(content = "", isUser = false, isStreaming = true,
+            loadingStatus = "🔍 正在搜索相關數據...")
+        addMessage(loadingMsg)
+        val loadingIndex = messages.size - 1
 
         currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
             try {
                 // Step 1: 获取同板块股票
-                val sectorAnalysis = withContext(Dispatchers.IO) {
-                    buildSectorAnalysis(userText)
+                val sectorAnalysis = if (skipStockContext) {
+                    ""
+                } else {
+                    updateLoadingStatus(loadingIndex, "🔍 正在掃描量化策略...")
+                    withContext(Dispatchers.IO) {
+                        buildSectorAnalysis(userText)
+                    }
                 }
 
                 // Step 2: 构建深度分析 prompt
+                updateLoadingStatus(loadingIndex, "🔍 正在深度分析...")
                 val memory = withContext(Dispatchers.IO) { memoryManager.buildMemorySuffix() }
-                val prompt = "【🔍 深度分析模式】\n$userText\n\n$sectorAnalysis\n$memory\n\n请执行：1)分析该股票所属板块热度 2)同板块Top5对比 3)量化策略信号综合评估 4)给出买入/观望/回避建议。"
-                val history = messages.toList().subList(0, streamingIndex)
-                sendWithRetry(provider, history, prompt, streamingIndex, 2)
+                val prompt = """【🔍 深度分析模式】
+用戶輸入：$userText
+
+$sectorAnalysis
+$memory
+
+請先判斷用戶意圖，然後按對應格式輸出：
+
+【意圖判斷】
+1. 如果用戶要求「對比」多只股票 → 輸出「多股深度對比格式」
+2. 如果用戶問單只股票 → 輸出「單股深度分析格式」
+3. 如果用戶問非股票問題 → 輸出「通用深度問答格式」
+
+【單股深度分析格式】
+一、所屬板塊熱度分析（當前板塊資金流向、排名）
+二、同板塊 Top5 對比（表格：股票/市值/漲跌幅/量比/策略信號）
+三、量化策略信號綜合評估（MA/RSI/量比/資金流等策略信號匯總）
+四、AI 預測模型評分（技術面/基本面/情緒面綜合評分）
+五、買入/觀望/回避建議（給出具體價位區間和止損位）
+
+【多股深度對比格式】
+一、產業鏈位置 & 板塊歸屬
+二、量化策略篩選對比（策略信號表格）
+三、板塊熱度 & 資金流向對比
+四、AI 預測評分對比
+五、綜合排名 & 選股建議
+
+【通用深度問答格式】
+- 深入分析用戶問題，提供結構化答案
+
+注意：
+1. 總字數 800-1200 字
+2. 使用表格和 bullet points
+3. 最後加免責聲明"""
+                val history = messages.toList().subList(0, loadingIndex)
+                sendWithRetry(provider, history, prompt, loadingIndex, 2)
             } catch (e: Exception) {
                 if (isAdded) requireActivity().runOnUiThread {
-                    failStreamingMessage(streamingIndex, "深度分析失败: ${e.message}")
+                    failStreamingMessage(loadingIndex, "深度分析失败: ${e.message}")
                 }
             }
         }
     }
 
-    /** 🧠 专家模式：7步AI智能体流水线 */
-    private fun runExpertAnalysis(userText: String, provider: ApiProvider) {
-        val streamingMessage = Message(content = "", isUser = false, isStreaming = true,
-            loadingStatus = "🧠 专家模式：启动7步AI智能体流水线...")
-        addMessage(streamingMessage)
-        val streamingIndex = messages.size - 1
+    /** 🧠 專家模式：智能體協同篩選
+     *
+     * 根據股票產業鏈位置自動選擇分析流程：
+     * - 賣水人（上游）→ 賣水人智能篩選（7 個智能體，含題材賽道分析）
+     * - 非賣水人（下游）→ 非賣水人智能篩選（6 個智能體，注重產品力和品牌）
+     *
+     * 7 個智能體（賣水人）：
+     * 1. 基本面  2. 技術面  3. 資金面  4. 題材賽道  5. 估值  D. 風控  F. 情緒策略
+     *
+     * 6 個智能體（非賣水人）：
+     * 1. 基本面  2. 技術面  3. 資金面  4. 估值  5. 風控  6. 情緒策略
+     */
+    private fun runExpertAnalysis(userText: String, provider: ApiProvider, skipStockContext: Boolean = false) {
+        val loadingMsg = Message(content = "", isUser = false, isStreaming = true,
+            loadingStatus = "🧠 正在搜索相關數據...")
+        addMessage(loadingMsg)
+        val loadingIndex = messages.size - 1
 
         currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val orchestrator = com.chin.stockanalysis.agent.pipeline.AgentPipelineOrchestrator(requireContext())
-                var stepResults = StringBuilder()
-
-                orchestrator.onStepStart = { index, step ->
-                    if (isAdded) requireActivity().runOnUiThread {
-                        messages[streamingIndex] = messages[streamingIndex].copy(
-                            loadingStatus = "🧠 ${step.name} 执行中... (${index + 1}/7)")
-                        adapter.notifyItemChanged(streamingIndex)
+                val stockInfo = if (skipStockContext) {
+                    ""
+                } else {
+                    updateLoadingStatus(loadingIndex, "🧠 正在識別產業鏈位置...")
+                    withContext(Dispatchers.IO) {
+                        smartContext.getOrBuild(userText = userText, baseSystemPrompt = BASE_SYSTEM_PROMPT, onPreferenceLeaned = {})
                     }
                 }
+                updateLoadingStatus(loadingIndex, "🧠 正在啟動智能體協同篩選...")
+                val memory = withContext(Dispatchers.IO) { memoryManager.buildMemorySuffix() }
 
-                orchestrator.onStepComplete = { index, step, ctx ->
-                    if (isAdded) requireActivity().runOnUiThread {
-                        val summary = ctx.stepAnalyses[index]?.take(60) ?: "完成"
-                        stepResults.append("✅ ${step.name}: $summary\n")
-                        messages[streamingIndex] = messages[streamingIndex].copy(
-                            content = stepResults.toString(),
-                            loadingStatus = "🧠 ${step.name} 完成 (${index + 1}/7)")
-                        adapter.notifyItemChanged(streamingIndex)
-                    }
-                }
+                // 智能體協同分析 prompt（根據股票產業鏈位置自動選擇 6步/7步）
+                val prompt = """【🧠 專家模式：智能體協同篩選】
+分析基準時間：${java.time.LocalDate.now()} 午盤
+⚠️ 全部內容僅為數據復盤研究，不構成任何投資建議
 
-                val result = orchestrator.execute(userText)
+用戶輸入：$userText
 
-                if (isAdded) requireActivity().runOnUiThread {
-                    val finalText = buildString {
-                        append("🧠 7步AI智能体流水线分析完成\n\n")
-                        append(stepResults.toString())
-                        append("\n📊 最终结果:\n")
-                        result.stocks.firstOrNull()?.let { stock ->
-                            append("股票: ${stock.stockName} (${stock.stockCode})\n")
-                            stock.chainScore?.let { append("产业链打分: ${it.totalScore}/100 (${it.barrierLevel}壁垒)\n") }
-                            stock.riskResult?.let { append("风控等级: ${it.riskLevel}\n") }
-                            stock.sentimentResult?.let { append("仓位微调: ${it.positionAdjust}\n") }
-                            stock.tradePlan?.let { append("交易方案: ${it.stopLoss}止损 / ${it.targets.joinToString(", ")}止盈\n") }
-                            append("通过判定: ${if (stock.passed) "✅ 通过" else "❌ 未通过"}")
-                        } ?: append("无有效结果")
-                    }
-                    completeStreamingMessage(streamingIndex, finalText)
-                    onMessageComplete()
-                }
+$stockInfo
+$memory
+
+【第一步】判斷用戶意圖：
+1. 如果用戶要求「對比」多只股票 → 執行「橫向對比流程」
+2. 如果用戶問單只股票 → 執行「單股分析流程」
+3. 如果用戶問非股票問題 → 執行「通用專家問答流程」
+
+【第二步】對每隻股票進行產業鏈分類（這決定用 6 步還是 7 步）：
+- 「賣水人」= 產業鏈上游（原材料、設備、技術平台、關鍵零部件），為下游提供核心材料/技術/服務
+  → 使用「賣水人智能篩選」（7 個智能體）
+- 「非賣水人」= 產業鏈下游（終端產品、品牌、集成商），直接面向終端客戶
+  → 使用「非賣水人智能篩選」（6 個智能體）
+
+【賣水人智能篩選】（7 個智能體，適用於產業鏈上游股票）
+上游公司更依賴賽道景氣度和技術迭代，因此需要額外的「題材賽道」智能體。
+
+智能體 1：基本面分析智能體（營收、利潤、業務壁壘）
+- 核心業務：主營業務、行業地位、核心競爭力
+- 財報核心：最新季度營收/歸母淨利潤、同比增速、毛利率、資產負債率、經營性現金流
+- 護城河：專利數量、客戶認證、市佔率、國產替代空間
+- 短板：毛利率水平、業務集中度、傳統業務增長乏力等
+
+智能體 2：技術面分析智能體（K線、趨勢、支撐壓力）
+- 階段走勢：近 3 個月漲幅、是否屬於超級趨勢妖股、今日盤面表現
+- 量能結構：近 5 日成交額、換手率、籌碼交換情況
+- 關鍵價位：短期壓力位、短期支撐位、前期密集成交區
+- 均線狀態：短期均線方向、5 日線壓制/支撐、趨勢格局判斷
+
+智能體 3：資金面分析智能體（主力、北向、融資、龍虎）
+- 槓桿資金：融資餘額、佔流通市值比例、槓桿倉位分位數
+- 資金行為：主力資金流向、北向資金動向、機構大額買入/賣出信號
+- 成交特徵：連續天量/縮量、場內分歧程度、增量/存量博弈特徵
+
+智能體 4：題材賽道分析智能體（行業邏輯、政策催化）← 賣水人專屬
+- 核心題材：所屬概念板塊、核心驅動邏輯
+- 行業邏輯：中長期行業景氣度、供需格局、技術迭代趨勢
+- 催化點：近期利好催化（訂單落地、產能投產、新產品認證）
+- 利空壓制：題材炒作過熱、板塊退潮、估值殺情緒
+
+智能體 5：估值定價分析智能體（PE、溢價、合理性測算）
+- 當前估值：TTM 市盈率、市淨率、處於歷史什麼分位
+- 溢價拆解：情緒溢價佔比、業績成長溢價佔比、估值透支年限
+- 估值結論：基本面增速能否匹配估值、高估/低估/合理判斷
+
+智能體 D：風控預警智能體（風險清單、排雷）
+- 估值泡沫風險：PE 極度偏高、估值回調空間
+- 股東減持風險：高管/大股東減持計劃、產業資本高位減持信號
+- 槓桿踩踏風險：融資盤倉位過高、大跌觸發被動平倉
+- 業績兌現風險：訂單增速不及預期、產能釋放延遲
+- 板塊退潮風險：題材降溫、高位股集體殺估值
+- 成本波動風險：原材料漲價擠壓毛利率
+
+智能體 F：市場情緒 & 策略智能體（情緒打分、操作參考）
+- 情緒打分（0~10 分）：前期抱團情緒、當前恐慌/貪婪程度、做多意願
+- 短線判斷：趨勢是否終結、進入震盪調整概率、反彈乏力/強勁判斷
+- 分層參考思路（非操作建議）：
+  * 持倉者：支撐位為強弱分水嶺，跌破注意減倉規避深度回調
+  * 觀望者：不急於抄底，等待估值回落、縮量企穩、情緒修復後再評估
+  * 長線視角：看好賽道邏輯也需等估值消化，不宜高位追入
+
+綜合總評：基本面賽道價值 vs 短期風險權衡，明確結論類型
+
+【非賣水人智能篩選】（6 個智能體，適用於產業鏈下游股票）
+下游公司更看重產品力、品牌、渠道和財務質量，不需要「題材賽道」智能體。
+
+智能體 1：基本面分析智能體（營收、利潤、業務壁壘）
+- 核心業務：主營業務、行業地位、品牌力、渠道優勢
+- 財報核心：最新季度營收/歸母淨利潤、同比增速、毛利率、資產負債率、經營性現金流
+- 護城河：品牌溢價、渠道壁壘、規模效應、客戶粘性
+- 短板：增長乏力、市場份額流失、成本控制能力
+
+智能體 2：技術面分析智能體（K線、趨勢、支撐壓力）
+（同賣水人智能體 2）
+
+智能體 3：資金面分析智能體（主力、北向、融資、龍虎）
+（同賣水人智能體 3）
+
+智能體 4：估值定價分析智能體（PE、溢價、合理性測算）
+（同賣水人智能體 5，但更注重 ROE、分紅率、自由現金流）
+
+智能體 5：風控預警智能體（風險清單、排雷）
+（同賣水人智能體 D，但更注重行業競爭加劇、渠道變化、消費降級等下游風險）
+
+智能體 6：市場情緒 & 策略智能體（情緒打分、操作參考）
+（同賣水人智能體 F）
+
+綜合總評：產品力 vs 競爭格局，明確結論類型
+
+【橫向對比流程】（多只股票時）
+先輸出「基礎行情總覽」表格：
+| 標的 | 代碼 | 現價 | 當日漲跌幅 | 總市值 | PE(TTM) | 產業鏈定位 | 篩選類型 |
+
+然後：
+1. 對每隻股票分類（賣水人/非賣水人），標註使用 7步還是 6步
+2. 每個智能體對所有股票橫向對比分析，給出排名
+3. 賣水人股票用 7 個智能體分析，非賣水人股票用 6 個智能體分析
+4. 最後綜合總評：產業鏈關係、整體風險、不同風格投資者選擇建議
+
+【通用專家問答流程】
+- 深入分析用戶問題，提供專業結構化答案
+
+注意：
+1. 每個智能體獨立輸出，用「智能體 X：」標題分隔
+2. 使用 bullet points、表格、emoji 標註
+3. 單股分析總字數 1500-2500 字；橫向對比總字數 2000-3000 字
+4. 最後加免責聲明：「⚠️ 全部內容僅為數據復盤研究，不構成任何投資建議」"""
+
+                val history = messages.toList().subList(0, loadingIndex)
+                sendWithRetry(provider, history, prompt, loadingIndex, 2)
             } catch (e: Exception) {
                 if (isAdded) requireActivity().runOnUiThread {
-                    failStreamingMessage(streamingIndex, "专家模式失败: ${e.message}")
+                    failStreamingMessage(loadingIndex, "專家模式失敗: ${e.message}")
                 }
             }
         }
@@ -764,6 +933,13 @@ $memory
     // ════════════════════════════════════════
 
     private fun completeStreamingMessage(index: Int, content: String) { if (index in messages.indices) { messages[index] = messages[index].copy(content = content, isStreaming = false, loadingStatus = null); adapter.notifyItemChanged(index) } }
+    private fun updateLoadingStatus(index: Int, status: String) {
+        if (index in messages.indices && isAdded) {
+            messages[index] = messages[index].copy(loadingStatus = status)
+            adapter.notifyItemChanged(index)
+        }
+    }
+
     private fun failStreamingMessage(index: Int, errMsg: String) { if (index in messages.indices) { messages[index] = Message(content = "❌ $errMsg", isUser = false, isError = true, errorMessage = errMsg); adapter.notifyItemChanged(index) } }
     private fun addMessage(message: Message) { binding.tvNewTopicHint.visibility = View.GONE; messages.add(message); adapter.notifyItemInserted(messages.size - 1); binding.recyclerView.scrollToPosition(messages.size - 1) }
     private fun addBotMessage(text: String) = addMessage(Message(content = text, isUser = false))
@@ -871,6 +1047,52 @@ $memory
         return result
     }
 
+    /**
+     * 從圖片提取文字（OCR）
+     * 簡化實現：返回圖片信息，由 AI 分析
+     */
+    private suspend fun extractTextFromImage(uri: Uri): String = withContext(Dispatchers.IO) {
+        try {
+            val bitmap = android.graphics.BitmapFactory.decodeStream(
+                requireContext().contentResolver.openInputStream(uri)
+            ) ?: return@withContext ""
+            "[圖片尺寸: ${bitmap.width}x${bitmap.height}]"
+        } catch (e: Exception) {
+            Log.e(TAG, "圖片處理失敗: ${e.message}")
+            ""
+        }
+    }
+
+    /**
+     * 從文件提取文字
+     * 支持 txt、pdf、docx 等格式
+     */
+    private suspend fun extractTextFromFile(uri: Uri, fileName: String): String = withContext(Dispatchers.IO) {
+        try {
+            val extension = fileName.substringAfterLast('.', "").lowercase()
+            when (extension) {
+                "txt" -> {
+                    requireContext().contentResolver.openInputStream(uri)?.use { stream ->
+                        stream.bufferedReader().use { it.readText() }
+                    } ?: ""
+                }
+                "pdf" -> {
+                    // 簡單的 PDF 文本提取（需要 PDFBox 或類似庫）
+                    // 目前返回文件信息
+                    "[PDF 文件: $fileName]"
+                }
+                "docx" -> {
+                    // 簡單的 DOCX 文本提取
+                    "[Word 文件: $fileName]"
+                }
+                else -> "[文件: $fileName]"
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "文件處理失敗: ${e.message}")
+            ""
+        }
+    }
+
     private fun startVoiceInput() {
         val dialog = AlertDialog.Builder(requireContext())
             .setTitle("🎤 語音輸入")
@@ -899,13 +1121,7 @@ $memory
     // ════════════════════════════════════════
 
     private fun onMessageComplete() {
-        lifecycleScope.launch {
-            try {
-                backgroundPredictor.predictAfterConversation(scope = this, messages = messages.toList(), convId = currentConvId,
-                    onFollowUpReady = { suggestions -> if (suggestions.isNotEmpty() && isAdded) requireActivity().runOnUiThread { showFollowUpChips(suggestions) } })
-                checkAndPromptNewsFactor()
-            } catch (e: Exception) { Log.e(TAG, "onMessageComplete 异常: ${e.message}") }
-        }
+        // 不再使用固定追問模板，讓 AI 自然對話
     }
 
     /** 检测用户输入中的 AI 提供者关键词 — 仅记录，不绕过池创建 Provider */
@@ -957,42 +1173,6 @@ $memory
                 if (cmd != null) {
                     Log.i(TAG, "📢 收到跨Tab指令: ${cmd.action}")
                     when (cmd.action) {
-                        "ANALYZE_SINGLE_STOCK" -> {
-                            // 在对话框内跑完整分析流程
-                            withContext(Dispatchers.Main) {
-                                addBotMessage("🔍 开始分析 ${cmd.stockName.ifBlank { cmd.stockCode.takeLast(6) }}...")
-                            }
-                            val baseIdx = messages.size  // 所有进度消息从这个位置开始
-                            withContext(Dispatchers.Main) {
-                                addBotMessage("⏳ 正在分析...")
-                            }
-                            try {
-                                val analyzer = com.chin.stockanalysis.ai.StockAnalyzerService(requireContext())
-                                val result = analyzer.analyze(
-                                    stockCode = cmd.stockCode,
-                                    stockNameHint = cmd.stockName,
-                                    onProgress = { msg ->
-                                        withContext(Dispatchers.Main) {
-                                            // 为每个进度步骤添加独立的消息
-                                            if (messages.isNotEmpty() && messages.last().isUser) return@withContext
-                                            addBotMessage(msg.content)
-                                        }
-                                    }
-                                )
-                                // 最终结果
-                                withContext(Dispatchers.Main) {
-                                    addBotMessage(result.finalRecommendation)
-                                    // 如果策略有命中，询问用户是否买入
-                                    if (result.strategyHits.isNotEmpty()) {
-                                        showBuyConfirmationDialog(result)
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                withContext(Dispatchers.Main) {
-                                    addErrorMessage("分析失败: ${e.message?.take(50)}")
-                                }
-                            }
-                        }
                         "CREATE_STRATEGY" -> {
                             withContext(Dispatchers.Main) {
                                 addBotMessage("🤖 AI 正在生成策略配置...")

@@ -8,19 +8,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * ## 熱門板塊動態選股池
+ * ## 熱門板塊動態選股池 v2.0 — AI 驅動
  *
- * 第1步 (原第0步)：
- * App啟動時抓取近一年熱門板塊 → 展開到子版塊 →
+ * App啟動時通過 AI 獲取當前熱門板塊 → 展開到子版塊 →
  * 每個子版塊取前10隻股票（5主板 + 5科創/創業），合併去重。
  *
- * 覆蓋板塊包括：
- * 光通信(光模塊/光芯片/光纖/光器件)、化肥、有機硅、化工、電網設備、
- * 固態電池、風電設備、算力(國產替代)、華為產業鏈、超算、銅箔、PCB、
- * 燃氣輪機、儲能、液冷、谷歌/馬斯克/英偉達供應鏈、電子布、稀土、
- * 半導體(設計/封測/設備/材料)、綠電、傳統電力、光刻膠、高壓變壓器、
- * AI服務器、光伏玻璃、戶用儲能、大儲能、算點協同、量子科技、CPO、
- * 有色金屬...等
+ * 覆蓋板塊由 AI 動態決定（不再硬編碼）
  */
 object HotSectorStockPool {
 
@@ -33,26 +26,38 @@ object HotSectorStockPool {
 
     /**
      * 構建熱門板塊選股池
+     * @param context 上下文
+     * @param aiSectorNames AI 提供的熱門板塊名稱集合（可選，為空則 fallback 到東方財富）
      * @return 代碼集合（用於與其他池合併）
      */
-    suspend fun build(context: Context): Set<String> = withContext(Dispatchers.IO) {
+    suspend fun build(
+        context: Context,
+        aiSectorNames: Set<String> = emptySet()
+    ): Set<String> = withContext(Dispatchers.IO) {
         val db = StockDatabase.getInstance(context)
         val pool = mutableSetOf<String>()
 
         try {
-            // 1. 從東方財富獲取概念板塊 + 行業板塊
-            val allSectors = (EastMoneyHotSectorSource.conceptSectors +
-                    EastMoneyHotSectorSource.industrySectors)
-                .distinctBy { it.name }
-            Log.i(TAG, "獲取到 ${allSectors.size} 個板塊")
+            // 1. 獲取板塊名稱（優先使用 AI 提供的，否則 fallback 到東方財富）
+            val sectorNames: List<String> = if (aiSectorNames.isNotEmpty()) {
+                Log.i(TAG, "🤖 使用 AI 提供的 ${aiSectorNames.size} 個熱門板塊")
+                aiSectorNames.toList()
+            } else {
+                Log.i(TAG, "⚠️ AI 未提供板塊，fallback 到東方財富")
+                val allSectors = (EastMoneyHotSectorSource.conceptSectors +
+                        EastMoneyHotSectorSource.industrySectors)
+                    .distinctBy { it.name }
+                Log.i(TAG, "獲取到 ${allSectors.size} 個板塊（東方財富）")
+                allSectors.map { it.name }
+            }
 
             // 2. 展開每個板塊的子版塊
             val allSubSectors = mutableSetOf<String>()
-            for (sector in allSectors) {
-                allSubSectors.add(sector.name)
+            for (sectorName in sectorNames) {
+                allSubSectors.add(sectorName)
                 try {
                     val subs = com.chin.stockanalysis.stock.data.sources.SectorSubDivision
-                        .getSubSectors(sector.name)
+                        .getSubSectors(sectorName)
                     subs.forEach { allSubSectors.add(it.name) }
                 } catch (_: Exception) { /* 無子版塊則只用父板塊 */ }
             }
