@@ -5,6 +5,78 @@
 
 ---
 
+## 🆕 v14.0 AI 驅動熱門板塊查詢（2026-06-24）
+
+### 核心變更
+**熱門板塊判斷方式徹底改為 AI 驅動**，不再依賴 ETF 漲跌或東方財富 compositeScore。
+
+### 之前 vs 現在
+| | 之前 | 現在 |
+|--|------|------|
+| 年度熱門板塊 | ETF 漲跌計算 | **AI 直接查詢** |
+| 月度熱門板塊 | 東方財富 compositeScore | **AI 直接查詢** |
+| 周度熱門板塊 | 無（僅靠運氣） | **AI 直接查詢** |
+| 昨日熱門板塊 | ETF 數據 | **AI 直接查詢** |
+
+### 新增 `AIHotSectorProvider`
+```kotlin
+object AIHotSectorProvider {
+    // 取得熱門板塊（優先緩存，3 小時過期）
+    suspend fun getHotSectors(context: Context): HotSectorResult
+
+    // 強制刷新
+    suspend fun forceRefresh(context: Context): HotSectorResult
+
+    // 檢查緩存是否過期
+    fun isCacheExpired(context: Context): Boolean
+}
+
+data class HotSectorResult(
+    val annualSectors: List<String>,    // 年度熱門板塊 ~15個
+    val monthlySectors: List<String>,   // 月度熱門板塊 ~15個
+    val weeklySectors: List<String>,    // 周度熱門板塊 ~15個
+    val yesterdaySectors: List<String>  // 昨日熱門板塊 ~15個
+) {
+    val allSectors: List<String>  // 合併去重 ~40-60個
+}
+```
+
+### AI 查詢流程
+```
+1. 構造 Prompt（中文，要求嚴格 JSON 輸出）
+2. 調用 DeepSeek/豆包 API（優先當前選中的 Provider）
+3. 解析 JSON（含 Markdown 代碼塊處理 + 正則 fallback）
+4. 寫入 SharedPreferences 緩存（3 小時）
+5. AI 失敗時自動 fallback 到預設 40 個科技熱門板塊
+```
+
+### `CandidatePool` v2.0 更新
+| | v1.0 | v2.0 |
+|--|------|------|
+| 熱門板塊來源 | ETF + 東方財富 | **AIHotSectorProvider** |
+| 龍頭股獲取 | ETF/東方財富 API | 東方財富 sectorLeaders + DB sectorStockDao |
+| 備選池大小 | ~100-200 | ~100-200（不變） |
+| 緩存策略 | 跨天 | 跨天 + AI 3小時緩存 |
+
+### `HotSectorStockPool` v2.0
+- `build()` 新增 `aiSectorNames: Set<String>` 參數
+- 優先使用 AI 提供的板塊名稱
+- AI 未提供時 fallback 到東方財富（無感切換）
+
+### `SimulationTradeEngine` 更新
+- `getHotSectorStockPool()` 先調用 `AIHotSectorProvider.getHotSectors()` 獲取板塊名稱
+- 再傳給 `HotSectorStockPool.build(context, aiSectorNames)`
+
+### 新增/修改檔案
+| 檔案 | 類型 | 說明 |
+|------|------|------|
+| `strategy/data/AIHotSectorProvider.kt` | **新建** | AI 熱門板塊查詢核心（~290行） |
+| `strategy/data/CandidatePool.kt` | **重寫** | v2.0 AI 驅動備選池 |
+| `strategy/trade/HotSectorStockPool.kt` | **修改** | 支援 AI 板塊名稱參數 |
+| `strategy/trade/SimulationTradeEngine.kt` | **修改** | 銜接 AI 板塊查詢 |
+
+---
+
 ## 一、備選池 (CandidatePool) — 全新公共類
 
 ### 1.1 設計目標
