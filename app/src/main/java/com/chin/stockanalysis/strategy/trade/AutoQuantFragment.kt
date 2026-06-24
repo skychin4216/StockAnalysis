@@ -741,10 +741,5 @@ class AutoQuantFragment : QuantFragmentBase() {
     }
 
     // 清除功能已由基類 QuantFragmentBase 提供（clearData / clearDataByDate）
-    // 短線量化使用基類的清除功能
-
-    override fun showDialog(title: String, content: String) {
-        val sv = ScrollView(requireContext()); sv.addView(TextView(requireContext()).apply { text=content; textSize=10f; setTextColor(Color.parseColor("#333333")); setPadding(16,12,16,12); setLineSpacing(2f,1.1f); setTypeface(Typeface.MONOSPACE) })
-        androidx.appcompat.app.AlertDialog.Builder(requireContext()).setTitle(title).setView(sv).setPositiveButton("关闭",null).create().apply { show(); window?.setLayout(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT) }
-    }
+    // showDialog 已由基類 QuantFragmentBase 提供，無需重寫
 }
