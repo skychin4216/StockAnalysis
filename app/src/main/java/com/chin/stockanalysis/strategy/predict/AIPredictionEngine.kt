@@ -2,13 +2,14 @@ package com.chin.stockanalysis.strategy.predict
 
 import android.content.Context
 import android.util.Log
-import com.chin.stockanalysis.ApiConfigManager
 import com.chin.stockanalysis.ApiProvider
+import com.chin.stockanalysis.ai.AiProviderPool
 import com.chin.stockanalysis.news.NewsFactorManager
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.models.ScreeningResult
 import com.chin.stockanalysis.strategy.models.StrategySignal
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -83,45 +84,36 @@ class AIPredictionEngine(private val context: Context) {
     suspend fun predict(
         strategyResults: List<ScreeningResult>,
         selectedDate: String,
-        onProgress: ((String) -> Unit)? = null
+        onProgress: ((String) -> Unit)? = null,
+        useEnhancedAi: Boolean = false   // true=导入模式(增强型多API), false=策略模式(单一API)
     ): AIPrediction? {
-        // 自动回退：当前 provider 无有效 key 时回退到豆包（assets 内置 key）
-        val configManager = ApiConfigManager.getInstance(context)
-        var provider: ApiProvider? = null
-        val currentConfig = configManager.getCurrentProviderConfig()
-        val currentKey = currentConfig?.apiKey?.trim() ?: ""
-        if (currentKey.isNotBlank()) {
-            provider = configManager.createCurrentProvider()
+        val slot = if (useEnhancedAi) {
+            AiProviderPool.acquire(context)
         } else {
-            Log.w(TAG, "当前后端(${currentConfig?.name ?: "无"})无有效API Key，尝试回退到豆包")
+            com.chin.stockanalysis.ai.SimpleAiProvider.acquire(context)
         }
 
-        if (provider == null) {
-            val fallback = configManager.getProviderConfig("doubao")
-            if (fallback != null && fallback.apiKey.isNotBlank()) {
-                provider = com.chin.stockanalysis.OpenAiCompatibleProvider(fallback)
-                Log.i(TAG, "✅ 已回退到豆包后端")
-            } else {
-                Log.e(TAG, "无可用AI后端（豆包Key也缺失），请检查 assets/api_keys_local.properties")
-                return null
-            }
+        if (slot == null) {
+            Log.e(TAG, "❌ 无可用 AI Provider")
+            return null
         }
 
-        return try {
+        var currentSlot = slot
+        var response: String? = null
+        var attempts = 0
+        val maxAttempts = if (useEnhancedAi) 3 else 2
+
+        try {
             onProgress?.invoke("正在收集历史数据...")
-            // 1. 收集候选股票（所有策略命中股票的去重集合）
             val candidateStocks = collectCandidateStocks(strategyResults)
 
             onProgress?.invoke("正在获取多日特征...")
-            // 2. 获取近5日历史数据特征（方案A）
             val multiDayFeatures = buildMultiDayFeatures(candidateStocks, selectedDate)
 
             onProgress?.invoke("正在获取新闻因子...")
-            // 3. 获取活跃新闻因子（方案B）
             val newsFactors = newsManager.getActiveFactors(50)
 
             onProgress?.invoke("正在构建AI提示...")
-            // 4. 构建综合 Prompt
             val prompt = buildPredictionPrompt(
                 strategyResults = strategyResults,
                 candidateStocks = candidateStocks,
@@ -130,18 +122,53 @@ class AIPredictionEngine(private val context: Context) {
                 selectedDate = selectedDate
             )
 
-            onProgress?.invoke("AI 正在分析预测...")
-            // 5. 调用 AI
-            val response = withContext(Dispatchers.IO) {
-                sendSyncRequest(provider, prompt)
+            // 重试：策略模式用 SimpleAiProvider.switchToNext，增强模式用 AiProviderPool 轮换
+            while (attempts < maxAttempts && response == null) {
+                try {
+                    onProgress?.invoke("AI 正在分析预测(${currentSlot!!.configName})...")
+                    response = sendSyncRequest(currentSlot!!.provider, prompt)
+                } catch (e: java.io.IOException) {
+                    attempts++
+                    Log.w(TAG, "AI 请求失败[${currentSlot!!.configName}]（第${attempts}次）: ${e.message}")
+                    if (attempts < maxAttempts) {
+                        val next = if (useEnhancedAi) {
+                            AiProviderPool.invalidateHealthCache()
+                            AiProviderPool.releaseNonBlocking(currentSlot)
+                            AiProviderPool.acquire(context)
+                        } else {
+                            com.chin.stockanalysis.ai.SimpleAiProvider.release()
+                            com.chin.stockanalysis.ai.SimpleAiProvider.switchToNext(context)
+                        }
+                        if (next != null) {
+                            currentSlot = next
+                            Log.i(TAG, "🔄 切换到: ${next.configName}")
+                        } else {
+                            Log.e(TAG, "❌ 无可用 Provider，放弃重试")
+                            break
+                        }
+                    }
+                } catch (e: Exception) {
+                            Log.e(TAG, "AI 预测失败[${currentSlot!!.configName}]: ${e.message}", e)
+                    break
+                }
             }
 
-            // 6. 解析结果
-            parsePrediction(response)
+            if (response == null) {
+                Log.e(TAG, "❌ 所有 Provider 重试失败")
+                return null
+            }
+
+            return parsePrediction(response)
 
         } catch (e: Exception) {
             Log.e(TAG, "AI 预测失败: ${e.message}", e)
-            null
+            return null
+        } finally {
+            if (useEnhancedAi) {
+                AiProviderPool.releaseNonBlocking(currentSlot)
+            } else {
+                com.chin.stockanalysis.ai.SimpleAiProvider.release()
+            }
         }
     }
 
@@ -370,15 +397,30 @@ class AIPredictionEngine(private val context: Context) {
         }
     }
 
+    /** 發送同步請求（30s 超時，最多 2 次重試） */
     private suspend fun sendSyncRequest(provider: ApiProvider, prompt: String): String {
-        return kotlinx.coroutines.suspendCancellableCoroutine { cont ->
-            provider.sendMessageStream(
-                messages = emptyList(),
-                systemPrompt = prompt,
-                onSuccess = {},
-                onComplete = { full -> cont.resumeWith(Result.success(full)) },
-                onError = { err -> cont.resumeWith(Result.failure(Exception(err))) }
-            )
+        var lastErr: Exception? = null
+        repeat(2) { attempt ->
+            try {
+                return withTimeoutOrNull(30_000L) {
+                    kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+                        provider.sendMessageStream(
+                            messages = emptyList(),
+                            systemPrompt = prompt,
+                            onSuccess = {},
+                            onComplete = { full -> cont.resumeWith(Result.success(full)) },
+                            onError = { err -> cont.resumeWith(Result.failure(Exception(err))) }
+                        )
+                    }
+                } ?: throw java.io.IOException("AI 请求超时（30秒）")
+            } catch (e: Exception) {
+                lastErr = e
+                Log.w(TAG, "AI 请求失败（第${attempt+1}/2次）: ${e.message}")
+                if (attempt < 1) {
+                    kotlinx.coroutines.delay(2000L)  // 2秒后再试
+                }
+            }
         }
+        throw lastErr ?: Exception("AI 请求失败，已重试2次")
     }
 }

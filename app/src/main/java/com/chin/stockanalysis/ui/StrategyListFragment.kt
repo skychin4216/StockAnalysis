@@ -169,11 +169,12 @@ class StrategyListFragment : Fragment() {
         layout.addView(header)
 
         val row2 = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(8,4,8,4); setBackgroundColor(Color.WHITE) }
-        scanBtn = Button(requireContext()).apply { text = "执行策略"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#E65100")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.3f).apply { marginEnd = 3 }; setOnClickListener { runSelectedStrategies() } }; row2.addView(scanBtn)
-        tuneBtn = Button(requireContext()).apply { text = "拟合(90%)"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#EF6C00")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.3f).apply { marginEnd = 3 }; setOnClickListener { runSelfTune() } }; row2.addView(tuneBtn)
-        val importBtn = Button(requireContext()).apply { text = "导入"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#2E7D32")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.2f).apply { marginEnd = 3 }; setOnClickListener { importHistoricalData() } }; row2.addView(importBtn)
-        val exportBtn = Button(requireContext()).apply { text = "导出"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#006064")); setPadding(4,6,4,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.0f).apply { marginEnd = 3 }; setOnClickListener { exportSnapshotData() } }; row2.addView(exportBtn)
-        val addCustomBtn = Button(requireContext()).apply { text = "+策略"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#1565C0")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.0f).apply { marginEnd = 3 }; setOnClickListener { showAddDialog() } }; row2.addView(addCustomBtn)
+        scanBtn = Button(requireContext()).apply { text = "执行策略"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#E65100")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.2f).apply { marginEnd = 3 }; setOnClickListener { runSelectedStrategies() } }; row2.addView(scanBtn)
+        tuneBtn = Button(requireContext()).apply { text = "拟合(90%)"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#EF6C00")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.1f).apply { marginEnd = 3 }; setOnClickListener { runSelfTune() } }; row2.addView(tuneBtn)
+        val historyBtn = Button(requireContext()).apply { text = "报告"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#455A64")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,0.9f).apply { marginEnd = 3 }; setOnClickListener { showScanHistory() } }; row2.addView(historyBtn)
+        val importBtn = Button(requireContext()).apply { text = "导入"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#2E7D32")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.1f).apply { marginEnd = 3 }; setOnClickListener { importHistoricalData() } }; row2.addView(importBtn)
+        val exportBtn = Button(requireContext()).apply { text = "导出"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#006064")); setPadding(4,6,4,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,0.9f).apply { marginEnd = 3 }; setOnClickListener { exportSnapshotData() } }; row2.addView(exportBtn)
+        val addCustomBtn = Button(requireContext()).apply { text = "+策略"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#1565C0")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,0.9f).apply { marginEnd = 3 }; setOnClickListener { showAddDialog() } }; row2.addView(addCustomBtn)
         layout.addView(row2)
 
         val statusRow = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(16,2,16,4); setBackgroundColor(Color.WHITE) }
@@ -572,6 +573,43 @@ class StrategyListFragment : Fragment() {
     }
 
     private fun saveBacktestData(results: List<ScreeningResult>) { lifecycleScope.launch { try { val be = com.chin.stockanalysis.strategy.backtest.BacktestEngine(requireContext()); for (r in results) be.savePredictions(r.strategyId, r.strategyName, r) } catch (e: Exception) { Log.w("SLF", "保存预测失败: ${e.message}") } } }
+
+    private fun showScanHistory() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val entities = db.dailyPeriodResultDao().getRecent(100)
+                    .filter { it.strategyId == "STRATEGY_SCAN" }
+                    .sortedByDescending { it.tradeDate }
+                if (entities.isEmpty()) { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "暂无量化选股历史报告", Toast.LENGTH_SHORT).show() }; return@launch }
+                withContext(Dispatchers.Main) {
+                    val sb = StringBuilder()
+                    sb.appendLine("📊 量化选股历史报告 (共 ${entities.size} 条)"); sb.appendLine()
+                    for (entity in entities) {
+                        val codes = try { org.json.JSONArray(entity.stockCodesJson) } catch (_: Exception) { org.json.JSONArray() }
+                        sb.appendLine("━━━ ${entity.tradeDate} ━━━")
+                        sb.appendLine("  热门板块: ${entity.strategyName}")
+                        sb.appendLine("  共 ${codes.length()} 只股票命中信号")
+                        try {
+                            val top3 = org.json.JSONArray(entity.finalTop3Json)
+                            if (top3.length() > 0) {
+                                sb.appendLine("  精选Top:")
+                                for (i in 0 until minOf(top3.length(), 10)) {
+                                    val obj = top3.optJSONObject(i) ?: continue
+                                    sb.appendLine("    ${i+1}. ${obj.optString("name")}(${obj.optString("code").takeLast(6)}) 得分:${obj.optInt("score")}")
+                                }
+                            }
+                        } catch (_: Exception) {}
+                        sb.appendLine()
+                    }
+                    AlertDialog.Builder(requireContext())
+                        .setTitle("量化选股报告")
+                        .setMessage(sb.toString())
+                        .setPositiveButton("关闭", null).show()
+                }
+            } catch (e: Exception) { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "加载失败: ${e.message}", Toast.LENGTH_SHORT).show() } }
+        }
+    }
     override fun onResume() { super.onResume(); loadHotSectors(); pendingResults?.let { showResults(it); pendingResults = null } }
     override fun onDestroyView() { super.onDestroyView(); engine?.cancelScan() }
 }

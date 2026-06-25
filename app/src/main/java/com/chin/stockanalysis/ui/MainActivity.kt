@@ -54,10 +54,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun initGlobalServices() {
         ApiConfigManager.getInstance(applicationContext)
-        // App 启动即拉取热门板块数据（统一池 + 后台调度）
-        startPoolScheduler(lifecycleScope)
-        // 初始化共享股票数据中心（板块/股票/策略公用）
-        StockDataCenter.init(applicationContext, lifecycleScope)
+        // 🚀 統一後台調度器
+        com.chin.stockanalysis.stock.database.AppBackgroundRunner.start(applicationContext, lifecycleScope)
         migrateLegacyConversations()
         // 后台拉取热点板块新闻
         lifecycleScope.launch(Dispatchers.IO) {

@@ -31,7 +31,7 @@ import java.time.format.DateTimeFormatter
  * ## 量化交易 Fragment 基類
  *
  * 為中線量化（MidTermQuant）和短線量化（ShortTermQuant）提供共用功能：
- * - UI 組件（狀態、進度條、持倉容器、按鈕等）
+ * - 統一按鈕行：建倉 → 持倉 → 回溯 → 擬合 → 賣出 → 數據
  * - 賣出評估與執行（使用 AutoSellEngine）
  * - 數據管理與清除
  * - 持倉刷新與顯示
@@ -53,6 +53,9 @@ abstract class QuantFragmentBase : Fragment() {
 
     /** 持倉容器 */
     protected lateinit var positionContainer: LinearLayout
+
+    /** 建倉按鈕 */
+    protected lateinit var buildBtn: Button
 
     /** 清除按鈕 */
     protected lateinit var clearBtn: Button
@@ -115,25 +118,27 @@ abstract class QuantFragmentBase : Fragment() {
     /** 返回量化類型："ShortTermQuant" 或 "MidTermQuant" */
     abstract fun getQuantType(): String
 
+    /** 建倉按鈕點擊 — 各子類實現自己的選股邏輯 */
+    abstract fun onBuildClick()
+
     /** 擬合按鈕點擊 */
     abstract fun onFittingClick()
 
-    /** 回調按鈕點擊 */
+    /** 回溯按鈕點擊 */
     abstract fun onBacktrackClick()
 
     /** 清除按鈕點擊 */
     abstract fun onClearClick()
 
-    /** 加載持倉（子類可覆寫以自定義持倉顯示） */
-    abstract fun loadPositions()
+    /** 加載持倉（默認調用 refreshPositions，子類可覆寫） */
+    open fun loadPositions() = refreshPositions()
 
     // ═══════════════════════════════════════════════════
     // UI 輔助方法
     // ═══════════════════════════════════════════════════
 
     /**
-     * 創建按鈕行
-     * 包含：擬合、回調、數據、賣出、清除
+     * 統一按鈕行：建倉 | 持倉 | 回溯 | 擬合 | 賣出 | 數據
      */
     protected fun createButtonRow(): LinearLayout {
         val row = LinearLayout(requireContext()).apply {
@@ -142,75 +147,83 @@ abstract class QuantFragmentBase : Fragment() {
             setPadding(4, 1, 4, 1)
         }
 
-        // 擬合按鈕
-        val fitBtn = Button(requireContext()).apply {
-            text = "🔧 擬合(90%)"
+        // ── 1. 建倉 ──
+        buildBtn = Button(requireContext()).apply {
+            text = "▶ 建倉"
             textSize = 10f
             setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#EF6C00"))
+            setBackgroundColor(Color.parseColor("#E65100"))
             setPadding(4, 1, 4, 1)
-            setMinWidth(0)
-            setMinimumWidth(0)
-            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.9f).apply { marginEnd = 1 }
-            setOnClickListener { onFittingClick() }
+            setMinWidth(0); setMinimumWidth(0)
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 1.0f).apply { marginEnd = 1 }
+            setOnClickListener { onBuildClick() }
         }
-        row.addView(fitBtn)
+        row.addView(buildBtn)
 
-        // 回調按鈕
+        // ── 2. 持倉 ──
+        val posBtn = Button(requireContext()).apply {
+            text = "📊 持倉"
+            textSize = 10f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#1565C0"))
+            setPadding(4, 1, 4, 1)
+            setMinWidth(0); setMinimumWidth(0)
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.9f).apply { marginEnd = 1 }
+            setOnClickListener { refreshPositions() }
+        }
+        row.addView(posBtn)
+
+        // ── 3. 回溯 ──
         val backtrackBtn = Button(requireContext()).apply {
-            text = "📈 回調"
+            text = "📈 回溯"
             textSize = 10f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#7B1FA2"))
             setPadding(4, 1, 4, 1)
-            setMinWidth(0)
-            setMinimumWidth(0)
+            setMinWidth(0); setMinimumWidth(0)
             layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.9f).apply { marginEnd = 1 }
             setOnClickListener { onBacktrackClick() }
         }
         row.addView(backtrackBtn)
 
-        // 數據按鈕
-        val dataBtn = Button(requireContext()).apply {
-            text = "🗄️ 數據"
+        // ── 4. 擬合 ──
+        val fitBtn = Button(requireContext()).apply {
+            text = "🔧 擬合"
             textSize = 10f
             setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#455A64"))
+            setBackgroundColor(Color.parseColor("#EF6C00"))
             setPadding(4, 1, 4, 1)
-            setMinWidth(0)
-            setMinimumWidth(0)
+            setMinWidth(0); setMinimumWidth(0)
             layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.9f).apply { marginEnd = 1 }
-            setOnClickListener { showDataMenu() }
+            setOnClickListener { onFittingClick() }
         }
-        row.addView(dataBtn)
+        row.addView(fitBtn)
 
-        // 賣出按鈕（帶下拉菜單）
+        // ── 5. 賣出（帶下拉菜單） ──
         val sellBtn = Button(requireContext()).apply {
             text = "💰 賣出 ▾"
             textSize = 10f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#00897B"))
             setPadding(4, 1, 4, 1)
-            setMinWidth(0)
-            setMinimumWidth(0)
+            setMinWidth(0); setMinimumWidth(0)
             layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 1f).apply { marginEnd = 1 }
             setOnClickListener { showSellMenu(it) }
         }
         row.addView(sellBtn)
 
-        // 清除按鈕
-        clearBtn = Button(requireContext()).apply {
-            text = "🗑️ 清除"
-            textSize = 9f
+        // ── 6. 數據 ──
+        val dataBtn = Button(requireContext()).apply {
+            text = "🗄️ 數據"
+            textSize = 10f
             setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#C62828"))
+            setBackgroundColor(Color.parseColor("#455A64"))
             setPadding(4, 1, 4, 1)
-            setMinWidth(0)
-            setMinimumWidth(0)
-            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.8f)
-            setOnClickListener { onClearClick() }
+            setMinWidth(0); setMinimumWidth(0)
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.9f)
+            setOnClickListener { showDataMenu() }
         }
-        row.addView(clearBtn)
+        row.addView(dataBtn)
 
         return row
     }
@@ -273,9 +286,7 @@ abstract class QuantFragmentBase : Fragment() {
     // 賣出功能
     // ═══════════════════════════════════════════════════
 
-    /**
-     * 顯示賣出下拉菜單
-     */
+    /** 顯示賣出下拉菜單 */
     protected fun showSellMenu(anchor: View) {
         val popup = PopupMenu(requireContext(), anchor, Gravity.END)
         popup.menu.add(0, 1, 0, "💰 賣出評估")
@@ -292,9 +303,7 @@ abstract class QuantFragmentBase : Fragment() {
         popup.show()
     }
 
-    /**
-     * 執行賣出評估（僅評估，不執行）
-     */
+    /** 執行賣出評估（僅評估，不執行） */
     protected fun runAutoSellEvaluation() {
         val eng = engine ?: return
         progressBar.visibility = View.VISIBLE
@@ -304,15 +313,9 @@ abstract class QuantFragmentBase : Fragment() {
             try {
                 val strategies = eng.getStrategies().filter { eng.isEnabled(it.id) }
                 val te = tradeEngine ?: return@launch
-
-                // 過濾當前量化類型的訂單進行評估
-                val decisions = te.runAutoSellEvaluate(
-                    strategies,
-                    browsingDate.format(DATE_FMT)
-                ).filter { it.order.orderType == getQuantType() }
-
+                val decisions = te.runAutoSellEvaluate(strategies, browsingDate.format(DATE_FMT))
+                    .filter { it.order.orderType == getQuantType() }
                 sellDecisionsCache = decisions
-
                 withContext(Dispatchers.Main) {
                     progressBar.visibility = View.GONE
                     val shouldSell = decisions.count { it.shouldSell }
@@ -329,27 +332,18 @@ abstract class QuantFragmentBase : Fragment() {
         }
     }
 
-    /**
-     * 執行賣出（使用緩存的決策）
-     */
+    /** 執行賣出（使用緩存的決策） */
     protected fun executeAutoSell() {
         if (sellDecisionsCache.isEmpty()) {
-            // 沒有緩存，先評估
             runAutoSellEvaluation()
-            Toast.makeText(
-                requireContext(),
-                "請等待評估完成後再次點擊「執行賣出」",
-                Toast.LENGTH_SHORT
-            ).show()
+            Toast.makeText(requireContext(), "請等待評估完成後再次點擊「執行賣出」", Toast.LENGTH_SHORT).show()
             return
         }
-
         val shouldSell = sellDecisionsCache.filter { it.shouldSell }
         if (shouldSell.isEmpty()) {
             Toast.makeText(requireContext(), "當前沒有需要賣出的持倉", Toast.LENGTH_SHORT).show()
             return
         }
-
         progressBar.visibility = View.VISIBLE
         statusTv.text = "正在執行賣出..."
 
@@ -365,11 +359,7 @@ abstract class QuantFragmentBase : Fragment() {
                     statusTv.text = "✅ 已執行 ${shouldSell.size} 筆賣出"
                     refreshPositions()
                     sellDecisionsCache = emptyList()
-                    Toast.makeText(
-                        requireContext(),
-                        "已賣出 ${shouldSell.size} 筆訂單",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    Toast.makeText(requireContext(), "已賣出 ${shouldSell.size} 筆訂單", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -380,9 +370,7 @@ abstract class QuantFragmentBase : Fragment() {
         }
     }
 
-    /**
-     * 顯示賣出決策對話框
-     */
+    /** 顯示賣出決策對話框 */
     protected fun showSellDecisionsDialog(decisions: List<AutoSellEngine.SellDecision>) {
         val sb = StringBuilder()
         sb.appendLine("💰 智能賣出評估報告")
@@ -405,9 +393,8 @@ abstract class QuantFragmentBase : Fragment() {
                 sb.appendLine("  $emoji ${d.order.stockName}(${d.order.stockCode.takeLast(6)})")
                 sb.appendLine("    觸發: ${d.strategy} | 盈虧: ${"%.2f".format(d.profitPct)}% | 賣出比例: ${(d.sellRatio * 100).toInt()}%")
                 sb.appendLine("    原因: ${d.reason.take(80)}")
-                if (d.technicalDetails.isNotEmpty()) {
+                if (d.technicalDetails.isNotEmpty())
                     d.technicalDetails.forEach { (k, v) -> sb.appendLine("    $k=$v") }
-                }
                 sb.appendLine()
             }
         }
@@ -427,9 +414,7 @@ abstract class QuantFragmentBase : Fragment() {
         showDialog("賣出評估報告", sb.toString())
     }
 
-    /**
-     * 查看賣出策略歷史績效
-     */
+    /** 查看賣出策略歷史績效 */
     protected fun showSellPerformance() {
         progressBar.visibility = View.VISIBLE
         statusTv.text = "正在統計賣出績效..."
@@ -438,40 +423,28 @@ abstract class QuantFragmentBase : Fragment() {
             try {
                 val te = tradeEngine ?: return@launch
                 val stats = te.getSellPerformance(90)
-
                 withContext(Dispatchers.Main) {
                     progressBar.visibility = View.GONE
                     statusTv.text = "✅ 賣出績效已加載"
-
                     if (stats.isEmpty()) {
                         showDialog("賣出績效", "暫無賣出記錄，無法統計績效")
                         return@withContext
                     }
-
                     val sb = StringBuilder()
                     sb.appendLine("📊 賣出策略績效統計 (最近90天)")
                     sb.appendLine()
                     sb.appendLine("策略            賣出數  均收益   勝率    最大贏   最大虧   均持倉")
                     sb.appendLine("──────────────────────────────────────────────────────")
-
                     for (s in stats) {
                         val name = when (s.strategyName) {
-                            "HardStop" -> "硬止損"
-                            "MaxDrawdown" -> "最大回撤"
-                            "TimeForceClose" -> "時間強平"
-                            "TimeNoProgress" -> "時間無進展"
-                            "TieredTP" -> "階梯止盈"
-                            "ChandelierExit" -> "吊燈止損"
-                            "TrailProfit" -> "移動止盈"
-                            "MADeathCross" -> "MA死叉"
-                            "VolumeClimax" -> "放量滯漲"
-                            "RSIOverbought" -> "RSI超買"
-                            "SectorWeakness" -> "板塊弱勢"
-                            "TakeProfit" -> "目標止盈"
-                            "ATRStop" -> "ATR止損"
-                            "MomentumDecay" -> "動量衰竭"
-                            "Other" -> "其他"
-                            else -> s.strategyName.take(6)
+                            "HardStop" -> "硬止損"; "MaxDrawdown" -> "最大回撤"
+                            "TimeForceClose" -> "時間強平"; "TimeNoProgress" -> "時間無進展"
+                            "TieredTP" -> "階梯止盈"; "ChandelierExit" -> "吊燈止損"
+                            "TrailProfit" -> "移動止盈"; "MADeathCross" -> "MA死叉"
+                            "VolumeClimax" -> "放量滯漲"; "RSIOverbought" -> "RSI超買"
+                            "SectorWeakness" -> "板塊弱勢"; "TakeProfit" -> "目標止盈"
+                            "ATRStop" -> "ATR止損"; "MomentumDecay" -> "動量衰竭"
+                            "Other" -> "其他"; else -> s.strategyName.take(6)
                         }
                         sb.appendLine(
                             "${name.padEnd(10)} ${s.totalSells.toString().padEnd(6)} " +
@@ -499,9 +472,7 @@ abstract class QuantFragmentBase : Fragment() {
     // 數據管理
     // ═══════════════════════════════════════════════════
 
-    /**
-     * 顯示數據菜單
-     */
+    /** 顯示數據菜單 */
     protected open fun showDataMenu() {
         val options = arrayOf(
             "📋 查看交易記錄",
@@ -522,33 +493,22 @@ abstract class QuantFragmentBase : Fragment() {
             .show()
     }
 
-    /**
-     * 清除數據
-     */
+    /** 清除數據 */
     protected fun clearData() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val db = StockDatabase.getInstance(requireContext())
                 val quantType = getQuantType()
-
-                // 獲取該類型的所有訂單
                 val orders = db.strategyTradeOrderDao().getRecent(500)
                     .filter { it.orderType == quantType }
-
-                // 刪除該類型的訂單（按日期分組刪除）
                 val dates = orders.map { it.tradeDate }.distinct()
                 for (date in dates) {
                     db.strategyTradeOrderDao().deleteByDate(date)
                 }
-
                 withContext(Dispatchers.Main) {
                     refreshPositions()
                     statusTv.text = "✅ 已清除 ${orders.size} 條 $quantType 數據"
-                    Toast.makeText(
-                        requireContext(),
-                        "已清除 ${orders.size} 條記錄",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    Toast.makeText(requireContext(), "已清除 ${orders.size} 條記錄", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -558,26 +518,15 @@ abstract class QuantFragmentBase : Fragment() {
         }
     }
 
-    /**
-     * 按日期清除數據
-     */
+    /** 按日期清除數據 */
     protected fun clearDataByDate(date: String) {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val db = StockDatabase.getInstance(requireContext())
-                val quantType = getQuantType()
-
-                // 刪除該日期和類型的訂單
-                db.strategyTradeOrderDao().deleteByDate(date)
-
+                StockDatabase.getInstance(requireContext()).strategyTradeOrderDao().deleteByDate(date)
                 withContext(Dispatchers.Main) {
                     refreshPositions()
-                    statusTv.text = "✅ 已清除 $date 的 $quantType 數據"
-                    Toast.makeText(
-                        requireContext(),
-                        "已清除 $date 的數據",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    statusTv.text = "✅ 已清除 $date 的 ${getQuantType()} 數據"
+                    Toast.makeText(requireContext(), "已清除 $date 的數據", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -588,18 +537,15 @@ abstract class QuantFragmentBase : Fragment() {
     }
 
     // ═══════════════════════════════════════════════════
-    // 持倉管理
+    // 持倉管理（共用）
     // ═══════════════════════════════════════════════════
 
-    /**
-     * 刷新持倉
-     */
+    /** 刷新持倉 */
     open fun refreshPositions() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val db = StockDatabase.getInstance(requireContext())
                 val quantType = getQuantType()
-
                 val orders = db.strategyTradeOrderDao().getRecent(100)
                     .filter {
                         it.orderType == quantType &&
@@ -607,10 +553,23 @@ abstract class QuantFragmentBase : Fragment() {
                     }
                     .sortedByDescending { it.tradeDate }
 
+                if (orders.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        positionContainer.removeAllViews()
+                        positionContainer.addView(TextView(requireContext()).apply {
+                            text = "📌 暫無持倉記錄"
+                            textSize = 11f
+                            setTextColor(Color.parseColor("#999999"))
+                            setPadding(0, 8, 0, 8)
+                        })
+                    }
+                    return@launch
+                }
+
+                val minTradeDate = orders.minByOrNull { it.tradeDate }?.tradeDate ?: browsingDate.format(DATE_FMT)
                 val dates = db.dailySnapshotDao().getAvailableDates(15)
-                    .filter { it >= orders.minOfOrNull { it.tradeDate } ?: it }
-                    .sorted()
-                    .takeLast(10)
+                    .filter { it >= minTradeDate && it <= browsingDate.format(DATE_FMT) }
+                    .sorted().takeLast(10)
 
                 val priceMap = mutableMapOf<String, MutableMap<String, Double>>()
                 for (date in dates) {
@@ -623,15 +582,11 @@ abstract class QuantFragmentBase : Fragment() {
                 withContext(Dispatchers.Main) {
                     renderPositions(orders, dates, priceMap)
                 }
-            } catch (e: Exception) {
-                // 忽略錯誤
-            }
+            } catch (_: Exception) {}
         }
     }
 
-    /**
-     * 渲染持倉列表（可被子類覆寫）
-     */
+    /** 渲染持倉列表（默認表格視圖，可被子類覆寫） */
     protected open fun renderPositions(
         orders: List<StrategyTradeOrderEntity>,
         dates: List<String>,
@@ -642,24 +597,19 @@ abstract class QuantFragmentBase : Fragment() {
         if (orders.isEmpty()) {
             positionContainer.addView(TextView(requireContext()).apply {
                 text = "📌 暫無持倉記錄"
-                textSize = 11f
-                setTextColor(Color.parseColor("#999999"))
-                setPadding(0, 4, 0, 4)
+                textSize = 11f; setTextColor(Color.parseColor("#999999")); setPadding(0, 8, 0, 8)
             })
             return
         }
 
         // 計算總盈虧
         val lastDate = dates.lastOrNull() ?: browsingDate.format(DATE_FMT)
-        var totalCost = 0.0
-        var totalValue = 0.0
-
+        var totalCost = 0.0; var totalValue = 0.0
         for (order in orders) {
             totalCost += order.buyPrice * order.quantity
             val lastPrice = priceMap[order.stockCode]?.get(lastDate) ?: order.buyPrice
             totalValue += lastPrice * order.quantity
         }
-
         val totalPnl = totalValue - totalCost
         val totalPnlPct = if (totalCost > 0) (totalPnl / totalCost * 100) else 0.0
         val pnlColor = if (totalPnl >= 0) "#D32F2F" else "#2E7D32"
@@ -667,53 +617,35 @@ abstract class QuantFragmentBase : Fragment() {
 
         // 標題行
         val titleRow = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 2, 0, 2)
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, 2, 0, 2)
         }
-
         titleRow.addView(TextView(requireContext()).apply {
             text = "📌 ${getQuantType()}持倉"
-            textSize = 12f
-            setTextColor(Color.parseColor("#1A1A2E"))
+            textSize = 12f; setTextColor(Color.parseColor("#1A1A2E"))
             setTypeface(null, Typeface.BOLD)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
-
         titleRow.addView(TextView(requireContext()).apply {
             text = "總持倉 ${orders.size} 只  |  "
-            textSize = 10f
-            setTextColor(Color.parseColor("#666666"))
-            gravity = Gravity.END
+            textSize = 10f; setTextColor(Color.parseColor("#666666")); gravity = Gravity.END
         })
-
         titleRow.addView(TextView(requireContext()).apply {
             text = "總盈虧 $pnlStr"
-            textSize = 10f
-            setTextColor(Color.parseColor(pnlColor))
-            gravity = Gravity.END
+            textSize = 10f; setTextColor(Color.parseColor(pnlColor)); gravity = Gravity.END
         })
-
         positionContainer.addView(titleRow)
 
         // 持倉列表
         val scroll = ScrollView(requireContext())
-        val listLayout = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-
+        val listLayout = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL }
         for (order in orders) {
-            val row = createPositionRow(order, dates, priceMap)
-            listLayout.addView(row)
+            listLayout.addView(createPositionRow(order, dates, priceMap))
         }
-
         scroll.addView(listLayout)
         positionContainer.addView(scroll)
     }
 
-    /**
-     * 創建持倉行（可被子類覆寫）
-     */
+    /** 創建持倉行 */
     protected open fun createPositionRow(
         order: StrategyTradeOrderEntity,
         dates: List<String>,
@@ -725,70 +657,48 @@ abstract class QuantFragmentBase : Fragment() {
             setBackgroundColor(Color.WHITE)
         }
 
-        // 股票名稱和代碼
         val nameLayout = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f)
         }
-
         nameLayout.addView(TextView(requireContext()).apply {
-            text = order.stockName
-            textSize = 13f
-            setTextColor(Color.parseColor("#1A1A2E"))
-            setTypeface(null, Typeface.BOLD)
+            text = order.stockName; textSize = 13f
+            setTextColor(Color.parseColor("#1A1A2E")); setTypeface(null, Typeface.BOLD)
         })
-
         nameLayout.addView(TextView(requireContext()).apply {
-            text = order.stockCode
-            textSize = 10f
-            setTextColor(Color.parseColor("#666666"))
+            text = order.stockCode; textSize = 10f; setTextColor(Color.parseColor("#666666"))
         })
-
         row.addView(nameLayout)
 
-        // 成本價
         row.addView(TextView(requireContext()).apply {
             text = "¥${"%.2f".format(order.buyPrice)}"
-            textSize = 12f
-            setTextColor(Color.parseColor("#333333"))
+            textSize = 12f; setTextColor(Color.parseColor("#333333"))
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             gravity = Gravity.CENTER
         })
 
-        // 當前價和盈虧
         val lastPrice = priceMap[order.stockCode]?.get(dates.lastOrNull())
         if (lastPrice != null) {
             val pnl = if (order.buyPrice > 0) (lastPrice - order.buyPrice) / order.buyPrice * 100 else 0.0
             val pnlColor = if (pnl >= 0) "#D32F2F" else "#2E7D32"
-
             val priceLayout = LinearLayout(requireContext()).apply {
                 orientation = LinearLayout.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.5f)
                 gravity = Gravity.CENTER
             }
-
             priceLayout.addView(TextView(requireContext()).apply {
-                text = "¥${"%.2f".format(lastPrice)}"
-                textSize = 12f
-                setTextColor(Color.parseColor("#333333"))
-                gravity = Gravity.CENTER
+                text = "¥${"%.2f".format(lastPrice)}"; textSize = 12f
+                setTextColor(Color.parseColor("#333333")); gravity = Gravity.CENTER
             })
-
             priceLayout.addView(TextView(requireContext()).apply {
-                text = "${if (pnl >= 0) "+" else ""}${"%.2f".format(pnl)}%"
-                textSize = 11f
-                setTextColor(Color.parseColor(pnlColor))
-                gravity = Gravity.CENTER
+                text = "${if (pnl >= 0) "+" else ""}${"%.2f".format(pnl)}%"; textSize = 11f
+                setTextColor(Color.parseColor(pnlColor)); gravity = Gravity.CENTER
             })
-
             row.addView(priceLayout)
         }
 
-        // 賣出按鈕
         val sellBtn = Button(requireContext()).apply {
-            text = "賣"
-            textSize = 10f
-            setTextColor(Color.WHITE)
+            text = "賣"; textSize = 10f; setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#C62828"))
             layoutParams = LinearLayout.LayoutParams(dpToPx(40), dpToPx(32))
             isEnabled = lastPrice != null
@@ -801,9 +711,7 @@ abstract class QuantFragmentBase : Fragment() {
         return row
     }
 
-    /**
-     * 顯示單筆賣出確認對話框
-     */
+    /** 顯示單筆賣出確認對話框 */
     protected fun showSellConfirmDialog(order: StrategyTradeOrderEntity, currentPrice: Double) {
         val profitPct = if (order.buyPrice > 0) (currentPrice - order.buyPrice) / order.buyPrice * 100 else 0.0
         val profitStr = if (profitPct >= 0) "+${"%.2f".format(profitPct)}%" else "${"%.2f".format(profitPct)}%"
@@ -821,32 +729,22 @@ abstract class QuantFragmentBase : Fragment() {
         AlertDialog.Builder(requireContext())
             .setTitle("💰 確認賣出")
             .setMessage(message)
-            .setPositiveButton("確認賣出") { _, _ ->
-                executeSingleSell(order, currentPrice)
-            }
+            .setPositiveButton("確認賣出") { _, _ -> executeSingleSell(order, currentPrice) }
             .setNegativeButton("取消", null)
             .show()
     }
 
-    /**
-     * 執行單筆賣出
-     */
+    /** 執行單筆賣出 */
     protected fun executeSingleSell(order: StrategyTradeOrderEntity, sellPrice: Double) {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val db = StockDatabase.getInstance(requireContext())
-                val dao = db.strategyTradeOrderDao()
                 val profitPct = (sellPrice - order.buyPrice) / order.buyPrice * 100
-
-                dao.updateSellInfo(
-                    id = order.id,
-                    status = "SOLD",
-                    sellPrice = sellPrice,
-                    sellTime = LocalDate.now().toString() + " " +
-                              java.time.LocalTime.now().toString().take(8),
+                db.strategyTradeOrderDao().updateSellInfo(
+                    id = order.id, status = "SOLD", sellPrice = sellPrice,
+                    sellTime = LocalDate.now().toString() + " " + java.time.LocalTime.now().toString().take(8),
                     profitPct = profitPct
                 )
-
                 withContext(Dispatchers.Main) {
                     statusTv.text = "✅ 已賣出 ${order.stockName} @ ¥${"%.2f".format(sellPrice)} (${"%.2f".format(profitPct)}%)"
                     Toast.makeText(requireContext(), "賣出成功: ${order.stockName}", Toast.LENGTH_SHORT).show()
@@ -864,20 +762,13 @@ abstract class QuantFragmentBase : Fragment() {
     // 通用對話框與導出
     // ═══════════════════════════════════════════════════
 
-    /**
-     * 顯示通用對話框
-     */
+    /** 顯示通用對話框 */
     protected fun showDialog(title: String, content: String) {
         val sv = ScrollView(requireContext())
         sv.addView(TextView(requireContext()).apply {
-            text = content
-            textSize = 10f
-            setTextColor(Color.parseColor("#333333"))
-            setPadding(16, 12, 16, 12)
-            setLineSpacing(2f, 1.1f)
-            setTypeface(Typeface.MONOSPACE)
+            text = content; textSize = 10f; setTextColor(Color.parseColor("#333333"))
+            setPadding(16, 12, 16, 12); setLineSpacing(2f, 1.1f); setTypeface(Typeface.MONOSPACE)
         })
-
         AlertDialog.Builder(requireContext())
             .setTitle(title)
             .setView(sv)
@@ -885,16 +776,11 @@ abstract class QuantFragmentBase : Fragment() {
             .create()
             .apply {
                 show()
-                window?.setLayout(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.MATCH_PARENT
-                )
+                window?.setLayout(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT)
             }
     }
 
-    /**
-     * 顯示交易歷史
-     */
+    /** 顯示交易歷史 */
     protected fun showTradeHistory() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -902,35 +788,22 @@ abstract class QuantFragmentBase : Fragment() {
                 val quantType = getQuantType()
                 val orders = db.strategyTradeOrderDao().getRecent(100)
                     .filter { it.orderType == quantType }
-
                 withContext(Dispatchers.Main) {
                     val sb = StringBuilder()
-                    sb.appendLine("📋 交易記錄 (最近100條)")
-                    sb.appendLine()
-
-                    if (orders.isEmpty()) {
-                        sb.appendLine("暫無交易記錄")
-                    } else {
-                        for (order in orders) {
-                            val statusEmoji = when (order.status) {
-                                "SOLD" -> "✅"
-                                "BUYING" -> "🟢"
-                                "FAILED" -> "❌"
-                                else -> "⏳"
-                            }
-                            sb.appendLine("$statusEmoji ${order.stockName}(${order.stockCode.takeLast(6)})")
-                            sb.appendLine("   買入: ${order.tradeDate} ¥${"%.2f".format(order.buyPrice)} x${order.quantity}")
-                            if (order.status == "SOLD") {
-                                val profitStr = if (order.profitPct >= 0)
-                                    "+${"%.2f".format(order.profitPct)}%"
-                                else
-                                    "${"%.2f".format(order.profitPct)}%"
-                                sb.appendLine("   賣出: ¥${"%.2f".format(order.sellPrice)} 收益: $profitStr")
-                            } else {
-                                sb.appendLine("   狀態: ${order.status}")
-                            }
-                            sb.appendLine()
+                    sb.appendLine("📋 交易記錄 (最近100條)"); sb.appendLine()
+                    if (orders.isEmpty()) sb.appendLine("暫無交易記錄")
+                    else for (order in orders) {
+                        val statusEmoji = when (order.status) {
+                            "SOLD" -> "✅"; "BUYING" -> "🟢"; "FAILED" -> "❌"; else -> "⏳"
                         }
+                        sb.appendLine("$statusEmoji ${order.stockName}(${order.stockCode.takeLast(6)})")
+                        sb.appendLine("   買入: ${order.tradeDate} ¥${"%.2f".format(order.buyPrice)} x${order.quantity}")
+                        if (order.status == "SOLD") {
+                            val profitStr = if (order.profitPct >= 0) "+${"%.2f".format(order.profitPct)}%"
+                            else "${"%.2f".format(order.profitPct)}%"
+                            sb.appendLine("   賣出: ¥${"%.2f".format(order.sellPrice)} 收益: $profitStr")
+                        } else sb.appendLine("   狀態: ${order.status}")
+                        sb.appendLine()
                     }
                     showDialog("交易記錄", sb.toString())
                 }
@@ -942,9 +815,7 @@ abstract class QuantFragmentBase : Fragment() {
         }
     }
 
-    /**
-     * 導出交易數據
-     */
+    /** 導出交易數據 */
     protected fun exportTradeData() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -952,18 +823,14 @@ abstract class QuantFragmentBase : Fragment() {
                 val quantType = getQuantType()
                 val orders = db.strategyTradeOrderDao().getRecent(1000)
                     .filter { it.orderType == quantType }
-
                 val sb = StringBuilder()
                 sb.appendLine("$quantType 數據導出")
-                sb.appendLine("導出時間: ${LocalDate.now()}")
-                sb.appendLine()
+                sb.appendLine("導出時間: ${LocalDate.now()}"); sb.appendLine()
                 sb.appendLine("=== 交易訂單 ===")
                 sb.appendLine("日期,策略,股票代碼,股票名稱,買入價,數量,狀態,賣出價,收益%")
-
                 for (order in orders) {
                     sb.appendLine("${order.tradeDate},${order.strategyId},${order.stockCode},${order.stockName},${order.buyPrice},${order.quantity},${order.status},${order.sellPrice},${order.profitPct}")
                 }
-
                 withContext(Dispatchers.Main) {
                     showDialog("導出數據", sb.toString())
                     Toast.makeText(requireContext(), "數據已生成（可複製）", Toast.LENGTH_SHORT).show()

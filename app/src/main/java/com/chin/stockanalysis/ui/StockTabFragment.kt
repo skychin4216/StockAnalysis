@@ -9,23 +9,27 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import androidx.viewpager2.adapter.FragmentStateAdapter
 import androidx.viewpager2.widget.ViewPager2
+import com.chin.stockanalysis.stock.database.StockDatabase
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
- * ## 股票栏目 — v7.0 改版
+ * ## 股票栏目 — v11.0
  *
  * 顶部三 Tab 切换：
  * - Tab 0：热门行情（MarketHotFragment — 全球指数 + A 股热门板块）
- * - Tab 1：我的自选（WatchlistGroupFragment — 自选组管理）
+ * - Tab 1：自选/AI精选（WatchlistUnifiedFragment — 统一自选和AI精选，按钮切换）
  * - Tab 2：热点新闻（HotNewsFragment — 板块新闻分析）
  */
 class StockTabFragment : Fragment() {
 
     private lateinit var viewPager: ViewPager2
-    private lateinit var tabLayout: TabLayout
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
@@ -41,7 +45,7 @@ class StockTabFragment : Fragment() {
         }
 
         // TabLayout
-        tabLayout = TabLayout(ctx).apply {
+        val tabLayout = TabLayout(ctx).apply {
             setSelectedTabIndicatorColor(Color.parseColor("#E65100"))
             setTabTextColors(Color.parseColor("#999999"), Color.parseColor("#E65100"))
             setBackgroundColor(Color.WHITE)
@@ -62,7 +66,7 @@ class StockTabFragment : Fragment() {
         TabLayoutMediator(tabLayout, viewPager) { tab, position ->
             tab.text = when (position) {
                 0 -> "🔥 热门行情"
-                1 -> "⭐ 我的自选"
+                1 -> "⭐ 自选/AI"
                 2 -> "📰 热点新闻"
                 else -> ""
             }
@@ -78,7 +82,7 @@ class StockTabFragment : Fragment() {
         override fun createFragment(position: Int): Fragment {
             return when (position) {
                 0 -> MarketHotFragment()
-                1 -> WatchlistGroupFragment()
+                1 -> WatchlistUnifiedFragment()
                 2 -> HotNewsFragment()
                 else -> MarketHotFragment()
             }

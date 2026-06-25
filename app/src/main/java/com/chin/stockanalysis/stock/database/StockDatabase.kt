@@ -70,6 +70,32 @@ interface WeightCalibrationDao {
     @Query("DELETE FROM weight_calibrations WHERE strategy_id = :strategyId") suspend fun deleteByStrategy(strategyId: String)
 }
 
+/** 用戶自選股 DAO */
+@Dao
+interface UserWatchlistDao {
+    @Query("SELECT * FROM user_watchlist WHERE status = :status ORDER BY added_date DESC") suspend fun getByStatus(status: String): List<UserWatchlistEntity>
+    @Query("SELECT * FROM user_watchlist ORDER BY added_date DESC") suspend fun getAll(): List<UserWatchlistEntity>
+    @Query("SELECT * FROM user_watchlist WHERE stock_code = :code LIMIT 1") suspend fun getByCode(code: String): UserWatchlistEntity?
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(entity: UserWatchlistEntity)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(entities: List<UserWatchlistEntity>)
+    @Update suspend fun update(entity: UserWatchlistEntity)
+    @Query("DELETE FROM user_watchlist WHERE stock_code = :code") suspend fun deleteByCode(code: String)
+    @Query("DELETE FROM user_watchlist") suspend fun clearAll()
+}
+
+/** AI 精選股 DAO */
+@Dao
+interface AiSelectedStockDao {
+    @Query("SELECT * FROM ai_selected_stock WHERE selected_date = :date ORDER BY score DESC") suspend fun getByDate(date: String): List<AiSelectedStockEntity>
+    @Query("SELECT * FROM ai_selected_stock ORDER BY selected_date DESC, score DESC") suspend fun getAll(): List<AiSelectedStockEntity>
+    @Query("SELECT * FROM ai_selected_stock WHERE selected_date = :date") fun getByDateFlow(date: String): kotlinx.coroutines.flow.Flow<List<AiSelectedStockEntity>>
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(entity: AiSelectedStockEntity)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(entities: List<AiSelectedStockEntity>)
+    @Query("DELETE FROM ai_selected_stock WHERE selected_date != :today") suspend fun keepOnlyToday(today: String)
+    @Query("DELETE FROM ai_selected_stock") suspend fun clearAll()
+    @Query("DELETE FROM ai_selected_stock WHERE selected_date = :date") suspend fun deleteByDate(date: String)
+}
+
 // ── Room Database ────────────────────────────────
 
 @Database(
@@ -86,9 +112,11 @@ interface WeightCalibrationDao {
         com.chin.stockanalysis.strategy.trade.DailyPeriodResultEntity::class,
         com.chin.stockanalysis.strategy.trade.StrategyTradeFittingParamEntity::class,
         com.chin.stockanalysis.strategy.trade.DailyNewsHotPickEntity::class,
-        com.chin.stockanalysis.strategy.trade.StrategyTradeOrderEntity::class
+        com.chin.stockanalysis.strategy.trade.StrategyTradeOrderEntity::class,
+        UserWatchlistEntity::class,
+        AiSelectedStockEntity::class
     ],
-    version = 8,
+    version = 10,
     exportSchema = false
 )
 abstract class StockDatabase : RoomDatabase() {
@@ -106,6 +134,8 @@ abstract class StockDatabase : RoomDatabase() {
     abstract fun strategyTradeFittingParamDao(): com.chin.stockanalysis.strategy.trade.StrategyTradeFittingParamDao
     abstract fun dailyNewsHotPickDao(): com.chin.stockanalysis.strategy.trade.DailyNewsHotPickDao
     abstract fun strategyTradeOrderDao(): com.chin.stockanalysis.strategy.trade.StrategyTradeOrderDao
+    abstract fun userWatchlistDao(): UserWatchlistDao
+    abstract fun aiSelectedStockDao(): AiSelectedStockDao
 
     companion object {
         const val DATABASE_NAME = "stock_analysis.db"
@@ -126,15 +156,32 @@ abstract class StockDatabase : RoomDatabase() {
 
         fun getInstance(context: Context): StockDatabase {
             return INSTANCE ?: synchronized(this) {
-                INSTANCE ?: Room.databaseBuilder(
-                    context.applicationContext,
-                    StockDatabase::class.java,
-                    DATABASE_NAME
-                )
+                // 使用外部存储（避免卸载重装后数据丢失）
+                val dbDir = context.getExternalFilesDir(null)
+                val dbFile = java.io.File(dbDir, "databases/$DATABASE_NAME")
+                dbFile.parentFile?.mkdirs()
+
+                val builder = if (dbFile.exists()) {
+                    Log.i(TAG, "数据库路径: ${dbFile.absolutePath}")
+                    Room.databaseBuilder(
+                        context.applicationContext,
+                        StockDatabase::class.java,
+                        dbFile.absolutePath
+                    )
+                } else {
+                    Log.i(TAG, "新建数据库: ${dbFile.absolutePath}")
+                    Room.databaseBuilder(
+                        context.applicationContext,
+                        StockDatabase::class.java,
+                        dbFile.absolutePath
+                    )
+                }
+
+                INSTANCE = builder
                     .fallbackToDestructiveMigration()
                     .addCallback(destructiveCallback)
                     .build()
-                    .also { INSTANCE = it }
+                INSTANCE!!
             }
         }
     }
