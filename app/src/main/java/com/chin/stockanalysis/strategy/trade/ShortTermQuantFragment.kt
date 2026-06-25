@@ -344,27 +344,6 @@ class ShortTermQuantFragment : QuantFragmentBase() {
                 mergedStockNames = pool.keys.associateWith { c -> screenings.values.firstNotNullOfOrNull { sc->sc.signals.find{it.stockCode==c}?.stockName } ?: codeToName[c] ?: c }
                 // AI 精选
                 if (screeningList.isNotEmpty()) { withContext(Dispatchers.Main) { statusTv.text = "🤖 AI 正在精选..." }; try { val p = AIPredictionEngine(requireContext()).predict(screeningList, today); if (p!=null && p.topPicks.isNotEmpty()) aiPicks = p.topPicks else aiPicks = emptyList() } catch (_: Exception) { aiPicks = emptyList() } }
-                // AI 失败降级：从合并池取 Top 3
-                if (aiPicks.isEmpty() && mergedPool.isNotEmpty()) {
-                    aiPicks = mergedPool.entries
-                        .sortedByDescending { (_, hits) -> hits.size * 100 + (hits.firstOrNull()?.second ?: 0) }
-                        .take(3)
-                        .map { (code, hits) ->
-                            val name = mergedStockNames[code] ?: code
-                            val strength = hits.firstOrNull()?.second ?: 50
-                            AIPredictionEngine.AIPick(
-                                stockCode = code,
-                                stockName = name,
-                                compositeScore = strength,
-                                upProbability = if (strength >= 70) 65 else 50,
-                                rank = 1,
-                                reason = "合并池Top (${hits.size}策略命中): ${hits.take(3).joinToString { "${it.first.take(3)}${it.second}" }}",
-                                actionSuggestion = "建议关注"
-                            )
-                        }
-                    withContext(Dispatchers.Main) { statusTv.text = "⚠️ AI 超时，降级使用合并池 Top ${aiPicks.size}" }
-                    Log.i("AutoQuant", "⚠️ AI超时，降级: ${aiPicks.size}只 (合并池${mergedPool.size}只)")
-                }
                 // 发布到跨Tab总线
                 CrossTabBus.postMergedPool(mergedPool)
                 CrossTabBus.postAiTopPicks(aiPicks)

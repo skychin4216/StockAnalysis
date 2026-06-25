@@ -81,6 +81,12 @@ class WatchlistUnifiedFragment : Fragment() {
         return sv
     }
 
+    /** 每次切換回此 Tab 時自動刷新數據 */
+    override fun onResume() {
+        super.onResume()
+        loadData()
+    }
+
     private fun buildUI() {
         // ── 頂部標題 ──
         val topBar = LinearLayout(requireContext()).apply {

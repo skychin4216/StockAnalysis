@@ -1,19 +1,17 @@
-<?xml version="1.0" encoding="utf-8"?><!--
-   Sample data extraction rules file; uncomment and customize as necessary.
-   See https://developer.android.com/about/versions/12/backup-restore#xml-changes
-   for details.
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+   Android 12+ 数据备份规则
+   卸载重装后通过 Google 云端备份自动恢复数据库
 -->
 <data-extraction-rules>
+    <!-- 云端备份（卸载重装时恢复） -->
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <include domain="database" path="."/>
+        <include domain="sharedpref" path="."/>
     </cloud-backup>
-    <!--
+    <!-- 设备间迁移 -->
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <include domain="database" path="."/>
+        <include domain="sharedpref" path="."/>
     </device-transfer>
-    -->
 </data-extraction-rules>
