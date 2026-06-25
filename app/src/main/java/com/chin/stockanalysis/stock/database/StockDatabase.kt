@@ -156,32 +156,26 @@ abstract class StockDatabase : RoomDatabase() {
 
         fun getInstance(context: Context): StockDatabase {
             return INSTANCE ?: synchronized(this) {
-                // 使用外部存储（避免卸载重装后数据丢失）
-                val dbDir = context.getExternalFilesDir(null)
-                val dbFile = java.io.File(dbDir, "databases/$DATABASE_NAME")
-                dbFile.parentFile?.mkdirs()
-
-                val builder = if (dbFile.exists()) {
-                    Log.i(TAG, "数据库路径: ${dbFile.absolutePath}")
-                    Room.databaseBuilder(
-                        context.applicationContext,
-                        StockDatabase::class.java,
-                        dbFile.absolutePath
-                    )
-                } else {
-                    Log.i(TAG, "新建数据库: ${dbFile.absolutePath}")
-                    Room.databaseBuilder(
-                        context.applicationContext,
-                        StockDatabase::class.java,
-                        dbFile.absolutePath
-                    )
-                }
-
-                INSTANCE = builder
+                INSTANCE ?: Room.databaseBuilder(
+                    context.applicationContext,
+                    StockDatabase::class.java,
+                    DATABASE_NAME
+                )
                     .fallbackToDestructiveMigration()
                     .addCallback(destructiveCallback)
                     .build()
-                INSTANCE!!
+                    .also { INSTANCE = it }
+            }
+        }
+
+        /**
+         * 清除 Room 实例缓存（从 SAF 备份恢复后调用，强制重新打开数据库）
+         */
+        fun clearInstance() {
+            synchronized(this) {
+                INSTANCE?.close()
+                INSTANCE = null
+                Log.i(TAG, "🔁 数据库实例已清除")
             }
         }
     }

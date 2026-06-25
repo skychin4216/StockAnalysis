@@ -1,5 +1,7 @@
 package com.chin.stockanalysis.ui
 
+import android.app.AlertDialog
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -14,8 +16,8 @@ import com.chin.stockanalysis.R
 import com.chin.stockanalysis.conversation.ConversationRepository
 import com.chin.stockanalysis.databinding.ActivityMainBinding
 import com.chin.stockanalysis.news.HotSectorNewsUpdater
-import com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.Companion.startPoolScheduler
 import com.chin.stockanalysis.stock.database.StockDataCenter
+import com.chin.stockanalysis.storage.BackupManager
 import com.google.android.material.bottomnavigation.BottomNavigationView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -31,6 +33,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var viewPager: ViewPager2
     private lateinit var bottomNav: BottomNavigationView
+
+    companion object {
+        private const val REQUEST_BACKUP_FOLDER = 9001
+    }
 
     private val tabFragments: List<Fragment> by lazy {
         listOf(
@@ -54,12 +60,60 @@ class MainActivity : AppCompatActivity() {
 
     private fun initGlobalServices() {
         ApiConfigManager.getInstance(applicationContext)
-        // 🚀 統一後台調度器
+        // 数据备份初始化
+        initBackupSystem()
+        // 统一后台调度器
         com.chin.stockanalysis.stock.database.AppBackgroundRunner.start(applicationContext, lifecycleScope)
         migrateLegacyConversations()
         // 后台拉取热点板块新闻
         lifecycleScope.launch(Dispatchers.IO) {
             HotSectorNewsUpdater(applicationContext).updateIfNeeded()
+        }
+    }
+
+    private fun initBackupSystem() {
+        BackupManager.initialize(
+            this,
+            onNeedSetup = {
+                runOnUiThread {
+                    AlertDialog.Builder(this)
+                        .setTitle("💾 数据备份")
+                        .setMessage("选择备份文件夹可保护你的数据（卸载重装后可恢复）。\n\n建议选择 /Documents/StockAnalysis")
+                        .setPositiveButton("选择文件夹") { _, _ ->
+                            BackupManager.openFolderPicker(this, REQUEST_BACKUP_FOLDER)
+                        }
+                        .setNegativeButton("稍后", null)
+                        .show()
+                }
+            },
+            onRestored = {
+                runOnUiThread {
+                    Toast.makeText(this, "✅ 数据已从备份恢复", Toast.LENGTH_LONG).show()
+                }
+            }
+        )
+    }
+
+    /** 处理备份文件夹选择结果 */
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_BACKUP_FOLDER && resultCode == RESULT_OK && data?.data != null) {
+            BackupManager.onFolderSelected(this, data.data!!)
+            // 立即做一次备份
+            lifecycleScope.launch(Dispatchers.IO) {
+                BackupManager.backupNow(this@MainActivity)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@MainActivity, "✅ 备份文件夹已设置", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    /** App 进入后台时自动备份 */
+    override fun onStop() {
+        super.onStop()
+        lifecycleScope.launch(Dispatchers.IO) {
+            BackupManager.backupNow(this@MainActivity)
         }
     }
 
@@ -112,7 +166,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupBottomNavigation() {
         bottomNav = binding.bottomNav
-        // 东方财富风格：选中项橙红色
         bottomNav.itemIconTintList = resources.getColorStateList(com.chin.stockanalysis.R.color.nav_item_tint)
         bottomNav.itemTextColor = resources.getColorStateList(com.chin.stockanalysis.R.color.nav_item_tint)
         bottomNav.selectedItemId = R.id.nav_chat
@@ -149,19 +202,14 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    /**
-     * 从策略页面等非对话Tab切换到对话Tab并发送消息
-     */
     fun switchToStrategyTab() {
         viewPager.setCurrentItem(3, false)
         bottomNav.selectedItemId = R.id.nav_strategy
     }
 
     fun switchToChatAndSend(message: String) {
-        // 切换到对话 Tab
         viewPager.setCurrentItem(0, false)
         bottomNav.selectedItemId = R.id.nav_chat
-        // 延迟发送（等待 Fragment 就绪）
         viewPager.postDelayed({
             val chatFragment = supportFragmentManager.fragments
                 .firstOrNull { it is ChatTabFragment } as? ChatTabFragment
