@@ -93,11 +93,23 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
      * 動態更新步驟列表（AI 選擇模式後調用）
      */
     fun updateSteps(steps: List<PipelineStep>) {
+        // 保存已完成步驟的內容，避免重建時丟失
+        val savedSummaries = mutableMapOf<Int, String>()
+        val savedBadges = mutableMapOf<Int, Pair<String, String>>()
+        for ((order, card) in stepViews) {
+            savedSummaries[order] = card.getSummaryText()
+            card.getBadgeInfo()?.let { savedBadges[order] = it }
+        }
+
         currentSteps = steps
         stepViews.clear()
         stepsContainer.removeAllViews()
         for (step in steps) {
             val card = StepCard(context, step)
+            savedSummaries[step.order]?.let {
+                if (it != "等待中..." && it != "執行中...") card.restoreDone(it)
+            }
+            savedBadges[step.order]?.let { card.restoreBadge(it.first, it.second) }
             stepViews[step.order] = card
             stepsContainer.addView(card)
         }
@@ -327,6 +339,30 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
             summaryTv.setTextColor(Color.parseColor("#AAAAAA"))
             badgeTv.visibility = View.GONE
             badgeTv.text = ""
+        }
+
+        /** 獲取當前摘要文字 */
+        fun getSummaryText(): String = summaryTv.text.toString()
+
+        /** 恢復已完成狀態 */
+        fun restoreDone(summary: String) {
+            iconTv.text = "✅"
+            summaryTv.text = summary.take(80)
+            summaryTv.setTextColor(Color.parseColor(COLOR_DONE))
+        }
+
+        /** 獲取徽章信息 */
+        fun getBadgeInfo(): Pair<String, String>? {
+            if (badgeTv.visibility != View.VISIBLE || badgeTv.text.isNullOrBlank()) return null
+            return badgeTv.text.toString() to badgeTv.currentTextColor.toString()
+        }
+
+        /** 恢復徽章 */
+        fun restoreBadge(text: String, colorStr: String) {
+            badgeTv.visibility = View.VISIBLE
+            badgeTv.text = text
+            try { badgeTv.setTextColor(colorStr.toInt()) } catch (_: Exception) {}
+            badgeTv.setTypeface(null, Typeface.BOLD)
         }
     }
 }
