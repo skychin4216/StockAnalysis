@@ -41,6 +41,8 @@ class ZiplinePipeline(private val context: Context) {
         lookbackDays: Int = 30
     ): FactorSet = withContext(Dispatchers.IO) {
         try {
+            // 只計算傳入股票，大幅減少無效計算
+            val targetCodes = stocks.map { it.code }.toSet()
             val availableDates = db.dailySnapshotDao().getAvailableDates(lookbackDays + 5)
                 .filter { it <= date }.sorted().takeLast(lookbackDays)
             if (availableDates.isEmpty()) return@withContext FactorSet()
@@ -51,6 +53,7 @@ class ZiplinePipeline(private val context: Context) {
                 try {
                     val snaps = db.dailySnapshotDao().getByDate(d)
                     for (snap in snaps) {
+                        if (snap.code !in targetCodes) continue  // 只計算候選池
                         history.getOrPut(snap.code) { mutableListOf() }.add(snap.close)
                         volumes.getOrPut(snap.code) { mutableListOf() }.add(snap.volume)
                     }

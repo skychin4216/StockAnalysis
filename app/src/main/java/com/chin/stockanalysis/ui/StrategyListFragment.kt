@@ -95,7 +95,7 @@ class StrategyListFragment : Fragment() {
         lifecycleScope.launch(Dispatchers.IO) {
             engine?.getStrategies()?.forEach { strategy ->
                 StrategySelfTuner.loadLatestTunedWeights(requireContext(), strategy.id)?.let { tuned ->
-                    strategy.weightFactors = tuned; Log.i("SLF", "加载调优权重: ${strategy.id}")
+                    strategy.weightFactors = tuned; Log.i("SLF", "加载拟合权重: ${strategy.id}")
                 }
             }
         }
@@ -170,7 +170,7 @@ class StrategyListFragment : Fragment() {
 
         val row2 = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(8,4,8,4); setBackgroundColor(Color.WHITE) }
         scanBtn = Button(requireContext()).apply { text = "执行策略"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#E65100")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.3f).apply { marginEnd = 3 }; setOnClickListener { runSelectedStrategies() } }; row2.addView(scanBtn)
-        tuneBtn = Button(requireContext()).apply { text = "调优(90%)"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#EF6C00")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.3f).apply { marginEnd = 3 }; setOnClickListener { runSelfTune() } }; row2.addView(tuneBtn)
+        tuneBtn = Button(requireContext()).apply { text = "拟合(90%)"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#EF6C00")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.3f).apply { marginEnd = 3 }; setOnClickListener { runSelfTune() } }; row2.addView(tuneBtn)
         val importBtn = Button(requireContext()).apply { text = "导入"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#2E7D32")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.2f).apply { marginEnd = 3 }; setOnClickListener { importHistoricalData() } }; row2.addView(importBtn)
         val exportBtn = Button(requireContext()).apply { text = "导出"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#006064")); setPadding(4,6,4,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.0f).apply { marginEnd = 3 }; setOnClickListener { exportSnapshotData() } }; row2.addView(exportBtn)
         val addCustomBtn = Button(requireContext()).apply { text = "+策略"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#1565C0")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.0f).apply { marginEnd = 3 }; setOnClickListener { showAddDialog() } }; row2.addView(addCustomBtn)
@@ -395,17 +395,17 @@ class StrategyListFragment : Fragment() {
 
     private fun runSelfTune() {
         val eng = engine ?: return
-        tuneBtn.isEnabled = false; tuneBtn.text = "⏳"; progressBar.visibility = View.VISIBLE; statusTv.text = "  🔧 正在自测调优(目标90%)..."
+        tuneBtn.isEnabled = false; tuneBtn.text = "⏳"; progressBar.visibility = View.VISIBLE; statusTv.text = "  🔧 正在自测拟合(目标90%)..."
         lifecycleScope.launch {
-            try { val report = StrategySelfTuner(requireContext()).selfTune(eng.getEnabledStrategies(), 30, 0.90f); withContext(Dispatchers.Main) { tuneBtn.isEnabled = true; tuneBtn.text = "调优(90%)"; progressBar.visibility = View.GONE; statusTv.text = "  ✅ 调优完成"; showFullScreenTuneReport(report.summary) } }
-            catch (e: Exception) { withContext(Dispatchers.Main) { tuneBtn.isEnabled = true; tuneBtn.text = "调优(90%)"; progressBar.visibility = View.GONE; statusTv.text = "  调优失败: ${e.message?.take(30)}" } }
+            try { val report = StrategySelfTuner(requireContext()).selfTune(eng.getEnabledStrategies(), 30, 0.90f); withContext(Dispatchers.Main) { tuneBtn.isEnabled = true; tuneBtn.text = "拟合(90%)"; progressBar.visibility = View.GONE; statusTv.text = "  ✅ 拟合完成"; showFullScreenTuneReport(report.summary) } }
+            catch (e: Exception) { withContext(Dispatchers.Main) { tuneBtn.isEnabled = true; tuneBtn.text = "拟合(90%)"; progressBar.visibility = View.GONE; statusTv.text = "  拟合失败: ${e.message?.take(30)}" } }
         }
     }
 
     private fun showFullScreenTuneReport(text: String) {
         ScrollView(requireContext()).also { sv ->
             sv.addView(TextView(requireContext()).apply { this.text = text; setTextColor(Color.parseColor("#333333")); textSize = 10f; setPadding(dp(16), dp(12), dp(16), dp(12)); setLineSpacing(2f, 1.1f); setTypeface(Typeface.MONOSPACE); isVerticalScrollBarEnabled = true })
-            AlertDialog.Builder(requireContext()).setTitle("策略自测调优报告(目标90%)").setView(sv).setPositiveButton("关闭") { d, _ -> d.dismiss() }.create().apply { show(); window?.setLayout(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT); getButton(AlertDialog.BUTTON_POSITIVE)?.apply { gravity = Gravity.END or Gravity.BOTTOM } }
+            AlertDialog.Builder(requireContext()).setTitle("策略自测拟合报告(目标90%)").setView(sv).setPositiveButton("关闭") { d, _ -> d.dismiss() }.create().apply { show(); window?.setLayout(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT); getButton(AlertDialog.BUTTON_POSITIVE)?.apply { gravity = Gravity.END or Gravity.BOTTOM } }
         }
     }
 

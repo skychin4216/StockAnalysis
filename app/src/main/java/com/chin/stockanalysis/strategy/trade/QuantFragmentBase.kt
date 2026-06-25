@@ -144,7 +144,7 @@ abstract class QuantFragmentBase : Fragment() {
 
         // 擬合按鈕
         val fitBtn = Button(requireContext()).apply {
-            text = "🔧 擬合"
+            text = "🔧 擬合(90%)"
             textSize = 10f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#EF6C00"))

@@ -22,8 +22,8 @@ import android.util.Log
  *
  * 顶部三 Tab：
  * - Tab 0：量化选股 (StrategyListFragment)
- * - Tab 1：中线量化 (SimulationTradeFragment)
- * - Tab 2：短线量化 (AutoQuantFragment)
+ * - Tab 1：中线量化 (MidTermQuantFragment)
+ * - Tab 2：短线量化 (ShortTermQuantFragment)
  */
 class StrategyFragment : Fragment() {
 
@@ -91,8 +91,8 @@ class StrategyFragment : Fragment() {
                                 viewPager.setCurrentItem(1, true)  // Tab 1 = 中线量化
                                 viewPager.postDelayed({
                                     val frag = childFragmentManager.fragments
-                                        .firstOrNull { it is com.chin.stockanalysis.strategy.trade.SimulationTradeFragment }
-                                        as? com.chin.stockanalysis.strategy.trade.SimulationTradeFragment
+                                        .firstOrNull { it is com.chin.stockanalysis.strategy.trade.MidTermQuantFragment }
+                                        as? com.chin.stockanalysis.strategy.trade.MidTermQuantFragment
                                     frag?.autoExecuteTrade()
                                 }, 500)
                             }
@@ -102,8 +102,8 @@ class StrategyFragment : Fragment() {
                                 viewPager.setCurrentItem(2, true)  // Tab 2 = 短线量化
                                 viewPager.postDelayed({
                                     val frag = childFragmentManager.fragments
-                                        .firstOrNull { it is com.chin.stockanalysis.strategy.trade.AutoQuantFragment }
-                                        as? com.chin.stockanalysis.strategy.trade.AutoQuantFragment
+                                        .firstOrNull { it is com.chin.stockanalysis.strategy.trade.ShortTermQuantFragment }
+                                        as? com.chin.stockanalysis.strategy.trade.ShortTermQuantFragment
                                     frag?.autoRunPipeline()
                                 }, 500)
                             }
@@ -126,8 +126,8 @@ class StrategyFragment : Fragment() {
         override fun createFragment(position: Int): Fragment {
             return when (position) {
                 0 -> StrategyListFragment()
-                1 -> com.chin.stockanalysis.strategy.trade.SimulationTradeFragment()
-                2 -> com.chin.stockanalysis.strategy.trade.AutoQuantFragment()
+                1 -> com.chin.stockanalysis.strategy.trade.MidTermQuantFragment()
+                2 -> com.chin.stockanalysis.strategy.trade.ShortTermQuantFragment()
                 else -> StrategyListFragment()
             }
         }

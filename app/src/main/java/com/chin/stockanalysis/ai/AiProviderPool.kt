@@ -91,6 +91,31 @@ object AiProviderPool {
     }
 
     /**
+     * 取得所有健康的 AI Provider（不佔用，用於並行任務）
+     *
+     * 用於量化選股場景：每個 Provider 獨立處理一部分任務，
+     * 無需佔用鎖，因為調用方自行管理生命週期。
+     *
+     * @return 所有通過連通性檢測且有 API Key 的 Slot 列表（按優先級排序）
+     */
+    suspend fun acquireAllHealthy(context: Context): List<Slot> {
+        initIfNeeded(context); val result = mutableListOf<Slot>()
+        val mgr = configManager ?: return result
+        mutex.withLock {
+            for (preferredId in PRIORITY_ORDER) {
+                val config = mgr.getProviderConfig(preferredId) ?: continue
+                if (config.apiKey.isBlank()) continue
+                if (!isHealthy(config.id, config)) continue
+                val provider = getOrCreateProvider(config)
+                // 不檢查 occupied，允許並行共享
+                result.add(Slot(config.id, config.name, provider))
+            }
+        }
+        Log.i(TAG, "📊 acquireAllHealthy → ${result.size} 個可用: ${result.joinToString { it.configName }}")
+        return result
+    }
+
+    /**
      * 释放 Slot
      */
     suspend fun release(slot: Slot?) {

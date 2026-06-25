@@ -38,7 +38,7 @@ import java.util.*
  * - 卖出策略绩效统计
  * - 一键执行卖出
  */
-class SimulationTradeFragment : Fragment() {
+class MidTermQuantFragment : Fragment() {
 
     private lateinit var rootLayout: LinearLayout
     private lateinit var statusTv: TextView
@@ -50,9 +50,10 @@ class SimulationTradeFragment : Fragment() {
     private lateinit var clearBtn: Button
     private lateinit var periodCheckboxes: LinearLayout
     private lateinit var mainBoardSwitch: Switch
+    private var isPosTab = true
+    private lateinit var contentContainer: LinearLayout
     private lateinit var resultsContainer: LinearLayout
     private lateinit var positionContainer: LinearLayout
-    private lateinit var reportDivider: View
 
     private var engine: StrategyEngine? = null
     private var screener: StockScreener? = null
@@ -141,53 +142,63 @@ class SimulationTradeFragment : Fragment() {
             setBackgroundColor(Color.parseColor("#DDDDDD"))
         })
 
-        // 持仓视图
-        positionContainer = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0, 1f
-            )
-            setPadding(8, 4, 8, 4)
+        // ── Tab 切換：持倉明細 | 量化報告 ──
+        val tabRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.WHITE); setPadding(0, 0, 0, 0)
         }
-        rootLayout.addView(positionContainer)
+        val posTab = TextView(requireContext()).apply {
+            text = "📌 持倉明細"; textSize = 11f; gravity = Gravity.CENTER
+            setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#1565C0"))
+            setTypeface(null, Typeface.BOLD); setPadding(dpToPx(8), dpToPx(2), dpToPx(8), dpToPx(2))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { switchTab(true) }
+        }
+        val rptTab = TextView(requireContext()).apply {
+            text = "📊 量化報告"; textSize = 11f; gravity = Gravity.CENTER
+            setTextColor(Color.parseColor("#666666")); setBackgroundColor(Color.parseColor("#EEEEEE"))
+            setTypeface(null, Typeface.BOLD); setPadding(dpToPx(8), dpToPx(2), dpToPx(8), dpToPx(2))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { switchTab(false); loadReportFromDb() }
+        }
+        tabRow.addView(posTab); tabRow.addView(rptTab)
+        rootLayout.addView(tabRow)
+        posTabRef = posTab; rptTabRef = rptTab
 
-        // 分割线（初始隐藏，有报告时显示）
-        reportDivider = View(requireContext()).apply {
-            visibility = View.GONE
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 1
-            ).apply { topMargin = 4 }
-            setBackgroundColor(Color.parseColor("#DDDDDD"))
+        // 共用顯示區
+        contentContainer = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL }
+        val contentScroll = ScrollView(requireContext()).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            addView(contentContainer)
         }
-        rootLayout.addView(reportDivider)
+        rootLayout.addView(contentScroll)
 
-        // 结果区（初始隐藏，有报告时显示）
-        resultsContainer = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = View.GONE
-            setPadding(8, 4, 8, 4)
-        }
-        rootLayout.addView(resultsContainer)
+        // 持倉區和報告區直接加入共用容器，用 visibility 切換
+        positionContainer = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL; setPadding(8, 4, 8, 4) }
+        resultsContainer = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL; setPadding(8, 4, 8, 4); visibility = View.GONE }
+        contentContainer.addView(positionContainer)
+        contentContainer.addView(resultsContainer)
 
         refreshPositions()
     }
 
-    private fun updateViewSplit() {
-        if (hasTradeReport) {
-            positionContainer.layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
-            resultsContainer.visibility = View.VISIBLE
-            resultsContainer.layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
-            reportDivider.visibility = View.VISIBLE
+    private var posTabRef: TextView? = null
+    private var rptTabRef: TextView? = null
+
+    private fun switchTab(showPos: Boolean) {
+        if (isPosTab == showPos) return
+        isPosTab = showPos
+        positionContainer.visibility = if (showPos) View.VISIBLE else View.GONE
+        resultsContainer.visibility = if (showPos) View.GONE else View.VISIBLE
+        val activeColor = Color.WHITE; val activeBg = Color.parseColor("#1565C0")
+        val inactiveColor = Color.parseColor("#666666"); val inactiveBg = Color.parseColor("#EEEEEE")
+        if (showPos) {
+            posTabRef?.setTextColor(activeColor); posTabRef?.setBackgroundColor(activeBg)
+            rptTabRef?.setTextColor(inactiveColor); rptTabRef?.setBackgroundColor(inactiveBg)
         } else {
-            positionContainer.layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
-            resultsContainer.visibility = View.GONE
-            reportDivider.visibility = View.GONE
+            rptTabRef?.setTextColor(activeColor); rptTabRef?.setBackgroundColor(activeBg)
+            posTabRef?.setTextColor(inactiveColor); posTabRef?.setBackgroundColor(inactiveBg)
         }
-        rootLayout.requestLayout()
     }
 
     private fun createConfigSection(): View {
@@ -396,7 +407,7 @@ class SimulationTradeFragment : Fragment() {
     private fun showTradeReport(report: SimulationTradeEngine.TradeSessionReport) {
         resultsContainer.removeAllViews()
         hasTradeReport = true
-        updateViewSplit()
+        switchTab(false)  // 自動切換到報告標籤
 
         val sv = ScrollView(requireContext())
         val c = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL; setPadding(8, 8, 8, 8) }
@@ -1219,6 +1230,62 @@ class SimulationTradeFragment : Fragment() {
                 if (codes.length() > 60) sb.appendLine("  ... 共 ${codes.length()} 只，仅显示前60")
                 withContext(Dispatchers.Main) { showDialog("FinalPool_${latest.tradeDate}", sb.toString()) }
             } catch (e: Exception) { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "载入精选池失败: ${e.message}", Toast.LENGTH_SHORT).show() } }
+        }
+    }
+
+    /** 從 DB 載入歷史量化報告並顯示 */
+    private fun loadReportFromDb() {
+        if (resultsContainer.childCount > 0) return
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val entities = db.dailyPeriodResultDao().getRecent(50)
+                    .filter { it.strategyId != "FINAL_POOL" && it.strategyId != "BACKTRACK" }
+                if (entities.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        resultsContainer.removeAllViews()
+                        resultsContainer.addView(TextView(requireContext()).apply {
+                            text = "📊 暂无量化报告，请先执行建仓"
+                            textSize = 12f; setTextColor(Color.parseColor("#999999"))
+                            setPadding(8, 16, 8, 16)
+                        })
+                    }
+                    return@launch
+                }
+                val grouped = entities.groupBy { it.tradeDate }
+                val codeToName = try { db.stockBasicDao().getAll().associate { it.code to it.name } } catch (_: Exception) { emptyMap() }
+                withContext(Dispatchers.Main) {
+                    resultsContainer.removeAllViews()
+                    val sv = ScrollView(requireContext())
+                    val c = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL; setPadding(8, 8, 8, 8) }
+                    for ((date, items) in grouped.toSortedMap().entries.reversed().take(10)) {
+                        c.addView(TextView(requireContext()).apply {
+                            text = "━━━ $date ━━━"; textSize = 12f
+                            setTextColor(Color.parseColor("#1A1A2E")); setTypeface(null, Typeface.BOLD)
+                            setPadding(0, 8, 0, 4)
+                        })
+                        for (item in items) {
+                            val sb = StringBuilder()
+                            sb.appendLine("  ${item.strategyName}[${item.periodDays}日]: ${item.stockCount}只信号")
+                            try {
+                                val arr = org.json.JSONArray(item.finalTop3Json)
+                                for (i in 0 until minOf(arr.length(), 3)) {
+                                    val obj = arr.getJSONObject(i)
+                                    val code = obj.optString("code")
+                                    val name = obj.optString("name").takeIf { it.isNotBlank() } ?: codeToName[code] ?: code.takeLast(6)
+                                    sb.appendLine("    Top${i+1}: $name(${code.takeLast(6)}) 得分:${obj.optInt("score")}")
+                                }
+                            } catch (_: Exception) {}
+                            c.addView(TextView(requireContext()).apply {
+                                text = sb.toString(); textSize = 9f
+                                setTextColor(Color.parseColor("#666666")); setPadding(4, 2, 0, 6)
+                                setLineSpacing(1.5f, 1f)
+                            })
+                        }
+                    }
+                    sv.addView(c); resultsContainer.addView(sv)
+                }
+            } catch (_: Exception) {}
         }
     }
 

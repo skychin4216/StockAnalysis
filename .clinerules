@@ -1,0 +1,10 @@
+# Cline Rules — StockAnalysis
+
+## 1. 禁止自動 push
+- 任何 commit 都**不得**在未經用戶明確指示下執行 `git push`。
+- 可以本地建立 commit，但 push 必須由用戶主動要求。
+
+## 2. 編譯錯誤修復規則
+- 修復編譯錯誤時，**禁止每修一個錯誤就單獨建立 commit 並 push**。
+- 允許：在本地建立多個 commit 作為進度存檔。
+- 必須：等待用戶確認編譯通過後，再由用戶決定何時 push 以及是否合併 commit。

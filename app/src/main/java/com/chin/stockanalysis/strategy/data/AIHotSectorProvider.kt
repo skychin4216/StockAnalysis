@@ -2,12 +2,10 @@ package com.chin.stockanalysis.strategy.data
 
 import android.content.Context
 import android.util.Log
-import com.chin.stockanalysis.ApiConfigManager
-import com.chin.stockanalysis.ApiProviderConfig
-import com.chin.stockanalysis.OpenAiCompatibleProvider
+import com.chin.stockanalysis.ApiProvider
+import com.chin.stockanalysis.ai.AiProviderPool
 import com.chin.stockanalysis.ui.Message
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.CountDownLatch
@@ -99,67 +97,128 @@ object AIHotSectorProvider {
     // AI 查詢邏輯
     // ════════════════════════════════════════
 
-    private suspend fun fetchFromAI(context: Context): HotSectorResult {
-        // 優先使用當前選中的 Provider，否則按優先級查找
-        val manager = ApiConfigManager.getInstance(context)
-        val config = manager.getCurrentProviderConfig()
-            ?: manager.getAllConfigs().find { it.id.contains("deepseek", true) }
-            ?: manager.getAllConfigs().find { it.id.contains("doubao", true) }
-            ?: manager.getAllConfigs().firstOrNull()
-            ?: throw IllegalStateException("無可用 API 配置")
+    /**
+     * 並行調用多個 AI Provider 查詢熱門板塊
+     *
+     * 將 4 個時間維度拆分到最多 4 個 Provider 並行查詢：
+     *   - Provider 0 → 年度
+     *   - Provider 1 → 月度
+     *   - Provider 2 → 周度
+     *   - Provider 3 → 昨日
+     * 如果可用 Provider < 4，則用可用的 Provider 平分維度。
+     */
+    /** Task 輔助 data class */
+    private data class Task(val dimension: String, val userMessage: String, val provider: ApiProvider, val providerName: String)
 
-        val provider = OpenAiCompatibleProvider(config)
+    private suspend fun fetchFromAI(context: Context): HotSectorResult = coroutineScope {
+        val slots = AiProviderPool.acquireAllHealthy(context)
+        if (slots.isEmpty()) throw IllegalStateException("無可用 AI Provider")
 
-        val systemPrompt = buildString {
-            appendLine("你是一位專業的A股市場分析師，精通中國A股市場的板塊輪動和資金流向規律。")
-            appendLine("你的任務是根據你的知識庫，列出當前最熱門的A股板塊。")
-            appendLine()
-            appendLine("要求：")
-            appendLine("1. 板塊名稱使用中文（如：光通信、半導體、AI算力、儲能、低空經濟、機器人）")
-            appendLine("2. 不要包含房地產、白酒、傳媒娛樂、ST相關板塊")
-            appendLine("3. 每個時間週期最多 15 個板塊")
-            appendLine("4. 嚴格按照 JSON 格式輸出，不要任何額外文字")
+        val dimensions = listOf("annual", "monthly", "weekly", "yesterday")
+        Log.i(TAG, "🚀 並行 AI 查詢: ${slots.size} 個 Provider × ${dimensions.size} 個維度")
+
+        // 為每個維度建立任務，輪流分配給可用 Provider
+        val tasks = dimensions.mapIndexed { i, dim ->
+            val slot = slots[i % slots.size]
+            Task(
+                dimension = dim,
+                userMessage = buildString {
+                    appendLine("請列出當前A股市場在以下時間週期的熱門板塊（最多15個）：")
+                    appendLine("- ${when(dim) {
+                        "annual" -> "年度：持續受政策/資金關注的長期熱門板塊"
+                        "monthly" -> "月度：近一個月資金流入明顯的中期熱門板塊"
+                        "weekly" -> "周度：本週最活躍的短期熱點板塊"
+                        else -> "昨日：上一個交易日表現最好的板塊"
+                    }}")
+                    appendLine()
+                    appendLine("輸出嚴格JSON格式（不要markdown代碼塊）：")
+                    appendLine("""{"${dim}_sectors":[]}""")
+                },
+                provider = slot.provider,
+                providerName = slot.configName
+            )
         }
 
-        val userMessage = buildString {
-            appendLine("請列出當前A股市場在不同時間週期下的熱門板塊：")
-            appendLine()
-            appendLine("- 年度：持續受政策/資金關注的長期熱門板塊")
-            appendLine("- 月度：近一個月資金流入明顯的中期熱門板塊")
-            appendLine("- 周度：本週最活躍的短期熱點板塊")
-            appendLine("- 昨日：上一個交易日表現最好的板塊")
-            appendLine()
-            appendLine("輸出嚴格JSON格式（不要markdown代碼塊）：")
-            appendLine("""{"annual_sectors":[],"monthly_sectors":[],"weekly_sectors":[],"yesterday_sectors":[]}""")
+        // 並行執行所有任務
+        val results = tasks.map { task ->
+            async(Dispatchers.IO) { querySingleProvider(task) }
+        }.awaitAll()
+
+        // 合併結果
+        val annualSectors = mutableListOf<String>()
+        val monthlySectors = mutableListOf<String>()
+        val weeklySectors = mutableListOf<String>()
+        val yesterdaySectors = mutableListOf<String>()
+
+        results.forEachIndexed { i, sectors ->
+            when (tasks[i].dimension) {
+                "annual" -> annualSectors.addAll(sectors)
+                "monthly" -> monthlySectors.addAll(sectors)
+                "weekly" -> weeklySectors.addAll(sectors)
+                "yesterday" -> yesterdaySectors.addAll(sectors)
+            }
         }
 
+        Log.i(TAG, "✅ 並行查詢完成: 年度${annualSectors.size} 月度${monthlySectors.size} 周度${weeklySectors.size} 昨日${yesterdaySectors.size}")
+        HotSectorResult(
+            annualSectors = annualSectors.distinct(),
+            monthlySectors = monthlySectors.distinct(),
+            weeklySectors = weeklySectors.distinct(),
+            yesterdaySectors = yesterdaySectors.distinct()
+        )
+    }
+
+    /** 對單個 Provider 執行查詢，返回板塊列表 */
+    private suspend fun querySingleProvider(task: Task): List<String> {
+        val (dimension, userMessage, provider, providerName) = task
         val resultRef = AtomicReference<String>()
         val latch = CountDownLatch(1)
 
         provider.sendMessageStream(
             messages = listOf(Message(content = userMessage, isUser = true)),
-            systemPrompt = systemPrompt,
+            systemPrompt = "你是一位專業的A股市場分析師，精通中國A股市場的板塊輪動和資金流向規律。你的任務是根據你的知識庫，列出指定的熱門A股板塊。",
             onSuccess = { chunk -> resultRef.set((resultRef.get() ?: "") + chunk) },
             onComplete = { fullContent ->
                 resultRef.set(fullContent)
                 latch.countDown()
             },
             onError = { errorMsg ->
-                Log.e(TAG, "AI 查詢失敗: $errorMsg")
+                Log.e(TAG, "❌ $providerName 查詢[$dimension]失敗: $errorMsg")
                 resultRef.set("")
                 latch.countDown()
             }
         )
 
-        // 最多等待 30 秒
         val success = latch.await(30, TimeUnit.SECONDS)
         val rawResponse = resultRef.get() ?: ""
         if (!success || rawResponse.isBlank()) {
-            throw IllegalStateException("AI 查詢超時或返回為空")
+            Log.w(TAG, "⏰ $providerName 查詢[$dimension]超時或返回為空")
+            return emptyList()
         }
 
-        Log.i(TAG, "AI 原始回應長度: ${rawResponse.length}")
-        return parseAIResponse(rawResponse)
+        Log.i(TAG, "  ✅ $providerName → $dimension: ${rawResponse.length} 字")
+        return parseSingleDimensionResponse(rawResponse, "${dimension}_sectors")
+    }
+
+    /** 解析單個維度的回應 */
+    private fun parseSingleDimensionResponse(raw: String, key: String): List<String> {
+        var json = raw.trim()
+        val jsonBlockRegex = Regex("```(?:json)?\\s*([\\s\\S]*?)```")
+        val match = jsonBlockRegex.find(json)
+        if (match != null) json = match.groupValues[1].trim()
+        val braceStart = json.indexOf('{')
+        val braceEnd = json.lastIndexOf('}')
+        if (braceStart >= 0 && braceEnd > braceStart) json = json.substring(braceStart, braceEnd + 1)
+
+        return try {
+            val obj = JSONObject(json)
+            obj.optJSONArray(key)?.let { arr -> (0 until arr.length()).map { arr.getString(it) } } ?: emptyList()
+        } catch (e: Exception) {
+            // 正則 fallback
+            val regex = Regex("\"$key\"\\s*:\\s*\\[([^\\]]*)\\]")
+            val m = regex.find(json) ?: return emptyList()
+            Regex("\"([^\"]+)\"").findAll(m.groupValues[1]).map { it.groupValues[1] }.toList()
+        }
     }
 
     // ════════════════════════════════════════

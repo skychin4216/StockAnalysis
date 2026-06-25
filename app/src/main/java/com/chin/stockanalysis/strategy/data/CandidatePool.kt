@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
 import com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource
+import com.chin.stockanalysis.stock.data.sources.SectorSubDivision
 import com.chin.stockanalysis.stock.database.StockDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -115,35 +116,48 @@ object CandidatePool {
             fallback
         }
 
-        // 3. 對每個熱門板塊，取板塊內的龍頭股（主板為主）
+        // 3. 🏗️ 展開子板塊 → 每個最小子板塊取 15 只（主5 + 科5 + 創5）
         var addedFromSectors = 0
+        val db = StockDatabase.getInstance(context)
         for (sectorName in hotSectors.allSectors) {
             try {
-                // a) 先嘗試從東方財富獲取該板塊的龍頭
-                val eastMoneySectors = EastMoneyHotSectorSource.conceptSectors +
-                        EastMoneyHotSectorSource.industrySectors
-                val matched = eastMoneySectors.find { it.name.contains(sectorName, true) || sectorName.contains(it.name, true) }
+                // 展開該板塊的子板塊
+                val subSectors = SectorSubDivision.getSubSectors(sectorName)
+                Log.d(TAG, "  板塊 [$sectorName] → ${subSectors.size} 個子板塊: ${subSectors.joinToString { it.name }}")
 
-                if (matched != null) {
-                    val leaders = EastMoneyHotSectorSource().fetchSectorLeaders(matched.code, 3)
-                        .filter { isMainBoard(it.code) }
-                    for (leader in leaders) {
-                        val normalized = normalizeCode(leader.code)
-                        if (pool.add(normalized)) addedFromSectors++
-                    }
-                } else {
-                    // b) 嘗試從 DB 的板塊表中查找該板塊的股票
-                    val db = StockDatabase.getInstance(context)
+                for (sub in subSectors) {
                     try {
-                        val codes = db.sectorStockDao().getStockCodesBySector(sectorName)
-                        val mainBoard = codes.filter { isMainBoard(it) }.take(3)
-                        for (code in mainBoard) {
+                        // 從 DB 獲取該子板塊的股票代碼
+                        val codes = db.sectorStockDao().getStockCodesBySector(sub.name)
+                        if (codes.isEmpty()) {
+                            Log.d(TAG, "    子板塊 [${sub.name}] 無股票數據")
+                            continue
+                        }
+
+                        // 按 board 類型分組，各取 5 只
+                        val mainBoard = mutableListOf<String>()
+                        val starBoard = mutableListOf<String>()  // 科創板 688
+                        val gemBoard = mutableListOf<String>()   // 創業板 300/301
+
+                        for (code in codes) {
+                            when {
+                                code.startsWith("sh688") -> starBoard.add(code)
+                                code.startsWith("sz300") || code.startsWith("sz301") -> gemBoard.add(code)
+                                else -> mainBoard.add(code)
+                            }
+                        }
+
+                        val picked = (mainBoard.take(5) + starBoard.take(5) + gemBoard.take(5)).toSet()
+                        for (code in picked) {
                             if (pool.add(code)) addedFromSectors++
                         }
-                    } catch (_: Exception) { /* ignore */ }
+                        if (picked.isNotEmpty()) {
+                            Log.d(TAG, "    子板塊 [${sub.name}]: 主${mainBoard.take(5).size}·科${starBoard.take(5).size}·創${gemBoard.take(5).size} → 新增${picked.size}只")
+                        }
+                    } catch (_: Exception) { /* skip individual sub-sector errors */ }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "  板塊 [$sectorName] 獲取龍頭失敗: ${e.message}")
+                Log.w(TAG, "  板塊 [$sectorName] 展開子板塊失敗: ${e.message}")
             }
         }
         Log.i(TAG, "✅ AI熱門板塊龍頭: 新增${addedFromSectors}只, 總池${pool.size}只")
