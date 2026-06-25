@@ -15,7 +15,7 @@ import kotlin.coroutines.resumeWithException
 /**
  * ## 单一 AI Provider（策略使用）
  *
- * - 仅使用一个 API，按优先级：豆包 > Qwen
+ * - 动态选择已配置 apiKey 的 Provider，失败后自动切换下一个
  * - 不检查健康缓存，失败后自动切换
  * - 与 AiProviderPool 互斥（不同时占用同一 Provider）
  *
@@ -26,15 +26,24 @@ object SimpleAiProvider {
 
     private const val TAG = "SimpleAiProvider"
 
-    /** 策略专用优先级 */
-    private val PRIORITY = listOf("doubao", "dashscope-qwen3")
-
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val mutex = Mutex()
     private val providerCache = mutableMapOf<String, ApiProvider>()
     private var configManager: ApiConfigManager? = null
     private var currentConfigId: String? = null
     private var currentSlot: AiProviderPool.Slot? = null
+    /** 已失败的 provider ID，避免循環切換 */
+    private val failedIds = mutableSetOf<String>()
+
+    /**
+     * 動態獲取所有已配置 apiKey 的 Provider 列表（按 builtInProviders 順序）
+     */
+    private fun getAvailableIds(): List<String> {
+        val mgr = configManager ?: return emptyList()
+        return mgr.getAllConfigs()
+            .filter { it.apiKey.isNotBlank() }
+            .map { it.id }
+    }
 
     /**
      * 获取当前可用的 Provider，失败时自动切到下一个
@@ -44,19 +53,29 @@ object SimpleAiProvider {
         val mgr = configManager ?: return null
 
         mutex.withLock {
-            // 先尝试上次成功的
+            val availableIds = getAvailableIds()
+            if (availableIds.isEmpty()) {
+                Log.e(TAG, "❌ 无可用 Provider（所有 Provider 均未配置 apiKey）")
+                return null
+            }
+
+            // 先嘗試上次成功的（未在失敗列表中）
             currentConfigId?.let { id ->
-                val config = mgr.getProviderConfig(id)
-                if (config != null && config.apiKey.isNotBlank()) {
-                    val provider = getOrCreateProvider(config)
-                    val slot = AiProviderPool.Slot(id, config.name, provider)
-                    currentSlot = slot
-                    Log.d(TAG, "✅ 使用: ${config.name}")
-                    return slot
+                if (id !in failedIds) {
+                    val config = mgr.getProviderConfig(id)
+                    if (config != null && config.apiKey.isNotBlank()) {
+                        val provider = getOrCreateProvider(config)
+                        val slot = AiProviderPool.Slot(id, config.name, provider)
+                        currentSlot = slot
+                        Log.d(TAG, "✅ 使用: ${config.name}")
+                        return slot
+                    }
                 }
             }
-            // 按优先级找第一个可用的
-            for (id in PRIORITY) {
+
+            // 找第一個可用的（跳過已失敗的）
+            for (id in availableIds) {
+                if (id in failedIds) continue
                 val config = mgr.getProviderConfig(id) ?: continue
                 if (config.apiKey.isBlank()) continue
                 val provider = getOrCreateProvider(config)
@@ -66,6 +85,21 @@ object SimpleAiProvider {
                 Log.i(TAG, "✅ acquire → ${config.name}")
                 return slot
             }
+
+            // 所有 provider 都失敗了，清除失敗記錄重試
+            Log.w(TAG, "⚠️ 所有 Provider 均已失敗，清除失敗記錄重試")
+            failedIds.clear()
+            for (id in availableIds) {
+                val config = mgr.getProviderConfig(id) ?: continue
+                if (config.apiKey.isBlank()) continue
+                val provider = getOrCreateProvider(config)
+                val slot = AiProviderPool.Slot(id, config.name, provider)
+                currentConfigId = id
+                currentSlot = slot
+                Log.i(TAG, "✅ acquire(重試) → ${config.name}")
+                return slot
+            }
+
             Log.e(TAG, "❌ 无可用 Provider")
             return null
         }
@@ -77,15 +111,37 @@ object SimpleAiProvider {
     suspend fun switchToNext(context: Context): AiProviderPool.Slot? {
         val mgr = configManager ?: return null
         mutex.withLock {
-            val currentIdx = PRIORITY.indexOf(currentConfigId)
-            val nextIdx = if (currentIdx >= 0 && currentIdx + 1 < PRIORITY.size) currentIdx + 1 else 0
-            val nextId = PRIORITY[nextIdx]
-            val config = mgr.getProviderConfig(nextId)
+            val availableIds = getAvailableIds()
+            if (availableIds.isEmpty()) return null
+
+            // 標記當前 provider 為已失敗
+            currentConfigId?.let { failedIds.add(it) }
+
+            // 從當前位置的下一個開始，找第一個未失敗的
+            val currentIdx = availableIds.indexOf(currentConfigId)
+            for (i in 1..availableIds.size) {
+                val nextIdx = (currentIdx + i) % availableIds.size
+                val nextId = availableIds[nextIdx]
+                if (nextId in failedIds) continue
+                val config = mgr.getProviderConfig(nextId)
+                if (config != null && config.apiKey.isNotBlank()) {
+                    val provider = getOrCreateProvider(config)
+                    currentConfigId = nextId
+                    currentSlot = AiProviderPool.Slot(nextId, config.name, provider)
+                    Log.i(TAG, "🔄 切换 → ${config.name}")
+                    return currentSlot
+                }
+            }
+
+            // 全部失敗，清除記錄並從頭開始
+            Log.w(TAG, "⚠️ 所有 Provider 均已失敗，清除記錄重試")
+            failedIds.clear()
+            val first = availableIds.first()
+            val config = mgr.getProviderConfig(first)
             if (config != null && config.apiKey.isNotBlank()) {
                 val provider = getOrCreateProvider(config)
-                currentConfigId = nextId
-                currentSlot = AiProviderPool.Slot(nextId, config.name, provider)
-                Log.i(TAG, "🔄 切换 → ${config.name}")
+                currentConfigId = first
+                currentSlot = AiProviderPool.Slot(first, config.name, provider)
                 return currentSlot
             }
             return null

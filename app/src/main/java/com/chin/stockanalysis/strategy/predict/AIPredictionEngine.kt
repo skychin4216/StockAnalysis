@@ -397,7 +397,7 @@ class AIPredictionEngine(private val context: Context) {
         }
     }
 
-    /** 發送同步請求（30s 超時，最多 2 次重試） */
+    /** 發送同步請求（30s 超時，最多 2 次重試，DNS 錯誤快速跳過） */
     private suspend fun sendSyncRequest(provider: ApiProvider, prompt: String): String {
         var lastErr: Exception? = null
         repeat(2) { attempt ->
@@ -415,6 +415,13 @@ class AIPredictionEngine(private val context: Context) {
                 } ?: throw java.io.IOException("AI 请求超时（30秒）")
             } catch (e: Exception) {
                 lastErr = e
+                // DNS 錯誤不重試，直接拋出讓外層換 provider
+                if (e.message?.contains("Unable to resolve host") == true ||
+                    e.message?.contains("UnknownHostException") == true ||
+                    e.message?.contains("No address associated") == true) {
+                    Log.w(TAG, "DNS 解析失敗，跳過此 Provider: ${e.message}")
+                    throw e
+                }
                 Log.w(TAG, "AI 请求失败（第${attempt+1}/2次）: ${e.message}")
                 if (attempt < 1) {
                     kotlinx.coroutines.delay(2000L)  // 2秒后再试
