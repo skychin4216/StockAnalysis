@@ -171,7 +171,7 @@ class StrategyListFragment : Fragment() {
         val row2 = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(8,4,8,4); setBackgroundColor(Color.WHITE) }
         scanBtn = Button(requireContext()).apply { text = "执行策略"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#E65100")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.2f).apply { marginEnd = 3 }; setOnClickListener { runSelectedStrategies() } }; row2.addView(scanBtn)
         tuneBtn = Button(requireContext()).apply { text = "拟合(90%)"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#EF6C00")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.1f).apply { marginEnd = 3 }; setOnClickListener { runSelfTune() } }; row2.addView(tuneBtn)
-        val historyBtn = Button(requireContext()).apply { text = "报告"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#455A64")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,0.9f).apply { marginEnd = 3 }; setOnClickListener { showScanHistory() } }; row2.addView(historyBtn)
+        val dataBtn = Button(requireContext()).apply { text = "数据"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#455A64")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,0.9f).apply { marginEnd = 3 }; setOnClickListener { showDataMenu() } }; row2.addView(dataBtn)
         val importBtn = Button(requireContext()).apply { text = "导入"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#2E7D32")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.1f).apply { marginEnd = 3 }; setOnClickListener { importHistoricalData() } }; row2.addView(importBtn)
         val exportBtn = Button(requireContext()).apply { text = "导出"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#006064")); setPadding(4,6,4,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,0.9f).apply { marginEnd = 3 }; setOnClickListener { exportSnapshotData() } }; row2.addView(exportBtn)
         val addCustomBtn = Button(requireContext()).apply { text = "+策略"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#1565C0")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,0.9f).apply { marginEnd = 3 }; setOnClickListener { showAddDialog() } }; row2.addView(addCustomBtn)
@@ -573,6 +573,59 @@ class StrategyListFragment : Fragment() {
     }
 
     private fun saveBacktestData(results: List<ScreeningResult>) { lifecycleScope.launch { try { val be = com.chin.stockanalysis.strategy.backtest.BacktestEngine(requireContext()); for (r in results) be.savePredictions(r.strategyId, r.strategyName, r) } catch (e: Exception) { Log.w("SLF", "保存预测失败: ${e.message}") } } }
+
+    /** 数据菜单 — 拉取股票报告 + 执行策略报告 */
+    private fun showDataMenu() {
+        val options = arrayOf("📥 拉取股票报告", "📊 执行策略报告")
+        AlertDialog.Builder(requireContext())
+            .setTitle("数据中心")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> showFetchReport()
+                    1 -> showScanHistory()
+                }
+            }
+            .show()
+    }
+
+    private fun showFetchReport() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val latestDates = db.dailySnapshotDao().getAvailableDates(20).sorted()
+                if (latestDates.size < 2) {
+                    withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "需先导入数据", Toast.LENGTH_SHORT).show() }
+                    return@launch
+                }
+                val sb = StringBuilder()
+                sb.appendLine("📥 拉取股票报告 (最近 ${latestDates.size} 天)")
+                sb.appendLine()
+                for (date in latestDates.takeLast(5)) {
+                    val snaps = db.dailySnapshotDao().getByDate(date)
+                    sb.appendLine("━━━ $date ━━━")
+                    sb.appendLine("  总股票数: ${snaps.size}")
+                    val avgPct = snaps.map { it.changePct }.average().let { String.format("%.2f", it) }
+                    val posCount = snaps.count { it.changePct > 0 }
+                    sb.appendLine("  上涨数: $posCount / ${snaps.size} (${(posCount * 100.0 / snaps.size).let { "%.1f".format(it) }}%)")
+                    sb.appendLine("  平均涨幅: ${avgPct}%")
+                    val topGainers = snaps.sortedByDescending { it.changePct }.take(5)
+                    sb.appendLine("  Top5涨幅: ${topGainers.joinToString { "${it.name}(${String.format("%.2f", it.changePct)}%)" }}")
+                    sb.appendLine()
+                }
+                val prefs = requireContext().getSharedPreferences("data_import", android.content.Context.MODE_PRIVATE)
+                val lastImport = prefs.getString("last_import_date", "从未")
+                sb.appendLine("📅 上次导入: $lastImport")
+                withContext(Dispatchers.Main) {
+                    AlertDialog.Builder(requireContext())
+                        .setTitle("拉取股票报告")
+                        .setMessage(sb.toString())
+                        .setPositiveButton("关闭", null).show()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "加载失败: ${e.message}", Toast.LENGTH_SHORT).show() }
+            }
+        }
+    }
 
     private fun showScanHistory() {
         lifecycleScope.launch(Dispatchers.IO) {

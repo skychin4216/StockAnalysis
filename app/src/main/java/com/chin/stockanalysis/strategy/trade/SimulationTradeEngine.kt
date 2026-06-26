@@ -536,8 +536,31 @@ class SimulationTradeEngine(private val context: Context) {
         return filtered to info
     }
 
-    private suspend fun generateBuyOrders(aiPicks: List<AIPick>, tradeDate: String, snapshots: List<DailySnapshotEntity>): List<TradeOrder> =
-        aiPicks.mapNotNull{pick->snapshots.find{it.code==pick.stockCode}?.let{ TradeOrder(pick.stockCode,pick.stockName,"AI_SELECTED",tradeDate,it.close,100,reason=pick.reason,scoreAtBuy=pick.compositeScore,orderType="AI精選") }}
+    private suspend fun generateBuyOrders(aiPicks: List<AIPick>, tradeDate: String, snapshots: List<DailySnapshotEntity>): List<TradeOrder> {
+        return aiPicks.mapNotNull { pick ->
+            // 尝试多种代码格式匹配
+            val rawCode = pick.stockCode.removePrefix("sh").removePrefix("sz")
+            var snap = snapshots.find { it.code == pick.stockCode }
+                ?: snapshots.find { it.code == rawCode }
+                ?: snapshots.find { it.code.removePrefix("sh").removePrefix("sz") == rawCode }
+
+            // 如果快照中找不到，尝试用 StockNameResolver 补充名称
+            val stockName = if (pick.stockName.isNotBlank() && pick.stockName != rawCode) {
+                pick.stockName
+            } else {
+                com.chin.stockanalysis.stock.data.StockNameResolver.resolve(rawCode) ?: pick.stockName.ifEmpty { rawCode }
+            }
+
+            if (snap != null) {
+                TradeOrder(pick.stockCode, stockName, "AI_SELECTED", tradeDate, snap.close, 100,
+                    reason = pick.reason, scoreAtBuy = pick.compositeScore, orderType = "AI精選")
+            } else {
+                // 即使没有快照数据，也尝试创建订单（价格用0标记）
+                Log.w(TAG, "⚠️ AI推荐股票无快照: ${pick.stockName}(${rawCode}), 跳过买入")
+                null
+            }
+        }
+    }
 
     private suspend fun runFitting(strategies: List<Strategy>, results: List<StrategyPeriodResult>, config: TradeSessionConfig) {
         for (strategy in strategies) for (period in config.periods) {
