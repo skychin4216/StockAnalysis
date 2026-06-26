@@ -85,7 +85,7 @@ class AIPredictionEngine(private val context: Context) {
         strategyResults: List<ScreeningResult>,
         selectedDate: String,
         onProgress: ((String) -> Unit)? = null,
-        useEnhancedAi: Boolean = false   // true=导入模式(增强型多API), false=策略模式(单一API)
+        useEnhancedAi: Boolean = true   // 默认使用多Provider轮换，避免单点故障
     ): AIPrediction? {
         val slot = if (useEnhancedAi) {
             AiProviderPool.acquire(context)
