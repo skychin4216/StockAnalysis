@@ -120,7 +120,7 @@ class StrategyListFragment : Fragment() {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, 6, 0, 0)
         }
         hotSectorRow.addView(TextView(requireContext()).apply {
-            text = "📌 热门"; textSize = 13f; setTextColor(Color.parseColor("#E65100")); setTypeface(null, Typeface.BOLD); setPadding(0, 0, 4, 0)
+            text = "\uD83D\uDCCC 热门"; textSize = 13f; setTextColor(Color.parseColor("#E65100")); setTypeface(null, Typeface.BOLD); setPadding(0, 0, 4, 0)
         })
         hotSectorSpinner = Spinner(requireContext()).apply {
             val presets = listOf("当日(板块/子板块)", "近三日(板块/子板块)", "近10日(板块/子板块)", "近30日(板块/子板块)", "近50日", "近100日(板块/子板块)")
@@ -186,62 +186,29 @@ class StrategyListFragment : Fragment() {
         refreshList(); refreshDateUI(); loadHotSectors()
     }
 
-    /**
-     * 获取热门板块及其子板块
-     * 规则：
-     * 1. 取实时概念板块前三名
-     * 2. 每个板块如果有子板块，展开子板块
-     * 3. 如果没有子板块，直接显示板块名称
-     * 4. 子板块包含：MLCC(三环/风华/火炬/洁美)、光模块(中际/新易盛/天孚/光迅/德科立/联特)、
-     *    光纤(长飞/亨通/中天)、光材料等
-     */
     private fun loadHotSectors() {
         lifecycleScope.launch(Dispatchers.IO) {
             val days = when (selectedHotPeriod) { 0->1; 1->3; 2->10; 3->30; 4->50; 5->100; else->1 }
-
-            // 获取热门板块（取前三）
             val top3Sectors: List<String> = when {
                 days == 1 -> {
                     val live = EastMoneyHotSectorSource.conceptSectors
-                    if (live.isNotEmpty()) {
-                        live.map { it.name }.take(3)
-                    } else {
-                        try {
-                            val direct = EastMoneyHotSectorSource().fetchSectorsByTypeDirect(3, 5)
-                            direct.map { it.name }.take(3)
-                        } catch (_: Exception) {
-                            StockDataCenter.getHotSectorsByPeriod(3).take(3)
-                        }
-                    }
+                    if (live.isNotEmpty()) live.map { it.name }.take(3)
+                    else try { EastMoneyHotSectorSource().fetchSectorsByTypeDirect(3, 5).map { it.name }.take(3) }
+                    catch (_: Exception) { StockDataCenter.getHotSectorsByPeriod(3).take(3) }
                 }
                 else -> StockDataCenter.getHotSectorsByPeriod(days).take(3)
             }
-
             if (top3Sectors.isEmpty()) {
                 currentHotSectors = (EastMoneyHotSectorSource.conceptSectors + EastMoneyHotSectorSource.industrySectors)
                     .map { it.name }.distinct().sorted().take(3)
             } else {
-                // 展开子板块-不限制数量，列出所有相关子板块
-                // 比如光通信板块会展开：光芯片、光模块、CPO、光材料等
                 val expandedSectors = mutableListOf<String>()
                 for (sector in top3Sectors) {
-                    val subSectors = try {
-                        com.chin.stockanalysis.stock.data.sources.SectorSubDivision
-                            .getSubSectors(sector).map { it.name }
-                    } catch (_: Exception) { emptyList() }
-                    
-                    if (subSectors.isNotEmpty()) {
-                        // 列出所有子板块（不限制数量）
-                        expandedSectors.addAll(subSectors)
-                    } else {
-                        // 没有子板块直接显示板块
-                        expandedSectors.add(sector)
-                    }
+                    val subSectors = try { com.chin.stockanalysis.stock.data.sources.SectorSubDivision.getSubSectors(sector).map { it.name } } catch (_: Exception) { emptyList() }
+                    if (subSectors.isNotEmpty()) expandedSectors.addAll(subSectors) else expandedSectors.add(sector)
                 }
                 currentHotSectors = expandedSectors.distinct()
             }
-
-            // 最终fallback
             if (currentHotSectors.isEmpty()) {
                 try {
                     val db = StockDatabase.getInstance(requireContext())
@@ -254,49 +221,30 @@ class StrategyListFragment : Fragment() {
                     }
                 } catch (_: Exception) {}
             }
-
             val hasSubSectors = currentHotSectors.any { sector ->
-                try { 
-                    com.chin.stockanalysis.stock.data.sources.SectorSubDivision
-                        .getSubSectors(sector).isNotEmpty() 
-                } catch (_: Exception) { false }
+                try { com.chin.stockanalysis.stock.data.sources.SectorSubDivision.getSubSectors(sector).isNotEmpty() } catch (_: Exception) { false }
             }
-
             withContext(Dispatchers.Main) {
-                statusTv.text = "  🔥 已加载热门板块(前三子板块): ${currentHotSectors.take(5).joinToString("、")}"
+                statusTv.text = "  \uD83D\uDD25 已加载热门板块(前三子板块): ${currentHotSectors.take(5).joinToString("\u3001")}"
                 updateSpinnerLabels(hasSubSectors)
             }
         }
     }
 
     private fun resetToRecent() { browsingDate = TradingDayPickerView.recentTradingDay(); isBrowsing = false; datePicker.selectedDate = browsingDate; refreshDateUI() }
-
-    private fun refreshDateUI() {
-        resetBtn.visibility = if (isBrowsing) View.VISIBLE else View.GONE
-    }
+    private fun refreshDateUI() { resetBtn.visibility = if (isBrowsing) View.VISIBLE else View.GONE }
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
-
     private fun isMainBoard(code: String): Boolean = !(code.startsWith("sz300") || code.startsWith("sz301") || code.startsWith("sh688") || code.startsWith("bj"))
-
-    // LruCache for sector labels (200 entries max)
     private val sectorLabelCache = object : LinkedHashMap<String, String>(200, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 200
     }
-
     private fun getSectorLabel(stockCode: String, stockName: String = ""): String {
         val cacheKey = "$stockCode|$stockName"
         sectorLabelCache[cacheKey]?.let { return it }
-        val result = try {
-            kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
-                StockDataCenter.getSubSectorByStock(stockCode, stockName)
-            }
-        } catch (_: Exception) {
-            if (stockName.isNotEmpty()) hardcodedSubSector(stockName) else "-"
-        }
-        sectorLabelCache[cacheKey] = result
-        return result
+        val result = try { kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) { StockDataCenter.getSubSectorByStock(stockCode, stockName) } }
+        catch (_: Exception) { if (stockName.isNotEmpty()) hardcodedSubSector(stockName) else "-" }
+        sectorLabelCache[cacheKey] = result; return result
     }
-
     private fun updateSpinnerLabels(hasSubSectors: Boolean) {
         val s = if (hasSubSectors) "(板块/子板块)" else ""
         val labels = listOf("当日$s", "近三日$s", "近10日$s", "近30日$s", "近50日", "近100日$s")
@@ -304,35 +252,27 @@ class StrategyListFragment : Fragment() {
             init { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
             override fun getView(pos: Int, cv: View?, parent: ViewGroup): View {
                 val tv = super.getView(pos, cv, parent) as TextView
-                tv.textSize = 12f; tv.setTextColor(Color.parseColor("#E65100")); tv.typeface = Typeface.DEFAULT_BOLD
-                return tv
+                tv.textSize = 12f; tv.setTextColor(Color.parseColor("#E65100")); tv.typeface = Typeface.DEFAULT_BOLD; return tv
             }
         }
-        hotSectorSpinner.adapter = newAdapter
-        // 恢复之前的选中位置
-        hotSectorSpinner.setSelection(selectedHotPeriod)
+        hotSectorSpinner.adapter = newAdapter; hotSectorSpinner.setSelection(selectedHotPeriod)
     }
-
     private fun hardcodedSubSector(name: String): String {
         val map = mapOf("生益" to "覆铜板","沪电" to "PCB","深南" to "基板","鹏鼎" to "软板","景旺" to "PCB","世运" to "PCB","超声" to "PCB","三环" to "MLCC","风华" to "MLCC","火炬" to "MLCC","洁美" to "MLCC","中际" to "光模块","新易盛" to "光模块","天孚" to "光器件","光迅" to "光模块","德科立" to "光模块","联特" to "光模块","意华" to "连接器","鼎通" to "连接器","立讯" to "代工","博创" to "光器件","太辰" to "光器件","东山" to "软板","信维" to "射频","闻泰" to "代工","韦尔" to "CIS","兆易" to "存储","长电" to "封测","通富" to "封测","华天" to "封测","北方华创" to "设备","中微" to "刻蚀","盛美" to "清洗","拓荆" to "镀膜","芯源" to "涂胶","江丰" to "靶材","安集" to "抛光液","中芯" to "代工","华虹" to "代工","斯达" to "IGBT","时代电气" to "IGBT","中兴" to "通信","烽火" to "通信","宁德" to "电池","比亚迪" to "整车","亿纬" to "电池","赣锋" to "锂矿","天齐" to "锂矿","华友" to "钴镍","中矿" to "铯矿","紫金" to "金铜","洛阳钼业" to "钼矿","西部矿业" to "铜矿","中科" to "超算","浪潮" to "服务器","曙光" to "超算","海光" to "CPU","寒武纪" to "AI芯","金山" to "办公","中望" to "CAD","德赛西威" to "智驾","均胜" to "安全","阳光" to "逆变器","固德" to "逆变器","锦浪" to "逆变器","晶澳" to "组件","隆基" to "硅片","通威" to "硅料","福莱" to "玻璃","福斯" to "胶膜","泰格" to "CXO","药明" to "CXO","康龙" to "CXO","凯莱英" to "CXO","迈瑞" to "器械","联影" to "影像","鱼跃" to "家用","恒瑞" to "创新药","百济" to "创新药","爱尔" to "眼科","通策" to "口腔")
-        for ((kw, label) in map) { if (name.contains(kw)) return label }
-        return ""
+        for ((kw, label) in map) { if (name.contains(kw)) return label }; return ""
     }
 
     private fun runSelectedStrategies() {
         val eng = engine ?: return
         val nowMs = System.currentTimeMillis()
-        val selectedDate = browsingDate.toString(); val sectorLabel = currentHotSectors.take(3).joinToString("、").ifEmpty { "全市场" }
-
-        // 缓存檢查：10分鐘內相同條件 ⇒ 直接輸出緩存結果
+        val selectedDate = browsingDate.toString(); val sectorLabel = currentHotSectors.take(3).joinToString("\u3001").ifEmpty { "全市场" }
         val withinCacheWindow = (nowMs - lastExecTimeMs) < 600_000L
         val sameConditions = (browsingDate == lastExecDate && selectedHotPeriod == lastExecPeriod)
         if (withinCacheWindow && sameConditions && cachedResults != null) {
-            statusTv.text = "  📋 使用快取結果（${(nowMs - lastExecTimeMs) / 1000}秒前）"
+            statusTv.text = "  \uD83D\uDCCB 使用快取結果（${(nowMs - lastExecTimeMs) / 1000}秒前）"
             showResults(cachedResults!!); return
         }
-
-        scanBtn.isEnabled = false; scanBtn.text = "⏳"; progressBar.visibility = View.VISIBLE
+        scanBtn.isEnabled = false; scanBtn.text = "\u23F3"; progressBar.visibility = View.VISIBLE
         val today = TradingDayPickerView.recentTradingDay()
         statusTv.text = "  正在执行 $browsingDate（$sectorLabel）..."
         lifecycleScope.launch(Dispatchers.IO) {
@@ -340,19 +280,12 @@ class StrategyListFragment : Fragment() {
                 val db = StockDatabase.getInstance(requireContext())
                 val snapshots = db.dailySnapshotDao().getByDate(selectedDate)
                 if (snapshots.isEmpty()) {
-                    // 如果選擇的是今天（當日）且沒數據，且市場已開盤 → 直接用實時行情
-                    if (browsingDate == today && A股TradingHours.a股是否交易中()) {
-                        executeRealTime(eng, selectedDate); return@launch
-                    }
+                    if (browsingDate == today && A股TradingHours.a股是否交易中()) { executeRealTime(eng, selectedDate); return@launch }
                     val availableDates = db.dailySnapshotDao().getAvailableDates(5)
                     if (availableDates.isNotEmpty()) {
                         val latestDate = availableDates.first()
-                        // 不要修改 browsingDate，只在内部使用 latestDate 的数据
                         val latestSnapshots = db.dailySnapshotDao().getByDate(latestDate)
-                        if (latestSnapshots.isNotEmpty()) {
-                            doExecute(eng, db, latestSnapshots, latestDate, sectorLabel)
-                            return@launch
-                        }
+                        if (latestSnapshots.isNotEmpty()) { doExecute(eng, db, latestSnapshots, latestDate, sectorLabel); return@launch }
                     }
                     executeRealTime(eng, selectedDate); return@launch
                 }
@@ -361,7 +294,6 @@ class StrategyListFragment : Fragment() {
         }
     }
 
-    /** 多日合并快照 */
     private suspend fun getMultiDaySnapshots(db: StockDatabase, baseDate: String): List<com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity> {
         if (selectedHotPeriod <= 0) return db.dailySnapshotDao().getByDate(baseDate)
         val days = when (selectedHotPeriod) { 1->3; 2->10; 3->30; 4->50; 5->100; else->1 }
@@ -377,15 +309,12 @@ class StrategyListFragment : Fragment() {
         val sectorStockCodes = if (currentHotSectors.isEmpty()) emptySet()
         else { val codes = mutableSetOf<String>(); for (name in currentHotSectors) codes.addAll(db.sectorStockDao().getStockCodesBySector(name)); codes }
         val onlyMainBoard = (view?.findViewWithTag<Switch>("mainBoardSwitch")?.isChecked == true)
-        // 统一数据层: 使用 StrategyDataFeed 构建 StockRealtime
         val feed = com.chin.stockanalysis.strategy.data.StrategyDataFeed(requireContext())
         val allStocks = feed.convertSnapshots(effectiveSnapshots, com.chin.stockanalysis.strategy.data.StrategyDataFeed.DataFeedConfig(onlyMainBoard = onlyMainBoard))
         val stockList = if (sectorStockCodes.isEmpty()) allStocks else allStocks.filter { it.code in sectorStockCodes }
         val results = mutableListOf<ScreeningResult>()
         for (s in eng.getStrategies()) { if (!eng.isEnabled(s.id)) continue; if (s.id == "ai_prediction") continue; try { s.screenWithData(stockList).getOrNull()?.let { results.add(it) } } catch (e: Exception) { Log.w("SLF", "策略 ${s.id} 异常: ${e.message}") } }
-        // 发布到跨Tab总线
         CrossTabBus.postStrategyResults(results)
-        // 更新缓存
         cachedResults = results
         lastExecTimeMs = System.currentTimeMillis()
         lastExecDate = browsingDate
@@ -396,9 +325,9 @@ class StrategyListFragment : Fragment() {
 
     private fun runSelfTune() {
         val eng = engine ?: return
-        tuneBtn.isEnabled = false; tuneBtn.text = "⏳"; progressBar.visibility = View.VISIBLE; statusTv.text = "  🔧 正在自测拟合(目标90%)..."
+        tuneBtn.isEnabled = false; tuneBtn.text = "\u23F3"; progressBar.visibility = View.VISIBLE; statusTv.text = "  \uD83D\uDD27 正在自测拟合(目标90%)..."
         lifecycleScope.launch {
-            try { val report = StrategySelfTuner(requireContext()).selfTune(eng.getEnabledStrategies(), 30, 0.90f); withContext(Dispatchers.Main) { tuneBtn.isEnabled = true; tuneBtn.text = "拟合(90%)"; progressBar.visibility = View.GONE; statusTv.text = "  ✅ 拟合完成"; showFullScreenTuneReport(report.summary) } }
+            try { val report = StrategySelfTuner(requireContext()).selfTune(eng.getEnabledStrategies(), 30, 0.90f); withContext(Dispatchers.Main) { tuneBtn.isEnabled = true; tuneBtn.text = "拟合(90%)"; progressBar.visibility = View.GONE; statusTv.text = "  \u2705 拟合完成"; showFullScreenTuneReport(report.summary) } }
             catch (e: Exception) { withContext(Dispatchers.Main) { tuneBtn.isEnabled = true; tuneBtn.text = "拟合(90%)"; progressBar.visibility = View.GONE; statusTv.text = "  拟合失败: ${e.message?.take(30)}" } }
         }
     }
@@ -416,12 +345,9 @@ class StrategyListFragment : Fragment() {
                 val rts = screener?.scanFullMarket() ?: emptyList()
                 val results = mutableListOf<ScreeningResult>()
                 if (rts.isNotEmpty()) { for (s in eng.getStrategies()) { if (!eng.isEnabled(s.id)) continue; if (s.id == "ai_prediction") continue; try { s.screenWithData(rts).getOrNull()?.let { results.add(it) } } catch (e: Exception) { Log.w("SLF", "实时 ${s.id}: ${e.message}") } } }
-                // 更新缓存
                 cachedResults = results.takeIf { it.isNotEmpty() }
-                lastExecTimeMs = System.currentTimeMillis()
-                lastExecDate = browsingDate
-                lastExecPeriod = selectedHotPeriod
-                if (isAdded) { withContext(Dispatchers.Main) { scanBtn.isEnabled = true; scanBtn.text = "执行策略"; progressBar.visibility = View.GONE; statusTv.text = "  已完成 · $selectedDate (实时)" + if (rts.isEmpty()) " ⚠️ 扫描无数据" else ""; saveBacktestData(results); showResults(results) } }
+                lastExecTimeMs = System.currentTimeMillis(); lastExecDate = browsingDate; lastExecPeriod = selectedHotPeriod
+                if (isAdded) { withContext(Dispatchers.Main) { scanBtn.isEnabled = true; scanBtn.text = "执行策略"; progressBar.visibility = View.GONE; statusTv.text = "  已完成 · $selectedDate (实时)" + if (rts.isEmpty()) " \u26A0\uFE0F 扫描无数据" else ""; saveBacktestData(results); showResults(results) } }
                 else { pendingResults = results }
             } catch (e: Exception) { if (isAdded) withContext(Dispatchers.Main) { scanBtn.isEnabled = true; scanBtn.text = "执行策略"; progressBar.visibility = View.GONE; statusTv.text = "  执行失败: ${e.message}" } }
         }
@@ -431,8 +357,7 @@ class StrategyListFragment : Fragment() {
         if (!isAdded) return
         val totalHits = results.sumOf { it.hitCount }; val totalScanned = results.sumOf { it.totalScanned }
         if (results.isEmpty() || totalHits == 0) { 
-            statusTv.text = "  ⚠️ 扫描${totalScanned}只，未产生命中信号"; 
-            Log.i("SLF", "扫描${totalScanned}只，未产生命中信号")
+            statusTv.text = "  \u26A0\uFE0F 扫描${totalScanned}只，未产生命中信号"
             AlertDialog.Builder(requireContext()).setTitle("策略执行结果").setMessage("扫描 $totalScanned 只股票，未产生命中信号。\n\n可能原因:\n• 当前市场情绪偏弱\n• 策略阈值较高\n• 数据源未就绪").setPositiveButton("确定", null).show()
             return 
         }
@@ -445,7 +370,7 @@ class StrategyListFragment : Fragment() {
         val rm = results.associateBy { it.strategyId }; val all = engine?.getStrategies()?.filter { engine!!.isEnabled(it.id) && it.id != "ai_prediction" } ?: emptyList()
         for (r in all.map { s -> rm[s.id] ?: ScreeningResult(strategyId = s.id, strategyName = s.name, category = s.category, signals = emptyList(), totalScanned = 0, scanTimeMs = 0) }) {
             c.addView(TextView(requireContext()).apply { text = "${r.category.icon} ${r.strategyName}  (${r.hitCount}只 / ${r.scanTimeMs}ms)"; textSize = 15f; setTextColor(Color.parseColor("#333333")); setTypeface(null, Typeface.BOLD); setPadding(0, 16, 0, 8); setOnClickListener { if (r.signals.isNotEmpty()) openResultDialog(r) } })
-            if (r.signals.isEmpty()) { c.addView(TextView(requireContext()).apply { text = "  ⚠️ 无命中信号"; textSize = 12f; setTextColor(Color.parseColor("#999999")); setPadding(0, 0, 0, 8) }); continue }
+            if (r.signals.isEmpty()) { c.addView(TextView(requireContext()).apply { text = "  \u26A0\uFE0F 无命中信号"; textSize = 12f; setTextColor(Color.parseColor("#999999")); setPadding(0, 0, 0, 8) }); continue }
             val t = TableLayout(requireContext()).apply { isStretchAllColumns = true }
             val hr = TableRow(requireContext()); for (h in listOf("名称", "子板块", "代码", "强度", "价格", "涨幅")) hr.addView(TextView(requireContext()).apply { text = h; textSize = 11f; setTextColor(Color.parseColor("#999999")); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER; setPadding(4, 4, 4, 4) }); t.addView(hr)
             for (s in r.signals.distinctBy { it.stockCode }.take(10)) {
@@ -461,9 +386,8 @@ class StrategyListFragment : Fragment() {
             }; c.addView(t)
         }
         c.addView(View(requireContext()).apply { layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, 2).apply { topMargin = 16; bottomMargin = 8 }; setBackgroundColor(Color.parseColor("#DDDDDD")) })
-        c.addView(TextView(requireContext()).apply { text = "🤖 AI 量化选股（多策略+新闻因子+周期轮动）"; textSize = 16f; setTextColor(Color.parseColor("#1565C0")); setTypeface(null, Typeface.BOLD); setPadding(0, 8, 0, 8) })
-        val ail = TextView(requireContext()).apply { text = "  ⏳ AI 正在分析中，请稍候..."; textSize = 12f; setTextColor(Color.parseColor("#999999")) }; c.addView(ail)
-        // 动态标题：多日模式用label
+        c.addView(TextView(requireContext()).apply { text = "\uD83E\uDD16 AI 量化选股（多策略+新闻因子+周期轮动）"; textSize = 16f; setTextColor(Color.parseColor("#1565C0")); setTypeface(null, Typeface.BOLD); setPadding(0, 8, 0, 8) })
+        val ail = TextView(requireContext()).apply { text = "  \u23F3 AI 正在分析中，请稍候..."; textSize = 12f; setTextColor(Color.parseColor("#999999")) }; c.addView(ail)
         val dialogTitle = when {
             isBrowsing && selectedHotPeriod == 0 -> "扫描结果 ($browsingDate)"
             selectedHotPeriod > 0 -> { val label = when(selectedHotPeriod){1->"近三日";2->"近10日";3->"近30日";4->"近50日";5->"近100日"; else->"当日"}; "扫描结果 ($label)" }
@@ -474,7 +398,7 @@ class StrategyListFragment : Fragment() {
         dialog.show()
         dialog.window?.setLayout(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT)
         dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.apply { gravity = Gravity.END or Gravity.BOTTOM }
-        lifecycleScope.launch { try { val ai = AIPredictionEngine(requireContext()); val pr = ai.predict(results, browsingDate.toString()); requireActivity().runOnUiThread { if (pr != null && pr.topPicks.isNotEmpty()) { ail.text = ""; c.addView(TextView(requireContext()).apply { text = "  📋 方案${pr.mode}: ${pr.modeReason}"; textSize = 11f; setTextColor(Color.parseColor("#E65100")); setPadding(0, 4, 0, 8) }); c.addView(TextView(requireContext()).apply { text = "  📊 市场判断: ${pr.marketOutlook}"; textSize = 11f; setTextColor(Color.parseColor("#666666")); setPadding(0, 0, 0, 4) }); c.addView(TextView(requireContext()).apply { text = "  ⚠ ${pr.riskWarning}"; textSize = 11f; setTextColor(Color.parseColor("#EF6C00")); setPadding(0, 0, 0, 8) }); val tpTable = TableLayout(requireContext()).apply { isStretchAllColumns = true }; val tpHr = TableRow(requireContext()); for (h in listOf("排名", "名称", "代码", "综分", "概率", "建议")) tpHr.addView(TextView(requireContext()).apply { text = h; textSize = 10f; setTextColor(Color.parseColor("#999999")); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER; setPadding(2, 4, 2, 4) }); tpTable.addView(tpHr); for (p in pr.topPicks) { val tpRow = TableRow(requireContext()); for (cell in listOf("#${p.rank}", p.stockName, p.stockCode.takeLast(6), "${p.compositeScore}", "${p.upProbability}%", p.actionSuggestion)) tpRow.addView(TextView(requireContext()).apply { text = cell; textSize = 10f; setTextColor(Color.parseColor("#333333")); gravity = Gravity.CENTER; setPadding(2, 4, 2, 4) }); tpTable.addView(tpRow) }; c.addView(tpTable) } else { ail.text = "  ⚠️ AI 预测暂不可用" } } } catch (e: Exception) { requireActivity().runOnUiThread { ail.text = "  ⚠️ AI 预测失败: ${e.message?.take(30)}" } } }
+        lifecycleScope.launch { try { val ai = AIPredictionEngine(requireContext()); val pr = ai.predict(results, browsingDate.toString(), useEnhancedAi = true); requireActivity().runOnUiThread { if (pr != null && pr.topPicks.isNotEmpty()) { ail.text = ""; c.addView(TextView(requireContext()).apply { text = "  \uD83D\uDCCB 方案${pr.mode}: ${pr.modeReason}"; textSize = 11f; setTextColor(Color.parseColor("#E65100")); setPadding(0, 4, 0, 8) }); c.addView(TextView(requireContext()).apply { text = "  \uD83D\uDCCA 市场判断: ${pr.marketOutlook}"; textSize = 11f; setTextColor(Color.parseColor("#666666")); setPadding(0, 0, 0, 4) }); c.addView(TextView(requireContext()).apply { text = "  \u26A0 ${pr.riskWarning}"; textSize = 11f; setTextColor(Color.parseColor("#EF6C00")); setPadding(0, 0, 0, 8) }); val tpTable = TableLayout(requireContext()).apply { isStretchAllColumns = true }; val tpHr = TableRow(requireContext()); for (h in listOf("排名", "名称", "代码", "综分", "概率", "建议")) tpHr.addView(TextView(requireContext()).apply { text = h; textSize = 10f; setTextColor(Color.parseColor("#999999")); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER; setPadding(2, 4, 2, 4) }); tpTable.addView(tpHr); for (p in pr.topPicks) { val tpRow = TableRow(requireContext()); for (cell in listOf("#${p.rank}", p.stockName, p.stockCode.takeLast(6), "${p.compositeScore}", "${p.upProbability}%", p.actionSuggestion)) tpRow.addView(TextView(requireContext()).apply { text = cell; textSize = 10f; setTextColor(Color.parseColor("#333333")); gravity = Gravity.CENTER; setPadding(2, 4, 2, 4) }); tpTable.addView(tpRow) }; c.addView(tpTable) } else { ail.text = "  \u26A0\uFE0F AI 预测暂不可用" } } } catch (e: Exception) { requireActivity().runOnUiThread { ail.text = "  \u26A0\uFE0F AI 预测失败: ${e.message?.take(30)}" } } }
     }
 
     private fun refreshList() { engine?.let { adapter = StrategyAdapter(it.getStrategies(), ::onStrategyClick, ::onStrategyToggle); recyclerView.adapter = adapter } }
@@ -483,109 +407,61 @@ class StrategyListFragment : Fragment() {
     private fun openResultDialog(result: ScreeningResult) { StrategyResultDialogFragment().apply { this.result = result; onAskQuestion = { q -> val ctx = buildString { appendLine("基于以下策略扫描结果，请回答用户问题："); appendLine("策略: ${result.strategyName} | 扫描: ${result.totalScanned}只 | 命中: ${result.hitCount}只"); for ((i, s) in result.signals.take(10).withIndex()) appendLine("| ${i + 1} | ${s.stockName} | ${s.stockCode.takeLast(6)} | ${s.strength}% | ${"%.2f".format(s.currentPrice)} | ${"%.2f".format(s.changePercent)}% |"); appendLine(); appendLine("用户问题: $q") }; if (activity is MainActivity) (activity as MainActivity).switchToChatAndSend(ctx) else Toast.makeText(requireContext(), "提问已记录: $q", Toast.LENGTH_SHORT).show() } }.show(parentFragmentManager, "result") }
     private fun showAddDialog() { val name = EditText(requireContext()).apply { hint = "策略名称"; setSingleLine() }; val desc = EditText(requireContext()).apply { hint = "策略描述"; setSingleLine() }; AlertDialog.Builder(requireContext()).setTitle("添加自定义策略").setView(LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 16, 32, 8); addView(name, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply { bottomMargin = 12 }); addView(desc, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)) }).setPositiveButton("创建") { _, _ -> val n = name.text.toString().trim(); if (n.isNotBlank()) { val id = "custom_${System.currentTimeMillis()}"; engine?.registerStrategy(object : Strategy { override val id = id; override var name = n; override var description = desc.text.toString().trim().ifEmpty { "自定义策略" }; override val category = StrategyCategory.CUSTOM; override val config = StrategyConfig.fullMarket(20); override var weightFactors = listOf(WeightFactor("default", "综合评分", 100, "默认权重")); override val source = StrategySource.USER_CUSTOM; override suspend fun screen() = Result.success(ScreeningResult(strategyId = id, strategyName = n, category = StrategyCategory.CUSTOM, signals = emptyList(), totalScanned = 0, scanTimeMs = 0)); override suspend fun isAvailable() = false }); refreshList(); strategyCount = engine?.getStrategies()?.size ?: strategyCount } }.setNegativeButton("取消", null).show() }
     private fun importHistoricalData() {
-        scanBtn.isEnabled = false; scanBtn.text = "⏳"; progressBar.visibility = View.VISIBLE
+        scanBtn.isEnabled = false; scanBtn.text = "\u23F3"; progressBar.visibility = View.VISIBLE
         val days = when (selectedHotPeriod) { 0->1; 1->3; 2->10; 3->30; 4->50; 5->100; else->60 }
         val label = when (selectedHotPeriod) { 0->"当日"; 1->"近3日"; 2->"近10日"; 3->"近30日"; 4->"近50日"; 5->"近100日"; else->"历史" }
-        // Use the selected browsing date as the start date for import
         val useStartDate = browsingDate
         statusTv.text = "  正在从东方财富拉取 $browsingDate ~ 至今 的${label}K线..."
         lifecycleScope.launch {
             try {
                 val f = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
                 val t = f.fetchAllHistoricalData(days, force = true, startDateOverride = useStartDate) { p ->
-                    lifecycleScope.launch(Dispatchers.Main) {
-                        statusTv.text = "  进度: ${p.completedStocks}/${p.totalStocks} 只 · ${p.totalRecords} 条"
-                    }
+                    lifecycleScope.launch(Dispatchers.Main) { statusTv.text = "  进度: ${p.completedStocks}/${p.totalStocks} 只 · ${p.totalRecords} 条" }
                 }
                 withContext(Dispatchers.Main) {
                     scanBtn.isEnabled = true; scanBtn.text = "执行策略"; progressBar.visibility = View.GONE
-                    statusTv.text = "  ✅ 导入完成 · $t 条历史记录"
-                    // Auto reset date picker to the most recent trading day
+                    statusTv.text = "  \u2705 导入完成 · $t 条历史记录"
                     val recent = TradingDayPickerView.recentTradingDay()
-                    if (browsingDate != recent) {
-                        browsingDate = recent
-                        isBrowsing = false
-                        datePicker.selectedDate = recent
-                        refreshDateUI()
-                    }
+                    if (browsingDate != recent) { browsingDate = recent; isBrowsing = false; datePicker.selectedDate = recent; refreshDateUI() }
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    scanBtn.isEnabled = true; scanBtn.text = "执行策略"; progressBar.visibility = View.GONE
-                    statusTv.text = "  导入失败: ${e.message}"
-                }
+                withContext(Dispatchers.Main) { scanBtn.isEnabled = true; scanBtn.text = "执行策略"; progressBar.visibility = View.GONE; statusTv.text = "  导入失败: ${e.message}" }
             }
         }
     }
     private fun exportSnapshotData() {
         val days = when (selectedHotPeriod) { 0->1; 1->3; 2->10; 3->30; 4->50; 5->100; else->1 }
         val label = when (selectedHotPeriod) { 0->"1日"; 1->"3日"; 2->"10日"; 3->"30日"; 4->"50日"; 5->"100日"; else->"当日" }
-        statusTv.text = "  📤 正在导出${label}K线数据..."
+        statusTv.text = "  \uD83D\uDCE4 正在导出${label}K线数据..."
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val db = StockDatabase.getInstance(requireContext())
-                val allDates = db.dailySnapshotDao().getAvailableDates(days + 5)
-                    .sorted().takeLast(days)
-                if (allDates.isEmpty()) {
-                    withContext(Dispatchers.Main) {
-                        statusTv.text = "  ⚠️ 无可用日期数据"
-                        Toast.makeText(requireContext(), "数据库中没有K线数据，请先导入", Toast.LENGTH_SHORT).show()
-                    }
-                    return@launch
-                }
+                val allDates = db.dailySnapshotDao().getAvailableDates(days + 5).sorted().takeLast(days)
+                if (allDates.isEmpty()) { withContext(Dispatchers.Main) { statusTv.text = "  \u26A0\uFE0F 无可用日期数据"; Toast.makeText(requireContext(), "数据库中没有K线数据，请先导入", Toast.LENGTH_SHORT).show() }; return@launch }
                 val sb = StringBuilder()
                 sb.appendLine("stockCode,stockName,date,open,high,low,close,volume,amount,changePct,turnoverRate")
                 var totalRows = 0
-                for (date in allDates) {
-                    try {
-                        val snaps = db.dailySnapshotDao().getByDate(date)
-                        for (snap in snaps) {
-                            sb.appendLine("${snap.code},${snap.name},${snap.date},${snap.open},${snap.high},${snap.low},${snap.close},${snap.volume},${snap.amount},${snap.changePct},${snap.turnoverRate}")
-                            totalRows++
-                        }
-                    } catch (_: Exception) { /* skip this date */ }
-                }
-                if (totalRows == 0) {
-                    withContext(Dispatchers.Main) {
-                        statusTv.text = "  ⚠️ 无快照数据可导出"
-                        Toast.makeText(requireContext(), "无数据可导出", Toast.LENGTH_SHORT).show()
-                    }
-                    return@launch
-                }
-                // 写入手机下载目录
+                for (date in allDates) { try { val snaps = db.dailySnapshotDao().getByDate(date); for (snap in snaps) { sb.appendLine("${snap.code},${snap.name},${snap.date},${snap.open},${snap.high},${snap.low},${snap.close},${snap.volume},${snap.amount},${snap.changePct},${snap.turnoverRate}"); totalRows++ } } catch (_: Exception) {} }
+                if (totalRows == 0) { withContext(Dispatchers.Main) { statusTv.text = "  \u26A0\uFE0F 无快照数据可导出"; Toast.makeText(requireContext(), "无数据可导出", Toast.LENGTH_SHORT).show() }; return@launch }
                 val dir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
                 val fileName = "StockAnalysis_snapshot_${label}_${java.time.LocalDate.now()}.csv"
                 val file = java.io.File(dir, fileName)
                 file.writeText(sb.toString())
                 val sizeKb = file.length() / 1024
-                withContext(Dispatchers.Main) {
-                    statusTv.text = "  ✅ 已导出 ${allDates.size}天K线数据 (" + totalRows + "行, " + sizeKb + "KB)"
-                    Toast.makeText(requireContext(), "已保存到: Downloads/$fileName (" + totalRows + "行)", Toast.LENGTH_LONG).show()
-                    Log.i("SLF", "导出完成: " + file.absolutePath + ", " + totalRows + "行")
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    statusTv.text = "  导出失败: ${e.message?.take(30)}"
-                    Toast.makeText(requireContext(), "导出失败: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            }
+                withContext(Dispatchers.Main) { statusTv.text = "  \u2705 已导出 ${allDates.size}天K线数据 (" + totalRows + "行, " + sizeKb + "KB)"; Toast.makeText(requireContext(), "已保存到: Downloads/$fileName (" + totalRows + "行)", Toast.LENGTH_LONG).show() }
+            } catch (e: Exception) { withContext(Dispatchers.Main) { statusTv.text = "  导出失败: ${e.message?.take(30)}"; Toast.makeText(requireContext(), "导出失败: ${e.message}", Toast.LENGTH_LONG).show() } }
         }
     }
 
     private fun saveBacktestData(results: List<ScreeningResult>) { lifecycleScope.launch { try { val be = com.chin.stockanalysis.strategy.backtest.BacktestEngine(requireContext()); for (r in results) be.savePredictions(r.strategyId, r.strategyName, r) } catch (e: Exception) { Log.w("SLF", "保存预测失败: ${e.message}") } } }
 
-    /** 数据菜单 — 拉取股票报告 + 执行策略报告 */
     private fun showDataMenu() {
-        val options = arrayOf("📥 拉取股票报告", "📊 执行策略报告")
+        val options = arrayOf("\uD83D\uDCE5 拉取股票报告", "\uD83D\uDCCA 执行策略报告")
         AlertDialog.Builder(requireContext())
             .setTitle("数据中心")
             .setItems(options) { _, which ->
-                when (which) {
-                    0 -> showFetchReport()
-                    1 -> showScanHistory()
-                }
-            }
-            .show()
+                when (which) { 0 -> showFetchReport(); 1 -> showScanHistory() }
+            }.show()
     }
 
     private fun showFetchReport() {
@@ -593,16 +469,13 @@ class StrategyListFragment : Fragment() {
             try {
                 val db = StockDatabase.getInstance(requireContext())
                 val latestDates = db.dailySnapshotDao().getAvailableDates(20).sorted()
-                if (latestDates.size < 2) {
-                    withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "需先导入数据", Toast.LENGTH_SHORT).show() }
-                    return@launch
-                }
+                if (latestDates.size < 2) { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "需先导入数据", Toast.LENGTH_SHORT).show() }; return@launch }
                 val sb = StringBuilder()
-                sb.appendLine("📥 拉取股票报告 (最近 ${latestDates.size} 天)")
+                sb.appendLine("\uD83D\uDCE5 拉取股票报告 (最近 ${latestDates.size} 天)")
                 sb.appendLine()
                 for (date in latestDates.takeLast(5)) {
                     val snaps = db.dailySnapshotDao().getByDate(date)
-                    sb.appendLine("━━━ $date ━━━")
+                    sb.appendLine("\u2501\u2501\u2501 $date \u2501\u2501\u2501")
                     sb.appendLine("  总股票数: ${snaps.size}")
                     val avgPct = snaps.map { it.changePct }.average().let { String.format("%.2f", it) }
                     val posCount = snaps.count { it.changePct > 0 }
@@ -614,16 +487,9 @@ class StrategyListFragment : Fragment() {
                 }
                 val prefs = requireContext().getSharedPreferences("data_import", android.content.Context.MODE_PRIVATE)
                 val lastImport = prefs.getString("last_import_date", "从未")
-                sb.appendLine("📅 上次导入: $lastImport")
-                withContext(Dispatchers.Main) {
-                    AlertDialog.Builder(requireContext())
-                        .setTitle("拉取股票报告")
-                        .setMessage(sb.toString())
-                        .setPositiveButton("关闭", null).show()
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "加载失败: ${e.message}", Toast.LENGTH_SHORT).show() }
-            }
+                sb.appendLine("\uD83D\uDCC5 上次导入: $lastImport")
+                withContext(Dispatchers.Main) { AlertDialog.Builder(requireContext()).setTitle("拉取股票报告").setMessage(sb.toString()).setPositiveButton("关闭", null).show() }
+            } catch (e: Exception) { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "加载失败: ${e.message}", Toast.LENGTH_SHORT).show() } }
         }
     }
 
@@ -631,16 +497,14 @@ class StrategyListFragment : Fragment() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val db = StockDatabase.getInstance(requireContext())
-                val entities = db.dailyPeriodResultDao().getRecent(100)
-                    .filter { it.strategyId == "STRATEGY_SCAN" }
-                    .sortedByDescending { it.tradeDate }
+                val entities = db.dailyPeriodResultDao().getRecent(100).filter { it.strategyId == "STRATEGY_SCAN" }.sortedByDescending { it.tradeDate }
                 if (entities.isEmpty()) { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "暂无量化选股历史报告", Toast.LENGTH_SHORT).show() }; return@launch }
                 withContext(Dispatchers.Main) {
                     val sb = StringBuilder()
-                    sb.appendLine("📊 量化选股历史报告 (共 ${entities.size} 条)"); sb.appendLine()
+                    sb.appendLine("\uD83D\uDCCA 量化选股历史报告 (共 ${entities.size} 条)"); sb.appendLine()
                     for (entity in entities) {
                         val codes = try { org.json.JSONArray(entity.stockCodesJson) } catch (_: Exception) { org.json.JSONArray() }
-                        sb.appendLine("━━━ ${entity.tradeDate} ━━━")
+                        sb.appendLine("\u2501\u2501\u2501 ${entity.tradeDate} \u2501\u2501\u2501")
                         sb.appendLine("  热门板块: ${entity.strategyName}")
                         sb.appendLine("  共 ${codes.length()} 只股票命中信号")
                         try {
@@ -655,10 +519,7 @@ class StrategyListFragment : Fragment() {
                         } catch (_: Exception) {}
                         sb.appendLine()
                     }
-                    AlertDialog.Builder(requireContext())
-                        .setTitle("量化选股报告")
-                        .setMessage(sb.toString())
-                        .setPositiveButton("关闭", null).show()
+                    AlertDialog.Builder(requireContext()).setTitle("量化选股报告").setMessage(sb.toString()).setPositiveButton("关闭", null).show()
                 }
             } catch (e: Exception) { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "加载失败: ${e.message}", Toast.LENGTH_SHORT).show() } }
         }
