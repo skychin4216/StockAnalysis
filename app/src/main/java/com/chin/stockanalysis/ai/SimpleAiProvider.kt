@@ -133,17 +133,8 @@ object SimpleAiProvider {
                 }
             }
 
-            // 全部失敗，清除記錄並從頭開始
-            Log.w(TAG, "⚠️ 所有 Provider 均已失敗，清除記錄重試")
-            failedIds.clear()
-            val first = availableIds.first()
-            val config = mgr.getProviderConfig(first)
-            if (config != null && config.apiKey.isNotBlank()) {
-                val provider = getOrCreateProvider(config)
-                currentConfigId = first
-                currentSlot = AiProviderPool.Slot(first, config.name, provider)
-                return currentSlot
-            }
+            // 全部失敗，不再重試
+            Log.e(TAG, "❌ 所有 ${availableIds.size} 個 Provider 均已失敗")
             return null
         }
     }
