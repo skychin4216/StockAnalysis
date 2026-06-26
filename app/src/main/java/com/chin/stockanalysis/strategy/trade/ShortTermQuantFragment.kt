@@ -63,7 +63,10 @@ class ShortTermQuantFragment : QuantFragmentBase() {
     private var mergedPool: Map<String, List<Pair<String, Int>>> = emptyMap()
     private var mergedStockNames: Map<String, String> = emptyMap()
 
-    companion object { private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd") }
+    companion object {
+        private const val TAG = "ShortTermQuant"
+        private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+    }
 
     override fun getQuantType() = "ShortTermQuant"
 
@@ -300,8 +303,9 @@ class ShortTermQuantFragment : QuantFragmentBase() {
 
     private fun runPipeline() {
         val eng = engine ?: return
-        buildBtn.isEnabled = false; buildBtn.text = "⏳ 建仓中"; progressBar.visibility = View.VISIBLE; statusTv.text = "检查数据..."
+        buildBtn.isEnabled = false; buildBtn.text = "⏳ 建仓中"; progressBar.visibility = View.VISIBLE; statusTv.text = "🔄 初始化短綫量化..."
         lifecycleScope.launch(Dispatchers.IO) {
+            val totalStart = System.currentTimeMillis()
             try {
                 // 检查是否需要先导入数据
                 val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().format(DATE_FMT)
@@ -310,47 +314,104 @@ class ShortTermQuantFragment : QuantFragmentBase() {
                 val db = StockDatabase.getInstance(requireContext())
                 val todaySnaps = db.dailySnapshotDao().getByDate(today)
                 val needImport = todaySnaps.size < 100 || lastImport != today
+                val importStart = System.currentTimeMillis()
                 if (needImport) {
-                    withContext(Dispatchers.Main) { statusTv.text = "📥 数据不足，自动导入..." }
+                    Log.i(TAG, "[ShortTerm] Step 1: importing data, todaySnaps=${todaySnaps.size}, lastImport=$lastImport")
+                    withContext(Dispatchers.Main) { statusTv.text = "📥 導入歷史數據中..." }
                     val f = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
                     f.fetchAllHistoricalData(60) { p ->
-                        lifecycleScope.launch(Dispatchers.Main) { statusTv.text = "📥 导入: ${p.completedStocks}/${p.totalStocks}" }
+                        lifecycleScope.launch(Dispatchers.Main) { statusTv.text = "📥 導入數據: ${p.completedStocks}/${p.totalStocks}" }
                     }
                     prefs.edit().putString("last_import_date", today).apply()
-                    withContext(Dispatchers.Main) { statusTv.text = "✅ 导入完成，开始 Pipeline" }
+                    withContext(Dispatchers.Main) { statusTv.text = "✅ 數據導入完成" }
+                } else {
+                    Log.i(TAG, "[ShortTerm] Step 1: skip import, data already up to date")
                 }
+                val importElapsed = System.currentTimeMillis() - importStart
+                Log.i(TAG, "[ShortTerm] Step 1 done: import=${importElapsed}ms")
+
                 // 建仓日使用最近的交易日（避免非交易日）
                 val tradeDay = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().format(DATE_FMT)
                 lastTradeDate = tradeDay
                 val feed = StrategyDataFeed(requireContext())
                 // 使用備選池而非全部A股，大幅提升速度
                 val poolCodes = try { com.chin.stockanalysis.strategy.data.CandidatePool.getPoolCodes(requireContext()) } catch (_: Exception) { emptyList() }
+                withContext(Dispatchers.Main) { statusTv.text = "🔄 準備股票池數據..." }
+                val feedStart = System.currentTimeMillis()
                 val stocks = if (poolCodes.isNotEmpty()) {
                     feed.prepareFromDb(today, StrategyDataFeed.DataFeedConfig(onlyMainBoard = true, stockCodes = poolCodes.toSet()))
                 } else {
                     feed.prepareFromDb(today, StrategyDataFeed.DataFeedConfig(onlyMainBoard = true))
                 }
+                val feedElapsed = System.currentTimeMillis() - feedStart
+                Log.i(TAG, "[ShortTerm] Step 2 done: prepareFromDb=${feedElapsed}ms, stocks=${stocks.size}")
                 todayStocks = stocks
                 if (stocks.isEmpty()) { withContext(Dispatchers.Main) { statusTv.text="⚠️ 无交易日数据"; buildBtn.isEnabled=true; buildBtn.text="▶ 建仓"; progressBar.visibility=View.GONE }; return@launch }
+
+                withContext(Dispatchers.Main) { statusTv.text = "🔄 Zipline 因子計算中..." }
+                val ziplineStart = System.currentTimeMillis()
                 val pipeline = ZiplinePipeline(requireContext()); val factors = pipeline.computeAll(stocks, today, 30); pipelineFactors = factors
+                val ziplineElapsed = System.currentTimeMillis() - ziplineStart
+                Log.i(TAG, "[ShortTerm] Step 3 done: Zipline computeAll=${ziplineElapsed}ms, valid=${factors.ma5.size}")
+
                 val codeToName = try { StockDatabase.getInstance(requireContext()).stockBasicDao().getAll().associate { it.code to it.name } } catch (_: Exception) { emptyMap() }
+                val strategyStart = System.currentTimeMillis()
                 val screenings = mutableMapOf<Strategy, ScreeningResult>(); val screeningList = mutableListOf<ScreeningResult>()
-                for (strategy in eng.getStrategies()) { if (!eng.isEnabled(strategy.id) || strategy.id == "ai_prediction") continue; try { val r = strategy.screenWithData(stocks); r.getOrNull()?.let { screenings[strategy]=it; screeningList.add(it) } } catch (_: Exception) {} }
+                var enabledCount = 0
+                withContext(Dispatchers.Main) { statusTv.text = "🔄 執行策略篩選中..." }
+                for (strategy in eng.getStrategies()) {
+                    if (!eng.isEnabled(strategy.id) || strategy.id == "ai_prediction") continue
+                    enabledCount++
+                    val sName = strategy.name
+                    withContext(Dispatchers.Main) { statusTv.text = "🔄 執行策略: $sName ($enabledCount/${eng.getStrategies().size - 1})" }
+                    val sStart = System.currentTimeMillis()
+                    try {
+                        val r = strategy.screenWithData(stocks)
+                        r.getOrNull()?.let { screenings[strategy]=it; screeningList.add(it) }
+                    } catch (_: Exception) {}
+                    val sElapsed = System.currentTimeMillis() - sStart
+                    if (sElapsed > 1000) {
+                        Log.d(TAG, "[ShortTerm] Strategy ${strategy.id} took ${sElapsed}ms")
+                    }
+                }
+                val strategyElapsed = System.currentTimeMillis() - strategyStart
+                Log.i(TAG, "[ShortTerm] Step 4 done: ${enabledCount} strategies=${strategyElapsed}ms, hits=${screeningList.sumOf { it.hitCount }}")
                 allScreenings = screenings
+
                 // 合并池
+                withContext(Dispatchers.Main) { statusTv.text = "🔄 合併策略結果..." }
+                val mergeStart = System.currentTimeMillis()
                 val pool = mutableMapOf<String, MutableList<Pair<String, Int>>>()
                 for ((s, sc) in screenings) for (sig in sc.signals.distinctBy { it.stockCode }) pool.getOrPut(sig.stockCode){ mutableListOf() }.add(s.name to sig.strength)
                 mergedPool = pool.mapValues { it.value.sortedByDescending { p->p.second } }
                 mergedStockNames = pool.keys.associateWith { c -> screenings.values.firstNotNullOfOrNull { sc->sc.signals.find{it.stockCode==c}?.stockName } ?: codeToName[c] ?: c }
+                val mergeElapsed = System.currentTimeMillis() - mergeStart
+                Log.i(TAG, "[ShortTerm] Step 5 done: merge pool=${mergeElapsed}ms, size=${mergedPool.size}")
+
                 // AI 精选
-                if (screeningList.isNotEmpty()) { withContext(Dispatchers.Main) { statusTv.text = "🤖 AI 正在精选..." }; try { val p = AIPredictionEngine(requireContext()).predict(screeningList, today); if (p!=null && p.topPicks.isNotEmpty()) aiPicks = p.topPicks else aiPicks = emptyList() } catch (_: Exception) { aiPicks = emptyList() } }
+                val aiStart = System.currentTimeMillis()
+                if (screeningList.isNotEmpty()) {
+                    withContext(Dispatchers.Main) { statusTv.text = "🤖 AI 大模型分析中..." }
+                    try {
+                        val p = AIPredictionEngine(requireContext()).predict(screeningList, today)
+                        if (p!=null && p.topPicks.isNotEmpty()) aiPicks = p.topPicks else aiPicks = emptyList()
+                    } catch (_: Exception) { aiPicks = emptyList() }
+                }
+                val aiElapsed = System.currentTimeMillis() - aiStart
+                Log.i(TAG, "[ShortTerm] Step 6 done: AI predict=${aiElapsed}ms, picks=${aiPicks.size}")
+
                 // 发布到跨Tab总线
                 CrossTabBus.postMergedPool(mergedPool)
                 CrossTabBus.postAiTopPicks(aiPicks)
                 CrossTabBus.postStrategyResults(screeningList)
+
+                val totalElapsed = System.currentTimeMillis() - totalStart
+                Log.i(TAG, "[ShortTerm] ====== TOTAL: ${totalElapsed}ms ======")
+                Log.i(TAG, "[ShortTerm] Breakdown: import=${importElapsed}ms  feed=${feedElapsed}ms  zipline=${ziplineElapsed}ms  strategy=${strategyElapsed}ms  merge=${mergeElapsed}ms  ai=${aiElapsed}ms")
+
                 withContext(Dispatchers.Main) {
                     showPipelineTable(screenings, factors, today); hasPipelineResult = true
-                    statusTv.text = "✅ 选股完成 (${factors.ma5.size} 只有效)"; buildBtn.isEnabled = true; buildBtn.text = "▶ 建仓"; progressBar.visibility = View.GONE
+                    statusTv.text = "✅ 选股完成 (${factors.ma5.size} 只有效, ${totalElapsed}ms)"; buildBtn.isEnabled = true; buildBtn.text = "▶ 建仓"; progressBar.visibility = View.GONE
                     // 自動觸發建倉 + 騰龍換鳥分析
                     if (aiPicks.isNotEmpty()) {
                         statusTv.text = "🔄 正在自動建倉 + 騰龍換鳥分析..."
@@ -370,7 +431,10 @@ class ShortTermQuantFragment : QuantFragmentBase() {
                         }
                     }
                 }
-            } catch (e: Exception) { withContext(Dispatchers.Main) { statusTv.text="❌ 选股失败: ${e.message?.take(40)}"; buildBtn.isEnabled=true; buildBtn.text="▶ 建仓"; progressBar.visibility=View.GONE } }
+            } catch (e: Exception) {
+                Log.e(TAG, "[ShortTerm] Pipeline failed: ${e.message}", e)
+                withContext(Dispatchers.Main) { statusTv.text="❌ 选股失败: ${e.message?.take(40)}"; buildBtn.isEnabled=true; buildBtn.text="▶ 建仓"; progressBar.visibility=View.GONE }
+            }
         }
     }
 

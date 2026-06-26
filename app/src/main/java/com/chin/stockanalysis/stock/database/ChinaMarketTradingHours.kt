@@ -242,14 +242,5 @@ object ChinaMarketTradingHours {
         return sb.toString().trimEnd(' ', '|')
     }
 
-    fun 最近A股交易日(): LocalDate {
-        if (a股是否休市()) {
-            var d = today().minusDays(1)
-            while (d.dayOfWeek == DayOfWeek.SATURDAY || d.dayOfWeek == DayOfWeek.SUNDAY || d in A股休市日) {
-                d = d.minusDays(1)
-            }
-            return d
-        }
-        return today()
-    }
+    fun 最近A股交易日(): LocalDate = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay()
 }

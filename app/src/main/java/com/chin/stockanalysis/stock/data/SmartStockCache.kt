@@ -98,9 +98,7 @@ class SmartStockCache(private val maxSize: Int = 200) {
     }
 
     private fun millisToNextTradingDay(today: LocalDate, nowTime: LocalTime): Long {
-        var next = today.plusDays(1)
-        while (next.dayOfWeek == DayOfWeek.SATURDAY || next.dayOfWeek == DayOfWeek.SUNDAY)
-            next = next.plusDays(1)
+        val next = com.chin.stockanalysis.ui.TradingDayPickerView.addTradingDays(today, 1)
         val now = LocalDateTime.of(today, nowTime)
         val target = LocalDateTime.of(next, LocalTime.of(9, 30))
         return Duration.between(now, target).toMillis()

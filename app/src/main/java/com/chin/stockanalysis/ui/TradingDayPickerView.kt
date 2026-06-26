@@ -49,6 +49,9 @@ class TradingDayPickerView @JvmOverloads constructor(
             raw.map { LocalDate.parse(it) }.toSet()
         }
 
+        /** 今天（自然日） */
+        fun today(): LocalDate = LocalDate.now()
+
         /**
          * 获取最近一个交易日。
          * < 9:30 返回昨天；跳过周末和中国假期。
@@ -61,6 +64,85 @@ class TradingDayPickerView @JvmOverloads constructor(
             }
             return d
         }
+
+        /**
+         * 获取上一个交易日（不含当天）。
+         * 用于回测拟合：需要 T+1 验证，T 必须是历史日期。
+         */
+        fun previousTradingDay(): LocalDate {
+            var d = recentTradingDay().minusDays(1)
+            while (d.dayOfWeek == DayOfWeek.SATURDAY || d.dayOfWeek == DayOfWeek.SUNDAY || d in CHINESE_HOLIDAYS) {
+                d = d.minusDays(1)
+            }
+            return d
+        }
+
+        /**
+         * 获取下一个交易日。
+         * 注意：如果最近交易日 = 今天，则 nextTradingDay 就是今天。
+         * 仅当最近交易日 < 今天时，nextTradingDay 才是真正的未来。
+         */
+        fun nextTradingDay(): LocalDate {
+            var d = recentTradingDay().plusDays(1)
+            while (d.dayOfWeek == DayOfWeek.SATURDAY || d.dayOfWeek == DayOfWeek.SUNDAY || d in CHINESE_HOLIDAYS) {
+                d = d.plusDays(1)
+            }
+            return d
+        }
+
+        /**
+         * 判断给定的日期是否是交易日（非周末且非假期）。
+         */
+        fun isTradingDay(date: LocalDate): Boolean {
+            return date.dayOfWeek != DayOfWeek.SATURDAY &&
+                   date.dayOfWeek != DayOfWeek.SUNDAY &&
+                   date !in CHINESE_HOLIDAYS
+        }
+
+        /**
+         * 判断 date 是否 >= 最近交易日。
+         * true 表示 date 是「今天或未来」，不存在历史交易数据，不适合做回测验证。
+         */
+        fun isFutureOrToday(date: LocalDate): Boolean = date >= recentTradingDay()
+
+        /**
+         * 从指定日期开始，向前推进 n 个交易日。
+         * 用于回测中需要跳过周末和假日的场景。
+         */
+        fun addTradingDays(from: LocalDate, days: Int): LocalDate {
+            var d = from
+            var added = 0
+            while (added < days) {
+                d = d.plusDays(1)
+                if (isTradingDay(d)) added++
+            }
+            return d
+        }
+
+        /**
+         * 从指定日期开始，向后回退 n 个交易日。
+         */
+        fun subtractTradingDays(from: LocalDate, days: Int): LocalDate {
+            var d = from
+            var removed = 0
+            while (removed < days) {
+                d = d.minusDays(1)
+                if (isTradingDay(d)) removed++
+            }
+            return d
+        }
+
+        /**
+         * 根据日期字符串从数据库查询下一个交易日。
+         * 用于回测拟合等需要精确交易日序列的场景。
+         * @return 下一个交易日的日期字符串，如果查不到则返回 null
+         */
+        suspend fun getNextTradingDayFromDb(date: String, datesLimit: Int = 10, getContext: () -> android.content.Context): String? = try {
+            val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(getContext())
+            val dates = db.dailySnapshotDao().getAvailableDates(datesLimit).sorted()
+            val idx = dates.indexOf(date)
+            if (idx >= 0 && idx + 1 < dates.size) dates[idx + 1] else null
+        } catch (_: Exception) { null }
     }
 
     private val prevBtn: Button

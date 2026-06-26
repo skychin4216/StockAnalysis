@@ -128,9 +128,7 @@ class HistoricalDataFetcher(private val context: Context) {
 
         val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay()
         val todayStr = today.format(STORE_FMT)
-        val isNonTrading = today.dayOfWeek == java.time.DayOfWeek.SATURDAY ||
-                today.dayOfWeek == java.time.DayOfWeek.SUNDAY ||
-                today in com.chin.stockanalysis.ui.TradingDayPickerView.CHINESE_HOLIDAYS
+        val isNonTrading = !com.chin.stockanalysis.ui.TradingDayPickerView.isTradingDay(today)
         Log.i(TAG, "  today=$todayStr  nonTrading=$isNonTrading")
 
         val prefs = context.getSharedPreferences("data_import", Context.MODE_PRIVATE)
@@ -152,9 +150,11 @@ class HistoricalDataFetcher(private val context: Context) {
         }
 
         // Step 1: Realtime API for today
+        val step1Start = System.currentTimeMillis()
         Log.i(TAG, "--- Step 1: Realtime API ---")
         var totalRecords = 0
         val doneCount = java.util.concurrent.atomic.AtomicInteger(0)
+        var realtimeCount = 0
         try {
             val realtimeUrl = "https://push2.eastmoney.com/api/qt/clist/get?" +
                     "pn=1&pz=200&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23" +
@@ -207,6 +207,7 @@ class HistoricalDataFetcher(private val context: Context) {
                     if (entities.isNotEmpty()) {
                         db.dailySnapshotDao().insertAll(entities)
                         totalRecords += entities.size
+                        realtimeCount = entities.size
                         for (nb in names) {
                             try { db.stockBasicDao().insert(nb) } catch (_: Exception) { }
                         }
@@ -223,38 +224,58 @@ class HistoricalDataFetcher(private val context: Context) {
         } catch (e: Exception) {
             Log.w(TAG, "  Realtime API failed: ${e.message}")
         }
+        val step1Elapsed = System.currentTimeMillis() - step1Start
+        Log.i(TAG, "  Step 1 done: ${step1Elapsed}ms, records=$realtimeCount")
 
         // Step 2: K-line API for full coverage
-        Log.i(TAG, "--- Step 2: K-line API (${stocks.size} stocks, concurrency=20) ---")
+        val step2Start = System.currentTimeMillis()
+        val concurrency = 10 // 降低併發，避免被限流
+        Log.i(TAG, "--- Step 2: K-line API (${stocks.size} stocks, concurrency=$concurrency) ---")
+        var failedStocks = 0
+        var successStocks = 0
         if (stocks.isNotEmpty()) {
-            stocks.chunked(20).forEachIndexed { chunkIdx, batch ->
+            stocks.chunked(concurrency).forEachIndexed { chunkIdx, batch ->
+                val chunkStart = System.currentTimeMillis()
                 val jobs = batch.map { code -> async { fetchOneStock(code, startDate, endDate) } }
                 for (job in jobs) {
                     val (records, name) = job.await()
                     if (records.isNotEmpty()) {
                         db.dailySnapshotDao().insertAll(records)
                         totalRecords += records.size
+                        successStocks++
                         if (name.isNotBlank()) {
                             try {
                                 db.stockBasicDao().insert(StockBasicEntity(code = records.first().code, name = name, business = ""))
                             } catch (_: Exception) { }
                         }
+                    } else {
+                        failedStocks++
                     }
                     val done = doneCount.addAndGet(1)
-                    onProgress?.invoke(FetchProgress(totalStocks = stocks.size, completedStocks = done * batch.size, totalRecords = totalRecords))
+                    onProgress?.invoke(FetchProgress(totalStocks = stocks.size, completedStocks = done, totalRecords = totalRecords))
                 }
-                if (chunkIdx % 5 == 0) Log.d(TAG, "  K-line chunk $chunkIdx: ${doneCount.get()}/${stocks.size} done, $totalRecords records")
+                val chunkElapsed = System.currentTimeMillis() - chunkStart
+                if (chunkIdx % 5 == 0) {
+                    Log.d(TAG, "  K-line chunk $chunkIdx: ${doneCount.get()}/${stocks.size} done, $totalRecords records, ${chunkElapsed}ms")
+                }
             }
         }
+        val step2Elapsed = System.currentTimeMillis() - step2Start
+        Log.i(TAG, "  Step 2 done: ${step2Elapsed}ms, success=$successStocks, failed=$failedStocks")
 
-        prefs.edit().putBoolean("leader_stocks_fetched", true).putString("last_fetched_date", todayStr).apply()
-
+        // Step 3: fill missing names (only for stocks that actually need it)
+        val step3Start = System.currentTimeMillis()
         val filledCount = fillMissingNames()
         if (filledCount > 0) Log.i(TAG, "  Names fixed: $filledCount stocks")
+        val step3Elapsed = System.currentTimeMillis() - step3Start
+        Log.i(TAG, "  Step 3 done: ${step3Elapsed}ms")
+
+        prefs.edit().putBoolean("leader_stocks_fetched", true).putString("last_fetched_date", todayStr).apply()
 
         val elapsedMs = System.currentTimeMillis() - startMs
         Log.i(TAG, "========== FETCH COMPLETE ==========")
         Log.i(TAG, "  Records: $totalRecords  Stocks: ${stocks.size}  Time: ${elapsedMs}ms")
+        Log.i(TAG, "  Breakdown: Step1=${step1Elapsed}ms  Step2=${step2Elapsed}ms  Step3=${step3Elapsed}ms")
         totalRecords
     }
 
@@ -262,24 +283,36 @@ class HistoricalDataFetcher(private val context: Context) {
         try {
             val recentDates = db.dailySnapshotDao().getAvailableDates(10)
             if (recentDates.isEmpty()) return 0
-            val allCodes = mutableSetOf<String>()
+            // 只獲取缺少名稱的股票，而非全部
+            val missingNameCodes = mutableSetOf<String>()
             for (date in recentDates) {
                 val shots = db.dailySnapshotDao().getByDate(date)
-                for (s in shots) allCodes.add(s.code)
+                for (s in shots) {
+                    if (s.name.isBlank()) missingNameCodes.add(s.code)
+                }
             }
-            if (allCodes.isEmpty()) return 0
+            if (missingNameCodes.isEmpty()) {
+                Log.d(TAG, "  fillMissingNames: all stocks have names, skip")
+                return 0
+            }
+            Log.i(TAG, "  fillMissingNames: ${missingNameCodes.size} stocks need names")
             var corrected = 0
-            for (code in allCodes) {
+            var failed = 0
+            val fillStart = System.currentTimeMillis()
+            for (code in missingNameCodes) {
                 try {
-                    val (records, name) = fetchOneStock(code, startDate = LocalDate.now().minusDays(3), endDate = LocalDate.now())
+                    val (_, name) = fetchOneStock(code, startDate = LocalDate.now().minusDays(3), endDate = LocalDate.now())
                     if (name.isNotBlank()) {
                         db.stockBasicDao().insert(StockBasicEntity(code = code, name = name, business = ""))
                         db.dailySnapshotDao().updateName(code, name)
                         corrected++
+                    } else {
+                        failed++
                     }
-                } catch (_: Exception) { }
+                } catch (_: Exception) { failed++ }
             }
-            Log.i(TAG, "  fillMissingNames: $corrected/${allCodes.size}")
+            val fillElapsed = System.currentTimeMillis() - fillStart
+            Log.i(TAG, "  fillMissingNames: $corrected/${missingNameCodes.size} fixed, $failed failed, ${fillElapsed}ms")
             return corrected
         } catch (e: Exception) {
             Log.w(TAG, "  fillMissingNames failed: ${e.message}")
@@ -356,15 +389,20 @@ class HistoricalDataFetcher(private val context: Context) {
                 "secid=$market.$pureCode&klt=101&fqt=1" +
                 "&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f61" +
                 "&beg=$beg&end=$end&lmt=300"
-        for (attempt in 0..0) {
+        val maxRetries = 2
+        for (attempt in 0..maxRetries) {
             try {
-                if (attempt > 0) kotlinx.coroutines.delay(600L * attempt)
+                if (attempt > 0) {
+                    val delayMs = 500L * (1 shl attempt) // 指數退避: 1000ms, 2000ms
+                    Log.d(TAG, "  EastMoney retry $attempt for $code after ${delayMs}ms")
+                    kotlinx.coroutines.delay(delayMs)
+                }
                 val req = Request.Builder().url(url)
                     .addHeader("User-Agent", "Mozilla/5.0")
                     .addHeader("Referer", "https://quote.eastmoney.com/")
                     .build()
                 val resp = client.newCall(req).execute()
-                if (!resp.isSuccessful) { Log.d(TAG, "  EastMoney #$attempt HTTP ${resp.code}"); continue }
+                if (!resp.isSuccessful) { Log.d(TAG, "  EastMoney #$attempt HTTP ${resp.code} for $code"); continue }
                 val body = resp.body?.string() ?: continue
                 val data = JSONObject(body).optJSONObject("data") ?: continue
                 val klines = data.optJSONArray("klines") ?: continue
@@ -385,8 +423,17 @@ class HistoricalDataFetcher(private val context: Context) {
                         volume = parts[5].toLongOrNull() ?: 0L, amount = parts[6].toDoubleOrNull() ?: 0.0,
                         changePct = parts[8].toDoubleOrNull() ?: 0.0, turnoverRate = 0.0, mainNetInflow = 0.0))
                 }
+                if (attempt > 0) {
+                    Log.d(TAG, "  EastMoney retry success for $code after $attempt attempts")
+                }
                 return Pair(results, stockName)
-            } catch (e: Exception) { Log.d(TAG, "  EastMoney #$attempt: ${e.message?.take(40)}") }
+            } catch (e: Exception) {
+                val err = e.message?.take(60) ?: "unknown"
+                Log.d(TAG, "  EastMoney #$attempt for $code: $err")
+                if (attempt == maxRetries) {
+                    Log.w(TAG, "  EastMoney gave up on $code after $maxRetries retries")
+                }
+            }
         }
         return null
     }

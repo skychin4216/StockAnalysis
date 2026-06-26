@@ -433,7 +433,8 @@ class ChatTabFragment : Fragment() {
                         val sign = if (snap.changePct > 0) "+" else ""
                         val sector = (sectorCache[snap.code] ?: "").replace("null", "").trim()
                         val sectorSuffix = if (sector.isNotEmpty()) " [$sector]" else ""
-                        "$emoji ${snap.name} $sign${"%.2f".format(snap.changePct)}%$sectorSuffix"
+                        val codeShort = snap.code.takeLast(6)
+                        "$emoji ${snap.name}($codeShort) $sign${"%.2f".format(snap.changePct)}%$sectorSuffix"
                     }
                 } else { lifecycleScope.launch(Dispatchers.IO) { try { com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext()).fetchAllHistoricalData(days = 1); cachedHotSectorsTime = 0L } catch (_: Exception) {} }; "暂无交易日数据（后台拉取中...）" }
 

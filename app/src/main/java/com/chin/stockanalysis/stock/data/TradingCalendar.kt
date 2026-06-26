@@ -182,11 +182,7 @@ object TradingCalendar {
      * 计算距下一个交易日 9:30 的毫秒数。
      */
     private fun millisToNextTradingDay(today: LocalDate, now: LocalDateTime): Long {
-        var next = today.plusDays(1)
-        // 跳过周末
-        while (next.dayOfWeek == DayOfWeek.SATURDAY || next.dayOfWeek == DayOfWeek.SUNDAY) {
-            next = next.plusDays(1)
-        }
+        val next = com.chin.stockanalysis.ui.TradingDayPickerView.addTradingDays(today, 1)
         val target = next.atTime(LocalTime.of(9, 30))
         return Duration.between(now, target).toMillis()
     }

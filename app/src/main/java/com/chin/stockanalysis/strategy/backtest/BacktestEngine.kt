@@ -175,22 +175,15 @@ class BacktestEngine(private val context: Context) {
     suspend fun getPredictionsByDate(date: String): List<StrategyPredictionEntity> = predictionDao.getByDate(date)
 
     private fun getNextTradingDay(date: String): String {
-        val d = LocalDate.parse(date, DATE_FMT).plusDays(1)
-        return when (d.dayOfWeek) {
-            DayOfWeek.SATURDAY -> d.plusDays(2).format(DATE_FMT)
-            DayOfWeek.SUNDAY -> d.plusDays(1).format(DATE_FMT)
-            else -> d.format(DATE_FMT)
-        }
+        val d = LocalDate.parse(date, DATE_FMT)
+        val next = com.chin.stockanalysis.ui.TradingDayPickerView.addTradingDays(d, 1)
+        return next.format(DATE_FMT)
     }
 
     private fun getFutureTradingDay(date: String, days: Int): String {
-        var d = LocalDate.parse(date, DATE_FMT)
-        var added = 0
-        while (added < days) {
-            d = d.plusDays(1)
-            if (d.dayOfWeek != DayOfWeek.SATURDAY && d.dayOfWeek != DayOfWeek.SUNDAY) added++
-        }
-        return d.format(DATE_FMT)
+        val d = LocalDate.parse(date, DATE_FMT)
+        val future = com.chin.stockanalysis.ui.TradingDayPickerView.addTradingDays(d, days)
+        return future.format(DATE_FMT)
     }
 
     private suspend fun findRecoveryDays(stockCode: String, fromDate: String, maxDays: Int): Int {

@@ -45,6 +45,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
     private var positionOrderDates: MutableMap<View, String> = mutableMapOf()
 
     companion object {
+        private const val TAG = "MidTermQuant"
         private val PERIOD_LABELS = mapOf(1 to "当日", 3 to "近3日", 10 to "近10日",
             30 to "近30日", 50 to "近50日", 100 to "近100日")
     }
@@ -197,9 +198,11 @@ class MidTermQuantFragment : QuantFragmentBase() {
         }
 
         buildBtn.isEnabled = false; buildBtn.text = "⏳ 执行中..."
-        progressBar.visibility = View.VISIBLE; statusTv.text = "正在执行中线量化..."
+        progressBar.visibility = View.VISIBLE; statusTv.text = "🔄 初始化中綫量化..."
+
 
         lifecycleScope.launch(Dispatchers.IO) {
+            val totalStart = System.currentTimeMillis()
             try {
                 val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().format(DATE_FMT)
                 val importPrefs = requireContext().getSharedPreferences("data_import", android.content.Context.MODE_PRIVATE)
@@ -219,11 +222,17 @@ class MidTermQuantFragment : QuantFragmentBase() {
                 }
                 if (tradeEngine == null) tradeEngine = SimulationTradeEngine(requireContext())
                 val te = tradeEngine!!
+                te.onStatusUpdate = { msg ->
+                    lifecycleScope.launch(Dispatchers.Main) { statusTv.text = msg }
+                }
                 val db = StockDatabase.getInstance(requireContext())
-                // 检查是否需要先导入数据（与短线量化一致）
+
+                // Step 1: 检查并导入数据
+                val importStart = System.currentTimeMillis()
                 val todaySnaps = db.dailySnapshotDao().getByDate(today)
                 val needImport = todaySnaps.size < 100 || lastImport != today
                 if (needImport) {
+                    Log.i(TAG, "[MidTerm] Step 1: importing data, todaySnaps=${todaySnaps.size}, lastImport=$lastImport")
                     withContext(Dispatchers.Main) { statusTv.text = "📥 数据不足，自动导入中（请耐心等待）..." }
                     val f = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
                     f.fetchAllHistoricalData(60) { p ->
@@ -231,9 +240,26 @@ class MidTermQuantFragment : QuantFragmentBase() {
                     }
                     importPrefs.edit().putString("last_import_date", today).apply()
                     withContext(Dispatchers.Main) { statusTv.text = "✅ 数据导入完成，开始中线量化..." }
+                } else {
+                    Log.i(TAG, "[MidTerm] Step 1: skip import, data already up to date")
                 }
+                val importElapsed = System.currentTimeMillis() - importStart
+                Log.i(TAG, "[MidTerm] Step 1 done: import=${importElapsed}ms")
+
+                // Step 2: 执行交易回话
+                val sessionStart = System.currentTimeMillis()
+                withContext(Dispatchers.Main) { statusTv.text = "🔄 計算策略信號與AI分析..." }
                 val report = te.runTradeSession(strategies, config)
+                val sessionElapsed = System.currentTimeMillis() - sessionStart
+                Log.i(TAG, "[MidTerm] Step 2 done: runTradeSession=${sessionElapsed}ms, buyOrders=${report.buyOrders.size}")
+
+                // Step 3: 腾龙换鸟
+                val swapStart = System.currentTimeMillis()
+                withContext(Dispatchers.Main) { statusTv.text = "🔄 騰龍換鳥分析..." }
                 val swappedCount = te.swapWeakHoldings(strategies, report.buyOrders.size, browsingDate.format(DATE_FMT))
+                val swapElapsed = System.currentTimeMillis() - swapStart
+                Log.i(TAG, "[MidTerm] Step 3 done: swapWeakHoldings=${swapElapsed}ms, swapped=$swappedCount")
+
                 val finalReport = if (swappedCount > 0) {
                     val holdingOrders = db.strategyTradeOrderDao().getRecent(200).filter { it.status == "BUYING" }
                     val soldStocks = db.strategyTradeOrderDao().getRecent(300).filter {
@@ -248,12 +274,17 @@ class MidTermQuantFragment : QuantFragmentBase() {
                     )
                     report.copy(summary = te.buildEnhancedSummary(report.stepDetail, report.aiTop3, report.crossDayRanking, swapInfo))
                 } else report
+
+                val totalElapsed = System.currentTimeMillis() - totalStart
+                Log.i(TAG, "[MidTerm] ====== TOTAL: ${totalElapsed}ms ======")
+                Log.i(TAG, "[MidTerm] Breakdown: import=${importElapsed}ms  session=${sessionElapsed}ms  swap=${swapElapsed}ms")
+
                 withContext(Dispatchers.Main) {
                     try {
                         saveBuyOrdersToDb(finalReport)
                         showTradeReport(finalReport)
                         refreshPositions()
-                        statusTv.text = "✅ 完成: ${report.summary.lines().firstOrNull()?.take(60) ?: "交易完成"}"
+                        statusTv.text = "✅ 完成: ${report.summary.lines().firstOrNull()?.take(60) ?: "交易完成"} (${totalElapsed}ms)"
                     } catch (uiEx: Exception) {
                         Log.e("TradeUI", "UI update failed", uiEx)
                         statusTv.text = "✅ 交易完成，但显示报告时出错"
@@ -263,6 +294,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
                     }
                 }
             } catch (e: Exception) {
+                Log.e(TAG, "[MidTerm] executeTrade failed: ${e.message}", e)
                 withContext(Dispatchers.Main) {
                     statusTv.text = "❌ 执行失败: ${e.message?.take(50)}"
                     buildBtn.isEnabled = true; buildBtn.text = "▶ 建仓"
@@ -432,11 +464,8 @@ class MidTermQuantFragment : QuantFragmentBase() {
         }
     }
 
-    private suspend fun getNextTradingDayFromDB(date: String): String? = try {
-        val db = StockDatabase.getInstance(requireContext())
-        val dates = db.dailySnapshotDao().getAvailableDates(10).sorted()
-        val idx = dates.indexOf(date); if (idx >= 0 && idx + 1 < dates.size) dates[idx + 1] else null
-    } catch (_: Exception) { null }
+    private suspend fun getNextTradingDayFromDB(date: String): String? =
+        com.chin.stockanalysis.ui.TradingDayPickerView.getNextTradingDayFromDb(date) { requireContext() }
 
     // ═══════════════════════════════════════
     // 拟合

@@ -37,9 +37,22 @@ class SimulationTradeEngine(private val context: Context) {
         const val NEWS_WEIGHT_BOOST = 0.15
         const val ROTATION_PENALTY = 0.10
         const val MAX_HOLDINGS = 5  // 最大持仓数，超出时触发腾笼换鸟
+
+        private val TECH_MOAT_SECTORS = setOf(
+            "光刻机", "光刻胶", "芯片设计", "芯片制造", "先进封装", "EDA",
+            "半导体设备", "半导体材料", "第三代半导体", "IGBT",
+            "碳化硅", "氮化镓", "光模块", "CPO", "算力租赁",
+            "量子计算", "卫星互联网", "商业航天", "航空发动机",
+            "工业母机", "高端数控机床", "机器人", "机器视觉",
+            "新材料", "稀土永磁", "碳纤维", "石墨烯",
+            "创新药", "CXO", "基因编辑", "合成生物"
+        )
     }
 
     private val db = StockDatabase.getInstance(context)
+
+    /** 狀態回調，用於向 UI 報告當前執行的步驟 */
+    var onStatusUpdate: ((String) -> Unit)? = null
 
     data class TradeSessionConfig(
         val tradeDate: String = LocalDate.now().format(DATE_FMT),
@@ -156,36 +169,47 @@ class SimulationTradeEngine(private val context: Context) {
         strategies: List<Strategy>,
         config: TradeSessionConfig = TradeSessionConfig()
     ): TradeSessionReport = withContext(Dispatchers.IO) {
+        val totalStart = System.currentTimeMillis()
         Log.i(TAG, "━━━ 9步精選模擬交易 ━━━")
         Log.i(TAG, "交易日: ${config.tradeDate}  主板: ${config.onlyMainBoard}  周期: ${config.periods}")
         Log.i(TAG, "策略数: ${strategies.size}  最大持仓: ${MAX_HOLDINGS}")
 
+        val t1 = System.currentTimeMillis()
         val poolCodes = buildDailyStockPool(config.tradeDate)
-        Log.i(TAG, "【Step 1-4】精選池: ${poolCodes.size} 隻")
+        val step1 = System.currentTimeMillis() - t1
+        Log.i(TAG, "【Step 1-4】精選池: ${poolCodes.size} 隻, ${step1}ms")
 
+        val t2 = System.currentTimeMillis()
         val allSnapshots = getTradingDayData(config.tradeDate)
-        Log.i(TAG, "获取交易日数据: ${allSnapshots.size}只")
+        val step2 = System.currentTimeMillis() - t2
+        Log.i(TAG, "获取交易日数据: ${allSnapshots.size}只, ${step2}ms")
         if (allSnapshots.isEmpty()) {
             return@withContext TradeSessionReport(config, emptyList(), emptyList(), emptyList(),
                 "交易日 ${config.tradeDate} 无可用数据")
         }
         // 统一数据层: 使用 StrategyDataFeed 构建 StockRealtime
+        val t3 = System.currentTimeMillis()
         val dataFeed = com.chin.stockanalysis.strategy.data.StrategyDataFeed(context)
         val feedConfig = com.chin.stockanalysis.strategy.data.StrategyDataFeed.DataFeedConfig(
             onlyMainBoard = config.onlyMainBoard,
             stockCodes = poolCodes
         )
         var stockList = dataFeed.convertSnapshots(allSnapshots, feedConfig)
-        Log.i(TAG, "統一數據層: ${allSnapshots.size}隻 → ${stockList.size}隻 (主板=${config.onlyMainBoard})")
+        val step3 = System.currentTimeMillis() - t3
+        Log.i(TAG, "統一數據層: ${allSnapshots.size}隻 → ${stockList.size}隻 (主板=${config.onlyMainBoard}), ${step3}ms")
 
-        val heatScores = mutableMapOf<String, Int>()
-        stockList.forEach { stock -> heatScores[stock.code] = StockDataCenter.calculateStockHeatScore(stock.code, allSnapshots) }
+        val tHeat = System.currentTimeMillis()
+        val heatScores = calculateHeatScoresBatch(stockList, allSnapshots)
         stockList = stockList.sortedByDescending { heatScores[it.code] ?: 0 }
+        val heatElapsed = System.currentTimeMillis() - tHeat
+        Log.i(TAG, "熱度計算: ${stockList.size}隻, ${heatElapsed}ms")
 
         // Step 5: 策略信號生成
+        val t5 = System.currentTimeMillis()
         val allTodayResults = mutableListOf<StrategyPeriodResult>()
         for (strategy in strategies) {
             if (strategy.id == "ai_prediction") continue
+            val ts = System.currentTimeMillis()
             Log.d(TAG, "【Step 5】执行策略: ${strategy.name} 输入${stockList.size}只")
             val rawSignals = executeStrategy(strategy, stockList, 1) ?: continue
             if (rawSignals.isEmpty()) { Log.d(TAG, "  ${strategy.name}: 无信号"); continue }
@@ -206,31 +230,41 @@ class SimulationTradeEngine(private val context: Context) {
                 afterMainBoardFilter = filtered.take(MAX_STOCKS_PER_STRATEGY),
                 filteredStocks = filteredInfo.take(20), finalTop15 = top15
             ))
-            Log.i(TAG, "  ${strategy.name}: 输出Top15 — ${top15.take(5).joinToString { "${it.stockName}(${it.strength}%)" }}")
+            val sElapsed = System.currentTimeMillis() - ts
+            Log.i(TAG, "  ${strategy.name}: 输出Top15 — ${top15.take(5).joinToString { "${it.stockName}(${it.strength}%)" }}, ${sElapsed}ms")
             savePeriodResultToDb(strategy.id, strategy.name, 1, config.tradeDate, rawSignals, newsScore, rotationPenaltyScore,
                 filtered.map { it.stockCode }, filteredInfo, top15)
         }
-        Log.i(TAG, "【Step 5】${allTodayResults.size} 個策略命中，输入${stockList.size}只 → 输出策略结果")
+        val step5 = System.currentTimeMillis() - t5
+        Log.i(TAG, "【Step 5】${allTodayResults.size} 個策略命中，输入${stockList.size}只 → 输出策略结果, ${step5}ms")
 
         // Step 6: 跨日聚合 + 多周期热门股
+        val t6a = System.currentTimeMillis()
         val crossDayTop20 = aggregateCrossDayResults(config.tradeDate, strategies, poolCodes)
-        Log.i(TAG, "【Step 6a】跨${CROSS_DAY_WINDOW}天聚合 → Top${crossDayTop20.size}: ${crossDayTop20.take(8).joinToString { "${it.first.takeLast(6)}(${it.second}天)" }}")
+        val step6a = System.currentTimeMillis() - t6a
+        Log.i(TAG, "【Step 6a】跨${CROSS_DAY_WINDOW}天聚合 → Top${crossDayTop20.size}: ${crossDayTop20.take(8).joinToString { "${it.first.takeLast(6)}(${it.second}天)" }}, ${step6a}ms")
+        val t6b = System.currentTimeMillis()
         val hotStocks = addMultiPeriodHotStocks(config.tradeDate, config.onlyMainBoard)
-        Log.i(TAG, "【Step 6b】多周期热门股: +${hotStocks.size}隻 — ${hotStocks.take(5).joinToString()}")
+        val step6b = System.currentTimeMillis() - t6b
+        Log.i(TAG, "【Step 6b】多周期热门股: +${hotStocks.size}隻 — ${hotStocks.take(5).joinToString()}, ${step6b}ms")
 
         // Step 7: 板块精选
+        val t7 = System.currentTimeMillis()
         val sectorPicked = if (config.onlyMainBoard) getHotSectorStockPool().filter { isMainBoard(it) }.toSet() else getHotSectorStockPool()
-        Log.i(TAG, "【Step 7】板塊精選: +${sectorPicked.size} 隻")
+        val step7 = System.currentTimeMillis() - t7
+        Log.i(TAG, "【Step 7】板塊精選: +${sectorPicked.size} 隻, ${step7}ms")
 
         // Step 8: 用户搜索/智能体/自选股
+        val t8 = System.currentTimeMillis()
         val userStockCodes = if (config.onlyMainBoard) StockDataCenter.getUserSearchStockCodes().filter { isMainBoard(it) }.toSet() else StockDataCenter.getUserSearchStockCodes()
         val skillPickCodes = if (config.onlyMainBoard) StockDataCenter.getSkillPickStockCodes().filter { isMainBoard(it) }.toSet() else StockDataCenter.getSkillPickStockCodes()
         val watchlistCodes = if (config.onlyMainBoard) StockDataCenter.getWatchlistStockCodes(context).filter { isMainBoard(it) }.toSet() else StockDataCenter.getWatchlistStockCodes(context)
-        Log.i(TAG, "【Step 8】用戶搜索${userStockCodes.size}隻 + 智能體${skillPickCodes.size}隻 + 自選${watchlistCodes.size}隻")
+        val step8 = System.currentTimeMillis() - t8
+        Log.i(TAG, "【Step 8】用戶搜索${userStockCodes.size}隻 + 智能體${skillPickCodes.size}隻 + 自選${watchlistCodes.size}隻, ${step8}ms")
 
         // Step 9: 组装+过滤
+        val t9 = System.currentTimeMillis()
         val rawPool = (crossDayTop20.map { it.first }.toSet() + hotStocks + sectorPicked + userStockCodes + skillPickCodes + watchlistCodes).toSet()
-        Log.i(TAG, "【Step 9a】rawPool: ${rawPool.size}隻")
         val finalPool = filterPoolCodes(rawPool, allSnapshots)
         val filteredOut = rawPool.size - finalPool.size
         if (filteredOut > 0) Log.i(TAG, "【Step 9b】買入過濾: 移除${filteredOut}隻不合格股 → 最終池 ${finalPool.size} 隻")
@@ -245,7 +279,12 @@ class SimulationTradeEngine(private val context: Context) {
         val finalPoolSafe = safePool.toSet()
         val finalSnapshots = allSnapshots.filter { it.code in finalPoolSafe }
         val finalStockList = dataFeed.convertSnapshots(finalSnapshots, com.chin.stockanalysis.strategy.data.StrategyDataFeed.DataFeedConfig(onlyMainBoard = false))
+        val step9 = System.currentTimeMillis() - t9
+        Log.i(TAG, "【Step 9】組裝過濾: ${step9}ms")
 
+        // AI 精选
+        onStatusUpdate?.invoke("🤖 AI 大模型分析中...")
+        val tAi = System.currentTimeMillis()
         val aiStrategy = strategies.find { it.id == "ai_prediction" }
         val aiPicks = if (aiStrategy != null && aiStrategy is com.chin.stockanalysis.strategy.strategies.AIPredictionStrategy) {
             val screeningResults = mutableListOf<com.chin.stockanalysis.strategy.models.ScreeningResult>()
@@ -267,17 +306,26 @@ class SimulationTradeEngine(private val context: Context) {
                     reason = s.reason, actionSuggestion = if (s.strength>=75) "推荐买入" else if (s.strength>=60) "关注" else "观望")
             }
         } else emptyList()
+        val stepAi = System.currentTimeMillis() - tAi
+        Log.i(TAG, "AI 精选: ${aiPicks.size}只, ${stepAi}ms")
 
+        val tOrder = System.currentTimeMillis()
         val buyOrders = generateBuyOrders(aiPicks, config.tradeDate, allSnapshots)
-        Log.i(TAG, "生成买入订单: ${buyOrders.size}只")
+        val stepOrder = System.currentTimeMillis() - tOrder
+        Log.i(TAG, "生成买入订单: ${buyOrders.size}只, ${stepOrder}ms")
         saveDailyNewsHotPicks(config.tradeDate)
         if (buyOrders.isEmpty()) {
             Log.i(TAG, "⏭️ 无买入订单，跳过拟合（节省时间）")
         } else {
+            val tFit = System.currentTimeMillis()
             runFitting(strategies, allTodayResults, config)
+            val stepFit = System.currentTimeMillis() - tFit
+            Log.i(TAG, "拟合完成: ${stepFit}ms")
         }
         saveFinalPoolToDb(config.tradeDate, finalPoolSafe.toList(), crossDayTop20)
-        Log.i(TAG, "━━━ 9步精選完成 ━━━")
+        val totalElapsed = System.currentTimeMillis() - totalStart
+        Log.i(TAG, "━━━ 9步精選完成 ━━━ TOTAL: ${totalElapsed}ms")
+        Log.i(TAG, "Breakdown: pool=${step1}ms data=${step2}ms convert=${step3}ms heat=${heatElapsed}ms strategy=${step5}ms crossDay=${step6a}ms hot=${step6b}ms sector=${step7}ms user=${step8}ms filter=${step9}ms ai=${stepAi}ms order=${stepOrder}ms")
 
         val stepDetail = StepDetail(
             basePoolSize = poolCodes.size,
@@ -294,6 +342,156 @@ class SimulationTradeEngine(private val context: Context) {
         )
         val summary = buildEnhancedSummary(stepDetail, aiPicks, crossDayTop20, null)
         TradeSessionReport(config, allTodayResults, aiPicks, buyOrders, summary, finalPool.toList(), crossDayTop20, stepDetail, null)
+    }
+
+    /**
+     * 批量熱度計算 — 替代 StockDataCenter.calculateStockHeatScore 的逐只計算
+     * 核心優化：將數據庫查詢從「每只股票 N 次」減少到「全局少量次數」
+     */
+    private suspend fun calculateHeatScoresBatch(
+        stockList: List<StockRealtime>,
+        todaySnapshots: List<DailySnapshotEntity>
+    ): Map<String, Int> = withContext(Dispatchers.IO) {
+        val today = LocalDate.now().format(DATE_FMT)
+
+        // 1. 今日快照轉 Map，O(1) 查找
+        val snapMap = todaySnapshots.associateBy { it.code }
+        // 2. 全市場總成交額只算一次
+        val totalAmount = todaySnapshots.sumOf { it.amount }
+
+        // 3. 預加載近5日數據（用於量比）— 按日期批量查，而非按股票查
+        val recent5Dates = db.dailySnapshotDao().getAvailableDates(5)
+            .filter { it <= today }.sorted().takeLast(5)
+        val recent5VolumeMap = mutableMapOf<String, MutableList<Long>>()
+        for (date in recent5Dates.dropLast(1)) {
+            val snaps = db.dailySnapshotDao().getByDate(date)
+            for (snap in snaps) {
+                recent5VolumeMap.getOrPut(snap.code) { mutableListOf() }.add(snap.volume)
+            }
+        }
+
+        // 4. 預加載近30日數據（用於階段新高）— 按日期批量查
+        val recent30Dates = db.dailySnapshotDao().getAvailableDates(30)
+            .filter { it <= today }.sorted().takeLast(30)
+        val recent30CloseMap = mutableMapOf<String, MutableList<Double>>()
+        for (date in recent30Dates) {
+            val snaps = db.dailySnapshotDao().getByDate(date)
+            for (snap in snaps) {
+                recent30CloseMap.getOrPut(snap.code) { mutableListOf() }.add(snap.close)
+            }
+        }
+
+        // 5. 預加載板塊歷史記錄（全局只查一次）
+        val sectorRecords = try { db.sectorDailyRecordDao().getRecentDays(60) } catch (_: Exception) { emptyList() }
+
+        // 6. 預加載所有股票板塊信息（按股票查，但比在原函數中查少很多次）
+        val stockSectorsMap = mutableMapOf<String, List<String>>()
+        for (stock in stockList) {
+            try {
+                stockSectorsMap[stock.code] = db.sectorStockDao().getSectorNamesByStockCode(stock.code)
+            } catch (_: Exception) { stockSectorsMap[stock.code] = emptyList() }
+        }
+
+        // 7. 批量計算每只股票熱度（無數據庫查詢）
+        stockList.associate { stock ->
+            val selfSnap = snapMap[stock.code]
+            if (selfSnap == null) {
+                stock.code to 15
+            } else {
+                var score = 0
+
+                // 維度1: 交易量能 (0-30分)
+                val turnoverRate = selfSnap.turnoverRate.coerceIn(0.0, 50.0)
+                score += when {
+                    turnoverRate >= 8 -> 10
+                    turnoverRate >= 5 -> 8
+                    turnoverRate >= 3 -> 6
+                    turnoverRate >= 1 -> 3
+                    else -> 1
+                }
+                if (totalAmount > 0) {
+                    val pct = selfSnap.amount / totalAmount
+                    score += when {
+                        pct >= 0.03 -> 10
+                        pct >= 0.01 -> 7
+                        pct >= 0.005 -> 5
+                        pct >= 0.001 -> 3
+                        else -> 1
+                    }
+                }
+                val volumes = recent5VolumeMap[stock.code]
+                if (volumes != null && volumes.isNotEmpty()) {
+                    val avgVolume = volumes.average()
+                    if (avgVolume > 0) {
+                        val volumeRatio = selfSnap.volume / avgVolume
+                        score += when {
+                            volumeRatio >= 3.0 -> 10
+                            volumeRatio >= 2.0 -> 7
+                            volumeRatio >= 1.5 -> 5
+                            volumeRatio >= 1.0 -> 3
+                            else -> 1
+                        }
+                    }
+                } else { score += 3 }
+
+                // 維度2: 資金動向 (0-20分)
+                val sectors = stockSectorsMap[stock.code] ?: emptyList()
+                if (sectors.isNotEmpty()) {
+                    val allSectors = com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.industrySectors +
+                        com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.conceptSectors
+                    val matched = allSectors.filter { hs -> sectors.any { s -> hs.name.contains(s) || s.contains(hs.name) } }
+                    if (matched.isNotEmpty()) {
+                        val maxInflow = matched.maxOf { it.mainNetInflow }
+                        score += when {
+                            maxInflow >= 10 -> 10
+                            maxInflow >= 5 -> 7
+                            maxInflow >= 1 -> 5
+                            maxInflow > 0 -> 3
+                            else -> 0
+                        }
+                        val avgComposite = matched.map { it.compositeScore }.average()
+                        score += (avgComposite / 20.0).toInt().coerceIn(0, 10)
+                    } else { score += 5 }
+                } else { score += 5 }
+
+                // 維度3: 板塊歷史熱度 (0-20分)
+                if (sectors.isNotEmpty()) {
+                    val sectorRecordCount = sectorRecords.count { r -> sectors.any { r.sectorName.contains(it) || it.contains(r.sectorName) } }
+                    val sectorHotCount = sectorRecords.count { r ->
+                        sectors.any { s -> r.sectorName.contains(s) || s.contains(r.sectorName) } && r.isHot in listOf("S", "A")
+                    }
+                    score += when {
+                        sectorHotCount >= 20 -> 20
+                        sectorHotCount >= 10 -> 15
+                        sectorHotCount >= 5 -> 10
+                        sectorRecordCount >= 10 -> 5
+                        else -> 2
+                    }
+                } else { score += 5 }
+
+                // 維度4: 價格位置 (0-15分)
+                val changePct = kotlin.math.abs(selfSnap.changePct)
+                score += when {
+                    changePct >= 9.5 -> 8
+                    changePct >= 7 -> 6
+                    changePct >= 5 -> 5
+                    changePct >= 3 -> 3
+                    changePct >= 1 -> 1
+                    else -> 0
+                }
+                val closes = recent30CloseMap[stock.code]
+                if (closes != null && closes.isNotEmpty()) {
+                    val maxClose = closes.max()
+                    if (selfSnap.close >= maxClose * 0.98) score += 7 else score += 3
+                } else { score += 3 }
+
+                // 維度5: 概念壁壘 (0-15分)
+                val hasMoat = sectors.any { s -> TECH_MOAT_SECTORS.any { ts -> s.contains(ts) || ts.contains(s) } }
+                score += if (hasMoat) 15 else 5
+
+                stock.code to score.coerceIn(0, 100)
+            }
+        }
     }
 
     private suspend fun saveFinalPoolToDb(tradeDate: String, codes: List<String>, crossDay: List<Pair<String, Int>>) {
@@ -567,13 +765,52 @@ class SimulationTradeEngine(private val context: Context) {
     }
 
     private suspend fun runFitting(strategies: List<Strategy>, results: List<StrategyPeriodResult>, config: TradeSessionConfig) {
+        val fitStart = System.currentTimeMillis()
+        var fitCount = 0
+        var skipCount = 0
+        val dayInfo = com.chin.stockanalysis.ui.TradingDayPickerView
+
+        Log.i(TAG, "runFitting start: today=${dayInfo.today()}, recent=${dayInfo.recentTradingDay()}, prev=${dayInfo.previousTradingDay()}, next=${dayInfo.nextTradingDay()}, strategies=${strategies.size}, periods=${config.periods}")
+
         for (strategy in strategies) for (period in config.periods) {
             val prs = results.filter{it.strategyId==strategy.id && it.periodDays==period}; if(prs.isEmpty()) continue
             val tradeDate = prs.first().tradeDate
+
+            // 解析 tradeDate 為 LocalDate
+            val tradeDateLocal = try { LocalDate.parse(tradeDate) } catch (_: Exception) {
+                Log.w(TAG, "runFitting skip: ${strategy.name} p${period}d, tradeDate=$tradeDate 格式無法解析")
+                skipCount++; continue
+            }
+
+            // 提前判斷：tradeDate >= 最近交易日 → 下一個交易日無數據，跳過
+            if (dayInfo.isFutureOrToday(tradeDateLocal)) {
+                Log.i(TAG, "runFitting skip: ${strategy.name} p${period}d, tradeDate=$tradeDate >= recent=${dayInfo.recentTradingDay()} → 下一個交易日無數據，跳過擬合")
+                skipCount++; continue
+            }
+
+            // 計算 nextDate
             val nextDate = getNextTradingDay(tradeDate)?:try{LocalDate.parse(tradeDate).plusDays(1).format(DATE_FMT)}catch(_:Exception){null}?:continue
-            val nextDayData = getTradingDayData(nextDate); if(nextDayData.isEmpty()) continue
+            val nextDateLocal = try { LocalDate.parse(nextDate) } catch (_: Exception) {
+                Log.w(TAG, "runFitting skip: ${strategy.name} p${period}d, nextDate=$nextDate 格式無法解析")
+                skipCount++; continue
+            }
+            // 二次保險
+            if (dayInfo.isFutureOrToday(nextDateLocal)) {
+                Log.i(TAG, "runFitting skip: ${strategy.name} p${period}d, nextDate=$nextDate >= recent=${dayInfo.recentTradingDay()} → nextDate也無實際數據，跳過擬合")
+                skipCount++; continue
+            }
+
+            // 到這裡是歷史數據，正常擬合
+            val nextDayData = try { db.dailySnapshotDao().getByDate(nextDate) } catch (_: Exception) { emptyList() }
+            if(nextDayData.isEmpty()) {
+                Log.i(TAG, "runFitting skip: ${strategy.name} p${period}d, nextDate=$nextDate 數據庫無數據（可能需要先導入 $nextDate 的歷史數據）")
+                skipCount++; continue
+            }
+
+            Log.i(TAG, "runFitting execute: ${strategy.name} p${period}d, tradeDate=$tradeDate → nextDate=$nextDate (${nextDayData.size}只), 驗證Top15準確率")
             val fp = mutableListOf<FittingRoundParam>()
-            for(round in 1..config.maxFitRounds.coerceAtMost(1000)) fp.add(validateParams(prs.first(),nextDayData,round))
+            val rounds = config.maxFitRounds.coerceAtMost(100)
+            for(round in 1..rounds) fp.add(validateParams(prs.first(),nextDayData,round))
             saveFittingParams(strategy.id, tradeDate, period, fp)
             val bestRound = fp.maxByOrNull{ it.accuracy } ?: continue
             val oldBest = getOldBestAccuracy(strategy.id, tradeDate, period) ?: 0f
@@ -586,15 +823,17 @@ class SimulationTradeEngine(private val context: Context) {
                             if (f.key == factor.key) f.copy(weight = newWeight) else f
                         }
                     }
-                    val today = LocalDate.now().format(DATE_FMT)
                     val weightJson = strategy.weightFactors.joinToString(";") { "${it.key}:${it.label}:${it.weight}" }
                     db.strategyWeightSnapshotDao().insert(
                         com.chin.stockanalysis.strategy.backtest.StrategyWeightSnapshotEntity(
-                            strategyId = strategy.id, date = today, weightJson = weightJson, totalScore = 0, hitCount = bestRound.hitCount))
+                            strategyId = strategy.id, date = dayInfo.today().format(DATE_FMT), weightJson = weightJson, totalScore = 0, hitCount = bestRound.hitCount))
                     Log.i(TAG, "🔧 统一调优: ${strategy.name} ${"%.1f".format(oldBest*100)}% → ${"%.1f".format(bestRound.accuracy*100)}%")
                 } catch (e: Exception) { Log.w(TAG, "更新共享权重失败: ${e.message}") }
             }
+            fitCount++
         }
+        val fitElapsed = System.currentTimeMillis() - fitStart
+        Log.i(TAG, "runFitting done: executed=$fitCount, skipped=$skipCount, ${fitElapsed}ms")
     }
 
     private suspend fun validateParams(result: StrategyPeriodResult, nextDayData: List<DailySnapshotEntity>, round: Int): FittingRoundParam {
@@ -629,9 +868,8 @@ class SimulationTradeEngine(private val context: Context) {
         catch (_: Exception) {}
     }
 
-    private suspend fun getNextTradingDay(date: String): String? = try {
-        val dates=db.dailySnapshotDao().getAvailableDates(10).sorted(); val idx=dates.indexOf(date); if(idx>=0&&idx+1<dates.size)dates[idx+1] else null
-    } catch (_: Exception) { null }
+    private suspend fun getNextTradingDay(date: String): String? =
+        com.chin.stockanalysis.ui.TradingDayPickerView.getNextTradingDayFromDb(date) { context }
 
     // ══════════════════════════════════════════════════
     // 智能賣出 (委托给 AutoSellEngine)
