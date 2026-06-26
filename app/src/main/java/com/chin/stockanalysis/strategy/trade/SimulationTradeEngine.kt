@@ -271,7 +271,11 @@ class SimulationTradeEngine(private val context: Context) {
         val buyOrders = generateBuyOrders(aiPicks, config.tradeDate, allSnapshots)
         Log.i(TAG, "生成买入订单: ${buyOrders.size}只")
         saveDailyNewsHotPicks(config.tradeDate)
-        runFitting(strategies, allTodayResults, config)
+        if (buyOrders.isEmpty()) {
+            Log.i(TAG, "⏭️ 无买入订单，跳过拟合（节省时间）")
+        } else {
+            runFitting(strategies, allTodayResults, config)
+        }
         saveFinalPoolToDb(config.tradeDate, finalPoolSafe.toList(), crossDayTop20)
         Log.i(TAG, "━━━ 9步精選完成 ━━━")
 
