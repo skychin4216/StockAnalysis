@@ -1143,6 +1143,122 @@ $memory
 
     private fun onMessageComplete() {
         // 不再使用固定追問模板，讓 AI 自然對話
+        // 檢查最後一條用戶消息是否包含股票代碼，如有則彈窗詢問操作
+        tryPromptStockAction()
+    }
+
+    /** 如果用戶輸入包含股票代碼，分析完成後彈窗詢問加入自選/買入 */
+    private fun tryPromptStockAction() {
+        val lastUserMsg = messages.lastOrNull { it.isUser && !it.isStreaming && !it.isError } ?: return
+        val codeMatch = Regex("(sh|sz|bj)?\\d{6}").find(lastUserMsg.content)
+        val stockCode = codeMatch?.value ?: return
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val result = analyzeStockBrief(stockCode)
+                if (result != null && isAdded) {
+                    withContext(Dispatchers.Main) { showStockActionDialog(result) }
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    data class StockBriefResult(
+        val code: String, val name: String, val price: Double,
+        val changePct: Double, val score: Int, val hits: List<String>
+    )
+
+    /** 快速分析單只股票（本地策略，不調 AI） */
+    private suspend fun analyzeStockBrief(stockCode: String): StockBriefResult? {
+        val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().toString()
+        val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(requireContext())
+        val snap = db.dailySnapshotDao().getByDateAndCode(today, stockCode) ?: return null
+        val basic = db.stockBasicDao().getByCode(stockCode)
+        val stockName = basic?.name ?: stockCode
+
+        val feed = com.chin.stockanalysis.strategy.data.StrategyDataFeed(requireContext())
+        val stocks = feed.prepareFromDb(today, com.chin.stockanalysis.strategy.data.StrategyDataFeed.DataFeedConfig(onlyMainBoard = false, stockCodes = setOf(stockCode)))
+        if (stocks.isEmpty()) return null
+
+        val eng = com.chin.stockanalysis.strategy.StrategyEngineHolder.get()
+        val hits = mutableListOf<String>()
+        var maxScore = 0
+        for (strategy in eng.getStrategies()) {
+            if (!eng.isEnabled(strategy.id) || strategy.id == "ai_prediction") continue
+            try {
+                val r = strategy.screenWithData(stocks)
+                r.getOrNull()?.signals?.firstOrNull()?.let { sig ->
+                    hits.add(strategy.name)
+                    if (sig.strength > maxScore) maxScore = sig.strength
+                }
+            } catch (_: Exception) {}
+        }
+        return StockBriefResult(stockCode, stockName, snap.close, snap.changePct, maxScore, hits)
+    }
+
+    /** 顯示股票操作彈窗：加入自選 + 買入（符合條件時綠色，否則灰色） */
+    private fun showStockActionDialog(result: StockBriefResult) {
+        if (!isAdded) return
+        val canBuy = result.score >= 60 && result.hits.isNotEmpty()
+        val actionColor = if (canBuy) "#4CAF50" else "#9E9E9E"
+        val msg = buildString {
+            appendLine("${result.name} (${result.code})")
+            appendLine("現價 ¥${"%.2f".format(result.price)} (${if(result.changePct>=0)"+" else ""}${"%.2f".format(result.changePct)}%)")
+            appendLine("策略命中: ${result.hits.size} 個 (${result.hits.joinToString()})")
+            appendLine("綜合評分: ${result.score}分")
+            appendLine()
+            appendLine(if (canBuy) "🟢 符合買入條件" else "🔴 暫不符合買入條件")
+        }
+
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle("📌 分析完成")
+            .setMessage(msg)
+            .setPositiveButton("➕ 加入自選") { _, _ ->
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        com.chin.stockanalysis.stock.database.AppBackgroundRunner.addToWatchlist(
+                            requireContext(), result.code, result.name, "chat_analysis", result.score)
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(requireContext(), "✅ 已加入自選: ${result.name}", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+            .setNegativeButton("取消", null)
+            .setNeutralButton("▶ 買入") { _, _ ->
+                if (!canBuy) return@setNeutralButton
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(requireContext())
+                        val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay()
+                            .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+                        db.strategyTradeOrderDao().insert(
+                            com.chin.stockanalysis.strategy.trade.StrategyTradeOrderEntity(
+                                strategyId = "Chat_Analysis", stockCode = result.code,
+                                stockName = result.name, tradeDate = today,
+                                buyPrice = result.price, quantity = 100, orderType = "對話買入",
+                                status = "BUYING", reason = "對話分析命中: ${result.hits.joinToString()}",
+                                scoreAtBuy = result.score, createdAt = System.currentTimeMillis()
+                            )
+                        )
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(requireContext(), "✅ 已買入 ${result.name}", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.setTextColor(android.graphics.Color.parseColor("#2196F3"))
+            val neutralBtn = dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL)
+            if (canBuy) {
+                neutralBtn?.setTextColor(android.graphics.Color.parseColor("#4CAF50"))
+            } else {
+                neutralBtn?.text = "▶ 買入 (條件不足)"
+                neutralBtn?.setTextColor(android.graphics.Color.parseColor("#9E9E9E"))
+            }
+        }
+        dialog.show()
     }
 
     /** 检测用户输入中的 AI 提供者关键词 — 仅记录，不绕过池创建 Provider */
