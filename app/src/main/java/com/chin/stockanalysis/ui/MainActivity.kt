@@ -110,6 +110,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** App 进入后台时自动备份 */
+    override fun onStart() {
+        super.onStart()
+        // App 回到前臺時清掃過期 AI Provider 佔用（應對系統凍結導致的釋放遺漏）
+        com.chin.stockanalysis.ai.AiProviderPool.sweepExpired()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 进程解冻后强制清理 Provider 锁（Samsung Nandswap）
+        com.chin.stockanalysis.ai.AiProviderPool.emergencyReset("onResume")
+    }
+
     override fun onStop() {
         super.onStop()
         lifecycleScope.launch(Dispatchers.IO) {
