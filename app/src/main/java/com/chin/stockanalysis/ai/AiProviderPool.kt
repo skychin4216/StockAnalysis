@@ -24,14 +24,14 @@ object AiProviderPool {
 
     private const val TAG = "AiProviderPool"
 
-    /** 佔用超時時間（秒）：系統凍結最長約 60-90 秒，留足餘量 */
-    private const val OCCUPY_TIMEOUT_MS = 90_000L
+        /** 佔用超時時間（秒）：30 秒自動釋放，避免任何鎖死 */
+    private const val OCCUPY_TIMEOUT_MS = 30_000L
 
     /** 健康檢測超時（秒） */
-    private const val HEALTH_PROBE_TIMEOUT_MS = 5_000L
+    private const val HEALTH_PROBE_TIMEOUT_MS = 3_000L
 
     /** AI 請求超時（秒） */
-    private const val AI_REQUEST_TIMEOUT_MS = 60_000L
+    private const val AI_REQUEST_TIMEOUT_MS = 30_000L
 
     /** 优先级顺序 */
     private val PRIORITY_ORDER = listOf(
@@ -96,11 +96,10 @@ object AiProviderPool {
                     return slot
                 }
 
-                // 3. 全部被佔用 → 嘗試共享第一個健康的
+                // 3. 全部被佔用 → 嘗試共享第一個有 key 的（不論健康狀態）
                 for (preferredId in PRIORITY_ORDER) {
                     val config = mgr.getProviderConfig(preferredId) ?: continue
                     if (config.apiKey.isBlank()) continue
-                    if (!isHealthy(config.id, config)) continue
 
                     val provider = getOrCreateProvider(config)
                     val slot = Slot(preferredId, "${config.name}(共享)", provider, allocatedBy = callerTag)
@@ -109,7 +108,7 @@ object AiProviderPool {
                 }
             }
 
-            // 4. 等待 1 秒後重試
+            // 4. 等待 1 秒後重試（最多 5 秒）
             Log.d(TAG, "⏳ 等待釋放... [by: $callerTag]")
             delay(1_000L)
         }
