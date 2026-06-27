@@ -13,12 +13,11 @@ import com.chin.stockanalysis.agent.pipeline.PipelineResult
 import com.chin.stockanalysis.agent.pipeline.PipelineStep
 
 /**
- * 智能體流水線進度面板
+ * 7 步流水線進度面板
  *
- * 支持三種模式動態切換：
- * - 六智體通用（消費/醫藥/周期）
- * - 七智體賣水人（光通信/半導體）
- * - 精簡版 5+1（默認）
+ * 展示 F → 3 → 1 → 2 → 5 → D → 4 的執行進度，
+ * 每步顯示狀態圖標、名稱、分析摘要。
+ * Agent 2 完成後顯示打分徽章，Agent 5 顯示風控徽章，Agent D 顯示倉位微調。
  */
 class PipelineProgressView(context: Context) : LinearLayout(context) {
 
@@ -37,9 +36,6 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
 
     private val stepViews = mutableMapOf<Int, StepCard>()
     private val resultContainer: LinearLayout
-    private val stepsContainer: LinearLayout
-    private val titleTv: TextView
-    private var currentSteps: List<PipelineStep> = AgentPipelineOrchestrator.getStepsByName("精簡版")
 
     init {
         orientation = LinearLayout.VERTICAL
@@ -47,20 +43,19 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
         setBackgroundColor(Color.parseColor("#FAFAFA"))
 
         // 標題
-        titleTv = TextView(context).apply {
-            text = "🧠 Agent 流水線（精簡版 5+1）"
+        addView(TextView(context).apply {
+            text = "🧠 AI 智能體流水線 (F→3→1→2→5→D→4)"
             textSize = 14f
             setTextColor(Color.parseColor("#1A1A2E"))
             setTypeface(null, Typeface.BOLD)
             setPadding(0, 0, 0, 8)
-        }
-        addView(titleTv)
+        })
 
         // 步驟卡片容器
-        stepsContainer = LinearLayout(context).apply {
+        val stepsContainer = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
         }
-        for (step in AgentPipelineOrchestrator.getStepsByName("精簡版")) {
+        for (step in AgentPipelineOrchestrator.STEPS) {
             val card = StepCard(context, step)
             stepViews[step.order] = card
             stepsContainer.addView(card)
@@ -87,39 +82,6 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
      */
     fun markStepStart(_stepIndex: Int, step: PipelineStep) {
         stepViews[step.order]?.markRunning()
-    }
-
-    /**
-     * 動態更新步驟列表（AI 選擇模式後調用）
-     */
-    fun updateSteps(steps: List<PipelineStep>) {
-        // 保存已完成步驟的內容，避免重建時丟失
-        val savedSummaries = mutableMapOf<Int, String>()
-        val savedBadges = mutableMapOf<Int, Pair<String, String>>()
-        for ((order, card) in stepViews) {
-            savedSummaries[order] = card.getSummaryText()
-            card.getBadgeInfo()?.let { savedBadges[order] = it }
-        }
-
-        currentSteps = steps
-        stepViews.clear()
-        stepsContainer.removeAllViews()
-        for (step in steps) {
-            val card = StepCard(context, step)
-            savedSummaries[step.order]?.let {
-                if (it != "等待中..." && it != "執行中...") card.restoreDone(it)
-            }
-            savedBadges[step.order]?.let { card.restoreBadge(it.first, it.second) }
-            stepViews[step.order] = card
-            stepsContainer.addView(card)
-        }
-        // 更新標題
-        val modeLabel = when (steps.size) {
-            6 -> if (steps.any { it.agentId == "pipeline_agent_competition" }) "六智體通用" else "精簡版 5+1"
-            7 -> "七智體賣水人"
-            else -> "${steps.size} 步"
-        }
-        titleTv.text = "🧠 Agent 流水線（$modeLabel）"
     }
 
     /**
@@ -151,7 +113,7 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
      * 標記步驟錯誤
      */
     fun markStepError(stepIndex: Int, error: String) {
-        val order = AgentPipelineOrchestrator.getStepsByName("精簡版").getOrNull(stepIndex)?.order ?: return
+        val order = AgentPipelineOrchestrator.STEPS.getOrNull(stepIndex)?.order ?: return
         stepViews[order]?.markError(error)
     }
 
@@ -339,30 +301,6 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
             summaryTv.setTextColor(Color.parseColor("#AAAAAA"))
             badgeTv.visibility = View.GONE
             badgeTv.text = ""
-        }
-
-        /** 獲取當前摘要文字 */
-        fun getSummaryText(): String = summaryTv.text.toString()
-
-        /** 恢復已完成狀態 */
-        fun restoreDone(summary: String) {
-            iconTv.text = "✅"
-            summaryTv.text = summary.take(80)
-            summaryTv.setTextColor(Color.parseColor(COLOR_DONE))
-        }
-
-        /** 獲取徽章信息 */
-        fun getBadgeInfo(): Pair<String, String>? {
-            if (badgeTv.visibility != View.VISIBLE || badgeTv.text.isNullOrBlank()) return null
-            return badgeTv.text.toString() to badgeTv.currentTextColor.toString()
-        }
-
-        /** 恢復徽章 */
-        fun restoreBadge(text: String, colorStr: String) {
-            badgeTv.visibility = View.VISIBLE
-            badgeTv.text = text
-            try { badgeTv.setTextColor(colorStr.toInt()) } catch (_: Exception) {}
-            badgeTv.setTypeface(null, Typeface.BOLD)
         }
     }
 }

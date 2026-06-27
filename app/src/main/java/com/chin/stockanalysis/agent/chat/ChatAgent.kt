@@ -1,0 +1,313 @@
+package com.chin.stockanalysis.agent.chat
+
+import android.content.Context
+import android.util.Log
+import com.chin.stockanalysis.agent.framework.*
+import com.chin.stockanalysis.agent.stock.StockAnalysisAgent
+import com.chin.stockanalysis.agent.stock.StockPickingAgent
+import com.chin.stockanalysis.ai.AiProviderPool
+import com.chin.stockanalysis.stock.database.StockDatabase
+import com.chin.stockanalysis.ui.TradingDayPickerView
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+/**
+ * ## 對話 Agent（ReAct + 子 Agent 協作）
+ *
+ * 替代現有 ChatTabFragment 中硬編碼的對話邏輯，實現智能對話：
+ * 1. 理解用戶意圖（選股/分析/交易/閒聊）
+ * 2. 規劃回覆步驟（可能需要調用子 Agent）
+ * 3. 執行並匯總結果
+ * 4. 生成自然語言回覆
+ */
+class ChatAgent(context: Context) : AgentBase(
+    id = "chat",
+    name = "對話 Agent",
+    description = "理解用戶意圖，協調其他 Agent 完成任務，生成自然語言回覆",
+    context = context
+) {
+    companion object {
+        private const val TAG = "ChatAgent"
+    }
+
+    private val pickingAgent = StockPickingAgent(context)
+    private val analysisAgent = StockAnalysisAgent(context)
+
+    init {
+        registerTool(StockQueryTool(context))
+        registerTool(MarketBriefTool(context))
+        registerTool(IntentParseTool())
+    }
+
+    override fun buildSystemPrompt(): String = """
+        你是一位專業的股票投資助手，擅長理解用戶意圖並協調專業 Agent 完成任務。
+
+        ## 你能做的事情
+        1. 選股：調用選股 Agent 為用戶推薦股票
+        2. 分析：調用分析 Agent 深度分析單只股票
+        3. 閒聊：與用戶進行自然對話，回答投資相關問題
+        4. 市場概覽：提供當日市場簡報
+
+        ## 對話風格
+        - 專業但親切，像一位經驗豐富的投資顧問
+        - 回答簡潔有力，避免冗長
+        - 涉及具體股票時，給出明確的代碼和理由
+        - 不確定時坦誠說明，不瞎猜
+
+        ## 意圖識別
+        用戶輸入可能包含以下意圖：
+        - "幫我選股" / "今天有什麼好股票" → 調用選股 Agent
+        - "分析一下 600519" / "茅台怎麼樣" → 調用分析 Agent
+        - "市場怎麼樣" / "今天大盤" → 提供市場簡報
+        - 其他 → 直接回答
+    """.trimIndent()
+
+    /**
+     * 處理用戶消息
+     */
+    suspend fun handleMessage(
+        userMessage: String,
+        onStream: ((String) -> Unit)? = null
+    ): ChatAgentResult {
+        val ctx = AgentContext().apply {
+            put("user_message", userMessage)
+            put("session_id", sessionId)
+        }
+
+        // 判斷意圖，決定使用哪種模式
+        val intent = detectIntent(userMessage)
+
+        return when (intent) {
+            UserIntent.STOCK_PICKING -> {
+                // 選股：使用 Plan-and-Execute
+                val result = pickingAgent.pickStocks()
+                ChatAgentResult(
+                    success = result.success,
+                    response = formatPickingResponse(result),
+                    intent = intent.name,
+                    data = mapOf("recommendations" to result.recommendations)
+                )
+            }
+            UserIntent.STOCK_ANALYSIS -> {
+                // 分析：提取股票代碼，調用分析 Agent
+                val code = extractStockCode(userMessage)
+                if (code != null) {
+                    val result = analysisAgent.analyze(code)
+                    ChatAgentResult(
+                        success = result.success,
+                        response = formatAnalysisResponse(result),
+                        intent = intent.name,
+                        data = mapOf("analysis" to result)
+                    )
+                } else {
+                    ChatAgentResult(
+                        success = false,
+                        response = "請提供具體的股票代碼（如 600519）或名稱，我來為您分析。",
+                        intent = intent.name
+                    )
+                }
+            }
+            UserIntent.MARKET_BRIEF -> {
+                // 市場簡報
+                val brief = generateMarketBrief()
+                ChatAgentResult(
+                    success = true,
+                    response = brief,
+                    intent = intent.name
+                )
+            }
+            else -> {
+                // 一般對話：使用 ReAct
+                val result = react(userMessage, ctx, maxSteps = 4)
+                ChatAgentResult(
+                    success = result.success,
+                    response = result.output,
+                    intent = intent.name,
+                    steps = result.steps
+                )
+            }
+        }
+    }
+
+    private fun detectIntent(message: String): UserIntent {
+        val lower = message.lowercase()
+        return when {
+            lower.contains("選股") || lower.contains("推薦") || lower.contains("有什麼好股票") || lower.contains("買什麼") -> UserIntent.STOCK_PICKING
+            lower.contains("分析") || lower.contains("怎麼樣") || lower.contains("看一下") || lower.contains("點評") -> UserIntent.STOCK_ANALYSIS
+            lower.contains("大盤") || lower.contains("市場") || lower.contains("行情") || lower.contains("走勢") -> UserIntent.MARKET_BRIEF
+            Regex("(sh|sz|bj)?\\d{6}").containsMatchIn(lower) -> UserIntent.STOCK_ANALYSIS
+            else -> UserIntent.GENERAL_CHAT
+        }
+    }
+
+    private fun extractStockCode(message: String): String? {
+        val match = Regex("(sh|sz|bj)?(\\d{6})").find(message)
+        return match?.groupValues?.get(2)
+    }
+
+    private fun formatPickingResponse(result: com.chin.stockanalysis.agent.stock.StockPickingResult): String {
+        return buildString {
+            appendLine("🎯 選股 Agent 為您推薦以下股票：")
+            appendLine()
+            result.recommendations.forEachIndexed { index, rec ->
+                appendLine("${index + 1}. **${rec.name} (${rec.code})** — 評分 ${rec.score}分")
+                appendLine("   命中策略: ${rec.strategies.joinToString(", ")}")
+                appendLine("   理由: ${rec.reason}")
+                appendLine()
+            }
+            if (result.riskWarning.isNotBlank()) {
+                appendLine("⚠️ 風險提示: ${result.riskWarning}")
+            }
+        }
+    }
+
+    private fun formatAnalysisResponse(result: com.chin.stockanalysis.agent.stock.StockAnalysisResult): String {
+        return buildString {
+            appendLine("📊 **${result.stockCode} 分析報告**")
+            appendLine()
+            appendLine("綜合評分: ${result.overallScore}分 | 建議: ${result.recommendation} | 置信度: ${result.confidence}")
+            appendLine()
+            appendLine("各維度評分:")
+            appendLine("- 技術面: ${result.technicalScore}分")
+            appendLine("- 基本面: ${result.fundamentalScore}分")
+            appendLine("- 資金面: ${result.fundFlowScore}分")
+            appendLine("- 新聞面: ${result.newsScore}分")
+            appendLine("- 板塊面: ${result.sectorScore}分")
+            appendLine()
+            appendLine("分析理由: ${result.reasoning}")
+            if (result.targetPrice.isNotBlank()) {
+                appendLine("目標價: ${result.targetPrice} | 止損位: ${result.stopLoss}")
+            }
+            if (result.riskFactors.isNotEmpty()) {
+                appendLine()
+                appendLine("⚠️ 風險因素:")
+                result.riskFactors.forEach { appendLine("- $it") }
+            }
+        }
+    }
+
+    private suspend fun generateMarketBrief(): String {
+        return withContext(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(context)
+                val today = TradingDayPickerView.recentTradingDay().toString()
+                val data = db.dailySnapshotDao().getByDate(today)
+
+                val avgChange = data.map { it.changePct }.average()
+                val upCount = data.count { it.changePct > 0 }
+                val downCount = data.count { it.changePct < 0 }
+                val topGainers = data.sortedByDescending { it.changePct }.take(5)
+
+                buildString {
+                    appendLine("📈 **今日市場簡報** ($today)")
+                    appendLine()
+                    appendLine("大盤環境: ${if (avgChange > 1) "強勢" else if (avgChange > 0) "偏多" else if (avgChange > -1) "偏弱" else "弱勢"}（平均 ${"%.2f".format(avgChange)}%）")
+                    appendLine("漲跌家數: 上漲 $upCount / 下跌 $downCount")
+                    appendLine()
+                    appendLine("漲幅榜 TOP 5:")
+                    topGainers.forEachIndexed { i, s ->
+                        appendLine("${i + 1}. ${s.stockName} (${s.stockCode}): +${"%.2f".format(s.changePct)}%")
+                    }
+                }
+            } catch (e: Exception) {
+                "暫時無法獲取市場數據，請稍後再試。"
+            }
+        }
+    }
+}
+
+/** 對話結果 */
+data class ChatAgentResult(
+    val success: Boolean,
+    val response: String,
+    val intent: String = "GENERAL_CHAT",
+    val data: Map<String, Any> = emptyMap(),
+    val steps: Int = 0
+)
+
+enum class UserIntent {
+    STOCK_PICKING,
+    STOCK_ANALYSIS,
+    MARKET_BRIEF,
+    GENERAL_CHAT
+}
+
+/** ================================================================ */
+/** 股票查詢工具 */
+class StockQueryTool(private val ctx: Context) : AgentTool {
+    override val name = "stock_query"
+    override val description = "查詢股票基本信息和最新行情"
+    override val parameters = listOf("stock_code")
+
+    override suspend fun execute(params: Map<String, String>, ctx: AgentContext): String {
+        return withContext(Dispatchers.IO) {
+            try {
+                val code = params["stock_code"] ?: return@withContext "錯誤: 未提供股票代碼"
+                val db = StockDatabase.getInstance(ctx)
+                val basic = db.stockBasicDao().getByCode(code)
+                val snapshot = db.dailySnapshotDao().getLatestByCode(code)
+
+                if (basic == null && snapshot == null) return@withContext "未找到股票 $code"
+
+                buildString {
+                    appendLine("【股票查詢】 $code")
+                    basic?.let {
+                        appendLine("- 名稱: ${it.name}")
+                        appendLine("- 主營: ${it.mainBusiness}")
+                    }
+                    snapshot?.let {
+                        appendLine("- 最新價: ${it.close} (${if(it.changePct>=0)"+" else ""}${"%.2f".format(it.changePct)}%)")
+                        appendLine("- 成交額: ${"%.0f".format(it.amount)}萬")
+                        appendLine("- 換手率: ${"%.2f".format(it.turnover)}%")
+                    }
+                }
+            } catch (e: Exception) {
+                "錯誤: 查詢失敗: ${e.message}"
+            }
+        }
+    }
+}
+
+/** 市場簡報工具 */
+class MarketBriefTool(private val ctx: Context) : AgentTool {
+    override val name = "market_brief"
+    override val description = "獲取當日市場簡要概況"
+    override val parameters = listOf()
+
+    override suspend fun execute(params: Map<String, String>, ctx: AgentContext): String {
+        return withContext(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(ctx)
+                val today = TradingDayPickerView.recentTradingDay().toString()
+                val data = db.dailySnapshotDao().getByDate(today)
+
+                val avgChange = data.map { it.changePct }.average()
+                val upCount = data.count { it.changePct > 0 }
+                val downCount = data.count { it.changePct < 0 }
+
+                "今日市場: 平均 ${"%.2f".format(avgChange)}%, 上漲 $upCount 家, 下跌 $downCount 家"
+            } catch (e: Exception) {
+                "錯誤: 獲取市場簡報失敗: ${e.message}"
+            }
+        }
+    }
+}
+
+/** 意圖解析工具 */
+class IntentParseTool : AgentTool {
+    override val name = "intent_parse"
+    override val description = "解析用戶輸入的意圖（選股/分析/閒聊）"
+    override val parameters = listOf("message")
+
+    override suspend fun execute(params: Map<String, String>, ctx: AgentContext): String {
+        val message = params["message"] ?: return "錯誤: 未提供消息"
+        val lower = message.lowercase()
+        val intent = when {
+            lower.contains("選股") || lower.contains("推薦") -> "STOCK_PICKING"
+            lower.contains("分析") || Regex("\\d{6}").containsMatchIn(lower) -> "STOCK_ANALYSIS"
+            lower.contains("大盤") || lower.contains("市場") -> "MARKET_BRIEF"
+            else -> "GENERAL_CHAT"
+        }
+        return "意圖識別結果: $intent"
+    }
+}
