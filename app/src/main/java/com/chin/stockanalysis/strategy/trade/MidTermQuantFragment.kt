@@ -225,6 +225,9 @@ class MidTermQuantFragment : QuantFragmentBase() {
                 te.onStatusUpdate = { msg ->
                     lifecycleScope.launch(Dispatchers.Main) { statusTv.text = msg }
                 }
+
+                // 策略篩選 + AI 精選（引擎內部會自動在 AI 步驟前刷新新聞、暫停/恢復後臺）
+                withContext(Dispatchers.Main) { statusTv.text = "🔄 計算策略信號與AI分析..." }
                 val db = StockDatabase.getInstance(requireContext())
 
                 // Step 1: 检查并导入数据
@@ -279,6 +282,9 @@ class MidTermQuantFragment : QuantFragmentBase() {
                 Log.i(TAG, "[MidTerm] ====== TOTAL: ${totalElapsed}ms ======")
                 Log.i(TAG, "[MidTerm] Breakdown: import=${importElapsed}ms  session=${sessionElapsed}ms  swap=${swapElapsed}ms")
 
+                // 引擎內部已恢復後臺，這裡額外觸發一次持倉監控
+                try { com.chin.stockanalysis.stock.database.AppBackgroundRunner.monitorWatchlistDirect(requireContext()) } catch (_: Exception) {}
+
                 withContext(Dispatchers.Main) {
                     try {
                         saveBuyOrdersToDb(finalReport)
@@ -295,6 +301,8 @@ class MidTermQuantFragment : QuantFragmentBase() {
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "[MidTerm] executeTrade failed: ${e.message}", e)
+                // 異常時確保恢復後臺
+                com.chin.stockanalysis.stock.database.AppBackgroundRunner.isQuantRunning = false
                 withContext(Dispatchers.Main) {
                     statusTv.text = "❌ 执行失败: ${e.message?.take(50)}"
                     buildBtn.isEnabled = true; buildBtn.text = "▶ 建仓"

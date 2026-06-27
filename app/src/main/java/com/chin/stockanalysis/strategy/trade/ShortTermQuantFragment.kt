@@ -391,11 +391,22 @@ class ShortTermQuantFragment : QuantFragmentBase() {
                 // AI 精选
                 val aiStart = System.currentTimeMillis()
                 if (screeningList.isNotEmpty()) {
+                    // AI 前置：刷新新聞 + 暫停後臺，確保 AI 獨佔 Provider
+                    withContext(Dispatchers.Main) { statusTv.text = "📰 拉取最新新聞因子..." }
+                    try {
+                        val updater = com.chin.stockanalysis.news.HotSectorNewsUpdater(requireContext())
+                        updater.updateIfNeeded(forceRefresh = true, ignoreQuantPause = true)
+                    } catch (_: Exception) {}
+                    com.chin.stockanalysis.stock.database.AppBackgroundRunner.isQuantRunning = true
+
                     withContext(Dispatchers.Main) { statusTv.text = "🤖 AI 大模型分析中..." }
                     try {
                         val p = AIPredictionEngine(requireContext()).predict(screeningList, today)
                         if (p!=null && p.topPicks.isNotEmpty()) aiPicks = p.topPicks else aiPicks = emptyList()
                     } catch (_: Exception) { aiPicks = emptyList() }
+
+                    // AI 結束，恢復後臺
+                    com.chin.stockanalysis.stock.database.AppBackgroundRunner.isQuantRunning = false
                 }
                 val aiElapsed = System.currentTimeMillis() - aiStart
                 Log.i(TAG, "[ShortTerm] Step 6 done: AI predict=${aiElapsed}ms, picks=${aiPicks.size}")
@@ -408,6 +419,9 @@ class ShortTermQuantFragment : QuantFragmentBase() {
                 val totalElapsed = System.currentTimeMillis() - totalStart
                 Log.i(TAG, "[ShortTerm] ====== TOTAL: ${totalElapsed}ms ======")
                 Log.i(TAG, "[ShortTerm] Breakdown: import=${importElapsed}ms  feed=${feedElapsed}ms  zipline=${ziplineElapsed}ms  strategy=${strategyElapsed}ms  merge=${mergeElapsed}ms  ai=${aiElapsed}ms")
+
+                // 引擎內部已恢復後臺，這裡額外觸發一次持倉監控
+                try { com.chin.stockanalysis.stock.database.AppBackgroundRunner.monitorWatchlistDirect(requireContext()) } catch (_: Exception) {}
 
                 withContext(Dispatchers.Main) {
                     showPipelineTable(screenings, factors, today); hasPipelineResult = true
@@ -433,6 +447,7 @@ class ShortTermQuantFragment : QuantFragmentBase() {
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "[ShortTerm] Pipeline failed: ${e.message}", e)
+                com.chin.stockanalysis.stock.database.AppBackgroundRunner.isQuantRunning = false
                 withContext(Dispatchers.Main) { statusTv.text="❌ 选股失败: ${e.message?.take(40)}"; buildBtn.isEnabled=true; buildBtn.text="▶ 建仓"; progressBar.visibility=View.GONE }
             }
         }

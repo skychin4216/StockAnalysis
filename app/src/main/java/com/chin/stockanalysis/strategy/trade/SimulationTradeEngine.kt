@@ -284,8 +284,24 @@ class SimulationTradeEngine(private val context: Context) {
 
         // AI 精选
         onStatusUpdate?.invoke("🤖 AI 大模型分析中...")
-        val tAi = System.currentTimeMillis()
+
+        // ── AI 精選前置處理：有候選股時，先刷新新聞再暫停後臺，確保 AI 獨佔 ──
         val aiStrategy = strategies.find { it.id == "ai_prediction" }
+        val needAi = aiStrategy != null && finalStockList.isNotEmpty()
+        if (needAi) {
+            onStatusUpdate?.invoke("📰 拉取最新新聞因子...")
+            try {
+                val updater = com.chin.stockanalysis.news.HotSectorNewsUpdater(context)
+                updater.updateIfNeeded(forceRefresh = true, ignoreQuantPause = true)
+                Log.i(TAG, "AI前置: 新聞因子已刷新")
+            } catch (e: Exception) {
+                Log.w(TAG, "AI前置: 新聞刷新失敗（不阻塞）: ${e.message}")
+            }
+            com.chin.stockanalysis.stock.database.AppBackgroundRunner.isQuantRunning = true
+            Log.i(TAG, "AI前置: 已暫停後臺 AI 任務")
+        }
+
+        val tAi = System.currentTimeMillis()
         val aiPicks = if (aiStrategy != null && aiStrategy is com.chin.stockanalysis.strategy.strategies.AIPredictionStrategy) {
             val screeningResults = mutableListOf<com.chin.stockanalysis.strategy.models.ScreeningResult>()
             for (strategy in strategies) {
@@ -308,6 +324,12 @@ class SimulationTradeEngine(private val context: Context) {
         } else emptyList()
         val stepAi = System.currentTimeMillis() - tAi
         Log.i(TAG, "AI 精选: ${aiPicks.size}只, ${stepAi}ms")
+
+        // AI 結束，恢復後臺任務
+        if (needAi) {
+            com.chin.stockanalysis.stock.database.AppBackgroundRunner.isQuantRunning = false
+            Log.i(TAG, "AI前置: 已恢復後臺 AI 任務")
+        }
 
         val tOrder = System.currentTimeMillis()
         val buyOrders = generateBuyOrders(aiPicks, config.tradeDate, allSnapshots)

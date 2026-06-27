@@ -20,11 +20,49 @@ object AppBackgroundRunner {
     private const val TAG = "AppBgRunner"
     private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
     private var monitorJob: Job? = null
+    private var _appScope: CoroutineScope? = null
+
+    /** 量化選股運行時設為 true，後臺 AI 相關任務應暫停 */
+    @Volatile
+    var isQuantRunning = false
+
+    /** 暫停後臺 AI 任務（量化選股開始時調用） */
+    fun pauseForQuant() {
+        isQuantRunning = true
+        Log.i(TAG, "⏸️ 量化選股開始，暫停後臺 AI 任務")
+    }
+
+    /** 量化開始前，先確保新聞因子是最新的，然後再暫停後臺 */
+    suspend fun ensureNewsFreshThenPause(context: Context) {
+        try {
+            val updater = com.chin.stockanalysis.news.HotSectorNewsUpdater(context.applicationContext)
+            updater.updateIfNeeded(forceRefresh = true)
+            Log.i(TAG, "📰 新聞因子已刷新，暫停後臺 AI 任務")
+        } catch (e: Exception) {
+            Log.w(TAG, "新聞刷新失敗（不阻塞量化）: ${e.message}")
+        }
+        isQuantRunning = true
+    }
+
+    /** 恢復後臺 AI 任務並立即觸發一次（量化選股結束時調用） */
+    suspend fun resumeAfterQuant(context: Context) {
+        isQuantRunning = false
+        Log.i(TAG, "▶️ 量化選股結束，恢復後臺 AI 任務，立即觸發一次")
+        monitorJob?.cancel()
+        try { monitorWatchlist(context) } catch (_: Exception) {}
+        _appScope?.let { startPositionMonitor(context.applicationContext, it) }
+    }
+
+    /** 觸發一次持倉監控（不重啟定時器，供量化結束後額外調用） */
+    suspend fun monitorWatchlistDirect(context: Context) {
+        try { monitorWatchlist(context) } catch (e: Exception) { Log.w(TAG, "額外監控失敗: ${e.message}") }
+    }
 
     fun start(context: Context, scope: CoroutineScope) {
         Log.i(TAG, "🚀 啟動後台任務")
         EastMoneyHotSectorSource.startPoolScheduler(scope)
         StockDataCenter.init(context.applicationContext, scope)
+        _appScope = scope
         startPositionMonitor(context.applicationContext, scope)
     }
 

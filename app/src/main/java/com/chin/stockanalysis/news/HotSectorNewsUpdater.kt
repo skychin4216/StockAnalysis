@@ -49,7 +49,7 @@ class HotSectorNewsUpdater(private val context: Context) {
      * App 启动或用户手动刷新时调用。
      * @param forceRefresh true=忽略缓存强制重新拉取
      */
-    suspend fun updateIfNeeded(forceRefresh: Boolean = false) {
+    suspend fun updateIfNeeded(forceRefresh: Boolean = false, ignoreQuantPause: Boolean = false) {
         if (!forceRefresh && hasRun) return
         hasRun = true
 
@@ -75,7 +75,7 @@ class HotSectorNewsUpdater(private val context: Context) {
             // 3. 用 AI 搜索新闻
             val allNews = mutableListOf<NewsFactorEntity>()
             for ((i, sector) in targetSectors.withIndex()) {
-                val news = searchSectorNews(sector)
+                val news = searchSectorNews(sector, ignoreQuantPause = ignoreQuantPause)
                 allNews.addAll(news)
                 if (i < targetSectors.size - 1) delay(800)
             }
@@ -126,19 +126,19 @@ class HotSectorNewsUpdater(private val context: Context) {
     }
 
     /** 用豆包 AI 搜索指定板块的最新新闻 */
-    private suspend fun searchSectorNews(sector: String): List<NewsFactorEntity> {
+    private suspend fun searchSectorNews(sector: String, ignoreQuantPause: Boolean = false): List<NewsFactorEntity> {
+        // 量化選股運行時暫停 AI 新聞搜索（除非是量化主動調用）
+        if (!ignoreQuantPause && com.chin.stockanalysis.stock.database.AppBackgroundRunner.isQuantRunning) {
+            Log.i(TAG, "⏸️ 量化選股運行中，跳過新聞搜索: $sector")
+            return emptyList()
+        }
+        val slot = com.chin.stockanalysis.ai.AiProviderPool.acquire(context)
+        if (slot == null) {
+            Log.w(TAG, "無可用 AI Provider，跳過新聞搜索: $sector")
+            return emptyList()
+        }
         try {
-            val configManager = ApiConfigManager.getInstance(context)
-            var provider = configManager.createCurrentProvider()
-            if (provider == null) {
-                val fallback = configManager.getProviderConfig("doubao")
-                if (fallback != null && fallback.apiKey.isNotBlank()) {
-                    provider = OpenAiCompatibleProvider(fallback)
-                } else {
-                    Log.w(TAG, "无可用 AI 后端，跳过新闻搜索")
-                    return emptyList()
-                }
-            }
+            val provider = slot.provider
 
             val today = LocalDate.now().format(DATE_FMT)
             val prompt = buildString {
@@ -180,6 +180,8 @@ class HotSectorNewsUpdater(private val context: Context) {
         } catch (e: Exception) {
             Log.w(TAG, "搜索板块[$sector]新闻失败: ${e.message}")
             return emptyList()
+        } finally {
+            com.chin.stockanalysis.ai.AiProviderPool.releaseNonBlocking(slot)
         }
     }
 
