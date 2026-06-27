@@ -1237,7 +1237,8 @@ $memory
                                 stockName = result.name, tradeDate = today,
                                 buyPrice = result.price, quantity = 100, orderType = "對話買入",
                                 status = "BUYING", reason = "對話分析命中: ${result.hits.joinToString()}",
-                                scoreAtBuy = result.score, createdAt = System.currentTimeMillis()
+                                scoreAtBuy = result.score, createdAt = System.currentTimeMillis(),
+                                buyTime = java.time.LocalTime.now().toString().take(8)
                             )
                         )
                         withContext(Dispatchers.Main) {

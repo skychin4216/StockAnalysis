@@ -132,7 +132,7 @@ class HotSectorNewsUpdater(private val context: Context) {
             Log.i(TAG, "⏸️ 量化選股運行中，跳過新聞搜索: $sector")
             return emptyList()
         }
-        val slot = com.chin.stockanalysis.ai.AiProviderPool.acquire(context)
+        val slot = com.chin.stockanalysis.ai.AiProviderPool.acquire(context, callerTag = "HotSectorNewsUpdater.$sector")
         if (slot == null) {
             Log.w(TAG, "無可用 AI Provider，跳過新聞搜索: $sector")
             return emptyList()

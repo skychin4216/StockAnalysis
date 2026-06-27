@@ -88,7 +88,7 @@ class AIPredictionEngine(private val context: Context) {
         useEnhancedAi: Boolean = true   // 默认使用多Provider轮换，避免单点故障
     ): AIPrediction? {
         val slot = if (useEnhancedAi) {
-            AiProviderPool.acquire(context)
+            AiProviderPool.acquire(context, callerTag = "AIPredictionEngine", timeoutMs = 120_000L)
         } else {
             com.chin.stockanalysis.ai.SimpleAiProvider.acquire(context)
         }
@@ -134,7 +134,7 @@ class AIPredictionEngine(private val context: Context) {
                         val next = if (useEnhancedAi) {
                             AiProviderPool.invalidateHealthCache()
                             AiProviderPool.releaseNonBlocking(currentSlot)
-                            AiProviderPool.acquire(context)
+                            AiProviderPool.acquire(context, callerTag = "AIPredictionEngine-retry", timeoutMs = 120_000L)
                         } else {
                             com.chin.stockanalysis.ai.SimpleAiProvider.release()
                             com.chin.stockanalysis.ai.SimpleAiProvider.switchToNext(context)
@@ -402,7 +402,7 @@ class AIPredictionEngine(private val context: Context) {
         var lastErr: Exception? = null
         repeat(2) { attempt ->
             try {
-                return withTimeoutOrNull(30_000L) {
+                return withTimeoutOrNull(60_000L) {
                     kotlinx.coroutines.suspendCancellableCoroutine { cont ->
                         provider.sendMessageStream(
                             messages = emptyList(),
@@ -412,7 +412,7 @@ class AIPredictionEngine(private val context: Context) {
                             onError = { err -> cont.resumeWith(Result.failure(Exception(err))) }
                         )
                     }
-                } ?: throw java.io.IOException("AI 请求超时（30秒）")
+                } ?: throw java.io.IOException("AI 请求超时（60秒）")
             } catch (e: Exception) {
                 lastErr = e
                 // DNS 錯誤不重試，直接拋出讓外層換 provider
