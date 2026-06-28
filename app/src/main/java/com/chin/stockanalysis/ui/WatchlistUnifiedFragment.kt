@@ -309,7 +309,23 @@ class WatchlistUnifiedFragment : Fragment() {
                 val items = StockDataService.enrich(requireContext(), codes)
                 withContext(Dispatchers.Main) {
                     listContainer.removeAllViews()
-                    listContainer.addView(StockTableHelper.createHeaderRow(requireContext()))
+                    listContainer.addView(StockTableHelper.createHeaderRow(requireContext()) {
+                        // 點擊"清空"標題：清空當前模式的所有股票
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            try {
+                                val db = StockDatabase.getInstance(requireContext())
+                                if (isAiMode) {
+                                    val today = java.time.LocalDate.now().toString()
+                                    db.aiSelectedStockDao().deleteByDate(today)
+                                } else {
+                                    db.userWatchlistDao().clearAll()
+                                }
+                                withContext(Dispatchers.Main) {
+                                    loadData()
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    })
                     for ((index, item) in items.withIndex()) {
                         listContainer.addView(StockTableHelper.createDataRow(requireContext(), item, index == items.size - 1,
                             onDelete = { deleted ->

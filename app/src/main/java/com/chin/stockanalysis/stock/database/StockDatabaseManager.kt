@@ -32,7 +32,7 @@ import java.util.*
  * val stocks = dbManager.getStocksBySector("commercial_space") // → List<StockBasicEntity>
  * ```
  */
-class StockDatabaseManager private constructor(context: Context) {
+class StockDatabaseManager private constructor(private val appContext: Context) {
 
     companion object {
         private const val TAG = "StockDatabaseManager"
@@ -60,14 +60,14 @@ class StockDatabaseManager private constructor(context: Context) {
     }
 
     // Room 数据库（单例，含 migration）
-    val db: StockDatabase = StockDatabase.getInstance(context)
+    val db: StockDatabase = StockDatabase.getInstance(appContext)
 
     private val stockDao = db.stockBasicDao()
     private val sectorDao = db.sectorStockDao()
 
     /** SharedPreferences 用于记录上次同步时间 */
     private val prefs: SharedPreferences =
-        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        appContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
 
     /** 标记是否已完成首次数据迁移 */
     @Volatile
@@ -143,8 +143,8 @@ class StockDatabaseManager private constructor(context: Context) {
             // ── 2. 收集候選股票 ──
             val candidateSet = mutableSetOf<String>()
 
-            // 2a. 核心龍頭股
-            val coreLeaders = LeaderStockPool.ALL_LEADER_CODES
+            // 2a. 核心龍頭股（產業主線，排除概念板塊）
+            val coreLeaders = LeaderStockPool.getMainlineCodes(appContext)
             candidateSet.addAll(coreLeaders)
             Log.d(TAG, "核心龍頭股: ${coreLeaders.size} 只")
 
@@ -199,10 +199,9 @@ class StockDatabaseManager private constructor(context: Context) {
                 Log.w(TAG, "ETF 動態板塊獲取失敗: ${e.message}")
             }
 
-            // 2d. 查找子板塊前 10（通過 LeaderStockPool.SECTOR_CONFIGS）
-            // SECTOR_CONFIGS 中的 stocks 是 List<String>（股票代碼列表）
+            // 2d. 查找子板塊前 10（通過 LeaderStockPool 持久化配置）
             try {
-                for (cfg in LeaderStockPool.SECTOR_CONFIGS) {
+                for (cfg in LeaderStockPool.getAllConfigs(appContext)) {
                     for (subSector in cfg.subSectors) {
                         val topCodes = subSector.stocks.take(10)
                         for (code in topCodes) {

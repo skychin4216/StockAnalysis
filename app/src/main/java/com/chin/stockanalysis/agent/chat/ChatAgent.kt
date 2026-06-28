@@ -6,6 +6,7 @@ import com.chin.stockanalysis.agent.framework.*
 import com.chin.stockanalysis.agent.stock.StockAnalysisAgent
 import com.chin.stockanalysis.agent.stock.StockPickingAgent
 import com.chin.stockanalysis.ai.AiProviderPool
+import com.chin.stockanalysis.strategy.data.LeaderStockPool
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.ui.TradingDayPickerView
 import kotlinx.coroutines.Dispatchers
@@ -37,6 +38,7 @@ class ChatAgent(context: Context) : AgentBase(
         registerTool(StockQueryTool(context))
         registerTool(MarketBriefTool(context))
         registerTool(IntentParseTool())
+        registerTool(LeaderPoolManageTool(context))
     }
 
     override fun buildSystemPrompt(): String = """
@@ -312,5 +314,86 @@ class IntentParseTool : AgentTool {
             else -> "GENERAL_CHAT"
         }
         return "意圖識別結果: $intent"
+    }
+}
+
+/** 龍頭股池管理工具 — 支持對話式增刪改查 */
+class LeaderPoolManageTool(private val ctx: Context) : AgentTool {
+    override val name = "leader_pool_manage"
+    override val description = "管理龍頭股池：列出板塊、添加/移除板塊、添加/移除股票、標記概念炒作。參數: action=list|add_sector|remove_sector|add_stock|remove_stock|set_concept, sector_name, sub_sector_name, stock_code, is_concept(true/false)"
+    override val parameters = listOf("action", "sector_name", "sub_sector_name", "stock_code", "is_concept")
+
+    override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
+        val action = params["action"] ?: return "錯誤: 缺少 action 參數"
+        val sectorName = params["sector_name"] ?: ""
+        val subSectorName = params["sub_sector_name"] ?: ""
+        val stockCode = params["stock_code"] ?: ""
+        val isConcept = params["is_concept"]?.lowercase() == "true"
+
+        return when (action) {
+            "list" -> {
+                val sectors = LeaderStockPool.listSectors(ctx)
+                val details = sectors.joinToString("\n") { name ->
+                    val cfg = LeaderStockPool.getAllConfigs(ctx).find { it.name == name }
+                    val tag = if (cfg?.isConcept == true) "[概念]" else "[產業]"
+                    val stocks = cfg?.subSectors?.sumOf { it.stocks.size } ?: 0
+                    "- $tag $name ($stocks 只)"
+                }
+                "當前龍頭股池共 ${sectors.size} 個板塊:\n$details"
+            }
+
+            "list_detail" -> {
+                if (sectorName.isBlank()) return "錯誤: 請提供 sector_name"
+                val subs = LeaderStockPool.listSubSectors(ctx, sectorName)
+                if (subs.isEmpty()) return "板塊 [$sectorName] 不存在或為空"
+                subs.joinToString("\n") { (subName, stocks) ->
+                    "  [$subName]: ${stocks.joinToString(", ")}"
+                }
+            }
+
+            "add_sector" -> {
+                if (sectorName.isBlank()) return "錯誤: 請提供 sector_name"
+                val ok = LeaderStockPool.addSector(ctx, sectorName, isConcept)
+                if (ok) "✅ 已添加板塊 [$sectorName]${if (isConcept) " (標記為概念)" else ""}"
+                else "⚠️ 板塊 [$sectorName] 已存在"
+            }
+
+            "remove_sector" -> {
+                if (sectorName.isBlank()) return "錯誤: 請提供 sector_name"
+                val ok = LeaderStockPool.removeSector(ctx, sectorName)
+                if (ok) "✅ 已移除板塊 [$sectorName]"
+                else "⚠️ 板塊 [$sectorName] 不存在"
+            }
+
+            "add_stock" -> {
+                if (sectorName.isBlank() || subSectorName.isBlank() || stockCode.isBlank())
+                    return "錯誤: 請提供 sector_name, sub_sector_name, stock_code"
+                val ok = LeaderStockPool.addStock(ctx, sectorName, subSectorName, stockCode)
+                if (ok) "✅ 已添加 [$stockCode] 到 [$sectorName / $subSectorName]"
+                else "⚠️ 添加失敗（可能已存在或板塊不存在）"
+            }
+
+            "remove_stock" -> {
+                if (sectorName.isBlank() || subSectorName.isBlank() || stockCode.isBlank())
+                    return "錯誤: 請提供 sector_name, sub_sector_name, stock_code"
+                val ok = LeaderStockPool.removeStock(ctx, sectorName, subSectorName, stockCode)
+                if (ok) "✅ 已從 [$sectorName / $subSectorName] 移除 [$stockCode]"
+                else "⚠️ 移除失敗（股票不存在）"
+            }
+
+            "set_concept" -> {
+                if (sectorName.isBlank()) return "錯誤: 請提供 sector_name"
+                val ok = LeaderStockPool.setSectorConcept(ctx, sectorName, isConcept)
+                if (ok) "✅ 已將 [$sectorName] 標記為${if (isConcept) "概念炒作" else "產業主線"}"
+                else "⚠️ 板塊 [$sectorName] 不存在"
+            }
+
+            "reset" -> {
+                LeaderStockPool.resetToDefault(ctx)
+                "✅ 龍頭股池已重置為默認配置"
+            }
+
+            else -> "錯誤: 未知 action [$action]。支持: list, list_detail, add_sector, remove_sector, add_stock, remove_stock, set_concept, reset"
+        }
     }
 }

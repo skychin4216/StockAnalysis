@@ -71,10 +71,10 @@ class StockPoolManager(private val context: Context) {
             Log.i(TAG, "Already initialized: core=${core.size} header=${header.size}")
             return
         }
-        val seed = (HistoricalDataFetcher.getCoreStockPool(context) + LeaderStockPool.ALL_LEADER_CODES)
+        val seed = (HistoricalDataFetcher.getCoreStockPool(context) + LeaderStockPool.getMainlineCodes(context))
         val valid = basicFilter(seed)
         HistoricalDataFetcher.saveCoreStockPool(context, valid)
-        HistoricalDataFetcher.saveHeaderStockPool(context, LeaderStockPool.ALL_LEADER_CODES)
+        HistoricalDataFetcher.saveHeaderStockPool(context, LeaderStockPool.getMainlineCodes(context))
         val mw = mutableMapOf<String, Int>()
         for (c in valid) mw[c] = 0
         saveMiss(mw)
@@ -93,6 +93,17 @@ class StockPoolManager(private val context: Context) {
         Log.i(TAG, "=== Weekly update: $dateStr ===")
         val allStocks = basicFilterFromDB()
         Log.i(TAG, "Step1 basic: ${allStocks.size}")
+
+        // 刷新主力資金行為緩存（策略篩選時需要）
+        val codesForCache = allStocks.map { it.code }
+        if (codesForCache.isNotEmpty()) {
+            try {
+                SmartMoneyCache.refresh(context.applicationContext, codesForCache)
+                Log.i(TAG, "Step1b SmartMoneyCache refreshed: ${codesForCache.size} stocks")
+            } catch (e: Exception) {
+                Log.w(TAG, "SmartMoneyCache refresh failed: ${e.message}")
+            }
+        }
 
         val repo = com.chin.stockanalysis.stock.data.StockDataSourceFactory
             .createDefaultRepository(context.applicationContext)

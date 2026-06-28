@@ -41,7 +41,7 @@ class EastMoneyStockSource : StockDataSource {
         codes.chunked(50).forEach { batch ->
             val secids = batch.joinToString(",") { toSecId(it) }
             val url = "https://push2.eastmoney.com/api/qt/ulist.np/get" +
-                "?fltt=2&invt=2&secids=$secids&fields=f12,f14,f2,f3,f4,f5,f6,f15,f16,f17,f18"
+                "?fltt=2&invt=2&secids=$secids&fields=f12,f14,f2,f3,f4,f5,f6,f7,f8,f9,f10,f15,f16,f17,f18,f20,f23"
 
             val body = executeWithRetry(url)
             if (body != null) {
@@ -123,6 +123,10 @@ class EastMoneyStockSource : StockDataSource {
                             amount = item.optDoubleSafe("f6") * 10000, // 万元->元
                             changePercent = changePercent,
                             changeAmount = if (changeAmount.isNaN() || changeAmount == 0.0) price - yestClose else changeAmount,
+                            turnoverRate = item.optDoubleSafe("f8"),  // f8=換手率%
+                            pe = item.optDoubleSafe("f9"),             // f9=市盈率(動態)
+                            pb = item.optDoubleSafe("f23"),            // f23=市淨率
+                            marketCap = item.optDoubleSafe("f20"),     // f20=總市值(元)
                             timestamp = System.currentTimeMillis()
                         )
                     )

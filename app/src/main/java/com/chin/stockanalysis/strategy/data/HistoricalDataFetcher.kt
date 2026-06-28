@@ -36,7 +36,7 @@ class HistoricalDataFetcher(private val context: Context) {
 
         // Pool management: JSON assets (factory) + SharedPreferences (live)
         fun getTopStocks(context: Context): List<String> =
-            (LeaderStockPool.ALL_LEADER_CODES + getPool(context, "core_stock_pool_json", "core_stock_pool.json")).toList()
+            (LeaderStockPool.getMainlineCodes(context) + getPool(context, "core_stock_pool_json", "core_stock_pool.json")).toList()
 
         fun getCoreStockPool(context: Context) = getPool(context, PREFS_KEY_CORE_POOL, ASSET_FILE)
         fun getHeaderStockPool(context: Context) = getPool(context, "header_stock_pool_json", "header_stock_pool.json")

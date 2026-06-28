@@ -36,10 +36,9 @@ object CandidatePool {
 
     private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
-    // ════════════════════════════════════════
-    // 核心龍頭股（靜態配置，約81只）
-    // ════════════════════════════════════════
-    val CORE_LEADERS: Set<String> = LeaderStockPool.ALL_LEADER_CODES
+    /** 核心龍頭股（產業主線，排除概念板塊） */
+    private fun getCoreLeaders(context: Context): Set<String> =
+        LeaderStockPool.getMainlineCodes(context)
 
     // ════════════════════════════════════════
     // 數據模型
@@ -55,7 +54,8 @@ object CandidatePool {
         val changePct: Double = 0.0,
         val marketCap: Double = 0.0,
         val peRatio: Double = 0.0,
-        val isST: Boolean = false
+        val isST: Boolean = false,
+        val fundamentalScore: Double = 0.0  // 0~5 分基本面評分
     )
 
     data class PoolSnapshot(
@@ -102,8 +102,9 @@ object CandidatePool {
         val allSectorNames = mutableListOf<String>()
 
         // 1. 加入核心龍頭股
-        pool.addAll(CORE_LEADERS)
-        Log.i(TAG, "✅ 核心龍頭: ${CORE_LEADERS.size}只")
+        val coreLeaders = getCoreLeaders(context)
+        pool.addAll(coreLeaders)
+        Log.i(TAG, "✅ 核心龍頭: ${coreLeaders.size}只")
 
         // 2. 🤖 AI 查詢熱門板塊（年度/月度/周度/昨日）
         val hotSectors = try {
@@ -118,48 +119,54 @@ object CandidatePool {
             fallback
         }
 
-        // 3. 🏗️ 展開子板塊 → 每個最小子板塊取 15 只（主5 + 科5 + 創5）
+        // 3. 🏗️ 從 SectorSubDivision.ALL_SECTORS 獲取板塊股票 → 按主板/科創/創業分組各取 5 只
         var addedFromSectors = 0
         val db = StockDatabase.getInstance(context)
         for (sectorName in hotSectors.allSectors) {
             try {
-                // 展開該板塊的子板塊
-                val subSectors = SectorSubDivision.getSubSectors(sectorName)
-                Log.d(TAG, "  板塊 [$sectorName] → ${subSectors.size} 個子板塊: ${subSectors.joinToString { it.name }}")
+                // 方案 A: 直接從 SectorSubDivision.ALL_SECTORS 獲取該板塊的硬編碼股票列表
+                val subSectorList = SectorSubDivision.ALL_SECTORS[sectorName]
+                val codes = if (!subSectorList.isNullOrEmpty()) {
+                    val allStocks = subSectorList.flatMap { it.stocks.map { stock -> stock.code } }
+                    Log.d(TAG, "  板塊 [$sectorName] → 從 SectorSubDivision 獲取 ${allStocks.size} 只")
+                    allStocks
+                } else {
+                    // Fallback: 展開子板塊 → 從 DB 查詢
+                    val subSectors = SectorSubDivision.getSubSectors(sectorName)
+                    Log.d(TAG, "  板塊 [$sectorName] → ${subSectors.size} 個子板塊 (DB fallback)")
+                    subSectors.flatMap { sub ->
+                        db.sectorStockDao().getStockCodesBySector(sub.name)
+                    }.distinct()
+                }
 
-                for (sub in subSectors) {
-                    try {
-                        // 從 DB 獲取該子板塊的股票代碼
-                        val codes = db.sectorStockDao().getStockCodesBySector(sub.name)
-                        if (codes.isEmpty()) {
-                            Log.d(TAG, "    子板塊 [${sub.name}] 無股票數據")
-                            continue
-                        }
+                if (codes.isEmpty()) {
+                    Log.d(TAG, "  板塊 [$sectorName] 無股票數據")
+                    continue
+                }
 
-                        // 按 board 類型分組，各取 5 只
-                        val mainBoard = mutableListOf<String>()
-                        val starBoard = mutableListOf<String>()  // 科創板 688
-                        val gemBoard = mutableListOf<String>()   // 創業板 300/301
+                // 按 board 類型分組，各取 5 只
+                val mainBoard = mutableListOf<String>()
+                val starBoard = mutableListOf<String>()  // 科創板 688
+                val gemBoard = mutableListOf<String>()   // 創業板 300/301
 
-                        for (code in codes) {
-                            when {
-                                code.startsWith("sh688") -> starBoard.add(code)
-                                code.startsWith("sz300") || code.startsWith("sz301") -> gemBoard.add(code)
-                                else -> mainBoard.add(code)
-                            }
-                        }
+                for (code in codes) {
+                    when {
+                        code.startsWith("sh688") -> starBoard.add(code)
+                        code.startsWith("sz300") || code.startsWith("sz301") -> gemBoard.add(code)
+                        else -> mainBoard.add(code)
+                    }
+                }
 
-                        val picked = (mainBoard.take(5) + starBoard.take(5) + gemBoard.take(5)).toSet()
-                        for (code in picked) {
-                            if (pool.add(code)) addedFromSectors++
-                        }
-                        if (picked.isNotEmpty()) {
-                            Log.d(TAG, "    子板塊 [${sub.name}]: 主${mainBoard.take(5).size}·科${starBoard.take(5).size}·創${gemBoard.take(5).size} → 新增${picked.size}只")
-                        }
-                    } catch (_: Exception) { /* skip individual sub-sector errors */ }
+                val picked = (mainBoard.take(5) + starBoard.take(5) + gemBoard.take(5)).toSet()
+                for (code in picked) {
+                    if (pool.add(code)) addedFromSectors++
+                }
+
+                if (picked.isNotEmpty()) {
+                    Log.d(TAG, "  板塊 [$sectorName] 選中 ${picked.size} 只 (主${mainBoard.take(5).size}/科${starBoard.take(5).size}/創${gemBoard.take(5).size})")
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "  板塊 [$sectorName] 展開子板塊失敗: ${e.message}")
+                Log.w(TAG, "  板塊 [$sectorName] 處理失敗: ${e.message}")
             }
         }
         Log.i(TAG, "✅ AI熱門板塊龍頭: 新增${addedFromSectors}只, 總池${pool.size}只")
@@ -172,7 +179,7 @@ object CandidatePool {
             apply()
         }
 
-        Log.i(TAG, "✅ 備選池刷新完成: ${pool.size}只 (核心${CORE_LEADERS.size} + AI動態${pool.size - CORE_LEADERS.size})")
+        Log.i(TAG, "✅ 備選池刷新完成: ${pool.size}只 (核心${coreLeaders.size} + AI動態${pool.size - coreLeaders.size})")
         buildSnapshotFromCodes(context, pool, allSectorNames, today)
     }
 
@@ -210,6 +217,7 @@ object CandidatePool {
         date: String
     ): PoolSnapshot = withContext(Dispatchers.IO) {
         val db = StockDatabase.getInstance(context)
+        val coreLeaders = getCoreLeaders(context)
 
         // 從 stock_basics 獲取名稱映射
         val nameMap = try {
@@ -231,37 +239,52 @@ object CandidatePool {
         } catch (_: Exception) { emptyMap() }
 
         val stocks = mutableListOf<CandidateStock>()
+        var filteredST = 0
+
         for (code in codes) {
             val snap = snapMap[code]
             val name = snap?.name ?: nameMap[code] ?: code
-            // 查找所屬板塊（從靜態配置 + DB 查詢）
-            val (sector, subSector) = findSectorForCode(db, code)
+            val basic = basicsMap[code]
+
+            // ── ST / 退市 過濾 ──
+            if (name.contains("ST", ignoreCase = true) || name.contains("退", ignoreCase = true)) {
+                filteredST++
+                continue
+            }
+
+            // 查找所屬板塊（從持久化配置 + DB 查詢）
+            val (sector, subSector) = findSectorForCode(context, db, code)
             stocks.add(CandidateStock(
                 code = code,
                 name = name,
                 sector = sector,
                 subSector = subSector,
-                source = if (code in CORE_LEADERS) "core" else "ai",
+                source = if (code in coreLeaders) "core" else "ai",
                 rankInSector = 0,
                 changePct = snap?.changePct ?: 0.0,
                 marketCap = 0.0,
                 peRatio = 0.0,
-                isST = false  // TODO: 等 StockBasicEntity 加入 isST 字段後開啟
+                isST = false,
+                fundamentalScore = 0.0
             ))
+        }
+
+        if (filteredST > 0) {
+            Log.i(TAG, "🧹 過濾: ST/退市 ${filteredST}只")
         }
 
         PoolSnapshot(
             stocks = stocks.sortedByDescending { it.changePct },
             hotSectors = hotSectors,
-            etfSectors = hotSectors,  // 兼容：實際為 AI 熱門板塊
+            etfSectors = hotSectors,
             updateTime = targetDate,
             totalCount = stocks.size
         )
     }
 
-    private suspend fun findSectorForCode(db: StockDatabase, code: String): Pair<String, String> {
-        // 1. 先查靜態配置（LeaderStockPool）
-        for (cfg in LeaderStockPool.SECTOR_CONFIGS) {
+    private suspend fun findSectorForCode(context: Context, db: StockDatabase, code: String): Pair<String, String> {
+        // 1. 先查持久化配置（LeaderStockPool）
+        for (cfg in LeaderStockPool.getAllConfigs(context)) {
             for (ss in cfg.subSectors) {
                 if (code in ss.stocks) {
                     return cfg.name to ss.name

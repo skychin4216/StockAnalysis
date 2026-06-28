@@ -6,6 +6,7 @@ import com.chin.stockanalysis.strategy.Strategy
 import com.chin.stockanalysis.strategy.StrategyCategory
 import com.chin.stockanalysis.strategy.StrategyConfig
 import com.chin.stockanalysis.strategy.StrategySource
+import com.chin.stockanalysis.strategy.data.SmartMoneyCache
 import com.chin.stockanalysis.strategy.data.StockScreener
 import com.chin.stockanalysis.strategy.models.WeightFactor
 import com.chin.stockanalysis.strategy.models.ScreeningResult
@@ -37,10 +38,11 @@ class FundamentalFilterStrategy(
     )
 
     override var weightFactors: List<WeightFactor> = listOf(
-        WeightFactor("valuation", "估值", 35, "PE+PB"),
+        WeightFactor("valuation", "估值", 30, "PE+PB"),
         WeightFactor("profitability", "盈利能力", 25, "ROE+毛利率"),
         WeightFactor("liquidity", "流动性", 20, "换手率+成交额"),
-        WeightFactor("quality", "财务健康", 20, "负债率+经营现金流")
+        WeightFactor("quality", "财务健康", 15, "负债率+经营现金流"),
+        WeightFactor("smartMoney", "主力行为", 10, "MFI+CMF+A/D+主力净流入")
     )
 
     private val techPrefixes = setOf("sh688", "sz300", "sz301", "sz002")
@@ -167,11 +169,12 @@ class FundamentalFilterStrategy(
 
     private fun signal(s: StockRealtime, layer: Int): StrategySignal {
         val w = weightFactors.associateBy { it.key }
-        val vScore = (peScore(s.pe, s.pb) * (w["valuation"]?.weight ?: 35) / 100.0)
+        val vScore = (peScore(s.pe, s.pb) * (w["valuation"]?.weight ?: 30) / 100.0)
         val pScore = (profScore(s) * (w["profitability"]?.weight ?: 25) / 100.0)
         val lScore = (liqScore(s) * (w["liquidity"]?.weight ?: 20) / 100.0)
-        val qScore = (qualScore(s) * (w["quality"]?.weight ?: 20) / 100.0)
-        val str = (vScore + pScore + lScore + qScore).toInt().coerceIn(0, 100)
+        val qScore = (qualScore(s) * (w["quality"]?.weight ?: 15) / 100.0)
+        val smScore = (SmartMoneyCache.getScore(s.code).combined * (w["smartMoney"]?.weight ?: 10) / 100.0)
+        val str = (vScore + pScore + lScore + qScore + smScore).toInt().coerceIn(0, 100)
         val label = when (layer) { 1 -> "L1"; 3 -> "L3"; else -> "L2" }
         val sb = StringBuilder(label)
         if (s.marketCap > 0) sb.append(" | MCap").append(String.format("%.0f", s.marketCap / 1e8)).append("B")
@@ -179,6 +182,8 @@ class FundamentalFilterStrategy(
         if (s.pb > 0) sb.append(" | PB").append(String.format("%.2f", s.pb))
         sb.append(" | TOR").append(String.format("%.1f", s.turnoverRate)).append("%")
         if (s.roeTTM > 0) sb.append(" | ROE").append(String.format("%.1f", s.roeTTM)).append("%")
+        val smCache = SmartMoneyCache.getScore(s.code)
+        if (smCache.combined != 50.0) sb.append(" | SM").append(String.format("%.0f", smCache.combined))
         if (warn(s)) sb.append(" [WARN]")
         val act = when {
             warn(s) -> SignalAction.HOLD
