@@ -234,51 +234,58 @@ class HotNewsFragment : Fragment() {
     /** 获取今日Top3热门板块，带子板块+代表股票展示 */
     private suspend fun getTop3HotSectorsWithStocks(): Spanned {
         val sd = com.chin.stockanalysis.stock.data.sources.SectorSubDivision
-        // 优先使用有子板块数据的热门板块，至少保证 3 个
+        // 优先从热门板块中匹配有子板块数据的
         val allSectorNames = getTop5HotSectors()
         val matched = mutableListOf<String>()
+        val seenSubSectorKeys = mutableSetOf<String>() // 用子板塊第一個名字去重
+
+        fun tryAdd(name: String): Boolean {
+            val subs = sd.getSubSectors(name)
+            if (subs.isEmpty()) return false
+            val fingerprint = subs.firstOrNull()?.name ?: return false
+            if (fingerprint in seenSubSectorKeys) return false
+            if (matched.any { already -> subs == sd.getSubSectors(already) }) return false
+            matched.add(name)
+            seenSubSectorKeys.add(fingerprint)
+            return true
+        }
+
         for (name in allSectorNames) {
-            if (sd.getSubSectors(name).isNotEmpty()) {
-                matched.add(name)
+            if (tryAdd(name) && matched.size >= 3) break
+        }
+
+        // 不够 3 个则从预设的主要板块列表中补充（按优先级，去重）
+        val fallbackOrder = listOf(
+            "CPO", "半导体", "人工智能", "芯片", "有色金属",
+            "固态电池", "商业航天", "电网设备", "新能源", "风电"
+        )
+        if (matched.size < 3) {
+            for (key in fallbackOrder) {
                 if (matched.size >= 3) break
+                tryAdd(key)
             }
         }
-        // 不够 3 个则从 ALL_SECTORS 中按字母序取前 3 个补充（只补充还不存在的）
+        // 如果还不夠，掃 ALL_SECTORS
         if (matched.size < 3) {
             for (key in sd.ALL_SECTORS.keys.sorted()) {
                 if (matched.size >= 3) break
-                if (key !in matched) matched.add(key)
+                tryAdd(key)
             }
         }
-        val top3 = matched.take(3)
 
+        val top3 = matched.take(3)
         val sb = SpannableStringBuilder()
         top3.forEachIndexed { idx, sector ->
             if (idx > 0) sb.append("\n")
             val subSectors = sd.getSubSectors(sector)
-            if (subSectors.isNotEmpty()) {
-                val start = sb.length
-                sb.append("▸ $sector\n")
-                sb.setSpan(StyleSpan(Typeface.BOLD), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                subSectors.take(3).forEach { sub ->
-                    val stockNames = sub.mainBoardStocks.take(3).map { it.name }.ifEmpty {
-                        sub.stocks.take(3).map { it.name }
-                    }.joinToString(" ")
-                    sb.append("  ${sub.name}: $stockNames\n")
-                }
-            } else {
-                val stocks = try {
-                    EastMoneyHotSectorSource.conceptSectors
-                        .filter { it.name == sector && it.top1StockName.isNotBlank() }
-                        .take(1).map { it.top1StockName }
-                } catch (_: Exception) { emptyList() }
-                val start = sb.length
-                sb.append("▸ $sector")
-                sb.setSpan(StyleSpan(Typeface.BOLD), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                if (stocks.isNotEmpty()) {
-                    sb.append(": ${stocks.joinToString(" ")}")
-                }
-                sb.append("\n")
+            val start = sb.length
+            sb.append("▸ $sector\n")
+            sb.setSpan(StyleSpan(Typeface.BOLD), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            subSectors.take(3).forEach { sub ->
+                val stockNames = sub.mainBoardStocks.take(3).map { it.name }.ifEmpty {
+                    sub.stocks.take(3).map { it.name }
+                }.joinToString(" ")
+                sb.append("  ${sub.name}: $stockNames\n")
             }
         }
         return sb
