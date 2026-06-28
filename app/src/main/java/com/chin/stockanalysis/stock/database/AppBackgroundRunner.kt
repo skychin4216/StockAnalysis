@@ -63,6 +63,16 @@ object AppBackgroundRunner {
         EastMoneyHotSectorSource.startPoolScheduler(scope)
         StockDataCenter.init(context.applicationContext, scope)
         _appScope = scope
+
+        // 啟動時執行一次：遷移超過 5 天的 AI 精選到自選股
+        scope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(context.applicationContext)
+                val today = LocalDate.now().format(DATE_FMT)
+                migrateOldAiPicksToWatchlist(context.applicationContext, db, today)
+            } catch (_: Exception) {}
+        }
+
         startPositionMonitor(context.applicationContext, scope)
     }
 
@@ -81,10 +91,7 @@ object AppBackgroundRunner {
         val db = StockDatabase.getInstance(context)
         val today = LocalDate.now().format(DATE_FMT)
 
-        // ── 1. 遷移前一天的 AI 精選股到自選股 ──
-        migrateOldAiPicksToWatchlist(context, db, today)
-
-        // ── 2. 監控自選股買賣點 ──
+        // ── 1. 監控自選股買賣點 ──
         val watchlist = db.userWatchlistDao().getAll()
         if (watchlist.isNotEmpty()) {
             val codes = watchlist.map { it.stockCode }
@@ -115,20 +122,21 @@ object AppBackgroundRunner {
                 Log.i(TAG, "📊 監控(自選): ${watchlist.size}只 買入${buySignals} 賣出${sellSignals}")
         }
 
-        // ── 3. 監控 AI 精選股買賣點 ──
+        // ── 2. 監控 AI 精選股買賣點 ──
         monitorAiSelectedStocks(context, db, today)
     }
 
     /**
-     * 將非當天的 AI 精選股遷移到自選股，然後清除舊 AI 精選記錄
+     * 保留最近 5 天的 AI 精選記錄，超出的遷移到自選股後刪除
      */
     private suspend fun migrateOldAiPicksToWatchlist(context: Context, db: StockDatabase, today: String) {
         val aiDao = db.aiSelectedStockDao()
+        val minDate = java.time.LocalDate.now().minusDays(5).format(DATE_FMT)
         val allAiStocks = aiDao.getAll()
-        val oldStocks = allAiStocks.filter { it.selectedDate != today }
+        val oldStocks = allAiStocks.filter { it.selectedDate < minDate }
         if (oldStocks.isEmpty()) return
 
-        Log.i(TAG, "🔄 遷移 ${oldStocks.size} 只舊 AI 精選股到自選股...")
+        Log.i(TAG, "🔄 遷移 ${oldStocks.size} 只超 5 天 AI 精選股到自選股...")
         val watchlistDao = db.userWatchlistDao()
         for (stock in oldStocks) {
             val existing = watchlistDao.getByCode(stock.stockCode)
@@ -144,9 +152,9 @@ object AppBackgroundRunner {
                 Log.i(TAG, "  ➕ ${stock.stockName}(${stock.stockCode}) → 自選股")
             }
         }
-        // 只保留當天的 AI 精選
-        aiDao.keepOnlyToday(today)
-        Log.i(TAG, "✅ AI 精選遷移完成，保留今日數據")
+        // 刪除超過 5 天的記錄
+        aiDao.deleteBeforeDate(minDate)
+        Log.i(TAG, "✅ AI 精選遷移完成，保留近 5 天數據")
     }
 
     /**
@@ -206,14 +214,15 @@ object AppBackgroundRunner {
         )
     }
 
-    /** 保存當天 AI 精選股（先清除舊數據，再寫入最新） */
+    /** 保存當天 AI 精選股（保留 5 天記錄，清除超過 5 天的舊數據） */
     suspend fun saveAiSelectedStocks(context: Context, stocks: List<AiSelectedStockEntity>) {
         val db = StockDatabase.getInstance(context)
         val today = LocalDate.now().format(DATE_FMT)
-        // 只保留當天的，舊的自動遷移
-        db.aiSelectedStockDao().keepOnlyToday(today)
+        val minDate = LocalDate.now().minusDays(5).format(DATE_FMT)
+        // 刪除超過 5 天的記錄，保留近 5 天
+        db.aiSelectedStockDao().deleteBeforeDate(minDate)
         db.aiSelectedStockDao().insertAll(stocks)
-        Log.i(TAG, "🤖 AI精選保存: ${stocks.size} 只 → ai_selected_stock")
+        Log.i(TAG, "🤖 AI精選保存: ${stocks.size} 只 → ai_selected_stock（保留近 5 天）")
     }
 
     /** 清除當天 AI 精選（策略重新運行前調用） */

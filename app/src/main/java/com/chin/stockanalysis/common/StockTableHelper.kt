@@ -35,8 +35,9 @@ object StockTableHelper {
         val score: Int = 0
     )
 
-    // 列寬權重（表頭和數據行共用，保證對齊）
-    private val WEIGHTS = floatArrayOf(1.8f, 0.5f, 1.0f, 0.9f, 0.8f, 0.9f, 0.8f, 0.5f)
+    // 列寬 dp（表頭和數據行共用固定寬度，保證對齊）
+    // 股票名稱 72 + 板塊 44 + 漲幅 50 + 現價 44 + 市盈 36 + 換手率 44 + 市值 44 + 清空 26 = 360dp
+    private val COL_WIDTH_DP = intArrayOf(72, 44, 50, 44, 36, 44, 44, 26)
 
     private val TITLES = arrayOf("股票名稱", "板塊", "漲幅", "現價", "市盈", "換手率", "市值", "清空")
     private val GRAVITIES = intArrayOf(
@@ -60,7 +61,10 @@ object StockTableHelper {
                     setTypeface(null, Typeface.BOLD)
                     maxLines = 1
                     gravity = GRAVITIES[i]
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, WEIGHTS[i])
+                    layoutParams = LinearLayout.LayoutParams(
+                        (COL_WIDTH_DP[i] * dp).toInt(),
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    )
                 }
                 if (i == 7 && onClearAll != null) {
                     tv.setTextColor(Color.parseColor("#E53935"))
@@ -70,6 +74,9 @@ object StockTableHelper {
             }
         }
     }
+
+    private fun colWidthPx(context: Context, col: Int): Int =
+        (COL_WIDTH_DP[col] * context.resources.displayMetrics.density).toInt()
 
     fun createDataRow(
         context: Context,
@@ -101,7 +108,7 @@ object StockTableHelper {
         val nameCell = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.START
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, WEIGHTS[0])
+            layoutParams = LinearLayout.LayoutParams(colWidthPx(context, 0), LinearLayout.LayoutParams.WRAP_CONTENT)
         }
         nameCell.addView(TextView(context).apply {
             text = item.name.take(8)
@@ -131,7 +138,7 @@ object StockTableHelper {
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             gravity = GRAVITIES[1]
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, WEIGHTS[1])
+            layoutParams = LinearLayout.LayoutParams(colWidthPx(context, 1), LinearLayout.LayoutParams.WRAP_CONTENT)
         })
 
         // ── 3. 漲幅 ──
@@ -158,7 +165,7 @@ object StockTableHelper {
                 setColor(changeBg)
                 cornerRadius = 2f * dp
             }
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, WEIGHTS[2])
+            layoutParams = LinearLayout.LayoutParams(colWidthPx(context, 2), LinearLayout.LayoutParams.WRAP_CONTENT)
         })
 
         // ── 4. 現價 ──
@@ -168,7 +175,7 @@ object StockTableHelper {
             setTextColor(priceColor)
             setTypeface(null, Typeface.BOLD)
             gravity = GRAVITIES[3]
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, WEIGHTS[3])
+            layoutParams = LinearLayout.LayoutParams(colWidthPx(context, 3), LinearLayout.LayoutParams.WRAP_CONTENT)
         })
 
         // ── 5. 市盈率 ──
@@ -177,7 +184,7 @@ object StockTableHelper {
             textSize = 10f
             setTextColor(Color.parseColor("#666666"))
             gravity = GRAVITIES[4]
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, WEIGHTS[4])
+            layoutParams = LinearLayout.LayoutParams(colWidthPx(context, 4), LinearLayout.LayoutParams.WRAP_CONTENT)
         })
 
         // ── 6. 換手率 ──
@@ -186,7 +193,7 @@ object StockTableHelper {
             textSize = 10f
             setTextColor(Color.parseColor("#666666"))
             gravity = GRAVITIES[5]
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, WEIGHTS[5])
+            layoutParams = LinearLayout.LayoutParams(colWidthPx(context, 5), LinearLayout.LayoutParams.WRAP_CONTENT)
         })
 
         // ── 7. 市值(億) ──
@@ -195,7 +202,7 @@ object StockTableHelper {
             textSize = 10f
             setTextColor(Color.parseColor("#666666"))
             gravity = GRAVITIES[6]
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, WEIGHTS[6])
+            layoutParams = LinearLayout.LayoutParams(colWidthPx(context, 6), LinearLayout.LayoutParams.WRAP_CONTENT)
         })
 
         // ── 8. 清空（刪除按鈕） ──
@@ -206,7 +213,7 @@ object StockTableHelper {
             setTypeface(null, Typeface.BOLD)
             gravity = GRAVITIES[7]
             setPadding((4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt())
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, WEIGHTS[7])
+            layoutParams = LinearLayout.LayoutParams(colWidthPx(context, 7), LinearLayout.LayoutParams.WRAP_CONTENT)
             setOnClickListener { onDelete?.invoke(item) }
         })
 

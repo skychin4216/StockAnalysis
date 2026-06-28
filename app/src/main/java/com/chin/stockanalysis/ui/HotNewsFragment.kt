@@ -233,17 +233,37 @@ class HotNewsFragment : Fragment() {
 
     /** 获取今日Top3热门板块，带子板块+代表股票展示 */
     private suspend fun getTop3HotSectorsWithStocks(): Spanned {
-        val top3 = getTop5HotSectors().take(3)
+        val sd = com.chin.stockanalysis.stock.data.sources.SectorSubDivision
+        // 优先使用有子板块数据的热门板块，至少保证 3 个
+        val allSectorNames = getTop5HotSectors()
+        val matched = mutableListOf<String>()
+        for (name in allSectorNames) {
+            if (sd.getSubSectors(name).isNotEmpty()) {
+                matched.add(name)
+                if (matched.size >= 3) break
+            }
+        }
+        // 不够 3 个则从 ALL_SECTORS 中按字母序取前 3 个补充（只补充还不存在的）
+        if (matched.size < 3) {
+            for (key in sd.ALL_SECTORS.keys.sorted()) {
+                if (matched.size >= 3) break
+                if (key !in matched) matched.add(key)
+            }
+        }
+        val top3 = matched.take(3)
+
         val sb = SpannableStringBuilder()
         top3.forEachIndexed { idx, sector ->
             if (idx > 0) sb.append("\n")
-            val subSectors = com.chin.stockanalysis.stock.data.sources.SectorSubDivision.getSubSectors(sector)
+            val subSectors = sd.getSubSectors(sector)
             if (subSectors.isNotEmpty()) {
                 val start = sb.length
                 sb.append("▸ $sector\n")
                 sb.setSpan(StyleSpan(Typeface.BOLD), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 subSectors.take(3).forEach { sub ->
-                    val stockNames = sub.stocks.take(3).map { it.name }.joinToString(" ")
+                    val stockNames = sub.mainBoardStocks.take(3).map { it.name }.ifEmpty {
+                        sub.stocks.take(3).map { it.name }
+                    }.joinToString(" ")
                     sb.append("  ${sub.name}: $stockNames\n")
                 }
             } else {

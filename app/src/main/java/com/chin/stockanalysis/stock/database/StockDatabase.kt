@@ -92,6 +92,9 @@ interface AiSelectedStockDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(entity: AiSelectedStockEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(entities: List<AiSelectedStockEntity>)
     @Query("DELETE FROM ai_selected_stock WHERE selected_date != :today") suspend fun keepOnlyToday(today: String)
+    @Query("DELETE FROM ai_selected_stock WHERE selected_date < :minDate") suspend fun deleteBeforeDate(minDate: String)
+    @Query("SELECT * FROM ai_selected_stock WHERE selected_date >= :minDate ORDER BY selected_date DESC, score DESC")
+    suspend fun getRecentDays(minDate: String): List<AiSelectedStockEntity>
     @Query("DELETE FROM ai_selected_stock") suspend fun clearAll()
     @Query("DELETE FROM ai_selected_stock WHERE selected_date = :date") suspend fun deleteByDate(date: String)
 }

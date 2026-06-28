@@ -66,7 +66,7 @@ class StockTabFragment : Fragment() {
         TabLayoutMediator(tabLayout, viewPager) { tab, position ->
             tab.text = when (position) {
                 0 -> "🔥 热门行情"
-                1 -> "⭐ 自选/AI"
+                1 -> "📊 精選股票"
                 2 -> "📰 热点新闻"
                 else -> ""
             }
