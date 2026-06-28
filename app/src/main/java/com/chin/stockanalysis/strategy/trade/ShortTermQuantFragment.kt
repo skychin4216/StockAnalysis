@@ -20,6 +20,7 @@ import com.chin.stockanalysis.strategy.models.StrategySignal
 import com.chin.stockanalysis.strategy.data.StrategyDataFeed
 import com.chin.stockanalysis.strategy.data.ZiplinePipeline
 import com.chin.stockanalysis.strategy.predict.AIPredictionEngine
+import com.chin.stockanalysis.strategy.data.SmartMoneyCache
 import com.chin.stockanalysis.ui.CrossTabBus
 import com.chin.stockanalysis.agent.pipeline.AgentPipelineOrchestrator
 import com.chin.stockanalysis.agent.pipeline.ui.PipelineProgressView
@@ -509,6 +510,17 @@ class ShortTermQuantFragment : QuantFragmentBase() {
 
     private suspend fun buyAiPicksInternal() {
         if (aiPicks.isEmpty()) return
+
+        // 確保主力資金緩存已刷新
+        if (!SmartMoneyCache.isFresh()) {
+            try {
+                SmartMoneyCache.refresh(requireContext(), aiPicks.map { it.stockCode })
+                Log.i(TAG, "短綫量化: 主力資金緩存已刷新")
+            } catch (e: Exception) {
+                Log.w(TAG, "短綫量化: 主力資金緩存刷新失敗: ${e.message}")
+            }
+        }
+
         val db = StockDatabase.getInstance(requireContext())
         val existingCodes = db.strategyTradeOrderDao().getRecent(200)
             .filter { it.orderType == "ShortTermQuant" && (it.status == "BUYING" || it.status == "PENDING") }
@@ -520,15 +532,25 @@ class ShortTermQuantFragment : QuantFragmentBase() {
 
         for (pick in aiPicks) {
             if (pick.stockCode in existingCodes) continue
+
+            // 主力資金評分過濾
+            val smScore = SmartMoneyCache.getScore(pick.stockCode)
+            if (smScore.combined < 55) {
+                Log.i(TAG, "🚫 短綫買入評分攔截: ${pick.stockName}(${pick.stockCode}) 主力資金評分=${String.format("%.0f", smScore.combined)} < 55")
+                continue
+            }
+
             val snap = todayStocks.find { it.code == pick.stockCode }
             val buyPrice = snap?.price ?: 0.0
             if (buyPrice <= 0) continue
+            val finalScore = (pick.compositeScore + smScore.combined.toInt()) / 2
             toInsert.add(StrategyTradeOrderEntity(
                 strategyId = "AI_Selected", stockCode = pick.stockCode, stockName = pick.stockName,
                 tradeDate = lastTradeDate, buyPrice = buyPrice,
                 buyTime = java.time.LocalTime.now().toString().take(8),
                 quantity = 100, orderType = "ShortTermQuant", status = "BUYING",
-                reason = "AI精选: ${pick.reason.take(60)}", scoreAtBuy = pick.compositeScore,
+                reason = "AI精选: ${pick.reason.take(60)} | 主力資金=${String.format("%.0f", smScore.combined)}",
+                scoreAtBuy = finalScore,
                 createdAt = System.currentTimeMillis()
             ))
             // 同時保存到 AI 精選表

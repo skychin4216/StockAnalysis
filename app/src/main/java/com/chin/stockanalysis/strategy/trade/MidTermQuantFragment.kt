@@ -211,7 +211,8 @@ class MidTermQuantFragment : QuantFragmentBase() {
                     tradeDate = browsingDate.format(DATE_FMT),
                     periods = selectedPeriods.toList().sorted(),
                     onlyMainBoard = mainBoardSwitch.isChecked,
-                    maxFitRounds = 20
+                    maxFitRounds = 20,
+                    orderType = "MidTermQuant"
                 )
                 val strategies = eng.getStrategies().filter { eng.isEnabled(it.id) }
                 if (strategies.isEmpty()) {

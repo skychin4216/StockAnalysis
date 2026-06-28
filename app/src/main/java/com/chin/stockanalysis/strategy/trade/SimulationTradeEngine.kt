@@ -7,6 +7,7 @@ import com.chin.stockanalysis.stock.database.StockDataCenter
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.Strategy
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
+import com.chin.stockanalysis.strategy.data.SmartMoneyCache
 import com.chin.stockanalysis.strategy.models.ScreeningResult
 import com.chin.stockanalysis.strategy.models.SignalAction
 import com.chin.stockanalysis.strategy.models.StrategySignal
@@ -60,7 +61,8 @@ class SimulationTradeEngine(private val context: Context) {
         val onlyMainBoard: Boolean = true,
         val maxFitRounds: Int = 1000,
         val targetAccuracy: Float = 0.55f,
-        val holdingPeriod: Int = 10  // 中线默认持仓10天
+        val holdingPeriod: Int = 10,  // 中线默认持仓10天
+        val orderType: String = "AI精選"  // 訂單類型（中綫/短綫量化區分）
     )
 
     data class StrategyPeriodResult(
@@ -204,6 +206,17 @@ class SimulationTradeEngine(private val context: Context) {
         val heatElapsed = System.currentTimeMillis() - tHeat
         Log.i(TAG, "熱度計算: ${stockList.size}隻, ${heatElapsed}ms")
 
+        // Step 4b: 刷新主力資金行為緩存（供 FundamentalFilterStrategy 使用）
+        if (!SmartMoneyCache.isFresh() && stockList.isNotEmpty()) {
+            val tSm = System.currentTimeMillis()
+            try {
+                SmartMoneyCache.refresh(context, stockList.map { it.code })
+                Log.i(TAG, "主力資金緩存刷新: ${stockList.size}隻, ${System.currentTimeMillis() - tSm}ms")
+            } catch (e: Exception) {
+                Log.w(TAG, "主力資金緩存刷新失敗: ${e.message}")
+            }
+        }
+
         // Step 5: 策略信號生成
         val t5 = System.currentTimeMillis()
         val allTodayResults = mutableListOf<StrategyPeriodResult>()
@@ -332,9 +345,35 @@ class SimulationTradeEngine(private val context: Context) {
         }
 
         val tOrder = System.currentTimeMillis()
-        val buyOrders = generateBuyOrders(aiPicks, config.tradeDate, allSnapshots)
+        val buyOrders = generateBuyOrders(aiPicks, config.tradeDate, allSnapshots, config.orderType)
         val stepOrder = System.currentTimeMillis() - tOrder
         Log.i(TAG, "生成买入订单: ${buyOrders.size}只, ${stepOrder}ms")
+
+        // 保存買入訂單到數據庫
+        if (buyOrders.isNotEmpty()) {
+            try {
+                val entities = buyOrders.map { order ->
+                    StrategyTradeOrderEntity(
+                        strategyId = order.strategyId,
+                        stockCode = order.stockCode,
+                        stockName = order.stockName,
+                        tradeDate = order.tradeDate,
+                        priceAtBuy = order.priceAtBuy,
+                        quantity = order.quantity,
+                        reason = order.reason,
+                        scoreAtBuy = order.scoreAtBuy,
+                        orderType = order.orderType,
+                        status = "PENDING",
+                        createdAt = System.currentTimeMillis()
+                    )
+                }
+                db.strategyTradeOrderDao().insertAll(entities)
+                Log.i(TAG, "✅ 已保存 ${entities.size} 只買入訂單到持倉")
+            } catch (e: Exception) {
+                Log.e(TAG, "保存買入訂單失敗: ${e.message}")
+            }
+        }
+
         saveDailyNewsHotPicks(config.tradeDate)
         if (buyOrders.isEmpty()) {
             Log.i(TAG, "⏭️ 无买入订单，跳过拟合（节省时间）")
@@ -760,8 +799,22 @@ class SimulationTradeEngine(private val context: Context) {
         return filtered to info
     }
 
-    private suspend fun generateBuyOrders(aiPicks: List<AIPick>, tradeDate: String, snapshots: List<DailySnapshotEntity>): List<TradeOrder> {
-        return aiPicks.mapNotNull { pick ->
+    private suspend fun generateBuyOrders(aiPicks: List<AIPick>, tradeDate: String, snapshots: List<DailySnapshotEntity>, orderType: String = "AI精選"): List<TradeOrder> {
+        // 先用 FundamentalFilterStrategy + SmartMoneyCache 對 AI 推薦進行評分過濾
+        val filteredPicks = aiPicks.filter { pick ->
+            val smScore = SmartMoneyCache.getScore(pick.stockCode)
+            // 主力資金綜合評分 >= 55（WATCH 級別）才允許買入
+            val passed = smScore.combined >= 55.0
+            if (!passed) {
+                Log.i(TAG, "🚫 買入評分攔截: ${pick.stockName}(${pick.stockCode}) 主力資金評分=${String.format("%.0f", smScore.combined)} < 55")
+            }
+            passed
+        }
+        if (filteredPicks.size < aiPicks.size) {
+            Log.i(TAG, "買入評分過濾: ${aiPicks.size}隻 → ${filteredPicks.size}隻 通過")
+        }
+
+        return filteredPicks.mapNotNull { pick ->
             // 尝试多种代码格式匹配
             val rawCode = pick.stockCode.removePrefix("sh").removePrefix("sz")
             var snap = snapshots.find { it.code == pick.stockCode }
@@ -776,8 +829,11 @@ class SimulationTradeEngine(private val context: Context) {
             }
 
             if (snap != null) {
+                val smScore = SmartMoneyCache.getScore(pick.stockCode)
+                val finalScore = (pick.compositeScore + smScore.combined.toInt()) / 2
                 TradeOrder(pick.stockCode, stockName, "AI_SELECTED", tradeDate, snap.close, 100,
-                    reason = pick.reason, scoreAtBuy = pick.compositeScore, orderType = "AI精選")
+                    reason = "${pick.reason} | 主力資金=${String.format("%.0f", smScore.combined)}",
+                    scoreAtBuy = finalScore, orderType = orderType)
             } else {
                 // 即使没有快照数据，也尝试创建订单（价格用0标记）
                 Log.w(TAG, "⚠️ AI推荐股票无快照: ${pick.stockName}(${rawCode}), 跳过买入")

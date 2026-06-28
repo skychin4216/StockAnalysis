@@ -27,6 +27,8 @@ class HotSectorNewsUpdater(private val context: Context) {
 
     companion object {
         private const val TAG = "HotSectorNewsUpdater"
+        private const val PREFS_NAME = "hot_sector_news_cache"
+        private const val CACHE_TTL_MINUTES = 60  // 新聞緩存有效期（分鐘）
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
         /** AI 硬件优先板块关键词 */
@@ -63,7 +65,7 @@ class HotSectorNewsUpdater(private val context: Context) {
                 return
             }
 
-            Log.i(TAG, "━━━ 开始后台拉取热门板块新闻 ━━━")
+            Log.i(TAG, "━━━ 開始檢查熱門板塊新聞（${CACHE_TTL_MINUTES}分鐘內有緩存則跳過） ━━━")
 
             // 1. 获取 Top 5 热门板块
             val topSectors = getTopHotSectors()
@@ -132,6 +134,17 @@ class HotSectorNewsUpdater(private val context: Context) {
             Log.i(TAG, "⏸️ 量化選股運行中，跳過新聞搜索: $sector")
             return emptyList()
         }
+
+        // 60分鐘緩存檢查：該板塊近期已拉取過則跳過
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val lastFetchKey = "last_fetch_$sector"
+        val lastFetchTime = prefs.getLong(lastFetchKey, 0)
+        val now = System.currentTimeMillis()
+        val elapsedMinutes = (now - lastFetchTime) / 60000
+        if (lastFetchTime > 0 && elapsedMinutes < CACHE_TTL_MINUTES) {
+            Log.i(TAG, "⏭️ [$sector] ${elapsedMinutes}分鐘前已更新，跳過（緩存${CACHE_TTL_MINUTES}分鐘）")
+            return emptyList()
+        }
         val slot = com.chin.stockanalysis.ai.AiProviderPool.acquire(context, callerTag = "HotSectorNewsUpdater.$sector")
         if (slot == null) {
             Log.w(TAG, "無可用 AI Provider，跳過新聞搜索: $sector")
@@ -176,7 +189,12 @@ class HotSectorNewsUpdater(private val context: Context) {
                 }
             }
 
-            return parseNewsResponse(response, sector, today)
+            val news = parseNewsResponse(response, sector, today)
+            // 記錄成功拉取時間
+            if (news.isNotEmpty()) {
+                prefs.edit().putLong(lastFetchKey, System.currentTimeMillis()).apply()
+            }
+            return news
         } catch (e: Exception) {
             Log.w(TAG, "搜索板块[$sector]新闻失败: ${e.message}")
             return emptyList()
