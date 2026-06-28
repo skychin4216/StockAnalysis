@@ -12,6 +12,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.viewpager2.adapter.FragmentStateAdapter
 import androidx.viewpager2.widget.ViewPager2
 import com.chin.stockanalysis.ApiConfigManager
+import com.chin.stockanalysis.config.FeatureFlagManager
 import com.chin.stockanalysis.R
 import com.chin.stockanalysis.conversation.ConversationRepository
 import com.chin.stockanalysis.databinding.ActivityMainBinding
@@ -59,6 +60,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun initGlobalServices() {
+        FeatureFlagManager.init(applicationContext)
         ApiConfigManager.getInstance(applicationContext)
         // 数据备份初始化
         initBackupSystem()

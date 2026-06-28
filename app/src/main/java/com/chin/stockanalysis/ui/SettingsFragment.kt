@@ -16,6 +16,9 @@ import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import com.chin.stockanalysis.ApiConfigManager
 import com.chin.stockanalysis.ApiProviderConfig
+import com.chin.stockanalysis.config.AgentRoute
+import com.chin.stockanalysis.config.FeatureFlagManager
+import com.chin.stockanalysis.config.GlobalMode
 import com.chin.stockanalysis.databinding.FragmentSettingsBinding
 import com.chin.stockanalysis.stock.StockService
 import com.chin.stockanalysis.stock.data.StockDataSourceFactory
@@ -51,6 +54,7 @@ class SettingsFragment : Fragment() {
             btnClearCache.setOnClickListener { clearAppCache() }
             tvAbout.text = buildAboutText()
         }
+        setupAgentFramework()
     }
 
     private fun refreshProviderInfo() {
@@ -257,6 +261,107 @@ class SettingsFragment : Fragment() {
         stockService.clearCache()
         binding.tvCacheInfo.text = "缓存已清除"
         Toast.makeText(requireContext(), "股票行情缓存已清除", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun setupAgentFramework() {
+        binding.apply {
+            when (FeatureFlagManager.globalMode) {
+                GlobalMode.LEGACY -> rbOldSystem.isChecked = true
+                GlobalMode.AGENT -> rbNewAgent.isChecked = true
+                GlobalMode.HYBRID -> rbPerModule.isChecked = true
+            }
+
+            rgGlobalMode.setOnCheckedChangeListener { _, checkedId ->
+                val mode = when (checkedId) {
+                    rbOldSystem.id -> GlobalMode.LEGACY
+                    rbNewAgent.id -> GlobalMode.AGENT
+                    rbPerModule.id -> GlobalMode.HYBRID
+                    else -> GlobalMode.LEGACY
+                }
+                FeatureFlagManager.globalMode = mode
+                updateModuleSwitchesEnabled(mode)
+                when (mode) {
+                    GlobalMode.LEGACY -> setAllModuleRoutes(AgentRoute.LEGACY)
+                    GlobalMode.AGENT -> setAllModuleRoutes(AgentRoute.AGENT_FRAMEWORK)
+                    GlobalMode.HYBRID -> {}
+                }
+                refreshModuleSwitches()
+            }
+
+            refreshModuleSwitches()
+            updateModuleSwitchesEnabled(FeatureFlagManager.globalMode)
+
+            swStockPicking.setOnCheckedChangeListener { _, isChecked ->
+                if (FeatureFlagManager.isHybrid) {
+                    FeatureFlagManager.stockPickingRoute =
+                        if (isChecked) AgentRoute.AGENT_FRAMEWORK else AgentRoute.LEGACY
+                }
+            }
+            swStockAnalysis.setOnCheckedChangeListener { _, isChecked ->
+                if (FeatureFlagManager.isHybrid) {
+                    FeatureFlagManager.stockAnalysisRoute =
+                        if (isChecked) AgentRoute.AGENT_FRAMEWORK else AgentRoute.LEGACY
+                }
+            }
+            swTradeExecution.setOnCheckedChangeListener { _, isChecked ->
+                if (FeatureFlagManager.isHybrid) {
+                    FeatureFlagManager.tradeExecutionRoute =
+                        if (isChecked) AgentRoute.AGENT_FRAMEWORK else AgentRoute.LEGACY
+                }
+            }
+            swChat.setOnCheckedChangeListener { _, isChecked ->
+                if (FeatureFlagManager.isHybrid) {
+                    FeatureFlagManager.chatRoute =
+                        if (isChecked) AgentRoute.AGENT_FRAMEWORK else AgentRoute.LEGACY
+                }
+            }
+            swNewsMonitor.setOnCheckedChangeListener { _, isChecked ->
+                if (FeatureFlagManager.isHybrid) {
+                    FeatureFlagManager.newsMonitoringRoute =
+                        if (isChecked) AgentRoute.AGENT_FRAMEWORK else AgentRoute.LEGACY
+                }
+            }
+            swRiskManagement.setOnCheckedChangeListener { _, isChecked ->
+                if (FeatureFlagManager.isHybrid) {
+                    FeatureFlagManager.riskManagementRoute =
+                        if (isChecked) AgentRoute.AGENT_FRAMEWORK else AgentRoute.LEGACY
+                }
+            }
+        }
+    }
+
+    private fun refreshModuleSwitches() {
+        binding.apply {
+            swStockPicking.isChecked = FeatureFlagManager.stockPickingRoute == AgentRoute.AGENT_FRAMEWORK
+            swStockAnalysis.isChecked = FeatureFlagManager.stockAnalysisRoute == AgentRoute.AGENT_FRAMEWORK
+            swTradeExecution.isChecked = FeatureFlagManager.tradeExecutionRoute == AgentRoute.AGENT_FRAMEWORK
+            swChat.isChecked = FeatureFlagManager.chatRoute == AgentRoute.AGENT_FRAMEWORK
+            swNewsMonitor.isChecked = FeatureFlagManager.newsMonitoringRoute == AgentRoute.AGENT_FRAMEWORK
+            swRiskManagement.isChecked = FeatureFlagManager.riskManagementRoute == AgentRoute.AGENT_FRAMEWORK
+        }
+    }
+
+    private fun setAllModuleRoutes(route: AgentRoute) {
+        FeatureFlagManager.stockPickingRoute = route
+        FeatureFlagManager.stockAnalysisRoute = route
+        FeatureFlagManager.tradeExecutionRoute = route
+        FeatureFlagManager.chatRoute = route
+        FeatureFlagManager.newsMonitoringRoute = route
+        FeatureFlagManager.riskManagementRoute = route
+    }
+
+    private fun updateModuleSwitchesEnabled(mode: GlobalMode) {
+        val enabled = (mode == GlobalMode.HYBRID)
+        val alpha = if (enabled) 1.0f else 0.4f
+        binding.apply {
+            tvModuleConfigTitle.alpha = alpha
+            swStockPicking.isEnabled = enabled; swStockPicking.alpha = alpha
+            swStockAnalysis.isEnabled = enabled; swStockAnalysis.alpha = alpha
+            swTradeExecution.isEnabled = enabled; swTradeExecution.alpha = alpha
+            swChat.isEnabled = enabled; swChat.alpha = alpha
+            swNewsMonitor.isEnabled = enabled; swNewsMonitor.alpha = alpha
+            swRiskManagement.isEnabled = enabled; swRiskManagement.alpha = alpha
+        }
     }
 
     private fun buildAboutText(): String = """

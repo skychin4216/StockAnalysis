@@ -15,6 +15,8 @@ import com.chin.stockanalysis.stock.database.AiSelectedStockEntity
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.stock.database.UserWatchlistEntity
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
+import com.chin.stockanalysis.common.StockDataService
+import com.chin.stockanalysis.common.StockTableHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -288,200 +290,48 @@ class WatchlistUnifiedFragment : Fragment() {
     }
 
     // ═══════════════════════════════════════
-    // 渲染列表
+    // 渲染列表（使用 StockTableHelper 公共函數）
     // ═══════════════════════════════════════
 
     private fun renderList() {
         listContainer.removeAllViews()
-
-        val data: List<DisplayItem> = if (isAiMode) {
-            aiStocksData.map { DisplayItem(
-                code = it.stockCode,
-                name = it.stockName,
-                source = it.source,
-                score = it.score,
-                isAi = true
-            ) }
-        } else {
-            watchlistData.map { DisplayItem(
-                code = it.stockCode,
-                name = it.stockName,
-                source = it.source,
-                score = it.scoreAtAdd,
-                isAi = false
-            ) }
-        }
-
-        headerRow.visibility = if (data.isNotEmpty()) View.VISIBLE else View.GONE
-
-        if (data.isEmpty()) {
+        val codes = if (isAiMode) aiStocksData.map { it.stockCode } else watchlistData.map { it.stockCode }
+        if (codes.isEmpty()) {
             listContainer.addView(TextView(requireContext()).apply {
                 text = if (isAiMode) "暂無 AI 精選数据，请先運行策略" else "暂無自選股，請添加"
-                textSize = 14f
-                setTextColor(Color.parseColor("#999999"))
-                gravity = Gravity.CENTER
-                setPadding(0, 48, 0, 48)
+                textSize = 14f; setTextColor(Color.parseColor("#999999"))
+                gravity = Gravity.CENTER; setPadding(0, 48, 0, 48)
             })
             return
         }
-
-        for ((index, item) in data.withIndex()) {
-            listContainer.addView(createDataRow(item, index == data.size - 1))
-        }
-    }
-
-    private data class DisplayItem(
-        val code: String,
-        val name: String,
-        val source: String,
-        val score: Int,
-        val isAi: Boolean
-    )
-
-    private fun createDataRow(item: DisplayItem, isLast: Boolean): View {
-        val ctx = requireContext()
-        val dp = resources.displayMetrics.density
-
-        val wrapper = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.WHITE)
-        }
-
-        val row = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding((16 * dp).toInt(), (12 * dp).toInt(), (16 * dp).toInt(), (12 * dp).toInt())
-        }
-
-        // 股票名稱 + 代碼
-        val nameCell = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2.5f)
-        }
-        if (item.isAi) {
-            val labelRow = LinearLayout(ctx).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val items = StockDataService.enrich(requireContext(), codes)
+                withContext(Dispatchers.Main) {
+                    listContainer.removeAllViews()
+                    listContainer.addView(StockTableHelper.createHeaderRow(requireContext()))
+                    for ((index, item) in items.withIndex()) {
+                        listContainer.addView(StockTableHelper.createDataRow(requireContext(), item, index == items.size - 1,
+                            onDelete = { deleted ->
+                                lifecycleScope.launch(Dispatchers.IO) {
+                                    try {
+                                        val db = StockDatabase.getInstance(requireContext())
+                                        db.userWatchlistDao().deleteByCode(deleted.code)
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(requireContext(), "✅ 已移除: ${deleted.name}", Toast.LENGTH_SHORT).show()
+                                            loadData()
+                                        }
+                                    } catch (_: Exception) {}
+                                }
+                            }
+                        ))
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    statusTv.text = "❌ 加载失败: ${e.message?.take(30)}"
+                }
             }
-            labelRow.addView(TextView(ctx).apply {
-                text = item.name.take(8)
-                textSize = 14f
-                setTextColor(Color.parseColor("#1A1A2E"))
-                setTypeface(null, Typeface.BOLD)
-                maxLines = 1
-                ellipsize = android.text.TextUtils.TruncateAt.END
-            })
-            // AI 來源標籤
-            val sourceLabel = when (item.source) {
-                "shortterm" -> "短"
-                "midterm" -> "中"
-                "agent" -> "A"
-                else -> item.source.take(1)
-            }
-            val labelBg = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                setColor(Color.parseColor("#E3F2FD"))
-                cornerRadius = 2f * dp
-            }
-            labelRow.addView(TextView(ctx).apply {
-                text = sourceLabel
-                textSize = 9f
-                setTextColor(Color.parseColor("#1565C0"))
-                setPadding((4 * dp).toInt(), (1 * dp).toInt(), (4 * dp).toInt(), (1 * dp).toInt())
-                background = labelBg
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { marginStart = (6 * dp).toInt() }
-            })
-            nameCell.addView(labelRow)
-        } else {
-            nameCell.addView(TextView(ctx).apply {
-                text = item.name.take(8)
-                textSize = 14f
-                setTextColor(Color.parseColor("#1A1A2E"))
-                setTypeface(null, Typeface.BOLD)
-                maxLines = 1
-                ellipsize = android.text.TextUtils.TruncateAt.END
-            })
         }
-        nameCell.addView(TextView(ctx).apply {
-            text = item.code.takeLast(6)
-            textSize = 10f
-            setTextColor(Color.parseColor("#AAAAAA"))
-            setPadding(0, (2 * dp).toInt(), 0, 0)
-        })
-        row.addView(nameCell)
-
-        val snap = snapshotCache[item.code]
-
-        // 現價
-        val price = snap?.close ?: 0.0
-        val priceColor = when {
-            snap == null -> Color.parseColor("#999999")
-            snap.changePct > 0 -> Color.parseColor("#E53935")
-            snap.changePct < 0 -> Color.parseColor("#43A047")
-            else -> Color.parseColor("#333333")
-        }
-        row.addView(TextView(ctx).apply {
-            text = if (snap != null) String.format("%.2f", price) else "--"
-            textSize = 13f
-            setTextColor(priceColor)
-            setTypeface(null, Typeface.BOLD)
-            gravity = Gravity.END
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f)
-        })
-
-        // 漲幅（帶背景色）
-        val changePct = snap?.changePct ?: 0.0
-        val changeText = when {
-            snap == null -> "--"
-            changePct > 0 -> "+${String.format("%.2f", changePct)}%"
-            else -> "${String.format("%.2f", changePct)}%"
-        }
-        val changeBg = when {
-            snap == null -> Color.TRANSPARENT
-            changePct > 0 -> Color.parseColor("#FFF0F0")
-            changePct < 0 -> Color.parseColor("#F0FFF0")
-            else -> Color.parseColor("#F5F5F5")
-        }
-        row.addView(TextView(ctx).apply {
-            text = changeText
-            textSize = 12f
-            setTextColor(priceColor)
-            setTypeface(null, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            setPadding((6 * dp).toInt(), (2 * dp).toInt(), (6 * dp).toInt(), (2 * dp).toInt())
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                setColor(changeBg)
-                cornerRadius = 3f * dp
-            }
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f)
-        })
-
-        // 漲跌額
-        row.addView(TextView(ctx).apply {
-            text = if (snap != null) {
-                val changeAmount = snap.close - snap.open
-                "${if (changeAmount >= 0) "+" else ""}${String.format("%.2f", changeAmount)}"
-            } else "--"
-            textSize = 12f
-            setTextColor(priceColor)
-            gravity = Gravity.END
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f)
-        })
-
-        wrapper.addView(row)
-
-        if (!isLast) {
-            wrapper.addView(View(ctx).apply {
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, 1
-                ).apply { setMargins((16 * dp).toInt(), 0, (16 * dp).toInt(), 0) }
-                setBackgroundColor(Color.parseColor("#F0F0F0"))
-            })
-        }
-
-        return wrapper
     }
 }

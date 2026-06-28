@@ -177,7 +177,9 @@ class ShortTermQuantFragment : QuantFragmentBase() {
                 val priceMap = mutableMapOf<String, MutableMap<String, Double>>()
                 for (date in dates) { val snaps = db.dailySnapshotDao().getByDate(date); for (snap in snaps) priceMap.getOrPut(snap.code) { mutableMapOf() }[date] = snap.close }
                 withContext(Dispatchers.Main) { renderPositionTable(orders, dates, priceMap) }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+            Log.w("ShortTermQuant", "Agent routing failed: ${e.message}")
+        }
         }
     }
 
@@ -368,7 +370,9 @@ class ShortTermQuantFragment : QuantFragmentBase() {
                     try {
                         val r = strategy.screenWithData(stocks)
                         r.getOrNull()?.let { screenings[strategy]=it; screeningList.add(it) }
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) {
+            Log.w("ShortTermQuant", "Agent routing failed: ${e.message}")
+        }
                     val sElapsed = System.currentTimeMillis() - sStart
                     if (sElapsed > 1000) {
                         Log.d(TAG, "[ShortTerm] Strategy ${strategy.id} took ${sElapsed}ms")
@@ -396,7 +400,9 @@ class ShortTermQuantFragment : QuantFragmentBase() {
                     try {
                         val updater = com.chin.stockanalysis.news.HotSectorNewsUpdater(requireContext())
                         updater.updateIfNeeded(forceRefresh = true, ignoreQuantPause = true)
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) {
+            Log.w("ShortTermQuant", "Agent routing failed: ${e.message}")
+        }
                     com.chin.stockanalysis.stock.database.AppBackgroundRunner.isQuantRunning = true
 
                     withContext(Dispatchers.Main) { statusTv.text = "🤖 AI 大模型分析中..." }

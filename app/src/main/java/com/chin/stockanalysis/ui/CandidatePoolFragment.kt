@@ -12,6 +12,8 @@ import android.widget.LinearLayout.LayoutParams
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.chin.stockanalysis.strategy.data.CandidatePool
+import com.chin.stockanalysis.common.StockDataService
+import com.chin.stockanalysis.common.StockTableHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -20,7 +22,7 @@ import kotlinx.coroutines.withContext
  * ## 備選池 Fragment
  *
  * 顯示 CandidatePool 中的股票列表，支持僅主板過濾。
- * 支持：刷新、點擊查看詳情
+ * 所有字段通過 StockDataService.enrich() 批量填充。
  */
 class CandidatePoolFragment : Fragment() {
 
@@ -113,7 +115,6 @@ class CandidatePoolFragment : Fragment() {
         statsRow.addView(updateTimeTv)
         outer.addView(statsRow)
 
-        // ── 說明文字 ──
         outer.addView(TextView(ctx).apply {
             text = "核心龍頭 + ETF熱門板塊 + 東方財富熱門板塊，去重後約100-200只主板股票"
             textSize = 11f
@@ -121,10 +122,7 @@ class CandidatePoolFragment : Fragment() {
             setPadding(0, 0, 0, 12)
         })
 
-        // ── 股票列表容器 ──
-        container = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-        }
+        container = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         outer.addView(container)
 
         loadPool(false)
@@ -133,28 +131,22 @@ class CandidatePoolFragment : Fragment() {
 
     private fun loadPool(forceRefresh: Boolean) {
         lifecycleScope.launch {
-            refreshBtn.isEnabled = false
-            refreshBtn.text = "刷新中..."
+            refreshBtn.isEnabled = false; refreshBtn.text = "刷新中..."
             container.removeAllViews()
-
             try {
                 val snapshot = withContext(Dispatchers.IO) {
                     CandidatePool.getPool(requireContext(), forceRefresh)
                 }
                 currentSnapshot = snapshot
                 renderList()
-
             } catch (e: Exception) {
                 container.addView(TextView(requireContext()).apply {
                     text = "加載失敗: ${e.message}"
-                    textSize = 14f
-                    setTextColor(Color.parseColor("#E53935"))
+                    textSize = 14f; setTextColor(Color.parseColor("#E53935"))
                     setPadding(0, 20, 0, 20)
                 })
             }
-
-            refreshBtn.isEnabled = true
-            refreshBtn.text = "刷新"
+            refreshBtn.isEnabled = true; refreshBtn.text = "刷新"
         }
     }
 
@@ -168,80 +160,51 @@ class CandidatePoolFragment : Fragment() {
             allStocks.filter { isMainBoard(it.code) }
         } else {
             allStocks
-        }
+        }.sortedByDescending { it.changePct }
 
         val mainBoardCount = allStocks.count { isMainBoard(it.code) }
         val kcCyCount = allStocks.size - mainBoardCount
-
         countTv.text = "主板 ${mainBoardCount} 只 / 科創/創業 ${kcCyCount} 只"
         updateTimeTv.text = "更新: ${snapshot.updateTime}"
 
-        // 統一列表，按漲跌幅排序
-        filteredStocks.sortedByDescending { it.changePct }.forEach { stock ->
-            addStockRow(stock)
-        }
-    }
-
-    private fun addStockRow(stock: CandidatePool.CandidateStock) {
-        val ctx = requireContext()
-        val dp = { v: Int -> (v * resources.displayMetrics.density + 0.5f).toInt() }
-
-        val row = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.WHITE)
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+        if (filteredStocks.isEmpty()) {
+            container.addView(TextView(ctx).apply {
+                text = "暫無數據"; textSize = 14f
+                setTextColor(Color.parseColor("#999999"))
+                gravity = Gravity.CENTER; setPadding(0, 48, 0, 48)
+            })
+            return
         }
 
-        // 股票名稱 + 代碼
-        val nameCol = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 2f)
-        }
-        nameCol.addView(TextView(ctx).apply {
-            text = stock.name
-            textSize = 14f
-            setTextColor(Color.parseColor("#222222"))
-            setTypeface(null, Typeface.BOLD)
-        })
-        nameCol.addView(TextView(ctx).apply {
-            text = "${stock.code} · ${stock.sector}"
-            textSize = 10f
-            setTextColor(Color.parseColor("#999999"))
-            setPadding(0, dp(2), 0, 0)
-        })
-        row.addView(nameCol)
-
-        // 漲跌幅
-        val changeColor = when {
-            stock.changePct > 0 -> Color.parseColor("#E53935")
-            stock.changePct < 0 -> Color.parseColor("#43A047")
-            else -> Color.parseColor("#666666")
-        }
-        row.addView(TextView(ctx).apply {
-            text = if (stock.changePct >= 0) "+${"%.2f".format(stock.changePct)}%" else "${"%.2f".format(stock.changePct)}%"
-            textSize = 13f
-            setTextColor(changeColor)
-            setTypeface(null, Typeface.BOLD)
-            gravity = Gravity.END
-            layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
-        })
-
-        container.addView(row)
-
-        // 分隔線
-        container.addView(View(ctx).apply {
-            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, 1).apply {
-                setMargins(dp(12), 0, dp(12), 0)
+        // 異步填充完整數據
+        lifecycleScope.launch {
+            try {
+                val codes = filteredStocks.map { it.code }
+                val items = StockDataService.enrich(ctx, codes)
+                withContext(Dispatchers.Main) {
+                    container.removeAllViews()
+                    container.addView(StockTableHelper.createHeaderRow(ctx))
+                    for ((index, item) in items.withIndex()) {
+                        container.addView(StockTableHelper.createDataRow(ctx, item, index == items.size - 1, 
+                            onDelete = { deleted -> 
+                                // 從備選池緩存中移除
+                                val prefs = ctx.getSharedPreferences("candidate_pool_prefs", android.content.Context.MODE_PRIVATE)
+                                val codes = (prefs.getStringSet("pool_codes", emptySet()) ?: emptySet()).toMutableSet()
+                                codes.remove(deleted.code)
+                                prefs.edit().putStringSet("pool_codes", codes).apply()
+                                // 刷新列表
+                                currentSnapshot = null
+                                loadPool(true)
+                            }
+                        ))
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { /* show empty */ }
             }
-            setBackgroundColor(Color.parseColor("#F0F0F0"))
-        })
+        }
     }
 
-    /**
-     * 判斷是否為主板股票（非科創非創業）
-     */
     private fun isMainBoard(code: String): Boolean {
         return code.startsWith("sh6") || code.startsWith("sz0") || code.startsWith("sz2")
     }

@@ -50,10 +50,12 @@ object CandidatePool {
         val name: String,
         val sector: String,
         val subSector: String,
-        val source: String,      // "core" / "ai_annual" / "ai_monthly" / "ai_weekly" / "ai_yesterday"
+        val source: String,      // "core" / "ai"
         val rankInSector: Int,
         val changePct: Double = 0.0,
-        val marketCap: Double = 0.0
+        val marketCap: Double = 0.0,
+        val peRatio: Double = 0.0,
+        val isST: Boolean = false
     )
 
     data class PoolSnapshot(
@@ -223,12 +225,17 @@ object CandidatePool {
         val snaps = try { db.dailySnapshotDao().getByDate(targetDate) } catch (_: Exception) { emptyList() }
         val snapMap = snaps.associateBy { it.code }
 
+        // 獲取 stock_basics 用於 ST 過濾
+        val basicsMap = try {
+            db.stockBasicDao().getAll().associateBy { it.code }
+        } catch (_: Exception) { emptyMap() }
+
         val stocks = mutableListOf<CandidateStock>()
         for (code in codes) {
             val snap = snapMap[code]
             val name = snap?.name ?: nameMap[code] ?: code
-            // 查找所屬板塊
-            val (sector, subSector) = findSectorForCode(code)
+            // 查找所屬板塊（從靜態配置 + DB 查詢）
+            val (sector, subSector) = findSectorForCode(db, code)
             stocks.add(CandidateStock(
                 code = code,
                 name = name,
@@ -236,7 +243,10 @@ object CandidatePool {
                 subSector = subSector,
                 source = if (code in CORE_LEADERS) "core" else "ai",
                 rankInSector = 0,
-                changePct = snap?.changePct ?: 0.0
+                changePct = snap?.changePct ?: 0.0,
+                marketCap = 0.0,
+                peRatio = 0.0,
+                isST = false  // TODO: 等 StockBasicEntity 加入 isST 字段後開啟
             ))
         }
 
@@ -249,7 +259,8 @@ object CandidatePool {
         )
     }
 
-    private fun findSectorForCode(code: String): Pair<String, String> {
+    private suspend fun findSectorForCode(db: StockDatabase, code: String): Pair<String, String> {
+        // 1. 先查靜態配置（LeaderStockPool）
         for (cfg in LeaderStockPool.SECTOR_CONFIGS) {
             for (ss in cfg.subSectors) {
                 if (code in ss.stocks) {
@@ -257,7 +268,18 @@ object CandidatePool {
                 }
             }
         }
-        return "其他" to "其他"
+        // 2. 從 DB 查（AI 動態板塊新增的股票）
+        try {
+            val sectorNames = db.sectorStockDao().getSectorNamesByStockCode(code)
+            if (sectorNames.isNotEmpty()) {
+                // 取第一個非 "其他" 的板塊名
+                val mainSector = sectorNames.firstOrNull { it != "其他" && it.isNotBlank() } ?: sectorNames.first()
+                // 如果有子板塊（第2級），作為 subSector
+                val subSector = sectorNames.getOrNull(1)?.takeIf { it.isNotBlank() && it != "其他" } ?: ""
+                return mainSector to subSector
+            }
+        } catch (_: Exception) {}
+        return "其他" to ""
     }
 
     /**

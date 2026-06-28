@@ -91,6 +91,118 @@
             android:textColor="@android:color/darker_gray"
             android:layout_marginBottom="24dp" />
 
+        <!-- Agent Framework -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@android:color/darker_gray"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Agent Framework"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="全局模式"
+            android:textSize="13sp"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginBottom="4dp" />
+
+        <RadioGroup
+            android:id="@+id/rgGlobalMode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="12dp">
+
+            <RadioButton
+                android:id="@+id/rbOldSystem"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Legacy"
+                android:textSize="12sp" />
+
+            <RadioButton
+                android:id="@+id/rbNewAgent"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Agent"
+                android:textSize="12sp" />
+
+            <RadioButton
+                android:id="@+id/rbPerModule"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Hybrid"
+                android:textSize="12sp" />
+        </RadioGroup>
+
+        <TextView
+            android:id="@+id/tvModuleConfigTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="模块级别配置"
+            android:textSize="13sp"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginBottom="4dp" />
+
+        <Switch
+            android:id="@+id/swStockPicking"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="选股模块（AI Pipeline）"
+            android:textSize="14sp"
+            android:layout_marginBottom="4dp" />
+
+        <Switch
+            android:id="@+id/swStockAnalysis"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="分析模块（单股深度分析）"
+            android:textSize="14sp"
+            android:layout_marginBottom="4dp" />
+
+        <Switch
+            android:id="@+id/swTradeExecution"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="交易模块（买卖执行）"
+            android:textSize="14sp"
+            android:layout_marginBottom="4dp" />
+
+        <Switch
+            android:id="@+id/swChat"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="对话模块（AI 聊天）"
+            android:textSize="14sp"
+            android:layout_marginBottom="4dp" />
+
+        <Switch
+            android:id="@+id/swNewsMonitor"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="新闻监控模块"
+            android:textSize="14sp"
+            android:layout_marginBottom="4dp" />
+
+        <Switch
+            android:id="@+id/swRiskManagement"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="风控模块"
+            android:textSize="14sp"
+            android:layout_marginBottom="24dp" />
+
         <!-- About -->
         <TextView
             android:layout_width="match_parent"

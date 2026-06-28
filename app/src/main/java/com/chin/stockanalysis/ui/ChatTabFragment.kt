@@ -44,6 +44,9 @@ import com.chin.stockanalysis.ui.CrossTabBus
 import com.chin.stockanalysis.skill.SkillEngine
 import com.chin.stockanalysis.skill.SkillOrchestrator
 import com.chin.stockanalysis.stock.StockQueryEngine
+import com.chin.stockanalysis.config.FeatureFlagManager
+import com.chin.stockanalysis.config.AgentRoute
+import com.chin.stockanalysis.agent.router.ChatRouter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -593,11 +596,59 @@ class ChatTabFragment : Fragment() {
         binding.etInput.setText(""); hideKeyboard()
         if (!hasAutoTitle) { hasAutoTitle = true; binding.tvChatTitle.text = extractSmartTitle(userText) }
 
-        // 🎯 根据分析模式分流处理
+        // 🎯 Agent 模式：如果全局開啟了 Agent，走 ChatRouter → ChatAgent
+        if (FeatureFlagManager.isAgentFramework(FeatureFlagManager.chatRoute)) {
+            runAgentAnalysis(userText, provider, skipStockContext)
+            return
+        }
+
+        // 🎯 Legacy 模式：根据分析模式分流处理
         when (analysisMode) {
             AnalysisMode.QUICK -> runQuickAnalysis(userText, provider, skipStockContext)
             AnalysisMode.DEEP -> runDeepAnalysis(userText, provider, skipStockContext)
             AnalysisMode.EXPERT -> runExpertAnalysis(userText, provider, skipStockContext)
+        }
+    }
+
+    /** 🤖 Agent 模式：ChatRouter → ChatAgent 智能對話 */
+    private fun runAgentAnalysis(userText: String, provider: ApiProvider, skipStockContext: Boolean = false) {
+        val loadingMsg = Message(content = "", isUser = false, isStreaming = true,
+            loadingStatus = "🤖 Agent 正在分析...")
+        addMessage(loadingMsg)
+        val loadingIndex = messages.size - 1
+
+        currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                updateLoadingStatus(loadingIndex, "🤖 正在啟動 Agent 框架...")
+                val service = ChatRouter.getService()
+                val result = withContext(Dispatchers.IO) {
+                    service.handleMessage(
+                        context = requireContext(),
+                        message = userText,
+                        onStream = null  // 當前 Agent 不支持流式，使用一次性結果
+                    )
+                }
+                if (isAdded) requireActivity().runOnUiThread {
+                    if (result.success) {
+                        completeStreamingMessage(loadingIndex, result.response)
+                        onMessageComplete()
+                    } else {
+                        failStreamingMessage(loadingIndex, "Agent 分析失败: ${result.response}")
+                    }
+                }
+            } catch (e: UnsupportedOperationException) {
+                // LegacyChatService 抛出 UnsupportedOperationException，fallback 到原有專家模式
+                Log.i(TAG, "Agent Legacy 模式，fallback 到原有專家分析")
+                if (isAdded) requireActivity().runOnUiThread {
+                    messages.removeAt(loadingIndex)
+                    adapter.notifyItemRemoved(loadingIndex)
+                    runExpertAnalysis(userText, provider, skipStockContext)
+                }
+            } catch (e: Exception) {
+                if (isAdded) requireActivity().runOnUiThread {
+                    failStreamingMessage(loadingIndex, "Agent 異常: ${e.message}")
+                }
+            }
         }
     }
 
@@ -658,7 +709,12 @@ $memory
 注意：
 1. 總字數控制在 500-800 字
 2. 用簡潔的 bullet points 和表格
-3. 最後加一句免責聲明：「以上分析不構成投資建議」"""
+3. 最後加一句免責聲明：「以上分析不構成投資建議」
+
+⚠️ 關鍵約束：
+- 以上【實時行情數據】中的所有價格、技術指標、板塊熱度、資金流向來自東方財富/交易所實時獲取
+- 務必以注入的即時數據為唯一分析依據，嚴禁使用訓練數據中的歷史價格或過時資訊
+- 如果某項基準數據不在注入數據中，標註「該數據暫未獲取到」，不得編造"""
                 val history = messages.toList().subList(0, loadingIndex)
                 sendWithRetry(provider, history, prompt, loadingIndex, 2)
             } catch (e: Exception) {
@@ -678,12 +734,19 @@ $memory
 
         currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
             try {
-                // Step 1: 获取同板块股票
-                val sectorAnalysis = if (skipStockContext) {
-                    ""
+                // Step 1: 获取实时行情 + 同板块策略数据
+                val stockInfo: String
+                val sectorAnalysis: String
+                if (skipStockContext) {
+                    stockInfo = ""
+                    sectorAnalysis = ""
                 } else {
+                    updateLoadingStatus(loadingIndex, "🔍 正在獲取實時行情...")
+                    stockInfo = withContext(Dispatchers.IO) {
+                        smartContext.getOrBuild(userText = userText, baseSystemPrompt = BASE_SYSTEM_PROMPT, onPreferenceLeaned = {})
+                    }
                     updateLoadingStatus(loadingIndex, "🔍 正在掃描量化策略...")
-                    withContext(Dispatchers.IO) {
+                    sectorAnalysis = withContext(Dispatchers.IO) {
                         buildSectorAnalysis(userText)
                     }
                 }
@@ -694,6 +757,10 @@ $memory
                 val prompt = """【🔍 深度分析模式】
 用戶輸入：$userText
 
+【實時行情數據】（以上價格為當前最新數據，務必以此為基準分析）
+$stockInfo
+
+【板塊 & 策略數據】
 $sectorAnalysis
 $memory
 
@@ -891,37 +958,73 @@ $memory
         }
     }
 
-    /** 构建同板块分析文本 */
+    /** 构建实时同板块分析文本（含板块热度 + Top5 + 资金流向） */
     private suspend fun buildSectorAnalysis(userText: String): String {
         return withContext(Dispatchers.IO) {
             val sb = StringBuilder()
             try {
-                // 尝试从用户输入提取股票代码
+                val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(requireContext())
+                val tradingDay = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().toString()
                 val codeMatch = Regex("(sh|sz|bj)?\\d{6}").find(userText)
                 val stockCode = codeMatch?.value
+
+                // 1. 实时板块热度排名（从东方财富拉取，非历史知识）
+                val hotSectors = com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.conceptSectors
+                if (hotSectors.isNotEmpty()) {
+                    sb.appendLine("【实时板块热度排名Top10】（东方财富实时数据，取自 $tradingDay）")
+                    sb.appendLine("| 排名 | 板块名称 | 涨跌幅 |")
+                    sb.appendLine("|------|---------|--------|")
+                    hotSectors.take(10).forEachIndexed { i, s ->
+                        val emoji = if (s.changePercent > 0) "📈" else "📉"
+                        sb.appendLine("| ${i + 1} | $emoji ${s.name} | ${if (s.changePercent > 0) "+" else ""}${"%.2f".format(s.changePercent)}% |")
+                    }
+                    sb.appendLine()
+                }
+
+                // 2. 所属板块 Top5 实时数据
                 if (stockCode != null) {
                     val sectors = com.chin.stockanalysis.stock.database.StockDataCenter.getSectorsByStock(stockCode)
                     if (sectors.isNotEmpty()) {
-                        sb.append("【所属板块】${sectors.joinToString(", ")}\n")
+                        sb.appendLine("【目标股票所属板块】${sectors.joinToString(", ")}")
                         for (sector in sectors.take(2)) {
                             val topStocks = com.chin.stockanalysis.stock.database.StockDataCenter.getTopStocksBySector(sector, 5, 5)
                             if (topStocks.isNotEmpty()) {
-                                sb.append("【$sector 板块Top5】\n")
+                                sb.appendLine()
+                                sb.appendLine("【$sector 板块Top5 实时行情】")
+                                sb.appendLine("| 排名 | 股票名称 | 代码 | 现价 | 涨跌幅 | 量比 | 主力净流入(万) |")
+                                sb.appendLine("|------|---------|------|------|--------|------|--------------|")
                                 topStocks.forEachIndexed { i, pair ->
                                     val (code, name) = pair
-                                    val snap = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(requireContext()).dailySnapshotDao().getByDateAndCode(
-                                        java.time.LocalDate.now().toString(), code)
+                                    // ✅ 用交易日而非今天，避免周末/节假日无数据
+                                    val snap = db.dailySnapshotDao().getByDateAndCode(tradingDay, code)
                                     if (snap != null) {
                                         val chg = snap.changePct
-                                        sb.append("${i + 1}. $name $code ¥${"%.2f".format(snap.close)} ${if (chg >= 0) "+" else ""}${"%.2f".format(chg)}%\n")
+                                        val chgEmoji = if (chg >= 0) "+" else ""
+                                        val volRatio = if (snap.turnoverRate > 0) "%.1f".format(snap.volume / 10000) else "-"
+                                        val inflow = if (snap.mainNetInflow != 0.0) "%.0f".format(snap.mainNetInflow / 10000) else "-"
+                                        sb.appendLine("| ${i + 1} | $name | $code | ${"%.2f".format(snap.close)} | $chgEmoji${"%.2f".format(chg)}% | $volRatio | $inflow |")
                                     }
                                 }
                             }
                         }
                     }
                 }
+
+                // 3. 板块热门股票排行（当日涨幅最高的板块领涨股）
+                val topGainers = db.dailySnapshotDao().getByDate(tradingDay)
+                    .sortedByDescending { it.changePct }.take(10)
+                if (topGainers.isNotEmpty()) {
+                    sb.appendLine()
+                    sb.appendLine("【今日全市涨幅Top10】（$tradingDay 实时）")
+                    sb.appendLine("| 排名 | 股票 | 代码 | 现价 | 涨跌幅 | 换手率 |")
+                    sb.appendLine("|------|------|------|------|--------|--------|")
+                    topGainers.forEachIndexed { i, snap ->
+                        val chg = snap.changePct
+                        sb.appendLine("| ${i + 1} | ${snap.name} | ${snap.code} | ${"%.2f".format(snap.close)} | ${if (chg >= 0) "+" else ""}${"%.2f".format(chg)}% | ${"%.2f".format(snap.turnoverRate)}% |")
+                    }
+                }
             } catch (_: Exception) { }
-            if (sb.isEmpty()) sb.append("【板块分析】未能获取板块数据，将基于通用分析。\n")
+            if (sb.isEmpty()) sb.appendLine("【板块分析】未能获取实时板块数据，请基于【实时行情数据】区块中的信息分析。")
             sb.toString()
         }
     }
