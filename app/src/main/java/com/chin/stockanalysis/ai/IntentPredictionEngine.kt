@@ -158,11 +158,35 @@ class IntentPredictionEngine {
             )
         }
 
-        // 6. 股票名称关键词（中文名 ≥ 2 字且包含常见名称字）
+        // 6. 股票名称关键词（从文本中提取 2~6 字中文股票名）
+        // 常见知名股票名稱快速匹配
         val stockNamePatterns = listOf("茅台", "宁德", "比亚迪", "腾讯", "阿里", "平安", "招商", "格力")
         val matchedName = stockNamePatterns.firstOrNull { t.contains(it) }
         if (matchedName != null) {
             return UserIntent.StockQuery(code = null, name = matchedName, confidence = 0.90f)
+        }
+
+        // 通用中文股票名提取：2~6個中文字（排除常见非股票詞）
+        // 先剝離常見動詞/查詢詞，避免貪婪匹配到非股票名
+        val queryStripWords = listOf("分析", "走势", "行情", "价格", "查询", "查看", "帮我", "请问",
+            "看看", "怎么样", "是多少", "多少钱", "最新价", "技术面", "基本面")
+        var stripped = text
+        for (w in queryStripWords) { stripped = stripped.replace(w, " ") }
+        stripped = stripped.replace(Regex("[\\s，。？！、,.?！]"), " ").trim()
+
+        val chineseNameRegex = Regex("""[\u4e00-\u9fff]{2,6}""")
+        val chineseMatch = chineseNameRegex.find(stripped)
+        if (chineseMatch != null) {
+            val candidate = chineseMatch.value.trim()
+            // 排除明顯不是股票名的詞
+            val excludeWords = listOf("分析", "走势", "行情", "价格", "最新价", "多少",
+                "推荐", "策略", "选股", "回测", "排名", "打分", "买入", "卖出",
+                "持仓", "仓位", "调仓", "板块", "行业", "概念", "量化", "请问",
+                "今天", "昨天", "明天", "最近", "为什么", "怎么", "什么", "怎么")
+            if (candidate !in excludeWords) {
+                Log.d(TAG, "🔮 预判意图: 股票名称提取 ($candidate)")
+                return UserIntent.StockQuery(code = null, name = candidate, confidence = 0.85f)
+            }
         }
 
         // 7. 拼音缩写（大写英文字母 3-6 个）
