@@ -57,6 +57,19 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         systemPrompt: String,
         onSuccess: (content: String) -> Unit,
         onComplete: (fullContent: String) -> Unit,
+        onError: (errorMsg: String) -> Unit
+    ) {
+        doSend(messages, systemPrompt, onSuccess, onComplete, onError, null, null, null, modelIndex = 0, retryCount = 0)
+    }
+
+    /**
+     * 帶 Function Calling 工具的擴展方法（非接口方法）
+     */
+    fun sendMessageStreamWithTools(
+        messages: List<Message>,
+        systemPrompt: String,
+        onSuccess: (content: String) -> Unit,
+        onComplete: (fullContent: String) -> Unit,
         onError: (errorMsg: String) -> Unit,
         tools: List<ChatTools.ToolDef>? = null,
         toolChoice: String? = null,

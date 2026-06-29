@@ -613,7 +613,7 @@ abstract class AgentBase(
                     // 直接使用 OpenAiCompatibleProvider 以取得 tools 參數和 onToolCalls 回呼支援
                     val openAiProvider = slot.provider as? OpenAiCompatibleProvider
                     if (openAiProvider != null) {
-                        openAiProvider.sendMessageStream(
+                        openAiProvider.sendMessageStreamWithTools(
                             messages = emptyList(), // 我們自行管理 messageHistory，透過 systemPrompt 傳遞
                             systemPrompt = buildSystemPrompt() + "\n\n" + buildMessageHistoryText(messageHistory),
                             onSuccess = { chunk -> contentAcc.append(chunk) },

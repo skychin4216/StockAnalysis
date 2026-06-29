@@ -71,6 +71,17 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             HotSectorNewsUpdater(applicationContext).updateIfNeeded()
         }
+        // 構建股票名稱 Trie 詞典（供意圖解析使用）
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                if (!com.chin.stockanalysis.stock.data.StockNameTrie.isBuilt) {
+                    com.chin.stockanalysis.stock.data.StockNameTrie.build(applicationContext)
+                    android.util.Log.i("MainActivity", "StockNameTrie 構建完成")
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("MainActivity", "StockNameTrie 構建失敗: ${e.message}")
+            }
+        }
     }
 
     private fun initBackupSystem() {

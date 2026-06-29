@@ -17,6 +17,8 @@ import kotlinx.coroutines.withContext
 object IndexAnalysisAgent {
 
     private const val TAG = "IndexAnalysisAgent"
+    /** 推理模型較慢，給 60s */
+    private const val LLM_TIMEOUT_MS = 60_000L
 
     data class IndexAnalysisResult(
         val indexName: String,
@@ -43,21 +45,31 @@ object IndexAnalysisAgent {
         // Step 2: 構建 prompt
         val prompt = buildIndexPrompt(kline)
 
-        // Step 3: 調用 LLM
+        // Step 3: 調用 LLM（60s 超時，推理模型較慢）
         val response = withContext(Dispatchers.IO) {
-            val provider = AiProviderPool.acquire()
+            val slot = AiProviderPool.acquire(context, callerTag = "Agent.index_analysis", timeoutMs = LLM_TIMEOUT_MS) ?: return@withContext ""
             try {
-                val sb = StringBuilder()
-                provider.sendMessageStream(
-                    messages = listOf(mapOf("role" to "user", "content" to prompt)),
-                    systemPrompt = buildSystemPrompt(),
-                    onSuccess = { chunk -> sb.append(chunk) },
-                    onComplete = { /* no-op */ },
-                    onError = { err -> Log.e(TAG, "LLM error: $err") }
-                )
-                sb.toString()
+                kotlinx.coroutines.withTimeout(LLM_TIMEOUT_MS) {
+                    kotlinx.coroutines.suspendCancellableCoroutine<String> { cont ->
+                        var resumed = false
+                        slot.provider.sendMessageStream(
+                            messages = listOf(com.chin.stockanalysis.ui.Message(content = prompt, isUser = true)),
+                            systemPrompt = buildSystemPrompt(),
+                            onSuccess = {},
+                            onComplete = { full ->
+                                if (!resumed) { resumed = true; cont.resume(full, null) }
+                            },
+                            onError = { err ->
+                                if (!resumed) { resumed = true; cont.resumeWith(Result.failure(Exception(err))) }
+                            }
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "LLM 分析失敗: ${e.message}")
+                ""
             } finally {
-                AiProviderPool.release(provider)
+                AiProviderPool.releaseNonBlocking(slot)
             }
         }
 

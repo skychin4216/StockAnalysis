@@ -256,6 +256,23 @@ object StockNameTrie {
     }
 
     /**
+     * 拼音專用搜索
+     *
+     * 當 StockEntityExtractor 判斷輸入可能是拼音時調用，
+     * 只執行拼音縮寫和拼音全拼匹配，跳過中文精確/前綴/子串匹配。
+     *
+     * @param input 用戶輸入（已轉為小寫，如 "zycx"）
+     * @return 匹配的股票列表
+     */
+    fun searchByPinyin(input: String): List<TrieResult> {
+        if (!isBuilt || input.isBlank()) return emptyList()
+        val resultMap = linkedMapOf<String, TrieResult>()
+        searchPinyinAbbr(input, resultMap)
+        searchPinyinFull(input, resultMap)
+        return resultMap.values.sortedByDescending { it.confidence }
+    }
+
+    /**
      * 精確匹配：遍歷 nameTrie 的所有終端節點，
      * 檢查是否有股票名與 input 完全相同。
      */

@@ -204,7 +204,7 @@ class ChatAdapter(
 
     // ── 實體確認卡片（歧義消解） ──
     inner class EntityConfirmViewHolder(private val card: EntityConfirmCard)
-        : RecyclerView.ViewHolder(card.root) {
+        : RecyclerView.ViewHolder(card) {
 
         fun bind(message: Message) {
             val entities = message.ambiguousEntities ?: return

@@ -58,36 +58,78 @@ object StockEntityExtractor {
         val confidence: Float
     )
 
-    companion object {
-        private const val TAG = "EntityExtractor"
+    private const val TAG = "EntityExtractor"
 
-        /** 需要從輸入中剝離的查詢前後綴詞（按長度降序，長詞優先替換） */
-        private val STRIP_WORDS = listOf(
-            "分析一下", "分析分析", "走勢如何", "怎麼樣", "是多少",
-            "還能買嗎", "能不能買", "可以買嗎", "能買嗎",
-            "可以追漲", "還能追漲", "的走勢", "的行情",
-            "的最新股價", "最新股價", "的股價",
-            "價格是多少", "多少錢", "什麼價格", "什麼價",
-            "幫我分析", "幫我看看", "幫我查",
-            "分析", "查詢", "查看", "走勢", "行情", "價格", "股價",
-            "追漲", "技術面", "基本面", "今天", "最新", "最近"
-        )
+    /** 需要從輸入中剝離的查詢前後綴詞（按長度降序，長詞優先替換） */
+    private val STRIP_WORDS = listOf(
+        "分析一下", "分析分析", "走勢如何", "怎麼樣", "是多少",
+        "還能買嗎", "能不能買", "可以買嗎", "能買嗎",
+        "可以追漲", "還能追漲", "的走勢", "的行情",
+        "的最新股價", "最新股價", "的股價",
+        "價格是多少", "多少錢", "什麼價格", "什麼價",
+        "幫我分析", "幫我看看", "幫我查",
+        "分析", "查詢", "查看", "走勢", "行情", "價格", "股價",
+        "追漲", "技術面", "基本面", "今天", "最新", "最近"
+    )
 
-        /** 非股票詞黑名單——匹配到這些詞時直接跳過 */
-        private val BLACKLIST = setOf(
-            "今天", "今日", "最新", "現在", "目前", "當前",
-            "股票", "股市", "大盤", "行情", "指數", "推薦", "分析",
-            "怎麼", "如何", "什麼", "為什麼", "哪個", "哪只",
-            "買入", "賣出", "買賣", "投資", "基金", "期貨", "外匯",
-            "上漲", "下跌", "漲停", "跌停", "漲幅", "跌幅",
-            "走勢", "價格", "股價", "查詢", "查看",
-            "量化", "選股", "策略", "回測", "排名", "打分",
-            "板塊", "行業", "概念", "產業鏈"
-        )
+    /** 非股票詞黑名單——匹配到這些詞時直接跳過 */
+    private val BLACKLIST = setOf(
+        "今天", "今日", "最新", "現在", "目前", "當前",
+        "股票", "股市", "大盤", "行情", "指數", "推薦", "分析",
+        "怎麼", "如何", "什麼", "為什麼", "哪個", "哪只",
+        "買入", "賣出", "買賣", "投資", "基金", "期貨", "外匯",
+        "上漲", "下跌", "漲停", "跌停", "漲幅", "跌幅",
+        "走勢", "價格", "股價", "查詢", "查看",
+        "量化", "選股", "策略", "回測", "排名", "打分",
+        "板塊", "行業", "概念", "產業鏈"
+    )
 
-        /** 多股票連接詞，用於拆分用戶輸入中的多個股票名稱 */
-        private val CONNECTORS = Regex("和|跟|與|還有|以及|、|,|，")
-    }
+    /** 多股票連接詞，用於拆分用戶輸入中的多個股票名稱 */
+    private val CONNECTORS = Regex("和|跟|與|還有|以及|、|,|，")
+
+    /**
+     * 常用股票名稱→代碼映射（Trie 未構建時的降級方案）
+     *
+     * 覆蓋 A 股市場最常見的龍頭股，確保即使 Trie 還沒構建也能基本識別。
+     */
+    private val FALLBACK_STOCK_MAP = mapOf(
+        "兆易創新" to "603986", "兆易创新" to "603986",
+        "貴州茅台" to "600519", "茅台" to "600519",
+        "寧德時代" to "300750", "宁德" to "300750",
+        "比亞迪" to "002594", "比亚迪" to "002594",
+        "騰訊控股" to "00700", "腾讯" to "00700",
+        "阿里巴巴" to "09988", "阿里" to "09988",
+        "中國平安" to "601318", "平安" to "601318",
+        "招商銀行" to "600036", "招行" to "600036",
+        "格力電器" to "000651", "格力" to "000651",
+        "立訊精密" to "002475", "立讯" to "002475",
+        "韋爾股份" to "603501", "韦尔" to "603501",
+        "東山精密" to "002384", "东山" to "002384",
+        "中際旭創" to "300308", "中际" to "300308",
+        "北方華創" to "002371", "北方" to "002371",
+        "中芯國際" to "00981", "中芯" to "00981",
+        "海康威視" to "002415", "海康" to "002415",
+        "美的集團" to "000333", "美的" to "000333",
+        "五糧液" to "000858",
+        "恒瑞醫藥" to "600276", "恒瑞" to "600276",
+        "藥明康德" to "603259", "药明" to "603259",
+        "長江電力" to "600900",
+        "比亞迪股份" to "01211",
+        "快手" to "01024",
+        "美團" to "03690",
+        "京東" to "09618",
+        "拼多多" to "PDD",
+        "小米集團" to "01810", "小米" to "01810",
+        "蔚來" to "NIO", "理想" to "LI", "小鵬" to "XPEV",
+        "台積電" to "TSM",
+        "英偉達" to "NVDA",
+        "蘋果" to "AAPL", "苹果" to "AAPL",
+        "微軟" to "MSFT",
+        "谷歌" to "GOOGL",
+        "亞馬遜" to "AMZN", "亚马逊" to "AMZN",
+        "特斯拉" to "TSLA",
+        "波克夏" to "BRK"
+    )
 
     /**
      * 從用戶輸入中提取所有股票實體
@@ -266,22 +308,25 @@ object StockEntityExtractor {
     }
 
     /**
-     * 同步版本提取（不需要 Context，Trie 已構建時純內存操作）
+     * 同步版本提取（不需要 Context）
      *
-     * 用於 IntentPredictionEngine 等同步場景，Trie 未構建時返回空列表。
+     * 用於 IntentPredictionEngine 等同步場景。
+     * Trie 已構建時走 Trie 匹配；未構建時走 FALLBACK_STOCK_MAP 降級。
      *
      * @param input 用戶原始輸入
-     * @return 提取的實體列表，Trie 未構建時返回空列表
+     * @return 提取的實體列表
      */
     fun extractSync(input: String): List<ExtractedEntity> {
-        if (!StockNameTrie.isBuilt) return emptyList()
-        return doExtract(input)
+        return doExtract(input, useFallback = !StockNameTrie.isBuilt)
     }
 
     /**
-     * 核心提取邏輯（不含 Trie 構建，可同步調用）
+     * 核心提取邏輯（可同步調用）
+     *
+     * @param input 用戶原始輸入
+     * @param useFallback 是否使用 FALLBACK_STOCK_MAP 降級（Trie 未構建時）
      */
-    private fun doExtract(input: String): List<ExtractedEntity> {
+    private fun doExtract(input: String, useFallback: Boolean = false): List<ExtractedEntity> {
         var stripped = input
         for (w in STRIP_WORDS) { stripped = stripped.replace(w, " ") }
         stripped = stripped.replace(Regex("[\\s，。？！、,.?！\\d]"), " ").trim()
@@ -296,18 +341,43 @@ object StockEntityExtractor {
             val trimmed = clause.trim()
             if (trimmed.length < 2 || trimmed in BLACKLIST) continue
 
-            val trieResults = trieMatch(trimmed)
-            if (trieResults.isNotEmpty()) {
-                allEntities.addAll(trieResults)
-                continue
-            }
-
-            val pinyinResults = pinyinMatch(trimmed)
-            if (pinyinResults.isNotEmpty()) {
-                allEntities.addAll(pinyinResults)
+            if (!useFallback) {
+                // L2: Trie 詞典匹配
+                val trieResults = trieMatch(trimmed)
+                if (trieResults.isNotEmpty()) {
+                    allEntities.addAll(trieResults)
+                    continue
+                }
+                val pinyinResults = pinyinMatch(trimmed)
+                if (pinyinResults.isNotEmpty()) {
+                    allEntities.addAll(pinyinResults)
+                }
+            } else {
+                // L2 降級：FALLBACK_STOCK_MAP 直接查找
+                val fallback = fallbackMatch(trimmed)
+                if (fallback != null) {
+                    allEntities.add(fallback)
+                }
             }
         }
 
         return allEntities.distinctBy { it.code }.sortedByDescending { it.confidence }
+    }
+
+    /**
+     * 降級匹配：使用硬編碼的常用股票映射表
+     */
+    private fun fallbackMatch(text: String): ExtractedEntity? {
+        // 1. 精確匹配
+        FALLBACK_STOCK_MAP[text]?.let { code ->
+            return ExtractedEntity(text, code, text, MatchType.EXACT_NAME, 0.90f)
+        }
+        // 2. 遍歷映射表，檢查是否有 key 包含在 text 中（子串匹配）
+        for ((name, code) in FALLBACK_STOCK_MAP) {
+            if (text.contains(name)) {
+                return ExtractedEntity(text, code, name, MatchType.SUBSTRING_NAME, 0.85f)
+            }
+        }
+        return null
     }
 }

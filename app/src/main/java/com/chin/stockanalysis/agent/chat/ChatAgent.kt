@@ -80,6 +80,24 @@ class ChatAgent(context: Context) : AgentBase(
         val intent = detectIntent(userMessage)
 
         return when (intent) {
+            UserIntent.INDEX_ANALYSIS -> {
+                // 提取指數名稱/代碼
+                val indexInfo = extractIndexInfo(userMessage)
+                if (indexInfo != null) {
+                    val result = IndexAnalysisAgent.analyze(context, indexInfo.first, indexInfo.second)
+                    if (result != null) {
+                        ChatAgentResult(
+                            success = true,
+                            response = "📊 ${result.indexName} 技術面分析\n\n${result.summary}\n\n${result.technicalView}\n\n🔮 短線預判：${result.prediction}\n\n⚠️ 風險提示：\n${result.risks.joinToString("\n") { "• $it" }}",
+                            intent = intent.name
+                        )
+                    } else {
+                        ChatAgentResult(success = false, response = "暫無指數歷史數據，請先確保已導入歷史數據。", intent = intent.name)
+                    }
+                } else {
+                    ChatAgentResult(success = false, response = "請提供具體的指數名稱（如上證指數、深證成指）。", intent = intent.name)
+                }
+            }
             UserIntent.STOCK_PICKING -> {
                 // 選股：使用 Plan-and-Execute
                 val result = pickingAgent.pickStocks()
@@ -154,6 +172,11 @@ class ChatAgent(context: Context) : AgentBase(
     private fun detectIntent(message: String): UserIntent {
         val lower = message.lowercase()
 
+        // 指數查詢意圖識別
+        val indexKeywords = listOf("上證", "深證", "創業板", "科創板", "滬深300", "上證50", "大盤", "指數")
+        val hasIndex = indexKeywords.any { lower.contains(it) }
+        if (hasIndex) return UserIntent.INDEX_ANALYSIS
+
         // 優先用 StockEntityExtractor 做本地詞典匹配
         try {
             val entities = com.chin.stockanalysis.ai.StockEntityExtractor.extractSync(message)
@@ -187,6 +210,21 @@ class ChatAgent(context: Context) : AgentBase(
         // 降級：正則提取代碼
         val match = Regex("(sh|sz|bj)?(\\d{6})").find(message)
         return match?.groupValues?.get(2)
+    }
+
+    private fun extractIndexInfo(message: String): Pair<String, String>? {
+        val indexMap = mapOf(
+            "上證指數" to "sh000001", "上證" to "sh000001", "大盤" to "sh000001",
+            "深證成指" to "sz399001", "深證" to "sz399001",
+            "創業板指" to "sz399006", "創業板" to "sz399006",
+            "科創50" to "sh000688", "科創板" to "sh000688",
+            "滬深300" to "sh000300", "上證50" to "sh000016",
+            "中證500" to "sh000905", "中證1000" to "sh000852"
+        )
+        for ((name, code) in indexMap) {
+            if (message.contains(name)) return Pair(code, name)
+        }
+        return null
     }
 
     private fun formatPickingResponse(result: com.chin.stockanalysis.agent.stock.StockPickingResult): String {
@@ -269,6 +307,7 @@ data class ChatAgentResult(
 )
 
 enum class UserIntent {
+    INDEX_ANALYSIS,
     STOCK_PICKING,
     STOCK_ANALYSIS,
     MARKET_BRIEF,
