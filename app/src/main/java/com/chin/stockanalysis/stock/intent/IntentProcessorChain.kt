@@ -1,5 +1,6 @@
 package com.chin.stockanalysis.stock.intent
 
+import android.content.Context
 import android.util.Log
 import com.chin.stockanalysis.stock.analysis.AiStockAnalyzer
 import com.chin.stockanalysis.stock.intent.handlers.*
@@ -11,15 +12,18 @@ import com.chin.stockanalysis.stock.intent.handlers.*
  * 1. StockCodeHandler     - 优先：纯数字代码（如"600519"）
  * 2. IndexHandler         - 指数查询（如"上证指数"）
  * 3. StockNameHandler     - 股票名称（硬编码常见股票，如"茅台"）
- * 4. FuzzyStockNameHandler- 动态搜索（东方财富 API，覆盖任意股票名称如"北方稀土"）
- * 5. GeneralStockHandler  - 通用股市查询
- * 6. AiIntentHandler      - AI 兜底解析（需要 LLM，可选）
+ * 4. TrieStockNameHandler - 本地 Trie 词库匹配（5000+ A 股，<10ms）
+ * 5. FuzzyStockNameHandler- 动态搜索（东方财富 API，覆盖任意股票名称如"北方稀土"）
+ * 6. GeneralStockHandler  - 通用股市查询
+ * 7. AiIntentHandler      - AI 兜底解析（需要 LLM，可选）
  *
  * 如果 AI 分析器可用且前面 Handler 置信度 < 0.7，自动使用 AI 兜底。
  */
 class IntentProcessorChain(
     /** AI 分析器（可选，用于复杂意图的 AI 兜底解析） */
-    private val aiAnalyzer: AiStockAnalyzer? = null
+    private val aiAnalyzer: AiStockAnalyzer? = null,
+    /** Android Context（Trie 词库需要用于初始化） */
+    private val context: Context? = null
 ) {
     private val tag = "IntentProcessorChain"
     /** 置信度阈值：低于此值则尝试 AI 兜底 */
@@ -29,6 +33,9 @@ class IntentProcessorChain(
         add(StockCodeHandler())          // 优先：纯数字代码
         add(IndexHandler())              // 指数查询
         add(StockNameHandler())          // 股票名称（硬编码常见股票）
+        if (context != null) {
+            add(TrieStockNameHandler(context)) // 本地 Trie 词库（5000+ A 股）
+        }
         add(FuzzyStockNameHandler())     // 模糊搜索（东方财富 API，任意股票名如"北方稀土"）
         add(GeneralStockHandler())       // 通用股市查询（低置信度）
         // AI 兜底（如果可用）

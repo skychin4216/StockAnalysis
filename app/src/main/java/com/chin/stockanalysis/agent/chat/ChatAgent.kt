@@ -102,11 +102,31 @@ class ChatAgent(context: Context) : AgentBase(
                         data = mapOf("analysis" to result)
                     )
                 } else {
-                    ChatAgentResult(
-                        success = false,
-                        response = "請提供具體的股票代碼（如 600519）或名稱，我來為您分析。",
-                        intent = intent.name
-                    )
+                    // 檢查是否有歧義匹配
+                    try {
+                        val entities = com.chin.stockanalysis.ai.StockEntityExtractor.extractSync(userMessage)
+                        if (entities.size > 1) {
+                            // 歧義：多個匹配，需要用戶確認
+                            ChatAgentResult(
+                                success = false,
+                                response = "找到 ${entities.size} 個匹配，請選擇您要分析的股票。",
+                                intent = intent.name,
+                                ambiguousEntities = entities
+                            )
+                        } else {
+                            ChatAgentResult(
+                                success = false,
+                                response = "請提供具體的股票代碼（如 600519）或名稱，我來為您分析。",
+                                intent = intent.name
+                            )
+                        }
+                    } catch (_: Exception) {
+                        ChatAgentResult(
+                            success = false,
+                            response = "請提供具體的股票代碼（如 600519）或名稱，我來為您分析。",
+                            intent = intent.name
+                        )
+                    }
                 }
             }
             UserIntent.MARKET_BRIEF -> {
@@ -133,6 +153,21 @@ class ChatAgent(context: Context) : AgentBase(
 
     private fun detectIntent(message: String): UserIntent {
         val lower = message.lowercase()
+
+        // 優先用 StockEntityExtractor 做本地詞典匹配
+        try {
+            val entities = com.chin.stockanalysis.ai.StockEntityExtractor.extractSync(message)
+            if (entities.isNotEmpty()) {
+                return when {
+                    lower.contains("選股") || lower.contains("推薦") || lower.contains("有什麼好股票") || lower.contains("買什麼")
+                        -> UserIntent.STOCK_PICKING
+                    lower.contains("大盤") || lower.contains("市場") || lower.contains("行情")
+                        -> UserIntent.MARKET_BRIEF
+                    else -> UserIntent.STOCK_ANALYSIS
+                }
+            }
+        } catch (_: Exception) { /* Trie 未構建，繼續 */ }
+
         return when {
             lower.contains("選股") || lower.contains("推薦") || lower.contains("有什麼好股票") || lower.contains("買什麼") -> UserIntent.STOCK_PICKING
             lower.contains("分析") || lower.contains("怎麼樣") || lower.contains("看一下") || lower.contains("點評") -> UserIntent.STOCK_ANALYSIS
@@ -143,6 +178,13 @@ class ChatAgent(context: Context) : AgentBase(
     }
 
     private fun extractStockCode(message: String): String? {
+        // 優先使用 StockEntityExtractor（支援名稱→代碼）
+        try {
+            val entities = com.chin.stockanalysis.ai.StockEntityExtractor.extractSync(message)
+            if (entities.isNotEmpty()) return entities.first().code
+        } catch (_: Exception) { /* Trie 未構建，繼續 */ }
+
+        // 降級：正則提取代碼
         val match = Regex("(sh|sz|bj)?(\\d{6})").find(message)
         return match?.groupValues?.get(2)
     }
@@ -222,7 +264,8 @@ data class ChatAgentResult(
     val response: String,
     val intent: String = "GENERAL_CHAT",
     val data: Map<String, Any> = emptyMap(),
-    val steps: Int = 0
+    val steps: Int = 0,
+    val ambiguousEntities: List<com.chin.stockanalysis.ai.StockEntityExtractor.ExtractedEntity>? = null
 )
 
 enum class UserIntent {

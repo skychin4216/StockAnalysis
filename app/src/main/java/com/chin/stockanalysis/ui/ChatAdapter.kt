@@ -33,6 +33,7 @@ class ChatAdapter(
         private const val VIEW_TYPE_STREAMING = 3
         private const val VIEW_TYPE_ERROR = 4
         private const val VIEW_TYPE_CHART = 5
+        private const val VIEW_TYPE_ENTITY_CONFIRM = 6
     }
 
     var onCopyMessage: ((String) -> Unit)? = null
@@ -201,6 +202,26 @@ class ChatAdapter(
         }
     }
 
+    // ── 實體確認卡片（歧義消解） ──
+    inner class EntityConfirmViewHolder(private val card: EntityConfirmCard)
+        : RecyclerView.ViewHolder(card.root) {
+
+        fun bind(message: Message) {
+            val entities = message.ambiguousEntities ?: return
+            card.setTitle("找到 ${entities.size} 個匹配")
+            card.setSubtitle("請選擇您要分析的股票")
+            card.setCandidates(entities.map { e ->
+                EntityConfirmCard.Candidate(
+                    displayName = e.name,
+                    code = e.code,
+                    description = e.matchType.name
+                )
+            })
+            card.onConfirm = message.onEntityConfirm
+            card.onCancel = message.onEntityCancel
+        }
+    }
+
     // ================================================================
     //  Adapter 實現
     // ================================================================
@@ -211,6 +232,7 @@ class ChatAdapter(
             msg.isError -> VIEW_TYPE_ERROR
             msg.isStreaming -> VIEW_TYPE_STREAMING
             msg.isUser -> VIEW_TYPE_USER
+            msg.ambiguousEntities != null && msg.ambiguousEntities.isNotEmpty() -> VIEW_TYPE_ENTITY_CONFIRM
             msg.content.startsWith("__CHART__") -> VIEW_TYPE_CHART
             else -> VIEW_TYPE_AI
         }
@@ -222,6 +244,14 @@ class ChatAdapter(
             VIEW_TYPE_CHART -> {
                 val binding = ItemMessageChartBinding.inflate(inflater, parent, false)
                 ChartViewHolder(binding)
+            }
+            VIEW_TYPE_ENTITY_CONFIRM -> {
+                val card = EntityConfirmCard(parent.context)
+                card.layoutParams = ViewGroup.MarginLayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+                EntityConfirmViewHolder(card)
             }
             else -> {
                 val binding = ItemMessageBinding.inflate(inflater, parent, false)
@@ -243,6 +273,7 @@ class ChatAdapter(
             is StreamingViewHolder -> holder.bind(messages[position])
             is ErrorViewHolder -> holder.bind(messages[position])
             is ChartViewHolder -> holder.bind(messages[position])
+            is EntityConfirmViewHolder -> holder.bind(messages[position])
         }
     }
 

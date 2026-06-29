@@ -47,6 +47,7 @@ import com.chin.stockanalysis.stock.StockQueryEngine
 import com.chin.stockanalysis.config.FeatureFlagManager
 import com.chin.stockanalysis.config.AgentRoute
 import com.chin.stockanalysis.agent.router.ChatRouter
+import com.chin.stockanalysis.ai.StockEntityExtractor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -629,7 +630,27 @@ class ChatTabFragment : Fragment() {
                     )
                 }
                 if (isAdded) requireActivity().runOnUiThread {
-                    if (result.success) {
+                    // 歧義實體：需要用戶確認
+                    if (result.ambiguousEntities != null && result.ambiguousEntities.isNotEmpty()) {
+                        // 移除 loading 消息
+                        messages.removeAt(loadingIndex)
+                        adapter.notifyItemRemoved(loadingIndex)
+                        // 創建 EntityConfirmCard 消息
+                        val entityMsg = Message(
+                            content = result.response,
+                            isUser = false,
+                            ambiguousEntities = result.ambiguousEntities,
+                            onEntityConfirm = { selected ->
+                                // 用戶選擇後，將選中的股票代碼作為新消息發送
+                                sendMessage("分析 ${selected.code}")
+                            },
+                            onEntityCancel = {
+                                // 用戶取消
+                                addBotMessage("已取消")
+                            }
+                        )
+                        addMessage(entityMsg)
+                    } else if (result.success) {
                         completeStreamingMessage(loadingIndex, result.response)
                         onMessageComplete()
                     } else {

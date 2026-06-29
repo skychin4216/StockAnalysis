@@ -3,6 +3,8 @@ package com.chin.stockanalysis.agent.framework
 import android.content.Context
 import android.util.Log
 import com.chin.stockanalysis.ai.AiProviderPool
+import com.chin.stockanalysis.ai.ChatTools
+import com.chin.stockanalysis.OpenAiCompatibleProvider
 import kotlinx.coroutines.*
 import org.json.JSONObject
 
@@ -55,6 +57,10 @@ abstract class AgentBase(
      *
      * 適用場景：需要逐步探索、試錯、收集信息的任務
      * 例如：選股（先觀察市場 → 思考 → 選策略 → 觀察結果 → ...）
+     *
+     * 支援兩種模式：
+     * - 原生 Function Calling：當 Provider 支援時，使用 tool_calls 機制
+     * - JSON Prompt 約定模式：向後兼容，使用 `ACTION: TOOL_CALL` JSON 格式
      */
     suspend fun react(
         input: String,
@@ -70,39 +76,49 @@ abstract class AgentBase(
         var finalAnswer: String? = null
 
         try {
-            while (stepCount < maxSteps && finalAnswer == null) {
-                stepCount++
-                log("  Step $stepCount/$maxSteps")
+            // 判斷是否使用原生 Function Calling
+            val supportsTools = tools.isNotEmpty() && checkProviderSupportsTools()
 
-                // 1. Thought: LLM 思考下一步該做什麼
-                val thoughtPrompt = buildReactPrompt(
-                    input = input,
-                    observations = observations,
-                    step = stepCount,
-                    maxSteps = maxSteps,
-                    ctx = ctx
-                )
-                val thoughtRaw = callLLM(thoughtPrompt)
-                log("  💭 Thought: ${thoughtRaw.take(120)}")
+            if (supportsTools) {
+                log("  📡 使用原生 Function Calling 模式")
+                finalAnswer = reactWithFunctionCalling(input, ctx, observations, maxSteps)
+                stepCount = observations.size
+            } else {
+                log("  📝 使用 JSON Prompt 約定模式")
+                while (stepCount < maxSteps && finalAnswer == null) {
+                    stepCount++
+                    log("  Step $stepCount/$maxSteps")
 
-                // 2. 解析 Thought，提取 Action
-                val action = parseAction(thoughtRaw)
+                    // 1. Thought: LLM 思考下一步該做什麼
+                    val thoughtPrompt = buildReactPrompt(
+                        input = input,
+                        observations = observations,
+                        step = stepCount,
+                        maxSteps = maxSteps,
+                        ctx = ctx
+                    )
+                    val thoughtRaw = callLLM(thoughtPrompt)
+                    log("  💭 Thought: ${thoughtRaw.take(120)}")
 
-                when (action.type) {
-                    ActionType.TOOL_CALL -> {
-                        // 執行工具
-                        val toolResult = executeTool(action.toolName!!, action.params)
-                        observations.add("[Step $stepCount] 調用 ${action.toolName}: $toolResult")
-                        log("  🔧 Tool(${action.toolName}): ${toolResult.take(100)}")
-                    }
-                    ActionType.ANSWER -> {
-                        // 給出最終答案
-                        finalAnswer = action.content
-                        log("  ✅ Final Answer: ${finalAnswer.take(100)}")
-                    }
-                    ActionType.THINK -> {
-                        // 純思考，不執行工具
-                        observations.add("[Step $stepCount] 思考: ${action.content}")
+                    // 2. 解析 Thought，提取 Action
+                    val action = parseAction(thoughtRaw)
+
+                    when (action.type) {
+                        ActionType.TOOL_CALL -> {
+                            // 執行工具
+                            val toolResult = executeTool(action.toolName!!, action.params)
+                            observations.add("[Step $stepCount] 調用 ${action.toolName}: $toolResult")
+                            log("  🔧 Tool(${action.toolName}): ${toolResult.take(100)}")
+                        }
+                        ActionType.ANSWER -> {
+                            // 給出最終答案
+                            finalAnswer = action.content
+                            log("  ✅ Final Answer: ${finalAnswer.take(100)}")
+                        }
+                        ActionType.THINK -> {
+                            // 純思考，不執行工具
+                            observations.add("[Step $stepCount] 思考: ${action.content}")
+                        }
                     }
                 }
             }
@@ -136,6 +152,94 @@ abstract class AgentBase(
             onAfterExecute(result)
             return result
         }
+    }
+
+    /**
+     * ## 原生 Function Calling 模式的 ReAct 循環
+     *
+     * 使用 OpenAI 兼容的 tool_calls 機制，LLM 透過原生
+     * function calling 請求工具調用，Agent 執行後將結果
+     * 以 tool message 回傳，重複直到 LLM 不再請求工具或達到 maxSteps。
+     */
+    private suspend fun reactWithFunctionCalling(
+        input: String,
+        ctx: AgentContext,
+        observations: MutableList<String>,
+        maxSteps: Int
+    ): String {
+        var stepCount = 0
+
+        // 訊息歷史：用於多輪 Function Calling 對話
+        val messageHistory = mutableListOf<MutableMap<String, Any>>()
+        // 初始 user message
+        val userMsg = buildString {
+            appendLine("你是一個 $name Agent。請使用可用工具解決以下問題。")
+            appendLine()
+            appendLine("## 任務")
+            appendLine(input)
+            appendLine()
+            appendLine("## 上下文數據")
+            ctx.data.forEach { (k, v) ->
+                appendLine("- $k: $v")
+            }
+            appendLine()
+            appendLine("請根據需要調用工具收集信息，然後給出最終答案。")
+        }
+        messageHistory.add(mutableMapOf("role" to "user", "content" to userMsg))
+
+        var finalAnswer: String? = null
+
+        while (stepCount < maxSteps && finalAnswer == null) {
+            stepCount++
+            log("  FC Step $stepCount/$maxSteps")
+
+            // 使用帶 tools 的 LLM 調用，獲取 content 和 tool_calls
+            val (content, toolCalls) = callLLMWithTools(messageHistory)
+
+            if (toolCalls.isNotEmpty()) {
+                log("  🔧 LLM 請求 ${toolCalls.size} 個工具調用")
+
+                // 將 assistant message（含 tool_calls）加入歷史
+                val assistantMsg = mutableMapOf<String, Any>(
+                    "role" to "assistant",
+                    "content" to (content.ifBlank { "" })
+                )
+                val tcArray = toolCalls.map { tc ->
+                    mapOf(
+                        "id" to tc.id,
+                        "type" to tc.type,
+                        "function" to mapOf(
+                            "name" to tc.function.name,
+                            "arguments" to tc.function.arguments
+                        )
+                    )
+                }
+                assistantMsg["tool_calls"] = tcArray
+                messageHistory.add(assistantMsg)
+
+                // 處理每個 tool_call
+                for (tc in toolCalls) {
+                    val result = handleToolCall(tc)
+                    observations.add("[Step $stepCount] 調用 ${tc.function.name}: $result")
+                    log("  🔧 Tool(${tc.function.name}): ${result.take(100)}")
+
+                    // 將 tool result 作為 tool message 回傳
+                    messageHistory.add(mutableMapOf(
+                        "role" to "tool",
+                        "tool_call_id" to tc.id,
+                        "content" to result
+                    ))
+                }
+            } else if (content.isNotEmpty()) {
+                // LLM 沒有請求工具調用，返回最終答案
+                finalAnswer = content
+                log("  ✅ Final Answer: ${finalAnswer.take(100)}")
+            } else {
+                observations.add("[Step $stepCount] LLM 回覆為空")
+            }
+        }
+
+        return finalAnswer ?: "經過 $stepCount 步推理，未能得出結論。觀察記錄:\n${observations.joinToString("\n")}"
     }
 
     /**
@@ -480,6 +584,194 @@ abstract class AgentBase(
         appendLine()
         appendLine("觀察記錄:")
         observations.forEach { appendLine("- $it") }
+    }
+
+    /**
+     * 帶原生 Function Calling 的 LLM 調用
+     *
+     * 發送訊息歷史 + tools 定義給 Provider，回傳 (content, toolCalls)。
+     * 直接使用 OpenAiCompatibleProvider 以支援 tool_calls 回傳。
+     *
+     * @param messageHistory 訊息歷史（mutable，調用後會被修改以加入 assistant 回覆）
+     * @return Pair<content, toolCalls>
+     */
+    protected suspend fun callLLMWithTools(
+        messageHistory: List<Map<String, Any>>
+    ): Pair<String, List<ChatTools.ToolCall>> {
+        val slot = AiProviderPool.acquire(
+            context = context,
+            callerTag = "Agent.$id.FC",
+            timeoutMs = LLM_TIMEOUT_MS
+        ) ?: throw IllegalStateException("無可用 AI Provider")
+
+        return try {
+            kotlinx.coroutines.withTimeout(LLM_TIMEOUT_MS) {
+                kotlinx.coroutines.suspendCancellableCoroutine<Pair<String, List<ChatTools.ToolCall>>> { cont ->
+                    var resumed = false
+                    val contentAcc = StringBuilder()
+
+                    // 直接使用 OpenAiCompatibleProvider 以取得 tools 參數和 onToolCalls 回呼支援
+                    val openAiProvider = slot.provider as? OpenAiCompatibleProvider
+                    if (openAiProvider != null) {
+                        openAiProvider.sendMessageStream(
+                            messages = emptyList(), // 我們自行管理 messageHistory，透過 systemPrompt 傳遞
+                            systemPrompt = buildSystemPrompt() + "\n\n" + buildMessageHistoryText(messageHistory),
+                            onSuccess = { chunk -> contentAcc.append(chunk) },
+                            onComplete = { fullContent ->
+                                // content 已透過 onSuccess 累積，tool_calls 已透過 onToolCalls 收集
+                                // 這裡作為保底：如果 onToolCalls 未觸發（無 tool_calls 的純文本回覆），由這裡 resume
+                                if (!resumed) {
+                                    resumed = true
+                                    cont.resume(Pair(contentAcc.toString(), emptyList()), null)
+                                }
+                            },
+                            onError = { err ->
+                                if (!resumed) { resumed = true; cont.resumeWith(Result.failure(Exception(err))) }
+                            },
+                            tools = ChatTools.allTools,
+                            onToolCalls = { toolCalls ->
+                                // tool_calls 收集完成，立即返回結果
+                                if (!resumed) {
+                                    resumed = true
+                                    cont.resume(Pair(contentAcc.toString(), toolCalls), null)
+                                }
+                            }
+                        )
+                    } else {
+                        // 降級：不帶 tools 的普通調用
+                        slot.provider.sendMessageStream(
+                            messages = emptyList(),
+                            systemPrompt = buildSystemPrompt() + "\n\n" + buildMessageHistoryText(messageHistory),
+                            onSuccess = { chunk -> contentAcc.append(chunk) },
+                            onComplete = { full ->
+                                if (!resumed) { resumed = true; cont.resume(Pair(full, emptyList()), null) }
+                            },
+                            onError = { err ->
+                                if (!resumed) { resumed = true; cont.resumeWith(Result.failure(Exception(err))) }
+                            }
+                        )
+                    }
+                }
+            }
+        } finally {
+            AiProviderPool.releaseNonBlocking(slot)
+        }
+    }
+
+    /**
+     * 將 messageHistory 轉為文字格式，作為 systemPrompt 的一部分傳遞
+     *
+     * 由於 ApiProvider.sendMessageStream 的 messages 參數期望 List<Message>，
+     * 而 Function Calling 需要精確的 role/content/tool_calls/tool_call_id 結構，
+     * 這裡將完整的 messageHistory 序列化為文字附加在 systemPrompt 中，
+     * 讓 LLM 能看到完整對話上下文。
+     */
+    private fun buildMessageHistoryText(messageHistory: List<Map<String, Any>>): String {
+        return buildString {
+            appendLine("## 對話歷史")
+            for (msg in messageHistory) {
+                val role = msg["role"] as? String ?: "unknown"
+                when (role) {
+                    "user" -> {
+                        appendLine("### User")
+                        appendLine(msg["content"].toString())
+                    }
+                    "assistant" -> {
+                        appendLine("### Assistant")
+                        val content = msg["content"]?.toString()
+                        if (!content.isNullOrBlank()) appendLine(content)
+                        val toolCalls = msg["tool_calls"] as? List<*>
+                        if (toolCalls != null) {
+                            appendLine("[請求調用工具]")
+                            @Suppress("UNCHECKED_CAST")
+                            for (tc in toolCalls as List<Map<String, Any>>) {
+                                val func = tc["function"] as? Map<*, *> ?: continue
+                                appendLine("  - ${func["name"]}: ${func["arguments"]}")
+                            }
+                        }
+                    }
+                    "tool" -> {
+                        appendLine("### Tool Result (call_id: ${msg["tool_call_id"]})")
+                        appendLine(msg["content"].toString())
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 檢查當前可用的 Provider 是否支援原生 Function Calling
+     */
+    private suspend fun checkProviderSupportsTools(): Boolean {
+        val slot = AiProviderPool.acquire(
+            context = context,
+            callerTag = "Agent.$id.checkFC",
+            timeoutMs = 5_000L
+        ) ?: return false
+
+        return try {
+            // 檢查 slot 是否為 OpenAiCompatibleProvider（支援 tools 參數）
+            val isOpenAiCompatible = slot.provider is OpenAiCompatibleProvider
+            // 檢查 provider 名稱是否在 ChatTools 支援列表中
+            val isSupported = ChatTools.isSupportedByProvider(slot.configId)
+            isOpenAiCompatible && isSupported
+        } finally {
+            AiProviderPool.releaseNonBlocking(slot)
+        }
+    }
+
+    /**
+     * 處理單個 tool_call
+     *
+     * 將 LLM 返回的 ChatTools.ToolCall 映射到已註冊的 AgentTool 並執行。
+     * 支援 ChatTools 定義的工具（stock_query, sector_query, market_brief）
+     * 以及 Agent 自行註冊的工具。
+     *
+     * @param tc LLM 返回的 tool_call
+     * @return 工具執行結果字串
+     */
+    protected suspend fun handleToolCall(tc: ChatTools.ToolCall): String {
+        val toolName = tc.function.name
+        val argsJson = tc.function.arguments
+
+        // 解析參數
+        val params = try {
+            val json = JSONObject(argsJson)
+            mutableMapOf<String, String>().apply {
+                json.keys().forEach { key ->
+                    put(key, json.optString(key, ""))
+                }
+            }
+        } catch (e: Exception) {
+            log("  ⚠️ 解析 tool_call 參數失敗: ${e.message}", isError = true)
+            return "錯誤: 無法解析工具參數: ${e.message}"
+        }
+
+        log("  🔧 handleToolCall: $toolName | params: $params")
+
+        // 1. 先嘗試匹配已註冊的 AgentTool
+        val registeredTool = tools[toolName]
+        if (registeredTool != null) {
+            return try {
+                registeredTool.execute(params, currentContext)
+            } catch (e: Exception) {
+                "錯誤: 工具 $toolName 執行失敗: ${e.message}"
+            }
+        }
+
+        // 2. 處理 ChatTools 中定義的標準工具（stock_query, sector_query, market_brief）
+        // 這些工具通常由外部服務提供，此處為框架佔位，子類可覆寫擴展
+        return when (toolName) {
+            "stock_query", "sector_query", "market_brief" -> {
+                // 標準工具：子類應透過 registerTool 註冊對應的實作
+                // 如果到這裡，表示子類未註冊，返回提示
+                log("  ⚠️ 工具 $toolName 未在 Agent 中註冊，請確認子類已 registerTool", isError = true)
+                "錯誤: 工具 '$toolName' 未註冊。請在 Agent 初始化時透過 registerTool() 註冊此工具的實作。"
+            }
+            else -> {
+                "錯誤: 未知工具 '$toolName'"
+            }
+        }
     }
 
     /** 日誌 */

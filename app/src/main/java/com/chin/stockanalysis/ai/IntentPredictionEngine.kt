@@ -158,6 +158,21 @@ class IntentPredictionEngine {
             )
         }
 
+        // 5.5 本地詞典匹配（Trie 樹，<10ms，覆蓋 5000+ A 股）
+        // 延遲初始化：Trie 在首次調用時構建，後續查詢純內存
+        try {
+            val entities = com.chin.stockanalysis.ai.StockEntityExtractor.extractSync(t)
+            if (entities.isNotEmpty()) {
+                val best = entities.first()
+                Log.d(TAG, "🔮 预判意图: Trie詞典命中 (${best.name}/${best.code}, ${best.matchType})")
+                return UserIntent.StockQuery(
+                    code = best.code,
+                    name = best.name,
+                    confidence = best.confidence
+                )
+            }
+        } catch (_: Exception) { /* Trie 未構建，繼續 */ }
+
         // 6. 股票名称关键词（从文本中提取 2~6 字中文股票名）
         // 常见知名股票名稱快速匹配
         val stockNamePatterns = listOf("茅台", "宁德", "比亚迪", "腾讯", "阿里", "平安", "招商", "格力")
