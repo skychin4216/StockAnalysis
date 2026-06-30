@@ -71,6 +71,8 @@ class ShortTermQuantFragment : QuantFragmentBase() {
 
     override fun getQuantType() = "ShortTermQuant"
 
+    override val positionTitlePrefix = "短線量化"
+
     override fun onBuildClick() { runBuildAndBuy() }
     override fun onFittingClick() = autoFit()
     override fun onBacktrackClick() {
@@ -147,120 +149,8 @@ class ShortTermQuantFragment : QuantFragmentBase() {
 
 
     // ═══════════════════════════════════════
-    // 持仓
+    // 持仓（直接使用基類 refreshPositions + renderPositions）
     // ═══════════════════════════════════════
-
-    override fun refreshPositions() {
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val db = StockDatabase.getInstance(requireContext())
-                val orders: List<StrategyTradeOrderEntity> = db.strategyTradeOrderDao().getRecent(100)
-                    .filter {
-                        it.orderType == "ShortTermQuant" &&
-                        (it.status == "BUYING" || it.status == "PENDING")
-                    }
-                    .sortedByDescending { it.tradeDate }
-                if (orders.isEmpty()) {
-                    withContext(Dispatchers.Main) {
-                        positionContainer.removeAllViews()
-                        positionContainer.addView(TextView(requireContext()).apply {
-                            text = "📌 暂无持仓记录"
-                            textSize = 11f
-                            setTextColor(Color.parseColor("#999999"))
-                            setPadding(0, 4, 0, 4)
-                        })
-                    }; return@launch
-                }
-                val minTradeDate = orders.minByOrNull { it.tradeDate }?.tradeDate ?: browsingDate.format(DATE_FMT)
-                val dates = db.dailySnapshotDao().getAvailableDates(15)
-                    .filter { it >= minTradeDate && it <= browsingDate.format(DATE_FMT) }
-                    .sorted().takeLast(10)
-                val priceMap = mutableMapOf<String, MutableMap<String, Double>>()
-                for (date in dates) { val snaps = db.dailySnapshotDao().getByDate(date); for (snap in snaps) priceMap.getOrPut(snap.code) { mutableMapOf() }[date] = snap.close }
-                withContext(Dispatchers.Main) { renderPositionTable(orders, dates, priceMap) }
-            } catch (e: Exception) {
-            Log.w("ShortTermQuant", "Agent routing failed: ${e.message}")
-        }
-        }
-    }
-
-    private fun renderPositionTable(orders: List<StrategyTradeOrderEntity>, dates: List<String> = emptyList(), priceMap: Map<String, Map<String, Double>> = emptyMap()) {
-        positionContainer.removeAllViews()
-        if (orders.isEmpty()) { positionContainer.addView(TextView(requireContext()).apply { text = "📌 暂无持仓记录"; textSize = 11f; setTextColor(Color.parseColor("#999999")); setPadding(0, 4, 0, 4) }); return }
-
-        // 匯總
-        val lastDate = dates.lastOrNull() ?: browsingDate.format(DATE_FMT)
-        var totalCost = 0.0; var totalValue = 0.0
-        for (order in orders) {
-            totalCost += order.buyPrice * order.quantity
-            val lastPrice = priceMap[order.stockCode]?.get(lastDate) ?: order.buyPrice
-            totalValue += lastPrice * order.quantity
-        }
-        val totalPnl = totalValue - totalCost
-        val totalPnlPct = if (totalCost > 0) (totalPnl / totalCost * 100) else 0.0
-        val pnlColor = if (totalPnl >= 0) "#D32F2F" else "#2E7D32"
-        val pnlStr = "${if (totalPnl >= 0) "+" else ""}¥${"%.0f".format(totalPnl)} (${"%.2f".format(totalPnlPct)}%)"
-
-        val titleRow = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, 2, 0, 2)
-        }
-        titleRow.addView(TextView(requireContext()).apply {
-            text = "📌 短线量化持仓 (启动资金 ¥1,000,000)"; textSize = 12f; setTextColor(Color.parseColor("#1A1A2E"))
-            setTypeface(null, Typeface.BOLD); layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        })
-        titleRow.addView(TextView(requireContext()).apply {
-            text = "总持仓 ${orders.size} 只  |  "; textSize = 10f; setTextColor(Color.parseColor("#666666")); gravity = Gravity.END
-        })
-        titleRow.addView(TextView(requireContext()).apply {
-            text = "总盈亏 $pnlStr"; textSize = 10f; setTextColor(Color.parseColor(pnlColor)); gravity = Gravity.END
-        })
-        positionContainer.addView(titleRow)
-
-        // 多日漲跌表格（模擬交易風格）
-        val scroll = HorizontalScrollView(requireContext())
-        val table = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL }
-        val headerRow = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 2, 0, 4); setBackgroundColor(Color.parseColor("#EEEEEE")) }
-        for (header in listOf("股票", "建仓日", "成本")) headerRow.addView(createCell(header, 60, "#666666", 10f, bold = true))
-        headerRow.addView(createCell("持仓", 45, "#666666", 9f, bold = true))
-        for (date in dates) { val label = date.takeLast(5); headerRow.addView(createCell(label, 72, "#666666", 10f, bold = true)) }
-        headerRow.addView(createCell("💰 卖出", 50, "#666666", 9f, bold = true))
-        table.addView(headerRow)
-
-        for (order in orders) {
-            val row = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 2, 0, 2) }
-            val nameCell = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL; layoutParams = LinearLayout.LayoutParams(dpToPx(60), LinearLayout.LayoutParams.WRAP_CONTENT); gravity = Gravity.CENTER }
-            nameCell.addView(TextView(requireContext()).apply { text = order.stockName.take(6); textSize = 11f; setTextColor(Color.parseColor("#222222")); gravity = Gravity.CENTER; setTypeface(null, Typeface.BOLD) })
-            nameCell.addView(TextView(requireContext()).apply { text = order.stockCode.takeLast(6); textSize = 8f; setTextColor(Color.parseColor("#AAAAAA")); gravity = Gravity.CENTER })
-            row.addView(nameCell)
-            row.addView(createCell(order.tradeDate.takeLast(5), 60, "#333333", 10f))
-            row.addView(createCell("¥${"%.2f".format(order.buyPrice)}", 60, "#333333", 10f))
-            row.addView(createCell("${order.quantity}", 45, "#1565C0", 9f))
-            for (date in dates) {
-                val price = priceMap[order.stockCode]?.get(date)
-                val cellText: String; val cellColor: String
-                if (price == null) { cellText = "—"; cellColor = "#999999" }
-                else if (date < order.tradeDate) { cellText = "¥${"%.2f".format(price)}"; cellColor = "#000000" }
-                else if (date == order.tradeDate) { cellText = "¥${"%.2f".format(price)}\n0.00%"; cellColor = "#999999" }
-                else {
-                    val pnl = if (order.buyPrice > 0) (price - order.buyPrice) / order.buyPrice * 100 else 0.0
-                    cellText = "¥${"%.2f".format(price)}\n${if (pnl >= 0) "+" else ""}${"%.2f".format(pnl)}%"
-                    cellColor = if (pnl >= 0) "#D32F2F" else "#2E7D32"
-                }
-                row.addView(TextView(requireContext()).apply { text = cellText; textSize = 9f; setTextColor(Color.parseColor(cellColor)); gravity = Gravity.CENTER; layoutParams = LinearLayout.LayoutParams(dpToPx(72), LinearLayout.LayoutParams.WRAP_CONTENT); setPadding(2, 4, 2, 4); setLineSpacing(2f, 1f) })
-            }
-            val lastPrice = priceMap[order.stockCode]?.get(dates.lastOrNull())
-            val sellBtn = Button(requireContext()).apply {
-                text = "賣"; textSize = 9f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#C62828"))
-                layoutParams = LinearLayout.LayoutParams(dpToPx(50), dpToPx(28)); setPadding(2, 0, 2, 0)
-                isEnabled = lastPrice != null
-                setOnClickListener { showSellConfirmDialog(order, lastPrice ?: order.buyPrice) }
-            }
-            row.addView(sellBtn)
-            table.addView(row)
-        }
-        scroll.addView(table)
-        val verticalScroll = ScrollView(requireContext()); verticalScroll.addView(scroll); positionContainer.addView(verticalScroll)
-    }
 
     // createCell, dpToPx, showSellConfirmDialog, executeSingleSell 已由基類 QuantFragmentBase 提供
 
@@ -310,6 +200,11 @@ class ShortTermQuantFragment : QuantFragmentBase() {
         lifecycleScope.launch(Dispatchers.IO) {
             val totalStart = System.currentTimeMillis()
             try {
+                // 🔥 非阻塞啟動新聞因子拉取（與後續步驟並行）
+                val newsJob = com.chin.stockanalysis.news.HotSectorNewsUpdater.ensureFreshGlobal(
+                    scope = this, context = requireContext(), forceRefresh = true
+                )
+
                 // 检查是否需要先导入数据
                 val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().format(DATE_FMT)
                 val prefs = requireContext().getSharedPreferences("data_import", android.content.Context.MODE_PRIVATE)
@@ -396,13 +291,14 @@ class ShortTermQuantFragment : QuantFragmentBase() {
                 // AI 精选
                 val aiStart = System.currentTimeMillis()
                 if (screeningList.isNotEmpty()) {
-                    // AI 前置：刷新新聞 + 暫停後臺，確保 AI 獨佔 Provider
-                    withContext(Dispatchers.Main) { statusTv.text = "📰 拉取最新新聞因子..." }
+                    // AI 前置：等待新聞因子完成（已在 Pipeline 開頭 async 啟動）
+                    if (newsJob.isActive) {
+                        withContext(Dispatchers.Main) { statusTv.text = "📰 等待新聞因子完成（共享拉取）..." }
+                    }
                     try {
-                        val updater = com.chin.stockanalysis.news.HotSectorNewsUpdater(requireContext())
-                        updater.updateIfNeeded(forceRefresh = true, ignoreQuantPause = true)
+                        newsJob.await()
                     } catch (e: Exception) {
-            Log.w("ShortTermQuant", "Agent routing failed: ${e.message}")
+            Log.w("ShortTermQuant", "新聞因子等待失敗（不阻塞）: ${e.message}")
         }
                     com.chin.stockanalysis.stock.database.AppBackgroundRunner.isQuantRunning = true
 

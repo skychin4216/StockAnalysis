@@ -4,9 +4,6 @@ import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.graphics.Typeface
 import android.os.Bundle
-import android.text.SpannableStringBuilder
-import android.text.Spanned
-import android.text.style.StyleSpan
 import android.view.*
 import android.widget.*
 import android.widget.LinearLayout.LayoutParams
@@ -205,9 +202,9 @@ class HotNewsFragment : Fragment() {
     // ─── 加载并填充热门板块 ───
     private fun loadAndPopulateDropdown() {
         lifecycleScope.launch(Dispatchers.IO) {
-            val top5 = getTop3HotSectorsWithStocks()
+            val display = getHotSectorsDisplay()
             withContext(Dispatchers.Main) {
-                hotSectorTv.text = if (top5.isNotEmpty()) top5 else "暂无热门板块"
+                hotSectorTv.text = if (display.isNotEmpty()) display else "暂无热门板块"
             }
         }
     }
@@ -231,73 +228,70 @@ class HotNewsFragment : Fragment() {
         return StockDataCenter.getHotSectorsByPeriod(1).take(5)
     }
 
-    /** 获取今日Top3热门板块，带子板块+代表股票展示 */
-    private suspend fun getTop3HotSectorsWithStocks(): Spanned {
-        val sd = com.chin.stockanalysis.stock.data.sources.SectorSubDivision
-        // 优先从热门板块中匹配有子板块数据的
-        val allSectorNames = getTop5HotSectors()
-        val matched = mutableListOf<String>()
-        val seenSubSectorKeys = mutableSetOf<String>() // 用子板塊第一個名字去重
-
-        fun tryAdd(name: String): Boolean {
-            val subs = sd.getSubSectors(name)
-            if (subs.isEmpty()) return false
-            val fingerprint = subs.firstOrNull()?.name ?: return false
-            if (fingerprint in seenSubSectorKeys) return false
-            if (matched.any { already -> subs == sd.getSubSectors(already) }) return false
-            matched.add(name)
-            seenSubSectorKeys.add(fingerprint)
-            return true
+    /** 获取今日Top5热门板块，直接从东财API获取成分股涨跌幅 */
+    private suspend fun getHotSectorsDisplay(): String {
+        // 第一步：获取涨幅最高的5个概念板块
+        var hotSectors = EastMoneyHotSectorSource.conceptSectors
+            .sortedByDescending { it.changePercent }.take(10)
+        if (hotSectors.isEmpty()) {
+            try {
+                val source = EastMoneyHotSectorSource()
+                hotSectors = source.fetchSectorsByTypeDirect(type = 3, topN = 10)
+                    .sortedByDescending { it.changePercent }.take(10)
+            } catch (_: Exception) {}
         }
 
-        for (name in allSectorNames) {
-            if (tryAdd(name) && matched.size >= 3) break
-        }
+        if (hotSectors.isEmpty()) return "暂无热门板块数据"
 
-        // 不够 3 个则从预设的主要板块列表中补充（按优先级，去重）
-        val fallbackOrder = listOf(
-            "CPO", "半导体", "人工智能", "芯片", "有色金属",
-            "固态电池", "商业航天", "电网设备", "新能源", "风电"
-        )
-        if (matched.size < 3) {
-            for (key in fallbackOrder) {
-                if (matched.size >= 3) break
-                tryAdd(key)
+        // 第二步：对每个板块调用 fetchSectorLeaders 获取涨幅前5成分股
+        val source = EastMoneyHotSectorSource()
+        val lines = mutableListOf<String>()
+        val allLeaders = mutableListOf<Pair<String, EastMoneyHotSectorSource.LeaderStock>>()
+
+        for (s in hotSectors) {
+            val emoji = if (s.changePercent > 0) "📈" else "📉"
+            val sign = if (s.changePercent > 0) "+" else ""
+
+            val leaders = try {
+                source.fetchSectorLeaders(s.code, 5)
+            } catch (_: Exception) { emptyList() }
+
+            val stocksDisplay = leaders.joinToString(" ") { stock ->
+                val cpSign = if (stock.changePercent > 0) "+" else ""
+                "${stock.name} $cpSign${"%.2f".format(stock.changePercent)}%"
+            }
+
+            lines.add("$emoji ${s.name} $sign${"%.2f".format(s.changePercent)}%")
+            if (stocksDisplay.isNotBlank()) {
+                lines.add("├─ $stocksDisplay")
+            }
+
+            for (stock in leaders) {
+                allLeaders.add(s.name to stock)
             }
         }
-        // 如果还不夠，掃 ALL_SECTORS
-        if (matched.size < 3) {
-            for (key in sd.ALL_SECTORS.keys.sorted()) {
-                if (matched.size >= 3) break
-                tryAdd(key)
+
+        // 第三步：涨幅Top5个股汇总
+        if (allLeaders.isNotEmpty()) {
+            val top5 = allLeaders.sortedByDescending { it.second.changePercent }.take(5)
+            lines.add("")
+            lines.add("🔥 涨幅Top5个股:")
+            for ((sectorName, stock) in top5) {
+                val sign = if (stock.changePercent > 0) "+" else ""
+                lines.add("📈 ${stock.name}(${stock.code}) ${sign}${"%.2f".format(stock.changePercent)}% [$sectorName]")
             }
         }
 
-        val top3 = matched.take(3)
-        val sb = SpannableStringBuilder()
-        top3.forEachIndexed { idx, sector ->
-            if (idx > 0) sb.append("\n")
-            val subSectors = sd.getSubSectors(sector)
-            val start = sb.length
-            sb.append("▸ $sector\n")
-            sb.setSpan(StyleSpan(Typeface.BOLD), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            subSectors.take(3).forEach { sub ->
-                val stockNames = sub.mainBoardStocks.take(3).map { it.name }.ifEmpty {
-                    sub.stocks.take(3).map { it.name }
-                }.joinToString(" ")
-                sb.append("  ${sub.name}: $stockNames\n")
-            }
-        }
-        return sb
+        return if (lines.isNotEmpty()) lines.joinToString("\n") else "暂无热门板块"
     }
 
     private fun startHotSectorRefresh() {
         lifecycleScope.launch(Dispatchers.IO) {
             while (isActive) {
                 delay(3 * 60_000L)
-                val top5 = getTop3HotSectorsWithStocks()
+                val display = getHotSectorsDisplay()
                 withContext(Dispatchers.Main) {
-                    hotSectorTv.text = if (top5.isNotEmpty()) top5 else "暂无热门板块"
+                    hotSectorTv.text = if (display.isNotEmpty()) display else "暂无热门板块"
                 }
             }
         }

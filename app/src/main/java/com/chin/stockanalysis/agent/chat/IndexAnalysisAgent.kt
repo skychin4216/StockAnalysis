@@ -2,10 +2,15 @@ package com.chin.stockanalysis.agent.chat
 
 import android.content.Context
 import android.util.Log
-import com.chin.stockanalysis.ai.AiProviderPool
+import com.chin.stockanalysis.ai.AiProviderSelector
 import com.chin.stockanalysis.stock.analysis.IndexKlineAnalyzer
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resumeWithException
 
 /**
  * 指數分析 Agent
@@ -45,31 +50,63 @@ object IndexAnalysisAgent {
         // Step 2: 構建 prompt
         val prompt = buildIndexPrompt(kline)
 
-        // Step 3: 調用 LLM（60s 超時，推理模型較慢）
+        // Step 3: 調用 LLM（總超時 60s，20s 無活動檢測）
         val response = withContext(Dispatchers.IO) {
-            val slot = AiProviderPool.acquire(context, callerTag = "Agent.index_analysis", timeoutMs = LLM_TIMEOUT_MS) ?: return@withContext ""
+            val provider = AiProviderSelector.getProvider(
+                context = context,
+                scenario = AiProviderSelector.AiScenario.CHAT_AGENT
+            ) ?: return@withContext ""
+
+            val startTime = System.currentTimeMillis()
+            var lastTokenTime = startTime
+            var hasReceivedToken = false
+
             try {
                 kotlinx.coroutines.withTimeout(LLM_TIMEOUT_MS) {
-                    kotlinx.coroutines.suspendCancellableCoroutine<String> { cont ->
+                    coroutineScope {
                         var resumed = false
-                        slot.provider.sendMessageStream(
-                            messages = listOf(com.chin.stockanalysis.ui.Message(content = prompt, isUser = true)),
-                            systemPrompt = buildSystemPrompt(),
-                            onSuccess = {},
-                            onComplete = { full ->
-                                if (!resumed) { resumed = true; cont.resume(full, null) }
-                            },
-                            onError = { err ->
-                                if (!resumed) { resumed = true; cont.resumeWith(Result.failure(Exception(err))) }
+
+                        // 無活動檢測
+                        val activityJob = launch {
+                            while (isActive) {
+                                delay(5_000)
+                                val idle = System.currentTimeMillis() - lastTokenTime
+                                if (idle > 20_000 && hasReceivedToken) {
+                                    Log.w(TAG, "⏱ 20s 無新 token，取消")
+                                    resumed = true
+                                    break
+                                }
                             }
-                        )
+                        }
+
+                        val result = kotlinx.coroutines.suspendCancellableCoroutine<String> { cont ->
+                            cont.invokeOnCancellation {
+                                provider.cancel()
+                            }
+
+                            provider.sendMessageStream(
+                                messages = listOf(com.chin.stockanalysis.ui.Message(content = prompt, isUser = true)),
+                                systemPrompt = buildSystemPrompt(),
+                                onSuccess = { _ ->
+                                    lastTokenTime = System.currentTimeMillis()
+                                    hasReceivedToken = true
+                                },
+                                onComplete = { full ->
+                                    if (!resumed) { cont.resume(full) {} }
+                                },
+                                onError = { err ->
+                                    if (!resumed) { cont.resumeWith(Result.failure(Exception(err))) }
+                                }
+                            )
+                        }
+
+                        activityJob.cancel()
+                        result
                     }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "LLM 分析失敗: ${e.message}")
                 ""
-            } finally {
-                AiProviderPool.releaseNonBlocking(slot)
             }
         }
 

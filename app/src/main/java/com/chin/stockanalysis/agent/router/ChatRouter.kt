@@ -12,7 +12,8 @@ interface ChatService {
     suspend fun handleMessage(
         context: Context,
         message: String,
-        onStream: ((String) -> Unit)? = null
+        onStream: ((String) -> Unit)? = null,
+        analysisMode: com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode = com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.QUICK
     ): ChatAgentResult
 }
 
@@ -21,7 +22,8 @@ class LegacyChatService : ChatService {
     override suspend fun handleMessage(
         context: Context,
         message: String,
-        onStream: ((String) -> Unit)?
+        onStream: ((String) -> Unit)?,
+        analysisMode: com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode
     ): ChatAgentResult {
         // Legacy 模式下抛出异常，由调用方自动 fallback 到原有流程
         throw UnsupportedOperationException("ChatRouter Legacy: 请使用原有 ChatTabFragment 流程")
@@ -39,9 +41,11 @@ class AgentChatService : ChatService {
     override suspend fun handleMessage(
         context: Context,
         message: String,
-        onStream: ((String) -> Unit)?
+        onStream: ((String) -> Unit)?,
+        analysisMode: com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode
     ): ChatAgentResult {
         val agent = ChatAgent(context)
+        agent.analysisMode = analysisMode
         return agent.handleMessage(message, onStream)
     }
 }

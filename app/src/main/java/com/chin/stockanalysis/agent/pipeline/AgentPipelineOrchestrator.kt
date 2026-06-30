@@ -4,14 +4,20 @@ import android.content.Context
 import android.util.Log
 import com.chin.stockanalysis.agent.AgentManager
 import com.chin.stockanalysis.ai.AiProviderPool
+import com.chin.stockanalysis.ai.AiProviderSelector
 import com.chin.stockanalysis.strategy.data.StockScreener
 import com.chin.stockanalysis.strategy.models.StrategySignal
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -408,30 +414,64 @@ class AgentPipelineOrchestrator(private val context: Context) {
 
     /**
      * 調用 LLM（SSE 串流）
+     *
+     * 策略：不設單步硬超時，依賴 Pipeline 總超時 120s。
+     * 但增加「30s 無活動檢測」：如果 30s 內沒有收到任何 token，認為模型卡住，主動取消。
+     * 這樣模型正常輸出時不會被中斷，只有真正卡住時才會超時。
      */
     private suspend fun callLLM(step: PipelineStep, allSteps: List<PipelineStep>, ctx: PipelineContext, mode: AnalysisMode): String {
         return withContext(Dispatchers.IO) {
             val agent = agentManager.get(step.agentId)
             val systemPrompt = buildStepPrompt(step, allSteps, agent?.systemPrompt ?: "", ctx, mode)
 
-            val slot = AiProviderPool.acquire(context)
-                ?: throw IllegalStateException("無可用 AI Provider")
+            // Pipeline 場景：使用專家模式模型（結構化輸出能力強）
+            val provider = AiProviderSelector.getProvider(
+                context = context,
+                scenario = AiProviderSelector.AiScenario.PIPELINE_EXPERT
+            ) ?: throw IllegalStateException("無可用 AI Provider")
 
-            try {
-                suspendCancellableCoroutine { cont ->
-                    slot.provider.sendMessageStream(
+            val stepStartTime = System.currentTimeMillis()
+            var lastTokenTime = stepStartTime
+            var hasReceivedToken = false
+
+            coroutineScope {
+                // 啟動無活動檢測協程
+                val activityCheckJob = launch {
+                    while (isActive) {
+                        delay(5_000)  // 每 5s 檢查一次
+                        val idleTime = System.currentTimeMillis() - lastTokenTime
+                        if (idleTime > 30_000 && hasReceivedToken) {
+                            // 已收到過 token 但 30s 無新輸出，認為卡住
+                            Log.w(TAG, "⏱ ${step.name} 30s 無新 token，取消")
+                            break
+                        }
+                    }
+                }
+
+                val result = suspendCancellableCoroutine<String> { cont ->
+                    cont.invokeOnCancellation {
+                        provider.cancel()
+                    }
+
+                    provider.sendMessageStreamJson(
                         messages = emptyList(),
                         systemPrompt = systemPrompt,
-                        onSuccess = { },
+                        onSuccess = { chunk ->
+                            lastTokenTime = System.currentTimeMillis()
+                            hasReceivedToken = true
+                        },
                         onComplete = { full ->
                             val sanitized = full.replace("null", "")
-                            cont.resume(sanitized)
+                            if (!cont.isCompleted) cont.resume(sanitized) {}
                         },
-                        onError = { err -> cont.resumeWithException(Exception(err)) }
+                        onError = { err ->
+                            if (!cont.isCompleted) cont.resumeWithException(Exception(err))
+                        }
                     )
                 }
-            } finally {
-                AiProviderPool.releaseNonBlocking(slot)
+
+                activityCheckJob.cancel()
+                result
             }
         }
     }

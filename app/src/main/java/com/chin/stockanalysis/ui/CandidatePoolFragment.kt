@@ -184,31 +184,29 @@ class CandidatePoolFragment : Fragment() {
                 val items = StockDataService.enrich(ctx, codes)
                 withContext(Dispatchers.Main) {
                     container.removeAllViews()
-                    container.addView(StockTableHelper.createHeaderRow(ctx) {
-                        // 點擊"清空"標題：清空當前列表（不重新生成備選池）
-                        currentSnapshot = currentSnapshot?.let { it.copy(stocks = emptyList()) }
-                        // 從 SharedPreferences 緩存中清空
-                        val prefs = ctx.getSharedPreferences("candidate_pool_prefs", android.content.Context.MODE_PRIVATE)
-                        prefs.edit().remove("pool_codes").apply()
-                        renderList()
-                    })
-                    for ((index, item) in items.withIndex()) {
-                        container.addView(StockTableHelper.createDataRow(ctx, item, index == items.size - 1,
+                    container.addView(
+                        StockTableHelper.createDynamicTable(
+                            context = ctx,
+                            columns = StockTableHelper.extendedColumns(),
+                            items = items,
+                            onClearAll = {
+                                currentSnapshot = currentSnapshot?.let { it.copy(stocks = emptyList()) }
+                                val prefs = ctx.getSharedPreferences("candidate_pool_prefs", android.content.Context.MODE_PRIVATE)
+                                prefs.edit().remove("pool_codes").apply()
+                                renderList()
+                            },
                             onDelete = { deleted ->
-                                // 從 currentSnapshot 中移除（不觸發重新生成）
                                 currentSnapshot = currentSnapshot?.let { snapshot ->
                                     snapshot.copy(stocks = snapshot.stocks.filter { it.code != deleted.code })
                                 }
-                                // 從 SharedPreferences 緩存中移除
                                 val prefs = ctx.getSharedPreferences("candidate_pool_prefs", android.content.Context.MODE_PRIVATE)
                                 val codes = (prefs.getStringSet("pool_codes", emptySet()) ?: emptySet()).toMutableSet()
                                 codes.remove(deleted.code)
                                 prefs.edit().putStringSet("pool_codes", codes).apply()
-                                // 重新渲染列表（僅 UI 刷新，不重新生成備選池）
                                 renderList()
                             }
-                        ))
-                    }
+                        )
+                    )
                 }
             } catch (e: Exception) {
                 Log.e("CandidatePool", "渲染失敗", e)

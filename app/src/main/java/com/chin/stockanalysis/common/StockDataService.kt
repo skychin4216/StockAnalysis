@@ -94,6 +94,11 @@ object StockDataService {
                 turnoverRate = rt?.turnoverRate ?: snap?.turnoverRate ?: 0.0,
                 marketCap = { val cap = rt?.marketCap ?: 0.0; if (cap > 0) cap / 1_0000_0000.0 else 0.0 }(),
                 changeAmount = rt?.changeAmount ?: if (snap != null) (snap.close - snap.open) else 0.0,
+                high = rt?.high ?: 0.0,
+                low = rt?.low ?: 0.0,
+                volume = rt?.volume ?: snap?.volume ?: 0,
+                amount = rt?.amount ?: 0.0,
+                pb = rt?.pb ?: 0.0,
                 hasSnapshot = snap != null || rt != null,
                 source = "",
                 score = 0
