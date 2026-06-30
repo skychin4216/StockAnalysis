@@ -1,6 +1,7 @@
-package com.chin.stockanalysis.ui
+﻿package com.chin.stockanalysis.ui
 
 import android.app.AlertDialog
+
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -402,17 +403,57 @@ class ChatTabFragment : Fragment() {
 
         lifecycleScope.launch(Dispatchers.IO) {
             try {
+                // 第一步：獲取10個東方財富概念板塊漲幅
                 var hotSectors = com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.conceptSectors
-                    .sortedByDescending { it.changePercent }.take(3)
+                    .sortedByDescending { it.changePercent }.take(10)
                 if (hotSectors.isEmpty()) {
                     val source = com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource()
-                    hotSectors = source.fetchSectorsByTypeDirect(type = 3, topN = 3).sortedByDescending { it.changePercent }.take(3)
+                    hotSectors = source.fetchSectorsByTypeDirect(type = 3, topN = 10).sortedByDescending { it.changePercent }.take(10)
                 }
+
+                // 第二步：對每個板塊獲取漲幅前5的成分股
+                val eastSource = com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource()
+                val allLeaders = mutableMapOf<String, List<com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.LeaderStock>>()
+                for (s in hotSectors) {
+                    try {
+                        allLeaders[s.name] = eastSource.fetchSectorLeaders(s.code, 5)
+                    } catch (_: Exception) { allLeaders[s.name] = emptyList() }
+                }
+
+                // 第三步：格式化輸出
                 val sectorLines = if (hotSectors.isNotEmpty()) {
-                    hotSectors.withIndex().joinToString("\n") { (i, s) -> val emoji = if (s.changePercent > 0) "📈" else "📉"; val sign = if (s.changePercent > 0) "+" else ""; "${i + 1}. $emoji ${s.name} $sign${"%.2f".format(s.changePercent)}%" }
+                    val lines = mutableListOf<String>()
+                    for (s in hotSectors) {
+                        val emoji = if (s.changePercent > 0) "📈" else "📉"
+                        val sign = if (s.changePercent > 0) "+" else ""
+                        lines.add("$emoji ${s.name} $sign${"%.2f".format(s.changePercent)}%")
+                        val leaders = allLeaders[s.name] ?: emptyList()
+                        if (leaders.isNotEmpty()) {
+                            val stockStr = leaders.map { l ->
+                                val cpSign = if (l.changePercent > 0) "+" else ""
+                                "${l.name} $cpSign${"%.2f".format(l.changePercent)}%"
+                            }.joinToString(" ")
+                            lines.add("  ├─ $stockStr")
+                        }
+                    }
+                    // Top5 個股匯總
+                    val allStocks = allLeaders.values.flatten().sortedByDescending { it.changePercent }
+                    if (allStocks.isNotEmpty()) {
+                        lines.add("")
+                        lines.add("🔥 涨幅Top5个股:")
+                        allStocks.take(5).forEach { l ->
+                            val emoji2 = if (l.changePercent > 0) "📈" else "📉"
+                            val sign2 = if (l.changePercent > 0) "+" else ""
+                            lines.add("$emoji2 ${l.name}(${l.code}) $sign2${"%.2f".format(l.changePercent)}%")
+                        }
+                    }
+                    lines.joinToString("\n")
                 } else "暂无实时板块数据"
 
+                // 第五步仍需要 db
                 val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(requireContext())
+
+                // 第五步：保持 Top5 個股行不變
                 val recentTradingDay = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().toString()
                 val allDates = db.dailySnapshotDao().getAvailableDates(5).sorted()
                 val effectiveDate = if (allDates.contains(recentTradingDay)) recentTradingDay else allDates.lastOrNull() ?: recentTradingDay
@@ -449,6 +490,7 @@ class ChatTabFragment : Fragment() {
             } catch (e: Exception) { Log.w(TAG, "热门板块获取失败: ${e.message}") }
         }
     }
+
 
     private fun showWelcomeMessage() {
         if (messages.isNotEmpty()) return
@@ -622,11 +664,18 @@ class ChatTabFragment : Fragment() {
             try {
                 updateLoadingStatus(loadingIndex, "🤖 正在啟動 Agent 框架...")
                 val service = ChatRouter.getService()
+
                 val result = withContext(Dispatchers.IO) {
                     service.handleMessage(
                         context = requireContext(),
                         message = userText,
-                        onStream = null  // 當前 Agent 不支持流式，使用一次性結果
+                        onStream = { chunk ->
+                            // 專家模式 Pipeline 進度：實時更新對話消息
+                            if (isAdded) requireActivity().runOnUiThread {
+                                updateLoadingStatus(loadingIndex, chunk)
+                            }
+                        },
+                        analysisMode = analysisMode
                     )
                 }
                 if (isAdded) requireActivity().runOnUiThread {
@@ -1565,3 +1614,4 @@ $memory
     /** 分析模式枚举 */
     enum class AnalysisMode { QUICK, DEEP, EXPERT }
 }
+

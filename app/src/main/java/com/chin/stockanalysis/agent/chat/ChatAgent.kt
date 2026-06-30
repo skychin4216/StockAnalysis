@@ -31,8 +31,12 @@ class ChatAgent(context: Context) : AgentBase(
         private const val TAG = "ChatAgent"
     }
 
+    /** 分析模式（由 ChatTabFragment 傳入） */
+    var analysisMode: com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode = com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.QUICK
+
     private val pickingAgent = StockPickingAgent(context)
     private val analysisAgent = StockAnalysisAgent(context)
+    private val pipelineAdapter = PipelineChatAdapter(context)
 
     init {
         registerTool(StockQueryTool(context))
@@ -109,10 +113,35 @@ class ChatAgent(context: Context) : AgentBase(
                 )
             }
             UserIntent.STOCK_ANALYSIS -> {
-                // 分析：提取股票代碼，調用分析 Agent
+                // 分析：提取股票代碼
                 val code = extractStockCode(userMessage)
-                if (code != null) {
-                    val result = analysisAgent.analyze(code)
+                val stockName = extractStockName(userMessage)
+
+                if (analysisMode == com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.EXPERT && stockName != null) {
+                    // 專家模式：走 Pipeline 多智能體流水線
+                    onStream?.invoke("🤖 專家模式分析中：$stockName\n")
+                    val pipelineResult = pipelineAdapter.analyze(stockName) { progress ->
+                        onStream?.invoke("$progress\n")
+                    }
+
+                    if (pipelineResult != null) {
+                        val report = pipelineAdapter.formatResult(pipelineResult)
+                        ChatAgentResult(
+                            success = pipelineResult.stocks.isNotEmpty(),
+                            response = report,
+                            intent = intent.name,
+                            data = mapOf("pipelineResult" to pipelineResult)
+                        )
+                    } else {
+                        ChatAgentResult(
+                            success = false,
+                            response = "專家分析超時（120s），部分步驟可能因網路或模型響應過慢而中斷。請稍後重試或切換為深度模式。",
+                            intent = intent.name
+                        )
+                    }
+                } else if (code != null) {
+                    // 快速/深度模式：單次 LLM 分析
+                    val result = analysisAgent.analyze(code, stockName = stockName)
                     ChatAgentResult(
                         success = result.success,
                         response = formatAnalysisResponse(result),
@@ -210,6 +239,17 @@ class ChatAgent(context: Context) : AgentBase(
         // 降級：正則提取代碼
         val match = Regex("(sh|sz|bj)?(\\d{6})").find(message)
         return match?.groupValues?.get(2)
+    }
+
+    /**
+     * 提取股票名稱（用於 Pipeline 輸入，需要中文名而非代碼）
+     */
+    private fun extractStockName(message: String): String? {
+        try {
+            val entities = com.chin.stockanalysis.ai.StockEntityExtractor.extractSync(message)
+            if (entities.isNotEmpty()) return entities.first().name
+        } catch (_: Exception) { /* Trie 未構建，繼續 */ }
+        return null
     }
 
     private fun extractIndexInfo(message: String): Pair<String, String>? {

@@ -319,27 +319,48 @@ class MidTermQuantFragment : QuantFragmentBase() {
     // ═══════════════════════════════════════
 
     private fun showTradeReport(report: SimulationTradeEngine.TradeSessionReport) {
-        val sv = ScrollView(requireContext())
-        val c = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL; setPadding(8, 8, 8, 8) }
+        val ctx = requireContext()
+        val sv = ScrollView(ctx)
+        val c = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(8, 8, 8, 8) }
 
-        c.addView(TextView(requireContext()).apply {
+        c.addView(TextView(ctx).apply {
             text = "📊 中线量化报告  ${report.config.tradeDate}"
             textSize = 15f; setTextColor(Color.parseColor("#1A1A2E")); setTypeface(null, Typeface.BOLD)
             setPadding(0, 8, 0, 8)
         })
 
-        val table = TableLayout(requireContext()).apply { isStretchAllColumns = true }
-        val hr = TableRow(requireContext())
+        val table = TableLayout(ctx).apply { isStretchAllColumns = true }
+        val hr = TableRow(ctx)
         for (h in listOf("策略", "周期", "精选3只", "买入价", "卖出价", "收益")) {
-            hr.addView(TextView(requireContext()).apply {
+            hr.addView(TextView(ctx).apply {
                 text = h; textSize = 9f; setTextColor(Color.parseColor("#999999"))
                 setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER; setPadding(2, 4, 2, 4)
             })
         }
         table.addView(hr)
 
+        // 預加載精選股票的實時行情（用於報告顯示）
+        val allSelectedCodes = mutableListOf<String>()
         val resultMap = report.periodResults.groupBy { it.strategyId to it.periodDays }
         val enabledStrategies = engine?.getStrategies()?.filter { engine!!.isEnabled(it.id) } ?: emptyList()
+        for (strategy in enabledStrategies) {
+            for (period in report.config.periods) {
+                val pr = resultMap[strategy.id to period]?.firstOrNull()
+                if (pr != null && pr.finalTop15.isNotEmpty()) {
+                    allSelectedCodes.addAll(pr.finalTop15.map {
+                        val c = it.stockCode.takeLast(6)
+                        if (c.length == 6 && c.all { it.isDigit() }) {
+                            when (c[0]) { '6', '9' -> "sh$c"; '0', '3' -> "sz$c"; else -> "sz$c" }
+                        } else c
+                    })
+                }
+            }
+        }
+        val realtimeMap = try {
+            com.chin.stockanalysis.stock.data.sources.SinaStockSource()
+                .fetchRealtime(allSelectedCodes.distinct())
+        } catch (_: Exception) { emptyMap() }
+
         for (strategy in enabledStrategies) {
             for (period in report.config.periods) {
                 val pr = resultMap[strategy.id to period]?.firstOrNull()
@@ -347,23 +368,30 @@ class MidTermQuantFragment : QuantFragmentBase() {
                 val periodLabel = PERIOD_LABELS[period] ?: "${period}日"
                 val hasResults = pr != null && pr.finalTop15.isNotEmpty()
                 val top3Text = if (hasResults) {
-                    pr!!.finalTop15.joinToString("\n") { "${it.stockName}(${it.stockCode.takeLast(6)}) ${it.strength}%" }
+                    pr!!.finalTop15.joinToString("\n") {
+                        val c = it.stockCode.takeLast(6)
+                        val code = if (c.length == 6 && c.all { it.isDigit() }) when (c[0]) { '6', '9' -> "sh$c"; '0', '3' -> "sz$c"; else -> "sz$c" } else c
+                        val rt = realtimeMap[code]
+                        val priceInfo = if (rt != null && rt.price > 0) " ¥${rt.price}" else ""
+                        val turnoverInfo = if (rt != null && rt.turnoverRate > 0) " 换${"%.1f".format(rt.turnoverRate)}%" else ""
+                        "${it.stockName}(${it.stockCode.takeLast(6)}) ${it.strength}%${priceInfo}${turnoverInfo}"
+                    }
                 } else "⚠ 无信号"
-                val row = TableRow(requireContext())
+                val row = TableRow(ctx)
                 if (hasResults && pr != null) { row.setOnClickListener { showDetailDialog(report, pr) } }
-                row.addView(TextView(requireContext()).apply {
+                row.addView(TextView(ctx).apply {
                     text = name; textSize = 10f; setTextColor(Color.parseColor("#222222"))
                     setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER_VERTICAL; setPadding(1, 4, 1, 4)
                 })
-                row.addView(TextView(requireContext()).apply {
+                row.addView(TextView(ctx).apply {
                     text = periodLabel; textSize = 10f; setTextColor(Color.parseColor("#333333"))
                     gravity = Gravity.CENTER; setPadding(1, 4, 1, 4)
                 })
-                row.addView(TextView(requireContext()).apply {
+                row.addView(TextView(ctx).apply {
                     text = top3Text; textSize = 8f; setTextColor(Color.parseColor("#666666"))
                     setLineSpacing(1.5f, 1f); setPadding(1, 4, 1, 4)
                 })
-                for (j in 1..3) row.addView(TextView(requireContext()).apply {
+                for (j in 1..3) row.addView(TextView(ctx).apply {
                     text = "—"; textSize = 10f; setTextColor(Color.parseColor("#999999"))
                     gravity = Gravity.CENTER; setPadding(1, 4, 1, 4)
                 })

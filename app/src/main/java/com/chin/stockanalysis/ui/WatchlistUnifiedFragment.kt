@@ -381,24 +381,24 @@ class WatchlistUnifiedFragment : Fragment() {
                 val items = StockDataService.enrich(requireContext(), codes)
                 withContext(Dispatchers.Main) {
                     listContainer.removeAllViews()
-                    listContainer.addView(StockTableHelper.createHeaderRow(requireContext()) {
-                        // 點擊"清空"標題：清空當前模式的所有股票
-                        lifecycleScope.launch(Dispatchers.IO) {
-                            try {
-                                val db = StockDatabase.getInstance(requireContext())
-                                if (currentMode == ViewMode.AI) {
-                                    db.aiSelectedStockDao().clearAll()
-                                } else {
-                                    db.userWatchlistDao().clearAll()
+                    listContainer.addView(
+                        StockTableHelper.createDynamicTable(
+                            context = requireContext(),
+                            columns = StockTableHelper.extendedColumns(),
+                            items = items,
+                            onClearAll = {
+                                lifecycleScope.launch(Dispatchers.IO) {
+                                    try {
+                                        val db = StockDatabase.getInstance(requireContext())
+                                        if (currentMode == ViewMode.AI) {
+                                            db.aiSelectedStockDao().clearAll()
+                                        } else {
+                                            db.userWatchlistDao().clearAll()
+                                        }
+                                        withContext(Dispatchers.Main) { loadData() }
+                                    } catch (_: Exception) {}
                                 }
-                                withContext(Dispatchers.Main) {
-                                    loadData()
-                                }
-                            } catch (_: Exception) {}
-                        }
-                    })
-                    for ((index, item) in items.withIndex()) {
-                        listContainer.addView(StockTableHelper.createDataRow(requireContext(), item, index == items.size - 1,
+                            },
                             onDelete = { deleted ->
                                 lifecycleScope.launch(Dispatchers.IO) {
                                     try {
@@ -411,8 +411,8 @@ class WatchlistUnifiedFragment : Fragment() {
                                     } catch (_: Exception) {}
                                 }
                             }
-                        ))
-                    }
+                        )
+                    )
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -458,15 +458,17 @@ class WatchlistUnifiedFragment : Fragment() {
                 val items = StockDataService.enrich(ctx, codes)
                 withContext(Dispatchers.Main) {
                     listContainer.removeAllViews()
-                    listContainer.addView(StockTableHelper.createHeaderRow(ctx) {
-                        // 點擊"清空"標題：從備選池清空
-                        candidatePoolSnapshot = candidatePoolSnapshot?.let { it.copy(stocks = emptyList()) }
-                        val prefs = ctx.getSharedPreferences("candidate_pool_prefs", android.content.Context.MODE_PRIVATE)
-                        prefs.edit().remove("pool_codes").apply()
-                        renderList()
-                    })
-                    for ((index, item) in items.withIndex()) {
-                        listContainer.addView(StockTableHelper.createDataRow(ctx, item, index == items.size - 1,
+                    listContainer.addView(
+                        StockTableHelper.createDynamicTable(
+                            context = ctx,
+                            columns = StockTableHelper.extendedColumns(),
+                            items = items,
+                            onClearAll = {
+                                candidatePoolSnapshot = candidatePoolSnapshot?.let { it.copy(stocks = emptyList()) }
+                                val prefs = ctx.getSharedPreferences("candidate_pool_prefs", android.content.Context.MODE_PRIVATE)
+                                prefs.edit().remove("pool_codes").apply()
+                                renderList()
+                            },
                             onDelete = { deleted ->
                                 candidatePoolSnapshot = candidatePoolSnapshot?.let { snap ->
                                     snap.copy(stocks = snap.stocks.filter { it.code != deleted.code })
@@ -477,8 +479,8 @@ class WatchlistUnifiedFragment : Fragment() {
                                 prefs.edit().putStringSet("pool_codes", poolCodes).apply()
                                 renderList()
                             }
-                        ))
-                    }
+                        )
+                    )
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {

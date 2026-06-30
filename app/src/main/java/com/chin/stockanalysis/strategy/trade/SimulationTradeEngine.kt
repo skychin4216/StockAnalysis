@@ -176,6 +176,11 @@ class SimulationTradeEngine(private val context: Context) {
         Log.i(TAG, "交易日: ${config.tradeDate}  主板: ${config.onlyMainBoard}  周期: ${config.periods}")
         Log.i(TAG, "策略数: ${strategies.size}  最大持仓: ${MAX_HOLDINGS}")
 
+        // 🔥 非阻塞啟動新聞因子拉取（與後續步驟並行）
+        val newsJob = com.chin.stockanalysis.news.HotSectorNewsUpdater.ensureFreshGlobal(
+            scope = this, context = context, forceRefresh = true
+        )
+
         val t1 = System.currentTimeMillis()
         val poolCodes = buildDailyStockPool(config.tradeDate)
         val step1 = System.currentTimeMillis() - t1
@@ -298,15 +303,16 @@ class SimulationTradeEngine(private val context: Context) {
         // AI 精选
         onStatusUpdate?.invoke("🤖 AI 大模型分析中...")
 
-        // ── AI 精選前置處理：有候選股時，先刷新新聞再暫停後臺，確保 AI 獨佔 ──
+        // ── AI 精選前置處理：等待新聞因子拉取完成（如果已跑完則立即返回） ──
         val aiStrategy = strategies.find { it.id == "ai_prediction" }
         val needAi = aiStrategy != null && finalStockList.isNotEmpty()
         if (needAi) {
-            onStatusUpdate?.invoke("📰 拉取最新新聞因子...")
+            if (newsJob.isActive) {
+                onStatusUpdate?.invoke("📰 等待新聞因子完成（可能其他量化正在拉取）...")
+            }
             try {
-                val updater = com.chin.stockanalysis.news.HotSectorNewsUpdater(context)
-                updater.updateIfNeeded(forceRefresh = true, ignoreQuantPause = true)
-                Log.i(TAG, "AI前置: 新聞因子已刷新")
+                newsJob.await()
+                Log.i(TAG, "AI前置: 新聞因子已就緒")
             } catch (e: Exception) {
                 Log.w(TAG, "AI前置: 新聞刷新失敗（不阻塞）: ${e.message}")
             }
@@ -335,6 +341,10 @@ class SimulationTradeEngine(private val context: Context) {
                     reason = s.reason, actionSuggestion = if (s.strength>=75) "推荐买入" else if (s.strength>=60) "关注" else "观望")
             }
         } else emptyList()
+        // 主板過濾：AI 精選結果中也排除科創板/創業板/北交所
+        val aiPicksFiltered = if (config.onlyMainBoard) {
+            aiPicks.filter { isMainBoard(it.stockCode) }
+        } else aiPicks
         val stepAi = System.currentTimeMillis() - tAi
         Log.i(TAG, "AI 精选: ${aiPicks.size}只, ${stepAi}ms")
 
@@ -345,7 +355,7 @@ class SimulationTradeEngine(private val context: Context) {
         }
 
         val tOrder = System.currentTimeMillis()
-        val buyOrders = generateBuyOrders(aiPicks, config.tradeDate, allSnapshots, config.orderType)
+        val buyOrders = generateBuyOrders(aiPicksFiltered, config.tradeDate, allSnapshots, config.orderType)
         val stepOrder = System.currentTimeMillis() - tOrder
         Log.i(TAG, "生成买入订单: ${buyOrders.size}只, ${stepOrder}ms")
 
@@ -402,8 +412,8 @@ class SimulationTradeEngine(private val context: Context) {
             newBuyCodes = buyOrders.map { "${it.stockName}(${it.stockCode.takeLast(6)})" },
             mergedCodes = emptyList()
         )
-        val summary = buildEnhancedSummary(stepDetail, aiPicks, crossDayTop20, null)
-        TradeSessionReport(config, allTodayResults, aiPicks, buyOrders, summary, finalPool.toList(), crossDayTop20, stepDetail, null)
+        val summary = buildEnhancedSummary(stepDetail, aiPicksFiltered, crossDayTop20, null)
+        TradeSessionReport(config, allTodayResults, aiPicksFiltered, buyOrders, summary, finalPool.toList(), crossDayTop20, stepDetail, null)
     }
 
     /**

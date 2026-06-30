@@ -39,6 +39,31 @@ class HotSectorNewsUpdater(private val context: Context) {
             "绿色电力", "电网设备", "特高压", "液冷散热",
             "华为昇腾", "算力租赁", "PCB", "先进封装"
         )
+
+        /**
+         * 全局 Mutex：多個 Fragment/Engine 同時調用時，
+         * 只有第一個執行實際拉取，其餘掛起等待，完成後共享結果。
+         */
+        private val globalMutex = kotlinx.coroutines.sync.Mutex()
+
+        /**
+         * 便捷靜態方法：全局只啟動一次 async，後續調用返回同一個 Deferred。
+         */
+        private var pendingJob: Deferred<Unit>? = null
+
+        @Synchronized
+        fun ensureFreshGlobal(scope: CoroutineScope, context: Context, forceRefresh: Boolean = true): Deferred<Unit> {
+            // 如果已有正在執行或已完成的 job，直接返回
+            if (pendingJob != null && pendingJob!!.isActive) {
+                Log.i(TAG, "⏭️ 新聞因子拉取已在進行中，共享同一個 job")
+                return pendingJob!!
+            }
+            val job = HotSectorNewsUpdater(context).ensureFreshAsync(scope, forceRefresh, ignoreQuantPause = true)
+            pendingJob = job
+            // 完成後清理引用
+            job.invokeOnCompletion { pendingJob = null }
+            return job
+        }
     }
 
     private val db = StockDatabase.getInstance(context)
@@ -49,13 +74,28 @@ class HotSectorNewsUpdater(private val context: Context) {
 
     /**
      * App 启动或用户手动刷新时调用。
-     * @param forceRefresh true=忽略缓存强制重新拉取
+     * 全局 Mutex 保證多個調用方共享同一次拉取：
+     * - 第一個調用：執行實際拉取
+     * - 後續調用：掛起等待，完成後直接返回（不重複拉取）
+     *
+     * @param forceRefresh true=忽略緩存強制重新拉取
      */
     suspend fun updateIfNeeded(forceRefresh: Boolean = false, ignoreQuantPause: Boolean = false) {
-        if (!forceRefresh && hasRun) return
-        hasRun = true
+        // 快速路徑：非強制且已完成，直接返回
+        if (!forceRefresh && hasRun) {
+            Log.i(TAG, "⏭️ 新聞因子已更新過，跳過")
+            return
+        }
 
+        globalMutex.lock()
         try {
+            // 雙重檢查：獲得鎖後再判斷（可能已被其他線程完成）
+            if (!forceRefresh && hasRun) {
+                Log.i(TAG, "⏭️ 新聞因子已被其他調用更新，共享結果")
+                return
+            }
+            hasRun = true
+
             val latestDate = db.newsFactorDao().getLatestNewsDate()
             val today = LocalDate.now().format(DATE_FMT)
             val existingCount = if (latestDate == today) db.newsFactorDao().countActive() else 0
@@ -91,6 +131,26 @@ class HotSectorNewsUpdater(private val context: Context) {
             }
         } catch (e: Exception) {
             Log.w(TAG, "后台新闻更新失败: ${e.message}")
+        } finally {
+            globalMutex.unlock()
+        }
+    }
+
+    /**
+     * 非阻塞版本：返回一個 Deferred，調用方可：
+     * 1. 先做其他任務
+     * 2. 到需要新聞因子時 `.await()`
+     *
+     * 典型用法：
+     * ```
+     * val newsJob = HotSectorNewsUpdater.ensureFreshAsync(context)
+     * doOtherWork()  // 並行執行不需要新聞的任務
+     * newsJob.await() // 到需要新聞因子時才等待
+     * ```
+     */
+    fun ensureFreshAsync(scope: CoroutineScope, forceRefresh: Boolean = true, ignoreQuantPause: Boolean = false): Deferred<Unit> {
+        return scope.async(Dispatchers.IO) {
+            updateIfNeeded(forceRefresh, ignoreQuantPause)
         }
     }
 

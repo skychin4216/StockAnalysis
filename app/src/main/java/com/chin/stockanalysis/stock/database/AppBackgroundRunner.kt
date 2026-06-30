@@ -73,7 +73,68 @@ object AppBackgroundRunner {
             } catch (_: Exception) {}
         }
 
+        // 啟動時增量同步 daily_snapshot（拉取缺失的交易日數據）
+        scope.launch(Dispatchers.IO) {
+            syncMissingTradingDays(context.applicationContext)
+        }
+
         startPositionMonitor(context.applicationContext, scope)
+    }
+
+    /**
+     * 增量同步 daily_snapshot：
+     * 查詢本地最後一條數據日期，拉取從那天到今天之間所有缺失的交易日數據。
+     *
+     * - 首次安裝：拉取最近 5 個交易日
+     * - 正常使用：只拉取缺失的天數（通常 0-1 天）
+     * - 長期未使用：拉取缺失的所有交易日（最多 30 天）
+     */
+    private suspend fun syncMissingTradingDays(context: Context) {
+        try {
+            val db = StockDatabase.getInstance(context)
+            val today = LocalDate.now()
+
+            // 查詢本地最新數據日期
+            val existingDates = try {
+                db.dailySnapshotDao().getAvailableDates(30)
+            } catch (_: Exception) { emptyList() }
+
+            val latestDate = existingDates
+                .filter { it <= today.format(DATE_FMT) }
+                .maxOrNull()
+
+            if (latestDate != null && latestDate >= today.format(DATE_FMT)) {
+                Log.i(TAG, "📅 daily_snapshot 已是最新（$latestDate），跳過增量同步")
+                return
+            }
+
+            // 計算需要拉取的天數
+            val startLocalDate = if (latestDate != null) {
+                LocalDate.parse(latestDate, DATE_FMT).plusDays(1)
+            } else {
+                today.minusDays(5)  // 首次安裝，拉取最近 5 天
+            }
+            val daysToFetch = java.time.temporal.ChronoUnit.DAYS.between(startLocalDate, today).toInt().coerceIn(0, 30)
+
+            if (daysToFetch <= 0) {
+                Log.i(TAG, "📅 無需增量同步")
+                return
+            }
+
+            Log.i(TAG, "📅 增量同步 daily_snapshot：從 ${startLocalDate.format(DATE_FMT)} 到 ${today.format(DATE_FMT)}（約 $daysToFetch 天）")
+
+            val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(context)
+            val count = fetcher.fetchAllHistoricalData(
+                days = daysToFetch + 2,  // 多拉 2 天保險
+                startDateOverride = startLocalDate,
+                onProgress = { progress ->
+                    Log.d(TAG, "📅 增量同步: ${progress.completedStocks}/${progress.totalStocks} (${progress.totalRecords} 條)")
+                }
+            )
+            Log.i(TAG, "📅 增量同步完成：寫入 $count 條記錄")
+        } catch (e: Exception) {
+            Log.w(TAG, "📅 增量同步失敗（不阻塞啟動）: ${e.message}")
+        }
     }
 
     private fun startPositionMonitor(context: Context, scope: CoroutineScope) {

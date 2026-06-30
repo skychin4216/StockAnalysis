@@ -24,22 +24,22 @@ import java.time.format.DateTimeFormatter
  */
 class LeaderStockPool(private val context: Context) {
 
+    // ════════════════════════════════════
+    // 数据模型（類級別，外部可直接 import）
+    // ════════════════════════════════════
+    data class SubSector(val name: String, val stocks: List<String>)
+
+    data class SectorConfig(
+        val name: String,
+        val subSectors: List<SubSector>,
+        val isConcept: Boolean = false  // 概念炒作标记，true=概念，false=产业主线
+    )
+
     companion object {
         private const val TAG = "LeaderStockPool"
         private const val PREFS_NAME = "leader_stock_pool"
         private const val KEY_CONFIGS = "sector_configs"
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
-
-        // ════════════════════════════════════
-        // 数据模型
-        // ════════════════════════════════════
-        data class SubSector(val name: String, val stocks: List<String>)
-
-        data class SectorConfig(
-            val name: String,
-            val subSectors: List<SubSector>,
-            val isConcept: Boolean = false  // 概念炒作标记，true=概念，false=产业主线
-        )
 
         // 默认配置（首次启动时使用）
         private val DEFAULT_CONFIGS: List<SectorConfig> = listOf(
@@ -57,10 +57,13 @@ class LeaderStockPool(private val context: Context) {
                 SubSector("铝", listOf("sh601600", "sz000807", "sh600219")),
             )),
             SectorConfig("半导体", listOf(
-                SubSector("设备",   listOf("sh688981", "sz002371", "sh603501")),
-                SubSector("设计",   listOf("sh688396", "sz300661", "sh688256")),
-                SubSector("封测",   listOf("sh688036", "sz002156", "sh600584")),
+                SubSector("设备",     listOf("sh688981", "sz002371", "sh603501")),
+                SubSector("设计",     listOf("sh688396", "sz300661", "sh688256")),
+                SubSector("封测",     listOf("sh688036", "sz002156", "sh600584")),
                 SubSector("国产替代", listOf("sh688012", "sz002049", "sh688008")),
+                SubSector("功率半导体", listOf("sh603290", "sz300782", "sh688521")),
+                SubSector("半导体材料", listOf("sh688012", "sz300236", "sh603690")),
+                SubSector("光刻胶",   listOf("sz300576", "sh603650", "sz002372")),
             )),
             SectorConfig("AI算力", listOf(
                 SubSector("国产算力", listOf("sh600536", "sh688111", "sz300502")),
@@ -73,6 +76,7 @@ class LeaderStockPool(private val context: Context) {
                 SubSector("光芯片",     listOf("sh600703", "sz300661", "sh688313")),
                 SubSector("光材料",     listOf("sz002281", "sh600745", "sz300502")),
                 SubSector("铜缆高速连接", listOf("sz002475", "sh601138", "sz300502")),
+                SubSector("CPO",        listOf("sz300502", "sz300394", "sz002281")),
             )),
             SectorConfig("PCB", listOf(
                 SubSector("服务器PCB", listOf("sz002916", "sz002815", "sh603228")),
