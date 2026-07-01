@@ -5,16 +5,12 @@ import android.util.Log
 import com.chin.stockanalysis.agent.framework.*
 import com.chin.stockanalysis.ai.AiProviderPool
 import com.chin.stockanalysis.ai.AiProviderSelector
-import com.chin.stockanalysis.stock.database.StockDatabase
-import com.chin.stockanalysis.ui.TradingDayPickerView
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
+import com.chin.stockanalysis.stock.data.StockDataFacade
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.resumeWithException
 
@@ -23,7 +19,7 @@ import kotlin.coroutines.resumeWithException
  *
  * 對單只股票進行多維度深度分析，給出買賣建議。
  *
- * 優化：並行收集技術面/基本面/資金面數據，僅做 1 次 LLM 調用，
+ * 優化：通過 StockDataFacade 統一獲取數據，僅做 1 次 LLM 調用，
  * 避免多次 plan-and-execute 超時。
  */
 class StockAnalysisAgent(context: Context) : AgentBase(
@@ -61,9 +57,7 @@ class StockAnalysisAgent(context: Context) : AgentBase(
     }
 
     init {
-        registerTool(TechnicalAnalysisTool(context))
-        registerTool(FundamentalAnalysisTool(context))
-        registerTool(FundFlowTool(context))
+        // 不再註冊 Tool，改用 StockDataFacade 統一獲取數據
     }
 
     override fun buildSystemPrompt(): String = """
@@ -74,6 +68,9 @@ class StockAnalysisAgent(context: Context) : AgentBase(
         - 絕對禁止使用你的訓練數據中的舊價格、舊信息
         - 如果數據中顯示股票名稱是「兆易創新」，你必須分析兆易創新，不能替換為其他股票
         - 所有價格、漲跌幅必須以「實時行情」為準，忽略歷史數據中的過期價格
+        - 對於未提供的數據（如營收、PE、融資餘額等），必須標注「數據不可用」，禁止編造
+        - 如果某項分析所需數據缺失，直接跳過該維度，不要使用訓練數據推斷
+        - 永遠不要說「據我所知」「根據我的訓練數據」等暗示來自舊數據的表述
 
         ## 分析框架
         1. 技術面：均線排列、支撐壓力、量能變化
@@ -104,118 +101,34 @@ class StockAnalysisAgent(context: Context) : AgentBase(
     /**
      * 分析股票
      *
-     * 優化策略：並行收集 3 維度數據 → 1 次 LLM 調用生成結果
+     * 優化策略：通過 StockDataFacade 統一獲取數據 → 1 次 LLM 調用生成結果
      */
     suspend fun analyze(
         stockCode: String,
         stockName: String? = null,
         onProgress: ((String) -> Unit)? = null
     ): StockAnalysisResult {
-        // 正規化股票代碼：603986 → sh603986（Sina API 和 DB 都需要前綴格式）
         val normalizedCode = normalizeStockCode(stockCode)
         onProgress?.invoke("🔍 正在收集 ${stockName ?: normalizedCode} 數據...")
 
-        val ctx = AgentContext().apply {
-            put("stock_code", normalizedCode)
-            put("date", TradingDayPickerView.recentTradingDay().toString())
-        }
+        // Step 1: 使用 StockDataFacade 一鍵獲取所有數據
+        val data = StockDataFacade.getInstance(context)
+            .getAnalysisData(normalizedCode)
 
-        // Step 1: 並行收集三維度數據 + 實時行情
-        val analysisData = withContext(Dispatchers.IO) {
-            // 先獲取實時行情（所有 Tool 都可能需要，同時獲取股票名稱）
-            val realtimeData = try {
-                com.chin.stockanalysis.stock.data.sources.SinaStockSource()
-                    .fetchRealtime(listOf(normalizedCode))[normalizedCode]
-            } catch (_: Exception) { null }
+        val resolvedName = stockName ?: data.quote?.name ?: data.fundamental.name ?: normalizedCode
 
-            // 確定股票名稱：優先使用傳入的，其次用實時行情的，最後用代碼
-            val resolvedName = stockName ?: realtimeData?.name ?: normalizedCode
+        onProgress?.invoke("🤖 AI 分析 $resolvedName 中...")
 
-            // 將實時數據注入 AgentContext，供 Tool 使用
-            if (realtimeData != null) {
-                ctx.put("realtime_price", realtimeData.price.toString())
-                ctx.put("realtime_change_pct", realtimeData.changePercent.toString())
-                ctx.put("realtime_high", realtimeData.high.toString())
-                ctx.put("realtime_low", realtimeData.low.toString())
-                ctx.put("realtime_volume", realtimeData.volume.toString())
-                ctx.put("realtime_amount", realtimeData.amount.toString())
-            }
-
-            val technical = async {
-                tools["technical_analysis"]?.execute(
-                    mapOf("stock_code" to normalizedCode, "days" to "30"), ctx
-                ) ?: "數據不可用"
-            }
-            val fundamental = async {
-                tools["fundamental_analysis"]?.execute(
-                    mapOf("stock_code" to normalizedCode), ctx
-                ) ?: "數據不可用"
-            }
-            val fundFlow = async {
-                tools["fund_flow"]?.execute(
-                    mapOf("stock_code" to normalizedCode, "days" to "5"), ctx
-                ) ?: "數據不可用"
-            }
-
-            val techResult = technical.await()
-            val fundResult = fundamental.await()
-            val flowResult = fundFlow.await()
-
-            Log.d(TAG, "📊 Tool 結果: tech=${techResult.take(30)}, fund=${fundResult.take(30)}, flow=${flowResult.take(30)}")
-            Log.d(TAG, "📊 realtimeData=${if (realtimeData != null) "price=${realtimeData.price}" else "null"}")
-
-            // 如果所有 Tool 都返回空數據，用實時行情構建基本數據
-            val allEmpty = (techResult.contains("沒有") || techResult.contains("不足") || techResult.contains("不可用"))
-                    && (fundResult.contains("沒有") || fundResult.contains("未找到") || fundResult.contains("不可用"))
-                    && (flowResult.contains("沒有") || flowResult.contains("不可用"))
-            val fallbackData = if (allEmpty && realtimeData != null) {
-                Log.w(TAG, "⚠️ DB 數據為空，使用實時行情構建基本數據")
-                """
-## 實時行情（新浪 — DB 中無歷史數據，僅提供即時行情）
-- 股票名稱: ${resolvedName}
-- 當前價: ${realtimeData.price}
-- 漲跌幅: ${"%.2f".format(realtimeData.changePercent)}%
-- 最高: ${realtimeData.high}
-- 最低: ${realtimeData.low}
-- 成交量: ${realtimeData.volume}
-- 成交額: ${"%.0f".format(realtimeData.amount)}
-"""
-            } else null
-
-            if (fallbackData != null) {
-                Pair(fallbackData, resolvedName)
-            } else {
-                // 正常數據 + 如果有實時行情，追加到末尾確保 prompt 不為空
-                val realtimeSection = if (realtimeData != null && !allEmpty) {
-                    "\n## 實時行情（新浪）\n- 股票名稱: $resolvedName\n- 當前價: ${realtimeData.price}\n- 漲跌幅: ${"%.2f".format(realtimeData.changePercent)}%\n- 最高: ${realtimeData.high}\n- 最低: ${realtimeData.low}\n- 成交量: ${realtimeData.volume}\n- 成交額: ${"%.0f".format(realtimeData.amount)}"
-                } else null
-
-                Pair("""
-## 技術面數據
-$techResult
-
-## 基本面數據
-$fundResult
-
-## 資金面數據
-$flowResult
-${realtimeSection ?: ""}
-                """.trimIndent(), resolvedName)
-            }
-        }
-
-        val (promptData, resolvedStockName) = analysisData
-
-        onProgress?.invoke("🤖 AI 分析 $resolvedStockName 中...")
-
-        // Step 2: 單次 LLM 調用，60s 超時
+        // Step 2: 構建 prompt
+        val promptData = buildAnalysisPrompt(data, resolvedName)
         val prompt = """
-請根據以下數據對股票 $resolvedStockName（$normalizedCode）進行深度分析，給出買賣建議。
+請根據以下數據對股票 $resolvedName（$normalizedCode）進行深度分析，給出買賣建議。
 
 $promptData
 請嚴格按 JSON 格式輸出分析結果。
         """.trimIndent()
 
+        // Step 3: 單次 LLM 調用，60s 超時
         val llmOutput = try {
             // 使用場景選擇器：Agent 分析用結構化輸出模型
             val provider = AiProviderSelector.getProvider(
@@ -279,7 +192,7 @@ $promptData
             )
         }
 
-        // Step 3: 解析 JSON 結果
+        // Step 4: 解析 JSON 結果
         return try {
             val jsonStr = llmOutput.substringAfter("```json").substringBefore("```").trim()
                 .ifEmpty { llmOutput.trim() }
@@ -314,6 +227,80 @@ $promptData
             )
         }
     }
+
+    /**
+     * 構建分析用的 prompt 數據部分
+     */
+    private fun buildAnalysisPrompt(
+        data: StockDataFacade.StockAnalysisData,
+        resolvedName: String
+    ): String {
+        val sb = StringBuilder()
+
+        // 實時行情
+        if (data.quote != null) {
+            val q = data.quote
+            sb.appendLine("## 實時行情（${q.name}）")
+            sb.appendLine("- 當前價: ${q.price} (${if (q.changePercent >= 0) "+" else ""}${"%.2f".format(q.changePercent)}%)")
+            sb.appendLine("- 最高: ${q.high}, 最低: ${q.low}")
+            sb.appendLine("- 成交量: ${q.volume}, 成交額: ${"%.0f".format(q.amount)}")
+            sb.appendLine("- 換手率: ${"%.2f".format(q.turnoverRate)}%")
+            if (q.pe > 0) sb.appendLine("- PE(TTM): ${"%.2f".format(q.pe)}")
+            sb.appendLine()
+        }
+
+        // 基本面
+        val f = data.fundamental
+        sb.appendLine("## 基本面數據（${f.source}）")
+        sb.appendLine("- 股票名稱: ${f.name}")
+        if (f.business.isNotBlank()) sb.appendLine("- 主營業務: ${f.business}")
+        if (f.sectorNames.isNotEmpty()) sb.appendLine("- 所屬板塊: ${f.sectorNames.joinToString(", ")}")
+        if (f.chainRationale.isNotBlank()) sb.appendLine("- 產業鏈邏輯: ${f.chainRationale}")
+        if (!f.isFresh) sb.appendLine("⚠️ 基本面數據可能不是最新")
+        sb.appendLine()
+
+        // 技術面
+        val h = data.history
+        if (h.snapshots.size >= 5) {
+            val prices = h.snapshots.map { it.close }
+            val volumes = h.snapshots.map { it.volume }
+            val ma5 = prices.take(5).average()
+            val ma10 = prices.take(10).average()
+            val ma20 = prices.take(minOf(20, prices.size)).average()
+            val avgVol = volumes.average()
+            val latestVol = volumes.first()
+            val trend = when {
+                prices.first() > prices.last() * 1.05 -> "上升趨勢"
+                prices.first() < prices.last() * 0.95 -> "下降趨勢"
+                else -> "震蕩整理"
+            }
+
+            sb.appendLine("## 技術面數據（${h.source}）")
+            sb.appendLine("- MA5: ${"%.2f".format(ma5)}, MA10: ${"%.2f".format(ma10)}, MA20: ${"%.2f".format(ma20)}")
+            sb.appendLine("- 趨勢: $trend")
+            sb.appendLine("- 量能: ${if (latestVol > avgVol * 1.5) "放量" else if (latestVol < avgVol * 0.7) "縮量" else "正常"}")
+            if (!h.isFresh) sb.appendLine("⚠️ 歷史數據截至 ${h.latestDate}")
+            sb.appendLine()
+        } else {
+            sb.appendLine("## 技術面數據")
+            sb.appendLine("- 歷史數據不足（僅 ${h.snapshots.size} 條），無法計算技術指標")
+            sb.appendLine()
+        }
+
+        // 資金面
+        val ff = data.fundFlow
+        sb.appendLine("## 資金面數據（${ff.source}）")
+        if (!ff.isEmpty) {
+            sb.appendLine("- 主力淨流入合計: ${"%.2f".format(ff.totalNetInflow)}萬")
+            sb.appendLine("- 平均換手率: ${"%.2f".format(ff.avgTurnoverRate)}%")
+            sb.appendLine("- 資金趨勢: ${if (ff.totalNetInflow > 0) "流入" else "流出"}")
+            if (!ff.isFresh) sb.appendLine("⚠️ 最新數據日期: ${ff.latestDate}")
+        } else {
+            sb.appendLine("- 沒有資金流向數據（本地數據庫無記錄）")
+        }
+
+        return sb.toString()
+    }
 }
 
 /** 分析結果 */
@@ -333,146 +320,3 @@ data class StockAnalysisResult(
     val rawOutput: String = "",
     val steps: Int = 0
 )
-
-/** ================================================================ */
-/** 技術分析工具 */
-class TechnicalAnalysisTool(private val ctx: Context) : AgentTool {
-    override val name = "technical_analysis"
-    override val description = "分析股票技術面（均線、K線、成交量）"
-    override val parameters = listOf("stock_code", "days")
-
-    override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
-        val c = ctx
-        return withContext(Dispatchers.IO) {
-            try {
-                val code = params["stock_code"] ?: return@withContext "錯誤: 未提供股票代碼"
-                val days = params["days"]?.toIntOrNull() ?: 30
-                val db = StockDatabase.getInstance(c)
-                val snapshots = db.dailySnapshotDao().getByCode(code, days)
-
-                if (snapshots.isEmpty()) return@withContext "沒有歷史數據"
-                if (snapshots.size < 5) return@withContext "數據不足（僅 ${snapshots.size} 條）"
-
-                val latest = snapshots.first()
-                val prices = snapshots.map { it.close }
-                val volumes = snapshots.map { it.volume }
-
-                val ma5 = prices.take(5).average()
-                val ma10 = prices.take(10).average()
-                val ma20 = prices.take(coerceAtMost(20, prices.size)).average()
-                val avgVolume = volumes.average()
-                val latestVolume = volumes.first()
-
-                val trend = when {
-                    prices.first() > prices.last() * 1.05 -> "上升趨勢"
-                    prices.first() < prices.last() * 0.95 -> "下降趨勢"
-                    else -> "震蕩整理"
-                }
-
-                // 嘗試獲取實時行情，替換過期的本地數據
-                var currentPrice = latest.close
-                var currentChangePct = latest.changePct
-                var dataSource = "歷史"
-                try {
-                    val realtimeMap = com.chin.stockanalysis.stock.data.sources.SinaStockSource()
-                        .fetchRealtime(listOf(code))
-                    val realtime = realtimeMap[code]
-                    if (realtime != null && realtime.price > 0) {
-                        currentPrice = realtime.price
-                        currentChangePct = realtime.changePercent
-                        dataSource = "實時"
-                    }
-                } catch (_: Exception) { /* 實時獲取失敗，使用本地數據 */ }
-
-                buildString {
-                    appendLine("【技術面分析】 $code（$dataSource）")
-                    appendLine("- 當前價: $currentPrice " +
-                        "(${if (currentChangePct >= 0) "+" else ""}" +
-                        "${"%.2f".format(currentChangePct)}%)")
-                    appendLine("- MA5: ${"%.2f".format(ma5)}, " +
-                        "MA10: ${"%.2f".format(ma10)}, " +
-                        "MA20: ${"%.2f".format(ma20)}")
-                    appendLine("- 趨勢: $trend")
-                    appendLine("- 量能: ${
-                        if (latestVolume > avgVolume * 1.5) "放量"
-                        else if (latestVolume < avgVolume * 0.7) "縮量"
-                        else "正常"
-                    } (${"%.0f".format(latestVolume / avgVolume * 100)}% 均量)")
-                    appendLine("- 換手率: ${"%.2f".format(latest.turnoverRate)}%")
-                    appendLine("- 主力淨流入: ${"%.2f".format(latest.mainNetInflow)}萬")
-                }
-            } catch (e: Exception) {
-                "錯誤: 技術分析失敗: ${e.message}"
-            }
-        }
-    }
-
-    private fun coerceAtMost(max: Int, size: Int): Int = if (max > size) size else max
-}
-
-/** 基本面分析工具 */
-class FundamentalAnalysisTool(private val ctx: Context) : AgentTool {
-    override val name = "fundamental_analysis"
-    override val description = "分析股票基本面（主營業務、產業鏈）"
-    override val parameters = listOf("stock_code")
-
-    override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
-        val c = ctx
-        return withContext(Dispatchers.IO) {
-            try {
-                val code = params["stock_code"] ?: return@withContext "錯誤: 未提供股票代碼"
-                val db = StockDatabase.getInstance(c)
-                val basic = db.stockBasicDao().getByCode(code)
-                    ?: return@withContext "未找到股票基本信息"
-
-                val sectorNames = db.sectorStockDao().getSectorNamesByStockCode(code)
-
-                buildString {
-                    appendLine("【基本面分析】 $code ${basic.name}")
-                    appendLine("- 主營業務: ${basic.business}")
-                    if (sectorNames.isNotEmpty()) {
-                        appendLine("- 所屬板塊: ${sectorNames.joinToString(", ")}")
-                    }
-                    if (basic.chainRationale.isNotBlank()) {
-                        appendLine("- 產業鏈邏輯: ${basic.chainRationale}")
-                    }
-                }
-            } catch (e: Exception) {
-                "錯誤: 基本面分析失敗: ${e.message}"
-            }
-        }
-    }
-}
-
-/** 資金流向工具 */
-class FundFlowTool(private val ctx: Context) : AgentTool {
-    override val name = "fund_flow"
-    override val description = "分析資金流向和主力動向"
-    override val parameters = listOf("stock_code", "days")
-
-    override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
-        val c = ctx
-        return withContext(Dispatchers.IO) {
-            try {
-                val code = params["stock_code"] ?: return@withContext "錯誤: 未提供股票代碼"
-                val days = params["days"]?.toIntOrNull() ?: 5
-                val db = StockDatabase.getInstance(c)
-                val snapshots = db.dailySnapshotDao().getByCode(code, days)
-
-                if (snapshots.isEmpty()) return@withContext "沒有資金流向數據"
-
-                val totalInflow = snapshots.sumOf { it.mainNetInflow }
-                val avgTurnover = snapshots.map { it.turnoverRate }.average()
-
-                buildString {
-                    appendLine("【資金面分析】 $code（近 $days 日）")
-                    appendLine("- 主力淨流入合計: ${"%.2f".format(totalInflow)}萬")
-                    appendLine("- 平均換手率: ${"%.2f".format(avgTurnover)}%")
-                    appendLine("- 資金趨勢: ${if (totalInflow > 0) "流入" else "流出"}")
-                }
-            } catch (e: Exception) {
-                "錯誤: 資金分析失敗: ${e.message}"
-            }
-        }
-    }
-}

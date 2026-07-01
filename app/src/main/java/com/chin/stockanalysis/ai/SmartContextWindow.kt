@@ -25,7 +25,7 @@ class SmartContextWindow(private val queryEngine: StockQueryEngine) {
         private const val TAG = "SmartContext"
         private const val MAX_CACHE_SIZE = 20
         private const val TRADING_TTL_MS = 30_000L      // 交易时段 30s
-        private const val IDLE_TTL_MS = 300_000L         // 非交易时段 5min
+        private const val IDLE_TTL_MS = 60_000L          // 非交易时段 1min
     }
 
     data class CachedContext(
