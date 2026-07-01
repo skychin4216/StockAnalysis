@@ -25,6 +25,9 @@ import com.chin.stockanalysis.ui.CrossTabBus
 import com.chin.stockanalysis.agent.pipeline.AgentPipelineOrchestrator
 import com.chin.stockanalysis.agent.pipeline.ui.PipelineProgressView
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
@@ -293,13 +296,23 @@ class ShortTermQuantFragment : QuantFragmentBase() {
                 if (screeningList.isNotEmpty()) {
                     // AI 前置：等待新聞因子完成（已在 Pipeline 開頭 async 啟動）
                     if (newsJob.isActive) {
-                        withContext(Dispatchers.Main) { statusTv.text = "📰 等待新聞因子完成（共享拉取）..." }
+                        val newsWaitStart = System.currentTimeMillis()
+                        val newsTimerJob = coroutineScope {
+                            launch {
+                                while (isActive) {
+                                    delay(1000)
+                                    val elapsed = "%.0f".format((System.currentTimeMillis() - newsWaitStart) / 1000.0)
+                                    withContext(Dispatchers.Main) { statusTv.text = "📰 等待新聞因子完成... ${elapsed}s" }
+                                }
+                            }
+                        }
+                        try { newsJob.await() } catch (e: Exception) {
+                            Log.w("ShortTermQuant", "新聞因子等待失敗（不阻塞）: ${e.message}")
+                        }
+                        newsTimerJob.cancel()
+                        val newsElapsed = "%.1f".format((System.currentTimeMillis() - newsWaitStart) / 1000.0)
+                        withContext(Dispatchers.Main) { statusTv.text = "✅ 新聞因子完成 (${newsElapsed}s)" }
                     }
-                    try {
-                        newsJob.await()
-                    } catch (e: Exception) {
-            Log.w("ShortTermQuant", "新聞因子等待失敗（不阻塞）: ${e.message}")
-        }
                     com.chin.stockanalysis.stock.database.AppBackgroundRunner.isQuantRunning = true
 
                     withContext(Dispatchers.Main) { statusTv.text = "🤖 AI 大模型分析中..." }

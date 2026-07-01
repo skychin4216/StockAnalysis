@@ -88,6 +88,7 @@ abstract class QuantFragmentBase : Fragment() {
 
     companion object {
         val DATE_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+        private const val TAG = "QuantFragmentBase"
     }
 
     // ═══════════════════════════════════════════════════
@@ -578,7 +579,8 @@ abstract class QuantFragmentBase : Fragment() {
                 }
 
                 val minTradeDate = orders.minByOrNull { it.tradeDate }?.tradeDate ?: browsingDate.format(DATE_FMT)
-                val dates = db.dailySnapshotDao().getAvailableDates(20)
+                val allDates = db.dailySnapshotDao().getAvailableDates(20)
+                val dates = allDates
                     .filter { it >= minTradeDate && it <= browsingDate.format(DATE_FMT) }
                     .filter { dateStr ->
                         // 自動排除周六日和節假日

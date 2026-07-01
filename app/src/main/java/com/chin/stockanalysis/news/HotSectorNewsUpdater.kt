@@ -3,9 +3,13 @@ package com.chin.stockanalysis.news
 import android.content.Context
 import android.util.Log
 import com.chin.stockanalysis.ApiConfigManager
-import com.chin.stockanalysis.OpenAiCompatibleProvider
 import com.chin.stockanalysis.stock.database.StockDatabase
+import com.chin.stockanalysis.ai.AiProviderPool
+import java.net.URLEncoder
 import kotlinx.coroutines.*
+import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.LocalDate
@@ -187,80 +191,60 @@ class HotSectorNewsUpdater(private val context: Context) {
         } else result
     }
 
-    /** 用豆包 AI 搜索指定板块的最新新闻 */
+    /** 三級優先級搜索指定板塊最新新聞（搜索與解析分離） */
     private suspend fun searchSectorNews(sector: String, ignoreQuantPause: Boolean = false): List<NewsFactorEntity> {
-        // 量化選股運行時暫停 AI 新聞搜索（除非是量化主動調用）
+        // 量化選股運行時暫停新聞搜索（除非是量化主動調用）
         if (!ignoreQuantPause && com.chin.stockanalysis.stock.database.AppBackgroundRunner.isQuantRunning) {
             Log.i(TAG, "⏸️ 量化選股運行中，跳過新聞搜索: $sector")
             return emptyList()
         }
 
-        // 60分鐘緩存檢查：該板塊近期已拉取過則跳過
+        // 緩存檢查
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val lastFetchKey = "last_fetch_$sector"
-        val lastFetchTime = prefs.getLong(lastFetchKey, 0)
-        val now = System.currentTimeMillis()
-        val elapsedMinutes = (now - lastFetchTime) / 60000
-        if (lastFetchTime > 0 && elapsedMinutes < CACHE_TTL_MINUTES) {
-            Log.i(TAG, "⏭️ [$sector] ${elapsedMinutes}分鐘前已更新，跳過（緩存${CACHE_TTL_MINUTES}分鐘）")
-            return emptyList()
+        val lastFetch = prefs.getLong(lastFetchKey, 0L)
+        if (System.currentTimeMillis() - lastFetch < 30 * 60 * 1000) {
+            val cached = loadCachedNews(sector)
+            if (cached.isNotEmpty()) return cached
         }
-        val slot = com.chin.stockanalysis.ai.AiProviderPool.acquire(context, callerTag = "HotSectorNewsUpdater.$sector")
-        if (slot == null) {
-            Log.w(TAG, "無可用 AI Provider，跳過新聞搜索: $sector")
-            return emptyList()
-        }
-        try {
-            val provider = slot.provider
 
-            val today = LocalDate.now().format(DATE_FMT)
-            val prompt = buildString {
-                appendLine("你是一个A股财经新闻助手。请搜索最近一周关于【${sector}】板块的热门新闻（3-5条）。")
-                appendLine("每一条新闻包含：标题、内容摘要、利好/利空判断、影响强度(0-100)、相关A股主板上市公司。")
-                appendLine()
-                appendLine("请按以下 JSON 格式输出（仅 JSON，不要其他文字）：")
-                appendLine("```json")
-                appendLine("{")
-                appendLine("  \"sector\": \"$sector\",")
-                appendLine("  \"news\": [")
-                appendLine("    {")
-                appendLine("      \"title\": \"新闻标题\",")
-                appendLine("      \"content\": \"50字内摘要\",")
-                appendLine("      \"sentiment\": 1,")
-                appendLine("      \"strength\": 75,")
-                appendLine("      \"company\": \"公司名称\",")
-                appendLine("      \"stock_code\": \"sh600xxx\",")
-                appendLine("      \"tags\": \"标签1,标签2\"")
-                appendLine("    }")
-                appendLine("  ]")
-                appendLine("}")
-                appendLine("```")
-            }
+        val today = LocalDate.now().format(DATE_FMT)
 
-            val response = withContext(Dispatchers.IO) {
-                kotlinx.coroutines.suspendCancellableCoroutine { cont ->
-                    provider.sendMessageStream(
-                        messages = emptyList(),
-                        systemPrompt = prompt,
-                        onSuccess = {},
-                        onComplete = { full -> cont.resumeWith(Result.success(full)) },
-                        onError = { err -> cont.resumeWith(Result.failure(Exception(err))) }
-                    )
-                }
-            }
+        // === 第一步：搜索新聞 ===
+        val rawNews = fetchNewsFromEastMoney(sector, today)
+            .ifEmpty { fetchNewsFromDuckDuckGo(sector, today) }
+            .ifEmpty { fetchNewsWithTavily(sector, today) }
 
-            val news = parseNewsResponse(response, sector, today)
-            // 記錄成功拉取時間
-            if (news.isNotEmpty()) {
+        // === 第二步：AI 解析 ===
+        if (rawNews.isNotEmpty()) {
+            val parsed = parseNewsWithAi(rawNews, sector, today)
+            if (parsed.isNotEmpty()) {
                 prefs.edit().putLong(lastFetchKey, System.currentTimeMillis()).apply()
+                return parsed
             }
-            return news
-        } catch (e: Exception) {
-            Log.w(TAG, "搜索板块[$sector]新闻失败: ${e.message}")
-            return emptyList()
-        } finally {
-            com.chin.stockanalysis.ai.AiProviderPool.releaseNonBlocking(slot)
+            // AI 解析失敗，繼續到 fallback
         }
+
+        // === Fallback 1：AI provider 直接搜索+分析 ===
+        Log.w(TAG, "⚠️ [$sector] 分離搜索解析失敗，fallback 到 AI provider")
+        val aiNews = searchWithAiProvider(sector, today)
+        if (aiNews.isNotEmpty()) {
+            prefs.edit().putLong(lastFetchKey, System.currentTimeMillis()).apply()
+            return aiNews
+        }
+
+        // === Fallback 2：關鍵詞匹配 ===
+        if (rawNews.isNotEmpty()) {
+            Log.w(TAG, "⚠️ [$sector] AI provider 也失敗，fallback 到關鍵詞匹配")
+            val keywordParsed = parseWithKeywords(rawNews, sector, today)
+            if (keywordParsed.isNotEmpty()) {
+                prefs.edit().putLong(lastFetchKey, System.currentTimeMillis()).apply()
+                return keywordParsed
+            }
+        }
+
+        Log.w(TAG, "⚠️ [$sector] 所有新聞源均失敗")
+        return emptyList()
     }
 
     private fun parseNewsResponse(response: String, sector: String, today: String): List<NewsFactorEntity> {
@@ -293,6 +277,302 @@ class HotSectorNewsUpdater(private val context: Context) {
             results
         } catch (e: Exception) {
             Log.w(TAG, "解析新闻失败: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /** 從數據庫加載今日該板塊的緩存新聞 */
+    private suspend fun loadCachedNews(sector: String): List<NewsFactorEntity> {
+        return try {
+            val today = LocalDate.now().format(DATE_FMT)
+            db.newsFactorDao().getActiveBySector(sector, limit = 20)
+                .filter { it.newsDate == today }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    /** 使用 AI 解析新聞列表，返回結構化結果 */
+    private suspend fun parseNewsWithAi(newsList: List<NewsFactorEntity>, sector: String, today: String): List<NewsFactorEntity> {
+        return try {
+            val titles = newsList.joinToString("\n") { "- ${it.title}" }
+            val prompt = """
+你是一位 A 股財經分析師。請分析以下關於「$sector」板塊的新聞，返回 JSON 格式：
+
+新聞列表：
+$titles
+
+請返回：
+{
+  "news": [
+    {
+      "stock_code": "",
+      "company": "",
+      "title": "新聞標題",
+      "content": "摘要",
+      "sentiment": 1,
+      "strength": 60,
+      "tags": "$sector"
+    }
+  ]
+}
+"sentiment": 1=利好, -1=利空, 0=中性
+"strength": 0-100 影響力度
+只返回 JSON，不要其他文字。
+""".trimIndent()
+
+            val slot = com.chin.stockanalysis.ai.AiProviderPool.acquire(
+                context = context,
+                callerTag = "HotSectorNewsUpdater.parseNews",
+                timeoutMs = 10_000L
+            ) ?: return emptyList()
+
+            try {
+                val response = withTimeoutOrNull(10000) {
+                    withContext(Dispatchers.IO) {
+                        suspendCancellableCoroutine<String> { cont ->
+                            slot.provider.sendMessageStream(
+                                messages = emptyList(),
+                                systemPrompt = prompt,
+                                onSuccess = {},
+                                onComplete = { full -> cont.resumeWith(Result.success(full)) },
+                                onError = { err -> cont.resumeWith(Result.failure(Exception(err))) }
+                            )
+                        }
+                    }
+                }
+
+                if (response == null) {
+                    Log.w(TAG, "⏱️ [$sector] AI 解析新聞超時")
+                    return emptyList()
+                }
+                parseNewsResponse(response, sector, today)
+            } finally {
+                com.chin.stockanalysis.ai.AiProviderPool.release(slot)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "AI 解析新聞失敗 [$sector]: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /** 關鍵詞匹配解析（AI 解析失敗時的 fallback） */
+    private fun parseWithKeywords(newsList: List<NewsFactorEntity>, sector: String, today: String): List<NewsFactorEntity> {
+        val positive = setOf("漲", "漲停", "利好", "訂單", "增長", "突破", "超預期", "業績", "盈利", "創新高", "爆發", "強勢")
+        val negative = setOf("跌", "跌停", "利空", "虧損", "下滑", "減持", "召回", "監管", "調查", "暴跌", "疲軟")
+        return newsList.map { news ->
+            val titleLower = news.title
+            val posCount = positive.count { titleLower.contains(it) }
+            val negCount = negative.count { titleLower.contains(it) }
+            val sentiment = when {
+                posCount > negCount -> 1
+                negCount > posCount -> -1
+                else -> 0
+            }
+            val strength = (50 + (posCount - negCount) * 15).coerceIn(0, 100)
+            news.copy(
+                sentiment = sentiment,
+                impactStrength = strength,
+                source = "${news.source}_keyword",
+                tags = sector
+            )
+        }
+    }
+
+    /** AI provider 直接搜索+分析（最終 fallback） */
+    private suspend fun searchWithAiProvider(sector: String, today: String): List<NewsFactorEntity> {
+        return try {
+            val prompt = """
+你是一位 A 股財經分析師。請搜索並分析關於「$sector」板塊的最新新聞，返回 JSON 格式：
+
+請返回：
+{
+  "news": [
+    {
+      "stock_code": "",
+      "company": "",
+      "title": "新聞標題",
+      "content": "摘要",
+      "sentiment": 1,
+      "strength": 60,
+      "tags": "$sector"
+    }
+  ]
+}
+"sentiment": 1=利好, -1=利空, 0=中性
+"strength": 0-100 影響力度
+請根據你的知識庫提供該板塊的最新動態，只返回 JSON，不要其他文字。
+""".trimIndent()
+
+            val slot = com.chin.stockanalysis.ai.AiProviderPool.acquire(
+                context = context,
+                callerTag = "HotSectorNewsUpdater.aiSearch",
+                timeoutMs = 15_000L
+            ) ?: return emptyList()
+
+            try {
+                val response = withTimeoutOrNull(15000) {
+                    withContext(Dispatchers.IO) {
+                        suspendCancellableCoroutine<String> { cont ->
+                            slot.provider.sendMessageStream(
+                                messages = emptyList(),
+                                systemPrompt = prompt,
+                                onSuccess = {},
+                                onComplete = { full -> cont.resumeWith(Result.success(full)) },
+                                onError = { err -> cont.resumeWith(Result.failure(Exception(err))) }
+                            )
+                        }
+                    }
+                }
+
+                if (response == null) {
+                    Log.w(TAG, "⏱️ [$sector] AI provider 搜索超時")
+                    return emptyList()
+                }
+                parseNewsResponse(response, sector, today)
+            } finally {
+                com.chin.stockanalysis.ai.AiProviderPool.release(slot)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "AI provider 搜索失敗 [$sector]: ${e.message}")
+            emptyList()
+        }
+    }
+
+    private suspend fun fetchNewsFromEastMoney(sector: String, today: String): List<NewsFactorEntity> {
+        return try {
+            val url = "https://searchapi.eastmoney.com/api/suggest/get?input=${URLEncoder.encode(sector, "UTF-8")}&type=14&count=5"
+            val request = Request.Builder().url(url).addHeader("User-Agent", "Mozilla/5.0").build()
+            val response = withTimeoutOrNull(5000) {
+                withContext(Dispatchers.IO) { com.chin.stockanalysis.stock.data.HttpClientProvider.realtimeClient.newCall(request).execute() }
+            }
+            if (response == null || !response.isSuccessful) return emptyList()
+
+            val body = response.body?.string() ?: return emptyList()
+            // 東方財富返回的是 JSON 數組
+            val arr = JSONArray(body)
+            val news = mutableListOf<NewsFactorEntity>()
+            for (i in 0 until arr.length()) {
+                val item = arr.getJSONObject(i)
+                news.add(NewsFactorEntity(
+                    stockCode = "",
+                    companyName = item.optString("Name", ""),
+                    title = item.optString("Name", ""),
+                    content = "",
+                    newsDate = today,
+                    sentiment = 1,
+                    impactStrength = 50,
+                    source = "eastmoney",
+                    sourceUrl = item.optString("Url", ""),
+                    tags = sector,
+                    sector = sector,
+                    createdAt = System.currentTimeMillis(),
+                    isActive = true
+                ))
+            }
+            news
+        } catch (e: Exception) {
+            Log.w(TAG, "東方財富新聞搜索失敗 [$sector]: ${e.message}")
+            emptyList()
+        }
+    }
+
+    private suspend fun fetchNewsFromDuckDuckGo(sector: String, today: String): List<NewsFactorEntity> {
+        return try {
+            val query = URLEncoder.encode("$sector A股 新闻", "UTF-8")
+            val url = "https://html.duckduckgo.com/html/?q=$query"
+            val request = Request.Builder()
+                .url(url)
+                .addHeader("User-Agent", "Mozilla/5.0")
+                .addHeader("Accept", "text/html")
+                .build()
+            val response = withTimeoutOrNull(8000) {
+                withContext(Dispatchers.IO) { com.chin.stockanalysis.stock.data.HttpClientProvider.realtimeClient.newCall(request).execute() }
+            }
+            if (response == null || !response.isSuccessful) return emptyList()
+
+            val html = response.body?.string() ?: return emptyList()
+            // 簡單解析：提取 result__a 和 result__snippet
+            val news = mutableListOf<NewsFactorEntity>()
+            val titleRegex = Regex("<a[^>]+class=\"result__a\"[^>]*>(.*?)</a>", RegexOption.DOT_MATCHES_ALL)
+            val snippetRegex = Regex("<a[^>]+class=\"result__snippet\"[^>]*>(.*?)</a>", RegexOption.DOT_MATCHES_ALL)
+            val titles = titleRegex.findAll(html).map { it.groupValues[1].replace(Regex("<[^>]+>"), "").trim() }.toList()
+            val snippets = snippetRegex.findAll(html).map { it.groupValues[1].replace(Regex("<[^>]+>"), "").trim() }.toList()
+
+            for (i in titles.indices.take(5)) {
+                news.add(NewsFactorEntity(
+                    stockCode = "",
+                    companyName = "",
+                    title = titles.getOrNull(i) ?: "",
+                    content = snippets.getOrNull(i)?.take(200) ?: "",
+                    newsDate = today,
+                    sentiment = 1,
+                    impactStrength = 50,
+                    source = "duckduckgo",
+                    sourceUrl = "",
+                    tags = sector,
+                    sector = sector,
+                    createdAt = System.currentTimeMillis(),
+                    isActive = true
+                ))
+            }
+            news
+        } catch (e: Exception) {
+            Log.w(TAG, "DuckDuckGo 搜索失敗 [$sector]: ${e.message}")
+            emptyList()
+        }
+    }
+
+    private suspend fun fetchNewsWithTavily(sector: String, today: String): List<NewsFactorEntity> {
+        return try {
+            val url = "https://api.tavily.com/search"
+            val jsonBody = JSONObject().apply {
+                put("api_key", "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")
+                put("query", "$sector A股 新闻")
+                put("search_depth", "basic")
+                put("max_results", 5)
+                put("include_answer", false)
+            }
+            val mediaType = "application/json".toMediaType()
+            val request = Request.Builder()
+                .url(url)
+                .post(jsonBody.toString().toRequestBody(mediaType))
+                .addHeader("Content-Type", "application/json")
+                .build()
+            val client = com.chin.stockanalysis.stock.data.HttpClientProvider.realtimeClient
+            val response = withTimeoutOrNull(8000) {
+                withContext(Dispatchers.IO) { client.newCall(request).execute() }
+            }
+            if (response == null || !response.isSuccessful) {
+                Log.w(TAG, "Tavily 搜索失敗: ${response?.code}")
+                return emptyList()
+            }
+            val bodyStr = response.body?.string() ?: return emptyList()
+            val obj = JSONObject(bodyStr)
+            val results = obj.optJSONArray("results") ?: return emptyList()
+            val news = mutableListOf<NewsFactorEntity>()
+            for (i in 0 until results.length()) {
+                val item = results.getJSONObject(i)
+                news.add(NewsFactorEntity(
+                    stockCode = "",
+                    companyName = "",
+                    title = item.optString("title", ""),
+                    content = item.optString("content", "").take(200),
+                    newsDate = today,
+                    sentiment = 1,
+                    impactStrength = 50,
+                    source = "tavily",
+                    sourceUrl = item.optString("url", ""),
+                    tags = sector,
+                    sector = sector,
+                    createdAt = System.currentTimeMillis(),
+                    isActive = true
+                ))
+            }
+            Log.i(TAG, "Tavily 搜索 [$sector] 獲取 ${news.size} 條新聞")
+            news
+        } catch (e: Exception) {
+            Log.w(TAG, "Tavily 搜索 [$sector] 失敗: ${e.message}")
             emptyList()
         }
     }

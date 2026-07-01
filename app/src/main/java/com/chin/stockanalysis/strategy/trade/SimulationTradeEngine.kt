@@ -12,6 +12,10 @@ import com.chin.stockanalysis.strategy.models.ScreeningResult
 import com.chin.stockanalysis.strategy.models.SignalAction
 import com.chin.stockanalysis.strategy.models.StrategySignal
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -172,6 +176,30 @@ class SimulationTradeEngine(private val context: Context) {
         config: TradeSessionConfig = TradeSessionConfig()
     ): TradeSessionReport = withContext(Dispatchers.IO) {
         val totalStart = System.currentTimeMillis()
+        val stepTimes = mutableMapOf<String, Long>()
+        suspend fun timedStep(name: String, block: suspend () -> Unit) = coroutineScope {
+            val start = System.currentTimeMillis()
+            onStatusUpdate?.invoke("⏳ 正在執行: $name...")
+            val timerJob = launch {
+                delay(1000)
+                while (isActive) {
+                    val elapsed = (System.currentTimeMillis() - start) / 1000.0
+                    onStatusUpdate?.invoke("⏱️ $name 已執行 ${"%.1f".format(elapsed)}s...")
+                    delay(1000)
+                }
+            }
+            try {
+                block()
+            } finally {
+                timerJob.cancel()
+                val elapsed = System.currentTimeMillis() - start
+                stepTimes[name] = elapsed
+                if (elapsed >= 500) {
+                    val sec = "%.1f".format(elapsed / 1000.0)
+                    onStatusUpdate?.invoke("✅ $name 完成 (${sec}s)")
+                }
+            }
+        }
         Log.i(TAG, "━━━ 9步精選模擬交易 ━━━")
         Log.i(TAG, "交易日: ${config.tradeDate}  主板: ${config.onlyMainBoard}  周期: ${config.periods}")
         Log.i(TAG, "策略数: ${strategies.size}  最大持仓: ${MAX_HOLDINGS}")
@@ -181,29 +209,33 @@ class SimulationTradeEngine(private val context: Context) {
             scope = this, context = context, forceRefresh = true
         )
 
-        val t1 = System.currentTimeMillis()
-        val poolCodes = buildDailyStockPool(config.tradeDate)
-        val step1 = System.currentTimeMillis() - t1
-        Log.i(TAG, "【Step 1-4】精選池: ${poolCodes.size} 隻, ${step1}ms")
+        var poolCodes = emptySet<String>()
+        timedStep("Step 1-4: 構建精選股票池") {
+            poolCodes = buildDailyStockPool(config.tradeDate).toSet()
+            Log.i(TAG, "【Step 1-4】精選池: ${poolCodes.size} 隻")
+        }
 
-        val t2 = System.currentTimeMillis()
-        val allSnapshots = getTradingDayData(config.tradeDate)
-        val step2 = System.currentTimeMillis() - t2
-        Log.i(TAG, "获取交易日数据: ${allSnapshots.size}只, ${step2}ms")
+        var allSnapshots = emptyList<DailySnapshotEntity>()
+        timedStep("Step 2: 獲取交易日快照數據") {
+            allSnapshots = getTradingDayData(config.tradeDate)
+            Log.i(TAG, "获取交易日数据: ${allSnapshots.size}只")
+        }
         if (allSnapshots.isEmpty()) {
             return@withContext TradeSessionReport(config, emptyList(), emptyList(), emptyList(),
                 "交易日 ${config.tradeDate} 无可用数据")
         }
-        // 统一数据层: 使用 StrategyDataFeed 构建 StockRealtime
-        val t3 = System.currentTimeMillis()
-        val dataFeed = com.chin.stockanalysis.strategy.data.StrategyDataFeed(context)
-        val feedConfig = com.chin.stockanalysis.strategy.data.StrategyDataFeed.DataFeedConfig(
-            onlyMainBoard = config.onlyMainBoard,
-            stockCodes = poolCodes
-        )
-        var stockList = dataFeed.convertSnapshots(allSnapshots, feedConfig)
-        val step3 = System.currentTimeMillis() - t3
-        Log.i(TAG, "統一數據層: ${allSnapshots.size}隻 → ${stockList.size}隻 (主板=${config.onlyMainBoard}), ${step3}ms")
+
+        lateinit var dataFeed: com.chin.stockanalysis.strategy.data.StrategyDataFeed
+        var stockList = emptyList<StockRealtime>()
+        timedStep("Step 3: 統一數據層轉換") {
+            dataFeed = com.chin.stockanalysis.strategy.data.StrategyDataFeed(context)
+            val feedConfig = com.chin.stockanalysis.strategy.data.StrategyDataFeed.DataFeedConfig(
+                onlyMainBoard = config.onlyMainBoard,
+                stockCodes = poolCodes
+            )
+            stockList = dataFeed.convertSnapshots(allSnapshots, feedConfig)
+            Log.i(TAG, "統一數據層: ${allSnapshots.size}隻 → ${stockList.size}隻 (主板=${config.onlyMainBoard})")
+        }
 
         val tHeat = System.currentTimeMillis()
         val heatScores = calculateHeatScoresBatch(stockList, allSnapshots)
@@ -223,54 +255,53 @@ class SimulationTradeEngine(private val context: Context) {
         }
 
         // Step 5: 策略信號生成
-        val t5 = System.currentTimeMillis()
-        val allTodayResults = mutableListOf<StrategyPeriodResult>()
-        for (strategy in strategies) {
-            if (strategy.id == "ai_prediction") continue
-            val ts = System.currentTimeMillis()
-            Log.d(TAG, "【Step 5】执行策略: ${strategy.name} 输入${stockList.size}只")
-            val rawSignals = executeStrategy(strategy, stockList, 1) ?: continue
-            if (rawSignals.isEmpty()) { Log.d(TAG, "  ${strategy.name}: 无信号"); continue }
-            Log.d(TAG, "  ${strategy.name}: 原始信號${rawSignals.size}個")
-            if (rawSignals.isEmpty()) continue
-            // 🔥 買入前過濾 (Step 5内部，在主板过濾之前)
-            val afterBuyFilter = applySignalFilter(rawSignals, allSnapshots)
-            Log.d(TAG, "  ${strategy.name}: 4条过滤后${afterBuyFilter.size}個")
-            val newsScore = calculateNewsStrength(afterBuyFilter, config.tradeDate)
-            val rotationPenaltyScore = calculateRotationPenalty(afterBuyFilter, config.tradeDate)
-            val (filtered, filteredInfo) = filterByMainBoard(afterBuyFilter, config.onlyMainBoard)
-            val top15 = filtered.sortedByDescending { it.strength }.take(MAX_STOCKS_PER_STRATEGY)
-            allTodayResults.add(StrategyPeriodResult(
-                strategyId = strategy.id, strategyName = strategy.name,
-                periodDays = 1, tradeDate = config.tradeDate,
-                rawStockSignals = rawSignals.take(MAX_STOCKS_PER_STRATEGY),
-                newsStrengthScore = newsScore, rotationPenalty = rotationPenaltyScore,
-                afterMainBoardFilter = filtered.take(MAX_STOCKS_PER_STRATEGY),
-                filteredStocks = filteredInfo.take(20), finalTop15 = top15
-            ))
-            val sElapsed = System.currentTimeMillis() - ts
-            Log.i(TAG, "  ${strategy.name}: 输出Top15 — ${top15.take(5).joinToString { "${it.stockName}(${it.strength}%)" }}, ${sElapsed}ms")
-            savePeriodResultToDb(strategy.id, strategy.name, 1, config.tradeDate, rawSignals, newsScore, rotationPenaltyScore,
-                filtered.map { it.stockCode }, filteredInfo, top15)
+        var allTodayResults = mutableListOf<StrategyPeriodResult>()
+        timedStep("Step 5: 執行策略信號生成") {
+            for (strategy in strategies) {
+                if (strategy.id == "ai_prediction") continue
+                val ts = System.currentTimeMillis()
+                Log.d(TAG, "【Step 5】执行策略: ${strategy.name} 输入${stockList.size}只")
+                val rawSignals = executeStrategy(strategy, stockList, 1) ?: continue
+                if (rawSignals.isEmpty()) { Log.d(TAG, "  ${strategy.name}: 无信号"); continue }
+                Log.d(TAG, "  ${strategy.name}: 原始信號${rawSignals.size}個")
+                if (rawSignals.isEmpty()) continue
+                // 🔥 買入前過濾 (Step 5内部，在主板过濾之前)
+                val afterBuyFilter = applySignalFilter(rawSignals, allSnapshots)
+                Log.d(TAG, "  ${strategy.name}: 4条过滤后${afterBuyFilter.size}個")
+                val newsScore = calculateNewsStrength(afterBuyFilter, config.tradeDate)
+                val rotationPenaltyScore = calculateRotationPenalty(afterBuyFilter, config.tradeDate)
+                val (filtered, filteredInfo) = filterByMainBoard(afterBuyFilter, config.onlyMainBoard)
+                val top15 = filtered.sortedByDescending { it.strength }.take(MAX_STOCKS_PER_STRATEGY)
+                allTodayResults.add(StrategyPeriodResult(
+                    strategyId = strategy.id, strategyName = strategy.name,
+                    periodDays = 1, tradeDate = config.tradeDate,
+                    rawStockSignals = rawSignals.take(MAX_STOCKS_PER_STRATEGY),
+                    newsStrengthScore = newsScore, rotationPenalty = rotationPenaltyScore,
+                    afterMainBoardFilter = filtered.take(MAX_STOCKS_PER_STRATEGY),
+                    filteredStocks = filteredInfo.take(20), finalTop15 = top15
+                ))
+                val sElapsed = System.currentTimeMillis() - ts
+                Log.i(TAG, "  ${strategy.name}: 输出Top15 — ${top15.take(5).joinToString { "${it.stockName}(${it.strength}%)" }}, ${sElapsed}ms")
+                savePeriodResultToDb(strategy.id, strategy.name, 1, config.tradeDate, rawSignals, newsScore, rotationPenaltyScore,
+                    filtered.map { it.stockCode }, filteredInfo, top15)
+            }
+            Log.i(TAG, "【Step 5】${allTodayResults.size} 個策略命中，输入${stockList.size}只 → 输出策略结果")
         }
-        val step5 = System.currentTimeMillis() - t5
-        Log.i(TAG, "【Step 5】${allTodayResults.size} 個策略命中，输入${stockList.size}只 → 输出策略结果, ${step5}ms")
 
-        // Step 6: 跨日聚合 + 多周期热门股
-        val t6a = System.currentTimeMillis()
-        val crossDayTop20 = aggregateCrossDayResults(config.tradeDate, strategies, poolCodes)
-        val step6a = System.currentTimeMillis() - t6a
-        Log.i(TAG, "【Step 6a】跨${CROSS_DAY_WINDOW}天聚合 → Top${crossDayTop20.size}: ${crossDayTop20.take(8).joinToString { "${it.first.takeLast(6)}(${it.second}天)" }}, ${step6a}ms")
-        val t6b = System.currentTimeMillis()
-        val hotStocks = addMultiPeriodHotStocks(config.tradeDate, config.onlyMainBoard)
-        val step6b = System.currentTimeMillis() - t6b
-        Log.i(TAG, "【Step 6b】多周期热门股: +${hotStocks.size}隻 — ${hotStocks.take(5).joinToString()}, ${step6b}ms")
+        // Step 6-7: 跨日聚合 + 多周期热门股 + 板块精选
+        var crossDayTop20 = emptyList<Pair<String, Int>>()
+        var hotStocks = emptySet<String>()
+        var sectorPicked = emptySet<String>()
+        timedStep("Step 6-7: 跨日聚合與熱門板塊精選") {
+            crossDayTop20 = aggregateCrossDayResults(config.tradeDate, strategies, poolCodes)
+            Log.i(TAG, "【Step 6a】跨${CROSS_DAY_WINDOW}天聚合 → Top${crossDayTop20.size}: ${crossDayTop20.take(8).joinToString { "${it.first.takeLast(6)}(${it.second}天)" }}")
 
-        // Step 7: 板块精选
-        val t7 = System.currentTimeMillis()
-        val sectorPicked = if (config.onlyMainBoard) getHotSectorStockPool().filter { isMainBoard(it) }.toSet() else getHotSectorStockPool()
-        val step7 = System.currentTimeMillis() - t7
-        Log.i(TAG, "【Step 7】板塊精選: +${sectorPicked.size} 隻, ${step7}ms")
+            hotStocks = addMultiPeriodHotStocks(config.tradeDate, config.onlyMainBoard)
+            Log.i(TAG, "【Step 6b】多周期热门股: +${hotStocks.size}隻 — ${hotStocks.take(5).joinToString()}")
+
+            sectorPicked = if (config.onlyMainBoard) getHotSectorStockPool().filter { isMainBoard(it) }.toSet() else getHotSectorStockPool()
+            Log.i(TAG, "【Step 7】板塊精選: +${sectorPicked.size} 隻")
+        }
 
         // Step 8: 用户搜索/智能体/自选股
         val t8 = System.currentTimeMillis()
@@ -303,50 +334,53 @@ class SimulationTradeEngine(private val context: Context) {
         // AI 精选
         onStatusUpdate?.invoke("🤖 AI 大模型分析中...")
 
-        // ── AI 精選前置處理：等待新聞因子拉取完成（如果已跑完則立即返回） ──
-        val aiStrategy = strategies.find { it.id == "ai_prediction" }
-        val needAi = aiStrategy != null && finalStockList.isNotEmpty()
-        if (needAi) {
-            if (newsJob.isActive) {
-                onStatusUpdate?.invoke("📰 等待新聞因子完成（可能其他量化正在拉取）...")
-            }
-            try {
-                newsJob.await()
-                Log.i(TAG, "AI前置: 新聞因子已就緒")
-            } catch (e: Exception) {
-                Log.w(TAG, "AI前置: 新聞刷新失敗（不阻塞）: ${e.message}")
-            }
-            com.chin.stockanalysis.stock.database.AppBackgroundRunner.isQuantRunning = true
-            Log.i(TAG, "AI前置: 已暫停後臺 AI 任務")
-        }
-
-        val tAi = System.currentTimeMillis()
-        val aiPicks = if (aiStrategy != null && aiStrategy is com.chin.stockanalysis.strategy.strategies.AIPredictionStrategy) {
-            val screeningResults = mutableListOf<com.chin.stockanalysis.strategy.models.ScreeningResult>()
-            for (strategy in strategies) {
-                if (strategy.id == "ai_prediction") continue
-                executeStrategy(strategy, finalStockList, 1)?.let { signals ->
-                    screeningResults.add(com.chin.stockanalysis.strategy.models.ScreeningResult(
-                        strategyId = strategy.id, strategyName = strategy.name,
-                        category = strategy.category, signals = signals,
-                        totalScanned = signals.size, scanTimeMs = 0))
+        var aiPicks = emptyList<AIPick>()
+        var aiPicksFiltered = emptyList<AIPick>()
+        var needAi = false
+        timedStep("Step 9: AI 預測精選") {
+            val aiStrategy = strategies.find { it.id == "ai_prediction" }
+            needAi = aiStrategy != null && finalStockList.isNotEmpty()
+            if (needAi) {
+                if (newsJob.isActive) {
+                    onStatusUpdate?.invoke("📰 等待新聞因子完成（可能其他量化正在拉取）...")
                 }
+                try {
+                    newsJob.await()
+                    Log.i(TAG, "AI前置: 新聞因子已就緒")
+                } catch (e: Exception) {
+                    Log.w(TAG, "AI前置: 新聞刷新失敗（不阻塞）: ${e.message}")
+                }
+                com.chin.stockanalysis.stock.database.AppBackgroundRunner.isQuantRunning = true
+                Log.i(TAG, "AI前置: 已暫停後臺 AI 任務")
             }
-            aiStrategy.strategyResults = screeningResults
-            aiStrategy.targetDate = config.tradeDate
-            val aiSignals = executeStrategy(aiStrategy, finalStockList, 1) ?: emptyList()
-            aiSignals.sortedByDescending { it.strength }.take(FINAL_TOP3).mapIndexed { i, s ->
-                AIPick(rank = i+1, stockCode = s.stockCode, stockName = s.stockName,
-                    compositeScore = s.strength, upProbability = ((s.strength * 0.8 + 20).toInt()).coerceIn(0,100),
-                    reason = s.reason, actionSuggestion = if (s.strength>=75) "推荐买入" else if (s.strength>=60) "关注" else "观望")
-            }
-        } else emptyList()
-        // 主板過濾：AI 精選結果中也排除科創板/創業板/北交所
-        val aiPicksFiltered = if (config.onlyMainBoard) {
-            aiPicks.filter { isMainBoard(it.stockCode) }
-        } else aiPicks
-        val stepAi = System.currentTimeMillis() - tAi
-        Log.i(TAG, "AI 精选: ${aiPicks.size}只, ${stepAi}ms")
+
+            aiPicks = if (aiStrategy != null && aiStrategy is com.chin.stockanalysis.strategy.strategies.AIPredictionStrategy) {
+                val screeningResults = mutableListOf<com.chin.stockanalysis.strategy.models.ScreeningResult>()
+                for (strategy in strategies) {
+                    if (strategy.id == "ai_prediction") continue
+                    executeStrategy(strategy, finalStockList, 1)?.let { signals ->
+                        screeningResults.add(com.chin.stockanalysis.strategy.models.ScreeningResult(
+                            strategyId = strategy.id, strategyName = strategy.name,
+                            category = strategy.category, signals = signals,
+                            totalScanned = signals.size, scanTimeMs = 0))
+                    }
+                }
+                aiStrategy.strategyResults = screeningResults
+                aiStrategy.targetDate = config.tradeDate
+                onStatusUpdate?.invoke("🤖 正在 AI 分析股票...")
+                val aiSignals = executeStrategy(aiStrategy, finalStockList, 1) ?: emptyList()
+                aiSignals.sortedByDescending { it.strength }.take(FINAL_TOP3).mapIndexed { i, s ->
+                    AIPick(rank = i+1, stockCode = s.stockCode, stockName = s.stockName,
+                        compositeScore = s.strength, upProbability = ((s.strength * 0.8 + 20).toInt()).coerceIn(0,100),
+                        reason = s.reason, actionSuggestion = if (s.strength>=75) "推荐买入" else if (s.strength>=60) "关注" else "观望")
+                }
+            } else emptyList()
+            // 主板過濾：AI 精選結果中也排除科創板/創業板/北交所
+            aiPicksFiltered = if (config.onlyMainBoard) {
+                aiPicks.filter { isMainBoard(it.stockCode) }
+            } else aiPicks
+            Log.i(TAG, "AI 精选: ${aiPicks.size}只")
+        }
 
         // AI 結束，恢復後臺任務
         if (needAi) {
@@ -354,50 +388,54 @@ class SimulationTradeEngine(private val context: Context) {
             Log.i(TAG, "AI前置: 已恢復後臺 AI 任務")
         }
 
-        val tOrder = System.currentTimeMillis()
-        val buyOrders = generateBuyOrders(aiPicksFiltered, config.tradeDate, allSnapshots, config.orderType)
-        val stepOrder = System.currentTimeMillis() - tOrder
-        Log.i(TAG, "生成买入订单: ${buyOrders.size}只, ${stepOrder}ms")
+        var buyOrders = emptyList<TradeOrder>()
+        timedStep("Step 10: 買入過濾與訂單生成") {
+            buyOrders = generateBuyOrders(aiPicksFiltered, config.tradeDate, allSnapshots, config.orderType)
+            Log.i(TAG, "生成买入订单: ${buyOrders.size}只")
+        }
 
-        // 保存買入訂單到數據庫
-        if (buyOrders.isNotEmpty()) {
-            try {
-                val entities = buyOrders.map { order ->
-                    StrategyTradeOrderEntity(
-                        strategyId = order.strategyId,
-                        stockCode = order.stockCode,
-                        stockName = order.stockName,
-                        tradeDate = order.tradeDate,
-                        buyPrice = order.buyPrice,
-                        buyTime = order.buyTime,
-                        quantity = order.quantity,
-                        reason = order.reason,
-                        scoreAtBuy = order.scoreAtBuy,
-                        orderType = order.orderType,
-                        status = "PENDING",
-                        createdAt = System.currentTimeMillis()
-                    )
+        timedStep("Step 11: 持倉合併與保存") {
+            // 保存買入訂單到數據庫
+            if (buyOrders.isNotEmpty()) {
+                try {
+                    val entities = buyOrders.map { order ->
+                        StrategyTradeOrderEntity(
+                            strategyId = order.strategyId,
+                            stockCode = order.stockCode,
+                            stockName = order.stockName,
+                            tradeDate = order.tradeDate,
+                            buyPrice = order.buyPrice,
+                            buyTime = order.buyTime,
+                            quantity = order.quantity,
+                            reason = order.reason,
+                            scoreAtBuy = order.scoreAtBuy,
+                            orderType = order.orderType,
+                            status = "PENDING",
+                            createdAt = System.currentTimeMillis()
+                        )
+                    }
+                    db.strategyTradeOrderDao().insertAll(entities)
+                    Log.i(TAG, "✅ 已保存 ${entities.size} 只買入訂單到持倉")
+                } catch (e: Exception) {
+                    Log.e(TAG, "保存買入訂單失敗: ${e.message}")
                 }
-                db.strategyTradeOrderDao().insertAll(entities)
-                Log.i(TAG, "✅ 已保存 ${entities.size} 只買入訂單到持倉")
-            } catch (e: Exception) {
-                Log.e(TAG, "保存買入訂單失敗: ${e.message}")
             }
+
+            saveDailyNewsHotPicks(config.tradeDate)
         }
 
-        saveDailyNewsHotPicks(config.tradeDate)
-        if (buyOrders.isEmpty()) {
-            Log.i(TAG, "⏭️ 无买入订单，跳过拟合（节省时间）")
-        } else {
-            val tFit = System.currentTimeMillis()
-            runFitting(strategies, allTodayResults, config)
-            val stepFit = System.currentTimeMillis() - tFit
-            Log.i(TAG, "拟合完成: ${stepFit}ms")
+        timedStep("Step 12: 換股與擬合計算") {
+            if (buyOrders.isEmpty()) {
+                Log.i(TAG, "⏭️ 无买入订单，跳过拟合（节省时间）")
+            } else {
+                runFitting(strategies, allTodayResults, config)
+                Log.i(TAG, "拟合完成")
+            }
+            saveFinalPoolToDb(config.tradeDate, finalPoolSafe.toList(), crossDayTop20)
         }
-        saveFinalPoolToDb(config.tradeDate, finalPoolSafe.toList(), crossDayTop20)
         val totalElapsed = System.currentTimeMillis() - totalStart
         Log.i(TAG, "━━━ 9步精選完成 ━━━ TOTAL: ${totalElapsed}ms")
-        Log.i(TAG, "Breakdown: pool=${step1}ms data=${step2}ms convert=${step3}ms heat=${heatElapsed}ms strategy=${step5}ms crossDay=${step6a}ms hot=${step6b}ms sector=${step7}ms user=${step8}ms filter=${step9}ms ai=${stepAi}ms order=${stepOrder}ms")
+        Log.i(TAG, "Breakdown: pool=${stepTimes["Step 1-4"]}ms data=${stepTimes["Step 2"]}ms convert=${stepTimes["Step 3"]}ms heat=${heatElapsed}ms strategy=${stepTimes["Step 5"]}ms crossDayHotSector=${stepTimes["Step 6-7"]}ms user=${step8}ms filter=${step9}ms ai=${stepTimes["Step 9"]}ms order=${stepTimes["Step 10"]}ms merge=${stepTimes["Step 11"]}ms fitting=${stepTimes["Step 12"]}ms")
 
         val stepDetail = StepDetail(
             basePoolSize = poolCodes.size,
