@@ -1,6 +1,7 @@
 package com.chin.stockanalysis.stock.data
 
 import android.util.Log
+import com.chin.stockanalysis.config.DataConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -93,7 +94,7 @@ object StockNameResolver {
             else -> return null
         }
         val secid = "$market.$rawCode"
-        val url = "https://push2.eastmoney.com/api/qt/stock/get?secid=$secid&fields=f57,f58"
+        val url = "${DataConfig.eastmoneyPush2}/stock/get?secid=$secid&fields=f57,f58"
 
         return try {
             val conn = URL(url).openConnection() as HttpURLConnection
@@ -127,7 +128,7 @@ object StockNameResolver {
             }
         }
         val filter = secids.joinToString(",")
-        val url = "https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=50&fs=$filter&fields=f12,f14"
+        val url = "${DataConfig.eastmoneyPush2}/clist/get?pn=1&pz=50&fs=$filter&fields=f12,f14"
 
         return try {
             val conn = URL(url).openConnection() as HttpURLConnection

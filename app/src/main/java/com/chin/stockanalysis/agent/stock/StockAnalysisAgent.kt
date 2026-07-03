@@ -119,14 +119,10 @@ class StockAnalysisAgent(context: Context) : AgentBase(
 
         onProgress?.invoke("🤖 AI 分析 $resolvedName 中...")
 
-        // Step 2: 構建 prompt
+        // Step 2: 構建 prompt（使用完整的 system prompt + 數據）
         val promptData = buildAnalysisPrompt(data, resolvedName)
-        val prompt = """
-請根據以下數據對股票 $resolvedName（$normalizedCode）進行深度分析，給出買賣建議。
-
-$promptData
-請嚴格按 JSON 格式輸出分析結果。
-        """.trimIndent()
+        val systemPrompt = buildSystemPrompt() + "\n\n## 待分析股票數據\n\n" + promptData
+        val prompt = "請分析股票 $resolvedName（$normalizedCode），嚴格按上方 JSON 格式輸出。"
 
         // Step 3: 單次 LLM 調用，60s 超時
         val llmOutput = try {
@@ -163,8 +159,8 @@ $promptData
                         }
 
                         provider.sendMessageStreamJson(
-                            messages = emptyList(),
-                            systemPrompt = buildSystemPrompt(),
+                            messages = listOf(com.chin.stockanalysis.ui.Message(content = prompt, isUser = true)),
+                            systemPrompt = systemPrompt,
                             onSuccess = { _ ->
                                 lastTokenTime = System.currentTimeMillis()
                                 hasReceivedToken = true
@@ -262,7 +258,7 @@ $promptData
         // 技術面
         val h = data.history
         if (h.snapshots.size >= 5) {
-            val prices = h.snapshots.map { it.close }
+            val prices = h.snapshots.map { snap: com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity -> snap.close }
             val volumes = h.snapshots.map { it.volume }
             val ma5 = prices.take(5).average()
             val ma10 = prices.take(10).average()

@@ -199,6 +199,16 @@ class AgentPipelineOrchestrator(private val context: Context) {
 
         Log.i(TAG, "🧠 啟動 ${mode.label} 模式分析: $target (${steps.size} 步)")
 
+        // 獲取標的的實時數據（通過 StockDataFacade）
+        val stockCode = extractStockCode(target)
+        try {
+            ctx.stockData = com.chin.stockanalysis.stock.data.StockDataFacade.getInstance(context)
+                .getAnalysisData(stockCode)
+            Log.i(TAG, "📊 StockDataFacade 數據獲取完成: quote=${ctx.stockData?.quote?.name}, fundamental=${ctx.stockData?.fundamental?.source}")
+        } catch (e: Exception) {
+            Log.w(TAG, "StockDataFacade 數據獲取失敗（不阻塞）: ${e.message}")
+        }
+
         try {
             // 啟動支線並行：Agent D（板塊&輿情）
             val sentimentJob = SupervisorJob()
@@ -241,9 +251,16 @@ class AgentPipelineOrchestrator(private val context: Context) {
                 // Agent 2 打分後檢查通過閾值
                 if (step.isScorer && ctx.chainScore != null) {
                     if (!ctx.chainScore!!.passed) {
-                        Log.d(TAG, "Agent 2 打分 ${ctx.chainScore!!.totalScore} < 40，標的淘汰")
-                        onStepComplete?.invoke(index, step, ctx)
-                        break
+                        // 所有分數為 0 說明數據不足，跳過此步驟而非淘汰標的
+                        val allZero = ctx.chainScore!!.totalScore == 0 &&
+                            ctx.chainScore!!.baseScore == 0 && ctx.chainScore!!.materialScore == 0
+                        if (allZero) {
+                            Log.w(TAG, "Agent 2 所有分數為 0（數據不足），跳過產業鏈篩選")
+                        } else {
+                            Log.d(TAG, "Agent 2 打分 ${ctx.chainScore!!.totalScore} < 40，標的淘汰")
+                            onStepComplete?.invoke(index, step, ctx)
+                            break
+                        }
                     }
                 }
 
@@ -508,6 +525,44 @@ class AgentPipelineOrchestrator(private val context: Context) {
             sb.append("催化事件：${intel.events.joinToString("；")}\n")
             sb.append("外資評級：${intel.ratings.joinToString("；")}\n")
             sb.append("供需格局：${intel.supplyChain.joinToString("；")}\n\n")
+        }
+
+        // 注入 StockDataFacade 數據（若有）
+        ctx.stockData?.let { data ->
+            sb.append("【股票實時數據】\n")
+            // 實時行情
+            data.quote?.let { q ->
+                sb.append("當前價: ${q.price} (${if (q.changePercent >= 0) "+" else ""}${"%.2f".format(q.changePercent)}%)")
+                sb.append(" | 最高: ${q.high} | 最低: ${q.low}")
+                sb.append(" | 成交量: ${q.volume} | 換手率: ${"%.2f".format(q.turnoverRate)}%\n")
+                if (q.pe > 0) sb.append("PE(TTM): ${"%.2f".format(q.pe)}\n")
+            }
+            // 基本面
+            val f = data.fundamental
+            sb.append("股票名稱: ${f.name}")
+            if (f.business.isNotBlank()) sb.append(" | 主營業務: ${f.business}")
+            if (f.sectorNames.isNotEmpty()) sb.append(" | 板塊: ${f.sectorNames.joinToString(", ")}")
+            if (f.chainRationale.isNotBlank()) sb.append(" | 產業鏈: ${f.chainRationale}")
+            sb.append("（${f.source}）\n")
+            // 技術面
+            val h = data.history
+            if (h.snapshots.size >= 5) {
+                val prices = h.snapshots.map { snap -> snap.close }
+                val ma5 = prices.take(5).average()
+                val ma10 = prices.take(minOf(10, prices.size)).average()
+                val ma20 = prices.take(minOf(20, prices.size)).average()
+                sb.append("MA5: ${"%.2f".format(ma5)} | MA10: ${"%.2f".format(ma10)} | MA20: ${"%.2f".format(ma20)}")
+                if (!h.isFresh) sb.append("（歷史截至 ${h.latestDate}）")
+                sb.append("\n")
+            }
+            // 資金面
+            val ff = data.fundFlow
+            if (!ff.isEmpty) {
+                sb.append("主力淨流入: ${"%.2f".format(ff.totalNetInflow)}萬 | 平均換手率: ${"%.2f".format(ff.avgTurnoverRate)}%")
+                if (!ff.isFresh) sb.append("（截至 ${ff.latestDate}）")
+                sb.append("\n")
+            }
+            sb.append("\n")
         }
 
         // 分析標的

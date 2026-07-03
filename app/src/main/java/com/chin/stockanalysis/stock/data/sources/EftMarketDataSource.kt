@@ -1,6 +1,7 @@
 package com.chin.stockanalysis.stock.data.sources
 
 import android.util.Log
+import com.chin.stockanalysis.config.DataConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -94,7 +95,7 @@ object EftMarketDataSource {
         try {
             // 东方财富行业板块资金流向
             val url = buildString {
-                append("https://push2.eastmoney.com/api/qt/clist/get?")
+                append("${DataConfig.eastmoneyPush2}/clist/get?")
                 append("pn=1&pz=30&po=1&np=1&fltt=2&invt=2&fid=f62")
                 append("&fs=m:90+t:2")
                 append("&fields=f12,f14,f2,f3,f62,f184,f66")
@@ -135,7 +136,7 @@ object EftMarketDataSource {
     suspend fun fetchTopStocksInSector(sectorCode: String): List<StockBrief> = withContext(Dispatchers.IO) {
         try {
             val url = buildString {
-                append("https://push2.eastmoney.com/api/qt/clist/get?")
+                append("${DataConfig.eastmoneyPush2}/clist/get?")
                 append("pn=1&pz=10&po=1&np=1&fltt=2&invt=2&fid=f66")
                 append("&fs=b:$sectorCode+f:!50")  // 去掉 ST
                 append("&fields=f12,f14,f2,f3,f62,f66")
@@ -171,7 +172,7 @@ object EftMarketDataSource {
     suspend fun fetchTopEtfs(): List<EtfInfo> = withContext(Dispatchers.IO) {
         try {
             val url = buildString {
-                append("https://push2.eastmoney.com/api/qt/clist/get?")
+                append("${DataConfig.eastmoneyPush2}/clist/get?")
                 append("pn=1&pz=15&po=1&np=1&fltt=2&invt=2&fid=f66")
                 append("&fs=b:MK0021+b:MK0022+b:MK0023")  // ETF分类
                 append("&fields=f12,f14,f2,f3,f62,f66")
@@ -258,7 +259,7 @@ object EftMarketDataSource {
         val request = Request.Builder()
             .url(url)
             .addHeader("User-Agent", "Mozilla/5.0")
-            .addHeader("Referer", "https://quote.eastmoney.com/")
+            .addHeader("Referer", DataConfig.eastmoneyQuote)
             .build()
 
         val response = client.newCall(request).execute()
@@ -270,7 +271,7 @@ object EftMarketDataSource {
         // 备用：使用概念板块
         return try {
             val url = buildString {
-                append("https://push2.eastmoney.com/api/qt/clist/get?")
+                append("${DataConfig.eastmoneyPush2}/clist/get?")
                 append("pn=1&pz=20&po=1&np=1&fltt=2&invt=2&fid=f62")
                 append("&fs=m:90+t:3")
                 append("&fields=f12,f14,f2,f3,f62,f184,f66")

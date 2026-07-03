@@ -1,6 +1,7 @@
 package com.chin.stockanalysis.strategy.data
 
 import android.util.Log
+import com.chin.stockanalysis.config.DataConfig
 import com.chin.stockanalysis.stock.StockRealtime
 import com.chin.stockanalysis.stock.data.MultiSourceStockRepository
 import okhttp3.OkHttpClient
@@ -29,8 +30,8 @@ class StockScreener(
         private const val TIMEOUT = 10L
 
         /** 东方财富全市场实时行情 API（前200只） */
-        private const val FULL_MARKET_URL =
-            "https://push2.eastmoney.com/api/qt/clist/get?" +
+        private val FULL_MARKET_URL get() =
+            "${DataConfig.eastmoneyPush2}/clist/get?" +
                     "pn=1&pz=200&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23" +
                     "&fields=f2,f3,f4,f5,f6,f7,f8,f9,f10,f12,f14,f15,f16,f17,f18,f20,f23"
     }
@@ -50,7 +51,7 @@ class StockScreener(
             val request = Request.Builder()
                 .url(FULL_MARKET_URL)
                 .addHeader("User-Agent", "Mozilla/5.0")
-                .addHeader("Referer", "https://quote.eastmoney.com/")
+                .addHeader("Referer", DataConfig.eastmoneyQuote)
                 .build()
             val response = client.newCall(request).execute()
             if (!response.isSuccessful) {

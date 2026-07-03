@@ -66,9 +66,6 @@ class StockNameHandler : IntentHandler {
 
         // ─── 东方财富模糊搜索 ───
         private const val SEARCH_TIMEOUT = 3L
-        private const val EASTMONEY_SEARCH_URL =
-            "https://searchapi.eastmoney.com/api/suggest/get" +
-                    "?input=%s&type=14,22&token=D43BF722C8E33BDC906FB84D85E326&count=3"
 
         // 在多股票查询中拆分的关键词
         private val STOCK_CONNECTORS = Regex("和|跟|与|还有|以及|、")
@@ -223,9 +220,7 @@ class StockNameHandler : IntentHandler {
      */
     private fun searchStockCode(stockName: String): List<String> {
         return try {
-            val url = EASTMONEY_SEARCH_URL.format(
-                java.net.URLEncoder.encode(stockName, "UTF-8")
-            )
+            val url = com.chin.stockanalysis.config.DataConfig.eastmoneySearchUrl(stockName, "14,22", 3)
             val request = Request.Builder().url(url)
                 .addHeader("User-Agent", "Mozilla/5.0")
                 .build()

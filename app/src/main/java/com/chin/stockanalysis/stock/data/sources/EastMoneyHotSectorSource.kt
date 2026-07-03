@@ -1,6 +1,7 @@
 package com.chin.stockanalysis.stock.data.sources
 
 import android.util.Log
+import com.chin.stockanalysis.config.DataConfig
 import com.chin.stockanalysis.stock.data.HttpClientProvider
 import com.chin.stockanalysis.stock.database.ChinaMarketTradingHours as A股TradingHours
 import kotlinx.coroutines.*
@@ -114,7 +115,7 @@ class EastMoneyHotSectorSource {
         for (type in listOf(2, 3)) {
             try {
                 val timestamp = System.currentTimeMillis()
-                val url = "https://push2.eastmoney.com/api/qt/clist/get?" +
+                val url = "${DataConfig.eastmoneyPush2}/clist/get?" +
                     "pn=1&pz=50&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281" +
                     "&fltt=2&invt=2&fid=f3&fs=m:90+t:${type}+f:!50" +
                     "&fields=f2,f3,f5,f8,f12,f14,f62,f128,f140,f124&_=$timestamp"
@@ -157,7 +158,7 @@ class EastMoneyHotSectorSource {
         try {
             val codes = INDEX_CODES.joinToString(",") { it.first }
             val timestamp = System.currentTimeMillis()
-            val url = "https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f2,f3,f4,f12,f14&secids=$codes&_=$timestamp"
+            val url = "${DataConfig.eastmoneyPush2}/ulist.np/get?fltt=2&invt=2&fields=f2,f3,f4,f12,f14&secids=$codes&_=$timestamp"
             val req = Request.Builder()
                 .url(url)
                 .addHeader("User-Agent", "Mozilla/5.0")
@@ -182,7 +183,7 @@ class EastMoneyHotSectorSource {
         return try {
             // 添加时间戳参数确保获取最新数据
             val timestamp = System.currentTimeMillis()
-            val url = "https://push2.eastmoney.com/api/qt/clist/get?" +
+            val url = "${DataConfig.eastmoneyPush2}/clist/get?" +
                 "pn=1&pz=$topN&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281" +
                 "&fltt=2&invt=2&fid=f3&fs=m:90+t:${type}+f:!50" +
                 "&fields=f2,f3,f5,f8,f12,f14,f62,f128,f140,f124&_=$timestamp"
@@ -215,7 +216,7 @@ class EastMoneyHotSectorSource {
     fun fetchSectorLeaders(blockCode: String, topN: Int = 10): List<LeaderStock> {
         return try {
             val timestamp = System.currentTimeMillis()
-            val url = "https://push2.eastmoney.com/api/qt/clist/get?" +
+            val url = "${DataConfig.eastmoneyPush2}/clist/get?" +
                 "pn=1&pz=$topN&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281" +
                 "&fltt=2&invt=2&fid=f20&fs=b:${blockCode}+f:!50" +
                 "&fields=f2,f3,f8,f12,f14,f20,f62,f184,f192&_=$timestamp"

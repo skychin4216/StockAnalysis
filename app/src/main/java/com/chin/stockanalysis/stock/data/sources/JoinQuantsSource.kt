@@ -1,6 +1,7 @@
 package com.chin.stockanalysis.stock.data.sources
 
 import android.util.Log
+import com.chin.stockanalysis.config.DataConfig
 import com.chin.stockanalysis.stock.StockRealtime
 import com.chin.stockanalysis.stock.data.HttpClientProvider
 import com.chin.stockanalysis.stock.data.StockDataSource
@@ -33,7 +34,7 @@ class JoinQuantsSource(private val token: String = "") : StockDataSource {
     private val tag = "JoinQuantsSource"
 
     companion object {
-        private const val BASE_URL = "https://api.joinquants.com/api"
+        private val baseUrl get() = DataConfig.otherJoinquants
         private const val MAX_RETRIES = 2
         private const val RETRY_DELAY_MS = 500L
     }
@@ -60,7 +61,7 @@ class JoinQuantsSource(private val token: String = "") : StockDataSource {
      */
     private fun executeWithRetry(batch: List<String>): Map<String, StockRealtime> {
         val jqCodes = batch.joinToString(",") { normalizeToJQFormat(it) }
-        val url = "${BASE_URL}/query_quote?security=${jqCodes}&token=$token"
+        val url = "${baseUrl}/query_quote?security=${jqCodes}&token=$token"
 
         for (attempt in 0..MAX_RETRIES) {
             try {
@@ -163,7 +164,7 @@ class JoinQuantsSource(private val token: String = "") : StockDataSource {
         if (token.isBlank()) return false
 
         return try {
-            val url = "${BASE_URL}/query_quote?security=000001.XSHE&token=$token"
+            val url = "${baseUrl}/query_quote?security=000001.XSHE&token=$token"
             val request = Request.Builder().url(url).build()
             healthClient.newCall(request).execute().isSuccessful
         } catch (e: Exception) {

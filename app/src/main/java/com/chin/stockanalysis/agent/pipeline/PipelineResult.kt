@@ -10,6 +10,8 @@ data class PipelineContext(
     var sector: String = "科技",
     /** 當前分析模式（使用 String 避免循環引用） */
     var analysisModeName: String = "精簡版",
+    /** StockDataFacade 獲取的股票數據 */
+    var stockData: com.chin.stockanalysis.stock.data.StockDataFacade.StockAnalysisData? = null,
     /** Agent F 採集的標準化情報 */
     var intelligence: DataFeederResult? = null,
     /** Agent 3 的賽道熱度評級 */

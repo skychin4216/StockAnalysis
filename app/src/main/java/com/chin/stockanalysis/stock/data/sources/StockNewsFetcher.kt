@@ -1,6 +1,7 @@
 package com.chin.stockanalysis.stock.data.sources
 
 import android.util.Log
+import com.chin.stockanalysis.config.DataConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Request
@@ -65,7 +66,7 @@ class StockNewsFetcher {
 
     private suspend fun fetchAnnouncements(stockCode: String, stockName: String): List<Announcement> {
         return try {
-            val url = "https://www.cninfo.com.cn/new/disclosure/detail?" +
+            val url = "${DataConfig.newsCninfo}?" +
                 "stockCode=$stockCode&pageSize=5&pageNum=1"
 
             val request = Request.Builder()
@@ -92,7 +93,7 @@ class StockNewsFetcher {
         return try {
             val encoded = URLEncoder.encode(stockName, "UTF-8")
             // 財聯社搜索 API
-            val url = "https://www.cls.cn/api/search?" +
+            val url = "${DataConfig.newsCls}?" +
                 "q=$encoded&type=article&page=1&size=5"
 
             val request = Request.Builder()
@@ -146,7 +147,7 @@ class StockNewsFetcher {
             val symbol = if (stockCode.startsWith("sh")) "SH${stockCode.removePrefix("sh")}"
             else "SZ${stockCode.removePrefix("sz").removePrefix("bj")}"
 
-            val url = "https://xueqiu.com/statuses/search.json?" +
+            val url = "${DataConfig.newsXueqiu}?" +
                 "count=5&comment=0&symbol=$symbol&hl=0&source=stock&sort=time&page=1"
 
             // 雪球需要 Cookie（先用空請求獲取，再帶 Cookie）
@@ -174,7 +175,7 @@ class StockNewsFetcher {
     private suspend fun fetchCapitalFlow(stockCode: String): CapitalFlowData {
         return try {
             val market: Int = if (stockCode.startsWith("6")) 1 else 0
-            val url = "https://push2.eastmoney.com/api/qt/stock/fflow/kline/get?" +
+            val url = "${DataConfig.eastmoneyPush2}/stock/fflow/kline/get?" +
                 "secid=$market.$stockCode&fields1=f1,f2,f3&fields2=f51,f52,f53,f54&klt=1&lmt=5"
 
             val request = Request.Builder()
@@ -227,7 +228,7 @@ class StockNewsFetcher {
                     title = item.optString("title", "").take(100),
                     source = "财联社",
                     date = item.optString("ctime", "").take(10),
-                    url = "https://www.cls.cn/detail/${item.optString("id", "")}"
+                    url = "${DataConfig.newsClsDetail}/${item.optString("id", "")}"
                 ))
             }
             return results
@@ -266,7 +267,7 @@ class StockNewsFetcher {
                     title = text,
                     source = "雪球",
                     date = item.optString("created_at", "").take(10),
-                    url = "https://xueqiu.com${item.optString("target", "")}"
+                    url = "${DataConfig.newsXueqiuDetail}${item.optString("target", "")}"
                 ))
             }
             return results

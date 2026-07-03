@@ -57,6 +57,7 @@ class HotSectorNewsUpdater(private val context: Context) {
 
         @Synchronized
         fun ensureFreshGlobal(scope: CoroutineScope, context: Context, forceRefresh: Boolean = true): Deferred<Unit> {
+            Log.i(TAG, "ensureFreshGlobal called, forceRefresh=$forceRefresh, pendingJob=${pendingJob}, isActive=${pendingJob?.isActive}")
             // 如果已有正在執行或已完成的 job，直接返回
             if (pendingJob != null && pendingJob!!.isActive) {
                 Log.i(TAG, "⏭️ 新聞因子拉取已在進行中，共享同一個 job")
@@ -64,8 +65,12 @@ class HotSectorNewsUpdater(private val context: Context) {
             }
             val job = HotSectorNewsUpdater(context).ensureFreshAsync(scope, forceRefresh, ignoreQuantPause = true)
             pendingJob = job
+            Log.i(TAG, "🆕 創建新聞因子拉取 job=${job}")
             // 完成後清理引用
-            job.invokeOnCompletion { pendingJob = null }
+            job.invokeOnCompletion {
+                Log.i(TAG, "✅ 新聞因子 job 完成，異常=${it?.message}")
+                pendingJob = null
+            }
             return job
         }
     }
@@ -91,52 +96,63 @@ class HotSectorNewsUpdater(private val context: Context) {
             return
         }
 
+        Log.i(TAG, "🔒 請求 globalMutex...")
         globalMutex.lock()
+        Log.i(TAG, "🔒 獲得 globalMutex")
         try {
             // 雙重檢查：獲得鎖後再判斷（可能已被其他線程完成）
-            if (!forceRefresh && hasRun) {
-                Log.i(TAG, "⏭️ 新聞因子已被其他調用更新，共享結果")
-                return
-            }
-            hasRun = true
+                if (!forceRefresh && hasRun) {
+                    Log.i(TAG, "⏭️ 新聞因子已被其他調用更新，共享結果")
+                    return
+                }
+                hasRun = true
 
-            val latestDate = db.newsFactorDao().getLatestNewsDate()
-            val today = LocalDate.now().format(DATE_FMT)
-            val existingCount = if (latestDate == today) db.newsFactorDao().countActive() else 0
+                val latestDate = db.newsFactorDao().getLatestNewsDate()
+                val today = LocalDate.now().format(DATE_FMT)
+                val existingCount = if (latestDate == today) db.newsFactorDao().countActive() else 0
 
-            if (!forceRefresh && latestDate == today && existingCount > 5) {
-                Log.i(TAG, "✅ 今日已有 $existingCount 条新闻，跳过更新")
-                return
-            }
+                if (!forceRefresh && latestDate == today && existingCount > 5) {
+                    Log.i(TAG, "✅ 今日已有 $existingCount 条新闻，跳过更新")
+                    return
+                }
 
-            Log.i(TAG, "━━━ 開始檢查熱門板塊新聞（${CACHE_TTL_MINUTES}分鐘內有緩存則跳過） ━━━")
+                Log.i(TAG, "━━━ 開始檢查熱門板塊新聞（${CACHE_TTL_MINUTES}分鐘內有緩存則跳過） ━━━")
 
-            // 1. 获取 Top 5 热门板块
-            val topSectors = getTopHotSectors()
-            Log.i(TAG, "Top 5 热门板块: ${topSectors.joinToString()}")
+                // 1. 获取 Top 5 热门板块
+                val topSectors = getTopHotSectors()
+                Log.i(TAG, "Top 5 热门板块: ${topSectors.joinToString()}")
 
-            // 2. 优先选择 AI 硬件相关板块
-            val targetSectors = selectPrioritySectors(topSectors)
+                // 2. 优先选择 AI 硬件相关板块
+                val targetSectors = selectPrioritySectors(topSectors)
+                Log.i(TAG, "🎯 目標板塊: ${targetSectors.joinToString()}")
 
-            // 3. 用 AI 搜索新闻
-            val allNews = mutableListOf<NewsFactorEntity>()
-            for ((i, sector) in targetSectors.withIndex()) {
-                val news = searchSectorNews(sector, ignoreQuantPause = ignoreQuantPause)
-                allNews.addAll(news)
-                if (i < targetSectors.size - 1) delay(800)
-            }
+                // 3. 並行搜索所有板塊新聞
+                val allNews = mutableListOf<NewsFactorEntity>()
+                coroutineScope {
+                    val sectorJobs = targetSectors.map { sector ->
+                        async(Dispatchers.IO) {
+                            Log.i(TAG, "🔍 [$sector] 並行開始搜索...")
+                            val sectorStart = System.currentTimeMillis()
+                            val news = searchSectorNews(sector, ignoreQuantPause = ignoreQuantPause)
+                            Log.i(TAG, "🔍 [$sector] 搜索完成，耗時=${System.currentTimeMillis()-sectorStart}ms, 獲取=${news.size}條")
+                            news
+                        }
+                    }
+                    sectorJobs.awaitAll().forEach { allNews.addAll(it) }
+                }
 
-            // 4. 写入数据库
-            if (allNews.isNotEmpty()) {
-                db.newsFactorDao().insertAll(allNews)
-                Log.i(TAG, "✅ 已保存 ${allNews.size} 条热点新闻")
-            } else {
-                Log.i(TAG, "⚠️ 未拉取到新新闻")
-            }
+                // 4. 写入数据库
+                if (allNews.isNotEmpty()) {
+                    db.newsFactorDao().insertAll(allNews)
+                    Log.i(TAG, "✅ 已保存 ${allNews.size} 条热点新闻")
+                } else {
+                    Log.i(TAG, "⚠️ 未拉取到新新闻")
+                }
         } catch (e: Exception) {
             Log.w(TAG, "后台新闻更新失败: ${e.message}")
         } finally {
             globalMutex.unlock()
+            Log.i(TAG, "🔓 釋放 globalMutex")
         }
     }
 
@@ -324,11 +340,11 @@ $titles
             val slot = com.chin.stockanalysis.ai.AiProviderPool.acquire(
                 context = context,
                 callerTag = "HotSectorNewsUpdater.parseNews",
-                timeoutMs = 10_000L
+                timeoutMs = 5_000L
             ) ?: return emptyList()
 
             try {
-                val response = withTimeoutOrNull(10000) {
+                val response = withTimeoutOrNull(5000) {
                     withContext(Dispatchers.IO) {
                         suspendCancellableCoroutine<String> { cont ->
                             slot.provider.sendMessageStream(
@@ -407,11 +423,11 @@ $titles
             val slot = com.chin.stockanalysis.ai.AiProviderPool.acquire(
                 context = context,
                 callerTag = "HotSectorNewsUpdater.aiSearch",
-                timeoutMs = 15_000L
+                timeoutMs = 8_000L
             ) ?: return emptyList()
 
             try {
-                val response = withTimeoutOrNull(15000) {
+                val response = withTimeoutOrNull(8000) {
                     withContext(Dispatchers.IO) {
                         suspendCancellableCoroutine<String> { cont ->
                             slot.provider.sendMessageStream(
@@ -441,16 +457,28 @@ $titles
 
     private suspend fun fetchNewsFromEastMoney(sector: String, today: String): List<NewsFactorEntity> {
         return try {
-            val url = "https://searchapi.eastmoney.com/api/suggest/get?input=${URLEncoder.encode(sector, "UTF-8")}&type=14&count=5"
+            val url = com.chin.stockanalysis.config.DataConfig.eastmoneySearchUrl(sector, "14", 5)
             val request = Request.Builder().url(url).addHeader("User-Agent", "Mozilla/5.0").build()
-            val response = withTimeoutOrNull(5000) {
+            val response = withTimeoutOrNull(3000) {
                 withContext(Dispatchers.IO) { com.chin.stockanalysis.stock.data.HttpClientProvider.realtimeClient.newCall(request).execute() }
             }
             if (response == null || !response.isSuccessful) return emptyList()
 
             val body = response.body?.string() ?: return emptyList()
-            // 東方財富返回的是 JSON 數組
-            val arr = JSONArray(body)
+            // 東方財富返回 {"QuotationCodeTable":{"Data":[...]}} 格式
+            val arr = try {
+                val root = JSONObject(body)
+                if (root.has("QuotationCodeTable")) {
+                    root.getJSONObject("QuotationCodeTable").getJSONArray("Data")
+                } else if (root.has("Data")) {
+                    root.getJSONArray("Data")
+                } else {
+                    null
+                }
+            } catch (_: Exception) {
+                try { JSONArray(body) } catch (_: Exception) { null }
+            }
+            if (arr == null) return emptyList()
             val news = mutableListOf<NewsFactorEntity>()
             for (i in 0 until arr.length()) {
                 val item = arr.getJSONObject(i)
@@ -479,14 +507,14 @@ $titles
 
     private suspend fun fetchNewsFromDuckDuckGo(sector: String, today: String): List<NewsFactorEntity> {
         return try {
-            val query = URLEncoder.encode("$sector A股 新闻", "UTF-8")
-            val url = "https://html.duckduckgo.com/html/?q=$query"
+            val query = "$sector A股 新闻"
+            val url = com.chin.stockanalysis.config.DataConfig.duckduckgoUrl(query)
             val request = Request.Builder()
                 .url(url)
                 .addHeader("User-Agent", "Mozilla/5.0")
                 .addHeader("Accept", "text/html")
                 .build()
-            val response = withTimeoutOrNull(8000) {
+            val response = withTimeoutOrNull(5000) {
                 withContext(Dispatchers.IO) { com.chin.stockanalysis.stock.data.HttpClientProvider.realtimeClient.newCall(request).execute() }
             }
             if (response == null || !response.isSuccessful) return emptyList()
@@ -524,10 +552,15 @@ $titles
     }
 
     private suspend fun fetchNewsWithTavily(sector: String, today: String): List<NewsFactorEntity> {
+        val apiKey = com.chin.stockanalysis.config.DataConfig.searchTavilyApiKey
+        if (apiKey.isEmpty()) {
+            Log.i(TAG, "Tavily API Key 未配置，跳過 Tavily 搜索 [$sector]")
+            return emptyList()
+        }
         return try {
-            val url = "https://api.tavily.com/search"
+            val url = com.chin.stockanalysis.config.DataConfig.searchTavily
             val jsonBody = JSONObject().apply {
-                put("api_key", "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")
+                put("api_key", apiKey)
                 put("query", "$sector A股 新闻")
                 put("search_depth", "basic")
                 put("max_results", 5)
@@ -540,7 +573,7 @@ $titles
                 .addHeader("Content-Type", "application/json")
                 .build()
             val client = com.chin.stockanalysis.stock.data.HttpClientProvider.realtimeClient
-            val response = withTimeoutOrNull(8000) {
+            val response = withTimeoutOrNull(5000) {
                 withContext(Dispatchers.IO) { client.newCall(request).execute() }
             }
             if (response == null || !response.isSuccessful) {

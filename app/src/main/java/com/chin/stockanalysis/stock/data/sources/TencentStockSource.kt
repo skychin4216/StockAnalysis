@@ -1,6 +1,7 @@
 package com.chin.stockanalysis.stock.data.sources
 
 import android.util.Log
+import com.chin.stockanalysis.config.DataConfig
 import com.chin.stockanalysis.stock.StockRealtime
 import com.chin.stockanalysis.stock.data.HttpClientProvider
 import com.chin.stockanalysis.stock.data.StockDataSource
@@ -48,7 +49,7 @@ class TencentStockSource : StockDataSource {
      * 带指数退避的重试机制
      */
     private fun executeWithRetry(batch: List<String>): String? {
-        val url = "https://qt.gtimg.cn/q=${batch.joinToString(",")}"
+        val url = "${DataConfig.tencentGtimg}/q=${batch.joinToString(",")}"
 
         for (attempt in 0..MAX_RETRIES) {
             try {
@@ -133,7 +134,7 @@ class TencentStockSource : StockDataSource {
 
     override fun isAvailable(): Boolean = runCatching {
         val request = Request.Builder()
-            .url("https://qt.gtimg.cn/q=sh000001")
+            .url("${DataConfig.tencentGtimg}/q=sh000001")
             .header("User-Agent", "Mozilla/5.0")
             .build()
         healthClient.newCall(request).execute().isSuccessful

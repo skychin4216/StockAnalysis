@@ -40,7 +40,11 @@ object PipelineResultFormatter {
                 if (score.irreplaceScore > 0) appendLine("  不可替代性：${score.irreplaceScore}")
                 if (score.resonanceBonus > 0) appendLine("  共振加分：${score.resonanceBonus}")
                 if (!score.passed) {
-                    appendLine("  ⚠️ 打分 < 40，未通過產業鏈篩選")
+                    if (score.totalScore == 0) {
+                        appendLine("  ⚠️ 產業鏈數據不足，跳過篩選")
+                    } else {
+                        appendLine("  ⚠️ 打分 < 40，未通過產業鏈篩選")
+                    }
                 }
             }
 

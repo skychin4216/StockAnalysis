@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "description": "StockAnalysis 數據源與 API 配置",
+
+  "data_sources": {
+    "sina": {
+      "name": "新浪行情",
+      "hq": "https://hq.sinajs.cn",
+      "suggest": "https://suggest3.sinajs.cn/suggest/type=11&key=%s",
+      "kline": "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData",
+      "finance": "https://finance.sina.com.cn"
+    },
+    "tencent": {
+      "name": "騰訊行情",
+      "gtimg": "https://qt.gtimg.cn"
+    },
+    "eastmoney": {
+      "name": "東方財富",
+      "push2": "https://push2.eastmoney.com/api/qt",
+      "push2his": "https://push2his.eastmoney.com/api/qt",
+      "searchapi": "https://searchapi.eastmoney.com/api/suggest/get",
+      "search_token": "D43BF722C8E33BDC906FB84D85E326",
+      "datacenter": "https://datacenter.eastmoney.com/api/data/v1/get",
+      "anotice": "https://np-anotice-stock.eastmoney.com/api/security/ann",
+      "quote": "https://quote.eastmoney.com",
+      "data": "https://data.eastmoney.com",
+      "guba": "https://guba.eastmoney.com"
+    },
+    "news": {
+      "name": "新聞數據源",
+      "cninfo": "https://www.cninfo.com.cn/new/disclosure/detail",
+      "cls": "https://www.cls.cn/api/search",
+      "cls_detail": "https://www.cls.cn/detail",
+      "xueqiu": "https://xueqiu.com/statuses/search.json",
+      "xueqiu_detail": "https://xueqiu.com"
+    },
+    "search": {
+      "name": "搜索引擎",
+      "duckduckgo": "https://html.duckduckgo.com/html/?q=%s",
+      "tavily": "https://api.tavily.com/search",
+      "tavily_api_key": ""
+    },
+    "other": {
+      "name": "其他數據源",
+      "akshare": "http://api.akshare.tech/stock_zh_a_spot",
+      "joinquants": "https://api.joinquants.com/api"
+    }
+  },
+
+  "ai_providers": {
+    "doubao": {
+      "name": "火山引擎 豆包",
+      "base_url": "https://ark.cn-beijing.volces.com/api/v3/",
+      "default_model": "doubao-seed-2-0-pro-260215",
+      "endpoint_id": ""
+    },
+    "qwen3": {
+      "name": "阿里云 Qwen3",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/",
+      "default_model": "qwen3-235b-a22b"
+    },
+    "siliconflow": {
+      "name": "硅基流動",
+      "base_url": "https://api.siliconflow.cn/v1/",
+      "default_model": "Pro/deepseek-ai/DeepSeek-V3"
+    },
+    "deepseek": {
+      "name": "DeepSeek",
+      "base_url": "https://api.deepseek.com/v1/",
+      "default_model": "deepseek-chat"
+    },
+    "aliyun_bailian": {
+      "name": "阿里雲百煉",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/",
+      "default_model": "qwen-plus"
+    },
+    "aliyun_maas": {
+      "name": "阿里雲 MaaS",
+      "base_url": "https://llm-kowojoaryb0hq5ik.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/",
+      "default_model": "qwen-max"
+    },
+    "baidu": {
+      "name": "百度千帆 ERNIE",
+      "base_url": "https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat/",
+      "default_model": "ernie-4.0-8k"
+    },
+    "zhipu": {
+      "name": "智譜 GLM-4",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4/",
+      "default_model": "glm-4"
+    },
+    "spark": {
+      "name": "訊飛星火",
+      "base_url": "https://spark-api-open.xf-yun.com/v1/",
+      "default_model": "generalv4"
+    },
+    "openai": {
+      "name": "OpenAI GPT",
+      "base_url": "https://api.openai.com/v1/",
+      "default_model": "gpt-4o-mini"
+    }
+  }
+}

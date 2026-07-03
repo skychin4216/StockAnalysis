@@ -1,6 +1,7 @@
 package com.chin.stockanalysis.stock.data.sources
 
 import android.util.Log
+import com.chin.stockanalysis.config.DataConfig
 import com.chin.stockanalysis.stock.StockRealtime
 import com.chin.stockanalysis.stock.data.HttpClientProvider
 import com.chin.stockanalysis.stock.data.StockDataSource
@@ -40,7 +41,7 @@ class EastMoneyStockSource : StockDataSource {
 
         codes.chunked(50).forEach { batch ->
             val secids = batch.joinToString(",") { toSecId(it) }
-            val url = "https://push2.eastmoney.com/api/qt/ulist.np/get" +
+            val url = "${DataConfig.eastmoneyPush2}/ulist.np/get" +
                 "?fltt=2&invt=2&secids=$secids&fields=f12,f14,f2,f3,f4,f5,f6,f7,f8,f9,f10,f15,f16,f17,f18,f20,f23"
 
             val body = executeWithRetry(url)
@@ -164,7 +165,7 @@ class EastMoneyStockSource : StockDataSource {
 
     override fun isAvailable(): Boolean = runCatching {
         val request = Request.Builder()
-            .url("https://push2.eastmoney.com/api/qt/ulist.np/get?secids=1.000001&fields=f12,f14,f2")
+            .url("${DataConfig.eastmoneyPush2}/ulist.np/get?secids=1.000001&fields=f12,f14,f2")
             .header("User-Agent", "Mozilla/5.0")
             .build()
         healthClient.newCall(request).execute().isSuccessful

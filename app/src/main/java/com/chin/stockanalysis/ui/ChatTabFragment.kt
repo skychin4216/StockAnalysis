@@ -194,6 +194,8 @@ class ChatTabFragment : Fragment() {
         initTts()
         showWelcomeMessage()
         showHotSectors()
+        // 熱門板塊關閉按鈕
+        binding.btnCloseHotSectors.setOnClickListener { binding.frameHotSectors.visibility = View.GONE }
         preloadMarketData()
         observeCrossTabBus()
     }

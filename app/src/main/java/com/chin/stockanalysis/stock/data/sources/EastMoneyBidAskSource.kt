@@ -1,6 +1,7 @@
 package com.chin.stockanalysis.stock.data.sources
 
 import android.util.Log
+import com.chin.stockanalysis.config.DataConfig
 import com.chin.stockanalysis.stock.data.HttpClientProvider
 import okhttp3.Request
 import org.json.JSONObject
@@ -61,7 +62,7 @@ class EastMoneyBidAskSource {
         // 东方财富单股接口，每次查一只（也可批量，但单股精度更高）
         codes.chunked(10).forEach { batch ->
             val secids = batch.joinToString(",") { toSecId(it) }
-            val url = "https://push2.eastmoney.com/api/qt/ulist.np/get" +
+            val url = "${DataConfig.eastmoneyPush2}/ulist.np/get" +
                     "?fltt=2&invt=2&secids=$secids&fields=$BID_ASK_FIELDS"
             try {
                 val body = executeRequest(url) ?: return@forEach
@@ -236,7 +237,7 @@ class EastMoneyBidAskSource {
             val request = Request.Builder()
                 .url(url)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                .header("Referer", "https://quote.eastmoney.com/")
+                .header("Referer", DataConfig.eastmoneyQuote)
                 .build()
             val response = client.newCall(request).execute()
             if (!response.isSuccessful) { Log.w(tag, "HTTP ${response.code}"); return null }

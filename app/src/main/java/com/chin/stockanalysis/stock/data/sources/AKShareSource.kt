@@ -1,6 +1,7 @@
 package com.chin.stockanalysis.stock.data.sources
 
 import android.util.Log
+import com.chin.stockanalysis.config.DataConfig
 import com.chin.stockanalysis.stock.StockRealtime
 import com.chin.stockanalysis.stock.data.HttpClientProvider
 import com.chin.stockanalysis.stock.data.StockDataSource
@@ -57,7 +58,7 @@ class AKShareSource : StockDataSource {
                 }
 
                 val request = Request.Builder()
-                    .url("http://api.akshare.tech/stock_zh_a_spot")
+                    .url(DataConfig.otherAkshare)
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                     .build()
 
@@ -127,7 +128,7 @@ class AKShareSource : StockDataSource {
     override fun isAvailable(): Boolean {
         return try {
             val request = Request.Builder()
-                .url("http://api.akshare.tech/stock_zh_a_spot")
+                .url(DataConfig.otherAkshare)
                 .header("User-Agent", "Mozilla/5.0")
                 .build()
             healthClient.newCall(request).execute().isSuccessful

@@ -62,6 +62,8 @@ class MainActivity : AppCompatActivity() {
     private fun initGlobalServices() {
         FeatureFlagManager.init(applicationContext)
         ApiConfigManager.getInstance(applicationContext)
+        // 統一數據源配置
+        com.chin.stockanalysis.config.DataConfig.load(applicationContext)
         // 数据备份初始化
         initBackupSystem()
         // 统一后台调度器

@@ -64,14 +64,8 @@ class FuzzyStockNameHandler : IntentHandler {
         @Suppress("unused")
         private val CHINESE_ONLY = Regex("^[\\u4e00-\\u9fff·]{$MIN_NAME_LEN,$MAX_NAME_LEN}$")
 
-        // 东方财富搜索 API（公开接口，无需鉴权）
-        private const val EASTMONEY_SEARCH_URL =
-            "https://searchapi.eastmoney.com/api/suggest/get" +
-                    "?input=%s&type=14,22&token=D43BF722C8E33BDC906FB84D85E326&count=3"
-
-        // 新浪财经搜索（备用）
-        private const val SINA_SEARCH_URL =
-            "https://suggest3.sinajs.cn/suggest/type=11&key=%s"
+        // 东方财富搜索 API（公开接口，无需鉴权）— 通过 DataConfig 获取
+        // 新浪财经搜索（备用）— 通过 DataConfig 获取
     }
 
     private val client = OkHttpClient.Builder()
@@ -222,9 +216,7 @@ class FuzzyStockNameHandler : IntentHandler {
      */
     private fun searchEastMoney(stockName: String): List<String>? {
         return try {
-            val url = EASTMONEY_SEARCH_URL.format(
-                java.net.URLEncoder.encode(stockName, "UTF-8")
-            )
+            val url = com.chin.stockanalysis.config.DataConfig.eastmoneySearchUrl(stockName, "14,22", 3)
             val request = Request.Builder().url(url)
                 .addHeader("User-Agent", "Mozilla/5.0")
                 .build()
@@ -280,9 +272,7 @@ class FuzzyStockNameHandler : IntentHandler {
      */
     private fun searchSina(stockName: String): List<String>? {
         return try {
-            val url = SINA_SEARCH_URL.format(
-                java.net.URLEncoder.encode(stockName, "UTF-8")
-            )
+            val url = com.chin.stockanalysis.config.DataConfig.getUrl("data_sources.sina.suggest", java.net.URLEncoder.encode(stockName, "UTF-8"))
             val request = Request.Builder().url(url)
                 .addHeader("User-Agent", "Mozilla/5.0")
                 .build()

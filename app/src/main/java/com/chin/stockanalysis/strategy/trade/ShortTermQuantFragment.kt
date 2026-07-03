@@ -295,24 +295,22 @@ class ShortTermQuantFragment : QuantFragmentBase() {
                 val aiStart = System.currentTimeMillis()
                 if (screeningList.isNotEmpty()) {
                     // AI 前置：等待新聞因子完成（已在 Pipeline 開頭 async 啟動）
-                    if (newsJob.isActive) {
-                        val newsWaitStart = System.currentTimeMillis()
-                        val newsTimerJob = coroutineScope {
-                            launch {
-                                while (isActive) {
-                                    delay(1000)
-                                    val elapsed = "%.0f".format((System.currentTimeMillis() - newsWaitStart) / 1000.0)
-                                    withContext(Dispatchers.Main) { statusTv.text = "📰 等待新聞因子完成... ${elapsed}s" }
-                                }
-                            }
+                    val newsWaitStart = System.currentTimeMillis()
+                    Log.i("ShortTermQuant", "📰 開始等待新聞因子... job=${newsJob}, isActive=${newsJob.isActive}, isCompleted=${newsJob.isCompleted}")
+                    val newsTimerJob = lifecycleScope.launch {
+                        while (isActive) {
+                            delay(1000)
+                            val elapsed = "%.0f".format((System.currentTimeMillis() - newsWaitStart) / 1000.0)
+                            Log.i("ShortTermQuant", "📰 等待新聞因子完成... ${elapsed}s, isActive=${newsJob.isActive}, isCompleted=${newsJob.isCompleted}")
+                            statusTv.text = "📰 等待新聞因子完成... ${elapsed}s"
                         }
-                        try { newsJob.await() } catch (e: Exception) {
-                            Log.w("ShortTermQuant", "新聞因子等待失敗（不阻塞）: ${e.message}")
-                        }
-                        newsTimerJob.cancel()
-                        val newsElapsed = "%.1f".format((System.currentTimeMillis() - newsWaitStart) / 1000.0)
-                        withContext(Dispatchers.Main) { statusTv.text = "✅ 新聞因子完成 (${newsElapsed}s)" }
                     }
+                    // 使用 isActive 輪詢而非 await()，避免 Deferred 狀態同步問題
+                    while (newsJob.isActive) { delay(100) }
+                    newsTimerJob.cancel()
+                    val newsElapsed = "%.1f".format((System.currentTimeMillis() - newsWaitStart) / 1000.0)
+                    Log.i("ShortTermQuant", "📰 新聞因子等待結束，耗時=${newsElapsed}s, isCompleted=${newsJob.isCompleted}")
+                    withContext(Dispatchers.Main) { statusTv.text = "✅ 新聞因子完成 (${newsElapsed}s)" }
                     com.chin.stockanalysis.stock.database.AppBackgroundRunner.isQuantRunning = true
 
                     withContext(Dispatchers.Main) { statusTv.text = "🤖 AI 大模型分析中..." }

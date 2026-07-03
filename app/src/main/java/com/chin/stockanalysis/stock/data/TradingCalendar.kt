@@ -1,6 +1,7 @@
 package com.chin.stockanalysis.stock.data
 
 import android.util.Log
+import com.chin.stockanalysis.config.DataConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -206,13 +207,13 @@ object TradingCalendar {
 
         try {
             val dateStr = date.format(DateTimeFormatter.ofPattern("yyyyMMdd"))
-            val url = "https://push2.eastmoney.com/api/qt/clist/get?" +
+            val url = "${DataConfig.eastmoneyPush2}/clist/get?" +
                 "pn=1&pz=1&po=1&np=1&fltt=2&invt=2&fid=f62" +
                 "&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23" +
                 "&fields=f12"
 
             val request = Request.Builder()
-                .url("https://push2.eastmoney.com/api/qt/kline/get?" +
+                .url("${DataConfig.eastmoneyPush2}/kline/get?" +
                     "secid=1.000001&klt=101&fqt=0&beg=$dateStr&end=$dateStr")
                 .addHeader("User-Agent", "Mozilla/5.0")
                 .build()

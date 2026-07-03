@@ -1,5 +1,6 @@
 package com.chin.stockanalysis
 
+import com.chin.stockanalysis.config.DataConfig
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
@@ -143,11 +144,11 @@ class StockDataProvider {
         try {
             // 新浪 API 支持批量查詢，多個代碼用逗號分隔
             val codesParam = stockCodes.joinToString(",")
-            val url = "https://hq.sinajs.cn/list=$codesParam"
+            val url = "${DataConfig.sinaHq}/list=$codesParam"
 
             val request = Request.Builder()
                 .url(url)
-                .header("Referer", "https://finance.sina.com.cn")
+                .header("Referer", DataConfig.sinaFinance)
                 .build()
 
             val response = client.newCall(request).execute()

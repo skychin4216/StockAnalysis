@@ -1,6 +1,7 @@
 package com.chin.stockanalysis.strategy.data
 
 import android.util.Log
+import com.chin.stockanalysis.config.DataConfig
 import com.chin.stockanalysis.stock.data.HttpClientProvider
 import kotlinx.coroutines.*
 import okhttp3.Request
@@ -53,11 +54,11 @@ class FactorDataProvider {
         try {
             val market = if (code.startsWith("sh")) 1 else 0
             val pureCode = code.removePrefix("sh").removePrefix("sz")
-            val url = "https://push2.eastmoney.com/api/qt/stock/get?" +
+            val url = "${DataConfig.eastmoneyPush2}/stock/get?" +
                     "secid=$market.$pureCode&fields=f62,f184,f66,f69"
             val req = Request.Builder().url(url)
                 .addHeader("User-Agent", "Mozilla/5.0")
-                .addHeader("Referer", "https://quote.eastmoney.com/")
+                .addHeader("Referer", DataConfig.eastmoneyQuote)
                 .build()
             val resp = client.newCall(req).execute()
             if (!resp.isSuccessful) return@withContext CapitalFlowResult()
@@ -108,7 +109,7 @@ class FactorDataProvider {
     suspend fun getFinanceData(code: String): FinanceResult = withContext(Dispatchers.IO) {
         try {
             val pureCode = code.removePrefix("sh").removePrefix("sz")
-            val url = "https://datacenter.eastmoney.com/api/data/v1/get?" +
+            val url = "${DataConfig.eastmoneyDatacenter}?" +
                     "reportName=RPT_F10_FINANCE_MAINFINADATA&columns=ALL" +
                     "&filter=(SECURITY_CODE=\"$pureCode\")&pageSize=1&pageNumber=1"
             val req = Request.Builder().url(url)
@@ -172,7 +173,7 @@ class FactorDataProvider {
     suspend fun getNewsSentiment(code: String): NewsSentimentResult = withContext(Dispatchers.IO) {
         try {
             val pureCode = code.removePrefix("sh").removePrefix("sz")
-            val url = "https://np-anotice-stock.eastmoney.com/api/security/ann?" +
+            val url = "${DataConfig.eastmoneyAnotice}?" +
                     "sr=-1&page_size=5&page_index=1&ann_type=A&stock_list=$pureCode"
             val req = Request.Builder().url(url)
                 .addHeader("User-Agent", "Mozilla/5.0")

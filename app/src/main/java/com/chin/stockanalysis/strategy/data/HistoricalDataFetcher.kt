@@ -2,6 +2,7 @@ package com.chin.stockanalysis.strategy.data
 
 import android.content.Context
 import android.util.Log
+import com.chin.stockanalysis.config.DataConfig
 import com.chin.stockanalysis.stock.data.HttpClientProvider
 import com.chin.stockanalysis.stock.database.StockBasicEntity
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
@@ -156,12 +157,12 @@ class HistoricalDataFetcher(private val context: Context) {
         val doneCount = java.util.concurrent.atomic.AtomicInteger(0)
         var realtimeCount = 0
         try {
-            val realtimeUrl = "https://push2.eastmoney.com/api/qt/clist/get?" +
+            val realtimeUrl = "${DataConfig.eastmoneyPush2}/clist/get?" +
                     "pn=1&pz=200&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23" +
                     "&fields=f2,f3,f4,f5,f6,f8,f12,f14,f15,f16,f17,f18"
             val req = Request.Builder().url(realtimeUrl)
                 .addHeader("User-Agent", "Mozilla/5.0")
-                .addHeader("Referer", "https://quote.eastmoney.com/")
+                .addHeader("Referer", DataConfig.eastmoneyQuote)
                 .build()
             Log.d(TAG, "  Realtime API request...")
             val resp = client.newCall(req).execute()
@@ -296,28 +297,74 @@ class HistoricalDataFetcher(private val context: Context) {
                 return 0
             }
             Log.i(TAG, "  fillMissingNames: ${missingNameCodes.size} stocks need names")
-            var corrected = 0
-            var failed = 0
             val fillStart = System.currentTimeMillis()
-            for (code in missingNameCodes) {
-                try {
-                    val (_, name) = fetchOneStock(code, startDate = LocalDate.now().minusDays(3), endDate = LocalDate.now())
-                    if (name.isNotBlank()) {
-                        db.stockBasicDao().insert(StockBasicEntity(code = code, name = name, business = ""))
-                        db.dailySnapshotDao().updateName(code, name)
-                        corrected++
-                    } else {
-                        failed++
-                    }
-                } catch (_: Exception) { failed++ }
+            var corrected = 0
+
+            // 1. 先從 stock_basic 表查找已有名稱
+            val existingBasics = db.stockBasicDao().getAll().associate { it.code to it.name }
+            for (code in missingNameCodes.toList()) {
+                val existingName = existingBasics[code]
+                if (!existingName.isNullOrBlank()) {
+                    db.dailySnapshotDao().updateName(code, existingName)
+                    corrected++
+                }
             }
+            val remainingCodes = missingNameCodes.filter { code ->
+                db.dailySnapshotDao().getByDate(recentDates.first()).find { it.code == code }?.name.isNullOrBlank()
+            }
+            Log.i(TAG, "  fillMissingNames: $corrected fixed from stock_basic, ${remainingCodes.size} remaining")
+
+            // 2. 用新浪批量 API 輕量獲取剩餘名稱
+            if (remainingCodes.isNotEmpty()) {
+                val sinaFixed = fetchNamesFromSinaBatch(remainingCodes)
+                corrected += sinaFixed
+            }
+
             val fillElapsed = System.currentTimeMillis() - fillStart
-            Log.i(TAG, "  fillMissingNames: $corrected/${missingNameCodes.size} fixed, $failed failed, ${fillElapsed}ms")
+            Log.i(TAG, "  fillMissingNames: $corrected/${missingNameCodes.size} fixed, ${missingNameCodes.size - corrected} remaining, ${fillElapsed}ms")
             return corrected
         } catch (e: Exception) {
             Log.w(TAG, "  fillMissingNames failed: ${e.message}")
             return 0
         }
+    }
+
+    /** 新浪批量 API 輕量獲取名稱：一個請求最多 60 個股票 */
+    private suspend fun fetchNamesFromSinaBatch(codes: List<String>): Int {
+        var fixed = 0
+        val batches = codes.chunked(60)
+        for (batch in batches) {
+            try {
+                val url = "${DataConfig.sinaHq}/list=${batch.joinToString(",")}"
+                val req = Request.Builder().url(url)
+                    .header("Referer", DataConfig.sinaFinance)
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .build()
+                val resp = withContext(Dispatchers.IO) { client.newCall(req).execute() }
+                if (!resp.isSuccessful) continue
+                // 新浪返回 GBK 编码，必须用原始字节解码
+                val bodyBytes = resp.body?.bytes() ?: continue
+                val body = try {
+                    String(bodyBytes, java.nio.charset.Charset.forName("GBK"))
+                } catch (_: Exception) { String(bodyBytes) }
+                // 解析: var hq_str_sh600000="浦發銀行,10.50,...";
+                val regex = Regex("var hq_str_(sh\\d+|sz\\d+|bj\\d+)=\"([^,]*)")
+                val matches = regex.findAll(body)
+                for (match in matches) {
+                    val code = match.groupValues[1]
+                    val name = match.groupValues[2].trim()
+                    if (name.isNotBlank()) {
+                        db.stockBasicDao().insert(StockBasicEntity(code = code, name = name, business = ""))
+                        db.dailySnapshotDao().updateName(code, name)
+                        fixed++
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "  fetchNamesFromSinaBatch failed: ${e.message}")
+            }
+        }
+        Log.i(TAG, "  fetchNamesFromSinaBatch: $fixed/${codes.size} fixed")
+        return fixed
     }
 
     private suspend fun retryHttp(url: String, maxRetries: Int, delayMs: Long): String? {
@@ -340,7 +387,7 @@ class HistoricalDataFetcher(private val context: Context) {
     private suspend fun fetchFromSina(code: String, startDate: LocalDate, endDate: LocalDate): List<DailySnapshotEntity> {
         val prefix = if (code.startsWith("sh")) "sh" else "sz"
         val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
-        val url = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?" +
+        val url = "${DataConfig.sinaKline}?" +
                 "symbol=${prefix}$pureCode&scale=240&ma=no&datalen=300"
         val body = retryHttp(url, maxRetries = 2, delayMs = 500) ?: return emptyList()
         try {
@@ -385,7 +432,7 @@ class HistoricalDataFetcher(private val context: Context) {
         val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
         val beg = startDate.format(DATE_FMT)
         val end = endDate.format(DATE_FMT)
-        val url = "https://push2his.eastmoney.com/api/qt/stock/kline/get?" +
+        val url = "${DataConfig.eastmoneyPush2his}/stock/kline/get?" +
                 "secid=$market.$pureCode&klt=101&fqt=1" +
                 "&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f61" +
                 "&beg=$beg&end=$end&lmt=300"
@@ -399,7 +446,7 @@ class HistoricalDataFetcher(private val context: Context) {
                 }
                 val req = Request.Builder().url(url)
                     .addHeader("User-Agent", "Mozilla/5.0")
-                    .addHeader("Referer", "https://quote.eastmoney.com/")
+                    .addHeader("Referer", DataConfig.eastmoneyQuote)
                     .build()
                 val resp = client.newCall(req).execute()
                 if (!resp.isSuccessful) { Log.d(TAG, "  EastMoney #$attempt HTTP ${resp.code} for $code"); continue }

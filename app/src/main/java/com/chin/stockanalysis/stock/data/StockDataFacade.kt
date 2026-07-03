@@ -107,7 +107,7 @@ class StockDataFacade private constructor(private val context: Context) {
     suspend fun getFundamentalInfo(code: String): FundamentalInfo = withContext(Dispatchers.IO) {
         // === 優先1：東方財富 API ===
         val emInfo = try {
-            val url = "https://searchapi.eastmoney.com/api/suggest/get?input=${URLEncoder.encode(code, "UTF-8")}&type=14&count=1"
+            val url = com.chin.stockanalysis.config.DataConfig.eastmoneySearchUrl(code)
             val request = Request.Builder()
                 .url(url)
                 .addHeader("User-Agent", "Mozilla/5.0")
@@ -116,8 +116,21 @@ class StockDataFacade private constructor(private val context: Context) {
             if (response.isSuccessful) {
                 val body = response.body?.string()
                 if (!body.isNullOrBlank()) {
-                    val arr = JSONArray(body)
-                    if (arr.length() > 0) {
+                    // 東方財富返回 {"QuotationCodeTable":{"Data":[...]}} 或直接 JSONArray
+                    val arr = try {
+                        val root = JSONObject(body)
+                        // 嘗試 QuotationCodeTable.Data 格式
+                        if (root.has("QuotationCodeTable")) {
+                            root.getJSONObject("QuotationCodeTable")
+                                .getJSONArray("Data")
+                        } else {
+                            // 直接是 JSONObject 包含 Data
+                            root.getJSONArray("Data")
+                        }
+                    } catch (_: Exception) {
+                        try { JSONArray(body) } catch (_: Exception) { null }
+                    }
+                    if (arr != null && arr.length() > 0) {
                         val item = arr.getJSONObject(0)
                         FundamentalInfo(
                             name = item.optString("Name", ""),
@@ -264,7 +277,7 @@ class StockDataFacade private constructor(private val context: Context) {
     )
 
     data class HistoricalData(
-        val snapshots: List<com.chin.stockanalysis.stock.database.DailySnapshotEntity>,
+        val snapshots: List<com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity>,
         val latestDate: String,
         val isFresh: Boolean,
         val source: String

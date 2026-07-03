@@ -1,6 +1,7 @@
 package com.chin.stockanalysis.stock.data.sources
 
 import android.util.Log
+import com.chin.stockanalysis.config.DataConfig
 import com.chin.stockanalysis.stock.StockRealtime
 import com.chin.stockanalysis.stock.data.HttpClientProvider
 import com.chin.stockanalysis.stock.data.StockDataSource
@@ -29,7 +30,7 @@ class SinaStockSource : StockDataSource {
     private val tag = "SinaStockSource"
 
     companion object {
-        private const val BASE_URL = "https://hq.sinajs.cn"
+        private val baseUrl get() = DataConfig.sinaHq
         private const val MAX_RETRIES = 2
         private const val RETRY_DELAY_MS = 500L
     }
@@ -50,7 +51,7 @@ class SinaStockSource : StockDataSource {
             val batches = codes.chunked(20)
             for (batchIndex in batches.indices) {
                 val batch = batches[batchIndex]
-                val url = "${BASE_URL}/list=${batch.joinToString(",")}"
+                val url = "${baseUrl}/list=${batch.joinToString(",")}"
                 Log.d(tag, "  batch[$batchIndex]: URL=$url")
 
                 // 带重试的请求
@@ -100,7 +101,7 @@ class SinaStockSource : StockDataSource {
                 val request = Request.Builder()
                     .url(url)
                     // 🔴 关键修复：必须加 Referer 头，否则新浪返回空
-                    .header("Referer", "https://finance.sina.com.cn")
+                    .header("Referer", DataConfig.sinaFinance)
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                     .build()
 
@@ -257,8 +258,8 @@ class SinaStockSource : StockDataSource {
     override fun isAvailable(): Boolean {
         return try {
             val request = Request.Builder()
-                .url("${BASE_URL}/list=sh000001")
-                .header("Referer", "https://finance.sina.com.cn")
+                .url("${baseUrl}/list=sh000001")
+                .header("Referer", DataConfig.sinaFinance)
                 .build()
             val response = healthClient.newCall(request).execute()
             val available = response.isSuccessful

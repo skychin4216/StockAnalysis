@@ -453,7 +453,25 @@ class StrategyListFragment : Fragment() {
         }
     }
 
-    private fun saveBacktestData(results: List<ScreeningResult>) { lifecycleScope.launch { try { val be = com.chin.stockanalysis.strategy.backtest.BacktestEngine(requireContext()); for (r in results) be.savePredictions(r.strategyId, r.strategyName, r) } catch (e: Exception) { Log.w("SLF", "保存预测失败: ${e.message}") } } }
+    private fun saveBacktestData(results: List<ScreeningResult>) { lifecycleScope.launch { try {
+        val ctx = requireContext()
+        val db = StockDatabase.getInstance(ctx)
+        val be = com.chin.stockanalysis.strategy.backtest.BacktestEngine(ctx)
+        for (r in results) be.savePredictions(r.strategyId, r.strategyName, r)
+        // 同時保存到 dailyPeriodResultDao（供 showScanHistory 查詢）
+        val top3Json = org.json.JSONArray(results.filter { it.signals.isNotEmpty() }.flatMap { res ->
+            res.signals.take(3).map { s -> org.json.JSONObject().apply { put("name", s.stockName); put("code", s.stockCode); put("score", s.strength) } }
+        }).toString()
+        val allCodes = org.json.JSONArray(results.flatMap { it.signals.map { it.stockCode } }).toString()
+        db.dailyPeriodResultDao().insert(com.chin.stockanalysis.strategy.trade.DailyPeriodResultEntity(
+            strategyId = "STRATEGY_SCAN", strategyName = "量化選股",
+            tradeDate = browsingDate.toString(), periodDays = 1,
+            stockCodesJson = allCodes, stockCount = results.sumOf { it.hitCount },
+            newsStrengthScore = 0, rotationPenalty = 0, mainBoardFilter = true,
+            filteredCodesJson = "[]", filteredReasonJson = "[]",
+            finalTop3Json = top3Json, aiSelectionReason = "",
+            createdAt = System.currentTimeMillis()))
+    } catch (e: Exception) { Log.w("SLF", "保存预测失败: ${e.message}") } } }
 
     private fun showDataMenu() {
         val options = arrayOf("\uD83D\uDCE5 拉取股票报告", "\uD83D\uDCCA 执行策略报告")

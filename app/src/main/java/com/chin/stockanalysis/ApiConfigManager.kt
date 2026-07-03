@@ -2,6 +2,7 @@ package com.chin.stockanalysis
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.chin.stockanalysis.config.DataConfig
 
 /**
  * API 配置管理器
@@ -75,7 +76,7 @@ class ApiConfigManager(context: Context) {
         ApiProviderConfig(
             id = "doubao",
             name = "🔥 豆包大模型 (付费)",
-            baseUrl = "https://ark.cn-beijing.volces.com/api/v3/",
+            baseUrl = DataConfig.get("ai_providers.doubao.base_url", "https://ark.cn-beijing.volces.com/api/v3/"),
             model = "doubao-seed-2-0-pro-260215",
             description = "火山引擎 Ark 平台。默认使用最强 Seed 2.0 Pro",
             isFree = false,
@@ -108,7 +109,7 @@ class ApiConfigManager(context: Context) {
         ApiProviderConfig(
             id = "dashscope-qwen3",
             name = "⭐ 阿里云 Qwen3 (付费)",
-            baseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1/",
+            baseUrl = DataConfig.get("ai_providers.qwen3.base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1/"),
             model = "qwen3-235b-a22b",
             description = "Qwen3 最新旗舰系列，支持 235B MoE 超大模型和 32B/14B/8B 多个尺寸，thinking 模式可切换",
             isFree = false,
@@ -137,7 +138,7 @@ class ApiConfigManager(context: Context) {
         ApiProviderConfig(
             id = "siliconflow-v3-flash",
             name = "硅基流动 V3 Flash (免费)",
-            baseUrl = "https://api.siliconflow.cn/v1/",
+            baseUrl = DataConfig.get("ai_providers.siliconflow.base_url", "https://api.siliconflow.cn/v1/"),
             model = "Pro/deepseek-ai/DeepSeek-V3",
             description = "DeepSeek-V3 Flash 版本，免费备用",
             isFree = true,
@@ -154,7 +155,7 @@ class ApiConfigManager(context: Context) {
         ApiProviderConfig(
             id = "deepseek-official",
             name = "DeepSeek 官方 (付费)",
-            baseUrl = "https://api.deepseek.com/v1/",
+            baseUrl = DataConfig.get("ai_providers.deepseek.base_url", "https://api.deepseek.com/v1/"),
             model = "deepseek-chat",
             description = "DeepSeek 官方接口，新用户送 500万 tokens，后续按量计费。如遇 402 余额不足需充值",
             isFree = false,
@@ -165,7 +166,7 @@ class ApiConfigManager(context: Context) {
         ApiProviderConfig(
             id = "dashscope-qwen3",
             name = "⭐ 阿里云 Qwen3 (付费)",
-            baseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1/",
+            baseUrl = DataConfig.get("ai_providers.qwen3.base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1/"),
             model = "qwen3-235b-a22b",
             description = "Qwen3 最新旗舰系列，支持 235B MoE 超大模型和 32B/14B/8B 多个尺寸，thinking 模式可切换",
             isFree = false,
@@ -190,7 +191,7 @@ class ApiConfigManager(context: Context) {
         ApiProviderConfig(
             id = "dashscope",
             name = "阿里云百炼 Qwen2.5 (付费)",
-            baseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1/",
+            baseUrl = DataConfig.get("ai_providers.qwen3.base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1/"),
             model = "qwen-plus",
             description = "阿里云百炼平台，通义千问 Qwen2.5 系列，有免费额度",
             isFree = false,
@@ -203,7 +204,7 @@ class ApiConfigManager(context: Context) {
         ApiProviderConfig(
             id = "aliyun-maas",
             name = "阿里云 MaaS (用户实例)",
-            baseUrl = "https://llm-kowojoaryb0hq5ik.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/",
+            baseUrl = DataConfig.get("ai_providers.aliyun_maas.base_url", "https://llm-kowojoaryb0hq5ik.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/"),
             model = "qwen-max",
             description = "阿里云 MaaS 用户专属实例（实例ID: 5144680），请在 api_keys_local.properties 中配置 ALIYUN_MAAS_KEY",
             isFree = false,
@@ -220,7 +221,7 @@ class ApiConfigManager(context: Context) {
         ApiProviderConfig(
             id = "baidu-qianfan",
             name = "百度千帆 ERNIE (付费)",
-            baseUrl = "https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat/",
+            baseUrl = DataConfig.get("ai_providers.baidu.base_url", "https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat/"),
             model = "ernie-4.0-8k",
             description = "百度文心一言 ERNIE 4.0，有免费额度",
             isFree = false
@@ -230,7 +231,7 @@ class ApiConfigManager(context: Context) {
         ApiProviderConfig(
             id = "zhipu",
             name = "智谱 GLM-4 (付费)",
-            baseUrl = "https://open.bigmodel.cn/api/paas/v4/",
+            baseUrl = DataConfig.get("ai_providers.zhipu.base_url", "https://open.bigmodel.cn/api/paas/v4/"),
             model = "glm-4",
             description = "智谱 AI GLM-4 模型，注册送免费额度",
             isFree = false
@@ -240,7 +241,7 @@ class ApiConfigManager(context: Context) {
         ApiProviderConfig(
             id = "iflytek",
             name = "讯飞星火 Spark (付费)",
-            baseUrl = "https://spark-api-open.xf-yun.com/v1/",
+            baseUrl = DataConfig.get("ai_providers.spark.base_url", "https://spark-api-open.xf-yun.com/v1/"),
             model = "generalv4",
             description = "讯飞星火大模型 V4.0，注册送免费体验额度",
             isFree = false
@@ -250,7 +251,7 @@ class ApiConfigManager(context: Context) {
         ApiProviderConfig(
             id = "openai",
             name = "OpenAI GPT (付费)",
-            baseUrl = "https://api.openai.com/v1/",
+            baseUrl = DataConfig.get("ai_providers.openai.base_url", "https://api.openai.com/v1/"),
             model = "gpt-4o-mini",
             description = "OpenAI GPT-4o-mini，性价比高，需要海外支付方式",
             isFree = false,

@@ -1,6 +1,7 @@
 package com.chin.stockanalysis.stock.data.sources
 
 import android.util.Log
+import com.chin.stockanalysis.config.DataConfig
 import com.chin.stockanalysis.stock.data.HttpClientProvider
 import okhttp3.Request
 import org.json.JSONObject
@@ -255,7 +256,7 @@ class EastMoneySectorSource {
             val request = Request.Builder()
                 .url(url)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                .header("Referer", "https://quote.eastmoney.com/")
+                .header("Referer", DataConfig.eastmoneyQuote)
                 .build()
             val response = client.newCall(request).execute()
             if (!response.isSuccessful) { Log.w(tag, "HTTP ${response.code}"); return null }

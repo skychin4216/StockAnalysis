@@ -101,14 +101,33 @@
             android:paddingHorizontal="10dp"
             android:paddingVertical="6dp">
 
-            <TextView
-                android:id="@+id/tvHotSectorsTitle"
+            <!-- 標題行: 左邊標題 + 右邊關閉按鈕 -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="🔥 今日热门"
-                android:textColor="#333333"
-                android:textSize="11sp"
-                android:textStyle="bold" />
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:id="@+id/tvHotSectorsTitle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="🔥 今日热门"
+                    android:textColor="#333333"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/btnCloseHotSectors"
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:gravity="center"
+                    android:text="✕"
+                    android:textColor="#999999"
+                    android:textSize="12sp"
+                    android:background="?android:attr/selectableItemBackgroundBorderless" />
+            </LinearLayout>
 
             <TextView
                 android:id="@+id/tvHotSectors"
