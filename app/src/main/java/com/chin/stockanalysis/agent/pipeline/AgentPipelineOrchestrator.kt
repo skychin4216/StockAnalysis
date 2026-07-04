@@ -425,7 +425,8 @@ class AgentPipelineOrchestrator(private val context: Context) {
             totalSteps = steps.size,
             stocks = listOf(stockResult),
             analysisMode = mode.label,
-            weightFormula = getWeightFormula(mode)
+            weightFormula = getWeightFormula(mode),
+            stepAnalyses = ctx.stepAnalyses.toMap()
         )
     }
 

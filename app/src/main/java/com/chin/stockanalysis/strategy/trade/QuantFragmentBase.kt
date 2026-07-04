@@ -694,6 +694,22 @@ abstract class QuantFragmentBase : Fragment() {
                 text = order.stockCode.takeLast(6); textSize = 8f
                 setTextColor(Color.parseColor("#AAAAAA")); gravity = Gravity.CENTER
             })
+            // 點擊股票名稱直接跳轉到詳情頁
+            nameCell.setOnClickListener {
+                val detail = com.chin.stockanalysis.ui.StockDetailFragment.newInstance(
+                    order.stockCode, order.stockName, order.buyPrice
+                )
+                activity?.supportFragmentManager
+                    ?.beginTransaction()
+                    ?.replace(android.R.id.content, detail)
+                    ?.addToBackStack(null)
+                    ?.commit()
+            }
+            nameCell.isClickable = true
+            nameCell.foreground = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0)
+                setCornerRadius(8f)
+            }
             row.addView(nameCell)
 
             // 建倉日

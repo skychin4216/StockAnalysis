@@ -9,15 +9,27 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.*
 import android.widget.LinearLayout.LayoutParams
+import androidx.activity.OnBackPressedCallback
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.chin.stockanalysis.news.NewsFactorEntity
+import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
 import com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource
 import com.chin.stockanalysis.stock.data.sources.SectorSubDivision
 import com.chin.stockanalysis.stock.database.ChinaMarketTradingHours as A股TradingHours
 import com.chin.stockanalysis.stock.database.StockDataCenter
 import com.chin.stockanalysis.stock.database.StockDatabase
+import com.chin.stockanalysis.agent.framework.UnifiedAgentRunner
+import com.chin.stockanalysis.strategy.data.InstitutionalRatingProvider
+import com.github.mikephil.charting.charts.CandleStickChart
+import com.github.mikephil.charting.components.XAxis
+import com.github.mikephil.charting.components.YAxis
+import com.github.mikephil.charting.data.CandleData
+import com.github.mikephil.charting.data.CandleDataSet
+import com.github.mikephil.charting.data.CandleEntry
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -91,7 +103,9 @@ class StockDetailFragment : Fragment() {
 
         // Header
         buildHeader()
+        buildAiAnalysisSection()
         buildMarketStatusBar()
+        buildMarketRiskBar()
 
         // Scroll content
         val sv = ScrollView(requireContext()).apply {
@@ -110,8 +124,37 @@ class StockDetailFragment : Fragment() {
         sv.addView(contentContainer)
         root.addView(sv)
 
-        // 加载数据
+        // 加載數據
         loadDetailData()
+        loadMarketRisk()
+
+        // 攔截返回鍵：AI 結果顯示時先收起，再按才退出
+        requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (aiResultContainer.visibility == View.VISIBLE) {
+                    // AI 結果可見 → 收起結果，回到 K 線+評級
+                    aiResultContainer.visibility = View.GONE
+                    aiDetailContainer.visibility = View.VISIBLE
+                } else if (aiExpanded) {
+                    // AI 展開區可見 → 收起
+                    aiExpanded = false
+                    aiDetailContainer.visibility = View.GONE
+                    aiResultContainer.visibility = View.GONE
+                    root.findViewWithTag<TextView>("aiHeaderBtn")?.text = "🤖 AI分析 ▶"
+                    // 恢復深度分析按鈕狀態
+                    root.findViewWithTag<Button>("btnRunAi")?.let {
+                        it.isEnabled = true
+                        it.text = "🤖 運行AI深度分析"
+                    }
+                } else {
+                    // 都已收起 → 正常退出
+                    aiAnalysisJob?.cancel()  // 取消正在進行的分析
+                    isEnabled = false
+                    requireActivity().onBackPressed()
+                }
+            }
+        })
+
         return root
     }
 
@@ -123,55 +166,78 @@ class StockDetailFragment : Fragment() {
             elevation = 2f
         }
 
-        // 标题行：股票名称 + 代码
+        // 標題行：名稱 + 價格(小字靠右) + AI 按鈕
         val titleRow = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        titleRow.addView(TextView(requireContext()).apply {
-            text = stockName
-            textSize = 22f; setTextColor(Color.parseColor("#1A1A2E"))
-            setTypeface(null, Typeface.BOLD)
-            layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
-        })
-        titleRow.addView(TextView(requireContext()).apply {
-            text = stockCode.takeLast(6)
-            textSize = 13f; setTextColor(Color.parseColor("#999999"))
-        })
-        headerCard.addView(titleRow)
 
-        // 价格行
-        val priceRow = LinearLayout(requireContext()).apply {
+        // 左側：名稱（左） + 價格（名稱右邊，小字）
+        val namePriceCol = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.BOTTOM
-            setPadding(0, 8, 0, 4)
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
         }
-        priceRow.addView(TextView(requireContext()).apply {
-            tag = "tvPrice"
-            text = if (initialPrice > 0) String.format("%.2f", initialPrice) else "—"
-            textSize = 36f; setTextColor(Color.parseColor("#E53935"))
+        // 股票名稱
+        namePriceCol.addView(TextView(requireContext()).apply {
+            text = stockName
+            textSize = 20f; setTextColor(Color.parseColor("#1A1A2E"))
             setTypeface(null, Typeface.BOLD)
-            setPadding(0, 0, 8, 0)
         })
-        priceRow.addView(TextView(requireContext()).apply {
+        // 價格（名稱右邊，小字）
+        namePriceCol.addView(TextView(requireContext()).apply {
+            tag = "tvPrice"
+            text = if (initialPrice > 0) " ¥${String.format("%.2f", initialPrice)}" else ""
+            textSize = 12f; setTextColor(Color.parseColor("#E53935"))
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(8, 0, 0, 0)
+        })
+        // 漲跌幅（更小字）
+        namePriceCol.addView(TextView(requireContext()).apply {
             tag = "tvChangePct"
             val sign = if (initialChangePct >= 0) "+" else ""
-            text = if (initialChangePct != 0.0) "$sign${String.format("%.2f", initialChangePct)}%" else "—"
-            textSize = 18f; setTypeface(null, Typeface.BOLD)
+            text = if (initialChangePct != 0.0) " $sign${String.format("%.2f", initialChangePct)}%" else ""
+            textSize = 10f; setTypeface(null, Typeface.BOLD)
             setTextColor(if (initialChangePct >= 0) Color.parseColor("#E53935") else Color.parseColor("#43A047"))
+            gravity = Gravity.CENTER_VERTICAL
         })
-        headerCard.addView(priceRow)
+        titleRow.addView(namePriceCol)
 
-        // 板块标签行
-        val sectorTagRow = LinearLayout(requireContext()).apply {
+        // 右側：AI 分析按鈕
+        val aiBtn = TextView(requireContext()).apply {
+            tag = "aiHeaderBtn"
+            text = "🤖 AI分析 ▶"
+            textSize = 11f
+            setTextColor(Color.parseColor("#FFFFFF"))
+            setBackgroundColor(Color.parseColor("#2E7D32"))
+            setPadding(12, 6, 12, 6)
+            gravity = Gravity.CENTER
+            setOnClickListener {
+                toggleAiAnalysis()
+                if (::aiDetailContainer.isInitialized) {
+                    root.post { root.scrollTo(0, aiDetailContainer.top) }
+                }
+            }
+        }
+        titleRow.addView(aiBtn)
+        headerCard.addView(titleRow)
+
+        // 代碼 + 板塊標籤行
+        val codeSectorRow = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             setPadding(0, 4, 0, 0)
-            tag = "sectorTagRow"
+            tag = "codeSectorRow"
         }
+        codeSectorRow.addView(TextView(requireContext()).apply {
+            text = stockCode.takeLast(6)
+            textSize = 11f; setTextColor(Color.parseColor("#999999"))
+        })
+        // 板塊標籤
         if (initialSector.isNotEmpty()) {
-            sectorTagRow.addView(createTagChip(initialSector, "#1565C0"))
+            codeSectorRow.addView(createTagChip(initialSector, "#1565C0"))
         }
-        headerCard.addView(sectorTagRow)
+        headerCard.addView(codeSectorRow)
 
         root.addView(headerCard)
     }
@@ -194,6 +260,496 @@ class StockDetailFragment : Fragment() {
         root.addView(statusBar)
     }
 
+    /** 大盤風險提示條（初始隱藏，加載數據後顯示） */
+    private fun buildMarketRiskBar() {
+        val riskBar = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(12, 4, 12, 4)
+            setBackgroundColor(Color.parseColor("#FFEBEE"))
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+            visibility = View.GONE  // 初始隱藏
+            tag = "marketRiskBar"
+        }
+        val riskTv = TextView(requireContext()).apply {
+            text = ""
+            textSize = 10f; setTextColor(Color.parseColor("#C62828"))
+            tag = "marketRiskTv"
+        }
+        riskBar.addView(riskTv)
+        root.addView(riskBar)
+    }
+
+    /** 加載大盤風險狀態（異步，不阻塞 UI） */
+    private fun loadMarketRisk() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val report = com.chin.stockanalysis.strategy.market.MarketAnalyzer.analyze(
+                    requireContext().applicationContext, emptyList()
+                )
+                val trend = report.trend
+                val sellType = report.sellType
+
+                val msg = buildString {
+                    when (trend.direction) {
+                        "BEARISH" -> {
+                            append("⚠️ 大盤下行（強度${trend.strength}/100）")
+                            if (sellType.sellType == "INSTITUTIONAL_EXIT") append(" | 主力撤資中")
+                            else if (sellType.sellType == "QUANT_CRASH") append(" | 量化砸盤")
+                            append(" — 建議降低倉位，關注防禦板塊")
+                        }
+                        "OSCILLATION" -> {
+                            if (trend.strength > 40) append("⚡ 大盤震蕩加劇（強度${trend.strength}） — 控制倉位")
+                            else append("📊 大盤震蕩（強度${trend.strength}） — 輕倉操作")
+                        }
+                        else -> return@launch // BULLISH 不顯示風險條
+                    }
+                }
+
+                withContext(Dispatchers.Main) {
+                    val riskBar = root.findViewWithTag<LinearLayout>("marketRiskBar")
+                    val riskTv = root.findViewWithTag<TextView>("marketRiskTv")
+                    if (riskBar != null && riskTv != null) {
+                        riskTv.text = msg
+                        riskBar.visibility = View.VISIBLE
+                        // 根據風險等級設置背景色
+                        riskBar.setBackgroundColor(when (trend.direction) {
+                            "BEARISH" -> Color.parseColor("#FFCDD2")
+                            else -> Color.parseColor("#FFF3E0")
+                        })
+                    }
+                }
+            } catch (_: Exception) {
+                // 大盤風險加載失敗不影響頁面
+            }
+        }
+    }
+
+    /** 動態更新 header 中的板塊標籤（loadDetailData 獲取板塊後回調） */
+    private fun updateHeaderSectorTags(sectors: List<String>, subSector: String) {
+        val codeSectorRow = root.findViewWithTag<LinearLayout>("codeSectorRow")
+            ?: return
+        // 移除舊板塊標籤（保留第一個 TextView 即股票代碼）
+        while (codeSectorRow.childCount > 1) {
+            codeSectorRow.removeViewAt(codeSectorRow.childCount - 1)
+        }
+        // 添加新板塊標籤
+        if (subSector.isNotEmpty() && subSector != "-") {
+            codeSectorRow.addView(createTagChip(subSector, "#E65100"))
+        }
+        for (sector in sectors.take(2)) {
+            if (sector != subSector) {
+                codeSectorRow.addView(createTagChip(sector, "#1565C0"))
+            }
+        }
+    }
+
+    // ── AI 分析展開區域 ──
+    private var aiExpanded = false
+    private var aiContentAdded = false
+    private lateinit var aiDetailContainer: LinearLayout  // K線+機構評級
+    private lateinit var aiResultContainer: LinearLayout   // AI Agent 分析結果
+
+    private fun buildAiAnalysisSection() {
+        // 容器 1：K線走勢 + 機構評級（點擊展開時立即顯示）
+        aiDetailContainer = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(12, 0, 12, 8)
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+            visibility = View.GONE
+            tag = "aiDetailContainer"
+        }
+        root.addView(aiDetailContainer)
+
+        // 容器 2：AI Agent 分析結果（用戶點擊「運行AI分析」後顯示，替換容器1）
+        aiResultContainer = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(12, 0, 12, 8)
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+            visibility = View.GONE
+            tag = "aiResultContainer"
+        }
+        root.addView(aiResultContainer)
+    }
+
+    private fun toggleAiAnalysis() {
+        aiExpanded = !aiExpanded
+        // 更新標題行 AI 按鈕的箭頭
+        root.findViewWithTag<TextView>("aiHeaderBtn")?.text =
+            if (aiExpanded) "🤖 AI分析 ▼" else "🤖 AI分析 ▶"
+
+        if (aiExpanded) {
+            // 展開：優先顯示 K線 + 機構評級
+            aiResultContainer.visibility = View.GONE
+            aiDetailContainer.visibility = View.VISIBLE
+            if (aiDetailContainer.childCount == 0) {
+                loadKlineAndRatings()
+            }
+        } else {
+            aiDetailContainer.visibility = View.GONE
+            aiResultContainer.visibility = View.GONE
+        }
+    }
+
+    /** 構建真正的 K 線圖表（CandleStickChart + 坐標軸） */
+    private fun buildCandleStickChart(snaps: List<DailySnapshotEntity>): CandleStickChart {
+        val chart = CandleStickChart(requireContext())
+        chart.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dpToPx(160))
+        chart.setBackgroundColor(Color.WHITE)
+        chart.description.isEnabled = false
+        chart.legend.isEnabled = false
+        chart.setScaleEnabled(true)
+        chart.setPinchZoom(true)
+
+        // 數據
+        val entries = ArrayList<CandleEntry>()
+        for (i in snaps.indices) {
+            val s = snaps[i]
+            entries.add(CandleEntry(
+                i.toFloat(),
+                s.high.toFloat(),       // shadow (上影線)
+                s.low.toFloat(),        // shadow (下影線)
+                s.open.toFloat(),       // open
+                s.close.toFloat()       // close
+            ))
+        }
+        val dataSet = CandleDataSet(entries, "K線").apply {
+            color = Color.parseColor("#333333")
+            shadowColor = Color.parseColor("#999999")
+            shadowWidth = 1f
+            increasingPaintStyle = android.graphics.Paint.Style.FILL
+            decreasingPaintStyle = android.graphics.Paint.Style.FILL
+            increasingColor = Color.parseColor("#E53935")  // 漲紅
+            decreasingColor = Color.parseColor("#43A047")  // 跌綠
+            valueTextSize = 9f
+            isHighlightEnabled = true
+        }
+        chart.data = CandleData(dataSet)
+
+        // X 軸：日期
+        chart.xAxis.apply {
+            position = XAxis.XAxisPosition.BOTTOM
+            granularity = 1f
+            textSize = 9f
+            textColor = Color.parseColor("#999999")
+            setDrawGridLines(false)
+            valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
+                override fun getFormattedValue(value: Float): String {
+                    val idx = value.toInt()
+                    return if (idx in snaps.indices) snaps[idx].date.takeLast(5) else ""
+                }
+            }
+        }
+
+        // Y 軸
+        chart.axisLeft.apply {
+            textSize = 9f
+            textColor = Color.parseColor("#999999")
+            setDrawGridLines(true)
+            gridColor = Color.parseColor("#EEEEEE")
+            valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
+                override fun getFormattedValue(value: Float): String =
+                    "%.2f".format(value)
+            }
+        }
+        chart.axisRight.isEnabled = false
+
+        chart.invalidate()
+        return chart
+    }
+
+    private fun dpToPx(dp: Int): Int =
+        (dp * resources.displayMetrics.density + 0.5f).toInt()
+
+    /** 加載 K 線走勢 + 機構評級數據 */
+    private fun loadKlineAndRatings() {
+        aiDetailContainer.removeAllViews()
+        // 加載提示
+        aiDetailContainer.addView(TextView(requireContext()).apply {
+            text = "⏳ 正在加載 K 線和機構評級..."
+            textSize = 10f; setTextColor(Color.parseColor("#999999"))
+        })
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val sb = StringBuilder()
+
+                // ── 1. K 線走勢（用 CandleStickChart 真正的圖表） ──
+                val snaps = db.dailySnapshotDao().getByCode(stockCode, 30).sortedBy { it.date }
+                withContext(Dispatchers.Main) { aiDetailContainer.removeAllViews() }
+
+                if (snaps.size >= 5) {
+                    withContext(Dispatchers.Main) {
+                        aiDetailContainer.addView(TextView(requireContext()).apply {
+                            text = "## 近${snaps.size}日K線走勢"
+                            textSize = 12f; setTextColor(Color.parseColor("#333333"))
+                            setTypeface(null, Typeface.BOLD)
+                            setPadding(0, 0, 0, 4)
+                        })
+                        val chart = buildCandleStickChart(snaps)
+                        aiDetailContainer.addView(chart)
+                        // MA5 簡評
+                        val closes = snaps.map { it.close }
+                        val ma5 = closes.takeLast(5).average()
+                        val currentPrice = closes.last()
+                        aiDetailContainer.addView(TextView(requireContext()).apply {
+                            text = "MA5: ¥${"%.2f".format(ma5)} | 現價${if (currentPrice > ma5) ">" else "<"}MA5 → ${if (currentPrice > ma5) "短期偏多" else "短期偏空"}"
+                            textSize = 10f; setTextColor(Color.parseColor("#666666"))
+                            setPadding(0, 4, 0, 8)
+                        })
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        aiDetailContainer.addView(TextView(requireContext()).apply {
+                            text = "K線數據不足（需要至少5天）"
+                            textSize = 11f; setTextColor(Color.parseColor("#999999"))
+                            setPadding(0, 0, 0, 8)
+                        })
+                    }
+                }
+
+                // ── 2. 機構評級 ──
+                sb.appendLine("## 🏦 機構評級（近90天）")
+                val ratingProvider = com.chin.stockanalysis.strategy.data.InstitutionalRatingProvider()
+                val ratingSummary = ratingProvider.getRatingSummary(stockCode, days = 90)
+
+                if (ratingSummary.totalReports == 0) {
+                    sb.appendLine("暫無機構評級數據")
+                } else {
+                    val emoji = when (ratingSummary.consensusRating) {
+                        "買入" -> "🔴"
+                        "增持" -> "🟠"
+                        "中性" -> "⚪"
+                        else -> "🟢"
+                    }
+                    sb.appendLine("共識評級: $emoji ${ratingSummary.consensusRating}（${ratingSummary.totalReports}份研報）")
+                    sb.appendLine("買入${ratingSummary.buyCount} / 增持${ratingSummary.overweightCount} / 中性${ratingSummary.neutralCount} / 賣出${ratingSummary.sellCount}")
+
+                    if (ratingSummary.avgTargetPrice != null) {
+                        val upside = if (ratingSummary.avgTargetPrice > 0 && snaps.isNotEmpty()) {
+                            val last = snaps.last().close
+                            (ratingSummary.avgTargetPrice - last) / last * 100
+                        } else 0.0
+                        sb.appendLine("平均目標價: ¥${"%.2f".format(ratingSummary.avgTargetPrice)}（空間${if (upside >= 0) "↑" else "↓"}${"%.1f".format(kotlin.math.abs(upside))}%）")
+                    }
+
+                    if (ratingSummary.latestOrgs.isNotEmpty()) {
+                        sb.appendLine("最近評級機構: ${ratingSummary.latestOrgs.take(3).joinToString("、")}")
+                    }
+
+                    // 詳細評級
+                    val topRatings = ratingSummary.detailList.take(8)
+                    sb.appendLine()
+                    sb.appendLine("### 詳細評級")
+                    for (r in topRatings) {
+                        val target = r.targetPriceHigh?.let { "目標¥${"%.1f".format(it)}" } ?: ""
+                        val change = if (r.ratingChange != "未知") "【${r.ratingChange}】" else ""
+                        val eps = mutableListOf<String>()
+                        r.predictEpsThisYear?.let { eps.add("今年¥${"%.2f".format(it)}") }
+                        r.predictEpsNextYear?.let { eps.add("明年¥${"%.2f".format(it)}") }
+                        sb.appendLine("• ${r.orgName}: ${r.rating} $change $target (${r.publishDate})")
+                        if (eps.isNotEmpty()) sb.appendLine("  EPS: ${eps.joinToString(" / ")}")
+                    }
+                }
+                sb.appendLine()
+
+                // ── 3. 基金持倉 ──
+                sb.appendLine("## 💰 基金持倉（持倉市值TOP10）")
+                val fundHoldings = ratingProvider.getFundHoldings(stockCode, 10)
+                if (fundHoldings.isEmpty()) {
+                    sb.appendLine("暫無基金持倉數據")
+                } else {
+                    for (f in fundHoldings) {
+                        val capStr = if (f.holdMarketCap >= 10000)
+                            "%.1f億".format(f.holdMarketCap / 10000.0)
+                        else "%.0f萬".format(f.holdMarketCap)
+                        sb.appendLine("• ${f.fundName}(${f.fundCode}): ${capStr} 占比${"%.2f".format(f.holdRatio)}% (${f.reportDate})")
+                    }
+                    val totalCap = fundHoldings.sumOf { it.holdMarketCap }
+                    val totalStr = if (totalCap >= 10000) "%.1f億".format(totalCap / 10000.0) else "%.0f萬".format(totalCap)
+                    sb.appendLine("\n合計持倉市值: $totalStr | ${fundHoldings.size}只基金")
+                }
+                sb.appendLine()
+
+                withContext(Dispatchers.Main) {
+                    aiDetailContainer.addView(TextView(requireContext()).apply {
+                        text = sb.toString()
+                        textSize = 11f; setTextColor(Color.parseColor("#333333"))
+                        setLineSpacing(3f, 1f)
+                    })
+                    // 底部按鈕行：運行AI深度分析 + 向AI追問 同一行
+                    val btnRow = LinearLayout(requireContext()).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER
+                        setPadding(0, 4, 0, 0)
+                    }
+                    btnRow.addView(Button(requireContext()).apply {
+                        tag = "btnRunAi"
+                        text = "🤖 運行AI深度分析"
+                        textSize = 9f; setTextColor(Color.WHITE)
+                        setBackgroundColor(Color.parseColor("#2E7D32"))
+                        setPadding(12, 4, 12, 4)
+                        minimumHeight = 0; minHeight = 0
+                        setOnClickListener {
+                            it.isEnabled = false
+                            text = "深度分析中..."
+                            runAiAgents(UnifiedAgentRunner.MODE_PIPELINE)
+                        }
+                    })
+                    btnRow.addView(Button(requireContext()).apply {
+                        text = "💬 向AI追問"
+                        textSize = 9f; setTextColor(Color.parseColor("#1565C0"))
+                        setBackgroundColor(Color.parseColor("#E3F2FD"))
+                        setPadding(12, 4, 12, 4)
+                        minimumHeight = 0; minHeight = 0
+                        setOnClickListener {
+                            val today = java.time.LocalDate.now()
+                            val msg = "請使用【最新交易日（${today}）的實時行情數據】，詳細分析股票 $stockName($stockCode) 的投資價值，包括：\n" +
+                                "1. 基本面分析（財報、估值、業績）\n" +
+                                "2. 技術面分析（K線走勢、支撐阻力位）\n" +
+                                "3. 資金面分析（主力資金流向、機構動態）\n" +
+                                "4. 風險評估與投資建議\n" +
+                                "請嚴格基於實時數據分析，不要使用訓練數據中的舊價格。"
+                            val mainActivity = activity as? com.chin.stockanalysis.ui.MainActivity
+                            if (mainActivity != null) {
+                                activity?.supportFragmentManager?.popBackStack()
+                                mainActivity.switchToChatAndSend(msg)
+                            }
+                        }
+                    })
+                    aiDetailContainer.addView(btnRow)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    aiDetailContainer.removeAllViews()
+                    aiDetailContainer.addView(TextView(requireContext()).apply {
+                        text = "加載失敗: ${e.message}"
+                        textSize = 11f; setTextColor(Color.parseColor("#C62828"))
+                    })
+                }
+            }
+        }
+    }
+
+    /** 當前正在進行的 AI 分析 Job（返回鍵可取消） */
+    private var aiAnalysisJob: Job? = null
+
+    /** 運行 AI Agent 分析，切換到 aiResultContainer */
+    private fun runAiAgents(mode: String = UnifiedAgentRunner.MODE_QUICK) {
+        // 取消之前正在進行的分析
+        aiAnalysisJob?.cancel()
+
+        aiResultContainer.removeAllViews()
+        val loadingRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, 4, 0, 4)
+        }
+        loadingRow.addView(ProgressBar(requireContext()).apply {
+            layoutParams = LayoutParams(dpToPx(16), dpToPx(16))
+            setPadding(0, 0, 4, 0)
+        })
+        loadingRow.addView(TextView(requireContext()).apply {
+            text = if (mode == UnifiedAgentRunner.MODE_PIPELINE) "深度分析中（需要30-60秒）..." else "AI 分析中..."
+            textSize = 9f; setTextColor(Color.parseColor("#999999"))
+        })
+        aiResultContainer.addView(loadingRow)
+        // 切換 view
+        aiDetailContainer.visibility = View.GONE
+        aiResultContainer.visibility = View.VISIBLE
+
+        aiAnalysisJob = lifecycleScope.launch(Dispatchers.IO) {
+            // 統一 Agent 分析入口
+            val result = UnifiedAgentRunner.run(
+                context = requireContext().applicationContext,
+                stockCode = stockCode,
+                stockName = stockName,
+                mode = mode,
+                sector = initialSector.takeIf { it.isNotEmpty() }
+            )
+
+            // 檢查是否被取消或 view 已銷毀
+            ensureActive()
+            if (view == null || !isAdded) return@launch
+
+            withContext(Dispatchers.Main) {
+                aiResultContainer.removeAllViews()
+                aiResultContainer.addView(TextView(requireContext()).apply {
+                    text = result.summaryText
+                    textSize = if (result.mode == UnifiedAgentRunner.MODE_PIPELINE) 9f else 10f
+                    setTextColor(Color.parseColor("#1B5E20"))
+                    setLineSpacing(2f, 1f)
+                    setPadding(0, 0, 0, 2)
+                })
+                // 模式標籤
+                if (result.mode == UnifiedAgentRunner.MODE_PIPELINE) {
+                    aiResultContainer.addView(TextView(requireContext()).apply {
+                        text = "🧠 ${result.elapsedMs}ms · Pipeline 深度分析"
+                        textSize = 8f; setTextColor(Color.parseColor("#666666"))
+                        gravity = Gravity.CENTER
+                        setPadding(0, 2, 0, 2)
+                    })
+                }
+                // 底部按鈕行：返回 + 加倉/減倉/清倉 同一行
+                val bottomRow = LinearLayout(requireContext()).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER
+                    setPadding(0, 4, 0, 2)
+                }
+                // 返回按鈕
+                bottomRow.addView(Button(requireContext()).apply {
+                    text = "◀ 返回K綫"
+                    textSize = 9f; setTextColor(Color.WHITE)
+                    setBackgroundColor(Color.parseColor("#757575"))
+                    setPadding(10, 4, 10, 4)
+                    minimumHeight = 0; minHeight = 0
+                    setOnClickListener {
+                        aiResultContainer.visibility = View.GONE
+                        aiDetailContainer.visibility = View.VISIBLE
+                        // 恢復深度分析按鈕
+                        root.findViewWithTag<Button>("btnRunAi")?.let {
+                            it.isEnabled = true
+                            it.text = "🤖 運行AI深度分析"
+                        }
+                    }
+                })
+                // 操作按鈕
+                val recommendation = result.recommendation
+                if (recommendation != null) {
+                    if (recommendation in listOf("BUY", "WATCH")) {
+                        bottomRow.addView(Button(requireContext()).apply {
+                            text = "➕ 加倉"; textSize = 9f
+                            setBackgroundColor(Color.parseColor("#1565C0"))
+                            setPadding(10, 4, 10, 4)
+                            minimumHeight = 0; minHeight = 0
+                            setOnClickListener { Toast.makeText(requireContext(), "請在建倉流程中加倉 $stockName", Toast.LENGTH_LONG).show() }
+                        })
+                    }
+                    if (recommendation in listOf("HOLD", "SELL", "WATCH")) {
+                        bottomRow.addView(Button(requireContext()).apply {
+                            text = "➖ 減倉"; textSize = 9f
+                            setBackgroundColor(Color.parseColor("#F9A825"))
+                            setPadding(10, 4, 10, 4)
+                            minimumHeight = 0; minHeight = 0
+                            setOnClickListener { Toast.makeText(requireContext(), "減倉功能開發中", Toast.LENGTH_SHORT).show() }
+                        })
+                    }
+                    if (recommendation in listOf("HOLD", "SELL")) {
+                        bottomRow.addView(Button(requireContext()).apply {
+                            text = "❌ 清倉"; textSize = 9f
+                            setBackgroundColor(Color.parseColor("#C62828"))
+                            setPadding(10, 4, 10, 4)
+                            minimumHeight = 0; minHeight = 0
+                            setOnClickListener { Toast.makeText(requireContext(), "清倉功能開發中", Toast.LENGTH_SHORT).show() }
+                        })
+                    }
+                }
+                aiResultContainer.addView(bottomRow)
+            }
+        }
+    }
+
     private fun loadDetailData() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -214,6 +770,20 @@ class StockDetailFragment : Fragment() {
 
                 withContext(Dispatchers.Main) {
                     loadingTv.visibility = View.GONE
+                    // 更新 header：板塊標籤 + 價格/漲跌幅
+                    if (leaderData != null) {
+                        root.findViewWithTag<TextView>("tvPrice")?.text =
+                            " ¥${String.format("%.2f", leaderData.price)}"
+                        root.findViewWithTag<TextView>("tvChangePct")?.let { tv ->
+                            val sign = if (leaderData.changePercent >= 0) "+" else ""
+                            tv.text = " $sign${String.format("%.2f", leaderData.changePercent)}%"
+                            tv.setTextColor(if (leaderData.changePercent >= 0)
+                                Color.parseColor("#E53935") else Color.parseColor("#43A047"))
+                        }
+                    }
+                    if (sectors.isNotEmpty() && initialSector.isEmpty()) {
+                        updateHeaderSectorTags(sectors, subSector)
+                    }
                     if (leaderData != null) buildRealtimeSection(leaderData)
                     buildSectorSection(sectors, subSector)
                     if (similarStocks.isNotEmpty()) buildSimilarStocksSection(similarStocks)
@@ -519,27 +1089,6 @@ class StockDetailFragment : Fragment() {
             setPadding(4, 6, 4, 8)
         }
         card.addView(analysisLabel)
-
-        // AI 追问按钮
-        val askAiBtn = TextView(ctx).apply {
-            text = "💬 向 AI 追问更多分析"
-            textSize = 12f; setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#1565C0"))
-            setPadding(24, 10, 24, 10)
-            gravity = Gravity.CENTER
-            layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-                topMargin = 8; bottomMargin = 8
-            }
-            setOnClickListener {
-                // 向 AI 发送追问
-                val question = "请详细分析 $stockName ($stockCode) 的走势，结合最近的成交量、新闻和所属板块$sectorStr 的轮动情况，给出投资建议。"
-                if (activity is MainActivity) {
-                    (activity as MainActivity).switchToChatAndSend(question)
-                }
-            }
-        }
-        card.addView(askAiBtn)
 
         contentContainer.addView(card)
     }

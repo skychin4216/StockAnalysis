@@ -110,7 +110,9 @@ data class PipelineResult(
     val stocks: List<PipelineStockResult> = emptyList(),
     val errorMessage: String? = null,
     val analysisMode: String = "精簡版",
-    val weightFormula: String = ""
+    val weightFormula: String = "",
+    /** 每步的原始 LLM 分析文本（stepIndex → markdown） */
+    val stepAnalyses: Map<Int, String> = emptyMap()
 )
 
 /** 單只股票的最終流水線結果 */

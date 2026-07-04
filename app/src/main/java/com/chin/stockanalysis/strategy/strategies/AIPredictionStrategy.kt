@@ -50,6 +50,8 @@ class AIPredictionStrategy(private val context: Context) : Strategy {
     /** 由外部注入：其他策略已执行完的结果。注入模式下设置，独立模式下留空。 */
     var strategyResults: List<ScreeningResult> = emptyList()
     var targetDate: String = ""
+    /** 由外部注入：大盤分析報告，AI 預測時參考市場環境 */
+    var marketContext: String = ""
 
     override suspend fun screen(): Result<ScreeningResult> = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
@@ -71,7 +73,7 @@ class AIPredictionStrategy(private val context: Context) : Strategy {
             }
 
             val ai = AIPredictionEngine(context)
-            val prediction = ai.predict(effectiveResults, date)
+            val prediction = ai.predict(effectiveResults, date, marketContext = marketContext)
 
             if (prediction == null || prediction.topPicks.isEmpty()) {
                 return@withContext Result.success(ScreeningResult(

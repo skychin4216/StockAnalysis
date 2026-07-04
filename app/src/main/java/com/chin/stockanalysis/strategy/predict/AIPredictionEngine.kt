@@ -85,7 +85,8 @@ class AIPredictionEngine(private val context: Context) {
         strategyResults: List<ScreeningResult>,
         selectedDate: String,
         onProgress: ((String) -> Unit)? = null,
-        useEnhancedAi: Boolean = true   // 默认使用多Provider轮换，避免单点故障
+        useEnhancedAi: Boolean = true,
+        marketContext: String = ""
     ): AIPrediction? {
         val slot = if (useEnhancedAi) {
             AiProviderPool.acquire(context, callerTag = "AIPredictionEngine", timeoutMs = 120_000L)
@@ -119,7 +120,8 @@ class AIPredictionEngine(private val context: Context) {
                 candidateStocks = candidateStocks,
                 multiDayFeatures = multiDayFeatures,
                 newsFactors = newsFactors,
-                selectedDate = selectedDate
+                selectedDate = selectedDate,
+                marketContext = marketContext
             )
 
             // 重试：策略模式用 SimpleAiProvider.switchToNext，增强模式用 AiProviderPool 轮换
@@ -255,7 +257,8 @@ class AIPredictionEngine(private val context: Context) {
         candidateStocks: List<StockStrategyScore>,
         multiDayFeatures: Map<String, List<DayFeature>>,
         newsFactors: List<com.chin.stockanalysis.news.NewsFactorEntity>,
-        selectedDate: String
+        selectedDate: String,
+        marketContext: String = ""
     ): String {
         val sb = StringBuilder()
 
@@ -266,6 +269,14 @@ class AIPredictionEngine(private val context: Context) {
         sb.appendLine("2. 用所选方案分析所有候选股票")
         sb.appendLine("3. 输出3-5只综合最可能上涨的股票，附详细理由")
         sb.appendLine()
+
+        // ── 大盤環境分析 ──
+        if (marketContext.isNotBlank()) {
+            sb.appendLine("## 当前大盤环境（重要参考）")
+            sb.appendLine(marketContext)
+            sb.appendLine("注意：如果大盤下行且出現主力撤資，應優先回避弱於大盤的股票，優先選擇防禦板塊或相對強勢股。")
+            sb.appendLine()
+        }
 
         // ── 策略打分结果 ──
         sb.appendLine("## 多策略扫描结果（交易日: $selectedDate）")

@@ -337,6 +337,17 @@ class SimulationTradeEngine(private val context: Context) {
         var aiPicks = emptyList<AIPick>()
         var aiPicksFiltered = emptyList<AIPick>()
         var needAi = false
+        timedStep("Step 8.5: 大盤環境分析") {
+            try {
+                latestMarketReport = com.chin.stockanalysis.strategy.market.MarketAnalyzer.analyze(
+                    context, emptyList()
+                )
+                onStatusUpdate?.invoke("📊 ${latestMarketReport!!.trend.direction} | ${latestMarketReport!!.sellType.sellType}")
+                Log.i(TAG, "大盤分析: ${latestMarketReport!!.summary}")
+            } catch (e: Exception) {
+                Log.w(TAG, "大盤分析失敗（不阻塞）: ${e.message}")
+            }
+        }
         timedStep("Step 9: AI 預測精選") {
             val aiStrategy = strategies.find { it.id == "ai_prediction" }
             needAi = aiStrategy != null && finalStockList.isNotEmpty()
@@ -367,6 +378,7 @@ class SimulationTradeEngine(private val context: Context) {
                 }
                 aiStrategy.strategyResults = screeningResults
                 aiStrategy.targetDate = config.tradeDate
+                aiStrategy.marketContext = latestMarketReport?.summary ?: ""
                 onStatusUpdate?.invoke("🤖 正在 AI 分析股票...")
                 val aiSignals = executeStrategy(aiStrategy, finalStockList, 1) ?: emptyList()
                 aiSignals.sortedByDescending { it.strength }.take(FINAL_TOP3).mapIndexed { i, s ->
@@ -595,9 +607,17 @@ class SimulationTradeEngine(private val context: Context) {
                     if (selfSnap.close >= maxClose * 0.98) score += 7 else score += 3
                 } else { score += 3 }
 
-                // 維度5: 概念壁壘 (0-15分)
+                // 維度5: 概念壁壘 (0-15分) — 根據大盤環境動態調整
                 val hasMoat = sectors.any { s -> TECH_MOAT_SECTORS.any { ts -> s.contains(ts) || ts.contains(s) } }
-                score += if (hasMoat) 15 else 5
+                val moatScore = when {
+                    // 大盤下行（BEARISH）時，科技壁壘加分大幅降低
+                    latestMarketReport?.trend?.direction == "BEARISH" -> if (hasMoat) 8 else 5
+                    // 大盤震蕩（OSCILLATION）時，適度加分
+                    latestMarketReport?.trend?.direction == "OSCILLATION" -> if (hasMoat) 11 else 5
+                    // 大盤上行（BULLISH）時，維持原加分
+                    else -> if (hasMoat) 15 else 5
+                }
+                score += moatScore
 
                 stock.code to score.coerceIn(0, 100)
             }
@@ -775,6 +795,10 @@ class SimulationTradeEngine(private val context: Context) {
     }
 
     private var hotSectorPoolCache: Set<String>? = null
+
+    /** 最近一次大盤環境分析報告（executeBuildStep Step 8.5 填充，其他方法可讀取） */
+    @Volatile
+    private var latestMarketReport: com.chin.stockanalysis.strategy.market.MarketAnalyzer.MarketReport? = null
     private suspend fun getHotSectorStockPool(): Set<String> {
         if (hotSectorPoolCache != null) return hotSectorPoolCache!!
 
