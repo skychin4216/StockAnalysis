@@ -696,14 +696,12 @@ abstract class QuantFragmentBase : Fragment() {
             })
             // 點擊股票名稱直接跳轉到詳情頁
             nameCell.setOnClickListener {
-                val detail = com.chin.stockanalysis.ui.StockDetailFragment.newInstance(
-                    order.stockCode, order.stockName, order.buyPrice
+                com.chin.stockanalysis.ui.StockDetailNavigator.navigateFromFragment(
+                    this@QuantFragmentBase,
+                    order.stockCode,
+                    order.stockName,
+                    price = order.buyPrice
                 )
-                activity?.supportFragmentManager
-                    ?.beginTransaction()
-                    ?.replace(android.R.id.content, detail)
-                    ?.addToBackStack(null)
-                    ?.commit()
             }
             nameCell.isClickable = true
             nameCell.foreground = android.graphics.drawable.GradientDrawable().apply {

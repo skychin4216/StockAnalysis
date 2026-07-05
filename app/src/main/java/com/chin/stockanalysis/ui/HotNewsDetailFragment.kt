@@ -86,8 +86,8 @@ class HotNewsDetailFragment : BottomSheetDialogFragment() {
                             val stocks = StockDataCenter.searchStocks(tag)
                             if (stocks.isNotEmpty()) {
                                 val (code, name) = stocks.first()
-                                val d = StockDetailFragment.newInstance(code, name, sectorName = tag)
-                                activity?.supportFragmentManager?.beginTransaction()?.replace(android.R.id.content, d)?.addToBackStack(null)?.commit(); dismiss()
+                                StockDetailNavigator.navigateFromFragment(this@HotNewsDetailFragment, code, name, sectorName = tag)
+                                dismiss()
                             } else {
                                 val sectors = StockDataCenter.searchSectors(tag)
                                 if (sectors.isNotEmpty()) {
@@ -121,8 +121,8 @@ class HotNewsDetailFragment : BottomSheetDialogFragment() {
                             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(4, 8, 4, 8)
                             setBackgroundColor(Color.parseColor("#F5F6FA")); (layoutParams as? LayoutParams)?.setMargins(0, 4, 0, 0)
                             setOnClickListener {
-                                val d = StockDetailFragment.newInstance(s.code, s.name)
-                                activity?.supportFragmentManager?.beginTransaction()?.replace(android.R.id.content, d)?.addToBackStack(null)?.commit(); dismiss()
+                                StockDetailNavigator.navigateFromFragment(this@HotNewsDetailFragment, s.code, s.name)
+                                dismiss()
                             }
                         }
                         row.addView(TextView(ctx).apply { text = "${s.name} (${s.code.takeLast(6)})\n${s.business.take(20)}"; textSize = 13f; setTextColor(Color.parseColor("#333333")); layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f) })
@@ -167,8 +167,8 @@ class HotNewsDetailFragment : BottomSheetDialogFragment() {
                 val str = LinearLayout(ctx).apply {
                     orientation = LinearLayout.HORIZONTAL; setPadding(20, 2, 4, 2)
                     setOnClickListener {
-                        val d = StockDetailFragment.newInstance(st.code, st.name)
-                        activity?.supportFragmentManager?.beginTransaction()?.replace(android.R.id.content, d)?.addToBackStack(null)?.commit(); dismiss()
+                        StockDetailNavigator.navigateFromFragment(this@HotNewsDetailFragment, st.code, st.name)
+                        dismiss()
                     }
                 }
                 str.addView(TextView(ctx).apply { text = "  ${st.name} (${st.code.takeLast(6)})"; textSize = 11f; setTextColor(Color.parseColor("#555555")) })

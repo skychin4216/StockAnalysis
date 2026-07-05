@@ -189,6 +189,13 @@ class CandidatePoolFragment : Fragment() {
                             context = ctx,
                             columns = StockTableHelper.extendedColumns(),
                             items = items,
+                            onItemClick = { item ->
+                                com.chin.stockanalysis.ui.StockDetailNavigator.navigateFromFragment(
+                                    this@CandidatePoolFragment,
+                                    item.code, item.name,
+                                    item.price, item.changePct, item.sector
+                                )
+                            },
                             onClearAll = {
                                 currentSnapshot = currentSnapshot?.let { it.copy(stocks = emptyList()) }
                                 val prefs = ctx.getSharedPreferences("candidate_pool_prefs", android.content.Context.MODE_PRIVATE)

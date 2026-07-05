@@ -43,13 +43,15 @@ class WatchlistUnifiedFragment : Fragment() {
     private lateinit var selfSelectBtn: TextView
     private lateinit var aiSelectBtn: TextView
     private lateinit var candidateBtn: TextView
+    private lateinit var trendImagesBtn: TextView
     private lateinit var statusTv: TextView
     private lateinit var lastUpdateTv: TextView
+    private lateinit var statusRow: LinearLayout
     private lateinit var listContainer: LinearLayout
     private lateinit var headerRow: LinearLayout
 
     /** 切換模式 */
-    private enum class ViewMode { WATCHLIST, AI, CANDIDATE }
+    private enum class ViewMode { WATCHLIST, AI, CANDIDATE, TREND_IMAGES }
     private var currentMode = ViewMode.WATCHLIST
 
     /** 僅主板開關（僅備選池模式可見） */
@@ -143,10 +145,18 @@ class WatchlistUnifiedFragment : Fragment() {
                 loadCandidatePool(forceRefresh = false)
             }
         }
+        trendImagesBtn = createToggleButton("📈 趋势图", selected = false) {
+            if (currentMode != ViewMode.TREND_IMAGES) {
+                currentMode = ViewMode.TREND_IMAGES
+                updateToggleState()
+                renderTrendImages()
+            }
+        }
 
         toggleInner.addView(selfSelectBtn)
         toggleInner.addView(aiSelectBtn)
         toggleInner.addView(candidateBtn)
+        toggleInner.addView(trendImagesBtn)
         toggleRow.addView(toggleInner)
         rootLayout.addView(toggleRow)
 
@@ -175,7 +185,7 @@ class WatchlistUnifiedFragment : Fragment() {
         rootLayout.addView(mainBoardRow)
 
         // ── 狀態列 ──
-        val statusRow = LinearLayout(requireContext()).apply {
+        statusRow = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(16, 6, 16, 6)
             gravity = Gravity.CENTER_VERTICAL
@@ -261,12 +271,16 @@ class WatchlistUnifiedFragment : Fragment() {
         updateToggleStyle(selfSelectBtn, currentMode == ViewMode.WATCHLIST)
         updateToggleStyle(aiSelectBtn, currentMode == ViewMode.AI)
         updateToggleStyle(candidateBtn, currentMode == ViewMode.CANDIDATE)
+        updateToggleStyle(trendImagesBtn, currentMode == ViewMode.TREND_IMAGES)
         selfSelectBtn.setTypeface(null, if (currentMode == ViewMode.WATCHLIST) Typeface.BOLD else Typeface.NORMAL)
         aiSelectBtn.setTypeface(null, if (currentMode == ViewMode.AI) Typeface.BOLD else Typeface.NORMAL)
         candidateBtn.setTypeface(null, if (currentMode == ViewMode.CANDIDATE) Typeface.BOLD else Typeface.NORMAL)
+        trendImagesBtn.setTypeface(null, if (currentMode == ViewMode.TREND_IMAGES) Typeface.BOLD else Typeface.NORMAL)
 
         // 僅主板開關僅在備選池模式可見
         mainBoardRow.visibility = if (currentMode == ViewMode.CANDIDATE) View.VISIBLE else View.GONE
+        // 狀態欄在趨勢圖模式隱藏
+        statusRow.visibility = if (currentMode == ViewMode.TREND_IMAGES) View.GONE else View.VISIBLE
     }
 
     // ═══════════════════════════════════════
@@ -361,6 +375,7 @@ class WatchlistUnifiedFragment : Fragment() {
 
         when (currentMode) {
             ViewMode.CANDIDATE -> renderCandidateList()
+            ViewMode.TREND_IMAGES -> renderTrendImages()
             else -> renderWatchlistOrAiList()
         }
     }
@@ -386,6 +401,13 @@ class WatchlistUnifiedFragment : Fragment() {
                             context = requireContext(),
                             columns = StockTableHelper.extendedColumns(),
                             items = items,
+                            onItemClick = { item ->
+                                StockDetailNavigator.navigateFromFragment(
+                                    this@WatchlistUnifiedFragment,
+                                    item.code, item.name,
+                                    item.price, item.changePct, item.sector
+                                )
+                            },
                             onClearAll = {
                                 lifecycleScope.launch(Dispatchers.IO) {
                                     try {
@@ -463,6 +485,13 @@ class WatchlistUnifiedFragment : Fragment() {
                             context = ctx,
                             columns = StockTableHelper.extendedColumns(),
                             items = items,
+                            onItemClick = { item ->
+                                StockDetailNavigator.navigateFromFragment(
+                                    this@WatchlistUnifiedFragment,
+                                    item.code, item.name,
+                                    item.price, item.changePct, item.sector
+                                )
+                            },
                             onClearAll = {
                                 candidatePoolSnapshot = candidatePoolSnapshot?.let { it.copy(stocks = emptyList()) }
                                 val prefs = ctx.getSharedPreferences("candidate_pool_prefs", android.content.Context.MODE_PRIVATE)
@@ -492,5 +521,95 @@ class WatchlistUnifiedFragment : Fragment() {
 
     private fun isMainBoard(code: String): Boolean {
         return code.startsWith("sh6") || code.startsWith("sz0") || code.startsWith("sz2")
+    }
+
+    // ═══════════════════════════════════════
+    // 趨勢圖片展示（從 assets/trend_images 加載）
+    // ═══════════════════════════════════════
+
+    private fun renderTrendImages() {
+        listContainer.removeAllViews()
+
+        val ctx = requireContext()
+        val assets = ctx.assets
+        val imageNames = try {
+            assets.list("trend_images")?.filter { it.endsWith(".jpg") || it.endsWith(".png") } ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+
+        if (imageNames.isEmpty()) {
+            listContainer.addView(TextView(ctx).apply {
+                text = "暫無趨勢圖片\n請將圖片放入 assets/trend_images 目錄"
+                textSize = 14f; setTextColor(Color.parseColor("#999999"))
+                gravity = Gravity.CENTER; setPadding(0, 48, 0, 48)
+            })
+            return
+        }
+
+        // 網格布局：2列
+        val grid = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        var row: LinearLayout? = null
+
+        imageNames.forEachIndexed { index, name ->
+            if (index % 2 == 0) {
+                row = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    )
+                }
+                grid.addView(row)
+            }
+
+            val iv = ImageView(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(0, 400, 1f).apply {
+                    setMargins(4, 4, 4, 4)
+                }
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                setBackgroundColor(Color.parseColor("#F5F5F5"))
+                setPadding(4, 4, 4, 4)
+            }
+
+            // 異步加載圖片
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    val bmp = android.graphics.BitmapFactory.decodeStream(
+                        assets.open("trend_images/$name")
+                    )
+                    withContext(Dispatchers.Main) {
+                        iv.setImageBitmap(bmp)
+                    }
+                } catch (_: Exception) {}
+            }
+
+            // 點擊圖片全屏預覽
+            iv.setOnClickListener {
+                showFullScreenImage(name)
+            }
+
+            row?.addView(iv)
+        }
+
+        listContainer.addView(grid)
+    }
+
+    private fun showFullScreenImage(imageName: String) {
+        val dialog = android.app.Dialog(requireContext(), android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        val iv = ImageView(requireContext()).apply {
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setOnClickListener { dialog.dismiss() }
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val bmp = requireContext().assets.open("trend_images/$imageName").use {
+                    android.graphics.BitmapFactory.decodeStream(it)
+                }
+                withContext(Dispatchers.Main) { iv.setImageBitmap(bmp) }
+            } catch (_: Exception) {}
+        }
+        dialog.setContentView(iv)
+        dialog.show()
     }
 }

@@ -153,18 +153,14 @@ class SectorDetailFragment : Fragment() {
                 if (idx % 2 == 1) setBackgroundColor(Color.parseColor("#F5F5F5"))
                 // 点击股票 → 跳转到股票详情页（而非板块页）
                 setOnClickListener {
-                    val detail = StockDetailFragment.newInstance(
-                        stockCode = s.code.takeIf { it.isNotBlank() } ?: "",
-                        stockName = s.name,
-                        price = s.price,
-                        changePct = s.changePercent,
-                        sectorName = sectorNameFinal
+                    StockDetailNavigator.navigateFromFragment(
+                        this@SectorDetailFragment,
+                        s.code.takeIf { it.isNotBlank() } ?: "",
+                        s.name,
+                        s.price,
+                        s.changePercent,
+                        sectorNameFinal
                     )
-                    activity?.supportFragmentManager
-                        ?.beginTransaction()
-                        ?.replace(android.R.id.content, detail)
-                        ?.addToBackStack(null)
-                        ?.commit()
                 }
             }
             row.addView(TextView(ctx).apply {
@@ -293,16 +289,12 @@ class SectorDetailFragment : Fragment() {
             setBackgroundColor(Color.parseColor("#F8F9FC"))
             // 点击静态股票 → 跳转到股票详情页（而非板块页）
             setOnClickListener {
-                val detail = StockDetailFragment.newInstance(
-                    stockCode = stock.code,
-                    stockName = stock.name,
+                StockDetailNavigator.navigateFromFragment(
+                    this@SectorDetailFragment,
+                    stock.code,
+                    stock.name,
                     sectorName = "" // 从子板块推断
                 )
-                activity?.supportFragmentManager
-                    ?.beginTransaction()
-                    ?.replace(android.R.id.content, detail)
-                    ?.addToBackStack(null)
-                    ?.commit()
             }
         }
         val boardTag = if (stock.isMainBoard) "" else " [${stock.boardType}]"

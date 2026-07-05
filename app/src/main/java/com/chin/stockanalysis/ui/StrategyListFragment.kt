@@ -374,7 +374,7 @@ class StrategyListFragment : Fragment() {
             val t = TableLayout(requireContext()).apply { isStretchAllColumns = true }
             val hr = TableRow(requireContext()); for (h in listOf("名称", "子板块", "代码", "强度", "价格", "涨幅")) hr.addView(TextView(requireContext()).apply { text = h; textSize = 11f; setTextColor(Color.parseColor("#999999")); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER; setPadding(4, 4, 4, 4) }); t.addView(hr)
             for (s in r.signals.distinctBy { it.stockCode }.take(10)) {
-                val row = TableRow(requireContext()); row.setOnClickListener { val detail = StockDetailFragment.newInstance(s.stockCode, s.stockName, s.currentPrice, s.changePercent, getSectorLabel(s.stockCode, s.stockName)); activity?.supportFragmentManager?.beginTransaction()?.replace(android.R.id.content, detail)?.addToBackStack(null)?.commit() }
+                val row = TableRow(requireContext()); row.setOnClickListener { StockDetailNavigator.navigateFromFragment(this, s.stockCode, s.stockName, s.currentPrice, s.changePercent, getSectorLabel(s.stockCode, s.stockName)) }
                 val strengthColor = when { s.strength >= 80 -> Color.parseColor("#E65100"); s.strength >= 60 -> Color.parseColor("#2E7D32"); else -> Color.parseColor("#666666") }
                 row.addView(TextView(requireContext()).apply { text = s.stockName; textSize = 11f; setTextColor(Color.parseColor("#222222")); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER_VERTICAL; setPadding(2, 6, 2, 6) })
                 row.addView(TextView(requireContext()).apply { text = getSectorLabel(s.stockCode, s.stockName); textSize = 9f; setTextColor(Color.parseColor("#1565C0")); gravity = Gravity.CENTER; setPadding(2, 6, 2, 6) })

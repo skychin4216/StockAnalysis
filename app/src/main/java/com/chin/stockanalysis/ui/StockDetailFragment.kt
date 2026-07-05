@@ -53,13 +53,15 @@ class StockDetailFragment : Fragment() {
         private const val ARG_STOCK_PRICE = "stock_price"
         private const val ARG_CHANGE_PCT = "change_pct"
         private const val ARG_SECTOR_NAME = "sector_name"
+        private const val ARG_AUTO_EXPAND_AI = "auto_expand_ai"
 
         fun newInstance(
             stockCode: String,
             stockName: String,
             price: Double = 0.0,
             changePct: Double = 0.0,
-            sectorName: String = ""
+            sectorName: String = "",
+            autoExpandAi: Boolean = true
         ): StockDetailFragment {
             return StockDetailFragment().apply {
                 arguments = Bundle().apply {
@@ -68,6 +70,7 @@ class StockDetailFragment : Fragment() {
                     putDouble(ARG_STOCK_PRICE, price)
                     putDouble(ARG_CHANGE_PCT, changePct)
                     putString(ARG_SECTOR_NAME, sectorName)
+                    putBoolean(ARG_AUTO_EXPAND_AI, autoExpandAi)
                 }
             }
         }
@@ -82,6 +85,7 @@ class StockDetailFragment : Fragment() {
     private var initialPrice = 0.0
     private var initialChangePct = 0.0
     private var initialSector = ""
+    private var autoExpandAi = true
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -91,6 +95,7 @@ class StockDetailFragment : Fragment() {
             initialPrice = it.getDouble(ARG_STOCK_PRICE, 0.0)
             initialChangePct = it.getDouble(ARG_CHANGE_PCT, 0.0)
             initialSector = it.getString(ARG_SECTOR_NAME, "")
+            autoExpandAi = it.getBoolean(ARG_AUTO_EXPAND_AI, true)
         }
     }
 
@@ -127,6 +132,16 @@ class StockDetailFragment : Fragment() {
         // 加載數據
         loadDetailData()
         loadMarketRisk()
+
+        // 自動展開 AI 分析區（跳過簡單頁面，直接顯示 K 線+評級+分析按鈕）
+        if (autoExpandAi) {
+            aiExpanded = true
+            root.findViewWithTag<TextView>("aiHeaderBtn")?.text = "🤖 AI分析 ▼"
+            aiDetailContainer.visibility = View.VISIBLE
+            if (aiDetailContainer.childCount == 0) {
+                loadKlineAndRatings()
+            }
+        }
 
         // 攔截返回鍵：AI 結果顯示時先收起，再按才退出
         requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, object : OnBackPressedCallback(true) {
@@ -922,6 +937,68 @@ class StockDetailFragment : Fragment() {
         }
 
         card.addView(tagsLayout)
+        contentContainer.addView(card)
+
+        // 趨勢圖片區
+        buildTrendImagesSection()
+    }
+
+    /** 趨勢圖片展示（從 assets/trend_images 加載） */
+    private fun buildTrendImagesSection() {
+        val ctx = requireContext()
+        val assets = ctx.assets
+        val imageNames = try {
+            assets.list("trend_images")?.filter { it.endsWith(".jpg") || it.endsWith(".png") } ?: emptyList()
+        } catch (_: Exception) { return }
+
+        if (imageNames.isEmpty()) return
+
+        val card = createSectionCard()
+        card.addView(createSectionTitle("📈 趨勢參考圖"))
+
+        val scroll = HorizontalScrollView(ctx).apply {
+            isHorizontalScrollBarEnabled = false
+            setPadding(4, 4, 4, 4)
+        }
+        val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+
+        for (name in imageNames.take(6)) { // 最多顯示6張
+            val iv = ImageView(ctx).apply {
+                layoutParams = LayoutParams(dpToPx(140), dpToPx(140)).apply {
+                    setMargins(4, 0, 4, 0)
+                }
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                setBackgroundColor(Color.parseColor("#F5F5F5"))
+            }
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    val bmp = android.graphics.BitmapFactory.decodeStream(assets.open("trend_images/$name"))
+                    withContext(Dispatchers.Main) { iv.setImageBitmap(bmp) }
+                } catch (_: Exception) {}
+            }
+            // 點擊全屏
+            iv.setOnClickListener {
+                val dialog = android.app.Dialog(ctx, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+                val fullIv = ImageView(ctx).apply {
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    setOnClickListener { dialog.dismiss() }
+                }
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val bmp = assets.open("trend_images/$name").use {
+                            android.graphics.BitmapFactory.decodeStream(it)
+                        }
+                        withContext(Dispatchers.Main) { fullIv.setImageBitmap(bmp) }
+                    } catch (_: Exception) {}
+                }
+                dialog.setContentView(fullIv)
+                dialog.show()
+            }
+            row.addView(iv)
+        }
+
+        scroll.addView(row)
+        card.addView(scroll)
         contentContainer.addView(card)
     }
 
