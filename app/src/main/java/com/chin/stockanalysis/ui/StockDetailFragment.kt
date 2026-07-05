@@ -962,7 +962,7 @@ class StockDetailFragment : Fragment() {
         }
         val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
 
-        for (name in imageNames.take(6)) { // 最多顯示6張
+        for (name in imageNames) {
             val iv = ImageView(ctx).apply {
                 layoutParams = LayoutParams(dpToPx(140), dpToPx(140)).apply {
                     setMargins(4, 0, 4, 0)
