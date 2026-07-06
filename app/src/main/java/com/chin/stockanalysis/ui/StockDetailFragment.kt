@@ -27,6 +27,8 @@ import com.github.mikephil.charting.components.YAxis
 import com.github.mikephil.charting.data.CandleData
 import com.github.mikephil.charting.data.CandleDataSet
 import com.github.mikephil.charting.data.CandleEntry
+import androidx.recyclerview.widget.RecyclerView
+import androidx.viewpager2.widget.ViewPager2
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
@@ -962,7 +964,7 @@ class StockDetailFragment : Fragment() {
         }
         val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
 
-        for (name in imageNames) {
+        for ((index, name) in imageNames.withIndex()) {
             val iv = ImageView(ctx).apply {
                 layoutParams = LayoutParams(dpToPx(140), dpToPx(140)).apply {
                     setMargins(4, 0, 4, 0)
@@ -976,23 +978,9 @@ class StockDetailFragment : Fragment() {
                     withContext(Dispatchers.Main) { iv.setImageBitmap(bmp) }
                 } catch (_: Exception) {}
             }
-            // 點擊全屏
+            // 點擊進入全屏滑動瀏覽
             iv.setOnClickListener {
-                val dialog = android.app.Dialog(ctx, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
-                val fullIv = ImageView(ctx).apply {
-                    scaleType = ImageView.ScaleType.FIT_CENTER
-                    setOnClickListener { dialog.dismiss() }
-                }
-                lifecycleScope.launch(Dispatchers.IO) {
-                    try {
-                        val bmp = assets.open("trend_images/$name").use {
-                            android.graphics.BitmapFactory.decodeStream(it)
-                        }
-                        withContext(Dispatchers.Main) { fullIv.setImageBitmap(bmp) }
-                    } catch (_: Exception) {}
-                }
-                dialog.setContentView(fullIv)
-                dialog.show()
+                showFullScreenImageViewer(imageNames, index)
             }
             row.addView(iv)
         }
@@ -1000,6 +988,45 @@ class StockDetailFragment : Fragment() {
         scroll.addView(row)
         card.addView(scroll)
         contentContainer.addView(card)
+    }
+
+    /** 全屏圖片查看器（ViewPager2 支持左右滑動切換） */
+    private fun showFullScreenImageViewer(imageNames: List<String>, startPosition: Int) {
+        val ctx = requireContext()
+        val assets = ctx.assets
+        val dialog = android.app.Dialog(ctx, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+
+        val viewPager = ViewPager2(ctx).apply {
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+            adapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+                override fun getItemCount(): Int = imageNames.size
+
+                override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+                    val imageView = ImageView(ctx).apply {
+                        layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+                        scaleType = ImageView.ScaleType.FIT_CENTER
+                    }
+                    return object : RecyclerView.ViewHolder(imageView) {}
+                }
+
+                override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+                    val imageView = holder.itemView as ImageView
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        try {
+                            val bmp = assets.open("trend_images/${imageNames[position]}").use {
+                                android.graphics.BitmapFactory.decodeStream(it)
+                            }
+                            withContext(Dispatchers.Main) { imageView.setImageBitmap(bmp) }
+                        } catch (_: Exception) {}
+                    }
+                    imageView.setOnClickListener { dialog.dismiss() }
+                }
+            }
+            setCurrentItem(startPosition, false)
+        }
+
+        dialog.setContentView(viewPager)
+        dialog.show()
     }
 
     /** 相似股票区域 */

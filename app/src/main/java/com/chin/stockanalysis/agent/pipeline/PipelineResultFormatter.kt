@@ -92,6 +92,22 @@ object PipelineResultFormatter {
             // 最終建議
             appendLine()
             appendLine("💡 最終建議：${stock.finalPosition}")
+
+            // 季度环比數據（若有）
+            stock.quarterlyComparison?.let { qcp ->
+                if (qcp.hasData && qcp.latest != null) {
+                    appendLine()
+                    appendLine("📊 季度环比速覽")
+                    appendLine("  ${qcp.latestLabel} vs ${qcp.previousLabel}")
+                    appendLine("  歸母淨利潤環比: ${formatQoQ(qcp.netProfitQoQ)}")
+                    appendLine("  營收環比: ${formatQoQ(qcp.revenueQoQ)}")
+                    appendLine("  趨勢: ${qcp.trendDescription}")
+                    if (qcp.scoreAdjustment != 0) {
+                        appendLine("  評分調整: ${if (qcp.scoreAdjustment > 0) "+" else ""}${qcp.scoreAdjustment}分 — ${qcp.scoreReason}")
+                    }
+                }
+            }
+
             appendLine()
             appendLine("—".repeat(30))
         }
@@ -124,5 +140,9 @@ object PipelineResultFormatter {
             else -> "..."
         }
         return "[$current/$total] $icon $stepName $suffix"
+    }
+
+    private fun formatQoQ(value: Double): String {
+        return if (value >= 0) "+${"%.1f".format(value)}%" else "${"%.1f".format(value)}%"
     }
 }

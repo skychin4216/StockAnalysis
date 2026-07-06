@@ -209,6 +209,21 @@ class AgentPipelineOrchestrator(private val context: Context) {
             Log.w(TAG, "StockDataFacade 數據獲取失敗（不阻塞）: ${e.message}")
         }
 
+        // 獲取季度环比數據（數據鐵律：Agent2 財報核驗前置依賴）
+        try {
+            val quarterlyProvider = QuarterlyComparisonProvider
+            val quarterlyResult = quarterlyProvider.fetch(stockCode)
+            if (quarterlyResult.hasData) {
+                ctx.quarterlyComparison = quarterlyResult
+                ctx.quarterlyComparisonText = quarterlyProvider.formatForAgentInjection(quarterlyResult)
+                Log.i(TAG, "📈 季度环比數據獲取完成: ${quarterlyResult.latestLabel} vs ${quarterlyResult.previousLabel}, 趨勢=${quarterlyResult.trend}")
+            } else {
+                Log.w(TAG, "季度环比數據獲取失敗（不阻塞）")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "季度环比數據獲取異常（不阻塞）: ${e.message}")
+        }
+
         try {
             // 啟動支線並行：Agent D（板塊&輿情）
             val sentimentJob = SupervisorJob()
@@ -415,7 +430,8 @@ class AgentPipelineOrchestrator(private val context: Context) {
             sentimentResult = ctx.sentimentResult,
             tradePlan = ctx.tradePlan,
             finalPosition = ctx.positionAdjust ?: "30%",
-            passed = ctx.chainScore?.passed == true && ctx.riskResult?.passed == true
+            passed = ctx.chainScore?.passed == true && ctx.riskResult?.passed == true,
+            quarterlyComparison = ctx.quarterlyComparison
         )
 
         return PipelineResult(
@@ -564,6 +580,12 @@ class AgentPipelineOrchestrator(private val context: Context) {
                 sb.append("\n")
             }
             sb.append("\n")
+        }
+
+        // 注入季度环比數據（數據鐵律：所有 Agent 可用）
+        ctx.quarterlyComparisonText?.let { text ->
+            sb.append(text)
+            sb.append("\n\n")
         }
 
         // 分析標的

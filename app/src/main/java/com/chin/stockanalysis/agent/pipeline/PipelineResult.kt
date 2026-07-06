@@ -30,6 +30,10 @@ data class PipelineContext(
     var quantSignals: String? = null,
     /** 最終倉位微調比例（如 "+5%"） */
     var positionAdjust: String? = null,
+    /** 季度环比分析結果（數據鐵律：Agent2 財報核驗前置依賴） */
+    var quarterlyComparison: QuarterlyComparisonResult? = null,
+    /** 季度环比格式化文本（注入到 Agent prompt 中） */
+    var quarterlyComparisonText: String? = null,
     /** 每步的原始 Markdown 分析文本 */
     val stepAnalyses: MutableMap<Int, String> = mutableMapOf()
 )
@@ -124,5 +128,6 @@ data class PipelineStockResult(
     val sentimentResult: SentimentAdjustResult?,
     val tradePlan: TradeExecutionPlan?,
     val finalPosition: String,      // 最終建議倉位（含 Agent D 微調）
-    val passed: Boolean             // 是否通過全部流水線
+    val passed: Boolean,             // 是否通過全部流水線
+    val quarterlyComparison: QuarterlyComparisonResult? = null  // 季度环比數據
 )

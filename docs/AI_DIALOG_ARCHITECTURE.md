@@ -147,6 +147,81 @@ stock/ ├── AI_DIALOG_ARCHITECTURE.md ★ 本文档：AI 对话架构 ├�
     - 尽可能多地获取相关数据
     - 让 AI 基于充分的数据做出判断
 
+---
+
+## Pipeline 對話集成（v8.0+）
+
+### 架構
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    Pipeline 對話集成架構                                     │
+│                                                                             │
+│  ChatTabFragment                                                           │
+│       │                                                                     │
+│       ├── 標準模式: ChatAgent.handleMessage()                              │
+│       │      └─ 普通 AI 對話（v6.0 已有）                                  │
+│       │                                                                     │
+│       └── 專家模式: PipelineChatAdapter.analyze()                          │
+│              │                                                              │
+│              ├─ UnifiedAgentRunner.run(MODE_PIPELINE)                      │
+│              │      └─ AgentPipelineOrchestrator.execute()                 │
+│              │            └─ 7步 Agent 串行執行                            │
+│              │                                                              │
+│              ├─ onStepProgress(step, status, error)                        │
+│              │      └─ 實時更新 RecyclerView StepProgressCard              │
+│              │                                                              │
+│              └─ onComplete(result) / onError(error)                        │
+│                     └─ 顯示 Markdown 報告或錯誤提示                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### PipelineChatAdapter
+
+`com.chin.stockanalysis.agent.chat.PipelineChatAdapter`
+
+- **職責**：封裝 Pipeline 調用，提供對話友好的回調接口
+- **進度回調**：`onStepProgress(step, total, stepName, status, error)` — 每步開始/完成/失敗時觸發
+- **結果回調**：`onComplete(result)` / `onError(error)` — Pipeline 結束時觸發
+- **超時控制**：預設 300 秒超時，超時後返回已完成的步驟結果
+
+### 季度环比數據注入
+
+專家模式下，Pipeline 在 `execute()` 開頭自動拉取季度环比數據：
+
+```
+AgentPipelineOrchestrator.execute()
+    ├── QuarterlyComparisonProvider.fetch(stockCode)
+    │      └─ 東方財富 API → 最近兩季环比數據
+    │
+    └── buildStepPrompt() 注入到每步 Agent SystemPrompt
+           【季度环比數據】
+           | 指標 | 2026Q1 | 2025Q4 | 環比 | 趨勢 |
+           ...
+```
+
+所有 Pipeline Agent 均可讀取季度环比數據進行財報核驗。
+
+### 消息類型擴展
+
+```kotlin
+enum class MessageType {
+    TEXT,           // 普通文本
+    IMAGE,
+    ERROR,
+    STREAM,
+    STEP_PROGRESS   // Pipeline 步驟進度（v8.0 新增）
+}
+
+data class StepProgress(
+    val step: Int,          // 當前步驟（1-7）
+    val total: Int,         // 總步驟數
+    val stepName: String,   // 步驟名稱
+    val status: String,     // "pending"/"running"/"done"/"error"
+    val error: String?      // 錯誤信息（如果有）
+)
+```
+
 3. **自动化分析**
     - 不要让用户逐个要求分析维度
     - 系统自动提供完整的综合分析
