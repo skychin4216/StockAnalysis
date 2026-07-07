@@ -236,14 +236,19 @@ object StockTableHelper {
             val widthPx = (col.widthDp * dp).toInt()
 
             return when (col.key) {
-                // ── 股票名稱（兩行：名稱 + 代碼） ──
+                // ── 股票名稱（兩行：名稱+質量標籤 + 代碼） ──
                 "name" -> {
                     LinearLayout(context).apply {
                         orientation = LinearLayout.VERTICAL
                         gravity = Gravity.START
                         layoutParams = LinearLayout.LayoutParams(widthPx, LinearLayout.LayoutParams.WRAP_CONTENT)
                     }.also { cell ->
-                        cell.addView(TextView(context).apply {
+                        // 名稱行：名稱 + 利潤質量標籤（水平排列）
+                        val nameRow = LinearLayout(context).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                            gravity = Gravity.CENTER_VERTICAL
+                        }
+                        nameRow.addView(TextView(context).apply {
                             text = item.name.take(8)
                             textSize = col.fontSize
                             setTextColor(Color.parseColor(col.colorHex))
@@ -251,6 +256,14 @@ object StockTableHelper {
                             maxLines = 1
                             ellipsize = android.text.TextUtils.TruncateAt.END
                         })
+                        // 預留利潤質量標籤（異步填充）
+                        nameRow.addView(TextView(context).apply {
+                            text = "⚪"
+                            textSize = 10f
+                            setPadding((2 * dp).toInt(), 0, 0, 0)
+                            tag = "qualityLabel_${item.code}"
+                        })
+                        cell.addView(nameRow)
                         cell.addView(TextView(context).apply {
                             text = item.code.takeLast(6)
                             textSize = 9f

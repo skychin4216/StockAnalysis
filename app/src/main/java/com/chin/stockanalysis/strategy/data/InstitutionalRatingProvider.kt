@@ -289,31 +289,20 @@ class InstitutionalRatingProvider {
 
     /**
      * 獲取某只股票的基金持倉數據
-     * 使用東方財富 datacenter API：RPT_FUND_HOLDERSTOCK
+     * 使用東方財富 F10 基金持股接口（替代已棄用的 RPT_FUND_HOLDERSTOCK）
+     * API: https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax?code={SECUCODE}
      */
     suspend fun getFundHoldings(code: String, pageSize: Int = 20): List<FundHolding> = withContext(Dispatchers.IO) {
         try {
-            val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
+            val secuCode = normalizeToSecuCode(code)
+            val url = "https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax?code=$secuCode"
 
-            val url = buildString {
-                append("https://datacenter-web.eastmoney.com/api/data/v1/get")
-                append("?reportName=RPT_FUND_HOLDERSTOCK")
-                append("&columns=ALL")
-                append("&filter=(SECURITY_CODE=\"$pureCode\")")
-                append("&pageNumber=1")
-                append("&pageSize=$pageSize")
-                append("&sortTypes=-1")
-                append("&sortColumns=HOLD_MARKET_CAP")
-                append("&source=WEB")
-                append("&client=WEB")
-            }
-
-            Log.i(TAG, "獲取基金持倉: $code, URL長度=${url.length}")
+            Log.i(TAG, "獲取基金持倉: $code → $secuCode, URL=$url")
 
             val req = Request.Builder()
                 .url(url)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                .header("Referer", "https://data.eastmoney.com")
+                .header("Referer", "https://emweb.securities.eastmoney.com/")
                 .build()
 
             val resp = client.newCall(req).execute()
@@ -324,27 +313,52 @@ class InstitutionalRatingProvider {
 
             val body = resp.body?.string() ?: return@withContext emptyList()
             val json = JSONObject(body.trim())
-            val result = json.optJSONObject("result") ?: return@withContext emptyList()
-            val dataArray = result.optJSONArray("data") ?: return@withContext emptyList()
+            val dataArray = json.optJSONArray("jjcc") ?: return@withContext emptyList()
 
             val list = mutableListOf<FundHolding>()
             for (i in 0 until dataArray.length()) {
                 val item = dataArray.getJSONObject(i)
+                // 只取機構類型為 01（基金）的數據
+                if (item.optString("ORG_TYPE", "") != "01") continue
+                val holdValue = item.optDouble("HOLD_VALUE", 0.0)
                 list.add(FundHolding(
-                    fundName = item.optString("FUND_NAME", ""),
+                    fundName = item.optString("HOLDER_NAME", ""),
                     fundCode = item.optString("FUND_CODE", ""),
-                    holdShares = item.optDouble("HOLD_SHARES", 0.0),
-                    holdMarketCap = item.optDouble("HOLD_MARKET_CAP", 0.0),
-                    holdRatio = item.optDouble("HOLD_RATIO", 0.0),
+                    holdShares = item.optDouble("TOTAL_SHARES", 0.0),
+                    holdMarketCap = if (holdValue > 0) holdValue / 10000.0 else 0.0,  // 元 → 萬元
+                    holdRatio = item.optDouble("FREESHARES_RATIO", 0.0) * 100,         // 小數 → %
                     reportDate = item.optString("REPORT_DATE", "").take(10)
                 ))
             }
 
-            Log.i(TAG, "基金持倉成功: $code, ${list.size} 條")
-            list
+            // 按持股市值降序排列，取前 pageSize 條
+            val sorted = list.sortedByDescending { it.holdMarketCap }.take(pageSize)
+            Log.i(TAG, "基金持倉成功: $code, ${sorted.size}/${list.size} 條（已按市值排序取TOP）")
+            sorted
         } catch (e: Exception) {
             Log.w(TAG, "基金持倉異常: ${e.message}")
             emptyList()
+        }
+    }
+
+    /**
+     * 將標準股票代碼轉換為東方財富 F10 格式（如 sh603986 → SH603986）
+     */
+    private fun normalizeToSecuCode(code: String): String {
+        val trimmed = code.trim().lowercase()
+        return when {
+            trimmed.startsWith("sh") -> trimmed.uppercase()
+            trimmed.startsWith("sz") -> trimmed.uppercase()
+            trimmed.startsWith("bj") -> trimmed.uppercase()
+            trimmed.length == 6 && trimmed.all { it.isDigit() } -> {
+                when (trimmed[0]) {
+                    '6', '9' -> "SH$trimmed"
+                    '0', '3' -> "SZ$trimmed"
+                    '4', '8' -> "BJ$trimmed"
+                    else -> "SH$trimmed"
+                }
+            }
+            else -> trimmed.uppercase()
         }
     }
 }

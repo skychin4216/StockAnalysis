@@ -11,18 +11,26 @@ import android.view.ViewGroup
 import android.widget.*
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
+import com.chin.stockanalysis.agent.v2.ProfitQualityAnalyzer
+import com.chin.stockanalysis.agent.v2.ProfitQualityLevel
+import com.chin.stockanalysis.agent.v2.PositionWaterValve
 import com.chin.stockanalysis.stock.database.AiSelectedStockEntity
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.stock.database.UserWatchlistEntity
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
 import com.chin.stockanalysis.strategy.data.CandidatePool
+import com.chin.stockanalysis.strategy.market.MarketAnalyzer
 import com.chin.stockanalysis.common.StockDataService
 import com.chin.stockanalysis.common.StockTableHelper
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.isActive
 
 /**
  * ## 精選股票 統一頁面
@@ -68,6 +76,12 @@ class WatchlistUnifiedFragment : Fragment() {
     /** 行情緩存 */
     private val snapshotCache = mutableMapOf<String, DailySnapshotEntity?>()
 
+    /** 利潤質量計算協程（用於取消） */
+    private var qualityJob: Job? = null
+
+    /** 市場環境分析協程 */
+    private var marketEnvJob: Job? = null
+
     companion object {
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
     }
@@ -92,7 +106,7 @@ class WatchlistUnifiedFragment : Fragment() {
         }
         sv.addView(rootLayout)
         buildUI()
-        loadData()
+        // loadData 由 onResume 統一觸發，避免重複
         return sv
     }
 
@@ -100,6 +114,91 @@ class WatchlistUnifiedFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         loadData()
+        loadMarketEnvironment()
+    }
+
+    /**
+     * 異步加載市場環境數據，更新頂部 marketEnvBar
+     */
+    private fun loadMarketEnvironment() {
+        marketEnvJob?.cancel()
+        marketEnvJob = viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val marketEnvBar = rootLayout.findViewWithTag<TextView>("marketEnvBar") ?: return@launch
+                marketEnvBar.text = "正在分析市場環境..."
+                marketEnvBar.setBackgroundColor(Color.parseColor("#FFF3E0"))
+                marketEnvBar.visibility = View.VISIBLE
+
+                val report = withContext(Dispatchers.IO) {
+                    MarketAnalyzer.analyze(requireContext(), emptyList())
+                }
+
+                val capResult = PositionWaterValve.calculatePositionCap(report)
+                val (bgColor, emoji, direction) = when (report.trend.direction) {
+                    "BULLISH" -> Triple("#E8F5E9", "📈", "多头")
+                    "BEARISH" -> Triple("#FFEBEE", "📉", "空头")
+                    else -> Triple("#FFF3E0", "📊", "震荡")
+                }
+
+                if (isAdded) {
+                    marketEnvBar.text = "$emoji 市场：$direction（强度${report.trend.strength}/100）| 仓位上限 ${capResult.capPercent}% | ${capResult.strategy}"
+                    marketEnvBar.setBackgroundColor(Color.parseColor(bgColor))
+                    marketEnvBar.setTextColor(when (report.trend.direction) {
+                        "BULLISH" -> Color.parseColor("#2E7D32")
+                        "BEARISH" -> Color.parseColor("#C62828")
+                        else -> Color.parseColor("#E65100")
+                    })
+                }
+            } catch (e: Exception) {
+                if (isAdded) {
+                    rootLayout.findViewWithTag<TextView>("marketEnvBar")?.let {
+                        it.text = "⚠️ 市场环境数据获取失败"
+                        it.setBackgroundColor(Color.parseColor("#FFF3E0"))
+                        it.setTextColor(Color.parseColor("#999999"))
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 異步計算每只股票的利潤質量，並更新表格中的質量標籤。
+     * 標籤通過 tag "qualityLabel_${code}" 定位。
+     */
+    private fun computeProfitQualityLabels(items: List<StockTableHelper.StockDisplayItem>) {
+        qualityJob?.cancel()
+        qualityJob = viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            for (item in items) {
+                if (!isActive) break
+                val emoji = try {
+                    val result = withTimeoutOrNull(15_000L) {
+                        ProfitQualityAnalyzer.analyze(item.code)
+                    }
+                    if (result == null) "⚪"  // timeout
+                    else when (result.qualityLevel) {
+                        ProfitQualityLevel.ENDOGENOUS_GROWTH -> "🟢"
+                        ProfitQualityLevel.ONE_TIME_PROFIT -> "🟡"
+                        ProfitQualityLevel.PROFIT_INFLATION -> "🔴"
+                        ProfitQualityLevel.INSUFFICIENT_DATA -> "⚪"
+                    }
+                } catch (_: Exception) {
+                    "⚪"
+                }
+                if (!isActive) break
+                withContext(Dispatchers.Main) {
+                    if (!isAdded) return@withContext
+                    try {
+                        rootLayout.findViewWithTag<TextView>("qualityLabel_${item.code}")?.text = emoji
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        qualityJob?.cancel()
+        marketEnvJob?.cancel()
     }
 
     private fun buildUI() {
@@ -183,6 +282,18 @@ class WatchlistUnifiedFragment : Fragment() {
         }
         mainBoardRow.addView(mainBoardSwitch)
         rootLayout.addView(mainBoardRow)
+
+        // ── 市場環境信息條 ──
+        val marketEnvBar = TextView(requireContext()).apply {
+            tag = "marketEnvBar"
+            text = "正在分析市場環境..."
+            textSize = 12f
+            setTextColor(Color.parseColor("#333333"))
+            setPadding(16, 8, 16, 8)
+            setBackgroundColor(Color.parseColor("#FFF3E0"))
+            visibility = View.VISIBLE
+        }
+        rootLayout.addView(marketEnvBar)
 
         // ── 狀態列 ──
         statusRow = LinearLayout(requireContext()).apply {
@@ -296,7 +407,7 @@ class WatchlistUnifiedFragment : Fragment() {
     }
 
     private fun loadWatchlistAndAiData() {
-        lifecycleScope.launch(Dispatchers.IO) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val db = StockDatabase.getInstance(requireContext())
                 val today = LocalDate.now().format(DATE_FMT)
@@ -335,11 +446,11 @@ class WatchlistUnifiedFragment : Fragment() {
     }
 
     private fun loadCandidatePool(forceRefresh: Boolean) {
-        lifecycleScope.launch(Dispatchers.Main) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
             statusTv.text = "加載備選池..."
             listContainer.removeAllViews()
         }
-        lifecycleScope.launch(Dispatchers.IO) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val snapshot = CandidatePool.getPool(requireContext(), forceRefresh)
                 candidatePoolSnapshot = snapshot
@@ -391,7 +502,7 @@ class WatchlistUnifiedFragment : Fragment() {
             })
             return
         }
-        lifecycleScope.launch(Dispatchers.IO) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val items = StockDataService.enrich(requireContext(), codes)
                 withContext(Dispatchers.Main) {
@@ -409,7 +520,7 @@ class WatchlistUnifiedFragment : Fragment() {
                                 )
                             },
                             onClearAll = {
-                                lifecycleScope.launch(Dispatchers.IO) {
+                                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                                     try {
                                         val db = StockDatabase.getInstance(requireContext())
                                         if (currentMode == ViewMode.AI) {
@@ -422,7 +533,7 @@ class WatchlistUnifiedFragment : Fragment() {
                                 }
                             },
                             onDelete = { deleted ->
-                                lifecycleScope.launch(Dispatchers.IO) {
+                                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                                     try {
                                         val db = StockDatabase.getInstance(requireContext())
                                         db.userWatchlistDao().deleteByCode(deleted.code)
@@ -435,6 +546,8 @@ class WatchlistUnifiedFragment : Fragment() {
                             }
                         )
                     )
+                    // 表格構建完成後，異步計算利潤質量標籤
+                    computeProfitQualityLabels(items)
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -474,7 +587,7 @@ class WatchlistUnifiedFragment : Fragment() {
             return
         }
 
-        lifecycleScope.launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val codes = filteredStocks.map { it.code }
                 val items = StockDataService.enrich(ctx, codes)
@@ -573,7 +686,7 @@ class WatchlistUnifiedFragment : Fragment() {
             }
 
             // 異步加載圖片
-            lifecycleScope.launch(Dispatchers.IO) {
+            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                 try {
                     val bmp = android.graphics.BitmapFactory.decodeStream(
                         assets.open("trend_images/$name")
@@ -601,7 +714,7 @@ class WatchlistUnifiedFragment : Fragment() {
             scaleType = ImageView.ScaleType.FIT_CENTER
             setOnClickListener { dialog.dismiss() }
         }
-        lifecycleScope.launch(Dispatchers.IO) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val bmp = requireContext().assets.open("trend_images/$imageName").use {
                     android.graphics.BitmapFactory.decodeStream(it)

@@ -48,6 +48,8 @@ import com.chin.stockanalysis.stock.StockQueryEngine
 import com.chin.stockanalysis.config.FeatureFlagManager
 import com.chin.stockanalysis.config.AgentRoute
 import com.chin.stockanalysis.agent.router.ChatRouter
+import com.chin.stockanalysis.agent.framework.UnifiedAgentRunner
+import com.chin.stockanalysis.agent.stock.StockAnalysisAgent
 import com.chin.stockanalysis.ai.StockEntityExtractor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -203,7 +205,7 @@ class ChatTabFragment : Fragment() {
     override fun onResume() { super.onResume(); initProvider() }
     override fun onPause() { super.onPause(); saveCurrentConversation() }
     override fun onStop() { super.onStop(); saveCurrentConversation() }
-    override fun onDestroyView() { super.onDestroyView(); _binding = null }
+    override fun onDestroyView() { super.onDestroyView(); _binding = null; hotSectorsHideJob?.cancel() }
     override fun onDestroy() {
         super.onDestroy()
         cancelApiCall()
@@ -235,9 +237,9 @@ class ChatTabFragment : Fragment() {
         }
 
         val modeHint = when (mode) {
-            AnalysisMode.QUICK -> "⚡ 快速模式：实时行情+情绪分析"
-            AnalysisMode.DEEP -> "🔍 深度模式：多策略量化筛选+板块对比"
-            AnalysisMode.EXPERT -> "🧠 专家模式：使用 AI智能体流水线"
+            AnalysisMode.QUICK -> "⚡ V1.0 Quick：Agent 並行快速分析"
+            AnalysisMode.DEEP -> "🔍 V1.0 Pipeline：多 Agent 流水線深度分析"
+            AnalysisMode.EXPERT -> "📊 V2.0 全周期：市場環境+利潤質量+決策矩陣"
         }
         binding.etInput.hint = modeHint
     }
@@ -647,11 +649,13 @@ class ChatTabFragment : Fragment() {
             return
         }
 
-        // 🎯 Legacy 模式：根据分析模式分流处理
-        when (analysisMode) {
-            AnalysisMode.QUICK -> runQuickAnalysis(userText, provider, skipStockContext)
-            AnalysisMode.DEEP -> runDeepAnalysis(userText, provider, skipStockContext)
-            AnalysisMode.EXPERT -> runExpertAnalysis(userText, provider, skipStockContext)
+        // 🎯 新引擎：嘗試提取股票代碼，走 UnifiedAgentRunner
+        val stockCode = extractStockCodeFromText(userText)
+        if (stockCode != null) {
+            runUnifiedAnalysis(userText, stockCode)
+        } else {
+            // 無股票代碼 → 通用問答（非股票問題、生活/技術等）
+            runGeneralChat(userText, provider, skipStockContext)
         }
     }
 
@@ -709,12 +713,12 @@ class ChatTabFragment : Fragment() {
                     }
                 }
             } catch (e: UnsupportedOperationException) {
-                // LegacyChatService 抛出 UnsupportedOperationException，fallback 到原有專家模式
-                Log.i(TAG, "Agent Legacy 模式，fallback 到原有專家分析")
+                // LegacyChatService 拋出 UnsupportedOperationException，fallback 到通用問答
+                Log.i(TAG, "Agent Legacy 模式，fallback 到通用問答")
                 if (isAdded) requireActivity().runOnUiThread {
                     messages.removeAt(loadingIndex)
                     adapter.notifyItemRemoved(loadingIndex)
-                    runExpertAnalysis(userText, provider, skipStockContext)
+                    runGeneralChat(userText, provider, skipStockContext)
                 }
             } catch (e: Exception) {
                 if (isAdded) requireActivity().runOnUiThread {
@@ -724,391 +728,130 @@ class ChatTabFragment : Fragment() {
         }
     }
 
-    /** ⚡ 快速模式：AI 智能解析 + 結構化輸出 */
-    private fun runQuickAnalysis(userText: String, provider: ApiProvider, skipStockContext: Boolean = false) {
-        val loadingMsg = Message(content = "", isUser = false, isStreaming = true,
-            loadingStatus = "⚡ 正在思考...")
-        addMessage(loadingMsg)
-        val loadingIndex = messages.size - 1
-
-        currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                // 動態更新 loading 狀態
-                val stockInfo = if (skipStockContext) {
-                    ""
-                } else {
-                    updateLoadingStatus(loadingIndex, "⚡ 正在搜索相關數據...")
-                    withContext(Dispatchers.IO) {
-                        smartContext.getOrBuild(userText = userText, baseSystemPrompt = BASE_SYSTEM_PROMPT, onPreferenceLeaned = {})
-                    }
-                }
-                updateLoadingStatus(loadingIndex, "⚡ 正在分析...")
-                val memory = withContext(Dispatchers.IO) { memoryManager.buildMemorySuffix() }
-
-                // AI 先判斷用戶意圖，再決定輸出格式
-                val prompt = """【⚡ AI 快速分析】
-用戶輸入：$userText
-
-$stockInfo
-$memory
-
-請先判斷用戶意圖，然後按對應格式輸出：
-
-【意圖判斷】
-1. 如果用戶要求「對比」多只股票 → 輸出「多股對比格式」
-2. 如果用戶問單只股票 → 輸出「單股分析格式」
-3. 如果用戶問非股票問題（生活/技術/其他）→ 輸出「通用問答格式」
-
-【單股分析格式】（參考豆包風格，簡潔全面）
-一、公司基本概況（主營業務、行業地位、核心競爭力）
-二、最新財務表現（營收/利潤增速、毛利率）
-三、核心上漲邏輯（2-3個驅動因素）
-四、核心風險（2-3個風險點）
-五、短期 & 中長期總結
-
-【多股對比格式】（參考豆包風格）
-一、先理清產業鏈位置（各公司在產業鏈中的位置）
-二、基礎信息 & 主營業務對比（表格形式）
-三、最新財務對比（營收、利潤、增速）
-四、核心壁壘 & 競爭優勢對比（每家公司 ✅優勢 / ❌劣勢）
-五、估值 & 成長屬性對比
-六、風險總結
-七、極簡選股建議（針對不同風格投資者）
-
-【通用問答格式】
-- 直接回答用戶問題，保持專業簡潔
-
-注意：
-1. 總字數控制在 500-800 字
-2. 用簡潔的 bullet points 和表格
-3. 最後加一句免責聲明：「以上分析不構成投資建議」
-
-⚠️ 關鍵約束：
-- 以上【實時行情數據】中的所有價格、技術指標、板塊熱度、資金流向來自東方財富/交易所實時獲取
-- 務必以注入的即時數據為唯一分析依據，嚴禁使用訓練數據中的歷史價格或過時資訊
-- 如果某項基準數據不在注入數據中，標註「該數據暫未獲取到」，不得編造"""
-                val history = messages.toList().subList(0, loadingIndex)
-                sendWithRetry(provider, history, prompt, loadingIndex, 2)
-            } catch (e: Exception) {
-                if (isAdded) requireActivity().runOnUiThread {
-                    failStreamingMessage(loadingIndex, "快速分析失败: ${e.message}")
-                }
-            }
+    /** 從用戶輸入文本中提取股票代碼 */
+    private fun extractStockCodeFromText(text: String): String? {
+        // 匹配帶前綴的格式：sh600519, sz000001, bj830799
+        val prefixed = Regex("(?i)(sh|sz|bj)(\\d{6})").find(text)
+        if (prefixed != null) {
+            return StockAnalysisAgent.normalizeStockCode(prefixed.value)
         }
+        // 匹配純6位數字代碼
+        val pure = Regex("\\b(\\d{6})\\b").find(text)
+        if (pure != null) {
+            return StockAnalysisAgent.normalizeStockCode(pure.groupValues[1])
+        }
+        return null
     }
 
-    /** 🔍 深度模式：多策略量化筛选 + 板块对比 + AI Predict */
-    private fun runDeepAnalysis(userText: String, provider: ApiProvider, skipStockContext: Boolean = false) {
-        val loadingMsg = Message(content = "", isUser = false, isStreaming = true,
-            loadingStatus = "🔍 正在搜索相關數據...")
-        addMessage(loadingMsg)
-        val loadingIndex = messages.size - 1
-
-        currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                // Step 1: 获取实时行情 + 同板块策略数据
-                val stockInfo: String
-                val sectorAnalysis: String
-                if (skipStockContext) {
-                    stockInfo = ""
-                    sectorAnalysis = ""
-                } else {
-                    updateLoadingStatus(loadingIndex, "🔍 正在獲取實時行情...")
-                    stockInfo = withContext(Dispatchers.IO) {
-                        smartContext.getOrBuild(userText = userText, baseSystemPrompt = BASE_SYSTEM_PROMPT, onPreferenceLeaned = {})
-                    }
-                    updateLoadingStatus(loadingIndex, "🔍 正在掃描量化策略...")
-                    sectorAnalysis = withContext(Dispatchers.IO) {
-                        buildSectorAnalysis(userText)
-                    }
-                }
-
-                // Step 2: 构建深度分析 prompt
-                updateLoadingStatus(loadingIndex, "🔍 正在深度分析...")
-                val memory = withContext(Dispatchers.IO) { memoryManager.buildMemorySuffix() }
-                val prompt = """【🔍 深度分析模式】
-用戶輸入：$userText
-
-【實時行情數據】（以上價格為當前最新數據，務必以此為基準分析）
-$stockInfo
-
-【板塊 & 策略數據】
-$sectorAnalysis
-$memory
-
-請先判斷用戶意圖，然後按對應格式輸出：
-
-【意圖判斷】
-1. 如果用戶要求「對比」多只股票 → 輸出「多股深度對比格式」
-2. 如果用戶問單只股票 → 輸出「單股深度分析格式」
-3. 如果用戶問非股票問題 → 輸出「通用深度問答格式」
-
-【單股深度分析格式】
-一、所屬板塊熱度分析（當前板塊資金流向、排名）
-二、同板塊 Top5 對比（表格：股票/市值/漲跌幅/量比/策略信號）
-三、量化策略信號綜合評估（MA/RSI/量比/資金流等策略信號匯總）
-四、AI 預測模型評分（技術面/基本面/情緒面綜合評分）
-五、買入/觀望/回避建議（給出具體價位區間和止損位）
-
-【多股深度對比格式】
-一、產業鏈位置 & 板塊歸屬
-二、量化策略篩選對比（策略信號表格）
-三、板塊熱度 & 資金流向對比
-四、AI 預測評分對比
-五、綜合排名 & 選股建議
-
-【通用深度問答格式】
-- 深入分析用戶問題，提供結構化答案
-
-注意：
-1. 總字數 800-1200 字
-2. 使用表格和 bullet points
-3. 最後加免責聲明"""
-                val history = messages.toList().subList(0, loadingIndex)
-                sendWithRetry(provider, history, prompt, loadingIndex, 2)
-            } catch (e: Exception) {
-                if (isAdded) requireActivity().runOnUiThread {
-                    failStreamingMessage(loadingIndex, "深度分析失败: ${e.message}")
-                }
-            }
-        }
-    }
-
-    /** 🧠 專家模式：智能體協同篩選
-     *
-     * 根據股票產業鏈位置自動選擇分析流程：
-     * - 賣水人（上游）→ 賣水人智能篩選（7 個智能體，含題材賽道分析）
-     * - 非賣水人（下游）→ 非賣水人智能篩選（6 個智能體，注重產品力和品牌）
-     *
-     * 7 個智能體（賣水人）：
-     * 1. 基本面  2. 技術面  3. 資金面  4. 題材賽道  5. 估值  D. 風控  F. 情緒策略
-     *
-     * 6 個智能體（非賣水人）：
-     * 1. 基本面  2. 技術面  3. 資金面  4. 估值  5. 風控  6. 情緒策略
-     */
-    private fun runExpertAnalysis(userText: String, provider: ApiProvider, skipStockContext: Boolean = false) {
-        val loadingMsg = Message(content = "", isUser = false, isStreaming = true,
-            loadingStatus = "🧠 正在搜索相關數據...")
-        addMessage(loadingMsg)
-        val loadingIndex = messages.size - 1
-
-        currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                val stockInfo = if (skipStockContext) {
-                    ""
-                } else {
-                    updateLoadingStatus(loadingIndex, "🧠 正在識別產業鏈位置...")
-                    withContext(Dispatchers.IO) {
-                        smartContext.getOrBuild(userText = userText, baseSystemPrompt = BASE_SYSTEM_PROMPT, onPreferenceLeaned = {})
-                    }
-                }
-                updateLoadingStatus(loadingIndex, "🧠 正在啟動智能體協同篩選...")
-                val memory = withContext(Dispatchers.IO) { memoryManager.buildMemorySuffix() }
-
-                // 智能體協同分析 prompt（根據股票產業鏈位置自動選擇 6步/7步）
-                val prompt = """【🧠 專家模式：智能體協同篩選】
-分析基準時間：${java.time.LocalDate.now()} 午盤
-⚠️ 全部內容僅為數據復盤研究，不構成任何投資建議
-
-⚠️ 數據約束：
-1. 你只能使用上方【股票信息】中明確提供的具體數據進行分析
-2. 對於未提供的數據（如營收、PE、融資餘額等），必須標註「數據不可用」
-3. 禁止使用訓練數據中的任何舊價格、舊信息進行推斷
-4. 如果某項分析所需數據缺失，請直接跳過該維度，不要編造
-
-用戶輸入：$userText
-
-$stockInfo
-$memory
-
-【第一步】判斷用戶意圖：
-1. 如果用戶要求「對比」多只股票 → 執行「橫向對比流程」
-2. 如果用戶問單只股票 → 執行「單股分析流程」
-3. 如果用戶問非股票問題 → 執行「通用專家問答流程」
-
-【第二步】對每隻股票進行產業鏈分類（這決定用 6 步還是 7 步）：
-- 「賣水人」= 產業鏈上游（原材料、設備、技術平台、關鍵零部件），為下游提供核心材料/技術/服務
-  → 使用「賣水人智能篩選」（7 個智能體）
-- 「非賣水人」= 產業鏈下游（終端產品、品牌、集成商），直接面向終端客戶
-  → 使用「非賣水人智能篩選」（6 個智能體）
-
-【賣水人智能篩選】（7 個智能體，適用於產業鏈上游股票）
-上游公司更依賴賽道景氣度和技術迭代，因此需要額外的「題材賽道」智能體。
-
-智能體 1：基本面分析智能體（營收、利潤、業務壁壘）
-- 核心業務：主營業務、行業地位、核心競爭力
-- 財報核心：最新季度營收/歸母淨利潤、同比增速、毛利率、資產負債率、經營性現金流
-- 護城河：專利數量、客戶認證、市佔率、國產替代空間
-- 短板：毛利率水平、業務集中度、傳統業務增長乏力等
-
-智能體 2：技術面分析智能體（K線形態、趨勢、支撐壓力）
-- 階段走勢：近 3 個月漲幅、是否屬於超級趨勢妖股、今日盤面表現
-- K線形態識別（必須明確指出發現的形態，不可遺漏）：
-  * 看漲反轉：錘子線、啓明星、刺透形態、看漲吞沒、上升三法、仙人指路、雙錘打擊
-  * 看跌反轉：射擊之星、黃昏之星、看跌吞沒、高位實體吞噬、漲勢盡頭線、高位掉線、頂部陰包陽
-  * 中性/觀望：十字星、紡錘線
-  * 確認標準：結合前後 K 線、成交量、位置（高位/低位/盤整）綜合判斷
-- 量能結構：近 5 日成交額、換手率、籌碼交換情況
-- 關鍵價位：短期壓力位、短期支撐位、前期密集成交區
-- 均線狀態：短期均線方向、5 日線壓制/支撐、趨勢格局判斷
-
-智能體 3：資金面分析智能體（主力、北向、融資、龍虎）
-- 槓桿資金：融資餘額、佔流通市值比例、槓桿倉位分位數
-- 資金行為：主力資金流向、北向資金動向、機構大額買入/賣出信號
-- 成交特徵：連續天量/縮量、場內分歧程度、增量/存量博弈特徵
-
-智能體 4：題材賽道分析智能體（行業邏輯、政策催化）← 賣水人專屬
-- 核心題材：所屬概念板塊、核心驅動邏輯
-- 行業邏輯：中長期行業景氣度、供需格局、技術迭代趨勢
-- 催化點：近期利好催化（訂單落地、產能投產、新產品認證）
-- 利空壓制：題材炒作過熱、板塊退潮、估值殺情緒
-
-智能體 5：估值定價分析智能體（PE、溢價、合理性測算）
-- 當前估值：TTM 市盈率、市淨率、處於歷史什麼分位
-- 溢價拆解：情緒溢價佔比、業績成長溢價佔比、估值透支年限
-- 估值結論：基本面增速能否匹配估值、高估/低估/合理判斷
-
-智能體 D：風控預警智能體（風險清單、排雷）
-- 估值泡沫風險：PE 極度偏高、估值回調空間
-- 股東減持風險：高管/大股東減持計劃、產業資本高位減持信號
-- 槓桿踩踏風險：融資盤倉位過高、大跌觸發被動平倉
-- 業績兌現風險：訂單增速不及預期、產能釋放延遲
-- 板塊退潮風險：題材降溫、高位股集體殺估值
-- 成本波動風險：原材料漲價擠壓毛利率
-
-智能體 F：市場情緒 & 策略智能體（情緒打分、操作參考）
-- 情緒打分（0~10 分）：前期抱團情緒、當前恐慌/貪婪程度、做多意願
-- 短線判斷：趨勢是否終結、進入震盪調整概率、反彈乏力/強勁判斷
-- 分層參考思路（非操作建議）：
-  * 持倉者：支撐位為強弱分水嶺，跌破注意減倉規避深度回調
-  * 觀望者：不急於抄底，等待估值回落、縮量企穩、情緒修復後再評估
-  * 長線視角：看好賽道邏輯也需等估值消化，不宜高位追入
-
-綜合總評：基本面賽道價值 vs 短期風險權衡，明確結論類型
-
-【非賣水人智能篩選】（6 個智能體，適用於產業鏈下游股票）
-下游公司更看重產品力、品牌、渠道和財務質量，不需要「題材賽道」智能體。
-
-智能體 1：基本面分析智能體（營收、利潤、業務壁壘）
-- 核心業務：主營業務、行業地位、品牌力、渠道優勢
-- 財報核心：最新季度營收/歸母淨利潤、同比增速、毛利率、資產負債率、經營性現金流
-- 護城河：品牌溢價、渠道壁壘、規模效應、客戶粘性
-- 短板：增長乏力、市場份額流失、成本控制能力
-
-智能體 2：技術面分析智能體（K線形態、趨勢、支撐壓力）
-（同賣水人智能體 2，含 K線形態識別：錘子線、啓明星、刺透、吞沒、上升三法、仙人指路、雙錘打擊、射擊之星、黃昏之星、漲勢盡頭線、高位掉線、頂部陰包陽等）
-
-智能體 3：資金面分析智能體（主力、北向、融資、龍虎）
-（同賣水人智能體 3）
-
-智能體 4：估值定價分析智能體（PE、溢價、合理性測算）
-（同賣水人智能體 5，但更注重 ROE、分紅率、自由現金流）
-
-智能體 5：風控預警智能體（風險清單、排雷）
-（同賣水人智能體 D，但更注重行業競爭加劇、渠道變化、消費降級等下游風險）
-
-智能體 6：市場情緒 & 策略智能體（情緒打分、操作參考）
-（同賣水人智能體 F）
-
-綜合總評：產品力 vs 競爭格局，明確結論類型
-
-【橫向對比流程】（多只股票時）
-先輸出「基礎行情總覽」表格：
-| 標的 | 代碼 | 現價 | 當日漲跌幅 | 總市值 | PE(TTM) | 產業鏈定位 | 篩選類型 |
-
-然後：
-1. 對每隻股票分類（賣水人/非賣水人），標註使用 7步還是 6步
-2. 每個智能體對所有股票橫向對比分析，給出排名
-3. 賣水人股票用 7 個智能體分析，非賣水人股票用 6 個智能體分析
-4. 最後綜合總評：產業鏈關係、整體風險、不同風格投資者選擇建議
-
-【通用專家問答流程】
-- 深入分析用戶問題，提供專業結構化答案
-
-注意：
-1. 每個智能體獨立輸出，用「智能體 X：」標題分隔
-2. 使用 bullet points、表格、emoji 標註
-3. 單股分析總字數 1500-2500 字；橫向對比總字數 2000-3000 字
-4. 最後加免責聲明：「⚠️ 全部內容僅為數據復盤研究，不構成任何投資建議」"""
-
-                val history = messages.toList().subList(0, loadingIndex)
-                sendWithRetry(provider, history, prompt, loadingIndex, 2)
-            } catch (e: Exception) {
-                if (isAdded) requireActivity().runOnUiThread {
-                    failStreamingMessage(loadingIndex, "專家模式失敗: ${e.message}")
-                }
-            }
-        }
-    }
-
-    /** 构建实时同板块分析文本（含板块热度 + Top5 + 资金流向） */
-    private suspend fun buildSectorAnalysis(userText: String): String {
-        return withContext(Dispatchers.IO) {
-            val sb = StringBuilder()
-            try {
+    /** 根據股票代碼解析股票名稱 */
+    private suspend fun resolveStockName(code: String): String? {
+        return try {
+            withContext(Dispatchers.IO) {
                 val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(requireContext())
                 val tradingDay = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().toString()
-                val codeMatch = Regex("(sh|sz|bj)?\\d{6}").find(userText)
-                val stockCode = codeMatch?.value
+                val snap = db.dailySnapshotDao().getByDateAndCode(tradingDay, code)
+                snap?.name
+            }
+        } catch (_: Exception) { null }
+    }
 
-                // 1. 实时板块热度排名（从东方财富拉取，非历史知识）
-                val hotSectors = com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.conceptSectors
-                if (hotSectors.isNotEmpty()) {
-                    sb.appendLine("【实时板块热度排名Top10】（东方财富实时数据，取自 $tradingDay）")
-                    sb.appendLine("| 排名 | 板块名称 | 涨跌幅 |")
-                    sb.appendLine("|------|---------|--------|")
-                    hotSectors.take(10).forEachIndexed { i, s ->
-                        val emoji = if (s.changePercent > 0) "📈" else "📉"
-                        sb.appendLine("| ${i + 1} | $emoji ${s.name} | ${if (s.changePercent > 0) "+" else ""}${"%.2f".format(s.changePercent)}% |")
-                    }
-                    sb.appendLine()
+    /** 🚀 統一引擎分析：Chat 和詳情頁共用 UnifiedAgentRunner */
+    private fun runUnifiedAnalysis(userText: String, stockCode: String) {
+        val modeLabel = when (analysisMode) {
+            AnalysisMode.QUICK -> "⚡ V1.0 Quick 快速分析"
+            AnalysisMode.DEEP -> "🔍 V1.0 Pipeline 深度分析"
+            AnalysisMode.EXPERT -> "📊 V2.0 全周期分析"
+        }
+        val mode = when (analysisMode) {
+            AnalysisMode.QUICK -> UnifiedAgentRunner.MODE_QUICK
+            AnalysisMode.DEEP -> UnifiedAgentRunner.MODE_PIPELINE
+            AnalysisMode.EXPERT -> UnifiedAgentRunner.MODE_V2
+        }
+
+        val loadingMsg = Message(content = "", isUser = false, isStreaming = true,
+            loadingStatus = "$modeLabel 中..."
+        )
+        addMessage(loadingMsg)
+        val loadingIndex = messages.size - 1
+
+        currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                // 在協程中解析股票名稱
+                val stockName = resolveStockName(stockCode)
+
+                val result = withContext(Dispatchers.IO) {
+                    UnifiedAgentRunner.run(
+                        context = requireContext(),
+                        stockCode = stockCode,
+                        stockName = stockName,
+                        mode = mode
+                    )
                 }
 
-                // 2. 所属板块 Top5 实时数据
-                if (stockCode != null) {
-                    val sectors = com.chin.stockanalysis.stock.database.StockDataCenter.getSectorsByStock(stockCode)
-                    if (sectors.isNotEmpty()) {
-                        sb.appendLine("【目标股票所属板块】${sectors.joinToString(", ")}")
-                        for (sector in sectors.take(2)) {
-                            val topStocks = com.chin.stockanalysis.stock.database.StockDataCenter.getTopStocksBySector(sector, 5, 5)
-                            if (topStocks.isNotEmpty()) {
-                                sb.appendLine()
-                                sb.appendLine("【$sector 板块Top5 实时行情】")
-                                sb.appendLine("| 排名 | 股票名称 | 代码 | 现价 | 涨跌幅 | 量比 | 主力净流入(万) |")
-                                sb.appendLine("|------|---------|------|------|--------|------|--------------|")
-                                topStocks.forEachIndexed { i, pair ->
-                                    val (code, name) = pair
-                                    // ✅ 用交易日而非今天，避免周末/节假日无数据
-                                    val snap = db.dailySnapshotDao().getByDateAndCode(tradingDay, code)
-                                    if (snap != null) {
-                                        val chg = snap.changePct
-                                        val chgEmoji = if (chg >= 0) "+" else ""
-                                        val volRatio = if (snap.turnoverRate > 0) "%.1f".format(snap.volume / 10000) else "-"
-                                        val inflow = if (snap.mainNetInflow != 0.0) "%.0f".format(snap.mainNetInflow / 10000) else "-"
-                                        sb.appendLine("| ${i + 1} | $name | $code | ${"%.2f".format(snap.close)} | $chgEmoji${"%.2f".format(chg)}% | $volRatio | $inflow |")
-                                    }
-                                }
-                            }
+                if (isAdded) requireActivity().runOnUiThread {
+                    if (result.success) {
+                        // 組合最終文本：用戶問題 + 分析結果
+                        val fullText = buildString {
+                            appendLine("**用戶**：$userText")
+                            appendLine()
+                            append(result.summaryText)
                         }
+                        completeStreamingMessage(loadingIndex, fullText)
+                    } else {
+                        failStreamingMessage(loadingIndex, "$modeLabel 失敗: ${result.errorMessage}")
                     }
+                    onMessageComplete()
                 }
+            } catch (e: Exception) {
+                if (isAdded) requireActivity().runOnUiThread {
+                    failStreamingMessage(loadingIndex, "$modeLabel 異常: ${e.message}")
+                }
+            }
+        }
+    }
 
-                // 3. 板块热门股票排行（当日涨幅最高的板块领涨股）
-                val topGainers = db.dailySnapshotDao().getByDate(tradingDay)
-                    .sortedByDescending { it.changePct }.take(10)
-                if (topGainers.isNotEmpty()) {
-                    sb.appendLine()
-                    sb.appendLine("【今日全市涨幅Top10】（$tradingDay 实时）")
-                    sb.appendLine("| 排名 | 股票 | 代码 | 现价 | 涨跌幅 | 换手率 |")
-                    sb.appendLine("|------|------|------|------|--------|--------|")
-                    topGainers.forEachIndexed { i, snap ->
-                        val chg = snap.changePct
-                        sb.appendLine("| ${i + 1} | ${snap.name} | ${snap.code} | ${"%.2f".format(snap.close)} | ${if (chg >= 0) "+" else ""}${"%.2f".format(chg)}% | ${"%.2f".format(snap.turnoverRate)}% |")
+
+    /** 💬 通用問答：非股票問題的簡潔 LLM 對話 */
+    private fun runGeneralChat(userText: String, provider: ApiProvider, skipStockContext: Boolean = false) {
+        val loadingMsg = Message(content = "", isUser = false, isStreaming = true,
+            loadingStatus = "💬 正在思考...")
+        addMessage(loadingMsg)
+        val loadingIndex = messages.size - 1
+
+        currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val contextInfo = if (skipStockContext) {
+                    ""
+                } else {
+                    updateLoadingStatus(loadingIndex, "💬 正在搜索相關數據...")
+                    withContext(Dispatchers.IO) {
+                        smartContext.getOrBuild(userText = userText, baseSystemPrompt = BASE_SYSTEM_PROMPT, onPreferenceLeaned = {})
                     }
                 }
-            } catch (_: Exception) { }
-            if (sb.isEmpty()) sb.appendLine("【板块分析】未能获取实时板块数据，请基于【实时行情数据】区块中的信息分析。")
-            sb.toString()
+                updateLoadingStatus(loadingIndex, "💬 正在回答...")
+                val memory = withContext(Dispatchers.IO) { memoryManager.buildMemorySuffix() }
+
+                val prompt = """你是用戶的 AI 投資助手，專業簡潔。
+
+用戶輸入：$userText
+
+$contextInfo
+$memory
+
+回答要求：
+1. 直接回答用戶問題，保持專業簡潔
+2. 如果涉及股票/投資，使用結構化格式（bullet points、表格）
+3. 字數控制在 300-800 字
+4. 如果涉及投資建議，末尾加免責聲明：「以上不構成投資建議」
+5. 以上數據來自實時行情，嚴禁使用訓練數據中的舊價格或過時資訊"""
+
+                val history = messages.toList().subList(0, loadingIndex)
+                sendWithRetry(provider, history, prompt, loadingIndex, 2)
+            } catch (e: Exception) {
+                if (isAdded) requireActivity().runOnUiThread {
+                    failStreamingMessage(loadingIndex, "回答失敗: ${e.message}")
+                }
+            }
         }
     }
 

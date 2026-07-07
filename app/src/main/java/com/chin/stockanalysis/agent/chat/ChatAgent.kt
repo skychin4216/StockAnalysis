@@ -117,36 +117,34 @@ class ChatAgent(context: Context) : AgentBase(
                 val code = extractStockCode(userMessage)
                 val stockName = extractStockName(userMessage)
 
-                if (analysisMode == com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.EXPERT && stockName != null) {
-                    // 專家模式：走 Pipeline 多智能體流水線
-                    onStream?.invoke("🤖 專家模式分析中：$stockName\n")
-                    val pipelineResult = pipelineAdapter.analyze(stockName) { progress ->
-                        onStream?.invoke("$progress\n")
+                if (code != null) {
+                    // 統一引擎：根據 analysisMode 映射到 UnifiedAgentRunner
+                    val normalizedCode = StockAnalysisAgent.normalizeStockCode(code)
+                    val mode = when (analysisMode) {
+                        com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.QUICK -> UnifiedAgentRunner.MODE_QUICK
+                        com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.DEEP -> UnifiedAgentRunner.MODE_PIPELINE
+                        com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.EXPERT -> UnifiedAgentRunner.MODE_V2
                     }
+                    val modeLabel = when (analysisMode) {
+                        com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.QUICK -> "⚡ V1.0 Quick"
+                        com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.DEEP -> "🔍 V1.0 Pipeline"
+                        com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.EXPERT -> "📊 V2.0 全周期"
+                    }
+                    onStream?.invoke("$modeLabel 分析中：${stockName ?: normalizedCode}\n")
 
-                    if (pipelineResult != null) {
-                        val report = pipelineAdapter.formatResult(pipelineResult)
-                        ChatAgentResult(
-                            success = pipelineResult.stocks.isNotEmpty(),
-                            response = report,
-                            intent = intent.name,
-                            data = mapOf("pipelineResult" to pipelineResult)
-                        )
-                    } else {
-                        ChatAgentResult(
-                            success = false,
-                            response = "專家分析超時（120s），部分步驟可能因網路或模型響應過慢而中斷。請稍後重試或切換為深度模式。",
-                            intent = intent.name
-                        )
-                    }
-                } else if (code != null) {
-                    // 快速/深度模式：單次 LLM 分析
-                    val result = analysisAgent.analyze(code, stockName = stockName)
+                    val result = UnifiedAgentRunner.run(
+                        context = context,
+                        stockCode = normalizedCode,
+                        stockName = stockName,
+                        mode = mode
+                    )
+
                     ChatAgentResult(
                         success = result.success,
-                        response = formatAnalysisResponse(result),
+                        response = if (result.success) result.summaryText
+                            else "${modeLabel} 分析失敗：${result.errorMessage}",
                         intent = intent.name,
-                        data = mapOf("analysis" to result)
+                        data = mapOf("unifiedResult" to result)
                     )
                 } else {
                     // 檢查是否有歧義匹配
@@ -363,7 +361,6 @@ class StockQueryTool(private val ctx: Context) : AgentTool {
 
     override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
         val localCtx = ctx
-        val c = ctx
         return withContext(Dispatchers.IO) {
             try {
                 val code = params["stock_code"] ?: return@withContext "錯誤: 未提供股票代碼"
@@ -400,11 +397,9 @@ class MarketBriefTool(private val ctx: Context) : AgentTool {
     override val parameters = listOf<String>()
 
     override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
-        val localCtx = ctx
-        val c = ctx
         return withContext(Dispatchers.IO) {
             try {
-                val db = StockDatabase.getInstance(localCtx)
+                val db = StockDatabase.getInstance(ctx)
                 val today = TradingDayPickerView.recentTradingDay().toString()
                 val data = db.dailySnapshotDao().getByDate(today)
 

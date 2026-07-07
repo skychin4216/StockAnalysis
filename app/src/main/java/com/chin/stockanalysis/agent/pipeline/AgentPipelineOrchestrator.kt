@@ -297,7 +297,8 @@ class AgentPipelineOrchestrator(private val context: Context) {
             return PipelineResult(
                 target = target, sector = ctx.sector,
                 stepsCompleted = ctx.stepAnalyses.size,
-                errorMessage = e.message
+                errorMessage = e.message,
+                intelligence = ctx.intelligence
             )
         }
     }
@@ -442,7 +443,8 @@ class AgentPipelineOrchestrator(private val context: Context) {
             stocks = listOf(stockResult),
             analysisMode = mode.label,
             weightFormula = getWeightFormula(mode),
-            stepAnalyses = ctx.stepAnalyses.toMap()
+            stepAnalyses = ctx.stepAnalyses.toMap(),
+            intelligence = ctx.intelligence
         )
     }
 

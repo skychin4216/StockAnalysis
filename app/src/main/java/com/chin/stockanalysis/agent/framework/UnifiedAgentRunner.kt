@@ -6,6 +6,7 @@ import com.chin.stockanalysis.agent.pipeline.AgentPipelineOrchestrator
 import com.chin.stockanalysis.agent.pipeline.PipelineResult
 import com.chin.stockanalysis.agent.risk.RiskManagementAgent
 import com.chin.stockanalysis.agent.stock.StockAnalysisAgent
+import com.chin.stockanalysis.agent.v2.V2AgentRunner
 import com.chin.stockanalysis.strategy.market.MarketAnalyzer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -48,11 +49,14 @@ object UnifiedAgentRunner {
     //  分析模式常量
     // ════════════════════════════════════════════════════
 
-    /** Pipeline 深度分析模式（5-6 Agent 串/並行流水線） */
+    /** Pipeline 深度分析模式（5-6 Agent 串/並行流水線）— V1.0 */
     const val MODE_PIPELINE = "pipeline"
 
-    /** Quick 快速分析模式（2 Agent 並行） */
+    /** Quick 快速分析模式（2 Agent 並行）— V1.0 */
     const val MODE_QUICK = "quick"
+
+    /** V2.0 全周期投研模式（市場環境 + 利潤質量 + 決策矩陣） */
+    const val MODE_V2 = "v2"
 
     // ════════════════════════════════════════════════════
     //  統一結果類
@@ -121,6 +125,7 @@ object UnifiedAgentRunner {
         return when (mode) {
             MODE_PIPELINE -> runPipeline(context, stockCode, stockName, sector, startTime)
             MODE_QUICK    -> runQuick(context, stockCode, stockName, startTime)
+            MODE_V2       -> runV2(context, stockCode, stockName, startTime)
             else -> {
                 Log.w(TAG, "未知模式 '$mode'，回退到 Quick 模式")
                 runQuick(context, stockCode, stockName, startTime)
@@ -242,15 +247,38 @@ object UnifiedAgentRunner {
             sb.appendLine("暫無具體股票分析結果")
         }
 
-        // 各 Agent 的原始深度分析文本
-        if (pr.stepAnalyses.isNotEmpty()) {
+        // Agent F 情報摘要 + 各 Agent 的原始深度分析文本
+        if (pr.stepAnalyses.isNotEmpty() || pr.intelligence != null) {
             sb.appendLine()
             sb.appendLine("---")
             sb.appendLine("## 📋 各 Agent 深度分析詳情")
             sb.appendLine()
+
+            // Agent F：數據底座情報採集
+            val intel = pr.intelligence
+            if (intel != null && (intel.events.isNotEmpty() || intel.ratings.isNotEmpty() || intel.supplyChain.isNotEmpty())) {
+                sb.appendLine("### 📍 Agent F: 數據底座·投研情報採集")
+                if (intel.events.isNotEmpty()) {
+                    sb.appendLine("🔴 催化事件：")
+                    intel.events.forEach { sb.appendLine("  • $it") }
+                }
+                if (intel.ratings.isNotEmpty()) {
+                    sb.appendLine("📊 外資評級：")
+                    intel.ratings.forEach { sb.appendLine("  • $it") }
+                }
+                if (intel.supplyChain.isNotEmpty()) {
+                    sb.appendLine("🏭 供需格局：")
+                    intel.supplyChain.forEach { sb.appendLine("  • $it") }
+                }
+                sb.appendLine()
+            }
+
+            // 各步驟 Agent 分析詳情
+            val steps = AgentPipelineOrchestrator.getStepsByName(pr.analysisMode)
             val sortedSteps = pr.stepAnalyses.toSortedMap()
             for ((idx, text) in sortedSteps) {
-                sb.appendLine("### Agent 步驟 $idx")
+                val stepName = steps.getOrNull(idx)?.name ?: "Agent 步驟 $idx"
+                sb.appendLine("### 📍 $stepName")
                 sb.appendLine(text.trim())
                 sb.appendLine()
             }
@@ -406,6 +434,44 @@ object UnifiedAgentRunner {
             rawOutput = (analysis?.rawOutput ?: "") + "\n\n" + (risk?.assessment ?: ""),
             errorMessage = if (analysis?.success != true) "AI 分析失敗" else null,
             elapsedMs = elapsed
+        )
+    }
+
+    // ════════════════════════════════════════════════════
+    //  V2.0 全周期投研模式
+    // ════════════════════════════════════════════════════
+
+    /**
+     * V2.0 全周期投研与交易决策系统
+     *
+     * 新增模塊：
+     * - 市場環境量化分類（上升/震蕩/下跌）→ 倉位水閥
+     * - 利潤質量剪刀差分析 → 區分內生性增長 vs 一次性浮盈
+     * - 決策矩陣 → 環境 × 利潤質量 × 估值 → 最終操作指令
+     */
+    private suspend fun runV2(
+        context: Context,
+        stockCode: String,
+        stockName: String?,
+        startTime: Long
+    ): Result {
+        val v2Result = V2AgentRunner.run(context, stockCode, stockName)
+
+        return Result(
+            stockCode = v2Result.stockCode,
+            stockName = v2Result.stockName,
+            mode = MODE_V2,
+            success = v2Result.success,
+            overallScore = v2Result.overallScore,
+            recommendation = v2Result.recommendation,
+            confidence = v2Result.confidence,
+            riskLevel = v2Result.riskLevel,
+            targetPrice = v2Result.targetPrice,
+            stopLoss = v2Result.stopLoss,
+            summaryText = v2Result.summaryText,
+            rawOutput = v2Result.rawOutput,
+            errorMessage = v2Result.errorMessage,
+            elapsedMs = System.currentTimeMillis() - startTime
         )
     }
 }

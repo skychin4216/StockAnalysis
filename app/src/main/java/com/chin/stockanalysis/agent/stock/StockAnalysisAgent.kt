@@ -232,6 +232,49 @@ class StockAnalysisAgent(context: Context) : AgentBase(
             val jsonStr = llmOutput.substringAfter("```json").substringBefore("```").trim()
                 .ifEmpty { llmOutput.trim() }
             val json = org.json.JSONObject(jsonStr)
+
+            // 解析 LLM 返回的目標價/止損位
+            var targetPrice = json.optString("target_price", "")
+            var stopLoss = json.optString("stop_loss", "")
+
+            // 算法 fallback：如果 LLM 返回空或「數據不足」等無效值，使用算法計算
+            val h = data.history
+            if (h.snapshots.size >= 5) {
+                val highs = h.snapshots.map { it.high }
+                val lows = h.snapshots.map { it.low }
+                val prices = h.snapshots.map { it.close }
+                val resistance = highs.take(60).maxOrNull() ?: 0.0
+                val support = lows.take(60).minOrNull() ?: 0.0
+                val recentRanges = (0 until minOf(20, highs.size, lows.size)).map {
+                    highs[it] - lows[it]
+                }
+                val atr = if (recentRanges.isNotEmpty()) recentRanges.average() * 1.5 else 0.0
+                val latestPrice = prices.first()
+
+                // 判斷趨勢
+                val trend = when {
+                    prices.first() > prices.last() * 1.05 -> "上升"
+                    prices.first() < prices.last() * 0.95 -> "下降"
+                    else -> "震蕩"
+                }
+
+                // 如果 targetPrice 無效
+                if (targetPrice.isBlank() || targetPrice.contains("不足") || targetPrice.contains("無法") || targetPrice == "null") {
+                    val algoTarget = when {
+                        trend.contains("上升") -> resistance * 1.05
+                        trend.contains("下降") -> resistance
+                        else -> latestPrice * 1.03
+                    }.takeIf { it > 0 }
+                    if (algoTarget != null) targetPrice = "¥%.2f".format(algoTarget)
+                }
+
+                // 如果 stopLoss 無效
+                if (stopLoss.isBlank() || stopLoss.contains("不足") || stopLoss.contains("無法") || stopLoss == "null") {
+                    val algoStop = maxOf(latestPrice * 0.97, latestPrice - atr * 2, support * 0.97)
+                    stopLoss = "¥%.2f".format(algoStop)
+                }
+            }
+
             StockAnalysisResult(
                 success = true,
                 stockCode = normalizedCode,
@@ -245,8 +288,8 @@ class StockAnalysisAgent(context: Context) : AgentBase(
                 riskFactors = json.optJSONArray("risk_factors")?.let {
                     (0 until it.length()).map { i -> it.getString(i) }
                 } ?: emptyList(),
-                targetPrice = json.optString("target_price", ""),
-                stopLoss = json.optString("stop_loss", ""),
+                targetPrice = targetPrice,
+                stopLoss = stopLoss,
                 rawOutput = llmOutput,
                 steps = 1
             )
@@ -377,8 +420,36 @@ class StockAnalysisAgent(context: Context) : AgentBase(
                     candlePatterns.add("陰包陽（看跌吞沒，今日實體完全包裹昨日陽線實體）")
             }
 
+            // 算法計算目標價和止損位
+            val resistance = highs.take(60).maxOrNull() ?: 0.0
+            val support = lows.take(60).minOrNull() ?: 0.0
+
+            // ATR（平均真實波幅，取最近 20 日）
+            val recentRanges = (0 until minOf(20, highs.size, lows.size)).map {
+                highs[it] - lows[it]
+            }
+            val atr = if (recentRanges.isNotEmpty()) recentRanges.average() * 1.5 else 0.0
+
+            // 目標價計算
+            val targetPrice = when {
+                trend.contains("上升") -> resistance * 1.05
+                trend.contains("下降") -> resistance
+                else -> latestPrice * 1.03  // 震蕩時用小幅上浮
+            }.takeIf { it > 0 }
+
+            // 止損位計算（取多個保護位的最大值）
+            val stopLoss = maxOf(
+                latestPrice * 0.97,           // 3% 保本位
+                latestPrice - (atr * 2),       // ATR止損
+                support * 0.97               // 支撐位
+            )
+
             sb.appendLine("## 技術面數據（${h.source}）")
             sb.appendLine("- 趨勢: $trend")
+            sb.appendLine("- 近60日阻力位: ¥${"%.2f".format(resistance)}（${if (targetPrice != null) "若突破可上看至" else ""}¥${"%.2f".format(targetPrice ?: 0)}）")
+            sb.appendLine("- 近60日支撐位: ¥${"%.2f".format(support)}")
+            sb.appendLine("- 動態止損位: ¥${"%.2f".format(stopLoss)}（下方2倍ATR+支撐位）")
+            sb.appendLine("- ATR: ${"%.2f".format(atr)}（近20日平均波幅×1.5）")
             sb.appendLine("- 均線: MA5=${"%.2f".format(ma5)}, MA10=${"%.2f".format(ma10)}, MA20=${"%.2f".format(ma20)}")
             sb.appendLine("- 均線排列: $maAlign")
             sb.appendLine("- 量能: $volStatus（5日均量=${"%.0f".format(avgVol5)}）")
