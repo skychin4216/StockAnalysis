@@ -78,9 +78,7 @@ class ShortTermQuantFragment : QuantFragmentBase() {
 
     override fun onBuildClick() { runBuildAndBuy() }
     override fun onFittingClick() = autoFit()
-    override fun onBacktrackClick() {
-        Toast.makeText(requireContext(), "短線量化暫無回調功能", Toast.LENGTH_SHORT).show()
-    }
+    override fun onBacktrackClick() { runShortTermBacktrack() }
     override fun onClearClick() = clearData()
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -160,6 +158,55 @@ class ShortTermQuantFragment : QuantFragmentBase() {
     // ═══════════════════════════════════════
     // 建倉（智能分流：Agent結果 vs zipline）
     // ═══════════════════════════════════════
+
+    /**
+     * 短線量化回測：復用 HistoricalBacktestEngine 做逐日回測
+     * 持仓周期 = 3 天，賣出使用 AutoSellEngine 規則（硬止損 -8% / 時間平倉 10 天）
+     */
+    private fun runShortTermBacktrack() {
+        val eng = engine ?: return
+        buildBtn.isEnabled = false; buildBtn.text = "⏳ 回溯中..."
+        progressBar.visibility = View.VISIBLE; statusTv.text = "正在執行短線回溯..."
+        val ctx = requireContext()
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val strategies = eng.getStrategies().filter { eng.isEnabled(it.id) }
+                if (strategies.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"; progressBar.visibility = View.GONE
+                        statusTv.text = "❌ 無啟用策略"
+                    }
+                    return@launch
+                }
+                val backtestEngine = com.chin.stockanalysis.strategy.backtest.HistoricalBacktestEngine(ctx)
+                val report = backtestEngine.runHistoricalBacktest(strategies, tradingDays = 30)
+                val sb = StringBuilder()
+                sb.appendLine("📈 短線回測報告（30 個交易日）")
+                sb.appendLine("期間: ${report.dateRange}"); sb.appendLine()
+                for (r in report.strategyReports) {
+                    sb.appendLine("📋 ${r.strategyName}")
+                    sb.appendLine("  交易日: ${r.totalDays} 天 | 買入信號: ${r.totalBuys} 次")
+                    sb.appendLine("  買入準確率: ${"%.1f".format(r.buyAccuracy * 100)}% (${r.correctBuys}/${r.totalBuys})")
+                    sb.appendLine("  平均淨收益: ${"%.2f".format(r.avgReturn)}%（已扣交易成本0.3%）")
+                    sb.appendLine("  最大盈利: ${"%.2f".format(r.maxGain)}% | 最大虧損: ${"%.2f".format(r.maxLoss)}%")
+                    sb.appendLine()
+                }
+                Log.i("ShortTermQuant", sb.toString())
+                withContext(Dispatchers.Main) {
+                    showDialog("短線回測報告", sb.toString())
+                    buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"; progressBar.visibility = View.GONE
+                    statusTv.text = "✅ 回測完成: ${report.strategyReports.size} 個策略"
+                }
+            } catch (e: Exception) {
+                Log.e("ShortTermQuant", "回測失敗: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"; progressBar.visibility = View.GONE
+                    statusTv.text = "❌ 回測失敗: ${e.message?.take(50)}"
+                    Toast.makeText(ctx, "回測失敗: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
 
     /**
      * 建倉按鈕點擊：
@@ -705,7 +752,7 @@ class ShortTermQuantFragment : QuantFragmentBase() {
     }
 
     /**
-     * 🧠 Agent 分析（AI 動態選擇模式：六智體/七智體/精簡版）
+     * 🧠 Agent 分析（AI 動態選擇模式：六智體/七智體）
      */
     private fun runAIPipeline() {
         val inputEt = EditText(requireContext()).apply {
@@ -716,7 +763,7 @@ class ShortTermQuantFragment : QuantFragmentBase() {
         }
         androidx.appcompat.app.AlertDialog.Builder(requireContext())
             .setTitle("🧠 Agent 分析")
-            .setMessage("輸入要分析的標的或板塊，AI 將根據賽道自動選擇分析模式：\n• 六智體通用（消費/醫藥/周期）\n• 七智體賣水人（光通信/半導體）\n• 精簡版 5+1（默認）")
+            .setMessage("輸入要分析的標的或板塊，AI 將根據賽道自動選擇分析模式：\n• 六智體通用（消費/醫藥/周期）\n• 七智體賣水人（光通信/半導體）")
             .setView(inputEt)
             .setPositiveButton("開始分析") { _, _ ->
                 val target = inputEt.text.toString().trim()

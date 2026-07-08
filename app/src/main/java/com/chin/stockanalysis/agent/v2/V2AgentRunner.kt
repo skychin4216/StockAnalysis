@@ -5,6 +5,7 @@ import android.util.Log
 import com.chin.stockanalysis.agent.stock.StockAnalysisAgent
 import com.chin.stockanalysis.agent.stock.StockAnalysisResult
 import com.chin.stockanalysis.stock.data.StockDataFacade
+import com.chin.stockanalysis.strategy.data.FactorDataProvider
 import com.chin.stockanalysis.strategy.market.MarketAnalyzer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -103,9 +104,16 @@ object V2AgentRunner {
                     )
                 } ?: MarketEnvironment("OSCILLATION", 30, "數據不足，默認震蕩", "NONE")
 
-                // 估值评估
-                val pe = quote?.pe ?: 0.0
-                val pb = quote?.pb ?: 0.0
+                // 估值评估（優先使用實時行情，fallback 到東方財富 F10）
+                var pe = quote?.pe ?: 0.0
+                var pb = quote?.pb ?: 0.0
+                if (pe <= 0.0 || pb <= 0.0) {
+                    try {
+                        val finance = FactorDataProvider().getFinanceData(stockCode)
+                        if (pe <= 0.0 && finance.pe > 0) pe = finance.pe
+                        if (pb <= 0.0 && finance.pb > 0) pb = finance.pb
+                    } catch (_: Exception) { }
+                }
                 val peBand = when {
                     pe <= 0 -> "無法評估"
                     pe < 20 -> "低估"

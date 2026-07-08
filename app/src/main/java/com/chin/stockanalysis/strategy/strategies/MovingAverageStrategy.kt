@@ -53,11 +53,18 @@ class MovingAverageStrategy(
         } catch (e: Exception) { Result.failure(e) }
     }
 
-    private fun screenWithPool(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
+    private suspend fun screenWithPool(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
         if (pool.isEmpty()) return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,
             signals = emptyList(), totalScanned = 0, scanTimeMs = System.currentTimeMillis() - startTime
         ))
+
+        // 大盤環境預檢：BEARISH 時提高門檻
+        val marketDir = try { screener.detectMarketDirection() } catch (_: Exception) { "OSCILLATION" }
+        val isBearish = marketDir == "BEARISH"
+        val dynamicStrengthThreshold = if (isBearish) 45 else 30
+        Log.i("MA_Strategy", "大盤環境: $marketDir → 均線門檻 ${if (isBearish) "30→45" else "標準門檻30"}")
+
         val step1 = pool.filter { it.price > it.yestClose && it.changePercent > 0.5 }
         Log.i("MA_Strategy", "pool=${pool.size} → 过滤(price>yestClose && chg>0.5)=${step1.size}")
         if (step1.isNotEmpty()) {
@@ -65,8 +72,8 @@ class MovingAverageStrategy(
             Log.i("MA_Strategy", "  样本: ${sample.code} ${sample.name} price=${"%.2f".format(sample.price)} open=${"%.2f".format(sample.open)} yestClose=${"%.2f".format(sample.yestClose)} chg=${"%.2f".format(sample.changePercent)}% amt=${sample.amount}")
         }
         val step2 = step1.map { calculateSignal(it) }
-        val step3 = step2.filter { it.strength >= 30 }
-        Log.i("MA_Strategy", "打分后 strength>=30: ${step3.size}")
+        val step3 = step2.filter { it.strength >= dynamicStrengthThreshold }
+        Log.i("MA_Strategy", "打分后 strength>=$dynamicStrengthThreshold: ${step3.size}")
         if (step2.isNotEmpty()) {
             val topScores = step2.sortedByDescending { it.strength }.take(3)
             Log.i("MA_Strategy", "  Top3得分: ${topScores.joinToString { it.stockName + "=" + it.strength }}")

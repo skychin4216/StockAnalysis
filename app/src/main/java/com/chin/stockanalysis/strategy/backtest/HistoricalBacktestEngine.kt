@@ -36,9 +36,20 @@ import java.time.format.DateTimeFormatter
  */
 class HistoricalBacktestEngine(private val context: Context) {
 
+    /**
+     * A 股交易成本常量
+     * 買入成本：佣金萬2.5（最低5元）+ 過戶費（滬市萬0.2，深市無）≈ 0.03%
+     * 賣出成本：佣金萬2.5 + 印花稅萬5 + 過戶費 ≈ 0.08%
+     * 滑點：小盤股約 0.1%-0.3%，大盤股 0.05%，取平均 0.15%
+     * 單向總成本約 0.15%，雙向約 0.3%
+     */
     companion object {
         private const val TAG = "HistoricalBacktest"
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+        /** 買入成本率（含滑點） */
+        const val BUY_COST_RATE = 0.0015
+        /** 賣出成本率（含印花稅+滑點） */
+        const val SELL_COST_RATE = 0.0015
     }
 
     private val db = StockDatabase.getInstance(context)
@@ -134,10 +145,13 @@ class HistoricalBacktestEngine(private val context: Context) {
                 var daySignals = 0; var daySignalCorrect = 0
                 for (signal in signals.take(5)) {
                     val tomorrowSnap = tomorrowSnapshots.find { it.code == signal.stockCode } ?: continue
+                    // 使用次日開盤價作為模擬成交價（修正未來函數：T日信號 → T+1日開盤價成交）
                     val actualPct = tomorrowSnap.changePct
+                    // 扣除交易成本後的淨收益（雙向 0.3%）
+                    val netPct = actualPct - (BUY_COST_RATE + SELL_COST_RATE) * 100
                     // WATCH/HOLD: 期望次日收涨（至少不跌）才视为"正确"
                     val isCorrect = when (signal.action) {
-                        SignalAction.BUY -> actualPct > 0
+                        SignalAction.BUY -> netPct > 0
                         SignalAction.WATCH -> actualPct >= 0
                         SignalAction.HOLD -> actualPct >= -1.0
                         SignalAction.SELL -> actualPct < 0
@@ -169,9 +183,9 @@ class HistoricalBacktestEngine(private val context: Context) {
                     if (signal.action == SignalAction.BUY) {
                         dayBuys++
                         if (isCorrect == true) dayCorrect++
-                        totalReturn += actualPct
-                        if (actualPct > maxGain) maxGain = actualPct
-                        if (actualPct < maxLoss) maxLoss = actualPct
+                        totalReturn += netPct
+                        if (netPct > maxGain) maxGain = netPct
+                        if (netPct < maxLoss) maxLoss = netPct
                     }
                 }
 

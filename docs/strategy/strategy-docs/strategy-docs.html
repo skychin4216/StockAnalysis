@@ -1,0 +1,1767 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StockAnalysis 策略系統全覽</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+<style>
+/* ========== 基礎重置與全域 ========== */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; font-size: 16px; }
+body {
+  font-family: 'Noto Sans SC', 'Microsoft JhengHei', sans-serif;
+  background: #0F1419;
+  color: #E0E6ED;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+mark.key {
+  background: linear-gradient(135deg, #7C4DFF33, #00BCD433);
+  color: #fff;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border-bottom: 1px solid #7C4DFF88;
+}
+a { color: #7C4DFF; text-decoration: none; transition: color .2s; }
+a:hover { color: #00BCD4; }
+
+/* ========== 封面 ========== */
+.hero {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  overflow: hidden;
+  background: radial-gradient(ellipse at 30% 20%, #7C4DFF15 0%, transparent 50%),
+              radial-gradient(ellipse at 70% 80%, #00BCD410 0%, transparent 50%),
+              #0F1419;
+}
+.hero::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 60px,
+    #7C4DFF08 60px,
+    #7C4DFF08 61px
+  ),
+  repeating-linear-gradient(
+    90deg,
+    transparent,
+    transparent 60px,
+    #00BCD408 60px,
+    #00BCD408 61px
+  );
+  animation: gridPulse 8s ease-in-out infinite;
+}
+@keyframes gridPulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.6; }
+}
+.hero-content { position: relative; z-index: 1; max-width: 800px; padding: 2rem; }
+.hero-badge {
+  display: inline-block;
+  padding: 6px 20px;
+  border: 1px solid #7C4DFF55;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  color: #7C4DFF;
+  letter-spacing: 2px;
+  margin-bottom: 1.5rem;
+  background: #7C4DFF0D;
+}
+.hero h1 {
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  font-weight: 900;
+  background: linear-gradient(135deg, #FFFFFF, #7C4DFF, #00BCD4);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 0.8rem;
+  line-height: 1.3;
+}
+.hero .subtitle {
+  font-size: clamp(1rem, 2.5vw, 1.3rem);
+  color: #8899AA;
+  font-weight: 300;
+  letter-spacing: 4px;
+  margin-bottom: 1.5rem;
+}
+.hero .date {
+  font-size: 0.9rem;
+  color: #556677;
+  border-top: 1px solid #2A3A4A;
+  padding-top: 1rem;
+  margin-top: 1rem;
+}
+.hero-stats {
+  display: flex;
+  gap: 2rem;
+  justify-content: center;
+  margin-top: 2rem;
+  flex-wrap: wrap;
+}
+.hero-stat {
+  text-align: center;
+}
+.hero-stat .num {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #7C4DFF;
+}
+.hero-stat .label {
+  font-size: 0.8rem;
+  color: #667788;
+  letter-spacing: 1px;
+}
+
+/* ========== 容器 ========== */
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+.section-title {
+  font-size: 1.8rem;
+  font-weight: 700;
+  margin-bottom: 1.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid #7C4DFF;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.section-title .icon {
+  width: 32px;
+  height: 32px;
+  background: linear-gradient(135deg, #7C4DFF, #00BCD4);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+}
+
+/* ========== 策略總覽表格 ========== */
+.overview-section {
+  position: relative;
+}
+.sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: #0F1419;
+  padding: 1rem 0;
+  border-bottom: 1px solid #2A3A4A;
+}
+.sticky-header h2 {
+  font-size: 1.2rem;
+  color: #7C4DFF;
+}
+.overview-table-wrap {
+  overflow-x: auto;
+  border-radius: 12px;
+  border: 1px solid #2A3A4A;
+  margin-top: 1rem;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+thead th {
+  background: #141E2B;
+  color: #8899AA;
+  font-weight: 500;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 1px;
+  padding: 12px 16px;
+  text-align: left;
+  position: sticky;
+  top: 0;
+}
+tbody tr:nth-child(even) { background: #1E2A3A; }
+tbody tr:nth-child(odd) { background: #1A2332; }
+tbody tr:hover { background: #243447; }
+tbody td {
+  padding: 10px 16px;
+  border-bottom: 1px solid #2A3A4A33;
+  vertical-align: middle;
+}
+
+/* ========== 類別標籤 ========== */
+.tag {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+.tag-TREND    { background: #2196F322; color: #2196F3; border: 1px solid #2196F344; }
+.tag-MOMENTUM { background: #FF980022; color: #FF9800; border: 1px solid #FF980044; }
+.tag-VALUE    { background: #4CAF5022; color: #4CAF50; border: 1px solid #4CAF5044; }
+.tag-VOLUME   { background: #9C27B022; color: #9C27B0; border: 1px solid #9C27B044; }
+.tag-CUSTOM   { background: #00BCD422; color: #00BCD4; border: 1px solid #00BCD444; }
+
+.signal-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+.signal-buy  { background: #00E67622; color: #00E676; border: 1px solid #00E67644; }
+.signal-sell { background: #FF525222; color: #FF5252; border: 1px solid #FF525244; }
+
+/* ========== 策略卡片 ========== */
+.strategy-section { margin-top: 4rem; }
+.strategy-card {
+  background: #1A2332;
+  border: 1px solid #2A3A4A;
+  border-radius: 12px;
+  padding: 2rem;
+  margin-bottom: 2.5rem;
+  position: relative;
+  overflow: hidden;
+  transition: border-color .3s, box-shadow .3s;
+}
+.strategy-card:hover {
+  box-shadow: 0 4px 30px #00000055;
+}
+.strategy-card.trend    { border-left: 4px solid #2196F3; }
+.strategy-card.momentum { border-left: 4px solid #FF9800; }
+.strategy-card.value    { border-left: 4px solid #4CAF50; }
+.strategy-card.volume   { border-left: 4px solid #9C27B0; }
+.strategy-card.custom   { border-left: 4px solid #00BCD4; }
+.strategy-card::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.04;
+  pointer-events: none;
+}
+.strategy-card.trend::after    { background: #2196F3; }
+.strategy-card.momentum::after { background: #FF9800; }
+.strategy-card.value::after    { background: #4CAF50; }
+.strategy-card.volume::after   { background: #9C27B0; }
+.strategy-card.custom::after   { background: #00BCD4; }
+
+.card-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.card-title {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #FFFFFF;
+}
+.card-id {
+  font-family: monospace;
+  font-size: 0.85rem;
+  color: #667788;
+  background: #0F1419;
+  padding: 2px 10px;
+  border-radius: 4px;
+  border: 1px solid #2A3A4A;
+}
+.card-desc {
+  color: #AABBCC;
+  margin-bottom: 1.5rem;
+  font-size: 0.95rem;
+  line-height: 1.8;
+}
+
+/* ========== 子區塊 ========== */
+.sub-block {
+  margin-bottom: 1.5rem;
+}
+.sub-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #00BCD4;
+  margin-bottom: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.sub-title::before {
+  content: '';
+  display: inline-block;
+  width: 3px;
+  height: 16px;
+  background: #00BCD4;
+  border-radius: 2px;
+}
+
+/* ========== 權重因子橫條圖 ========== */
+.weight-table {
+  width: 100%;
+}
+.weight-table td {
+  padding: 8px 12px !important;
+  vertical-align: middle !important;
+}
+.weight-table .key-col {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: #7C4DFF;
+  white-space: nowrap;
+}
+.weight-table .label-col {
+  color: #CCDDEE;
+  white-space: nowrap;
+}
+.weight-table .weight-col {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: #FFD600;
+  min-width: 50px;
+  text-align: center;
+}
+.weight-table .desc-col {
+  color: #8899AA;
+  font-size: 0.85rem;
+}
+.bar-cell {
+  min-width: 200px;
+  padding: 4px 0 !important;
+}
+.bar-track {
+  width: 100%;
+  height: 8px;
+  background: #0F1419;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #7C4DFF, #00BCD4);
+  transition: width 0.6s ease;
+}
+.bar-fill.high { background: linear-gradient(90deg, #7C4DFF, #00E676); }
+.bar-fill.medium { background: linear-gradient(90deg, #7C4DFF, #00BCD4); }
+.bar-fill.low { background: linear-gradient(90deg, #9C27B0, #FF9800); }
+
+/* ========== 門檻參數 ========== */
+.threshold-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.8rem;
+}
+.threshold-item {
+  background: #141E2B;
+  border: 1px solid #2A3A4A44;
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+.threshold-item .t-key {
+  font-size: 0.75rem;
+  color: #667788;
+  margin-bottom: 4px;
+}
+.threshold-item .t-value {
+  font-size: 1.1rem;
+  font-weight: 700;
+  font-family: monospace;
+  color: #FFFFFF;
+}
+.threshold-item .t-note {
+  font-size: 0.75rem;
+  color: #556677;
+  margin-top: 2px;
+}
+
+/* ========== 大盤適應規則 ========== */
+.bearish-box {
+  background: #1A1020;
+  border: 1px solid #FF525233;
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+}
+.bearish-box .bearish-label {
+  color: #FF5252;
+  font-weight: 600;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.bearish-box ul {
+  list-style: none;
+  padding: 0;
+}
+.bearish-box li {
+  position: relative;
+  padding-left: 1.2rem;
+  margin-bottom: 0.3rem;
+  color: #AABBCC;
+  font-size: 0.85rem;
+}
+.bearish-box li::before {
+  content: '>';
+  position: absolute;
+  left: 0;
+  color: #FF5252;
+  font-family: monospace;
+}
+
+/* ========== 信號 & 場景 ========== */
+.signal-scene-wrap {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+@media (max-width: 768px) {
+  .signal-scene-wrap { grid-template-columns: 1fr; }
+}
+.info-box {
+  background: #141E2B;
+  border: 1px solid #2A3A4A44;
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+}
+.info-box .info-label {
+  font-size: 0.75rem;
+  color: #667788;
+  margin-bottom: 0.4rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.info-box .info-value {
+  color: #E0E6ED;
+  font-size: 0.9rem;
+}
+
+/* ========== 量化交易系統 ========== */
+.quant-section { margin-top: 4rem; }
+.quant-card {
+  background: #1A2332;
+  border: 1px solid #2A3A4A;
+  border-radius: 12px;
+  padding: 2rem;
+  margin-bottom: 2rem;
+}
+.quant-card h3 {
+  font-size: 1.3rem;
+  color: #FFFFFF;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.quant-card h3 .q-badge {
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+.quant-card h3 .q-badge.short { background: #7C4DFF22; color: #7C4DFF; border: 1px solid #7C4DFF44; }
+.quant-card h3 .q-badge.mid { background: #00BCD422; color: #00BCD4; border: 1px solid #00BCD444; }
+.flow-steps {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 1rem 0;
+  align-items: center;
+}
+.flow-step {
+  background: #141E2B;
+  border: 1px solid #2A3A4A;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  color: #CCDDEE;
+  white-space: nowrap;
+}
+.flow-arrow {
+  color: #7C4DFF;
+  font-size: 1rem;
+}
+.trade-rules {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+@media (max-width: 768px) {
+  .trade-rules { grid-template-columns: 1fr; }
+}
+.trade-rule-box {
+  background: #141E2B;
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+  border-left: 3px solid;
+}
+.trade-rule-box.take-profit { border-color: #00E676; }
+.trade-rule-box.stop-loss { border-color: #FF5252; }
+.trade-rule-box .rule-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+.trade-rule-box.take-profit .rule-title { color: #00E676; }
+.trade-rule-box.stop-loss .rule-title { color: #FF5252; }
+.trade-rule-box ul {
+  list-style: none;
+  padding: 0;
+}
+.trade-rule-box li {
+  font-size: 0.85rem;
+  color: #AABBCC;
+  padding-left: 1rem;
+  position: relative;
+  margin-bottom: 0.2rem;
+}
+.trade-rule-box li::before {
+  content: '-';
+  position: absolute;
+  left: 0;
+  color: #667788;
+}
+
+/* ========== V2.0 全周期投研系統 ========== */
+.v2-section { margin-top: 4rem; }
+.arch-svg-wrap {
+  background: #141E2B;
+  border: 1px solid #2A3A4A;
+  border-radius: 12px;
+  padding: 2rem;
+  margin-bottom: 2rem;
+  overflow-x: auto;
+  text-align: center;
+}
+.arch-svg-wrap svg { max-width: 100%; height: auto; }
+
+.component-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+@media (max-width: 768px) {
+  .component-grid { grid-template-columns: 1fr; }
+}
+.component-card {
+  background: #1A2332;
+  border: 1px solid #2A3A4A;
+  border-radius: 12px;
+  padding: 1.5rem;
+  border-top: 3px solid #7C4DFF;
+}
+.component-card:nth-child(2) { border-top-color: #00BCD4; }
+.component-card:nth-child(3) { border-top-color: #00E676; }
+.component-card:nth-child(4) { border-top-color: #FFD600; }
+.component-card h4 {
+  font-size: 1rem;
+  color: #FFFFFF;
+  margin-bottom: 0.3rem;
+}
+.component-card .cc-class {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: #7C4DFF;
+  margin-bottom: 0.8rem;
+}
+.component-card p {
+  font-size: 0.85rem;
+  color: #AABBCC;
+  line-height: 1.7;
+}
+
+/* ========== 決策矩陣 ========== */
+.dm-table th { font-size: 0.8rem !important; }
+.dm-table td { font-size: 0.85rem !important; }
+
+/* ========== 利潤質量分級 ========== */
+.pq-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+.pq-card {
+  border-radius: 8px;
+  padding: 1.2rem;
+  border: 1px solid;
+}
+.pq-card.a-plus { background: #00E6760A; border-color: #00E67644; }
+.pq-card.a      { background: #00BCD40A; border-color: #00BCD444; }
+.pq-card.b-plus { background: #FFD6000A; border-color: #FFD60044; }
+.pq-card.b      { background: #FF98000A; border-color: #FF980044; }
+.pq-card.c      { background: #FF52520A; border-color: #FF525244; }
+.pq-card .pq-grade {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 0.3rem;
+}
+.pq-card.a-plus .pq-grade { color: #00E676; }
+.pq-card.a .pq-grade      { color: #00BCD4; }
+.pq-card.b-plus .pq-grade { color: #FFD600; }
+.pq-card.b .pq-grade      { color: #FF9800; }
+.pq-card.c .pq-grade      { color: #FF5252; }
+.pq-card .pq-label { font-size: 0.8rem; color: #8899AA; }
+.pq-card .pq-desc { font-size: 0.85rem; color: #AABBCC; margin-top: 0.5rem; }
+
+/* ========== V1 vs V2 對比 ========== */
+.compare-table th {
+  font-size: 0.85rem !important;
+  text-align: center !important;
+}
+.compare-table td {
+  text-align: center !important;
+  font-size: 0.85rem !important;
+}
+.compare-table td:first-child { text-align: left !important; font-weight: 500; }
+
+/* ========== 頁腳 ========== */
+.footer {
+  text-align: center;
+  padding: 3rem 2rem;
+  color: #556677;
+  font-size: 0.8rem;
+  border-top: 1px solid #2A3A4A;
+  margin-top: 4rem;
+}
+
+/* ========== 錨點偏移 ========== */
+.anchor-offset {
+  scroll-margin-top: 80px;
+}
+
+/* ========== 響應式 ========== */
+@media (max-width: 768px) {
+  .container { padding: 1rem; }
+  .strategy-card { padding: 1.2rem; }
+  .hero-stats { gap: 1rem; }
+  .threshold-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 480px) {
+  .threshold-grid { grid-template-columns: 1fr; }
+  .hero-stats { flex-direction: column; gap: 0.5rem; }
+}
+</style>
+</head>
+<body>
+
+<!-- ============================================================ -->
+<!--  封面                                                         -->
+<!-- ============================================================ -->
+<section class="hero">
+  <div class="hero-content">
+    <div class="hero-badge">SYSTEM DOCUMENTATION v2.0</div>
+    <h1>StockAnalysis 策略系統全覽</h1>
+    <div class="subtitle">量化選股 &middot; 交易引擎 &middot; AI 全周期投研</div>
+    <div class="hero-stats">
+      <div class="hero-stat"><div class="num">12</div><div class="label">策略模組</div></div>
+      <div class="hero-stat"><div class="num">5</div><div class="label">策略類別</div></div>
+      <div class="hero-stat"><div class="num">2</div><div class="label">量化引擎</div></div>
+      <div class="hero-stat"><div class="num">4</div><div class="label">V2 組件</div></div>
+    </div>
+    <div class="date">Document Generated: 2026-07-09</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--  策略總覽                                                     -->
+<!-- ============================================================ -->
+<section class="overview-section container" id="overview">
+  <div class="sticky-header">
+    <h2>&#128202; 策略總覽 &mdash; Strategy Index</h2>
+  </div>
+  <div class="overview-table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>ID</th>
+          <th>策略名稱</th>
+          <th>類別</th>
+          <th>門檻分數</th>
+          <th>信號類型</th>
+          <th>連結</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>01</td><td style="font-family:monospace;color:#7C4DFF">ma_golden_cross</td><td>均線金叉策略</td><td><span class="tag tag-TREND">TREND</span></td><td>0.65</td><td><span class="signal-tag signal-buy">BUY</span></td><td><a href="#s1">詳情 &rarr;</a></td></tr>
+        <tr><td>02</td><td style="font-family:monospace;color:#7C4DFF">volume_break</td><td>放量突破策略</td><td><span class="tag tag-VOLUME">VOLUME</span></td><td>0.70</td><td><span class="signal-tag signal-buy">BUY</span></td><td><a href="#s2">詳情 &rarr;</a></td></tr>
+        <tr><td>03</td><td style="font-family:monospace;color:#7C4DFF">gap_up_momentum</td><td>高開高走策略</td><td><span class="tag tag-MOMENTUM">MOMENTUM</span></td><td>0.60</td><td><span class="signal-tag signal-buy">BUY</span></td><td><a href="#s3">詳情 &rarr;</a></td></tr>
+        <tr><td>04</td><td style="font-family:monospace;color:#7C4DFF">turnover_active</td><td>換手率活躍策略</td><td><span class="tag tag-VOLUME">VOLUME</span></td><td>0.55</td><td><span class="signal-tag signal-buy">BUY</span></td><td><a href="#s4">詳情 &rarr;</a></td></tr>
+        <tr><td>05</td><td style="font-family:monospace;color:#7C4DFF">bollinger_band</td><td>布林帶突破策略</td><td><span class="tag tag-TREND">TREND</span></td><td>0.60</td><td><span class="signal-tag signal-buy">BUY</span></td><td><a href="#s5">詳情 &rarr;</a></td></tr>
+        <tr><td>06</td><td style="font-family:monospace;color:#7C4DFF">rsi_divergence</td><td>RSI背離策略</td><td><span class="tag tag-MOMENTUM">MOMENTUM</span></td><td>0.55</td><td><span class="signal-tag signal-buy">BUY</span> / <span class="signal-tag signal-sell">SELL</span></td><td><a href="#s6">詳情 &rarr;</a></td></tr>
+        <tr><td>07</td><td style="font-family:monospace;color:#7C4DFF">fundamental_filter</td><td>基本面三層分級篩選</td><td><span class="tag tag-VALUE">VALUE</span></td><td>0.50</td><td><span class="signal-tag signal-buy">BUY</span></td><td><a href="#s7">詳情 &rarr;</a></td></tr>
+        <tr><td>08</td><td style="font-family:monospace;color:#7C4DFF">smart_money_detection</td><td>主力資金行為偵測</td><td><span class="tag tag-VOLUME">VOLUME</span></td><td>0.60</td><td><span class="signal-tag signal-buy">BUY</span> / <span class="signal-tag signal-sell">SELL</span></td><td><a href="#s8">詳情 &rarr;</a></td></tr>
+        <tr><td>09</td><td style="font-family:monospace;color:#7C4DFF">low_valuation</td><td>低估值策略</td><td><span class="tag tag-VALUE">VALUE</span></td><td>0.50</td><td><span class="signal-tag signal-buy">BUY</span></td><td><a href="#s9">詳情 &rarr;</a></td></tr>
+        <tr><td>10</td><td style="font-family:monospace;color:#7C4DFF">tail_low_pick</td><td>超短線尾盤低吸</td><td><span class="tag tag-CUSTOM">CUSTOM</span></td><td>0.65</td><td><span class="signal-tag signal-buy">BUY</span></td><td><a href="#s10">詳情 &rarr;</a></td></tr>
+        <tr><td>11</td><td style="font-family:monospace;color:#7C4DFF">early_morning_chase</td><td>早盤追漲選股</td><td><span class="tag tag-MOMENTUM">MOMENTUM</span></td><td>0.70</td><td><span class="signal-tag signal-buy">BUY</span></td><td><a href="#s11">詳情 &rarr;</a></td></tr>
+        <tr><td>12</td><td style="font-family:monospace;color:#7C4DFF">ai_prediction</td><td>AI量化選股</td><td><span class="tag tag-CUSTOM">CUSTOM</span></td><td>0.60</td><td><span class="signal-tag signal-buy">BUY</span></td><td><a href="#s12">詳情 &rarr;</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--  策略詳情                                                     -->
+<!-- ============================================================ -->
+<div class="container strategy-section">
+  <h2 class="section-title"><span class="icon">&#9881;</span> 策略詳情 &mdash; Strategy Details</h2>
+
+  <!-- ==================== S1: 均線金叉 ==================== -->
+  <div class="strategy-card trend anchor-offset" id="s1">
+    <div class="card-header">
+      <span class="card-title">均線金叉策略</span>
+      <span class="card-id">ma_golden_cross</span>
+      <span class="tag tag-TREND">TREND</span>
+    </div>
+    <div class="card-desc">
+      當短期均線（如 MA5）<mark class="key">上穿</mark>長期均線（如 MA10），形成「金叉」信號，代表短期動能轉強，趨勢由空轉多。
+      本策略綜合考量均線斜率、成交量配合程度及距離壓力位的空間，過濾假突破，提升勝率。
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">權重因子</div>
+      <div class="overview-table-wrap">
+        <table class="weight-table">
+          <thead><tr><th>Key</th><th>Label</th><th>Weight</th><th>視覺化</th><th>說明</th></tr></thead>
+          <tbody>
+            <tr><td class="key-col">golden_cross_signal</td><td class="label-col">金叉信號</td><td class="weight-col">0.30</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:60%"></div></div></td>
+              <td class="desc-col">MA5 上穿 MA10 的確認信號</td></tr>
+            <tr><td class="key-col">ma_slope</td><td class="label-col">均線斜率</td><td class="weight-col">0.25</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:50%"></div></div></td>
+              <td class="desc-col">均線向上的斜率大小，反映趨勢強度</td></tr>
+            <tr><td class="key-col">volume_confirm</td><td class="label-col">成交量確認</td><td class="weight-col">0.25</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:50%"></div></div></td>
+              <td class="desc-col">金叉當日成交量需大於前5日均量</td></tr>
+            <tr><td class="key-col">distance_to_resist</td><td class="label-col">距壓力位</td><td class="weight-col">0.20</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill medium" style="width:40%"></div></div></td>
+              <td class="desc-col">距上方壓力位的距離，越大越好</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">門檻參數</div>
+      <div class="threshold-grid">
+        <div class="threshold-item"><div class="t-key">min_score</div><div class="t-value">0.65</div><div class="t-note">最低觸發門檻</div></div>
+        <div class="threshold-item"><div class="t-key">ma_short</div><div class="t-value">5</div><div class="t-note">短期均線周期</div></div>
+        <div class="threshold-item"><div class="t-key">ma_long</div><div class="t-value">10</div><div class="t-note">長期均線周期</div></div>
+        <div class="threshold-item"><div class="t-key">volume_ratio</div><div class="t-value">1.2</div><div class="t-note">成交量放大倍數</div></div>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">大盤環境適應</div>
+      <div class="bearish-box">
+        <div class="bearish-label">&#9888; BEARISH 門檻調整</div>
+        <ul>
+          <li>門檻提升至 <mark class="key">0.75</mark>，過濾弱信號</li>
+          <li>均線斜率權重提升至 <mark class="key">0.35</mark>，要求更強趨勢</li>
+          <li>增加額外條件：大盤 MA20 需保持向上</li>
+        </ul>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="signal-scene-wrap">
+        <div class="info-box"><div class="info-label">信號類型</div><div class="info-value"><span class="signal-tag signal-buy">BUY</span> 做多信號</div></div>
+        <div class="info-box"><div class="info-label">適用場景</div><div class="info-value">趨勢反轉初期、震盪築底後突破</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== S2: 放量突破 ==================== -->
+  <div class="strategy-card volume anchor-offset" id="s2">
+    <div class="card-header">
+      <span class="card-title">放量突破策略</span>
+      <span class="card-id">volume_break</span>
+      <span class="tag tag-VOLUME">VOLUME</span>
+    </div>
+    <div class="card-desc">
+      價格<mark class="key">放量突破</mark>近期重要高點（如前 N 日最高價或平台壓力位），同時成交量顯著放大，
+      代表主力資金主動進場，突破有效。策略結合突破幅度、量比、回踩不破等多維度驗證。
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">權重因子</div>
+      <div class="overview-table-wrap">
+        <table class="weight-table">
+          <thead><tr><th>Key</th><th>Label</th><th>Weight</th><th>視覺化</th><th>說明</th></tr></thead>
+          <tbody>
+            <tr><td class="key-col">breakout_pct</td><td class="label-col">突破幅度</td><td class="weight-col">0.30</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:60%"></div></div></td>
+              <td class="desc-col">突破壓力位的幅度百分比</td></tr>
+            <tr><td class="key-col">volume_ratio</td><td class="label-col">量比</td><td class="weight-col">0.30</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:60%"></div></div></td>
+              <td class="desc-col">當日成交量 / 前5日均量</td></tr>
+            <tr><td class="key-col">price_strength</td><td class="label-col">價格強度</td><td class="weight-col">0.20</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill medium" style="width:40%"></div></div></td>
+              <td class="desc-col">收盤價相對於日內高點的位置</td></tr>
+            <tr><td class="key-col">avg_turnover</td><td class="label-col">平均換手率</td><td class="weight-col">0.20</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill medium" style="width:40%"></div></div></td>
+              <td class="desc-col">近5日平均換手率水平</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">門檻參數</div>
+      <div class="threshold-grid">
+        <div class="threshold-item"><div class="t-key">min_score</div><div class="t-value">0.70</div><div class="t-note">最低觸發門檻</div></div>
+        <div class="threshold-item"><div class="t-key">breakout_pct_min</div><div class="t-value">2%</div><div class="t-note">突破幅度下限</div></div>
+        <div class="threshold-item"><div class="t-key">volume_ratio_min</div><div class="t-value">1.5</div><div class="t-note">量比下限</div></div>
+        <div class="threshold-item"><div class="t-key">lookback_days</div><div class="t-value">20</div><div class="t-note">回溯天數</div></div>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">大盤環境適應</div>
+      <div class="bearish-box">
+        <div class="bearish-label">&#9888; BEARISH 門檻調整</div>
+        <ul>
+          <li>門檻提升至 <mark class="key">0.80</mark></li>
+          <li>量比下限提升至 <mark class="key">2.0</mark>，要求更強的資金認可</li>
+          <li>增加條件：大盤當日需收紅</li>
+        </ul>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="signal-scene-wrap">
+        <div class="info-box"><div class="info-label">信號類型</div><div class="info-value"><span class="signal-tag signal-buy">BUY</span> 做多信號</div></div>
+        <div class="info-box"><div class="info-label">適用場景</div><div class="info-value">平台整理後突破、前高突破、頭肩底頸線突破</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== S3: 高開高走 ==================== -->
+  <div class="strategy-card momentum anchor-offset" id="s3">
+    <div class="card-header">
+      <span class="card-title">高開高走策略</span>
+      <span class="card-id">gap_up_momentum</span>
+      <span class="tag tag-MOMENTUM">MOMENTUM</span>
+    </div>
+    <div class="card-desc">
+      開盤價<mark class="key">跳空高開</mark>且盤中持續走高，收盤價接近全日最高價，形成強勢「高開高走」K線形態。
+      此策略捕捉由利好消息或資金搶籌推動的慣性行情，結合缺口幅度與盤中強度進行過濾。
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">權重因子</div>
+      <div class="overview-table-wrap">
+        <table class="weight-table">
+          <thead><tr><th>Key</th><th>Label</th><th>Weight</th><th>視覺化</th><th>說明</th></tr></thead>
+          <tbody>
+            <tr><td class="key-col">gap_pct</td><td class="label-col">跳空幅度</td><td class="weight-col">0.30</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:60%"></div></div></td>
+              <td class="desc-col">開盤價高於前日收盤價的百分比</td></tr>
+            <tr><td class="key-col">intraday_strength</td><td class="label-col">盤中強度</td><td class="weight-col">0.25</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:50%"></div></div></td>
+              <td class="desc-col">（收-開）/（高-開）衡量日內動能</td></tr>
+            <tr><td class="key-col">close_position</td><td class="label-col">收盤位置</td><td class="weight-col">0.25</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:50%"></div></div></td>
+              <td class="desc-col">收盤價在日內振幅中的相對位置（接近高點）</td></tr>
+            <tr><td class="key-col">volume_support</td><td class="label-col">量能支撐</td><td class="weight-col">0.20</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill medium" style="width:40%"></div></div></td>
+              <td class="desc-col">成交量是否配合放大</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">門檻參數</div>
+      <div class="threshold-grid">
+        <div class="threshold-item"><div class="t-key">min_score</div><div class="t-value">0.60</div><div class="t-note">最低觸發門檻</div></div>
+        <div class="threshold-item"><div class="t-key">gap_min</div><div class="t-value">1%</div><div class="t-note">最小跳空幅度</div></div>
+        <div class="threshold-item"><div class="t-key">close_pos_min</div><div class="t-value">0.80</div><div class="t-note">收盤位於振幅上方80%</div></div>
+        <div class="threshold-item"><div class="t-key">volume_ratio</div><div class="t-value">1.3</div><div class="t-note">量比下限</div></div>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">大盤環境適應</div>
+      <div class="bearish-box">
+        <div class="bearish-label">&#9888; BEARISH 門檻調整</div>
+        <ul>
+          <li>門檻提升至 <mark class="key">0.72</mark></li>
+          <li>跳空幅度下限提升至 <mark class="key">2%</mark></li>
+          <li>需額外確認：個股所屬板塊當日漲幅 &gt; 0</li>
+        </ul>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="signal-scene-wrap">
+        <div class="info-box"><div class="info-label">信號類型</div><div class="info-value"><span class="signal-tag signal-buy">BUY</span> 做多信號</div></div>
+        <div class="info-box"><div class="info-label">適用場景</div><div class="info-value">利好消息跳空、龍頭股二波啟動、板塊聯動帶動</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== S4: 換手率活躍 ==================== -->
+  <div class="strategy-card volume anchor-offset" id="s4">
+    <div class="card-header">
+      <span class="card-title">換手率活躍策略</span>
+      <span class="card-id">turnover_active</span>
+      <span class="tag tag-VOLUME">VOLUME</span>
+    </div>
+    <div class="card-desc">
+      <mark class="key">換手率</mark>是衡量市場活躍度的核心指標。本策略篩選換手率突然放大至常態水平數倍的個股，
+      代表資金密集交換，可能預示即將啟動行情。策略結合歷史換手率分位數與價格趨勢，避免追高被套。
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">權重因子</div>
+      <div class="overview-table-wrap">
+        <table class="weight-table">
+          <thead><tr><th>Key</th><th>Label</th><th>Weight</th><th>視覺化</th><th>說明</th></tr></thead>
+          <tbody>
+            <tr><td class="key-col">turnover_ratio</td><td class="label-col">換手率比</td><td class="weight-col">0.35</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:70%"></div></div></td>
+              <td class="desc-col">當日換手率 / 20日平均換手率</td></tr>
+            <tr><td class="key-col">price_change</td><td class="label-col">價格漲幅</td><td class="weight-col">0.25</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:50%"></div></div></td>
+              <td class="desc-col">當日漲幅（配合換手率判斷方向）</td></tr>
+            <tr><td class="key-col">turnover_percentile</td><td class="label-col">換手率分位</td><td class="weight-col">0.20</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill medium" style="width:40%"></div></div></td>
+              <td class="desc-col">在過去60日中的換手率分位數</td></tr>
+            <tr><td class="key-col">volatility</td><td class="label-col">波動率</td><td class="weight-col">0.20</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill medium" style="width:40%"></div></div></td>
+              <td class="desc-col">近期波動率是否適中（非極端）</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">門檻參數</div>
+      <div class="threshold-grid">
+        <div class="threshold-item"><div class="t-key">min_score</div><div class="t-value">0.55</div><div class="t-note">最低觸發門檻</div></div>
+        <div class="threshold-item"><div class="t-key">turnover_ratio_min</div><div class="t-value">2.0</div><div class="t-note">換手率放大倍數下限</div></div>
+        <div class="threshold-item"><div class="t-key">abs_turnover_min</div><div class="t-value">5%</div><div class="t-note">絕對換手率下限</div></div>
+        <div class="threshold-item"><div class="t-key">percentile_min</div><div class="t-value">80</div><div class="t-note">歷史分位數下限</div></div>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">大盤環境適應</div>
+      <div class="bearish-box">
+        <div class="bearish-label">&#9888; BEARISH 門檻調整</div>
+        <ul>
+          <li>門檻提升至 <mark class="key">0.65</mark></li>
+          <li>換手率比下限提升至 <mark class="key">3.0</mark></li>
+          <li>需過濾：股價未處於下降通道中</li>
+        </ul>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="signal-scene-wrap">
+        <div class="info-box"><div class="info-label">信號類型</div><div class="info-value"><span class="signal-tag signal-buy">BUY</span> 做多信號</div></div>
+        <div class="info-box"><div class="info-label">適用場景</div><div class="info-value">主力建倉階段、底部放量、籌碼交換完成</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== S5: 布林帶突破 ==================== -->
+  <div class="strategy-card trend anchor-offset" id="s5">
+    <div class="card-header">
+      <span class="card-title">布林帶突破策略</span>
+      <span class="card-id">bollinger_band</span>
+      <span class="tag tag-TREND">TREND</span>
+    </div>
+    <div class="card-desc">
+      <mark class="key">布林帶</mark>（Bollinger Bands）由中軌（MA20）與上下軌（2倍標準差）組成。
+      當價格突破上軌且帶有成交量配合時，代表波動率擴張、趨勢加速，為顺势追入信號。
+      同時監控帶寬收窄後的突破效果更佳（Squeeze Breakout）。
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">權重因子</div>
+      <div class="overview-table-wrap">
+        <table class="weight-table">
+          <thead><tr><th>Key</th><th>Label</th><th>Weight</th><th>視覺化</th><th>說明</th></tr></thead>
+          <tbody>
+            <tr><td class="key-col">break_upper</td><td class="label-col">突破上軌</td><td class="weight-col">0.30</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:60%"></div></div></td>
+              <td class="desc-col">收盤價突破布林上軌的幅度</td></tr>
+            <tr><td class="key-col">bandwidth_squeeze</td><td class="label-col">帶寬收窄</td><td class="weight-col">0.25</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:50%"></div></div></td>
+              <td class="desc-col">帶寬處於近20日最低附近（蓄勢突破）</td></tr>
+            <tr><td class="key-col">volume_surge</td><td class="label-col">量能衝擊</td><td class="weight-col">0.25</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:50%"></div></div></td>
+              <td class="desc-col">突破當日成交量放大程度</td></tr>
+            <tr><td class="key-col">trend_filter</td><td class="label-col">趨勢過濾</td><td class="weight-col">0.20</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill medium" style="width:40%"></div></div></td>
+              <td class="desc-col">中軌方向需向上，過濾逆勢信號</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">門檻參數</div>
+      <div class="threshold-grid">
+        <div class="threshold-item"><div class="t-key">min_score</div><div class="t-value">0.60</div><div class="t-note">最低觸發門檻</div></div>
+        <div class="threshold-item"><div class="t-key">bb_period</div><div class="t-value">20</div><div class="t-note">布林帶周期</div></div>
+        <div class="threshold-item"><div class="t-key">bb_std</div><div class="t-value">2.0</div><div class="t-note">標準差倍數</div></div>
+        <div class="threshold-item"><div class="t-key">squeeze_rank</div><div class="t-value">20%</div><div class="t-note">帶寬分位數下限</div></div>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">大盤環境適應</div>
+      <div class="bearish-box">
+        <div class="bearish-label">&#9888; BEARISH 門檻調整</div>
+        <ul>
+          <li>門檻提升至 <mark class="key">0.72</mark></li>
+          <li>趨勢過濾權重提升至 <mark class="key">0.30</mark>，嚴格要求中軌向上</li>
+          <li>增加條件：突破後第二日需確認站穩上軌</li>
+        </ul>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="signal-scene-wrap">
+        <div class="info-box"><div class="info-label">信號類型</div><div class="info-value"><span class="signal-tag signal-buy">BUY</span> 做多信號</div></div>
+        <div class="info-box"><div class="info-label">適用場景</div><div class="info-value">波動率收窄後突破、趨勢加速、價格脫離震盪區間</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== S6: RSI背離 ==================== -->
+  <div class="strategy-card momentum anchor-offset" id="s6">
+    <div class="card-header">
+      <span class="card-title">RSI背離策略</span>
+      <span class="card-id">rsi_divergence</span>
+      <span class="tag tag-MOMENTUM">MOMENTUM</span>
+    </div>
+    <div class="card-desc">
+      <mark class="key">RSI 背離</mark>（Divergence）是經典的反轉信號：價格創新高但 RSI 未創新高（頂背離），
+      或價格創新低但 RSI 未創新低（底背離）。本策略偵測底背離產生做多信號，頂背離產生做空/減倉信號。
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">權重因子</div>
+      <div class="overview-table-wrap">
+        <table class="weight-table">
+          <thead><tr><th>Key</th><th>Label</th><th>Weight</th><th>視覺化</th><th>說明</th></tr></thead>
+          <tbody>
+            <tr><td class="key-col">divergence_strength</td><td class="label-col">背離強度</td><td class="weight-col">0.35</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:70%"></div></div></td>
+              <td class="desc-col">價格與 RSI 背離的幅度差異</td></tr>
+            <tr><td class="key-col">rsi_level</td><td class="label-col">RSI 位置</td><td class="weight-col">0.25</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:50%"></div></div></td>
+              <td class="desc-col">RSI 所處的超買/超賣區域</td></tr>
+            <tr><td class="key-col">trend_context</td><td class="label-col">趨勢背景</td><td class="weight-col">0.20</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill medium" style="width:40%"></div></div></td>
+              <td class="desc-col">大級別趨勢方向與背離的一致性</td></tr>
+            <tr><td class="key-col">confirm_candle</td><td class="label-col">確認K線</td><td class="weight-col">0.20</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill medium" style="width:40%"></div></div></td>
+              <td class="desc-col">背離後出現的反轉確認K線</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">門檻參數</div>
+      <div class="threshold-grid">
+        <div class="threshold-item"><div class="t-key">min_score</div><div class="t-value">0.55</div><div class="t-note">最低觸發門檻</div></div>
+        <div class="threshold-item"><div class="t-key">rsi_period</div><div class="t-value">14</div><div class="t-note">RSI 計算周期</div></div>
+        <div class="threshold-item"><div class="t-key">oversold</div><div class="t-value">30</div><div class="t-note">超賣閾值</div></div>
+        <div class="threshold-item"><div class="t-key">overbought</div><div class="t-value">70</div><div class="t-note">超買閾值</div></div>
+        <div class="threshold-item"><div class="t-key">lookback</div><div class="t-value">30</div><div class="t-note">背離偵測回溯天數</div></div>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">大盤環境適應</div>
+      <div class="bearish-box">
+        <div class="bearish-label">&#9888; BEARISH 門檻調整</div>
+        <ul>
+          <li>底背離門檻不變（<mark class="key">0.55</mark>），為熊市中的低吸機會</li>
+          <li>頂背離信號在 BEARISH 中自動提升權重（<mark class="key">0.45</mark>），即減倉信號更靈敏</li>
+        </ul>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="signal-scene-wrap">
+        <div class="info-box"><div class="info-label">信號類型</div><div class="info-value"><span class="signal-tag signal-buy">BUY</span> 底背離做多 &nbsp;/&nbsp; <span class="signal-tag signal-sell">SELL</span> 頂背離減倉</div></div>
+        <div class="info-box"><div class="info-label">適用場景</div><div class="info-value">超跌反彈、頂部逃頂、趨勢衰竭反轉</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== S7: 基本面三層分級 ==================== -->
+  <div class="strategy-card value anchor-offset" id="s7">
+    <div class="card-header">
+      <span class="card-title">基本面三層分級篩選</span>
+      <span class="card-id">fundamental_filter</span>
+      <span class="tag tag-VALUE">VALUE</span>
+    </div>
+    <div class="card-desc">
+      採用<mark class="key">三層漏斗</mark>篩選架構：第一層排除 ST、上市不足1年、金融股等異常標的；第二層篩選
+      ROE &gt; 12%、淨利潤增長率 &gt; 15%、PE 在行業合理區間的優質公司；第三層根據綜合評分
+      （盈利能力、成長性、安全性、估值水平）排序選取。
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">權重因子</div>
+      <div class="overview-table-wrap">
+        <table class="weight-table">
+          <thead><tr><th>Key</th><th>Label</th><th>Weight</th><th>視覺化</th><th>說明</th></tr></thead>
+          <tbody>
+            <tr><td class="key-col">roe</td><td class="label-col">ROE</td><td class="weight-col">0.25</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:50%"></div></div></td>
+              <td class="desc-col">淨資產收益率 &gt; 12%</td></tr>
+            <tr><td class="key-col">profit_growth</td><td class="label-col">淨利增長</td><td class="weight-col">0.25</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:50%"></div></div></td>
+              <td class="desc-col">歸母淨利潤同比增長 &gt; 15%</td></tr>
+            <tr><td class="key-col">pe_ratio</td><td class="label-col">PE 合理</td><td class="weight-col">0.20</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill medium" style="width:40%"></div></div></td>
+              <td class="desc-col">PE 在行業歷史分位數 30%-70%</td></tr>
+            <tr><td class="key-col">debt_ratio</td><td class="label-col">資產負債率</td><td class="weight-col">0.15</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill low" style="width:30%"></div></div></td>
+              <td class="desc-col">低於行業平均，財務安全</td></tr>
+            <tr><td class="key-col">cash_flow</td><td class="label-col">經營現金流</td><td class="weight-col">0.15</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill low" style="width:30%"></div></div></td>
+              <td class="desc-col">經營現金流為正且穩定</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">門檻參數</div>
+      <div class="threshold-grid">
+        <div class="threshold-item"><div class="t-key">min_score</div><div class="t-value">0.50</div><div class="t-note">最低觸發門檻</div></div>
+        <div class="threshold-item"><div class="t-key">roe_min</div><div class="t-value">12%</div><div class="t-note">ROE 下限</div></div>
+        <div class="threshold-item"><div class="t-key">profit_growth_min</div><div class="t-value">15%</div><div class="t-note">淨利增長下限</div></div>
+        <div class="threshold-item"><div class="t-key">pe_percentile_range</div><div class="t-value">30-70</div><div class="t-note">PE 分位數範圍</div></div>
+        <div class="threshold-item"><div class="t-key">list_days_min</div><div class="t-value">250</div><div class="t-note">最低上市天數</div></div>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">大盤環境適應</div>
+      <div class="bearish-box">
+        <div class="bearish-label">&#9888; BEARISH 門檻調整</div>
+        <ul>
+          <li>門檻提升至 <mark class="key">0.60</mark>，嚴格篩選防禦性標的</li>
+          <li>資產負債率權重提升至 <mark class="key">0.25</mark>，優選低負債</li>
+          <li>增加條件：現金流/淨利潤比 &gt; 0.8（盈利質量高）</li>
+        </ul>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="signal-scene-wrap">
+        <div class="info-box"><div class="info-label">信號類型</div><div class="info-value"><span class="signal-tag signal-buy">BUY</span> 做多信號</div></div>
+        <div class="info-box"><div class="info-label">適用場景</div><div class="info-value">中長線價值投資、定期調倉、行業輪動配置</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== S8: 主力資金行為偵測 ==================== -->
+  <div class="strategy-card volume anchor-offset" id="s8">
+    <div class="card-header">
+      <span class="card-title">主力資金行為偵測</span>
+      <span class="card-id">smart_money_detection</span>
+      <span class="tag tag-VOLUME">VOLUME</span>
+    </div>
+    <div class="card-desc">
+      透過分析<mark class="key">大單買賣比例</mark>、主力資金淨流入、籌碼集中度變化及龍虎榜數據，
+      偵測機構/游資等主力資金的建倉、拉升、出貨行為。當主力持續流入且股價未大幅上漲時為低吸時機，
+      當主力大幅流出時為減倉信號。
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">權重因子</div>
+      <div class="overview-table-wrap">
+        <table class="weight-table">
+          <thead><tr><th>Key</th><th>Label</th><th>Weight</th><th>視覺化</th><th>說明</th></tr></thead>
+          <tbody>
+            <tr><td class="key-col">net_inflow</td><td class="label-col">主力淨流入</td><td class="weight-col">0.30</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:60%"></div></div></td>
+              <td class="desc-col">近3日主力資金淨流入佔成交額比例</td></tr>
+            <tr><td class="key-col">big_buy_ratio</td><td class="label-col">大單買入比</td><td class="weight-col">0.25</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:50%"></div></div></td>
+              <td class="desc-col">大單買入量 / 總成交量</td></tr>
+            <tr><td class="key-col">chip_concentration</td><td class="label-col">籌碼集中度</td><td class="weight-col">0.25</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:50%"></div></div></td>
+              <td class="desc-col">籌碼向高價位集中趨勢</td></tr>
+            <tr><td class="key-col">price_volume_diverge</td><td class="label-col">量價背離</td><td class="weight-col">0.20</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill medium" style="width:40%"></div></div></td>
+              <td class="desc-col">價漲量增 / 價跌量縮的健康程度</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">門檻參數</div>
+      <div class="threshold-grid">
+        <div class="threshold-item"><div class="t-key">min_score</div><div class="t-value">0.60</div><div class="t-note">最低觸發門檻</div></div>
+        <div class="threshold-item"><div class="t-key">net_inflow_days</div><div class="t-value">3</div><div class="t-note">連續流入天數</div></div>
+        <div class="threshold-item"><div class="t-key">big_order_threshold</div><div class="t-value">100萬</div><div class="t-note">大單門檻金額</div></div>
+        <div class="threshold-item"><div class="t-key">chip_shift_pct</div><div class="t-value">5%</div><div class="t-note">籌碼集中度變化下限</div></div>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">大盤環境適應</div>
+      <div class="bearish-box">
+        <div class="bearish-label">&#9888; BEARISH 門檻調整</div>
+        <ul>
+          <li>做多信號門檻提升至 <mark class="key">0.75</mark></li>
+          <li>做空/減倉信號門檻降低至 <mark class="key">0.45</mark>（更靈敏的風控）</li>
+          <li>增加條件：需確認龍虎榜機構淨買入</li>
+        </ul>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="signal-scene-wrap">
+        <div class="info-box"><div class="info-label">信號類型</div><div class="info-value"><span class="signal-tag signal-buy">BUY</span> 主力建倉 &nbsp;/&nbsp; <span class="signal-tag signal-sell">SELL</span> 主力出貨</div></div>
+        <div class="info-box"><div class="info-label">適用場景</div><div class="info-value">主力吸籌低吸、跟莊操作、出貨提前預警</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== S9: 低估值 ==================== -->
+  <div class="strategy-card value anchor-offset" id="s9">
+    <div class="card-header">
+      <span class="card-title">低估值策略</span>
+      <span class="card-id">low_valuation</span>
+      <span class="tag tag-VALUE">VALUE</span>
+    </div>
+    <div class="card-desc">
+      基於<mark class="key">絕對估值</mark>和<mark class="key">相對估值</mark>雙維度，篩選被市場低估的優質標的。
+      絕對估值採用 PE、PB、PS、股息率等指標的歷史分位數；相對估值與同行業對比。
+      結合成長性（避免價值陷阱）和財務健康度，選取性價比最高的標的。
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">權重因子</div>
+      <div class="overview-table-wrap">
+        <table class="weight-table">
+          <thead><tr><th>Key</th><th>Label</th><th>Weight</th><th>視覺化</th><th>說明</th></tr></thead>
+          <tbody>
+            <tr><td class="key-col">pe_percentile</td><td class="label-col">PE 分位數</td><td class="weight-col">0.25</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:50%"></div></div></td>
+              <td class="desc-col">PE 處於歷史分位數越低越好</td></tr>
+            <tr><td class="key-col">pb_percentile</td><td class="label-col">PB 分位數</td><td class="weight-col">0.20</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill medium" style="width:40%"></div></div></td>
+              <td class="desc-col">PB 歷史分位數</td></tr>
+            <tr><td class="key-col">dividend_yield</td><td class="label-col">股息率</td><td class="weight-col">0.15</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill low" style="width:30%"></div></div></td>
+              <td class="desc-col">股息率 &gt; 3% 加分</td></tr>
+            <tr><td class="key-col">growth_stability</td><td class="label-col">成長穩定性</td><td class="weight-col">0.20</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill medium" style="width:40%"></div></div></td>
+              <td class="desc-col">近3年營收與淨利增長的穩定性</td></tr>
+            <tr><td class="key-col">financial_health</td><td class="label-col">財務健康</td><td class="weight-col">0.20</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill medium" style="width:40%"></div></div></td>
+              <td class="desc-col">Altman Z-Score 或類似財務安全指標</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">門檻參數</div>
+      <div class="threshold-grid">
+        <div class="threshold-item"><div class="t-key">min_score</div><div class="t-value">0.50</div><div class="t-note">最低觸發門檻</div></div>
+        <div class="threshold-item"><div class="t-key">pe_percentile_max</div><div class="t-value">30</div><div class="t-note">PE 分位數上限</div></div>
+        <div class="threshold-item"><div class="t-key">pb_percentile_max</div><div class="t-value">30</div><div class="t-note">PB 分位數上限</div></div>
+        <div class="threshold-item"><div class="t-key">dividend_yield_min</div><div class="t-value">2%</div><div class="t-note">股息率下限（加分項）</div></div>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">大盤環境適應</div>
+      <div class="bearish-box">
+        <div class="bearish-label">&#9888; BEARISH 門檻調整</div>
+        <ul>
+          <li>門檻提升至 <mark class="key">0.60</mark>，嚴格避開價值陷阱</li>
+          <li>財務健康權重提升至 <mark class="key">0.30</mark></li>
+          <li>增加條件：營收增長 &gt; 0（排除衰退型低估）</li>
+        </ul>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="signal-scene-wrap">
+        <div class="info-box"><div class="info-label">信號類型</div><div class="info-value"><span class="signal-tag signal-buy">BUY</span> 做多信號</div></div>
+        <div class="info-box"><div class="info-label">適用場景</div><div class="info-value">極端恐慌殺跌後、中長線佈局、防禦型配置</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== S10: 超短線尾盤低吸 ==================== -->
+  <div class="strategy-card custom anchor-offset" id="s10">
+    <div class="card-header">
+      <span class="card-title">超短線尾盤低吸</span>
+      <span class="card-id">tail_low_pick</span>
+      <span class="tag tag-CUSTOM">CUSTOM</span>
+    </div>
+    <div class="card-desc">
+      在交易日<mark class="key">尾盤 14:30-15:00</mark>區間，篩選當日回調但技術形態未破的個股，
+      以較低價格建倉，博取次日反彈。策略核心是「<mark class="key">日內回調不改趨勢</mark>」，
+      結合支撐位、分時圖量能及籌碼分布進行精確時機選擇。
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">權重因子</div>
+      <div class="overview-table-wrap">
+        <table class="weight-table">
+          <thead><tr><th>Key</th><th>Label</th><th>Weight</th><th>視覺化</th><th>說明</th></tr></thead>
+          <tbody>
+            <tr><td class="key-col">pullback_pct</td><td class="label-col">回調幅度</td><td class="weight-col">0.25</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:50%"></div></div></td>
+              <td class="desc-col">日內從最高點回調的幅度（3%-7%最佳）</td></tr>
+            <tr><td class="key-col">support_hold</td><td class="label-col">支撐保持</td><td class="weight-col">0.25</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:50%"></div></div></td>
+              <td class="desc-col">回調未跌破關鍵支撐位（MA5/MA10）</td></tr>
+            <tr><td class="key-col">volume_dry</td><td class="label-col">尾盤縮量</td><td class="weight-col">0.20</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill medium" style="width:40%"></div></div></td>
+              <td class="desc-col">尾盤成交量相對盤中萎縮</td></tr>
+            <tr><td class="key-col">trend_intact</td><td class="label-col">趨勢完整</td><td class="weight-col">0.30</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:60%"></div></div></td>
+              <td class="desc-col">5日均線方向向上且未破</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">門檻參數</div>
+      <div class="threshold-grid">
+        <div class="threshold-item"><div class="t-key">min_score</div><div class="t-value">0.65</div><div class="t-note">最低觸發門檻</div></div>
+        <div class="threshold-item"><div class="t-key">pullback_range</div><div class="t-value">3-7%</div><div class="t-note">最佳回調幅度區間</div></div>
+        <div class="threshold-item"><div class="t-key">execution_window</div><div class="t-value">14:30-15:00</div><div class="t-note">執行時間窗口</div></div>
+        <div class="threshold-item"><div class="t-key">hold_period</div><div class="t-value">1-3日</div><div class="t-note">預計持有期限</div></div>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">大盤環境適應</div>
+      <div class="bearish-box">
+        <div class="bearish-label">&#9888; BEARISH 門檻調整</div>
+        <ul>
+          <li>門檻提升至 <mark class="key">0.78</mark>（熊市尾盤風險大）</li>
+          <li>趨勢完整權重提升至 <mark class="key">0.40</mark></li>
+          <li>增加條件：大盤尾盤未出現恐慌性拋售</li>
+        </ul>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="signal-scene-wrap">
+        <div class="info-box"><div class="info-label">信號類型</div><div class="info-value"><span class="signal-tag signal-buy">BUY</span> 尾盤建倉信號</div></div>
+        <div class="info-box"><div class="info-label">適用場景</div><div class="info-value">T+0/T+1 超短線、日內回調博反彈、尾盤搶籌</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== S11: 早盤追漲 ==================== -->
+  <div class="strategy-card momentum anchor-offset" id="s11">
+    <div class="card-header">
+      <span class="card-title">早盤追漲選股</span>
+      <span class="card-id">early_morning_chase</span>
+      <span class="tag tag-MOMENTUM">MOMENTUM</span>
+    </div>
+    <div class="card-desc">
+      在<mark class="key">開盤 9:30-10:00</mark>的黃金半小時，篩選快速拉升、量價配合、有板塊聯動效應的個股，
+      進行顺势追入。策略結合集合競價數據、開盤5分鐘量能、漲速等即時指標，
+      捕捉由資金集中攻擊推動的慣性行情。
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">權重因子</div>
+      <div class="overview-table-wrap">
+        <table class="weight-table">
+          <thead><tr><th>Key</th><th>Label</th><th>Weight</th><th>視覺化</th><th>說明</th></tr></thead>
+          <tbody>
+            <tr><td class="key-col">rush_speed</td><td class="label-col">拉升速度</td><td class="weight-col">0.30</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:60%"></div></div></td>
+              <td class="desc-col">開盤前15分鐘的漲幅速度</td></tr>
+            <tr><td class="key-col">auction_volume</td><td class="label-col">競價量能</td><td class="weight-col">0.25</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:50%"></div></div></td>
+              <td class="desc-col">集合競價成交量高於常態</td></tr>
+            <tr><td class="key-col">sector_sync</td><td class="label-col">板塊聯動</td><td class="weight-col">0.25</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:50%"></div></div></td>
+              <td class="desc-col">同板塊多股同步拉升的聯動效應</td></tr>
+            <tr><td class="key-col">price_level</td><td class="label-col">價位位置</td><td class="weight-col">0.20</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill medium" style="width:40%"></div></div></td>
+              <td class="desc-col">非近期新高點（避免追頂），距前高有空間</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">門檻參數</div>
+      <div class="threshold-grid">
+        <div class="threshold-item"><div class="t-key">min_score</div><div class="t-value">0.70</div><div class="t-note">最低觸發門檻</div></div>
+        <div class="threshold-item"><div class="t-key">execution_window</div><div class="t-value">9:30-10:00</div><div class="t-note">執行時間窗口</div></div>
+        <div class="threshold-item"><div class="t-key">rush_pct_min</div><div class="t-value">2%</div><div class="t-note">15分鐘內最低漲幅</div></div>
+        <div class="threshold-item"><div class="t-key">sector_min_stocks</div><div class="t-value">3</div><div class="t-note">板塊內同步拉升最少家數</div></div>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">大盤環境適應</div>
+      <div class="bearish-box">
+        <div class="bearish-label">&#9888; BEARISH 門檻調整</div>
+        <ul>
+          <li>門檻提升至 <mark class="key">0.82</mark>（熊市追漲極危險）</li>
+          <li>板塊聯動權重提升至 <mark class="key">0.35</mark>（要求更強的板塊共識）</li>
+          <li>增加條件：大盤早盤需站穩昨收</li>
+        </ul>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="signal-scene-wrap">
+        <div class="info-box"><div class="info-label">信號類型</div><div class="info-value"><span class="signal-tag signal-buy">BUY</span> 早盤追入信號</div></div>
+        <div class="info-box"><div class="info-label">適用場景</div><div class="info-value">強勢市場龍頭接力、板塊輪動、政策利好追漲</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== S12: AI量化選股 ==================== -->
+  <div class="strategy-card custom anchor-offset" id="s12">
+    <div class="card-header">
+      <span class="card-title">AI量化選股</span>
+      <span class="card-id">ai_prediction</span>
+      <span class="tag tag-CUSTOM">CUSTOM</span>
+    </div>
+    <div class="card-desc">
+      利用<mark class="key">機器學習模型</mark>（如 XGBoost、LightGBM）整合多維度特徵（技術面、基本面、資金面、情緒面），
+      輸出個股未來 N 日上漲概率預測。模型定期以最新數據重訓練，保持預測有效性。
+      結合置信度和預期收益進行綜合排序，生成最終推薦列表。
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">權重因子</div>
+      <div class="overview-table-wrap">
+        <table class="weight-table">
+          <thead><tr><th>Key</th><th>Label</th><th>Weight</th><th>視覺化</th><th>說明</th></tr></thead>
+          <tbody>
+            <tr><td class="key-col">prediction_prob</td><td class="label-col">預測概率</td><td class="weight-col">0.35</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:70%"></div></div></td>
+              <td class="desc-col">模型輸出的上漲概率 &gt; 0.6</td></tr>
+            <tr><td class="key-col">expected_return</td><td class="label-col">預期收益</td><td class="weight-col">0.25</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill high" style="width:50%"></div></div></td>
+              <td class="desc-col">模型預測的期望收益率</td></tr>
+            <tr><td class="key-col">model_confidence</td><td class="label-col">模型置信度</td><td class="weight-col">0.20</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill medium" style="width:40%"></div></div></td>
+              <td class="desc-col">模型預測的信心水準（基於特徵覆蓋度）</td></tr>
+            <tr><td class="key-col">feature_importance</td><td class="label-col">特徵權重</td><td class="weight-col">0.20</td>
+              <td class="bar-cell"><div class="bar-track"><div class="bar-fill medium" style="width:40%"></div></div></td>
+              <td class="desc-col">主要驅動特徵是否為有效信號</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">門檻參數</div>
+      <div class="threshold-grid">
+        <div class="threshold-item"><div class="t-key">min_score</div><div class="t-value">0.60</div><div class="t-note">最低觸發門檻</div></div>
+        <div class="threshold-item"><div class="t-key">prediction_prob_min</div><div class="t-value">0.60</div><div class="t-note">最低上漲概率</div></div>
+        <div class="threshold-item"><div class="t-key">model_version</div><div class="t-value">latest</div><div class="t-note">使用最新訓練版本</div></div>
+        <div class="threshold-item"><div class="t-key">retrain_cycle</div><div class="t-value">weekly</div><div class="t-note">模型重訓練周期</div></div>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">大盤環境適應</div>
+      <div class="bearish-box">
+        <div class="bearish-label">&#9888; BEARISH 門檻調整</div>
+        <ul>
+          <li>門檻提升至 <mark class="key">0.72</mark></li>
+          <li>預測概率下限提升至 <mark class="key">0.70</mark></li>
+          <li>增加條件：模型需在類似市場環境中驗證過效果</li>
+        </ul>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="signal-scene-wrap">
+        <div class="info-box"><div class="info-label">信號類型</div><div class="info-value"><span class="signal-tag signal-buy">BUY</span> AI 推薦買入</div></div>
+        <div class="info-box"><div class="info-label">適用場景</div><div class="info-value">多因子融合選股、量化增強、Alpha 挖掘</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!--  量化交易系統                                                  -->
+<!-- ============================================================ -->
+<div class="container quant-section" id="quant-system">
+  <h2 class="section-title"><span class="icon">&#9889;</span> 量化交易系統 &mdash; Quant Trading Engine</h2>
+
+  <!-- ShortTermQuant -->
+  <div class="quant-card">
+    <h3>短線量化引擎 <span class="q-badge short">ShortTermQuant</span></h3>
+    <div class="sub-block">
+      <div class="sub-title">執行流程</div>
+      <div class="flow-steps">
+        <div class="flow-step">策略信號觸發</div>
+        <span class="flow-arrow">&rarr;</span>
+        <div class="flow-step">風控過濾</div>
+        <span class="flow-arrow">&rarr;</span>
+        <div class="flow-step">倉位計算</div>
+        <span class="flow-arrow">&rarr;</span>
+        <div class="flow-step">下單執行</div>
+        <span class="flow-arrow">&rarr;</span>
+        <div class="flow-step">持倉監控</div>
+        <span class="flow-arrow">&rarr;</span>
+        <div class="flow-step">止盈/止損觸發</div>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">建倉邏輯</div>
+      <div class="card-desc">
+        <ul style="list-style:none;padding:0;">
+          <li style="padding:4px 0;color:#AABBCC;">- 單票最大倉位：<mark class="key">20%</mark> 總資金</li>
+          <li style="padding:4px 0;color:#AABBCC;">- 同時持有上限：<mark class="key">5</mark> 只個股</li>
+          <li style="padding:4px 0;color:#AABBCC;">- 建倉方式：分批建倉（首倉 50%，確認後加倉 50%）</li>
+          <li style="padding:4px 0;color:#AABBCC;">- 優先級排序：策略評分 &times; 信號強度 &times; 流動性加權</li>
+        </ul>
+      </div>
+    </div>
+    <div class="trade-rules">
+      <div class="trade-rule-box take-profit">
+        <div class="rule-title">&#10003; 止盈規則</div>
+        <ul>
+          <li>固定止盈：<mark class="key">+8%</mark> 分批止盈（50% @ +5%，50% @ +8%）</li>
+          <li>移動止盈：盈利 &gt; 3% 後，止盈線跟隨至成本價</li>
+          <li>時間止盈：持有超過 3 個交易日且盈利 &gt; 2%，平倉</li>
+        </ul>
+      </div>
+      <div class="trade-rule-box stop-loss">
+        <div class="rule-title">&#10007; 止損規則</div>
+        <ul>
+          <li>固定止損：<mark class="key">-3%</mark> 無條件平倉</li>
+          <li>時間止損：持有超過 5 個交易日未達止盈，平倉</li>
+          <li>黑天鵝：單日跌超 <mark class="key">-5%</mark> 或大盤跌超 <mark class="key">-3%</mark>，全部平倉</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- MidTermQuant -->
+  <div class="quant-card">
+    <h3>中線量化引擎 <span class="q-badge mid">MidTermQuant</span></h3>
+    <div class="sub-block">
+      <div class="sub-title">執行流程</div>
+      <div class="flow-steps">
+        <div class="flow-step">基本面篩選</div>
+        <span class="flow-arrow">&rarr;</span>
+        <div class="flow-step">技術面確認</div>
+        <span class="flow-arrow">&rarr;</span>
+        <div class="flow-step">大盤環境評估</div>
+        <span class="flow-arrow">&rarr;</span>
+        <div class="flow-step">倉位配置</div>
+        <span class="flow-arrow">&rarr;</span>
+        <div class="flow-step">分批建倉</div>
+        <span class="flow-arrow">&rarr;</span>
+        <div class="flow-step">動態再平衡</div>
+      </div>
+    </div>
+    <div class="sub-block">
+      <div class="sub-title">建倉邏輯</div>
+      <div class="card-desc">
+        <ul style="list-style:none;padding:0;">
+          <li style="padding:4px 0;color:#AABBCC;">- 單票最大倉位：<mark class="key">15%</mark> 總資金</li>
+          <li style="padding:4px 0;color:#AABBCC;">- 同時持有上限：<mark class="key">8</mark> 只個股</li>
+          <li style="padding:4px 0;color:#AABBCC;">- 建倉方式：三批建倉（30% / 30% / 40%），間隔 2-3 個交易日</li>
+          <li style="padding:4px 0;color:#AABBCC;">- 持有期限：<mark class="key">2-8 週</mark>，根據趨勢動態調整</li>
+        </ul>
+      </div>
+    </div>
+    <div class="trade-rules">
+      <div class="trade-rule-box take-profit">
+        <div class="rule-title">&#10003; 止盈規則</div>
+        <ul>
+          <li>分批止盈：<mark class="key">+15%</mark> 減半倉，<mark class="key">+25%</mark> 再減半</li>
+          <li>移動止盈：盈利 &gt; 10% 後，止盈線跟隨至 +5% 位置</li>
+          <li>趨勢止盈：核心趨勢破壞（MA20 下穿 MA60）時全部平倉</li>
+        </ul>
+      </div>
+      <div class="trade-rule-box stop-loss">
+        <div class="rule-title">&#10007; 止損規則</div>
+        <ul>
+          <li>固定止損：<mark class="key">-8%</mark> 無條件平倉</li>
+          <li>時間止損：持有超過 8 週未達預期，逐步減倉</li>
+          <li>邏輯止損：買入邏輯失效（如基本面惡化）提前平倉</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!--  V2.0 全周期投研系統                                            -->
+<!-- ============================================================ -->
+<div class="container v2-section" id="v2-system">
+  <h2 class="section-title"><span class="icon">&#128640;</span> V2.0 全周期投研系統</h2>
+
+  <!-- 架構圖 -->
+  <div class="arch-svg-wrap">
+    <svg viewBox="0 0 900 420" xmlns="http://www.w3.org/2000/svg" font-family="'Noto Sans SC', sans-serif">
+      <!-- 背景 -->
+      <rect width="900" height="420" fill="#0F1419" rx="8"/>
+
+      <!-- 標題 -->
+      <text x="450" y="35" fill="#7C4DFF" font-size="16" font-weight="700" text-anchor="middle">V2.0 全周期投研系統架構</text>
+
+      <!-- 數據層 -->
+      <rect x="50" y="60" width="180" height="50" rx="8" fill="#1A2332" stroke="#2A3A4A" stroke-width="1"/>
+      <text x="140" y="90" fill="#00BCD4" font-size="12" font-weight="600" text-anchor="middle">MarketAnalyzer</text>
+      <text x="140" y="78" fill="#667788" font-size="9" text-anchor="middle">市場環境分析</text>
+
+      <rect x="360" y="60" width="180" height="50" rx="8" fill="#1A2332" stroke="#2A3A4A" stroke-width="1"/>
+      <text x="450" y="90" fill="#00BCD4" font-size="12" font-weight="600" text-anchor="middle">ProfitQualityAnalyzer</text>
+      <text x="450" y="78" fill="#667788" font-size="9" text-anchor="middle">利潤質量分析</text>
+
+      <rect x="670" y="60" width="180" height="50" rx="8" fill="#1A2332" stroke="#2A3A4A" stroke-width="1"/>
+      <text x="760" y="90" fill="#00BCD4" font-size="12" font-weight="600" text-anchor="middle">PositionWaterValve</text>
+      <text x="760" y="78" fill="#667788" font-size="9" text-anchor="middle">持倉水位閥門</text>
+
+      <!-- 連線到決策矩陣 -->
+      <line x1="140" y1="110" x2="140" y2="160" stroke="#7C4DFF44" stroke-width="2"/>
+      <line x1="140" y1="160" x2="450" y2="160" stroke="#7C4DFF44" stroke-width="2"/>
+      <line x1="450" y1="110" x2="450" y2="160" stroke="#7C4DFF44" stroke-width="2"/>
+      <line x1="760" y1="110" x2="760" y2="160" stroke="#7C4DFF44" stroke-width="2"/>
+      <line x1="760" y1="160" x2="450" y2="160" stroke="#7C4DFF44" stroke-width="2"/>
+      <line x1="450" y1="160" x2="450" y2="190" stroke="#7C4DFF88" stroke-width="2"/>
+
+      <!-- 決策矩陣 -->
+      <rect x="280" y="190" width="340" height="60" rx="12" fill="#7C4DFF22" stroke="#7C4DFF" stroke-width="2"/>
+      <text x="450" y="218" fill="#FFFFFF" font-size="14" font-weight="700" text-anchor="middle">V2DecisionMatrix</text>
+      <text x="450" y="238" fill="#AABBCC" font-size="10" text-anchor="middle">多維度決策引擎：環境 &times; 利潤質量 &times; 水位</text>
+
+      <!-- 輸出 -->
+      <line x1="350" y1="250" x2="200" y2="300" stroke="#00E67644" stroke-width="2"/>
+      <line x1="450" y1="250" x2="450" y2="300" stroke="#FFD60044" stroke-width="2"/>
+      <line x1="550" y1="250" x2="700" y2="300" stroke="#FF525244" stroke-width="2"/>
+
+      <!-- 輸出節點 -->
+      <rect x="100" y="300" width="200" height="45" rx="8" fill="#00E67615" stroke="#00E67655" stroke-width="1"/>
+      <text x="200" y="322" fill="#00E676" font-size="12" font-weight="600" text-anchor="middle">AGGRESSIVE</text>
+      <text x="200" y="338" fill="#667788" font-size="9" text-anchor="middle">積極建倉 / 加倉</text>
+
+      <rect x="350" y="300" width="200" height="45" rx="8" fill="#FFD60015" stroke="#FFD60055" stroke-width="1"/>
+      <text x="450" y="322" fill="#FFD600" font-size="12" font-weight="600" text-anchor="middle">HOLD / REDUCE</text>
+      <text x="450" y="338" fill="#667788" font-size="9" text-anchor="middle">持有觀望 / 減倉</text>
+
+      <rect x="600" y="300" width="200" height="45" rx="8" fill="#FF525215" stroke="#FF525255" stroke-width="1"/>
+      <text x="700" y="322" fill="#FF5252" font-size="12" font-weight="600" text-anchor="middle">DEFENSIVE</text>
+      <text x="700" y="338" fill="#667788" font-size="9" text-anchor="middle">防禦持倉 / 空倉</text>
+
+      <!-- V1 Pipeline 對比箭頭 -->
+      <rect x="200" y="380" width="500" height="30" rx="6" fill="#141E2B" stroke="#2A3A4A" stroke-width="1"/>
+      <text x="450" y="400" fill="#667788" font-size="10" text-anchor="middle">V1.0 Pipeline: 策略信號 &rarr; 門檻過濾 &rarr; 風控 &rarr; 執行  |  V2.0: 市場分析 &rarr; 利潤質量 &rarr; 水位控制 &rarr; 決策矩陣 &rarr; 執行</text>
+    </svg>
+  </div>
+
+  <!-- 組件說明 -->
+  <div class="component-grid">
+    <div class="component-card">
+      <h4>市場環境分析器</h4>
+      <div class="cc-class">MarketAnalyzer</div>
+      <p>實時評估大盤環境狀態（BULLISH / NEUTRAL / BEARISH），綜合考量大盤均線排列、成交量趨勢、市場情緒指標、板塊漲跌比等因素，為下游決策提供市場背景上下文。</p>
+    </div>
+    <div class="component-card">
+      <h4>利潤質量分析器</h4>
+      <div class="cc-class">ProfitQualityAnalyzer</div>
+      <p>對已持有倉位的利潤進行質量分級（A+ / A / B+ / B / C），分析利潤來源（基本面驅動 vs 投機推動）、利潤穩定性及可持續性，指導止盈策略選擇。</p>
+    </div>
+    <div class="component-card">
+      <h4>持倉水位閥門</h4>
+      <div class="cc-class">PositionWaterValve</div>
+      <p>動態管理總持倉水位，根據市場環境和利潤質量調整持倉比例上限。牛市高水位（80%）、中性中水位（50%）、熊市低水位（20%），並根據風險事件觸發緊急排水。</p>
+    </div>
+    <div class="component-card">
+      <h4>V2 決策矩陣</h4>
+      <div class="cc-class">V2DecisionMatrix</div>
+      <p>綜合市場環境、利潤質量、持倉水位三個維度的輸入，透過預定義的決策規則矩陣，輸出最終操作建議（AGGRESSIVE / HOLD / REDUCE / DEFENSIVE），驅動交易執行引擎。</p>
+    </div>
+  </div>
+
+  <!-- 決策矩陣規則 -->
+  <div class="sub-block" style="margin-top:2rem;">
+    <div class="sub-title">決策矩陣規則</div>
+    <div class="overview-table-wrap">
+      <table class="dm-table">
+        <thead>
+          <tr>
+            <th>市場環境</th>
+            <th>利潤質量</th>
+            <th>持倉水位</th>
+            <th>操作建議</th>
+            <th>建倉比例</th>
+            <th>風控等級</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><span class="tag tag-TREND" style="font-size:.7rem">BULLISH</span></td><td>A+ / A</td><td>&lt; 60%</td><td style="color:#00E676;font-weight:600">AGGRESSIVE</td><td>70-80%</td><td style="color:#00E676">LOW</td></tr>
+          <tr><td><span class="tag tag-TREND" style="font-size:.7rem">BULLISH</span></td><td>B+ / B</td><td>&lt; 70%</td><td style="color:#00E676;font-weight:600">AGGRESSIVE</td><td>50-60%</td><td style="color:#FFD600">MEDIUM</td></tr>
+          <tr><td><span class="tag tag-MOMENTUM" style="font-size:.7rem">NEUTRAL</span></td><td>A+ / A</td><td>&lt; 50%</td><td style="color:#FFD600;font-weight:600">HOLD</td><td>40-50%</td><td style="color:#FFD600">MEDIUM</td></tr>
+          <tr><td><span class="tag tag-MOMENTUM" style="font-size:.7rem">NEUTRAL</span></td><td>B+ / B / C</td><td>&gt; 50%</td><td style="color:#FF9800;font-weight:600">REDUCE</td><td>20-30%</td><td style="color:#FF9800">HIGH</td></tr>
+          <tr><td><span class="tag tag-VALUE" style="font-size:.7rem">BEARISH</span></td><td>A+ / A</td><td>&gt; 40%</td><td style="color:#FF9800;font-weight:600">REDUCE</td><td>20-30%</td><td style="color:#FF9800">HIGH</td></tr>
+          <tr><td><span class="tag tag-VALUE" style="font-size:.7rem">BEARISH</span></td><td>B / C</td><td>ANY</td><td style="color:#FF5252;font-weight:600">DEFENSIVE</td><td>0-10%</td><td style="color:#FF5252">CRITICAL</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 利潤質量分級 -->
+  <div class="sub-block" style="margin-top:2rem;">
+    <div class="sub-title">利潤質量分級</div>
+    <div class="pq-grid">
+      <div class="pq-card a-plus">
+        <div class="pq-grade">A+</div>
+        <div class="pq-label">卓越利潤</div>
+        <div class="pq-desc">基本面驅動，利潤來自業績增長，高確定性、可持續。止盈空間大。</div>
+      </div>
+      <div class="pq-card a">
+        <div class="pq-grade">A</div>
+        <div class="pq-label">優質利潤</div>
+        <div class="pq-desc">趨勢驅動配合基本面支撐，利潤穩定可預期。可適度持有。</div>
+      </div>
+      <div class="pq-card b-plus">
+        <div class="pq-grade">B+</div>
+        <div class="pq-label">良好利潤</div>
+        <div class="pq-desc">技術面驅動為主，有一定支撐但需警惕趨勢變化。適度獲利了結。</div>
+      </div>
+      <div class="pq-card b">
+        <div class="pq-grade">B</div>
+        <div class="pq-label">一般利潤</div>
+        <div class="pq-desc">短期資金推動，缺乏基本面支撐，脆弱性高。建議減倉鎖利。</div>
+      </div>
+      <div class="pq-card c">
+        <div class="pq-grade">C</div>
+        <div class="pq-label">低質利潤</div>
+        <div class="pq-desc">純投機性利潤，隨時可能回吐。強烈建議立即平倉。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- V1 vs V2 對比 -->
+  <div class="sub-block" style="margin-top:2rem;">
+    <div class="sub-title">V1.0 vs V2.0 對比</div>
+    <div class="overview-table-wrap">
+      <table class="compare-table">
+        <thead>
+          <tr>
+            <th style="text-align:left !important">維度</th>
+            <th>V1.0 Pipeline</th>
+            <th>V2.0 Full-Cycle</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>決策模式</td><td>線性流水線</td><td>多維度矩陣</td></tr>
+          <tr><td>市場感知</td><td>靜態門檻調整</td><td>實時環境分析（MarketAnalyzer）</td></tr>
+          <tr><td>持倉管理</td><td>固定持倉上限</td><td>動態水位控制（PositionWaterValve）</td></tr>
+          <tr><td>止盈策略</td><td>統一止盈規則</td><td>利潤質量分級止盈（ProfitQualityAnalyzer）</td></tr>
+          <tr><td>風控粒度</td><td>單票級風控</td><td>組合級 + 市場級風控</td></tr>
+          <tr><td>環境適應</td><td>BULLISH / BEARISH 二元</td><td>BULLISH / NEUTRAL / BEARISH 三級</td></tr>
+          <tr><td>決策輸出</td><td>BUY / SELL</td><td>AGGRESSIVE / HOLD / REDUCE / DEFENSIVE</td></tr>
+          <tr><td>適用周期</td><td>單一周期</td><td>全周期（短線 + 中線 + 長線）</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!--  頁腳                                                         -->
+<!-- ============================================================ -->
+<footer class="footer">
+  <p>StockAnalysis 策略系統文檔 &mdash; Generated 2026-07-09</p>
+  <p style="margin-top:0.5rem">本文檔僅供內部參考，不構成投資建議。策略參數可能隨市場環境調整。</p>
+</footer>
+
+</body>
+</html>

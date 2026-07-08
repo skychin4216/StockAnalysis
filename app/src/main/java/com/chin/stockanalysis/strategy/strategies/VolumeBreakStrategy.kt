@@ -49,16 +49,26 @@ class VolumeBreakStrategy(
         } catch (e: Exception) { Result.failure(e) }
     }
 
-    private fun screenWithPool(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
+    private suspend fun screenWithPool(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
         if (pool.isEmpty()) return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,
             signals = emptyList(), totalScanned = 0, scanTimeMs = System.currentTimeMillis() - startTime
         ))
-        val step1 = pool.filter { it.changePercent >= 2.0 && it.price > it.open && it.amount > 10_000_000 }
-        Log.i("VB_Strategy", "pool=${pool.size} → 过滤(chg>=2% & price>open & amt>10M)=${step1.size}")
+
+        // 大盤環境預檢：BEARISH 時提高放量突破門檻，避免在下跌趨勢中追突破
+        val marketDirection = try { screener.detectMarketDirection() } catch (_: Exception) { "OSCILLATION" }
+
+        val isBearish = marketDirection == "BEARISH"
+        // BEARISH 時提高漲幅門檻（+1%）與最低分數門檻（+15分）
+        val dynamicChangeMin = if (isBearish) 3.0 else 2.0
+        val dynamicStrengthThreshold = if (isBearish) 45 else 30
+        Log.i(id, "大盤環境: $marketDirection → 缺口門檻已調整 chg≥${dynamicChangeMin}%, strength≥${dynamicStrengthThreshold}")
+
+        val step1 = pool.filter { it.changePercent >= dynamicChangeMin && it.price > it.open && it.amount > 10_000_000 }
+        Log.i("VB_Strategy", "pool=${pool.size} → 过滤(chg>=${dynamicChangeMin}% & price>open & amt>10M)=${step1.size}")
         val step2 = step1.map { calculateSignal(it) }
-        val step3 = step2.filter { it.strength >= 30 }
-        Log.i("VB_Strategy", "打分后 strength>=30: ${step3.size}")
+        val step3 = step2.filter { it.strength >= dynamicStrengthThreshold }
+        Log.i("VB_Strategy", "打分后 strength>=${dynamicStrengthThreshold}: ${step3.size}")
         if (step2.isNotEmpty()) {
             val top = step2.sortedByDescending { it.strength }.take(3)
             Log.i("VB_Strategy", "  Top3: ${top.joinToString { "${it.stockName}=${it.strength}" }}")

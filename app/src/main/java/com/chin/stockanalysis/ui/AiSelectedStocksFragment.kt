@@ -122,7 +122,7 @@ class AiSelectedStocksFragment : Fragment() {
 
         // ── 說明 ──
         rootLayout.addView(TextView(requireContext()).apply {
-            text = "⚡ 僅顯示當天 AI 精選，下一個交易日自動遷移至「我的自選」"
+            text = "⚡ 顯示近 5 天 AI 精選，不同日期用分隔線區分"
             textSize = 10f
             setTextColor(Color.parseColor("#AAAAAA"))
             setPadding(16, 4, 16, 8)
@@ -142,30 +142,42 @@ class AiSelectedStocksFragment : Fragment() {
             try {
                 val db = StockDatabase.getInstance(requireContext())
                 val today = LocalDate.now().format(DATE_FMT)
+                val minDate = LocalDate.now().minusDays(5).format(DATE_FMT)
 
-                // 讀取當天 AI 精選
-                aiStocks = db.aiSelectedStockDao().getByDate(today)
+                // 讀取近 5 天 AI 精選（按日期降序）
+                val allStocks = db.aiSelectedStockDao().getRecentDays(minDate)
 
-                // 獲取即時行情
+                // 補全名稱：從 daily_snapshot 查詢缺失名稱的股票
                 stockDataCache.clear()
-                for (stock in aiStocks) {
+                val nameFixedStocks = mutableListOf<AiSelectedStockEntity>()
+                for (stock in allStocks) {
+                    val fixedName = if (stock.stockName.isBlank() || stock.stockName == stock.stockCode) {
+                        try {
+                            val snap = db.dailySnapshotDao().getByDateAndCode(today, stock.stockCode)
+                            snap?.name ?: stock.stockCode.takeLast(6)
+                        } catch (_: Exception) { stock.stockCode.takeLast(6) }
+                    } else stock.stockName
+                    nameFixedStocks.add(stock.copy(stockName = fixedName))
+
+                    // 緩存即時行情
                     val snap = try { db.dailySnapshotDao().getByDateAndCode(today, stock.stockCode) }
                         catch (_: Exception) { null }
                     stockDataCache[stock.stockCode] = snap
                 }
 
+                aiStocks = nameFixedStocks
+
                 withContext(Dispatchers.Main) {
                     renderStockList()
+                    val dates = aiStocks.map { it.selectedDate }.distinct().sortedDescending()
                     statusTv.text = if (aiStocks.isNotEmpty())
-                        "✅ 共 ${aiStocks.size} 只 AI 精選股"
+                        "✅ 共 ${aiStocks.size} 只 AI 精選股（${dates.size} 天）"
                     else
                         "📌 暫無 AI 精選數據，請先在策略頁面運行選股"
 
                     lastUpdateTv.text = java.text.SimpleDateFormat(
                         "HH:mm:ss", java.util.Locale.getDefault()
                     ).format(java.util.Date())
-
-                    // AI 精選已整合到 WatchlistUnifiedFragment，無需再通知 tab 可見性
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -189,29 +201,62 @@ class AiSelectedStocksFragment : Fragment() {
             return
         }
 
-        // ── 表頭 ──
-        val headerRow = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(Color.parseColor("#EEEEEE"))
-            setPadding(8, 8, 8, 8)
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        for ((text, weight) in listOf("股票" to 2.5f, "來源" to 1.2f, "分數" to 0.8f, "最新價" to 1.2f, "漲跌幅" to 1.0f)) {
-            headerRow.addView(TextView(requireContext()).apply {
-                this.text = text
-                textSize = 11f
-                setTextColor(Color.parseColor("#888888"))
-                setTypeface(null, Typeface.BOLD)
-                gravity = Gravity.CENTER
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, weight)
-            })
-        }
-        stockListContainer.addView(headerRow)
+        // 按日期分組（降序）
+        val today = LocalDate.now().format(DATE_FMT)
+        val grouped = aiStocks.groupBy { it.selectedDate }.toSortedMap(compareByDescending { it })
 
-        // ── 股票行 ──
-        for (stock in aiStocks) {
-            val row = createStockRow(stock)
-            stockListContainer.addView(row)
+        for ((date, stocks) in grouped) {
+            // ── 日期標題分隔線 ──
+            val isToday = date == today
+            val dateLabel = if (isToday) "📅 今天 ($date)" else "📅 $date"
+            val dateBg = if (isToday) "#FFF8E1" else "#F5F6FA"
+            val dateColor = if (isToday) "#E65100" else "#666666"
+
+            stockListContainer.addView(LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setBackgroundColor(Color.parseColor(dateBg))
+                setPadding(12, 8, 12, 8)
+                gravity = Gravity.CENTER_VERTICAL
+                addView(TextView(requireContext()).apply {
+                    text = dateLabel
+                    textSize = 12f
+                    setTextColor(Color.parseColor(dateColor))
+                    setTypeface(null, Typeface.BOLD)
+                })
+                addView(TextView(requireContext()).apply {
+                    text = "  ${stocks.size} 只"
+                    textSize = 10f
+                    setTextColor(Color.parseColor("#AAAAAA"))
+                })
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { setMargins(0, if (date != grouped.keys.first()) 12 else 0, 0, 0) }
+            })
+
+            // ── 該日期的表頭 ──
+            val headerRow = LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setBackgroundColor(Color.parseColor("#EEEEEE"))
+                setPadding(8, 6, 8, 6)
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            for ((text, weight) in listOf("股票" to 2.5f, "來源" to 1.2f, "分數" to 0.8f, "最新價" to 1.2f, "漲跌幅" to 1.0f)) {
+                headerRow.addView(TextView(requireContext()).apply {
+                    this.text = text
+                    textSize = 10f
+                    setTextColor(Color.parseColor("#888888"))
+                    setTypeface(null, Typeface.BOLD)
+                    gravity = Gravity.CENTER
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, weight)
+                })
+            }
+            stockListContainer.addView(headerRow)
+
+            // ── 股票行 ──
+            for (stock in stocks) {
+                stockListContainer.addView(createStockRow(stock))
+            }
         }
     }
 

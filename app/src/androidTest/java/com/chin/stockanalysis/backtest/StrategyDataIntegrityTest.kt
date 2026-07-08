@@ -179,10 +179,9 @@ class StrategyDataIntegrityTest {
 
     @Test
     fun testAllStrategiesProduceValidSignals() = runBlocking {
-        val repo = com.chin.stockanalysis.stock.data.StockDataSourceFactory.createDefaultRepository(
-            ApplicationProvider.getApplicationContext()
-        )
-        val screener = StockScreener(repo)
+        val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val repo = com.chin.stockanalysis.stock.data.StockDataSourceFactory.createDefaultRepository(ctx)
+        val screener = StockScreener(repo, ctx)
 
         val strategies = listOf(
             MovingAverageStrategy(screener),
@@ -239,10 +238,9 @@ class StrategyDataIntegrityTest {
 
     @Test
     fun testTurnoverStrategySpecificSignals() = runBlocking {
-        val repo = com.chin.stockanalysis.stock.data.StockDataSourceFactory.createDefaultRepository(
-            ApplicationProvider.getApplicationContext()
-        )
-        val screener = StockScreener(repo)
+        val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val repo = com.chin.stockanalysis.stock.data.StockDataSourceFactory.createDefaultRepository(ctx)
+        val screener = StockScreener(repo, ctx)
         val strategy = TurnoverFilterStrategy(screener)
 
         val result = strategy.screen().getOrNull()
@@ -329,10 +327,9 @@ class StrategyDataIntegrityTest {
 
     @Test
     fun testScreenerNameCodePriceIntegrity() = runBlocking {
-        val repo = com.chin.stockanalysis.stock.data.StockDataSourceFactory.createDefaultRepository(
-            ApplicationProvider.getApplicationContext()
-        )
-        val screener = StockScreener(repo)
+        val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val repo = com.chin.stockanalysis.stock.data.StockDataSourceFactory.createDefaultRepository(ctx)
+        val screener = StockScreener(repo, ctx)
         val stocks = screener.scanFullMarket()
 
         // 1. 必须有数据
@@ -422,7 +419,7 @@ class StrategyDataIntegrityTest {
         val repo = com.chin.stockanalysis.stock.data.StockDataSourceFactory.createDefaultRepository(
             ApplicationProvider.getApplicationContext()
         )
-        val screener = StockScreener(repo)
+        val screener = StockScreener(repo, ApplicationProvider.getApplicationContext())
 
         val strategies = listOf(
             MovingAverageStrategy(screener),

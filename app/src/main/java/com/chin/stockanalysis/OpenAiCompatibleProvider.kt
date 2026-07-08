@@ -65,15 +65,19 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
     /**
      * 強制 JSON 輸出模式（response_format: json_object）
      * 適用於 Agent 場景：結構化數據提取、股票分析 JSON 輸出等
+     *
+     * @param maxTokens 自定義最大輸出 tokens（預設 6144）。
+     *   簡單 Agent（1-3）建議 4096，複雜 Agent（6 風控）建議 6144-8192
      */
     fun sendMessageStreamJson(
         messages: List<Message>,
         systemPrompt: String,
         onSuccess: (content: String) -> Unit,
         onComplete: (fullContent: String) -> Unit,
-        onError: (errorMsg: String) -> Unit
+        onError: (errorMsg: String) -> Unit,
+        maxTokens: Int? = null
     ) {
-        doSend(messages, systemPrompt, onSuccess, onComplete, onError, null, null, null, modelIndex = 0, retryCount = 0, jsonMode = true)
+        doSend(messages, systemPrompt, onSuccess, onComplete, onError, null, null, null, modelIndex = 0, retryCount = 0, jsonMode = true, maxTokens = maxTokens)
     }
 
     /**
@@ -103,11 +107,12 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         onToolCalls: ((List<ChatTools.ToolCall>) -> Unit)?,
         modelIndex: Int,
         retryCount: Int,
-        jsonMode: Boolean
+        jsonMode: Boolean,
+        maxTokens: Int? = null
     ) {
         val model = getModel(modelIndex, onError) ?: return
         val url = config.baseUrl.trimEnd('/') + "/chat/completions"
-        val requestBody = buildBody(messages, systemPrompt, model, tools, toolChoice, jsonMode)
+        val requestBody = buildBody(messages, systemPrompt, model, tools, toolChoice, jsonMode, maxTokens)
 
         Log.d(TAG, "📤 请求: $url | 模型: $model | 重试: $retryCount | jsonMode=$jsonMode")
 
@@ -186,16 +191,17 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         toolChoice: String?,
         onToolCalls: ((List<ChatTools.ToolCall>) -> Unit)?,
         modelIndex: Int, retryCount: Int, lastError: String,
-        jsonMode: Boolean = false
+        jsonMode: Boolean = false,
+        maxTokens: Int? = null
     ) {
         when {
             retryCount < 3 -> {
                 Log.d(TAG, "🔄 第 $retryCount 次重试中...")
-                doSend(messages, systemPrompt, onSuccess, onComplete, onError, tools, toolChoice, onToolCalls, modelIndex, retryCount, jsonMode)
+                doSend(messages, systemPrompt, onSuccess, onComplete, onError, tools, toolChoice, onToolCalls, modelIndex, retryCount, jsonMode, maxTokens)
             }
             modelIndex < config.fallbackModels.size -> {
                 Log.d(TAG, "🔄 回退到备用模型 #${modelIndex + 1}")
-                doSend(messages, systemPrompt, onSuccess, onComplete, onError, tools, toolChoice, onToolCalls, modelIndex + 1, 0, jsonMode)
+                doSend(messages, systemPrompt, onSuccess, onComplete, onError, tools, toolChoice, onToolCalls, modelIndex + 1, 0, jsonMode, maxTokens)
             }
             else -> onError(lastError)
         }
@@ -205,7 +211,8 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         messages: List<Message>, systemPrompt: String?, model: String,
         tools: List<ChatTools.ToolDef>? = null,
         toolChoice: String? = null,
-        jsonMode: Boolean = false
+        jsonMode: Boolean = false,
+        maxTokens: Int? = null
     ): JSONObject {
         val msgArray = JSONArray()
         if (!systemPrompt.isNullOrBlank())
@@ -221,7 +228,8 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
             put("model", model)
             put("messages", msgArray)
             put("temperature", 0.7)
-            put("max_tokens", if (jsonMode) 16384 else 4096)
+            // Pipeline Agent 分層：簡單 Agent 4096，複雜 Agent 6144，通用預設 6144
+            put("max_tokens", maxTokens ?: if (jsonMode) 6144 else 4096)
             put("stream", true)
             if (jsonMode) {
                 put("response_format", JSONObject().apply { put("type", "json_object") })

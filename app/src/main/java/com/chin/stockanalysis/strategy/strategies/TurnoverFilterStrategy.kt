@@ -57,16 +57,23 @@ class TurnoverFilterStrategy(
         } catch (e: Exception) { Result.failure(e) }
     }
 
-    private fun screenWithPool(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
+    private suspend fun screenWithPool(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
         if (pool.isEmpty()) return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,
             signals = emptyList(), totalScanned = 0, scanTimeMs = System.currentTimeMillis() - startTime
         ))
+
+        // 大盤環境預檢
+        val marketDir = try { screener.detectMarketDirection() } catch (_: Exception) { "OSCILLATION" }
+        val isBearish = marketDir == "BEARISH"
+        val toStrengthThreshold = if (isBearish) 45 else 30
+        Log.i("TO_Strategy", "大盤環境: $marketDir → 換手率門檻 ${if (isBearish) "30→45" else "標準門檻30"}")
+
         val step1 = pool.filter { it.amount > 50_000_000 && it.changePercent >= 1.0 && it.price > 2.0 && it.price < 300.0 }
         Log.i("TO_Strategy", "pool=${pool.size} → 过滤(amt>50M & chg>=1% & price2-300)=${step1.size}")
         val step2 = step1.map { calculateSignal(it) }
-        val step3 = step2.filter { it.strength >= 30 }
-        Log.i("TO_Strategy", "打分后 strength>=30: ${step3.size}")
+        val step3 = step2.filter { it.strength >= toStrengthThreshold }
+        Log.i("TO_Strategy", "打分后 strength>=$toStrengthThreshold: ${step3.size}")
         val signals = step3.sortedByDescending { it.strength }.take(config.maxResults)
         return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,

@@ -113,7 +113,7 @@ data class PipelineResult(
     val totalSteps: Int = 7,
     val stocks: List<PipelineStockResult> = emptyList(),
     val errorMessage: String? = null,
-    val analysisMode: String = "精簡版",
+    val analysisMode: String = "六智體通用",
     val weightFormula: String = "",
     /** 每步的原始 LLM 分析文本（stepIndex → markdown） */
     val stepAnalyses: Map<Int, String> = emptyMap(),

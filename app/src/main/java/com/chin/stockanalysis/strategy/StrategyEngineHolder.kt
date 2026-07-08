@@ -29,7 +29,7 @@ object StrategyEngineHolder {
     fun init(context: Context) {
         if (engine != null) return
         val repo = StockDataSourceFactory.createDefaultRepository(context.applicationContext)
-        val screener = StockScreener(repo)
+        val screener = StockScreener(repo, context.applicationContext)
         engine = StrategyEngine(context.applicationContext, screener).apply {
             registerStrategy(MovingAverageStrategy(screener))
             registerStrategy(VolumeBreakStrategy(screener))

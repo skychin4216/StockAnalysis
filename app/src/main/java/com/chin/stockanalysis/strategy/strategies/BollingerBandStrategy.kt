@@ -58,11 +58,18 @@ class BollingerBandStrategy(
 
     override suspend fun isAvailable(): Boolean = true
 
-    private fun screenWithPool(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
+    private suspend fun screenWithPool(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
         if (pool.isEmpty()) return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,
             signals = emptyList(), totalScanned = 0, scanTimeMs = System.currentTimeMillis() - startTime
         ))
+
+        // 大盤環境預檢
+        val marketDir = try { screener.detectMarketDirection() } catch (_: Exception) { "OSCILLATION" }
+        val isBearish = marketDir == "BEARISH"
+        val bbStrengthThreshold = if (isBearish) 40 else 25
+        Log.i("BB_Strategy", "大盤環境: $marketDir → 布林帶門檻 ${if (isBearish) "25→40" else "標準門檻25"}")
+
         val period = (config.params["period"] as? Number)?.toInt() ?: 20
         val volMin = (config.params["volume_min"] as? Number)?.toDouble() ?: 1e8
 
@@ -78,7 +85,7 @@ class BollingerBandStrategy(
                 strength = strength, reason = "布林带上轨${"%.2f".format(bb.upper)} 突破${if(breakout>0)"+" else ""}${"%.2f".format(breakout)}%",
                 action = if (strength >= 40) SignalAction.BUY else SignalAction.WATCH,
                 currentPrice = stock.price, changePercent = stock.changePercent)
-        }.filter { it.strength >= 25 }.sortedByDescending { it.strength }.take(config.maxResults)
+        }.filter { it.strength >= bbStrengthThreshold }.sortedByDescending { it.strength }.take(config.maxResults)
         Log.i("BB_Strategy", "pool=${pool.size} → 信号=${signals.size}")
         return Result.success(ScreeningResult(strategyId = id, strategyName = name, category = category,
             signals = signals, totalScanned = pool.size, scanTimeMs = System.currentTimeMillis() - startTime))

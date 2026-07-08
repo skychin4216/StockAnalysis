@@ -150,8 +150,16 @@ class FundamentalFilterStrategy(
 
     // ── Pipeline ──
 
-    private fun doScreen(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
+    private suspend fun doScreen(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
         if (pool.isEmpty()) return success(emptyList(), 0, startTime)
+
+        // 大盤環境預檢
+        val marketDir = try { screener.detectMarketDirection() } catch (_: Exception) { "OSCILLATION" }
+        val isBearish = marketDir == "BEARISH"
+        val strengthThreshold = if (isBearish) 35 else 20
+        val maxRes = if (isBearish) config.maxResults / 2 else config.maxResults
+        Log.i(id, "大盤環境: $marketDir → 基本面門檻 ${if (isBearish) "20→35, maxResults減半" else "標準門檻20"}")
+
         val layer = (config.params["layer"] as? Number)?.toInt() ?: 2
         val base = pool.filter { !baseExcluded(it) }
         val filtered = when (layer) {
@@ -160,9 +168,9 @@ class FundamentalFilterStrategy(
             else -> base.filter { l2(it) }
         }
         val scored = filtered.map { signal(it, layer) }
-            .filter { it.strength >= 20 }
+            .filter { it.strength >= strengthThreshold }
             .sortedByDescending { it.strength }
-        return success(scored.take(config.maxResults), pool.size, startTime)
+        return success(scored.take(maxRes), pool.size, startTime)
     }
 
     // ── Scoring ──

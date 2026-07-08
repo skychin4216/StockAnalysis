@@ -90,10 +90,15 @@ class SmartMoneyDetectionStrategy(
 
     // ── Pipeline ──
 
-    private fun doScreen(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
+    private suspend fun doScreen(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
         if (pool.isEmpty()) return success(emptyList(), 0, startTime)
 
-        val minScore = (config.params["min_score"] as? Number)?.toInt() ?: 55
+        // 大盤環境預檢
+        val marketDir = try { screener.detectMarketDirection() } catch (_: Exception) { "OSCILLATION" }
+        val isBearish = marketDir == "BEARISH"
+        val minScore = if (isBearish) 70 else ((config.params["min_score"] as? Number)?.toInt() ?: 55)
+        Log.i(id, "大盤環境: $marketDir → 智慧資金門檻 ${if (isBearish) "55→70" else "標準門檻55"}")
+
         val scored = pool.mapNotNull { s ->
             val sm = SmartMoneyCache.getScore(s.code)
             if (sm.combined >= minScore) {

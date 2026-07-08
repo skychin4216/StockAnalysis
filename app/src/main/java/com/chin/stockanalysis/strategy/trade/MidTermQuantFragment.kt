@@ -78,7 +78,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
         super.initEngine()
         val ctx = requireContext().applicationContext
         val repo = StockDataSourceFactory.createDefaultRepository(ctx)
-        screener = StockScreener(repo)
+        screener = StockScreener(repo, ctx)
     }
 
     override fun buildUI() {
@@ -464,8 +464,11 @@ class MidTermQuantFragment : QuantFragmentBase() {
                     val nextDate = getNextTradingDayFromDB(order.tradeDate) ?: continue
                     val nextDaySnaps = db.dailySnapshotDao().getByDate(nextDate)
                     val nextDayStock = nextDaySnaps.find { it.code == order.stockCode } ?: continue
-                    val sellPrice = nextDayStock.close
-                    val profitPct = (sellPrice - order.buyPrice) / order.buyPrice * 100
+                    // 使用次日開盤價作為模擬賣出價（修正未來函數）
+                    val sellPrice = nextDayStock.open
+                    // 扣除賣出成本（佣金+印花稅+滑點 ≈ 0.15%）
+                    val netSellPrice = sellPrice * (1.0 - 0.0015)
+                    val profitPct = (netSellPrice - order.buyPrice) / order.buyPrice * 100
                     db.strategyTradeOrderDao().updateSellInfo(
                         id = order.id, status = "SOLD", sellPrice = sellPrice,
                         sellTime = "$nextDate 15:00", profitPct = profitPct

@@ -37,7 +37,28 @@ class HistoricalDataFetcher(private val context: Context) {
 
         // Pool management: JSON assets (factory) + SharedPreferences (live)
         fun getTopStocks(context: Context): List<String> =
-            (LeaderStockPool.getMainlineCodes(context) + getPool(context, "core_stock_pool_json", "core_stock_pool.json")).toList()
+            (getDefaultIndexCodes() + LeaderStockPool.getMainlineCodes(context) + getPool(context, "core_stock_pool_json", "core_stock_pool.json")).toList()
+
+        /**
+         * 默認指數/ETF 列表，確保每次數據同步都會更新
+         * 包含：A 股主要指數、熱門 ETF
+         * 注意：美股/韓國需要不同 API 格式，暫不加入
+         */
+        fun getDefaultIndexCodes(): Set<String> = setOf(
+            // A 股主要指數
+            "sh000001", // 上證指數
+            "sz399001", // 深證成指
+            "sz399006", // 創業板指
+            "sh000688", // 科創50
+            "sz399303", // 國證2000
+            // A 股熱門 ETF
+            "sh510300", // 滬深300ETF
+            "sh510500", // 中證500ETF
+            "sz159915", // 創業板ETF
+            "sh588000", // 科創50ETF
+            "sz159949", // 創業板50ETF
+            "sh512100"  // 中證1000ETF
+        )
 
         fun getCoreStockPool(context: Context) = getPool(context, PREFS_KEY_CORE_POOL, ASSET_FILE)
         fun getHeaderStockPool(context: Context) = getPool(context, "header_stock_pool_json", "header_stock_pool.json")

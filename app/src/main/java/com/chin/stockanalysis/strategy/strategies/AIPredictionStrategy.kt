@@ -91,7 +91,7 @@ class AIPredictionStrategy(private val context: Context) : Strategy {
                     category = category,
                     strength = pick.compositeScore,
                     action = when { pick.rank <= 3 -> SignalAction.BUY; else -> SignalAction.WATCH },
-                    reason = "AI推荐(${prediction.mode}方案): ${pick.reason.take(60)}",
+                    reason = "AI綜合推薦(${prediction.mode}): ${pick.reason.take(60)}",
                     details = mapOf(
                         "ai_rank" to "${pick.rank}",
                         "composite_score" to "${pick.compositeScore}",
@@ -99,7 +99,8 @@ class AIPredictionStrategy(private val context: Context) : Strategy {
                         "action" to pick.actionSuggestion,
                         "mode" to prediction.mode,
                         "market_outlook" to prediction.marketOutlook,
-                        "risk_warning" to prediction.riskWarning
+                        "risk_warning" to prediction.riskWarning,
+                        "market_direction" to prediction.marketDirection
                     ),
                     currentPrice = 0.0,
                     changePercent = 0.0

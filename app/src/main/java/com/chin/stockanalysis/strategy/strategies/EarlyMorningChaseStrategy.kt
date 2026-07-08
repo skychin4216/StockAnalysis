@@ -84,13 +84,23 @@ class EarlyMorningChaseStrategy(
         }
     }
 
-    private fun screenWithPool(pool: List<StockRealtime>, startTime: Long, isBacktest: Boolean): Result<ScreeningResult> {
+    private suspend fun screenWithPool(pool: List<StockRealtime>, startTime: Long, isBacktest: Boolean): Result<ScreeningResult> {
         if (pool.isEmpty()) return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,
             signals = emptyList(), totalScanned = 0, scanTimeMs = System.currentTimeMillis() - startTime
         ))
 
         Log.i(id, "========== V型反转筛选 pool=${pool.size} isBacktest=$isBacktest ==========")
+
+        // 大盤環境預檢：BEARISH 時提高追漲門檻，避免在下跌趨勢中追高
+        val marketDirection = try { screener.detectMarketDirection() } catch (_: Exception) { "OSCILLATION" }
+
+        val isBearish = marketDirection == "BEARISH"
+        val isOscillation = marketDirection == "OSCILLATION"
+        // BEARISH 時提高門檻，減少追漲風險
+        val dynamicVThreshold = if (isBearish) config.getInt("v_score_threshold", 60) + 15 else config.getInt("v_score_threshold", 60)
+        val dynamicCatchupThreshold = if (isBearish) config.getInt("catchup_score_threshold", 50) + 15 else config.getInt("catchup_score_threshold", 50)
+        Log.i(id, "大盤環境: $marketDirection → V型門檻: $dynamicVThreshold, 補漲門檻: $dynamicCatchupThreshold")
 
         // 获取当日热门板块（实时用概念板块，回测也可使用）
         val hotSectors = EastMoneyHotSectorSource.conceptSectors.map { it.name }.toSet()
@@ -115,7 +125,7 @@ class EarlyMorningChaseStrategy(
         val vScored = vCandidates.map { v ->
             val score = scoreVReversal(v)
             v to score
-        }.filter { (_, s) -> s >= config.getInt("v_score_threshold", 60) }
+        }.filter { (_, s) -> s >= dynamicVThreshold }
             .sortedByDescending { (_, s) -> s }
         Log.i(id, "V型评分≥${config.getInt("v_score_threshold", 60)}: ${vScored.size}")
         vScored.take(5).forEach { (v, s) ->
@@ -155,7 +165,7 @@ class EarlyMorningChaseStrategy(
         val catchupScored = catchupCandidates.map { stock ->
             val s = scoreCatchup(stock)
             stock to s
-        }.filter { (_, s) -> s >= config.getInt("catchup_score_threshold", 50) }
+        }.filter { (_, s) -> s >= dynamicCatchupThreshold }
             .sortedByDescending { (_, s) -> s }
         Log.i(id, "补涨评分≥${config.getInt("catchup_score_threshold", 50)}: ${catchupScored.size}")
 
@@ -208,13 +218,14 @@ class EarlyMorningChaseStrategy(
         val amplitude = if (basePrice > 0) ((stock.high - stock.low) / basePrice) * 100 else 0.0
         if (amplitude < 5.0) return null
 
-        // 回升比例：从低点回到当前价，走了振幅的多少
-        val recoveryRatio = if (stock.high > stock.low) {
-            (stock.price - stock.low) / (stock.high - stock.low)
+        // 回升比例：從砸盤低點恢復了多少（相對於砸盤幅度 open-low）
+        // 分母用 open-low（砸盤空間）而非 high-low（全日振幅），避免開盤衝高後砸盤的情況下比例被壓低
+        val recoveryRatio = if (stock.open > stock.low) {
+            (stock.price - stock.low) / (stock.open - stock.low)
         } else 0.0
 
-        // 回升比例必须 ≥ 60%（即收在高位附近）
-        if (recoveryRatio < 0.60) return null
+        // 回升比例必須 ≥ 50%（即從低點回升了砸盤幅度的至少一半）
+        if (recoveryRatio < 0.50) return null
 
         // 板块匹配：检查是否属于热门板块
         val hotSectors = EastMoneyHotSectorSource.conceptSectors.map { it.name }.toSet()
@@ -273,16 +284,18 @@ class EarlyMorningChaseStrategy(
             else -> 4
         }
 
-        // 4. 入场位置 (0-10)：当前价在 V 型低位更好
-        // 如果还在中低位（price 离 low 不太远），入场位置更优
+        // 4. 入場位置 (0-10)：在拉升確認區間得分最高
+        // positionInV 表示從低點回升到高點的比例
+        // <0.3 剛拉起未確認風險大，0.4-0.7 拉升確認最佳上車，>0.85 追高風險大
         val positionInV = if (s.high > s.low) {
             (s.price - s.low) / (s.high - s.low)
         } else 1.0
         val positionScore = when {
-            positionInV < 0.4 -> 10   // 还在中低位，入场良机
-            positionInV < 0.6 -> 8
-            positionInV < 0.8 -> 5
-            else -> 3                 // 已在接近高位
+            positionInV < 0.3 -> 4    // 剛拉起，未確認反轉
+            positionInV < 0.5 -> 8    // 拉升中，初步確認
+            positionInV < 0.7 -> 10   // 拉升確認，最佳上車區間
+            positionInV < 0.85 -> 7   // 拉升較多，仍可追
+            else -> 3                  // 接近高位，追高風險大
         }
 
         return minOf(vScore + sectorScore + capitalScore + positionScore, 100)

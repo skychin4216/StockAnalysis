@@ -24,10 +24,9 @@ import kotlin.coroutines.resumeWithException
 /**
  * ## 智能體流水線編排器 v2.0（參考豆包思路）
  *
- * 支持三種分析模式：
- * 1. MODE_NORMAL_SIX — 六智體通用模式（消費、醫藥、周期等普通公司）
- * 2. MODE_SELLER_SEVEN — 七智體賣水人模式（光通信、半導體等上下游清晰賽道）
- * 3. MODE_SELLER_SIMPLE — 精簡版（5 主線 + 1 支線，當前 APP 默認）
+ * 支持兩種分析模式：
+ * 1. MODE_NORMAL_SIX — Standard 6-Agent Analysis（消費、醫藥、周期等普通公司）
+ * 2. MODE_SELLER_SEVEN — Upstream 7-Agent Value Chain（光通信、半導體等上下游清晰賽道）
  *
  * 全局統一規則：
  * - 綜合總分強制區間 [0, 100]
@@ -44,16 +43,14 @@ class AgentPipelineOrchestrator(private val context: Context) {
         private const val TAG = "PipelineOrchestrator"
 
         // ════════════════════════════════════════
-        // 三種分析模式
+        // 兩種分析模式
         // ════════════════════════════════════════
 
         enum class AnalysisMode(val label: String, val desc: String) {
-            /** 六智體通用模式：適用消費、醫藥、周期、整車等普通公司 */
-            MODE_NORMAL_SIX("六智體通用", "普通個股研判"),
-            /** 七智體賣水人模式：適用光通信、半導體、鋰電、光伏等上下游清晰賽道 */
-            MODE_SELLER_SEVEN("七智體賣水人", "產業鏈賣水人研判"),
-            /** 精簡版：5 主線 + 1 支線，APP 默認 */
-            MODE_SELLER_SIMPLE("精簡版", "5+1 常態化分析")
+            /** Standard 6-Agent Analysis：適用消費、醫藥、周期、整車等普通公司 */
+            MODE_NORMAL_SIX("Standard Analysis（標準分析）", "6-Agent Standard"),
+            /** Upstream 7-Agent Value Chain：適用光通信、半導體、鋰電、光伏等上下游清晰賽道 */
+            MODE_SELLER_SEVEN("Upstream Value Chain Analysis（上游價值鏈分析）", "7-Agent Upstream")
         }
 
         // ════════════════════════════════════════
@@ -70,10 +67,10 @@ class AgentPipelineOrchestrator(private val context: Context) {
             PipelineStep("pipeline_agent_d", "Agent D: 板塊&輿情評分",       5, isAuxiliary = true)
         )
 
-        /** 七智體：A1→A2(賣水人)→A3(賽道)→A4(競爭格局)→A5(技術)→A6(風控) + 並行D */
+        /** 7-Agent：A1→A2(Upstream)→A3(賽道)→A4(競爭格局)→A5(技術)→A6(風控) + 並行D */
         private val STEPS_SEVEN: List<PipelineStep> = listOf(
             PipelineStep("pipeline_agent_1", "Agent 1: 基本面拐點價值選股", 0),
-            PipelineStep("pipeline_agent_2", "Agent 2: 產業鏈賣水人選股",   1, isScorer = true, passThreshold = 40),
+            PipelineStep("pipeline_agent_2", "Agent 2: 產業鏈 Upstream 選股",   1, isScorer = true, passThreshold = 40),
             PipelineStep("pipeline_agent_3", "Agent 3: 賽道熱度識別",       2),
             PipelineStep("pipeline_agent_competition", "Agent 4: 行業競爭格局", 3),
             PipelineStep("pipeline_agent_4", "Agent 5: 技術量價拐點交易",   4),
@@ -81,45 +78,32 @@ class AgentPipelineOrchestrator(private val context: Context) {
             PipelineStep("pipeline_agent_d", "Agent D: 板塊&輿情評分",     6, isAuxiliary = true)
         )
 
-        /** 精簡版：A1→A2(賣水人)→A3(賽道)→A4(技術)→A5(風控) + 並行D */
-        private val STEPS_SIMPLE: List<PipelineStep> = listOf(
-            PipelineStep("pipeline_agent_1", "Agent 1: 基本面拐點價值選股", 0),
-            PipelineStep("pipeline_agent_2", "Agent 2: 產業鏈賣水人選股",   1, isScorer = true, passThreshold = 40),
-            PipelineStep("pipeline_agent_3", "Agent 3: 賽道熱度識別",       2),
-            PipelineStep("pipeline_agent_4", "Agent 4: 技術量價拐點交易",   3),
-            PipelineStep("pipeline_agent_5", "Agent 5: 風控終審",           4, canHedge = true),
-            PipelineStep("pipeline_agent_d", "Agent D: 板塊&輿情評分",     5, isAuxiliary = true)
-        )
-
         /** 根據模式獲取步驟列表 */
         fun getSteps(mode: AnalysisMode): List<PipelineStep> = when (mode) {
             AnalysisMode.MODE_NORMAL_SIX    -> STEPS_SIX
             AnalysisMode.MODE_SELLER_SEVEN  -> STEPS_SEVEN
-            AnalysisMode.MODE_SELLER_SIMPLE -> STEPS_SIMPLE
         }
 
         /** 根據模式名稱獲取步驟列表（UI 使用） */
         fun getStepsByName(modeName: String): List<PipelineStep> = when {
-            modeName.contains("六智體") -> STEPS_SIX
-            modeName.contains("七智體") -> STEPS_SEVEN
-            else -> STEPS_SIMPLE
+            modeName.contains("Upstream") || modeName.contains("7-Agent") -> STEPS_SEVEN
+            else -> STEPS_SIX
         }
 
         /** 根據模式獲取權重公式描述 */
         fun getWeightFormula(mode: AnalysisMode): String = when (mode) {
             AnalysisMode.MODE_NORMAL_SIX -> "基礎分 = A1×0.2 + A2×0.2 + A4×0.2 + A3×0.3 + A5×0.1"
             AnalysisMode.MODE_SELLER_SEVEN -> "基礎分 = A1×0.2 + A2×0.2 + A3×0.2 + A5×0.3 + A6×0.1（A4僅定性）"
-            AnalysisMode.MODE_SELLER_SIMPLE -> "基礎分 = A1×0.2 + A2×0.2 + A3×0.2 + A4×0.3 + A5×0.1"
         }
 
-        /** 已知賣水人賽道關鍵詞（用於 AI 動態選擇模式的輔助判斷） */
+        /** 已知 Upstream 賽道關鍵詞（用於 AI 動態選擇模式的輔助判斷） */
         private val SELLER_SECTOR_KEYWORDS = listOf(
             "光通信", "光模塊", "PCB", "覆銅板", "CCL", "半導體", "鋰電", "光伏",
             "生益科技", "華工科技", "光迅科技", "潔美科技", "中際旭創", "新易盛",
             "天孚通信", "源傑科技", "銅陵有色", "諾德股份", "嘉元科技"
         )
 
-        /** 判斷標的是否屬於賣水人賽道（快速本地判斷，不調 AI） */
+        /** 判斷標的是否屬於 Upstream 賽道（快速本地判斷，不調 AI） */
         fun isLikelySellerSector(target: String): Boolean {
             return SELLER_SECTOR_KEYWORDS.any { target.contains(it) }
         }
@@ -139,7 +123,7 @@ class AgentPipelineOrchestrator(private val context: Context) {
 基本面排名：...
 
 ## 智能體 2：{agent2_name}
-（根據模式不同：賣水人分析 或 賽道分析）
+（根據模式不同：Upstream 分析 或 賽道分析）
 
 ## 智能體 3：{agent3_name}
 （根據模式不同：技術面 或 賽道熱度）
@@ -310,14 +294,14 @@ class AgentPipelineOrchestrator(private val context: Context) {
     private suspend fun selectMode(target: String, sector: String): AnalysisMode {
         // 1. 本地快速判斷：賣水人賽道關鍵詞
         if (isLikelySellerSector(target) || isLikelySellerSector(sector)) {
-            Log.i(TAG, "🎯 本地判斷為賣水人賽道，使用精簡版")
-            return AnalysisMode.MODE_SELLER_SIMPLE
+            Log.i(TAG, "🎯 本地判斷為 Upstream 賽道，使用 7-Agent")
+            return AnalysisMode.MODE_SELLER_SEVEN
         }
 
         // 2. AI 判斷（僅在本地無法確定時）
         return withContext(Dispatchers.IO) {
             try {
-                val slot = AiProviderPool.acquire(context) ?: return@withContext AnalysisMode.MODE_SELLER_SIMPLE
+                val slot = AiProviderPool.acquire(context) ?: return@withContext AnalysisMode.MODE_SELLER_SEVEN
                 try {
                     suspendCancellableCoroutine { cont ->
                         slot.provider.sendMessageStream(
@@ -326,30 +310,29 @@ class AgentPipelineOrchestrator(private val context: Context) {
 標的：$target
 賽道：$sector
 
-三種模式：
-1. MODE_NORMAL_SIX — 六智體通用：適用消費、醫藥、周期、整車等無明確上游賣水邏輯的普通公司
-2. MODE_SELLER_SEVEN — 七智體賣水人：適用光通信、半導體、鋰電、光伏等上下游分層清晰賽道
-3. MODE_SELLER_SIMPLE — 精簡版：5+1 常態化分析，適合大多數標的
+兩種模式：
+1. MODE_NORMAL_SIX — Standard 6-Agent：適用消費、醫藥、周期、整車等無明確上游 Upstream 邏輯的普通公司
+2. MODE_SELLER_SEVEN — Upstream 7-Agent：適用光通信、半導體、鋰電、光伏等上下游分層清晰賽道
 
-請只回覆模式名稱（MODE_NORMAL_SIX 或 MODE_SELLER_SEVEN 或 MODE_SELLER_SIMPLE），不要其他內容。""",
+請只回覆模式名稱（MODE_NORMAL_SIX 或 MODE_SELLER_SEVEN），不要其他內容。""",
                             onSuccess = {},
                             onComplete = { full ->
                                 val mode = when {
                                     full.contains("MODE_SELLER_SEVEN") -> AnalysisMode.MODE_SELLER_SEVEN
                                     full.contains("MODE_NORMAL_SIX") -> AnalysisMode.MODE_NORMAL_SIX
-                                    else -> AnalysisMode.MODE_SELLER_SIMPLE
+                                    else -> AnalysisMode.MODE_SELLER_SEVEN
                                 }
                                 cont.resume(mode)
                             },
-                            onError = { cont.resume(AnalysisMode.MODE_SELLER_SIMPLE) }
+                            onError = { cont.resume(AnalysisMode.MODE_SELLER_SEVEN) }
                         )
                     }
                 } finally {
                     AiProviderPool.releaseNonBlocking(slot)
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "AI 模式選擇失敗，使用默認精簡版: ${e.message}")
-                AnalysisMode.MODE_SELLER_SIMPLE
+                Log.w(TAG, "AI 模式選擇失敗，使用默認 Upstream: ${e.message}")
+                AnalysisMode.MODE_SELLER_SEVEN
             }
         }
     }
@@ -484,6 +467,14 @@ class AgentPipelineOrchestrator(private val context: Context) {
                     }
                 }
 
+                // Pipeline Agent 分層 max_tokens：複雜 Agent 給更多配額，避免截斷同時防止過長回應
+                val stepMaxTokens = when (step.agentId) {
+                    "pipeline_agent_6" -> 8192  // 風控終審：deductions 數組可能很長
+                    "pipeline_agent_4", "pipeline_agent_5" -> 6144  // 競爭格局/技術量價：中等長度
+                    "pipeline_agent_1", "pipeline_agent_2", "pipeline_agent_3", "pipeline_agent_d" -> 4096
+                    else -> 6144
+                }
+
                 val result = suspendCancellableCoroutine<String> { cont ->
                     cont.invokeOnCancellation {
                         provider.cancel()
@@ -502,7 +493,8 @@ class AgentPipelineOrchestrator(private val context: Context) {
                         },
                         onError = { err ->
                             if (!cont.isCompleted) cont.resumeWithException(Exception(err))
-                        }
+                        },
+                        maxTokens = stepMaxTokens
                     )
                 }
 
@@ -527,12 +519,18 @@ class AgentPipelineOrchestrator(private val context: Context) {
         val currentIndex = mainSteps.indexOf(step)
         if (currentIndex > 0) {
             sb.append("【前序智能體分析結果匯總】\n")
+            // 越靠後的步驟，前序摘要越精簡（避免 prompt 過長導致 LLM 回應慢）
+            val maxCharsPerStep = when {
+                currentIndex <= 2 -> 600  // 前期步驟：600 字
+                currentIndex <= 4 -> 400  // 中期步驟：400 字
+                else -> 250              // 後期步驟（風控等）：250 字
+            }
             for (i in 0 until currentIndex) {
                 val prevStep = mainSteps[i]
                 val prevAnalysis = ctx.stepAnalyses[i]
                 if (prevAnalysis != null) {
                     sb.append("── ${prevStep.name} ──\n")
-                    sb.append(prevAnalysis.take(800))  // 截取前 800 字避免過長
+                    sb.append(prevAnalysis.take(maxCharsPerStep))
                     sb.append("\n\n")
                 }
             }

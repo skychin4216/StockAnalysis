@@ -86,11 +86,17 @@ class TailLowPickStrategy(
         }
     }
 
-    private fun screenWithPool(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
+    private suspend fun screenWithPool(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
         if (pool.isEmpty()) return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,
             signals = emptyList(), totalScanned = 0, scanTimeMs = System.currentTimeMillis() - startTime
         ))
+
+        // 大盤環境預檢
+        val marketDir = try { screener.detectMarketDirection() } catch (_: Exception) { "OSCILLATION" }
+        val isBearish = marketDir == "BEARISH"
+        val scoreThreshold = if (isBearish) 75 else config.getInt("score_threshold", 60)
+        Log.i("TL_Strategy", "大盤環境: $marketDir → 尾盤低吸門檻 ${if (isBearish) "60→75" else "標準門檻60"}")
 
         // Step 1: 硬性过滤
         val filtered = pool.filter { passesHardFilters(it) }
@@ -101,8 +107,8 @@ class TailLowPickStrategy(
             val score = calculateScore(stock)
             stock to score
         }
-        val scored = scoredAll.filter { (_, score) -> score.total >= config.getInt("score_threshold", 60) }
-        Log.i("TL_Strategy", "打分后 total>=60: ${scored.size}")
+        val scored = scoredAll.filter { (_, score) -> score.total >= scoreThreshold }
+        Log.i("TL_Strategy", "打分后 total>=$scoreThreshold: ${scored.size}")
         val finalSignals = scored
             .sortedByDescending { (_, score) -> score.total }
             .take(config.maxResults)

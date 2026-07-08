@@ -57,21 +57,31 @@ class GapUpMomentumStrategy(
         } catch (e: Exception) { Result.failure(e) }
     }
 
-    private fun screenWithPool(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
+    private suspend fun screenWithPool(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
         if (pool.isEmpty()) return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,
             signals = emptyList(), totalScanned = 0, scanTimeMs = System.currentTimeMillis() - startTime
         ))
+
+        // 大盤環境預檢：BEARISH 時提高缺口追漲門檻，避免在下跌趨勢中追高
+        val marketDirection = try { screener.detectMarketDirection() } catch (_: Exception) { "OSCILLATION" }
+
+        val isBearish = marketDirection == "BEARISH"
+        // BEARISH 時提高缺口門檻（+1%）與最低分數門檻（+15分）
+        val dynamicGapMin = if (isBearish) 2.0 else 1.0
+        val dynamicStrengthThreshold = if (isBearish) 45 else 30
+        Log.i(id, "大盤環境: $marketDirection → 缺口門檻已調整 gap≥${dynamicGapMin}%, strength≥${dynamicStrengthThreshold}")
+
         val step1 = pool.filter { it.yestClose > 0 && it.open > 0 && it.price > 0 }
         val step2 = step1.filter {
             val gapPct = (it.open - it.yestClose) / it.yestClose * 100
             val intraPct = (it.price - it.open) / it.open * 100
-            gapPct >= 1.0 && intraPct >= 0.5 && it.changePercent >= 1.5
+            gapPct >= dynamicGapMin && intraPct >= 0.5 && it.changePercent >= 1.5
         }
-        Log.i("GU_Strategy", "pool=${pool.size} → 基础过滤=${step1.size} → 高开高走(gap≥1% & intra≥0.5%)=${step2.size}")
+        Log.i("GU_Strategy", "pool=${pool.size} → 基础过滤=${step1.size} → 高开高走(gap≥${dynamicGapMin}% & intra≥0.5%)=${step2.size}")
         val step3 = step2.map { calculateSignal(it) }
-        val step4 = step3.filter { it.strength >= 30 }
-        Log.i("GU_Strategy", "打分后 strength>=30: ${step4.size}")
+        val step4 = step3.filter { it.strength >= dynamicStrengthThreshold }
+        Log.i("GU_Strategy", "打分后 strength>=${dynamicStrengthThreshold}: ${step4.size}")
         val signals = step4.sortedByDescending { it.strength }.take(config.maxResults)
         return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,

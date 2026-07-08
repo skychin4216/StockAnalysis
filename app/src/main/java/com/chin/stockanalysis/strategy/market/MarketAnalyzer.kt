@@ -13,6 +13,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import com.chin.stockanalysis.config.DataConfig
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import kotlin.math.abs
@@ -291,7 +295,15 @@ object MarketAnalyzer {
             .sortedBy { it.date }
 
         if (snaps.size < 20) {
-            Log.w(TAG, "[趨勢] 上證指數數據不足: ${snaps.size} 條，至少需要 20 條")
+            Log.w(TAG, "[趨勢] 上證指數本地數據不足: ${snaps.size} 條，嘗試從東方財富 API 實時拉取...")
+            val fetched = fetchIndexKlineFromApi(context)
+            if (fetched != null && fetched.size >= 20) {
+                Log.i(TAG, "[趨勢] API 拉取成功: ${fetched.size} 條，寫入本地數據庫")
+                // 將拉取的數據批量寫入本地數據庫供後續使用
+                try { db.dailySnapshotDao().insertAll(fetched) } catch (_: Exception) { }
+                return analyzeTrend(context) // 用新數據重新分析
+            }
+            Log.w(TAG, "[趨勢] API 拉取失敗或數據仍不足，使用默認震蕩")
             return TrendAnalysis(
                 direction = "OSCILLATION",
                 strength = 50,
@@ -468,9 +480,60 @@ object MarketAnalyzer {
     // ════════════════════════════════════════════════════
 
     /**
-     * 分析賣出類型：區分主力撤資 / 量化砸盤 / 正常賣出
+     * 從東方財富 API 實時拉取上證指數 K 線數據作為 fallback
+     * 當本地 daily_snapshot 中 sh000001 數據不足 20 條時調用
+     */
+    private suspend fun fetchIndexKlineFromApi(context: Context): List<DailySnapshotEntity>? {
+        return try {
+            withContext(Dispatchers.IO) {
+                val endDate = LocalDate.now().format(DATE_FMT)
+                val startDate = LocalDate.now().minusDays(45).format(DATE_FMT)
+                // 上證指數 secid: 1.000001
+                val url = "${DataConfig.eastmoneyPush2his}/stock/kline/get?" +
+                        "secid=1.000001&klt=101&fqt=1" +
+                        "&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f61" +
+                        "&beg=$startDate&end=$endDate&lmt=60"
+                val client = OkHttpClient()
+                val req = Request.Builder().url(url)
+                    .addHeader("User-Agent", "Mozilla/5.0")
+                    .build()
+                val resp = client.newCall(req).execute()
+                if (!resp.isSuccessful) return@withContext null
+
+                val body = resp.body?.string() ?: return@withContext null
+                val json = JSONObject(body)
+                val data = json.optJSONObject("data") ?: return@withContext null
+                val klines = data.optJSONArray("klines") ?: return@withContext null
+
+                val result = mutableListOf<DailySnapshotEntity>()
+                for (i in 0 until klines.length()) {
+                    val line = klines.getString(i).split(",")
+                    if (line.size < 7) continue
+                    val date = line[0]
+                    val open = line[1].toDoubleOrNull() ?: continue
+                    val close = line[2].toDoubleOrNull() ?: continue
+                    val high = line[3].toDoubleOrNull() ?: continue
+                    val low = line[4].toDoubleOrNull() ?: continue
+                    val volume = line[5].toDoubleOrNull()?.toLong() ?: 0L
+                    val changePct = line[6].toDoubleOrNull() ?: 0.0
+                    result.add(DailySnapshotEntity(
+                        date = date, code = INDEX_CODE, name = "上證指數",
+                        open = open, close = close, high = high, low = low,
+                        volume = volume, amount = 0.0, changePct = changePct
+                    ))
+                }
+                result.sortedByDescending { it.date }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "[趨勢] API 拉取上證指數失敗: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * ## 主力/量化賣出類型識別
      *
-     * 判斷邏輯：
+     * 規則：
      * - mainNetInflow < threshold 且 isContinuousInflow == false → 主力撤資
      * - MFI < 30 且 CMF < 0 且成交量異常（量/MA20量 > 2）→ 量化砸盤
      * - 其他 → 正常賣出

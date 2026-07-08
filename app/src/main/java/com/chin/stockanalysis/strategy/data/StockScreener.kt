@@ -1,5 +1,6 @@
 package com.chin.stockanalysis.strategy.data
 
+import android.content.Context
 import android.util.Log
 import com.chin.stockanalysis.config.DataConfig
 import com.chin.stockanalysis.stock.StockRealtime
@@ -23,7 +24,8 @@ import java.util.concurrent.TimeUnit
  * ```
  */
 class StockScreener(
-    private val repository: MultiSourceStockRepository
+    private val repository: MultiSourceStockRepository,
+    val context: Context
 ) {
     companion object {
         private const val TAG = "StockScreener"
@@ -86,6 +88,29 @@ class StockScreener(
     fun getPreMarketData(codes: List<String>): Map<String, StockRealtime> {
         if (codes.isEmpty()) return emptyMap()
         return repository.getRealtime(codes)
+    }
+
+    // ═══════════════════════════════
+    // 大盤環境檢測
+    // ═══════════════════════════════
+
+    /** 檢測大盤環境方向（suspend，因為需要讀取資料庫） */
+    suspend fun detectMarketDirection(): String {
+        return try {
+            val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(context)
+            val indexSnaps = db.dailySnapshotDao().getByCode("sh000001", 30).sortedBy { it.date }
+            if (indexSnaps.size >= 20) {
+                val closes = indexSnaps.map { it.close }
+                val ma5 = closes.takeLast(5).average()
+                val ma10 = closes.takeLast(10).average()
+                val ma20 = closes.takeLast(20).average()
+                when {
+                    ma5 > ma10 && ma10 > ma20 -> "BULLISH"
+                    ma5 < ma10 && ma10 < ma20 -> "BEARISH"
+                    else -> "OSCILLATION"
+                }
+            } else "OSCILLATION"
+        } catch (_: Exception) { "OSCILLATION" }
     }
 
     // ═══════════════════════════════

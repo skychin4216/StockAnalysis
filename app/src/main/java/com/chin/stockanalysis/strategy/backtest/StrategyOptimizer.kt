@@ -122,9 +122,14 @@ class StrategyOptimizer(private val context: Context) {
         availableDates: List<String>
     ): GridSearchResult = withContext(Dispatchers.IO) {
         val factors = strategy.weightFactors
-        if (factors.isEmpty() || availableDates.size < 5) {
+        if (factors.isEmpty() || availableDates.size < 10) {
             return@withContext GridSearchResult(strategy.weightFactors, 0f, 0.0, 0)
         }
+
+        // Walk-Forward 分割：訓練集 80%，測試集 20%
+        val splitIndex = (availableDates.size * 0.8).toInt().coerceAtLeast(5)
+        val trainDates = availableDates.take(splitIndex)
+        val testDates = availableDates.drop(splitIndex)
 
         // 搜索空间：每个因子可能的权重值（步长5%）
         val step = 5
@@ -137,7 +142,6 @@ class StrategyOptimizer(private val context: Context) {
 
         when (factors.size) {
             3 -> {
-                // 3因子的权重组合 O(n^3)
                 for (w1 in candidates) {
                     for (w2 in candidates) {
                         for (w3 in candidates) {
@@ -148,7 +152,7 @@ class StrategyOptimizer(private val context: Context) {
                                 factors[1].copy(weight = w2),
                                 factors[2].copy(weight = w3)
                             )
-                            val (acc, ret) = evaluateWeights(strategy, adjustedFactors, availableDates)
+                            val (acc, ret) = evaluateWeights(strategy, adjustedFactors, trainDates)
                             if (acc > bestAccuracy) {
                                 bestAccuracy = acc
                                 bestAvgReturn = ret
@@ -167,7 +171,7 @@ class StrategyOptimizer(private val context: Context) {
                             factors[0].copy(weight = w1), factors[1].copy(weight = w2),
                             factors[2].copy(weight = w3), factors[3].copy(weight = w4)
                         )
-                        val (acc, ret) = evaluateWeights(strategy, adjusted, availableDates)
+                        val (acc, ret) = evaluateWeights(strategy, adjusted, trainDates)
                         if (acc > bestAccuracy) { bestAccuracy = acc; bestAvgReturn = ret; bestWeights = adjusted }
                     }
             }
@@ -181,22 +185,32 @@ class StrategyOptimizer(private val context: Context) {
                             factors[2].copy(weight = w3), factors[3].copy(weight = w4),
                             factors[4].copy(weight = w5)
                         )
-                        val (acc, ret) = evaluateWeights(strategy, adjusted, availableDates)
+                        val (acc, ret) = evaluateWeights(strategy, adjusted, trainDates)
                         if (acc > bestAccuracy) { bestAccuracy = acc; bestAvgReturn = ret; bestWeights = adjusted }
                     }
             }
             else -> {
-                // 太多因子 → 随机采样
                 totalCombinations = 200
                 for (i in 0 until 200) {
                     val adjusted = randomWeights(factors)
-                    val (acc, ret) = evaluateWeights(strategy, adjusted, availableDates)
+                    val (acc, ret) = evaluateWeights(strategy, adjusted, trainDates)
                     if (acc > bestAccuracy) { bestAccuracy = acc; bestAvgReturn = ret; bestWeights = adjusted }
                 }
             }
         }
 
-        Log.i(TAG, "网格搜索完成: $totalCombinations 组合 → 最优准确率 ${"%.1f".format(bestAccuracy * 100)}%")
+        // Walk-Forward 驗證：用測試集驗證最優權重
+        val testResult = evaluateWeights(strategy, bestWeights, testDates)
+        val overfitGap = bestAccuracy - testResult.first
+
+        Log.i(TAG, "網格搜索完成: $totalCombinations 組合 → 訓練集準確率 ${"%.1f".format(bestAccuracy * 100)}%, 測試集準確率 ${"%.1f".format(testResult.first * 100)}%, 過擬差距 ${"%.1f".format(overfitGap * 100)}%")
+
+        // 如果測試集表現顯著低於訓練集（過擬差距 > 15%），使用原始權重
+        if (overfitGap > 0.15f) {
+            Log.w(TAG, "⚠️ 檢測到過擬合（差距${"%.0f".format(overfitGap * 100)}%），保留原始權重")
+            return@withContext GridSearchResult(strategy.weightFactors, testResult.first, testResult.second, totalCombinations)
+        }
+
         GridSearchResult(bestWeights, bestAccuracy, bestAvgReturn, totalCombinations)
     }
 

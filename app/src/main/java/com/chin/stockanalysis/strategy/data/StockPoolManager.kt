@@ -107,7 +107,7 @@ class StockPoolManager(private val context: Context) {
 
         val repo = com.chin.stockanalysis.stock.data.StockDataSourceFactory
             .createDefaultRepository(context.applicationContext)
-        val filter = FundamentalFilterStrategy(StockScreener(repo))
+        val filter = FundamentalFilterStrategy(StockScreener(repo, context.applicationContext))
         val weeklyPassed = if (allStocks.isNotEmpty()) {
             try { filter.screenWithData(allStocks).getOrNull()?.signals?.map { it.stockCode }?.toSet() ?: emptySet() }
             catch (e: Exception) { Log.w(TAG, "screen err: ${e.message}"); emptySet() }

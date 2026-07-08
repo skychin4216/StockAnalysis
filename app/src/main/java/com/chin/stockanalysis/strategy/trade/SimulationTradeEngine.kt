@@ -7,6 +7,7 @@ import com.chin.stockanalysis.stock.database.StockDataCenter
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.Strategy
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
+import com.chin.stockanalysis.strategy.backtest.StrategyOptimizer
 import com.chin.stockanalysis.strategy.data.SmartMoneyCache
 import com.chin.stockanalysis.strategy.models.ScreeningResult
 import com.chin.stockanalysis.strategy.models.SignalAction
@@ -17,6 +18,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.LocalDate
@@ -24,6 +26,7 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import com.chin.stockanalysis.strategy.market.MarketAdaptiveStrategy
 
 /**
  * ## 中线量化引擎 v2.0 — 9步精選流程 + 智能賣出
@@ -337,6 +340,7 @@ class SimulationTradeEngine(private val context: Context) {
         var aiPicks = emptyList<AIPick>()
         var aiPicksFiltered = emptyList<AIPick>()
         var needAi = false
+        var adaptiveParams: MarketAdaptiveStrategy.AdaptiveParams? = null
         timedStep("Step 8.5: 大盤環境分析") {
             try {
                 latestMarketReport = com.chin.stockanalysis.strategy.market.MarketAnalyzer.analyze(
@@ -344,6 +348,9 @@ class SimulationTradeEngine(private val context: Context) {
                 )
                 onStatusUpdate?.invoke("📊 ${latestMarketReport!!.trend.direction} | ${latestMarketReport!!.sellType.sellType}")
                 Log.i(TAG, "大盤分析: ${latestMarketReport!!.summary}")
+                adaptiveParams = MarketAdaptiveStrategy.calculate(latestMarketReport!!)
+                Log.i(TAG, "🌊 市場自適應: ${adaptiveParams?.description}")
+                onStatusUpdate?.invoke("🌊 ${adaptiveParams?.description}")
             } catch (e: Exception) {
                 Log.w(TAG, "大盤分析失敗（不阻塞）: ${e.message}")
             }
@@ -378,7 +385,7 @@ class SimulationTradeEngine(private val context: Context) {
                 }
                 aiStrategy.strategyResults = screeningResults
                 aiStrategy.targetDate = config.tradeDate
-                aiStrategy.marketContext = latestMarketReport?.summary ?: ""
+                aiStrategy.marketContext = latestMarketReport?.summary ?: "" + (adaptiveParams?.let { "\n\n" + MarketAdaptiveStrategy.buildMarketPrompt(it) } ?: "")
                 onStatusUpdate?.invoke("🤖 正在 AI 分析股票...")
                 val aiSignals = executeStrategy(aiStrategy, finalStockList, 1) ?: emptyList()
                 aiSignals.sortedByDescending { it.strength }.take(FINAL_TOP3).mapIndexed { i, s ->
@@ -402,7 +409,7 @@ class SimulationTradeEngine(private val context: Context) {
 
         var buyOrders = emptyList<TradeOrder>()
         timedStep("Step 10: 買入過濾與訂單生成") {
-            buyOrders = generateBuyOrders(aiPicksFiltered, config.tradeDate, allSnapshots, config.orderType)
+            buyOrders = generateBuyOrders(aiPicksFiltered, config.tradeDate, allSnapshots, config.orderType, adaptiveParams)
             Log.i(TAG, "生成买入订单: ${buyOrders.size}只")
         }
 
@@ -682,7 +689,9 @@ class SimulationTradeEngine(private val context: Context) {
         }
         val nextDate = getNextTradingDay(config.tradeDate)
         val nextDayData = if (nextDate != null) try { db.dailySnapshotDao().getByDate(nextDate) } catch (_: Exception) { emptyList() } else emptyList()
-        val nextDayPriceMap = nextDayData.associate { it.code to it.close }
+        // 使用次日開盤價作為模擬成交價（修正未來函數）
+        val nextDayPriceMap = nextDayData.associate { it.code to it.open }
+        val nextDayCloseMap = nextDayData.associate { it.code to it.close }
         val allPeriodResults = mutableListOf<StrategyPeriodResult>()
         for (strategy in strategies) for (period in config.periods) {
             val rawSignals = executeStrategy(strategy, stockList, period) ?: continue
@@ -701,21 +710,39 @@ class SimulationTradeEngine(private val context: Context) {
         val orderAnalysisList = mutableListOf<BacktrackOrderAnalysis>()
         for (code in boughtStocks) {
             val snap = snapshots.find { it.code == code } ?: continue
-            val nextPrice = nextDayPriceMap[code] ?: continue
-            orderAnalysisList.add(BacktrackOrderAnalysis(code, snap.name, snap.close, nextPrice, (nextPrice-snap.close)/snap.close*100, (nextPrice-snap.close)/snap.close*100 > 0))
+            val nextOpenPrice = nextDayPriceMap[code] ?: continue
+            // 扣除交易成本（雙向 0.3%）
+            val netBuyPrice = snap.close * (1.0 + 0.0015)  // 買入含滑點
+            val netSellPrice = nextOpenPrice * (1.0 - 0.0015)  // 賣出含印花稅+滑點
+            val profitPct = (netSellPrice - netBuyPrice) / netBuyPrice * 100
+            orderAnalysisList.add(BacktrackOrderAnalysis(code, snap.name, snap.close, nextOpenPrice, profitPct, profitPct > 0))
         }
         val optimizedList = mutableListOf<BacktrackOptimizedStrategy>()
+        // 收集可用日期用於網格搜索
+        val btAvailableDates = try { db.dailySnapshotDao().getAvailableDates(31).reversed() } catch (_: Exception) { emptyList() }
         for (strategy in strategies) for (period in config.periods) {
             val prs = allPeriodResults.filter { it.strategyId == strategy.id && it.periodDays == period }
             if (prs.isEmpty() || nextDayData.isEmpty()) continue
+            if (strategy.weightFactors.isEmpty()) continue
             val tradeDate = prs.first().tradeDate
-            val fittingParams = mutableListOf<FittingRoundParam>()
-            for (round in 1..config.maxFitRounds.coerceAtMost(500)) fittingParams.add(validateParams(prs.first(), nextDayData, round))
-            saveFittingParams(strategy.id, tradeDate, period, fittingParams)
-            val bestNew = fittingParams.maxByOrNull{it.accuracy}
-            val oldBest = getOldBestAccuracy(strategy.id, tradeDate, period)
-            optimizedList.add(BacktrackOptimizedStrategy(strategy.id, strategy.name, oldBest?:0f, bestNew?.accuracy?:0f,
-                listOf("重新拟合:${fittingParams.size}轮, ${"%.1f".format((oldBest?:0f)*100)}%→${"%.1f".format((bestNew?.accuracy?:0f)*100)}%")))
+            try {
+                val optimizer = StrategyOptimizer(context)
+                val gridResult = optimizer.gridSearch(strategy, btAvailableDates)
+                val fp = FittingRoundParam(
+                    round = gridResult.totalCombinations,
+                    paramJson = strategy.weightFactors.joinToString(",") { "${it.key}:${it.weight}" },
+                    accuracy = gridResult.bestAccuracy,
+                    avgReturn = gridResult.bestAvgReturn,
+                    hitCount = (gridResult.bestAccuracy * 15).toInt(),
+                    totalSignals = 15
+                )
+                saveFittingParams(strategy.id, tradeDate, period, listOf(fp))
+                val oldBest = getOldBestAccuracy(strategy.id, tradeDate, period) ?: 0f
+                optimizedList.add(BacktrackOptimizedStrategy(strategy.id, strategy.name, oldBest, gridResult.bestAccuracy,
+                    listOf("網格搜索${gridResult.totalCombinations}組合: ${"%.1f".format(oldBest*100)}%→${"%.1f".format(gridResult.bestAccuracy*100)}%")))
+            } catch (e: Exception) {
+                Log.w(TAG, "backtrack gridSearch 失敗: ${strategy.name} ${e.message}")
+            }
         }
         val sb = StringBuilder()
         sb.appendLine("📈 回溯复盘").appendLine("交易日: ${config.tradeDate}")
@@ -764,7 +791,8 @@ class SimulationTradeEngine(private val context: Context) {
         if (date == today) {
             try {
                 val screener = com.chin.stockanalysis.strategy.data.StockScreener(
-                    com.chin.stockanalysis.stock.data.StockDataSourceFactory.createDefaultRepository(context.applicationContext))
+                    com.chin.stockanalysis.stock.data.StockDataSourceFactory.createDefaultRepository(context.applicationContext),
+                    context.applicationContext)
                 val realtimeStocks = screener.scanFullMarket()
                 if (realtimeStocks.isEmpty()) return local
                 val entities = realtimeStocks.map { DailySnapshotEntity(code=it.code, name=it.name, date=date,
@@ -872,14 +900,14 @@ class SimulationTradeEngine(private val context: Context) {
         return filtered to info
     }
 
-    private suspend fun generateBuyOrders(aiPicks: List<AIPick>, tradeDate: String, snapshots: List<DailySnapshotEntity>, orderType: String = "AI精選"): List<TradeOrder> {
+    private suspend fun generateBuyOrders(aiPicks: List<AIPick>, tradeDate: String, snapshots: List<DailySnapshotEntity>, orderType: String = "AI精選", adaptiveParams: MarketAdaptiveStrategy.AdaptiveParams? = null): List<TradeOrder> {
         // 先用 FundamentalFilterStrategy + SmartMoneyCache 對 AI 推薦進行評分過濾
-        val filteredPicks = aiPicks.filter { pick ->
+        val threshold = adaptiveParams?.scoreThreshold?.toDouble() ?: if (orderType == "MidTermQuant") 40.0 else 55.0
+        var filteredPicks = aiPicks.filter { pick ->
             val smScore = SmartMoneyCache.getScore(pick.stockCode)
-            // 主力資金綜合評分 >= 55（WATCH 級別）才允許買入
-            val passed = smScore.combined >= 55.0
+            val passed = smScore.combined >= threshold
             if (!passed) {
-                Log.i(TAG, "🚫 買入評分攔截: ${pick.stockName}(${pick.stockCode}) 主力資金評分=${String.format("%.0f", smScore.combined)} < 55")
+                Log.i(TAG, "🚫 買入評分攔截: ${pick.stockName}(${pick.stockCode}) 主力資金評分=${String.format("%.0f", smScore.combined)} < $threshold")
             }
             passed
         }
@@ -887,7 +915,43 @@ class SimulationTradeEngine(private val context: Context) {
             Log.i(TAG, "買入評分過濾: ${aiPicks.size}隻 → ${filteredPicks.size}隻 通過")
         }
 
-        return filteredPicks.mapNotNull { pick ->
+        // 市場自適應：空倉觸發
+        if (adaptiveParams != null && latestMarketReport != null) {
+            val highScoreCount = filteredPicks.size
+            if (MarketAdaptiveStrategy.shouldForceEmpty(latestMarketReport!!, highScoreCount)) {
+                Log.i(TAG, "🛑 市場自適應空倉觸發：BEARISH 強趨勢 + 高分股不足")
+                return emptyList()
+            }
+        }
+
+        // 市場自適應：限制最大買入數量
+        val maxCount = adaptiveParams?.maxStockCount ?: Int.MAX_VALUE
+        if (filteredPicks.size > maxCount) {
+            Log.i(TAG, "🌊 市場自適應數量限制：${filteredPicks.size}隻 → ${maxCount}隻")
+            filteredPicks = filteredPicks.take(maxCount)
+        }
+
+        // 利潤質量過濾（V2.0 輕量整合）
+        val pqFilteredPicks = filteredPicks.filter { pick ->
+            try {
+                val pqResult = withTimeoutOrNull(10_000L) {
+                    com.chin.stockanalysis.agent.v2.ProfitQualityAnalyzer.analyze(pick.stockCode)
+                } ?: return@filter true  // 超時不阻塞
+                val isGoodQuality = pqResult.qualityLevel == com.chin.stockanalysis.agent.v2.ProfitQualityLevel.ENDOGENOUS_GROWTH
+                        || pqResult.qualityLevel == com.chin.stockanalysis.agent.v2.ProfitQualityLevel.ONE_TIME_PROFIT
+                if (!isGoodQuality) {
+                    Log.i(TAG, "🚫 利潤質量攔截: ${pick.stockName}(${pick.stockCode}) 利潤質量=${pqResult.qualityLevel}")
+                }
+                isGoodQuality
+            } catch (_: Exception) {
+                true  // 分析失敗不阻塞買入
+            }
+        }
+        if (pqFilteredPicks.size < filteredPicks.size) {
+            Log.i(TAG, "利潤質量過濾: ${filteredPicks.size}隻 → ${pqFilteredPicks.size}隻 通過")
+        }
+
+        return pqFilteredPicks.mapNotNull { pick ->
             // 尝试多种代码格式匹配
             val rawCode = pick.stockCode.removePrefix("sh").removePrefix("sz")
             var snap = snapshots.find { it.code == pick.stockCode }
@@ -923,6 +987,11 @@ class SimulationTradeEngine(private val context: Context) {
 
         Log.i(TAG, "runFitting start: today=${dayInfo.today()}, recent=${dayInfo.recentTradingDay()}, prev=${dayInfo.previousTradingDay()}, next=${dayInfo.nextTradingDay()}, strategies=${strategies.size}, periods=${config.periods}")
 
+        // 收集最近 30 個可用交易日用於網格搜索回測
+        val availableDates = try {
+            db.dailySnapshotDao().getAvailableDates(31).reversed()
+        } catch (_: Exception) { emptyList() }
+
         for (strategy in strategies) for (period in config.periods) {
             val prs = results.filter{it.strategyId==strategy.id && it.periodDays==period}; if(prs.isEmpty()) continue
             val tradeDate = prs.first().tradeDate
@@ -939,48 +1008,43 @@ class SimulationTradeEngine(private val context: Context) {
                 skipCount++; continue
             }
 
-            // 計算 nextDate
-            val nextDate = getNextTradingDay(tradeDate)?:try{LocalDate.parse(tradeDate).plusDays(1).format(DATE_FMT)}catch(_:Exception){null}?:continue
-            val nextDateLocal = try { LocalDate.parse(nextDate) } catch (_: Exception) {
-                Log.w(TAG, "runFitting skip: ${strategy.name} p${period}d, nextDate=$nextDate 格式無法解析")
-                skipCount++; continue
-            }
-            // 二次保險
-            if (dayInfo.isFutureOrToday(nextDateLocal)) {
-                Log.i(TAG, "runFitting skip: ${strategy.name} p${period}d, nextDate=$nextDate >= recent=${dayInfo.recentTradingDay()} → nextDate也無實際數據，跳過擬合")
+            // 到這裡是歷史數據，執行真正的網格搜索擬合
+            if (strategy.weightFactors.isEmpty()) {
+                Log.i(TAG, "runFitting skip: ${strategy.name} 無 weightFactors，跳過")
                 skipCount++; continue
             }
 
-            // 到這裡是歷史數據，正常擬合
-            val nextDayData = try { db.dailySnapshotDao().getByDate(nextDate) } catch (_: Exception) { emptyList() }
-            if(nextDayData.isEmpty()) {
-                Log.i(TAG, "runFitting skip: ${strategy.name} p${period}d, nextDate=$nextDate 數據庫無數據（可能需要先導入 $nextDate 的歷史數據）")
+            try {
+                val optimizer = StrategyOptimizer(context)
+                val gridResult = optimizer.gridSearch(strategy, availableDates)
+
+                // 保存擬合結果
+                val fp = FittingRoundParam(
+                    round = gridResult.totalCombinations,
+                    paramJson = strategy.weightFactors.joinToString(",") { "${it.key}:${it.weight}" },
+                    accuracy = gridResult.bestAccuracy,
+                    avgReturn = gridResult.bestAvgReturn,
+                    hitCount = (gridResult.bestAccuracy * 15).toInt(),
+                    totalSignals = 15
+                )
+                saveFittingParams(strategy.id, tradeDate, period, listOf(fp))
+
+                val oldBest = getOldBestAccuracy(strategy.id, tradeDate, period) ?: 0f
+                if (gridResult.bestAccuracy > oldBest && gridResult.bestAccuracy >= config.targetAccuracy * 0.8f) {
+                    // 更新策略權重（gridSearch 已修改 strategy.weightFactors 為最優值）
+                    try {
+                        val weightJson = strategy.weightFactors.joinToString(";") { "${it.key}:${it.label}:${it.weight}" }
+                        db.strategyWeightSnapshotDao().insert(
+                            com.chin.stockanalysis.strategy.backtest.StrategyWeightSnapshotEntity(
+                                strategyId = strategy.id, date = dayInfo.today().format(DATE_FMT), weightJson = weightJson, totalScore = 0, hitCount = fp.hitCount))
+                        Log.i(TAG, "🔧 網格搜索擬合: ${strategy.name} ${"%.1f".format(oldBest*100)}% → ${"%.1f".format(gridResult.bestAccuracy*100)}% (${gridResult.totalCombinations}組合)")
+                    } catch (e: Exception) { Log.w(TAG, "更新共享權重失敗: ${e.message}") }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "runFitting gridSearch 失敗: ${strategy.name} ${e.message}")
                 skipCount++; continue
             }
 
-            Log.i(TAG, "runFitting execute: ${strategy.name} p${period}d, tradeDate=$tradeDate → nextDate=$nextDate (${nextDayData.size}只), 驗證Top15準確率")
-            val fp = mutableListOf<FittingRoundParam>()
-            val rounds = config.maxFitRounds.coerceAtMost(100)
-            for(round in 1..rounds) fp.add(validateParams(prs.first(),nextDayData,round))
-            saveFittingParams(strategy.id, tradeDate, period, fp)
-            val bestRound = fp.maxByOrNull{ it.accuracy } ?: continue
-            val oldBest = getOldBestAccuracy(strategy.id, tradeDate, period) ?: 0f
-            if (bestRound.accuracy > oldBest && bestRound.accuracy >= config.targetAccuracy) {
-                try {
-                    val bestParams = JSONObject(bestRound.paramJson)
-                    for (factor in strategy.weightFactors) {
-                        val newWeight = bestParams.optInt(factor.key, factor.weight)
-                        strategy.weightFactors = strategy.weightFactors.map { f ->
-                            if (f.key == factor.key) f.copy(weight = newWeight) else f
-                        }
-                    }
-                    val weightJson = strategy.weightFactors.joinToString(";") { "${it.key}:${it.label}:${it.weight}" }
-                    db.strategyWeightSnapshotDao().insert(
-                        com.chin.stockanalysis.strategy.backtest.StrategyWeightSnapshotEntity(
-                            strategyId = strategy.id, date = dayInfo.today().format(DATE_FMT), weightJson = weightJson, totalScore = 0, hitCount = bestRound.hitCount))
-                    Log.i(TAG, "🔧 统一调优: ${strategy.name} ${"%.1f".format(oldBest*100)}% → ${"%.1f".format(bestRound.accuracy*100)}%")
-                } catch (e: Exception) { Log.w(TAG, "更新共享权重失败: ${e.message}") }
-            }
             fitCount++
         }
         val fitElapsed = System.currentTimeMillis() - fitStart
@@ -1266,7 +1330,13 @@ class SimulationTradeEngine(private val context: Context) {
         }
 
         appendLine("🤖 AI最終推薦 Top3:")
-        for (pick in aiPicks) appendLine("  #${pick.rank} ${pick.stockName}(${pick.stockCode.takeLast(6)}) 評分:${pick.compositeScore} ${pick.actionSuggestion}")
+        val buyThreshold = 40.0  // 中線用 40
+        for (pick in aiPicks) {
+            val smScore = SmartMoneyCache.getScore(pick.stockCode)
+            val canBuy = smScore.combined >= buyThreshold
+            val buyTag = if (canBuy) "✅可買入" else "⛔評分不足"
+            appendLine("  #${pick.rank} ${pick.stockName}(${pick.stockCode.takeLast(6)}) AI評分:${pick.compositeScore} 主力資金:${String.format("%.0f", smScore.combined)} $buyTag ${pick.actionSuggestion}")
+        }
     }
 }
 

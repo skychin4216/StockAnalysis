@@ -489,7 +489,8 @@ abstract class QuantFragmentBase : Fragment() {
         val options = arrayOf(
             "📋 查看交易記錄",
             "📊 查看持倉詳情",
-            "📤 導出交易數據"
+            "🔥 導出熱門板塊（由導入保存的數據）",
+            "📋 導出策略報告"
         )
 
         AlertDialog.Builder(requireContext())
@@ -498,7 +499,8 @@ abstract class QuantFragmentBase : Fragment() {
                 when (which) {
                     0 -> showTradeHistory()
                     1 -> loadPositions()
-                    2 -> exportTradeData()
+                    2 -> exportHotSectors()
+                    3 -> exportStrategyReport()
                 }
             }
             .setNegativeButton("關閉", null)
@@ -861,7 +863,100 @@ abstract class QuantFragmentBase : Fragment() {
         }
     }
 
-    /** 導出交易數據 */
+    /** 導出熱門板塊（從 sector_daily_record 表讀取已保存的數據） */
+    protected fun exportHotSectors() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val recentDays = db.sectorDailyRecordDao().getRecentDays(30)
+                if (recentDays.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(requireContext(), "無熱門板塊數據（請先導入或運行量化）", Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+                val sb = StringBuilder()
+                sb.appendLine("🔥 熱門板塊報告（最近 30 個交易日）")
+                sb.appendLine("導出時間: ${LocalDate.now()}"); sb.appendLine()
+
+                // 按日期分組
+                val grouped = recentDays.groupBy { it.date }.toSortedMap()
+                for ((date, sectors) in grouped) {
+                    val hotCount = sectors.count { it.isHot == "Y" || it.isHot == "true" }
+                    sb.appendLine("📅 $date（${sectors.size} 板塊，${hotCount} 熱門）")
+                    for (s in sectors.sortedByDescending { it.hotScore }.take(10)) {
+                        val tag = when (s.rank) { in 1..3 -> "🔥"; in 4..10 -> "⭐"; else -> "  " }
+                        sb.appendLine("  $tag ${s.sectorName} 漲幅:${"%.2f".format(s.changePct)}% 主力:${"%.0f".format(s.mainNetInflow)}萬 評分:${"%.1f".format(s.hotScore)} 連板:${s.consecutiveHotDays}天 $s.isHot")
+                    }
+                    sb.appendLine()
+                }
+                withContext(Dispatchers.Main) {
+                    showDialog("熱門板塊報告", sb.toString())
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(requireContext(), "導出失敗: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    /** 導出策略報告（各策略的權重、擬合結果、回測表現） */
+    protected fun exportStrategyReport() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val eng = com.chin.stockanalysis.strategy.StrategyEngineHolder.get()
+                val strategies = eng.getStrategies().filter { eng.isEnabled(it.id) }
+
+                val sb = StringBuilder()
+                sb.appendLine("📋 策略配置報告")
+                sb.appendLine("導出時間: ${LocalDate.now()}")
+                sb.appendLine("量化類型: ${getQuantType()}"); sb.appendLine()
+
+                for (strategy in strategies) {
+                    sb.appendLine("━━ ${strategy.name} (${strategy.id}) ━━")
+                    sb.appendLine("  類別: ${strategy.category.label}")
+                    sb.appendLine("  權重因子:")
+                    for (f in strategy.weightFactors) {
+                        sb.appendLine("    - ${f.label}: ${f.weight}%")
+                    }
+                    // 讀取最近的擬合結果
+                    val snapshots = try {
+                        db.strategyWeightSnapshotDao().getByStrategy(strategy.id)
+                    } catch (_: Exception) { emptyList() }
+                    if (snapshots.isNotEmpty()) {
+                        val latest = snapshots.first()
+                        sb.appendLine("  最近擬合: ${latest.date} | 命中: ${latest.hitCount}")
+                    }
+                    sb.appendLine()
+                }
+
+                // 市場環境
+                try {
+                    val marketReport = com.chin.stockanalysis.strategy.market.MarketAnalyzer.analyze(requireContext(), emptyList())
+                    sb.appendLine("━━ 當前市場環境 ━━")
+                    sb.appendLine("  趨勢: ${marketReport.trend.direction} (強度:${marketReport.trend.strength})")
+                    sb.appendLine("  ADX: ${marketReport.trend.adx?.let { "%.1f".format(it) } ?: "N/A"}")
+                    sb.appendLine("  賣出類型: ${marketReport.sellType.sellType}")
+                    sb.appendLine()
+                    sb.append(marketReport.summary)
+                } catch (_: Exception) {
+                    sb.appendLine("（市場環境分析失敗）")
+                }
+
+                withContext(Dispatchers.Main) {
+                    showDialog("策略報告", sb.toString())
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(requireContext(), "導出失敗: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    /** 導出交易數據（保留供子類調用） */
     protected fun exportTradeData() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {

@@ -1,5 +1,6 @@
 package com.chin.stockanalysis.agent.pipeline
 
+import android.util.Log
 import org.json.JSONObject
 import org.json.JSONArray
 
@@ -98,14 +99,31 @@ object StructuredOutputParser {
      * 解析 Agent D 輿情微調
      */
     fun parseSentimentResult(text: String): SentimentAdjustResult? {
-        val json = extractJson(text) ?: return null
-        return try {
-            SentimentAdjustResult(
-                sentimentScore = json.optInt("sentimentScore", 0),
-                positionAdjust = json.optString("positionAdjust", "0%"),
-                reason = json.optString("reason", "")
-            )
-        } catch (_: Exception) { null }
+        val json = extractJson(text)
+        if (json != null) {
+            return try {
+                SentimentAdjustResult(
+                    sentimentScore = json.optInt("sentimentScore", 0),
+                    positionAdjust = json.optString("positionAdjust", "0%"),
+                    reason = json.optString("reason", "")
+                )
+            } catch (_: Exception) { null }
+        }
+        // Fallback: 如果 JSON 解析失敗，嘗試從文本提取分數（部分模型在 jsonMode 下仍返回非結構化文本）
+        val trimmed = text.trim()
+        val scoreMatch = Regex("(?:sentimentScore|score|得分|評分)[：:\\s]*(\\d+)").find(trimmed)
+        val score = scoreMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        val adjustMatch = Regex("(?:positionAdjust|position_adjust|倉位|倉位調整)[：:\\s]*([+-]?\\d+%?)").find(trimmed)
+        val adjust = adjustMatch?.groupValues?.get(1) ?: "0%"
+        if (score == 0 && adjust == "0%" && trimmed.length < 50) {
+            Log.w("StructuredOutputParser", "Agent D 輿情解析失敗，原始回應: ${trimmed.take(100)}")
+            return null
+        }
+        return SentimentAdjustResult(
+            sentimentScore = score,
+            positionAdjust = adjust,
+            reason = "LLM 未返回標準 JSON，已從文本提取"
+        )
     }
 
     /**

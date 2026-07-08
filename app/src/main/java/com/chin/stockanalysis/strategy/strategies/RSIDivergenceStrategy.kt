@@ -56,11 +56,18 @@ class RSIDivergenceStrategy(
 
     override suspend fun isAvailable(): Boolean = true
 
-    private fun screenWithPool(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
+    private suspend fun screenWithPool(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
         if (pool.isEmpty()) return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,
             signals = emptyList(), totalScanned = 0, scanTimeMs = System.currentTimeMillis() - startTime
         ))
+
+        // 大盤環境預檢
+        val marketDir = try { screener.detectMarketDirection() } catch (_: Exception) { "OSCILLATION" }
+        val isBearish = marketDir == "BEARISH"
+        val rsiStrengthThreshold = if (isBearish) 45 else 30
+        Log.i("RSI_Strategy", "大盤環境: $marketDir → RSI門檻 ${if (isBearish) "30→45" else "標準門檻30"}")
+
         val period = (config.params["rsi_period"] as? Number)?.toInt() ?: 14
         val minPrice = (config.params["min_price"] as? Number)?.toDouble() ?: 5.0
         val avgVolume = pool.map { s: StockRealtime -> s.volume }.average().takeIf { it > 0 } ?: 1.0
@@ -77,7 +84,7 @@ class RSIDivergenceStrategy(
                 strength = strength, reason = "RSI${"%.0f".format(rsi)} 量比${"%.1f".format(volumeRatio)} 动量${"%.1f".format(momentum)}%",
                 action = if (strength >= 50) SignalAction.BUY else SignalAction.WATCH,
                 currentPrice = stock.price, changePercent = stock.changePercent)
-        }.filter { it.strength >= 30 }.sortedByDescending { it.strength }.take(config.maxResults)
+        }.filter { it.strength >= rsiStrengthThreshold }.sortedByDescending { it.strength }.take(config.maxResults)
         Log.i("RSI_Strategy", "pool=${pool.size} → 信号=${signals.size}")
         return Result.success(ScreeningResult(strategyId = id, strategyName = name, category = category,
             signals = signals, totalScanned = pool.size, scanTimeMs = System.currentTimeMillis() - startTime))
