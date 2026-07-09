@@ -52,6 +52,8 @@ class AIPredictionStrategy(private val context: Context) : Strategy {
     var targetDate: String = ""
     /** 由外部注入：大盤分析報告，AI 預測時參考市場環境 */
     var marketContext: String = ""
+    /** 由外部注入：板塊上下文（用戶關注/回彈板塊/板塊大年） */
+    var sectorContext: com.chin.stockanalysis.strategy.predict.AIPredictionEngine.SectorContext? = null
 
     override suspend fun screen(): Result<ScreeningResult> = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
@@ -73,7 +75,11 @@ class AIPredictionStrategy(private val context: Context) : Strategy {
             }
 
             val ai = AIPredictionEngine(context)
-            val prediction = ai.predict(effectiveResults, date, marketContext = marketContext)
+            val prediction = ai.predict(
+                effectiveResults, date,
+                marketContext = marketContext,
+                sectorContext = sectorContext ?: com.chin.stockanalysis.strategy.predict.AIPredictionEngine.SectorContext()
+            )
 
             if (prediction == null || prediction.topPicks.isEmpty()) {
                 return@withContext Result.success(ScreeningResult(

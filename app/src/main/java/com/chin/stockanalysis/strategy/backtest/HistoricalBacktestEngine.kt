@@ -114,15 +114,21 @@ class HistoricalBacktestEngine(private val context: Context) {
                 val todaySnapshots = db.dailySnapshotDao().getByDate(today)
                 if (todaySnapshots.isEmpty()) continue
 
+                // 預加載前一天收盤價 Map，避免 N+1 查詢
+                val prevDayMap = if (i > 0) {
+                    try {
+                        db.dailySnapshotDao().getByDate(dates[i - 1])
+                            .associate { it.code to it.close }
+                    } catch (_: Exception) { emptyMap() }
+                } else emptyMap()
+
                 // 2. 转换为 StockRealtime
                 val stockList = todaySnapshots.map { snap ->
                     StockRealtime(
                         code = snap.code, name = snap.name,
                         price = snap.close, open = snap.open,
-                        yestClose = if (i > 0) {
-                            db.dailySnapshotDao().getByDate(dates[i - 1])
-                                .find { it.code == snap.code }?.close ?: snap.close / (1.0 + snap.changePct / 100.0)
-                        } else snap.close / (1.0 + snap.changePct / 100.0),
+                        yestClose = prevDayMap[snap.code]
+                            ?: (snap.close / (1.0 + snap.changePct / 100.0)),
                         high = snap.high, low = snap.low,
                         volume = snap.volume, amount = snap.amount,
                         changePercent = snap.changePct,
@@ -143,6 +149,8 @@ class HistoricalBacktestEngine(private val context: Context) {
 
                 var dayBuys = 0; var dayCorrect = 0
                 var daySignals = 0; var daySignalCorrect = 0
+                // 批量收集預測記錄，最後一次性寫入 DB，避免逐條 insert
+                val predictionEntities = mutableListOf<StrategyPredictionEntity>()
                 for (signal in signals.take(5)) {
                     val tomorrowSnap = tomorrowSnapshots.find { it.code == signal.stockCode } ?: continue
                     // 使用次日開盤價作為模擬成交價（修正未來函數：T日信號 → T+1日開盤價成交）
@@ -158,8 +166,8 @@ class HistoricalBacktestEngine(private val context: Context) {
                         else -> null
                     }
 
-                    // 保存预测记录
-                    db.strategyPredictionDao().insertAll(listOf(
+                    // 收集預測記錄到列表
+                    predictionEntities.add(
                         StrategyPredictionEntity(
                             strategyId = strategy.id, strategyName = strategy.name,
                             date = today, stockCode = signal.stockCode,
@@ -170,7 +178,7 @@ class HistoricalBacktestEngine(private val context: Context) {
                             wasCorrect = isCorrect,
                             deviation = actualPct - 5.0
                         )
-                    ))
+                    )
 
                     // 统计所有信号（不仅仅是BUY）
                     daySignals++
@@ -187,6 +195,11 @@ class HistoricalBacktestEngine(private val context: Context) {
                         if (netPct > maxGain) maxGain = netPct
                         if (netPct < maxLoss) maxLoss = netPct
                     }
+                }
+                // 批量寫入預測記錄到 DB
+                if (predictionEntities.isNotEmpty()) {
+                    try { db.strategyPredictionDao().insertAll(predictionEntities) }
+                    catch (e: Exception) { Log.w(TAG, "批量寫入預測記錄失敗: ${e.message}") }
                 }
 
                 totalBuys += dayBuys

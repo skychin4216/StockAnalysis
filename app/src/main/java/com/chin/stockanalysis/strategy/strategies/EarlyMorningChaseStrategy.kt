@@ -256,7 +256,7 @@ class EarlyMorningChaseStrategy(
     // V 型反转打分（满分100）
     // ═══════════════════════════════
 
-    private fun scoreVReversal(v: VReversal): Int {
+    private suspend fun scoreVReversal(v: VReversal): Int {
         val s = v.stock
 
         // 1. V型反转力度 (0-40)
@@ -274,6 +274,15 @@ class EarlyMorningChaseStrategy(
             v.sectorNames.size == 1 -> 25
             else -> 15
         }
+
+        // 2b. 回彈板塊額外加分
+        val bounceBonus = try {
+            val bounceFactor = com.chin.stockanalysis.strategy.sector.SectorBounceFactor(
+                com.chin.stockanalysis.stock.database.StockDatabase.getInstance(screener.context)
+            )
+            val bounceScore = bounceFactor.getBounceScoreForStock(s.name)
+            (bounceScore * 0.15).toInt().coerceAtMost(10)
+        } catch (_: Exception) { 0 }
 
         // 3. 资金质量 (0-20)：成交额大说明主力参与度高
         val capitalScore = when {
@@ -298,7 +307,7 @@ class EarlyMorningChaseStrategy(
             else -> 3                  // 接近高位，追高風險大
         }
 
-        return minOf(vScore + sectorScore + capitalScore + positionScore, 100)
+        return minOf(vScore + sectorScore + bounceBonus + capitalScore + positionScore, 100)
     }
 
     // ═══════════════════════════════

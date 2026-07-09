@@ -489,8 +489,9 @@ abstract class QuantFragmentBase : Fragment() {
         val options = arrayOf(
             "📋 查看交易記錄",
             "📊 查看持倉詳情",
-            "🔥 導出熱門板塊（由導入保存的數據）",
-            "📋 導出策略報告"
+            "🔥 導出熱門板塊數據",
+            "📋 導出策略報告",
+            "🧠 市場記憶設置"
         )
 
         AlertDialog.Builder(requireContext())
@@ -501,6 +502,7 @@ abstract class QuantFragmentBase : Fragment() {
                     1 -> loadPositions()
                     2 -> exportHotSectors()
                     3 -> exportStrategyReport()
+                    4 -> showMarketMemoryDialog()
                 }
             }
             .setNegativeButton("關閉", null)
@@ -954,6 +956,36 @@ abstract class QuantFragmentBase : Fragment() {
                 }
             }
         }
+    }
+
+    /** 顯示市場記憶設置對話框 */
+    protected fun showMarketMemoryDialog() {
+        val memory = com.chin.stockanalysis.strategy.sector.UserMarketMemory(requireContext())
+        val current = memory.focusSectors.joinToString(", ")
+        val input = android.widget.EditText(requireContext()).apply {
+            hint = "輸入關注板塊，用逗號分隔（如：科技,半導體,光通信）"
+            setText(current)
+        }
+        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle("🧠 市場記憶設置")
+            .setMessage("系統會持續追蹤這些板塊，連跌時提醒，選股時優先。\n\nAI 當前判斷：${memory.aiYearDetection}")
+            .setView(input)
+            .setPositiveButton("保存") { _, _ ->
+                val sectors = input.text.toString().split(",").map { it.trim() }.filter { it.isNotBlank() }
+                memory.focusSectors = sectors
+                com.chin.stockanalysis.strategy.sector.StrategyMarketContext.invalidateCache()
+                android.widget.Toast.makeText(requireContext(), "已保存 ${sectors.size} 個關注板塊，緩存已清空", android.widget.Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("取消", null)
+            .setNeutralButton("AI 檢測板塊大年") { _, _ ->
+                lifecycleScope.launch {
+                    val result = memory.detectSectorYearByIndex()
+                    memory.aiYearDetection = result
+                    com.chin.stockanalysis.strategy.sector.StrategyMarketContext.invalidateCache()
+                    android.widget.Toast.makeText(requireContext(), "AI 檢測：$result", android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+            .show()
     }
 
     /** 導出交易數據（保留供子類調用） */

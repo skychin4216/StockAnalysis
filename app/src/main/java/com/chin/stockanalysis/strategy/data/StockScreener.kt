@@ -94,23 +94,38 @@ class StockScreener(
     // 大盤環境檢測
     // ═══════════════════════════════
 
-    /** 檢測大盤環境方向（suspend，因為需要讀取資料庫） */
+    /** 檢測大盤環境方向（三指數綜合：上證+深證+創業板） */
     suspend fun detectMarketDirection(): String {
         return try {
             val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(context)
-            val indexSnaps = db.dailySnapshotDao().getByCode("sh000001", 30).sortedBy { it.date }
-            if (indexSnaps.size >= 20) {
-                val closes = indexSnaps.map { it.close }
-                val ma5 = closes.takeLast(5).average()
-                val ma10 = closes.takeLast(10).average()
-                val ma20 = closes.takeLast(20).average()
-                when {
-                    ma5 > ma10 && ma10 > ma20 -> "BULLISH"
-                    ma5 < ma10 && ma10 < ma20 -> "BEARISH"
-                    else -> "OSCILLATION"
-                }
-            } else "OSCILLATION"
+            val sh = analyzeIndexDirection(db, "sh000001")
+            val sz = analyzeIndexDirection(db, "sz399001")
+            val cy = analyzeIndexDirection(db, "sz399006")
+
+            val bullishCount = listOf(sh, sz, cy).count { it == "BULLISH" }
+            val bearishCount = listOf(sh, sz, cy).count { it == "BEARISH" }
+
+            when {
+                bearishCount >= 2 -> "BEARISH"
+                bullishCount >= 2 -> "BULLISH"
+                else -> "OSCILLATION"
+            }
         } catch (_: Exception) { "OSCILLATION" }
+    }
+
+    private suspend fun analyzeIndexDirection(db: com.chin.stockanalysis.stock.database.StockDatabase, code: String): String {
+        val snaps = db.dailySnapshotDao().getByCode(code, 30).sortedBy { it.date }
+        return if (snaps.size >= 20) {
+            val closes = snaps.map { it.close }
+            val ma5 = closes.takeLast(5).average()
+            val ma10 = closes.takeLast(10).average()
+            val ma20 = closes.takeLast(20).average()
+            when {
+                ma5 > ma10 && ma10 > ma20 -> "BULLISH"
+                ma5 < ma10 && ma10 < ma20 -> "BEARISH"
+                else -> "OSCILLATION"
+            }
+        } else "OSCILLATION"
     }
 
     // ═══════════════════════════════

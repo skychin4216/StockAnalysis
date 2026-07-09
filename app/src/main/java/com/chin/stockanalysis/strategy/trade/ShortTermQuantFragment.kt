@@ -328,6 +328,10 @@ class ShortTermQuantFragment : QuantFragmentBase() {
                 Log.i(TAG, "[ShortTerm] Step 4 done: ${enabledCount} strategies=${strategyElapsed}ms, hits=${screeningList.sumOf { it.hitCount }}")
                 allScreenings = screenings
 
+                // 🔥 構建統一市場上下文（用戶關注/多周期熱門/回彈板塊/大盤指數）
+                val mktCtx = com.chin.stockanalysis.strategy.sector.StrategyMarketContext.build(requireContext(), today)
+                Log.i(TAG, "[ShortTerm] 市場上下文: 用戶關注${mktCtx.userFocusSectors.size}個, 回彈${mktCtx.bounceSectors.size}個, 大盤${mktCtx.indexSnapshot.tripleVote}")
+
                 // 合并池
                 withContext(Dispatchers.Main) { statusTv.text = "🔄 合併策略結果..." }
                 val mergeStart = System.currentTimeMillis()
@@ -337,6 +341,28 @@ class ShortTermQuantFragment : QuantFragmentBase() {
                 mergedStockNames = pool.keys.associateWith { c -> screenings.values.firstNotNullOfOrNull { sc->sc.signals.find{it.stockCode==c}?.stockName } ?: codeToName[c] ?: c }
                 val mergeElapsed = System.currentTimeMillis() - mergeStart
                 Log.i(TAG, "[ShortTerm] Step 5 done: merge pool=${mergeElapsed}ms, size=${mergedPool.size}")
+
+                // 🔥 板塊加權後處理：用戶關注 + 回彈板塊 加分
+                val boostedPool = mutableMapOf<String, MutableList<Pair<String, Int>>>()
+                for ((code, hits) in mergedPool) {
+                    val stockName = mergedStockNames[code] ?: code
+                    val focusBoost = mktCtx.getFocusBoostForStock(stockName)
+                    val bounceBoost = mktCtx.getBounceBoostForStock(stockName)
+                    if (focusBoost > 0 || bounceBoost > 0) {
+                        val bonusHits = hits.map { (name, strength) ->
+                            val boosted = (strength + focusBoost + bounceBoost).coerceAtMost(100)
+                            "$name(+${focusBoost + bounceBoost})" to boosted
+                        }
+                        boostedPool[code] = bonusHits.toMutableList()
+                    } else {
+                        boostedPool[code] = hits.toMutableList()
+                    }
+                }
+                val boostedCount = boostedPool.count { it.value.any { it.first.contains("+") } }
+                if (boostedCount > 0) {
+                    mergedPool = boostedPool.mapValues { it.value.sortedByDescending { p -> p.second } }
+                    Log.i(TAG, "[ShortTerm] 板塊加權: ${boostedCount}只股票獲得加分")
+                }
 
                 // AI 精选
                 val aiStart = System.currentTimeMillis()
@@ -362,7 +388,10 @@ class ShortTermQuantFragment : QuantFragmentBase() {
 
                     withContext(Dispatchers.Main) { statusTv.text = "🤖 AI 大模型分析中..." }
                     try {
-                        val p = AIPredictionEngine(requireContext()).predict(screeningList, today)
+                        val p = AIPredictionEngine(requireContext()).predict(
+                            screeningList, today,
+                            sectorContext = mktCtx.toAiSectorContext()
+                        )
                         if (p!=null && p.topPicks.isNotEmpty()) aiPicks = p.topPicks else aiPicks = emptyList()
                     } catch (_: Exception) { aiPicks = emptyList() }
 
@@ -465,10 +494,16 @@ class ShortTermQuantFragment : QuantFragmentBase() {
     private suspend fun buyAiPicksInternal() {
         if (aiPicks.isEmpty()) return
 
+        // 按分數排序，最多買入 5 隻（與中線 MAX_HOLDINGS 對齊）
+        val sortedPicks = aiPicks.sortedByDescending { it.compositeScore }.take(5)
+        if (sortedPicks != aiPicks) {
+            aiPicks = sortedPicks
+        }
+
         // 確保主力資金緩存已刷新
         if (!SmartMoneyCache.isFresh()) {
             try {
-                SmartMoneyCache.refresh(requireContext(), aiPicks.map { it.stockCode })
+                SmartMoneyCache.refresh(requireContext(), sortedPicks.map { it.stockCode })
                 Log.i(TAG, "短綫量化: 主力資金緩存已刷新")
             } catch (e: Exception) {
                 Log.w(TAG, "短綫量化: 主力資金緩存刷新失敗: ${e.message}")
@@ -484,22 +519,28 @@ class ShortTermQuantFragment : QuantFragmentBase() {
         val watchlistStocks = mutableListOf<Triple<String, String, Int>>()
         val today = java.time.LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
 
-        for (pick in aiPicks) {
-            if (pick.stockCode in existingCodes) continue
+        for (pick in sortedPicks) {
+            // 代碼格式匹配（AI 返回的 code 可能不帶 sh/sz 前綴）
+            val rawCode = pick.stockCode.removePrefix("sh").removePrefix("sz")
+            val matchedCode = todayStocks.find { it.code == pick.stockCode }?.code
+                ?: todayStocks.find { it.code == rawCode }?.code
+                ?: todayStocks.find { it.code.removePrefix("sh").removePrefix("sz") == rawCode }?.code
+                ?: pick.stockCode
+            if (matchedCode in existingCodes) continue
 
             // 主力資金評分過濾
-            val smScore = SmartMoneyCache.getScore(pick.stockCode)
+            val smScore = SmartMoneyCache.getScore(matchedCode)
             if (smScore.combined < 55) {
-                Log.i(TAG, "🚫 短綫買入評分攔截: ${pick.stockName}(${pick.stockCode}) 主力資金評分=${String.format("%.0f", smScore.combined)} < 55")
+                Log.i(TAG, "🚫 短綫買入評分攔截: ${pick.stockName}(${matchedCode}) 主力資金評分=${String.format("%.0f", smScore.combined)} < 55")
                 continue
             }
 
-            val snap = todayStocks.find { it.code == pick.stockCode }
+            val snap = todayStocks.find { it.code == matchedCode }
             val buyPrice = snap?.price ?: 0.0
             if (buyPrice <= 0) continue
             val finalScore = (pick.compositeScore + smScore.combined.toInt()) / 2
             toInsert.add(StrategyTradeOrderEntity(
-                strategyId = "AI_Selected", stockCode = pick.stockCode, stockName = pick.stockName,
+                strategyId = "AI_Selected", stockCode = matchedCode, stockName = pick.stockName,
                 tradeDate = lastTradeDate, buyPrice = buyPrice,
                 buyTime = java.time.LocalTime.now().toString().take(8),
                 quantity = 100, orderType = "ShortTermQuant", status = "BUYING",
@@ -509,7 +550,7 @@ class ShortTermQuantFragment : QuantFragmentBase() {
             ))
             // 同時保存到 AI 精選表
             aiSelectedEntities.add(com.chin.stockanalysis.stock.database.AiSelectedStockEntity(
-                stockCode = pick.stockCode,
+                stockCode = matchedCode,
                 stockName = pick.stockName,
                 source = "shortterm",
                 selectedDate = today,
@@ -518,7 +559,7 @@ class ShortTermQuantFragment : QuantFragmentBase() {
                 buyPrice = buyPrice
             ))
             // 加到自選股
-            watchlistStocks.add(Triple(pick.stockCode, pick.stockName, pick.compositeScore))
+            watchlistStocks.add(Triple(matchedCode, pick.stockName, pick.compositeScore))
         }
         if (toInsert.isNotEmpty()) {
             db.strategyTradeOrderDao().insertAll(toInsert)

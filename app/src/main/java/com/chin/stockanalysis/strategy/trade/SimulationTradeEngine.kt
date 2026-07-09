@@ -38,7 +38,7 @@ class SimulationTradeEngine(private val context: Context) {
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
         val PERIOD_DAYS = listOf(1, 3, 10, 30, 50, 100)
         const val MAX_STOCKS_PER_STRATEGY = 15
-        const val FINAL_TOP3 = 3
+        const val FINAL_TOP3 = 5
         const val CROSS_DAY_WINDOW = 5
         const val CROSS_DAY_TOP_N = 20
         const val ROTATION_THRESHOLD_DAYS = 3
@@ -61,6 +61,9 @@ class SimulationTradeEngine(private val context: Context) {
 
     /** 狀態回調，用於向 UI 報告當前執行的步驟 */
     var onStatusUpdate: ((String) -> Unit)? = null
+
+    /** 市場上下文（外部可注入，為空時自動構建） */
+    var marketContext: com.chin.stockanalysis.strategy.sector.StrategyMarketContext? = null
 
     data class TradeSessionConfig(
         val tradeDate: String = LocalDate.now().format(DATE_FMT),
@@ -207,6 +210,13 @@ class SimulationTradeEngine(private val context: Context) {
         Log.i(TAG, "交易日: ${config.tradeDate}  主板: ${config.onlyMainBoard}  周期: ${config.periods}")
         Log.i(TAG, "策略数: ${strategies.size}  最大持仓: ${MAX_HOLDINGS}")
 
+        // 🔥 構建市場上下文（統一板塊/指數/用戶關注/回彈）
+        val ctxStart = System.currentTimeMillis()
+        val mktCtx = marketContext
+            ?: com.chin.stockanalysis.strategy.sector.StrategyMarketContext.build(context, config.tradeDate)
+        marketContext = mktCtx
+        Log.i(TAG, "市場上下文: 用戶關注${mktCtx.userFocusSectors.size}個, 回彈${mktCtx.bounceSectors.size}個, 大盤${mktCtx.indexSnapshot.tripleVote} (${System.currentTimeMillis() - ctxStart}ms)")
+
         // 🔥 非阻塞啟動新聞因子拉取（與後續步驟並行）
         val newsJob = com.chin.stockanalysis.news.HotSectorNewsUpdater.ensureFreshGlobal(
             scope = this, context = context, forceRefresh = true
@@ -295,6 +305,8 @@ class SimulationTradeEngine(private val context: Context) {
         var crossDayTop20 = emptyList<Pair<String, Int>>()
         var hotStocks = emptySet<String>()
         var sectorPicked = emptySet<String>()
+        var userFocusPicked = emptySet<String>()
+        var bouncePicked = emptySet<String>()
         timedStep("Step 6-7: 跨日聚合與熱門板塊精選") {
             crossDayTop20 = aggregateCrossDayResults(config.tradeDate, strategies, poolCodes)
             Log.i(TAG, "【Step 6a】跨${CROSS_DAY_WINDOW}天聚合 → Top${crossDayTop20.size}: ${crossDayTop20.take(8).joinToString { "${it.first.takeLast(6)}(${it.second}天)" }}")
@@ -304,6 +316,21 @@ class SimulationTradeEngine(private val context: Context) {
 
             sectorPicked = if (config.onlyMainBoard) getHotSectorStockPool().filter { isMainBoard(it) }.toSet() else getHotSectorStockPool()
             Log.i(TAG, "【Step 7】板塊精選: +${sectorPicked.size} 隻")
+
+            // 🔥 用戶關注板塊 + 回彈板塊（從統一市場上下文獲取）
+            val focusCodes = mutableSetOf<String>()
+            for (sectorName in mktCtx.userFocusSectors) {
+                val codes = try { db.sectorStockDao().getStockCodesBySector(sectorName) } catch (_: Exception) { emptyList() }
+                focusCodes.addAll(codes)
+            }
+            val bounceCodes = mutableSetOf<String>()
+            for (b in mktCtx.bounceSectors.take(5)) {
+                val codes = try { db.sectorStockDao().getStockCodesBySector(b.sectorName) } catch (_: Exception) { emptyList() }
+                bounceCodes.addAll(codes)
+            }
+            userFocusPicked = focusCodes
+            bouncePicked = bounceCodes
+            Log.i(TAG, "【Step 7b】用戶關注板塊: +${userFocusPicked.size}隻, 回彈板塊: +${bouncePicked.size}隻")
         }
 
         // Step 8: 用户搜索/智能体/自选股
@@ -316,7 +343,7 @@ class SimulationTradeEngine(private val context: Context) {
 
         // Step 9: 组装+过滤
         val t9 = System.currentTimeMillis()
-        val rawPool = (crossDayTop20.map { it.first }.toSet() + hotStocks + sectorPicked + userStockCodes + skillPickCodes + watchlistCodes).toSet()
+        val rawPool: Set<String> = (crossDayTop20.map { it.first }.toSet() + hotStocks + sectorPicked + userFocusPicked + bouncePicked + userStockCodes + skillPickCodes + watchlistCodes)
         val finalPool = filterPoolCodes(rawPool, allSnapshots)
         val filteredOut = rawPool.size - finalPool.size
         if (filteredOut > 0) Log.i(TAG, "【Step 9b】買入過濾: 移除${filteredOut}隻不合格股 → 最終池 ${finalPool.size} 隻")
@@ -386,6 +413,7 @@ class SimulationTradeEngine(private val context: Context) {
                 aiStrategy.strategyResults = screeningResults
                 aiStrategy.targetDate = config.tradeDate
                 aiStrategy.marketContext = latestMarketReport?.summary ?: "" + (adaptiveParams?.let { "\n\n" + MarketAdaptiveStrategy.buildMarketPrompt(it) } ?: "")
+                aiStrategy.sectorContext = mktCtx.toAiSectorContext()
                 onStatusUpdate?.invoke("🤖 正在 AI 分析股票...")
                 val aiSignals = executeStrategy(aiStrategy, finalStockList, 1) ?: emptyList()
                 aiSignals.sortedByDescending { it.strength }.take(FINAL_TOP3).mapIndexed { i, s ->
@@ -414,27 +442,51 @@ class SimulationTradeEngine(private val context: Context) {
         }
 
         timedStep("Step 11: 持倉合併與保存") {
-            // 保存買入訂單到數據庫
             if (buyOrders.isNotEmpty()) {
                 try {
-                    val entities = buyOrders.map { order ->
-                        StrategyTradeOrderEntity(
-                            strategyId = order.strategyId,
-                            stockCode = order.stockCode,
-                            stockName = order.stockName,
-                            tradeDate = order.tradeDate,
-                            buyPrice = order.buyPrice,
-                            buyTime = order.buyTime,
-                            quantity = order.quantity,
-                            reason = order.reason,
-                            scoreAtBuy = order.scoreAtBuy,
-                            orderType = order.orderType,
-                            status = "PENDING",
-                            createdAt = System.currentTimeMillis()
-                        )
+                    // 查詢現有持倉（BUYING / PENDING），避免對同一股票重複建倉
+                    val existingHoldings = db.strategyTradeOrderDao().getRecent(500)
+                        .filter { it.status == "BUYING" || it.status == "PENDING" }
+                    val existingMap = existingHoldings.associateBy { it.stockCode }
+
+                    val newEntities = mutableListOf<StrategyTradeOrderEntity>()
+                    val updatedCount = mutableListOf<String>()
+
+                    for (order in buyOrders) {
+                        val existing = existingMap[order.stockCode]
+                        if (existing != null) {
+                            // 已持倉：更新數量（追加）和均價（加權平均）
+                            val totalQty = existing.quantity + order.quantity
+                            val avgPrice = (existing.buyPrice * existing.quantity + order.buyPrice * order.quantity) / totalQty
+                            db.strategyTradeOrderDao().updateQuantityAndPrice(existing.id, totalQty, avgPrice)
+                            updatedCount.add("${order.stockName}(${order.stockCode.takeLast(6)}): ${existing.quantity}→${totalQty}")
+                        } else {
+                            // 新持倉：插入
+                            newEntities.add(StrategyTradeOrderEntity(
+                                strategyId = order.strategyId,
+                                stockCode = order.stockCode,
+                                stockName = order.stockName,
+                                tradeDate = order.tradeDate,
+                                buyPrice = order.buyPrice,
+                                buyTime = order.buyTime,
+                                quantity = order.quantity,
+                                reason = order.reason,
+                                scoreAtBuy = order.scoreAtBuy,
+                                orderType = order.orderType,
+                                status = "PENDING",
+                                createdAt = System.currentTimeMillis()
+                            ))
+                        }
                     }
-                    db.strategyTradeOrderDao().insertAll(entities)
-                    Log.i(TAG, "✅ 已保存 ${entities.size} 只買入訂單到持倉")
+
+                    if (newEntities.isNotEmpty()) {
+                        db.strategyTradeOrderDao().insertAll(newEntities)
+                    }
+
+                    Log.i(TAG, "✅ 持倉保存完成: 新建 ${newEntities.size} 只, 更新 ${updatedCount.size} 只")
+                    if (updatedCount.isNotEmpty()) {
+                        Log.i(TAG, "📝 持倉數量更新: ${updatedCount.joinToString(", ")}")
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "保存買入訂單失敗: ${e.message}")
                 }
@@ -720,7 +772,13 @@ class SimulationTradeEngine(private val context: Context) {
         val optimizedList = mutableListOf<BacktrackOptimizedStrategy>()
         // 收集可用日期用於網格搜索
         val btAvailableDates = try { db.dailySnapshotDao().getAvailableDates(31).reversed() } catch (_: Exception) { emptyList() }
-        for (strategy in strategies) for (period in config.periods) {
+        // 限制 gridSearch 策略數量：策略太多時只對前 3 個做網格搜索，其餘跳過
+        val strategiesForGrid = if (strategies.size > 3) {
+            Log.i(TAG, "backtrackAndOptimize: 策略數=${strategies.size}，僅對前3個執行 gridSearch")
+            strategies.take(3)
+        } else strategies
+        val gridSearchStart = System.currentTimeMillis()
+        for (strategy in strategiesForGrid) for (period in config.periods) {
             val prs = allPeriodResults.filter { it.strategyId == strategy.id && it.periodDays == period }
             if (prs.isEmpty() || nextDayData.isEmpty()) continue
             if (strategy.weightFactors.isEmpty()) continue
@@ -744,6 +802,8 @@ class SimulationTradeEngine(private val context: Context) {
                 Log.w(TAG, "backtrack gridSearch 失敗: ${strategy.name} ${e.message}")
             }
         }
+        val gridSearchElapsed = System.currentTimeMillis() - gridSearchStart
+        Log.i(TAG, "backtrackAndOptimize gridSearch 總耗時: ${gridSearchElapsed}ms, 策略數=${strategiesForGrid.size}/${strategies.size}")
         val sb = StringBuilder()
         sb.appendLine("📈 回溯复盘").appendLine("交易日: ${config.tradeDate}")
         sb.appendLine("📊 买入分析: ${orderAnalysisList.size}只, ${orderAnalysisList.count{it.wasGood}}盈利")
@@ -931,18 +991,23 @@ class SimulationTradeEngine(private val context: Context) {
             filteredPicks = filteredPicks.take(maxCount)
         }
 
-        // 利潤質量過濾（V2.0 輕量整合）
+        // 利潤質量過濾（V2.0 輕量整合）— 超時時標記但不阻塞買入
         val pqFilteredPicks = filteredPicks.filter { pick ->
             try {
-                val pqResult = withTimeoutOrNull(10_000L) {
+                val pqResult = withTimeoutOrNull(15_000L) {
                     com.chin.stockanalysis.agent.v2.ProfitQualityAnalyzer.analyze(pick.stockCode)
-                } ?: return@filter true  // 超時不阻塞
-                val isGoodQuality = pqResult.qualityLevel == com.chin.stockanalysis.agent.v2.ProfitQualityLevel.ENDOGENOUS_GROWTH
-                        || pqResult.qualityLevel == com.chin.stockanalysis.agent.v2.ProfitQualityLevel.ONE_TIME_PROFIT
-                if (!isGoodQuality) {
-                    Log.i(TAG, "🚫 利潤質量攔截: ${pick.stockName}(${pick.stockCode}) 利潤質量=${pqResult.qualityLevel}")
                 }
-                isGoodQuality
+                if (pqResult == null) {
+                    Log.w(TAG, "⏱ 利潤質量超時(15s)，放行: ${pick.stockName}(${pick.stockCode})")
+                    true  // 超時不阻塞
+                } else {
+                    val isGoodQuality = pqResult.qualityLevel == com.chin.stockanalysis.agent.v2.ProfitQualityLevel.ENDOGENOUS_GROWTH
+                            || pqResult.qualityLevel == com.chin.stockanalysis.agent.v2.ProfitQualityLevel.ONE_TIME_PROFIT
+                    if (!isGoodQuality) {
+                        Log.i(TAG, "🚫 利潤質量攔截: ${pick.stockName}(${pick.stockCode}) 利潤質量=${pqResult.qualityLevel}")
+                    }
+                    isGoodQuality
+                }
             } catch (_: Exception) {
                 true  // 分析失敗不阻塞買入
             }
@@ -951,7 +1016,10 @@ class SimulationTradeEngine(private val context: Context) {
             Log.i(TAG, "利潤質量過濾: ${filteredPicks.size}隻 → ${pqFilteredPicks.size}隻 通過")
         }
 
-        return pqFilteredPicks.mapNotNull { pick ->
+        return pqFilteredPicks
+            .sortedByDescending { it.compositeScore }
+            .take(MAX_HOLDINGS)
+            .mapNotNull { pick ->
             // 尝试多种代码格式匹配
             val rawCode = pick.stockCode.removePrefix("sh").removePrefix("sz")
             var snap = snapshots.find { it.code == pick.stockCode }
@@ -1463,6 +1531,9 @@ interface StrategyTradeOrderDao {
     suspend fun getByStrategy(sid: String, limit: Int = 50): List<StrategyTradeOrderEntity>
     @androidx.room.Query("UPDATE strategy_trade_orders SET status = :status, sell_price = :sellPrice, sell_time = :sellTime, profit_pct = :profitPct WHERE id = :id")
     suspend fun updateSellInfo(id: Long, status: String, sellPrice: Double, sellTime: String, profitPct: Double)
+    /** 更新持倉數量和均價（追加建倉時使用） */
+    @androidx.room.Query("UPDATE strategy_trade_orders SET quantity = :quantity, buy_price = :buyPrice WHERE id = :id")
+    suspend fun updateQuantityAndPrice(id: Long, quantity: Int, buyPrice: Double)
     @androidx.room.Query("SELECT SUM(profit_pct) FROM strategy_trade_orders WHERE strategy_id = :sid AND status = 'SOLD'")
     suspend fun getTotalProfit(sid: String): Double?
     @androidx.room.Query("SELECT COUNT(*) FROM strategy_trade_orders WHERE strategy_id = :sid AND status = 'SOLD' AND profit_pct > 0")

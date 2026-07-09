@@ -71,6 +71,9 @@ class StrategyListFragment : Fragment() {
     private var lastExecPeriod: Int = -1  // selectedHotPeriod
     private var cachedResults: List<ScreeningResult>? = null
 
+    // 板塊上下文（供 AI 選股加權使用）
+    private var lastSectorContext: com.chin.stockanalysis.strategy.predict.AIPredictionEngine.SectorContext? = null
+
     companion object {
     }
 
@@ -173,8 +176,7 @@ class StrategyListFragment : Fragment() {
         tuneBtn = Button(requireContext()).apply { text = "拟合(90%)"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#EF6C00")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.1f).apply { marginEnd = 3 }; setOnClickListener { runSelfTune() } }; row2.addView(tuneBtn)
         val dataBtn = Button(requireContext()).apply { text = "数据"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#455A64")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,0.9f).apply { marginEnd = 3 }; setOnClickListener { showDataMenu() } }; row2.addView(dataBtn)
         val importBtn = Button(requireContext()).apply { text = "导入"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#2E7D32")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.1f).apply { marginEnd = 3 }; setOnClickListener { importHistoricalData() } }; row2.addView(importBtn)
-        val exportBtn = Button(requireContext()).apply { text = "导出"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#006064")); setPadding(4,6,4,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,0.9f).apply { marginEnd = 3 }; setOnClickListener { exportSnapshotData() } }; row2.addView(exportBtn)
-        val addCustomBtn = Button(requireContext()).apply { text = "+策略"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#1565C0")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,0.9f).apply { marginEnd = 3 }; setOnClickListener { showAddDialog() } }; row2.addView(addCustomBtn)
+        val addCustomBtn = Button(requireContext()).apply { text = "+策略"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#1565C0")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.1f).apply { marginEnd = 3 }; setOnClickListener { showAddDialog() } }; row2.addView(addCustomBtn)
         layout.addView(row2)
 
         val statusRow = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(16,2,16,4); setBackgroundColor(Color.WHITE) }
@@ -306,20 +308,61 @@ class StrategyListFragment : Fragment() {
     private suspend fun doExecute(eng: StrategyEngine, db: StockDatabase, snapshots: List<com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity>, selectedDate: String, sectorLabel: String) {
         val effectiveSnapshots = if (selectedHotPeriod > 0) getMultiDaySnapshots(db, selectedDate) else snapshots
         for (code in effectiveSnapshots.map { it.code }.distinct()) StockDataCenter.getSectorsByStock(code)
+
+        // 統一構建市場上下文（含用戶關注/多周期熱門/回彈板塊/指數/板塊大年）
+        val marketCtx = com.chin.stockanalysis.strategy.sector.StrategyMarketContext.build(requireContext(), selectedDate)
+
+        // 1. 當前熱門板塊股票
         val sectorStockCodes = if (currentHotSectors.isEmpty()) emptySet()
         else { val codes = mutableSetOf<String>(); for (name in currentHotSectors) codes.addAll(db.sectorStockDao().getStockCodesBySector(name)); codes }
+
+        // 2. 用戶關注板塊股票（從統一上下文獲取）
+        val userFocusCodes = if (marketCtx.userFocusSectors.isEmpty()) emptySet()
+        else { val codes = mutableSetOf<String>(); for (name in marketCtx.userFocusSectors) codes.addAll(db.sectorStockDao().getStockCodesBySector(name)); codes }
+
+        // 3. 回彈板塊股票（從統一上下文獲取）
+        val bounceSectors = marketCtx.bounceSectors
+        val bounceCodes = if (bounceSectors.isEmpty()) emptySet()
+        else { val codes = mutableSetOf<String>(); for (b in bounceSectors.take(5)) codes.addAll(db.sectorStockDao().getStockCodesBySector(b.sectorName)); codes }
+
+        // 合併股票池：熱門 + 用戶關注 + 回彈
+        val allSectorCodes = sectorStockCodes + userFocusCodes + bounceCodes
+
         val onlyMainBoard = (view?.findViewWithTag<Switch>("mainBoardSwitch")?.isChecked == true)
         val feed = com.chin.stockanalysis.strategy.data.StrategyDataFeed(requireContext())
         val allStocks = feed.convertSnapshots(effectiveSnapshots, com.chin.stockanalysis.strategy.data.StrategyDataFeed.DataFeedConfig(onlyMainBoard = onlyMainBoard))
-        val stockList = if (sectorStockCodes.isEmpty()) allStocks else allStocks.filter { it.code in sectorStockCodes }
+        val stockList = if (allSectorCodes.isEmpty()) allStocks else allStocks.filter { it.code in allSectorCodes }
+
         val results = mutableListOf<ScreeningResult>()
-        for (s in eng.getStrategies()) { if (!eng.isEnabled(s.id)) continue; if (s.id == "ai_prediction") continue; try { s.screenWithData(stockList).getOrNull()?.let { results.add(it) } } catch (e: Exception) { Log.w("SLF", "策略 ${s.id} 异常: ${e.message}") } }
+        for (s in eng.getStrategies()) {
+            if (!eng.isEnabled(s.id)) continue
+            if (s.id == "ai_prediction") continue
+            try {
+                s.screenWithData(stockList).getOrNull()?.let { raw ->
+                    // 後處理：用戶關注板塊 + 回彈板塊 額外加權（使用統一上下文方法）
+                    val boostedSignals = raw.signals.map { signal ->
+                        var bonus = 0
+                        // 用戶關注板塊加成
+                        bonus += marketCtx.getFocusBoostForStock(signal.stockName)
+                        // 回彈板塊加成（回調天數越多加分越多：1天+1, 2天+2, 3天+3...）
+                        bonus += marketCtx.getBounceBoostForStock(signal.stockName)
+                        if (bonus > 0) signal.copy(strength = (signal.strength + bonus).coerceAtMost(100))
+                        else signal
+                    }.sortedByDescending { it.strength }
+                    results.add(raw.copy(signals = boostedSignals))
+                }
+            } catch (e: Exception) { Log.w("SLF", "策略 ${s.id} 异常: ${e.message}") }
+        }
         CrossTabBus.postStrategyResults(results)
         cachedResults = results
         lastExecTimeMs = System.currentTimeMillis()
         lastExecDate = browsingDate
         lastExecPeriod = selectedHotPeriod
-        if (isAdded) { withContext(Dispatchers.Main) { scanBtn.isEnabled = true; scanBtn.text = "执行策略"; progressBar.visibility = View.GONE; statusTv.text = "  已完成 · $selectedDate（$sectorLabel）"; saveBacktestData(results); showResults(results) } }
+        // 保存板塊上下文供 AI 選股使用
+        lastSectorContext = marketCtx.toAiSectorContext()
+
+        val boostInfo = if (userFocusCodes.isNotEmpty() || bounceCodes.isNotEmpty()) " · 關注${userFocusCodes.size}只·回彈${bounceCodes.size}只" else ""
+        if (isAdded) { withContext(Dispatchers.Main) { scanBtn.isEnabled = true; scanBtn.text = "执行策略"; progressBar.visibility = View.GONE; statusTv.text = "  已完成 · $selectedDate（$sectorLabel）$boostInfo"; saveBacktestData(results); showResults(results) } }
         else { pendingResults = results }
     }
 
@@ -398,7 +441,49 @@ class StrategyListFragment : Fragment() {
         dialog.show()
         dialog.window?.setLayout(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT)
         dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.apply { gravity = Gravity.END or Gravity.BOTTOM }
-        lifecycleScope.launch { try { val ai = AIPredictionEngine(requireContext()); val pr = ai.predict(results, browsingDate.toString(), useEnhancedAi = true); requireActivity().runOnUiThread { if (pr != null && pr.topPicks.isNotEmpty()) { ail.text = ""; c.addView(TextView(requireContext()).apply { text = "  \uD83D\uDCCB 方案${pr.mode}: ${pr.modeReason}"; textSize = 11f; setTextColor(Color.parseColor("#E65100")); setPadding(0, 4, 0, 8) }); c.addView(TextView(requireContext()).apply { text = "  \uD83C\uDF0C 大盘方向: ${pr.marketDirection}"; textSize = 11f; setTextColor(if (pr.marketDirection == "BULLISH") Color.parseColor("#E53935") else if (pr.marketDirection == "BEARISH") Color.parseColor("#43A047") else Color.parseColor("#EF6C00")); setPadding(0, 4, 0, 4) }); c.addView(TextView(requireContext()).apply { text = "  \uD83D\uDCCA 市场判断: ${pr.marketOutlook}"; textSize = 11f; setTextColor(Color.parseColor("#666666")); setPadding(0, 0, 0, 4) }); c.addView(TextView(requireContext()).apply { text = "  \u26A0 ${pr.riskWarning}"; textSize = 11f; setTextColor(Color.parseColor("#EF6C00")); setPadding(0, 0, 0, 8) }); val tpTable = TableLayout(requireContext()).apply { isStretchAllColumns = true }; val tpHr = TableRow(requireContext()); for (h in listOf("排名", "名称", "代码", "综分", "概率", "建议")) tpHr.addView(TextView(requireContext()).apply { text = h; textSize = 10f; setTextColor(Color.parseColor("#999999")); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER; setPadding(2, 4, 2, 4) }); tpTable.addView(tpHr); for (p in pr.topPicks) { val tpRow = TableRow(requireContext()); for (cell in listOf("#${p.rank}", p.stockName, p.stockCode.takeLast(6), "${p.compositeScore}", "${p.upProbability}%", p.actionSuggestion)) tpRow.addView(TextView(requireContext()).apply { text = cell; textSize = 10f; setTextColor(Color.parseColor("#333333")); gravity = Gravity.CENTER; setPadding(2, 4, 2, 4) }); tpTable.addView(tpRow) }; c.addView(tpTable) } else { ail.text = "  \u26A0\uFE0F AI 预测暂不可用" } } } catch (e: Exception) { requireActivity().runOnUiThread { ail.text = "  \u26A0\uFE0F AI 预测失败: ${e.message?.take(30)}" } } }
+        lifecycleScope.launch {
+            try {
+                val ai = AIPredictionEngine(requireContext())
+                val pr = ai.predict(
+                    results,
+                    browsingDate.toString(),
+                    useEnhancedAi = true,
+                    sectorContext = lastSectorContext ?: com.chin.stockanalysis.strategy.predict.AIPredictionEngine.SectorContext()
+                )
+                requireActivity().runOnUiThread {
+                    if (pr != null && pr.topPicks.isNotEmpty()) {
+                        ail.text = ""
+                        c.addView(TextView(requireContext()).apply { text = "  \uD83D\uDCCB 方案${pr.mode}: ${pr.modeReason}"; textSize = 11f; setTextColor(Color.parseColor("#E65100")); setPadding(0, 4, 0, 8) })
+                        c.addView(TextView(requireContext()).apply { text = "  \uD83C\uDF0C 大盘方向: ${pr.marketDirection}"; textSize = 11f; setTextColor(if (pr.marketDirection == "BULLISH") Color.parseColor("#E53935") else if (pr.marketDirection == "BEARISH") Color.parseColor("#43A047") else Color.parseColor("#EF6C00")); setPadding(0, 4, 0, 4) })
+                        c.addView(TextView(requireContext()).apply { text = "  \uD83D\uDCCA 市场判断: ${pr.marketOutlook}"; textSize = 11f; setTextColor(Color.parseColor("#666666")); setPadding(0, 0, 0, 4) })
+                        c.addView(TextView(requireContext()).apply { text = "  \u26A0 ${pr.riskWarning}"; textSize = 11f; setTextColor(Color.parseColor("#EF6C00")); setPadding(0, 0, 0, 8) })
+                        // 顯示板塊加權信息
+                        val sc = lastSectorContext
+                        if (sc != null && (sc.userFocusSectors.isNotEmpty() || sc.bounceSectors.isNotEmpty())) {
+                            val sectorInfo = buildString {
+                                if (sc.userFocusSectors.isNotEmpty()) append("關注板塊: ${sc.userFocusSectors.joinToString("、")} | ")
+                                if (sc.bounceSectors.isNotEmpty()) append("回彈板塊: ${sc.bounceSectors.take(3).joinToString("、") { it.sectorName }}")
+                            }
+                            c.addView(TextView(requireContext()).apply { text = "  \uD83D\uDD25 $sectorInfo"; textSize = 10f; setTextColor(Color.parseColor("#1565C0")); setPadding(0, 0, 0, 8) })
+                        }
+                        val tpTable = TableLayout(requireContext()).apply { isStretchAllColumns = true }
+                        val tpHr = TableRow(requireContext())
+                        for (h in listOf("排名", "名称", "代码", "综分", "概率", "建议")) tpHr.addView(TextView(requireContext()).apply { text = h; textSize = 10f; setTextColor(Color.parseColor("#999999")); setTypeface(null, Typeface.BOLD); gravity = Gravity.CENTER; setPadding(2, 4, 2, 4) })
+                        tpTable.addView(tpHr)
+                        for (p in pr.topPicks) {
+                            val tpRow = TableRow(requireContext())
+                            for (cell in listOf("#${p.rank}", p.stockName, p.stockCode.takeLast(6), "${p.compositeScore}", "${p.upProbability}%", p.actionSuggestion)) tpRow.addView(TextView(requireContext()).apply { text = cell; textSize = 10f; setTextColor(Color.parseColor("#333333")); gravity = Gravity.CENTER; setPadding(2, 4, 2, 4) })
+                            tpTable.addView(tpRow)
+                        }
+                        c.addView(tpTable)
+                    } else {
+                        ail.text = "  \u26A0\uFE0F AI 预测暂不可用"
+                    }
+                }
+            } catch (e: Exception) {
+                requireActivity().runOnUiThread { ail.text = "  \u26A0\uFE0F AI 预测失败: ${e.message?.take(30)}" }
+            }
+        }
     }
 
     private fun refreshList() { engine?.let { adapter = StrategyAdapter(it.getStrategies(), ::onStrategyClick, ::onStrategyToggle); recyclerView.adapter = adapter } }
@@ -453,6 +538,136 @@ class StrategyListFragment : Fragment() {
         }
     }
 
+    /** 導出熱門板塊數據（使用統一市場上下文） */
+    private fun exportHotSectorData() {
+        statusTv.text = "  \uD83D\uDD25 正在導出熱門板塊數據..."
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val ctx = com.chin.stockanalysis.strategy.sector.StrategyMarketContext.build(requireContext())
+                val sb = StringBuilder()
+                sb.appendLine("\uD83D\uDD25 熱門板塊數據導出")
+                sb.appendLine("導出時間: ${java.time.LocalDate.now()}")
+                sb.appendLine("大盤方向: ${ctx.indexSnapshot.tripleVote}")
+                sb.appendLine()
+
+                // 用戶關注板塊
+                if (ctx.userFocusSectors.isNotEmpty()) {
+                    sb.appendLine("━━ 用戶關注板塊 ━━")
+                    for (s in ctx.userFocusSectors) { sb.appendLine("  • $s") }
+                    sb.appendLine()
+                }
+
+                // 多周期熱門板塊
+                if (ctx.todayHotSectors.isNotEmpty()) {
+                    sb.appendLine("━━ 今日熱門板塊 Top 3 ━━")
+                    for (s in ctx.todayHotSectors) { sb.appendLine("  • $s") }
+                    sb.appendLine()
+                }
+                if (ctx.weeklyHotSectors.isNotEmpty()) {
+                    sb.appendLine("━━ 周熱門板塊（近7日）Top 5 ━━")
+                    for (s in ctx.weeklyHotSectors) { sb.appendLine("  • $s") }
+                    sb.appendLine()
+                }
+                if (ctx.monthlyHotSectors.isNotEmpty()) {
+                    sb.appendLine("━━ 月熱門板塊（近30日）Top 5 ━━")
+                    for (s in ctx.monthlyHotSectors) { sb.appendLine("  • $s") }
+                    sb.appendLine()
+                }
+                if (ctx.quarterlyHotSectors.isNotEmpty()) {
+                    sb.appendLine("━━ 季度熱門板塊（近90日）Top 5 ━━")
+                    for (s in ctx.quarterlyHotSectors) { sb.appendLine("  • $s") }
+                    sb.appendLine()
+                }
+
+                // 回彈板塊
+                if (ctx.bounceSectors.isNotEmpty()) {
+                    sb.appendLine("━━ 回彈板塊（連熱≥3天 + 回調後反彈） ━━")
+                    for (b in ctx.bounceSectors.take(10)) {
+                        sb.appendLine("  • ${b.sectorName}: 連熱${b.consecutiveHotDays}天 | 近3天${"%.2f".format(b.recentDropPct)}% | 今日${"%.2f".format(b.todayBouncePct)}% | 反彈分${"%.1f".format(b.bounceScore)}")
+                    }
+                    sb.appendLine()
+                }
+
+                // AI 板塊大年
+                if (ctx.aiYearDetection != "未檢測" && ctx.aiYearDetection != "檢測失敗") {
+                    sb.appendLine("━━ AI 板塊大年檢測 ━━")
+                    sb.appendLine("  ${ctx.aiYearDetection}")
+                }
+
+                val dir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                val fileName = "StockAnalysis_hot_sectors_${java.time.LocalDate.now()}.txt"
+                val file = java.io.File(dir, fileName)
+                file.writeText(sb.toString())
+                withContext(Dispatchers.Main) { statusTv.text = "  \u2705 已導出熱門板塊數據"; Toast.makeText(requireContext(), "已保存到: Downloads/$fileName", Toast.LENGTH_LONG).show() }
+            } catch (e: Exception) { withContext(Dispatchers.Main) { statusTv.text = "  導出失敗: ${e.message?.take(30)}"; Toast.makeText(requireContext(), "導出失敗: ${e.message}", Toast.LENGTH_LONG).show() } }
+        }
+    }
+
+    /** 導出策略報告 */
+    private fun exportStrategyReport() {
+        val eng = engine ?: return
+        statusTv.text = "  \uD83D\uDCCB 正在導出策略報告..."
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val sb = StringBuilder()
+                sb.appendLine("\uD83D\uDCCB 策略配置報告")
+                sb.appendLine("導出時間: ${java.time.LocalDate.now()}")
+                sb.appendLine()
+
+                for (strategy in eng.getStrategies().filter { eng.isEnabled(it.id) }) {
+                    sb.appendLine("━━ ${strategy.name} (${strategy.id}) ━━")
+                    sb.appendLine("  類別: ${strategy.category.label}")
+                    sb.appendLine("  權重因子:")
+                    for (f in strategy.weightFactors) { sb.appendLine("    - ${f.label}: ${f.weight}%") }
+                    val snapshots = try { db.strategyWeightSnapshotDao().getByStrategy(strategy.id) } catch (_: Exception) { emptyList() }
+                    if (snapshots.isNotEmpty()) {
+                        val latest = snapshots.first()
+                        sb.appendLine("  最近擬合: ${latest.date} | 命中: ${latest.hitCount}")
+                    }
+                    sb.appendLine()
+                }
+
+                val dir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                val fileName = "StockAnalysis_strategy_report_${java.time.LocalDate.now()}.txt"
+                val file = java.io.File(dir, fileName)
+                file.writeText(sb.toString())
+                withContext(Dispatchers.Main) { statusTv.text = "  \u2705 已導出策略報告"; Toast.makeText(requireContext(), "已保存到: Downloads/$fileName", Toast.LENGTH_LONG).show() }
+            } catch (e: Exception) { withContext(Dispatchers.Main) { statusTv.text = "  導出失敗: ${e.message?.take(30)}"; Toast.makeText(requireContext(), "導出失敗: ${e.message}", Toast.LENGTH_LONG).show() } }
+        }
+    }
+
+    /** 顯示市場記憶設置對話框 */
+    private fun showMarketMemoryDialog() {
+        val memory = com.chin.stockanalysis.strategy.sector.UserMarketMemory(requireContext())
+        val current = memory.focusSectors.joinToString(", ")
+        val input = android.widget.EditText(requireContext()).apply {
+            hint = "輸入關注板塊，用逗號分隔（如：科技,半導體,光通信）"
+            setText(current)
+        }
+        AlertDialog.Builder(requireContext())
+            .setTitle("\uD83E\uDDE0 市場記憶設置")
+            .setMessage("系統會持續追蹤這些板塊，連跌時提醒，選股時優先。\n\nAI 當前判斷：${memory.aiYearDetection}")
+            .setView(input)
+            .setPositiveButton("保存") { _, _ ->
+                val sectors = input.text.toString().split(",").map { it.trim() }.filter { it.isNotBlank() }
+                memory.focusSectors = sectors
+                // 清空緩存，下次執行時重新構建市場上下文
+                com.chin.stockanalysis.strategy.sector.StrategyMarketContext.invalidateCache()
+                Toast.makeText(requireContext(), "已保存 ${sectors.size} 個關注板塊，緩存已清空", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("取消", null)
+            .setNeutralButton("AI 檢測板塊大年") { _, _ ->
+                lifecycleScope.launch {
+                    val result = memory.detectSectorYearByIndex()
+                    memory.aiYearDetection = result
+                    com.chin.stockanalysis.strategy.sector.StrategyMarketContext.invalidateCache()
+                    Toast.makeText(requireContext(), "AI 檢測：$result", Toast.LENGTH_LONG).show()
+                }
+            }
+            .show()
+    }
+
     private fun saveBacktestData(results: List<ScreeningResult>) { lifecycleScope.launch { try {
         val ctx = requireContext()
         val db = StockDatabase.getInstance(ctx)
@@ -474,11 +689,27 @@ class StrategyListFragment : Fragment() {
     } catch (e: Exception) { Log.w("SLF", "保存预测失败: ${e.message}") } } }
 
     private fun showDataMenu() {
-        val options = arrayOf("\uD83D\uDCE5 拉取股票报告", "\uD83D\uDCCA 执行策略报告")
+        val memory = com.chin.stockanalysis.strategy.sector.UserMarketMemory(requireContext())
+        val userSectors = memory.focusSectors.takeIf { it.isNotEmpty() }?.joinToString("、") ?: "未設置"
+        val options = arrayOf(
+            "\uD83D\uDCE5 拉取股票报告",
+            "\uD83D\uDCCA 执行策略报告",
+            "\uD83D\uDD25 導出熱門板塊數據（用戶關注：$userSectors）",
+            "\uD83D\uDCCB 導出策略報告",
+            "\uD83E\uDDE0 市場記憶設置",
+            "\uD83D\uDD04 刷新市場上下文緩存"
+        )
         AlertDialog.Builder(requireContext())
             .setTitle("数据中心")
             .setItems(options) { _, which ->
-                when (which) { 0 -> showFetchReport(); 1 -> showScanHistory() }
+                when (which) {
+                    0 -> showFetchReport()
+                    1 -> showScanHistory()
+                    2 -> exportHotSectorData()
+                    3 -> exportStrategyReport()
+                    4 -> showMarketMemoryDialog()
+                    5 -> { com.chin.stockanalysis.strategy.sector.StrategyMarketContext.invalidateCache(); Toast.makeText(requireContext(), "市場上下文緩存已清空", Toast.LENGTH_SHORT).show() }
+                }
             }.show()
     }
 

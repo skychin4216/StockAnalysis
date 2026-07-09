@@ -48,6 +48,28 @@ class AIPredictionEngine(private val context: Context) {
     private val newsManager = NewsFactorManager(context)
 
     /**
+     * 板塊上下文：用戶關注 + 回彈板塊 + AI 大年檢測
+     */
+    data class SectorContext(
+        /** 用戶設置的關注板塊關鍵詞列表 */
+        val userFocusSectors: List<String> = emptyList(),
+        /** 回彈板塊詳情（連熱天數、回調幅度、今日反彈） */
+        val bounceSectors: List<BounceSectorInfo> = emptyList(),
+        /** AI 檢測的板塊大年結論 */
+        val aiYearDetection: String = "未檢測",
+        /** 回調加權規則：回調 N 天加 N 分 */
+        val pullbackBonusEnabled: Boolean = true
+    ) {
+        data class BounceSectorInfo(
+            val sectorName: String,
+            val consecutiveHotDays: Int,
+            val recentDropPct: Double,
+            val todayBouncePct: Double,
+            val bounceScore: Double
+        )
+    }
+
+    /**
      * AI 预测结果
      */
     data class AIPrediction(
@@ -91,7 +113,8 @@ class AIPredictionEngine(private val context: Context) {
         selectedDate: String,
         onProgress: ((String) -> Unit)? = null,
         useEnhancedAi: Boolean = true,
-        marketContext: String = ""
+        marketContext: String = "",
+        sectorContext: SectorContext = SectorContext()
     ): AIPrediction? {
         val slot = if (useEnhancedAi) {
             AiProviderPool.acquire(context, callerTag = "AIPredictionEngine", timeoutMs = 120_000L)
@@ -126,14 +149,15 @@ class AIPredictionEngine(private val context: Context) {
                 detectMarketDirection(selectedDate)
             }
 
-            onProgress?.invoke("正在构建AI提示...")
+            onProgress?.invoke("正在构建AI提示（含板塊權重）...")
             val prompt = buildPredictionPrompt(
                 strategyResults = strategyResults,
                 candidateStocks = candidateStocks,
                 multiDayFeatures = multiDayFeatures,
                 newsFactors = newsFactors,
                 selectedDate = selectedDate,
-                marketContext = effectiveMarketContext
+                marketContext = effectiveMarketContext,
+                sectorContext = sectorContext
             )
 
             // 重试：策略模式用 SimpleAiProvider.switchToNext，增强模式用 AiProviderPool 轮换
@@ -172,7 +196,9 @@ class AIPredictionEngine(private val context: Context) {
                 return null
             }
 
-            return parsePrediction(response)
+            val rawPrediction = parsePrediction(response)
+            // 後處理：板塊權重加權（回調天數越多加分越多）
+            return rawPrediction?.let { applySectorBoost(it, candidateStocks, sectorContext) }
 
         } catch (e: Exception) {
             Log.e(TAG, "AI 预测失败: ${e.message}", e)
@@ -220,7 +246,7 @@ class AIPredictionEngine(private val context: Context) {
         val strength: Int
     )
 
-    /** 获取候选股票近 N 日的 OHLCV 特征 */
+    /** 获取候选股票近 N 日的 OHLCV 特徵（批量查詢避免 N+1） */
     private suspend fun buildMultiDayFeatures(
         candidates: List<StockStrategyScore>,
         selectedDate: String,
@@ -231,20 +257,25 @@ class AIPredictionEngine(private val context: Context) {
             .filter { it <= selectedDate }
             .take(days)
 
+        if (availableDates.isEmpty()) return result
+
+        // 批量查詢：每個日期一次查全部，然後在內存中過濾候選股
+        val candidateCodes = candidates.map { it.stockCode }.toSet()
+        val dateToSnaps = mutableMapOf<String, Map<String, DayFeature>>()
+        for (date in availableDates) {
+            val snaps = db.dailySnapshotDao().getByDate(date)
+            dateToSnaps[date] = snaps.filter { it.code in candidateCodes }.associate {
+                it.code to DayFeature(
+                    date = date, open = it.open, high = it.high, low = it.low,
+                    close = it.close, volume = it.volume, changePct = it.changePct
+                )
+            }
+        }
+
+        // 組裝每隻股票的特徵序列
         for (cand in candidates) {
-            val features = mutableListOf<DayFeature>()
-            for (date in availableDates) {
-                val snapshots = db.dailySnapshotDao().getByDate(date)
-                val snap = snapshots.firstOrNull { it.code == cand.stockCode } ?: continue
-                features.add(DayFeature(
-                    date = date,
-                    open = snap.open,
-                    high = snap.high,
-                    low = snap.low,
-                    close = snap.close,
-                    volume = snap.volume,
-                    changePct = snap.changePct
-                ))
+            val features = availableDates.mapNotNull { date ->
+                dateToSnaps[date]?.get(cand.stockCode)
             }
             if (features.isNotEmpty()) result[cand.stockCode] = features
         }
@@ -308,7 +339,8 @@ class AIPredictionEngine(private val context: Context) {
         multiDayFeatures: Map<String, List<DayFeature>>,
         newsFactors: List<com.chin.stockanalysis.news.NewsFactorEntity>,
         selectedDate: String,
-        marketContext: String = ""
+        marketContext: String = "",
+        sectorContext: SectorContext = SectorContext()
     ): String {
         val sb = StringBuilder()
 
@@ -335,6 +367,30 @@ class AIPredictionEngine(private val context: Context) {
         sb.appendLine("- BEARISH（空頭）: composite_score ≥ 75，且只推薦防禦板塊（醫藥/食品/銀行/公用事業）或逆勢強勢股")
         sb.appendLine("- 如果大盤環境中標註了 BEARISH，你必須在 risk_warning 中明確提醒「大盤空頭，控制倉位」")
         sb.appendLine()
+
+        // ── 板塊輪動與用戶關注 ──
+        sb.appendLine("## 板塊權重與回調加分（重要參考）")
+        if (sectorContext.userFocusSectors.isNotEmpty()) {
+            sb.appendLine("### 用戶關注板塊（年度熱門，需加權）")
+            sb.appendLine("用戶持續追蹤: ${sectorContext.userFocusSectors.joinToString("、")}")
+            sb.appendLine("選股規則：命中用戶關注板塊的股票，composite_score 額外 +10~15 分")
+            sb.appendLine()
+        }
+        if (sectorContext.bounceSectors.isNotEmpty()) {
+            sb.appendLine("### 回彈板塊（回調後加權：回調1天+1分，2天+2分...）")
+            for (b in sectorContext.bounceSectors.take(8)) {
+                val dropDays = (-b.recentDropPct / 1.0).toInt().coerceAtMost(5).coerceAtLeast(1)
+                sb.appendLine("- ${b.sectorName}: 連熱${b.consecutiveHotDays}天 | 近3天${"%.2f".format(b.recentDropPct)}%（回調${dropDays}天）| 今日反彈${"%.2f".format(b.todayBouncePct)}% | 基礎反彈分${"%.1f".format(b.bounceScore)}")
+                sb.appendLine("  → 該板塊股票 composite_score 額外 +$dropDays 分（回調天數加分）")
+            }
+            sb.appendLine()
+        }
+        if (sectorContext.aiYearDetection != "未檢測" && sectorContext.aiYearDetection != "檢測失敗") {
+            sb.appendLine("### AI 板塊大年檢測")
+            sb.appendLine("結論：${sectorContext.aiYearDetection}")
+            sb.appendLine("選股規則：順應大年風格的股票給予額外 +5 分")
+            sb.appendLine()
+        }
 
         // ── 策略打分结果 ──
         sb.appendLine("## 多策略扫描结果（交易日: $selectedDate）")
@@ -424,6 +480,69 @@ class AIPredictionEngine(private val context: Context) {
             volume >= 10_000 -> "${"%.1f".format(volume / 10_000.0)}万"
             else -> volume.toString()
         }
+    }
+
+    // ════════════════════════════════════════
+    // 板塊權重後處理
+    // ════════════════════════════════════════
+
+    /**
+     * 對 AI 預測結果應用板塊權重加權：
+     * - 用戶關注板塊：+10~15 分
+     * - 回彈板塊：回調 N 天 + N 分（1天+1, 2天+2...最多+5）
+     * - 板塊大年順應：+5 分
+     */
+    private fun applySectorBoost(
+        prediction: AIPrediction,
+        candidateStocks: List<StockStrategyScore>,
+        sectorContext: SectorContext
+    ): AIPrediction {
+        if (sectorContext.userFocusSectors.isEmpty() && sectorContext.bounceSectors.isEmpty()) {
+            return prediction
+        }
+
+        val boostedPicks = prediction.topPicks.map { pick ->
+            var bonus = 0
+            val stockName = pick.stockName
+
+            // 1. 用戶關注板塊加成
+            if (sectorContext.userFocusSectors.any {
+                    stockName.contains(it) || it.contains(stockName.take(2))
+                }) {
+                bonus += 12
+            }
+
+            // 2. 回彈板塊加成（回調天數越多加分越多）
+            val matchedBounce = sectorContext.bounceSectors.find {
+                stockName.contains(it.sectorName) || it.sectorName.contains(stockName.take(2))
+            }
+            matchedBounce?.let { b ->
+                val dropDays = (-b.recentDropPct / 1.0).toInt().coerceAtMost(5).coerceAtLeast(1)
+                bonus += dropDays  // 回調1天+1, 2天+2, 3天+3...
+            }
+
+            // 3. 板塊大年順應加成
+            val yearDetection = sectorContext.aiYearDetection
+            if (yearDetection.contains("科技") && (stockName.contains("芯") || stockName.contains("半導") || stockName.contains("光") || stockName.contains("AI") || stockName.contains("軟件"))) {
+                bonus += 5
+            } else if (yearDetection.contains("主板") && (stockName.contains("銀行") || stockName.contains("保險") || stockName.contains("地產") || stockName.contains("煤炭") || stockName.contains("鋼鐵"))) {
+                bonus += 5
+            } else if (yearDetection.contains("成長") && (stockName.contains("新能") || stockName.contains("生物") || stockName.contains("醫藥") || stockName.contains("創新"))) {
+                bonus += 5
+            }
+
+            if (bonus > 0) {
+                pick.copy(
+                    compositeScore = (pick.compositeScore + bonus).coerceAtMost(100),
+                    upProbability = (pick.upProbability + bonus / 2).coerceAtMost(95),
+                    reason = pick.reason + " [板塊加權+${bonus}分]"
+                )
+            } else pick
+        }.sortedByDescending { it.compositeScore }
+            // 重新排名
+            .mapIndexed { index, pick -> pick.copy(rank = index + 1) }
+
+        return prediction.copy(topPicks = boostedPicks)
     }
 
     // ════════════════════════════════════════

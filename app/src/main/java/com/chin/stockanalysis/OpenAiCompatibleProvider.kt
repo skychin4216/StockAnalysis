@@ -167,6 +167,9 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
                         handleRetry(messages, systemPrompt, onSuccess, onComplete, onError,
                             tools, toolChoice, onToolCalls, modelIndex, retryCount + 1, "流式处理异常: ${e.message}", jsonMode)
                     }
+                } finally {
+                    // 確保 response body 被關閉，避免 OkHttp 連接洩漏
+                    try { response.close() } catch (_: Exception) {}
                 }
             }
         })
@@ -280,10 +283,10 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
                     }
                     json.put(key, arr)
                 }
-                is String? -> json.put(key, value)
+                is String -> json.put(key, value)
                 is Number -> json.put(key, value)
                 is Boolean -> json.put(key, value)
-                else -> json.put(key, value?.toString())
+                else -> json.put(key, value.toString())
             }
         }
         return json
@@ -303,7 +306,12 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         onToolCalls: ((List<ChatTools.ToolCall>) -> Unit)? = null,
         jsonMode: Boolean = false
     ) {
-        val body = response.body ?: run { onError("响应体为空"); return }
+        val body = response.body
+        if (body == null) {
+            response.close()
+            onError("响应体为空")
+            return
+        }
         val source = body.source()
         val sb = StringBuilder()
         accumulated = sb
@@ -368,6 +376,9 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
             return
         } finally {
             accumulated = null
+            // 確保 source 和 response 被關閉，避免 OkHttp 連接洩漏
+            try { source.close() } catch (_: Exception) {}
+            try { response.close() } catch (_: Exception) {}
         }
 
         // 組裝 tool_calls 結果
@@ -407,14 +418,13 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         sb: StringBuilder,
         onSuccess: (String) -> Unit,
         toolCallBuilders: MutableMap<Int, MutableMap<String, StringBuilder>>,
-        finishReason: String?,
+        _finishReason: String?,
         jsonMode: Boolean = false
     ) {
         val json = JSONObject(data)
         val choices = json.optJSONArray("choices")
         if (choices == null || choices.length() == 0) return
         val choice = choices.getJSONObject(0)
-        val fr = choice.optString("finish_reason", "").ifBlank { null }
         val delta = choice.optJSONObject("delta") ?: return
 
         // content 和 reasoning_content 二选一

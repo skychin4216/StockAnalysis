@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Provider 管理系统 - StockAnalysis</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #ffffff;
+    --card-bg: #ffffff;
+    --border: #e4e7ec;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --code-bg: #f8fafc;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Noto Sans CJK SC", "Microsoft YaHei", "PingFang SC", "Source Han Sans SC", sans-serif;
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 40px 24px 80px;
+  }
+  header {
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: 16px;
+    margin-bottom: 32px;
+  }
+  header h1 {
+    font-size: 26px;
+    margin: 0 0 8px;
+    color: #111827;
+  }
+  header .subtitle {
+    color: var(--muted);
+    font-size: 14px;
+    margin: 0;
+  }
+  header .meta {
+    color: var(--muted);
+    font-size: 13px;
+    margin-top: 6px;
+  }
+  h2.section-title {
+    font-size: 20px;
+    color: #111827;
+    border-left: 4px solid var(--accent);
+    padding-left: 12px;
+    margin: 36px 0 16px;
+  }
+  .diagram-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    margin-bottom: 28px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+  }
+  .diagram-card h3 {
+    margin: 0 0 4px;
+    font-size: 17px;
+    color: #111827;
+  }
+  .diagram-card .card-desc {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 0 0 16px;
+  }
+  .diagram-wrap {
+    background: #fbfcfe;
+    border: 1px solid #eef0f3;
+    border-radius: 6px;
+    padding: 20px;
+    overflow-x: auto;
+  }
+  .diagram-wrap .mermaid {
+    display: flex;
+    justify-content: center;
+  }
+  .note {
+    margin-top: 16px;
+    padding: 14px 16px;
+    background: var(--code-bg);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    font-size: 13.5px;
+    color: #374151;
+  }
+  .note strong { color: #111827; }
+  .note ul { margin: 6px 0 0; padding-left: 20px; }
+  .note li { margin: 4px 0; }
+  .note code {
+    background: #eef2f7;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 12.5px;
+    font-family: "JetBrains Mono", Consolas, "Courier New", monospace;
+  }
+  .file-tag {
+    display: inline-block;
+    background: #eff6ff;
+    color: var(--accent);
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-left: 6px;
+    font-family: "JetBrains Mono", Consolas, monospace;
+  }
+  footer {
+    margin-top: 48px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 12px;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <h1>AI Provider 管理系统</h1>
+    <p class="subtitle">StockAnalysis 项目 - AI Provider 生命周期、健康探测、流式响应与 max_tokens 配置</p>
+    <p class="meta">涉及组件：OpenAiCompatibleProvider / AiProviderPool / AiOrchestrator / AiProbe / AiProviderSelector / IntentDispatcher / BackgroundPredictor / ConnectionPreWarmPool / SmartContextWindow</p>
+  </header>
+
+  <!-- 图1：AI请求生命周期流程 -->
+  <h2 class="section-title">1. AI 请求生命周期流程</h2>
+  <div class="diagram-card">
+    <h3>请求 → ProviderPool → 健康检查 → 选择 Provider → 发送 → 重试 → 响应解析<span class="file-tag">AiOrchestrator.kt</span></h3>
+    <p class="card-desc">展示一次 AI 请求从入口到返回的完整链路，由 AiOrchestrator 协调 ProviderPool 与重试逻辑（最多 3 次）。</p>
+    <div class="diagram-wrap">
+      <div class="mermaid">
+flowchart TD
+    A([客户端发起 AI 请求]) --> B[AiOrchestrator<br/>接收请求]
+    B --> C[构建 Prompt<br/>StockAIPromptBuilder]
+    C --> D{请求类型?}
+    D -->|JSON mode| E1[设置 response_format=json<br/>max_tokens=6144]
+    D -->|Chat mode| E2[设置 chat 模式<br/>max_tokens=4096]
+    E1 --> F[AiProviderPool<br/>获取可用 Provider]
+    E2 --> F
+    F --> G{健康检查<br/>AiProbe}
+    G -->|存在健康 Provider| H[AiProviderSelector<br/>按优先级选择]
+    G -->|全部不健康| X[降级处理<br/>返回兜底响应]
+    H --> I[OpenAiCompatibleProvider<br/>发送请求]
+    I --> J{响应成功?}
+    J -->|成功| K[解析响应体]
+    J -->|失败/超时| L{重试次数 < 3?}
+    L -->|是| M[标记 Provider 不健康<br/>切换下一个 Provider]
+    M --> I
+    L -->|否| N[抛出异常<br/>记录错误日志]
+    K --> O[关闭响应体<br/>finally close]
+    O --> P([返回结果给客户端])
+    X --> P
+    N --> P
+
+    style A fill:#dbeafe,stroke:#2563eb
+    style P fill:#dbeafe,stroke:#2563eb
+    style X fill:#fee2e2,stroke:#dc2626
+    style N fill:#fee2e2,stroke:#dc2626
+    style O fill:#fef3c7,stroke:#d97706
+      </div>
+    </div>
+    <div class="note">
+      <strong>关键点：</strong>
+      <ul>
+        <li><code>AiOrchestrator</code> 负责编排整体流程，重试上限为 <strong>3 次</strong>。</li>
+        <li>响应体必须在 <code>finally</code> 块中关闭，防止 OkHttp 连接泄漏。</li>
+        <li>请求进入 <code>AiProviderPool</code> 后先经过健康检查，再由 <code>AiProviderSelector</code> 按优先级选择。</li>
+        <li>全部 Provider 不健康时进入降级路径，返回兜底响应而非抛错中断。</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 图2：Provider健康探测与故障转移 -->
+  <h2 class="section-title">2. Provider 健康探测与故障转移</h2>
+  <div class="diagram-card">
+    <h3>定时探测 → 标记健康/不健康 → 请求时跳过不健康 → 全部不健康时降级<span class="file-tag">AiProviderPool.kt / AiProbe.kt</span></h3>
+    <p class="card-desc">AiProviderPool 通过 AiProbe 对多 Provider 执行健康探测（HEALTH_PROBE_TIMEOUT_MS=5000），动态维护健康状态并实现故障转移。</p>
+    <div class="diagram-wrap">
+      <div class="mermaid">
+flowchart TD
+    subgraph 探测阶段
+        T1[定时触发<br/>健康探测任务] --> T2[遍历所有 Provider]
+        T2 --> T3[AiProbe 探测<br/>超时 5000ms]
+        T3 --> T4{探测响应?}
+        T4 -->|200 OK 且有效| T5[标记 HEALTHY<br/>更新延迟指标]
+        T4 -->|超时/错误/非200| T6[标记 UNHEALTHY<br/>记录失败原因]
+        T5 --> T7[写入健康状态表]
+        T6 --> T7
+        T7 --> T8[按优先级重排序<br/>健康 Provider 优先]
+    end
+
+    subgraph 请求阶段
+        R1[新请求到达] --> R2[读取健康状态表]
+        R2 --> R3{存在 HEALTHY Provider?}
+        R3 -->|是| R4[跳过所有 UNHEALTHY<br/>选择优先级最高的健康 Provider]
+        R3 -->|否| R5{全部 UNHEALTHY?}
+        R5 -->|是| R6[触发降级策略]
+        R6 --> R7[尝试最低优先级 Provider<br/>或返回兜底响应]
+        R4 --> R8[发送请求]
+        R8 --> R9{请求成功?}
+        R9 -->|失败| R10[即时标记该 Provider UNHEALTHY<br/>故障转移到下一个]
+        R10 --> R3
+        R9 -->|成功| R11[返回响应]
+    end
+
+    T8 -.-> R2
+
+    style T5 fill:#dcfce7,stroke:#16a34a
+    style T6 fill:#fee2e2,stroke:#dc2626
+    style R6 fill:#fef3c7,stroke:#d97706
+    style R7 fill:#fef3c7,stroke:#d97706
+    style R11 fill:#dbeafe,stroke:#2563eb
+      </div>
+    </div>
+    <div class="note">
+      <strong>关键点：</strong>
+      <ul>
+        <li>健康探测超时 <code>HEALTH_PROBE_TIMEOUT_MS = 5000</code>，由 <code>AiProbe</code> 执行。</li>
+        <li>探测与请求两个阶段联动：探测结果写入健康状态表，请求阶段读取该表跳过不健康节点。</li>
+        <li>请求失败时即时标记 UNHEALTHY，触发故障转移到下一个 Provider，形成动态反馈闭环。</li>
+        <li>全部不健康时进入降级策略，保证系统可用性而非完全失败。</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 图3：流式vs非流式响应处理 -->
+  <h2 class="section-title">3. 流式 vs 非流式响应处理</h2>
+  <div class="diagram-card">
+    <h3>两种模式分支处理<span class="file-tag">OpenAiCompatibleProvider.kt</span></h3>
+    <p class="card-desc">OpenAiCompatibleProvider 支持 streaming 与非 streaming 两种模式，分别走 handleStreamResponse（SSE 解析）和一次性 JSON 解析路径。</p>
+    <div class="diagram-wrap">
+      <div class="mermaid">
+flowchart TD
+    A[OpenAiCompatibleProvider<br/>构建 OkHttp Request] --> B{stream 参数?}
+    B -->|stream=true<br/>流式| S1[设置 stream=true<br/>Accept: text/event-stream]
+    B -->|stream=false<br/>非流式| N1[普通 POST 请求]
+
+    subgraph 流式分支
+        S1 --> S2[OkHttp 发送请求<br/>获取 Response]
+        S2 --> S3[获取 ResponseBody<br/>source 流]
+        S3 --> S4[handleStreamResponse<br/>逐行读取 SSE]
+        S4 --> S5{解析 data: 行}
+        S5 -->|data: [DONE]| S6[结束流<br/>汇总完整内容]
+        S5 -->|data: {json}| S7[提取 delta.content<br/>增量回调]
+        S7 --> S8[实时推送给客户端<br/>UI 流式渲染]
+        S8 --> S5
+        S6 --> S9[finally 关闭 ResponseBody<br/>防止连接泄漏]
+    end
+
+    subgraph 非流式分支
+        N1 --> N2[OkHttp 发送请求<br/>同步阻塞]
+        N2 --> N3[获取 Response]
+        N3 --> N4[读取完整 ResponseBody<br/>一次性字符串]
+        N4 --> N5[解析 JSON<br/>提取 choices 0.message]
+        N5 --> N6[finally 关闭 ResponseBody<br/>防止连接泄漏]
+    end
+
+    S9 --> O[返回完整结果]
+    N6 --> O
+
+    style A fill:#dbeafe,stroke:#2563eb
+    style O fill:#dbeafe,stroke:#2563eb
+    style S9 fill:#fef3c7,stroke:#d97706
+    style N6 fill:#fef3c7,stroke:#d97706
+    style S8 fill:#dcfce7,stroke:#16a34a
+      </div>
+    </div>
+    <div class="note">
+      <strong>关键点：</strong>
+      <ul>
+        <li>流式模式通过 <code>handleStreamResponse</code> 处理 SSE（Server-Sent Events），逐行解析 <code>data:</code> 行。</li>
+        <li>流式支持增量回调，客户端可实时渲染；遇到 <code>data: [DONE]</code> 结束流并汇总。</li>
+        <li>两条分支都必须在 <code>finally</code> 中关闭 <code>ResponseBody</code>，防止 OkHttp 连接池泄漏。</li>
+        <li>OkHttp 使用连接池管理，流式与非流式共享连接复用机制。</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 图4：Agent管道max_tokens配置矩阵 -->
+  <h2 class="section-title">4. Agent 管道 max_tokens 配置矩阵</h2>
+  <div class="diagram-card">
+    <h3>各 Agent 与模式的 token 配置<span class="file-tag">OpenAiCompatibleProvider.kt</span></h3>
+    <p class="card-desc">Pipeline 中不同 Agent 节点使用差异化 max_tokens 配置：Agent 1-3/D=4096, Agent 4-5=6144, Agent 6=8192；JSON mode=6144, Chat mode=4096。</p>
+    <div class="diagram-wrap">
+      <div class="mermaid">
+flowchart LR
+    CFG[max_tokens 配置中心] --> AGENT[Agent 管道]
+    CFG --> MODE[请求模式]
+
+    AGENT --> A1[Agent 1<br/>max_tokens=4096]
+    AGENT --> A2[Agent 2<br/>max_tokens=4096]
+    AGENT --> A3[Agent 3<br/>max_tokens=4096]
+    AGENT --> AD[Agent D<br/>max_tokens=4096]
+    AGENT --> A4[Agent 4<br/>max_tokens=6144]
+    AGENT --> A5[Agent 5<br/>max_tokens=6144]
+    AGENT --> A6[Agent 6<br/>max_tokens=8192]
+
+    MODE --> JM[JSON mode<br/>max_tokens=6144]
+    MODE --> CM[Chat mode<br/>max_tokens=4096]
+
+    A1 --> R1[轻量分析任务]
+    A2 --> R2[数据提取任务]
+    A3 --> R3[基础推理任务]
+    AD --> RD[诊断任务]
+    A4 --> R4[深度分析任务]
+    A5 --> R5[综合推理任务]
+    A6 --> R6[最终生成任务<br/>最大输出]
+
+    JM --> RJ[结构化 JSON 输出]
+    CM --> RC[自然语言对话]
+
+    style CFG fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+    style A1 fill:#dcfce7,stroke:#16a34a
+    style A2 fill:#dcfce7,stroke:#16a34a
+    style A3 fill:#dcfce7,stroke:#16a34a
+    style AD fill:#dcfce7,stroke:#16a34a
+    style A4 fill:#fef3c7,stroke:#d97706
+    style A5 fill:#fef3c7,stroke:#d97706
+    style A6 fill:#fee2e2,stroke:#dc2626
+    style JM fill:#e0e7ff,stroke:#4f46e5
+    style CM fill:#e0e7ff,stroke:#4f46e5
+      </div>
+    </div>
+    <div class="note">
+      <strong>配置矩阵：</strong>
+      <ul>
+        <li><strong>Agent 1-3 / Agent D</strong>：<code>max_tokens = 4096</code>，用于轻量分析与数据提取任务。</li>
+        <li><strong>Agent 4-5</strong>：<code>max_tokens = 6144</code>，用于深度分析与综合推理任务。</li>
+        <li><strong>Agent 6</strong>：<code>max_tokens = 8192</code>，用于最终生成任务，输出空间最大。</li>
+        <li><strong>JSON mode</strong>：<code>max_tokens = 6144</code>，保证结构化 JSON 输出完整。</li>
+        <li><strong>Chat mode</strong>：<code>max_tokens = 4096</code>，自然语言对话场景。</li>
+      </ul>
+    </div>
+  </div>
+
+  <footer>
+    StockAnalysis · AI Provider 管理系统文档 · 生成于 2026-07-10
+  </footer>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'base',
+    themeVariables: {
+      primaryColor: '#eff6ff',
+      primaryTextColor: '#1f2937',
+      primaryBorderColor: '#2563eb',
+      lineColor: '#6b7280',
+      secondaryColor: '#f1f5f9',
+      tertiaryColor: '#f8fafc',
+      fontSize: '14px',
+      fontFamily: '"Noto Sans CJK SC", "Microsoft YaHei", sans-serif'
+    },
+    flowchart: {
+      htmlLabels: true,
+      curve: 'basis',
+      padding: 15
+    }
+  });
+</script>
+</body>
+</html>

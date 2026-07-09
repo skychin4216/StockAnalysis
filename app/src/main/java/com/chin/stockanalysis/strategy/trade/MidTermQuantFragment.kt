@@ -227,6 +227,11 @@ class MidTermQuantFragment : QuantFragmentBase() {
                     lifecycleScope.launch(Dispatchers.Main) { statusTv.text = msg }
                 }
 
+                // 🔥 構建統一市場上下文（注入到 tradeEngine）
+                val mktCtx = com.chin.stockanalysis.strategy.sector.StrategyMarketContext.build(requireContext(), today)
+                te.marketContext = mktCtx
+                Log.i(TAG, "[MidTerm] 市場上下文: 用戶關注${mktCtx.userFocusSectors.size}個, 回彈${mktCtx.bounceSectors.size}個, 大盤${mktCtx.indexSnapshot.tripleVote}")
+
                 // 策略篩選 + AI 精選（引擎內部會自動在 AI 步驟前刷新新聞、暫停/恢復後臺）
                 withContext(Dispatchers.Main) { statusTv.text = "🔄 計算策略信號與AI分析..." }
                 val db = StockDatabase.getInstance(requireContext())
@@ -517,6 +522,20 @@ class MidTermQuantFragment : QuantFragmentBase() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val db = StockDatabase.getInstance(requireContext())
+
+                // 先執行一次快速擬合（用 autoFit 而非 gridSearch）
+                val te = SimulationTradeEngine(requireContext())
+                val enabledStrategies = strategies.filter { eng.isEnabled(it.id) }
+                val recentDates = db.dailySnapshotDao().getAvailableDates(30).sorted()
+                if (enabledStrategies.isNotEmpty() && recentDates.size >= 2) {
+                    try {
+                        te.autoFit(enabledStrategies, recentDates)
+                        Log.i(TAG, "擬合完成，更新 strategy_trade_fitting_params 表")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "快速擬合失敗（仍顯示已有數據）: ${e.message}")
+                    }
+                }
+
                 val sb = StringBuilder()
                 sb.appendLine("🔧 调优拟合参数"); sb.appendLine()
                 for (strategy in strategies) {

@@ -139,6 +139,7 @@ class StrategyOptimizer(private val context: Context) {
         var bestAvgReturn = 0.0
         var bestWeights = factors
         var totalCombinations = 0
+        var evaluatedCount = 0  // 已評估組合計數，用於早停判斷
 
         when (factors.size) {
             3 -> {
@@ -147,6 +148,7 @@ class StrategyOptimizer(private val context: Context) {
                         for (w3 in candidates) {
                             if (w1 + w2 + w3 != 100) continue
                             totalCombinations++
+                            evaluatedCount++
                             val adjustedFactors = listOf(
                                 factors[0].copy(weight = w1),
                                 factors[1].copy(weight = w2),
@@ -158,8 +160,15 @@ class StrategyOptimizer(private val context: Context) {
                                 bestAvgReturn = ret
                                 bestWeights = adjustedFactors
                             }
+                            // 早停機制：準確率已 > 70% 且已評估超過 50 組合
+                            if (bestAccuracy > 0.70f && evaluatedCount > 50) {
+                                Log.i(TAG, "gridSearch 早停: accuracy=${bestAccuracy}, 已評估 ${evaluatedCount} 組合")
+                                break
+                            }
                         }
+                        if (bestAccuracy > 0.70f && evaluatedCount > 50) break
                     }
+                    if (bestAccuracy > 0.70f && evaluatedCount > 50) break
                 }
             }
             4 -> {
@@ -167,12 +176,18 @@ class StrategyOptimizer(private val context: Context) {
                     for (w3 in candidates) for (w4 in candidates) {
                         if (w1 + w2 + w3 + w4 != 100) continue
                         totalCombinations++
+                        evaluatedCount++
                         val adjusted = listOf(
                             factors[0].copy(weight = w1), factors[1].copy(weight = w2),
                             factors[2].copy(weight = w3), factors[3].copy(weight = w4)
                         )
                         val (acc, ret) = evaluateWeights(strategy, adjusted, trainDates)
                         if (acc > bestAccuracy) { bestAccuracy = acc; bestAvgReturn = ret; bestWeights = adjusted }
+                        // 早停機制
+                        if (bestAccuracy > 0.70f && evaluatedCount > 50) {
+                            Log.i(TAG, "gridSearch 早停: accuracy=${bestAccuracy}, 已評估 ${evaluatedCount} 組合")
+                            return@withContext buildGridResult(strategy, bestWeights, bestAccuracy, bestAvgReturn, totalCombinations, testDates)
+                        }
                     }
             }
             5 -> {
@@ -180,6 +195,7 @@ class StrategyOptimizer(private val context: Context) {
                     for (w3 in candidates) for (w4 in candidates) for (w5 in candidates) {
                         if (w1 + w2 + w3 + w4 + w5 != 100) continue
                         totalCombinations++
+                        evaluatedCount++
                         val adjusted = listOf(
                             factors[0].copy(weight = w1), factors[1].copy(weight = w2),
                             factors[2].copy(weight = w3), factors[3].copy(weight = w4),
@@ -187,6 +203,11 @@ class StrategyOptimizer(private val context: Context) {
                         )
                         val (acc, ret) = evaluateWeights(strategy, adjusted, trainDates)
                         if (acc > bestAccuracy) { bestAccuracy = acc; bestAvgReturn = ret; bestWeights = adjusted }
+                        // 早停機制
+                        if (bestAccuracy > 0.70f && evaluatedCount > 50) {
+                            Log.i(TAG, "gridSearch 早停: accuracy=${bestAccuracy}, 已評估 ${evaluatedCount} 組合")
+                            return@withContext buildGridResult(strategy, bestWeights, bestAccuracy, bestAvgReturn, totalCombinations, testDates)
+                        }
                     }
             }
             else -> {
@@ -195,10 +216,29 @@ class StrategyOptimizer(private val context: Context) {
                     val adjusted = randomWeights(factors)
                     val (acc, ret) = evaluateWeights(strategy, adjusted, trainDates)
                     if (acc > bestAccuracy) { bestAccuracy = acc; bestAvgReturn = ret; bestWeights = adjusted }
+                    if (bestAccuracy > 0.70f && i > 50) {
+                        Log.i(TAG, "gridSearch 早停(隨機): accuracy=${bestAccuracy}, 已評估 ${i+1} 組合")
+                        break
+                    }
                 }
             }
         }
 
+        // Walk-Forward 驗證 + 構建結果（共用邏輯抽取）
+        return@withContext buildGridResult(strategy, bestWeights, bestAccuracy, bestAvgReturn, totalCombinations, testDates)
+    }
+
+    /**
+     * 構建 GridSearchResult（含 Walk-Forward 過擬合檢測）
+     */
+    private suspend fun buildGridResult(
+        strategy: Strategy,
+        bestWeights: List<WeightFactor>,
+        bestAccuracy: Float,
+        bestAvgReturn: Double,
+        totalCombinations: Int,
+        testDates: List<String>
+    ): GridSearchResult {
         // Walk-Forward 驗證：用測試集驗證最優權重
         val testResult = evaluateWeights(strategy, bestWeights, testDates)
         val overfitGap = bestAccuracy - testResult.first
@@ -208,10 +248,10 @@ class StrategyOptimizer(private val context: Context) {
         // 如果測試集表現顯著低於訓練集（過擬差距 > 15%），使用原始權重
         if (overfitGap > 0.15f) {
             Log.w(TAG, "⚠️ 檢測到過擬合（差距${"%.0f".format(overfitGap * 100)}%），保留原始權重")
-            return@withContext GridSearchResult(strategy.weightFactors, testResult.first, testResult.second, totalCombinations)
+            return GridSearchResult(strategy.weightFactors, testResult.first, testResult.second, totalCombinations)
         }
 
-        GridSearchResult(bestWeights, bestAccuracy, bestAvgReturn, totalCombinations)
+        return GridSearchResult(bestWeights, bestAccuracy, bestAvgReturn, totalCombinations)
     }
 
     /**
@@ -224,10 +264,10 @@ class StrategyOptimizer(private val context: Context) {
         dates: List<String>
     ): Pair<Float, Double> {
         strategy.weightFactors = adjustedFactors
-        // 运行一次回测
+        // 運行一次回測（gridSearch 內部只用最近 15 天，減少計算量）
         val report = backtestEngine.runHistoricalBacktest(
             strategies = listOf(strategy),
-            tradingDays = minOf(dates.size - 1, 30)
+            tradingDays = minOf(dates.size - 1, 15)
         )
         val r = report.strategyReports.firstOrNull()
         return if (r != null) Pair(r.buyAccuracy, r.avgReturn) else Pair(0f, 0.0)

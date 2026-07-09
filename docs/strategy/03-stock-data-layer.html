@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StockAnalysis - 股票数据层架构</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        :root {
+            --primary: #1a73e8;
+            --secondary: #5f6368;
+            --border: #e0e0e0;
+            --bg-soft: #f8f9fa;
+            --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: "Noto Sans CJK SC", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", sans-serif;
+            background: #ffffff;
+            color: #202124;
+            line-height: 1.7;
+            padding: 40px 24px;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 48px;
+            padding-bottom: 24px;
+            border-bottom: 2px solid var(--primary);
+        }
+
+        header h1 {
+            font-size: 28px;
+            color: var(--primary);
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        header .subtitle {
+            color: var(--secondary);
+            font-size: 15px;
+        }
+
+        .diagram-card {
+            background: #ffffff;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 32px 28px;
+            margin-bottom: 36px;
+            box-shadow: var(--card-shadow);
+        }
+
+        .diagram-card h2 {
+            font-size: 20px;
+            color: #1a1a1a;
+            margin-bottom: 6px;
+            padding-bottom: 10px;
+            border-left: 4px solid var(--primary);
+            padding-left: 12px;
+        }
+
+        .diagram-card .diagram-meta {
+            color: var(--secondary);
+            font-size: 13px;
+            margin-bottom: 20px;
+            padding-left: 16px;
+        }
+
+        .mermaid {
+            display: flex;
+            justify-content: center;
+            background: var(--bg-soft);
+            border-radius: 6px;
+            padding: 24px 12px;
+            overflow-x: auto;
+        }
+
+        .description {
+            margin-top: 20px;
+            padding: 16px 20px;
+            background: #f0f6ff;
+            border-left: 3px solid var(--primary);
+            border-radius: 0 4px 4px 0;
+            font-size: 14px;
+            color: #333;
+        }
+
+        .description strong {
+            color: var(--primary);
+        }
+
+        .description ul {
+            margin-top: 6px;
+            padding-left: 20px;
+        }
+
+        .description li {
+            margin-bottom: 4px;
+        }
+
+        footer {
+            text-align: center;
+            color: var(--secondary);
+            font-size: 13px;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>StockAnalysis - 股票数据层架构</h1>
+            <p class="subtitle">stock/ 目录下的数据源、仓库、缓存、数据库、意图识别与实时行情设计</p>
+        </header>
+
+        <!-- 图 1：多数据源架构图 -->
+        <section class="diagram-card">
+            <h2>图 1 · 多数据源架构图</h2>
+            <p class="diagram-meta">数据源 → 仓库 → 缓存 → 调用方</p>
+            <div class="mermaid">
+graph TB
+    subgraph Sources["多数据源 (stock/data/sources/)"]
+        EM["EastMoneyStockSource<br/>东方财富 · K线/实时/板块"]
+        TX["TencentStockSource<br/>腾讯财经 · 备用实时行情"]
+        SINA["SinaStockSource<br/>新浪财经 · 备用"]
+        AK["AKShareSource<br/>AKShare · Python HTTP"]
+        EMHS["EastMoneyHotSectorSource<br/>热门板块 · 连接池调度"]
+        EMS["EastMoneySectorSource<br/>板块数据"]
+        EMBA["EastMoneyBidAskSource<br/>五档买卖盘"]
+        SSD["SectorSubDivision<br/>板块子分类"]
+        SNF["StockNewsFetcher<br/>新闻抓取"]
+        JQ["JoinQuantsSource<br/>聚宽数据"]
+    end
+
+    subgraph Repository["数据仓库 (stock/data/)"]
+        FACT["StockDataSourceFactory<br/>数据源工厂"]
+        MULTI["MultiSourceStockRepository<br/>多源仓库 · 故障转移/负载均衡"]
+        ENH["EnhancedStockDataProvider<br/>增强数据提供者"]
+        FACADE["StockDataFacade<br/>统一门面接口"]
+    end
+
+    subgraph Cache["智能缓存"]
+        SC["StockCache"]
+        SSC["SmartStockCache<br/>TTL · 预热"]
+        HCP["HttpClientProvider<br/>OkHttp 单例"]
+        TC["TradingCalendar<br/>交易日历"]
+        SNR["StockNameResolver / StockNameTrie<br/>名称解析 · 前缀树"]
+    end
+
+    subgraph Callers["调用方"]
+        QE["StockQueryEngine<br/>查询引擎 · 核心调度"]
+        SS["StockService / StockRealtime"]
+        RDS["RemoteDataService"]
+    end
+
+    EM --> FACT
+    TX --> FACT
+    SINA --> FACT
+    AK --> FACT
+    EMHS --> FACT
+    EMS --> FACT
+    EMBA --> FACT
+    SSD --> FACT
+    SNF --> FACT
+    JQ --> FACT
+
+    FACT --> MULTI
+    MULTI --> ENH
+    ENH --> FACADE
+
+    MULTI -.读写.-> SSC
+    SC --> SSC
+    HCP -.提供连接.-> MULTI
+    TC -.交易日历.-> MULTI
+    SNR -.名称解析.-> ENH
+
+    FACADE --> QE
+    FACADE --> SS
+    FACADE --> RDS
+                </div>
+            <div class="description">
+                <strong>架构说明：</strong>数据层采用"工厂 + 多源仓库 + 门面"三段式设计。
+                <ul>
+                    <li><strong>数据源层</strong>：10 个独立数据源覆盖 K线、实时行情、板块、买卖盘、新闻等场景，东方财富为主源，腾讯/新浪为备用源，AKShare 提供通过 HTTP 调用的 Python 数据能力。</li>
+                    <li><strong>仓库层</strong>：<code>StockDataSourceFactory</code> 负责数据源实例化；<code>MultiSourceStockRepository</code> 实现自动故障转移与负载均衡；<code>EnhancedStockDataProvider</code> 做增强处理；最终由 <code>StockDataFacade</code> 对外暴露统一接口。</li>
+                    <li><strong>缓存层</strong>：<code>SmartStockCache</code> 支持 TTL 与预热策略，<code>StockNameTrie</code> 用前缀树实现快速名称匹配，<code>HttpClientProvider</code> 提供 OkHttp 单例复用连接，<code>TradingCalendar</code> 提供交易日历支持。</li>
+                    <li><strong>调用方</strong>：<code>StockQueryEngine</code> 作为核心调度器统一对接数据门面，供服务层与远程数据服务调用。</li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- 图 2：意图识别流程图 -->
+        <section class="diagram-card">
+            <h2>图 2 · 意图识别流程图</h2>
+            <p class="diagram-meta">用户输入 → 意图识别 → Handler 链 → 查询引擎 → 数据源</p>
+            <div class="mermaid">
+flowchart TD
+    A["用户输入文本<br/>(股票代码/名称/指数/模糊名)"] --> B["IntentRecognizer<br/>意图识别器"]
+
+    B --> C{"是否 AI 意图?"}
+    C -- 是 --> AI["AiIntentHandler<br/>AI 意图处理"]
+    C -- 否 --> D["IntentProcessorChain<br/>处理链调度"]
+
+    D --> H1["StockCodeHandler<br/>股票代码识别<br/>(6位数字)"]
+    H1 -- 匹配 --> R["StockQueryEngine<br/>股票查询引擎"]
+    H1 -- 未匹配 --> H2["IndexHandler<br/>指数识别<br/>(上证/深证/创业板)"]
+    H2 -- 匹配 --> R
+    H2 -- 未匹配 --> H3["TrieStockNameHandler<br/>前缀树精确名称匹配"]
+    H3 -- 匹配 --> R
+    H3 -- 未匹配 --> H4["StockNameHandler<br/>名称匹配"]
+    H4 -- 匹配 --> R
+    H4 -- 未匹配 --> H5["FuzzyStockNameHandler<br/>模糊名称匹配"]
+    H5 -- 匹配 --> R
+    H5 -- 未匹配 --> H6["GeneralStockHandler<br/>通用兜底处理"]
+    H6 --> R
+
+    AI --> R
+
+    R --> E["StockDataFacade<br/>数据门面"]
+    E --> F["MultiSourceStockRepository<br/>多源仓库"]
+    F --> G["数据源<br/>(东方财富/腾讯/新浪/AKShare...)"]
+
+    G --> F2["SmartStockCache<br/>智能缓存"]
+    F2 --> RET["返回结构化数据<br/>(K线/实时行情/板块/快照)"]
+    RET --> UI["UI 渲染展示"]
+
+    style A fill:#e8f0fe,stroke:#1a73e8
+    style R fill:#fef7e0,stroke:#f9ab00
+    style UI fill:#e6f4ea,stroke:#34a853
+    style AI fill:#fce8e6,stroke:#ea4335
+                </div>
+            <div class="description">
+                <strong>流程说明：</strong>意图识别采用"识别器 + 处理链"模式，支持多种输入形式。
+                <ul>
+                    <li><strong>意图识别</strong>：<code>IntentRecognizer</code> 先判断是否为 AI 意图，若是则直接走 <code>AiIntentHandler</code>；否则进入 <code>IntentProcessorChain</code> 处理链。</li>
+                    <li><strong>Handler 链</strong>：按优先级依次尝试代码识别 → 指数识别 → 前缀树名称匹配 → 普通名称匹配 → 模糊名称匹配 → 通用兜底，任一 Handler 匹配成功即短路返回。</li>
+                    <li><strong>查询执行</strong>：匹配结果交由 <code>StockQueryEngine</code> 调度，经数据门面 → 多源仓库 → 数据源获取数据，中间经过 <code>SmartStockCache</code> 智能缓存加速。</li>
+                    <li><strong>数据返回</strong>：结构化数据（K线/实时行情/板块/快照）最终交由 UI 渲染展示。</li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- 图 3：Room 数据库 ER 图 -->
+        <section class="diagram-card">
+            <h2>图 3 · Room 数据库 ER 图</h2>
+            <p class="diagram-meta">核心实体关系（stock/database/）</p>
+            <div class="mermaid">
+erDiagram
+    DailySnapshotEntity ||--o{ SectorDailyRecordEntity : "所属板块记录"
+    SectorDailyRecordEntity }o--|| SectorStockDao : "查询"
+    StrategyTradeOrderEntity ||--o{ AiSelectedStockEntity : "策略选股关联"
+    UserWatchlistEntity }o--o{ DailySnapshotEntity : "自选股快照"
+    AiSelectedStockEntity }o--|| DailySnapshotEntity : "选股快照"
+
+    DailySnapshotEntity {
+        String stockCode PK
+        String stockName
+        String date
+        Double openPrice
+        Double closePrice
+        Double highPrice
+        Double lowPrice
+        Long volume
+        Double turnover
+        Double changePercent
+    }
+
+    SectorDailyRecordEntity {
+        Long id PK
+        String sectorCode
+        String sectorName
+        String sectorType
+        String date
+        Double changePercent
+        Integer stockCount
+        Double netInflow
+    }
+
+    StrategyTradeOrderEntity {
+        Long id PK
+        String strategyName
+        String stockCode
+        String orderType
+        Double price
+        Integer quantity
+        String orderDate
+        String status
+    }
+
+    AiSelectedStockEntity {
+        Long id PK
+        String stockCode
+        String strategyName
+        String selectDate
+        Double score
+        String reason
+    }
+
+    UserWatchlistEntity {
+        Long id PK
+        String stockCode
+        String stockName
+        String addDate
+        String group
+        Integer sortIndex
+    }
+
+    StockDatabase {
+        String name "StockDatabase"
+        Integer version
+        String entities "5 Entities"
+        String daos "4 DAOs"
+    }
+
+    StockDatabase ||--|| DailySnapshotEntity : "dailySnapshotDao"
+    StockDatabase ||--|| SectorDailyRecordEntity : "sectorDailyRecordDao"
+    StockDatabase ||--|| StrategyTradeOrderEntity : "strategyTradeOrderDao"
+    StockDatabase ||--|| SectorStockDao : "sectorStockDao"
+                </div>
+            <div class="description">
+                <strong>ER 关系说明：</strong>Room 数据库由 <code>StockDatabase</code> 主数据库承载，<code>StockDatabaseManager</code> 统一管理。
+                <ul>
+                    <li><strong>DailySnapshotEntity</strong>：每日快照实体，存储股票日 OHLCV 数据，是核心数据表，与板块记录、AI 选股、自选股均有关联。</li>
+                    <li><strong>SectorDailyRecordEntity</strong>：板块日记录实体，区分概念板块与行业板块，记录涨跌幅、成分股数量、资金净流入。</li>
+                    <li><strong>StrategyTradeOrderEntity</strong>：策略交易订单实体，记录策略名、订单类型、价格、数量、状态。</li>
+                    <li><strong>AiSelectedStockEntity</strong>：AI 选股实体，记录选股策略、评分、选股理由，与策略订单关联。</li>
+                    <li><strong>UserWatchlistEntity</strong>：用户自选股实体，支持分组与排序。</li>
+                    <li><strong>辅助组件</strong>：<code>StockDataCenter</code> 提供热点板块查询与股票快照；<code>DataExportImport</code> 负责数据导入导出；<code>ChinaMarketTradingHours</code> 判断 A 股交易时间；<code>AppBackgroundRunner</code> 执行后台任务。</li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- 图 4：实时行情刷新流程 -->
+        <section class="diagram-card">
+            <h2>图 4 · 实时行情刷新流程</h2>
+            <p class="diagram-meta">定时器 → 数据源 → 通知 → UI</p>
+            <div class="mermaid">
+flowchart TD
+    START(["用户进入行情页 / 开启自选股监控"]) --> INIT["StockAutoRefreshManager<br/>自动刷新管理器初始化"]
+
+    INIT --> POLICY["RefreshPolicy<br/>刷新策略配置<br/>(间隔/交易时段/网络)"]
+    POLICY --> TIMER["定时器启动<br/>(交易时段高频 / 非交易时段低频)"]
+
+    TIMER --> CHECK{"ChinaMarketTradingHours<br/>是否交易时段?"}
+    CHECK -- 否 --> WAIT["进入低频轮询<br/>(延长间隔)"]
+    WAIT --> TIMER
+    CHECK -- 是 --> FETCH["RealtimeDataAccessor<br/>实时数据访问器"]
+
+    FETCH --> CFG["RealtimeConfig<br/>配置数据源优先级"]
+    CFG --> SRC["MultiSourceStockRepository<br/>多源仓库"]
+
+    SRC --> SRC1{"主源<br/>东方财富"}
+    SRC1 -- 成功 --> PROC
+    SRC1 -- 失败 --> SRC2{"备用源<br/>腾讯财经"}
+    SRC2 -- 成功 --> PROC
+    SRC2 -- 失败 --> SRC3{"备用源<br/>新浪财经"}
+    SRC3 -- 成功 --> PROC
+    SRC3 -- 失败 --> CACHE_READ["读取 SmartStockCache<br/>缓存数据"]
+    CACHE_READ --> PROC
+
+    PROC["RealtimeDataProcessor<br/>实时数据处理器<br/>(价格/涨跌/成交量)"]
+    PROC --> NOTIFY["PriceUpdateNotifier<br/>价格更新通知器"]
+    NOTIFY --> CACHE_WRITE["写入 SmartStockCache<br/>更新缓存"]
+    NOTIFY --> UI["UI 订阅者<br/>(行情页/自选股/详情页)"]
+    UI --> RENDER["刷新价格、涨跌幅、买卖盘<br/>动画过渡展示"]
+
+    RENDER --> LOOP{"刷新策略<br/>是否继续?"}
+    LOOP -- 是 --> TIMER
+    LOOP -- 否 --> STOP(["停止自动刷新"])
+
+    style START fill:#e8f0fe,stroke:#1a73e8
+    style PROC fill:#fef7e0,stroke:#f9ab00
+    style NOTIFY fill:#f3e8fd,stroke:#a142f4
+    style RENDER fill:#e6f4ea,stroke:#34a853
+    style STOP fill:#fce8e6,stroke:#ea4335
+                </div>
+            <div class="description">
+                <strong>刷新流程说明：</strong>实时行情采用"策略驱动 + 多源兜底 + 通知订阅"模式。
+                <ul>
+                    <li><strong>策略配置</strong>：<code>RefreshPolicy</code> 定义刷新间隔、交易时段判断、网络条件等策略；<code>StockAutoRefreshManager</code> 根据策略启动定时器。</li>
+                    <li><strong>交易时段判断</strong>：<code>ChinaMarketTradingHours</code> 判断当前是否为 A 股交易时段，交易时段高频刷新，非交易时段进入低频轮询以省电。</li>
+                    <li><strong>多源兜底</strong>：<code>RealtimeDataAccessor</code> 按 <code>RealtimeConfig</code> 配置的优先级依次尝试东方财富 → 腾讯 → 新浪，全部失败则回退缓存数据。</li>
+                    <li><strong>数据处理与通知</strong>：<code>RealtimeDataProcessor</code> 处理价格、涨跌幅、成交量等指标，<code>PriceUpdateNotifier</code> 通过订阅模式通知所有 UI 订阅者（行情页/自选股/详情页），同时更新 <code>SmartStockCache</code> 缓存。</li>
+                    <li><strong>循环刷新</strong>：UI 刷新完成后根据策略决定是否继续下一轮刷新，直至用户离开页面或主动停止。</li>
+                </ul>
+            </div>
+        </section>
+
+        <footer>
+            StockAnalysis · 股票数据层架构文档 · 生成于 2026-07-10
+        </footer>
+    </div>
+
+    <script>
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'default',
+            themeVariables: {
+                primaryColor: '#e8f0fe',
+                primaryTextColor: '#202124',
+                primaryBorderColor: '#1a73e8',
+                lineColor: '#5f6368',
+                secondaryColor: '#f1f3f4',
+                tertiaryColor: '#ffffff',
+                fontFamily: '"Noto Sans CJK SC", "Microsoft YaHei", sans-serif',
+                fontSize: '14px'
+            },
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true,
+                curve: 'basis'
+            },
+            er: {
+                useMaxWidth: true
+            }
+        });
+    </script>
+</body>
+</html>

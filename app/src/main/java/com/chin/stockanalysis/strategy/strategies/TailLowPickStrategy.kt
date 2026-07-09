@@ -171,12 +171,26 @@ class TailLowPickStrategy(
         val volumeScore: Int
     )
 
-    private fun calculateScore(stock: StockRealtime): TailScore {
+    private suspend fun calculateScore(stock: StockRealtime): TailScore {
         val w = weightFactors.associateBy { it.key }
 
         // 1. 主线赛道匹配 0~25
-        // TODO: 接入板块归属后精确判断
-        val sectorScore = 15  // 默认中等
+        // 現改為：硬編碼關鍵詞 + 用戶市場記憶 + 回彈板塊
+        val marketMemory = com.chin.stockanalysis.strategy.sector.UserMarketMemory(screener.context)
+        val bounceFactor = com.chin.stockanalysis.strategy.sector.SectorBounceFactor(
+            com.chin.stockanalysis.stock.database.StockDatabase.getInstance(screener.context)
+        )
+        val bounceScore = try { bounceFactor.getBounceScoreForStock(stock.name) } catch (_: Exception) { 0.0 }
+        val focusBoost = marketMemory.getFocusWeightBoost(stock.name)
+
+        val isCoreSector = CORE_SECTORS.any { stock.name.contains(it) }
+        val sectorScore = when {
+            isCoreSector && bounceScore > 30 -> 25  // 核心板塊 + 回彈
+            isCoreSector -> 20 + focusBoost
+            bounceScore > 20 -> 15 + focusBoost
+            focusBoost > 0 -> 10 + focusBoost
+            else -> 5
+        }.coerceAtMost(25)
 
         // 2. 行业景气预期 0~10（略低于业绩权重）
         // 涨幅温和+资金流入≈景气良好

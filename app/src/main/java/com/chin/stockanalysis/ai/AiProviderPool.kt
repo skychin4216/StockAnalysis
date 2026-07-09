@@ -27,8 +27,8 @@ object AiProviderPool {
         /** 佔用超時時間（秒）：30 秒自動釋放，避免任何鎖死 */
     private const val OCCUPY_TIMEOUT_MS = 30_000L
 
-    /** 健康檢測超時（秒） */
-    private const val HEALTH_PROBE_TIMEOUT_MS = 3_000L
+    /** 健康檢測超時（秒）：豆包等火山引擎 API 需更長時間 */
+    private const val HEALTH_PROBE_TIMEOUT_MS = 5_000L
 
     /** AI 請求超時（秒） */
     private const val AI_REQUEST_TIMEOUT_MS = 30_000L

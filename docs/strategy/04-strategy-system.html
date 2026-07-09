@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StockAnalysis 策略系统架构</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script>
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'base',
+            themeVariables: {
+                primaryColor: '#e8f0fe',
+                primaryTextColor: '#1a237e',
+                primaryBorderColor: '#3949ab',
+                lineColor: '#5c6bc0',
+                secondaryColor: '#f5f5f5',
+                tertiaryColor: '#fafafa',
+                fontFamily: '"Noto Sans CJK SC", "Microsoft YaHei", sans-serif'
+            },
+            flowchart: {
+                curve: 'basis',
+                padding: 20,
+                nodeSpacing: 50,
+                rankSpacing: 50
+            }
+        });
+    </script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+            background: #ffffff;
+            color: #333;
+            line-height: 1.7;
+            padding: 40px 20px;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        .page-header {
+            text-align: center;
+            margin-bottom: 50px;
+            padding-bottom: 25px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .page-header h1 {
+            font-size: 28px;
+            color: #1a237e;
+            margin-bottom: 10px;
+        }
+
+        .page-header p {
+            font-size: 15px;
+            color: #666;
+        }
+
+        .diagram-card {
+            background: #ffffff;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 30px;
+            margin-bottom: 35px;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+        }
+
+        .diagram-card h2 {
+            font-size: 20px;
+            color: #1a237e;
+            margin-bottom: 8px;
+            padding-bottom: 10px;
+            border-left: 4px solid #3949ab;
+            padding-left: 12px;
+        }
+
+        .diagram-card .subtitle {
+            font-size: 13px;
+            color: #888;
+            margin-bottom: 20px;
+            padding-left: 16px;
+        }
+
+        .diagram-wrapper {
+            background: #fafafa;
+            border-radius: 6px;
+            padding: 25px 15px;
+            text-align: center;
+            overflow-x: auto;
+        }
+
+        .diagram-wrapper .mermaid {
+            display: inline-block;
+        }
+
+        .diagram-desc {
+            margin-top: 20px;
+            padding: 15px 20px;
+            background: #f0f4ff;
+            border-left: 3px solid #3949ab;
+            border-radius: 4px;
+            font-size: 14px;
+            color: #444;
+        }
+
+        .diagram-desc ul {
+            margin-left: 18px;
+            margin-top: 6px;
+        }
+
+        .diagram-desc li {
+            margin-bottom: 4px;
+        }
+
+        .diagram-desc strong {
+            color: #1a237e;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #e0e0e0;
+            font-size: 13px;
+            color: #999;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="page-header">
+            <h1>StockAnalysis 策略系统架构</h1>
+            <p>策略引擎 / 11种选股策略 / 回测优化 / 模拟交易 / 板块加权 / 市场自适应</p>
+        </div>
+
+        <!-- 图1: 11种策略分类图 -->
+        <div class="diagram-card">
+            <h2>图 1 · 策略分类总览</h2>
+            <p class="subtitle">StrategyEngine 管理 11 种核心策略 + AIPredictionStrategy AI 预测，按类型分为趋势类 / 量价类 / 基本面类 / AI 类</p>
+            <div class="diagram-wrapper">
+                <div class="mermaid">
+graph TB
+    SE["StrategyEngine<br/>管理 11 种核心策略<br/>+ AI 预测策略<br/>支持启用/禁用"]
+
+    subgraph Trend["趋势类"]
+        MA["MovingAverageStrategy<br/>均线金叉<br/>MA5 上穿 MA10<br/>市场自适应阈值 30 / 45"]
+        BB["BollingerBandStrategy<br/>布林带突破<br/>突破上轨"]
+        GAP["GapUpMomentumStrategy<br/>跳空高开动量"]
+        RSI["RSIDivergenceStrategy<br/>RSI 底背离"]
+    end
+
+    subgraph VolPrice["量价类"]
+        VB["VolumeBreakStrategy<br/>放量突破<br/>量比 > 2<br/>涨幅自适应 2% / 3%"]
+        SM["SmartMoneyDetectionStrategy<br/>主力资金检测<br/>SmartMoneyCache 评分 >= 55"]
+        EMC["EarlyMorningChaseStrategy<br/>早盘追涨<br/>V 型反转<br/>recoveryRatio >= 50%"]
+        TLP["TailLowPickStrategy<br/>尾盘低吸<br/>板块加权动态计算"]
+    end
+
+    subgraph Fundamental["基本面类"]
+        LV["LowValuationStrategy<br/>低估值筛选"]
+        FF["FundamentalFilterStrategy<br/>基本面过滤"]
+        TF["TurnoverFilterStrategy<br/>换手率过滤"]
+    end
+
+    subgraph AICat["AI 类"]
+        AI["AIPredictionStrategy<br/>AI 预测策略<br/>注入 sectorContext"]
+    end
+
+    SE --> Trend
+    SE --> VolPrice
+    SE --> Fundamental
+    SE --> AICat
+
+    Holder["StrategyEngineHolder<br/>单例持有引擎"] -.-> SE
+    Config["StrategyConfig<br/>策略配置"] -.-> SE
+                </div>
+            </div>
+            <div class="diagram-desc">
+                <p><strong>说明：</strong>StrategyEngine 通过 StrategyEngineHolder 以单例模式持有，统一管理全部策略的启用/禁用状态。每种策略实现 <strong>Strategy</strong> 接口的 <code>screenWithData()</code> 方法，返回 <strong>ScreeningResult</strong>。策略按特性分为四大类：</p>
+                <ul>
+                    <li><strong>趋势类（4种）</strong>：均线金叉、布林带突破、跳空高开动量、RSI 底背离 — 捕捉趋势启动与反转信号</li>
+                    <li><strong>量价类（4种）</strong>：放量突破、主力资金检测、早盘追涨、尾盘低吸 — 量价异动与资金流向</li>
+                    <li><strong>基本面类（3种）</strong>：低估值、基本面过滤、换手率过滤 — 估值与基本面质量筛选</li>
+                    <li><strong>AI 类（1种）</strong>：AIPredictionStrategy — 注入 sectorContext 进行板块感知的 AI 预测</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 图2: 回测与拟合优化流程 -->
+        <div class="diagram-card">
+            <h2>图 2 · 回测与拟合优化流程</h2>
+            <p class="subtitle">数据导入 → 策略执行 → 历史回测 → 网格搜索优化 → 权重保存</p>
+            <div class="diagram-wrapper">
+                <div class="mermaid">
+flowchart TD
+    A["HistoricalDataFetcher<br/>历史数据抓取"] --> B["HistoricalDataStore<br/>历史数据存储"]
+    B --> C["预加载 prevDayMap<br/>避免 N+1 查询"]
+    C --> D["策略执行<br/>Strategy.screenWithData()<br/>返回 ScreeningResult"]
+    D --> E["HistoricalBacktestEngine<br/>历史回测引擎"]
+    E --> F["批量 insertAll<br/>回测结果批量写入"]
+    F --> G["StrategyOptimizer<br/>网格搜索 gridSearch"]
+    G --> H{"早停条件判断"}
+    H -- "accuracy > 70% 且 >= 50组" --> I["停止搜索<br/>输出最优参数组合"]
+    H -- "未满足条件" --> G
+    I --> J["WeightCalibrator<br/>权重校准器"]
+    J --> K["StrategySelfTuner<br/>加载 / 保存拟合权重"]
+    K --> L["15 天回测验证<br/>确认拟合效果"]
+    L --> M["MathIndicators<br/>数学指标计算验证"]
+
+    style H fill:#fff3e0,stroke:#e65100
+    style I fill:#e8f5e9,stroke:#2e7d32
+    style K fill:#e8f0fe,stroke:#3949ab
+                </div>
+            </div>
+            <div class="diagram-desc">
+                <p><strong>说明：</strong>回测优化系统通过以下关键设计保证效率与准确性：</p>
+                <ul>
+                    <li><strong>N+1 防护</strong>：HistoricalBacktestEngine 预加载 prevDayMap，避免逐股查询导致的 N+1 性能问题</li>
+                    <li><strong>批量写入</strong>：使用 insertAll 批量插入回测结果，减少数据库 I/O 开销</li>
+                    <li><strong>网格搜索 + 早停</strong>：StrategyOptimizer 执行 gridSearch 参数空间搜索，当准确率超过 70% 且已测试 50 组参数时触发早停，避免无效搜索</li>
+                    <li><strong>权重持久化</strong>：StrategySelfTuner 负责加载和保存拟合权重，WeightCalibrator 进行权重校准</li>
+                    <li><strong>验证回测</strong>：最终以 15 天回测验证拟合效果，MathIndicators 计算数学指标辅助评估</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 图3: SimulationTradeEngine 9步精选流程 -->
+        <div class="diagram-card">
+            <h2>图 3 · SimulationTradeEngine 9 步精选流程</h2>
+            <p class="subtitle">完整 9 步精选 + AI 预测 + 买入选取（generateBuyOrders + 騰籠換鳥）</p>
+            <div class="diagram-wrapper">
+                <div class="mermaid">
+flowchart TD
+    S1["Step 1 · 数据预处理<br/>StrategyDataFeed.convertSnapshots<br/>转换实时快照为策略数据"]
+    S2["Step 2 · 市场方向检测<br/>StockScreener.detectMarketDirection<br/>三指数投票机制"]
+    S3["Step 3 · 候选池构建<br/>CandidatePool 初筛<br/>+ LeaderStockPool 龙头股池"]
+    S4["Step 4 · 多策略并行筛选<br/>11 种策略 screenWithData()<br/>返回 ScreeningResult"]
+    S5["Step 5 · 主力资金检测<br/>SmartMoneyCache 评分 >= 55<br/>过滤主力资金标的"]
+    S6["Step 6 · 板块加权打分<br/>StrategyMarketContext 5分钟缓存<br/>+ SectorBounceFactor 回弹因子"]
+    S7["Step 7 · 机构评级筛选<br/>InstitutionalRatingProvider<br/>rcode = market.code"]
+    S8["Step 8 · AI 预测加分<br/>AIPredictionEngine<br/>applySectorBoost + buildMultiDayFeatures"]
+    S9["Step 9 · 综合排名精选<br/>FINAL_TOP3 = 5<br/>选取 Top 5 标的"]
+
+    S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7 --> S8 --> S9
+
+    S9 --> B1["generateBuyOrders<br/>生成买入订单"]
+    B1 --> B2{"騰籠換鳥<br/>MAX = 5"}
+    B2 -- "持仓已满" --> B3["卖出排名末尾标的<br/>AutoSellEngine.SellDecision"]
+    B2 -- "持仓未满" --> B4["直接买入新标的"]
+    B3 --> B5["换仓完成<br/>TradeDecisionHelper 辅助决策"]
+    B4 --> B5
+
+    style S9 fill:#e8f5e9,stroke:#2e7d32
+    style B1 fill:#fff3e0,stroke:#e65100
+    style B2 fill:#fce4ec,stroke:#c62828
+                </div>
+            </div>
+            <div class="diagram-desc">
+                <p><strong>说明：</strong>SimulationTradeEngine 通过 9 步精选流程完成从数据到交易的全链路决策：</p>
+                <ul>
+                    <li><strong>Step 1-3 数据准备</strong>：快照转换 → 市场方向判断（三指数投票）→ 候选池 + 龙头股池初筛</li>
+                    <li><strong>Step 4-5 策略筛选</strong>：11 种策略并行 screenWithData → 主力资金评分过滤（>= 55）</li>
+                    <li><strong>Step 6-7 加权评级</strong>：板块加权（5 分钟缓存上下文 + 回弹因子）→ 机构评级筛选（rcode 参数）</li>
+                    <li><strong>Step 8-9 AI 与排名</strong>：AI 预测引擎 applySectorBoost 板块加成 → 综合排名取 <strong>FINAL_TOP3 = 5</strong></li>
+                    <li><strong>买入执行</strong>：generateBuyOrders 生成买单；騰籠換鳥机制（MAX = 5）在持仓满时自动卖出末尾标的、买入新标的，由 AutoSellEngine 的 SellDecision 和 TradeDecisionHelper 辅助决策</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 图4: 板块加权机制流程 -->
+        <div class="diagram-card">
+            <h2>图 4 · 板块加权机制流程</h2>
+            <p class="subtitle">StrategyMarketContext 统一市场上下文 → 策略加分 + AI 加分 → 综合评分</p>
+            <div class="diagram-wrapper">
+                <div class="mermaid">
+flowchart LR
+    CTX["StrategyMarketContext<br/>统一市场上下文<br/>5 分钟缓存"]
+
+    CTX --> SBP["SectorBounceFactor<br/>板块回弹因子"]
+    CTX --> UMM["UserMarketMemory<br/>用户市场记忆<br/>关注板块 + AI 大年检测"]
+
+    SBP --> SA["策略加分<br/>板块权重评分<br/>回弹因子加成"]
+    UMM --> SA
+
+    CTX --> AIE["AIPredictionEngine<br/>applySectorBoost<br/>批量 buildMultiDayFeatures"]
+    AIE --> AA["AI 加分<br/>板块动量加成<br/>sectorContext 注入"]
+
+    SA --> SUM["综合评分<br/>策略分 + 板块分 + AI 分"]
+    AA --> SUM
+
+    SUM --> RANK["候选标的最终排名<br/>输入 SimulationTradeEngine"]
+
+    style CTX fill:#e8f0fe,stroke:#3949ab
+    style SUM fill:#e8f5e9,stroke:#2e7d32
+    style RANK fill:#fff3e0,stroke:#e65100
+                </div>
+            </div>
+            <div class="diagram-desc">
+                <p><strong>说明：</strong>板块加权机制通过统一市场上下文实现策略与 AI 的双重加分：</p>
+                <ul>
+                    <li><strong>StrategyMarketContext</strong>：作为统一市场上下文，提供 5 分钟缓存的市场数据，避免重复计算</li>
+                    <li><strong>策略加分路径</strong>：SectorBounceFactor（板块回弹因子）+ UserMarketMemory（用户关注板块记忆 + AI 大年检测）共同计算板块权重评分</li>
+                    <li><strong>AI 加分路径</strong>：AIPredictionEngine 通过 applySectorBoost 注入 sectorContext，结合 buildMultiDayFeatures 批量特征构建，生成板块动量加成</li>
+                    <li><strong>综合评分</strong>：策略分 + 板块分 + AI 分汇总为最终评分，作为 SimulationTradeEngine 排名的输入</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 图5: 市场环境自适应逻辑 -->
+        <div class="diagram-card">
+            <h2>图 5 · 市场环境自适应逻辑</h2>
+            <p class="subtitle">三指数投票 → BULLISH / OSCILLATION / BEARISH → 阈值动态调整</p>
+            <div class="diagram-wrapper">
+                <div class="mermaid">
+flowchart TD
+    VOTE["StockScreener.detectMarketDirection<br/>三指数投票机制<br/>指数1 + 指数2 + 指数3"]
+
+    VOTE --> DEC{"市场环境判断<br/>多数票决定方向"}
+
+    DEC -- "上涨票数占优" --> BULL["BULLISH<br/>牛市环境"]
+    DEC -- "票数均衡" --> OSC["OSCILLATION<br/>震荡市环境"]
+    DEC -- "下跌票数占优" --> BEAR["BEARISH<br/>熊市环境"]
+
+    BULL --> R1["放宽阈值<br/>MA 金叉阈值: 30<br/>涨幅要求: 2%<br/>量比要求: > 2"]
+    OSC --> R2["中性阈值<br/>MA 金叉阈值: 37<br/>涨幅要求: 2.5%<br/>量比要求: > 2"]
+    BEAR --> R3["收紧阈值<br/>MA 金叉阈值: 45<br/>涨幅要求: 3%<br/>量比要求: > 2.5"]
+
+    R1 --> ADAPT["MarketAdaptiveStrategy<br/>市场自适应策略<br/>动态参数调整"]
+    R2 --> ADAPT
+    R3 --> ADAPT
+
+    ADAPT --> OUT1["MovingAverageStrategy<br/>金叉阈值自适应<br/>30 / 37 / 45"]
+    ADAPT --> OUT2["VolumeBreakStrategy<br/>涨幅阈值自适应<br/>2% / 2.5% / 3%"]
+    ADAPT --> OUT3["其他策略参数<br/>同步调整"]
+
+    style BULL fill:#e8f5e9,stroke:#2e7d32
+    style OSC fill:#fff3e0,stroke:#e65100
+    style BEAR fill:#ffebee,stroke:#c62828
+    style ADAPT fill:#e8f0fe,stroke:#3949ab
+                </div>
+            </div>
+            <div class="diagram-desc">
+                <p><strong>说明：</strong>市场环境自适应机制根据三指数投票结果动态调整策略阈值，实现牛熊周期适配：</p>
+                <ul>
+                    <li><strong>三指数投票</strong>：StockScreener.detectMarketDirection() 通过三个市场指数的涨跌投票，多数票决定当前市场方向</li>
+                    <li><strong>三种市场环境</strong>：
+                        <br/>- <strong>BULLISH（牛市）</strong>：放宽阈值（MA 金叉 30、涨幅 2%），捕捉更多机会
+                        <br/>- <strong>OSCILLATION（震荡市）</strong>：中性阈值（MA 金叉 37、涨幅 2.5%），平衡风险与收益
+                        <br/>- <strong>BEARISH（熊市）</strong>：收紧阈值（MA 金叉 45、涨幅 3%），提高筛选标准降低风险
+                    </li>
+                    <li><strong>MarketAdaptiveStrategy</strong>：作为自适应策略核心，将市场环境判断结果传递给各策略，动态更新 MovingAverageStrategy 的金叉阈值（30/45）和 VolumeBreakStrategy 的涨幅阈值（2%/3%）</li>
+                    <li><strong>MarketAnalyzer</strong>：辅助提供市场分析数据，支撑投票决策</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>StockAnalysis 策略系统架构文档 · 基于 Mermaid 10 渲染</p>
+        </div>
+    </div>
+</body>
+</html>
