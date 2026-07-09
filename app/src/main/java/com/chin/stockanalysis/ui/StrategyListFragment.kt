@@ -212,15 +212,10 @@ class StrategyListFragment : Fragment() {
                 currentHotSectors = expandedSectors.distinct()
             }
             if (currentHotSectors.isEmpty()) {
+                // API 未就緒時，用 AIHotSectorProvider 作為 fallback
                 try {
-                    val db = StockDatabase.getInstance(requireContext())
-                    val latestDates = db.dailySnapshotDao().getAvailableDates(3)
-                    if (latestDates.isNotEmpty()) {
-                        val snaps = db.dailySnapshotDao().getByDate(latestDates.first())
-                        currentHotSectors = snaps.sortedByDescending { it.changePct }.take(20)
-                            .mapNotNull { snap -> db.sectorStockDao().getSectorNamesByStockCode(snap.code).firstOrNull() }
-                            .distinct().take(10)
-                    }
+                    val aiResult = com.chin.stockanalysis.strategy.data.AIHotSectorProvider.getHotSectors(requireContext())
+                    currentHotSectors = aiResult.allSectors.take(10)
                 } catch (_: Exception) {}
             }
             val hasSubSectors = currentHotSectors.any { sector ->

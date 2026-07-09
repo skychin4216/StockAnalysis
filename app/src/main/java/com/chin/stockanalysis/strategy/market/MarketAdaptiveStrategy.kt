@@ -45,10 +45,10 @@ object MarketAdaptiveStrategy {
         val capResult = PositionWaterValve.calculatePositionCap(marketReport)
 
         return when {
-            // 強趨勢下跌：極度嚴格
+            // 強趨勢下跌：嚴格但不極端
             direction == "BEARISH" && strength > 40 -> AdaptiveParams(
-                scoreThreshold = 70,
-                maxStockCount = 1,
+                scoreThreshold = 55,
+                maxStockCount = 2,
                 strategyTheme = "防禦因子（低Beta+高股息+現金充沛+經營現金流/淨利潤>0.8）",
                 stopLossRate = -0.03,
                 takeProfitRate = 0.05,

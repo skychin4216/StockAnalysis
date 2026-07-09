@@ -3,7 +3,7 @@ package com.chin.stockanalysis.strategy.sector
 import android.content.Context
 import android.util.Log
 import com.chin.stockanalysis.stock.database.StockDatabase
-// EastMoneyHotSectorSource 暫未直接使用，保留擴展空間
+import com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -80,10 +80,16 @@ class StrategyMarketContext private constructor(
             val userFocus = memory.focusSectors
 
             // 2. 多周期熱門板塊
-            val todayHot = fetchHotSectors(db, days = 1, topN = 3)
-            val weeklyHot = fetchHotSectors(db, days = 7, topN = 5)
-            val monthlyHot = fetchHotSectors(db, days = 30, topN = 5)
-            val quarterlyHot = fetchHotSectors(db, days = 90, topN = 5)
+            // 今日熱門：優先用東方財富實時數據（EastMoneyHotSectorSource）
+            val todayHot = fetchTodayHotFromAPI() ?: fetchHotSectors(db, days = 1, topN = 3)
+
+            // 周/月/季度熱門：用 AIHotSectorProvider（AI查詢+緩存，不依賴 sector_daily_record）
+            val aiSectors = try {
+                com.chin.stockanalysis.strategy.data.AIHotSectorProvider.getHotSectors(context)
+            } catch (_: Exception) { null }
+            val weeklyHot = aiSectors?.weeklySectors?.take(5) ?: emptyList()
+            val monthlyHot = aiSectors?.monthlySectors?.take(5) ?: emptyList()
+            val quarterlyHot = aiSectors?.annualSectors?.take(5) ?: emptyList()
 
             // 3. 回彈板塊
             val bounces = try { bounceFactor.detectBounceSectors(targetDate) } catch (_: Exception) { emptyList() }
@@ -114,15 +120,28 @@ class StrategyMarketContext private constructor(
             ctx
         }
 
+        /** 從東方財富實時 API 獲取今日熱門板塊（概念板塊+行業板塊 Top3） */
+        private fun fetchTodayHotFromAPI(): List<String>? {
+            val all = EastMoneyHotSectorSource.conceptSectors + EastMoneyHotSectorSource.industrySectors
+            if (all.isEmpty()) return null
+            return all.sortedByDescending { it.changePercent }
+                .take(3)
+                .map { it.name }
+                .distinct()
+        }
+
         /** 獲取指定周期內的熱門板塊 TopN */
         private suspend fun fetchHotSectors(db: StockDatabase, days: Int, topN: Int): List<String> {
+            // 主路徑：sector_daily_record 表
             return try {
                 val records = db.sectorDailyRecordDao().getRecentDays(days)
-                records.groupBy { it.sectorName }
-                    .map { (name, recs) -> name to recs.map { it.changePct }.average() }
-                    .sortedByDescending { it.second }
-                    .take(topN)
-                    .map { it.first }
+                if (records.isNotEmpty()) {
+                    records.groupBy { it.sectorName }
+                        .map { (name, recs) -> name to recs.map { it.changePct }.average() }
+                        .sortedByDescending { it.second }
+                        .take(topN)
+                        .map { it.first }
+                } else emptyList()
             } catch (_: Exception) { emptyList() }
         }
 

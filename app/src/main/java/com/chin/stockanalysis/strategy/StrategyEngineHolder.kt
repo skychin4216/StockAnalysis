@@ -42,6 +42,7 @@ object StrategyEngineHolder {
             registerStrategy(EarlyMorningChaseStrategy(screener))
             registerStrategy(TailLowPickStrategy(screener))
             registerStrategy(AIPredictionStrategy(context.applicationContext))
+            registerStrategy(HotSpotDrivenStrategy(screener))
         }
     }
 

@@ -1016,7 +1016,25 @@ class SimulationTradeEngine(private val context: Context) {
             Log.i(TAG, "利潤質量過濾: ${filteredPicks.size}隻 → ${pqFilteredPicks.size}隻 通過")
         }
 
-        return pqFilteredPicks
+        // 🔥 ETF/指數過濾：中線量化不買 ETF 或指數基金
+        val etfFiltered = pqFilteredPicks.filter { pick ->
+            val code = pick.stockCode
+            val name = pick.stockName
+            val isETF = code.startsWith("sh51") || code.startsWith("sh56")
+                    || code.startsWith("sz15") || code.startsWith("sz16")
+                    || code.startsWith("sh588") || code.startsWith("bj8")
+                    || name.contains("ETF")
+                    || name.contains("指數") || name.contains("綜指") || name.contains("成指")
+            if (isETF) {
+                Log.i(TAG, "🚫 ETF/指數過濾: ${name}(${code})")
+            }
+            !isETF
+        }
+        if (etfFiltered.size < pqFilteredPicks.size) {
+            Log.i(TAG, "ETF/指數過濾: ${pqFilteredPicks.size}隻 → ${etfFiltered.size}隻 通過")
+        }
+
+        return etfFiltered
             .sortedByDescending { it.compositeScore }
             .take(MAX_HOLDINGS)
             .mapNotNull { pick ->
