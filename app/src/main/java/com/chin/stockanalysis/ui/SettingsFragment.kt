@@ -327,6 +327,10 @@ class SettingsFragment : Fragment() {
                         if (isChecked) AgentRoute.AGENT_FRAMEWORK else AgentRoute.LEGACY
                 }
             }
+            // 臨時開關（後期刪除）
+            swDagPipeline.setOnCheckedChangeListener { _, isChecked ->
+                FeatureFlagManager.useDagPipelineMidTerm = isChecked
+            }
         }
     }
 
@@ -338,6 +342,7 @@ class SettingsFragment : Fragment() {
             swChat.isChecked = FeatureFlagManager.chatRoute == AgentRoute.AGENT_FRAMEWORK
             swNewsMonitor.isChecked = FeatureFlagManager.newsMonitoringRoute == AgentRoute.AGENT_FRAMEWORK
             swRiskManagement.isChecked = FeatureFlagManager.riskManagementRoute == AgentRoute.AGENT_FRAMEWORK
+            swDagPipeline.isChecked = FeatureFlagManager.useDagPipelineMidTerm
         }
     }
 

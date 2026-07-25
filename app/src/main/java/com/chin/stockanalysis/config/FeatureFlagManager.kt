@@ -40,6 +40,9 @@ object FeatureFlagManager {
     private const val KEY_NEWS_MONITOR      = "route_news_monitor"
     private const val KEY_RISK_MANAGEMENT   = "route_risk_management"
 
+    // ── 臨時開關（後期刪除） ──
+    private const val KEY_USE_DAG_PIPELINE   = "use_dag_pipeline_midterm"
+
     private lateinit var prefs: SharedPreferences
 
     /** 初始化（在 Application.onCreate 或 MainActivity.onCreate 中調用） */
@@ -136,6 +139,24 @@ object FeatureFlagManager {
         set(value) = setRoute(KEY_RISK_MANAGEMENT, value)
 
     // ═══════════════════════════════════════════════════════════════
+    // 臨時開關（後期刪除）
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * 中線量化是否使用 DAG Pipeline（高通風格拓撲引擎）。
+     * true  → UseCaseLoader.run("mid_term") → DagPipeline
+     * false → SimulationTradeEngine.runTradeSession()（原始流程）
+     *
+     * 臨時開關，後期 DAG Pipeline 功能完整後刪除。
+     */
+    var useDagPipelineMidTerm: Boolean
+        get() = prefs.getBoolean(KEY_USE_DAG_PIPELINE, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_USE_DAG_PIPELINE, value).apply()
+            Log.i(TAG, "中線 DAG Pipeline 開關: $value")
+        }
+
+    // ═══════════════════════════════════════════════════════════════
     // 輔助方法
     // ═══════════════════════════════════════════════════════════════
 
@@ -166,6 +187,8 @@ object FeatureFlagManager {
         appendLine("對話: ${chatRoute} (實際: ${resolveRoute(chatRoute)})")
         appendLine("新聞: ${newsMonitoringRoute} (實際: ${resolveRoute(newsMonitoringRoute)})")
         appendLine("風控: ${riskManagementRoute} (實際: ${resolveRoute(riskManagementRoute)})")
+        appendLine("── 臨時開關 ──")
+        appendLine("中線DAG Pipeline: $useDagPipelineMidTerm")
     }
 
     private fun getRoute(key: String): AgentRoute {

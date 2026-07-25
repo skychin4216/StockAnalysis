@@ -150,7 +150,7 @@ abstract class QuantFragmentBase : Fragment() {
     // ═══════════════════════════════════════════════════
 
     /**
-     * 統一按鈕行：建倉 | 持倉 | 回溯 | 擬合 | 賣出 | 數據
+     * 統一按鈕行：建倉 | Pipeline | 持倉 | 賣出 ▾ | 數據 ▾
      */
     protected fun createButtonRow(): LinearLayout {
         val row = LinearLayout(requireContext()).apply {
@@ -172,7 +172,20 @@ abstract class QuantFragmentBase : Fragment() {
         }
         row.addView(buildBtn)
 
-        // ── 2. 持倉 ──
+        // ── 2. Pipeline（啟動拓撲編輯器） ──
+        val pipelineBtn = Button(requireContext()).apply {
+            text = "🔧 Pipeline"
+            textSize = 10f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#6A1B9A"))
+            setPadding(4, 1, 4, 1)
+            setMinWidth(0); setMinimumWidth(0)
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.9f).apply { marginEnd = 1 }
+            setOnClickListener { openPipelineEditor() }
+        }
+        row.addView(pipelineBtn)
+
+        // ── 3. 持倉 ──
         val posBtn = Button(requireContext()).apply {
             text = "📊 持倉"
             textSize = 10f
@@ -185,33 +198,7 @@ abstract class QuantFragmentBase : Fragment() {
         }
         row.addView(posBtn)
 
-        // ── 3. 回溯 ──
-        val backtrackBtn = Button(requireContext()).apply {
-            text = "📈 回溯"
-            textSize = 10f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#7B1FA2"))
-            setPadding(4, 1, 4, 1)
-            setMinWidth(0); setMinimumWidth(0)
-            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.9f).apply { marginEnd = 1 }
-            setOnClickListener { onBacktrackClick() }
-        }
-        row.addView(backtrackBtn)
-
-        // ── 4. 擬合 ──
-        val fitBtn = Button(requireContext()).apply {
-            text = "🔧 擬合"
-            textSize = 10f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#EF6C00"))
-            setPadding(4, 1, 4, 1)
-            setMinWidth(0); setMinimumWidth(0)
-            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.9f).apply { marginEnd = 1 }
-            setOnClickListener { onFittingClick() }
-        }
-        row.addView(fitBtn)
-
-        // ── 5. 賣出（帶下拉菜單） ──
+        // ── 4. 賣出（帶下拉菜單） ──
         val sellBtn = Button(requireContext()).apply {
             text = "💰 賣出 ▾"
             textSize = 10f
@@ -224,21 +211,38 @@ abstract class QuantFragmentBase : Fragment() {
         }
         row.addView(sellBtn)
 
-        // ── 6. 數據 ──
+        // ── 5. 數據 ▾（含回溯/擬合/數據管理） ──
         val dataBtn = Button(requireContext()).apply {
-            text = "🗄️ 數據"
+            text = "🗄️ 數據 ▾"
             textSize = 10f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#455A64"))
             setPadding(4, 1, 4, 1)
             setMinWidth(0); setMinimumWidth(0)
-            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.9f)
-            setOnClickListener { showDataMenu() }
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 1.0f)
+            setOnClickListener { showDataMenu(it) }
         }
         row.addView(dataBtn)
 
         return row
     }
+
+    /** 啟動 Pipeline 拓撲編輯器 */
+    protected open fun openPipelineEditor() {
+        try {
+            val intent = android.content.Intent(
+                requireContext(),
+                com.chin.stockanalysis.strategy.topology.ui.TopologyEditorActivity::class.java
+            )
+            intent.putExtra("usecase_id", getDefaultUseCaseId())
+            startActivity(intent)
+        } catch (e: Exception) {
+            Toast.makeText(requireContext(), "Pipeline 編輯器跳轉失敗: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** 子類覆蓋以指定預加載的 UseCase ID */
+    protected open fun getDefaultUseCaseId(): String = "mid_term"
 
     /**
      * 創建進度條行
@@ -485,28 +489,28 @@ abstract class QuantFragmentBase : Fragment() {
     // ═══════════════════════════════════════════════════
 
     /** 顯示數據菜單 */
-    protected open fun showDataMenu() {
-        val options = arrayOf(
-            "📋 查看交易記錄",
-            "📊 查看持倉詳情",
-            "🔥 導出熱門板塊數據",
-            "📋 導出策略報告",
-            "🧠 市場記憶設置"
-        )
-
-        AlertDialog.Builder(requireContext())
-            .setTitle("數據中心")
-            .setItems(options) { _, which ->
-                when (which) {
-                    0 -> showTradeHistory()
-                    1 -> loadPositions()
-                    2 -> exportHotSectors()
-                    3 -> exportStrategyReport()
-                    4 -> showMarketMemoryDialog()
-                }
+    protected open fun showDataMenu(anchor: View) {
+        val popup = PopupMenu(requireContext(), anchor, Gravity.END)
+        popup.menu.add(0, 1, 0, "📋 查看交易記錄")
+        popup.menu.add(0, 2, 0, "📊 查看持倉詳情")
+        popup.menu.add(0, 3, 0, "🔥 導出熱門板塊數據")
+        popup.menu.add(0, 4, 0, "📋 導出策略報告")
+        popup.menu.add(0, 5, 0, "🧠 市場記憶設置")
+        popup.menu.add(0, 10, 4, "📈 回溯測試")
+        popup.menu.add(0, 11, 4, "🔧 擬合調優")
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                1 -> showTradeHistory()
+                2 -> loadPositions()
+                3 -> exportHotSectors()
+                4 -> exportStrategyReport()
+                5 -> showMarketMemoryDialog()
+                10 -> onBacktrackClick()
+                11 -> onFittingClick()
             }
-            .setNegativeButton("關閉", null)
-            .show()
+            true
+        }
+        popup.show()
     }
 
     /** 清除數據 */

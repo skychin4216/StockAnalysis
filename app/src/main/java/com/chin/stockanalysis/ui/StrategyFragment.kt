@@ -2,10 +2,15 @@ package com.chin.stockanalysis.ui
 
 import android.graphics.Color
 import android.os.Bundle
+import android.util.Log
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.viewpager2.adapter.FragmentStateAdapter
 import androidx.viewpager2.widget.ViewPager2
@@ -15,15 +20,14 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import android.util.Log
 
 /**
  * ## 策略栏目 — v9.0 改版
  *
  * 顶部三 Tab：
- * - Tab 0：量化选股 (StrategyListFragment)
+ * - Tab 0：短线量化 (ShortTermQuantFragment)
  * - Tab 1：中线量化 (MidTermQuantFragment)
- * - Tab 2：短线量化 (ShortTermQuantFragment)
+ * - Tab 2：量化选股 (StrategyListFragment)
  */
 class StrategyFragment : Fragment() {
 
@@ -69,14 +73,18 @@ class StrategyFragment : Fragment() {
         // 绑定
         TabLayoutMediator(tabLayout, viewPager) { tab, position ->
             tab.text = when (position) {
-                0 -> "🎯 量化选股"
+                0 -> "🤖 短线量化"
                 1 -> "💹 中线量化"
-                2 -> "🤖 短线量化"
+                2 -> "🎯 量化选股"
                 else -> ""
             }
         }.attach()
 
         return root
+    }
+
+    private fun dp(value: Int): Int {
+        return (value * resources.displayMetrics.density).toInt()
     }
 
     private fun observeCommands() {
@@ -99,7 +107,7 @@ class StrategyFragment : Fragment() {
                         }
                         "RUN_PIPELINE" -> {
                             withContext(Dispatchers.Main) {
-                                viewPager.setCurrentItem(2, true)  // Tab 2 = 短线量化
+                                viewPager.setCurrentItem(0, true)  // Tab 0 = 短线量化
                                 viewPager.postDelayed({
                                     val frag = childFragmentManager.fragments
                                         .firstOrNull { it is com.chin.stockanalysis.strategy.trade.ShortTermQuantFragment }
@@ -125,10 +133,10 @@ class StrategyFragment : Fragment() {
 
         override fun createFragment(position: Int): Fragment {
             return when (position) {
-                0 -> StrategyListFragment()
+                0 -> com.chin.stockanalysis.strategy.trade.ShortTermQuantFragment()
                 1 -> com.chin.stockanalysis.strategy.trade.MidTermQuantFragment()
-                2 -> com.chin.stockanalysis.strategy.trade.ShortTermQuantFragment()
-                else -> StrategyListFragment()
+                2 -> StrategyListFragment()
+                else -> com.chin.stockanalysis.strategy.trade.ShortTermQuantFragment()
             }
         }
     }

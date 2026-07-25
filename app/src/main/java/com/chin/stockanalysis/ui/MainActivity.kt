@@ -84,6 +84,14 @@ class MainActivity : AppCompatActivity() {
                 android.util.Log.w("MainActivity", "StockNameTrie 構建失敗: ${e.message}")
             }
         }
+        // 后台预热 sector_stocks：自动拉取热门板块成分股写入本地数据库
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                prefetchSectorStocks()
+            } catch (e: Exception) {
+                android.util.Log.w("MainActivity", "sector_stocks 预热失败: ${e.message}")
+            }
+        }
     }
 
     private fun initBackupSystem() {
@@ -107,6 +115,61 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         )
+    }
+
+    /**
+     * 后台预热 sector_stocks 表：启动时自动拉取热门板块成分股。
+     * 仅拉取热门板块，不影响 App 主流程。
+     * 如果 24 小时内已拉取过，则跳过。
+     */
+    private fun prefetchSectorStocks() {
+        val sectorSource = com.chin.stockanalysis.stock.data.sources.EastMoneySectorSource()
+        val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(applicationContext)
+        val prefs = applicationContext.getSharedPreferences("sector_stock_prefetch", 0)
+        val lastFetch = prefs.getLong("last_prefetch_time", 0)
+        // 24小时内不重复拉取
+        if (System.currentTimeMillis() - lastFetch < 24 * 3600 * 1000L) {
+            android.util.Log.i("MainActivity", "sector_stocks 预热跳过: 24小时内已拉取")
+            return
+        }
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            android.util.Log.i("MainActivity", "sector_stocks 预热开始...")
+            val sectors = listOf(
+                "半导体" to "BK0447",
+                "医药生物" to "BK0465",
+                "有色金属" to "BK0478",
+                "人工智能" to "BK1064",
+                "通信" to "BK0480",
+                "电子" to "BK0448",
+                "计算机" to "BK0446",
+                "新能源" to "BK0811",
+                "光伏" to "BK1026",
+                "储能" to "BK0816",
+                "军工" to "BK0460"
+            )
+            var successCount = 0
+            for ((sectorName, sectorCode) in sectors) {
+                try {
+                    val result = sectorSource.fetchByName(sectorName, topN = 30, excludeKcb = false, excludeCyb = false)
+                    if (result != null && result.second.isNotEmpty()) {
+                        val entities = result.second.map { stock ->
+                            com.chin.stockanalysis.stock.database.SectorStockEntity(
+                                sectorKey = sectorName,
+                                sectorName = sectorName,
+                                stockCode = stock.code
+                            )
+                        }
+                        db.sectorStockDao().insertAll(entities)
+                        successCount++
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("MainActivity", "预热板块[$sectorName]失败: ${e.message}")
+                }
+            }
+            prefs.edit().putLong("last_prefetch_time", System.currentTimeMillis()).apply()
+            android.util.Log.i("MainActivity", "sector_stocks 预热完成: $successCount/${sectors.size} 个板块")
+        }
     }
 
     /** 处理备份文件夹选择结果 */

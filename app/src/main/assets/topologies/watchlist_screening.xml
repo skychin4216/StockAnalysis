@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 自選股篩選拓撲
+
+  流程：自選股源 → 基本面過濾 → 技術過濾 → 評分排序 → 輸出
+
+  適用場景：對用戶自選股進行系統化篩選，快速發現基本面健康、技術面良好的個股。
+-->
+<topology id="watchlist_screening" name="自選股篩選" description="對自選股進行基本面+技術面篩選和評分排序" version="1">
+    <nodes>
+        <node id="ws_source" module="watchlist_source" displayName="自選股">
+            <position x="50" y="150" />
+        </node>
+        <node id="ws_basic_filter" module="basic_filter" displayName="基本面過濾">
+            <position x="280" y="150" />
+            <config>
+                <param name="maxPe" value="50" />
+                <param name="excludeNegative" value="false" />
+            </config>
+        </node>
+        <node id="ws_tech_filter" module="technical_filter" displayName="技術過濾">
+            <position x="510" y="150" />
+            <config>
+                <param name="mode" value="RSI" />
+                <param name="minRsi" value="30" />
+                <param name="maxRsi" value="70" />
+            </config>
+        </node>
+        <node id="ws_score_sort" module="score_sort" displayName="評分排序">
+            <position x="740" y="150" />
+            <config>
+                <param name="maxOutput" value="15" />
+            </config>
+        </node>
+        <node id="ws_output" module="result_output_sink" displayName="結果輸出">
+            <position x="970" y="150" />
+        </node>
+    </nodes>
+    <streams>
+        <stream id="ws_s1" source="ws_source" sourcePort="stocks_out" sink="ws_basic_filter" sinkPort="stocks_in" />
+        <stream id="ws_s2" source="ws_basic_filter" sourcePort="filtered_out" sink="ws_tech_filter" sinkPort="stocks_in" />
+        <stream id="ws_s3" source="ws_tech_filter" sourcePort="filtered_out" sink="ws_score_sort" sinkPort="stocks_in" />
+        <stream id="ws_s4" source="ws_score_sort" sourcePort="sorted_out" sink="ws_output" sinkPort="final_in" />
+    </streams>
+</topology>

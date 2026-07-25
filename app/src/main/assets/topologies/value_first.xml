@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 估值優先選股拓撲
+
+  流程：全市場掃描 → 基本面過濾 → 技術過濾 → 板塊加權 → 評分排序 → 輸出
+
+  適用場景：中長線選股，先剔除估值不合理的股票，再用技術指標確認走勢。
+-->
+<topology id="value_first" name="估值優先選股" description="優先按基本面估值篩選，再通過技術指標和板塊熱度精選" version="1">
+    <nodes>
+        <node id="vf_source" module="market_source" displayName="全市場掃描">
+            <position x="50" y="100" />
+            <config>
+                <param name="minMarketCap" value="50" />
+                <param name="excludeSt" value="true" />
+                <param name="excludeETF" value="true" />
+            </config>
+        </node>
+        <node id="vf_basic_filter" module="basic_filter" displayName="基本面過濾">
+            <position x="250" y="100" />
+            <config>
+                <param name="maxPe" value="30" />
+                <param name="excludeNegative" value="true" />
+                <param name="minMarketCap" value="100" />
+            </config>
+        </node>
+        <node id="vf_tech_filter" module="technical_filter" displayName="技術過濾">
+            <position x="450" y="100" />
+            <config>
+                <param name="mode" value="MA_CROSS" />
+            </config>
+        </node>
+        <node id="vf_sector_boost" module="sector_boost" displayName="板塊加權">
+            <position x="650" y="100" />
+            <config>
+                <param name="boostMode" value="USER_FOCUS" />
+                <param name="boostWeight" value="15.0" />
+            </config>
+        </node>
+        <node id="vf_score_sort" module="score_sort" displayName="評分排序">
+            <position x="850" y="100" />
+            <config>
+                <param name="maxOutput" value="15" />
+            </config>
+        </node>
+        <node id="vf_output" module="result_output_sink" displayName="結果輸出">
+            <position x="1050" y="100" />
+        </node>
+    </nodes>
+    <streams>
+        <stream id="vf_s1" source="vf_source" sourcePort="stocks_out" sink="vf_basic_filter" sinkPort="stocks_in" />
+        <stream id="vf_s2" source="vf_basic_filter" sourcePort="filtered_out" sink="vf_tech_filter" sinkPort="stocks_in" />
+        <stream id="vf_s3" source="vf_tech_filter" sourcePort="filtered_out" sink="vf_sector_boost" sinkPort="stocks_in" />
+        <stream id="vf_s4" source="vf_sector_boost" sourcePort="boosted_out" sink="vf_score_sort" sinkPort="stocks_in" />
+        <stream id="vf_s5" source="vf_sector_boost" sourcePort="scores_out" sink="vf_score_sort" sinkPort="scores_in" />
+        <stream id="vf_s6" source="vf_score_sort" sourcePort="sorted_out" sink="vf_output" sinkPort="final_in" />
+    </streams>
+</topology>

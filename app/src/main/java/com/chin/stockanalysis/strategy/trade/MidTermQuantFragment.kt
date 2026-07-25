@@ -190,6 +190,225 @@ class MidTermQuantFragment : QuantFragmentBase() {
     // 建仓 — 中线量化核心逻辑
     // ═══════════════════════════════════════
 
+    /**
+     * ══════════ 臨時方法：通過 DAG Pipeline 執行中線量化 ══════════
+     *
+     * 使用高通風格 DagPipeline 替代 SimulationTradeEngine.runTradeSession()。
+     * 後期 DAG Pipeline 功能完整後，將此方法邏輯合併回 executeTrade() 並刪除。
+     */
+    private suspend fun executeTradeViaDagPipeline(tradeDate: String, today: String, totalStart: Long) {
+        withContext(Dispatchers.Main) {
+            statusTv.text = "🔄 [DAG] 初始化 Pipeline..."
+        }
+
+        try {
+            // 確保 UseCaseLoader 已初始化
+            val eng = engine ?: return
+            val strategies = eng.getStrategies().filter { eng.isEnabled(it.id) }
+            if (strategies.isEmpty()) {
+                withContext(Dispatchers.Main) {
+                    statusTv.text = "没有启用的策略"; buildBtn.isEnabled = true
+                    buildBtn.text = "▶ 建仓"; progressBar.visibility = View.GONE
+                }
+                return
+            }
+
+            com.chin.stockanalysis.strategy.topology.xml.UseCaseLoader.init(
+                requireContext(), strategies
+            )
+
+            // 數據導入檢查（與原始流程一致）
+            val db = StockDatabase.getInstance(requireContext())
+            val todaySnaps = db.dailySnapshotDao().getByDate(today)
+            if (todaySnaps.size < 100) {
+                withContext(Dispatchers.Main) {
+                    statusTv.text = "🔄 [DAG] 數據不足(${todaySnaps.size}<100)，先導入數據..."
+                }
+                com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
+                    .fetchAllHistoricalData(days = 60)
+            }
+
+            // 構建市場上下文（與原始流程一致）
+            val mktCtx = com.chin.stockanalysis.strategy.sector.StrategyMarketContext
+                .build(requireContext(), today)
+
+            withContext(Dispatchers.Main) {
+                statusTv.text = "🔄 [DAG] 執行中線 Pipeline..."
+            }
+
+            // 執行 DAG Pipeline
+            val result = com.chin.stockanalysis.strategy.topology.xml.UseCaseLoader
+                .run("mid_term", tradeDate)
+
+            val elapsed = System.currentTimeMillis() - totalStart
+
+            // ══════════ 後處理：從 nodeResults 提取訂單/持倉/換股信息 ══════════
+            var ordersCount = 0
+            var swapSummary = ""
+            var mergeSummary = ""
+            var savedWatchlist = false
+
+            try {
+                // UseCaseLoader.run() 返回 MultiPipelineResult，
+                // 其中 pipelineResults 的值類型為 PipelineResult（DagPipelineResult 已在內部轉換）。
+                // DAG 執行後，PipelineResult.stageResults 的 key 是 nodeId，value 是 LinkListResult。
+                for ((_, pipelineResult) in result.pipelineResults) {
+                    val nodeResults = pipelineResult.stageResults
+
+                    // 提取訂單生成結果
+                    val ordersLinkResult = nodeResults["n_orders"]
+                    val ordersOutput = ordersLinkResult?.output
+                    if (ordersOutput is com.chin.stockanalysis.strategy.topology.nodes.OrderGenerationResult) {
+                        ordersCount = ordersOutput.orders.size
+                        Log.i(TAG, "[DAG] 訂單生成: $ordersCount 筆")
+                    }
+
+                    // 提取持倉合併結果
+                    val mergeOutput = nodeResults["n_merge_pos"]?.output
+                    if (mergeOutput is com.chin.stockanalysis.strategy.topology.nodes.PositionMergeResult) {
+                        mergeSummary = buildString {
+                            appendLine("持倉合併: 新增${mergeOutput.newCount}筆, 總持倉${mergeOutput.totalHoldings}筆")
+                            if (mergeOutput.updatedCodes.isNotEmpty()) {
+                                appendLine("  追加: ${mergeOutput.updatedCodes.take(5).joinToString(", ")}")
+                            }
+                        }
+                        Log.i(TAG, "[DAG] $mergeSummary")
+                    }
+
+                    // 提取騰龍換鳥結果
+                    val swapOutput = nodeResults["n_swap"]?.output
+                    if (swapOutput is com.chin.stockanalysis.strategy.topology.nodes.SwapWeakResult) {
+                        swapSummary = buildString {
+                            appendLine("騰龍換鳥: 換${swapOutput.swappedCount}筆")
+                            appendLine("  換股前: ${swapOutput.beforeCount}筆 → 換股後: ${swapOutput.afterCount}筆")
+                            if (swapOutput.soldStocks.isNotEmpty()) {
+                                appendLine("  賣出: ${swapOutput.soldStocks.joinToString(", ")}")
+                            }
+                        }
+                        Log.i(TAG, "[DAG] $swapSummary")
+                    }
+
+                    // 提取訂單並保存到自選股
+                    if (ordersOutput is com.chin.stockanalysis.strategy.topology.nodes.OrderGenerationResult
+                        && ordersOutput.orders.isNotEmpty()) {
+                        try {
+                            val today = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+                            val watchlistItems = ordersOutput.orders.map { order ->
+                                Triple(order.stockCode, order.stockName, order.scoreAtBuy)
+                            }
+                            com.chin.stockanalysis.stock.database.AppBackgroundRunner.addBatchToWatchlist(
+                                requireContext(), watchlistItems, source = "midterm_dag"
+                            )
+                            savedWatchlist = true
+                            Log.i(TAG, "[DAG] 已保存 ${watchlistItems.size} 只到自選股")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "[DAG] 保存自選股失敗: ${e.message}")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "[DAG] 後處理異常: ${e.message}")
+            }
+
+            // ══════════ 輸出結果摘要 ══════════
+            val summary = buildString {
+                appendLine("═══ DAG Pipeline 執行報告 ═══")
+                appendLine("成功: ${result.success}")
+                appendLine("總耗時: ${elapsed}ms (Pipeline: ${result.totalElapsedMs}ms)")
+                appendLine("Pipeline 數: ${result.pipelineResults.size}")
+                for ((name, pr) in result.pipelineResults) {
+                    appendLine("  $name: ${if (pr.success) "✓" else "✗"} (${pr.totalElapsedMs}ms)")
+                }
+                if (ordersCount > 0) appendLine("生成訂單: ${ordersCount}筆")
+                if (swapSummary.isNotBlank()) appendLine(swapSummary.trimEnd())
+                if (mergeSummary.isNotBlank()) appendLine(mergeSummary.trimEnd())
+                if (savedWatchlist) appendLine("已保存到自選股")
+                if (result.errors.isNotEmpty()) {
+                    appendLine("錯誤:")
+                    for ((key, msg) in result.errors) {
+                        appendLine("  [$key] $msg")
+                    }
+                }
+                appendLine("═══════════════════════════")
+            }
+
+            Log.i(TAG, summary)
+
+            // 收集各 Pipeline 節點股票流動摘要
+            val stockFlowLines = mutableListOf<String>()
+            var totalFlowNodes = 0
+            for ((pipeName, pr) in result.pipelineResults) {
+                if (pr.stockFlowLogs.isNotEmpty()) {
+                    stockFlowLines.add("📊 $pipeName:")
+                    totalFlowNodes += pr.stockFlowLogs.size
+                    for ((nodeId, flow) in pr.stockFlowLogs) {
+                        val line = buildString {
+                            append("  ${flow.nodeName}: ${flow.inputCount}→${flow.outputCount}")
+                            if (flow.filterCount > 0) append(" (過濾${flow.filterCount}: ${flow.filterReason})")
+                        }
+                        stockFlowLines.add(line)
+                    }
+                }
+            }
+
+            withContext(Dispatchers.Main) {
+                val detailLines = mutableListOf<String>()
+                if (ordersCount > 0) detailLines.add("訂單${ordersCount}筆")
+                if (swapSummary.isNotBlank()) detailLines.add("換${swapSummary.lines().first().filter { it.isDigit() }}筆")
+                if (savedWatchlist) detailLines.add("已保存自選")
+
+                // 構建 UI 顯示文本（pipeline 名稱 + 節點流動 + 摘要）
+                val uiText = buildString {
+                    if (result.success) {
+                        appendLine("✅ [DAG] ${result.pipelineResults.keys.firstOrNull() ?: "Pipeline"} 完成 (${elapsed}ms)")
+                    } else {
+                        appendLine("❌ [DAG] 失敗: ${result.errors.keys.joinToString(", ")}")
+                    }
+                    // 節點股票流動摘要（最多顯示 5 行，避免過長）
+                    if (stockFlowLines.isNotEmpty()) {
+                        for (line in stockFlowLines.take(6)) {
+                            appendLine(line)
+                        }
+                        if (stockFlowLines.size > 6) {
+                            appendLine("  ... 共 $totalFlowNodes 個節點")
+                        }
+                    }
+                    // 業務摘要
+                    if (detailLines.isNotEmpty()) {
+                        append(detailLines.joinToString(" | "))
+                    }
+                }
+
+                statusTv.text = uiText.trimEnd()
+                buildBtn.isEnabled = true
+                buildBtn.text = "▶ 建仓"
+                progressBar.visibility = View.GONE
+            }
+
+            // 保存量化報告（含 pipeline 名稱 + 股票流動 JSON）
+            try {
+                savePipelineReportToDb(result, tradeDate, stockFlowLines)
+            } catch (e: Exception) {
+                Log.w(TAG, "[DAG] 保存報告失敗: ${e.message}")
+            }
+
+            // 後處理：刷新持倉（與原始流程一致的後續步驟）
+            try { com.chin.stockanalysis.stock.database.AppBackgroundRunner.monitorWatchlistDirect(requireContext()) } catch (_: Exception) {}
+            withContext(Dispatchers.Main) {
+                refreshPositions()
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "[DAG] 執行異常", e)
+            withContext(Dispatchers.Main) {
+                statusTv.text = "❌ [DAG] 異常: ${e.message}"
+                buildBtn.isEnabled = true
+                buildBtn.text = "▶ 建仓"
+                progressBar.visibility = View.GONE
+            }
+        }
+    }
+
     private fun executeTrade() {
         val eng = engine ?: return
         if (selectedPeriods.isEmpty()) {
@@ -205,6 +424,15 @@ class MidTermQuantFragment : QuantFragmentBase() {
             val totalStart = System.currentTimeMillis()
             try {
                 val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().format(DATE_FMT)
+                val tradeDate = browsingDate.format(DATE_FMT)
+
+                // ══════════ 臨時分支：DAG Pipeline vs 原始流程 ══════════
+                if (com.chin.stockanalysis.config.FeatureFlagManager.useDagPipelineMidTerm) {
+                    executeTradeViaDagPipeline(tradeDate, today, totalStart)
+                    return@launch
+                }
+                // ══════════ 以下為原始流程 ══════════
+
                 val importPrefs = requireContext().getSharedPreferences("data_import", android.content.Context.MODE_PRIVATE)
                 val lastImport = importPrefs.getString("last_import_date", "") ?: ""
                 val config = SimulationTradeEngine.TradeSessionConfig(
@@ -564,14 +792,15 @@ class MidTermQuantFragment : QuantFragmentBase() {
     // 数据菜单（覆写基类，增加中线特有选项）
     // ═══════════════════════════════════════
 
-    override fun showDataMenu() {
+    override fun showDataMenu(anchor: View) {
         val exporter = DataExportImport(requireContext())
         val options = arrayOf(
             "🧹 清空持仓", "🧹 清空报告",
             "📋 查看交易记录", "📊 中线量化报告 (历史)",
             "📊 查看精選池",
             "📤 导出交易数据 (CSV文本)", "📤 导出 JSON (全部数据)", "📤 导出 CSV (分表)",
-            "📂 查看导出文件列表", "📥 导入 JSON 数据", "📊 数据库统计信息"
+            "📂 查看导出文件列表", "📥 导入 JSON 数据", "📊 数据库统计信息",
+            "📈 回溯測試", "🔧 擬合調優"
         )
         androidx.appcompat.app.AlertDialog.Builder(requireContext())
             .setTitle("数据中心")
@@ -588,6 +817,8 @@ class MidTermQuantFragment : QuantFragmentBase() {
                     8 -> showExportFiles(exporter)
                     9 -> showImportDialog(exporter)
                     10 -> showDbStats(exporter)
+                    11 -> onBacktrackClick()
+                    12 -> onFittingClick()
                 }
             }
             .setNegativeButton("关闭", null).show()
@@ -696,6 +927,73 @@ class MidTermQuantFragment : QuantFragmentBase() {
     }
     private fun showDbStats(exporter: DataExportImport) {
         lifecycleScope.launch(Dispatchers.IO) { val stats = exporter.getDatabaseStats(); withContext(Dispatchers.Main) { showDialog("数据库统计", stats) } }
+    }
+
+    /**
+     * 保存 DAG Pipeline 執行報告到數據庫（含節點股票流動記錄）。
+     */
+    private suspend fun savePipelineReportToDb(
+        result: com.chin.stockanalysis.strategy.topology.xml.UseCaseLoader.MultiPipelineResult,
+        tradeDate: String,
+        stockFlowLines: List<String>
+    ) {
+        val db = StockDatabase.getInstance(requireContext())
+
+        // 收集最終輸出的股票代碼
+        val finalCodes = mutableListOf<String>()
+        for ((_, pr) in result.pipelineResults) {
+            val orders = pr.stageResults["n_orders"]?.output
+            if (orders is com.chin.stockanalysis.strategy.topology.nodes.OrderGenerationResult) {
+                finalCodes.addAll(orders.orders.map { it.stockCode })
+            }
+        }
+
+        // 構建 pipeline flow JSON
+        val flowJson = org.json.JSONObject().apply {
+            put("useCaseId", result.useCaseId)
+            put("success", result.success)
+            put("totalElapsedMs", result.totalElapsedMs)
+            val pipes = org.json.JSONObject()
+            for ((pipeName, pr) in result.pipelineResults) {
+                val pipeObj = org.json.JSONObject()
+                pipeObj.put("pipelineName", pr.pipelineName)
+                pipeObj.put("success", pr.success)
+                val flows = org.json.JSONArray()
+                for ((nodeId, flow) in pr.stockFlowLogs) {
+                    flows.put(org.json.JSONObject().apply {
+                        put("nodeId", nodeId)
+                        put("nodeName", flow.nodeName)
+                        put("inputCount", flow.inputCount)
+                        put("outputCount", flow.outputCount)
+                        put("filterCount", flow.filterCount)
+                        put("filterReason", flow.filterReason)
+                    })
+                }
+                pipeObj.put("stockFlows", flows)
+                pipes.put(pipeName, pipeObj)
+            }
+            put("pipelines", pipes)
+        }
+
+        val entity = com.chin.stockanalysis.strategy.trade.DailyPeriodResultEntity(
+            strategyId = "DAG_MIDTERM",
+            strategyName = result.pipelineResults.keys.firstOrNull() ?: "中線DAG",
+            tradeDate = tradeDate,
+            periodDays = 5,
+            stockCodesJson = org.json.JSONArray(finalCodes).toString(),
+            stockCount = finalCodes.size,
+            newsStrengthScore = 0,
+            rotationPenalty = 0,
+            mainBoardFilter = true,
+            filteredCodesJson = "[]",
+            filteredReasonJson = stockFlowLines.joinToString("\n"),
+            finalTop3Json = "[]",
+            aiSelectionReason = "DAG Pipeline 執行",
+            pipelineFlowJson = flowJson.toString(),
+            createdAt = System.currentTimeMillis()
+        )
+        db.dailyPeriodResultDao().insert(entity)
+        Log.i(TAG, "[DAG] 報告已保存: ${entity.strategyName} ${tradeDate}, 節點流動 ${result.pipelineResults.values.sumOf { it.stockFlowLogs.size }} 個")
     }
 
     private fun showFinalPool() {

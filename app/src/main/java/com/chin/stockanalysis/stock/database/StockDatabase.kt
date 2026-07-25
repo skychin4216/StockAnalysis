@@ -119,7 +119,7 @@ interface AiSelectedStockDao {
         UserWatchlistEntity::class,
         AiSelectedStockEntity::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = false
 )
 abstract class StockDatabase : RoomDatabase() {

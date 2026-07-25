@@ -1,0 +1,236 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 中線量化 DAG Pipeline v3 — 高通 Camera Pipeline 風格
+
+  扁平 DAG 結構：NodeList 定義節點，Links 定義依賴。
+  拓撲排序自動推導並行度，同層節點自動並行執行。
+
+  共 17 個 Node（原 12 + 補齊 5）：
+    Layer 0 (並行): adaptive_params, multi_period_hot, market_context, bg_manager
+    Layer 1: stock_pool（依賴 market_context）
+    Layer 2 (並行): signal_merge（策略動態注入）, heat_score（依賴 stock_pool）, cross_day_aggregation（依賴 stock_pool）
+    Layer 3: sector_boost（依賴 signal_merge）
+    Layer 4 (並行): news_strength, rotation_penalty（依賴 sector_boost）
+    Layer 5: ai_predict（依賴 sector_boost）
+    Layer 6: smart_money_filter（依賴 ai_predict）
+    Layer 7: news_guard（無 DAG 入邊，從 context.stageOutputs 讀取 smart_money_filter 結果）
+    Layer 8: generate_orders（依賴 smart_money_filter）
+    Layer 9 (並行): position_merge, swap_weak, fitting_save（依賴 generate_orders）
+-->
+<DagPipeline id="mid_term_dag" name="中線量化DAG Pipeline" description="自適應參數→多周期熱門→策略篩選→合併增強→跨日聚合→AI精選→主力過濾→新聞攔截→訂單生成→持倉合併/騰龍換鳥/擬合保存">
+
+  <!-- ══════════ NodeList ══════════ -->
+  <NodeList>
+    <!-- 中線獨有：數據源 Layer 0 -->
+    <Node id="n_adaptive" name="大盤分析+自適應參數" module="adaptive_params" />
+    <Node id="n_multihot" name="多周期熱門股聚合" module="multi_period_hot" />
+
+    <!-- 共用：數據準備 Layer 0-1 -->
+    <Node id="n_ctx" name="市場上下文" module="market_context" />
+    <Node id="n_pool" name="股票池" module="stock_pool" />
+
+    <!-- 中線補齊：後臺管理 Layer 0（並行） -->
+    <Node id="n_bg" name="後臺暫停/恢復" module="bg_manager" />
+
+    <!-- 中線補齊：熱度計算 Layer 2（依賴 stock_pool） -->
+    <Node id="n_heat" name="熱度計算" module="heat_score" />
+
+    <!-- 中線獨有：聚合 Layer 2 -->
+    <Node id="n_crossday" name="跨日聚合" module="cross_day_aggregation">
+      <config>
+        <param name="windowDays" value="5" />
+        <param name="topN" value="20" />
+      </config>
+    </Node>
+
+    <!-- 共用：聚合+增強 Layer 2-4 -->
+    <Node id="n_merge" name="信號合併" module="signal_merge" />
+    <Node id="n_boost" name="板塊加權" module="sector_boost" />
+
+    <!-- 中線獨有：增強 Layer 4 -->
+    <Node id="n_news_str" name="新聞力度計算" module="news_strength" />
+    <Node id="n_rot_pen" name="板塊輪動懲罰" module="rotation_penalty" />
+
+    <!-- 共用：AI+過濾 Layer 5-6 -->
+    <Node id="n_ai" name="AI精選" module="ai_predict" />
+    <Node id="n_smart" name="主力資金過濾" module="smart_money_filter">
+      <config>
+        <param name="minScore" value="55" />
+      </config>
+    </Node>
+
+    <!-- 中線獨有：過濾 Layer 7（無 DAG 入邊，從 context 讀取） -->
+    <Node id="n_newsguard" name="新聞攔截+技術過濾" module="news_guard">
+      <config>
+        <param name="impactThreshold" value="75" />
+        <param name="sentimentThreshold" value="-30" />
+      </config>
+    </Node>
+
+    <!-- 中線補齊：訂單生成 Layer 8 -->
+    <Node id="n_orders" name="買入訂單生成" module="generate_orders">
+      <config>
+        <param name="maxHoldings" value="5" />
+        <param name="orderType" value="MidTermQuant" />
+      </config>
+    </Node>
+
+    <!-- 中線補齊：持倉合併 Layer 9 -->
+    <Node id="n_merge_pos" name="持倉合併" module="position_merge" />
+
+    <!-- 中線獨有：交易動作 Layer 9（並行） -->
+    <Node id="n_swap" name="騰龍換鳥" module="swap_weak">
+      <config>
+        <param name="maxHoldings" value="5" />
+      </config>
+    </Node>
+
+    <!-- 中線補齊：擬合保存 Layer 9（並行） -->
+    <Node id="n_fit" name="擬合計算+保存" module="fitting_save" />
+  </NodeList>
+
+  <!-- ══════════ Links ══════════ -->
+  <Links>
+    <!-- Layer 0 → 1: 市場上下文 → 股票池 -->
+    <Link>
+      <SourceNodeId>n_ctx</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_pool</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 0 → 2: 大盤分析 → 信號合併（自適應參數注入） -->
+    <Link>
+      <SourceNodeId>n_adaptive</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_merge</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 0 → 2: 多周期熱門 → 跨日聚合（熱門股池注入） -->
+    <Link>
+      <SourceNodeId>n_multihot</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_crossday</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 1 → 2: 股票池 → 信號合併（策略動態注入在 Java 層完成） -->
+    <Link>
+      <SourceNodeId>n_pool</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_merge</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 1 → 2: 股票池 → 熱度計算（中線補齊） -->
+    <Link>
+      <SourceNodeId>n_pool</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_heat</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 1 → 2: 股票池 → 跨日聚合（中線獨有） -->
+    <Link>
+      <SourceNodeId>n_pool</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_crossday</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 2 → 3: 信號合併 → 板塊加權 -->
+    <Link>
+      <SourceNodeId>n_merge</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_boost</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 2 → 3: 熱度計算 → 板塊加權（熱度作為板塊加權輸入） -->
+    <Link>
+      <SourceNodeId>n_heat</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_boost</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 3 → 4: 板塊加權 → 新聞力度 / 輪動懲罰（並行評分） -->
+    <Link>
+      <SourceNodeId>n_boost</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_news_str</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_boost</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_rot_pen</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 3 → 5: 板塊加權 → AI精選 -->
+    <Link>
+      <SourceNodeId>n_boost</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_ai</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 4 → 5: 新聞力度 → AI精選（新聞評分作為AI輸入） -->
+    <Link>
+      <SourceNodeId>n_news_str</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_ai</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 5 → 6: AI精選 → 主力資金過濾 -->
+    <Link>
+      <SourceNodeId>n_ai</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_smart</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 6 → 7: 主力資金過濾 → 新聞攔截+技術過濾 -->
+    <Link>
+      <SourceNodeId>n_smart</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_newsguard</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 7 → 8: 新聞攔截 → 買入訂單生成 -->
+    <Link>
+      <SourceNodeId>n_newsguard</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_orders</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 8 → 9: 買入訂單生成 → 持倉合併（中線補齊） -->
+    <Link>
+      <SourceNodeId>n_orders</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_merge_pos</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 8 → 9: 買入訂單生成 → 騰龍換鳥（並行） -->
+    <Link>
+      <SourceNodeId>n_orders</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_swap</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 8 → 9: 買入訂單生成 → 擬合保存（並行，中線補齊） -->
+    <Link>
+      <SourceNodeId>n_orders</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_fit</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+  </Links>
+</DagPipeline>

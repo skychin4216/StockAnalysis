@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 短線量化 Pipeline
+
+  流程：
+    Stage 1 (並行): 市場上下文 + 股票池
+    Stage 2 (並行): 多策略篩選
+    Stage 3 (串行): 信號合併 → 板塊加權
+    Stage 4 (串行): AI 精選 → 主力資金過濾
+
+  短線一定要熱點熱點熱點。
+-->
+<pipeline id="short_term_pipeline" name="短線量化Pipeline" description="股票池→策略並行篩選→合併加權→AI精選→主力資金過濾" version="1">
+
+  <nodes>
+    <node id="n_ctx" module="market_context" />
+    <node id="n_pool" module="stock_pool" />
+    <node id="n_merge" module="signal_merge" />
+    <node id="n_boost" module="sector_boost" />
+    <node id="n_ai" module="ai_predict" />
+    <node id="n_smart" module="smart_money_filter">
+      <config>
+        <param name="minScore" value="55" />
+      </config>
+    </node>
+  </nodes>
+
+  <stages>
+    <stage name="數據準備" parallel="true">
+      <linkList name="市場上下文+股票池">
+        <link from="n_ctx" to="n_pool" />
+      </linkList>
+    </stage>
+
+    <stage name="策略篩選" parallel="true">
+      <!-- 動態注入策略 LinkList -->
+    </stage>
+
+    <stage name="合併加權" parallel="false">
+      <linkList name="合併+板塊加權">
+        <link from="n_merge" to="n_boost" />
+      </linkList>
+    </stage>
+
+    <stage name="AI+主力過濾" parallel="false">
+      <linkList name="AI精選+主力過濾">
+        <link from="n_boost" to="n_ai" />
+        <link from="n_ai" to="n_smart" />
+      </linkList>
+    </stage>
+  </stages>
+</pipeline>

@@ -76,6 +76,8 @@ class ShortTermQuantFragment : QuantFragmentBase() {
 
     override val positionTitlePrefix = "短線量化"
 
+    override fun getDefaultUseCaseId() = "short_term"
+
     override fun onBuildClick() { runBuildAndBuy() }
     override fun onFittingClick() = autoFit()
     override fun onBacktrackClick() { runShortTermBacktrack() }
@@ -669,12 +671,14 @@ class ShortTermQuantFragment : QuantFragmentBase() {
     // 数据查看
     // ═══════════════════════════════════════
 
-    protected override fun showDataMenu() {
+    override fun showDataMenu(anchor: View) {
         val options = arrayOf(
             "🧹 清空持仓",
             "🧹 清空报告",
             "📋 查看交易记录",
-            "📊 短线量化报告 (历史)"
+            "📊 短线量化报告 (历史)",
+            "📈 回溯測試",
+            "🔧 擬合調優"
         )
         androidx.appcompat.app.AlertDialog.Builder(requireContext())
             .setTitle("数据中心")
@@ -683,6 +687,9 @@ class ShortTermQuantFragment : QuantFragmentBase() {
                     0 -> confirmAndClearPositions()
                     1 -> confirmAndClearReports()
                     2 -> showShortTermTradeHistory()
+                    3 -> { /* 短线报告历史 - 待实现 */ }
+                    4 -> onBacktrackClick()
+                    5 -> onFittingClick()
                 }
             }
             .setNegativeButton("关闭", null).show()

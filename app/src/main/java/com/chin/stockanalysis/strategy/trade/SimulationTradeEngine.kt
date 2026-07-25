@@ -1446,6 +1446,7 @@ data class DailyPeriodResultEntity(
     @androidx.room.ColumnInfo(name = "filtered_reason_json") val filteredReasonJson: String,
     @androidx.room.ColumnInfo(name = "final_top3_json") val finalTop3Json: String,
     @androidx.room.ColumnInfo(name = "ai_selection_reason") val aiSelectionReason: String,
+    @androidx.room.ColumnInfo(name = "pipeline_flow_json") val pipelineFlowJson: String = "",
     @androidx.room.ColumnInfo(name = "created_at") val createdAt: Long
 )
 

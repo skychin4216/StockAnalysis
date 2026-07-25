@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 短線量化 UseCase
+
+  因子計算→策略→合併→AI精選→主力資金過濾→自動建倉。
+  流程：數據準備 → 策略篩選（並行） → 合併加權 → AI+主力過濾
+-->
+<usecase id="short_term" name="短線量化">
+  <description>股票池→策略並行篩選→合併加權→AI精選→主力資金過濾→自動建倉</description>
+  <steps>
+    <pipeline ref="topologies/data_prep_pipeline.xml" name="數據準備" />
+    <pipeline ref="topologies/strategy_screening_pipeline.xml" parallel="true" name="策略篩選" />
+    <pipeline ref="topologies/merge_boost_pipeline.xml" name="合併加權" />
+    <pipeline ref="topologies/ai_filter_pipeline.xml" name="AI+主力過濾" />
+  </steps>
+  <config>
+    <param name="orderType" value="ShortTermQuant" />
+    <param name="maxHoldings" value="3" />
+    <param name="maxStocksPerStrategy" value="15" />
+  </config>
+</usecase>

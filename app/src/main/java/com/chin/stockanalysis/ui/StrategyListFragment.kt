@@ -177,6 +177,7 @@ class StrategyListFragment : Fragment() {
         val dataBtn = Button(requireContext()).apply { text = "数据"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#455A64")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,0.9f).apply { marginEnd = 3 }; setOnClickListener { showDataMenu() } }; row2.addView(dataBtn)
         val importBtn = Button(requireContext()).apply { text = "导入"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#2E7D32")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.1f).apply { marginEnd = 3 }; setOnClickListener { importHistoricalData() } }; row2.addView(importBtn)
         val addCustomBtn = Button(requireContext()).apply { text = "+策略"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#1565C0")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.1f).apply { marginEnd = 3 }; setOnClickListener { showAddDialog() } }; row2.addView(addCustomBtn)
+        val dragonBtn = Button(requireContext()).apply { text = "🐲龙头轮动"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#6A1B9A")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.3f); setOnClickListener { runDragonHeadDip() } }; row2.addView(dragonBtn)
         layout.addView(row2)
 
         val statusRow = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(16,2,16,4); setBackgroundColor(Color.WHITE) }
@@ -257,6 +258,95 @@ class StrategyListFragment : Fragment() {
     private fun hardcodedSubSector(name: String): String {
         val map = mapOf("生益" to "覆铜板","沪电" to "PCB","深南" to "基板","鹏鼎" to "软板","景旺" to "PCB","世运" to "PCB","超声" to "PCB","三环" to "MLCC","风华" to "MLCC","火炬" to "MLCC","洁美" to "MLCC","中际" to "光模块","新易盛" to "光模块","天孚" to "光器件","光迅" to "光模块","德科立" to "光模块","联特" to "光模块","意华" to "连接器","鼎通" to "连接器","立讯" to "代工","博创" to "光器件","太辰" to "光器件","东山" to "软板","信维" to "射频","闻泰" to "代工","韦尔" to "CIS","兆易" to "存储","长电" to "封测","通富" to "封测","华天" to "封测","北方华创" to "设备","中微" to "刻蚀","盛美" to "清洗","拓荆" to "镀膜","芯源" to "涂胶","江丰" to "靶材","安集" to "抛光液","中芯" to "代工","华虹" to "代工","斯达" to "IGBT","时代电气" to "IGBT","中兴" to "通信","烽火" to "通信","宁德" to "电池","比亚迪" to "整车","亿纬" to "电池","赣锋" to "锂矿","天齐" to "锂矿","华友" to "钴镍","中矿" to "铯矿","紫金" to "金铜","洛阳钼业" to "钼矿","西部矿业" to "铜矿","中科" to "超算","浪潮" to "服务器","曙光" to "超算","海光" to "CPU","寒武纪" to "AI芯","金山" to "办公","中望" to "CAD","德赛西威" to "智驾","均胜" to "安全","阳光" to "逆变器","固德" to "逆变器","锦浪" to "逆变器","晶澳" to "组件","隆基" to "硅片","通威" to "硅料","福莱" to "玻璃","福斯" to "胶膜","泰格" to "CXO","药明" to "CXO","康龙" to "CXO","凯莱英" to "CXO","迈瑞" to "器械","联影" to "影像","鱼跃" to "家用","恒瑞" to "创新药","百济" to "创新药","爱尔" to "眼科","通策" to "口腔")
         for ((kw, label) in map) { if (name.contains(kw)) return label }; return ""
+    }
+
+    /** 执行龙头轮动策略 */
+    private fun runDragonHeadDip() {
+        scanBtn.isEnabled = false; scanBtn.text = "\u23F3"; progressBar.visibility = View.VISIBLE
+        statusTv.text = "  🐲 龙头轮动扫描中..."
+        android.util.Log.e("DragonHeadDip_UI", "====== 龙头轮动开始执行 ======")
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val strategy = com.chin.stockanalysis.strategy.strategies.DragonHeadDipStrategy(requireContext())
+                android.util.Log.e("DragonHeadDip_UI", "策略实例创建成功，开始 screen()...")
+                val result = strategy.screen()
+                android.util.Log.e("DragonHeadDip_UI", "screen() 返回: isSuccess=${result.isSuccess}, ${result.getOrNull()?.let { "命中${it.hitCount}只/扫描${it.totalScanned}只/耗时${it.scanTimeMs}ms" } ?: result.exceptionOrNull()?.message}")
+                if (isAdded) {
+                    withContext(Dispatchers.Main) {
+                        scanBtn.isEnabled = true; scanBtn.text = "执行策略"; progressBar.visibility = View.GONE
+                        if (result != null && result.getOrNull()?.hitCount ?: 0 > 0) {
+                            val r = result.getOrNull()!!
+                            statusTv.text = "  🐲 龙头轮动: 主板+科创/创业 共${r.hitCount}只 | 耗时${r.scanTimeMs}ms | 扫描${r.totalScanned}只"
+                            showDragonHeadDipResult(r)
+                        } else if (result.getOrNull() != null) {
+                            val r = result.getOrNull()!!
+                            statusTv.text = "  🐲 龙头轮动: 无符合条件的标的 | 扫描${r.totalScanned}只 | 耗时${r.scanTimeMs}ms"
+                            Toast.makeText(requireContext(), "龙头轮动扫描${r.totalScanned}只，无命中", Toast.LENGTH_SHORT).show()
+                        } else {
+                            val err = result.exceptionOrNull()
+                            statusTv.text = "  🐲 龙头轮动执行失败: ${err?.message}"
+                            android.util.Log.e("DragonHeadDip_UI", "执行失败: ${err?.message}", err)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("DragonHeadDip_UI", "异常: ${e.message}", e)
+                if (isAdded) withContext(Dispatchers.Main) {
+                    scanBtn.isEnabled = true; scanBtn.text = "执行策略"; progressBar.visibility = View.GONE
+                    statusTv.text = "  龙头轮动执行失败: ${e.message}"
+                }
+            }
+        }
+    }
+
+    /** 直接展示龙头轮动结果（不走 engine 策略过滤） */
+    private fun showDragonHeadDipResult(result: com.chin.stockanalysis.strategy.models.ScreeningResult) {
+        if (!isAdded || result.signals.isEmpty()) return
+        val sv = ScrollView(requireContext())
+        val c = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(24, 24, 24, 24)
+        }
+        c.addView(TextView(requireContext()).apply {
+            text = "🐲 龙头轮动 (${result.hitCount}只 / ${result.scanTimeMs}ms | 扫描${result.totalScanned}只)"
+            textSize = 15f; setTextColor(Color.parseColor("#333333"))
+            setTypeface(null, Typeface.BOLD); setPadding(0, 8, 0, 8)
+        })
+        for (signal in result.signals.sortedByDescending { it.strength }) {
+            val card = buildResultCard(signal)
+            c.addView(card)
+            c.addView(View(requireContext()).apply { setBackgroundColor(Color.parseColor("#E0E0E0")); layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, 1); setPadding(0, 8, 0, 8) })
+        }
+        AlertDialog.Builder(requireContext())
+            .setTitle("🐲 龙头轮动结果")
+            .setView(sv)
+            .setPositiveButton("关闭", null)
+            .show()
+    }
+
+    /** 构建单个信号卡片 */
+    private fun buildResultCard(signal: com.chin.stockanalysis.strategy.models.StrategySignal): LinearLayout {
+        return LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(12, 12, 12, 12); setBackgroundColor(Color.parseColor("#F5F5F5"))
+            addView(TextView(requireContext()).apply {
+                text = "${signal.stockName}(${signal.stockCode})"
+                textSize = 15f; setTextColor(Color.parseColor("#1565C0"))
+                setTypeface(null, Typeface.BOLD)
+            })
+            addView(TextView(requireContext()).apply {
+                text = "${signal.category.icon} 强度: ${signal.strength}/100 | ${signal.action.label}"
+                textSize = 13f; setTextColor(Color.parseColor("#666666"))
+            })
+            addView(TextView(requireContext()).apply {
+                text = signal.reason
+                textSize = 12f; setTextColor(Color.parseColor("#444444")); setPadding(0, 4, 0, 4)
+            })
+            if (signal.details.isNotEmpty()) {
+                val detailText = signal.details.entries.joinToString("\n") { "  • ${it.key}: ${it.value}" }
+                addView(TextView(requireContext()).apply {
+                    text = detailText; textSize = 11f; setTextColor(Color.parseColor("#888888")); setPadding(0, 4, 0, 0)
+                })
+            }
+        }
     }
 
     private fun runSelectedStrategies() {
@@ -674,7 +764,7 @@ class StrategyListFragment : Fragment() {
         }).toString()
         val allCodes = org.json.JSONArray(results.flatMap { it.signals.map { it.stockCode } }).toString()
         db.dailyPeriodResultDao().insert(com.chin.stockanalysis.strategy.trade.DailyPeriodResultEntity(
-            strategyId = "STRATEGY_SCAN", strategyName = "量化選股",
+            strategyId = "STRATEGY_SCAN", strategyName = "量化选股",
             tradeDate = browsingDate.toString(), periodDays = 1,
             stockCodesJson = allCodes, stockCount = results.sumOf { it.hitCount },
             newsStrengthScore = 0, rotationPenalty = 0, mainBoardFilter = true,
@@ -688,7 +778,7 @@ class StrategyListFragment : Fragment() {
         val userSectors = memory.focusSectors.takeIf { it.isNotEmpty() }?.joinToString("、") ?: "未設置"
         val options = arrayOf(
             "\uD83D\uDCE5 拉取股票报告",
-            "\uD83D\uDCCA 执行策略报告",
+            "\uD83D\uDCCA 量化选股报告",
             "\uD83D\uDD25 導出熱門板塊數據（用戶關注：$userSectors）",
             "\uD83D\uDCCB 導出策略報告",
             "\uD83E\uDDE0 市場記憶設置",

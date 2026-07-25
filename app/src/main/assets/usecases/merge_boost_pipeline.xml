@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 合併+板塊加權 Pipeline（共享）
+
+  信號合併 → 板塊加權。2 個 Node 串聯。
+  量化選股、短線量化、中線量化 共用此 Pipeline。
+-->
+<pipeline id="merge_boost" name="合併+板塊加權" description="多策略信號合併→板塊加權" version="1">
+  <nodes>
+    <node id="n_merge" module="signal_merge" />
+    <node id="n_boost" module="sector_boost" />
+  </nodes>
+  <stages>
+    <stage name="合併加權" parallel="false">
+      <linkList name="合併+板塊加權">
+        <link from="n_merge" to="n_boost" />
+      </linkList>
+    </stage>
+  </stages>
+</pipeline>
