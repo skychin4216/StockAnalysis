@@ -30,6 +30,7 @@ class MovingAverageStrategy(
     override val category = StrategyCategory.TREND
     override val holdingPeriods = listOf(HoldingPeriod.MID)
     override val source = StrategySource.BUILTIN
+    override val signalExpiryHours = 120   // 5個交易日
 
     override val config = StrategyConfig.custom(
         params = mapOf("short_period" to 5, "long_period" to 20, "volume_ratio_min" to 1.5),

@@ -30,6 +30,7 @@ class MoatLeaderStrategy(
     override val category = StrategyCategory.VALUE
     override val holdingPeriods = listOf(HoldingPeriod.LONG)
     override val source = StrategySource.BUILTIN
+    override val signalExpiryHours = 720   // 30個交易日
 
     override val config = StrategyConfig.custom(
         params = mapOf(

@@ -46,6 +46,8 @@ object StrategyEngineHolder {
             registerStrategy(DragonHeadDipStrategy(context.applicationContext, screener))
             registerStrategy(InstitutionalAccumulationStrategy(screener))
             registerStrategy(MoatLeaderStrategy(screener))
+            // 啟動時清理過期信號緩存
+            cleanExpiredResults()
         }
     }
 

@@ -46,6 +46,7 @@ class DragonHeadDipStrategy(
     override val category = StrategyCategory.MOMENTUM
     override val holdingPeriods = listOf(HoldingPeriod.SHORT)
     override val source = StrategySource.BUILTIN
+    override val signalExpiryHours = 72    // 3個交易日
 
     override val config = StrategyConfig.custom(
         params = mapOf(

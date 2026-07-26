@@ -290,7 +290,7 @@ class ShortTermQuantFragment : QuantFragmentBase() {
                     tradeDate = tradeDate,
                     today = today,
                     strategies = strategies,
-                    orderType = "short_term_dag",
+                    orderType = "shortterm",
                     importDays = 60
                 )
                 withContext(Dispatchers.Main) {

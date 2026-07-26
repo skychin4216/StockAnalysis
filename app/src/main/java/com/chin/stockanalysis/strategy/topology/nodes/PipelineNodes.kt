@@ -426,6 +426,41 @@ class AIPredictNode(
             )
         } ?: emptyList()
 
+        // ── AI 精選動態接入：讀取策略 requiresAIRefine 做條件執行 ──
+        val allStrategies = context.getStageOutput<List<Strategy>>("_strategies") ?: emptyList()
+        val requiresAIRefine = allStrategies.any { it.requiresAIRefine }
+
+        // 若沒有策略需要 AI 精選，跳過 AI 預測，直接返回按強度排序的原始信號
+        if (!requiresAIRefine) {
+            context.log(nodeId, "沒有策略需要 AI 精選（requiresAIRefine=false），跳過 AI 預測")
+
+            val topPicks = screeningResults.flatMap { it.signals }
+                .sortedByDescending { it.strength }
+                .take(5)
+                .mapIndexed { index, signal ->
+                    AIPredictionEngine.AIPick(
+                        stockCode = signal.stockCode,
+                        stockName = signal.stockName,
+                        rank = index + 1,
+                        compositeScore = signal.strength,
+                        upProbability = signal.strength,
+                        reason = signal.reason,
+                        actionSuggestion = signal.action.label
+                    )
+                }
+
+            return AIPredictionEngine.AIPrediction(
+                mode = "NO_AI",
+                modeReason = "沒有策略需要 AI 精選，使用原始信號排序",
+                topPicks = topPicks,
+                marketOutlook = "未使用 AI 精選，信號已按強度排序",
+                riskWarning = "",
+                marketDirection = marketDirection
+            )
+        }
+
+        context.log(nodeId, "${allStrategies.count { it.requiresAIRefine }} 個策略需要 AI 精選，啟動 AI 預測")
+
         return try {
             val prediction = engine.predict(
                 strategyResults = screeningResults,

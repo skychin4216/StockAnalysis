@@ -26,6 +26,7 @@ class BollingerBandStrategy(
     override val category = StrategyCategory.TREND
     override val holdingPeriods = listOf(HoldingPeriod.MID)
     override val source = StrategySource.BUILTIN
+    override val signalExpiryHours = 120   // 5個交易日
 
     override val config = StrategyConfig.custom(
         params = mapOf("period" to 20, "std_mult" to 2.0, "volume_min" to 1e8),

@@ -385,7 +385,7 @@ class LongTermQuantFragment : QuantFragmentBase() {
                 tradeDate = tradeDate,
                 today = today,
                 strategies = strategies,
-                orderType = "long_term_dag",
+                orderType = "long_term",
                 importDays = 60
             )
             withContext(Dispatchers.Main) {

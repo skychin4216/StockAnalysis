@@ -4,6 +4,7 @@ import android.util.Log
 import com.chin.stockanalysis.stock.StockRealtime
 import com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource
 import com.chin.stockanalysis.strategy.*
+import com.chin.stockanalysis.strategy.data.Level2DataProvider
 import com.chin.stockanalysis.strategy.data.StockScreener
 import com.chin.stockanalysis.strategy.models.WeightFactor
 import com.chin.stockanalysis.strategy.models.ScreeningResult
@@ -41,6 +42,39 @@ class EarlyMorningChaseStrategy(
     override val category = StrategyCategory.MOMENTUM
     override val holdingPeriods = listOf(HoldingPeriod.ULTRA_SHORT)
     override val source = StrategySource.USER_CUSTOM
+
+    // ── 風控默認值（下沉自 Fragment） ──
+    override val defaultStopLoss = -0.02f      // -2% 硬止損
+    override val defaultTakeProfit = 0.03f     // +3% 止盈
+    override val maxPositions = 3
+    override val signalExpiryHours = 2         // 僅當日 09:30-11:30 有效
+
+    // ── 數據依賴 ──
+    override val requiresL2Data = true
+    override val dataFrequency = DataFrequency.TICK
+
+    // ── 動態開關（基於時間計算，非寫死 false） ──
+    override val requiresSmartMoney: Boolean
+        get() = java.time.LocalTime.now().isBefore(java.time.LocalTime.of(14, 30))
+    override val requiresAIRefine: Boolean
+        get() {
+            val now = java.time.LocalTime.now()
+            return now.isAfter(java.time.LocalTime.of(15, 0)) &&
+                now.isBefore(java.time.LocalTime.of(16, 0))
+        }
+
+    /**
+     * 超輕量級 Level2 即時過濾（取代笨重的 AI，僅耗時 ~5ms）。
+     * 早盤追漲需要確認主力資金進場：特大單買入佔比 > 15%，且買賣價差小（流動性佳）。
+     * 支持部分數據：僅有 largeOrderBuyRatio 時只檢查主力資金，僅有 bidAskSpread 時只檢查流動性。
+     */
+    fun fastLevel2Filter(largeOrderBuyRatio: Double, bidAskSpread: Double): Boolean {
+        // 超大單買入佔比過低（主力未進場），僅有數據時檢查
+        if (largeOrderBuyRatio > 0 && largeOrderBuyRatio <= 0.15) return false
+        // 買賣價差過大（流動性差），僅有數據時檢查
+        if (bidAskSpread > 0 && bidAskSpread >= 0.02) return false
+        return true
+    }
 
     override val config = StrategyConfig.custom(
         params = mapOf(
@@ -122,8 +156,29 @@ class EarlyMorningChaseStrategy(
 
         Log.i(id, "V型检测: pool=${pool.size} → V型=${vCandidates.size} | 无V型=${cntNoV}")
 
+        // Step 1.5: Level2 數據填充 + 即時過濾
+        val enrichedVCandidates = Level2DataProvider.enrichStocks(vCandidates.map { it.stock }).mapIndexed { i, stock ->
+            vCandidates[i].copy(stock = stock)
+        }
+        val l2FilteredVCandidates = enrichedVCandidates.filter { v ->
+            val stock = v.stock
+            if (stock.largeOrderBuyRatio > 0 || stock.bidAskSpread > 0) {
+                val passed = fastLevel2Filter(stock.largeOrderBuyRatio, stock.bidAskSpread)
+                if (!passed) {
+                    Log.d(id, "Level2過濾淘汰V型: ${stock.code} ${stock.name} " +
+                        "大單買入比=${"%.3f".format(stock.largeOrderBuyRatio)} 買賣價差=${"%.4f".format(stock.bidAskSpread)}")
+                }
+                passed
+            } else {
+                true
+            }
+        }
+        if (l2FilteredVCandidates.size < vCandidates.size) {
+            Log.i(id, "Level2過濾V型: ${vCandidates.size} → ${l2FilteredVCandidates.size} (淘汰${vCandidates.size - l2FilteredVCandidates.size}只)")
+        }
+
         // Step 2: 打分 V 型反转
-        val vScored = vCandidates.map { v ->
+        val vScored = l2FilteredVCandidates.map { v ->
             val score = scoreVReversal(v)
             v to score
         }.filter { (_, s) -> s >= dynamicVThreshold }

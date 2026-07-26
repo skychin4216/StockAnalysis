@@ -24,6 +24,7 @@ class RSIDivergenceStrategy(
     override val category = StrategyCategory.MOMENTUM
     override val holdingPeriods = listOf(HoldingPeriod.MID)
     override val source = StrategySource.BUILTIN
+    override val signalExpiryHours = 120   // 5個交易日
 
     override val config = StrategyConfig.custom(
         params = mapOf("rsi_period" to 14, "oversold" to 30, "min_price" to 5.0),

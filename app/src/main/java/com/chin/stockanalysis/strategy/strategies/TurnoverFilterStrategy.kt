@@ -29,6 +29,7 @@ class TurnoverFilterStrategy(
     override val category = StrategyCategory.VOLUME
     override val holdingPeriods = listOf(HoldingPeriod.SHORT)
     override val source = StrategySource.BUILTIN
+    override val signalExpiryHours = 24    // 當日全天，次日清零
 
     override val config = StrategyConfig.custom(
         params = mapOf("amount_min" to 200_000_000.0, "change_min" to 1.5, "price_max" to 200.0),

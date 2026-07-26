@@ -29,6 +29,7 @@ class GapUpMomentumStrategy(
     override val category = StrategyCategory.MOMENTUM
     override val holdingPeriods = listOf(HoldingPeriod.SHORT)
     override val source = StrategySource.BUILTIN
+    override val signalExpiryHours = 24    // 當日全天，次日清零
 
     override val config = StrategyConfig.custom(
         params = mapOf("gap_min" to 2.0, "strength_min" to 1.0, "change_min" to 3.0),

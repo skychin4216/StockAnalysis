@@ -46,6 +46,7 @@ class SmartMoneyDetectionStrategy(
     override val category = StrategyCategory.VOLUME
     override val holdingPeriods = listOf(HoldingPeriod.MID)
     override val source = StrategySource.BUILTIN
+    override val signalExpiryHours = 72    // 3個交易日
 
     override val config = StrategyConfig.custom(
         params = mapOf("min_score" to 55.0, "max_results" to 30.0),

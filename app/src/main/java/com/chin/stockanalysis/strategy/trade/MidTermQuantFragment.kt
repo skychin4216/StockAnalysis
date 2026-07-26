@@ -298,7 +298,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
                                 Triple(order.stockCode, order.stockName, order.scoreAtBuy)
                             }
                             com.chin.stockanalysis.stock.database.AppBackgroundRunner.addBatchToWatchlist(
-                                requireContext(), watchlistItems, source = "midterm_dag"
+                                requireContext(), watchlistItems, source = "midterm"
                             )
                             savedWatchlist = true
                             Log.i(TAG, "[DAG] 已保存 ${watchlistItems.size} 只到自選股")

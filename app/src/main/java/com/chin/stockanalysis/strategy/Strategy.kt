@@ -48,6 +48,66 @@ interface Strategy {
     val defaultPeriod: HoldingPeriod
         get() = holdingPeriods.first()
 
+    // ───────────────────────────────────────────
+    // 风控默认值（下沉到策略，Fragment 不再硬编码）
+    // ───────────────────────────────────────────
+
+    /** 默认止损比率（如 -0.02 表示 -2%）。null 表示该策略不设默认止损 */
+    val defaultStopLoss: Float?
+        get() = null
+
+    /** 默认止盈比率（如 0.03 表示 +3%）。null 表示该策略不设默认止盈 */
+    val defaultTakeProfit: Float?
+        get() = null
+
+    /** 该策略在同周期内最大同时持有数量（默认 5） */
+    val maxPositions: Int
+        get() = 5
+
+    // ───────────────────────────────────────────
+    // 持仓天数建议（默认取周期枚举的范围）
+    // ───────────────────────────────────────────
+
+    /** 最短建议持仓天数 */
+    val minHoldingDays: Int
+        get() = defaultPeriod.holdingDays.first
+
+    /** 最长建议持仓天数 */
+    val maxHoldingDays: Int
+        get() = defaultPeriod.holdingDays.last
+
+    // ───────────────────────────────────────────
+    // 数据依赖
+    // ───────────────────────────────────────────
+
+    /** 是否需要 Level2 实时数据（超短线必备） */
+    val requiresL2Data: Boolean
+        get() = false
+
+    /** 是否需要财务季报/年报数据（长线必备） */
+    val requiresFinancialData: Boolean
+        get() = false
+
+    /** 数据频率 */
+    val dataFrequency: DataFrequency
+        get() = DataFrequency.DAILY
+
+    // ───────────────────────────────────────────
+    // 过滤开关（动态：可覆写为基于时间的 get()）
+    // ───────────────────────────────────────────
+
+    /** 是否需要主力资金过滤（>=55分）。超短线可覆写为时间动态开关 */
+    val requiresSmartMoney: Boolean
+        get() = false
+
+    /** 是否需要 AI 精选加权。超短线可覆写为盘后动态开关 */
+    val requiresAIRefine: Boolean
+        get() = false
+
+    /** 信号有效期（小时），过期作废。默认 24 小时 */
+    val signalExpiryHours: Int
+        get() = 24
+
     /**
      * 执行选股扫描（使用实时 API）
      */
@@ -88,4 +148,12 @@ enum class HoldingPeriod(val label: String, val icon: String, val holdingDays: I
     SHORT("短線", "🤖", 1..14),
     MID("中線", "📈", 30..180),
     LONG("長線", "💎", 180..999)
+}
+
+/** 数据频率 */
+enum class DataFrequency(val label: String) {
+    TICK("逐筆"),
+    MIN5("5分鐘"),
+    DAILY("日K"),
+    WEEKLY("週K")
 }

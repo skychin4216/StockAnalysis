@@ -32,6 +32,7 @@ class AIPredictionStrategy(private val context: Context) : Strategy {
     override val category = StrategyCategory.CUSTOM
     override val holdingPeriods = listOf(HoldingPeriod.MID)
     override val source = StrategySource.USER_CUSTOM
+    override val signalExpiryHours = 72    // 3個交易日
 
     override val config = StrategyConfig.custom(
         params = mapOf(

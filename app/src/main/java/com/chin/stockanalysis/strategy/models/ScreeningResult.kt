@@ -36,6 +36,18 @@ data class ScreeningResult(
     /** Top N 结果 */
     fun topN(n: Int): List<StrategySignal> = sortedByStrength.take(n)
 
+    /**
+     * 过滤掉已过期的信号，返回仅包含有效信号的新 ScreeningResult。
+     *
+     * @param maxAgeMs 最大有效期（毫秒），默认 24 小时
+     * @return 过期信号被移除后的 ScreeningResult（hitCount/totalScanned 不变）
+     */
+    fun filterExpired(maxAgeMs: Long = StrategySignal.DEFAULT_MAX_AGE_MS): ScreeningResult {
+        val validSignals = signals.filter { !it.isExpired(maxAgeMs) }
+        return if (validSignals.size == signals.size) this
+        else copy(signals = validSignals)
+    }
+
     /** 人类可读的摘要 */
     fun summary(): String = buildString {
         appendLine("🎯 $strategyName")

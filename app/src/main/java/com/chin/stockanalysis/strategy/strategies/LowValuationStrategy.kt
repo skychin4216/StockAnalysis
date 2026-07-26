@@ -21,6 +21,7 @@ class LowValuationStrategy(
     override val category = StrategyCategory.VALUE
     override val holdingPeriods = listOf(HoldingPeriod.LONG)
     override val source = StrategySource.BUILTIN
+    override val signalExpiryHours = 720   // 30個交易日
 
     override val config = StrategyConfig.custom(
         params = mapOf("pe_max" to 15.0, "roe_min" to 15.0, "stabilization_days" to 5),

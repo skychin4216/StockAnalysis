@@ -21,6 +21,7 @@ class VolumeBreakStrategy(
     override val category = StrategyCategory.VOLUME
     override val holdingPeriods = listOf(HoldingPeriod.SHORT, HoldingPeriod.MID)
     override val source = StrategySource.BUILTIN
+    override val signalExpiryHours = 120   // 5個交易日
 
     override val config = StrategyConfig.custom(
         params = mapOf("volume_ratio_min" to 2.0, "break_percent_min" to 1.0, "change_percent_min" to 2.0),

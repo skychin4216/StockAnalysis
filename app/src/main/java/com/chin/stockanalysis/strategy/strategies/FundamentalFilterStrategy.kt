@@ -33,6 +33,7 @@ class FundamentalFilterStrategy(
     override val category = StrategyCategory.VALUE
     override val holdingPeriods = listOf(HoldingPeriod.LONG)
     override val source = StrategySource.BUILTIN
+    override val signalExpiryHours = 720   // 30個交易日
 
     override val config = StrategyConfig.custom(
         params = mapOf("layer" to 2.0, "max_results" to 30.0),

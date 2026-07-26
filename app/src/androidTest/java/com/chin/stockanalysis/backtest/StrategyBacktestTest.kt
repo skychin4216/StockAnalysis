@@ -25,10 +25,15 @@ class StrategyBacktestTest {
         roeTTM: Double = 0.0, grossMarginTTM: Double = 0.0,
         debtToAsset: Double = 0.0, operatingCashFlow: Double = 0.0
     ): StockRealtime = StockRealtime(
-        code, name, price, open, yestClose, high, low,
-        volume, amount, changePercent, changeAmount, turnoverRate,
-        pe, pb, marketCap, roeTTM, grossMarginTTM, debtToAsset, operatingCashFlow,
-        System.currentTimeMillis()
+        code = code, name = name, price = price, open = open, yestClose = yestClose,
+        high = high, low = low,
+        volume = volume, amount = amount,
+        changePercent = changePercent, changeAmount = changeAmount,
+        turnoverRate = turnoverRate,
+        pe = pe, pb = pb, marketCap = marketCap,
+        roeTTM = roeTTM, grossMarginTTM = grossMarginTTM,
+        debtToAsset = debtToAsset, operatingCashFlow = operatingCashFlow,
+        timestamp = System.currentTimeMillis()
     )
 
     @Test
