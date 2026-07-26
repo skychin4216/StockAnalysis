@@ -25,4 +25,4 @@ app/src/main/assets/api_keys_local.properties
 .DS_Store
 
 # 其他
-*.log
+*.log.trae-html-share-packages/

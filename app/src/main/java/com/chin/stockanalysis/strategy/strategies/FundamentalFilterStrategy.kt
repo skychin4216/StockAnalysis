@@ -3,6 +3,7 @@ package com.chin.stockanalysis.strategy.strategies
 import android.util.Log
 import com.chin.stockanalysis.stock.StockRealtime
 import com.chin.stockanalysis.strategy.Strategy
+import com.chin.stockanalysis.strategy.HoldingPeriod
 import com.chin.stockanalysis.strategy.StrategyCategory
 import com.chin.stockanalysis.strategy.StrategyConfig
 import com.chin.stockanalysis.strategy.StrategySource
@@ -30,6 +31,7 @@ class FundamentalFilterStrategy(
     override var description =
         "基础排除(4项) -> 第一层基础价值(8项) -> 第二层优质成长(12项) -> 第三层核心精选(15项) -> 换手率出货警告"
     override val category = StrategyCategory.VALUE
+    override val holdingPeriods = listOf(HoldingPeriod.LONG)
     override val source = StrategySource.BUILTIN
 
     override val config = StrategyConfig.custom(

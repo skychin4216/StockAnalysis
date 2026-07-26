@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 長線量化 UseCase
+
+  持倉 1 年以上，深度基本面，公司成長+價值。
+  流程：市場上下文 → 股票池 → 策略篩選 → 板塊加權 → AI精選 → 主力過濾 → 新聞攔截 → 訂單生成 → 持倉合併/擬合保存
+-->
+<usecase id="long_term" name="長線量化">
+  <description>市場上下文→股票池→策略篩選→板塊加權→AI精選→主力過濾→新聞攔截→訂單生成→持倉合併/擬合保存</description>
+  <steps>
+    <pipeline ref="usecases/long_term_pipeline.xml" name="長線DAG流程" />
+  </steps>
+  <config>
+    <param name="orderType" value="LongTermQuant" />
+    <param name="maxHoldings" value="5" />
+    <param name="maxStocksPerStrategy" value="15" />
+    <param name="holdingPeriod" value="long" />
+  </config>
+</usecase>

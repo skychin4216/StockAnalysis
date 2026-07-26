@@ -30,6 +30,7 @@ class AIPredictionStrategy(private val context: Context) : Strategy {
     override var name = "AI量化选股"
     override var description = "基于多策略打分+历史数据+新闻因子，AI综合推荐3-5只最可能上涨的股票"
     override val category = StrategyCategory.CUSTOM
+    override val holdingPeriods = listOf(HoldingPeriod.MID)
     override val source = StrategySource.USER_CUSTOM
 
     override val config = StrategyConfig.custom(

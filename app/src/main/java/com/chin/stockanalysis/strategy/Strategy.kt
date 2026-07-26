@@ -40,6 +40,14 @@ interface Strategy {
     /** 策略来源：BUILTIN / USER_CUSTOM */
     val source: StrategySource
 
+    /** 策略适用的持仓周期（默认短线，向后兼容） */
+    val holdingPeriods: List<HoldingPeriod>
+        get() = listOf(HoldingPeriod.SHORT)
+
+    /** 默认推荐周期 */
+    val defaultPeriod: HoldingPeriod
+        get() = holdingPeriods.first()
+
     /**
      * 执行选股扫描（使用实时 API）
      */
@@ -72,4 +80,12 @@ enum class StrategyCategory(val label: String, val icon: String, val description
 enum class StrategySource(val label: String) {
     BUILTIN("系统内置"),
     USER_CUSTOM("用户自定义")
+}
+
+/** 持仓周期 */
+enum class HoldingPeriod(val label: String, val icon: String, val holdingDays: IntRange) {
+    ULTRA_SHORT("超短線", "⚡", 1..1),
+    SHORT("短線", "🤖", 1..14),
+    MID("中線", "📈", 30..180),
+    LONG("長線", "💎", 180..999)
 }

@@ -38,6 +38,7 @@ class HotSpotDrivenStrategy(
     override var name = "熱點驅動短線"
     override var description = "板塊熱度+新聞因子+基金增持，三重驅動的短線精選策略"
     override val category = StrategyCategory.MOMENTUM
+    override val holdingPeriods = listOf(HoldingPeriod.SHORT)
     override val source = StrategySource.BUILTIN
 
     override val config = StrategyConfig.custom(

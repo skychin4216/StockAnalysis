@@ -44,6 +44,8 @@ object StrategyEngineHolder {
             registerStrategy(AIPredictionStrategy(context.applicationContext))
             registerStrategy(HotSpotDrivenStrategy(screener))
             registerStrategy(DragonHeadDipStrategy(context.applicationContext, screener))
+            registerStrategy(InstitutionalAccumulationStrategy(screener))
+            registerStrategy(MoatLeaderStrategy(screener))
         }
     }
 

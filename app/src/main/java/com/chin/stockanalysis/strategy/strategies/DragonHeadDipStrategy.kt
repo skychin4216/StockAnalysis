@@ -44,6 +44,7 @@ class DragonHeadDipStrategy(
     override var name = "🐲 龙头轮动"
     override var description = "震荡期热门板块龙头低吸：深度跌透+均线走平+缩量+高振幅，主板5只+科创/创业5只"
     override val category = StrategyCategory.MOMENTUM
+    override val holdingPeriods = listOf(HoldingPeriod.SHORT)
     override val source = StrategySource.BUILTIN
 
     override val config = StrategyConfig.custom(

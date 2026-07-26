@@ -22,6 +22,7 @@ import com.chin.stockanalysis.config.GlobalMode
 import com.chin.stockanalysis.databinding.FragmentSettingsBinding
 import com.chin.stockanalysis.stock.StockService
 import com.chin.stockanalysis.stock.data.StockDataSourceFactory
+import com.chin.stockanalysis.strategy.HoldingPeriod
 
 class SettingsFragment : Fragment() {
     private var _binding: FragmentSettingsBinding? = null
@@ -281,8 +282,14 @@ class SettingsFragment : Fragment() {
                 FeatureFlagManager.globalMode = mode
                 updateModuleSwitchesEnabled(mode)
                 when (mode) {
-                    GlobalMode.LEGACY -> setAllModuleRoutes(AgentRoute.LEGACY)
-                    GlobalMode.AGENT -> setAllModuleRoutes(AgentRoute.AGENT_FRAMEWORK)
+                    GlobalMode.LEGACY -> {
+                        setAllModuleRoutes(AgentRoute.LEGACY)
+                        FeatureFlagManager.setAllPeriodRoutes(AgentRoute.LEGACY)
+                    }
+                    GlobalMode.AGENT -> {
+                        setAllModuleRoutes(AgentRoute.AGENT_FRAMEWORK)
+                        FeatureFlagManager.setAllPeriodRoutes(AgentRoute.AGENT_FRAMEWORK)
+                    }
                     GlobalMode.HYBRID -> {}
                 }
                 refreshModuleSwitches()
@@ -327,9 +334,29 @@ class SettingsFragment : Fragment() {
                         if (isChecked) AgentRoute.AGENT_FRAMEWORK else AgentRoute.LEGACY
                 }
             }
-            // 臨時開關（後期刪除）
+
+            // ── 週期級別路線開關（Phase 10） ──
+            setupPeriodRouteSwitch(swRouteUltraShort, HoldingPeriod.ULTRA_SHORT)
+            setupPeriodRouteSwitch(swRouteShort, HoldingPeriod.SHORT)
+            setupPeriodRouteSwitch(swRouteMid, HoldingPeriod.MID)
+            setupPeriodRouteSwitch(swRouteLong, HoldingPeriod.LONG)
+
+            // 通用 DAG 開關（適用於所有週期）
             swDagPipeline.setOnCheckedChangeListener { _, isChecked ->
-                FeatureFlagManager.useDagPipelineMidTerm = isChecked
+                FeatureFlagManager.useDagPipeline = isChecked
+            }
+        }
+    }
+
+    /** 設置單個週期路線開關的初始狀態和監聽器（Phase 10） */
+    private fun setupPeriodRouteSwitch(switch: android.widget.Switch, period: HoldingPeriod) {
+        switch.isChecked = FeatureFlagManager.getRoute(period) == AgentRoute.AGENT_FRAMEWORK
+        switch.setOnCheckedChangeListener { _, isChecked ->
+            if (FeatureFlagManager.isHybrid) {
+                FeatureFlagManager.setRoute(
+                    period,
+                    if (isChecked) AgentRoute.AGENT_FRAMEWORK else AgentRoute.LEGACY
+                )
             }
         }
     }
@@ -342,7 +369,12 @@ class SettingsFragment : Fragment() {
             swChat.isChecked = FeatureFlagManager.chatRoute == AgentRoute.AGENT_FRAMEWORK
             swNewsMonitor.isChecked = FeatureFlagManager.newsMonitoringRoute == AgentRoute.AGENT_FRAMEWORK
             swRiskManagement.isChecked = FeatureFlagManager.riskManagementRoute == AgentRoute.AGENT_FRAMEWORK
-            swDagPipeline.isChecked = FeatureFlagManager.useDagPipelineMidTerm
+            swDagPipeline.isChecked = FeatureFlagManager.useDagPipeline
+            // 週期路線開關
+            swRouteUltraShort.isChecked = FeatureFlagManager.getRoute(HoldingPeriod.ULTRA_SHORT) == AgentRoute.AGENT_FRAMEWORK
+            swRouteShort.isChecked = FeatureFlagManager.getRoute(HoldingPeriod.SHORT) == AgentRoute.AGENT_FRAMEWORK
+            swRouteMid.isChecked = FeatureFlagManager.getRoute(HoldingPeriod.MID) == AgentRoute.AGENT_FRAMEWORK
+            swRouteLong.isChecked = FeatureFlagManager.getRoute(HoldingPeriod.LONG) == AgentRoute.AGENT_FRAMEWORK
         }
     }
 
@@ -366,6 +398,12 @@ class SettingsFragment : Fragment() {
             swChat.isEnabled = enabled; swChat.alpha = alpha
             swNewsMonitor.isEnabled = enabled; swNewsMonitor.alpha = alpha
             swRiskManagement.isEnabled = enabled; swRiskManagement.alpha = alpha
+            // 週期路線開關（同樣只在 HYBRID 模式下可操作）
+            tvPeriodRouteTitle.alpha = alpha
+            swRouteUltraShort.isEnabled = enabled; swRouteUltraShort.alpha = alpha
+            swRouteShort.isEnabled = enabled; swRouteShort.alpha = alpha
+            swRouteMid.isEnabled = enabled; swRouteMid.alpha = alpha
+            swRouteLong.isEnabled = enabled; swRouteLong.alpha = alpha
         }
     }
 

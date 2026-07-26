@@ -3,6 +3,7 @@ package com.chin.stockanalysis.strategy.strategies
 import android.util.Log
 import com.chin.stockanalysis.stock.StockRealtime
 import com.chin.stockanalysis.strategy.Strategy
+import com.chin.stockanalysis.strategy.HoldingPeriod
 import com.chin.stockanalysis.strategy.StrategyCategory
 import com.chin.stockanalysis.strategy.StrategyConfig
 import com.chin.stockanalysis.strategy.StrategySource
@@ -43,6 +44,7 @@ class SmartMoneyDetectionStrategy(
     override var description =
         "MFI(30%) + CMF(25%) + A/D背離(25%) + 主力淨流入趨勢(20%) → 綜合評分偵測埋伏/拉升/出貨"
     override val category = StrategyCategory.VOLUME
+    override val holdingPeriods = listOf(HoldingPeriod.MID)
     override val source = StrategySource.BUILTIN
 
     override val config = StrategyConfig.custom(

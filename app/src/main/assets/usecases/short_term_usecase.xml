@@ -2,20 +2,18 @@
 <!--
   ## 短線量化 UseCase
 
-  因子計算→策略→合併→AI精選→主力資金過濾→自動建倉。
-  流程：數據準備 → 策略篩選（並行） → 合併加權 → AI+主力過濾
+  持倉 1 天~2 週，技術面為主，資金情緒脈衝。
+  流程：市場上下文→多周期熱門→股票池→策略篩選+熱度→板塊加權→AI精選→主力過濾→新聞攔截→訂單生成→持倉合併/騰龍換鳥/擬合保存
 -->
 <usecase id="short_term" name="短線量化">
-  <description>股票池→策略並行篩選→合併加權→AI精選→主力資金過濾→自動建倉</description>
+  <description>市場上下文→多周期熱門→股票池→策略篩選+熱度→板塊加權→AI精選→主力過濾→新聞攔截→訂單生成→持倉合併/騰龍換鳥/擬合保存</description>
   <steps>
-    <pipeline ref="topologies/data_prep_pipeline.xml" name="數據準備" />
-    <pipeline ref="topologies/strategy_screening_pipeline.xml" parallel="true" name="策略篩選" />
-    <pipeline ref="topologies/merge_boost_pipeline.xml" name="合併加權" />
-    <pipeline ref="topologies/ai_filter_pipeline.xml" name="AI+主力過濾" />
+    <pipeline ref="usecases/short_term_pipeline.xml" name="短線DAG流程" />
   </steps>
   <config>
     <param name="orderType" value="ShortTermQuant" />
     <param name="maxHoldings" value="3" />
     <param name="maxStocksPerStrategy" value="15" />
+    <param name="holdingPeriod" value="short" />
   </config>
 </usecase>

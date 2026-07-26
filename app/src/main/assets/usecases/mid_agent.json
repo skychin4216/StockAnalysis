@@ -1,0 +1,19 @@
+{
+  "period": "MID",
+  "mode": "PIPELINE",
+  "description": "中線 Agent 配置：PIPELINE 模式，六智體/七智體深度分析",
+  "agents": ["AgentPipelineOrchestrator"],
+  "pipelineMode": "AUTO",
+  "pipelineSteps": "from_orchestrator",
+  "parallel": false,
+  "timeout": 120,
+  "maxBatchSize": 5,
+  "postProcess": {
+    "sortBy": "overallScore",
+    "maxResults": 5,
+    "stopLoss": -12.0,
+    "takeProfit": 30.0,
+    "autoSellEngine": true,
+    "comment": "中線持倉1~6個月，AutoSellEngine 智能賣出"
+  }
+}

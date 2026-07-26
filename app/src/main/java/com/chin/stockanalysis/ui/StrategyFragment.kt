@@ -22,12 +22,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * ## 策略栏目 — v9.0 改版
+ * ## 策略栏目 — v10.0 四週期改版
  *
- * 顶部三 Tab：
- * - Tab 0：短线量化 (ShortTermQuantFragment)
- * - Tab 1：中线量化 (MidTermQuantFragment)
- * - Tab 2：量化选股 (StrategyListFragment)
+ * 顶部五 Tab：
+ * - Tab 0：超短線 (UltraShortQuantFragment) — 持倉1天，T+1賣出
+ * - Tab 1：短線量化 (ShortTermQuantFragment) — 持倉1天~2周
+ * - Tab 2：中線量化 (MidTermQuantFragment) — 持倉1~6個月
+ * - Tab 3：長線量化 (LongTermQuantFragment) — 持倉1年+
+ * - Tab 4：量化選股 (StrategyListFragment) — 策略沙盒
  */
 class StrategyFragment : Fragment() {
 
@@ -53,14 +55,14 @@ class StrategyFragment : Fragment() {
             setTabTextColors(Color.parseColor("#999999"), Color.parseColor("#E65100"))
             setBackgroundColor(Color.WHITE)
             elevation = 2f
-            tabMode = TabLayout.MODE_FIXED
+            tabMode = TabLayout.MODE_SCROLLABLE
         }
         root.addView(tabLayout)
 
         // ViewPager2
         viewPager = ViewPager2(ctx).apply {
             adapter = StrategyTabAdapter(this@StrategyFragment)
-            offscreenPageLimit = 1
+            offscreenPageLimit = 2
         }
         root.addView(viewPager, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
@@ -73,9 +75,11 @@ class StrategyFragment : Fragment() {
         // 绑定
         TabLayoutMediator(tabLayout, viewPager) { tab, position ->
             tab.text = when (position) {
-                0 -> "🤖 短线量化"
-                1 -> "💹 中线量化"
-                2 -> "🎯 量化选股"
+                0 -> "⚡ 超短線"
+                1 -> "🤖 短線"
+                2 -> "📈 中線"
+                3 -> "💎 長線"
+                4 -> "🎯 量化選股"
                 else -> ""
             }
         }.attach()
@@ -96,7 +100,7 @@ class StrategyFragment : Fragment() {
                         "EXECUTE_SIMULATE_TRADE" -> {
                             // 切换到中线量化Tab并自动触发买入
                             withContext(Dispatchers.Main) {
-                                viewPager.setCurrentItem(1, true)  // Tab 1 = 中线量化
+                                viewPager.setCurrentItem(2, true)  // Tab 2 = 中线量化
                                 viewPager.postDelayed({
                                     val frag = childFragmentManager.fragments
                                         .firstOrNull { it is com.chin.stockanalysis.strategy.trade.MidTermQuantFragment }
@@ -107,7 +111,7 @@ class StrategyFragment : Fragment() {
                         }
                         "RUN_PIPELINE" -> {
                             withContext(Dispatchers.Main) {
-                                viewPager.setCurrentItem(0, true)  // Tab 0 = 短线量化
+                                viewPager.setCurrentItem(1, true)  // Tab 1 = 短线量化
                                 viewPager.postDelayed({
                                     val frag = childFragmentManager.fragments
                                         .firstOrNull { it is com.chin.stockanalysis.strategy.trade.ShortTermQuantFragment }
@@ -129,13 +133,15 @@ class StrategyFragment : Fragment() {
     }
 
     private class StrategyTabAdapter(fragment: Fragment) : FragmentStateAdapter(fragment) {
-        override fun getItemCount() = 3
+        override fun getItemCount() = 5
 
         override fun createFragment(position: Int): Fragment {
             return when (position) {
-                0 -> com.chin.stockanalysis.strategy.trade.ShortTermQuantFragment()
-                1 -> com.chin.stockanalysis.strategy.trade.MidTermQuantFragment()
-                2 -> StrategyListFragment()
+                0 -> com.chin.stockanalysis.strategy.trade.UltraShortQuantFragment()
+                1 -> com.chin.stockanalysis.strategy.trade.ShortTermQuantFragment()
+                2 -> com.chin.stockanalysis.strategy.trade.MidTermQuantFragment()
+                3 -> com.chin.stockanalysis.strategy.trade.LongTermQuantFragment()
+                4 -> StrategyListFragment()
                 else -> com.chin.stockanalysis.strategy.trade.ShortTermQuantFragment()
             }
         }

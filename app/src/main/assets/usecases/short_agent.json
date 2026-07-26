@@ -1,0 +1,24 @@
+{
+  "period": "SHORT",
+  "mode": "QUICK",
+  "description": "短線 Agent 配置：默認 QUICK 模式，盤後可切換 PIPELINE 深度分析",
+  "agents": ["StockAnalysisAgent", "RiskManagementAgent"],
+  "parallel": true,
+  "timeout": 30,
+  "maxBatchSize": 8,
+  "alternateMode": {
+    "mode": "PIPELINE",
+    "trigger": "盤後深度分析",
+    "agents": ["AgentPipelineOrchestrator"],
+    "timeout": 120,
+    "maxBatchSize": 5
+  },
+  "postProcess": {
+    "sortBy": "overallScore",
+    "maxResults": 3,
+    "stopLoss": -8.0,
+    "takeProfit": 15.0,
+    "autoSellEngine": true,
+    "comment": "短線持倉1天~2周，硬止損-8%"
+  }
+}

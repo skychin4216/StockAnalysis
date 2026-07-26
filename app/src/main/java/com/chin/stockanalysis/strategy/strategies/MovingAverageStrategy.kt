@@ -28,6 +28,7 @@ class MovingAverageStrategy(
     override var name = "均线金叉策略"
     override var description = "5日均线上穿20日均线，配合成交量放大确认趋势启动"
     override val category = StrategyCategory.TREND
+    override val holdingPeriods = listOf(HoldingPeriod.MID)
     override val source = StrategySource.BUILTIN
 
     override val config = StrategyConfig.custom(

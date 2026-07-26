@@ -24,6 +24,7 @@ class BollingerBandStrategy(
     override var name = "布林带突破策略"
     override var description = "股价突破布林带上轨且成交量放大，趋势确认信号"
     override val category = StrategyCategory.TREND
+    override val holdingPeriods = listOf(HoldingPeriod.MID)
     override val source = StrategySource.BUILTIN
 
     override val config = StrategyConfig.custom(

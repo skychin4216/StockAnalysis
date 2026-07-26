@@ -201,13 +201,55 @@
             android:layout_height="48dp"
             android:text="风控模块"
             android:textSize="14sp"
+            android:layout_marginBottom="16dp" />
+
+        <!-- 週期級別路線（Phase 10） -->
+        <TextView
+            android:id="@+id/tvPeriodRouteTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="週期級別路線（策略執行）"
+            android:textSize="13sp"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginBottom="4dp" />
+
+        <Switch
+            android:id="@+id/swRouteUltraShort"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:text="超短線 → Agent(QUICK)"
+            android:textSize="13sp"
+            android:layout_marginBottom="4dp" />
+
+        <Switch
+            android:id="@+id/swRouteShort"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:text="短線 → Agent(QUICK)"
+            android:textSize="13sp"
+            android:layout_marginBottom="4dp" />
+
+        <Switch
+            android:id="@+id/swRouteMid"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:text="中線 → Agent(PIPELINE)"
+            android:textSize="13sp"
+            android:layout_marginBottom="4dp" />
+
+        <Switch
+            android:id="@+id/swRouteLong"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:text="長線 → Agent(V2)"
+            android:textSize="13sp"
             android:layout_marginBottom="24dp" />
 
         <!-- 臨時開關（後期刪除） -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="临时开关（调试用）"
+            android:text="DAG Pipeline 設置"
             android:textSize="13sp"
             android:textColor="@android:color/darker_gray"
             android:layout_marginTop="8dp"
@@ -217,7 +259,7 @@
             android:id="@+id/swDagPipeline"
             android:layout_width="match_parent"
             android:layout_height="48dp"
-            android:text="中线 DAG Pipeline"
+            android:text="DAG Pipeline（所有週期）"
             android:textSize="14sp"
             android:layout_marginBottom="24dp" />
 

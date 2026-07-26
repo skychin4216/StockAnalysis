@@ -303,7 +303,7 @@ abstract class QuantFragmentBase : Fragment() {
     // ═══════════════════════════════════════════════════
 
     /** 顯示賣出下拉菜單 */
-    protected fun showSellMenu(anchor: View) {
+    protected open fun showSellMenu(anchor: View) {
         val popup = PopupMenu(requireContext(), anchor, Gravity.END)
         popup.menu.add(0, 1, 0, "💰 賣出評估")
         popup.menu.add(0, 2, 0, "📊 賣出績效")

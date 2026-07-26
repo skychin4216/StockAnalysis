@@ -1,36 +1,34 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  ## 短線量化 DAG Pipeline v2 — 高通 Camera Pipeline 風格
+  ## 長線量化 DAG Pipeline — 高通 Camera Pipeline 風格
 
-  短線特徵：持倉 1 天~2 週，技術面為主，資金情緒脈衝，要熱點熱點熱點。
-  含熱度計算、新聞攔截、騰龍換鳥等短線專有節點。
+  長線特徵：持倉 1 年以上，深度基本面，公司成長+價值，重倉持有。
+  不追熱點、不頻繁換股，但需 news_guard 防黑天鵝利空。
 
-  共 14 個 Node：
-    Layer 0 (並行): market_context, multi_period_hot, bg_manager
+  共 11 個 Node：
+    Layer 0 (並行): market_context, bg_manager
     Layer 1: stock_pool（依賴 market_context）
-    Layer 2 (並行): signal_merge（策略動態注入）, heat_score（依賴 stock_pool）
-    Layer 3: sector_boost（依賴 signal_merge + heat_score）
+    Layer 2: signal_merge（策略動態注入在 Java 層完成）
+    Layer 3: sector_boost（依賴 signal_merge）
     Layer 4: ai_predict（依賴 sector_boost）
     Layer 5: smart_money_filter（依賴 ai_predict）
-    Layer 6: news_guard（依賴 smart_money_filter）
+    Layer 6: news_guard（依賴 smart_money_filter，防重大利空）
     Layer 7: generate_orders（依賴 news_guard）
-    Layer 8 (並行): position_merge, swap_weak, fitting_save（依賴 generate_orders）
+    Layer 8 (並行): position_merge, fitting_save（依賴 generate_orders）
 -->
-<DagPipeline id="short_term_dag" name="短線量化DAG Pipeline" description="市場上下文→多周期熱門→股票池→策略篩選+熱度→板塊加權→AI精選→主力過濾→新聞攔截→訂單生成→持倉合併/騰龍換鳥/擬合保存">
+<DagPipeline id="long_term_dag" name="長線量化DAG Pipeline" description="市場上下文→股票池→策略篩選→板塊加權→AI精選→主力過濾→新聞攔截→訂單生成→持倉合併/擬合保存">
 
   <!-- ══════════ NodeList ══════════ -->
   <NodeList>
-    <!-- 數據源 Layer 0（並行） -->
+    <!-- 數據準備 Layer 0 -->
     <Node id="n_ctx" name="市場上下文" module="market_context" />
-    <Node id="n_multihot" name="多周期熱門股聚合" module="multi_period_hot" />
     <Node id="n_bg" name="後臺暫停/恢復" module="bg_manager" />
 
     <!-- Layer 1 -->
     <Node id="n_pool" name="股票池" module="stock_pool" />
 
-    <!-- 聚合 Layer 2（並行） -->
+    <!-- 聚合 Layer 2 -->
     <Node id="n_merge" name="信號合併" module="signal_merge" />
-    <Node id="n_heat" name="熱度計算" module="heat_score" />
 
     <!-- 增強 Layer 3 -->
     <Node id="n_boost" name="板塊加權" module="sector_boost" />
@@ -43,7 +41,7 @@
       </config>
     </Node>
 
-    <!-- 新聞攔截 Layer 6 -->
+    <!-- 新聞攔截 Layer 6（防黑天鵝） -->
     <Node id="n_newsguard" name="新聞攔截+技術過濾" module="news_guard">
       <config>
         <param name="impactThreshold" value="75" />
@@ -54,18 +52,13 @@
     <!-- 訂單生成 Layer 7 -->
     <Node id="n_orders" name="買入訂單生成" module="generate_orders">
       <config>
-        <param name="maxHoldings" value="3" />
-        <param name="orderType" value="ShortTermQuant" />
+        <param name="maxHoldings" value="5" />
+        <param name="orderType" value="LongTermQuant" />
       </config>
     </Node>
 
-    <!-- 持倉合併 + 騰龍換鳥 + 擬合 Layer 8（並行） -->
+    <!-- 持倉合併 + 擬合 Layer 8（並行） -->
     <Node id="n_merge_pos" name="持倉合併" module="position_merge" />
-    <Node id="n_swap" name="騰龍換鳥" module="swap_weak">
-      <config>
-        <param name="maxHoldings" value="3" />
-      </config>
-    </Node>
     <Node id="n_fit" name="擬合計算+保存" module="fitting_save" />
   </NodeList>
 
@@ -87,25 +80,9 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 1 → 2: 股票池 → 熱度計算 -->
-    <Link>
-      <SourceNodeId>n_pool</SourceNodeId>
-      <SourcePortId>0</SourcePortId>
-      <TargetNodeId>n_heat</TargetNodeId>
-      <TargetPortId>0</TargetPortId>
-    </Link>
-
     <!-- Layer 2 → 3: 信號合併 → 板塊加權 -->
     <Link>
       <SourceNodeId>n_merge</SourceNodeId>
-      <SourcePortId>0</SourcePortId>
-      <TargetNodeId>n_boost</TargetNodeId>
-      <TargetPortId>0</TargetPortId>
-    </Link>
-
-    <!-- Layer 2 → 3: 熱度計算 → 板塊加權（熱度作為板塊加權輸入） -->
-    <Link>
-      <SourceNodeId>n_heat</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_boost</TargetNodeId>
       <TargetPortId>0</TargetPortId>
@@ -148,14 +125,6 @@
       <SourceNodeId>n_orders</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_merge_pos</TargetNodeId>
-      <TargetPortId>0</TargetPortId>
-    </Link>
-
-    <!-- Layer 7 → 8: 買入訂單生成 → 騰龍換鳥（並行） -->
-    <Link>
-      <SourceNodeId>n_orders</SourceNodeId>
-      <SourcePortId>0</SourcePortId>
-      <TargetNodeId>n_swap</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
 

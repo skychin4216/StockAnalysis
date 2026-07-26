@@ -1,0 +1,18 @@
+{
+  "period": "LONG",
+  "mode": "V2",
+  "description": "長線 Agent 配置：V2 模式，全周期投研（市場環境+利潤質量+決策矩陣）",
+  "agents": ["V2AgentRunner"],
+  "parallel": true,
+  "timeout": 90,
+  "maxBatchSize": 5,
+  "postProcess": {
+    "sortBy": "overallScore",
+    "maxResults": 5,
+    "stopLoss": -20.0,
+    "takeProfit": 50.0,
+    "autoSellEngine": false,
+    "sellConditions": ["fundamental_deterioration", "overvaluation", "industry_disruption"],
+    "comment": "長線持倉1年+，賣出條件：基本面惡化/估值過高/行業格局變化"
+  }
+}

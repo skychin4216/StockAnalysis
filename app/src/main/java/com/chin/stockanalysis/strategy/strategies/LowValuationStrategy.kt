@@ -19,6 +19,7 @@ class LowValuationStrategy(
     override var name = "低估值策略"
     override var description = "筛选市盈率低于行业均值、基本面稳健且价格企稳的低估值股票"
     override val category = StrategyCategory.VALUE
+    override val holdingPeriods = listOf(HoldingPeriod.LONG)
     override val source = StrategySource.BUILTIN
 
     override val config = StrategyConfig.custom(

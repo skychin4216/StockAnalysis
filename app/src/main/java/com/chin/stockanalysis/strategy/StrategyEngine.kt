@@ -110,6 +110,18 @@ class StrategyEngine(
     fun getEnabledStrategies(): List<Strategy> =
         strategies.values.filter { isEnabled(it.id) }
 
+    /**
+     * 获取指定周期的启用策略
+     */
+    fun getEnabledStrategiesByPeriod(period: HoldingPeriod): List<Strategy> =
+        strategies.values.filter { isEnabled(it.id) && period in it.holdingPeriods }
+
+    /**
+     * 获取指定周期的全部策略（含未启用）
+     */
+    fun getStrategiesByPeriod(period: HoldingPeriod): List<Strategy> =
+        strategies.values.filter { period in it.holdingPeriods }
+
     // ═══════════════════════════════
     // 执行扫描
     // ═══════════════════════════════

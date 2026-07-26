@@ -13,6 +13,7 @@ import androidx.lifecycle.lifecycleScope
 import com.chin.stockanalysis.stock.data.StockDataSourceFactory
 import com.chin.stockanalysis.stock.database.DataExportImport
 import com.chin.stockanalysis.stock.database.StockDatabase
+import com.chin.stockanalysis.strategy.HoldingPeriod
 import com.chin.stockanalysis.strategy.data.StockScreener
 import com.chin.stockanalysis.ui.TradingDayPickerView
 import kotlinx.coroutines.Dispatchers
@@ -204,7 +205,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
         try {
             // 確保 UseCaseLoader 已初始化
             val eng = engine ?: return
-            val strategies = eng.getStrategies().filter { eng.isEnabled(it.id) }
+            val strategies = eng.getEnabledStrategiesByPeriod(HoldingPeriod.MID)
             if (strategies.isEmpty()) {
                 withContext(Dispatchers.Main) {
                     statusTv.text = "没有启用的策略"; buildBtn.isEnabled = true
@@ -426,8 +427,8 @@ class MidTermQuantFragment : QuantFragmentBase() {
                 val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().format(DATE_FMT)
                 val tradeDate = browsingDate.format(DATE_FMT)
 
-                // ══════════ 臨時分支：DAG Pipeline vs 原始流程 ══════════
-                if (com.chin.stockanalysis.config.FeatureFlagManager.useDagPipelineMidTerm) {
+                // ══════════ 臨時分支：DAG Pipeline vs 原始流程（通用開關） ══════════
+                if (com.chin.stockanalysis.config.FeatureFlagManager.useDagPipeline) {
                     executeTradeViaDagPipeline(tradeDate, today, totalStart)
                     return@launch
                 }

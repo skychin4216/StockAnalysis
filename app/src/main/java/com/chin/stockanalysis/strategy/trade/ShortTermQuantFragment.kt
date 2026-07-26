@@ -12,6 +12,7 @@ import android.util.Log
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.chin.stockanalysis.stock.database.StockDatabase
+import com.chin.stockanalysis.strategy.HoldingPeriod
 import com.chin.stockanalysis.strategy.Strategy
 import com.chin.stockanalysis.strategy.StrategyEngine
 import com.chin.stockanalysis.strategy.StrategyEngineHolder
@@ -47,15 +48,8 @@ class ShortTermQuantFragment : QuantFragmentBase() {
     private lateinit var pipelineProgressView: PipelineProgressView
     private lateinit var aiPipelineBtn: Button
 
-    // 短线量化配置 (持仓周期3天)
-    private val shortTermConfig = SimulationTradeEngine.TradeSessionConfig(
-        tradeDate = browsingDate.format(DATE_FMT),
-        periods = listOf(1, 3),
-        onlyMainBoard = true,
-        maxFitRounds = 500,
-        targetAccuracy = 0.55f,
-        holdingPeriod = 3
-    )
+    /** 短線週期選擇（持倉 1 天 ~ 2 週） */
+    private var selectedPeriods: Set<Int> = setOf(3)
 
     private var pipelineFactors: ZiplinePipeline.FactorSet? = null
     private var allScreenings: Map<Strategy, ScreeningResult> = emptyMap()
@@ -70,6 +64,10 @@ class ShortTermQuantFragment : QuantFragmentBase() {
     companion object {
         private const val TAG = "ShortTermQuant"
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+        private val PERIOD_LABELS = mapOf(
+            1 to "1日", 3 to "3日", 5 to "5日",
+            7 to "7日", 10 to "10日", 14 to "14日"
+        )
     }
 
     override fun getQuantType() = "ShortTermQuant"
@@ -79,7 +77,7 @@ class ShortTermQuantFragment : QuantFragmentBase() {
     override fun getDefaultUseCaseId() = "short_term"
 
     override fun onBuildClick() { runBuildAndBuy() }
-    override fun onFittingClick() = autoFit()
+    override fun onFittingClick() = showFittingParams()
     override fun onBacktrackClick() { runShortTermBacktrack() }
     override fun onClearClick() = clearData()
 
@@ -125,6 +123,32 @@ class ShortTermQuantFragment : QuantFragmentBase() {
         }
         configRow.addView(aiPipelineBtn)
         rootLayout.addView(configRow)
+
+        // ── 週期選擇行（短線持倉 1 日 ~ 2 週） ──
+        val periodRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(8, 4, 8, 4); setBackgroundColor(Color.WHITE)
+        }
+        periodRow.addView(TextView(requireContext()).apply {
+            text = "📊 週期:"; textSize = 11f; setTextColor(Color.parseColor("#333333"))
+            setTypeface(null, Typeface.BOLD); setPadding(0, 0, 4, 0)
+        })
+        val periodRadioGroup = android.widget.RadioGroup(requireContext()).apply {
+            orientation = android.widget.RadioGroup.HORIZONTAL
+        }
+        for ((period, label) in PERIOD_LABELS) {
+            val rb = android.widget.RadioButton(requireContext()).apply {
+                text = label; textSize = 11f; id = period
+                isChecked = period == selectedPeriods.firstOrNull()
+                setOnCheckedChangeListener { _, isChecked -> if (isChecked) selectedPeriods = setOf(period) }
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { marginEnd = -4; marginStart = -4 }
+            }
+            periodRadioGroup.addView(rb)
+        }
+        periodRow.addView(periodRadioGroup)
+        rootLayout.addView(periodRow)
 
         // ── 统一按钮行（基类提供：建倉/持倉/回溯/擬合/賣出/數據） ──
         rootLayout.addView(createButtonRow())
@@ -216,6 +240,11 @@ class ShortTermQuantFragment : QuantFragmentBase() {
      * - 否則 → 執行 zipline 然後尋找可買入且符合騰籠換鳥的股票
      */
     private fun runBuildAndBuy() {
+        // ══════════ DAG Pipeline 分支（通用開關） ══════════
+        if (com.chin.stockanalysis.config.FeatureFlagManager.useDagPipeline) {
+            executeViaDagPipeline()
+            return
+        }
         if (hasAgentResult && aiPicks.isNotEmpty()) {
             // 有 Agent 分析結果，直接從結果中建倉
             statusTv.text = "🔄 從 Agent 分析結果中建倉..."
@@ -236,6 +265,53 @@ class ShortTermQuantFragment : QuantFragmentBase() {
         } else {
             // 沒有 Agent 結果，執行 zipline 選股 + 建倉 + 騰籠換鳥
             runPipeline()
+        }
+    }
+
+    /**
+     * ══════════ DAG Pipeline 執行（通用開關開啟時走此路徑） ══════════
+     *
+     * 使用 short_term_pipeline.xml 動態鏈接，節點關係由 XML 定義，可重新編排。
+     * 含熱度計算、新聞攔截、騰龍換鳥等短線專有節點。
+     */
+    private fun executeViaDagPipeline() {
+        val eng = engine ?: return
+        buildBtn.isEnabled = false; buildBtn.text = "⏳ [DAG] 執行中"
+        progressBar.visibility = View.VISIBLE
+        statusTv.text = "🔄 [DAG] 短線 Pipeline 執行中..."
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().format(DATE_FMT)
+                val tradeDate = browsingDate.format(DATE_FMT)
+                val strategies = eng.getEnabledStrategiesByPeriod(HoldingPeriod.SHORT)
+                val r = com.chin.stockanalysis.strategy.topology.xml.DagTradeExecutor.execute(
+                    context = requireContext(),
+                    useCaseId = "short_term",
+                    tradeDate = tradeDate,
+                    today = today,
+                    strategies = strategies,
+                    orderType = "short_term_dag",
+                    importDays = 60
+                )
+                withContext(Dispatchers.Main) {
+                    showDialog(
+                        "短線 DAG Pipeline 報告",
+                        com.chin.stockanalysis.strategy.topology.xml.DagTradeExecutor
+                            .buildReportText("短線 DAG Pipeline", r)
+                    )
+                    statusTv.text = r.uiText
+                    buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"
+                    progressBar.visibility = View.GONE
+                    refreshPositions()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[DAG] 短線執行異常", e)
+                withContext(Dispatchers.Main) {
+                    statusTv.text = "❌ [DAG] ${e.message?.take(40)}"
+                    buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"
+                    progressBar.visibility = View.GONE
+                }
+            }
         }
     }
 
@@ -309,8 +385,7 @@ class ShortTermQuantFragment : QuantFragmentBase() {
                 val screenings = mutableMapOf<Strategy, ScreeningResult>(); val screeningList = mutableListOf<ScreeningResult>()
                 var enabledCount = 0
                 withContext(Dispatchers.Main) { statusTv.text = "🔄 執行策略篩選中..." }
-                for (strategy in eng.getStrategies()) {
-                    if (!eng.isEnabled(strategy.id) || strategy.id == "ai_prediction") continue
+                for (strategy in eng.getEnabledStrategiesByPeriod(HoldingPeriod.SHORT)) {
                     enabledCount++
                     val sName = strategy.name
                     withContext(Dispatchers.Main) { statusTv.text = "🔄 執行策略: $sName ($enabledCount/${eng.getStrategies().size - 1})" }
@@ -770,26 +845,58 @@ class ShortTermQuantFragment : QuantFragmentBase() {
     // 賣出功能已由基類 QuantFragmentBase 提供（showSellMenu / runAutoSellEvaluation / executeAutoSell）
     // 短線量化使用基類的完整賣出評估和執行功能
 
-    /** 自动拟合 — 遍历最近交易日，验证预测准确率并更新策略权重 */
-    private fun autoFit() {
+    /** 擬合調優 — 執行 autoFit 並展示各策略各週期擬合參數報告（對齊中線邏輯） */
+    private fun showFittingParams() {
         val eng = engine ?: return
-        buildBtn.isEnabled = false; buildBtn.text = "⏳ 拟合中"; progressBar.visibility = View.VISIBLE; statusTv.text = "🔧 自动拟合中..."
+        buildBtn.isEnabled = false; buildBtn.text = "⏳ 擬合中"; progressBar.visibility = View.VISIBLE; statusTv.text = "🔧 擬合調優中（週期: ${selectedPeriods.joinToString(",")}日）..."
         lifecycleScope.launch(Dispatchers.IO) {
             try {
+                val db = StockDatabase.getInstance(requireContext())
                 val te = SimulationTradeEngine(requireContext())
                 val strategies = eng.getStrategies().filter { eng.isEnabled(it.id) }
-                val recentDates = StockDatabase.getInstance(requireContext()).dailySnapshotDao().getAvailableDates(30).sorted()
-                if (recentDates.size < 2) {
-                    withContext(Dispatchers.Main) { statusTv.text = "⚠️ 数据不足"; buildBtn.isEnabled = true; buildBtn.text = "▶ 建仓"; progressBar.visibility = View.GONE }
-                    return@launch
+                val recentDates = db.dailySnapshotDao().getAvailableDates(30).sorted()
+
+                // 先執行擬合
+                if (strategies.isNotEmpty() && recentDates.size >= 2) {
+                    try {
+                        te.autoFit(strategies, recentDates)
+                        Log.i(TAG, "短線擬合完成，更新 strategy_trade_fitting_params 表")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "短線擬合失敗（仍顯示已有數據）: ${e.message}")
+                    }
                 }
-                val results = te.autoFit(strategies, recentDates)
+
+                // 展示擬合參數報告
+                val sb = StringBuilder()
+                sb.appendLine("🔧 短線擬合參數（當前週期: ${selectedPeriods.joinToString(",")}日）")
+                sb.appendLine()
+                for (strategy in strategies) {
+                    sb.appendLine("【${strategy.name}】")
+                    val params = db.strategyTradeFittingParamDao().getRecentByStrategy(strategy.id, 50)
+                    if (params.isEmpty()) {
+                        sb.appendLine("  暫無擬合數據")
+                    } else {
+                        val byPeriod = params.groupBy { it.periodDays }
+                        for ((period, items) in byPeriod) {
+                            val best = items.maxByOrNull { it.accuracy }
+                            val worst = items.minByOrNull { it.accuracy }
+                            sb.appendLine("  [${period}日] ${items.size}條")
+                            if (best != null) sb.appendLine("    最佳: 準確率${"%.2f".format(best.accuracy * 100)}% 平均收益${"%.2f".format(best.avgReturn)}%")
+                            if (worst != null) sb.appendLine("    最差: 準確率${"%.2f".format(worst.accuracy * 100)}% 平均收益${"%.2f".format(worst.avgReturn)}%")
+                        }
+                    }
+                    sb.appendLine()
+                }
                 withContext(Dispatchers.Main) {
-                    statusTv.text = "✅ 拟合完成: ${results.size} 策略优化"; buildBtn.isEnabled = true; buildBtn.text = "▶ 建仓"; progressBar.visibility = View.GONE
-                    Toast.makeText(requireContext(), "拟合完成", Toast.LENGTH_SHORT).show()
+                    showDialog("短線擬合參數", sb.toString())
+                    statusTv.text = "✅ 擬合完成: ${strategies.size} 個策略"
+                    buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"; progressBar.visibility = View.GONE
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { statusTv.text = "❌ 拟合失败: ${e.message?.take(30)}"; buildBtn.isEnabled = true; buildBtn.text = "▶ 建仓"; progressBar.visibility = View.GONE }
+                withContext(Dispatchers.Main) {
+                    statusTv.text = "❌ 擬合失敗: ${e.message?.take(30)}"
+                    buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"; progressBar.visibility = View.GONE
+                }
             }
         }
     }

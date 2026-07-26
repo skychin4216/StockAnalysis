@@ -19,6 +19,7 @@ class VolumeBreakStrategy(
     override var name = "放量突破策略"
     override var description = "成交量放大2倍以上，价格突破近期高点，确认强势突破信号"
     override val category = StrategyCategory.VOLUME
+    override val holdingPeriods = listOf(HoldingPeriod.SHORT, HoldingPeriod.MID)
     override val source = StrategySource.BUILTIN
 
     override val config = StrategyConfig.custom(

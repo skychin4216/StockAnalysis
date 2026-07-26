@@ -3,6 +3,7 @@ package com.chin.stockanalysis.config
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
+import com.chin.stockanalysis.strategy.HoldingPeriod
 
 /**
  * ## 全局模式
@@ -40,8 +41,8 @@ object FeatureFlagManager {
     private const val KEY_NEWS_MONITOR      = "route_news_monitor"
     private const val KEY_RISK_MANAGEMENT   = "route_risk_management"
 
-    // ── 臨時開關（後期刪除） ──
-    private const val KEY_USE_DAG_PIPELINE   = "use_dag_pipeline_midterm"
+    // ── 通用 DAG 開關（適用於所有週期） ──
+    private const val KEY_USE_DAG_PIPELINE   = "use_dag_pipeline"
 
     private lateinit var prefs: SharedPreferences
 
@@ -139,22 +140,89 @@ object FeatureFlagManager {
         set(value) = setRoute(KEY_RISK_MANAGEMENT, value)
 
     // ═══════════════════════════════════════════════════════════════
-    // 臨時開關（後期刪除）
+    // 通用 DAG 開關（適用於所有週期）
     // ═══════════════════════════════════════════════════════════════
 
     /**
-     * 中線量化是否使用 DAG Pipeline（高通風格拓撲引擎）。
-     * true  → UseCaseLoader.run("mid_term") → DagPipeline
-     * false → SimulationTradeEngine.runTradeSession()（原始流程）
+     * 是否使用 DAG Pipeline（高通風格拓撲引擎）動態鏈接，適用於所有選股方案。
+     * true  → 各週期 Fragment 走 UseCaseLoader.run("<cycle>") → DagPipeline
+     *         - 超短線: ultra_short_pipeline.xml
+     *         - 短線:   short_term_pipeline.xml
+     *         - 中線:   mid_term_pipeline.xml
+     *         - 長線:   long_term_pipeline.xml
+     * false → 走各 Fragment 內 Hardcode 流程（SimulationTradeEngine / 內聯邏輯）
      *
-     * 臨時開關，後期 DAG Pipeline 功能完整後刪除。
+     * 默認 false（全部走 Hardcode）。
      */
-    var useDagPipelineMidTerm: Boolean
+    var useDagPipeline: Boolean
         get() = prefs.getBoolean(KEY_USE_DAG_PIPELINE, false)
         set(value) {
             prefs.edit().putBoolean(KEY_USE_DAG_PIPELINE, value).apply()
-            Log.i(TAG, "中線 DAG Pipeline 開關: $value")
+            Log.i(TAG, "通用 DAG Pipeline 開關: $value")
         }
+
+    /** @deprecated 已遷移至 [useDagPipeline]，保留以兼容舊調用點 */
+    @Deprecated("使用 useDagPipeline", ReplaceWith("useDagPipeline"))
+    var useDagPipelineMidTerm: Boolean
+        get() = useDagPipeline
+        set(value) { useDagPipeline = value }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 按週期的路線開關（Phase 8 新增）
+    // ═══════════════════════════════════════════════════════════════
+
+    private const val KEY_ROUTE_ULTRA_SHORT = "route_ultra_short"
+    private const val KEY_ROUTE_SHORT       = "route_short"
+    private const val KEY_ROUTE_MID         = "route_mid"
+    private const val KEY_ROUTE_LONG        = "route_long"
+
+    /** 獲取指定週期的執行路線 */
+    fun getRoute(period: HoldingPeriod): AgentRoute {
+        val key = when (period) {
+            HoldingPeriod.ULTRA_SHORT -> KEY_ROUTE_ULTRA_SHORT
+            HoldingPeriod.SHORT       -> KEY_ROUTE_SHORT
+            HoldingPeriod.MID         -> KEY_ROUTE_MID
+            HoldingPeriod.LONG        -> KEY_ROUTE_LONG
+        }
+        return resolveRoute(getRoute(key))
+    }
+
+    /** 設置指定週期的執行路線 */
+    fun setRoute(period: HoldingPeriod, route: AgentRoute) {
+        val key = when (period) {
+            HoldingPeriod.ULTRA_SHORT -> KEY_ROUTE_ULTRA_SHORT
+            HoldingPeriod.SHORT       -> KEY_ROUTE_SHORT
+            HoldingPeriod.MID         -> KEY_ROUTE_MID
+            HoldingPeriod.LONG        -> KEY_ROUTE_LONG
+        }
+        setRoute(key, route)
+    }
+
+    /** 獲取指定週期推薦的 Agent 子模式 */
+    fun getAgentMode(period: HoldingPeriod): String {
+        return when (period) {
+            HoldingPeriod.ULTRA_SHORT -> "QUICK"
+            HoldingPeriod.SHORT       -> "QUICK"
+            HoldingPeriod.MID         -> "PIPELINE"
+            HoldingPeriod.LONG        -> "V2"
+        }
+    }
+
+    /** 判斷指定週期是否使用 Agent 路線 */
+    fun isAgentRoute(period: HoldingPeriod): Boolean {
+        return getRoute(period) == AgentRoute.AGENT_FRAMEWORK
+    }
+
+    /** 一鍵切換全部週期到指定路線 */
+    fun setAllPeriodRoutes(route: AgentRoute) {
+        prefs.edit().apply {
+            putString(KEY_ROUTE_ULTRA_SHORT, route.name)
+            putString(KEY_ROUTE_SHORT, route.name)
+            putString(KEY_ROUTE_MID, route.name)
+            putString(KEY_ROUTE_LONG, route.name)
+        }.apply()
+        Log.i(TAG, "已一鍵切換全部週期路線: $route")
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // 輔助方法
@@ -187,8 +255,13 @@ object FeatureFlagManager {
         appendLine("對話: ${chatRoute} (實際: ${resolveRoute(chatRoute)})")
         appendLine("新聞: ${newsMonitoringRoute} (實際: ${resolveRoute(newsMonitoringRoute)})")
         appendLine("風控: ${riskManagementRoute} (實際: ${resolveRoute(riskManagementRoute)})")
-        appendLine("── 臨時開關 ──")
-        appendLine("中線DAG Pipeline: $useDagPipelineMidTerm")
+        appendLine("── 週期路線 ──")
+        appendLine("超短線: ${getRoute(HoldingPeriod.ULTRA_SHORT)} (${getAgentMode(HoldingPeriod.ULTRA_SHORT)})")
+        appendLine("短線: ${getRoute(HoldingPeriod.SHORT)} (${getAgentMode(HoldingPeriod.SHORT)})")
+        appendLine("中線: ${getRoute(HoldingPeriod.MID)} (${getAgentMode(HoldingPeriod.MID)})")
+        appendLine("長線: ${getRoute(HoldingPeriod.LONG)} (${getAgentMode(HoldingPeriod.LONG)})")
+        appendLine("── 通用開關 ──")
+        appendLine("DAG Pipeline (所有週期): $useDagPipeline")
     }
 
     private fun getRoute(key: String): AgentRoute {

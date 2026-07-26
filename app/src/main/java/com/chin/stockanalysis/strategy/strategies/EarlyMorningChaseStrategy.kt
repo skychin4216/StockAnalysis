@@ -39,6 +39,7 @@ class EarlyMorningChaseStrategy(
     override var name = "早盘追涨选股"
     override var description = "以单个交易日为单位，分析热门板块中追涨机会（V型反转+补涨信号）"
     override val category = StrategyCategory.MOMENTUM
+    override val holdingPeriods = listOf(HoldingPeriod.ULTRA_SHORT)
     override val source = StrategySource.USER_CUSTOM
 
     override val config = StrategyConfig.custom(

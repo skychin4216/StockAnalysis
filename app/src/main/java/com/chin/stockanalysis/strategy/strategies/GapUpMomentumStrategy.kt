@@ -27,6 +27,7 @@ class GapUpMomentumStrategy(
     override var name = "高开高走策略"
     override var description = "高开2%以上且持续放量走强，捕捉动量突破机会"
     override val category = StrategyCategory.MOMENTUM
+    override val holdingPeriods = listOf(HoldingPeriod.SHORT)
     override val source = StrategySource.BUILTIN
 
     override val config = StrategyConfig.custom(

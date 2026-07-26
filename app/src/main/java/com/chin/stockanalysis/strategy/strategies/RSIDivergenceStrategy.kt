@@ -22,6 +22,7 @@ class RSIDivergenceStrategy(
     override var name = "RSI背离策略"
     override var description = "RSI超卖区间反弹，配合成交量确认底部反转"
     override val category = StrategyCategory.MOMENTUM
+    override val holdingPeriods = listOf(HoldingPeriod.MID)
     override val source = StrategySource.BUILTIN
 
     override val config = StrategyConfig.custom(

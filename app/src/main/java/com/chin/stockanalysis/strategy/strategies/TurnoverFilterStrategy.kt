@@ -27,6 +27,7 @@ class TurnoverFilterStrategy(
     override var name = "换手率活跃策略"
     override var description = "成交活跃度高且涨幅显著的股票，适合短线关注"
     override val category = StrategyCategory.VOLUME
+    override val holdingPeriods = listOf(HoldingPeriod.SHORT)
     override val source = StrategySource.BUILTIN
 
     override val config = StrategyConfig.custom(
