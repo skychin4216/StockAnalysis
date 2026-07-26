@@ -23,8 +23,6 @@ import com.chin.stockanalysis.strategy.data.ZiplinePipeline
 import com.chin.stockanalysis.strategy.predict.AIPredictionEngine
 import com.chin.stockanalysis.strategy.data.SmartMoneyCache
 import com.chin.stockanalysis.ui.CrossTabBus
-import com.chin.stockanalysis.agent.pipeline.AgentPipelineOrchestrator
-import com.chin.stockanalysis.agent.pipeline.ui.PipelineProgressView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -45,8 +43,7 @@ import java.time.format.DateTimeFormatter
  */
 class ShortTermQuantFragment : QuantFragmentBase() {
 
-    private lateinit var pipelineProgressView: PipelineProgressView
-    private lateinit var aiPipelineBtn: Button
+    private lateinit var mainBoardSwitch: Switch
 
     /** 短線週期選擇（持倉 1 天 ~ 2 週） */
     private var selectedPeriods: Set<Int> = setOf(3)
@@ -110,18 +107,15 @@ class ShortTermQuantFragment : QuantFragmentBase() {
             }
         }
         configRow.addView(datePicker)
-        val mainBoardSwitch = Switch(requireContext()).apply { text = "仅主板"; textSize = 11f; isChecked = true; setTextColor(Color.parseColor("#333333")) }
+        mainBoardSwitch = Switch(requireContext()).apply { text = "仅主板"; textSize = 11f; isChecked = true; setTextColor(Color.parseColor("#333333")) }
         configRow.addView(mainBoardSwitch)
 
-        // Agent 分析按钮 — 放在仅主板之后
-        aiPipelineBtn = Button(requireContext()).apply {
-            text = "🧠 Agent分析"; textSize = 10f; setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#6A1B9A")); setPadding(8, 2, 8, 2)
-            setMinWidth(0); setMinimumWidth(0)
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dpToPx(24)).apply { marginStart = 6 }
-            setOnClickListener { runAIPipeline() }
+        // 持倉信息提示
+        val tipTv = TextView(requireContext()).apply {
+            text = "📊 持倉1-14天 | 最多5只 | 技術+資金"
+            textSize = 10f; setTextColor(Color.parseColor("#1565C0")); setPadding(8, 0, 0, 0)
         }
-        configRow.addView(aiPipelineBtn)
+        configRow.addView(tipTv)
         rootLayout.addView(configRow)
 
         // ── 週期選擇行（短線持倉 1 日 ~ 2 週） ──
@@ -158,10 +152,6 @@ class ShortTermQuantFragment : QuantFragmentBase() {
         progressRow.addView(progressBar)
         statusTv = TextView(requireContext()).apply { text = "就绪"; textSize = 12f; setTextColor(Color.parseColor("#AAAAAA")) }
         progressRow.addView(statusTv); rootLayout.addView(progressRow)
-
-        // ── AI 智能體流水線進度面板 ──
-        pipelineProgressView = PipelineProgressView(requireContext()).apply { visibility = View.GONE }
-        rootLayout.addView(pipelineProgressView)
 
         rootLayout.addView(View(requireContext()).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1); setBackgroundColor(Color.parseColor("#DDDDDD")) })
 
@@ -236,8 +226,8 @@ class ShortTermQuantFragment : QuantFragmentBase() {
 
     /**
      * 建倉按鈕點擊：
-     * - 如果有 Agent 分析結果 → 從結果中買入合適買點的股票
-     * - 否則 → 執行 zipline 然後尋找可買入且符合騰籠換鳥的股票
+     * - DAG 開關開啟 → 走 DAG Pipeline
+     * - 否則 → 執行 zipline 選股 + 建倉 + 騰籠換鳥
      */
     private fun runBuildAndBuy() {
         // ══════════ DAG Pipeline 分支（通用開關） ══════════
@@ -245,27 +235,8 @@ class ShortTermQuantFragment : QuantFragmentBase() {
             executeViaDagPipeline()
             return
         }
-        if (hasAgentResult && aiPicks.isNotEmpty()) {
-            // 有 Agent 分析結果，直接從結果中建倉
-            statusTv.text = "🔄 從 Agent 分析結果中建倉..."
-            lifecycleScope.launch(Dispatchers.IO) {
-                try {
-                    buyAiPicksInternal()
-                    analyzeSwapCandidates()
-                    withContext(Dispatchers.Main) {
-                        statusTv.text = "✅ 建倉完成（${aiPicks.size} 只 Agent 精選股）"
-                        refreshPositions()
-                    }
-                } catch (e: Exception) {
-                    withContext(Dispatchers.Main) {
-                        statusTv.text = "❌ 建倉失敗: ${e.message?.take(30)}"
-                    }
-                }
-            }
-        } else {
-            // 沒有 Agent 結果，執行 zipline 選股 + 建倉 + 騰籠換鳥
-            runPipeline()
-        }
+        // 執行 zipline 選股 + 建倉 + 騰籠換鳥
+        runPipeline()
     }
 
     /**
@@ -315,9 +286,6 @@ class ShortTermQuantFragment : QuantFragmentBase() {
         }
     }
 
-    /** 標記是否有 Agent 分析結果 */
-    private var hasAgentResult = false
-
     // ═══════════════════════════════════════
     // 短线选股（zipline 全流程）
     // ═══════════════════════════════════════
@@ -364,10 +332,11 @@ class ShortTermQuantFragment : QuantFragmentBase() {
                 val poolCodes = try { com.chin.stockanalysis.strategy.data.CandidatePool.getPoolCodes(requireContext()) } catch (_: Exception) { emptyList() }
                 withContext(Dispatchers.Main) { statusTv.text = "🔄 準備股票池數據..." }
                 val feedStart = System.currentTimeMillis()
+                val onlyMain = mainBoardSwitch.isChecked
                 val stocks = if (poolCodes.isNotEmpty()) {
-                    feed.prepareFromDb(today, StrategyDataFeed.DataFeedConfig(onlyMainBoard = true, stockCodes = poolCodes.toSet()))
+                    feed.prepareFromDb(today, StrategyDataFeed.DataFeedConfig(onlyMainBoard = onlyMain, stockCodes = poolCodes.toSet()))
                 } else {
-                    feed.prepareFromDb(today, StrategyDataFeed.DataFeedConfig(onlyMainBoard = true))
+                    feed.prepareFromDb(today, StrategyDataFeed.DataFeedConfig(onlyMainBoard = onlyMain))
                 }
                 val feedElapsed = System.currentTimeMillis() - feedStart
                 Log.i(TAG, "[ShortTerm] Step 2 done: prepareFromDb=${feedElapsed}ms, stocks=${stocks.size}")
@@ -394,7 +363,7 @@ class ShortTermQuantFragment : QuantFragmentBase() {
                         val r = strategy.screenWithData(stocks)
                         r.getOrNull()?.let { screenings[strategy]=it; screeningList.add(it) }
                     } catch (e: Exception) {
-            Log.w("ShortTermQuant", "Agent routing failed: ${e.message}")
+            Log.w("ShortTermQuant", "Strategy screen failed: ${e.message}")
         }
                     val sElapsed = System.currentTimeMillis() - sStart
                     if (sElapsed > 1000) {
@@ -904,145 +873,6 @@ class ShortTermQuantFragment : QuantFragmentBase() {
     /** 供外部调用的自动触发 Pipeline */
     fun autoRunPipeline() {
         if (buildBtn.isEnabled) runPipeline()
-    }
-
-    /**
-     * 🧠 Agent 分析（AI 動態選擇模式：六智體/七智體）
-     */
-    private fun runAIPipeline() {
-        val inputEt = EditText(requireContext()).apply {
-            hint = "輸入標的（如：生益科技、光通信板塊、半導體）"
-            textSize = 13f
-            setPadding(16, 12, 16, 12)
-            setSingleLine(true)
-        }
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
-            .setTitle("🧠 Agent 分析")
-            .setMessage("輸入要分析的標的或板塊，AI 將根據賽道自動選擇分析模式：\n• 六智體通用（消費/醫藥/周期）\n• 七智體賣水人（光通信/半導體）")
-            .setView(inputEt)
-            .setPositiveButton("開始分析") { _, _ ->
-                val target = inputEt.text.toString().trim()
-                if (target.isBlank()) {
-                    Toast.makeText(requireContext(), "請輸入標的", Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
-                }
-                executeAIPipeline(target)
-            }
-            .setNegativeButton("取消", null)
-            .show()
-    }
-
-    private fun executeAIPipeline(target: String) {
-        aiPipelineBtn.isEnabled = false
-        aiPipelineBtn.text = "⏳ 分析中..."
-        pipelineProgressView.visibility = View.VISIBLE
-        pipelineProgressView.reset()
-        statusTv.text = "🧠 正在獲取股票數據..."
-
-        val orchestrator = AgentPipelineOrchestrator(requireContext())
-
-        // 注入量化信號提供者（可選）
-        orchestrator.quantSignalsProvider = lambda@{ stockCode ->
-            val eng = engine ?: return@lambda emptyList()
-            try {
-                val feed = StrategyDataFeed(requireContext())
-                val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().format(DATE_FMT)
-                val stocks = feed.prepareFromDb(today, StrategyDataFeed.DataFeedConfig(onlyMainBoard = true))
-                val allSignals = mutableListOf<StrategySignal>()
-                for (strategy in eng.getStrategies()) {
-                    if (!eng.isEnabled(strategy.id) || strategy.id == "ai_prediction") continue
-                    try {
-                        val result = strategy.screenWithData(stocks).getOrNull() ?: continue
-                        allSignals.addAll(result.signals.filter { it.stockCode == stockCode })
-                    } catch (_: Exception) { }
-                }
-                allSignals
-            } catch (_: Exception) { emptyList() }
-        }
-
-        // 豆包風格動態進度文字（F→3→1→2→5→D→4）
-        val stepProgressTexts = listOf(
-            "🧠 正在啟動 Agent F（市場情緒）...",
-            "🧠 正在啟動 Agent 3（資金面）...",
-            "🧠 正在啟動 Agent 1（基本面拐點）...",
-            "🧠 正在啟動 Agent 2（技術面）...",
-            "🧠 正在啟動 Agent 5（風控終審）...",
-            "🧠 正在啟動 Agent D（風險排雷）...",
-            "🧠 正在啟動 Agent 4（技術交易執行）..."
-        )
-
-        // 設置回調
-        orchestrator.onStepStart = { index, step ->
-            lifecycleScope.launch(Dispatchers.Main) {
-                pipelineProgressView.markStepStart(index, step)
-                statusTv.text = stepProgressTexts.getOrElse(index) { "🧠 正在啟動 ${step.name}..." }
-            }
-        }
-
-        orchestrator.onStepComplete = { index, step, ctx ->
-            lifecycleScope.launch(Dispatchers.Main) {
-                pipelineProgressView.markStepComplete(index, step, ctx)
-            }
-        }
-
-        orchestrator.onError = { index, error ->
-            lifecycleScope.launch(Dispatchers.Main) {
-                pipelineProgressView.markStepError(index, error)
-                statusTv.text = "❌ 步驟 $index 錯誤: ${error.take(40)}"
-            }
-        }
-
-        // AI 動態選擇模式回調
-        orchestrator.onModeSelected = { mode, reason ->
-            lifecycleScope.launch(Dispatchers.Main) {
-                statusTv.text = "🧠 $reason"
-                pipelineProgressView.updateSteps(AgentPipelineOrchestrator.getStepsByName(mode.label))
-            }
-        }
-
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                withContext(Dispatchers.Main) { statusTv.text = "🧠 正在綜合評估..." }
-                val result = orchestrator.execute(target)
-
-                withContext(Dispatchers.Main) {
-                    pipelineProgressView.showResult(result)
-                    statusTv.text = if (result.errorMessage != null) {
-                        "❌ 分析失敗"
-                    } else {
-                        val passed = result.stocks.count { it.passed }
-                        "✅ Agent 分析完成 [${result.analysisMode}] (${result.stepsCompleted}/${result.totalSteps} 步, ${passed} 只通過)"
-                    }
-                    aiPipelineBtn.isEnabled = true
-                    aiPipelineBtn.text = "🧠 Agent分析"
-                    hasAgentResult = true
-
-                    // 發布到跨 Tab 總線
-                    if (result.stocks.isNotEmpty()) {
-                        CrossTabBus.postAiTopPicks(result.stocks.mapNotNull { stock ->
-                            if (stock.chainScore != null) {
-                                val cs = stock.chainScore
-                                AIPredictionEngine.AIPick(
-                                    stockCode = stock.stockCode,
-                                    stockName = stock.stockName,
-                                    compositeScore = cs.totalScore,
-                                    upProbability = if (cs.totalScore >= 60) 75 else 50,
-                                    rank = 1,
-                                    reason = "AI智能体分析筛选: ${cs.barrierLevel}壁壘",
-                                    actionSuggestion = if (stock.passed) "建議關注" else "風控不通過"
-                                )
-                            } else null
-                        })
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    statusTv.text = "❌ AI 智能体分析筛选異常: ${e.message?.take(40)}"
-                    aiPipelineBtn.isEnabled = true
-                    aiPipelineBtn.text = "🧠 Agent分析"
-                }
-            }
-        }
     }
 
     // 清除功能已由基類 QuantFragmentBase 提供（clearData / clearDataByDate）

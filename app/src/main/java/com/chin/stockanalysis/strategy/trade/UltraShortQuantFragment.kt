@@ -79,6 +79,7 @@ class UltraShortQuantFragment : QuantFragmentBase() {
 
     private lateinit var dateLabelTv: TextView
     private lateinit var datePicker: TradingDayPickerView
+    private lateinit var mainBoardSwitch: Switch
 
     private var todayStocks: List<com.chin.stockanalysis.stock.StockRealtime> = emptyList()
     private var lastTradeDate: String = ""
@@ -156,6 +157,12 @@ class UltraShortQuantFragment : QuantFragmentBase() {
             }
         }
         configRow.addView(datePicker)
+
+        // 僅主板開關
+        mainBoardSwitch = Switch(requireContext()).apply {
+            text = "仅主板"; textSize = 11f; isChecked = false; setTextColor(Color.parseColor("#333333"))
+        }
+        configRow.addView(mainBoardSwitch)
 
         // 提示標籤
         val tipTv = TextView(requireContext()).apply {
@@ -245,12 +252,13 @@ class UltraShortQuantFragment : QuantFragmentBase() {
                     com.chin.stockanalysis.strategy.data.CandidatePool.getPoolCodes(requireContext())
                 } catch (_: Exception) { emptyList() }
 
+                val onlyMain = mainBoardSwitch.isChecked
                 val stocks = if (poolCodes.isNotEmpty()) {
                     feed.prepareFromDb(today, StrategyDataFeed.DataFeedConfig(
-                        onlyMainBoard = false, stockCodes = poolCodes.toSet()
+                        onlyMainBoard = onlyMain, stockCodes = poolCodes.toSet()
                     ))
                 } else {
-                    feed.prepareFromDb(today, StrategyDataFeed.DataFeedConfig(onlyMainBoard = false))
+                    feed.prepareFromDb(today, StrategyDataFeed.DataFeedConfig(onlyMainBoard = onlyMain))
                 }
                 todayStocks = stocks
                 if (stocks.isEmpty()) {

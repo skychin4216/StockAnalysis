@@ -155,6 +155,13 @@ class MidTermQuantFragment : QuantFragmentBase() {
             text = "仅主板"; textSize = 12f; isChecked = true; setTextColor(Color.parseColor("#333333"))
         }
         row1.addView(mainBoardSwitch)
+
+        // 持倉信息提示
+        val tipTv = TextView(requireContext()).apply {
+            text = "📈 持倉1-6月 | 最多5只 | 基本面+技術面"
+            textSize = 10f; setTextColor(Color.parseColor("#1565C0")); setPadding(8, 0, 0, 0)
+        }
+        row1.addView(tipTv)
         container.addView(row1)
 
         container.addView(TextView(requireContext()).apply {

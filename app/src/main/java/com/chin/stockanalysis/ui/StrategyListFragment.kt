@@ -21,9 +21,12 @@ import com.chin.stockanalysis.strategy.backtest.StrategySelfTuner
 import com.chin.stockanalysis.strategy.backtest.WeightCalibrator
 import com.chin.stockanalysis.strategy.data.StockScreener
 import com.chin.stockanalysis.strategy.models.ScreeningResult
+import com.chin.stockanalysis.strategy.models.StrategySignal
 import com.chin.stockanalysis.strategy.models.WeightFactor
 import com.chin.stockanalysis.strategy.predict.AIPredictionEngine
 import com.chin.stockanalysis.strategy.strategies.*
+import com.chin.stockanalysis.agent.pipeline.AgentPipelineOrchestrator
+import com.chin.stockanalysis.agent.pipeline.ui.PipelineProgressView
 import com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource
 import com.chin.stockanalysis.stock.database.StockDataCenter
 import com.chin.stockanalysis.stock.database.ChinaMarketTradingHours as A股TradingHours
@@ -48,6 +51,8 @@ class StrategyListFragment : Fragment() {
     private lateinit var scanBtn: Button
     private lateinit var tuneBtn: Button
     private lateinit var progressBar: ProgressBar
+    private lateinit var aiPipelineBtn: Button
+    private lateinit var pipelineProgressView: PipelineProgressView
 
     private lateinit var dateLabelTv: TextView
     private lateinit var datePicker: TradingDayPickerView
@@ -168,6 +173,14 @@ class StrategyListFragment : Fragment() {
             setTextColor(Color.parseColor("#999999")); layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, dp(20)).apply { marginStart = 2 }
             tag = "mainBoardSwitch"
         }; hotSectorRow.addView(mainBoardSwitch)
+        // Agent 分析按鈕（放在主板開關後面）
+        aiPipelineBtn = Button(requireContext()).apply {
+            text = "🧠 Agent"; textSize = 10f; setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#6A1B9A")); setPadding(dp(6),dp(0),dp(6),dp(0))
+            setMinWidth(0); setMinimumWidth(0)
+            layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, dp(20)).apply { marginStart = 4 }
+            setOnClickListener { runAIPipeline() }
+        }; hotSectorRow.addView(aiPipelineBtn)
         header.addView(hotSectorRow)
         layout.addView(header)
 
@@ -184,6 +197,10 @@ class StrategyListFragment : Fragment() {
         progressBar = ProgressBar(requireContext()).apply { visibility = View.GONE; layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { marginEnd = 8 } }; statusRow.addView(progressBar)
         statusTv = TextView(requireContext()).apply { text = "$strategyCount 个策略已就绪"; textSize = 11f; setTextColor(Color.parseColor("#AAAAAA")) }; statusRow.addView(statusTv)
         layout.addView(statusRow)
+
+        // Agent Pipeline 進度面板（默認隱藏）
+        pipelineProgressView = PipelineProgressView(requireContext()).apply { visibility = View.GONE }
+        layout.addView(pipelineProgressView)
 
         recyclerView = RecyclerView(requireContext()).apply { layoutManager = LinearLayoutManager(context); layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f); setPadding(0,4,0,4); clipToPadding = false }; layout.addView(recyclerView)
         refreshList(); refreshDateUI(); loadHotSectors()
@@ -577,7 +594,8 @@ class StrategyListFragment : Fragment() {
             val sections = HoldingPeriod.values().map { period ->
                 period to eng.getStrategiesByPeriod(period)
             }
-            adapter = GroupedStrategyAdapter(sections, ::onStrategyClick, ::onStrategyToggle)
+            val resultsMap = cachedResults?.associateBy { it.strategyId } ?: emptyMap()
+            adapter = GroupedStrategyAdapter(sections, ::onStrategyClick, ::onStrategyToggle, resultsMap)
             recyclerView.adapter = adapter
         }
     }
@@ -588,11 +606,13 @@ class StrategyListFragment : Fragment() {
      * 按持仓周期分组的策略列表适配器。
      * 沙盒只读模式：保留点击策略执行与启用开关（参与执行过滤），不提供任何买入按钮。
      * 每个周期一组，组标题使用文字标签（超短線 / 短線 / 中線 / 長線），不使用 emoji。
+     * 每张策略卡片底部展示该策略当前选出的 Top 3 股票（若有信号）。
      */
     private inner class GroupedStrategyAdapter(
         private val sections: List<Pair<HoldingPeriod, List<Strategy>>>,
         private val onItemClick: (Strategy) -> Unit,
-        private val onToggle: (Strategy) -> Unit
+        private val onToggle: (Strategy) -> Unit,
+        private val resultsMap: Map<String, ScreeningResult> = emptyMap()
     ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
         private val typeHeader = 0
@@ -699,6 +719,56 @@ class StrategyListFragment : Fragment() {
                         setPadding(28, 0, 0, 6)
                     }
                     card.addView(wpreview)
+                }
+
+                // ── Top 3 选股结果（沙盒只读展示） ──
+                val screeningResult = resultsMap[strategy.id]
+                if (screeningResult != null && screeningResult.signals.isNotEmpty()) {
+                    val topSignals = screeningResult.topN(3)
+                    val resultContainer = LinearLayout(ctx).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setPadding(28, 6, 0, 4)
+                    }
+                    // 标题行：命中数 + 扫描数
+                    val resultHeader = TextView(ctx).apply {
+                        text = "📋 Top ${topSignals.size} | 命中 ${screeningResult.hitCount}/${screeningResult.totalScanned}"
+                        textSize = 11f; setTextColor(Color.parseColor("#333333"))
+                        setTypeface(null, Typeface.BOLD)
+                        setPadding(0, 4, 0, 2)
+                    }
+                    resultContainer.addView(resultHeader)
+                    // 每只股票一行
+                    for (signal in topSignals) {
+                        val stockRow = LinearLayout(ctx).apply {
+                            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                            setPadding(0, 2, 0, 2)
+                        }
+                        val emojiTv = TextView(ctx).apply {
+                            text = signal.emoji; textSize = 12f
+                            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginEnd = 4 }
+                        }
+                        stockRow.addView(emojiTv)
+                        val nameTv = TextView(ctx).apply {
+                            text = signal.stockName
+                            textSize = 12f; setTextColor(Color.parseColor("#222222"))
+                            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                        }
+                        stockRow.addView(nameTv)
+                        val codeTv = TextView(ctx).apply {
+                            text = signal.stockCode.takeLast(6)
+                            textSize = 10f; setTextColor(Color.parseColor("#999999"))
+                            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginEnd = 8 }
+                        }
+                        stockRow.addView(codeTv)
+                        val strengthTv = TextView(ctx).apply {
+                            text = "${signal.strength}%"
+                            textSize = 11f; setTextColor(Color.parseColor("#E65100"))
+                            setTypeface(null, Typeface.BOLD)
+                        }
+                        stockRow.addView(strengthTv)
+                        resultContainer.addView(stockRow)
+                    }
+                    card.addView(resultContainer)
                 }
 
                 card.setOnClickListener { onItemClick(strategy) }
@@ -989,6 +1059,138 @@ class StrategyListFragment : Fragment() {
             } catch (e: Exception) { withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "加载失败: ${e.message}", Toast.LENGTH_SHORT).show() } }
         }
     }
+    // ═══════════════════════════════════════
+    // 🧠 Agent 分析（AI 動態選擇模式：六智體/七智體）
+    // ═══════════════════════════════════════
+
+    private fun runAIPipeline() {
+        val inputEt = EditText(requireContext()).apply {
+            hint = "輸入標的（如：生益科技、光通信板塊、半導體）"
+            textSize = 13f; setPadding(16, 12, 16, 12); setSingleLine(true)
+        }
+        AlertDialog.Builder(requireContext())
+            .setTitle("🧠 Agent 分析")
+            .setMessage("輸入要分析的標的或板塊，AI 將根據賽道自動選擇分析模式：\n• 六智體通用（消費/醫藥/周期）\n• 七智體賣水人（光通信/半導體）")
+            .setView(inputEt)
+            .setPositiveButton("開始分析") { _, _ ->
+                val target = inputEt.text.toString().trim()
+                if (target.isBlank()) {
+                    Toast.makeText(requireContext(), "請輸入標的", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                executeAIPipeline(target)
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun executeAIPipeline(target: String) {
+        aiPipelineBtn.isEnabled = false
+        aiPipelineBtn.text = "⏳"
+        pipelineProgressView.visibility = View.VISIBLE
+        pipelineProgressView.reset()
+        statusTv.text = "🧠 正在獲取股票數據..."
+
+        val orchestrator = AgentPipelineOrchestrator(requireContext())
+
+        // 注入量化信號提供者
+        orchestrator.quantSignalsProvider = lambda@{ stockCode ->
+            val eng = engine ?: return@lambda emptyList<StrategySignal>()
+            try {
+                val feed = com.chin.stockanalysis.strategy.data.StrategyDataFeed(requireContext())
+                val today = TradingDayPickerView.recentTradingDay().toString()
+                val onlyMain = (view?.findViewWithTag<Switch>("mainBoardSwitch")?.isChecked == true)
+                val stocks = feed.prepareFromDb(today, com.chin.stockanalysis.strategy.data.StrategyDataFeed.DataFeedConfig(onlyMainBoard = onlyMain))
+                val allSignals = mutableListOf<StrategySignal>()
+                for (strategy in eng.getStrategies()) {
+                    if (!eng.isEnabled(strategy.id) || strategy.id == "ai_prediction") continue
+                    try {
+                        val result = strategy.screenWithData(stocks).getOrNull() ?: continue
+                        allSignals.addAll(result.signals.filter { it.stockCode == stockCode })
+                    } catch (_: Exception) { }
+                }
+                allSignals
+            } catch (_: Exception) { emptyList() }
+        }
+
+        val stepProgressTexts = listOf(
+            "🧠 正在啟動 Agent F（市場情緒）...",
+            "🧠 正在啟動 Agent 3（資金面）...",
+            "🧠 正在啟動 Agent 1（基本面拐點）...",
+            "🧠 正在啟動 Agent 2（技術面）...",
+            "🧠 正在啟動 Agent 5（風控終審）...",
+            "🧠 正在啟動 Agent D（風險排雷）...",
+            "🧠 正在啟動 Agent 4（技術交易執行）..."
+        )
+
+        orchestrator.onStepStart = { index, step ->
+            lifecycleScope.launch(Dispatchers.Main) {
+                pipelineProgressView.markStepStart(index, step)
+                statusTv.text = stepProgressTexts.getOrElse(index) { "🧠 正在啟動 ${step.name}..." }
+            }
+        }
+        orchestrator.onStepComplete = { index, step, ctx ->
+            lifecycleScope.launch(Dispatchers.Main) {
+                pipelineProgressView.markStepComplete(index, step, ctx)
+            }
+        }
+        orchestrator.onError = { index, error ->
+            lifecycleScope.launch(Dispatchers.Main) {
+                pipelineProgressView.markStepError(index, error)
+                statusTv.text = "❌ 步驟 $index 錯誤: ${error.take(40)}"
+            }
+        }
+        orchestrator.onModeSelected = { mode, reason ->
+            lifecycleScope.launch(Dispatchers.Main) {
+                statusTv.text = "🧠 $reason"
+                pipelineProgressView.updateSteps(AgentPipelineOrchestrator.getStepsByName(mode.label))
+            }
+        }
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                withContext(Dispatchers.Main) { statusTv.text = "🧠 正在綜合評估..." }
+                val result = orchestrator.execute(target)
+
+                withContext(Dispatchers.Main) {
+                    pipelineProgressView.showResult(result)
+                    statusTv.text = if (result.errorMessage != null) {
+                        "❌ 分析失敗"
+                    } else {
+                        val passed = result.stocks.count { it.passed }
+                        "✅ Agent 分析完成 [${result.analysisMode}] (${result.stepsCompleted}/${result.totalSteps} 步, ${passed} 只通過)"
+                    }
+                    aiPipelineBtn.isEnabled = true
+                    aiPipelineBtn.text = "🧠 Agent"
+
+                    // 發布到跨 Tab 總線
+                    if (result.stocks.isNotEmpty()) {
+                        CrossTabBus.postAiTopPicks(result.stocks.mapNotNull { stock ->
+                            if (stock.chainScore != null) {
+                                val cs = stock.chainScore
+                                AIPredictionEngine.AIPick(
+                                    stockCode = stock.stockCode,
+                                    stockName = stock.stockName,
+                                    compositeScore = cs.totalScore,
+                                    upProbability = if (cs.totalScore >= 60) 75 else 50,
+                                    rank = 1,
+                                    reason = "AI智能体分析筛选: ${cs.barrierLevel}壁壘",
+                                    actionSuggestion = if (stock.passed) "建議關注" else "風控不通過"
+                                )
+                            } else null
+                        })
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    statusTv.text = "❌ AI 智能体分析筛选異常: ${e.message?.take(40)}"
+                    aiPipelineBtn.isEnabled = true
+                    aiPipelineBtn.text = "🧠 Agent"
+                }
+            }
+        }
+    }
+
     override fun onResume() { super.onResume(); loadHotSectors(); pendingResults?.let { showResults(it); pendingResults = null } }
     override fun onDestroyView() { super.onDestroyView(); engine?.cancelScan() }
 }
