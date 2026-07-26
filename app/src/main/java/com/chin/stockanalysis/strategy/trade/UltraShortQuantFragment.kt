@@ -46,14 +46,35 @@ class UltraShortQuantFragment : QuantFragmentBase() {
         private const val TAG = "UltraShortQuant"
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
-        /** 最大持倉數 */
-        private const val MAX_HOLDINGS = 3
+        /** 最大持倉數（後備默認，優先讀取策略 maxPositions） */
+        private const val DEFAULT_MAX_HOLDINGS = 3
 
-        /** 止損線 -2% */
-        private const val STOP_LOSS_PCT = -2.0
+        /** 止損線 -2%（後備默認，優先讀取策略 defaultStopLoss） */
+        private const val DEFAULT_STOP_LOSS_PCT = -2.0
 
-        /** 止盈線 +3% */
-        private const val TAKE_PROFIT_PCT = 3.0
+        /** 止盈線 +3%（後備默認，優先讀取策略 defaultTakeProfit） */
+        private const val DEFAULT_TAKE_PROFIT_PCT = 3.0
+    }
+
+    /** 從啟用的超短線策略讀取止損線(%)，取最保守值（最大），無則用默認 */
+    private fun resolveStopLossPct(): Double {
+        val vals = engine?.getEnabledStrategiesByPeriod(HoldingPeriod.ULTRA_SHORT)
+            ?.mapNotNull { it.defaultStopLoss } ?: emptyList()
+        return vals.maxOrNull()?.toDouble()?.times(100) ?: DEFAULT_STOP_LOSS_PCT
+    }
+
+    /** 從啟用的超短線策略讀取止盈線(%)，取最小值，無則用默認 */
+    private fun resolveTakeProfitPct(): Double {
+        val vals = engine?.getEnabledStrategiesByPeriod(HoldingPeriod.ULTRA_SHORT)
+            ?.mapNotNull { it.defaultTakeProfit } ?: emptyList()
+        return vals.minOrNull()?.toDouble()?.times(100) ?: DEFAULT_TAKE_PROFIT_PCT
+    }
+
+    /** 從啟用的超短線策略讀取最大持倉數，取最小值，無則用默認 */
+    private fun resolveMaxHoldings(): Int {
+        val vals = engine?.getEnabledStrategiesByPeriod(HoldingPeriod.ULTRA_SHORT)
+            ?.map { it.maxPositions } ?: emptyList()
+        return vals.minOrNull() ?: DEFAULT_MAX_HOLDINGS
     }
 
     private lateinit var dateLabelTv: TextView
@@ -138,7 +159,7 @@ class UltraShortQuantFragment : QuantFragmentBase() {
 
         // 提示標籤
         val tipTv = TextView(requireContext()).apply {
-            text = "⚡ 持倉1天 | 最多${MAX_HOLDINGS}只 | 止損${STOP_LOSS_PCT}%/止盈+${TAKE_PROFIT_PCT}%"
+            text = "⚡ 持倉1天 | 最多${resolveMaxHoldings()}只 | 止損${resolveStopLossPct()}%/止盈+${resolveTakeProfitPct()}%"
             textSize = 10f
             setTextColor(Color.parseColor("#E65100"))
             setPadding(8, 0, 0, 0)
@@ -192,6 +213,11 @@ class UltraShortQuantFragment : QuantFragmentBase() {
                 val today = TradingDayPickerView.recentTradingDay().format(DATE_FMT)
                 val tradeDate = browsingDate.format(DATE_FMT)
                 lastTradeDate = tradeDate
+
+                // 從策略風控字段解析本次建倉參數（下沉）
+                val maxHoldings = resolveMaxHoldings()
+                val stopLossPct = resolveStopLossPct()
+                val takeProfitPct = resolveTakeProfitPct()
 
                 // ══════════ DAG Pipeline 分支（通用開關） ══════════
                 if (com.chin.stockanalysis.config.FeatureFlagManager.useDagPipeline) {
@@ -263,6 +289,32 @@ class UltraShortQuantFragment : QuantFragmentBase() {
                 }
                 Log.i(TAG, "[UltraShort] 策略執行完成: ${screenings.size}/${strategies.size} 成功")
 
+                // Step 3.5: 動態主力資金過濾（requiresSmartMoney 為時間動態開關：14:30 前啟用）
+                val smartMoneyStrategies = screenings.keys.filter { it.requiresSmartMoney }
+                if (smartMoneyStrategies.isNotEmpty()) {
+                    val candidateCodes = smartMoneyStrategies
+                        .flatMap { screenings[it]?.signals?.map { s -> s.stockCode } ?: emptyList() }
+                        .distinct()
+                    if (candidateCodes.isNotEmpty()) {
+                        try {
+                            com.chin.stockanalysis.strategy.data.SmartMoneyCache
+                                .refresh(requireContext(), candidateCodes)
+                            for (s in smartMoneyStrategies) {
+                                val sc = screenings[s] ?: continue
+                                val before = sc.signals.size
+                                val filtered = sc.signals.filter {
+                                    com.chin.stockanalysis.strategy.data.SmartMoneyCache
+                                        .getScore(it.stockCode).combined >= 55
+                                }
+                                screenings[s] = sc.copy(signals = filtered)
+                                Log.i(TAG, "[UltraShort] 主力過濾 ${s.name}: $before → ${filtered.size}")
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "[UltraShort] 主力過濾失敗（不阻塞）: ${e.message}")
+                        }
+                    }
+                }
+
                 // Step 4: 合併結果，按強度排序
                 val mergedPool = mutableMapOf<String, MutableList<Pair<String, Int>>>()
                 val codeToName = mutableMapOf<String, String>()
@@ -286,7 +338,7 @@ class UltraShortQuantFragment : QuantFragmentBase() {
                 // 按最大強度排序，取 Top N
                 val sortedStocks = mergedPool.entries
                     .sortedByDescending { it.value.maxOf { p -> p.second } }
-                    .take(MAX_HOLDINGS)
+                    .take(maxHoldings)
 
                 // Step 5: 檢查持倉限制並建倉
                 val existingCodes = db.strategyTradeOrderDao().getRecent(200)
@@ -294,10 +346,10 @@ class UltraShortQuantFragment : QuantFragmentBase() {
                         (it.status == "BUYING" || it.status == "PENDING") }
                     .map { it.stockCode }.toSet()
 
-                val availableSlots = MAX_HOLDINGS - existingCodes.size
+                val availableSlots = maxHoldings - existingCodes.size
                 if (availableSlots <= 0) {
                     withContext(Dispatchers.Main) {
-                        statusTv.text = "⚠️ 已達最大持倉限制 ($MAX_HOLDINGS 只)"
+                        statusTv.text = "⚠️ 已達最大持倉限制 ($maxHoldings 只)"
                         buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"
                         progressBar.visibility = View.GONE
                         refreshPositions()
@@ -350,7 +402,7 @@ class UltraShortQuantFragment : QuantFragmentBase() {
                             appendLine("  • ${order.stockName}(${order.stockCode.takeLast(6)}) ¥${"%.2f".format(order.buyPrice)} 強度:${order.scoreAtBuy}%")
                         }
                     }
-                    appendLine("止損: ${STOP_LOSS_PCT}% | 止盈: +${TAKE_PROFIT_PCT}% | T+1 賣出")
+                    appendLine("止損: ${stopLossPct}% | 止盈: +${takeProfitPct}% | T+1 賣出")
                 }
 
                 withContext(Dispatchers.Main) {
@@ -392,7 +444,7 @@ class UltraShortQuantFragment : QuantFragmentBase() {
                 tradeDate = tradeDate,
                 today = today,
                 strategies = strategies,
-                orderType = "ultra_short_dag",
+                orderType = "ultra_short",
                 importDays = 30
             )
             withContext(Dispatchers.Main) {
@@ -419,7 +471,11 @@ class UltraShortQuantFragment : QuantFragmentBase() {
     }
 
     /**
-     * T+1 自動賣出：檢查昨日建倉的超短線持倉，觸發止損/止盈
+     * T+1 自動賣出：
+     * - 建倉日早於今日（T+1 到期）→ 次日集合競價無論盈虧強制清倉
+     * - 當日建倉 → 僅在觸發止損/止盈時賣出
+     *
+     * 價格來源：MultiSourceStockRepository 實時行情（非建倉時快照），避免過期價格。
      */
     private fun checkT1AutoSell() {
         lifecycleScope.launch(Dispatchers.IO) {
@@ -431,31 +487,47 @@ class UltraShortQuantFragment : QuantFragmentBase() {
 
                 if (orders.isEmpty()) return@launch
 
+                // 從策略風控字段解析止損/止盈線
+                val stopLossPct = resolveStopLossPct()
+                val takeProfitPct = resolveTakeProfitPct()
+
+                // 實時價格（5源並發競速），取代 todayStocks 緩存快照
+                val realtime = try {
+                    com.chin.stockanalysis.stock.data.StockDataSourceFactory
+                        .createDefaultRepository(requireContext().applicationContext)
+                        .getRealtime(orders.map { it.stockCode })
+                } catch (e: Exception) {
+                    Log.w(TAG, "T+1 實時行情獲取失敗: ${e.message}"); emptyMap()
+                }
+
                 val today = TradingDayPickerView.recentTradingDay().format(DATE_FMT)
                 var sellCount = 0
+                var forcedCount = 0
                 for (order in orders) {
-                    // T+1: 如果建倉日不是今天，則檢查是否需要賣出
-                    if (order.tradeDate < today) {
-                        val snap = todayStocks.find { it.code == order.stockCode }
-                        val currentPrice = snap?.price ?: continue
-                        val pnlPct = (currentPrice - order.buyPrice) / order.buyPrice * 100
+                    val currentPrice = realtime[order.stockCode]?.price ?: continue
+                    if (currentPrice <= 0) continue
+                    val pnlPct = (currentPrice - order.buyPrice) / order.buyPrice * 100
 
-                        // 止損或止盈觸發 → 自動賣出
-                        if (pnlPct <= STOP_LOSS_PCT || pnlPct >= TAKE_PROFIT_PCT) {
-                            db.strategyTradeOrderDao().updateSellInfo(
-                                id = order.id, status = "SOLD",
-                                sellPrice = currentPrice,
-                                sellTime = today + " " + java.time.LocalTime.now().toString().take(8),
-                                profitPct = pnlPct
-                            )
-                            sellCount++
-                            Log.i(TAG, "[UltraShort] T+1 賣出: ${order.stockName} 盈虧=${"%.2f".format(pnlPct)}%")
-                        }
+                    val isT1Due = order.tradeDate < today
+                    val hitStop = pnlPct <= stopLossPct || pnlPct >= takeProfitPct
+
+                    // T+1 到期 → 無論盈虧強制清倉；當日建倉 → 僅止損/止盈觸發
+                    if (isT1Due || hitStop) {
+                        db.strategyTradeOrderDao().updateSellInfo(
+                            id = order.id, status = "SOLD",
+                            sellPrice = currentPrice,
+                            sellTime = today + " " + java.time.LocalTime.now().toString().take(8),
+                            profitPct = pnlPct
+                        )
+                        sellCount++
+                        if (isT1Due) forcedCount++
+                        Log.i(TAG, "[UltraShort] T+1 賣出: ${order.stockName} " +
+                            "盈虧=${"%.2f".format(pnlPct)}% ${if (isT1Due) "(次日強制清倉)" else "(止損/止盈)"}")
                     }
                 }
                 if (sellCount > 0) {
                     withContext(Dispatchers.Main) {
-                        statusTv.text = "⚡ T+1 自動賣出: ${sellCount} 只觸發止損/止盈"
+                        statusTv.text = "⚡ T+1 賣出: ${sellCount} 只 (強制清倉 ${forcedCount})"
                         refreshPositions()
                     }
                 }
@@ -493,7 +565,7 @@ class UltraShortQuantFragment : QuantFragmentBase() {
 
                 val sb = StringBuilder()
                 sb.appendLine("⚡ 超短線回溯測試報告 (30交易日)")
-                sb.appendLine("持倉: 1天 | 止損: ${STOP_LOSS_PCT}% | 止盈: +${TAKE_PROFIT_PCT}%")
+                sb.appendLine("持倉: 1天 | 止損: ${resolveStopLossPct()}% | 止盈: +${resolveTakeProfitPct()}%")
                 sb.appendLine("期間: ${report.dateRange}")
                 sb.appendLine()
                 for (r in report.strategyReports) {
@@ -525,9 +597,9 @@ class UltraShortQuantFragment : QuantFragmentBase() {
         showDialog("超短線擬合提示",
             "超短線策略（持倉1天）參數固定，無需擬合調優。\n\n" +
             "核心參數：\n" +
-            "• 止損: ${STOP_LOSS_PCT}%\n" +
-            "• 止盈: +${TAKE_PROFIT_PCT}%\n" +
-            "• 最大持倉: $MAX_HOLDINGS 只\n" +
+            "• 止損: ${resolveStopLossPct()}%\n" +
+            "• 止盈: +${resolveTakeProfitPct()}%\n" +
+            "• 最大持倉: ${resolveMaxHoldings()} 只\n" +
             "• 持倉週期: 1天 (T+1)\n\n" +
             "如需調整，請在回溯測試中驗證不同參數組合。")
     }
