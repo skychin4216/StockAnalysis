@@ -56,6 +56,7 @@ data class DagNode(
             "n_bg",       // 後臺暫停/恢復（輔助）
             "n_fit",      // 擬合計算（耗時，不影響建倉）
             "n_swap",     // 騰龍換鳥（輔助優化）
+            "n_guard",    // 持倉風控（輔助，失敗不阻斷買入）
             "n_heat",     // 熱度計算（輔助數據）
             "n_candle",   // K線形態偵測（輔助提醒）
             "n_news_str", // 新聞力度（輔助評分）
@@ -63,6 +64,12 @@ data class DagNode(
             "n_crossday", // 跨日聚合（輔助數據）
             "n_multihot"  // 多周期熱門（輔助數據）
         )
+
+        /**
+         * 輔助節點：僅提供執行順序保證（如先賣後買），其輸出為空/失敗時
+         * 下游節點自動回退到輔助節點的上游輸出，永遠不阻斷下游執行。
+         */
+        val AUXILIARY_NODES = setOf("n_swap")
     }
 }
 
@@ -311,7 +318,7 @@ class DagPipeline(
 
         // 收集依賴輸入
         val depEdges = edges.filter { it.targetNodeId == nodeId }
-        val input: Any? = when {
+        var input: Any? = when {
             depEdges.isEmpty() -> Unit  // 根節點：無依賴，輸入 Unit
             depEdges.size == 1 -> {
                 // 單一依賴：直接用上游輸出
@@ -326,6 +333,20 @@ class DagPipeline(
                 // 非聚合多依賴：用首個上游輸出作為主輸入，其餘通過 context.stageOutputs 讀取
                 val sourceId = depEdges[0].sourceNodeId
                 context.stageOutputs[sourceId]
+            }
+        }
+
+        // ── 輔助節點容錯 ──
+        // 如果所有上游都是輔助節點（如 n_swap）且輸出為空（失敗/超時），
+        // 回退到輔助節點的上游輸出（如 n_orders 的 OrderGenerationResult），
+        // 確保輔助節點永遠不阻斷下游執行
+        if (input == null && depEdges.isNotEmpty() &&
+            depEdges.all { it.sourceNodeId in DagNode.AUXILIARY_NODES }) {
+            input = depEdges
+                .flatMap { e -> edges.filter { it.targetNodeId == e.sourceNodeId } }
+                .firstNotNullOfOrNull { context.stageOutputs[it.sourceNodeId] }
+            if (input != null) {
+                context.log(nodeId, "⚠ 輔助節點上游無輸出，回退使用間接上游: ${dagNode.nodeName}")
             }
         }
 

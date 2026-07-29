@@ -7,6 +7,7 @@ import com.chin.stockanalysis.strategy.Strategy
 import com.chin.stockanalysis.strategy.topology.nodes.OrderGenerationResult
 import com.chin.stockanalysis.strategy.topology.nodes.PositionMergeResult
 import com.chin.stockanalysis.strategy.topology.nodes.SwapWeakResult
+import com.chin.stockanalysis.strategy.topology.nodes.HoldingGuardResult
 
 /**
  * ## 通用 DAG 交易執行器
@@ -33,6 +34,7 @@ object DagTradeExecutor {
      * @property ordersCount       生成訂單筆數
      * @property mergeSummary      持倉合併摘要（可空）
      * @property swapSummary       騰龍換鳥摘要（可空）
+     * @property guardSummary      持倉風控摘要（可空）
      * @property savedWatchlist    是否已保存到自選股
      * @property stockFlowLines    各節點股票流動日誌（供 UI 展示）
      * @property totalElapsedMs    總耗時
@@ -45,6 +47,7 @@ object DagTradeExecutor {
         val ordersCount: Int,
         val mergeSummary: String,
         val swapSummary: String,
+        val guardSummary: String,
         val patternSummary: String,
         val savedWatchlist: Boolean,
         val stockFlowLines: List<String>,
@@ -80,7 +83,7 @@ object DagTradeExecutor {
         if (strategies.isEmpty()) {
             return DagExecResult(
                 success = false, ordersCount = 0, mergeSummary = "",
-                swapSummary = "", patternSummary = "", savedWatchlist = false,
+                swapSummary = "", guardSummary = "", patternSummary = "", savedWatchlist = false,
                 stockFlowLines = emptyList(),
                 totalElapsedMs = 0, pipelineNames = emptyList(),
                 errors = mapOf("strategy" to "沒有啟用的策略"),
@@ -115,6 +118,7 @@ object DagTradeExecutor {
         // 4. 後處理：從 nodeResults 提取訂單/持倉/換股信息
         var ordersCount = 0
         var swapSummary = ""
+        var guardSummary = ""
         var mergeSummary = ""
         var patternSummary = ""
         var savedWatchlist = false
@@ -171,6 +175,16 @@ object DagTradeExecutor {
                     Log.i(TAG, "[$useCaseId] $swapSummary")
                 }
 
+                // 提取持倉風控結果
+                val guardOutput = nodeResults["n_guard"]?.output
+                if (guardOutput is HoldingGuardResult && guardOutput.soldCount > 0) {
+                    guardSummary = buildString {
+                        appendLine("持倉風控: 賣出${guardOutput.soldCount}筆（評估${guardOutput.evaluatedCount}筆）")
+                        appendLine("  賣出: ${guardOutput.soldStocks.joinToString(", ")}")
+                    }
+                    Log.i(TAG, "[$useCaseId] $guardSummary")
+                }
+
                 // 提取 K 線形態偵測結果
                 @Suppress("UNCHECKED_CAST")
                 val patternOutput = nodeResults["n_candle"]?.output as?
@@ -210,6 +224,7 @@ object DagTradeExecutor {
         // 6. 構建 UI 顯示文本
         val detailLines = mutableListOf<String>()
         if (ordersCount > 0) detailLines.add("訂單${ordersCount}筆")
+        if (guardSummary.isNotBlank()) detailLines.add("風控賣出")
         if (swapSummary.isNotBlank()) {
             val swapNum = swapSummary.lines().first().filter { it.isDigit() }
             if (swapNum.isNotEmpty()) detailLines.add("換${swapNum}筆")
@@ -240,6 +255,7 @@ object DagTradeExecutor {
             ordersCount = ordersCount,
             mergeSummary = mergeSummary,
             swapSummary = swapSummary,
+            guardSummary = guardSummary,
             patternSummary = patternSummary,
             savedWatchlist = savedWatchlist,
             stockFlowLines = stockFlowLines,
@@ -266,6 +282,7 @@ object DagTradeExecutor {
         appendLine("Pipeline: ${r.pipelineNames.joinToString(", ")}")
         if (r.ordersCount > 0) appendLine("生成訂單: ${r.ordersCount}筆")
         if (r.mergeSummary.isNotBlank()) appendLine(r.mergeSummary.trimEnd())
+        if (r.guardSummary.isNotBlank()) appendLine(r.guardSummary.trimEnd())
         if (r.swapSummary.isNotBlank()) appendLine(r.swapSummary.trimEnd())
         if (r.savedWatchlist) appendLine("已保存到自選股")
         if (r.stockFlowLines.isNotEmpty()) {

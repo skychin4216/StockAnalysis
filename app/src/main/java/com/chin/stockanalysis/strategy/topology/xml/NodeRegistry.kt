@@ -95,6 +95,7 @@ object NodeRegistry {
             val maxH = config["maxHoldings"]?.toIntOrNull() ?: 5
             com.chin.stockanalysis.strategy.topology.nodes.SwapWeakNode(maxHoldings = maxH)
         }
+        register("holding_guard") { ctx, _ -> com.chin.stockanalysis.strategy.topology.nodes.HoldingGuardNode() }
 
         // ══════════ 中線補齊 Node ══════════
 

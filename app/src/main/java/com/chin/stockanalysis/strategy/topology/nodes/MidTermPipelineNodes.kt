@@ -121,6 +121,16 @@ data class SwapWeakResult(
 )
 
 /**
+ * 持倉風控結果
+ */
+data class HoldingGuardResult(
+    val soldCount: Int,                     // 風控賣出數量（止損/止盈/策略退出）
+    val soldStocks: List<String>,          // 被賣出的股票（名稱+原因）
+    val remainingCount: Int,               // 賣出後剩餘持倉數
+    val evaluatedCount: Int                 // 評估的持倉總數
+)
+
+/**
  * 買入訂單生成結果
  */
 data class OrderGenerationResult(
@@ -869,10 +879,10 @@ class SwapWeakNode(
                 .filter { (it.status == "BUYING" || it.status == "PENDING") && orderTypePeriod(it.orderType) == period }
             val currentCount = holdingOrders.size
 
-            // ── 騰龍換鳥只在「持倉已滿」時觸發 ──
-            // 持倉未滿（如只持有一兩只）時有空位，新票直接買入即可，無需賣出現有持倉騰位置。
-            if (currentCount < maxHoldings) {
-                context.log(nodeId, "騰龍換鳥: 持倉 $currentCount < $maxHoldings, 有空位, 無需換股")
+            // ── 騰龍換鳥只在「持倉+新買超出上限」時觸發 ──
+            // 持倉+新買 ≤ 上限時倉位足夠，新票直接買入即可，無需賣出現有持倉騰位置。
+            if (currentCount + newBuyCount <= maxHoldings) {
+                context.log(nodeId, "騰龍換鳥: 持倉 $currentCount + 新買 $newBuyCount ≤ $maxHoldings, 倉位足夠, 無需換股")
                 // 📤 輸出日誌
                 context.log(nodeId, "📤 $nodeName 輸出: 0 只換股，持倉不變 $currentCount")
                 context.recordStockFlow(
@@ -1411,13 +1421,20 @@ class GenerateOrdersNode(
  *
  * 原始流程對應：SimulationTradeEngine.runTradeSession() Step 11
  */
-class PositionMergeNode : PipelineNode<OrderGenerationResult, PositionMergeResult> {
+class PositionMergeNode : PipelineNode<Any, PositionMergeResult> {
 
     override val nodeId: String = "position_merge"
     override val nodeName: String = "持倉合併"
     override val nodeType: NodeType = NodeType.TRADE_ACTION
 
-    override suspend fun execute(context: PipelineContext, input: OrderGenerationResult): PositionMergeResult {
+    override suspend fun execute(context: PipelineContext, rawInput: Any): PositionMergeResult {
+        // 騰龍換鳥(n_swap)是輔助節點，其輸出 SwapWeakResult 僅用於保證執行順序（先賣後買），
+        // 實際訂單數據統一從 generate_orders(n_orders) 的輸出獲取
+        val input: OrderGenerationResult = when (rawInput) {
+            is OrderGenerationResult -> rawInput
+            else -> context.getStageOutput<OrderGenerationResult>("n_orders")
+                ?: OrderGenerationResult(emptyList(), 0, false)
+        }
         // 📥 輸入日誌
         val orderCodes = input.orders.map { "${it.stockCode}(${it.stockName})" }
         context.log(nodeId, "📥 $nodeName 輸入: ${input.orders.size} 個訂單 ${formatTopCodes(orderCodes)}")
@@ -1734,6 +1751,117 @@ class FittingSaveNode : PipelineNode<Any, Unit> {
                 filterReason = "執行失敗: ${e.message}",
                 inputCodes = emptyList(), outputCodes = emptyList()
             )
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  HoldingGuardNode (TRADE_ACTION) — 持倉風控
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * ## 持倉風控節點
+ *
+ * 獨立於篩選鏈，每次 Pipeline 執行時**必定運行**（放 Layer 1，依賴 n_ctx）：
+ * - 評估本周期全部持倉（AutoSellEngine：止損/止盈/策略退出/技術面惡化）
+ * - shouldSell=true 的持倉直接執行賣出
+ *
+ * 與 SwapWeakNode 的分工：
+ * - HoldingGuardNode：「治病」— 持倉本身出問題（止損/止盈觸發），無論有無新候選都賣
+ * - SwapWeakNode：「換血」— 持倉健康但倉位滿，賣最弱騰位給更優的新票
+ *
+ * 非關鍵節點：失敗不阻斷 Pipeline。
+ *
+ * XML 用法：
+ * ```xml
+ * <Node id="n_guard" name="持倉風控" module="holding_guard" />
+ * <Link><SourceNodeId>n_ctx</SourceNodeId><TargetNodeId>n_guard</TargetNodeId></Link>
+ * ```
+ */
+class HoldingGuardNode(
+    private val strategies: List<Strategy> = emptyList()
+) : PipelineNode<Any, HoldingGuardResult> {
+
+    override val nodeId: String = "holding_guard"
+    override val nodeName: String = "持倉風控"
+    override val nodeType: NodeType = NodeType.TRADE_ACTION
+
+    override suspend fun execute(context: PipelineContext, input: Any): HoldingGuardResult {
+        val effectiveStrategies = strategies.ifEmpty {
+            context.getStageOutput<List<Strategy>>("_strategies") ?: emptyList()
+        }
+
+        val db = StockDatabase.getInstance(context.androidContext)
+        val period = orderTypePeriod(context.config.orderType)
+        val holdingOrders = db.strategyTradeOrderDao().getRecent(500)
+            .filter { (it.status == "BUYING" || it.status == "PENDING") && orderTypePeriod(it.orderType) == period }
+
+        if (holdingOrders.isEmpty()) {
+            context.log(nodeId, "📥 $nodeName: 無 $period 周期持倉，跳過評估")
+            context.recordStockFlow(
+                nodeId = nodeId, nodeName = nodeName,
+                inputCount = 0, outputCount = 0,
+                filterCount = 0, filterReason = "",
+                inputCodes = emptyList(), outputCodes = emptyList()
+            )
+            return HoldingGuardResult(0, emptyList(), 0, 0)
+        }
+
+        context.log(nodeId, "📥 $nodeName 輸入: ${holdingOrders.size} 只 $period 持倉")
+
+        return try {
+            val sellEngine = AutoSellEngine(context.androidContext)
+            val decisions = sellEngine.evaluateAll(
+                effectiveStrategies,
+                AutoSellEngine.AutoSellConfig(
+                    tradeDate = context.tradeDate,
+                    // 自適應止損：空頭市場收緊硬止損
+                    hardStopLossPct = context.getAdaptiveParams()?.stopLossRate?.times(100)
+                        ?: AutoSellEngine.HARD_STOP_LOSS_PCT
+                )
+            ).filter { orderTypePeriod(it.order.orderType) == period }
+
+            val mustSell = decisions.filter { it.shouldSell }
+
+            if (mustSell.isEmpty()) {
+                context.log(nodeId, "📤 $nodeName: ${holdingOrders.size} 只持倉全部健康，無賣出信號")
+                context.recordStockFlow(
+                    nodeId = nodeId, nodeName = nodeName,
+                    inputCount = holdingOrders.size, outputCount = 0,
+                    filterCount = 0, filterReason = "",
+                    inputCodes = holdingOrders.map { it.stockCode }.take(5), outputCodes = emptyList()
+                )
+                return HoldingGuardResult(0, emptyList(), holdingOrders.size, holdingOrders.size)
+            }
+
+            // 執行賣出（shouldSell 已過濾，force=false 即可）
+            val soldNames = mustSell.map { "${it.order.stockName}(${it.reason})" }
+            context.log(nodeId, "🚫 $nodeName 賣出: ${soldNames.joinToString(", ")}")
+            sellEngine.executeSells(mustSell, context.tradeDate)
+
+            val remainingCount = db.strategyTradeOrderDao().getRecent(500)
+                .count { (it.status == "BUYING" || it.status == "PENDING") && orderTypePeriod(it.orderType) == period }
+
+            context.log(nodeId, "📤 $nodeName 輸出: 賣出 ${mustSell.size} 只，剩餘 $remainingCount 只")
+            context.recordStockFlow(
+                nodeId = nodeId, nodeName = nodeName,
+                inputCount = holdingOrders.size, outputCount = mustSell.size,
+                filterCount = 0, filterReason = "風控賣出",
+                inputCodes = holdingOrders.map { it.stockCode }.take(5),
+                outputCodes = mustSell.map { it.order.stockCode }
+            )
+
+            HoldingGuardResult(mustSell.size, soldNames, remainingCount, holdingOrders.size)
+        } catch (e: Exception) {
+            context.log(nodeId, "$nodeName 異常: ${e.message}（不阻斷 Pipeline）")
+            context.recordError(nodeId, "持倉風控異常: ${e.message}")
+            context.recordStockFlow(
+                nodeId = nodeId, nodeName = nodeName,
+                inputCount = holdingOrders.size, outputCount = 0,
+                filterCount = 0, filterReason = "執行異常: ${e.message}",
+                inputCodes = holdingOrders.map { it.stockCode }.take(5), outputCodes = emptyList()
+            )
+            HoldingGuardResult(0, emptyList(), holdingOrders.size, holdingOrders.size)
         }
     }
 }

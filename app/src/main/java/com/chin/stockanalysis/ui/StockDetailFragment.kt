@@ -1,5 +1,6 @@
 package com.chin.stockanalysis.ui
 
+import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
@@ -21,6 +22,11 @@ import com.chin.stockanalysis.stock.database.ChinaMarketTradingHours as A股Trad
 import com.chin.stockanalysis.stock.database.StockDataCenter
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.agent.framework.UnifiedAgentRunner
+import com.chin.stockanalysis.agent.core.AgentOrchestrator
+import com.chin.stockanalysis.agent.core.IntentType
+import com.chin.stockanalysis.agent.core.UserIntent
+import com.chin.stockanalysis.config.FeatureFlagManager
+import com.chin.stockanalysis.strategy.HoldingPeriod
 import com.chin.stockanalysis.strategy.data.InstitutionalRatingProvider
 import com.github.mikephil.charting.charts.CandleStickChart
 import com.github.mikephil.charting.components.XAxis
@@ -696,6 +702,36 @@ class StockDetailFragment : Fragment() {
     /** 當前正在進行的 AI 分析 Job（返回鍵可取消） */
     private var aiAnalysisJob: Job? = null
 
+    /**
+     * 新 Agent 框架路徑（AgentOrchestrator）。
+     *
+     * 模式映射：
+     * - MODE_PIPELINE / MODE_V2 → DEEP_ANALYSIS（Scout+Analyst+Guardian 並行，中線週期）
+     * - MODE_QUICK → FOLLOW_UP（僅 Analyst，速度近似舊 Quick）
+     *
+     * 結果適配為 [UnifiedAgentRunner.Result]，UI 層無需改動。
+     */
+    private suspend fun runViaAgentFramework(appCtx: Context, mode: String): UnifiedAgentRunner.Result {
+        val intent = when (mode) {
+            UnifiedAgentRunner.MODE_PIPELINE, UnifiedAgentRunner.MODE_V2 ->
+                UserIntent(IntentType.DEEP_ANALYSIS, target = stockCode, period = HoldingPeriod.MID)
+            else ->
+                UserIntent(IntentType.FOLLOW_UP, target = stockCode)
+        }
+
+        val r = AgentOrchestrator(appCtx).execute(intent, stockCode, stockName)
+
+        return UnifiedAgentRunner.Result(
+            stockCode = stockCode,
+            stockName = stockName,
+            mode = mode,
+            success = r.isSuccess,
+            summaryText = r.summary.ifBlank { r.error ?: "Agent 分析失敗" },
+            elapsedMs = r.totalElapsedMs,
+            errorMessage = r.error
+        )
+    }
+
     /** 運行 AI Agent 分析，切換到 aiResultContainer */
     private fun runAiAgents(mode: String = UnifiedAgentRunner.MODE_QUICK) {
         // 取消之前正在進行的分析
@@ -726,14 +762,19 @@ class StockDetailFragment : Fragment() {
         aiResultScrollView.visibility = View.VISIBLE
 
         aiAnalysisJob = lifecycleScope.launch(Dispatchers.IO) {
-            // 統一 Agent 分析入口
-            val result = UnifiedAgentRunner.run(
-                context = requireContext().applicationContext,
-                stockCode = stockCode,
-                stockName = stockName,
-                mode = mode,
-                sector = initialSector.takeIf { it.isNotEmpty() }
-            )
+            val appCtx = requireContext().applicationContext
+            // 路線選擇：設置開啟 Agent 框架 → AgentOrchestrator（角色化+並行Sub-Agent），否則舊 Runner
+            val result = if (FeatureFlagManager.isAgentFramework(FeatureFlagManager.stockAnalysisRoute)) {
+                runViaAgentFramework(appCtx, mode)
+            } else {
+                UnifiedAgentRunner.run(
+                    context = appCtx,
+                    stockCode = stockCode,
+                    stockName = stockName,
+                    mode = mode,
+                    sector = initialSector.takeIf { it.isNotEmpty() }
+                )
+            }
 
             // 檢查是否被取消或 view 已銷毀
             ensureActive()

@@ -16,7 +16,8 @@
     Layer 6: smart_money_filter（依賴 ai_predict）
     Layer 7: news_guard（依賴 smart_money_filter）
     Layer 8: generate_orders（依賴 smart_money_filter）
-    Layer 9 (並行): position_merge, swap_weak, fitting_save（依賴 generate_orders）
+    Layer 9: swap_weak（依賴 generate_orders）, fitting_save（依賴 generate_orders，並行）
+    Layer 9.5: position_merge（依賴 swap_weak，換鳥後再入庫）
     Layer 10: crosstab_publish（依賴 position_merge，補齊 Hardcode）
 -->
 <DagPipeline id="mid_term_dag" name="中線量化DAG Pipeline" description="自適應參數→多周期熱門→策略篩選→合併增強→跨日聚合→AI精選→主力過濾→新聞攔截→訂單生成→持倉合併/騰龍換鳥/擬合保存">
@@ -33,6 +34,9 @@
 
     <!-- 中線補齊：板塊精選池 Layer 1（並行，依賴 market_context） -->
     <Node id="n_sector_pool" name="板塊精選池" module="sector_stock_pool" />
+
+    <!-- Layer 1（並行）: 持倉風控 — 每次必跑，評估止損/止盈/策略退出 -->
+    <Node id="n_guard" name="持倉風控" module="holding_guard" />
 
     <!-- 中線補齊：候選池過濾 Layer 1.5（依賴 stock_pool） -->
     <Node id="n_cand" name="候選池過濾" module="candidate_pool" />
@@ -115,6 +119,14 @@
       <SourceNodeId>n_ctx</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_sector_pool</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 0 → 1: 市場上下文 → 持倉風控（並行，每次必評估持倉） -->
+    <Link>
+      <SourceNodeId>n_ctx</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_guard</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
 
@@ -236,9 +248,9 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 8 → 9: 買入訂單生成 → 持倉合併（中線補齊） -->
+    <!-- Layer 8 → 9 → 10: 買入訂單生成 → 騰龍換鳥 → 持倉合併（序列：先賣後買避免競態） -->
     <Link>
-      <SourceNodeId>n_orders</SourceNodeId>
+      <SourceNodeId>n_swap</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_merge_pos</TargetNodeId>
       <TargetPortId>0</TargetPortId>
@@ -252,7 +264,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 8 → 9: 買入訂單生成 → 騰龍換鳥（並行） -->
+    <!-- Layer 8 → 9: 買入訂單生成 → 騰龍換鳥（序列鏈第一步） -->
     <Link>
       <SourceNodeId>n_orders</SourceNodeId>
       <SourcePortId>0</SourcePortId>
