@@ -173,14 +173,6 @@ class StrategyListFragment : Fragment() {
             setTextColor(Color.parseColor("#999999")); layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, dp(20)).apply { marginStart = 2 }
             tag = "mainBoardSwitch"
         }; hotSectorRow.addView(mainBoardSwitch)
-        // Agent 分析按鈕（放在主板開關後面）
-        aiPipelineBtn = Button(requireContext()).apply {
-            text = "🧠 Agent"; textSize = 10f; setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#6A1B9A")); setPadding(dp(6),dp(0),dp(6),dp(0))
-            setMinWidth(0); setMinimumWidth(0)
-            layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, dp(20)).apply { marginStart = 4 }
-            setOnClickListener { runAIPipeline() }
-        }; hotSectorRow.addView(aiPipelineBtn)
         header.addView(hotSectorRow)
         layout.addView(header)
 
@@ -190,7 +182,7 @@ class StrategyListFragment : Fragment() {
         val dataBtn = Button(requireContext()).apply { text = "数据"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#455A64")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,0.9f).apply { marginEnd = 3 }; setOnClickListener { showDataMenu() } }; row2.addView(dataBtn)
         val importBtn = Button(requireContext()).apply { text = "导入"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#2E7D32")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.1f).apply { marginEnd = 3 }; setOnClickListener { importHistoricalData() } }; row2.addView(importBtn)
         val addCustomBtn = Button(requireContext()).apply { text = "+策略"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#1565C0")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.1f).apply { marginEnd = 3 }; setOnClickListener { showAddDialog() } }; row2.addView(addCustomBtn)
-        val dragonBtn = Button(requireContext()).apply { text = "🐲龙头轮动"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#6A1B9A")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.3f); setOnClickListener { runDragonHeadDip() } }; row2.addView(dragonBtn)
+        aiPipelineBtn = Button(requireContext()).apply { text = "🧠 Agent 分析"; textSize = 11f; setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#6A1B9A")); setPadding(6,6,6,6); setMinWidth(0); setMinimumWidth(0); layoutParams = LayoutParams(0,60,1.3f).apply { marginEnd = 3 }; setOnClickListener { runAIPipeline() } }; row2.addView(aiPipelineBtn)
         layout.addView(row2)
 
         val statusRow = LinearLayout(requireContext()).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(16,2,16,4); setBackgroundColor(Color.WHITE) }
@@ -256,9 +248,15 @@ class StrategyListFragment : Fragment() {
     private fun getSectorLabel(stockCode: String, stockName: String = ""): String {
         val cacheKey = "$stockCode|$stockName"
         sectorLabelCache[cacheKey]?.let { return it }
-        val result = try { kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) { StockDataCenter.getSubSectorByStock(stockCode, stockName) } }
-        catch (_: Exception) { if (stockName.isNotEmpty()) hardcodedSubSector(stockName) else "-" }
-        sectorLabelCache[cacheKey] = result; return result
+        // 優先使用硬編碼映射（無 IO，不會阻塞主線程）
+        val hardcoded = if (stockName.isNotEmpty()) hardcodedSubSector(stockName) else ""
+        if (hardcoded.isNotEmpty()) {
+            sectorLabelCache[cacheKey] = hardcoded
+            return hardcoded
+        }
+        // 無硬編碼匹配時返回佔位符，避免在 RecyclerView 綁定時阻塞主線程
+        sectorLabelCache[cacheKey] = "-"
+        return "-"
     }
     private fun updateSpinnerLabels(hasSubSectors: Boolean) {
         val s = if (hasSubSectors) "(板块/子板块)" else ""

@@ -5,16 +5,19 @@
   短線特徵：持倉 1 天~2 週，技術面為主，資金情緒脈衝，要熱點熱點熱點。
   含熱度計算、新聞攔截、騰龍換鳥等短線專有節點。
 
-  共 14 個 Node：
-    Layer 0 (並行): market_context, multi_period_hot, bg_manager
+  共 18 個 Node：
+    Layer 0 (並行): market_context, multi_period_hot, bg_manager, adaptive_params（大盤防守）
     Layer 1: stock_pool（依賴 market_context）
+    Layer 1.5 (並行): candidate_pool, zipline_factor（補齊 Hardcode，依賴 stock_pool）
     Layer 2 (並行): signal_merge（策略動態注入）, heat_score（依賴 stock_pool）
-    Layer 3: sector_boost（依賴 signal_merge + heat_score）
+    Layer 3: sector_boost（依賴 signal_merge）
     Layer 4: ai_predict（依賴 sector_boost）
     Layer 5: smart_money_filter（依賴 ai_predict）
     Layer 6: news_guard（依賴 smart_money_filter）
-    Layer 7: generate_orders（依賴 news_guard）
-    Layer 8 (並行): position_merge, swap_weak, fitting_save（依賴 generate_orders）
+    Layer 7: generate_orders（依賴 news_guard + adaptive_params）
+    Layer 8: swap_weak（依賴 generate_orders，持倉滿時賣弱買強）
+    Layer 9: position_merge（依賴 swap_weak，換鳥後再入庫）, fitting_save（依賴 generate_orders，並行）
+    Layer 10: crosstab_publish（依賴 position_merge）
 -->
 <DagPipeline id="short_term_dag" name="短線量化DAG Pipeline" description="市場上下文→多周期熱門→股票池→策略篩選+熱度→板塊加權→AI精選→主力過濾→新聞攔截→訂單生成→持倉合併/騰龍換鳥/擬合保存">
 
@@ -24,9 +27,14 @@
     <Node id="n_ctx" name="市場上下文" module="market_context" />
     <Node id="n_multihot" name="多周期熱門股聚合" module="multi_period_hot" />
     <Node id="n_bg" name="後臺暫停/恢復" module="bg_manager" />
+    <Node id="n_adaptive" name="大盤分析+自適應參數" module="adaptive_params" />
 
     <!-- Layer 1 -->
     <Node id="n_pool" name="股票池" module="stock_pool" />
+
+    <!-- Layer 1.5: 候選池過濾 + Zipline 因子預計算（補齊 Hardcode） -->
+    <Node id="n_cand" name="候選池過濾" module="candidate_pool" />
+    <Node id="n_zipline" name="Zipline因子計算" module="zipline_factor" />
 
     <!-- 聚合 Layer 2（並行） -->
     <Node id="n_merge" name="信號合併" module="signal_merge" />
@@ -42,6 +50,7 @@
         <param name="minScore" value="55" />
       </config>
     </Node>
+    <Node id="n_candle" name="K線形態偵測" module="candle_pattern" />
 
     <!-- 新聞攔截 Layer 6 -->
     <Node id="n_newsguard" name="新聞攔截+技術過濾" module="news_guard">
@@ -54,16 +63,17 @@
     <!-- 訂單生成 Layer 7 -->
     <Node id="n_orders" name="買入訂單生成" module="generate_orders">
       <config>
-        <param name="maxHoldings" value="3" />
+        <param name="maxHoldings" value="5" />
         <param name="orderType" value="ShortTermQuant" />
       </config>
     </Node>
 
-    <!-- 持倉合併 + 騰龍換鳥 + 擬合 Layer 8（並行） -->
+    <!-- 騰龍換鳥 Layer 8 + 持倉合併 Layer 9 + 擬合（並行） -->
     <Node id="n_merge_pos" name="持倉合併" module="position_merge" />
+    <Node id="n_crosstab" name="跨Tab發布" module="crosstab_publish" />
     <Node id="n_swap" name="騰龍換鳥" module="swap_weak">
       <config>
-        <param name="maxHoldings" value="3" />
+        <param name="maxHoldings" value="5" />
       </config>
     </Node>
     <Node id="n_fit" name="擬合計算+保存" module="fitting_save" />
@@ -79,9 +89,25 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 1 → 2: 股票池 → 信號合併（策略動態注入在 Java 層完成） -->
+    <!-- Layer 1 → 1.5: 股票池 → 候選池過濾 -->
     <Link>
       <SourceNodeId>n_pool</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_cand</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 1.5 → 1.5: 候選池過濾 → Zipline 因子計算 -->
+    <Link>
+      <SourceNodeId>n_cand</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_zipline</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 1.5 → 2: Zipline 因子計算 → 信號合併（策略動態注入在 Java 層完成） -->
+    <Link>
+      <SourceNodeId>n_zipline</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_merge</TargetNodeId>
       <TargetPortId>0</TargetPortId>
@@ -135,6 +161,14 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
+    <!-- Layer 5 → 6: 主力資金過濾 → K線形態偵測（並行，輔助提醒） -->
+    <Link>
+      <SourceNodeId>n_smart</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_candle</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
     <!-- Layer 6 → 7: 新聞攔截 → 買入訂單生成 -->
     <Link>
       <SourceNodeId>n_newsguard</SourceNodeId>
@@ -143,19 +177,35 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 7 → 8: 買入訂單生成 → 持倉合併 -->
+    <!-- Layer 0 → 7: 大盤分析 → 買入訂單生成（自適應參數注入，空頭防守） -->
+    <Link>
+      <SourceNodeId>n_adaptive</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_orders</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 7 → 8: 買入訂單生成 → 騰龍換鳥（持倉滿時賣弱買強） -->
     <Link>
       <SourceNodeId>n_orders</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_swap</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 8 → 9: 騰龍換鳥 → 持倉合併（換鳥後再入庫，避免超持） -->
+    <Link>
+      <SourceNodeId>n_swap</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_merge_pos</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 7 → 8: 買入訂單生成 → 騰龍換鳥（並行） -->
+    <!-- Layer 8 → 9: 持倉合併 → 跨 Tab 發布（補齊 Hardcode） -->
     <Link>
-      <SourceNodeId>n_orders</SourceNodeId>
+      <SourceNodeId>n_merge_pos</SourceNodeId>
       <SourcePortId>0</SourcePortId>
-      <TargetNodeId>n_swap</TargetNodeId>
+      <TargetNodeId>n_crosstab</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
 

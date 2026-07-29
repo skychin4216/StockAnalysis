@@ -262,7 +262,12 @@ class ShortTermQuantFragment : QuantFragmentBase() {
                     today = today,
                     strategies = strategies,
                     orderType = "shortterm",
-                    importDays = 60
+                    importDays = 60,
+                    onNodeProgress = { pipelineName, nodeName ->
+                        lifecycleScope.launch(Dispatchers.Main) {
+                            statusTv.text = "🔄 [DAG] ${pipelineName} ${nodeName} 執行中..."
+                        }
+                    }
                 )
                 withContext(Dispatchers.Main) {
                     showDialog(
@@ -650,7 +655,7 @@ class ShortTermQuantFragment : QuantFragmentBase() {
     // UI 辅助
     // ═══════════════════════════════════════
 
-    private fun getSector(code: String): String = try { kotlinx.coroutines.runBlocking { com.chin.stockanalysis.stock.database.StockDataCenter.getSectorsByStock(code).firstOrNull() ?: "" } } catch (_: Exception) { "" }
+    private fun getSector(code: String): String = ""
 
     private fun tableHeaderRow(): TableRow { val hr = TableRow(requireContext()); for (h in listOf("名称","板块","代码","强度","价格","涨幅")) hr.addView(TextView(requireContext()).apply { text=h; textSize=10f; setTextColor(Color.parseColor("#999999")); setTypeface(null,Typeface.BOLD); gravity=Gravity.CENTER; setPadding(2,4,2,4) }); return hr }
 

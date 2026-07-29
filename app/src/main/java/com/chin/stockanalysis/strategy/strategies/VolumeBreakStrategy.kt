@@ -2,6 +2,7 @@ package com.chin.stockanalysis.strategy.strategies
 
 import android.util.Log
 import com.chin.stockanalysis.stock.StockRealtime
+import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.*
 import com.chin.stockanalysis.strategy.data.StockScreener
 import com.chin.stockanalysis.strategy.models.WeightFactor
@@ -11,6 +12,15 @@ import com.chin.stockanalysis.strategy.models.SignalAction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/**
+ * ## 放量突破策略（修正版）
+ *
+ * 使用真實量比（今日成交量 / 近 10 日均量）代替絕對成交額。
+ * 解決舊版系統性偏好大盤股的問題。
+ *
+ * 篩選：量比 >= 2.0 且漲幅 >= 2% 且價格突破開盤價
+ * 評分：量比(40%) + 突破幅度(30%) + 漲幅(30%)
+ */
 class VolumeBreakStrategy(
     private val screener: StockScreener
 ) : Strategy {
@@ -21,17 +31,17 @@ class VolumeBreakStrategy(
     override val category = StrategyCategory.VOLUME
     override val holdingPeriods = listOf(HoldingPeriod.SHORT, HoldingPeriod.MID)
     override val source = StrategySource.BUILTIN
-    override val signalExpiryHours = 120   // 5個交易日
+    override val signalExpiryHours = 120
 
     override val config = StrategyConfig.custom(
-        params = mapOf("volume_ratio_min" to 2.0, "break_percent_min" to 1.0, "change_percent_min" to 2.0),
+        params = mapOf("volume_ratio_min" to 2.0, "change_percent_min" to 2.0, "lookback_days" to 10),
         maxResults = 15
     )
 
     override var weightFactors: List<WeightFactor> = listOf(
-        WeightFactor("volume", "量比得分", 40, "成交额规模评分"),
-        WeightFactor("break", "突破强度", 30, "价格超出开盘价幅度评分"),
-        WeightFactor("change", "涨幅得分", 30, "当日涨跌幅评分")
+        WeightFactor("volume_ratio", "量比得分", 40, "今日成交量/近10日均量"),
+        WeightFactor("break", "突破强度", 30, "价格超出开盘价幅度"),
+        WeightFactor("change", "涨幅得分", 30, "当日涨跌幅")
     )
 
     override suspend fun screen(): Result<ScreeningResult> = withContext(Dispatchers.IO) {
@@ -51,57 +61,93 @@ class VolumeBreakStrategy(
         } catch (e: Exception) { Result.failure(e) }
     }
 
+    override suspend fun isAvailable(): Boolean = true
+
     private suspend fun screenWithPool(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
         if (pool.isEmpty()) return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,
             signals = emptyList(), totalScanned = 0, scanTimeMs = System.currentTimeMillis() - startTime
         ))
 
-        // 大盤環境預檢：BEARISH 時提高放量突破門檻，避免在下跌趨勢中追突破
         val marketDirection = try { screener.detectMarketDirection() } catch (_: Exception) { "OSCILLATION" }
-
         val isBearish = marketDirection == "BEARISH"
-        // BEARISH 時提高漲幅門檻（+1%）與最低分數門檻（+15分）
         val dynamicChangeMin = if (isBearish) 3.0 else 2.0
-        val dynamicStrengthThreshold = if (isBearish) 45 else 30
-        Log.i(id, "大盤環境: $marketDirection → 缺口門檻已調整 chg≥${dynamicChangeMin}%, strength≥${dynamicStrengthThreshold}")
+        val dynamicStrengthThreshold = if (isBearish) 50 else 35
+        val volumeRatioMin = (config.params["volume_ratio_min"] as? Number)?.toDouble() ?: 2.0
+        val lookbackDays = (config.params["lookback_days"] as? Number)?.toInt() ?: 10
 
-        val step1 = pool.filter { it.changePercent >= dynamicChangeMin && it.price > it.open && it.amount > 10_000_000 }
-        Log.i("VB_Strategy", "pool=${pool.size} → 过滤(chg>=${dynamicChangeMin}% & price>open & amt>10M)=${step1.size}")
-        val step2 = step1.map { calculateSignal(it) }
-        val step3 = step2.filter { it.strength >= dynamicStrengthThreshold }
-        Log.i("VB_Strategy", "打分后 strength>=${dynamicStrengthThreshold}: ${step3.size}")
-        if (step2.isNotEmpty()) {
-            val top = step2.sortedByDescending { it.strength }.take(3)
-            Log.i("VB_Strategy", "  Top3: ${top.joinToString { "${it.stockName}=${it.strength}" }}")
+        val db = StockDatabase.getInstance(screener.context)
+        val dao = db.dailySnapshotDao()
+
+        // 預過濾：當日有漲幅、價格突破開盤價、有基本流動性
+        val candidates = pool.filter {
+            it.changePercent >= dynamicChangeMin &&
+            it.price > it.open &&
+            it.amount > 30_000_000 &&
+            it.price > 2.0
         }
-        val signals = step3
-            .sortedByDescending { it.strength }
-            .take(config.maxResults)
+        Log.i("VB_Strategy", "大盤: $marketDirection, 候選: ${candidates.size}/${pool.size}, 量比門檻: $volumeRatioMin")
+
+        val signals = mutableListOf<StrategySignal>()
+
+        for (stock in candidates) {
+            try {
+                // 從 DB 讀取近 lookbackDays 天歷史成交量
+                val history = dao.getByCode(stock.code, lookbackDays)
+                if (history.isEmpty()) continue
+
+                val avgVolume = history.map { it.volume.toDouble() }.average()
+                if (avgVolume <= 0) continue
+
+                // 計算真實量比
+                val volumeRatio = stock.volume.toDouble() / avgVolume
+                if (volumeRatio < volumeRatioMin) continue
+
+                // 突破幅度：價格超出開盤價的百分比
+                val breakPercent = if (stock.open > 0) (stock.price - stock.open) / stock.open * 100 else 0.0
+
+                // 評分
+                val volumeScore = when {
+                    volumeRatio > 5.0 -> 40
+                    volumeRatio > 3.5 -> 35
+                    volumeRatio > 2.5 -> 30
+                    volumeRatio > 2.0 -> 25
+                    else -> 15
+                }
+                val breakScore = when {
+                    breakPercent > 5 -> 30
+                    breakPercent > 3 -> 25
+                    breakPercent > 2 -> 20
+                    breakPercent > 1 -> 15
+                    breakPercent > 0 -> 10
+                    else -> 0
+                }
+                val changeScore = when {
+                    stock.changePercent > 7 -> 30
+                    stock.changePercent > 5 -> 25
+                    stock.changePercent > 3 -> 20
+                    stock.changePercent > 2 -> 15
+                    else -> 10
+                }
+
+                val strength = (volumeScore + breakScore + changeScore).coerceIn(0, 100)
+                if (strength < dynamicStrengthThreshold) continue
+
+                signals.add(StrategySignal(
+                    stockCode = stock.code, stockName = stock.name, strategyId = id, category = category,
+                    strength = strength,
+                    action = when { strength >= 75 -> SignalAction.BUY; strength >= 55 -> SignalAction.WATCH; else -> SignalAction.HOLD },
+                    reason = "量比${"%.1f".format(volumeRatio)} 漲${"%.1f".format(stock.changePercent)}% 突破${"%.1f".format(breakPercent)}%",
+                    currentPrice = stock.price, changePercent = stock.changePercent
+                ))
+            } catch (_: Exception) { continue }
+        }
+
+        val result = signals.sortedByDescending { it.strength }.take(config.maxResults)
+        Log.i("VB_Strategy", "計算完成: ${candidates.size} 候選 → ${result.size} 信號")
         return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,
-            signals = signals, totalScanned = pool.size, scanTimeMs = System.currentTimeMillis() - startTime
+            signals = result, totalScanned = pool.size, scanTimeMs = System.currentTimeMillis() - startTime
         ))
-    }
-
-    override suspend fun isAvailable(): Boolean = true
-
-    private fun calculateSignal(stock: StockRealtime): StrategySignal {
-        val w = weightFactors.associateBy { it.key }
-        val volumeScore = when { stock.amount > 2_000_000_000 -> 40; stock.amount > 1_000_000_000 -> 30; stock.amount > 500_000_000 -> 20; stock.amount > 200_000_000 -> 10; else -> 5 }
-        val breakPercent = if (stock.open > 0) ((stock.price - stock.open) / stock.open) * 100 else 0.0
-        val breakScore = when { breakPercent > 5 -> 30; breakPercent > 3 -> 25; breakPercent > 2 -> 20; breakPercent > 1 -> 15; breakPercent > 0 -> 10; else -> 0 }
-        val changeScore = when { stock.changePercent > 7 -> 30; stock.changePercent > 5 -> 25; stock.changePercent > 3 -> 20; stock.changePercent > 2 -> 15; else -> 10 }
-        val rawStrength = (volumeScore * (w["volume"]?.weight ?: 40) / 100.0).toInt() +
-                (breakScore * (w["break"]?.weight ?: 30) / 100.0).toInt() +
-                (changeScore * (w["change"]?.weight ?: 30) / 100.0).toInt()
-        val strength = minOf(rawStrength, 100)
-        return StrategySignal(
-            stockCode = stock.code, stockName = stock.name, strategyId = id, category = category,
-            strength = strength,
-            action = when { strength >= 80 -> SignalAction.BUY; strength >= 60 -> SignalAction.WATCH; else -> SignalAction.HOLD },
-            reason = "放量突破：涨${String.format("%.2f", stock.changePercent)}%, 突破${String.format("%.2f", breakPercent)}%",
-            currentPrice = stock.price, changePercent = stock.changePercent
-        )
     }
 }

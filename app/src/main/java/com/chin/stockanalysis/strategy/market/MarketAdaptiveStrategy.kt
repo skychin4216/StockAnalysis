@@ -53,7 +53,7 @@ object MarketAdaptiveStrategy {
                 stopLossRate = -0.03,
                 takeProfitRate = 0.05,
                 positionCapPercent = capResult.capPercent,
-                description = "📉 強趨勢空頭（強度${strength}）：閾值70，最多1只，快進快出"
+                description = "📉 強趨勢空頭（強度${strength}）：閾值55，最多2只，快進快出"
             )
             // 弱趨勢下跌
             direction == "BEARISH" -> AdaptiveParams(

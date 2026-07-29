@@ -18,10 +18,10 @@ object NodeRegistry {
     private const val TAG = "NodeRegistry"
 
     /** Node 工廠函數：module type + config Map → PipelineNode */
-    private val factories = mutableMapOf<String, (Context, Map<String, String>) -> PipelineNode<*, *>>()
+    private val factories = java.util.concurrent.ConcurrentHashMap<String, (Context, Map<String, String>) -> PipelineNode<*, *>>()
 
     /** 策略列表（由外部注入，XML 中 module="strategy:ma_golden_cross" 時使用） */
-    private val strategyMap = mutableMapOf<String, Strategy>()
+    private val strategyMap = java.util.concurrent.ConcurrentHashMap<String, Strategy>()
 
     /**
      * 註冊內置 Node 工廠。
@@ -44,6 +44,11 @@ object NodeRegistry {
         register("smart_money_filter") { ctx, config ->
             val minScore = config["minScore"]?.toIntOrNull() ?: 55
             com.chin.stockanalysis.strategy.topology.nodes.SmartMoneyFilterNode(minScore)
+        }
+
+        // K線形態偵測（非關鍵，透傳輸入）
+        register("candle_pattern") { _, _ ->
+            com.chin.stockanalysis.strategy.topology.nodes.CandlePatternNode()
         }
 
         // AI
@@ -102,6 +107,29 @@ object NodeRegistry {
         register("position_merge") { ctx, _ -> com.chin.stockanalysis.strategy.topology.nodes.PositionMergeNode() }
         register("bg_manager") { ctx, _ -> com.chin.stockanalysis.strategy.topology.nodes.BackgroundManagerNode() }
         register("fitting_save") { ctx, _ -> com.chin.stockanalysis.strategy.topology.nodes.FittingSaveNode() }
+
+        // ══════════ Hardcode 補齊 Node（HardcodeCompatNodes.kt） ══════════
+
+        // 候選池過濾（所有周期共用）
+        register("candidate_pool") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.CandidatePoolNode() }
+
+        // Zipline 因子預計算（短線專用）
+        register("zipline_factor") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.ZiplineFactorNode() }
+
+        // 板塊精選池（中線專用）
+        register("sector_stock_pool") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.SectorStockPoolNode() }
+
+        // T+1 自動賣出（超短線專用）
+        register("t1_auto_sell") { _, config ->
+            val stopLoss = config["stopLossPct"]?.toDoubleOrNull() ?: -2.0
+            val takeProfit = config["takeProfitPct"]?.toDoubleOrNull() ?: 3.0
+            com.chin.stockanalysis.strategy.topology.nodes.T1AutoSellNode(
+                stopLossPct = stopLoss, takeProfitPct = takeProfit
+            )
+        }
+
+        // 跨 Tab 發布（短線/中線共用）
+        register("crosstab_publish") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.CrossTabPublishNode() }
 
         Log.i(TAG, "Node 註冊完成: ${factories.keys}")
     }

@@ -394,7 +394,12 @@ class LongTermQuantFragment : QuantFragmentBase() {
                 today = today,
                 strategies = strategies,
                 orderType = "long_term",
-                importDays = 60
+                importDays = 60,
+                onNodeProgress = { pipelineName, nodeName ->
+                    lifecycleScope.launch(Dispatchers.Main) {
+                        statusTv.text = "🔄 [DAG] ${pipelineName} ${nodeName} 執行中..."
+                    }
+                }
             )
             withContext(Dispatchers.Main) {
                 showDialog(

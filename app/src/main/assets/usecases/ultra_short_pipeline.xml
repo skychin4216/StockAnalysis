@@ -3,17 +3,20 @@
   ## 超短線量化 DAG Pipeline — 高通 Camera Pipeline 風格
 
   超短線特徵：持倉 1 天，純技術面，隔夜情緒溢價，快進快出。
-  流程最精簡，不加熱點/輪動/換鳥等中長線專有節點。
+  流程最精簡，不加熱點/輪動等中長線專有節點。
 
-  共 9 個 Node：
-    Layer 0 (並行): market_context, bg_manager
+  共 13 個 Node：
+    Layer 0 (並行): market_context, bg_manager, adaptive_params（大盤防守）
     Layer 1: stock_pool（依賴 market_context）
+    Layer 1.5: candidate_pool（候選池過濾，補齊 Hardcode）
     Layer 2: signal_merge（策略動態注入在 Java 層完成）
     Layer 3: sector_boost（依賴 signal_merge）
     Layer 4: ai_predict（依賴 sector_boost）
-    Layer 5: smart_money_filter（依賴 ai_predict）
-    Layer 6: generate_orders（依賴 smart_money_filter）
-    Layer 7 (並行): position_merge, fitting_save（依賴 generate_orders）
+    Layer 5: smart_money_filter（依賴 ai_predict，閾值30——超短V型票主力分天然低）
+    Layer 6: generate_orders（依賴 smart_money_filter + adaptive_params）
+    Layer 7: swap_weak（依賴 generate_orders，持倉滿時賣弱買強）
+    Layer 8: position_merge（依賴 swap_weak，換鳥後再入庫）
+    Layer 9 (並行): t1_auto_sell（依賴 position_merge）, fitting_save（依賴 generate_orders）
 -->
 <DagPipeline id="ultra_short_dag" name="超短線量化DAG Pipeline" description="市場上下文→股票池→策略篩選→板塊加權→AI精選→主力過濾→訂單生成→持倉合併/擬合保存">
 
@@ -22,9 +25,13 @@
     <!-- 數據準備 Layer 0 -->
     <Node id="n_ctx" name="市場上下文" module="market_context" />
     <Node id="n_bg" name="後臺暫停/恢復" module="bg_manager" />
+    <Node id="n_adaptive" name="大盤分析+自適應參數" module="adaptive_params" />
 
     <!-- Layer 1 -->
     <Node id="n_pool" name="股票池" module="stock_pool" />
+
+    <!-- Layer 1.5: 候選池過濾（補齊 Hardcode） -->
+    <Node id="n_cand" name="候選池過濾" module="candidate_pool" />
 
     <!-- 聚合 Layer 2 -->
     <Node id="n_merge" name="信號合併" module="signal_merge" />
@@ -36,20 +43,34 @@
     <Node id="n_ai" name="AI精選" module="ai_predict" />
     <Node id="n_smart" name="主力資金過濾" module="smart_money_filter">
       <config>
-        <param name="minScore" value="55" />
+        <param name="minScore" value="30" />
       </config>
     </Node>
+    <Node id="n_candle" name="K線形態偵測" module="candle_pattern" />
 
     <!-- 訂單生成 Layer 6 -->
     <Node id="n_orders" name="買入訂單生成" module="generate_orders">
       <config>
-        <param name="maxHoldings" value="3" />
+        <param name="maxHoldings" value="5" />
         <param name="orderType" value="UltraShortQuant" />
       </config>
     </Node>
 
-    <!-- 持倉合併 + 擬合 Layer 7（並行） -->
+    <!-- 騰龍換鳥 Layer 7（持倉滿時賣弱買強） -->
+    <Node id="n_swap" name="騰龍換鳥" module="swap_weak">
+      <config>
+        <param name="maxHoldings" value="5" />
+      </config>
+    </Node>
+
+    <!-- 持倉合併 + T+1賣出 + 擬合 Layer 8-9 -->
     <Node id="n_merge_pos" name="持倉合併" module="position_merge" />
+    <Node id="n_t1sell" name="T+1自動賣出" module="t1_auto_sell">
+      <config>
+        <param name="stopLossPct" value="-2.0" />
+        <param name="takeProfitPct" value="3.0" />
+      </config>
+    </Node>
     <Node id="n_fit" name="擬合計算+保存" module="fitting_save" />
   </NodeList>
 
@@ -63,9 +84,17 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 1 → 2: 股票池 → 信號合併（策略動態注入在 Java 層完成） -->
+    <!-- Layer 1 → 1.5: 股票池 → 候選池過濾 -->
     <Link>
       <SourceNodeId>n_pool</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_cand</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 1.5 → 2: 候選池過濾 → 信號合併（策略動態注入在 Java 層完成） -->
+    <Link>
+      <SourceNodeId>n_cand</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_merge</TargetNodeId>
       <TargetPortId>0</TargetPortId>
@@ -103,11 +132,43 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 6 → 7: 買入訂單生成 → 持倉合併 -->
+    <!-- Layer 5 → 6: 主力資金過濾 → K線形態偵測（並行，輔助提醒） -->
+    <Link>
+      <SourceNodeId>n_smart</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_candle</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 0 → 6: 大盤分析 → 買入訂單生成（自適應參數注入，空頭防守） -->
+    <Link>
+      <SourceNodeId>n_adaptive</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_orders</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 6 → 7: 買入訂單生成 → 騰龍換鳥（持倉滿時賣弱買強） -->
     <Link>
       <SourceNodeId>n_orders</SourceNodeId>
       <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_swap</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 7 → 8: 騰龍換鳥 → 持倉合併（換鳥後再入庫，避免超持） -->
+    <Link>
+      <SourceNodeId>n_swap</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_merge_pos</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 7 → 8: 持倉合併 → T+1 自動賣出 -->
+    <Link>
+      <SourceNodeId>n_merge_pos</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_t1sell</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
 

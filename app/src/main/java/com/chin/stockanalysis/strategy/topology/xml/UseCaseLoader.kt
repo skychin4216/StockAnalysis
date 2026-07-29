@@ -2,6 +2,7 @@
 
 import android.content.Context
 import android.util.Log
+import com.chin.stockanalysis.strategy.HoldingPeriod
 import com.chin.stockanalysis.strategy.Strategy
 import com.chin.stockanalysis.strategy.topology.core.*
 import kotlinx.coroutines.Dispatchers
@@ -109,9 +110,14 @@ object UseCaseLoader {
      *
      * @param useCaseId UseCase ID（如 "short_term"、"mid_term"、"screening"）
      * @param tradeDate 交易日
+     * @param onNodeProgress 節點執行進度回調（可選），參數為 (pipelineName, nodeName)，供 UI 實時顯示
      * @return [MultiPipelineResult] 包含所有 Pipeline 的結果
      */
-    suspend fun run(useCaseId: String, tradeDate: String): MultiPipelineResult {
+    suspend fun run(
+        useCaseId: String,
+        tradeDate: String,
+        onNodeProgress: ((pipelineName: String, nodeName: String) -> Unit)? = null
+    ): MultiPipelineResult {
         if (!initialized) {
             return MultiPipelineResult(
                 useCaseId = useCaseId,
@@ -132,6 +138,9 @@ object UseCaseLoader {
                 )
 
             Log.i(TAG, "加載 UseCase: ${useCaseConfig.name} → ${useCaseConfig.steps.size} 個步驟")
+
+            // 讀取 UseCase 的持倉周期（用於策略注入過濾：只注入匹配周期的策略）
+            val useCasePeriod = useCaseConfig.config["holdingPeriod"]
 
             // 2. 加載所有步驟（Pipeline 引用 + 直接 Node）
             val loadedPipelines = mutableListOf<Pair<String, Pipeline>>()  // (stepName, pipeline)
@@ -157,7 +166,7 @@ object UseCaseLoader {
                                 Log.e(TAG, "DAG Pipeline 加載失敗: ${step.ref}")
                             } else {
                                 Log.i(TAG, "DAG Pipeline 加載成功: ${dagPipeline.name} — ${dagPipeline.nodes.size} nodes, ${dagPipeline.edges.size} edges")
-                                val enriched = injectStrategiesToDag(dagPipeline)
+                                val enriched = injectStrategiesToDag(dagPipeline, useCasePeriod)
                                 loadedDagPipelines.add(pipelineName to enriched)
                             }
                         } else {
@@ -168,7 +177,7 @@ object UseCaseLoader {
                                 Log.e(TAG, "Pipeline 加載失敗: ${step.ref}")
                             } else {
                                 Log.i(TAG, "Pipeline 加載成功: ${pipeline.name} — ${pipeline.stages.size} 個 Stage")
-                                val enriched = injectStrategies(pipeline)
+                                val enriched = injectStrategies(pipeline, useCasePeriod)
                                 loadedPipelines.add(pipelineName to enriched)
                             }
                         }
@@ -195,6 +204,8 @@ object UseCaseLoader {
                 smartMoneyCache = com.chin.stockanalysis.strategy.data.SmartMoneyCache,
                 config = config
             )
+            // 掛上 UI 進度回調（DAG 執行時每個節點開始會回傳 pipelineName + nodeName）
+            context.onNodeProgress = onNodeProgress
 
             // 4. 將策略列表存入 context，供 DAG Node 使用
             val allStrategies = NodeRegistry.listModules()
@@ -276,7 +287,16 @@ object UseCaseLoader {
             for ((name, dagPipeline) in loadedDagPipelines) {
                 Log.i(TAG, "▶ 執行 DAG Pipeline: $name")
                 val dagResult = try {
-                    dagPipeline.execute(context)
+                    kotlinx.coroutines.withTimeout(180_000L) {
+                        dagPipeline.execute(context)
+                    }
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    Log.e(TAG, "DAG Pipeline 超時 (180s): $name")
+                    DagPipelineResult(
+                        pipelineName = name, success = false,
+                        nodeResults = emptyMap(), totalElapsedMs = 180_000,
+                        errors = mapOf(name to "DAG 執行超時 (180s)")
+                    )
                 } catch (e: Exception) {
                     DagPipelineResult(
                         pipelineName = name, success = false,
@@ -392,15 +412,20 @@ object UseCaseLoader {
      *
      * 找到名為 "策略篩選" 的 Stage，為每個策略創建一條 LinkList。
      */
-    private fun injectStrategies(pipeline: Pipeline): Pipeline {
+    private fun injectStrategies(pipeline: Pipeline, periodStr: String? = null): Pipeline {
+        val targetPeriod = periodFromString(periodStr)
         val strategies = NodeRegistry.listModules()
             .filter { it.startsWith("strategy:") }
             .mapNotNull { module ->
                 NodeRegistry.createNode(module, emptyMap(), appContext)
             }
+            .filter { node ->
+                val strategy = (node as? com.chin.stockanalysis.strategy.topology.nodes.StrategyNode)?.strategy
+                targetPeriod == null || strategy == null || targetPeriod in strategy.holdingPeriods
+            }
 
         if (strategies.isEmpty()) {
-            Log.w(TAG, "無已註冊的策略，Pipeline 將跳過策略篩選 Stage")
+            Log.w(TAG, "無匹配周期[$periodStr]的策略，Pipeline 將跳過策略篩選 Stage")
             return pipeline
         }
 
@@ -437,17 +462,25 @@ object UseCaseLoader {
      * - ...（每個策略並行）
      *
      * 這樣策略節點會與 n_pool 同層或下一層，拓撲排序會自動推導正確的並行度。
+     *
+     * **周期過濾**：只注入 `holdingPeriods` 包含 [periodStr] 對應周期的策略，
+     * 避免中線 Pipeline 執行超短線策略（反之亦然）。periodStr 為 null 時注入全部。
      */
-    private fun injectStrategiesToDag(dag: DagPipeline): DagPipeline {
+    private fun injectStrategiesToDag(dag: DagPipeline, periodStr: String? = null): DagPipeline {
+        val targetPeriod = periodFromString(periodStr)
         val strategies = NodeRegistry.listModules()
             .filter { it.startsWith("strategy:") }
             .mapNotNull { module ->
                 val node = NodeRegistry.createNode(module, emptyMap(), appContext)
                 if (node != null) module to node else null
             }
+            .filter { (_, node) ->
+                val strategy = (node as? com.chin.stockanalysis.strategy.topology.nodes.StrategyNode)?.strategy
+                targetPeriod == null || strategy == null || targetPeriod in strategy.holdingPeriods
+            }
 
         if (strategies.isEmpty()) {
-            Log.w(TAG, "無已註冊的策略，DAG Pipeline 將跳過策略注入")
+            Log.w(TAG, "無匹配周期[$periodStr]的策略，DAG Pipeline 將跳過策略注入")
             return dag
         }
 
@@ -477,7 +510,8 @@ object UseCaseLoader {
         // 需要移除 n_pool → n_merge 的直接連接（如果存在），讓策略節點成為中間層
         val filteredEdges = newEdges.filterNot { it.sourceNodeId == "n_pool" && it.targetNodeId == "n_merge" }
 
-        Log.i(TAG, "注入 ${strategyDagNodes.size} 個策略到 DAG Pipeline")
+        Log.i(TAG, "注入 ${strategyDagNodes.size} 個策略到 DAG Pipeline" +
+                (if (targetPeriod != null) "（周期: $periodStr）" else "（未指定周期，注入全部）"))
 
         return DagPipeline(
             id = dag.id,
@@ -486,6 +520,18 @@ object UseCaseLoader {
             nodes = dag.nodes + strategyDagNodes,
             edges = filteredEdges
         )
+    }
+
+    /**
+     * UseCase XML 的 holdingPeriod 字串 → [HoldingPeriod] 枚舉。
+     * 無法識別時返回 null（注入全部策略，向後兼容）。
+     */
+    private fun periodFromString(period: String?): HoldingPeriod? = when (period) {
+        "ultra_short" -> HoldingPeriod.ULTRA_SHORT
+        "short" -> HoldingPeriod.SHORT
+        "mid" -> HoldingPeriod.MID
+        "long" -> HoldingPeriod.LONG
+        else -> null
     }
 
     private fun parsePipelineConfig(config: Map<String, String>): PipelineConfig {

@@ -205,6 +205,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
      * 後期 DAG Pipeline 功能完整後，將此方法邏輯合併回 executeTrade() 並刪除。
      */
     private suspend fun executeTradeViaDagPipeline(tradeDate: String, today: String, totalStart: Long) {
+        val appCtx = requireContext().applicationContext
         withContext(Dispatchers.Main) {
             statusTv.text = "🔄 [DAG] 初始化 Pipeline..."
         }
@@ -222,23 +223,23 @@ class MidTermQuantFragment : QuantFragmentBase() {
             }
 
             com.chin.stockanalysis.strategy.topology.xml.UseCaseLoader.init(
-                requireContext(), strategies
+                appCtx, strategies
             )
 
             // 數據導入檢查（與原始流程一致）
-            val db = StockDatabase.getInstance(requireContext())
+            val db = StockDatabase.getInstance(appCtx)
             val todaySnaps = db.dailySnapshotDao().getByDate(today)
             if (todaySnaps.size < 100) {
                 withContext(Dispatchers.Main) {
                     statusTv.text = "🔄 [DAG] 數據不足(${todaySnaps.size}<100)，先導入數據..."
                 }
-                com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
+                com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(appCtx)
                     .fetchAllHistoricalData(days = 60)
             }
 
             // 構建市場上下文（與原始流程一致）
             val mktCtx = com.chin.stockanalysis.strategy.sector.StrategyMarketContext
-                .build(requireContext(), today)
+                .build(appCtx, today)
 
             withContext(Dispatchers.Main) {
                 statusTv.text = "🔄 [DAG] 執行中線 Pipeline..."
@@ -246,7 +247,11 @@ class MidTermQuantFragment : QuantFragmentBase() {
 
             // 執行 DAG Pipeline
             val result = com.chin.stockanalysis.strategy.topology.xml.UseCaseLoader
-                .run("mid_term", tradeDate)
+                .run("mid_term", tradeDate) { pipelineName, nodeName ->
+                    lifecycleScope.launch(Dispatchers.Main) {
+                        statusTv.text = "🔄 [DAG] ${pipelineName} ${nodeName} 執行中..."
+                    }
+                }
 
             val elapsed = System.currentTimeMillis() - totalStart
 
@@ -360,6 +365,27 @@ class MidTermQuantFragment : QuantFragmentBase() {
             }
 
             withContext(Dispatchers.Main) {
+                // 報告彈窗（對齊超短線/短線/長線，中線此前缺失）
+                val reportText = buildString {
+                    appendLine("═══ 中線 DAG Pipeline 報告 ═══")
+                    appendLine("成功: ${result.success} | 耗時: ${elapsed}ms")
+                    appendLine("Pipeline: ${result.pipelineResults.keys.joinToString(", ")}")
+                    if (ordersCount > 0) appendLine("生成訂單: ${ordersCount}筆")
+                    if (mergeSummary.isNotBlank()) appendLine(mergeSummary.trimEnd())
+                    if (swapSummary.isNotBlank()) appendLine(swapSummary.trimEnd())
+                    if (savedWatchlist) appendLine("已保存到自選股")
+                    if (stockFlowLines.isNotEmpty()) {
+                        appendLine("── 節點股票流動 ──")
+                        for (line in stockFlowLines) appendLine(line)
+                    }
+                    if (result.errors.isNotEmpty()) {
+                        appendLine("── 錯誤 ──")
+                        for ((key, msg) in result.errors) appendLine("  [$key] $msg")
+                    }
+                    appendLine("═══════════════════════════")
+                }
+                showDialog("中線 DAG Pipeline 報告", reportText)
+
                 val detailLines = mutableListOf<String>()
                 if (ordersCount > 0) detailLines.add("訂單${ordersCount}筆")
                 if (swapSummary.isNotBlank()) detailLines.add("換${swapSummary.lines().first().filter { it.isDigit() }}筆")
@@ -401,7 +427,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
             }
 
             // 後處理：刷新持倉（與原始流程一致的後續步驟）
-            try { com.chin.stockanalysis.stock.database.AppBackgroundRunner.monitorWatchlistDirect(requireContext()) } catch (_: Exception) {}
+            try { com.chin.stockanalysis.stock.database.AppBackgroundRunner.monitorWatchlistDirect(appCtx) } catch (_: Exception) {}
             withContext(Dispatchers.Main) {
                 refreshPositions()
             }
@@ -427,6 +453,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
         buildBtn.isEnabled = false; buildBtn.text = "⏳ 执行中..."
         progressBar.visibility = View.VISIBLE; statusTv.text = "🔄 初始化中綫量化..."
 
+        val appCtx = requireContext().applicationContext
 
         lifecycleScope.launch(Dispatchers.IO) {
             val totalStart = System.currentTimeMillis()
@@ -441,7 +468,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
                 }
                 // ══════════ 以下為原始流程 ══════════
 
-                val importPrefs = requireContext().getSharedPreferences("data_import", android.content.Context.MODE_PRIVATE)
+                val importPrefs = appCtx.getSharedPreferences("data_import", android.content.Context.MODE_PRIVATE)
                 val lastImport = importPrefs.getString("last_import_date", "") ?: ""
                 val config = SimulationTradeEngine.TradeSessionConfig(
                     tradeDate = browsingDate.format(DATE_FMT),
@@ -457,20 +484,20 @@ class MidTermQuantFragment : QuantFragmentBase() {
                         buildBtn.text = "▶ 建仓"; progressBar.visibility = View.GONE
                     }; return@launch
                 }
-                if (tradeEngine == null) tradeEngine = SimulationTradeEngine(requireContext())
+                if (tradeEngine == null) tradeEngine = SimulationTradeEngine(appCtx)
                 val te = tradeEngine!!
                 te.onStatusUpdate = { msg ->
                     lifecycleScope.launch(Dispatchers.Main) { statusTv.text = msg }
                 }
 
                 // 🔥 構建統一市場上下文（注入到 tradeEngine）
-                val mktCtx = com.chin.stockanalysis.strategy.sector.StrategyMarketContext.build(requireContext(), today)
+                val mktCtx = com.chin.stockanalysis.strategy.sector.StrategyMarketContext.build(appCtx, today)
                 te.marketContext = mktCtx
                 Log.i(TAG, "[MidTerm] 市場上下文: 用戶關注${mktCtx.userFocusSectors.size}個, 回彈${mktCtx.bounceSectors.size}個, 大盤${mktCtx.indexSnapshot.tripleVote}")
 
                 // 策略篩選 + AI 精選（引擎內部會自動在 AI 步驟前刷新新聞、暫停/恢復後臺）
                 withContext(Dispatchers.Main) { statusTv.text = "🔄 計算策略信號與AI分析..." }
-                val db = StockDatabase.getInstance(requireContext())
+                val db = StockDatabase.getInstance(appCtx)
 
                 // Step 1: 检查并导入数据
                 val importStart = System.currentTimeMillis()
@@ -479,7 +506,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
                 if (needImport) {
                     Log.i(TAG, "[MidTerm] Step 1: importing data, todaySnaps=${todaySnaps.size}, lastImport=$lastImport")
                     withContext(Dispatchers.Main) { statusTv.text = "📥 数据不足，自动导入中（请耐心等待）..." }
-                    val f = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
+                    val f = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(appCtx)
                     f.fetchAllHistoricalData(60) { p ->
                         lifecycleScope.launch(Dispatchers.Main) { statusTv.text = "📥 导入: ${p.completedStocks}/${p.totalStocks} 只" }
                     }
@@ -525,7 +552,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
                 Log.i(TAG, "[MidTerm] Breakdown: import=${importElapsed}ms  session=${sessionElapsed}ms  swap=${swapElapsed}ms")
 
                 // 引擎內部已恢復後臺，這裡額外觸發一次持倉監控
-                try { com.chin.stockanalysis.stock.database.AppBackgroundRunner.monitorWatchlistDirect(requireContext()) } catch (_: Exception) {}
+                try { com.chin.stockanalysis.stock.database.AppBackgroundRunner.monitorWatchlistDirect(appCtx) } catch (_: Exception) {}
 
                 withContext(Dispatchers.Main) {
                     try {
@@ -559,7 +586,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
     // 报告显示
     // ═══════════════════════════════════════
 
-    private fun showTradeReport(report: SimulationTradeEngine.TradeSessionReport) {
+    private suspend fun showTradeReport(report: SimulationTradeEngine.TradeSessionReport) {
         val ctx = requireContext()
         val sv = ScrollView(ctx)
         val c = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(8, 8, 8, 8) }
@@ -598,8 +625,10 @@ class MidTermQuantFragment : QuantFragmentBase() {
             }
         }
         val realtimeMap = try {
-            com.chin.stockanalysis.stock.data.sources.SinaStockSource()
-                .fetchRealtime(allSelectedCodes.distinct())
+            withContext(Dispatchers.IO) {
+                com.chin.stockanalysis.stock.data.sources.SinaStockSource()
+                    .fetchRealtime(allSelectedCodes.distinct())
+            }
         } catch (_: Exception) { emptyMap() }
 
         for (strategy in enabledStrategies) {

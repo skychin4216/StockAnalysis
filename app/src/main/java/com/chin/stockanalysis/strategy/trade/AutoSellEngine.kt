@@ -319,9 +319,9 @@ class AutoSellEngine(private val context: Context) {
     // 执行卖出
     // ═══════════════════════════════════════════════
 
-    suspend fun executeSells(decisions: List<SellDecision>, today: String = LocalDate.now().format(DATE_FMT)): Int = withContext(Dispatchers.IO) {
+    suspend fun executeSells(decisions: List<SellDecision>, today: String = LocalDate.now().format(DATE_FMT), force: Boolean = false): Int = withContext(Dispatchers.IO) {
         var executedCount = 0
-        for (dec in decisions.filter { it.shouldSell }) {
+        for (dec in if (force) decisions else decisions.filter { it.shouldSell }) {
             try {
                 if (dec.sellRatio >= 1.0) {
                     db.strategyTradeOrderDao().updateSellInfo(

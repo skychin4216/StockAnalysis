@@ -96,16 +96,35 @@ class AgentPipelineOrchestrator(private val context: Context) {
             AnalysisMode.MODE_SELLER_SEVEN -> "基礎分 = A1×0.2 + A2×0.2 + A3×0.2 + A5×0.3 + A6×0.1（A4僅定性）"
         }
 
-        /** 已知 Upstream 賽道關鍵詞（用於 AI 動態選擇模式的輔助判斷） */
-        private val SELLER_SECTOR_KEYWORDS = listOf(
-            "光通信", "光模塊", "PCB", "覆銅板", "CCL", "半導體", "鋰電", "光伏",
-            "生益科技", "華工科技", "光迅科技", "潔美科技", "中際旭創", "新易盛",
-            "天孚通信", "源傑科技", "銅陵有色", "諾德股份", "嘉元科技"
-        )
+        /** 動態獲取 Upstream 賽道關鍵詞（從實時熱門板塊 + 周期熱門板塊獲取） */
+        private fun getSellerSectorKeywords(context: Context): List<String> {
+            val keywords = mutableSetOf<String>()
+            try {
+                // 從 StrategyMarketContext 獲取今日熱門賽道
+                val today = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+                val mktCtx = kotlinx.coroutines.runBlocking {
+                    com.chin.stockanalysis.strategy.sector.StrategyMarketContext.build(context, today)
+                }
+                keywords.addAll(mktCtx.todayHotSectors)
+                keywords.addAll(mktCtx.userFocusSectors)
+                // 加入周/月熱門板塊
+                val hotSectors = kotlinx.coroutines.runBlocking {
+                    com.chin.stockanalysis.strategy.data.AIHotSectorProvider.getHotSectors(context)
+                }
+                keywords.addAll(hotSectors.weeklySectors)
+                keywords.addAll(hotSectors.monthlySectors)
+            } catch (e: Exception) {
+                Log.w(TAG, "動態獲取賽道關鍵詞失敗，使用最小 fallback: ${e.message}")
+                // 最小 fallback：僅保留通用上游關鍵詞（非具體賽道名）
+                keywords.addAll(listOf("半導體", "PCB", "CCL", "鋰電", "光伏"))
+            }
+            return keywords.toList()
+        }
 
-        /** 判斷標的是否屬於 Upstream 賽道（快速本地判斷，不調 AI） */
-        fun isLikelySellerSector(target: String): Boolean {
-            return SELLER_SECTOR_KEYWORDS.any { target.contains(it) }
+        /** 判斷標的是否屬於 Upstream 賽道（動態獲取關鍵詞，不硬編碼） */
+        fun isLikelySellerSector(target: String, context: Context): Boolean {
+            val keywords = getSellerSectorKeywords(context)
+            return keywords.any { target.contains(it) }
         }
 
         // ════════════════════════════════════════
@@ -212,7 +231,8 @@ class AgentPipelineOrchestrator(private val context: Context) {
             // 啟動支線並行：Agent D（板塊&輿情）
             val sentimentJob = SupervisorJob()
             val sentimentScope = kotlinx.coroutines.CoroutineScope(Dispatchers.IO + sentimentJob)
-            val dStep = steps.find { it.isAuxiliary }!!
+            val dStep = steps.find { it.isAuxiliary }
+                ?: throw IllegalStateException("No auxiliary step defined in pipeline")
             val dIndex = steps.indexOf(dStep)
             onStepStart?.invoke(dIndex, dStep)
             val sentimentDeferred = sentimentScope.async {
@@ -225,49 +245,55 @@ class AgentPipelineOrchestrator(private val context: Context) {
                 onStepComplete?.invoke(dIndex, dStep, ctx)
             }
 
-            // 主線串行
-            val mainSteps = steps.filter { !it.isAuxiliary }
-            for ((index, step) in mainSteps.withIndex()) {
-                onStepStart?.invoke(index, step)
-                Log.d(TAG, "Step $index: ${step.name} — LLM 分析中...")
+            try {
+                // 主線串行
+                val mainSteps = steps.filter { !it.isAuxiliary }
+                for ((index, step) in mainSteps.withIndex()) {
+                    onStepStart?.invoke(index, step)
+                    Log.d(TAG, "Step $index: ${step.name} — LLM 分析中...")
 
-                // Agent 4 之前注入量化策略信號
-                if (step.agentId == "pipeline_agent_4" && ctx.quantSignals == null) {
-                    injectQuantSignals(ctx)
-                }
+                    // Agent 4 之前注入量化策略信號
+                    if (step.agentId == "pipeline_agent_4" && ctx.quantSignals == null) {
+                        injectQuantSignals(ctx)
+                    }
 
-                val response = callLLM(step, steps, ctx, mode)
-                ctx.stepAnalyses[index] = response
+                    val response = callLLM(step, steps, ctx, mode)
+                    ctx.stepAnalyses[index] = response
 
-                // 解析結構化輸出
-                processStepResult(step, response, ctx)
+                    // 解析結構化輸出
+                    processStepResult(step, response, ctx)
 
-                // Agent 5 對沖機制
-                if (step.canHedge) {
-                    applyHedgeMechanism(ctx)
-                }
+                    // Agent 5 對沖機制
+                    if (step.canHedge) {
+                        applyHedgeMechanism(ctx)
+                    }
 
-                // Agent 2 打分後檢查通過閾值
-                if (step.isScorer && ctx.chainScore != null) {
-                    if (!ctx.chainScore!!.passed) {
-                        // 所有分數為 0 說明數據不足，跳過此步驟而非淘汰標的
-                        val allZero = ctx.chainScore!!.totalScore == 0 &&
-                            ctx.chainScore!!.baseScore == 0 && ctx.chainScore!!.materialScore == 0
-                        if (allZero) {
-                            Log.w(TAG, "Agent 2 所有分數為 0（數據不足），跳過產業鏈篩選")
-                        } else {
-                            Log.d(TAG, "Agent 2 打分 ${ctx.chainScore!!.totalScore} < 40，標的淘汰")
-                            onStepComplete?.invoke(index, step, ctx)
-                            break
+                    // Agent 2 打分後檢查通過閾值
+                    if (step.isScorer && ctx.chainScore != null) {
+                        if (!ctx.chainScore!!.passed) {
+                            // 所有分數為 0 說明數據不足，跳過此步驟而非淘汰標的
+                            val allZero = ctx.chainScore!!.totalScore == 0 &&
+                                ctx.chainScore!!.baseScore == 0 && ctx.chainScore!!.materialScore == 0
+                            if (allZero) {
+                                Log.w(TAG, "Agent 2 所有分數為 0（數據不足），跳過產業鏈篩選")
+                            } else {
+                                Log.d(TAG, "Agent 2 打分 ${ctx.chainScore!!.totalScore} < 40，標的淘汰")
+                                onStepComplete?.invoke(index, step, ctx)
+                                break
+                            }
                         }
                     }
+
+                    onStepComplete?.invoke(index, step, ctx)
                 }
 
-                onStepComplete?.invoke(index, step, ctx)
+                // 等待支線完成
+                try { sentimentDeferred.await() } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {}
+            } finally {
+                sentimentJob.cancel()
             }
-
-            // 等待支線完成
-            try { sentimentDeferred.await() } catch (_: Exception) {}
 
             // 構建最終結果（豆包格式）
             return buildFinalResult(ctx, mode, steps)
@@ -293,7 +319,7 @@ class AgentPipelineOrchestrator(private val context: Context) {
      */
     private suspend fun selectMode(target: String, sector: String): AnalysisMode {
         // 1. 本地快速判斷：賣水人賽道關鍵詞
-        if (isLikelySellerSector(target) || isLikelySellerSector(sector)) {
+        if (isLikelySellerSector(target, context) || isLikelySellerSector(sector, context)) {
             Log.i(TAG, "🎯 本地判斷為 Upstream 賽道，使用 7-Agent")
             return AnalysisMode.MODE_SELLER_SEVEN
         }
@@ -488,7 +514,7 @@ class AgentPipelineOrchestrator(private val context: Context) {
                             hasReceivedToken = true
                         },
                         onComplete = { full ->
-                            val sanitized = full.replace("null", "")
+                            val sanitized = full.replace(Regex(":\\s*null\\s*([,}\\]])"), ": \"\"$1")
                             if (!cont.isCompleted) cont.resume(sanitized) {}
                         },
                         onError = { err ->
@@ -510,8 +536,12 @@ class AgentPipelineOrchestrator(private val context: Context) {
     private fun buildStepPrompt(step: PipelineStep, allSteps: List<PipelineStep>, basePrompt: String, ctx: PipelineContext, mode: AnalysisMode): String {
         val sb = StringBuilder()
 
+        // 動態注入今日熱門賽道（替換 {today_hot_sectors} 佔位符）
+        val todayHotSectors = fetchTodayHotSectors()
+        val dynamicPrompt = basePrompt.replace("{today_hot_sectors}", todayHotSectors)
+
         // 基礎 SystemPrompt
-        sb.append(basePrompt)
+        sb.append(dynamicPrompt)
         sb.append("\n\n")
 
         // 注入前序步驟摘要（串行傳參規則）
@@ -602,5 +632,39 @@ class AgentPipelineOrchestrator(private val context: Context) {
     private fun extractStockCode(input: String): String {
         val pattern = Regex("(sh|sz|bj)\\d{6}")
         return pattern.find(input)?.value ?: input
+    }
+
+    /**
+     * 動態獲取今日熱門賽道列表（用於注入 Agent prompt 的 {today_hot_sectors} 佔位符）
+     * 數據來源：東方財富 API 實時漲幅 Top 板塊 + 週/月熱門板塊
+     */
+    private fun fetchTodayHotSectors(): String {
+        return try {
+            val today = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+            val mktCtx = kotlinx.coroutines.runBlocking {
+                com.chin.stockanalysis.strategy.sector.StrategyMarketContext.build(context, today)
+            }
+            val allSectors = mutableSetOf<String>()
+            allSectors.addAll(mktCtx.todayHotSectors)
+            allSectors.addAll(mktCtx.userFocusSectors)
+
+            // 補充週/月熱門板塊（AI 動態查詢）
+            try {
+                val hotSectors = kotlinx.coroutines.runBlocking {
+                    com.chin.stockanalysis.strategy.data.AIHotSectorProvider.getHotSectors(context)
+                }
+                allSectors.addAll(hotSectors.weeklySectors)
+                allSectors.addAll(hotSectors.monthlySectors)
+            } catch (_: Exception) { /* AI 查詢失敗不影響主流程 */ }
+
+            if (allSectors.isEmpty()) {
+                "今日暫無明確熱門賽道，請根據標的自身基本面動態分析"
+            } else {
+                allSectors.take(10).joinToString("、")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "動態獲取熱門賽道失敗: ${e.message}")
+            "今日熱門賽道獲取失敗，請根據標的自身基本面動態分析"
+        }
     }
 }

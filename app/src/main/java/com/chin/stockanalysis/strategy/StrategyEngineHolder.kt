@@ -21,11 +21,13 @@ import com.chin.stockanalysis.strategy.strategies.*
  * ```
  */
 object StrategyEngineHolder {
+    @Volatile
     private var engine: StrategyEngine? = null
 
     /**
      * 初始化全局引擎（只执行一次）
      */
+    @Synchronized
     fun init(context: Context) {
         if (engine != null) return
         val repo = StockDataSourceFactory.createDefaultRepository(context.applicationContext)
@@ -46,6 +48,14 @@ object StrategyEngineHolder {
             registerStrategy(DragonHeadDipStrategy(context.applicationContext, screener))
             registerStrategy(InstitutionalAccumulationStrategy(screener))
             registerStrategy(MoatLeaderStrategy(screener))
+            // ── v1.1 新增策略 ──
+            registerStrategy(TrendFollowingStrategy(context.applicationContext, screener))
+            registerStrategy(SectorRotationStrategy(context.applicationContext, screener))
+            registerStrategy(MarketSentimentStrategy(context.applicationContext, screener))
+            // ── v1.2 趨勢加減分策略（不過濾標的，只加減分）──
+            registerStrategy(TrendScoreStrategy(context.applicationContext, screener))
+            // ── v1.3 週期低位策略（長線左側佈局，防暴雷+52週低位）──
+            registerStrategy(CyclicalLowPositionStrategy(context.applicationContext, screener))
             // 啟動時清理過期信號緩存
             cleanExpiredResults()
         }

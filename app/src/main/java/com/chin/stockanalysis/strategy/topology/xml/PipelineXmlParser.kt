@@ -226,10 +226,14 @@ object PipelineXmlParser {
      */
     private fun parseConfigParams(parser: XmlPullParser): Map<String, String> {
         val config = mutableMapOf<String, String>()
+        // 自閉合標籤（如 <Node ... />）無子元素，直接返回
+        if (parser.isEmptyElementTag) return config
+
         val depth = parser.depth
         var eventType = parser.next()
-        while (!(eventType == XmlPullParser.END_TAG && parser.depth <= depth && parser.name == "config") &&
-               !(eventType == XmlPullParser.END_TAG && parser.depth == depth - 1)) {
+        while (eventType != XmlPullParser.END_DOCUMENT) {
+            // 退出：回到同層或更外層的 END_TAG（不消費越界事件）
+            if (eventType == XmlPullParser.END_TAG && parser.depth <= depth) break
             if (eventType == XmlPullParser.START_TAG && parser.name == "param") {
                 val name = parser.getAttributeValue(null, "name") ?: ""
                 val value = parser.getAttributeValue(null, "value") ?: ""
@@ -502,7 +506,8 @@ object PipelineXmlParser {
         val depth = parser.depth
         var eventType = parser.next()
         while (!(eventType == XmlPullParser.END_TAG && parser.depth == depth &&
-            (parser.name == "NodeList" || parser.name == "nodeList"))) {
+            (parser.name == "NodeList" || parser.name == "nodeList")) &&
+            eventType != XmlPullParser.END_DOCUMENT) {
             if (eventType == XmlPullParser.START_TAG && (parser.name == "Node" || parser.name == "node")) {
                 // 先嘗試屬性風格
                 val attrId = parser.getAttributeValue(null, "id")
@@ -569,7 +574,8 @@ object PipelineXmlParser {
         val depth = parser.depth
         var eventType = parser.next()
         while (!(eventType == XmlPullParser.END_TAG && parser.depth == depth &&
-            (parser.name == "Links" || parser.name == "links"))) {
+            (parser.name == "Links" || parser.name == "links")) &&
+            eventType != XmlPullParser.END_DOCUMENT) {
             if (eventType == XmlPullParser.START_TAG && (parser.name == "Link" || parser.name == "link")) {
                 // 先嘗試屬性風格
                 val attrSource = parser.getAttributeValue(null, "source") ?: parser.getAttributeValue(null, "from")

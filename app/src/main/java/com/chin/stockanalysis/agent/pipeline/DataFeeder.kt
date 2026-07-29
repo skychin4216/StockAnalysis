@@ -30,13 +30,7 @@ class DataFeeder(private val context: Context) {
     companion object {
         private const val TAG = "DataFeeder"
 
-        /** 8 大科技賽道（默認） */
-        private val DEFAULT_SECTORS = listOf(
-            "半導體", "電網設備", "PCB", "MLCC",
-            "光通信", "存儲", "AI 硬體", "AI 伺服器"
-        )
-
-        /** 板塊關鍵詞 → 賽道映射 */
+        /** 板塊關鍵詞 → 賽道映射（保留用於 inferSector 推斷） */
         private val SECTOR_KEYWORD_MAP = mapOf(
             "半導體" to listOf("半導體", "芯片", "晶圓", "封裝", "IC", "GPU", "CPU"),
             "電網設備" to listOf("電網", "配電", "變壓器", "電力設備", "特高壓"),
@@ -58,7 +52,7 @@ class DataFeeder(private val context: Context) {
     }
 
     /** 快取：target + sector → result + timestamp */
-    private val cache = mutableMapOf<String, Pair<DataFeederResult, Long>>()
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, Pair<DataFeederResult, Long>>()
 
     /**
      * 根據用戶輸入推斷板塊/賽道
@@ -74,11 +68,50 @@ class DataFeeder(private val context: Context) {
     }
 
     /**
-     * 獲取採集範圍的賽道列表
+     * 獲取採集範圍的賽道列表（動態獲取今日熱門賽道，不硬編碼）
      */
-    fun getSectorsForInput(userInput: String): List<String> {
+    suspend fun getSectorsForInput(userInput: String): List<String> {
         val inferred = inferSector(userInput)
-        return if (inferred == "科技") DEFAULT_SECTORS else listOf(inferred)
+        return if (inferred == "科技") {
+            // 動態獲取今日熱門賽道
+            getDynamicHotSectors()
+        } else {
+            listOf(inferred)
+        }
+    }
+
+    /**
+     * 動態獲取今日熱門賽道列表
+     * 數據來源：StrategyMarketContext 實時板塊漲幅 Top + 週/月熱門板塊
+     */
+    private suspend fun getDynamicHotSectors(): List<String> {
+        return try {
+            val today = java.time.LocalDate.now()
+                .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+            val mktCtx = com.chin.stockanalysis.strategy.sector.StrategyMarketContext
+                .build(context, today)
+            val sectors = mutableSetOf<String>()
+            sectors.addAll(mktCtx.todayHotSectors)
+            sectors.addAll(mktCtx.userFocusSectors)
+
+            // 補充週/月熱門板塊
+            try {
+                val hotSectors = com.chin.stockanalysis.strategy.data.AIHotSectorProvider
+                    .getHotSectors(context)
+                sectors.addAll(hotSectors.weeklySectors.take(3))
+                sectors.addAll(hotSectors.monthlySectors.take(3))
+            } catch (_: Exception) { }
+
+            if (sectors.isEmpty()) {
+                // 最終 fallback：從 SECTOR_KEYWORD_MAP 取前 5 個賽道
+                SECTOR_KEYWORD_MAP.keys.take(5).toList()
+            } else {
+                sectors.take(8).toList()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "動態獲取熱門賽道失敗，使用關鍵詞映射 fallback: ${e.message}")
+            SECTOR_KEYWORD_MAP.keys.take(5).toList()
+        }
     }
 
     /**
@@ -112,7 +145,7 @@ class DataFeeder(private val context: Context) {
      */
     private suspend fun fetchFromLLM(target: String, sector: String): DataFeederResult {
         return withContext(Dispatchers.IO) {
-            val sectors = if (sector == "科技") DEFAULT_SECTORS.joinToString("、") else sector
+            val sectors = if (sector == "科技") SECTOR_KEYWORD_MAP.keys.joinToString("、") else sector
             val prompt = buildFeederPrompt(target, sectors)
 
             val slot = AiProviderPool.acquire(context)
@@ -128,7 +161,7 @@ class DataFeeder(private val context: Context) {
                         systemPrompt = prompt,
                         onSuccess = { /* 串流 chunk 不處理 */ },
                         onComplete = { full ->
-                            val sanitized = full.replace("null", "")
+                            val sanitized = full.replace(Regex(":\\s*null\\s*([,}\\]])"), ": \"\"$1")
                             cont.resume(sanitized)
                         },
                         onError = { err ->

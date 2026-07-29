@@ -102,6 +102,7 @@ object Level2DataProvider {
                     val resp = client.newCall(req).execute()
                     if (!resp.isSuccessful) {
                         Log.w(TAG, "API 請求失敗: HTTP ${resp.code}")
+                        resp.close()
                         return@forEach
                     }
 

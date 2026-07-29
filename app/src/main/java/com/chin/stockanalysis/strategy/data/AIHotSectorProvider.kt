@@ -8,9 +8,6 @@ import com.chin.stockanalysis.ui.Message
 import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicReference
 
 /**
  * ## AI 熱門板塊查詢工具 v1.0
@@ -63,7 +60,7 @@ object AIHotSectorProvider {
             fetchFromAI(context)
         } catch (e: Exception) {
             Log.w(TAG, "AI 查詢失敗，使用備用列表: ${e.message}")
-            getDefaultHotSectors()
+            getDefaultHotSectors(context)
         }
 
         // 3. 寫入緩存
@@ -80,7 +77,7 @@ object AIHotSectorProvider {
             fetchFromAI(context)
         } catch (e: Exception) {
             Log.w(TAG, "AI 查詢失敗，使用備用列表: ${e.message}")
-            getDefaultHotSectors()
+            getDefaultHotSectors(context)
         }
         saveCache(context, result)
         result
@@ -171,27 +168,23 @@ object AIHotSectorProvider {
     /** 對單個 Provider 執行查詢，返回板塊列表 */
     private suspend fun querySingleProvider(task: Task): List<String> {
         val (dimension, userMessage, provider, providerName) = task
-        val resultRef = AtomicReference<String>()
-        val latch = CountDownLatch(1)
+        val deferred = CompletableDeferred<String>()
 
         provider.sendMessageStream(
             messages = listOf(Message(content = userMessage, isUser = true)),
             systemPrompt = "你是一位專業的A股市場分析師，精通中國A股市場的板塊輪動和資金流向規律。你的任務是根據你的知識庫，列出指定的熱門A股板塊。",
-            onSuccess = { chunk -> resultRef.set((resultRef.get() ?: "") + chunk) },
+            onSuccess = { /* 串流 chunk 不處理，等待 onComplete 的完整內容 */ },
             onComplete = { fullContent ->
-                resultRef.set(fullContent)
-                latch.countDown()
+                deferred.complete(fullContent)
             },
             onError = { errorMsg ->
                 Log.e(TAG, "❌ $providerName 查詢[$dimension]失敗: $errorMsg")
-                resultRef.set("")
-                latch.countDown()
+                deferred.complete("")
             }
         )
 
-        val success = latch.await(30, TimeUnit.SECONDS)
-        val rawResponse = resultRef.get() ?: ""
-        if (!success || rawResponse.isBlank()) {
+        val rawResponse = withTimeoutOrNull(30_000) { deferred.await() } ?: ""
+        if (rawResponse.isBlank()) {
             Log.w(TAG, "⏰ $providerName 查詢[$dimension]超時或返回為空")
             return emptyList()
         }
@@ -324,25 +317,57 @@ object AIHotSectorProvider {
     // 備用列表（AI 查詢失敗時使用）
     // ════════════════════════════════════════
 
-    /** 備用列表（AI 查詢失敗時使用），對外公開供 fallback 使用 */
-    fun getDefaultHotSectors(): HotSectorResult {
+    /**
+     * 備用列表（AI 查詢失敗時使用）
+     * 動態從數據庫 sector_daily_record 表獲取最近熱門板塊，不使用硬編碼列表
+     */
+    suspend fun getDefaultHotSectors(context: Context): HotSectorResult {
+        return try {
+            // 從數據庫獲取最近記錄的板塊數據
+            val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(context)
+            val recentRecords = db.sectorDailyRecordDao().getRecentDays(7)
+
+            if (recentRecords.isEmpty()) {
+                // DB 也沒有數據時，從東方財富實時數據獲取
+                getFromEastMoneyRealtime()
+            } else {
+                // 按漲跌幅排序，分組為不同週期
+                val sorted = recentRecords.sortedByDescending { it.changePct }
+                val today = sorted.filter { it.date == sorted.first().date }
+                    .take(10).map { it.sectorName }
+                val weekly = sorted.distinctBy { it.sectorName }
+                    .take(10).map { it.sectorName }
+                val monthly = sorted.distinctBy { it.sectorName }
+                    .takeLast(10).reversed().map { it.sectorName }
+
+                HotSectorResult(
+                    annualSectors = monthly,   // 年度用月度數據替代
+                    monthlySectors = monthly,
+                    weeklySectors = weekly,
+                    yesterdaySectors = today
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "動態獲取 fallback 板塊失敗，使用東方財富實時數據: ${e.message}")
+            getFromEastMoneyRealtime()
+        }
+    }
+
+    /** 從東方財富實時板塊數據獲取 */
+    private fun getFromEastMoneyRealtime(): HotSectorResult {
+        val conceptSectors = com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.conceptSectors
+        val industrySectors = com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.industrySectors
+        val all = conceptSectors + industrySectors
+        val sorted = all.sortedByDescending { it.changePercent }
+
+        val top10 = sorted.take(10).map { it.name }
+        val next10 = sorted.drop(10).take(10).map { it.name }
+
         return HotSectorResult(
-            annualSectors = listOf(
-                "人工智能", "半导体", "光通信", "新能源", "低空经济",
-                "机器人", "算力", "智能汽车", "量子科技", "生物医药"
-            ),
-            monthlySectors = listOf(
-                "CPO光模块", "算力租赁", "液冷", "铜箔", "PCB",
-                "存储芯片", "固态电池", "无人机", "氢能源", "数据要素"
-            ),
-            weeklySectors = listOf(
-                "光刻胶", "先进封装", "HBM", "高速连接器", "碳化硅",
-                "钠离子电池", "钙钛矿", "卫星互联网", "脑机接口", "合成生物"
-            ),
-            yesterdaySectors = listOf(
-                "半导体设备", "AI服务器", "光模块", "稀土永磁", "工业母机",
-                "特高压", "充电桩", "光伏玻璃", "风电设备", "储能"
-            )
+            annualSectors = next10,
+            monthlySectors = next10,
+            weeklySectors = top10,
+            yesterdaySectors = top10
         )
     }
 }

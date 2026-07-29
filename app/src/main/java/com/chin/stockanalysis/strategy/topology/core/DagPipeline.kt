@@ -45,6 +45,25 @@ data class DagNode(
 
     /** 該節點的所有出邊的目標節點 ID 集合 */
     var dependents: Set<String> = emptySet()
+
+    /** 是否為關鍵節點（失敗會導致 Pipeline 失敗） */
+    val isCritical: Boolean get() = nodeId !in NON_CRITICAL_NODE_IDS &&
+        !nodeId.startsWith("strategy_")
+
+    companion object {
+        /** 非關鍵節點：失敗不影響 Pipeline 最終結果（僅記錄警告） */
+        val NON_CRITICAL_NODE_IDS = setOf(
+            "n_bg",       // 後臺暫停/恢復（輔助）
+            "n_fit",      // 擬合計算（耗時，不影響建倉）
+            "n_swap",     // 騰龍換鳥（輔助優化）
+            "n_heat",     // 熱度計算（輔助數據）
+            "n_candle",   // K線形態偵測（輔助提醒）
+            "n_news_str", // 新聞力度（輔助評分）
+            "n_rot_pen",  // 輪動懲罰（輔助評分）
+            "n_crossday", // 跨日聚合（輔助數據）
+            "n_multihot"  // 多周期熱門（輔助數據）
+        )
+    }
 }
 
 /**
@@ -93,6 +112,17 @@ class DagPipeline(
 ) {
     companion object {
         private const val TAG = "DagPipeline"
+
+        /**
+         * 主流節點：輸出 0 代表「無股票可處理」，後續節點無意義 → 提前終止。
+         * 使用 internal nodeId（node.nodeId）。
+         * 不含：swap_weak（0=無需換鳥，merge 仍需跑）、adaptive_params/market_context（非股票輸出）、
+         *       sector_boost/ai_predict（enrichment，不直接決定有無候選）。
+         */
+        val FLOW_CRITICAL_NODES = setOf(
+            "stock_pool", "candidate_pool", "signal_merge",
+            "smart_money_filter", "news_guard", "generate_orders"
+        )
     }
 
     // 鄰接表
@@ -145,9 +175,9 @@ class DagPipeline(
                             val dagNode = layer[0]
                             val result = executeNode(dagNode, context)
                             nodeResults[dagNode.nodeId] = result
-                            if (!result.success) allSuccess = false
+                            if (!result.success && dagNode.isCritical) allSuccess = false
                             if (result.output != null) finalOutput = result.output
-                            if (result.error != null) errors[dagNode.nodeId] = result.error
+                            if (result.error != null && dagNode.isCritical) errors[dagNode.nodeId] = result.error
                         } else {
                             // 多節點並行
                             Log.i(TAG, "  Layer $layerIndex: 並行執行 ${layer.size} 個節點")
@@ -160,19 +190,44 @@ class DagPipeline(
                                 for (d in deferred) {
                                     val (dagNode, result) = d.await()
                                     nodeResults[dagNode.nodeId] = result
-                                    if (!result.success) allSuccess = false
+                                    if (!result.success && dagNode.isCritical) allSuccess = false
                                     if (result.output != null) finalOutput = result.output
-                                    if (result.error != null) errors[dagNode.nodeId] = result.error
+                                    if (result.error != null && dagNode.isCritical) errors[dagNode.nodeId] = result.error
                                 }
                             }
                         }
                     }
                     Log.i(TAG, "  Layer $layerIndex 完成: ${layerElapsed}ms")
+
+                    // ── Fail-fast：主流節點輸出 0 → 無股票可處理，提前終止 ──
+                    val emptyCritical = layer.firstOrNull { dagNode ->
+                        dagNode.node.nodeId in FLOW_CRITICAL_NODES &&
+                            nodeResults[dagNode.nodeId]?.let { r ->
+                                r.success && (r.stockFlow?.outputCount ?: -1) == 0
+                            } == true
+                    }
+                    if (emptyCritical != null) {
+                        val nodeName = emptyCritical.nodeName
+                        Log.w(TAG, "⛔ $nodeName 輸出 0，無股票可處理，提前終止 Pipeline")
+                        context.log(emptyCritical.nodeId,
+                            "⛔ $nodeName 輸出 0 → Pipeline 提前終止，後續節點不執行")
+                        errors[emptyCritical.nodeId] = "輸出為0，提前終止"
+                        allSuccess = false
+                        break
+                    }
                 }
             }
         }
 
-        errors.putAll(context.errors)
+        // 僅合併關鍵節點的 context 錯誤
+        // 注意：節點內部用 internal nodeId（如 "heat_score"）記錄錯誤，
+        // 而 NON_CRITICAL_NODE_IDS 使用 XML nodeId（如 "n_heat"），兩者都需過濾
+        val nonCriticalInternalIds = nodes.filter { !it.isCritical }.map { it.node.nodeId }.toSet()
+        context.errors.filterKeys { key ->
+            !DagNode.NON_CRITICAL_NODE_IDS.contains(key) &&
+                !nonCriticalInternalIds.contains(key) &&
+                !key.startsWith("strategy_")
+        }.let { errors.putAll(it) }
 
         Log.i(TAG, "◀ DAG Pipeline 完成: ${if (allSuccess) "成功" else "失敗"}, 耗時 ${totalElapsed}ms" +
             (if (errors.isNotEmpty()) ", 錯誤: ${errors.keys}" else ""))
@@ -263,8 +318,12 @@ class DagPipeline(
                 val sourceId = depEdges[0].sourceNodeId
                 context.stageOutputs[sourceId]
             }
+            node.nodeType == NodeType.AGGREGATION -> {
+                // 聚合節點：收集所有上游輸出為 List
+                depEdges.mapNotNull { context.stageOutputs[it.sourceNodeId] }
+            }
             else -> {
-                // 多依賴：用第一個依賴的輸出
+                // 非聚合多依賴：用首個上游輸出作為主輸入，其餘通過 context.stageOutputs 讀取
                 val sourceId = depEdges[0].sourceNodeId
                 context.stageOutputs[sourceId]
             }
@@ -290,8 +349,22 @@ class DagPipeline(
 
         val elapsed = measureTimeMillis {
             try {
+                // 通知 UI 層當前正在執行的節點（pipeline 名 + node 名）
+                context.onNodeProgress?.invoke(name, dagNode.nodeName)
                 context.log(nodeId, "▶ 開始: ${dagNode.nodeName}")
-                output = (node as PipelineNode<Any, Any>).execute(context, input ?: Unit)
+                val nodeTimeout = when (nodeId) {
+                    "n_fit" -> 120_000L   // 擬合計算耗時較長
+                    "n_bg" -> 10_000L     // 後臺管理不需太久
+                    else -> 30_000L
+                }
+                output = kotlinx.coroutines.withTimeout(nodeTimeout) {
+                    (node as PipelineNode<Any, Any>).execute(context, input ?: Unit)
+                }
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                val msg = "Node 超時: ${dagNode.nodeName}"
+                error = msg
+                context.recordError(nodeId, msg)
+                success = false
             } catch (e: Exception) {
                 val msg = "Node 執行失敗: ${e.message}"
                 error = msg
@@ -312,7 +385,12 @@ class DagPipeline(
         }
 
         // 提取該節點的股票流動記錄（節點執行過程中調用 recordStockFlow 寫入）
-        val nodeStockFlow = context.stockFlowLogs.lastOrNull { it.nodeId == nodeId }
+        // 注意：節點內部用 internal nodeId（如 "generate_orders"）記錄，
+        // 而 DAG 用 XML nodeId（如 "n_orders"），兩者都需匹配，否則提取不到
+        val internalNodeId = node.nodeId
+        val nodeStockFlow = synchronized(context.stockFlowLogs) {
+            context.stockFlowLogs.lastOrNull { it.nodeId == nodeId || it.nodeId == internalNodeId }
+        }
 
         return DagNodeResult(
             nodeId = nodeId,

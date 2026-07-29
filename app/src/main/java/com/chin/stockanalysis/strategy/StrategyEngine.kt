@@ -57,6 +57,7 @@ class StrategyEngine(
     private val lastResults = ConcurrentHashMap<String, ScreeningResult>()
 
     /** 当前扫描 Job */
+    @Volatile
     private var scanJob: Job? = null
 
     // ═══════════════════════════════

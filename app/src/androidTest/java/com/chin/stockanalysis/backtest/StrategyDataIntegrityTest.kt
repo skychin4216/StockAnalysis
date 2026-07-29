@@ -169,7 +169,8 @@ class StrategyDataIntegrityTest {
         val stock = StockRealtime(
             "sh600519", "贵州茅台", 1500.0, 1495.0, 1490.0,
             1510.0, 1480.0, 10_000_000L, 15_000_000_000.0,
-            0.3, 5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, System.currentTimeMillis()
+            0.3, 5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, System.currentTimeMillis()
         )
         // amount ≈ price * volume / 100（粗略：万元）
         assertTrue("交易金额应>0", stock.amount > 0)

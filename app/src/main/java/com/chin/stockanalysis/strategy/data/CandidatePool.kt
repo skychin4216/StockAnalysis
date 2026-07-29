@@ -114,7 +114,7 @@ object CandidatePool {
             result
         } catch (e: Exception) {
             Log.w(TAG, "AI 熱門板塊查詢失敗，使用備用列表: ${e.message}")
-            val fallback = AIHotSectorProvider.getDefaultHotSectors()
+            val fallback = AIHotSectorProvider.getDefaultHotSectors(context)
             allSectorNames.addAll(fallback.allSectors)
             fallback
         }

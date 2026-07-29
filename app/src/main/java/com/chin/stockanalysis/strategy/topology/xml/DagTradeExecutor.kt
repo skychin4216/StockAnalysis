@@ -45,6 +45,7 @@ object DagTradeExecutor {
         val ordersCount: Int,
         val mergeSummary: String,
         val swapSummary: String,
+        val patternSummary: String,
         val savedWatchlist: Boolean,
         val stockFlowLines: List<String>,
         val totalElapsedMs: Long,
@@ -63,6 +64,7 @@ object DagTradeExecutor {
      * @param strategies   啟用的策略列表（按週期過濾後傳入）
      * @param orderType    訂單類型（用於自選股來源標記，如 "ultra_short_dag"）
      * @param importDays   數據不足時的歷史導入天數（0 表示不導入）
+     * @param onNodeProgress 節點執行進度回調（可選），參數為 (pipelineName, nodeName)，供 UI 實時顯示
      * @return 執行結果摘要
      */
     suspend fun execute(
@@ -72,12 +74,14 @@ object DagTradeExecutor {
         today: String,
         strategies: List<Strategy>,
         orderType: String,
-        importDays: Int = 60
+        importDays: Int = 60,
+        onNodeProgress: ((pipelineName: String, nodeName: String) -> Unit)? = null
     ): DagExecResult {
         if (strategies.isEmpty()) {
             return DagExecResult(
                 success = false, ordersCount = 0, mergeSummary = "",
-                swapSummary = "", savedWatchlist = false, stockFlowLines = emptyList(),
+                swapSummary = "", patternSummary = "", savedWatchlist = false,
+                stockFlowLines = emptyList(),
                 totalElapsedMs = 0, pipelineNames = emptyList(),
                 errors = mapOf("strategy" to "沒有啟用的策略"),
                 uiText = "⚠️ 沒有啟用的策略"
@@ -105,13 +109,14 @@ object DagTradeExecutor {
         }
 
         // 3. 執行 DAG Pipeline
-        val result = UseCaseLoader.run(useCaseId, tradeDate)
+        val result = UseCaseLoader.run(useCaseId, tradeDate, onNodeProgress)
         val elapsed = System.currentTimeMillis() - totalStart
 
         // 4. 後處理：從 nodeResults 提取訂單/持倉/換股信息
         var ordersCount = 0
         var swapSummary = ""
         var mergeSummary = ""
+        var patternSummary = ""
         var savedWatchlist = false
 
         try {
@@ -164,6 +169,23 @@ object DagTradeExecutor {
                         }
                     }
                     Log.i(TAG, "[$useCaseId] $swapSummary")
+                }
+
+                // 提取 K 線形態偵測結果
+                @Suppress("UNCHECKED_CAST")
+                val patternOutput = nodeResults["n_candle"]?.output as?
+                    Map<String, List<com.chin.stockanalysis.strategy.analysis.CandlePatternDetector.PatternMatch>>
+                if (!patternOutput.isNullOrEmpty()) {
+                    patternSummary = buildString {
+                        appendLine("🚨 K線形態警示 🚨")
+                        for ((code, patterns) in patternOutput) {
+                            for (p in patterns) {
+                                val emoji = if (p.direction == com.chin.stockanalysis.strategy.analysis.CandlePatternDetector.Direction.BULLISH) "📈" else "📉"
+                                appendLine("  $emoji $code: 【${p.patternName}】→ ${p.direction.signal}（${p.description}）")
+                            }
+                        }
+                    }
+                    Log.i(TAG, "[$useCaseId] K線形態: ${patternOutput.size} 只股票偵測到形態")
                 }
             }
         } catch (e: Exception) {
@@ -218,6 +240,7 @@ object DagTradeExecutor {
             ordersCount = ordersCount,
             mergeSummary = mergeSummary,
             swapSummary = swapSummary,
+            patternSummary = patternSummary,
             savedWatchlist = savedWatchlist,
             stockFlowLines = stockFlowLines,
             totalElapsedMs = elapsed,
@@ -235,6 +258,10 @@ object DagTradeExecutor {
      */
     fun buildReportText(title: String, r: DagExecResult): String = buildString {
         appendLine("═══ $title ═══")
+        if (r.patternSummary.isNotBlank()) {
+            appendLine(r.patternSummary.trimEnd())
+            appendLine("─────────────────────────")
+        }
         appendLine("成功: ${r.success} | 耗時: ${r.totalElapsedMs}ms")
         appendLine("Pipeline: ${r.pipelineNames.joinToString(", ")}")
         if (r.ordersCount > 0) appendLine("生成訂單: ${r.ordersCount}筆")

@@ -6,6 +6,7 @@ import com.chin.stockanalysis.strategy.market.MarketAdaptiveStrategy
 import com.chin.stockanalysis.strategy.market.MarketAnalyzer
 import com.chin.stockanalysis.strategy.predict.AIPredictionEngine
 import com.chin.stockanalysis.strategy.sector.StrategyMarketContext
+import kotlinx.coroutines.sync.withLock
 
 /**
  * ## Pipeline 共享上下文
@@ -70,9 +71,11 @@ class PipelineContext(
 
     private var _marketReport: MarketAnalyzer.MarketReport? = null
     private var _marketReportLoaded: Boolean = false
+    private val _marketReportMutex = kotlinx.coroutines.sync.Mutex()
 
     private var _adaptiveParams: MarketAdaptiveStrategy.AdaptiveParams? = null
     private var _adaptiveParamsLoaded: Boolean = false
+    private val _adaptiveParamsMutex = kotlinx.coroutines.sync.Mutex()
 
     /**
      * 獲取大盤綜合分析報告（延遲加載，只計算一次）
@@ -82,13 +85,16 @@ class PipelineContext(
      */
     suspend fun getMarketReport(holdingCodes: List<String> = emptyList()): MarketAnalyzer.MarketReport? {
         if (_marketReportLoaded) return _marketReport
-        _marketReportLoaded = true
-        return try {
-            _marketReport = MarketAnalyzer.analyze(androidContext, holdingCodes)
-            _marketReport
-        } catch (e: Exception) {
-            logger.log("PipelineContext", "大盤分析報告加載失敗: ${e.message}")
-            null
+        return _marketReportMutex.withLock {
+            if (_marketReportLoaded) return _marketReport
+            _marketReportLoaded = true
+            try {
+                _marketReport = MarketAnalyzer.analyze(androidContext, holdingCodes)
+                _marketReport
+            } catch (e: Exception) {
+                logger.log("PipelineContext", "大盤分析報告加載失敗: ${e.message}")
+                null
+            }
         }
     }
 
@@ -99,16 +105,19 @@ class PipelineContext(
      */
     suspend fun getAdaptiveParams(): MarketAdaptiveStrategy.AdaptiveParams? {
         if (_adaptiveParamsLoaded) return _adaptiveParams
-        _adaptiveParamsLoaded = true
-        return try {
-            val report = getMarketReport()
-            if (report != null) {
-                _adaptiveParams = MarketAdaptiveStrategy.calculate(report)
+        return _adaptiveParamsMutex.withLock {
+            if (_adaptiveParamsLoaded) return _adaptiveParams
+            _adaptiveParamsLoaded = true
+            try {
+                val report = getMarketReport()
+                if (report != null) {
+                    _adaptiveParams = MarketAdaptiveStrategy.calculate(report)
+                }
+                _adaptiveParams
+            } catch (e: Exception) {
+                logger.log("PipelineContext", "自適應參數計算失敗: ${e.message}")
+                null
             }
-            _adaptiveParams
-        } catch (e: Exception) {
-            logger.log("PipelineContext", "自適應參數計算失敗: ${e.message}")
-            null
         }
     }
 
@@ -116,11 +125,11 @@ class PipelineContext(
     //  階段間數據傳遞
     // ════════════════════════════════════════════════════
 
-    /** 階段輸出存儲（NodeId/StageName → 數據） */
-    val stageOutputs: MutableMap<String, Any?> = mutableMapOf()
+    /** 階段輸出存儲（NodeId/StageName → 數據）— 線程安全（同層節點並行寫入） */
+    val stageOutputs: MutableMap<String, Any?> = java.util.Collections.synchronizedMap(mutableMapOf())
 
-    /** 錯誤存儲（NodeId/LinkLabel → 錯誤信息） */
-    val errors: MutableMap<String, String> = mutableMapOf()
+    /** 錯誤存儲（NodeId/LinkLabel → 錯誤信息）— 線程安全 */
+    val errors: MutableMap<String, String> = java.util.Collections.synchronizedMap(mutableMapOf())
 
     /**
      * 記錄錯誤到上下文。
@@ -167,8 +176,8 @@ class PipelineContext(
     //  股票流動追蹤（輸入/輸出/過濾統計）
     // ════════════════════════════════════════════════════
 
-    /** 各節點的股票流動記錄 */
-    val stockFlowLogs: MutableList<StockFlowRecord> = mutableListOf()
+    /** 各節點的股票流動記錄 — 線程安全（同層節點並行寫入） */
+    val stockFlowLogs: MutableList<StockFlowRecord> = java.util.Collections.synchronizedList(mutableListOf())
 
     /**
      * 記錄股票流動（輸入→輸出→過濾）。
@@ -209,6 +218,22 @@ class PipelineContext(
                 (if (it.filterCount > 0) " (過濾${it.filterCount}: ${it.filterReason})" else "")
         }
     }
+
+    // ════════════════════════════════════════════════════
+    //  節點執行進度回調（供 UI 實時顯示）
+    // ════════════════════════════════════════════════════
+
+    /**
+     * DAG 節點開始執行時的進度回調（可選）。
+     *
+     * 參數：(pipelineName, nodeName)。由 [DagPipeline] 在每個節點開始執行前調用，
+     * UI 層可據此顯示「[DAG] xx Pipeline 的 xx 節點 執行中...」。
+     *
+     * 注意：同層節點並行執行時可能被並發調用，實現方需自行保證線程安全
+     * （如切換到主線程更新 UI）。
+     */
+    @Volatile
+    var onNodeProgress: ((pipelineName: String, nodeName: String) -> Unit)? = null
 
     /**
      * 記錄日誌

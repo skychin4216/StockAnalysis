@@ -5,9 +5,10 @@
   長線特徵：持倉 1 年以上，深度基本面，公司成長+價值，重倉持有。
   不追熱點、不頻繁換股，但需 news_guard 防黑天鵝利空。
 
-  共 11 個 Node：
+  共 12 個 Node：
     Layer 0 (並行): market_context, bg_manager
     Layer 1: stock_pool（依賴 market_context）
+    Layer 1.5: candidate_pool（候選池過濾，補齊 Hardcode）
     Layer 2: signal_merge（策略動態注入在 Java 層完成）
     Layer 3: sector_boost（依賴 signal_merge）
     Layer 4: ai_predict（依賴 sector_boost）
@@ -26,6 +27,9 @@
 
     <!-- Layer 1 -->
     <Node id="n_pool" name="股票池" module="stock_pool" />
+
+    <!-- Layer 1.5: 候選池過濾（補齊 Hardcode） -->
+    <Node id="n_cand" name="候選池過濾" module="candidate_pool" />
 
     <!-- 聚合 Layer 2 -->
     <Node id="n_merge" name="信號合併" module="signal_merge" />
@@ -72,9 +76,17 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 1 → 2: 股票池 → 信號合併（策略動態注入在 Java 層完成） -->
+    <!-- Layer 1 → 1.5: 股票池 → 候選池過濾（補齊 Hardcode） -->
     <Link>
       <SourceNodeId>n_pool</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_cand</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 1.5 → 2: 候選池過濾 → 信號合併（策略動態注入在 Java 層完成） -->
+    <Link>
+      <SourceNodeId>n_cand</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_merge</TargetNodeId>
       <TargetPortId>0</TargetPortId>

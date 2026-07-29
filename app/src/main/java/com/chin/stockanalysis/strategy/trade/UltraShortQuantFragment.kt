@@ -453,7 +453,12 @@ class UltraShortQuantFragment : QuantFragmentBase() {
                 today = today,
                 strategies = strategies,
                 orderType = "ultra_short",
-                importDays = 30
+                importDays = 30,
+                onNodeProgress = { pipelineName, nodeName ->
+                    lifecycleScope.launch(Dispatchers.Main) {
+                        statusTv.text = "🔄 [DAG] ${pipelineName} ${nodeName} 執行中..."
+                    }
+                }
             )
             withContext(Dispatchers.Main) {
                 showDialog(
