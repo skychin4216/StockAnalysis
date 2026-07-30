@@ -25,7 +25,12 @@ import com.chin.stockanalysis.strategy.models.StrategySignal
 import com.chin.stockanalysis.strategy.models.WeightFactor
 import com.chin.stockanalysis.strategy.predict.AIPredictionEngine
 import com.chin.stockanalysis.strategy.strategies.*
-import com.chin.stockanalysis.agent.pipeline.AgentPipelineOrchestrator
+import com.chin.stockanalysis.agent.core.AgentOrchestrator
+import com.chin.stockanalysis.agent.core.AnalysisMode
+import com.chin.stockanalysis.agent.core.AnalysisStep
+import com.chin.stockanalysis.agent.core.AnalysisStepListener
+import com.chin.stockanalysis.agent.core.DeepAnalystEngine
+import com.chin.stockanalysis.agent.core.analyzeStock
 import com.chin.stockanalysis.agent.pipeline.ui.PipelineProgressView
 import com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource
 import com.chin.stockanalysis.stock.database.StockDataCenter
@@ -1087,13 +1092,14 @@ class StrategyListFragment : Fragment() {
         aiPipelineBtn.text = "⏳"
         pipelineProgressView.visibility = View.VISIBLE
         pipelineProgressView.reset()
-        statusTv.text = "🧠 正在獲取股票數據..."
+        statusTv.text = "🧠 正在解析目標..."
 
-        val orchestrator = AgentPipelineOrchestrator(requireContext())
+        // 預建步驟卡片（DEEP = SHORT 週期 = 5 子 Agent）
+        pipelineProgressView.updateSteps(DeepAnalystEngine.stepsFor(5))
 
-        // 注入量化信號提供者
-        orchestrator.quantSignalsProvider = lambda@{ stockCode ->
-            val eng = engine ?: return@lambda emptyList<StrategySignal>()
+        // 量化信號注入（保留原有邏輯）
+        val quantProvider: suspend (String) -> List<StrategySignal> = provider@{ stockCode ->
+            val eng = engine ?: return@provider emptyList<StrategySignal>()
             try {
                 val feed = com.chin.stockanalysis.strategy.data.StrategyDataFeed(requireContext())
                 val today = TradingDayPickerView.recentTradingDay().toString()
@@ -1111,77 +1117,94 @@ class StrategyListFragment : Fragment() {
             } catch (_: Exception) { emptyList() }
         }
 
-        val stepProgressTexts = listOf(
-            "🧠 正在啟動 Agent F（市場情緒）...",
-            "🧠 正在啟動 Agent 3（資金面）...",
-            "🧠 正在啟動 Agent 1（基本面拐點）...",
-            "🧠 正在啟動 Agent 2（技術面）...",
-            "🧠 正在啟動 Agent 5（風控終審）...",
-            "🧠 正在啟動 Agent D（風險排雷）...",
-            "🧠 正在啟動 Agent 4（技術交易執行）..."
-        )
-
-        orchestrator.onStepStart = { index, step ->
-            lifecycleScope.launch(Dispatchers.Main) {
-                pipelineProgressView.markStepStart(index, step)
-                statusTv.text = stepProgressTexts.getOrElse(index) { "🧠 正在啟動 ${step.name}..." }
+        // 步驟進度回調 → PipelineProgressView
+        val stepListener = object : AnalysisStepListener {
+            override fun onStepComplete(step: AnalysisStep, summary: String, result: Map<String, Any?>) {
+                lifecycleScope.launch(Dispatchers.Main) {
+                    pipelineProgressView.markStepComplete(step, summary)
+                    statusTv.text = "🧠 ${step.name} 完成"
+                }
             }
-        }
-        orchestrator.onStepComplete = { index, step, ctx ->
-            lifecycleScope.launch(Dispatchers.Main) {
-                pipelineProgressView.markStepComplete(index, step, ctx)
-            }
-        }
-        orchestrator.onError = { index, error ->
-            lifecycleScope.launch(Dispatchers.Main) {
-                pipelineProgressView.markStepError(index, error)
-                statusTv.text = "❌ 步驟 $index 錯誤: ${error.take(40)}"
-            }
-        }
-        orchestrator.onModeSelected = { mode, reason ->
-            lifecycleScope.launch(Dispatchers.Main) {
-                statusTv.text = "🧠 $reason"
-                pipelineProgressView.updateSteps(AgentPipelineOrchestrator.getStepsByName(mode.label))
+            override fun onStepError(step: AnalysisStep, error: String) {
+                lifecycleScope.launch(Dispatchers.Main) {
+                    pipelineProgressView.markStepError(step, error)
+                    statusTv.text = "❌ ${step.name} 錯誤: ${error.take(40)}"
+                }
             }
         }
 
+        val appCtx = requireContext().applicationContext
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                withContext(Dispatchers.Main) { statusTv.text = "🧠 正在綜合評估..." }
-                val result = orchestrator.execute(target)
+                // ── 解析目標 → 股票代碼 ──
+                val db = StockDatabase.getInstance(appCtx)
+                val dao = db.stockBasicDao()
+                val trimmed = target.trim()
+
+                // 先嘗試直接當代碼匹配
+                var code: String? = null
+                var name: String? = null
+                val byCode = dao.getByCode(trimmed)
+                if (byCode != null) {
+                    code = byCode.code; name = byCode.name
+                } else {
+                    // 按名稱模糊搜索，取第一個精確/最長匹配
+                    val candidates = dao.searchByName(trimmed)
+                    val best = candidates.firstOrNull { it.name == trimmed }
+                        ?: candidates.maxByOrNull { it.name.length }
+                    if (best != null) { code = best.code; name = best.name }
+                }
+
+                if (code == null) {
+                    withContext(Dispatchers.Main) {
+                        statusTv.text = "❌ 無法識別「$trimmed」，請輸入股票代碼或名稱"
+                        aiPipelineBtn.isEnabled = true
+                        aiPipelineBtn.text = "🧠 Agent"
+                    }
+                    return@launch
+                }
+
+                withContext(Dispatchers.Main) { statusTv.text = "🧠 正在分析 $name($code)..." }
+
+                // ── 統一入口：AgentOrchestrator.analyzeStock ──
+                val result = AgentOrchestrator(appCtx).analyzeStock(
+                    stockCode = code,
+                    stockName = name,
+                    mode = AnalysisMode.DEEP,
+                    useAgentFramework = true,
+                    stepListener = stepListener,
+                    quantSignalsProvider = quantProvider
+                )
 
                 withContext(Dispatchers.Main) {
                     pipelineProgressView.showResult(result)
-                    statusTv.text = if (result.errorMessage != null) {
-                        "❌ 分析失敗"
+                    statusTv.text = if (!result.success) {
+                        "❌ 分析失敗: ${result.errorMessage?.take(30) ?: "未知錯誤"}"
                     } else {
-                        val passed = result.stocks.count { it.passed }
-                        "✅ Agent 分析完成 [${result.analysisMode}] (${result.stepsCompleted}/${result.totalSteps} 步, ${passed} 只通過)"
+                        val passedStr = if (result.passed == true) "通過" else "未通過"
+                        "✅ $name 分析完成 [${result.overallScore}分/$passedStr] 耗時${result.elapsedMs / 1000}s"
                     }
                     aiPipelineBtn.isEnabled = true
                     aiPipelineBtn.text = "🧠 Agent"
 
                     // 發布到跨 Tab 總線
-                    if (result.stocks.isNotEmpty()) {
-                        CrossTabBus.postAiTopPicks(result.stocks.mapNotNull { stock ->
-                            if (stock.chainScore != null) {
-                                val cs = stock.chainScore
-                                AIPredictionEngine.AIPick(
-                                    stockCode = stock.stockCode,
-                                    stockName = stock.stockName,
-                                    compositeScore = cs.totalScore,
-                                    upProbability = if (cs.totalScore >= 60) 75 else 50,
-                                    rank = 1,
-                                    reason = "AI智能体分析筛选: ${cs.barrierLevel}壁壘",
-                                    actionSuggestion = if (stock.passed) "建議關注" else "風控不通過"
-                                )
-                            } else null
-                        })
+                    if (result.success) {
+                        CrossTabBus.postAiTopPicks(listOf(
+                            AIPredictionEngine.AIPick(
+                                stockCode = result.stockCode,
+                                stockName = result.stockName,
+                                compositeScore = result.overallScore,
+                                upProbability = if (result.overallScore >= 60) 75 else 50,
+                                rank = 1,
+                                reason = "AI智能体分析: ${result.barrierLevel ?: result.recommendation ?: "綜合評估"}",
+                                actionSuggestion = if (result.passed == true) "建議關注" else "風控不通過"
+                            )
+                        ))
                     }
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    statusTv.text = "❌ AI 智能体分析筛选異常: ${e.message?.take(40)}"
+                    statusTv.text = "❌ AI 智能体分析異常: ${e.message?.take(40)}"
                     aiPipelineBtn.isEnabled = true
                     aiPipelineBtn.text = "🧠 Agent"
                 }

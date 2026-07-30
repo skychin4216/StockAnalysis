@@ -52,41 +52,64 @@ class DeepAnalystEngine(
         private const val IDLE_CHECK_INTERVAL_MS = 5_000L
         /** LLM 無新 token 判定卡死的時長 */
         private const val IDLE_STALL_MS = 30_000L
+
+        // ── 子 Agent 定義 ──
+        private data class SubAgentDef(
+            val agentId: String,
+            val displayName: String,
+            val phase: Int,
+            val maxTokens: Int = 4096
+        )
+
+        private val allSubAgents = listOf(
+            SubAgentDef("pipeline_agent_1", "基本面拐點分析", phase = 1),
+            SubAgentDef("pipeline_agent_3", "賽道熱度識別", phase = 1),
+            SubAgentDef("pipeline_agent_d", "板塊&輿情評分", phase = 1),
+            SubAgentDef("pipeline_agent_2", "產業鏈打分", phase = 2),
+            SubAgentDef("pipeline_agent_4", "技術量價分析", phase = 2, maxTokens = 6144),
+            SubAgentDef("pipeline_agent_competition", "行業競爭格局", phase = 2),
+            SubAgentDef("pipeline_agent_5", "風控終審", phase = 3, maxTokens = 6144)
+        )
+
+        /** 根據 maxSteps 選取子 Agent 集合（風控永遠保留） */
+        private fun selectSubAgents(maxSteps: Int): List<SubAgentDef> = when {
+            maxSteps <= 3 -> allSubAgents.filter {
+                it.agentId in setOf("pipeline_agent_4", "pipeline_agent_d", "pipeline_agent_5")
+            }
+            maxSteps <= 5 -> allSubAgents.filter { it.agentId != "pipeline_agent_2" }
+            else -> allSubAgents
+        }
+
+        private fun SubAgentDef.toAnalysisStep(order: Int) = AnalysisStep(
+            agentId = agentId,
+            name = displayName,
+            order = order,
+            isScorer = agentId == "pipeline_agent_2",
+            canHedge = agentId == "pipeline_agent_5",
+            isAuxiliary = agentId == "pipeline_agent_d"
+        )
+
+        /** 给定分析深度（子 Agent 數上限），返回有序步驟列表（供進度 UI 預建卡片） */
+        fun stepsFor(maxSteps: Int): List<AnalysisStep> =
+            selectSubAgents(maxSteps).mapIndexed { i, def -> def.toAnalysisStep(i) }
     }
-
-    // ── 子 Agent 定義 ──
-    private data class SubAgentDef(
-        val agentId: String,
-        val displayName: String,
-        val phase: Int,
-        val maxTokens: Int = 4096
-    )
-
-    private val allSubAgents = listOf(
-        SubAgentDef("pipeline_agent_1", "基本面拐點分析", phase = 1),
-        SubAgentDef("pipeline_agent_3", "賽道熱度識別", phase = 1),
-        SubAgentDef("pipeline_agent_d", "板塊&輿情評分", phase = 1),
-        SubAgentDef("pipeline_agent_2", "產業鏈打分", phase = 2),
-        SubAgentDef("pipeline_agent_4", "技術量價分析", phase = 2, maxTokens = 6144),
-        SubAgentDef("pipeline_agent_competition", "行業競爭格局", phase = 2),
-        SubAgentDef("pipeline_agent_5", "風控終審", phase = 3, maxTokens = 6144)
-    )
 
     /** 根據 maxSteps 選取子 Agent 集合（風控永遠保留） */
-    private fun selectSubAgents(): List<SubAgentDef> = when {
-        maxSteps <= 3 -> allSubAgents.filter {
-            it.agentId in setOf("pipeline_agent_4", "pipeline_agent_d", "pipeline_agent_5")
-        }
-        maxSteps <= 5 -> allSubAgents.filter { it.agentId != "pipeline_agent_2" }
-        else -> allSubAgents
-    }
+    private fun selectSubAgents(): List<SubAgentDef> = Companion.selectSubAgents(maxSteps)
 
     /**
      * 執行深度分析
      *
+     * @param ctx Agent 上下文
+     * @param stepListener 逐步進度回調（供 StrategyListFragment 進度面板，可空）
+     * @param quantSignalsProvider 量化策略信號提供者（注入到各子 Agent prompt，可空）
      * @return 結構化結果 map（score/recommendation/summary/riskFactors/tradePlan 等）
      */
-    suspend fun execute(ctx: AgentContext): Map<String, Any?> = withContext(Dispatchers.IO) {
+    suspend fun execute(
+        ctx: AgentContext,
+        stepListener: AnalysisStepListener? = null,
+        quantSignalsProvider: (suspend (String) -> List<com.chin.stockanalysis.strategy.models.StrategySignal>)? = null
+    ): Map<String, Any?> = withContext(Dispatchers.IO) {
         val agents = selectSubAgents()
         val target = stockName?.let { "$it($stockCode)" } ?: stockCode
         ctx.log("深度分析引擎啟動: $target, 子Agent=${agents.size}")
@@ -108,6 +131,9 @@ class DeepAnalystEngine(
         val hotSectors = fetchTodayHotSectors()
         val resolvedName = stockName ?: stockData?.quote?.name ?: stockCode
 
+        // 量化策略信號（一次獲取，注入各子 Agent）
+        val quantSignalsText = fetchQuantSignals(quantSignalsProvider)
+
         // ══ 2. 分階段執行 ══
         val analyses = mutableMapOf<String, String>()   // agentId → LLM 原始輸出
         val phase1Agents = agents.filter { it.phase == 1 }
@@ -118,7 +144,7 @@ class DeepAnalystEngine(
             // Phase 1: 並行
             val p1Deferred = phase1Agents.map { def ->
                 def to async {
-                    runSubAgent(ctx, def, target, resolvedName, stockData, quarterlyText, hotSectors, emptyMap())
+                    runSubAgent(ctx, def, target, resolvedName, stockData, quarterlyText, hotSectors, emptyMap(), quantSignalsText, agents, stepListener)
                 }
             }
             for ((def, deferred) in p1Deferred) {
@@ -129,7 +155,7 @@ class DeepAnalystEngine(
             // Phase 2: 並行（注入 Phase1 摘要）
             val p2Deferred = phase2Agents.map { def ->
                 def to async {
-                    runSubAgent(ctx, def, target, resolvedName, stockData, quarterlyText, hotSectors, analyses)
+                    runSubAgent(ctx, def, target, resolvedName, stockData, quarterlyText, hotSectors, analyses, quantSignalsText, agents, stepListener)
                 }
             }
             for ((def, deferred) in p2Deferred) {
@@ -149,7 +175,7 @@ class DeepAnalystEngine(
             // Phase 3: 串行（注入全部摘要；淘汰時跳過）
             if (!eliminated) {
                 for (def in phase3Agents) {
-                    runSubAgent(ctx, def, target, resolvedName, stockData, quarterlyText, hotSectors, analyses)
+                    runSubAgent(ctx, def, target, resolvedName, stockData, quarterlyText, hotSectors, analyses, quantSignalsText, agents, stepListener)
                         ?.let { analyses[def.agentId] = it }
                 }
             }
@@ -242,26 +268,53 @@ class DeepAnalystEngine(
         stockData: StockDataFacade.StockAnalysisData?,
         quarterlyText: String?,
         hotSectors: String,
-        priorAnalyses: Map<String, String>
+        priorAnalyses: Map<String, String>,
+        quantSignalsText: String?,
+        agents: List<SubAgentDef>,
+        stepListener: AnalysisStepListener?
     ): String? {
+        val step = with(DeepAnalystEngine.Companion) { def.toAnalysisStep(agents.indexOf(def).coerceAtLeast(0)) }
         return try {
             val basePrompt = AgentManager(appContext).get(def.agentId)?.systemPrompt ?: ""
             if (basePrompt.isBlank()) {
                 Log.w(TAG, "${def.displayName} prompt 為空，跳過")
+                stepListener?.onStepError(step, "prompt 為空")
                 null
             } else {
                 val prompt = buildSubAgentPrompt(
                     basePrompt.replace("{today_hot_sectors}", hotSectors),
-                    def, target, resolvedName, stockData, quarterlyText, priorAnalyses
+                    def, target, resolvedName, stockData, quarterlyText, priorAnalyses, quantSignalsText
                 )
                 val output = callLLM(def, prompt)
                 ctx.log("${def.displayName} 完成 (${output.length} 字)")
+                stepListener?.onStepComplete(step, StructuredOutputParser.formatReadable(def.agentId, output), emptyMap())
                 output
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Log.w(TAG, "${def.displayName} 失敗: ${e.message}")
             ctx.recordError("SUB_AGENT_${def.agentId}", "${def.displayName}: ${e.message}")
+            stepListener?.onStepError(step, e.message ?: "分析失敗")
+            null
+        }
+    }
+
+    /** 獲取量化策略信號文本（注入各子 Agent prompt） */
+    private suspend fun fetchQuantSignals(
+        provider: (suspend (String) -> List<com.chin.stockanalysis.strategy.models.StrategySignal>)?
+    ): String? {
+        provider ?: return null
+        return try {
+            val signals = provider(stockCode)
+            if (signals.isEmpty()) return null
+            buildString {
+                appendLine("【量化策略信號（${signals.size} 條）】")
+                for (sig in signals) {
+                    appendLine("- ${sig.emoji} [${sig.strategyId}] ${sig.stockName}: ${sig.reason} (強度:${sig.strength}%, 建議:${sig.action.label})")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "量化信號注入失敗: ${e.message?.take(60)}")
             null
         }
     }
@@ -330,7 +383,8 @@ class DeepAnalystEngine(
         resolvedName: String,
         stockData: StockDataFacade.StockAnalysisData?,
         quarterlyText: String?,
-        priorAnalyses: Map<String, String>
+        priorAnalyses: Map<String, String>,
+        quantSignalsText: String?
     ): String = buildString {
         append(basePrompt)
         append("\n\n")
@@ -385,6 +439,12 @@ class DeepAnalystEngine(
         quarterlyText?.let {
             append(it)
             append("\n\n")
+        }
+
+        // 量化策略信號（來自策略列表的實時篩選信號）
+        quantSignalsText?.let {
+            append(it)
+            append("\n")
         }
 
         // 分析標的

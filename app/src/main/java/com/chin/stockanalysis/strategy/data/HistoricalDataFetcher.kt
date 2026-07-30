@@ -180,7 +180,7 @@ class HistoricalDataFetcher(private val context: Context) {
         try {
             val realtimeUrl = "${DataConfig.eastmoneyPush2}/clist/get?" +
                     "pn=1&pz=200&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23" +
-                    "&fields=f2,f3,f4,f5,f6,f8,f12,f14,f15,f16,f17,f18"
+                    "&fields=f2,f3,f4,f5,f6,f8,f9,f12,f14,f15,f16,f17,f18,f20,f23"
             val req = Request.Builder().url(realtimeUrl)
                 .addHeader("User-Agent", "Mozilla/5.0")
                 .addHeader("Referer", DataConfig.eastmoneyQuote)
@@ -220,7 +220,10 @@ class HistoricalDataFetcher(private val context: Context) {
                             amount = item.optDouble("f6", 0.0) * 10000,
                             changePct = item.optDouble("f3", 0.0),
                             turnoverRate = item.optDouble("f8", 0.0),
-                            mainNetInflow = 0.0
+                            mainNetInflow = 0.0,
+                            pe = item.optDouble("f9", 0.0),
+                            pb = item.optDouble("f23", 0.0),
+                            marketCap = item.optDouble("f20", 0.0)
                         ))
                         if (name.isNotBlank()) {
                             names.add(StockBasicEntity(code = fullCode, name = name, business = ""))
@@ -285,6 +288,17 @@ class HistoricalDataFetcher(private val context: Context) {
         val step2Elapsed = System.currentTimeMillis() - step2Start
         Log.i(TAG, "  Step 2 done: ${step2Elapsed}ms, success=$successStocks, failed=$failedStocks")
 
+        // Step 2.5: 基本面充实（K线写入会覆盖当日行的 PE/PB/市值，须在其后回写）
+        val step25Start = System.currentTimeMillis()
+        Log.i(TAG, "--- Step 2.5: Fundamentals enrichment (${stocks.size} stocks) ---")
+        val enrichedCount = try {
+            enrichFundamentals(todayStr, stocks)
+        } catch (e: Exception) {
+            Log.w(TAG, "  Fundamentals enrichment failed: ${e.message}"); 0
+        }
+        val step25Elapsed = System.currentTimeMillis() - step25Start
+        Log.i(TAG, "  Step 2.5 done: ${step25Elapsed}ms, enriched=$enrichedCount")
+
         // Step 3: fill missing names (only for stocks that actually need it)
         val step3Start = System.currentTimeMillis()
         val filledCount = fillMissingNames()
@@ -297,8 +311,57 @@ class HistoricalDataFetcher(private val context: Context) {
         val elapsedMs = System.currentTimeMillis() - startMs
         Log.i(TAG, "========== FETCH COMPLETE ==========")
         Log.i(TAG, "  Records: $totalRecords  Stocks: ${stocks.size}  Time: ${elapsedMs}ms")
-        Log.i(TAG, "  Breakdown: Step1=${step1Elapsed}ms  Step2=${step2Elapsed}ms  Step3=${step3Elapsed}ms")
+        Log.i(TAG, "  Breakdown: Step1=${step1Elapsed}ms  Step2=${step2Elapsed}ms  Step2.5=${step25Elapsed}ms  Step3=${step3Elapsed}ms")
         totalRecords
+    }
+
+    /**
+     * 基本面充实：把 PE/PB/市值（push2 行情批量）与 ROE/毛利率/负债率/现金流
+     * （datacenter 财务批量）回写到当日快照行。
+     *
+     * 必要性：K 线 API 只有 OHLCV，Step 2 的 REPLACE 写入会把 Step 1 已带的
+     * PE/PB/市值清零；基本面策略（机构增持/护城河/低估值/周期低位）的硬性
+     * 过滤全部依赖这些字段。
+     *
+     * @return 实际更新的行数
+     */
+    private suspend fun enrichFundamentals(date: String, stocks: List<String>): Int {
+        // 1. 行情批量：PE/PB/市值/换手率（复用 EastMoneyStockSource，内部按 50 分批）
+        val quoteMap = try {
+            com.chin.stockanalysis.stock.data.sources.EastMoneyStockSource().fetchRealtime(stocks)
+        } catch (e: Exception) {
+            Log.w(TAG, "  quote batch failed: ${e.message}"); emptyMap()
+        }
+
+        // 2. 财务批量：ROE/毛利率/负债率/现金流（按报告期倒序，每股取最新一期）
+        val financeMap = FundamentalsProvider.fetchBulkFinance(neededCodes = stocks)
+
+        if (quoteMap.isEmpty() && financeMap.isEmpty()) return 0
+
+        var updated = 0
+        for (code in stocks) {
+            val q = quoteMap[code]
+            val f = financeMap[code]
+            if (q == null && f == null) continue
+            // 至少有一个有效值才回写（市值>0 或 PE!=0 或 ROE!=0）
+            val hasValue = (q != null && (q.marketCap > 0 || q.pe != 0.0)) ||
+                    (f != null && (f.roe != 0.0 || f.grossMargin != 0.0))
+            if (!hasValue) continue
+            try {
+                updated += db.dailySnapshotDao().updateFundamentals(
+                    code = code, date = date,
+                    pe = q?.pe ?: 0.0,
+                    pb = q?.pb ?: 0.0,
+                    marketCap = q?.marketCap ?: 0.0,
+                    roeTTM = f?.roe ?: 0.0,
+                    grossMarginTTM = f?.grossMargin ?: 0.0,
+                    debtToAsset = f?.debtToAsset ?: 0.0,
+                    operatingCashFlow = f?.operatingCashFlow ?: 0.0,
+                    turnoverRate = q?.turnoverRate ?: 0.0
+                )
+            } catch (_: Exception) { /* 单只失败不中断 */ }
+        }
+        return updated
     }
 
     private suspend fun fillMissingNames(): Int {

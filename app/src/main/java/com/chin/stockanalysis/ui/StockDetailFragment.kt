@@ -21,12 +21,11 @@ import com.chin.stockanalysis.stock.data.sources.SectorSubDivision
 import com.chin.stockanalysis.stock.database.ChinaMarketTradingHours as A股TradingHours
 import com.chin.stockanalysis.stock.database.StockDataCenter
 import com.chin.stockanalysis.stock.database.StockDatabase
-import com.chin.stockanalysis.agent.framework.UnifiedAgentRunner
 import com.chin.stockanalysis.agent.core.AgentOrchestrator
-import com.chin.stockanalysis.agent.core.IntentType
-import com.chin.stockanalysis.agent.core.UserIntent
+import com.chin.stockanalysis.agent.core.AnalysisMode
+import com.chin.stockanalysis.agent.core.AnalysisResult
+import com.chin.stockanalysis.agent.core.analyzeStock
 import com.chin.stockanalysis.config.FeatureFlagManager
-import com.chin.stockanalysis.strategy.HoldingPeriod
 import com.chin.stockanalysis.strategy.data.InstitutionalRatingProvider
 import com.github.mikephil.charting.charts.CandleStickChart
 import com.github.mikephil.charting.components.XAxis
@@ -648,7 +647,7 @@ class StockDetailFragment : Fragment() {
                         setOnClickListener {
                             it.isEnabled = false
                             text = "V1.0分析中..."
-                            runAiAgents(UnifiedAgentRunner.MODE_PIPELINE)
+                            runAiAgents(AnalysisMode.DEEP)
                         }
                     })
                     btnRow.addView(Button(requireContext()).apply {
@@ -661,7 +660,7 @@ class StockDetailFragment : Fragment() {
                         setOnClickListener {
                             it.isEnabled = false
                             text = "V2.0分析中..."
-                            runAiAgents(UnifiedAgentRunner.MODE_V2)
+                            runAiAgents(AnalysisMode.EXPERT)
                         }
                     })
                     btnRow.addView(Button(requireContext()).apply {
@@ -703,37 +702,24 @@ class StockDetailFragment : Fragment() {
     private var aiAnalysisJob: Job? = null
 
     /**
-     * 新 Agent 框架路徑（AgentOrchestrator）。
+     * 統一分析入口（AgentOrchestrator.analyzeStock）。
      *
-     * 模式映射：
-     * - MODE_PIPELINE / MODE_V2 → DEEP_ANALYSIS（Scout+Analyst+Guardian 並行，中線週期）
-     * - MODE_QUICK → FOLLOW_UP（僅 Analyst，速度近似舊 Quick）
-     *
-     * 結果適配為 [UnifiedAgentRunner.Result]，UI 層無需改動。
+     * flag 控制編排深度：
+     * - stockAnalysisRoute = AGENT_FRAMEWORK → 完整角色編排（Scout+Analyst+Guardian 並行）
+     * - 否則 → 輕量直連（DeepAnalystEngine + 決策矩陣）
      */
-    private suspend fun runViaAgentFramework(appCtx: Context, mode: String): UnifiedAgentRunner.Result {
-        val intent = when (mode) {
-            UnifiedAgentRunner.MODE_PIPELINE, UnifiedAgentRunner.MODE_V2 ->
-                UserIntent(IntentType.DEEP_ANALYSIS, target = stockCode, period = HoldingPeriod.MID)
-            else ->
-                UserIntent(IntentType.FOLLOW_UP, target = stockCode)
-        }
-
-        val r = AgentOrchestrator(appCtx).execute(intent, stockCode, stockName)
-
-        return UnifiedAgentRunner.Result(
+    private suspend fun runAnalysis(appCtx: Context, mode: AnalysisMode): AnalysisResult {
+        val useAgent = FeatureFlagManager.isAgentFramework(FeatureFlagManager.stockAnalysisRoute)
+        return AgentOrchestrator(appCtx).analyzeStock(
             stockCode = stockCode,
             stockName = stockName,
             mode = mode,
-            success = r.isSuccess,
-            summaryText = r.summary.ifBlank { r.error ?: "Agent 分析失敗" },
-            elapsedMs = r.totalElapsedMs,
-            errorMessage = r.error
+            useAgentFramework = useAgent
         )
     }
 
     /** 運行 AI Agent 分析，切換到 aiResultContainer */
-    private fun runAiAgents(mode: String = UnifiedAgentRunner.MODE_QUICK) {
+    private fun runAiAgents(mode: AnalysisMode = AnalysisMode.DEEP) {
         // 取消之前正在進行的分析
         aiAnalysisJob?.cancel()
 
@@ -749,8 +735,8 @@ class StockDetailFragment : Fragment() {
         })
         loadingRow.addView(TextView(requireContext()).apply {
             text = when (mode) {
-                UnifiedAgentRunner.MODE_PIPELINE -> "V1.0深度分析中（需要30-60秒）..."
-                UnifiedAgentRunner.MODE_V2 -> "V2.0全周期分析中（市場環境+利潤質量+決策矩陣）..."
+                AnalysisMode.DEEP -> "V1.0深度分析中（需要30-60秒）..."
+                AnalysisMode.EXPERT -> "V2.0全周期分析中（市場環境+利潤質量+決策矩陣）..."
                 else -> "AI 分析中..."
             }
             textSize = 9f; setTextColor(Color.parseColor("#999999"))
@@ -763,18 +749,8 @@ class StockDetailFragment : Fragment() {
 
         aiAnalysisJob = lifecycleScope.launch(Dispatchers.IO) {
             val appCtx = requireContext().applicationContext
-            // 路線選擇：設置開啟 Agent 框架 → AgentOrchestrator（角色化+並行Sub-Agent），否則舊 Runner
-            val result = if (FeatureFlagManager.isAgentFramework(FeatureFlagManager.stockAnalysisRoute)) {
-                runViaAgentFramework(appCtx, mode)
-            } else {
-                UnifiedAgentRunner.run(
-                    context = appCtx,
-                    stockCode = stockCode,
-                    stockName = stockName,
-                    mode = mode,
-                    sector = initialSector.takeIf { it.isNotEmpty() }
-                )
-            }
+            // 統一入口：AgentOrchestrator.analyzeStock（flag 控制完整編排 / 輕量直連）
+            val result = runAnalysis(appCtx, mode)
 
             // 檢查是否被取消或 view 已銷毀
             ensureActive()
@@ -784,15 +760,15 @@ class StockDetailFragment : Fragment() {
                 aiResultContainer.removeAllViews()
                 aiResultContainer.addView(TextView(requireContext()).apply {
                     text = result.summaryText
-                    textSize = if (result.mode == UnifiedAgentRunner.MODE_PIPELINE) 9f else 10f
+                    textSize = if (result.mode == AnalysisMode.DEEP) 9f else 10f
                     setTextColor(Color.parseColor("#1B5E20"))
                     setLineSpacing(2f, 1f)
                     setPadding(0, 0, 0, 2)
                 })
                 // 模式標籤
-                if (result.mode == UnifiedAgentRunner.MODE_PIPELINE) {
+                if (result.mode != AnalysisMode.QUICK) {
                     aiResultContainer.addView(TextView(requireContext()).apply {
-                        text = "🧠 ${result.elapsedMs}ms · Pipeline 深度分析"
+                        text = "🧠 ${result.elapsedMs}ms · ${if (result.mode == AnalysisMode.EXPERT) "全周期" else "深度"}分析"
                         textSize = 8f; setTextColor(Color.parseColor("#666666"))
                         gravity = Gravity.CENTER
                         setPadding(0, 2, 0, 2)

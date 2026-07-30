@@ -3,6 +3,7 @@ package com.chin.stockanalysis.agent.chat
 import android.content.Context
 import android.util.Log
 import com.chin.stockanalysis.agent.framework.*
+import com.chin.stockanalysis.agent.core.analyzeStock
 import com.chin.stockanalysis.agent.stock.StockAnalysisAgent
 import com.chin.stockanalysis.agent.stock.StockPickingAgent
 import com.chin.stockanalysis.ai.AiProviderPool
@@ -36,7 +37,6 @@ class ChatAgent(context: Context) : AgentBase(
 
     private val pickingAgent = StockPickingAgent(context)
     private val analysisAgent = StockAnalysisAgent(context)
-    private val pipelineAdapter = PipelineChatAdapter(context)
 
     init {
         registerTool(StockQueryTool(context))
@@ -118,12 +118,12 @@ class ChatAgent(context: Context) : AgentBase(
                 val stockName = extractStockName(userMessage)
 
                 if (code != null) {
-                    // 統一引擎：根據 analysisMode 映射到 UnifiedAgentRunner
+                    // 統一入口：AgentOrchestrator.analyzeStock（輕量直連路徑）
                     val normalizedCode = StockAnalysisAgent.normalizeStockCode(code)
-                    val mode = when (analysisMode) {
-                        com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.QUICK -> UnifiedAgentRunner.MODE_QUICK
-                        com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.DEEP -> UnifiedAgentRunner.MODE_PIPELINE
-                        com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.EXPERT -> UnifiedAgentRunner.MODE_V2
+                    val coreMode = when (analysisMode) {
+                        com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.QUICK -> com.chin.stockanalysis.agent.core.AnalysisMode.QUICK
+                        com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.DEEP -> com.chin.stockanalysis.agent.core.AnalysisMode.DEEP
+                        com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.EXPERT -> com.chin.stockanalysis.agent.core.AnalysisMode.EXPERT
                     }
                     val modeLabel = when (analysisMode) {
                         com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.QUICK -> "⚡ V1.0 Quick"
@@ -132,11 +132,11 @@ class ChatAgent(context: Context) : AgentBase(
                     }
                     onStream?.invoke("$modeLabel 分析中：${stockName ?: normalizedCode}\n")
 
-                    val result = UnifiedAgentRunner.run(
-                        context = context,
+                    val result = com.chin.stockanalysis.agent.core.AgentOrchestrator(context).analyzeStock(
                         stockCode = normalizedCode,
                         stockName = stockName,
-                        mode = mode
+                        mode = coreMode,
+                        useAgentFramework = false
                     )
 
                     ChatAgentResult(

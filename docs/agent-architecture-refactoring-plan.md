@@ -636,35 +636,22 @@ DAG Pipeline 與 Hardcode 路徑目前**不等價**。Hardcode 路徑包含若�
 | Fragment 接入（FeatureFlag 開關切換新舊路線） | ✅ | `ui/StockDetailFragment.kt`（設置 → 分析模塊開關） |
 | DAG 騰龍換鳥修正（swap 輔助化 + 序列鏈） | ✅ | `DagPipeline.kt`, `MidTermPipelineNodes.kt`, 4 個 XML |
 | 持倉風控節點（n_guard，每次必評估止損/止盈） | ✅ | `MidTermPipelineNodes.kt` HoldingGuardNode |
+| Step 2：DeepAnalystEngine（V1 等價深度分析） | ✅ | `agent/core/DeepAnalystEngine.kt` |
+| Step 4a：統一入口 StockAnalysisUseCase | ✅ | `agent/core/StockAnalysisUseCase.kt`（analyzeStock 擴展函數） |
+| Step 4b：遷移所有調用方 | ✅ | StockDetailFragment / ChatTabFragment / ChatAgent / StrategyListFragment |
+| Step 4c：刪除舊編排層 | ✅ | 已刪：UnifiedAgentRunner / AgentPipelineOrchestrator / V2AgentRunner / DataFeeder / PipelineStep / analytics/CapitalFlowData |
+| PipelineProgressView 解耦 | ✅ | `agent/pipeline/ui/PipelineProgressView.kt`（改用 AnalysisStep/AnalysisResult） |
+| StructuredOutputParser.formatReadable | ✅ | `agent/pipeline/StructuredOutputParser.kt`（可讀摘要渲染） |
 
 ### 12.2 剩餘計劃
 
-#### Step 1：穩定性驗證（當前階段）
+#### Step 1：穩定性驗證 ✅ 已完成
 
-- 設置頁「分析模塊」開關 = ON 時走 AgentOrchestrator，OFF 走 UnifiedAgentRunner
-- 觀測指標：分析成功率、耗時、LLM 調用次數、降級比例
-- 驗證標準：連續 3 個交易日無 crash / 無分析失敗 → 進入 Step 2
+舊編排層已刪除，所有調用方已遷移至統一入口。
 
-#### Step 2：Analyst 深度補齊（刪除 V1/V2 的前提）✅ 已實現
+#### Step 2：Analyst 深度補齊 ✅ 已完成
 
-> **背景**：V1.0 深度分析（6-7 步專職 LLM Agent）和 V2.0 全周期（決策矩陣）的分析深度
-> 優於當前 AgentOrchestrator 的 AnalystTask（僅 1 次通用 LLM 調用）。
-> 必須先補齊內容再刪舊框架，否則分析質量倒退。
-
-**實現方案**（`agent/core/DeepAnalystEngine.kt`）：
-
-| 項目 | 實現 | 來源 |
-|------|------|------|
-| 7 個專職 Sub-Agent，3 階段並行 | Phase1 並行：基本面拐點(A1)+賽道熱度(A3)+板塊輿情(D)；Phase2 並行：產業鏈打分(A2)+技術量價(A4)+競爭格局，注入 Phase1 摘要；Phase3 串行：風控終審(A5) 注入全部摘要 | 復用 `skills_config.json` 的 `pipeline_agent_1~d/competition` prompt + `StructuredOutputParser` |
-| V1 等價邏輯 | 提前淘汰（打分<40 跳過風控）+ 對沖機制（海外扣分清零海外加分） | `AgentPipelineOrchestrator` passThreshold + applyHedgeMechanism |
-| 按周期裁剪子 Agent | `AgentClusterConfig.analystSteps`：超短線 3 個（技術+輿情+風控）、短線 5 個、中長線全量 7 個 | — |
-| 決策矩陣（環境×利潤質量×估值→操作指令） | `computeDecisionMatrix()` 移入 Orchestrator Phase 2.5，含 peBand 估值分檔 + PE 陷阱警示，報告新增「🎯 決策矩陣」段落 | 復用 `ProfitQualityAnalyzer` + `V2DecisionMatrix` + `PositionWaterValve` |
-| 超時調整 | `analystTimeout` 上調至 90~210s（3 階段串行 LLM），`orchestratorTimeout` 120~240s | `IntentRouter.AgentClusterConfig` |
-| 數據復用 | StockDataFacade + 季度環比 + 熱門賽道一次預取，所有子 Agent 共享；prompt 注入邏輯復用 V1 `buildStepPrompt` | — |
-
-相比 V1 的 6 步串行，延遲從 6×LLM 降至 3×LLM；相比舊 AnalystTask，分析深度追平 V1。
-
-**待驗證**：同一股票新舊路線報告對比，信息量不低於 V1 → 通過後 V1/V2 分析內容全部在新框架內運行，舊編排層才可安全刪除。
+DeepAnalystEngine 已實現 V1 等價的 7 子 Agent 3 階段並行分析。
 
 #### Step 3：Phase E — 優化與擴展
 
@@ -675,87 +662,38 @@ DAG Pipeline 與 Hardcode 路徑目前**不等價**。Hardcode 路徑包含若�
 | Token 用量統計 | 每次 LLM 調用記錄 input/output tokens，報告附帶成本 | 報告末尾顯示 token 消耗 |
 | AnalysisCache 命中率優化 | 相同股票+周期 30 分鐘內復用，跳過 LLM | 重複分析 LLM 調用 = 0 |
 
-#### Step 4：刪除舊編排層
+#### Step 4：刪除舊編排層 ✅ 已完成（2026-07-30）
 
-**前提**：Step 2 完成（分析深度追平 V1/V2）+ 設置開關默認值改為 AGENT_FRAMEWORK。
-
-**3a. 遷移剩餘調用方**（刪除前必須完成）：
-
-| 調用方 | 當前 | 遷移為 |
-|--------|------|--------|
-| `agent/chat/ChatAgent.kt`（AI對話框） | UnifiedAgentRunner.run(QUICK/PIPELINE/V2) | IntentRouter.resolve(聊天文本) → AgentOrchestrator |
-| `config/AgentRouteExecutor.kt` | UnifiedAgentRunner.run(QUICK/V2) | AgentOrchestrator.execute(UserIntent) |
-| `ui/StockDetailFragment.kt` | 雙路線 fallback | 刪除 fallback，runViaAgentFramework 為唯一路徑 |
-
-**3b. 刪除清單**（僅編排層，底層分析器保留）：
-
-| 刪除 | 保留 |
-|------|------|
-| `agent/framework/UnifiedAgentRunner.kt` | `agent/stock/StockAnalysisAgent.kt`（AnalystTask 包裝） |
-| `agent/framework/MultiAgentOrchestrator.kt` | `agent/risk/RiskManagementAgent.kt`（GuardianTask 包裝） |
-| `agent/pipeline/AgentPipelineOrchestrator.kt` + 相關 | `strategy/market/MarketAnalyzer.kt`（ScoutTask 包裝） |
-| `agent/v2/V2AgentRunner.kt`（⚠️ 僅刪此文件） | `agent/v2/ProfitQualityAnalyzer.kt`（DAG 節點引用） |
-| StockDetailFragment 中的 fallback 分支 | FeatureFlagManager（其他模塊仍用） |
-
-刪除後調用鏈簡化為：`UI/Chat → AgentOrchestrator → Task → 葉子 Agent`，適配層（OrchestratorResult → Result）可一併移除。
+已刪除：UnifiedAgentRunner / AgentPipelineOrchestrator / V2AgentRunner / DataFeeder / PipelineStep / analytics/CapitalFlowData。
+保留：AgentBase + AgentTool（TradeExecutionAgent 仍使用）、StructuredOutputParser + QuarterlyComparisonProvider（DeepAnalystEngine 使用）、PipelineResult.kt（精簡為僅保留數據類）。
 
 #### Step 5：后续擴展（可選）
 
 - IntentRouter 接入 ChatTabFragment（聊天意圖 → Agent 群）
 - 註解驅動 Node 註冊（refactoring-plan Phase 4）
 - Executor 角色接入 DagTradeExecutor（訂單生成 → 跨 Tab 發布全自動）
+- V1/V2 按鈕合併為單一「深度分析」+ 周期選擇
 
-### 12.3 三條分析路線的關係與開關
+### 12.3 當前統一架構（2026-07-30 後）
 
-> 個股詳情頁現有「V1.0 深度分析」「V2.0 全周期」兩個按鈕，加上新的 AgentOrchestrator，
-> 共三條路線。本節說明它們的關係、開關位置和最終歸宿。
-
-#### 路由全景（過渡期）
-
-```
-設置 Flag OFF（默認 LEGACY）:
-  V1按鈕(MODE_PIPELINE) → UnifiedAgentRunner.runPipeline → AgentPipelineOrchestrator（6步串行 LLM）
-  V2按鈕(MODE_V2)       → UnifiedAgentRunner.runV2       → V2AgentRunner（決策矩陣）
-
-設置 Flag ON:
-  V1按鈕 ─┐
-          ├→ runViaAgentFramework → AgentOrchestrator.execute(DEEP_ANALYSIS, MID)
-  V2按鈕 ─┘        → executeDeepAnalysis（DeepAnalystEngine 7子Agent + 決策矩陣）
-```
-
-關鍵點：`StockDetailFragment.runViaAgentFramework` 把 MODE_PIPELINE 和 MODE_V2 **都映射到**
-`DEEP_ANALYSIS + HoldingPeriod.MID`，所以 Flag ON 後两个按鈕走的是同一條路
-（executeDeepAnalysis 已包含 V1+V2 全部分析內容）。
-
-#### 在哪裏開啟 AgentOrchestrator
-
-設置頁「Agent 框架」區域（`SettingsFragment.setupAgentFramework`）：
-
-| 全局模式 | 效果 |
-|---------|------|
-| 舊系統（LEGACY，默認） | 全部模塊走舊路線，模塊開關不可操作 |
-| 新 Agent（AGENT） | 全部模塊走 AgentOrchestrator |
-| 按模塊混合（HYBRID） | 各模塊開關獨立生效，其中「分析」開關（swStockAnalysis）控制個股分析路線 |
-
-判定鏈（`FeatureFlagManager.resolveRoute`）：
+舊編排層（UnifiedAgentRunner / AgentPipelineOrchestrator / V2AgentRunner）已刪除。
+所有調用方統一走 `AgentOrchestrator.analyzeStock()` 擴展函數：
 
 ```
-isAgentFramework(stockAnalysisRoute)
-  → resolveRoute(): globalMode 優先
-      LEGACY → 一票否決（全部走舊）
-      AGENT  → 一票通過（全部走新）
-      HYBRID → 看模塊級 stockAnalysisRoute（AUTO 視為 AGENT_FRAMEWORK）
+調用方                        統一入口                          底層實現
+─────────────────────────────────────────────────────────────────────────
+StockDetailFragment ─┐
+ChatTabFragment ─────┤
+ChatAgent ───────────┼→ AgentOrchestrator.analyzeStock()
+StrategyListFragment ┘     │
+                           ├─ QUICK  → StockAnalysisAgent + RiskManagementAgent + MarketAnalyzer（並行）
+                           ├─ DEEP   → DeepAnalystEngine(5 子Agent) + 決策矩陣
+                           └─ EXPERT → DeepAnalystEngine(7 子Agent) + 決策矩陣（中長線週期）
 ```
 
-#### 三條路線的最終歸宿
+`useAgentFramework` flag 控制編排深度：
+- true  → 完整角色編排（Scout + Analyst + Guardian 並行，session/spawner，降級兜底）
+- false → 輕量直連（DeepAnalystEngine + 內聯 MarketAnalyzer → 決策矩陣，無 session 開銷）
 
-**executeDeepAnalysis 是唯一深度分析實現，V1/V2 編排層最終刪除。**
-
-1. 驗證：跑 2-3 隻股票對比新舊報告，信息量不輸 V1
-2. 遷移剩餘調用方：`ChatAgent`（AI對話框）、`AgentRouteExecutor` → 全部走 AgentOrchestrator
-3. 刪除編排層：`UnifiedAgentRunner` / `AgentPipelineOrchestrator` / `V2AgentRunner` / `MultiAgentOrchestrator`
-4. 保留葉子模塊：`StockAnalysisAgent`（FOLLOW_UP 輕量分析）、`RiskManagementAgent`、
-   `MarketAnalyzer`、`ProfitQualityAnalyzer`、`V2DecisionMatrix`、`PositionWaterValve`
-5. 按鈕合併：V1/V2 兩按鈕合併為一個「深度分析」+ 周期選擇
-   （DeepAnalystEngine 已按周期裁剪子 Agent，按鈕再區分 V1/V2 失去意義）
+FeatureFlagManager 仍保留，用於控制 `useAgentFramework` 參數的默認值。
 

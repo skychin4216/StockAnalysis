@@ -111,7 +111,8 @@ class FactorDataProvider {
             val pureCode = code.removePrefix("sh").removePrefix("sz")
             val url = "${DataConfig.eastmoneyDatacenter}?" +
                     "reportName=RPT_F10_FINANCE_MAINFINADATA&columns=ALL" +
-                    "&filter=(SECURITY_CODE=\"$pureCode\")&pageSize=1&pageNumber=1"
+                    "&filter=(SECURITY_CODE=\"$pureCode\")&pageSize=1&pageNumber=1" +
+                    "&sortColumns=REPORT_DATE&sortTypes=-1"
             val req = Request.Builder().url(url)
                 .addHeader("User-Agent", "Mozilla/5.0")
                 .build()
@@ -123,11 +124,12 @@ class FactorDataProvider {
             if (records == null || records.length() == 0) return@withContext FinanceResult()
 
             val data = records.getJSONObject(0)
+            // 注意：该报表不含 PE/PB 字段（保持 0，调用方另有行情来源）
             val pe = data.optDouble("PE_TTM", 0.0)
             val pb = data.optDouble("PB", 0.0)
-            val roe = data.optDouble("ROE_WEIGHT", 0.0)
-            val npGrowth = data.optDouble("NETPROFIT_YOY", 0.0)
-            val revGrowth = data.optDouble("TOTALOPERATEREVE_YOY", 0.0)
+            val roe = data.optDouble("ROEJQ", 0.0)                    // ROE加权%
+            val npGrowth = data.optDouble("PARENTNETPROFITTZ", 0.0)   // 归母净利润同比%
+            val revGrowth = data.optDouble("TOTALOPERATEREVETZ", 0.0) // 营业总收入同比%
 
             // 财务评分
             val score = when {

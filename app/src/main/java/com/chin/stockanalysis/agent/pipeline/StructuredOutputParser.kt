@@ -183,4 +183,94 @@ object StructuredOutputParser {
         val json = extractJson(text) ?: return null
         return try { json.optString("heatLevel", null) } catch (_: Exception) { null }
     }
+
+    /**
+     * 將單個 Pipeline Agent 的結構化 JSON 輸出轉為可讀摘要。
+     *
+     * Agent 在 jsonMode 下輸出純 JSON（見 skills_config.json 的輸出規範），
+     * 直接傾倒會產生亂碼。此處按 agentId 提取關鍵欄位渲染為自然語言。
+     * 非 JSON（純文本回覆）則截斷保留。
+     */
+    fun formatReadable(agentId: String, rawText: String): String {
+        val json = extractJson(rawText) ?: return rawText.trim().take(400)
+        return try {
+            when (agentId) {
+                "pipeline_agent_1" -> {
+                    val arr = json.optJSONArray("filteredPool")
+                    if (arr == null || arr.length() == 0) return "（未輸出初選池）"
+                    buildString {
+                        appendLine("初選池 ${arr.length()} 檔：")
+                        for (i in 0 until arr.length()) {
+                            val o = arr.getJSONObject(i)
+                            appendLine("  • ${o.optString("code")} ${o.optString("name")}：${o.optString("reason")}")
+                        }
+                    }.trim()
+                }
+                "pipeline_agent_2" -> {
+                    "產業鏈打分 ${json.optInt("totalScore", 0)}/100（壁壘：${json.optString("barrierLevel", "?")}），" +
+                        (if (json.optBoolean("passed", false)) "通過流轉" else "未達 40 分淘汰")
+                }
+                "pipeline_agent_3" -> buildString {
+                    append("賽道熱度：${json.optString("heatLevel", "未知")}")
+                    val theme = json.optString("theme", "")
+                    if (theme.isNotBlank()) append("｜主題：$theme")
+                    append("｜正宗標的：${if (json.optBoolean("authentic", false)) "是" else "否（蹭熱點）"}")
+                    val cat = json.optJSONArray("catalysts")
+                    if (cat != null && cat.length() > 0) {
+                        appendLine()
+                        append("催化事件：${(0 until cat.length()).map { cat.optString(it) }.joinToString("；")}")
+                    }
+                }.trim()
+                "pipeline_agent_4" -> buildString {
+                    val ez = json.optJSONArray("entryZones")
+                    if (ez != null && ez.length() > 0) appendLine("低吸區間：${(0 until ez.length()).map { ez.optString(it) }.joinToString(" / ")}")
+                    val sl = json.optString("stopLoss", "")
+                    if (sl.isNotBlank()) appendLine("止損位：$sl")
+                    val tg = json.optJSONArray("targets")
+                    if (tg != null && tg.length() > 0) appendLine("止盈目標：${(0 until tg.length()).map { tg.optString(it) }.joinToString(" / ")}")
+                    append("最大倉位：${json.optString("maxPosition", "?")}｜分倉比例：${json.optString("splitRatio", "?")}")
+                }.trim()
+                "pipeline_agent_5" -> buildString {
+                    append("風險等級：${json.optString("riskLevel", "未知")}")
+                    val adj = json.optInt("adjustedScore", 0)
+                    if (adj > 0) append("｜對沖後分數：$adj")
+                    val ded = json.optJSONArray("deductions")
+                    if (ded != null && ded.length() > 0) {
+                        appendLine()
+                        for (i in 0 until ded.length()) {
+                            val d = ded.getJSONObject(i)
+                            appendLine("  • ${d.optString("item")}：${d.optString("description")}")
+                        }
+                    }
+                }.trim()
+                "pipeline_agent_d" -> {
+                    "輿情得分 ${json.optInt("sentimentScore", 0)}，倉位微調 ${json.optString("positionAdjust", "0%")}" +
+                        json.optString("reason", "").let { if (it.isNotBlank()) "：$it" else "" }
+                }
+                else -> genericJsonToText(json)  // 競爭格局等其他 Agent：通用提取
+            }
+        } catch (_: Exception) {
+            rawText.trim().take(300)
+        }
+    }
+
+    /** 通用 fallback：從 JSON 提取可讀的字串/陣列欄位，避免傾倒原始結構 */
+    private fun genericJsonToText(json: JSONObject): String = buildString {
+        val keys = json.keys()
+        var count = 0
+        while (keys.hasNext() && count < 8) {
+            val k = keys.next()
+            val v = json.opt(k)
+            val s = when (v) {
+                is String -> v
+                is JSONArray -> (0 until v.length()).mapNotNull { v.opt(it)?.toString() }.joinToString("、")
+                null -> ""
+                else -> v.toString()
+            }
+            if (s.isNotBlank() && s != "0" && s.length > 1) {
+                appendLine("  $k：${s.take(120)}")
+                count++
+            }
+        }
+    }.trim().ifBlank { "（無可讀摘要）" }
 }

@@ -857,7 +857,9 @@ class SimulationTradeEngine(private val context: Context) {
                 if (realtimeStocks.isEmpty()) return local
                 val entities = realtimeStocks.map { DailySnapshotEntity(code=it.code, name=it.name, date=date,
                     open=it.open, close=it.price, high=it.high, low=it.low, volume=it.volume,
-                    amount=it.amount, changePct=it.changePercent, turnoverRate=it.turnoverRate, mainNetInflow=0.0) }
+                    amount=it.amount, changePct=it.changePercent, turnoverRate=it.turnoverRate, mainNetInflow=0.0,
+                    pe=it.pe, pb=it.pb, marketCap=it.marketCap, roeTTM=it.roeTTM,
+                    grossMarginTTM=it.grossMarginTTM, debtToAsset=it.debtToAsset, operatingCashFlow=it.operatingCashFlow) }
                 db.dailySnapshotDao().insertAll(entities)
                 return local + entities.filter { it.code !in local.map{l->l.code}.toSet() }
             } catch (e: Exception) { return local }

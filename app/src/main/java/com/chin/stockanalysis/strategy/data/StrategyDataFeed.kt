@@ -3,6 +3,7 @@ package com.chin.stockanalysis.strategy.data
 import android.content.Context
 import android.util.Log
 import com.chin.stockanalysis.stock.StockRealtime
+import com.chin.stockanalysis.stock.data.sources.EastMoneyStockSource
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +31,12 @@ class StrategyDataFeed(private val context: Context) {
     companion object {
         private const val TAG = "StrategyDataFeed"
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+
+        // ── 基本面日級緩存（PE/PB/市值/換手率，東財批量API，每日僅拉一次）──
+        // DB快照只有OHLCV，基本面策略依賴這些字段；多線程併發時用鎖避免重複拉取
+        private data class FundamentalsCache(val date: String, val map: Map<String, StockRealtime>)
+        @Volatile private var fundamentalsCache: FundamentalsCache? = null
+        private val fundamentalsLock = Any()
     }
 
     private val db = StockDatabase.getInstance(context)
@@ -37,7 +44,8 @@ class StrategyDataFeed(private val context: Context) {
     data class DataFeedConfig(
         val onlyMainBoard: Boolean = true,
         val stockCodes: Set<String>? = null,    // null=全市场, 非null=只取这些代码
-        val preferRealtime: Boolean = false     // true=走实时API, false=DB快照
+        val preferRealtime: Boolean = false,    // true=走实时API, false=DB快照
+        val enrichFundamentals: Boolean = true  // true=出口批量注入PE/PB/市值(DB快照无此字段)
     )
 
     /** 快照 → 统一转换为 StockRealtime（集中处理缺失值） */
@@ -64,7 +72,12 @@ class StrategyDataFeed(private val context: Context) {
             code = snap.code, name = name, price = snap.close,
             open = snap.open, yestClose = yc, high = snap.high, low = snap.low,
             volume = snap.volume, amount = snap.amount, changePercent = chgPct,
-            changeAmount = snap.close * chgPct / 100, timestamp = System.currentTimeMillis()
+            changeAmount = snap.close * chgPct / 100,
+            turnoverRate = snap.turnoverRate,
+            pe = snap.pe, pb = snap.pb, marketCap = snap.marketCap,
+            roeTTM = snap.roeTTM, grossMarginTTM = snap.grossMarginTTM,
+            debtToAsset = snap.debtToAsset, operatingCashFlow = snap.operatingCashFlow,
+            timestamp = System.currentTimeMillis()
         )
     }
 
@@ -88,9 +101,11 @@ class StrategyDataFeed(private val context: Context) {
                 config.stockCodes != null -> allSnaps.filter { it.code in config.stockCodes }
                 else -> allSnaps
             }
-            val list = snaps
+            val raw = snaps
                 .filter { !config.onlyMainBoard || isMainBoard(it.code) }
                 .map { snap -> snapshotToStock(snap, codeToName[snap.code] ?: snap.code) }
+            // 兜底：DB 行缺基本面（如同步未跑）时用行情批量 API 补 PE/PB/市值
+            val list = if (config.enrichFundamentals) enrichMissingFundamentals(raw) else raw
             Log.i(TAG, "数据准备: ${allSnaps.size}只 → 过滤后${list.size}只 (主板=${config.onlyMainBoard})")
             list
         } catch (e: Exception) {
@@ -133,6 +148,58 @@ class StrategyDataFeed(private val context: Context) {
             list
         } catch (e: Exception) {
             Log.w(TAG, "多周期数据异常: ${e.message}"); emptyList()
+        }
+    }
+
+    // ══════════════════════════════════════
+    // 基本面运行时兜底（B层）
+    // 正常路径由 HistoricalDataFetcher Step 2.5 在同步时持久化；
+    // 这里仅补 DB 行缺失的部分（marketCap<=0），同日缓存增量复用。
+    // ══════════════════════════════════════
+
+    /** 只补缺基本面的股票（市值<=0 视为缺失；PE 可为负=亏损，不作缺失判据） */
+    private fun enrichMissingFundamentals(list: List<StockRealtime>): List<StockRealtime> {
+        val missing = list.filter { it.marketCap <= 0.0 }
+        if (missing.isEmpty()) return list
+        val quoteMap = getOrFetchQuotes(missing.map { it.code })
+        if (quoteMap.isEmpty()) return list
+        var hit = 0
+        val enriched = list.map { stock ->
+            if (stock.marketCap > 0.0) return@map stock
+            val rt = quoteMap[stock.code] ?: return@map stock
+            hit++
+            stock.copy(
+                pe = if (rt.pe != 0.0) rt.pe else stock.pe,
+                pb = if (rt.pb != 0.0) rt.pb else stock.pb,
+                marketCap = if (rt.marketCap > 0) rt.marketCap else stock.marketCap,
+                turnoverRate = if (rt.turnoverRate > 0) rt.turnoverRate else stock.turnoverRate
+            )
+        }
+        Log.i(TAG, "基本面兜底: 缺失${missing.size}只, 命中$hit")
+        return enriched
+    }
+
+    /** 行情批量（日级增量缓存，加锁防并发重复拉取） */
+    private fun getOrFetchQuotes(codes: List<String>): Map<String, StockRealtime> {
+        if (codes.isEmpty()) return emptyMap()
+        val today = LocalDate.now().format(DATE_FMT)
+        synchronized(fundamentalsLock) {
+            val cached = fundamentalsCache
+            val base = if (cached != null && cached.date == today) cached.map else emptyMap()
+            val missing = codes.filter { it !in base }
+            if (missing.isEmpty()) return base
+            val fetched = try {
+                EastMoneyStockSource().fetchRealtime(missing)
+            } catch (e: Exception) {
+                Log.w(TAG, "基本面兜底拉取失败(${missing.size}只): ${e.message}")
+                emptyMap()
+            }
+            if (fetched.isNotEmpty()) {
+                Log.i(TAG, "基本面缓存 +${fetched.size} (合计${base.size + fetched.size})")
+            }
+            val merged = base + fetched
+            fundamentalsCache = FundamentalsCache(today, merged)
+            return merged
         }
     }
 }

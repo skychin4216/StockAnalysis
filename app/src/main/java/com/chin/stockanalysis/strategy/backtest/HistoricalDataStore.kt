@@ -48,7 +48,23 @@ data class DailySnapshotEntity(
     val turnoverRate: Double = 0.0,
 
     @ColumnInfo(name = "main_net_inflow")
-    val mainNetInflow: Double = 0.0   // 主力净流入(万元)，默认0
+    val mainNetInflow: Double = 0.0,  // 主力净流入(万元)，默认0
+
+    // ── 基本面字段（v12 新增，同步时由 FundamentalsProvider 批量填充，0 = 无数据）──
+    @ColumnInfo(name = "pe")
+    val pe: Double = 0.0,                       // 市盈率(动态)，负值=亏损
+    @ColumnInfo(name = "pb")
+    val pb: Double = 0.0,                       // 市净率
+    @ColumnInfo(name = "market_cap")
+    val marketCap: Double = 0.0,                // 总市值(元)
+    @ColumnInfo(name = "roe_ttm")
+    val roeTTM: Double = 0.0,                   // ROE加权(最新报告期)%
+    @ColumnInfo(name = "gross_margin_ttm")
+    val grossMarginTTM: Double = 0.0,           // 销售毛利率%
+    @ColumnInfo(name = "debt_to_asset")
+    val debtToAsset: Double = 0.0,              // 资产负债率%
+    @ColumnInfo(name = "operating_cash_flow")
+    val operatingCashFlow: Double = 0.0         // 经营现金流净额(元)
 )
 
 /**
@@ -173,6 +189,22 @@ interface DailySnapshotDao {
     /** 批量更新股票名称（覆盖空名和错名） */
     @Query("UPDATE daily_snapshot SET name = :name WHERE code = :code")
     suspend fun updateName(code: String, name: String)
+
+    /**
+     * 更新基本面字段（同步时 FundamentalsProvider 批量回写）
+     * turnover_rate 用 CASE 保护：新值为 0 时保留原值
+     */
+    @Query("""UPDATE daily_snapshot SET pe = :pe, pb = :pb, market_cap = :marketCap,
+        roe_ttm = :roeTTM, gross_margin_ttm = :grossMarginTTM,
+        debt_to_asset = :debtToAsset, operating_cash_flow = :operatingCashFlow,
+        turnover_rate = CASE WHEN :turnoverRate > 0 THEN :turnoverRate ELSE turnover_rate END
+        WHERE code = :code AND date = :date""")
+    suspend fun updateFundamentals(
+        code: String, date: String,
+        pe: Double, pb: Double, marketCap: Double,
+        roeTTM: Double, grossMarginTTM: Double, debtToAsset: Double,
+        operatingCashFlow: Double, turnoverRate: Double
+    ): Int
 }
 
 @Dao

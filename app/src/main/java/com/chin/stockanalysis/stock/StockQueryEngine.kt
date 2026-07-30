@@ -517,8 +517,15 @@ class StockQueryEngine private constructor(
                         volume = stock.volume,
                         amount = stock.amount,
                         changePct = stock.changePercent,
-                        turnoverRate = 0.0,
-                        mainNetInflow = 0.0
+                        turnoverRate = stock.turnoverRate,
+                        mainNetInflow = 0.0,
+                        pe = stock.pe,
+                        pb = stock.pb,
+                        marketCap = stock.marketCap,
+                        roeTTM = stock.roeTTM,
+                        grossMarginTTM = stock.grossMarginTTM,
+                        debtToAsset = stock.debtToAsset,
+                        operatingCashFlow = stock.operatingCashFlow
                     )
                 }
             if (entities.isNotEmpty()) {

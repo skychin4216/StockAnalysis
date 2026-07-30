@@ -518,3 +518,69 @@ AI Provider.sendMessageStream()
     ▼
 流式输出到聊天界面（Markdown 表格渲染）
 ```
+
+## v4.2 数据层更新（2026-07-30）：基本面持久化
+
+### 背景问题
+
+`daily_snapshot` 表（K 线 API 来源）只有 OHLCV + 换手率，没有估值/财务字段。
+`StrategyDataFeed.snapshotToStock()` 转出的 `StockRealtime` 其 PE/PB/市值/ROE 全部为 0，
+导致所有基本面策略（机构增持、护城河龙头、低估值、周期低位）在第一步硬性过滤即全军覆没
+（如 `mcap>=200亿 && PE>0 && PB>0` → 199→0），DAG 长线 pipeline 因 `n_orders` 输出 0
+触发 fail-fast 报"失败"。
+
+### 方案（DB 持久化为主 + 运行时兜底）
+
+**1. Schema（DB version 11 → 12，破坏性迁移自动重建）**
+
+`DailySnapshotEntity` 新增 7 列（均默认 0 = 无数据）：
+`pe`（动态市盈率，负=亏损）、`pb`、`market_cap`（总市值/元）、
+`roe_ttm`（ROE加权/最新报告期）、`gross_margin_ttm`（毛利率）、
+`debt_to_asset`（资产负债率）、`operating_cash_flow`（经营现金流/元）。
+
+**2. 同步写入（HistoricalDataFetcher）**
+
+- Step 1（clist 实时榜）：fields 增加 `f9`(PE)/`f20`(市值)/`f23`(PB)，当日行直接带估值。
+- Step 2（K 线）：`REPLACE` 写入会覆盖当日行、清零估值 —— 因此新增 **Step 2.5 基本面充实**：
+  - push2 行情批量（复用 `EastMoneyStockSource.fetchRealtime`，50/批）→ PE/PB/市值/换手
+  - datacenter 财务批量（`FundamentalsProvider.fetchBulkFinance`，
+    `RPT_F10_FINANCE_MAINFINADATA` 按报告期倒序分页、每股取最新一期、命中即停）
+    → ROEJQ/XSMLL/ZCFZL/NETCASH_OPERATE_PK
+  - 经 `DailySnapshotDao.updateFundamentals()` 回写当日行（turnover_rate 用 CASE 保护不被 0 覆盖）。
+
+**3. 运行时兜底（StrategyDataFeed，B 层）**
+
+`prepareFromDb()` 出口检查 `marketCap<=0` 的缺失行，用日级增量缓存
+（companion 锁 + 按日 key）批量补 PE/PB/市值。同步已跑时零请求；
+仅在升级后未同步 / 同步未覆盖的股票时触发。`DataFeedConfig.enrichFundamentals=false` 可关闭。
+
+**4. 其余写入点接线**
+
+`StockQueryEngine.saveRealtimeToSnapshot`、`SimulationTradeEngine` 当日实时写入
+均携带 `StockRealtime` 的基本面字段。
+
+**5. 顺带修复（FactorDataProvider）**
+
+datacenter 报表真实列名与旧代码不符（旧值恒为 0）：
+`ROE_WEIGHT→ROEJQ`、`NETPROFIT_YOY→PARENTNETPROFITTZ`、
+`TOTALOPERATEREVE_YOY→TOTALOPERATEREVETZ`；并补 `sortColumns=REPORT_DATE` 降序
+保证 pageSize=1 取到最新报告期。该报表不含 PE/PB（调用方另有行情来源）。
+
+### 数据流
+
+```
+同步: clist(f9/f20/f23) ─┐
+      K线(OHLCV, 覆盖当日行) → daily_snapshot(v12)
+      Step2.5: push2批量 + F10批量 ─→ updateFundamentals ┘
+                                        │
+查询: prepareFromDb → snapshotToStock(携带7字段) → StockRealtime
+        └─ marketCap<=0 的行 → B层日级缓存补拉(仅缺失码)
+                                        │
+      策略硬性过滤(PE/PB/mcap/ROE/毛利率/负债率/现金流) 正常生效
+```
+
+### 已知边界
+
+- 历史日期行的基本面为 0（K 线 API 无历史估值，回测场景按需 `enrichFundamentals=false`）。
+- ROE 取最新报告期（季报值），非年化 —— 策略阈值（如 roe_min=15）按此语义理解。
+- B 层只补估值三件套（PE/PB/市值），ROE 等财务字段依赖同步 Step 2.5。

@@ -8,7 +8,6 @@ import com.chin.stockanalysis.agent.v2.PositionWaterValve
 import com.chin.stockanalysis.agent.v2.ProfitQualityAnalyzer
 import com.chin.stockanalysis.agent.v2.V2DecisionMatrix
 import com.chin.stockanalysis.stock.data.StockDataFacade
-import com.chin.stockanalysis.strategy.data.FactorDataProvider
 import com.chin.stockanalysis.strategy.market.MarketAnalyzer
 import kotlinx.coroutines.*
 
@@ -28,13 +27,13 @@ import kotlinx.coroutines.*
  * val result = orchestrator.execute(intent)
  * ```
  */
-class AgentOrchestrator(private val appContext: Context) {
+class AgentOrchestrator(internal val appContext: Context) {
 
     companion object {
         private const val TAG = "AgentOrchestrator"
     }
 
-    private val spawner = SubAgentSpawner()
+    internal val spawner = SubAgentSpawner()
     private val sessionManager = AgentSessionManager.instance
     private val intentRouter = IntentRouter()
 
@@ -271,7 +270,7 @@ class AgentOrchestrator(private val appContext: Context) {
                 PositionWaterValve.calculatePositionCap(it).capPercent
             } ?: 50
 
-            // PE/PB：優先實時行情，fallback 東方財富 F10
+            // PE/PB：優先實時行情（多源合併），仍為 0 時回退本地快照（DB v12 已持久化）
             var pe = 0.0
             var pb = 0.0
             try {
@@ -282,9 +281,13 @@ class AgentOrchestrator(private val appContext: Context) {
             } catch (_: Exception) { }
             if (pe <= 0.0 || pb <= 0.0) {
                 try {
-                    val finance = FactorDataProvider().getFinanceData(stockCode)
-                    if (pe <= 0.0 && finance.pe > 0) pe = finance.pe
-                    if (pb <= 0.0 && finance.pb > 0) pb = finance.pb
+                    val snap = com.chin.stockanalysis.stock.database.StockDatabase
+                        .getInstance(appContext).dailySnapshotDao().getByCode(stockCode, 5)
+                        .firstOrNull { it.pe > 0 || it.pb > 0 }
+                    if (snap != null) {
+                        if (pe <= 0.0 && snap.pe > 0) pe = snap.pe
+                        if (pb <= 0.0 && snap.pb > 0) pb = snap.pb
+                    }
                 } catch (_: Exception) { }
             }
 
@@ -472,8 +475,15 @@ class ScoutTask(private val appContext: Context) {
             // 板塊輪動建議
             result["sectorAdvice"] = marketReport.sectorAdvice.toString()
 
+            // 外圍市場
+            if (marketReport.overseas.direction != "UNKNOWN") {
+                result["overseasDirection"] = marketReport.overseas.direction
+                result["overseasStrength"] = marketReport.overseas.strength
+                result["overseasHint"] = marketReport.overseas.impactHint
+            }
+
             ctx.log("偵察完成: direction=${marketReport.trend.direction}, " +
-                "strength=${marketReport.trend.strength}")
+                "strength=${marketReport.trend.strength}, overseas=${marketReport.overseas.direction}")
             result
 
         } catch (e: Exception) {

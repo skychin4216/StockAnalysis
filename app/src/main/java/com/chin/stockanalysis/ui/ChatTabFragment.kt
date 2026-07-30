@@ -48,7 +48,8 @@ import com.chin.stockanalysis.stock.StockQueryEngine
 import com.chin.stockanalysis.config.FeatureFlagManager
 import com.chin.stockanalysis.config.AgentRoute
 import com.chin.stockanalysis.agent.router.ChatRouter
-import com.chin.stockanalysis.agent.framework.UnifiedAgentRunner
+import com.chin.stockanalysis.agent.core.AgentOrchestrator
+import com.chin.stockanalysis.agent.core.analyzeStock
 import com.chin.stockanalysis.agent.stock.StockAnalysisAgent
 import com.chin.stockanalysis.ai.StockEntityExtractor
 import kotlinx.coroutines.Dispatchers
@@ -192,6 +193,7 @@ class ChatTabFragment : Fragment() {
         initAiProbe()
         setupRecyclerView()
         setupInput()
+        setAnalysisMode(analysisMode)  // 初始化提示（快速為默認，無按鈕）
         setupTitleBar()
         initTts()
         showWelcomeMessage()
@@ -223,10 +225,6 @@ class ChatTabFragment : Fragment() {
         val activeBg = com.chin.stockanalysis.R.drawable.bg_mode_active
         val inactiveBg = com.chin.stockanalysis.R.drawable.bg_mode_inactive
 
-        binding.btnModeQuick.apply {
-            setTextColor(android.graphics.Color.parseColor(if (mode == AnalysisMode.QUICK) "#FFFFFF" else inactiveColor))
-            background = if (mode == AnalysisMode.QUICK) requireContext().getDrawable(activeBg) else requireContext().getDrawable(inactiveBg)
-        }
         binding.btnModeDeep.apply {
             setTextColor(android.graphics.Color.parseColor(if (mode == AnalysisMode.DEEP) "#FFFFFF" else inactiveColor))
             background = if (mode == AnalysisMode.DEEP) requireContext().getDrawable(activeBg) else requireContext().getDrawable(inactiveBg)
@@ -318,10 +316,13 @@ class ChatTabFragment : Fragment() {
     }
 
     private fun setupInput() {
-        // 模式选择按钮
-        binding.btnModeQuick.setOnClickListener { setAnalysisMode(AnalysisMode.QUICK) }
-        binding.btnModeDeep.setOnClickListener { setAnalysisMode(AnalysisMode.DEEP) }
-        binding.btnModeExpert.setOnClickListener { setAnalysisMode(AnalysisMode.EXPERT) }
+        // 模式选择按钮（快速为默认，不显示按钮；再次点击深度/专家可切回快速）
+        binding.btnModeDeep.setOnClickListener {
+            setAnalysisMode(if (analysisMode == AnalysisMode.DEEP) AnalysisMode.QUICK else AnalysisMode.DEEP)
+        }
+        binding.btnModeExpert.setOnClickListener {
+            setAnalysisMode(if (analysisMode == AnalysisMode.EXPERT) AnalysisMode.QUICK else AnalysisMode.EXPERT)
+        }
 
         // ⚡ AI增强按钮
         binding.btnAiBoost.setOnClickListener {
@@ -762,10 +763,10 @@ class ChatTabFragment : Fragment() {
             AnalysisMode.DEEP -> "🔍 V1.0 Pipeline 深度分析"
             AnalysisMode.EXPERT -> "📊 V2.0 全周期分析"
         }
-        val mode = when (analysisMode) {
-            AnalysisMode.QUICK -> UnifiedAgentRunner.MODE_QUICK
-            AnalysisMode.DEEP -> UnifiedAgentRunner.MODE_PIPELINE
-            AnalysisMode.EXPERT -> UnifiedAgentRunner.MODE_V2
+        val coreMode = when (analysisMode) {
+            AnalysisMode.QUICK -> com.chin.stockanalysis.agent.core.AnalysisMode.QUICK
+            AnalysisMode.DEEP -> com.chin.stockanalysis.agent.core.AnalysisMode.DEEP
+            AnalysisMode.EXPERT -> com.chin.stockanalysis.agent.core.AnalysisMode.EXPERT
         }
 
         val loadingMsg = Message(content = "", isUser = false, isStreaming = true,
@@ -780,11 +781,11 @@ class ChatTabFragment : Fragment() {
                 val stockName = resolveStockName(stockCode)
 
                 val result = withContext(Dispatchers.IO) {
-                    UnifiedAgentRunner.run(
-                        context = requireContext(),
+                    AgentOrchestrator(requireContext()).analyzeStock(
                         stockCode = stockCode,
                         stockName = stockName,
-                        mode = mode
+                        mode = coreMode,
+                        useAgentFramework = false
                     )
                 }
 

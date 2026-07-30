@@ -14,6 +14,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import com.chin.stockanalysis.config.DataConfig
+import com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -89,6 +90,8 @@ object MarketAnalyzer {
         val sectorAdvice: SectorAdvice,
         /** 持倉股票評估列表 */
         val holdings: List<HoldingAdvice>,
+        /** 外圍市場分析（納指/KOSPI/恒生等隔夜表現） */
+        val overseas: OverseasMarketAnalysis = OverseasMarketAnalysis(),
         /** 文字摘要（可直接展示在 UI）*/
         val summary: String,
         /** 分析時間戳 */
@@ -185,6 +188,41 @@ object MarketAnalyzer {
         val ratingCount: Int = 0
     )
 
+    /**
+     * 外圍市場分析結果
+     *
+     * 綜合納斯達克、KOSPI、恒生、道瓊、標普的隔夜/實時漲跌，
+     * 加權計算對 A 股的影響方向和強度。
+     *
+     * 權重設計：
+     * - 納指 0.35（科技/AI/半導體鏈與 A 股科技板塊高度聯動）
+     * - KOSPI 0.25（三星/SK 海力士 → A 股存儲/芯片鏈）
+     * - 恒生 0.25（A/H 溢價、南向資金直接聯動）
+     * - 道瓊 0.10（整體風險偏好）
+     * - 標普 0.05（廣義市場情緒）
+     */
+    data class OverseasMarketAnalysis(
+        /** 加權方向：BULLISH / BEARISH / NEUTRAL / UNKNOWN */
+        val direction: String = "UNKNOWN",
+        /** 影響強度 0-100（abs(加權漲跌) 映射，±3% 封頂） */
+        val strength: Int = 0,
+        /** 加權漲跌幅（%） */
+        val weightedChange: Double = 0.0,
+        /** 各指數明細 */
+        val indices: List<IndexMove> = emptyList(),
+        /** 對 A 股板塊的影響提示 */
+        val impactHint: String = "",
+        /** 數據是否為隔夜（A 股收盤後更新）還是實時 */
+        val isOvernight: Boolean = false
+    )
+
+    data class IndexMove(
+        val code: String,
+        val name: String,
+        val changePercent: Double,
+        val weight: Double
+    )
+
     // ════════════════════════════════════════════════════
     //  主入口
     // ════════════════════════════════════════════════════
@@ -258,8 +296,14 @@ object MarketAnalyzer {
 
             val holdings = holdingsDeferred.await()
 
+            // 外圍市場（純內存讀取，無 I/O）
+            val overseas = analyzeOverseasMarkets()
+            if (overseas.direction != "UNKNOWN") {
+                Log.i(TAG, "外圍市場: ${overseas.direction}(強度${overseas.strength}) 加權${"%.2f".format(overseas.weightedChange)}% ${overseas.impactHint}")
+            }
+
             // 生成文字摘要
-            val summary = buildSummary(trend, sellType, sectorAdvice, holdings)
+            val summary = buildSummary(trend, sellType, sectorAdvice, holdings, overseas)
 
             val elapsed = System.currentTimeMillis() - startTime
             Log.i(TAG, "========== 大盤綜合分析完成，耗時 ${elapsed}ms ==========")
@@ -270,6 +314,7 @@ object MarketAnalyzer {
                 sellType = sellType,
                 sectorAdvice = sectorAdvice,
                 holdings = holdings,
+                overseas = overseas,
                 summary = summary,
                 timestamp = System.currentTimeMillis()
             )
@@ -1022,17 +1067,88 @@ object MarketAnalyzer {
     }
 
     // ════════════════════════════════════════════════════
-    //  文字摘要生成
+    //  模組 6：外圍市場分析
     // ════════════════════════════════════════════════════
 
+    /** 外圍指數權重（對 A 股影響力） */
+    private val OVERSEAS_WEIGHTS = mapOf(
+        "NDX" to 0.35,   // 納斯達克 → 科技/半導體聯動
+        "KS11" to 0.25,  // 韓國 KOSPI → 半導體/面板
+        "HSI" to 0.25,   // 恒生 → A/H 溢價、南向資金
+        "DJI" to 0.10,   // 道瓊 → 整體風險偏好
+        "SPX" to 0.05    // 標普 → 廣義情緒
+    )
+
+    /** 板塊聯動映射：指數大跌時提示受壓板塊 */
+    private val INDEX_SECTOR_IMPACT = mapOf(
+        "NDX" to listOf("科技", "半導體", "芯片", "AI", "軟件"),
+        "KS11" to listOf("半導體", "面板", "存儲"),
+        "HSI" to listOf("港股通", "金融", "地產"),
+        "DJI" to listOf("外貿", "航運"),
+        "SPX" to listOf("消費", "醫藥")
+    )
+
     /**
-     * 構建可展示在 UI 的文字摘要
+     * 分析外圍市場對 A 股的隔夜影響。
+     * 純內存讀取（globalIndices 由後台調度器刷新），無 I/O。
      */
+    private fun analyzeOverseasMarkets(): OverseasMarketAnalysis {
+        val indices = EastMoneyHotSectorSource.globalIndices
+        if (indices.isEmpty()) return OverseasMarketAnalysis()
+
+        val moves = OVERSEAS_WEIGHTS.mapNotNull { (codeSuffix, weight) ->
+            val idx = indices.firstOrNull { it.code.equals(codeSuffix, ignoreCase = true) } ?: return@mapNotNull null
+            IndexMove(code = idx.code, name = idx.name, changePercent = idx.changePercent, weight = weight)
+        }
+        if (moves.isEmpty()) return OverseasMarketAnalysis()
+
+        val weightedChange = moves.sumOf { it.changePercent * it.weight }
+        val direction = when {
+            weightedChange > 0.5 -> "BULLISH"
+            weightedChange < -0.5 -> "BEARISH"
+            else -> "NEUTRAL"
+        }
+        val strength = (abs(weightedChange) / 3.0 * 100).toInt().coerceIn(0, 100)
+
+        // 生成影響提示：找出跌幅 > 1% 的指數，提示受壓板塊
+        val impactHint = buildString {
+            val bigMovers = moves.filter { abs(it.changePercent) >= 1.0 }
+            if (bigMovers.isNotEmpty()) {
+                val sectors = bigMovers.flatMap { INDEX_SECTOR_IMPACT[it.code.uppercase()] ?: emptyList() }.distinct()
+                val worst = bigMovers.minByOrNull { it.changePercent }
+                if (worst != null && worst.changePercent < -1.0) {
+                    append("${worst.name}大跌${"%.1f".format(worst.changePercent)}%")
+                    if (sectors.isNotEmpty()) append("，A股${sectors.take(3).joinToString("/")}板塊承壓")
+                } else {
+                    val best = bigMovers.maxByOrNull { it.changePercent }
+                    if (best != null && best.changePercent > 1.0) {
+                        append("${best.name}大漲${"%.1f".format(best.changePercent)}%")
+                        if (sectors.isNotEmpty()) append("，A股${sectors.take(3).joinToString("/")}板塊受益")
+                    }
+                }
+            }
+        }
+
+        // 判斷是否隔夜：A股交易時段(9:30-15:00 CST)外圍數據視為隔夜
+        val hour = java.time.LocalTime.now(java.time.ZoneId.of("Asia/Shanghai")).hour
+        val isOvernight = hour in 9..15
+
+        return OverseasMarketAnalysis(
+            direction = direction,
+            strength = strength,
+            weightedChange = weightedChange,
+            indices = moves,
+            impactHint = impactHint,
+            isOvernight = isOvernight
+        )
+    }
+
     private fun buildSummary(
         trend: TrendAnalysis,
         sellType: SellTypeAnalysis,
         sectorAdvice: SectorAdvice,
-        holdings: List<HoldingAdvice>
+        holdings: List<HoldingAdvice>,
+        overseas: OverseasMarketAnalysis = OverseasMarketAnalysis()
     ): String {
         val sb = StringBuilder()
 
@@ -1044,6 +1160,18 @@ object MarketAnalyzer {
         }
         sb.append("$trendEmoji 大盤趨勢: ${trend.direction}(強度${trend.strength})。")
         sb.append(trend.description).append("。\n")
+
+        // 外圍市場摘要
+        if (overseas.direction != "UNKNOWN" && overseas.indices.isNotEmpty()) {
+            val ovsEmoji = when (overseas.direction) {
+                "BULLISH" -> "[外多]"
+                "BEARISH" -> "[外空]"
+                else -> "[外平]"
+            }
+            sb.append("$ovsEmoji 外圍: 加權${"%.2f".format(overseas.weightedChange)}%(強度${overseas.strength})。")
+            if (overseas.impactHint.isNotEmpty()) sb.append(overseas.impactHint).append("。")
+            sb.append("\n")
+        }
 
         // 賣出類型摘要
         when (sellType.sellType) {
