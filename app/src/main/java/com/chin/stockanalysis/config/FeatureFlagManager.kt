@@ -152,20 +152,14 @@ object FeatureFlagManager {
      *         - 長線:   long_term_pipeline.xml
      * false → 走各 Fragment 內 Hardcode 流程（SimulationTradeEngine / 內聯邏輯）
      *
-     * 默認 false（全部走 Hardcode）。
+     * 默認 true（全部走 DAG Pipeline）。
      */
     var useDagPipeline: Boolean
-        get() = prefs.getBoolean(KEY_USE_DAG_PIPELINE, false)
+        get() = prefs.getBoolean(KEY_USE_DAG_PIPELINE, true)
         set(value) {
             prefs.edit().putBoolean(KEY_USE_DAG_PIPELINE, value).apply()
             Log.i(TAG, "通用 DAG Pipeline 開關: $value")
         }
-
-    /** @deprecated 已遷移至 [useDagPipeline]，保留以兼容舊調用點 */
-    @Deprecated("使用 useDagPipeline", ReplaceWith("useDagPipeline"))
-    var useDagPipelineMidTerm: Boolean
-        get() = useDagPipeline
-        set(value) { useDagPipeline = value }
 
     // ═══════════════════════════════════════════════════════════════
     // 按週期的路線開關（Phase 8 新增）

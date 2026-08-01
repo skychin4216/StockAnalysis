@@ -376,7 +376,7 @@ class DagPipeline(
                 val nodeTimeout = when (nodeId) {
                     "n_fit" -> 120_000L   // 擬合計算耗時較長
                     "n_bg" -> 10_000L     // 後臺管理不需太久
-                    else -> 30_000L
+                    else -> 60_000L       // AI精選/策略等需要較長超時
                 }
                 output = kotlinx.coroutines.withTimeout(nodeTimeout) {
                     (node as PipelineNode<Any, Any>).execute(context, input ?: Unit)

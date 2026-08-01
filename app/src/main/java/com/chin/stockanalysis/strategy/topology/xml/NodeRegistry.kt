@@ -39,6 +39,9 @@ object NodeRegistry {
 
         // 增強
         register("sector_boost") { ctx, _ -> com.chin.stockanalysis.strategy.topology.nodes.SectorBoostNode() }
+        register("bounce_reversal") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.BounceReversalNode() }
+        register("inst_tips") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.InstitutionalTipsNode() }
+        register("ma_convergence") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.MaConvergenceNode() }
 
         // 過濾（主力資金）
         register("smart_money_filter") { ctx, config ->
@@ -119,6 +122,22 @@ object NodeRegistry {
 
         // 板塊精選池（中線專用）
         register("sector_stock_pool") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.SectorStockPoolNode() }
+
+        // 防守高息（中線/長線，熊市/震盪時啟動）
+        register("defensive_dividend") { _, config ->
+            val maxPb = config["maxPb"]?.toDoubleOrNull() ?: 1.5
+            val maxDebt = config["maxDebt"]?.toDoubleOrNull() ?: 70.0
+            val maxCand = config["maxCandidates"]?.toIntOrNull() ?: 5
+            com.chin.stockanalysis.strategy.topology.nodes.DefensiveDividendNode(
+                maxPb = maxPb, maxDebt = maxDebt, maxCandidates = maxCand)
+        }
+
+        // 數據導入檢查（所有周期，Layer 0 首節點）
+        register("data_import") { _, config ->
+            val days = config["days"]?.toIntOrNull() ?: 60
+            val minSnaps = config["minSnapshots"]?.toIntOrNull() ?: 100
+            com.chin.stockanalysis.strategy.topology.nodes.DataImportNode(days = days, minSnapshots = minSnaps)
+        }
 
         // T+1 自動賣出（超短線專用）
         register("t1_auto_sell") { _, config ->

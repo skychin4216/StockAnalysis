@@ -15,9 +15,9 @@ import com.chin.stockanalysis.strategy.market.MarketAdaptiveStrategy
 import com.chin.stockanalysis.strategy.predict.AIPredictionEngine
 import com.chin.stockanalysis.strategy.topology.core.*
 import com.chin.stockanalysis.strategy.trade.AutoSellEngine
-import com.chin.stockanalysis.strategy.trade.SimulationTradeEngine
 import com.chin.stockanalysis.strategy.trade.StrategyTradeOrderEntity
 import com.chin.stockanalysis.strategy.trade.StrategyTradeFittingParamEntity
+import com.chin.stockanalysis.strategy.trade.TradeOrder
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
@@ -112,12 +112,16 @@ data class NewsGuardResult(
 
 /**
  * 騰龍換鳥結果
+ *
+ * orders 透傳上游 GenerateOrdersNode 的買入訂單，無論是否換股都不丟棄。
+ * 下游 PositionMergeNode 從 orders 中提取訂單執行持倉入庫。
  */
 data class SwapWeakResult(
     val swappedCount: Int,                  // 實際換股數量
     val soldStocks: List<String>,          // 被賣出的股票（名稱）
     val beforeCount: Int,                   // 換股前持倉數
-    val afterCount: Int                     // 換股後持倉數
+    val afterCount: Int,                    // 換股後持倉數
+    val orders: List<TradeOrder> = emptyList()  // 透傳買入訂單
 )
 
 /**
@@ -134,7 +138,7 @@ data class HoldingGuardResult(
  * 買入訂單生成結果
  */
 data class OrderGenerationResult(
-    val orders: List<SimulationTradeEngine.TradeOrder>,
+    val orders: List<TradeOrder>,
     val filteredCount: Int,
     val emptyTriggered: Boolean
 )
@@ -328,13 +332,13 @@ class MultiPeriodHotNode(
     private val periods: List<Int> = listOf(3, 5, 10, 30, 50, 100),
     private val topNPerPeriod: Int = 3,
     private val onlyMainBoard: Boolean = true
-) : PipelineNode<Unit, MultiPeriodHotResult> {
+) : PipelineNode<Any, MultiPeriodHotResult> {
 
     override val nodeId: String = "multi_period_hot"
     override val nodeName: String = "多周期熱門股聚合"
     override val nodeType: NodeType = NodeType.DATA_SOURCE
 
-    override suspend fun execute(context: PipelineContext, input: Unit): MultiPeriodHotResult {
+    override suspend fun execute(context: PipelineContext, input: Any): MultiPeriodHotResult {
         val db = StockDatabase.getInstance(context.androidContext)
 
         // 📥 輸入日誌（獨立數據源，無直接輸入）
@@ -424,17 +428,26 @@ class MultiPeriodHotNode(
  */
 class NewsStrengthNode(
     private val lookbackDays: Int = 3
-) : PipelineNode<MergedSignalPool, Int> {
+) : PipelineNode<Any, Int> {
 
     override val nodeId: String = "news_strength"
     override val nodeName: String = "新聞力度計算"
     override val nodeType: NodeType = NodeType.ENRICHMENT
 
-    override suspend fun execute(context: PipelineContext, input: MergedSignalPool): Int {
+    override suspend fun execute(context: PipelineContext, input: Any): Int {
+        // 從 input 或 context 中按需讀取 MergedSignalPool
+        val pool: MergedSignalPool = when (input) {
+            is MergedSignalPool -> input
+            else -> context.getStageOutput<MergedSignalPool>("sector_boost")
+                ?: context.getStageOutput<MergedSignalPool>("n_boost")
+                ?: context.getStageOutput<MergedSignalPool>("signal_merge")
+                ?: context.getStageOutput<MergedSignalPool>("n_merge")
+                ?: MergedSignalPool(emptyMap(), emptyMap(), emptyList())
+        }
         val db = StockDatabase.getInstance(context.androidContext)
 
         // 📥 輸入日誌
-        context.log(nodeId, "📥 $nodeName 輸入: ${input.totalStocks} 只股票 ${formatTopCodes(input.stockHits.keys)}")
+        context.log(nodeId, "📥 $nodeName 輸入: ${pool.totalStocks} 只股票 ${formatTopCodes(pool.stockHits.keys)}")
 
         return try {
             val fromDate = LocalDate.parse(context.tradeDate)
@@ -449,15 +462,15 @@ class NewsStrengthNode(
                 context.log(nodeId, "📤 $nodeName 輸出: score=50 (無新聞數據)")
                 context.recordStockFlow(
                     nodeId = nodeId, nodeName = nodeName,
-                    inputCount = input.totalStocks, outputCount = input.totalStocks,
+                    inputCount = pool.totalStocks, outputCount = pool.totalStocks,
                     filterCount = 0, filterReason = "",
-                    inputCodes = input.stockHits.keys.toList().take(5),
-                    outputCodes = input.stockHits.keys.toList().take(5)
+                    inputCodes = pool.stockHits.keys.toList().take(5),
+                    outputCodes = pool.stockHits.keys.toList().take(5)
                 )
                 return 50
             }
 
-            val signalCodes = input.stockHits.keys
+            val signalCodes = pool.stockHits.keys
             val related = newsList.filter { it.stockCode in signalCodes || it.sector.isNotEmpty() }
 
             if (related.isEmpty()) {
@@ -466,10 +479,10 @@ class NewsStrengthNode(
                 context.log(nodeId, "📤 $nodeName 輸出: score=40 (無相關新聞)")
                 context.recordStockFlow(
                     nodeId = nodeId, nodeName = nodeName,
-                    inputCount = input.totalStocks, outputCount = input.totalStocks,
+                    inputCount = pool.totalStocks, outputCount = pool.totalStocks,
                     filterCount = 0, filterReason = "",
-                    inputCodes = input.stockHits.keys.toList().take(5),
-                    outputCodes = input.stockHits.keys.toList().take(5)
+                    inputCodes = pool.stockHits.keys.toList().take(5),
+                    outputCodes = pool.stockHits.keys.toList().take(5)
                 )
                 return 40
             }
@@ -490,11 +503,18 @@ class NewsStrengthNode(
             }
             context.recordStockFlow(
                 nodeId = nodeId, nodeName = nodeName,
-                inputCount = input.totalStocks, outputCount = input.totalStocks,
+                inputCount = pool.totalStocks, outputCount = pool.totalStocks,
                 filterCount = 0, filterReason = "",
-                inputCodes = input.stockHits.keys.toList().take(5),
-                outputCodes = input.stockHits.keys.toList().take(5)
+                inputCodes = pool.stockHits.keys.toList().take(5),
+                outputCodes = pool.stockHits.keys.toList().take(5)
             )
+
+            // ═══ 補齊 Hardcode：固化每日新聞熱點 Top3 到 daily_news_hot_picks 表 ═══
+            try {
+                saveNewsHotPicks(context, related, context.tradeDate)
+            } catch (e2: Exception) {
+                context.log(nodeId, "新聞熱點固化失敗（不阻塞）: ${e2.message}")
+            }
 
             context.log(nodeId, "新聞力度: ${related.size} 條相關新聞, " +
                 "avgImpact=${"%.1f".format(avgStr)}, avgSentiment=${"%.1f".format(avgSent)}, " +
@@ -505,13 +525,66 @@ class NewsStrengthNode(
             context.log(nodeId, "新聞力度計算失敗: ${e.message}, 默認 50 分")
             context.recordStockFlow(
                 nodeId = nodeId, nodeName = nodeName,
-                inputCount = input.totalStocks, outputCount = input.totalStocks,
+                inputCount = pool.totalStocks, outputCount = pool.totalStocks,
                 filterCount = 0, filterReason = "",
-                inputCodes = input.stockHits.keys.toList().take(5),
-                outputCodes = input.stockHits.keys.toList().take(5)
+                inputCodes = pool.stockHits.keys.toList().take(5),
+                outputCodes = pool.stockHits.keys.toList().take(5)
             )
             50
         }
+    }
+
+    /**
+     * 補齊 Hardcode：按板塊聚合新聞熱點，取 Top3 固化到 daily_news_hot_picks 表。
+     *
+     * 聚合規則：
+     * - 按新聞的 sector 欄位分組
+     * - 每個板塊的 hotScore = 該板塊新聞的平均 impactStrength
+     * - 按熱度降序取 Top3
+     * - relatedStockCodes = 該板塊新聞涉及的股票代碼集合
+     */
+    private suspend fun saveNewsHotPicks(
+        context: PipelineContext,
+        relatedNews: List<com.chin.stockanalysis.news.NewsFactorEntity>,
+        tradeDate: String
+    ) {
+        if (relatedNews.isEmpty()) return
+
+        // 按板塊聚合
+        val sectorGroups = relatedNews
+            .filter { it.sector.isNotEmpty() }
+            .groupBy { it.sector }
+
+        if (sectorGroups.isEmpty()) return
+
+        // 計算每個板塊的熱度分數
+        val sectorScores = sectorGroups.map { (sector, newsList) ->
+            val avgImpact = newsList.map { it.impactStrength }.average().toInt()
+            val relatedCodes = newsList.map { it.stockCode }.filter { it.isNotEmpty() }.distinct()
+            val topNews = newsList.maxByOrNull { it.impactStrength }
+            Triple(sector, avgImpact, relatedCodes to (topNews?.title ?: ""))
+        }.sortedByDescending { it.second }
+
+        val db = StockDatabase.getInstance(context.androidContext)
+        val hotPickDao = db.dailyNewsHotPickDao()
+
+        // 取 Top3 寫入
+        for ((rank, item) in sectorScores.take(3).withIndex()) {
+            val (sector, hotScore, pair) = item
+            val (relatedCodes, newsTitle) = pair
+            val entity = com.chin.stockanalysis.strategy.trade.DailyNewsHotPickEntity(
+                newsDate = tradeDate,
+                rank = rank + 1,
+                sectorName = sector,
+                subSectorName = "",  // 子板塊由 StockDataCenter 動態查詢，此處留空
+                hotScore = hotScore,
+                newsTitle = newsTitle.take(200),
+                relatedStockCodes = relatedCodes.joinToString(",")
+            )
+            hotPickDao.insert(entity)
+        }
+
+        context.log(nodeId, "📰 新聞熱點固化: ${minOf(3, sectorScores.size)} 個板塊寫入 daily_news_hot_picks")
     }
 }
 
@@ -534,20 +607,29 @@ class NewsStrengthNode(
 class RotationPenaltyNode(
     private val thresholdDays: Int = 3,
     private val penaltyPerExcess: Int = 10
-) : PipelineNode<MergedSignalPool, Int> {
+) : PipelineNode<Any, Int> {
 
     override val nodeId: String = "rotation_penalty"
     override val nodeName: String = "板塊輪動懲罰"
     override val nodeType: NodeType = NodeType.ENRICHMENT
 
-    override suspend fun execute(context: PipelineContext, input: MergedSignalPool): Int {
+    override suspend fun execute(context: PipelineContext, input: Any): Int {
+        // 從 input 或 context 中按需讀取 MergedSignalPool
+        val pool: MergedSignalPool = when (input) {
+            is MergedSignalPool -> input
+            else -> context.getStageOutput<MergedSignalPool>("sector_boost")
+                ?: context.getStageOutput<MergedSignalPool>("n_boost")
+                ?: context.getStageOutput<MergedSignalPool>("signal_merge")
+                ?: context.getStageOutput<MergedSignalPool>("n_merge")
+                ?: MergedSignalPool(emptyMap(), emptyMap(), emptyList())
+        }
         // 📥 輸入日誌
-        context.log(nodeId, "📥 $nodeName 輸入: ${input.totalStocks} 只股票 ${formatTopCodes(input.stockHits.keys)}")
+        context.log(nodeId, "📥 $nodeName 輸入: ${pool.totalStocks} 只股票 ${formatTopCodes(pool.stockHits.keys)}")
 
         return try {
             val sectorCounts = mutableMapOf<String, Int>()
 
-            for (code in input.stockHits.keys) {
+            for (code in pool.stockHits.keys) {
                 val sectors = StockDataCenter.getSectorsByStock(code)
                 for (sector in sectors) {
                     sectorCounts[sector] = (sectorCounts[sector] ?: 0) + 1
@@ -581,10 +663,10 @@ class RotationPenaltyNode(
             }
             context.recordStockFlow(
                 nodeId = nodeId, nodeName = nodeName,
-                inputCount = input.totalStocks, outputCount = input.totalStocks,
+                inputCount = pool.totalStocks, outputCount = pool.totalStocks,
                 filterCount = 0, filterReason = "",
-                inputCodes = input.stockHits.keys.toList().take(5),
-                outputCodes = input.stockHits.keys.toList().take(5)
+                inputCodes = pool.stockHits.keys.toList().take(5),
+                outputCodes = pool.stockHits.keys.toList().take(5)
             )
 
             finalPenalty
@@ -592,10 +674,10 @@ class RotationPenaltyNode(
             context.log(nodeId, "輪動懲罰計算失敗: ${e.message}, 默認 0")
             context.recordStockFlow(
                 nodeId = nodeId, nodeName = nodeName,
-                inputCount = input.totalStocks, outputCount = input.totalStocks,
+                inputCount = pool.totalStocks, outputCount = pool.totalStocks,
                 filterCount = 0, filterReason = "",
-                inputCodes = input.stockHits.keys.toList().take(5),
-                outputCodes = input.stockHits.keys.toList().take(5)
+                inputCodes = pool.stockHits.keys.toList().take(5),
+                outputCodes = pool.stockHits.keys.toList().take(5)
             )
             0
         }
@@ -778,7 +860,7 @@ class NewsGuardNode(
  * 並將結果存入 PipelineContext 供後續節點使用。
  *
  * 自適應參數包含：
- * - scoreThreshold: 動態評分閾值（BEARISH=55, OSCILLATION=50, BULLISH=45）
+ * - scoreThreshold: 動態評分閾值（BEARISH強=55/BEARISH弱=60, OSCILLATION=55, BULLISH=50）
  * - maxStockCount: 最大選股數量
  * - shouldGoEmpty: 是否觸發空倉
  *
@@ -788,19 +870,35 @@ class NewsGuardNode(
  */
 class AdaptiveParamsNode(
     private val holdingCodes: List<String> = emptyList()
-) : PipelineNode<Unit, MarketAdaptiveStrategy.AdaptiveParams?> {
+) : PipelineNode<Any, MarketAdaptiveStrategy.AdaptiveParams?> {
 
     override val nodeId: String = "adaptive_params"
     override val nodeName: String = "大盤分析+自適應參數"
     override val nodeType: NodeType = NodeType.DATA_SOURCE
 
-    override suspend fun execute(context: PipelineContext, input: Unit): MarketAdaptiveStrategy.AdaptiveParams? {
+    override suspend fun execute(context: PipelineContext, input: Any): MarketAdaptiveStrategy.AdaptiveParams? {
+        // 從數據庫讀取持倉（若構造函數未傳入）
+        val effectiveHoldingCodes = if (holdingCodes.isNotEmpty()) {
+            holdingCodes
+        } else {
+            try {
+                val db = StockDatabase.getInstance(context.androidContext)
+                val period = orderTypePeriod(context.config.orderType)
+                db.strategyTradeOrderDao().getRecent(500)
+                    .filter { (it.status == "BUYING" || it.status == "PENDING") && orderTypePeriod(it.orderType) == period }
+                    .map { it.stockCode }
+            } catch (e: Exception) {
+                context.log(nodeId, "讀取持倉失敗: ${e.message}")
+                emptyList()
+            }
+        }
+
         // 📥 輸入日誌
-        context.log(nodeId, "📥 $nodeName 輸入: ${holdingCodes.size} 只持倉 ${formatTopCodes(holdingCodes)}")
+        context.log(nodeId, "📥 $nodeName 輸入: ${effectiveHoldingCodes.size} 只持倉 ${formatTopCodes(effectiveHoldingCodes)}")
 
         return try {
             // 觸發延遲加載（首次調用時計算，後續直接返回緩存值）
-            val report = context.getMarketReport(holdingCodes)
+            val report = context.getMarketReport(effectiveHoldingCodes)
             val params = context.getAdaptiveParams()
 
             if (report != null) {
@@ -851,19 +949,32 @@ class AdaptiveParamsNode(
 class SwapWeakNode(
     private val maxHoldings: Int = 5,
     private val strategies: List<Strategy> = emptyList()
-) : PipelineNode<OrderGenerationResult, SwapWeakResult> {
+) : PipelineNode<Any, SwapWeakResult> {
 
     override val nodeId: String = "swap_weak"
     override val nodeName: String = "騰龍換鳥"
     override val nodeType: NodeType = NodeType.TRADE_ACTION
 
-    override suspend fun execute(context: PipelineContext, input: OrderGenerationResult): SwapWeakResult {
+    override suspend fun execute(context: PipelineContext, input: Any): SwapWeakResult {
+        // 從 input 或 context 中按需讀取 OrderGenerationResult
+        val orderResult: OrderGenerationResult = when (input) {
+            is OrderGenerationResult -> input
+            else -> context.getStageOutput<OrderGenerationResult>("generate_orders")
+                ?: context.getStageOutput<OrderGenerationResult>("n_orders")
+                ?: return SwapWeakResult(0, emptyList(), 0, 0, emptyList())
+        }
         // 從上游 GenerateOrdersNode 輸出中動態獲取 newBuyCount
-        val newBuyCount = input.orders.size
+        val newBuyCount = orderResult.orders.size
+
+        // ── 快速跳過：無新買訂單時無需任何 DB 查詢，直接返回 ──
+        if (newBuyCount == 0) {
+            context.log(nodeId, "$nodeName: 無新買訂單，跳過")
+            return SwapWeakResult(0, emptyList(), 0, 0, orderResult.orders)
+        }
 
         // 📥 輸入日誌
-        val orderCodes = input.orders.map { "${it.stockCode}(${it.stockName})" }
-        context.log(nodeId, "📥 $nodeName 輸入: ${input.orders.size} 個訂單 ${formatTopCodes(orderCodes)}")
+        val orderCodes = orderResult.orders.map { "${it.stockCode}(${it.stockName})" }
+        context.log(nodeId, "📥 $nodeName 輸入: ${orderResult.orders.size} 個訂單 ${formatTopCodes(orderCodes)}")
 
         val effectiveStrategies = strategies.ifEmpty {
             context.getStageOutput<List<Strategy>>("_strategies") ?: emptyList()
@@ -877,7 +988,53 @@ class SwapWeakNode(
             val period = orderTypePeriod(context.config.orderType)
             val holdingOrders = db.strategyTradeOrderDao().getRecent(500)
                 .filter { (it.status == "BUYING" || it.status == "PENDING") && orderTypePeriod(it.orderType) == period }
-            val currentCount = holdingOrders.size
+            var currentCount = holdingOrders.size
+
+            // ── 趨勢轉換檢測：即使持倉未滿，趨勢轉空的持倉也主動賣出換股 ──
+            // 讀取每只持倉最近20天K線，判斷是否空頭排列(MA5<MA10<MA20)或近3日創20日新低
+            val trendReversedCodes = mutableListOf<String>()
+            for (order in holdingOrders) {
+                try {
+                    val snaps = db.dailySnapshotDao().getByCode(order.stockCode, 20)
+                    if (snaps.size < 20) continue  // 數據不足，跳過趨勢判斷
+                    val klines = snaps.sortedBy { it.date }  // 按 date ASC 排序，takeLast = 最新
+                    val closes = klines.map { it.close }
+                    val ma5 = closes.takeLast(5).average()
+                    val ma10 = closes.takeLast(10).average()
+                    val ma20 = closes.takeLast(20).average()
+                    val recent3Low = klines.takeLast(3).minOf { it.low }
+                    val prior17Low = klines.dropLast(3).minOf { it.low }
+                    val bearishAlignment = ma5 < ma10 && ma10 < ma20
+                    val newLow = recent3Low < prior17Low
+                    if (bearishAlignment || newLow) {
+                        trendReversedCodes.add(order.stockCode)
+                        val reason = if (bearishAlignment) "空頭排列" else "近3日創新低"
+                        context.log(nodeId, "中期趨勢轉換: ${order.stockName}($reason)，主動賣出換股")
+                    }
+                } catch (_: Exception) {
+                    // 單股查詢失敗不影響整體流程
+                }
+            }
+
+            if (trendReversedCodes.isNotEmpty()) {
+                val allDecisions = sellEngine.evaluateAll(
+                    effectiveStrategies,
+                    AutoSellEngine.AutoSellConfig(
+                        tradeDate = context.tradeDate,
+                        hardStopLossPct = context.getAdaptiveParams()?.stopLossRate?.times(100)
+                            ?: AutoSellEngine.HARD_STOP_LOSS_PCT
+                    )
+                ).filter { orderTypePeriod(it.order.orderType) == period }
+                val trendSellDecisions = allDecisions.filter { it.order.stockCode in trendReversedCodes }
+                if (trendSellDecisions.isNotEmpty()) {
+                    val soldNames = trendSellDecisions.map { "${it.order.stockName}(趨勢轉空)" }
+                    context.log(nodeId, "騰龍換鳥: 趨勢轉換賣出 ${soldNames.joinToString()}")
+                    sellEngine.executeSells(trendSellDecisions, context.tradeDate, force = true)
+                }
+                // 賣出後重新計算持倉數
+                currentCount = db.strategyTradeOrderDao().getRecent(500)
+                    .count { (it.status == "BUYING" || it.status == "PENDING") && orderTypePeriod(it.orderType) == period }
+            }
 
             // ── 騰龍換鳥只在「持倉+新買超出上限」時觸發 ──
             // 持倉+新買 ≤ 上限時倉位足夠，新票直接買入即可，無需賣出現有持倉騰位置。
@@ -887,12 +1044,12 @@ class SwapWeakNode(
                 context.log(nodeId, "📤 $nodeName 輸出: 0 只換股，持倉不變 $currentCount")
                 context.recordStockFlow(
                     nodeId = nodeId, nodeName = nodeName,
-                    inputCount = input.orders.size, outputCount = 0,
-                    filterCount = input.orders.size,
+                    inputCount = orderResult.orders.size, outputCount = 0,
+                    filterCount = orderResult.orders.size,
                     filterReason = "持倉未滿無需換股",
                     inputCodes = orderCodes.take(5), outputCodes = emptyList()
                 )
-                return SwapWeakResult(0, emptyList(), currentCount, currentCount)
+                return SwapWeakResult(0, emptyList(), currentCount, currentCount, orderResult.orders)
             }
 
             // 沒有新買訂單 → 沒有換股候選，不換
@@ -905,7 +1062,7 @@ class SwapWeakNode(
                     filterCount = 0, filterReason = "無新買訂單",
                     inputCodes = emptyList(), outputCodes = emptyList()
                 )
-                return SwapWeakResult(0, emptyList(), currentCount, currentCount)
+                return SwapWeakResult(0, emptyList(), currentCount, currentCount, orderResult.orders)
             }
 
             // 持倉已滿且有新候選 → 需騰出 newBuyCount 個位置（持倉超滿時一併修剪到上限）
@@ -933,7 +1090,7 @@ class SwapWeakNode(
 
             // ── 只換「更值得買」的票：新票最高評分須高於待賣邊界持倉的買入評分 ──
             // 若最佳新票都打不過最弱的待賣持倉，說明這次換股不是「升級」，不執行。
-            val bestNewScore = input.orders.maxOfOrNull { it.scoreAtBuy } ?: 0
+            val bestNewScore = orderResult.orders.maxOfOrNull { it.scoreAtBuy } ?: 0
             val marginalHoldingScore = rankedForSale.lastOrNull()?.order?.scoreAtBuy ?: Int.MAX_VALUE
             if (bestNewScore <= marginalHoldingScore) {
                 context.log(nodeId, "騰龍換鳥: 新票最高分 $bestNewScore ≤ 持倉分 $marginalHoldingScore, " +
@@ -941,12 +1098,12 @@ class SwapWeakNode(
                 context.log(nodeId, "📤 $nodeName 輸出: 0 只換股（新票不優於持倉）")
                 context.recordStockFlow(
                     nodeId = nodeId, nodeName = nodeName,
-                    inputCount = input.orders.size, outputCount = 0,
-                    filterCount = input.orders.size,
+                    inputCount = orderResult.orders.size, outputCount = 0,
+                    filterCount = orderResult.orders.size,
                     filterReason = "新票不優於持倉",
                     inputCodes = orderCodes.take(5), outputCodes = emptyList()
                 )
-                return SwapWeakResult(0, emptyList(), currentCount, currentCount)
+                return SwapWeakResult(0, emptyList(), currentCount, currentCount, orderResult.orders)
             }
 
             if (rankedForSale.isNotEmpty()) {
@@ -966,8 +1123,8 @@ class SwapWeakNode(
                 context.log(nodeId, "📤 $nodeName 輸出: ${rankedForSale.size} 只換股，持倉 $currentCount → $afterCount")
                 context.recordStockFlow(
                     nodeId = nodeId, nodeName = nodeName,
-                    inputCount = input.orders.size, outputCount = rankedForSale.size,
-                    filterCount = if (rankedForSale.isEmpty()) input.orders.size else 0,
+                    inputCount = orderResult.orders.size, outputCount = rankedForSale.size,
+                    filterCount = if (rankedForSale.isEmpty()) orderResult.orders.size else 0,
                     filterReason = if (rankedForSale.isEmpty()) "無需換股" else "",
                     inputCodes = orderCodes.take(5), outputCodes = rankedForSale.take(5).map { it.order.stockCode }
                 )
@@ -976,31 +1133,32 @@ class SwapWeakNode(
                     swappedCount = rankedForSale.size,
                     soldStocks = soldNames,
                     beforeCount = currentCount,
-                    afterCount = afterCount
+                    afterCount = afterCount,
+                    orders = orderResult.orders
                 )
             } else {
                 // 📤 輸出日誌
                 context.log(nodeId, "📤 $nodeName 輸出: 0 只換股，無需賣出")
                 context.recordStockFlow(
                     nodeId = nodeId, nodeName = nodeName,
-                    inputCount = input.orders.size, outputCount = 0,
-                    filterCount = input.orders.size,
+                    inputCount = orderResult.orders.size, outputCount = 0,
+                    filterCount = orderResult.orders.size,
                     filterReason = "無需換股",
                     inputCodes = orderCodes.take(5), outputCodes = emptyList()
                 )
-                SwapWeakResult(0, emptyList(), currentCount, currentCount)
+                SwapWeakResult(0, emptyList(), currentCount, currentCount, orderResult.orders)
             }
         } catch (e: Exception) {
             context.log(nodeId, "騰龍換鳥失敗: ${e.message}")
             context.recordError(nodeId, "騰龍換鳥失敗: ${e.message}")
             context.recordStockFlow(
                 nodeId = nodeId, nodeName = nodeName,
-                inputCount = input.orders.size, outputCount = 0,
-                filterCount = input.orders.size,
+                inputCount = orderResult.orders.size, outputCount = 0,
+                filterCount = orderResult.orders.size,
                 filterReason = "執行失敗: ${e.message}",
                 inputCodes = orderCodes.take(5), outputCodes = emptyList()
             )
-            SwapWeakResult(0, emptyList(), 0, 0)
+            SwapWeakResult(0, emptyList(), 0, 0, orderResult.orders)
         }
     }
 }
@@ -1024,18 +1182,27 @@ class SwapWeakNode(
  * 4. 從快照計算價格位置得分（距均線距離、漲幅位置）
  * 5. 返回 Map<String, Int>（code → score）
  */
-class HeatScoreNode : PipelineNode<StockPool, Map<String, Int>> {
+class HeatScoreNode : PipelineNode<Any, Map<String, Int>> {
 
     override val nodeId: String = "heat_score"
     override val nodeName: String = "熱度計算"
     override val nodeType: NodeType = NodeType.DATA_TRANSFORM
 
-    override suspend fun execute(context: PipelineContext, input: StockPool): Map<String, Int> {
+    override suspend fun execute(context: PipelineContext, input: Any): Map<String, Int> {
+        // 從 input 或 context 中按需讀取 StockPool
+        val pool: StockPool = when (input) {
+            is StockPool -> input
+            else -> context.getStageOutput<StockPool>("stock_pool")
+                ?: context.getStageOutput<StockPool>("n_pool")
+                ?: context.getStageOutput<StockPool>("candidate_pool")
+                ?: context.getStageOutput<StockPool>("n_cand")
+                ?: StockPool(emptyList(), "empty")
+        }
         // 📥 輸入日誌
-        val inputCodes = input.stocks.map { it.code }
-        context.log(nodeId, "📥 $nodeName 輸入: ${input.stocks.size} 只股票 ${formatTopCodes(inputCodes)}")
+        val inputCodes = pool.stocks.map { it.code }
+        context.log(nodeId, "📥 $nodeName 輸入: ${pool.stocks.size} 只股票 ${formatTopCodes(inputCodes)}")
 
-        if (input.isEmpty) {
+        if (pool.isEmpty) {
             context.log(nodeId, "股票池為空，跳過熱度計算")
             return emptyMap()
         }
@@ -1059,7 +1226,7 @@ class HeatScoreNode : PipelineNode<StockPool, Map<String, Int>> {
             // 3. 計算每隻股票的熱度分數
             val heatScores = mutableMapOf<String, Int>()
 
-            for (stock in input.stocks) {
+            for (stock in pool.stocks) {
                 val code = stock.code
                 val snap = snapMap[code]
                 if (snap == null) {
@@ -1114,7 +1281,7 @@ class HeatScoreNode : PipelineNode<StockPool, Map<String, Int>> {
             }
             context.recordStockFlow(
                 nodeId = nodeId, nodeName = nodeName,
-                inputCount = input.stocks.size, outputCount = heatScores.size,
+                inputCount = pool.stocks.size, outputCount = heatScores.size,
                 filterCount = lowScoreCount,
                 filterReason = if (lowScoreCount > 0) "低熱度(<40分)" else "",
                 inputCodes = inputCodes.take(5), outputCodes = heatScores.keys.toList().take(5)
@@ -1128,8 +1295,8 @@ class HeatScoreNode : PipelineNode<StockPool, Map<String, Int>> {
             context.recordError(nodeId, "熱度計算失敗: ${e.message}")
             context.recordStockFlow(
                 nodeId = nodeId, nodeName = nodeName,
-                inputCount = input.stocks.size, outputCount = 0,
-                filterCount = input.stocks.size,
+                inputCount = pool.stocks.size, outputCount = 0,
+                filterCount = pool.stocks.size,
                 filterReason = "執行失敗: ${e.message}",
                 inputCodes = inputCodes.take(5), outputCodes = emptyList()
             )
@@ -1274,6 +1441,11 @@ class GenerateOrdersNode(
             val holdingOrders = db.strategyTradeOrderDao().getRecent(500)
                 .filter { (it.status == "BUYING" || it.status == "PENDING") && orderTypePeriod(it.orderType) == period }
             val holdingCodes = holdingOrders.map { it.stockCode }.toSet()
+            // 僅「同日買入」的持倉才過濾（避免同日重複下單）；
+            // 非同日持倉允許通過 → 下游 PositionMergeNode 執行加倉（追加加權平均）
+            val todayHoldingCodes = holdingOrders
+                .filter { it.tradeDate == context.tradeDate }
+                .map { it.stockCode }.toSet()
             val availableSlots = maxHoldings - holdingCodes.size
 
             if (availableSlots <= 0) {
@@ -1293,10 +1465,10 @@ class GenerateOrdersNode(
                     continue
                 }
 
-                // 2. 已持有過濾
-                if (pick.stockCode in holdingCodes) {
+                // 2. 同日已持有過濾（僅過濾同日重複，非同日允許加倉）
+                if (pick.stockCode in todayHoldingCodes) {
                     filteredCount++
-                    filteredReasons.add("${pick.stockCode}: 已持有")
+                    filteredReasons.add("${pick.stockCode}: 今日已買入")
                     continue
                 }
 
@@ -1304,6 +1476,13 @@ class GenerateOrdersNode(
                 if (pick.stockCode.startsWith("sh51") || pick.stockCode.startsWith("sz15")) {
                     filteredCount++
                     filteredReasons.add("${pick.stockCode}: ETF排除")
+                    continue
+                }
+
+                // 3.5 指數過濾（排除大盤指數：sh000xxx / sz399xxx 不可交易）
+                if (pick.stockCode.startsWith("sh000") || pick.stockCode.startsWith("sz399")) {
+                    filteredCount++
+                    filteredReasons.add("${pick.stockCode}: 指數排除")
                     continue
                 }
 
@@ -1316,6 +1495,50 @@ class GenerateOrdersNode(
                 }
 
                 candidates.add(pick)
+            }
+
+            // ── Fallback：如果所有候選都被評分閾值過濾，降低閾值放行最優候選 ──
+            // 場景：OSCILLATION 市場閾值 55，但策略信號強度普遍為 50（如「趨勢加減分」策略）
+            // 此時不應完全空倉，而是放行評分最高的候選，由下游止損/風控管理風險
+            //
+            // 兩級 Fallback：
+            //   Tier 1 — 回收被評分閾值過濾的候選，仍要求主力資金 ≥ 30（偏好有主力支撐的票）
+            //   Tier 2 — 若 Tier 1 仍為空（所有票主力資金都低），忽略主力資金要求，放行評分最高的候選
+            if (candidates.isEmpty() && filteredCount > 0) {
+                // 基礎過濾條件：排除 ETF、指數、同日已買入
+                fun baseFilter(pick: AIPredictionEngine.AIPick) =
+                    pick.stockCode !in todayHoldingCodes &&
+                    !pick.stockCode.startsWith("sh51") && !pick.stockCode.startsWith("sz15") &&
+                    !pick.stockCode.startsWith("sh000") && !pick.stockCode.startsWith("sz399")
+
+                // Tier 1：評分閾值過濾 + 主力資金 ≥ 30
+                val tier1 = topPicks
+                    .filter { it.compositeScore < scoreThreshold && baseFilter(it) &&
+                        SmartMoneyCache.getScore(it.stockCode).combined >= 30 }
+                    .sortedByDescending { it.compositeScore }
+
+                if (tier1.isNotEmpty()) {
+                    val fallbackThreshold = tier1.first().compositeScore
+                    val fallbackCount = minOf(tier1.size, maxStockCount)
+                    val fallbackPicks = tier1.take(fallbackCount)
+                    candidates.addAll(fallbackPicks)
+                    context.log(nodeId, "⚠ $nodeName 評分 Fallback Tier1: 所有候選被閾值 $scoreThreshold 過濾，" +
+                        "降低閾值至 $fallbackThreshold 放行 ${fallbackPicks.size} 只最優候選（主力資金≥30）")
+                } else {
+                    // Tier 2：忽略主力資金要求，僅按評分排序放行
+                    val tier2 = topPicks
+                        .filter { it.compositeScore < scoreThreshold && baseFilter(it) }
+                        .sortedByDescending { it.compositeScore }
+
+                    if (tier2.isNotEmpty()) {
+                        val fallbackThreshold = tier2.first().compositeScore
+                        val fallbackCount = minOf(tier2.size, maxStockCount)
+                        val fallbackPicks = tier2.take(fallbackCount)
+                        candidates.addAll(fallbackPicks)
+                        context.log(nodeId, "⚠ $nodeName 評分 Fallback Tier2: 所有候選被閾值 $scoreThreshold 過濾" +
+                            "且主力資金均不足，忽略主力資金要求，降低閾值至 $fallbackThreshold 放行 ${fallbackPicks.size} 只最優候選")
+                    }
+                }
             }
 
             // ── 大盤防守：空倉防禦 ──
@@ -1356,7 +1579,7 @@ class GenerateOrdersNode(
             val orders = finalCandidates.mapIndexed { index, pick ->
                 val snap = snapMap[pick.stockCode]
                 val buyPrice = snap?.close ?: 0.0
-                SimulationTradeEngine.TradeOrder(
+                TradeOrder(
                     stockCode = pick.stockCode,
                     stockName = pick.stockName,
                     strategyId = "ai_midterm_${context.tradeDate}",
@@ -1385,7 +1608,7 @@ class GenerateOrdersNode(
                 inputCount = topPicks.size, outputCount = orders.size,
                 filterCount = topPicks.size - orders.size,
                 filterReason = buildString {
-                    if (filteredCount > 0) append("已持倉或價格異常${filteredCount}只")
+                    if (filteredCount > 0) append("同日重複/價格異常${filteredCount}只")
                 }.trim(),
                 inputCodes = topPicks.map { it.stockCode }.take(5),
                 outputCodes = orders.map { it.stockCode }.take(5)
@@ -1428,18 +1651,21 @@ class PositionMergeNode : PipelineNode<Any, PositionMergeResult> {
     override val nodeType: NodeType = NodeType.TRADE_ACTION
 
     override suspend fun execute(context: PipelineContext, rawInput: Any): PositionMergeResult {
-        // 騰龍換鳥(n_swap)是輔助節點，其輸出 SwapWeakResult 僅用於保證執行順序（先賣後買），
-        // 實際訂單數據統一從 generate_orders(n_orders) 的輸出獲取
-        val input: OrderGenerationResult = when (rawInput) {
-            is OrderGenerationResult -> rawInput
-            else -> context.getStageOutput<OrderGenerationResult>("n_orders")
-                ?: OrderGenerationResult(emptyList(), 0, false)
+        // 兼容兩種上游輸入：
+        // - SwapWeakResult（經騰龍換鳥 n_swap → n_merge_pos）：直接從 orders 字段提取
+        // - OrderGenerationResult（直連 n_orders → n_merge_pos）：直接使用
+        // - 其他類型（如輔助節點容錯回退）：從 context 獲取 n_orders 的輸出
+        val orders: List<TradeOrder> = when (rawInput) {
+            is SwapWeakResult -> rawInput.orders
+            is OrderGenerationResult -> rawInput.orders
+            else -> context.getStageOutput<OrderGenerationResult>("n_orders")?.orders
+                ?: emptyList()
         }
         // 📥 輸入日誌
-        val orderCodes = input.orders.map { "${it.stockCode}(${it.stockName})" }
-        context.log(nodeId, "📥 $nodeName 輸入: ${input.orders.size} 個訂單 ${formatTopCodes(orderCodes)}")
+        val orderCodes = orders.map { "${it.stockCode}(${it.stockName})" }
+        context.log(nodeId, "📥 $nodeName 輸入: ${orders.size} 個訂單 ${formatTopCodes(orderCodes)}")
 
-        if (input.orders.isEmpty()) {
+        if (orders.isEmpty()) {
             val db = StockDatabase.getInstance(context.androidContext)
             val period = orderTypePeriod(context.config.orderType)
             val currentTotal = db.strategyTradeOrderDao().getRecent(500)
@@ -1473,7 +1699,7 @@ class PositionMergeNode : PipelineNode<Any, PositionMergeResult> {
             val updatedCodes = mutableListOf<String>()
             val entitiesToInsert = mutableListOf<StrategyTradeOrderEntity>()
 
-            for (order in input.orders) {
+            for (order in orders) {
                 val existing = existingMap[order.stockCode]
                 if (existing != null) {
                     // 已持有：追加加權平均
@@ -1524,13 +1750,13 @@ class PositionMergeNode : PipelineNode<Any, PositionMergeResult> {
             }
             context.recordStockFlow(
                 nodeId = nodeId, nodeName = nodeName,
-                inputCount = input.orders.size, outputCount = newCount,
-                filterCount = input.orders.size - newCount,
-                filterReason = if (input.orders.size - newCount > 0) "重複持倉合併" else "",
+                inputCount = orders.size, outputCount = newCount,
+                filterCount = orders.size - newCount,
+                filterReason = if (orders.size - newCount > 0) "重複持倉合併" else "",
                 inputCodes = orderCodes.take(5), outputCodes = updatedCodes.take(5)
             )
 
-            context.log(nodeId, "持倉合併: ${input.orders.size} 個訂單 → 新增 $newCount 只, " +
+            context.log(nodeId, "持倉合併: ${orders.size} 個訂單 → 新增 $newCount 只, " +
                 "更新 ${updatedCodes.size} 只, 總持倉 $totalHoldings")
 
             PositionMergeResult(newCount, updatedCodes, totalHoldings)
@@ -1539,8 +1765,8 @@ class PositionMergeNode : PipelineNode<Any, PositionMergeResult> {
             context.recordError(nodeId, "持倉合併失敗: ${e.message}")
             context.recordStockFlow(
                 nodeId = nodeId, nodeName = nodeName,
-                inputCount = input.orders.size, outputCount = 0,
-                filterCount = input.orders.size,
+                inputCount = orders.size, outputCount = 0,
+                filterCount = orders.size,
                 filterReason = "執行失敗: ${e.message}",
                 inputCodes = orderCodes.take(5), outputCodes = emptyList()
             )
@@ -1561,13 +1787,13 @@ class PositionMergeNode : PipelineNode<Any, PositionMergeResult> {
  *
  * 原始流程對應：AppBackgroundRunner.isQuantRunning
  */
-class BackgroundManagerNode : PipelineNode<Unit, Unit> {
+class BackgroundManagerNode : PipelineNode<Any, Unit> {
 
     override val nodeId: String = "bg_manager"
     override val nodeName: String = "後臺暫停/恢復"
     override val nodeType: NodeType = NodeType.DATA_SOURCE
 
-    override suspend fun execute(context: PipelineContext, input: Unit): Unit {
+    override suspend fun execute(context: PipelineContext, input: Any): Unit {
         // 📥 輸入日誌
         context.log(nodeId, "📥 $nodeName 輸入: 準備暫停後臺任務（isQuantRunning=${AppBackgroundRunner.isQuantRunning}）")
 
@@ -1815,13 +2041,40 @@ class HoldingGuardNode(
                 effectiveStrategies,
                 AutoSellEngine.AutoSellConfig(
                     tradeDate = context.tradeDate,
-                    // 自適應止損：空頭市場收緊硬止損
-                    hardStopLossPct = context.getAdaptiveParams()?.stopLossRate?.times(100)
-                        ?: AutoSellEngine.HARD_STOP_LOSS_PCT
+                    // 自適應止損：空頭市場收緊硬止損；長期持倉放寬到 -25%
+                    hardStopLossPct = if (period == "long") -25.0
+                        else context.getAdaptiveParams()?.stopLossRate?.times(100)
+                            ?: AutoSellEngine.HARD_STOP_LOSS_PCT
                 )
             ).filter { orderTypePeriod(it.order.orderType) == period }
 
-            val mustSell = decisions.filter { it.shouldSell }
+            var mustSell = decisions.filter { it.shouldSell }
+
+            // ── 長期持倉特殊保護：只賣突發利空，不賣常規止盈止損 ──
+            // 長期容忍更大波動，止盈不觸發，只有突發利空（單日跌幅>7%或3日累計跌幅>15%）才賣出
+            if (period == "long" && mustSell.isNotEmpty()) {
+                val filteredSell = mustSell.filter { decision ->
+                    try {
+                        val recentSnaps = db.dailySnapshotDao()
+                            .getByCode(decision.order.stockCode, 5)
+                            .sortedBy { it.date }  // 按 date ASC，last() = 最新
+                        if (recentSnaps.size >= 3) {
+                            val singleDayDrop = recentSnaps.last().changePct
+                            val threeDayDrop = recentSnaps.takeLast(3).sumOf { it.changePct }
+                            // 突發利空：單日跌幅>7% 或 3日累計跌幅>15%
+                            singleDayDrop < -7.0 || threeDayDrop < -15.0
+                        } else false
+                    } catch (_: Exception) {
+                        false  // 查詢失敗時不賣（保守策略，避免誤殺長期持倉）
+                    }
+                }
+                val filteredOut = mustSell.size - filteredSell.size
+                if (filteredOut > 0) {
+                    context.log(nodeId, "長期持倉保護: 過濾掉 $filteredOut 只常規止盈止損信號，" +
+                        "僅保留 ${filteredSell.size} 只突發利空信號")
+                }
+                mustSell = filteredSell
+            }
 
             if (mustSell.isEmpty()) {
                 context.log(nodeId, "📤 $nodeName: ${holdingOrders.size} 只持倉全部健康，無賣出信號")

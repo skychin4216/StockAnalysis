@@ -6,21 +6,23 @@ import com.chin.stockanalysis.agent.stock.TradeExecutionAgent
 import com.chin.stockanalysis.agent.stock.TradeExecutionResult
 import com.chin.stockanalysis.config.FeatureFlagManager
 import com.chin.stockanalysis.strategy.StrategyEngineHolder
-import com.chin.stockanalysis.strategy.trade.SimulationTradeEngine
+import com.chin.stockanalysis.strategy.HoldingPeriod
+import com.chin.stockanalysis.strategy.topology.xml.DagTradeExecutor
+import com.chin.stockanalysis.stock.database.StockDatabase
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 /**
  * ## 交易執行路由層
  *
- * Legacy: SimulationTradeEngine.runTradeSession() → 轉換為 TradeExecutionResult
+ * Legacy: DagTradeExecutor (mid_term pipeline)
  * Agent: TradeExecutionAgent.executeTrade()
  */
 interface TradeExecutionService {
     suspend fun executeTrade(context: Context): TradeExecutionResult
 }
 
-/** Legacy 實現 — 調用 SimulationTradeEngine.runTradeSession() */
+/** Legacy 實現 — 調用 DAG Pipeline (mid_term) */
 class LegacyTradeExecutionService : TradeExecutionService {
     companion object {
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
@@ -28,37 +30,41 @@ class LegacyTradeExecutionService : TradeExecutionService {
 
     override suspend fun executeTrade(context: Context): TradeExecutionResult {
         val engine = StrategyEngineHolder.get()
-        val strategies = engine.getStrategies()
+        val strategies = engine.getEnabledStrategiesByPeriod(HoldingPeriod.MID)
         if (strategies.isEmpty()) {
             return TradeExecutionResult(success = false, reasoning = "無可用策略")
         }
 
-        val te = SimulationTradeEngine(context)
-        val config = SimulationTradeEngine.TradeSessionConfig(
-            tradeDate = LocalDate.now().format(DATE_FMT),
-            onlyMainBoard = true
+        val today = LocalDate.now().format(DATE_FMT)
+        val result = DagTradeExecutor.execute(
+            context = context,
+            useCaseId = "mid_term",
+            tradeDate = today,
+            today = today,
+            strategies = strategies,
+            orderType = "MidTermQuant"
         )
 
-        val report = te.runTradeSession(strategies, config)
-
-        // 將 TradeSessionReport 轉換為 TradeExecutionResult
-        val buyOrders = report.buyOrders.map { order ->
+        // 從 DB 讀取今日訂單構建 BuyOrder 列表
+        val db = StockDatabase.getInstance(context)
+        val orders = try { db.strategyTradeOrderDao().getByDate(today) } catch (_: Exception) { emptyList() }
+        val buyOrders = orders.filter { it.status == "BUYING" || it.status == "PENDING" }.map { order ->
             BuyOrder(
                 code = order.stockCode,
                 name = order.stockName,
                 price = order.buyPrice,
                 quantity = order.quantity,
                 reason = order.reason,
-                stopLoss = 0.0 // Legacy 不提供止損價
+                stopLoss = 0.0
             )
         }
 
         return TradeExecutionResult(
-            success = true,
+            success = result.success,
             action = if (buyOrders.isNotEmpty()) "BUY" else "HOLD",
             buyOrders = buyOrders,
-            reasoning = report.summary,
-            rawOutput = report.summary,
+            reasoning = result.uiText,
+            rawOutput = result.uiText,
             steps = 9
         )
     }

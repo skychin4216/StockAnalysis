@@ -40,15 +40,22 @@ import java.time.format.DateTimeFormatter
  * ```
  * 放在 stock_pool 之後、signal_merge 之前。
  */
-class CandidatePoolNode : PipelineNode<StockPool, StockPool> {
+class CandidatePoolNode : PipelineNode<Any, StockPool> {
 
     override val nodeId: String = "candidate_pool"
     override val nodeName: String = "候選池過濾"
     override val nodeType: NodeType = NodeType.FILTER
 
-    override suspend fun execute(context: PipelineContext, input: StockPool): StockPool {
-        val inputCodes = input.stocks.map { it.code }
-        context.log(nodeId, "📥 輸入: ${input.size} 只股票")
+    override suspend fun execute(context: PipelineContext, input: Any): StockPool {
+        // 從 input 或 context 中按需讀取 StockPool
+        val pool: StockPool = when (input) {
+            is StockPool -> input
+            else -> context.getStageOutput<StockPool>("stock_pool")
+                ?: context.getStageOutput<StockPool>("n_pool")
+                ?: StockPool(emptyList(), "empty")
+        }
+        val inputCodes = pool.stocks.map { it.code }
+        context.log(nodeId, "📥 輸入: ${pool.size} 只股票")
 
         return try {
             // 1. 獲取 CandidatePool 代碼
@@ -68,7 +75,7 @@ class CandidatePoolNode : PipelineNode<StockPool, StockPool> {
             }
 
             // 4. 過濾全市場股票池，只保留候選池中的股票
-            val filteredStocks = input.stocks.filter { it.code in candidateCodes }
+            val filteredStocks = pool.stocks.filter { it.code in candidateCodes }
 
             // 5. 對於候選池中但不在全市場快照中的股票，從 DB 補充
             val existingCodes = filteredStocks.map { it.code }.toSet()
@@ -77,29 +84,31 @@ class CandidatePoolNode : PipelineNode<StockPool, StockPool> {
                 fetchStocksFromDb(context, missingCodes.toList())
             } else emptyList()
 
-            val finalStocks = (filteredStocks + extraStocks).distinctBy { it.code }
-            val pool = StockPool(
+            val finalStocks = (filteredStocks + extraStocks)
+                .distinctBy { it.code }
+                .filterNot { it.code.startsWith("sh000") || it.code.startsWith("sz399") }
+            val result = StockPool(
                 stocks = finalStocks,
                 source = "candidate_pool_filtered",
-                totalCount = input.size,
+                totalCount = pool.size,
                 filterReason = "CandidatePool(${candidateCodes.size}) 過濾 + 用戶/板塊補充"
             )
 
-            context.setStageOutput(nodeId, pool)
+            context.setStageOutput(nodeId, result)
             context.recordStockFlow(
                 nodeId = nodeId, nodeName = nodeName,
-                inputCount = input.size, outputCount = finalStocks.size,
-                filterCount = input.size - filteredStocks.size,
+                inputCount = pool.size, outputCount = finalStocks.size,
+                filterCount = pool.size - filteredStocks.size,
                 filterReason = "候選池過濾",
                 inputCodes = inputCodes.take(5),
                 outputCodes = finalStocks.map { it.code }.take(5)
             )
-            context.log(nodeId, "📤 輸出: ${finalStocks.size} 只 (過濾 ${input.size - filteredStocks.size}, 補充 ${extraStocks.size})")
-            pool
+            context.log(nodeId, "📤 輸出: ${finalStocks.size} 只 (過濾 ${pool.size - filteredStocks.size}, 補充 ${extraStocks.size})")
+            result
         } catch (e: Exception) {
             context.log(nodeId, "候選池過濾失敗，返回原池: ${e.message}")
             context.recordError(nodeId, "候選池過濾失敗: ${e.message}")
-            input  // 失敗時返回原池，不阻塞流程
+            pool  // 失敗時返回原池，不阻塞流程
         }
     }
 
@@ -167,28 +176,37 @@ class CandidatePoolNode : PipelineNode<StockPool, StockPool> {
  * ```
  * 放在 stock_pool/candidate_pool 之後、signal_merge 之前。
  */
-class ZiplineFactorNode : PipelineNode<StockPool, StockPool> {
+class ZiplineFactorNode : PipelineNode<Any, StockPool> {
 
     override val nodeId: String = "zipline_factor"
     override val nodeName: String = "Zipline 因子計算"
     override val nodeType: NodeType = NodeType.FACTOR_COMPUTE
 
-    override suspend fun execute(context: PipelineContext, input: StockPool): StockPool {
-        context.log(nodeId, "📥 輸入: ${input.size} 只股票")
+    override suspend fun execute(context: PipelineContext, input: Any): StockPool {
+        // 從 input 或 context 中按需讀取 StockPool
+        val pool: StockPool = when (input) {
+            is StockPool -> input
+            else -> context.getStageOutput<StockPool>("stock_pool")
+                ?: context.getStageOutput<StockPool>("n_pool")
+                ?: context.getStageOutput<StockPool>("candidate_pool")
+                ?: context.getStageOutput<StockPool>("n_cand")
+                ?: StockPool(emptyList(), "empty")
+        }
+        context.log(nodeId, "📥 輸入: ${pool.size} 只股票")
 
         return try {
             val zipline = ZiplinePipeline(context.androidContext)
-            val factorSet = zipline.computeAll(input.stocks, context.tradeDate, 30)
+            val factorSet = zipline.computeAll(pool.stocks, context.tradeDate, 30)
 
             // 存入 PipelineContext 供策略節點讀取
             context.setStageOutput("zipline_factors", factorSet)
 
             context.log(nodeId, "📤 因子計算完成: MA5=${factorSet.ma5.size}, RSI=${factorSet.rsi14.size}, BB=${factorSet.bbUpper.size}, ATR=${factorSet.atr14.size}")
-            input  // 透傳股票池，不修改
+            pool  // 透傳股票池，不修改
         } catch (e: Exception) {
             context.log(nodeId, "Zipline 因子計算失敗，跳過: ${e.message}")
             context.recordError(nodeId, "Zipline 因子計算失敗: ${e.message}")
-            input  // 失敗時透傳，不阻塞
+            pool  // 失敗時透傳，不阻塞
         }
     }
 }
@@ -211,31 +229,39 @@ class ZiplineFactorNode : PipelineNode<StockPool, StockPool> {
  * ```
  * 放在 market_context 之後、stock_pool/candidate_pool 之前（並行）。
  */
-class SectorStockPoolNode : PipelineNode<StrategyMarketContext, StrategyMarketContext> {
+class SectorStockPoolNode : PipelineNode<Any, StrategyMarketContext> {
 
     override val nodeId: String = "sector_stock_pool"
     override val nodeName: String = "板塊精選池"
     override val nodeType: NodeType = NodeType.DATA_SOURCE
 
-    override suspend fun execute(context: PipelineContext, input: StrategyMarketContext): StrategyMarketContext {
-        context.log(nodeId, "📥 輸入: ${input.todayHotSectors.size} 個熱門板塊")
+    override suspend fun execute(context: PipelineContext, input: Any): StrategyMarketContext {
+        // 從 input 或 context 中按需讀取市場上下文
+        val marketCtx: StrategyMarketContext = when (input) {
+            is StrategyMarketContext -> input
+            else -> context.marketContext
+                ?: context.getStageOutput<StrategyMarketContext>("market_context")
+                ?: context.getStageOutput<StrategyMarketContext>("n_ctx")
+                ?: StrategyMarketContext.build(context.androidContext, context.tradeDate, false)
+        }
+        context.log(nodeId, "📥 輸入: ${marketCtx.todayHotSectors.size} 個熱門板塊")
 
         return try {
             // 獲取板塊精選股票池（使用 HotSectorStockPool.build，傳入今日熱門板塊）
             val sectorCodes = HotSectorStockPool.build(
                 context.androidContext,
-                input.todayHotSectors.toSet()
+                marketCtx.todayHotSectors.toSet()
             )
 
             // 存入 PipelineContext，供 CandidatePoolNode 讀取
             context.setStageOutput("sector_stock_codes", sectorCodes)
 
             context.log(nodeId, "📤 板塊精選池: ${sectorCodes.size} 只股票")
-            input  // 透傳市場上下文
+            marketCtx  // 透傳市場上下文
         } catch (e: Exception) {
             context.log(nodeId, "板塊精選池獲取失敗，跳過: ${e.message}")
             context.recordError(nodeId, "板塊精選池失敗: ${e.message}")
-            input
+            marketCtx
         }
     }
 }
@@ -262,14 +288,19 @@ class SectorStockPoolNode : PipelineNode<StrategyMarketContext, StrategyMarketCo
 class T1AutoSellNode(
     private val stopLossPct: Double = -2.0,
     private val takeProfitPct: Double = 3.0
-) : PipelineNode<PositionMergeResult, T1AutoSellResult> {
+) : PipelineNode<Any, T1AutoSellResult> {
 
     override val nodeId: String = "t1_auto_sell"
     override val nodeName: String = "T+1 自動賣出"
     override val nodeType: NodeType = NodeType.TRADE_ACTION
 
-    override suspend fun execute(context: PipelineContext, input: PositionMergeResult): T1AutoSellResult {
-        context.log(nodeId, "📥 輸入: 總持倉 ${input.totalHoldings} 只")
+    override suspend fun execute(context: PipelineContext, input: Any): T1AutoSellResult {
+        // 兼容上游 PositionMergeResult 或空輸入（上游失敗時仍執行 T+1 賣出）
+        val totalHoldings = when (input) {
+            is PositionMergeResult -> input.totalHoldings
+            else -> -1  // 未知持倉數，從 DB 實際讀取
+        }
+        context.log(nodeId, "📥 輸入: 總持倉 ${if (totalHoldings >= 0) totalHoldings else "未知"} 只")
 
         return try {
             val db = StockDatabase.getInstance(context.androidContext)
@@ -359,14 +390,17 @@ data class T1AutoSellResult(
  * ```
  * 放在 position_merge 之後（並行於 fitting_save）。
  */
-class CrossTabPublishNode : PipelineNode<PositionMergeResult, PositionMergeResult> {
+class CrossTabPublishNode : PipelineNode<Any, PositionMergeResult> {
 
     override val nodeId: String = "crosstab_publish"
     override val nodeName: String = "跨 Tab 發布"
     override val nodeType: NodeType = NodeType.TRADE_ACTION
 
-    override suspend fun execute(context: PipelineContext, input: PositionMergeResult): PositionMergeResult {
-        context.log(nodeId, "📥 輸入: 新增 ${input.newCount} 只, 總持倉 ${input.totalHoldings}")
+    override suspend fun execute(context: PipelineContext, input: Any): PositionMergeResult {
+        // 兼容上游 PositionMergeResult 或空輸入
+        val mergeResult = input as? PositionMergeResult
+            ?: PositionMergeResult(0, emptyList(), 0)
+        context.log(nodeId, "📥 輸入: 新增 ${mergeResult.newCount} 只, 總持倉 ${mergeResult.totalHoldings}")
 
         return try {
             // 1. 從 stageOutputs 讀取信號合併結果（SignalMergeNode 的 nodeId = "signal_merge"）
@@ -393,13 +427,13 @@ class CrossTabPublishNode : PipelineNode<PositionMergeResult, PositionMergeResul
                 context.log(nodeId, "發布持倉上下文: ${ctxMap.size} 只")
             }
 
-            context.setStageOutput(nodeId, input)
+            context.setStageOutput(nodeId, mergeResult)
             context.log(nodeId, "📤 跨 Tab 發布完成")
-            input  // 透傳，不影響後續流程
+            mergeResult  // 透傳，不影響後續流程
         } catch (e: Exception) {
             context.log(nodeId, "跨 Tab 發布失敗: ${e.message}")
             context.recordError(nodeId, "跨 Tab 發布失敗: ${e.message}")
-            input
+            mergeResult
         }
     }
 }

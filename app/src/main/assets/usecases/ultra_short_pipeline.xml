@@ -5,30 +5,38 @@
   超短線特徵：持倉 1 天，純技術面，隔夜情緒溢價，快進快出。
   流程最精簡，不加熱點/輪動等中長線專有節點。
 
-  共 13 個 Node：
-    Layer 0 (並行): market_context, bg_manager, adaptive_params（大盤防守）
-    Layer 1: stock_pool（依賴 market_context）
+  共 20 個 Node：
+    Layer 0 (並行): market_context, bg_manager, adaptive_params（大盤防守）, data_import
+    Layer 1: stock_pool, ma_convergence, holding_guard（並行）
     Layer 1.5: candidate_pool（候選池過濾，補齊 Hardcode）
     Layer 2: signal_merge（策略動態注入在 Java 層完成）
-    Layer 3: sector_boost（依賴 signal_merge）
-    Layer 4: ai_predict（依賴 sector_boost）
-    Layer 5: smart_money_filter（依賴 ai_predict，閾值30——超短V型票主力分天然低）
-    Layer 6: generate_orders（依賴 smart_money_filter + adaptive_params）
+    Layer 3: sector_boost → bounce_reversal → inst_tips（依賴 signal_merge）
+    Layer 4: smart_money_filter（依賴 inst_tips，閾值30——超短V型票主力分天然低）
+    Layer 5: ai_predict（依賴 smart_money_filter，最終裁切 take 5）
+    Layer 6: generate_orders（依賴 ai_predict + adaptive_params）
     Layer 7: swap_weak（依賴 generate_orders，持倉滿時賣弱買強）
     Layer 8: position_merge（依賴 swap_weak，換鳥後再入庫）
     Layer 9 (並行): t1_auto_sell（依賴 position_merge）, fitting_save（依賴 generate_orders）
+    並行輔助: candle_pattern（依賴 smart_money_filter，形態警示）
 -->
-<DagPipeline id="ultra_short_dag" name="超短線量化DAG Pipeline" description="市場上下文→股票池→策略篩選→板塊加權→AI精選→主力過濾→訂單生成→持倉合併/擬合保存">
+<DagPipeline id="ultra_short_dag" name="超短線量化DAG Pipeline" description="市場上下文→股票池→策略篩選→板塊加權→主力過濾→AI精選→訂單生成→持倉合併/擬合保存">
 
   <!-- ══════════ NodeList ══════════ -->
   <NodeList>
     <!-- 數據準備 Layer 0 -->
+    <Node id="n_import" name="數據導入檢查" module="data_import">
+      <config>
+        <param name="days" value="30" />
+        <param name="minSnapshots" value="100" />
+      </config>
+    </Node>
     <Node id="n_ctx" name="市場上下文" module="market_context" />
     <Node id="n_bg" name="後臺暫停/恢復" module="bg_manager" />
     <Node id="n_adaptive" name="大盤分析+自適應參數" module="adaptive_params" />
 
     <!-- Layer 1 -->
     <Node id="n_pool" name="股票池" module="stock_pool" />
+    <Node id="n_ma_conv" name="均線粘合偵測" module="ma_convergence" />
 
     <!-- Layer 1（並行）: 持倉風控 — 每次必跑，評估止損/止盈/策略退出 -->
     <Node id="n_guard" name="持倉風控" module="holding_guard" />
@@ -41,6 +49,8 @@
 
     <!-- 增強 Layer 3 -->
     <Node id="n_boost" name="板塊加權" module="sector_boost" />
+    <Node id="n_bounce" name="跌後反彈加分" module="bounce_reversal" />
+    <Node id="n_inst_tips" name="機構線索加分" module="inst_tips" />
 
     <!-- AI+過濾 Layer 4-5 -->
     <Node id="n_ai" name="AI精選" module="ai_predict" />
@@ -79,6 +89,22 @@
 
   <!-- ══════════ Links ══════════ -->
   <Links>
+    <!-- Layer 0 → 1: 數據導入 → 股票池（確保數據充足） -->
+    <Link>
+      <SourceNodeId>n_import</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_pool</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 0 → 1: 數據導入 → 均線粘合偵測（與股票池並行） -->
+    <Link>
+      <SourceNodeId>n_import</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_ma_conv</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
     <!-- Layer 0 → 1: 市場上下文 → 股票池 -->
     <Link>
       <SourceNodeId>n_ctx</SourceNodeId>
@@ -119,31 +145,47 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 3 → 4: 板塊加權 → AI精選 -->
+    <!-- Layer 3 → 3.5: 板塊加權 → 跌後反彈加分 -->
     <Link>
       <SourceNodeId>n_boost</SourceNodeId>
       <SourcePortId>0</SourcePortId>
-      <TargetNodeId>n_ai</TargetNodeId>
+      <TargetNodeId>n_bounce</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 4 → 5: AI精選 → 主力資金過濾 -->
+    <!-- Layer 3.5 → 3.6: 跌後反彈加分 → 機構線索加分 -->
     <Link>
-      <SourceNodeId>n_ai</SourceNodeId>
+      <SourceNodeId>n_bounce</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_inst_tips</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 3.6 → 4: 機構線索加分 → 主力資金過濾（先過濾再AI精選） -->
+    <Link>
+      <SourceNodeId>n_inst_tips</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_smart</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 5 → 6: 主力資金過濾 → 買入訂單生成 -->
+    <!-- Layer 4 → 5: 主力資金過濾 → AI精選（最終裁切 take 5） -->
     <Link>
       <SourceNodeId>n_smart</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_ai</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 5 → 6: AI精選 → 買入訂單生成 -->
+    <Link>
+      <SourceNodeId>n_ai</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_orders</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 5 → 6: 主力資金過濾 → K線形態偵測（並行，輔助提醒） -->
+    <!-- Layer 4 → 5: 主力資金過濾 → K線形態偵測（並行，輔助提醒） -->
     <Link>
       <SourceNodeId>n_smart</SourceNodeId>
       <SourcePortId>0</SourcePortId>

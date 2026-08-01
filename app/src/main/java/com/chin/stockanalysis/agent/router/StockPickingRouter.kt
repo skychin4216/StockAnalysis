@@ -6,12 +6,14 @@ import com.chin.stockanalysis.agent.stock.StockPickingResult
 import com.chin.stockanalysis.agent.stock.StockRecommendation
 import com.chin.stockanalysis.config.FeatureFlagManager
 import com.chin.stockanalysis.strategy.StrategyEngineHolder
-import com.chin.stockanalysis.strategy.trade.SimulationTradeEngine
+import com.chin.stockanalysis.strategy.HoldingPeriod
+import com.chin.stockanalysis.strategy.topology.xml.DagTradeExecutor
+import com.chin.stockanalysis.stock.database.StockDatabase
 
 /**
  * ## 選股路由層
  *
- * Legacy: SimulationTradeEngine.runTradeSession() → 轉換為 StockPickingResult
+ * Legacy: DagTradeExecutor (mid_term pipeline) → 從 DB 讀取訂單轉為推薦
  * Agent: StockPickingAgent.pickStocks()
  */
 interface StockPickingService {
@@ -24,7 +26,7 @@ interface StockPickingService {
     ): StockPickingResult
 }
 
-/** Legacy 實現 — 調用 SimulationTradeEngine.runTradeSession() */
+/** Legacy 實現 — 調用 DAG Pipeline (mid_term) */
 class LegacyStockPickingService : StockPickingService {
     override suspend fun pickStocks(
         context: Context,
@@ -34,36 +36,48 @@ class LegacyStockPickingService : StockPickingService {
         onProgress: ((String) -> Unit)?
     ): StockPickingResult {
         val engine = StrategyEngineHolder.get()
-        val strategies = engine.getStrategies()
+        val strategies = engine.getEnabledStrategiesByPeriod(HoldingPeriod.MID)
         if (strategies.isEmpty()) {
             return StockPickingResult(success = false, rawOutput = "無可用策略")
         }
 
-        val te = SimulationTradeEngine(context)
-        val config = SimulationTradeEngine.TradeSessionConfig(
-            tradeDate = date ?: java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd")),
-            onlyMainBoard = onlyMainBoard
-        )
+        val tradeDate = date ?: java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+        val today = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
 
-        onProgress?.invoke("正在執行選股 Pipeline...")
-        val report = te.runTradeSession(strategies, config)
+        onProgress?.invoke("正在執行 DAG 選股 Pipeline...")
+        val result = DagTradeExecutor.execute(
+            context = context,
+            useCaseId = "mid_term",
+            tradeDate = tradeDate,
+            today = today,
+            strategies = strategies,
+            orderType = "MidTermQuant"
+        ) { _, nodeName ->
+            onProgress?.invoke("🔄 $nodeName 執行中...")
+        }
 
-        // 將 TradeSessionReport 轉換為 StockPickingResult
-        val recommendations = report.aiTop3.map { pick ->
-            StockRecommendation(
-                code = pick.stockCode,
-                name = pick.stockName,
-                strategies = listOf("LegacyPipeline"),
-                score = pick.compositeScore,
-                reason = pick.reason
-            )
-        }.take(maxResults)
+        // 從 DB 讀取今日訂單轉為推薦列表
+        val db = StockDatabase.getInstance(context)
+        val orders = try { db.strategyTradeOrderDao().getByDate(tradeDate) } catch (_: Exception) { emptyList() }
+        val recommendations = orders
+            .filter { it.status == "BUYING" || it.status == "PENDING" }
+            .sortedByDescending { it.scoreAtBuy }
+            .take(maxResults)
+            .map { order ->
+                StockRecommendation(
+                    code = order.stockCode,
+                    name = order.stockName,
+                    strategies = listOf("DAG_Pipeline"),
+                    score = order.scoreAtBuy,
+                    reason = order.reason
+                )
+            }
 
         return StockPickingResult(
-            success = recommendations.isNotEmpty(),
+            success = result.success && recommendations.isNotEmpty(),
             recommendations = recommendations,
-            marketAssessment = report.summary,
-            rawOutput = report.summary,
+            marketAssessment = result.uiText,
+            rawOutput = result.uiText,
             steps = 9
         )
     }

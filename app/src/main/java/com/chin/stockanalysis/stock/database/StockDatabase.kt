@@ -117,9 +117,12 @@ interface AiSelectedStockDao {
         com.chin.stockanalysis.strategy.trade.DailyNewsHotPickEntity::class,
         com.chin.stockanalysis.strategy.trade.StrategyTradeOrderEntity::class,
         UserWatchlistEntity::class,
-        AiSelectedStockEntity::class
+        AiSelectedStockEntity::class,
+        com.chin.stockanalysis.strategy.topology.nodes.InstitutionalTipEntity::class,
+        com.chin.stockanalysis.strategy.trade.PeriodHoldingProfitEntity::class,
+        com.chin.stockanalysis.strategy.trade.TTradeRecordEntity::class
     ],
-    version = 12,
+    version = 15,
     exportSchema = false
 )
 abstract class StockDatabase : RoomDatabase() {
@@ -139,6 +142,9 @@ abstract class StockDatabase : RoomDatabase() {
     abstract fun strategyTradeOrderDao(): com.chin.stockanalysis.strategy.trade.StrategyTradeOrderDao
     abstract fun userWatchlistDao(): UserWatchlistDao
     abstract fun aiSelectedStockDao(): AiSelectedStockDao
+    abstract fun institutionalTipDao(): com.chin.stockanalysis.strategy.topology.nodes.InstitutionalTipDao
+    abstract fun periodHoldingProfitDao(): com.chin.stockanalysis.strategy.trade.PeriodHoldingProfitDao
+    abstract fun tTradeRecordDao(): com.chin.stockanalysis.strategy.trade.TTradeRecordDao
 
     companion object {
         const val DATABASE_NAME = "stock_analysis.db"
@@ -157,6 +163,79 @@ abstract class StockDatabase : RoomDatabase() {
 
         @Volatile private var INSTANCE: StockDatabase? = null
 
+        /**
+         * v12 → v13 遷移：新增 institutional_tips 表（不破壞已有數據）
+         */
+        private val MIGRATION_12_13 = object : androidx.room.migration.Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `institutional_tips` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `stock_code` TEXT NOT NULL,
+                        `stock_name` TEXT NOT NULL DEFAULT '',
+                        `sector` TEXT NOT NULL DEFAULT '',
+                        `source` TEXT NOT NULL DEFAULT 'ai_chat',
+                        `tip_type` TEXT NOT NULL DEFAULT 'research',
+                        `summary` TEXT NOT NULL DEFAULT '',
+                        `chat_id` TEXT NOT NULL DEFAULT '',
+                        `created_date` TEXT NOT NULL DEFAULT '',
+                        `expire_date` TEXT NOT NULL DEFAULT ''
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_institutional_tips_stock_code` ON `institutional_tips` (`stock_code`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_institutional_tips_expire_date` ON `institutional_tips` (`expire_date`)")
+                Log.i(TAG, "✅ v12→v13 遷移完成：已創建 institutional_tips 表（保留已有數據）")
+            }
+        }
+
+        private val MIGRATION_13_14 = object : androidx.room.migration.Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `period_holding_profit` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `period_type` TEXT NOT NULL,
+                        `trade_date` TEXT NOT NULL,
+                        `holding_count` INTEGER NOT NULL,
+                        `total_cost` REAL NOT NULL,
+                        `total_value` REAL NOT NULL,
+                        `total_pnl` REAL NOT NULL,
+                        `total_pnl_pct` REAL NOT NULL,
+                        `stock_codes` TEXT NOT NULL DEFAULT '',
+                        `created_at` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_period_holding_profit_period_type_trade_date` ON `period_holding_profit` (`period_type`, `trade_date`)")
+                Log.i(TAG, "✅ v13→v14 遷移完成：已創建 period_holding_profit 表（各週期持有收益獨立固化）")
+            }
+        }
+
+        /**
+         * v14 → v15 遷移：新增 t_trade_records 表（做T/反T 日內交易記錄）
+         */
+        private val MIGRATION_14_15 = object : androidx.room.migration.Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `t_trade_records` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `stockCode` TEXT NOT NULL,
+                        `stockName` TEXT NOT NULL,
+                        `tradeDate` TEXT NOT NULL,
+                        `tradeType` TEXT NOT NULL,
+                        `quantity` INTEGER NOT NULL,
+                        `price` REAL NOT NULL,
+                        `pairedPrice` REAL NOT NULL,
+                        `profit` REAL NOT NULL,
+                        `profitPct` REAL NOT NULL,
+                        `status` TEXT NOT NULL,
+                        `periodType` TEXT NOT NULL,
+                        `basePositionQty` INTEGER NOT NULL,
+                        `createdAt` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                Log.i(TAG, "✅ v14→v15 遷移完成：已創建 t_trade_records 表（做T/反T日內交易記錄）")
+            }
+        }
+
         fun getInstance(context: Context): StockDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -164,6 +243,7 @@ abstract class StockDatabase : RoomDatabase() {
                     StockDatabase::class.java,
                     DATABASE_NAME
                 )
+                    .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
                     .fallbackToDestructiveMigration()
                     .addCallback(destructiveCallback)
                     .build()

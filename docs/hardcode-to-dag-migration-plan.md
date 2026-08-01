@@ -1,7 +1,7 @@
 # Hardcode → DAG Pipeline 完整遷移計劃
 
 > 目標：刪除所有 Fragment 中的 hardcode 路徑，統一使用 DAG Pipeline。
-> 前提：DAG 必須完整覆蓋 hardcode 的每個步驟，零功能損失。
+> 前提：DAG 必須完整覆蓋 hardcode 的每個步驟，零功能損失。DAG 代表 Directed Acyclic Graph（有向无环图）
 
 ---
 
@@ -292,7 +292,7 @@ XML 配置：作為 Layer 0 的第一個節點，所有下游節點依賴它。
 | ShortTermQuantFragment.kt | `runPipeline()`, `buyAiPicks()`, `buyAiPicksInternal()`, `analyzeSwapCandidates()`, `showPipelineTable()`（~400 行） |
 | MidTermQuantFragment.kt | `executeTrade()` 中 DAG check 之後的 hardcode 分支（~115 行） |
 | LongTermQuantFragment.kt | `runBuildAndBuy()` 中 DAG check 之後的 hardcode 分支（~170 行） |
-| SimulationTradeEngine.kt | **整個文件**（~1500 行，僅中線 hardcode 使用） |
+| SimulationTradeEngine.kt | 執行邏輯已是死碼，但 **不可整檔刪除**（TradeOrder / StrategyTradeOrderEntity / DAO 被 DAG 節點引用）→ Phase 5 拆分 |
 | ZiplinePipeline.kt | 確認 DAG 的 ZiplineFactorNode 是否完全替代，若是則刪除 |
 | AIPredictionEngine.kt | 確認 DAG 的 AiPredictNode 是否完全替代，若是則刪除 |
 | FeatureFlagManager.kt | 移除 `useDagPipeline` 開關 |
@@ -303,6 +303,54 @@ XML 配置：作為 Layer 0 的第一個節點，所有下游節點依賴它。
 2. 統一 orderType 命名（DAG 用 UltraShortQuant/ShortTermQuant/MidTermQuant/LongTermQuant）
 3. 更新 docs/agent-architecture-refactoring-plan.md 標記完成
 4. 移除 FeatureFlagManager 中其他已完成的 flag
+
+### Phase 5：SimulationTradeEngine 拆分（預估 0.5 天）
+
+SimulationTradeEngine.kt 的執行邏輯（runSimulation / executeBuy / executeSell 等）已是死碼，但以下 data class / Entity / DAO 仍被 DAG 節點引用：
+
+| 被引用類 | 引用方 |
+|---------|--------|
+| `TradeOrder` | GenerateOrdersNode, PositionMergeNode, SwapWeakNode |
+| `StrategyTradeOrderEntity` | PositionMergeNode (入庫) |
+| `StrategyTradeOrderDao` | HoldingGuardNode, GenerateOrdersNode |
+
+**拆分步驟**：
+1. 新建 `strategy/trade/model/TradeModels.kt`，移入 TradeOrder + StrategyTradeOrderEntity
+2. 新建 `strategy/trade/db/TradeOrderDao.kt`，移入 DAO interface
+3. 更新所有 import
+4. 確認編譯通過後，刪除 SimulationTradeEngine.kt 剩餘死碼
+
+---
+
+## 5.5、測試 Case 規劃
+
+### 單元測試（JVM，不依賴 Android）
+
+| 測試目標 | 覆蓋點 | 備註 |
+|---------|--------|------|
+| PipelineXmlParser | 自閉合 `<Node/>` 解析、Link 拓撲、參數讀取 | 用 assets XML 做 fixture |
+| DagPipeline 拓撲排序 | Kahn 分層正確性、環檢測 | 構造 mock node |
+| NodeRegistry | module→factory 映射完整性（4 XML 所有 module 都有註冊） | 反射掃描 |
+| SmartMoneyFilterNode | defensive 降閾、V型主力分低分通過 | mock StrategySignal |
+| GenerateOrdersNode | shouldForceEmpty 邏輯、buyCap 計算、todayHoldingCodes 過濾 | mock context |
+| SwapWeakNode | newBuyCount==0 早退、scoreAtBuy 比較 | mock |
+| DefensiveDividendNode | BEARISH 激活、BULLISH 跳過、PB/負債過濾 | mock DailySnapshot |
+| MarketAnalyzer.analyzeOverseasMarkets | 權重計算、方向判斷 | mock GlobalIndex |
+
+### 整合測試（需 Android / Robolectric）
+
+| 測試目標 | 覆蓋點 |
+|---------|--------|
+| DAG 全鏈路（ultra_short XML） | n_import→...→n_orders 輸出非空、orderType 正確 |
+| PositionMerge 加倉 | 跨日同股票加倉→加權平均成本 |
+| HoldingGuard 止損 | 模擬虧損觸發→AutoSellEngine 賣出 |
+| FeatureFlag 回退 | useDagPipeline=false 時 Fragment 不崩潰（路徑已刪，應 graceful fallback） |
+
+### 執行方式
+
+- JVM 測試：`./gradlew.bat :app:testDebugUnitTest`
+- 整合測試：`./gradlew.bat :app:connectedDebugAndroidTest`（需模擬器）
+- 優先級：單元測試 > 整合測試（DAG 框架穩定性 > 業務邏輯）
 
 ---
 

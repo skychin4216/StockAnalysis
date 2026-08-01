@@ -456,7 +456,13 @@ class WatchlistGroupFragment : Fragment() {
 
         // 點擊行進入詳情
         row.setOnClickListener {
-            Toast.makeText(ctx, "點擊 ${stock.name} - 詳情頁開發中", Toast.LENGTH_SHORT).show()
+            StockDetailNavigator.navigateFromFragment(
+                this@WatchlistGroupFragment,
+                stock.code,
+                stock.name,
+                price = snapshot?.close ?: 0.0,
+                changePct = snapshot?.changePct ?: 0.0
+            )
         }
 
         return wrapper

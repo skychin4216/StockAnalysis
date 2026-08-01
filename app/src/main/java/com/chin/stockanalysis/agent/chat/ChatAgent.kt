@@ -11,6 +11,7 @@ import com.chin.stockanalysis.strategy.data.LeaderStockPool
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.ui.TradingDayPickerView
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -82,6 +83,11 @@ class ChatAgent(context: Context) : AgentBase(
 
         // 判斷意圖，決定使用哪種模式
         val intent = detectIntent(userMessage)
+
+        // 非阻塞：嘗試從對話中提取機構線索（研報/評級/目標價）
+        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+            tryExtractInstitutionalTips(userMessage)
+        }
 
         return when (intent) {
             UserIntent.INDEX_ANALYSIS -> {
@@ -330,6 +336,71 @@ class ChatAgent(context: Context) : AgentBase(
             } catch (e: Exception) {
                 "暫時無法獲取市場數據，請稍後再試。"
             }
+        }
+    }
+
+    // ═══ 機構線索提取 ═══
+
+    private val INST_KEYWORDS = listOf(
+        "機構", "研報", "目標價", "買入評級", "增持評級", "推薦買入",
+        "券商", "基金", "調研", "機構調研", "主力", "莊家", "游資",
+        "龍虎榜", "機構席位", "量化", "融資", "北向資金"
+    )
+
+    /**
+     * 從用戶對話中提取機構線索，寫入 institutional_tips 表。
+     * 觸發條件：消息包含機構相關關鍵詞 + 至少一個股票代碼/名稱。
+     * 有效期默認 3 天。
+     */
+    private suspend fun tryExtractInstitutionalTips(message: String) {
+        try {
+            val hasInstKeyword = INST_KEYWORDS.any { message.contains(it) }
+            if (!hasInstKeyword) return
+
+            // 提取股票實體
+            val entities = try {
+                com.chin.stockanalysis.ai.StockEntityExtractor.extractSync(message)
+            } catch (_: Exception) { emptyList() }
+
+            // 降級：正則提取代碼
+            val codes = if (entities.isNotEmpty()) {
+                entities.map { Triple(it.code, it.name, "") }
+            } else {
+                Regex("(sh|sz|bj)(\\d{6})").findAll(message).map {
+                    Triple(it.value, "", "")
+                }.toList()
+            }
+
+            if (codes.isEmpty()) return
+
+            val db = StockDatabase.getInstance(context)
+            val dao = db.institutionalTipDao()
+            val today = java.time.LocalDate.now().toString()
+            val expire = java.time.LocalDate.now().plusDays(3).toString()
+
+            // 判斷線索類型
+            val tipType = when {
+                message.contains("目標價") -> "target"
+                message.contains("評級") || message.contains("增持") -> "rating"
+                else -> "research"
+            }
+
+            val tips = codes.map { (code, name, _) ->
+                com.chin.stockanalysis.strategy.topology.nodes.InstitutionalTipEntity(
+                    stockCode = code,
+                    stockName = name,
+                    source = "ai_chat",
+                    tipType = tipType,
+                    summary = message.take(100),
+                    chatId = sessionId,
+                    createdDate = today,
+                    expireDate = expire
+                )
+            }
+            dao.insertAll(tips)
+            Log.i(TAG, "🏦 提取機構線索: ${tips.size} 條 (${tips.joinToString { it.stockCode }})")
+        } catch (e: Exception) {
+            Log.w(TAG, "機構線索提取失敗: ${e.message}")
         }
     }
 }

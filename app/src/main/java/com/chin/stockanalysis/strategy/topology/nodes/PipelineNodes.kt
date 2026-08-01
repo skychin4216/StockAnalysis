@@ -29,13 +29,13 @@ import com.chin.stockanalysis.strategy.sector.StrategyMarketContext
  */
 class MarketContextNode(
     private val forceRefresh: Boolean = false
-) : PipelineNode<Unit, StrategyMarketContext> {
+) : PipelineNode<Any, StrategyMarketContext> {
 
     override val nodeId: String = "market_context"
     override val nodeName: String = "市場上下文構建"
     override val nodeType: NodeType = NodeType.DATA_SOURCE
 
-    override suspend fun execute(context: PipelineContext, input: Unit): StrategyMarketContext {
+    override suspend fun execute(context: PipelineContext, input: Any): StrategyMarketContext {
         return try {
             val marketContext = StrategyMarketContext.build(
                 context.androidContext,
@@ -63,15 +63,26 @@ class MarketContextNode(
  * 根據市場上下文中的板塊信息，從全市場股票中過濾出目標股票池。
  * 若市場上下文中定義了用戶關注板塊，優先匹配相關板塊的股票；
  * 否則返回全市場股票（可通過 [PipelineConfig.onlyMainBoard] 控制是否只保留主板）。
+ *
+ * **設計說明**：接受 `Any` 輸入是因為此節點在 DAG 中可能有多個上游邊
+ * （如 `n_import` 輸出 `Int`、`n_ctx` 輸出 `StrategyMarketContext`），
+ * DAG 框架取第一條邊的輸出作為 input。市場上下文統一從
+ * `context.marketContext` 讀取（由 `MarketContextNode` 寫入），不依賴 input 參數。
  */
-class StockPoolNode : PipelineNode<StrategyMarketContext, StockPool> {
+class StockPoolNode : PipelineNode<Any, StockPool> {
 
     override val nodeId: String = "stock_pool"
     override val nodeName: String = "股票池構建"
     override val nodeType: NodeType = NodeType.DATA_SOURCE
 
-    override suspend fun execute(context: PipelineContext, input: StrategyMarketContext): StockPool {
+    override suspend fun execute(context: PipelineContext, input: Any): StockPool {
         return try {
+            // 從 context 讀取市場上下文（由 MarketContextNode 寫入）
+            val marketContext = context.marketContext
+            if (marketContext == null) {
+                context.log(nodeId, "⚠ 市場上下文為空，使用空板塊列表構建股票池")
+            }
+
             val feed = StrategyDataFeed(context.androidContext)
             val allStocks = feed.prepareFromDb(
                 date = context.tradeDate,
@@ -81,7 +92,9 @@ class StockPoolNode : PipelineNode<StrategyMarketContext, StockPool> {
             )
 
             // 如果有用戶關注板塊或熱門板塊，嘗試按板塊名稱匹配過濾
-            val sectorKeywords = input.userFocusSectors + input.todayHotSectors
+            val sectorKeywords = marketContext?.let {
+                it.userFocusSectors + it.todayHotSectors
+            } ?: emptySet()
             val filteredStocks = if (sectorKeywords.isNotEmpty()) {
                 allStocks.filter { stock ->
                     sectorKeywords.any { keyword ->
@@ -100,8 +113,16 @@ class StockPoolNode : PipelineNode<StrategyMarketContext, StockPool> {
                 filteredStocks
             }
 
+            // 過濾掉大盤指數（sh000xxx / sz399xxx 不可交易，如上證指數、深證成指等）
+            val tradeableStocks = finalStocks.filterNot { stock ->
+                stock.code.startsWith("sh000") || stock.code.startsWith("sz399")
+            }
+            if (tradeableStocks.size < finalStocks.size) {
+                context.log(nodeId, "過濾大盤指數: ${finalStocks.size - tradeableStocks.size} 只（sh000/sz399）")
+            }
+
             val pool = StockPool(
-                stocks = finalStocks,
+                stocks = tradeableStocks,
                 source = if (sectorKeywords.isNotEmpty()) "sector_filtered" else "market_all",
                 totalCount = allStocks.size,
                 filterReason = if (finalStocks.size < allStocks.size) {
@@ -127,21 +148,31 @@ class StockPoolNode : PipelineNode<StrategyMarketContext, StockPool> {
  * ## 策略篩選節點
  *
  * 包裝現有 [Strategy] 接口，將其接入 Pipeline 數據流。
- * 接收 [StockPool]，調用策略的 `screenWithData()` 方法，將結果轉換為 [SignalPack]。
+ * 從 context 中按需讀取 [StockPool]，調用策略的 `screenWithData()` 方法，將結果轉換為 [SignalPack]。
  *
  * @property strategy 被包裝的量化選股策略實例
  */
 class StrategyNode(
     internal val strategy: Strategy
-) : PipelineNode<StockPool, SignalPack> {
+) : PipelineNode<Any, SignalPack> {
 
     override val nodeId: String = "strategy_${strategy.id}"
     override val nodeName: String = "策略: ${strategy.name}"
     override val nodeType: NodeType = NodeType.STRATEGY
 
-    override suspend fun execute(context: PipelineContext, input: StockPool): SignalPack {
+    override suspend fun execute(context: PipelineContext, input: Any): SignalPack {
         return try {
-            if (input.isEmpty) {
+            // 從 input 或 context 中按需讀取 StockPool
+            val pool: StockPool = when (input) {
+                is StockPool -> input
+                else -> context.getStageOutput<StockPool>("stock_pool")
+                    ?: context.getStageOutput<StockPool>("n_pool")
+                    ?: context.getStageOutput<StockPool>("candidate_pool")
+                    ?: context.getStageOutput<StockPool>("n_cand")
+                    ?: StockPool(emptyList(), "empty")
+            }
+
+            if (pool.isEmpty) {
                 context.log(nodeId, "股票池為空，跳過策略 ${strategy.name}")
                 return SignalPack(
                     strategyId = strategy.id,
@@ -150,7 +181,7 @@ class StrategyNode(
                 )
             }
 
-            val result = strategy.screenWithData(input.stocks)
+            val result = strategy.screenWithData(pool.stocks)
 
             val signals = result.fold(
                 onSuccess = { screeningResult ->
@@ -205,8 +236,24 @@ class SignalMergeNode : PipelineNode<Any, MergedSignalPool> {
     override suspend fun execute(context: PipelineContext, input: Any): MergedSignalPool {
         return try {
             // 從輸入中提取 SignalPack（過濾掉非 SignalPack 項目如 AdaptiveParams）
+            // 同時兼容 DefensiveDividendNode 輸出的 List<StrategySignal>
             val packs: List<SignalPack> = when (input) {
-                is List<*> -> input.filterIsInstance<SignalPack>()
+                is List<*> -> {
+                    val signalPacks = input.filterIsInstance<SignalPack>().toMutableList()
+                    // 將 List<StrategySignal>（如 DefensiveDividendNode 輸出）轉為 SignalPack
+                    val looseSignals = input.filterIsInstance<List<*>>()
+                        .filter { it.isNotEmpty() && it[0] is StrategySignal }
+                        .flatten()
+                        .filterIsInstance<StrategySignal>()
+                    if (looseSignals.isNotEmpty()) {
+                        signalPacks.add(SignalPack(
+                            strategyId = "defensive_dividend",
+                            strategyName = "防守高息",
+                            signals = looseSignals
+                        ))
+                    }
+                    signalPacks
+                }
                 is SignalPack -> listOf(input)
                 else -> {
                     context.log(nodeId, "⚠ 未知輸入類型: ${input::class.simpleName}，無信號可聚合")
@@ -397,7 +444,9 @@ class SmartMoneyFilterNode(
 
             for (signal in pool.boostedSignals) {
                 val score = SmartMoneyCache.getScore(signal.stockCode).combined
-                if (score >= minScore) {
+                // 防守高息股（銀行/電力等）主力資金分天然低，降閾到 20
+                val effectiveMin = if (signal.strategyId == "defensive_dividend") 20 else minScore
+                if (score >= effectiveMin) {
                     passed.add(signal)
                 } else {
                     rejectCount++
@@ -408,6 +457,18 @@ class SmartMoneyFilterNode(
             val passedCodes = passed.map { it.stockCode }.toSet()
             val filteredHits = pool.stockHits.filterKeys { it in passedCodes }
             val filteredNames = pool.stockNames.filterKeys { it in passedCodes }
+
+            // 兜底：若全部被淘汰（通過率 0%），保留原始信號避免 Pipeline 中斷
+            if (passed.isEmpty() && pool.boostedSignals.isNotEmpty()) {
+                context.log(nodeId, "⚠ 主力資金過濾全部淘汰，保留原始信號（不阻塞 Pipeline）")
+                context.setStageOutput(nodeId, pool)
+                context.log(
+                    nodeId,
+                    "主力資金過濾完成: 通過 0 只, " +
+                        "淘汰 $rejectCount 只, 通過率 0.0%（兜底透傳）"
+                )
+                return pool
+            }
 
             val result = MergedSignalPool(
                 stockHits = filteredHits,
@@ -528,13 +589,32 @@ class AIPredictNode(
         context: PipelineContext,
         input: Any
     ): AIPredictionEngine.AIPrediction {
-        // 兼容多依賴：中線 n_ai 有 n_boost + n_news_str 兩條入邊，
-        // 主輸入應為 MergedSignalPool，若收到其他類型則從 context 讀取
+        // AI 精選是最終選股步驟（在主力過濾 + 新聞攔截之後），負責從已過濾候選中挑出 top 5
+        // 兼容多種上游：
+        // - MergedSignalPool（超短線，無 n_newsguard）：直接使用
+        // - NewsGuardResult（短/中/長線）：從 context 讀取 smart_money_filter 輸出，按 passedCodes 過濾
         val signalPool: MergedSignalPool = when (input) {
             is MergedSignalPool -> input
+            is com.chin.stockanalysis.strategy.topology.nodes.NewsGuardResult -> {
+                // 從 context 讀取主力資金過濾後的信號池，按新聞攔截通過的代碼過濾
+                val pool = context.getStageOutput<MergedSignalPool>("smart_money_filter")
+                    ?: context.getStageOutput<MergedSignalPool>("n_smart")
+                    ?: MergedSignalPool(emptyMap(), emptyMap(), emptyList())
+                if (input.passedCodes.isEmpty()) {
+                    pool
+                } else {
+                    MergedSignalPool(
+                        stockHits = pool.stockHits.filterKeys { it in input.passedCodes },
+                        stockNames = pool.stockNames.filterKeys { it in input.passedCodes },
+                        boostedSignals = pool.boostedSignals.filter { it.stockCode in input.passedCodes }
+                    )
+                }
+            }
             else -> {
-                context.log(nodeId, "⚠ 輸入類型=${input::class.simpleName}，從 context 讀取 sector_boost 輸出")
-                context.getStageOutput<MergedSignalPool>("sector_boost")
+                context.log(nodeId, "⚠ 輸入類型=${input::class.simpleName}，從 context 讀取 smart_money_filter 輸出")
+                context.getStageOutput<MergedSignalPool>("smart_money_filter")
+                    ?: context.getStageOutput<MergedSignalPool>("n_smart")
+                    ?: context.getStageOutput<MergedSignalPool>("sector_boost")
                     ?: context.getStageOutput<MergedSignalPool>("n_boost")
                     ?: MergedSignalPool(emptyMap(), emptyMap(), emptyList())
             }
@@ -566,9 +646,9 @@ class AIPredictNode(
         val allStrategies = context.getStageOutput<List<Strategy>>("_strategies") ?: emptyList()
         val requiresAIRefine = allStrategies.any { it.requiresAIRefine }
 
-        // 若沒有策略需要 AI 精選，跳過 AI 預測，直接返回按強度排序的原始信號
+        // AI 精選是最終裁切步驟：從已過濾的候選中按強度取 top 5
         if (!requiresAIRefine) {
-            context.log(nodeId, "沒有策略需要 AI 精選（requiresAIRefine=false），跳過 AI 預測")
+            context.log(nodeId, "沒有策略需要 AI 精選（requiresAIRefine=false），按強度取 top 5")
 
             val topPicks = screeningResults.flatMap { it.signals }
                 .sortedByDescending { it.strength }
@@ -647,7 +727,7 @@ class AIPredictNode(
  * - `sz16*` — 深證 ETF / LOF
  * - `bj8*`  — 北交所股票
  */
-class MainBoardFilterNode : PipelineNode<StockPool, StockPool> {
+class MainBoardFilterNode : PipelineNode<Any, StockPool> {
 
     override val nodeId: String = "main_board_filter"
     override val nodeName: String = "主板股票過濾"
@@ -667,18 +747,26 @@ class MainBoardFilterNode : PipelineNode<StockPool, StockPool> {
         }
     }
 
-    override suspend fun execute(context: PipelineContext, input: StockPool): StockPool {
+    override suspend fun execute(context: PipelineContext, input: Any): StockPool {
         return try {
-            val originalSize = input.stocks.size
-            val mainBoardStocks = input.stocks.filter { isMainBoardStock(it.code) }
+            // 從 input 或 context 中按需讀取 StockPool
+            val pool: StockPool = when (input) {
+                is StockPool -> input
+                else -> context.getStageOutput<StockPool>("stock_pool")
+                    ?: context.getStageOutput<StockPool>("n_pool")
+                    ?: return StockPool(emptyList(), "empty")
+            }
+
+            val originalSize = pool.stocks.size
+            val mainBoardStocks = pool.stocks.filter { isMainBoardStock(it.code) }
             val excludedCount = originalSize - mainBoardStocks.size
 
-            val pool = StockPool(
+            val result = StockPool(
                 stocks = mainBoardStocks,
-                source = input.source,
-                totalCount = input.totalCount,
+                source = pool.source,
+                totalCount = pool.totalCount,
                 filterReason = buildString {
-                    append(input.filterReason)
+                    append(pool.filterReason)
                     if (excludedCount > 0) {
                         if (isNotEmpty()) append("; ")
                         append("排除非主板 $excludedCount 只")
@@ -688,13 +776,13 @@ class MainBoardFilterNode : PipelineNode<StockPool, StockPool> {
 
             context.log(
                 nodeId,
-                "主板過濾完成: $originalSize → ${pool.size} 只 (排除 $excludedCount 只)"
+                "主板過濾完成: $originalSize → ${result.size} 只 (排除 $excludedCount 只)"
             )
-            pool
+            result
         } catch (e: Exception) {
             context.log(nodeId, "主板過濾異常: ${e.message}")
-            // 出錯時返回原始股票池
-            input
+            // 出錯時嘗試返回原始股票池
+            (input as? StockPool) ?: StockPool(emptyList(), "empty")
         }
     }
 }

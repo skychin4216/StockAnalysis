@@ -9,27 +9,13 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.*
 import android.util.Log
-import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.HoldingPeriod
-import com.chin.stockanalysis.strategy.Strategy
-import com.chin.stockanalysis.strategy.StrategyEngine
 import com.chin.stockanalysis.strategy.StrategyEngineHolder
-import com.chin.stockanalysis.strategy.models.ScreeningResult
-import com.chin.stockanalysis.strategy.models.StrategySignal
-import com.chin.stockanalysis.strategy.data.StrategyDataFeed
-import com.chin.stockanalysis.strategy.data.ZiplinePipeline
-import com.chin.stockanalysis.strategy.predict.AIPredictionEngine
-import com.chin.stockanalysis.strategy.data.SmartMoneyCache
-import com.chin.stockanalysis.ui.CrossTabBus
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 /**
@@ -47,16 +33,6 @@ class ShortTermQuantFragment : QuantFragmentBase() {
 
     /** 短線週期選擇（持倉 1 天 ~ 2 週） */
     private var selectedPeriods: Set<Int> = setOf(3)
-
-    private var pipelineFactors: ZiplinePipeline.FactorSet? = null
-    private var allScreenings: Map<Strategy, ScreeningResult> = emptyMap()
-    private var todayStocks: List<com.chin.stockanalysis.stock.StockRealtime> = emptyList()
-    private var lastTradeDate: String = ""
-    private var hasPipelineResult: Boolean = false
-
-    private var aiPicks: List<AIPredictionEngine.AIPick> = emptyList()
-    private var mergedPool: Map<String, List<Pair<String, Int>>> = emptyMap()
-    private var mergedStockNames: Map<String, String> = emptyMap()
 
     companion object {
         private const val TAG = "ShortTermQuant"
@@ -225,18 +201,10 @@ class ShortTermQuantFragment : QuantFragmentBase() {
     }
 
     /**
-     * 建倉按鈕點擊：
-     * - DAG 開關開啟 → 走 DAG Pipeline
-     * - 否則 → 執行 zipline 選股 + 建倉 + 騰籠換鳥
+     * 建倉按鈕點擊：走 DAG Pipeline
      */
     private fun runBuildAndBuy() {
-        // ══════════ DAG Pipeline 分支（通用開關） ══════════
-        if (com.chin.stockanalysis.config.FeatureFlagManager.useDagPipeline) {
-            executeViaDagPipeline()
-            return
-        }
-        // 執行 zipline 選股 + 建倉 + 騰籠換鳥
-        runPipeline()
+        executeViaDagPipeline()
     }
 
     /**
@@ -291,430 +259,9 @@ class ShortTermQuantFragment : QuantFragmentBase() {
         }
     }
 
-    // ═══════════════════════════════════════
-    // 短线选股（zipline 全流程）
-    // ═══════════════════════════════════════
 
-    private fun runPipeline() {
-        val eng = engine ?: return
-        buildBtn.isEnabled = false; buildBtn.text = "⏳ 建仓中"; progressBar.visibility = View.VISIBLE; statusTv.text = "🔄 初始化短綫量化..."
-        lifecycleScope.launch(Dispatchers.IO) {
-            val totalStart = System.currentTimeMillis()
-            try {
-                // 🔥 非阻塞啟動新聞因子拉取（與後續步驟並行）
-                val newsJob = com.chin.stockanalysis.news.HotSectorNewsUpdater.ensureFreshGlobal(
-                    scope = this, context = requireContext(), forceRefresh = true
-                )
 
-                // 检查是否需要先导入数据
-                val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().format(DATE_FMT)
-                val prefs = requireContext().getSharedPreferences("data_import", android.content.Context.MODE_PRIVATE)
-                val lastImport = prefs.getString("last_import_date", "") ?: ""
-                val db = StockDatabase.getInstance(requireContext())
-                val todaySnaps = db.dailySnapshotDao().getByDate(today)
-                val needImport = todaySnaps.size < 100 || lastImport != today
-                val importStart = System.currentTimeMillis()
-                if (needImport) {
-                    Log.i(TAG, "[ShortTerm] Step 1: importing data, todaySnaps=${todaySnaps.size}, lastImport=$lastImport")
-                    withContext(Dispatchers.Main) { statusTv.text = "📥 導入歷史數據中..." }
-                    val f = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
-                    f.fetchAllHistoricalData(60) { p ->
-                        lifecycleScope.launch(Dispatchers.Main) { statusTv.text = "📥 導入數據: ${p.completedStocks}/${p.totalStocks}" }
-                    }
-                    prefs.edit().putString("last_import_date", today).apply()
-                    withContext(Dispatchers.Main) { statusTv.text = "✅ 數據導入完成" }
-                } else {
-                    Log.i(TAG, "[ShortTerm] Step 1: skip import, data already up to date")
-                }
-                val importElapsed = System.currentTimeMillis() - importStart
-                Log.i(TAG, "[ShortTerm] Step 1 done: import=${importElapsed}ms")
 
-                // 建仓日使用最近的交易日（避免非交易日）
-                val tradeDay = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().format(DATE_FMT)
-                lastTradeDate = tradeDay
-                val feed = StrategyDataFeed(requireContext())
-                // 使用備選池而非全部A股，大幅提升速度
-                val poolCodes = try { com.chin.stockanalysis.strategy.data.CandidatePool.getPoolCodes(requireContext()) } catch (_: Exception) { emptyList() }
-                withContext(Dispatchers.Main) { statusTv.text = "🔄 準備股票池數據..." }
-                val feedStart = System.currentTimeMillis()
-                val onlyMain = mainBoardSwitch.isChecked
-                val stocks = if (poolCodes.isNotEmpty()) {
-                    feed.prepareFromDb(today, StrategyDataFeed.DataFeedConfig(onlyMainBoard = onlyMain, stockCodes = poolCodes.toSet()))
-                } else {
-                    feed.prepareFromDb(today, StrategyDataFeed.DataFeedConfig(onlyMainBoard = onlyMain))
-                }
-                val feedElapsed = System.currentTimeMillis() - feedStart
-                Log.i(TAG, "[ShortTerm] Step 2 done: prepareFromDb=${feedElapsed}ms, stocks=${stocks.size}")
-                todayStocks = stocks
-                if (stocks.isEmpty()) { withContext(Dispatchers.Main) { statusTv.text="⚠️ 无交易日数据"; buildBtn.isEnabled=true; buildBtn.text="▶ 建仓"; progressBar.visibility=View.GONE }; return@launch }
-
-                withContext(Dispatchers.Main) { statusTv.text = "🔄 Zipline 因子計算中..." }
-                val ziplineStart = System.currentTimeMillis()
-                val pipeline = ZiplinePipeline(requireContext()); val factors = pipeline.computeAll(stocks, today, 30); pipelineFactors = factors
-                val ziplineElapsed = System.currentTimeMillis() - ziplineStart
-                Log.i(TAG, "[ShortTerm] Step 3 done: Zipline computeAll=${ziplineElapsed}ms, valid=${factors.ma5.size}")
-
-                val codeToName = try { StockDatabase.getInstance(requireContext()).stockBasicDao().getAll().associate { it.code to it.name } } catch (_: Exception) { emptyMap() }
-                val strategyStart = System.currentTimeMillis()
-                val screenings = mutableMapOf<Strategy, ScreeningResult>(); val screeningList = mutableListOf<ScreeningResult>()
-                var enabledCount = 0
-                withContext(Dispatchers.Main) { statusTv.text = "🔄 執行策略篩選中..." }
-                for (strategy in eng.getEnabledStrategiesByPeriod(HoldingPeriod.SHORT)) {
-                    enabledCount++
-                    val sName = strategy.name
-                    withContext(Dispatchers.Main) { statusTv.text = "🔄 執行策略: $sName ($enabledCount/${eng.getStrategies().size - 1})" }
-                    val sStart = System.currentTimeMillis()
-                    try {
-                        val r = strategy.screenWithData(stocks)
-                        r.getOrNull()?.let { screenings[strategy]=it; screeningList.add(it) }
-                    } catch (e: Exception) {
-            Log.w("ShortTermQuant", "Strategy screen failed: ${e.message}")
-        }
-                    val sElapsed = System.currentTimeMillis() - sStart
-                    if (sElapsed > 1000) {
-                        Log.d(TAG, "[ShortTerm] Strategy ${strategy.id} took ${sElapsed}ms")
-                    }
-                }
-                val strategyElapsed = System.currentTimeMillis() - strategyStart
-                Log.i(TAG, "[ShortTerm] Step 4 done: ${enabledCount} strategies=${strategyElapsed}ms, hits=${screeningList.sumOf { it.hitCount }}")
-                allScreenings = screenings
-
-                // 🔥 構建統一市場上下文（用戶關注/多周期熱門/回彈板塊/大盤指數）
-                val mktCtx = com.chin.stockanalysis.strategy.sector.StrategyMarketContext.build(requireContext(), today)
-                Log.i(TAG, "[ShortTerm] 市場上下文: 用戶關注${mktCtx.userFocusSectors.size}個, 回彈${mktCtx.bounceSectors.size}個, 大盤${mktCtx.indexSnapshot.tripleVote}")
-
-                // 合并池
-                withContext(Dispatchers.Main) { statusTv.text = "🔄 合併策略結果..." }
-                val mergeStart = System.currentTimeMillis()
-                val pool = mutableMapOf<String, MutableList<Pair<String, Int>>>()
-                for ((s, sc) in screenings) for (sig in sc.signals.distinctBy { it.stockCode }) pool.getOrPut(sig.stockCode){ mutableListOf() }.add(s.name to sig.strength)
-                mergedPool = pool.mapValues { it.value.sortedByDescending { p->p.second } }
-                mergedStockNames = pool.keys.associateWith { c -> screenings.values.firstNotNullOfOrNull { sc->sc.signals.find{it.stockCode==c}?.stockName } ?: codeToName[c] ?: c }
-                val mergeElapsed = System.currentTimeMillis() - mergeStart
-                Log.i(TAG, "[ShortTerm] Step 5 done: merge pool=${mergeElapsed}ms, size=${mergedPool.size}")
-
-                // 🔥 板塊加權後處理：用戶關注 + 回彈板塊 加分
-                val boostedPool = mutableMapOf<String, MutableList<Pair<String, Int>>>()
-                for ((code, hits) in mergedPool) {
-                    val stockName = mergedStockNames[code] ?: code
-                    val focusBoost = mktCtx.getFocusBoostForStock(stockName)
-                    val bounceBoost = mktCtx.getBounceBoostForStock(stockName)
-                    if (focusBoost > 0 || bounceBoost > 0) {
-                        val bonusHits = hits.map { (name, strength) ->
-                            val boosted = (strength + focusBoost + bounceBoost).coerceAtMost(100)
-                            "$name(+${focusBoost + bounceBoost})" to boosted
-                        }
-                        boostedPool[code] = bonusHits.toMutableList()
-                    } else {
-                        boostedPool[code] = hits.toMutableList()
-                    }
-                }
-                val boostedCount = boostedPool.count { it.value.any { it.first.contains("+") } }
-                if (boostedCount > 0) {
-                    mergedPool = boostedPool.mapValues { it.value.sortedByDescending { p -> p.second } }
-                    Log.i(TAG, "[ShortTerm] 板塊加權: ${boostedCount}只股票獲得加分")
-                }
-
-                // AI 精选
-                val aiStart = System.currentTimeMillis()
-                if (screeningList.isNotEmpty()) {
-                    // AI 前置：等待新聞因子完成（已在 Pipeline 開頭 async 啟動）
-                    val newsWaitStart = System.currentTimeMillis()
-                    Log.i("ShortTermQuant", "📰 開始等待新聞因子... job=${newsJob}, isActive=${newsJob.isActive}, isCompleted=${newsJob.isCompleted}")
-                    val newsTimerJob = lifecycleScope.launch {
-                        while (isActive) {
-                            delay(1000)
-                            val elapsed = "%.0f".format((System.currentTimeMillis() - newsWaitStart) / 1000.0)
-                            Log.i("ShortTermQuant", "📰 等待新聞因子完成... ${elapsed}s, isActive=${newsJob.isActive}, isCompleted=${newsJob.isCompleted}")
-                            statusTv.text = "📰 等待新聞因子完成... ${elapsed}s"
-                        }
-                    }
-                    // 使用 isActive 輪詢而非 await()，避免 Deferred 狀態同步問題
-                    while (newsJob.isActive) { delay(100) }
-                    newsTimerJob.cancel()
-                    val newsElapsed = "%.1f".format((System.currentTimeMillis() - newsWaitStart) / 1000.0)
-                    Log.i("ShortTermQuant", "📰 新聞因子等待結束，耗時=${newsElapsed}s, isCompleted=${newsJob.isCompleted}")
-                    withContext(Dispatchers.Main) { statusTv.text = "✅ 新聞因子完成 (${newsElapsed}s)" }
-                    com.chin.stockanalysis.stock.database.AppBackgroundRunner.isQuantRunning = true
-
-                    withContext(Dispatchers.Main) { statusTv.text = "🤖 AI 大模型分析中..." }
-                    try {
-                        val p = AIPredictionEngine(requireContext()).predict(
-                            screeningList, today,
-                            sectorContext = mktCtx.toAiSectorContext()
-                        )
-                        if (p!=null && p.topPicks.isNotEmpty()) aiPicks = p.topPicks else aiPicks = emptyList()
-                    } catch (_: Exception) { aiPicks = emptyList() }
-
-                    // AI 結束，恢復後臺
-                    com.chin.stockanalysis.stock.database.AppBackgroundRunner.isQuantRunning = false
-                }
-                val aiElapsed = System.currentTimeMillis() - aiStart
-                Log.i(TAG, "[ShortTerm] Step 6 done: AI predict=${aiElapsed}ms, picks=${aiPicks.size}")
-
-                // 发布到跨Tab总线
-                CrossTabBus.postMergedPool(mergedPool)
-                CrossTabBus.postAiTopPicks(aiPicks)
-                CrossTabBus.postStrategyResults(screeningList)
-
-                val totalElapsed = System.currentTimeMillis() - totalStart
-                Log.i(TAG, "[ShortTerm] ====== TOTAL: ${totalElapsed}ms ======")
-                Log.i(TAG, "[ShortTerm] Breakdown: import=${importElapsed}ms  feed=${feedElapsed}ms  zipline=${ziplineElapsed}ms  strategy=${strategyElapsed}ms  merge=${mergeElapsed}ms  ai=${aiElapsed}ms")
-
-                // 引擎內部已恢復後臺，這裡額外觸發一次持倉監控
-                try { com.chin.stockanalysis.stock.database.AppBackgroundRunner.monitorWatchlistDirect(requireContext()) } catch (_: Exception) {}
-
-                withContext(Dispatchers.Main) {
-                    showPipelineTable(screenings, factors, today); hasPipelineResult = true
-                    statusTv.text = "✅ 选股完成 (${factors.ma5.size} 只有效, ${totalElapsed}ms)"; buildBtn.isEnabled = true; buildBtn.text = "▶ 建仓"; progressBar.visibility = View.GONE
-                    // 自動觸發建倉 + 騰龍換鳥分析
-                    if (aiPicks.isNotEmpty()) {
-                        statusTv.text = "🔄 正在自動建倉 + 騰龍換鳥分析..."
-                        lifecycleScope.launch(Dispatchers.IO) {
-                            try {
-                                buyAiPicksInternal()
-                                analyzeSwapCandidates()
-                                withContext(Dispatchers.Main) {
-                                    statusTv.text = "✅ 短线选股 + 建仓 + 騰龍換鳥分析完成"
-                                    refreshPositions()
-                                }
-                            } catch (e: Exception) {
-                                withContext(Dispatchers.Main) {
-                                    statusTv.text = "✅ 短线选股完成 (建倉分析失敗: ${e.message?.take(30)})"
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "[ShortTerm] Pipeline failed: ${e.message}", e)
-                com.chin.stockanalysis.stock.database.AppBackgroundRunner.isQuantRunning = false
-                withContext(Dispatchers.Main) { statusTv.text="❌ 选股失败: ${e.message?.take(40)}"; buildBtn.isEnabled=true; buildBtn.text="▶ 建仓"; progressBar.visibility=View.GONE }
-            }
-        }
-    }
-
-    private fun buyAiPicks() {
-        if (aiPicks.isEmpty()) return
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val db = StockDatabase.getInstance(requireContext())
-                val existingCodes = db.strategyTradeOrderDao().getRecent(200).filter { it.orderType == "ShortTermQuant" && (it.status == "BUYING" || it.status == "PENDING") }.map { it.stockCode }.toSet()
-                val toInsert = mutableListOf<StrategyTradeOrderEntity>()
-                val watchlistStocks = mutableListOf<Triple<String, String, Int>>()
-                for (pick in aiPicks) {
-                    if (pick.stockCode in existingCodes) continue
-                    // 從即時行情獲取買入價格（避免 buyPrice=0）
-                    val snap = todayStocks.find { it.code == pick.stockCode }
-                    val buyPrice = snap?.price ?: 0.0
-                    if (buyPrice <= 0) {
-                        Log.w("AutoQuant", "AI精選 ${pick.stockName} 無即時價格，跳過買入")
-                        continue
-                    }
-                    toInsert.add(StrategyTradeOrderEntity(
-                        strategyId = "AI_Selected", stockCode = pick.stockCode, stockName = pick.stockName,
-                        tradeDate = lastTradeDate, buyPrice = buyPrice,
-                        buyTime = java.time.LocalTime.now().toString().take(8),
-                        quantity = 100, orderType = "ShortTermQuant", status = "BUYING",
-                        reason = "AI精选: ${pick.reason.take(60)}", scoreAtBuy = pick.compositeScore,
-                        createdAt = System.currentTimeMillis()
-                    ))
-                    watchlistStocks.add(Triple(pick.stockCode, pick.stockName, pick.compositeScore))
-                }
-                if (toInsert.isNotEmpty()) {
-                    db.strategyTradeOrderDao().insertAll(toInsert)
-                    com.chin.stockanalysis.stock.database.AppBackgroundRunner.addBatchToWatchlist(
-                        requireContext(), watchlistStocks, source = "shortterm"
-                    )
-                    withContext(Dispatchers.Main) {
-                        statusTv.text = "✅ 已买入 ${toInsert.size} 只AI精选股"
-                        refreshPositions()
-                        Toast.makeText(requireContext(), "已买入 ${toInsert.size} 只", Toast.LENGTH_SHORT).show()
-                    }
-                } else {
-                    withContext(Dispatchers.Main) { statusTv.text = "⚠️ AI精选股已全部持仓或無即時價格" }
-                }
-            } catch (e: Exception) { withContext(Dispatchers.Main) { statusTv.text = "❌ 买入失败: ${e.message?.take(30)}" } }
-        }
-    }
-
-    // ═══════════════════════════════════════
-    // 內部建倉 + 騰龍換鳥（不顯示 Toast，用於自動流程）
-    // ═══════════════════════════════════════
-
-    private suspend fun buyAiPicksInternal() {
-        if (aiPicks.isEmpty()) return
-
-        // 按分數排序，最多買入 5 隻（與中線 MAX_HOLDINGS 對齊）
-        val sortedPicks = aiPicks.sortedByDescending { it.compositeScore }.take(5)
-        if (sortedPicks != aiPicks) {
-            aiPicks = sortedPicks
-        }
-
-        // 確保主力資金緩存已刷新
-        if (!SmartMoneyCache.isFresh()) {
-            try {
-                SmartMoneyCache.refresh(requireContext(), sortedPicks.map { it.stockCode })
-                Log.i(TAG, "短綫量化: 主力資金緩存已刷新")
-            } catch (e: Exception) {
-                Log.w(TAG, "短綫量化: 主力資金緩存刷新失敗: ${e.message}")
-            }
-        }
-
-        val db = StockDatabase.getInstance(requireContext())
-        val existingCodes = db.strategyTradeOrderDao().getRecent(200)
-            .filter { it.orderType == "ShortTermQuant" && (it.status == "BUYING" || it.status == "PENDING") }
-            .map { it.stockCode }.toSet()
-        val toInsert = mutableListOf<StrategyTradeOrderEntity>()
-        val aiSelectedEntities = mutableListOf<com.chin.stockanalysis.stock.database.AiSelectedStockEntity>()
-        val watchlistStocks = mutableListOf<Triple<String, String, Int>>()
-        val today = java.time.LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
-
-        for (pick in sortedPicks) {
-            // 代碼格式匹配（AI 返回的 code 可能不帶 sh/sz 前綴）
-            val rawCode = pick.stockCode.removePrefix("sh").removePrefix("sz")
-            val matchedCode = todayStocks.find { it.code == pick.stockCode }?.code
-                ?: todayStocks.find { it.code == rawCode }?.code
-                ?: todayStocks.find { it.code.removePrefix("sh").removePrefix("sz") == rawCode }?.code
-                ?: pick.stockCode
-            if (matchedCode in existingCodes) continue
-
-            // 主力資金評分過濾
-            val smScore = SmartMoneyCache.getScore(matchedCode)
-            if (smScore.combined < 55) {
-                Log.i(TAG, "🚫 短綫買入評分攔截: ${pick.stockName}(${matchedCode}) 主力資金評分=${String.format("%.0f", smScore.combined)} < 55")
-                continue
-            }
-
-            val snap = todayStocks.find { it.code == matchedCode }
-            val buyPrice = snap?.price ?: 0.0
-            if (buyPrice <= 0) continue
-            val finalScore = (pick.compositeScore + smScore.combined.toInt()) / 2
-            toInsert.add(StrategyTradeOrderEntity(
-                strategyId = "AI_Selected", stockCode = matchedCode, stockName = pick.stockName,
-                tradeDate = lastTradeDate, buyPrice = buyPrice,
-                buyTime = java.time.LocalTime.now().toString().take(8),
-                quantity = 100, orderType = "ShortTermQuant", status = "BUYING",
-                reason = "AI精选: ${pick.reason.take(60)} | 主力資金=${String.format("%.0f", smScore.combined)}",
-                scoreAtBuy = finalScore,
-                createdAt = System.currentTimeMillis()
-            ))
-            // 同時保存到 AI 精選表
-            aiSelectedEntities.add(com.chin.stockanalysis.stock.database.AiSelectedStockEntity(
-                stockCode = matchedCode,
-                stockName = pick.stockName,
-                source = "shortterm",
-                selectedDate = today,
-                score = pick.compositeScore,
-                reason = pick.reason.take(120),
-                buyPrice = buyPrice
-            ))
-            // 加到自選股
-            watchlistStocks.add(Triple(matchedCode, pick.stockName, pick.compositeScore))
-        }
-        if (toInsert.isNotEmpty()) {
-            db.strategyTradeOrderDao().insertAll(toInsert)
-            Log.i("AutoQuant", "✅ 自動建倉 ${toInsert.size} 只")
-        }
-        // 保存 AI 精選到獨立表
-        if (aiSelectedEntities.isNotEmpty()) {
-            com.chin.stockanalysis.stock.database.AppBackgroundRunner.saveAiSelectedStocks(
-                requireContext(), aiSelectedEntities
-            )
-        }
-        // 同步加入我的自選
-        if (watchlistStocks.isNotEmpty()) {
-            com.chin.stockanalysis.stock.database.AppBackgroundRunner.addBatchToWatchlist(
-                requireContext(), watchlistStocks, source = "shortterm"
-            )
-            Log.i("AutoQuant", "⭐ 加入自選: ${watchlistStocks.size} 只")
-        }
-    }
-
-    /**
-     * 騰龍換鳥分析：比較現有持倉和新選股的強度，
-     * 如果新選股強度明顯高於現有持倉，建議換股
-     */
-    private suspend fun analyzeSwapCandidates() {
-        if (aiPicks.isEmpty()) return
-        val db = StockDatabase.getInstance(requireContext())
-        val existing = db.strategyTradeOrderDao().getRecent(200)
-            .filter { it.orderType == "ShortTermQuant" && it.status == "BUYING" }
-        if (existing.isEmpty()) return
-
-        // 找出現有持倉中強度最低的股票
-        val weakest = existing.minByOrNull { it.scoreAtBuy }
-        // 找出新選股中強度最高的股票
-        val strongest = aiPicks.maxByOrNull { it.compositeScore }
-        if (weakest != null && strongest != null && strongest.compositeScore > weakest.scoreAtBuy * 1.3f) {
-            Log.i("AutoQuant", "🔄 騰龍換鳥建議: 賣出 ${weakest.stockName}(${weakest.scoreAtBuy}) → 買入 ${strongest.stockName}(${strongest.compositeScore})")
-        }
-    }
-
-    // ═══════════════════════════════════════
-    // UI 辅助
-    // ═══════════════════════════════════════
-
-    private fun getSector(code: String): String = ""
-
-    private fun tableHeaderRow(): TableRow { val hr = TableRow(requireContext()); for (h in listOf("名称","板块","代码","强度","价格","涨幅")) hr.addView(TextView(requireContext()).apply { text=h; textSize=10f; setTextColor(Color.parseColor("#999999")); setTypeface(null,Typeface.BOLD); gravity=Gravity.CENTER; setPadding(2,4,2,4) }); return hr }
-
-    private fun tableDataRow(name: String, code: String, strength: Int, price: Double, changePct: Double): TableRow {
-        val row = TableRow(requireContext()); val sc = when { strength>=80 -> Color.parseColor("#E65100"); strength>=60 -> Color.parseColor("#2E7D32"); else -> Color.parseColor("#666666") }
-        row.addView(TextView(requireContext()).apply { text=name.take(6); textSize=10f; setTextColor(Color.parseColor("#222222")); gravity=Gravity.CENTER; setPadding(2,4,2,4) })
-        row.addView(TextView(requireContext()).apply { text=getSector(code).take(6).ifEmpty{"-"}; textSize=9f; setTextColor(Color.parseColor("#1565C0")); gravity=Gravity.CENTER; setPadding(2,4,2,4) })
-        row.addView(TextView(requireContext()).apply { text=code.takeLast(6); textSize=10f; setTextColor(sc); gravity=Gravity.CENTER; setPadding(2,4,2,4) })
-        row.addView(TextView(requireContext()).apply { text="${strength}%"; textSize=10f; setTextColor(sc); gravity=Gravity.CENTER; setPadding(2,4,2,4) })
-        row.addView(TextView(requireContext()).apply { text="%.2f".format(price); textSize=10f; setTextColor(Color.parseColor("#E53935")); gravity=Gravity.CENTER; setPadding(2,4,2,4) })
-        row.addView(TextView(requireContext()).apply { text="${if(changePct>=0)"+" else ""}${"%.2f".format(changePct)}%"; textSize=10f; setTextColor(if(changePct>=0) Color.parseColor("#E53935") else Color.parseColor("#43A047")); gravity=Gravity.CENTER; setPadding(2,4,2,4) })
-        return row
-    }
-
-    private fun showPipelineTable(allScreenings: Map<Strategy, ScreeningResult>, factors: ZiplinePipeline.FactorSet, today: String) {
-        val sv = ScrollView(requireContext())
-        val container = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL; setPadding(8, 8, 8, 8) }
-        container.addView(TextView(requireContext()).apply { text="📊 短线选股因子计算结果 ($today)"; textSize=14f; setTextColor(Color.parseColor("#1A1A2E")); setTypeface(null,Typeface.BOLD); setPadding(0,8,0,8) })
-        container.addView(TextView(requireContext()).apply { text="有效股票: ${factors.ma5.size}只 | 合并池: ${mergedPool.size}只 | AI精选: ${aiPicks.size}只"; textSize=11f; setTextColor(Color.parseColor("#666666")); setPadding(0,0,0,8) })
-
-        // ① AI 精选 Top3-5
-        if (aiPicks.isNotEmpty()) {
-            container.addView(TextView(requireContext()).apply { text="🤖 AI 精选 Top3-5"; textSize=15f; setTextColor(Color.parseColor("#E65100")); setTypeface(null,Typeface.BOLD); setPadding(0,12,0,6) })
-            val t1 = TableLayout(requireContext()).apply { isStretchAllColumns=true }; t1.addView(tableHeaderRow())
-            for (p in aiPicks) { val snap = todayStocks.find { it.code==p.stockCode }; t1.addView(tableDataRow(p.stockName, p.stockCode, p.compositeScore, snap?.price?:0.0, snap?.changePercent?:0.0)) }
-            container.addView(t1)
-        }
-
-        // ② 合并池
-        container.addView(View(requireContext()).apply { layoutParams=LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,1).apply{topMargin=12}; setBackgroundColor(Color.parseColor("#DDDDDD")) })
-        container.addView(TextView(requireContext()).apply { text="📋 策略合并池 (${mergedPool.size}只)"; textSize=13f; setTextColor(Color.parseColor("#333333")); setTypeface(null,Typeface.BOLD); setPadding(0,8,0,6) })
-        val t2 = TableLayout(requireContext()).apply { isStretchAllColumns=true }
-        val hr2 = TableRow(requireContext()); for (h in listOf("名称","板块","代码","命中","策略","热度")) hr2.addView(TextView(requireContext()).apply { text=h; textSize=10f; setTextColor(Color.parseColor("#999999")); setTypeface(null,Typeface.BOLD); gravity=Gravity.CENTER; setPadding(2,4,2,4) })
-        t2.addView(hr2)
-        for ((code, hits) in mergedPool.entries.sortedByDescending { it.value.size*50+(it.value.firstOrNull()?.second?:0) }.take(20)) {
-            val name = mergedStockNames[code] ?: code.takeLast(6); val maxStr = hits.firstOrNull()?.second ?: 0
-            val row = TableRow(requireContext())
-            row.addView(TextView(requireContext()).apply { text=name.take(6); textSize=10f; setTextColor(Color.parseColor("#222222")); gravity=Gravity.CENTER; setPadding(2,4,2,4) })
-            row.addView(TextView(requireContext()).apply { text=getSector(code).take(6).ifEmpty{"-"}; textSize=9f; setTextColor(Color.parseColor("#1565C0")); gravity=Gravity.CENTER; setPadding(2,4,2,4) })
-            row.addView(TextView(requireContext()).apply { text=code.takeLast(6); textSize=10f; setTextColor(Color.parseColor("#333333")); gravity=Gravity.CENTER; setPadding(2,4,2,4) })
-            row.addView(TextView(requireContext()).apply { text="${hits.size}次"; textSize=9f; setTextColor(Color.parseColor("#E65100")); gravity=Gravity.CENTER; setPadding(2,4,2,4) })
-            row.addView(TextView(requireContext()).apply { text=hits.take(3).joinToString { "${it.first.take(3)}${it.second}" }; textSize=8f; setTextColor(Color.parseColor("#666666")); gravity=Gravity.CENTER; setPadding(2,4,2,4) })
-            row.addView(TextView(requireContext()).apply { text="${maxStr}%"; textSize=10f; setTextColor(Color.parseColor(if(maxStr>=70)"#E65100" else "#333333")); gravity=Gravity.CENTER; setPadding(2,4,2,4) })
-            t2.addView(row)
-        }; container.addView(t2)
-
-        // ③ 各策略明细
-        container.addView(View(requireContext()).apply { layoutParams=LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,1).apply{topMargin=12}; setBackgroundColor(Color.parseColor("#DDDDDD")) })
-        for ((strategy, screening) in allScreenings) {
-            container.addView(TextView(requireContext()).apply { text="${strategy.category.icon} ${strategy.name}  (${screening.hitCount}只 / ${screening.scanTimeMs}ms)"; textSize=13f; setTextColor(Color.parseColor("#333333")); setTypeface(null,Typeface.BOLD); setPadding(0,12,0,6) })
-            if (screening.signals.isEmpty()) { container.addView(TextView(requireContext()).apply { text="  ⚠️ 无命中信号"; textSize=11f; setTextColor(Color.parseColor("#999999")); setPadding(0,0,0,8) }); continue }
-            val table = TableLayout(requireContext()).apply { isStretchAllColumns=true }; table.addView(tableHeaderRow())
-            for (sig in screening.signals.distinctBy{it.stockCode}.take(15)) table.addView(tableDataRow(sig.stockName.take(6), sig.stockCode, sig.strength, sig.currentPrice, sig.changePercent))
-            container.addView(table)
-        }
-        sv.addView(container);
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
-            .setTitle("短线选股结果 ($today)").setView(sv).setPositiveButton("关闭", null).show()
-    }
 
     // ═══════════════════════════════════════
     // 数据查看
@@ -826,7 +373,7 @@ class ShortTermQuantFragment : QuantFragmentBase() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val db = StockDatabase.getInstance(requireContext())
-                val te = SimulationTradeEngine(requireContext())
+                val te = StrategyFittingEngine(requireContext())
                 val strategies = eng.getStrategies().filter { eng.isEnabled(it.id) }
                 val recentDates = db.dailySnapshotDao().getAvailableDates(30).sorted()
 
@@ -877,7 +424,7 @@ class ShortTermQuantFragment : QuantFragmentBase() {
 
     /** 供外部调用的自动触发 Pipeline */
     fun autoRunPipeline() {
-        if (buildBtn.isEnabled) runPipeline()
+        if (buildBtn.isEnabled) runBuildAndBuy()
     }
 
     // 清除功能已由基類 QuantFragmentBase 提供（clearData / clearDataByDate）

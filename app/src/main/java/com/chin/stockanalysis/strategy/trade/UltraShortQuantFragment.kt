@@ -12,14 +12,11 @@ import android.widget.*
 import androidx.lifecycle.lifecycleScope
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.HoldingPeriod
-import com.chin.stockanalysis.strategy.Strategy
 import com.chin.stockanalysis.strategy.StrategyEngineHolder
-import com.chin.stockanalysis.strategy.data.StrategyDataFeed
 import com.chin.stockanalysis.ui.TradingDayPickerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 /**
@@ -117,7 +114,6 @@ class UltraShortQuantFragment : QuantFragmentBase() {
         val ctx = requireContext().applicationContext
         StrategyEngineHolder.init(ctx)
         engine = StrategyEngineHolder.get()
-        tradeEngine = SimulationTradeEngine(ctx)
     }
 
     override fun buildUI() {
@@ -208,222 +204,18 @@ class UltraShortQuantFragment : QuantFragmentBase() {
     // ═══════════════════════════════════════
 
     private fun runBuildAndBuy() {
-        val eng = engine ?: return
+        engine ?: return
         buildBtn.isEnabled = false
         buildBtn.text = "⏳ 執行中..."
         progressBar.visibility = View.VISIBLE
         statusTv.text = "⚡ 超短線選股中..."
 
         lifecycleScope.launch(Dispatchers.IO) {
-            val totalStart = System.currentTimeMillis()
             try {
                 val today = TradingDayPickerView.recentTradingDay().format(DATE_FMT)
                 val tradeDate = browsingDate.format(DATE_FMT)
                 lastTradeDate = tradeDate
-
-                // 從策略風控字段解析本次建倉參數（下沉）
-                val maxHoldings = resolveMaxHoldings()
-                val stopLossPct = resolveStopLossPct()
-                val takeProfitPct = resolveTakeProfitPct()
-
-                // ══════════ DAG Pipeline 分支（通用開關） ══════════
-                if (com.chin.stockanalysis.config.FeatureFlagManager.useDagPipeline) {
-                    executeViaDagPipeline(tradeDate, today)
-                    return@launch
-                }
-
-                // Step 1: 確保數據導入
-                val db = StockDatabase.getInstance(requireContext())
-                val todaySnaps = db.dailySnapshotDao().getByDate(today)
-                if (todaySnaps.size < 100) {
-                    withContext(Dispatchers.Main) { statusTv.text = "📥 導入歷史數據中..." }
-                    try {
-                        com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
-                            .fetchAllHistoricalData(30)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "數據導入失敗（不阻塞）: ${e.message}")
-                    }
-                }
-
-                // Step 2: 準備股票池
-                withContext(Dispatchers.Main) { statusTv.text = "🔄 準備股票池數據..." }
-                val feed = StrategyDataFeed(requireContext())
-                val poolCodes = try {
-                    com.chin.stockanalysis.strategy.data.CandidatePool.getPoolCodes(requireContext())
-                } catch (_: Exception) { emptyList() }
-
-                val onlyMain = mainBoardSwitch.isChecked
-                val stocks = if (poolCodes.isNotEmpty()) {
-                    feed.prepareFromDb(today, StrategyDataFeed.DataFeedConfig(
-                        onlyMainBoard = onlyMain, stockCodes = poolCodes.toSet()
-                    ))
-                } else {
-                    feed.prepareFromDb(today, StrategyDataFeed.DataFeedConfig(onlyMainBoard = onlyMain))
-                }
-                todayStocks = stocks
-                if (stocks.isEmpty()) {
-                    withContext(Dispatchers.Main) {
-                        statusTv.text = "⚠️ 無交易日數據"
-                        buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"
-                        progressBar.visibility = View.GONE
-                    }
-                    return@launch
-                }
-                Log.i(TAG, "[UltraShort] 股票池: ${stocks.size} 只")
-
-                // Step 3: 執行 ULTRA_SHORT 週期策略
-                withContext(Dispatchers.Main) { statusTv.text = "⚡ 執行超短線策略篩選..." }
-                val strategies = eng.getEnabledStrategiesByPeriod(HoldingPeriod.ULTRA_SHORT)
-                if (strategies.isEmpty()) {
-                    withContext(Dispatchers.Main) {
-                        statusTv.text = "⚠️ 沒有啟用的超短線策略（尾盤低吸/早盤追漲）"
-                        buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"
-                        progressBar.visibility = View.GONE
-                    }
-                    return@launch
-                }
-
-                val screenings = mutableMapOf<Strategy, com.chin.stockanalysis.strategy.models.ScreeningResult>()
-                for ((index, strategy) in strategies.withIndex()) {
-                    withContext(Dispatchers.Main) {
-                        statusTv.text = "⚡ 執行策略: ${strategy.name} (${index + 1}/${strategies.size})"
-                    }
-                    try {
-                        val r = strategy.screenWithData(stocks)
-                        r.getOrNull()?.let { screenings[strategy] = it }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "策略 ${strategy.id} 執行失敗: ${e.message}")
-                    }
-                }
-                Log.i(TAG, "[UltraShort] 策略執行完成: ${screenings.size}/${strategies.size} 成功")
-
-                // Step 3.5: 動態主力資金過濾（requiresSmartMoney 為時間動態開關：14:30 前啟用）
-                val smartMoneyStrategies = screenings.keys.filter { it.requiresSmartMoney }
-                if (smartMoneyStrategies.isNotEmpty()) {
-                    val candidateCodes = smartMoneyStrategies
-                        .flatMap { screenings[it]?.signals?.map { s -> s.stockCode } ?: emptyList() }
-                        .distinct()
-                    if (candidateCodes.isNotEmpty()) {
-                        try {
-                            com.chin.stockanalysis.strategy.data.SmartMoneyCache
-                                .refresh(requireContext(), candidateCodes)
-                            for (s in smartMoneyStrategies) {
-                                val sc = screenings[s] ?: continue
-                                val before = sc.signals.size
-                                val filtered = sc.signals.filter {
-                                    com.chin.stockanalysis.strategy.data.SmartMoneyCache
-                                        .getScore(it.stockCode).combined >= 55
-                                }
-                                screenings[s] = sc.copy(signals = filtered)
-                                Log.i(TAG, "[UltraShort] 主力過濾 ${s.name}: $before → ${filtered.size}")
-                            }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "[UltraShort] 主力過濾失敗（不阻塞）: ${e.message}")
-                        }
-                    }
-                }
-
-                // Step 4: 合併結果，按強度排序
-                val mergedPool = mutableMapOf<String, MutableList<Pair<String, Int>>>()
-                val codeToName = mutableMapOf<String, String>()
-                for ((s, sc) in screenings) {
-                    for (sig in sc.signals.distinctBy { it.stockCode }) {
-                        mergedPool.getOrPut(sig.stockCode) { mutableListOf() }
-                            .add(s.name to sig.strength)
-                        codeToName[sig.stockCode] = sig.stockName
-                    }
-                }
-
-                if (mergedPool.isEmpty()) {
-                    withContext(Dispatchers.Main) {
-                        statusTv.text = "⚠️ 超短線策略無命中信號"
-                        buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"
-                        progressBar.visibility = View.GONE
-                    }
-                    return@launch
-                }
-
-                // 按最大強度排序，取 Top N
-                val sortedStocks = mergedPool.entries
-                    .sortedByDescending { it.value.maxOf { p -> p.second } }
-                    .take(maxHoldings)
-
-                // Step 5: 檢查持倉限制並建倉
-                val existingCodes = db.strategyTradeOrderDao().getRecent(200)
-                    .filter { it.orderType == "UltraShortQuant" &&
-                        (it.status == "BUYING" || it.status == "PENDING") }
-                    .map { it.stockCode }.toSet()
-
-                val availableSlots = maxHoldings - existingCodes.size
-                if (availableSlots <= 0) {
-                    withContext(Dispatchers.Main) {
-                        statusTv.text = "⚠️ 已達最大持倉限制 ($maxHoldings 只)"
-                        buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"
-                        progressBar.visibility = View.GONE
-                        refreshPositions()
-                    }
-                    return@launch
-                }
-
-                val toInsert = mutableListOf<StrategyTradeOrderEntity>()
-                val watchlistStocks = mutableListOf<Triple<String, String, Int>>()
-                for ((code, hits) in sortedStocks.take(availableSlots)) {
-                    if (code in existingCodes) continue
-                    val snap = todayStocks.find { it.code == code }
-                    val buyPrice = snap?.price ?: 0.0
-                    if (buyPrice <= 0) {
-                        Log.w(TAG, "超短線選股 $code 無即時價格，跳過")
-                        continue
-                    }
-                    val name = codeToName[code] ?: code
-                    val maxStrength = hits.maxOf { it.second }
-                    toInsert.add(StrategyTradeOrderEntity(
-                        strategyId = hits.joinToString(",") { it.first },
-                        stockCode = code, stockName = name,
-                        tradeDate = tradeDate, buyPrice = buyPrice,
-                        buyTime = java.time.LocalTime.now().toString().take(8),
-                        quantity = 100, orderType = "UltraShortQuant", status = "BUYING",
-                        reason = "超短線策略命中: ${hits.joinToString(",") { "${it.first}(${it.second}%)" }}",
-                        scoreAtBuy = maxStrength,
-                        createdAt = System.currentTimeMillis()
-                    ))
-                    watchlistStocks.add(Triple(code, name, maxStrength))
-                }
-
-                if (toInsert.isNotEmpty()) {
-                    db.strategyTradeOrderDao().insertAll(toInsert)
-                    try {
-                        com.chin.stockanalysis.stock.database.AppBackgroundRunner.addBatchToWatchlist(
-                            requireContext(), watchlistStocks, source = "ultra_short"
-                        )
-                    } catch (_: Exception) {}
-                }
-
-                val elapsed = System.currentTimeMillis() - totalStart
-                val summary = buildString {
-                    appendLine("⚡ 超短線選股完成 (${elapsed}ms)")
-                    appendLine("策略: ${strategies.joinToString(",") { it.name }}")
-                    appendLine("命中: ${mergedPool.size} 只 → 建倉: ${toInsert.size} 只")
-                    if (toInsert.isNotEmpty()) {
-                        appendLine("建倉股票:")
-                        for (order in toInsert) {
-                            appendLine("  • ${order.stockName}(${order.stockCode.takeLast(6)}) ¥${"%.2f".format(order.buyPrice)} 強度:${order.scoreAtBuy}%")
-                        }
-                    }
-                    appendLine("止損: ${stopLossPct}% | 止盈: +${takeProfitPct}% | T+1 賣出")
-                }
-
-                withContext(Dispatchers.Main) {
-                    showDialog("超短線選股報告", summary)
-                    statusTv.text = "✅ 超短線: 建倉 ${toInsert.size} 只 (${elapsed}ms)"
-                    buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"
-                    progressBar.visibility = View.GONE
-                    refreshPositions()
-                }
-
-                // 觸發 T+1 賣出檢查
-                checkT1AutoSell()
-
+                executeViaDagPipeline(tradeDate, today)
             } catch (e: Exception) {
                 Log.e(TAG, "[UltraShort] 建倉失敗", e)
                 withContext(Dispatchers.Main) {

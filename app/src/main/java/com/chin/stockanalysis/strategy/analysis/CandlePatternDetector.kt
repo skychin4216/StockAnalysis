@@ -46,6 +46,16 @@ object CandlePatternDetector {
         detectEveningStar(c, n)?.let { results.add(it) }
         detectThreeWhiteSoldiers(c, n)?.let { results.add(it) }
         detectThreeBlackCrows(c, n)?.let { results.add(it) }
+        // 新增形態
+        detectBullishEngulfing(c, n)?.let { results.add(it) }
+        detectBearishEngulfing(c, n)?.let { results.add(it) }
+        detectBullishHarami(c, n)?.let { results.add(it) }
+        detectBearishHarami(c, n)?.let { results.add(it) }
+        detectDoji(c, n)?.let { results.add(it) }
+        detectHammer(c, n)?.let { results.add(it) }
+        detectShootingStar(c, n)?.let { results.add(it) }
+        detectPiercingLine(c, n)?.let { results.add(it) }
+        detectDarkCloudCover(c, n)?.let { results.add(it) }
 
         return results.sortedByDescending { it.strength }
     }
@@ -260,6 +270,271 @@ object CandlePatternDetector {
             patternName = "三烏鴉",
             direction = Direction.BEARISH,
             description = "連續三根實體陰線逐步走低，無下影支撐——空頭強勢打壓",
+            strength = 3
+        )
+    }
+
+    // ════════════════════════════════════════════════════
+    //  新增形態偵測（吞沒/孕線/十字星/錘子線/射擊之星/刺透/烏雲蓋頂）
+    // ════════════════════════════════════════════════════
+
+    /**
+     * 看漲吞沒（Bullish Engulfing）— 2 根 K 線，看多反轉
+     *
+     * Day1: 陰線
+     * Day2: 陽線，實體完全覆蓋 Day1 實體（open <= Day1.open, close >= Day1.close）
+     */
+    private fun detectBullishEngulfing(c: List<DailySnapshotEntity>, n: Int): PatternMatch? {
+        if (n < 2) return null
+        val d1 = c[n - 2]; val d2 = c[n - 1]
+        // Day1 陰線
+        if (d1.close >= d1.open) return null
+        // Day2 陽線
+        if (d2.close <= d2.open) return null
+        // Day2 實體完全覆蓋 Day1 實體
+        if (d2.open > d1.open || d2.close < d1.close) return null
+        // Day2 實體不能太小
+        val avgBody = c.takeLast(10).map { kotlin.math.abs(it.close - it.open) }.average()
+        if ((d2.close - d2.open) < avgBody * 0.8) return null
+
+        return PatternMatch(
+            patternName = "看漲吞沒",
+            direction = Direction.BULLISH,
+            description = "陽線完全包裹前一根陰線實體——多頭強勢反轉，買盤壓制賣盤",
+            strength = 4
+        )
+    }
+
+    /**
+     * 看跌吞沒（Bearish Engulfing）— 2 根 K 線，看空反轉
+     *
+     * Day1: 陽線
+     * Day2: 陰線，實體完全覆蓋 Day1 實體
+     */
+    private fun detectBearishEngulfing(c: List<DailySnapshotEntity>, n: Int): PatternMatch? {
+        if (n < 2) return null
+        val d1 = c[n - 2]; val d2 = c[n - 1]
+        // Day1 陽線
+        if (d1.close <= d1.open) return null
+        // Day2 陰線
+        if (d2.close >= d2.open) return null
+        // Day2 實體完全覆蓋 Day1 實體
+        if (d2.open < d1.open || d2.close > d1.close) return null
+        val avgBody = c.takeLast(10).map { kotlin.math.abs(it.close - it.open) }.average()
+        if ((d2.open - d2.close) < avgBody * 0.8) return null
+
+        return PatternMatch(
+            patternName = "看跌吞沒",
+            direction = Direction.BEARISH,
+            description = "陰線完全包裹前一根陽線實體——空頭強勢反轉，賣盤壓制買盤",
+            strength = 4
+        )
+    }
+
+    /**
+     * 看漲孕線（Bullish Harami）— 2 根 K 線，看多反轉
+     *
+     * Day1: 長陰線
+     * Day2: 小陽線，實體完全在 Day1 實體範圍內
+     */
+    private fun detectBullishHarami(c: List<DailySnapshotEntity>, n: Int): PatternMatch? {
+        if (n < 2) return null
+        val d1 = c[n - 2]; val d2 = c[n - 1]
+        val avgBody = c.takeLast(10).map { kotlin.math.abs(it.close - it.open) }.average()
+        // Day1 長陰線
+        if (d1.close >= d1.open) return null
+        if ((d1.open - d1.close) < avgBody * 1.0) return null
+        // Day2 小陽線，實體在 Day1 實體內
+        if (d2.close <= d2.open) return null
+        if (d2.open < d1.close || d2.close > d1.open) return null
+        if ((d2.close - d2.open) > avgBody * 0.6) return null
+
+        return PatternMatch(
+            patternName = "看漲孕線",
+            direction = Direction.BULLISH,
+            description = "大陰線後小陽線藏於其實體內——下跌動能減弱，可能反轉",
+            strength = 2
+        )
+    }
+
+    /**
+     * 看跌孕線（Bearish Harami）— 2 根 K 線，看空反轉
+     *
+     * Day1: 長陽線
+     * Day2: 小陰線，實體完全在 Day1 實體範圍內
+     */
+    private fun detectBearishHarami(c: List<DailySnapshotEntity>, n: Int): PatternMatch? {
+        if (n < 2) return null
+        val d1 = c[n - 2]; val d2 = c[n - 1]
+        val avgBody = c.takeLast(10).map { kotlin.math.abs(it.close - it.open) }.average()
+        // Day1 長陽線
+        if (d1.close <= d1.open) return null
+        if ((d1.close - d1.open) < avgBody * 1.0) return null
+        // Day2 小陰線，實體在 Day1 實體內
+        if (d2.close >= d2.open) return null
+        if (d2.open > d1.close || d2.close < d1.open) return null
+        if ((d2.open - d2.close) > avgBody * 0.6) return null
+
+        return PatternMatch(
+            patternName = "看跌孕線",
+            direction = Direction.BEARISH,
+            description = "大陽線後小陰線藏於其實體內——上漲動能減弱，可能反轉",
+            strength = 2
+        )
+    }
+
+    /**
+     * 十字星（Doji）— 1 根 K 線，中性/反轉信號
+     *
+     * 實體極小（< 平均實體的 10%），有明顯上下影線
+     */
+    private fun detectDoji(c: List<DailySnapshotEntity>, n: Int): PatternMatch? {
+        if (n < 1) return null
+        val d = c[n - 1]
+        val avgBody = c.takeLast(10).map { kotlin.math.abs(it.close - it.open) }.average()
+        if (avgBody <= 0) return null
+        val body = kotlin.math.abs(d.close - d.open)
+        // 實體極小
+        if (body > avgBody * 0.1) return null
+        // 需有上下影線
+        val upperShadow = d.high - kotlin.math.max(d.open, d.close)
+        val lowerShadow = kotlin.math.min(d.open, d.close) - d.low
+        if (upperShadow < body * 1.0 || lowerShadow < body * 1.0) return null
+
+        // 判斷趨勢背景：前期下跌→反轉看多；前期上漲→反轉看空
+        val recentTrend = if (n >= 5) {
+            val prevClose = c[n - 5].close
+            when {
+                d.close < prevClose * 0.97 -> "下跌"
+                d.close > prevClose * 1.03 -> "上漲"
+                else -> "橫盤"
+            }
+        } else "橫盤"
+
+        val (direction, desc) = when (recentTrend) {
+            "下跌" -> Direction.BULLISH to "下跌末端出現十字星——多空均衡，可能見底反轉"
+            "上漲" -> Direction.BEARISH to "上漲末端出現十字星——多空均衡，可能見頂反轉"
+            else -> Direction.BULLISH to "橫盤中出現十字星——方向不明，等待突破確認"
+        }
+
+        return PatternMatch(
+            patternName = "十字星",
+            direction = direction,
+            description = desc,
+            strength = 2
+        )
+    }
+
+    /**
+     * 錘子線（Hammer）— 1 根 K 線，看多反轉
+     *
+     * 下影線 > 實體 2 倍，上影線 < 實體 30%，出現在下跌趨勢中
+     */
+    private fun detectHammer(c: List<DailySnapshotEntity>, n: Int): PatternMatch? {
+        if (n < 5) return null
+        val d = c[n - 1]
+        val body = kotlin.math.abs(d.close - d.open)
+        if (body <= 0) return null
+        val lowerShadow = kotlin.math.min(d.open, d.close) - d.low
+        val upperShadow = d.high - kotlin.math.max(d.open, d.close)
+        // 下影線 > 實體 2 倍
+        if (lowerShadow < body * 2) return null
+        // 上影線 < 實體 30%
+        if (upperShadow > body * 0.3) return null
+        // 需在下跌趨勢中
+        val prevClose = c[n - 5].close
+        if (d.close >= prevClose * 0.98) return null
+
+        return PatternMatch(
+            patternName = "錘子線",
+            direction = Direction.BULLISH,
+            description = "下跌末端出現長下影線——下方有買盤承接，可能見底反轉",
+            strength = 3
+        )
+    }
+
+    /**
+     * 射擊之星（Shooting Star）— 1 根 K 線，看空反轉
+     *
+     * 上影線 > 實體 2 倍，下影線 < 實體 30%，出現在上升趨勢中
+     */
+    private fun detectShootingStar(c: List<DailySnapshotEntity>, n: Int): PatternMatch? {
+        if (n < 5) return null
+        val d = c[n - 1]
+        val body = kotlin.math.abs(d.close - d.open)
+        if (body <= 0) return null
+        val upperShadow = d.high - kotlin.math.max(d.open, d.close)
+        val lowerShadow = kotlin.math.min(d.open, d.close) - d.low
+        // 上影線 > 實體 2 倍
+        if (upperShadow < body * 2) return null
+        // 下影線 < 實體 30%
+        if (lowerShadow > body * 0.3) return null
+        // 需在上升趨勢中
+        val prevClose = c[n - 5].close
+        if (d.close <= prevClose * 1.02) return null
+
+        return PatternMatch(
+            patternName = "射擊之星",
+            direction = Direction.BEARISH,
+            description = "上升末端出現長上影線——上方拋壓重，可能見頂反轉",
+            strength = 3
+        )
+    }
+
+    /**
+     * 刺透形態（Piercing Line）— 2 根 K 線，看多反轉
+     *
+     * Day1: 陰線
+     * Day2: 陽線，開盤低於 Day1 最低價，收盤深入 Day1 實體一半以上
+     */
+    private fun detectPiercingLine(c: List<DailySnapshotEntity>, n: Int): PatternMatch? {
+        if (n < 2) return null
+        val d1 = c[n - 2]; val d2 = c[n - 1]
+        // Day1 陰線
+        if (d1.close >= d1.open) return null
+        // Day2 陽線
+        if (d2.close <= d2.open) return null
+        // Day2 開盤低於 Day1 最低價（低開）
+        if (d2.open > d1.low) return null
+        // Day2 收盤深入 Day1 實體一半以上
+        val mid1 = (d1.open + d1.close) / 2
+        if (d2.close < mid1) return null
+        // 但不能完全覆蓋（否則是看漲吞沒）
+        if (d2.close > d1.open) return null
+
+        return PatternMatch(
+            patternName = "刺透形態",
+            direction = Direction.BULLISH,
+            description = "陰線後陽線低開高走，收復前日一半失地——底部反轉信號",
+            strength = 3
+        )
+    }
+
+    /**
+     * 烏雲蓋頂（Dark Cloud Cover）— 2 根 K 線，看空反轉
+     *
+     * Day1: 陽線
+     * Day2: 陰線，開盤高於 Day1 最高價，收盤深入 Day1 實體一半以下
+     */
+    private fun detectDarkCloudCover(c: List<DailySnapshotEntity>, n: Int): PatternMatch? {
+        if (n < 2) return null
+        val d1 = c[n - 2]; val d2 = c[n - 1]
+        // Day1 陽線
+        if (d1.close <= d1.open) return null
+        // Day2 陰線
+        if (d2.close >= d2.open) return null
+        // Day2 開盤高於 Day1 最高價（高開）
+        if (d2.open < d1.high) return null
+        // Day2 收盤深入 Day1 實體一半以下
+        val mid1 = (d1.open + d1.close) / 2
+        if (d2.close > mid1) return null
+        // 但不能完全覆蓋（否則是看跌吞沒）
+        if (d2.close < d1.open) return null
+
+        return PatternMatch(
+            patternName = "烏雲蓋頂",
+            direction = Direction.BEARISH,
+            description = "陽線後陰線高開低走，跌入前日實體一半以下——頂部反轉信號",
             strength = 3
         )
     }

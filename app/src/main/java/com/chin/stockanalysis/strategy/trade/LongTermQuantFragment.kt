@@ -12,14 +12,11 @@ import android.widget.*
 import androidx.lifecycle.lifecycleScope
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.HoldingPeriod
-import com.chin.stockanalysis.strategy.Strategy
 import com.chin.stockanalysis.strategy.StrategyEngineHolder
-import com.chin.stockanalysis.strategy.data.StrategyDataFeed
 import com.chin.stockanalysis.ui.TradingDayPickerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 /**
@@ -92,7 +89,6 @@ class LongTermQuantFragment : QuantFragmentBase() {
         val ctx = requireContext().applicationContext
         StrategyEngineHolder.init(ctx)
         engine = StrategyEngineHolder.get()
-        tradeEngine = SimulationTradeEngine(ctx)
     }
 
     override fun buildUI() {
@@ -183,188 +179,18 @@ class LongTermQuantFragment : QuantFragmentBase() {
     // ═══════════════════════════════════════
 
     private fun runBuildAndBuy() {
-        val eng = engine ?: return
+        engine ?: return
         buildBtn.isEnabled = false
         buildBtn.text = "⏳ 執行中..."
         progressBar.visibility = View.VISIBLE
         statusTv.text = "💎 長線選股中..."
 
         lifecycleScope.launch(Dispatchers.IO) {
-            val totalStart = System.currentTimeMillis()
             try {
                 val today = TradingDayPickerView.recentTradingDay().format(DATE_FMT)
                 val tradeDate = browsingDate.format(DATE_FMT)
                 lastTradeDate = tradeDate
-
-                // ══════════ DAG Pipeline 分支（通用開關） ══════════
-                if (com.chin.stockanalysis.config.FeatureFlagManager.useDagPipeline) {
-                    executeViaDagPipeline(tradeDate, today)
-                    return@launch
-                }
-
-                // Step 1: 確保數據導入
-                val db = StockDatabase.getInstance(requireContext())
-                val todaySnaps = db.dailySnapshotDao().getByDate(today)
-                if (todaySnaps.size < 100) {
-                    withContext(Dispatchers.Main) { statusTv.text = "📥 導入歷史數據中..." }
-                    try {
-                        com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
-                            .fetchAllHistoricalData(60)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "數據導入失敗（不阻塞）: ${e.message}")
-                    }
-                }
-
-                // Step 2: 準備股票池
-                withContext(Dispatchers.Main) { statusTv.text = "🔄 準備股票池數據..." }
-                val feed = StrategyDataFeed(requireContext())
-                val poolCodes = try {
-                    com.chin.stockanalysis.strategy.data.CandidatePool.getPoolCodes(requireContext())
-                } catch (_: Exception) { emptyList() }
-
-                val onlyMain = mainBoardSwitch.isChecked
-                val stocks = if (poolCodes.isNotEmpty()) {
-                    feed.prepareFromDb(today, StrategyDataFeed.DataFeedConfig(
-                        onlyMainBoard = onlyMain, stockCodes = poolCodes.toSet()
-                    ))
-                } else {
-                    feed.prepareFromDb(today, StrategyDataFeed.DataFeedConfig(onlyMainBoard = onlyMain))
-                }
-                todayStocks = stocks
-                if (stocks.isEmpty()) {
-                    withContext(Dispatchers.Main) {
-                        statusTv.text = "⚠️ 無交易日數據"
-                        buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"
-                        progressBar.visibility = View.GONE
-                    }
-                    return@launch
-                }
-                Log.i(TAG, "[LongTerm] 股票池: ${stocks.size} 只")
-
-                // Step 3: 執行 LONG 週期策略
-                withContext(Dispatchers.Main) { statusTv.text = "💎 執行長線策略篩選..." }
-                val strategies = eng.getEnabledStrategiesByPeriod(HoldingPeriod.LONG)
-                if (strategies.isEmpty()) {
-                    withContext(Dispatchers.Main) {
-                        statusTv.text = "⚠️ 沒有啟用的長線策略（低估值/基本面/機構增持/護城河）"
-                        buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"
-                        progressBar.visibility = View.GONE
-                    }
-                    return@launch
-                }
-
-                val screenings = mutableMapOf<Strategy, com.chin.stockanalysis.strategy.models.ScreeningResult>()
-                for ((index, strategy) in strategies.withIndex()) {
-                    withContext(Dispatchers.Main) {
-                        statusTv.text = "💎 執行策略: ${strategy.name} (${index + 1}/${strategies.size})"
-                    }
-                    try {
-                        val r = strategy.screenWithData(stocks)
-                        r.getOrNull()?.let { screenings[strategy] = it }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "策略 ${strategy.id} 執行失敗: ${e.message}")
-                    }
-                }
-                Log.i(TAG, "[LongTerm] 策略執行完成: ${screenings.size}/${strategies.size} 成功")
-
-                // Step 4: 合併結果，按強度排序
-                val mergedPool = mutableMapOf<String, MutableList<Pair<String, Int>>>()
-                val codeToName = mutableMapOf<String, String>()
-                for ((s, sc) in screenings) {
-                    for (sig in sc.signals.distinctBy { it.stockCode }) {
-                        mergedPool.getOrPut(sig.stockCode) { mutableListOf() }
-                            .add(s.name to sig.strength)
-                        codeToName[sig.stockCode] = sig.stockName
-                    }
-                }
-
-                if (mergedPool.isEmpty()) {
-                    withContext(Dispatchers.Main) {
-                        statusTv.text = "⚠️ 長線策略無命中信號"
-                        buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"
-                        progressBar.visibility = View.GONE
-                    }
-                    return@launch
-                }
-
-                // 按最大強度排序，取 Top N
-                val sortedStocks = mergedPool.entries
-                    .sortedByDescending { it.value.maxOf { p -> p.second } }
-                    .take(MAX_HOLDINGS)
-
-                // Step 5: 檢查持倉限制並建倉
-                val existingOrders = db.strategyTradeOrderDao().getRecent(200)
-                    .filter { it.orderType == "LongTermQuant" &&
-                        (it.status == "BUYING" || it.status == "PENDING") }
-                val existingCodes = existingOrders.map { it.stockCode }.toSet()
-
-                val availableSlots = MAX_HOLDINGS - existingCodes.size
-                if (availableSlots <= 0) {
-                    withContext(Dispatchers.Main) {
-                        statusTv.text = "⚠️ 已達最大持倉限制 ($MAX_HOLDINGS 只)"
-                        buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"
-                        progressBar.visibility = View.GONE
-                        refreshPositions()
-                    }
-                    return@launch
-                }
-
-                val toInsert = mutableListOf<StrategyTradeOrderEntity>()
-                val watchlistStocks = mutableListOf<Triple<String, String, Int>>()
-                for ((code, hits) in sortedStocks.take(availableSlots)) {
-                    if (code in existingCodes) continue
-                    val snap = todayStocks.find { it.code == code }
-                    val buyPrice = snap?.price ?: 0.0
-                    if (buyPrice <= 0) {
-                        Log.w(TAG, "長線選股 $code 無即時價格，跳過")
-                        continue
-                    }
-                    val name = codeToName[code] ?: code
-                    val maxStrength = hits.maxOf { it.second }
-                    toInsert.add(StrategyTradeOrderEntity(
-                        strategyId = hits.joinToString(",") { it.first },
-                        stockCode = code, stockName = name,
-                        tradeDate = tradeDate, buyPrice = buyPrice,
-                        buyTime = java.time.LocalTime.now().toString().take(8),
-                        quantity = 100, orderType = "LongTermQuant", status = "BUYING",
-                        reason = "長線策略命中: ${hits.joinToString(",") { "${it.first}(${it.second}%)" }}",
-                        scoreAtBuy = maxStrength,
-                        createdAt = System.currentTimeMillis()
-                    ))
-                    watchlistStocks.add(Triple(code, name, maxStrength))
-                }
-
-                if (toInsert.isNotEmpty()) {
-                    db.strategyTradeOrderDao().insertAll(toInsert)
-                    try {
-                        com.chin.stockanalysis.stock.database.AppBackgroundRunner.addBatchToWatchlist(
-                            requireContext(), watchlistStocks, source = "long_term"
-                        )
-                    } catch (_: Exception) {}
-                }
-
-                val elapsed = System.currentTimeMillis() - totalStart
-                val summary = buildString {
-                    appendLine("💎 長線選股完成 (${elapsed}ms)")
-                    appendLine("策略: ${strategies.joinToString(",") { it.name }}")
-                    appendLine("命中: ${mergedPool.size} 只 → 建倉: ${toInsert.size} 只")
-                    if (toInsert.isNotEmpty()) {
-                        appendLine("建倉股票:")
-                        for (order in toInsert) {
-                            appendLine("  • ${order.stockName}(${order.stockCode.takeLast(6)}) ¥${"%.2f".format(order.buyPrice)} 強度:${order.scoreAtBuy}%")
-                        }
-                    }
-                    appendLine("持倉週期: 1年+ | 賣出條件: 基本面惡化 / 估值過高")
-                }
-
-                withContext(Dispatchers.Main) {
-                    showDialog("長線選股報告", summary)
-                    statusTv.text = "✅ 長線: 建倉 ${toInsert.size} 只 (${elapsed}ms)"
-                    buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"
-                    progressBar.visibility = View.GONE
-                    refreshPositions()
-                }
-
+                executeViaDagPipeline(tradeDate, today)
             } catch (e: Exception) {
                 Log.e(TAG, "[LongTerm] 建倉失敗", e)
                 withContext(Dispatchers.Main) {

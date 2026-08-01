@@ -8,6 +8,8 @@ import com.chin.stockanalysis.strategy.topology.nodes.OrderGenerationResult
 import com.chin.stockanalysis.strategy.topology.nodes.PositionMergeResult
 import com.chin.stockanalysis.strategy.topology.nodes.SwapWeakResult
 import com.chin.stockanalysis.strategy.topology.nodes.HoldingGuardResult
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * ## 通用 DAG 交易執行器
@@ -250,6 +252,13 @@ object DagTradeExecutor {
         } catch (_: Exception) {
         }
 
+        // 8. 保存 Pipeline 報告到 daily_period_result（統一所有週期）
+        try {
+            savePipelineReport(context, useCaseId, result, tradeDate, stockFlowLines)
+        } catch (e: Exception) {
+            Log.w(TAG, "[$useCaseId] 保存報告失敗: ${e.message}")
+        }
+
         return DagExecResult(
             success = result.success,
             ordersCount = ordersCount,
@@ -264,6 +273,140 @@ object DagTradeExecutor {
             errors = result.errors,
             uiText = uiText.trimEnd()
         )
+    }
+
+    /**
+     * 將 useCaseId 映射到 strategyId 和 periodDays。
+     */
+    private fun mapUseCaseToStrategy(useCaseId: String): Pair<String, Int> {
+        return when (useCaseId) {
+            "ultra_short" -> "UltraShortQuant" to 1
+            "short_term" -> "ShortTermTrend" to 5
+            "mid_term" -> "MidTermSwing" to 20
+            "long_term" -> "LongTermInvest" to 60
+            else -> useCaseId to 0
+        }
+    }
+
+    /**
+     * 保存 Pipeline 報告到 daily_period_result 表（統一所有週期）。
+     *
+     * 與 MidTermQuantFragment.savePipelineReportToDb 邏輯一致，
+     * 收集最終訂單股票代碼、構建 pipeline flow JSON 並寫入數據庫。
+     */
+    private suspend fun savePipelineReport(
+        context: Context,
+        useCaseId: String,
+        result: UseCaseLoader.MultiPipelineResult,
+        tradeDate: String,
+        stockFlowLines: List<String>
+    ) {
+        val (strategyId, periodDays) = mapUseCaseToStrategy(useCaseId)
+        val db = StockDatabase.getInstance(context)
+
+        // 收集最終輸出的股票代碼 + 逐策略 Top3 + 新聞力度/輪動懲罰
+        val finalCodes = mutableListOf<String>()
+        var newsStrengthScore = 0
+        var rotationPenalty = 0
+        val perStrategyTop3 = JSONArray()
+
+        for ((_, pr) in result.pipelineResults) {
+            // 最終訂單股票代碼
+            val ordersOutput = pr.stageResults["n_orders"]?.output
+            if (ordersOutput is OrderGenerationResult) {
+                finalCodes.addAll(ordersOutput.orders.map { it.stockCode })
+            }
+
+            // 新聞力度（Int 輸出）
+            (pr.stageResults["n_news_str"]?.output as? Int)?.let {
+                newsStrengthScore = it
+            }
+
+            // 板塊輪動懲罰（Int 輸出）
+            (pr.stageResults["n_rot_pen"]?.output as? Int)?.let {
+                rotationPenalty = it
+            }
+
+            // 逐策略 Top3：從信號合併節點提取 MergedSignalPool，按 strategyId 分組取 Top3
+            val mergedPool = pr.stageResults["n_merge"]?.output
+            if (mergedPool is com.chin.stockanalysis.strategy.topology.core.MergedSignalPool) {
+                // 從各策略節點的 SignalPack 輸出中收集 strategyId → strategyName 映射
+                val strategyNames = mutableMapOf<String, String>()
+                for ((_, linkResult) in pr.stageResults) {
+                    val sp = linkResult.output
+                    if (sp is com.chin.stockanalysis.strategy.topology.core.SignalPack) {
+                        strategyNames[sp.strategyId] = sp.strategyName
+                    }
+                }
+
+                val byStrategy = mergedPool.boostedSignals.groupBy { it.strategyId }
+                for ((sid, signals) in byStrategy) {
+                    val top3 = signals.sortedByDescending { it.strength }.take(3)
+                    val picksArr = JSONArray()
+                    for ((rank, sig) in top3.withIndex()) {
+                        picksArr.put(JSONObject().apply {
+                            put("rank", rank + 1)
+                            put("code", sig.stockCode)
+                            put("name", sig.stockName)
+                            put("strength", sig.strength)
+                            put("reason", sig.reason.take(100))
+                        })
+                    }
+                    perStrategyTop3.put(JSONObject().apply {
+                        put("strategyId", sid)
+                        put("strategyName", strategyNames[sid] ?: sid)
+                        put("picks", picksArr)
+                    })
+                }
+            }
+        }
+
+        // 構建 pipeline flow JSON
+        val flowJson = JSONObject().apply {
+            put("useCaseId", result.useCaseId)
+            put("success", result.success)
+            put("totalElapsedMs", result.totalElapsedMs)
+            val pipes = JSONObject()
+            for ((pipeName, pr) in result.pipelineResults) {
+                val pipeObj = JSONObject()
+                pipeObj.put("pipelineName", pr.pipelineName)
+                pipeObj.put("success", pr.success)
+                val flows = JSONArray()
+                for ((nodeId, flow) in pr.stockFlowLogs) {
+                    flows.put(JSONObject().apply {
+                        put("nodeId", nodeId)
+                        put("nodeName", flow.nodeName)
+                        put("inputCount", flow.inputCount)
+                        put("outputCount", flow.outputCount)
+                        put("filterCount", flow.filterCount)
+                        put("filterReason", flow.filterReason)
+                    })
+                }
+                pipeObj.put("stockFlows", flows)
+                pipes.put(pipeName, pipeObj)
+            }
+            put("pipelines", pipes)
+        }
+
+        val entity = com.chin.stockanalysis.strategy.trade.DailyPeriodResultEntity(
+            strategyId = "DAG_${useCaseId.uppercase()}",
+            strategyName = result.pipelineResults.keys.firstOrNull() ?: useCaseId,
+            tradeDate = tradeDate,
+            periodDays = periodDays,
+            stockCodesJson = JSONArray(finalCodes).toString(),
+            stockCount = finalCodes.size,
+            newsStrengthScore = newsStrengthScore,
+            rotationPenalty = rotationPenalty,
+            mainBoardFilter = true,
+            filteredCodesJson = "[]",
+            filteredReasonJson = stockFlowLines.joinToString("\n"),
+            finalTop3Json = perStrategyTop3.toString(),
+            aiSelectionReason = "DAG Pipeline 執行 ($strategyId)",
+            pipelineFlowJson = flowJson.toString(),
+            createdAt = System.currentTimeMillis()
+        )
+        db.dailyPeriodResultDao().insert(entity)
+        Log.i(TAG, "[$useCaseId] 報告已保存: ${entity.strategyName} $tradeDate, 最終股票 ${finalCodes.size} 只, 逐策略Top3 ${perStrategyTop3.length()} 組, 節點流動 ${result.pipelineResults.values.sumOf { it.stockFlowLogs.size }} 個")
     }
 
     /**

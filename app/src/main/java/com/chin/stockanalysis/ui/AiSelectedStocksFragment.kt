@@ -261,13 +261,22 @@ class AiSelectedStocksFragment : Fragment() {
     }
 
     private fun createStockRow(stock: AiSelectedStockEntity): View {
+        val snap = stockDataCache[stock.stockCode]
         val row = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(Color.WHITE)
             setPadding(8, 10, 8, 10)
             gravity = Gravity.CENTER_VERTICAL
-            // 點擊加入自選股
-            setOnClickListener { addToWatchlist(stock) }
+            // 點擊跳轉到股票詳情頁
+            setOnClickListener {
+                StockDetailNavigator.navigateFromFragment(
+                    this@AiSelectedStocksFragment,
+                    stock.stockCode,
+                    stock.stockName,
+                    price = snap?.close ?: 0.0,
+                    changePct = snap?.changePct ?: 0.0
+                )
+            }
             // 底部分隔線
             val divider = View(requireContext()).apply {
                 setBackgroundColor(Color.parseColor("#F0F0F0"))
@@ -329,7 +338,6 @@ class AiSelectedStocksFragment : Fragment() {
         })
 
         // 最新價 & 漲跌幅
-        val snap = stockDataCache[stock.stockCode]
         if (snap != null) {
             row.addView(TextView(requireContext()).apply {
                 text = "¥${"%.2f".format(snap.close)}"
@@ -365,6 +373,21 @@ class AiSelectedStocksFragment : Fragment() {
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f)
             })
         }
+
+        // ── 加入自選按鈕（獨立點擊，不觸發行跳轉） ──
+        row.addView(TextView(requireContext()).apply {
+            text = "+自選"
+            textSize = 10f
+            setTextColor(Color.parseColor("#FFFFFF"))
+            setBackgroundColor(Color.parseColor("#43A047"))
+            gravity = Gravity.CENTER
+            setPadding(6, 3, 6, 3)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            setOnClickListener { addToWatchlist(stock) }
+        })
 
         // ── 分隔線 ──
         val wrapper = LinearLayout(requireContext()).apply {
