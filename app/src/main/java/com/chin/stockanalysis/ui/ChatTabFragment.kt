@@ -741,6 +741,11 @@ class ChatTabFragment : Fragment() {
         if (pure != null) {
             return StockAnalysisAgent.normalizeStockCode(pure.groupValues[1])
         }
+        // 降級：嘗試用 StockEntityExtractor 解析中文名稱
+        val resolved = com.chin.stockanalysis.ai.StockEntityExtractor.resolveSync(text)
+        if (resolved != null) {
+            return StockAnalysisAgent.normalizeStockCode(resolved)
+        }
         return null
     }
 

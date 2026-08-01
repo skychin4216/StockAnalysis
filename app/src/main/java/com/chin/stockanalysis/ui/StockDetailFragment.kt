@@ -116,7 +116,10 @@ class StockDetailFragment : Fragment() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         arguments?.let {
-            stockCode = StockAnalysisAgent.normalizeStockCode(it.getString(ARG_STOCK_CODE, ""))
+            val rawCode = it.getString(ARG_STOCK_CODE, "")
+            // 解析中文名稱 → 代碼（如 "兆易創新" → "603986"）
+            val resolvedCode = com.chin.stockanalysis.ai.StockEntityExtractor.resolveSync(rawCode) ?: rawCode
+            stockCode = StockAnalysisAgent.normalizeStockCode(resolvedCode)
             stockName = it.getString(ARG_STOCK_NAME, "")
             initialPrice = it.getDouble(ARG_STOCK_PRICE, 0.0)
             initialChangePct = it.getDouble(ARG_CHANGE_PCT, 0.0)

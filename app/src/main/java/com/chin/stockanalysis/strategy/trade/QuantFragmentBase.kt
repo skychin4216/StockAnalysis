@@ -938,9 +938,10 @@ abstract class QuantFragmentBase : Fragment() {
             .setTitle("➕ 添加真實持倉")
             .setView(container)
             .setPositiveButton("保存") { _, _ ->
-                val code = com.chin.stockanalysis.agent.stock.StockAnalysisAgent.normalizeStockCode(
-                    codeEt.text.toString().trim()
-                )
+                val rawInput = codeEt.text.toString().trim()
+                // 解析中文名稱 → 代碼（如 "兆易創新" → "603986"）
+                val resolvedInput = com.chin.stockanalysis.ai.StockEntityExtractor.resolveSync(rawInput) ?: rawInput
+                val code = com.chin.stockanalysis.agent.stock.StockAnalysisAgent.normalizeStockCode(resolvedInput)
                 val name = nameEt.text.toString().trim()
                 val qty = qtyEt.text.toString().trim().toIntOrNull() ?: 0
                 val price = priceEt.text.toString().trim().toDoubleOrNull() ?: 0.0

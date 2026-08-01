@@ -380,4 +380,39 @@ object StockEntityExtractor {
         }
         return null
     }
+
+    /**
+     * 同步解析股票名稱/代碼 → 標準化代碼（非 suspend，無需 Context）
+     *
+     * 用於 UI 入口處的即時解析：用戶輸入中文名稱時立即轉換為代碼。
+     * 優先級：FALLBACK_STOCK_MAP → StockNameTrie（若已構建）
+     *
+     * @return 解析後的標準代碼（如 "603986"），若無法解析返回 null
+     */
+    fun resolveSync(input: String): String? {
+        val trimmed = input.trim()
+        if (trimmed.isBlank()) return null
+
+        // 如果已經是標準代碼格式，直接返回
+        if (trimmed.length == 6 && trimmed.all { it.isDigit() }) return trimmed
+        if (trimmed.length > 6 && (trimmed.startsWith("sh") || trimmed.startsWith("sz") || trimmed.startsWith("bj"))) {
+            return trimmed.substring(2) // 去掉前綴返回純數字
+        }
+
+        // 1. FALLBACK_STOCK_MAP 精確匹配
+        FALLBACK_STOCK_MAP[trimmed]?.let { return it }
+
+        // 2. FALLBACK_STOCK_MAP 子串匹配
+        for ((name, code) in FALLBACK_STOCK_MAP) {
+            if (trimmed.contains(name) || name.contains(trimmed)) return code
+        }
+
+        // 3. Trie 詞典匹配（若已構建）
+        if (StockNameTrie.isBuilt) {
+            val results = StockNameTrie.search(trimmed)
+            if (results.isNotEmpty()) return results.first().code
+        }
+
+        return null
+    }
 }

@@ -3,6 +3,7 @@ package com.chin.stockanalysis.ui
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
 import com.chin.stockanalysis.agent.stock.StockAnalysisAgent
+import com.chin.stockanalysis.ai.StockEntityExtractor
 
 /**
  * 統一的股票詳情頁跳轉導航器
@@ -10,10 +11,16 @@ import com.chin.stockanalysis.agent.stock.StockAnalysisAgent
  */
 object StockDetailNavigator {
 
+    /** 解析中文名稱 → 代碼，再標準化 */
+    private fun resolveAndNormalize(code: String): String {
+        val resolved = StockEntityExtractor.resolveSync(code) ?: code
+        return StockAnalysisAgent.normalizeStockCode(resolved)
+    }
+
     /**
      * 從 Fragment 跳轉到股票詳情頁
      * @param fragment 當前 Fragment
-     * @param stockCode 股票代碼（如 "sh600519"）
+     * @param stockCode 股票代碼（如 "sh600519"）或中文名稱
      * @param stockName 股票名稱
      * @param price 當前價格（可選）
      * @param changePct 漲跌幅（可選）
@@ -30,7 +37,7 @@ object StockDetailNavigator {
         autoExpandAi: Boolean = true
     ) {
         val detail = StockDetailFragment.newInstance(
-            stockCode = StockAnalysisAgent.normalizeStockCode(stockCode),
+            stockCode = resolveAndNormalize(stockCode),
             stockName = stockName,
             price = price,
             changePct = changePct,
@@ -57,7 +64,7 @@ object StockDetailNavigator {
         autoExpandAi: Boolean = true
     ) {
         val detail = StockDetailFragment.newInstance(
-            stockCode = StockAnalysisAgent.normalizeStockCode(stockCode),
+            stockCode = resolveAndNormalize(stockCode),
             stockName = stockName,
             price = price,
             changePct = changePct,
