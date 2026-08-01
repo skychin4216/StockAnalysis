@@ -151,6 +151,20 @@ object NodeRegistry {
         // 跨 Tab 發布（短線/中線共用）
         register("crosstab_publish") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.CrossTabPublishNode() }
 
+        // ══════════ 做T Pipeline Node（TTradePipelineNodes.kt） ══════════
+
+        register("t_trade_import") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.TTradeImportNode() }
+        register("t_holdings_load") { _, config ->
+            val pt = config["periodType"] ?: ""
+            com.chin.stockanalysis.strategy.topology.nodes.THoldingsLoadNode(periodType = pt)
+        }
+        register("t_inst_intent") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.TInstIntentNode() }
+        register("t_signal_synthesize") { _, config ->
+            val minConf = config["minConfidence"]?.toDoubleOrNull() ?: 0.3
+            com.chin.stockanalysis.strategy.topology.nodes.TSignalSynthesizeNode(minConfidence = minConf)
+        }
+        register("t_recommend_save") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.TRecommendSaveNode() }
+
         Log.i(TAG, "Node 註冊完成: ${factories.keys}")
     }
 

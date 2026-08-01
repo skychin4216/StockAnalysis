@@ -258,12 +258,18 @@ class StockAnalysisAgent(context: Context) : AgentBase(
                     else -> "震蕩"
                 }
 
-                // 如果 targetPrice 無效
-                if (targetPrice.isBlank() || targetPrice.contains("不足") || targetPrice.contains("無法") || targetPrice == "null") {
+                // 合理目標價範圍：現價上浮 3%~10%（封頂），確保不偏離現價太遠
+                val maxTargetPrice = latestPrice * 1.10
+                val minTargetPrice = latestPrice * 1.03
+
+                // 如果 targetPrice 無效或偏離現價太遠，使用算法計算
+                val llmTargetNum = targetPrice.replace(Regex("[^\\d.]"), "").toDoubleOrNull()
+                if (targetPrice.isBlank() || targetPrice.contains("不足") || targetPrice.contains("無法") || targetPrice == "null"
+                    || (llmTargetNum != null && (llmTargetNum > maxTargetPrice || llmTargetNum < latestPrice * 0.95))) {
                     val algoTarget = when {
-                        trend.contains("上升") -> resistance * 1.05
-                        trend.contains("下降") -> resistance
-                        else -> latestPrice * 1.03
+                        trend.contains("上升") -> (resistance * 1.02).coerceIn(minTargetPrice, maxTargetPrice)
+                        trend.contains("下降") -> (latestPrice * 1.03).coerceIn(minTargetPrice, maxTargetPrice)
+                        else -> (latestPrice * 1.03).coerceIn(minTargetPrice, maxTargetPrice)
                     }.takeIf { it > 0 }
                     if (algoTarget != null) targetPrice = "¥%.2f".format(algoTarget)
                 }
@@ -295,11 +301,19 @@ class StockAnalysisAgent(context: Context) : AgentBase(
             )
         } catch (e: Exception) {
             Log.w(TAG, "解析分析結果失敗: ${e.message}")
-            // JSON 解析失敗時，直接返回原始文本（推理模型可能帶思考過程）
+            // JSON 解析失敗時，清理原始文本（去掉 JSON 區塊，保留分析文字）
+            val cleanedOutput = llmOutput
+                .replace(Regex("```json[\\s\\S]*?```"), "")
+                .replace(Regex("\\{[^{}]*\\}"), "")
+                .trim()
+                .lines()
+                .filter { it.isNotBlank() && !it.matches(Regex("^\\s*[{}\\[\\],:]\\s*$")) }
+                .joinToString("\n")
+                .take(1500)
             StockAnalysisResult(
                 success = true,
                 stockCode = normalizedCode,
-                reasoning = llmOutput,
+                reasoning = cleanedOutput.ifBlank { "AI 分析完成但格式異常，請查看 K 線圖和評級數據" },
                 rawOutput = llmOutput,
                 steps = 1
             )
@@ -430,11 +444,13 @@ class StockAnalysisAgent(context: Context) : AgentBase(
             }
             val atr = if (recentRanges.isNotEmpty()) recentRanges.average() * 1.5 else 0.0
 
-            // 目標價計算
+            // 目標價計算（封頂在現價上浮 10%，確保不偏離現價太遠）
+            val maxTargetPrice = latestPrice * 1.10
+            val minTargetPrice = latestPrice * 1.03
             val targetPrice = when {
-                trend.contains("上升") -> resistance * 1.05
-                trend.contains("下降") -> resistance
-                else -> latestPrice * 1.03  // 震蕩時用小幅上浮
+                trend.contains("上升") -> (resistance * 1.02).coerceIn(minTargetPrice, maxTargetPrice)
+                trend.contains("下降") -> (latestPrice * 1.03).coerceIn(minTargetPrice, maxTargetPrice)
+                else -> (latestPrice * 1.03).coerceIn(minTargetPrice, maxTargetPrice)
             }.takeIf { it > 0 }
 
             // 止損位計算（取多個保護位的最大值）

@@ -56,6 +56,8 @@ object CandlePatternDetector {
         detectShootingStar(c, n)?.let { results.add(it) }
         detectPiercingLine(c, n)?.let { results.add(it) }
         detectDarkCloudCover(c, n)?.let { results.add(it) }
+        detectInvertedHammerBottom(c, n)?.let { results.add(it) }
+        detectInvertedHammerPullback(c, n)?.let { results.add(it) }
 
         return results.sortedByDescending { it.strength }
     }
@@ -535,6 +537,70 @@ object CandlePatternDetector {
             patternName = "烏雲蓋頂",
             direction = Direction.BEARISH,
             description = "陽線後陰線高開低走，跌入前日實體一半以下——頂部反轉信號",
+            strength = 3
+        )
+    }
+
+    /**
+     * 底部倒錘頭（Inverted Hammer at Bottom）— 1 根 K 線，看多反轉
+     *
+     * 幾何：小實體在低位，長上影線（> 實體 2 倍），下影線 < 實體 30%。
+     * 與射擊之星幾何相同，但出現在下跌趨勢末端，含義相反——看多。
+     * 機構嘗試拉升，雖被打回但顯示買盤進場意願。
+     */
+    private fun detectInvertedHammerBottom(c: List<DailySnapshotEntity>, n: Int): PatternMatch? {
+        if (n < 5) return null
+        val d = c[n - 1]
+        val body = kotlin.math.abs(d.close - d.open)
+        if (body <= 0) return null
+        val upperShadow = d.high - kotlin.math.max(d.open, d.close)
+        val lowerShadow = kotlin.math.min(d.open, d.close) - d.low
+        // 上影線 > 實體 2 倍
+        if (upperShadow < body * 2) return null
+        // 下影線 < 實體 30%
+        if (lowerShadow > body * 0.3) return null
+        // 需在下跌趨勢末端（前 5 日跌幅 > 3%）
+        val prevClose = c[n - 5].close
+        if (d.close >= prevClose * 0.97) return null
+
+        return PatternMatch(
+            patternName = "底部倒錘頭",
+            direction = Direction.BULLISH,
+            description = "下跌末端出現長上影線——有資金嘗試拉升，雖被打回但買盤進場意願增強，可能見底",
+            strength = 2
+        )
+    }
+
+    /**
+     * 調整和反彈途中的倒垂線（Inverted Hammer During Pullback）— 1 根 K 線，趨勢延續
+     *
+     * 幾何同底部倒錘頭，但出現在上升趨勢中的回調階段。
+     * 回調時出現長上影線，說明有資金嘗試上攻，預示回調結束、升勢延續。
+     */
+    private fun detectInvertedHammerPullback(c: List<DailySnapshotEntity>, n: Int): PatternMatch? {
+        if (n < 10) return null
+        val d = c[n - 1]
+        val body = kotlin.math.abs(d.close - d.open)
+        if (body <= 0) return null
+        val upperShadow = d.high - kotlin.math.max(d.open, d.close)
+        val lowerShadow = kotlin.math.min(d.open, d.close) - d.low
+        // 上影線 > 實體 2 倍
+        if (upperShadow < body * 2) return null
+        // 下影線 < 實體 30%
+        if (lowerShadow > body * 0.3) return null
+        // 大趨勢仍向上（10 日前 → 近期高點有明顯漲幅）
+        val highRecent = c.takeLast(10).maxOf { it.high }
+        val prevClose10 = c[n - 10].close
+        if (highRecent < prevClose10 * 1.05) return null  // 近 10 日無 5% 漲幅，不算上升趨勢
+        // 近 3 日處於回調（收盤低於 3 日前）
+        if (n < 4) return null
+        val prevClose3 = c[n - 4].close
+        if (d.close >= prevClose3) return null  // 沒在回調
+
+        return PatternMatch(
+            patternName = "調整倒垂線",
+            direction = Direction.BULLISH,
+            description = "上升趨勢回調中出現長上影線——有資金嘗試上攻，回調接近尾聲，升勢有望延續",
             strength = 3
         )
     }

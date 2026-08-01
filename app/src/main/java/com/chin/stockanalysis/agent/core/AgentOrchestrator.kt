@@ -374,39 +374,68 @@ class AgentOrchestrator(internal val appContext: Context) {
 
         // 市場環境（來自 Scout）
         if (scout != null && !scout.isFailed) {
-            appendLine("── 市場環境 ──")
-            scout.getResult<String>("marketDirection")?.let { appendLine("方向: $it") }
-            scout.getResult<List<String>>("hotSectors")?.let {
-                appendLine("熱點: ${it.take(3).joinToString(", ")}")
+            appendLine("── 🌐 市場環境 ──")
+            scout.getResult<String>("marketDirection")?.let {
+                val dirEmoji = when (it) { "BULLISH" -> "🔴"; "BEARISH" -> "🟢"; else -> "🟡" }
+                appendLine("$dirEmoji 方向: $it")
             }
+            scout.getResult<List<String>>("hotSectors")?.let {
+                appendLine("熱點板塊: ${it.take(3).joinToString(", ")}")
+            }
+            appendLine()
         }
 
-        // 分析結論（來自 DeepAnalyst）
+        // 分析結論（來自 DeepAnalyst）— 結構化輸出
         if (analyst != null && !analyst.isFailed) {
-            appendLine("── 分析結論 ──")
-            analyst.getResult<Int>("score")?.let { appendLine("評分: $it/100") }
+            appendLine("── 📊 分析結論 ──")
+            analyst.getResult<Int>("score")?.let { appendLine("綜合評分: $it/100") }
             analyst.getResult<String>("recommendation")?.let { appendLine("建議: $it") }
-            analyst.getResult<Int>("chainScore")?.let { appendLine("產業鏈打分: $it") }
-            analyst.getResult<String>("riskLevel")?.let { appendLine("風控等級: $it") }
+
+            // 各維度結論
+            analyst.getResult<Int>("chainScore")?.let { cs ->
+                val verdict = if (cs >= 40) "✅ 通過" else "❌ 未達標"
+                appendLine("產業鏈打分: $cs/100 $verdict")
+            }
+            analyst.getResult<String>("riskLevel")?.let { rl ->
+                val emoji = when (rl) { "低" -> "🟢"; "中" -> "🟡"; else -> "🔴" }
+                appendLine("風控等級: $emoji $rl")
+            }
             analyst.getResult<String>("positionAdjust")?.let { appendLine("輿情倉位微調: $it") }
+
             @Suppress("UNCHECKED_CAST")
             (analyst.result["entryZones"] as? List<String>)?.let { zones ->
                 if (zones.isNotEmpty()) appendLine("低吸區間: ${zones.joinToString(" / ")}")
             }
             @Suppress("UNCHECKED_CAST")
             (analyst.result["riskFactors"] as? List<String>)?.let { factors ->
-                factors.take(3).forEach { appendLine("⚠️ $it") }
+                if (factors.isNotEmpty()) {
+                    appendLine("風險因素:")
+                    factors.take(3).forEach { appendLine("  ⚠️ $it") }
+                }
             }
-            analyst.getResult<String>("summary")?.let { appendLine(it) }
+
+            // 分析摘要（已結構化，不再原始轉發）
+            analyst.getResult<String>("summary")?.let { summary ->
+                if (summary.isNotBlank()) {
+                    appendLine()
+                    appendLine(summary)
+                }
+            }
+            appendLine()
         }
 
         // 風控意見（來自 Guardian）
         if (guardian != null && !guardian.isFailed) {
-            appendLine("── 風控意見 ──")
-            guardian.getResult<String>("positionAdvice")?.let { appendLine("倉位: $it") }
+            appendLine("── 🛡 風控意見 ──")
+            guardian.getResult<String>("positionAdvice")?.let { appendLine("倉位建議: $it") }
             guardian.getResult<List<String>>("riskWarnings")?.let { warnings ->
-                warnings.take(3).forEach { appendLine("⚠️ $it") }
+                if (warnings.isNotEmpty()) {
+                    warnings.take(3).forEach { appendLine("  ⚠️ $it") }
+                } else {
+                    appendLine("  ✅ 無重大風險警示")
+                }
             }
+            appendLine()
         }
 
         // 決策矩陣（V2 遷移：環境 × 利潤質量 × 估值）
@@ -420,6 +449,7 @@ class AgentOrchestrator(internal val appContext: Context) {
             appendLine("止損規則: ${decision.stopLossRule}")
             output.valuationWarning?.let { appendLine(it) }
             decision.riskWarning?.let { appendLine("⚠️ $it") }
+            appendLine()
         }
 
         // 降級標記

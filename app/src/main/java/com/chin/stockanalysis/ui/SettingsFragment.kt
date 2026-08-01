@@ -341,10 +341,7 @@ class SettingsFragment : Fragment() {
             setupPeriodRouteSwitch(swRouteMid, HoldingPeriod.MID)
             setupPeriodRouteSwitch(swRouteLong, HoldingPeriod.LONG)
 
-            // 通用 DAG 開關（適用於所有週期）
-            swDagPipeline.setOnCheckedChangeListener { _, isChecked ->
-                FeatureFlagManager.useDagPipeline = isChecked
-            }
+            // 通用 DAG 開關已移除（pipeline 已全面啟用）
         }
     }
 
@@ -369,7 +366,6 @@ class SettingsFragment : Fragment() {
             swChat.isChecked = FeatureFlagManager.chatRoute == AgentRoute.AGENT_FRAMEWORK
             swNewsMonitor.isChecked = FeatureFlagManager.newsMonitoringRoute == AgentRoute.AGENT_FRAMEWORK
             swRiskManagement.isChecked = FeatureFlagManager.riskManagementRoute == AgentRoute.AGENT_FRAMEWORK
-            swDagPipeline.isChecked = FeatureFlagManager.useDagPipeline
             // 週期路線開關
             swRouteUltraShort.isChecked = FeatureFlagManager.getRoute(HoldingPeriod.ULTRA_SHORT) == AgentRoute.AGENT_FRAMEWORK
             swRouteShort.isChecked = FeatureFlagManager.getRoute(HoldingPeriod.SHORT) == AgentRoute.AGENT_FRAMEWORK
@@ -422,6 +418,7 @@ class SettingsFragment : Fragment() {
         • BottomNavigationView + ViewPager2
         • OkHttp + org.json/Gson
         • MPAndroidChart
+        • DAG 拓撲引擎（Pipeline 並行調度）
         
         © 2026 StockAnalysis Team
     """.trimIndent()

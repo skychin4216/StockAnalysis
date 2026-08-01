@@ -2,6 +2,7 @@ package com.chin.stockanalysis.ui
 
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
+import com.chin.stockanalysis.agent.stock.StockAnalysisAgent
 
 /**
  * 統一的股票詳情頁跳轉導航器
@@ -29,7 +30,7 @@ object StockDetailNavigator {
         autoExpandAi: Boolean = true
     ) {
         val detail = StockDetailFragment.newInstance(
-            stockCode = stockCode,
+            stockCode = StockAnalysisAgent.normalizeStockCode(stockCode),
             stockName = stockName,
             price = price,
             changePct = changePct,
@@ -56,7 +57,7 @@ object StockDetailNavigator {
         autoExpandAi: Boolean = true
     ) {
         val detail = StockDetailFragment.newInstance(
-            stockCode = stockCode,
+            stockCode = StockAnalysisAgent.normalizeStockCode(stockCode),
             stockName = stockName,
             price = price,
             changePct = changePct,

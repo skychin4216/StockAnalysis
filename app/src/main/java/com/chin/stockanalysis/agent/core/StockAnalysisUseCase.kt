@@ -141,15 +141,52 @@ private suspend fun AgentOrchestrator.runQuickAnalysis(
 
     if (analysis != null && analysis.success) {
         sb.appendLine("## 📊 AI 綜合分析")
-        sb.appendLine("評分: ${analysis.overallScore}/100 | 建議: ${analysis.recommendation} | 置信度: ${analysis.confidence}")
-        sb.appendLine("技術面: ${analysis.technicalScore}/100 | 基本面: ${analysis.fundamentalScore}/100 | 資金面: ${analysis.fundFlowScore}/100")
-        if (analysis.targetPrice.isNotBlank()) sb.appendLine("目標價: ${analysis.targetPrice}")
-        if (analysis.stopLoss.isNotBlank()) sb.appendLine("止損位: ${analysis.stopLoss}")
-        if (analysis.riskFactors.isNotEmpty()) sb.appendLine("風險: ${analysis.riskFactors.joinToString("、")}")
-        if (analysis.reasoning.isNotBlank()) sb.appendLine("\n${analysis.reasoning}")
+        sb.appendLine("綜合評分: ${analysis.overallScore}/100 | 建議: ${analysis.recommendation} | 置信度: ${analysis.confidence}")
+        sb.appendLine()
+
+        // 各維度結構化結論
+        sb.appendLine("### 📈 技術面: ${analysis.technicalScore}/100")
+        val techVerdict = when {
+            analysis.technicalScore >= 70 -> "技術面偏多，形態較好"
+            analysis.technicalScore >= 50 -> "技術面中性，觀望為主"
+            else -> "技術面偏空，謹慎操作"
+        }
+        sb.appendLine("結論: $techVerdict")
+        sb.appendLine()
+
+        sb.appendLine("### 💼 基本面: ${analysis.fundamentalScore}/100")
+        val fundVerdict = when {
+            analysis.fundamentalScore >= 70 -> "基本面扎實，估值合理"
+            analysis.fundamentalScore >= 50 -> "基本面一般，需關注業績變化"
+            else -> "基本面較弱，注意風險"
+        }
+        sb.appendLine("結論: $fundVerdict")
+        sb.appendLine()
+
+        sb.appendLine("### 💰 資金面: ${analysis.fundFlowScore}/100")
+        val flowVerdict = when {
+            analysis.fundFlowScore >= 70 -> "資金持續流入，主力看好"
+            analysis.fundFlowScore >= 50 -> "資金流向中性"
+            else -> "資金流出，注意主力動向"
+        }
+        sb.appendLine("結論: $flowVerdict")
+        sb.appendLine()
+
+        if (analysis.targetPrice.isNotBlank()) sb.appendLine("### 🎯 目標價: ${analysis.targetPrice}")
+        if (analysis.stopLoss.isNotBlank()) sb.appendLine("### 🛑 止損位: ${analysis.stopLoss}")
+        if (analysis.riskFactors.isNotEmpty()) {
+            sb.appendLine()
+            sb.appendLine("### ⚠️ 風險因素")
+            analysis.riskFactors.forEach { sb.appendLine("  • $it") }
+        }
+        if (analysis.reasoning.isNotBlank()) {
+            sb.appendLine()
+            sb.appendLine("### 📝 詳細分析")
+            sb.appendLine(analysis.reasoning)
+        }
         sb.appendLine()
     } else {
-        sb.appendLine("AI 綜合分析：失敗或超時")
+        sb.appendLine("⚠️ AI 綜合分析：失敗或超時")
     }
     sb.appendLine("## 🛡 風控評估")
     sb.appendLine(if (risk != null && risk.success) risk.assessment else "風控評估：失敗或超時")
@@ -381,18 +418,19 @@ private fun buildUnifiedSummary(
     // 市場環境（Scout 或內聯 MarketAnalyzer）
     val direction = scout?.getResult<String>("marketDirection")
     if (direction != null) {
-        appendLine("── 市場環境 ──")
-        appendLine("方向: $direction")
-        scout.getResult<List<String>>("hotSectors")?.let { appendLine("熱點: ${it.take(3).joinToString(", ")}") }
+        val dirEmoji = when (direction) { "BULLISH" -> "🔴"; "BEARISH" -> "🟢"; else -> "🟡" }
+        appendLine("### 🌐 大盤環境")
+        appendLine("$dirEmoji 方向: $direction")
+        scout.getResult<List<String>>("hotSectors")?.let { appendLine("熱點板塊: ${it.take(3).joinToString(", ")}") }
         appendLine()
     }
 
-    // DeepAnalyst 報告（已含各子 Agent 可讀分析）
+    // DeepAnalyst 報告（已由 DeepAnalystEngine.buildReport 結構化，含各環節結論）
     if (report.isNotBlank()) { appendLine(report); appendLine() }
 
     // 決策矩陣
     decision?.let { d ->
-        appendLine("── 🎯 決策矩陣 ──")
+        appendLine("### 🎯 決策矩陣")
         appendLine("操作: ${d.decision.action} | 建議倉位: ${d.decision.positionPercent}%")
         appendLine("估值: PE ${d.peBand} | 策略: ${d.decision.strategy}")
         d.decision.tTradingAdvice?.let { appendLine("做T建議: $it") }
@@ -404,12 +442,24 @@ private fun buildUnifiedSummary(
 
     // 風控意見（Guardian，僅完整編排）
     if (guardian != null && !guardian.isFailed) {
-        appendLine("── 風控意見 ──")
-        guardian.getResult<String>("positionAdvice")?.let { appendLine("倉位: $it") }
-        guardian.getResult<List<String>>("riskWarnings")?.let { it.take(3).forEach { w -> appendLine("⚠️ $w") } }
+        appendLine("### 🛡 風控意見")
+        guardian.getResult<String>("positionAdvice")?.let { appendLine("倉位建議: $it") }
+        guardian.getResult<List<String>>("riskWarnings")?.let { warnings ->
+            if (warnings.isNotEmpty()) {
+                warnings.take(3).forEach { appendLine("  ⚠️ $it") }
+            } else {
+                appendLine("  ✅ 無重大風險警示")
+            }
+        }
         appendLine()
     }
 
-    entryZones?.takeIf { it.isNotEmpty() }?.let { appendLine("低吸區間: ${it.joinToString(" / ")}") }
-    riskFactors?.takeIf { it.isNotEmpty() }?.let { it.take(3).forEach { f -> appendLine("⚠️ $f") } }
+    // 交易區間與風險
+    if (entryZones != null && entryZones.isNotEmpty()) {
+        appendLine("### 💰 低吸區間: ${entryZones.joinToString(" / ")}")
+    }
+    if (riskFactors != null && riskFactors.isNotEmpty()) {
+        appendLine("### ⚠️ 風險因素")
+        riskFactors.take(3).forEach { appendLine("  • $it") }
+    }
 }

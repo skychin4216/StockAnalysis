@@ -517,7 +517,9 @@ class WatchlistGroupFragment : Fragment() {
             .setView(layout)
             .setNegativeButton("取消", null)
             .setPositiveButton("添加") { _, _ ->
-                val code = codeInput.text.toString().trim()
+                val code = com.chin.stockanalysis.agent.stock.StockAnalysisAgent.normalizeStockCode(
+                    codeInput.text.toString().trim()
+                )
                 val name = nameInput.text.toString().trim()
                 if (code.isNotBlank() && name.isNotBlank()) {
                     val idx = groups.indexOf(group)

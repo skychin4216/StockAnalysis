@@ -2,6 +2,7 @@ package com.chin.stockanalysis.strategy.data
 
 import android.content.Context
 import android.util.Log
+import com.chin.stockanalysis.agent.stock.StockAnalysisAgent
 import com.chin.stockanalysis.config.DataConfig
 import com.chin.stockanalysis.stock.data.HttpClientProvider
 import com.chin.stockanalysis.stock.database.StockBasicEntity
@@ -500,14 +501,15 @@ class HistoricalDataFetcher(private val context: Context) {
     }
 
     internal suspend fun fetchOneStock(code: String, startDate: LocalDate, endDate: LocalDate): Pair<List<DailySnapshotEntity>, String> {
-        val emResults = fetchFromEastMoney(code, startDate, endDate)
+        val normalizedCode = StockAnalysisAgent.normalizeStockCode(code)
+        val emResults = fetchFromEastMoney(normalizedCode, startDate, endDate)
         if (emResults != null) return emResults
-        val sinaResults = fetchFromSina(code, startDate, endDate)
+        val sinaResults = fetchFromSina(normalizedCode, startDate, endDate)
         if (sinaResults.isNotEmpty()) {
             val name = sinaResults.firstOrNull()?.name ?: ""
             return Pair(sinaResults, name)
         }
-        Log.w(TAG, "  fetchOneStock $code: both sources failed")
+        Log.w(TAG, "  fetchOneStock $normalizedCode: both sources failed")
         return Pair(emptyList(), "")
     }
 

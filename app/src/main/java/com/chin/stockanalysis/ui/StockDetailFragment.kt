@@ -25,6 +25,7 @@ import com.chin.stockanalysis.agent.core.AgentOrchestrator
 import com.chin.stockanalysis.agent.core.AnalysisMode
 import com.chin.stockanalysis.agent.core.AnalysisResult
 import com.chin.stockanalysis.agent.core.analyzeStock
+import com.chin.stockanalysis.agent.stock.StockAnalysisAgent
 import com.chin.stockanalysis.config.FeatureFlagManager
 import com.chin.stockanalysis.strategy.analysis.CandlePatternDetector
 import com.chin.stockanalysis.strategy.data.InstitutionalRatingProvider
@@ -115,7 +116,7 @@ class StockDetailFragment : Fragment() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         arguments?.let {
-            stockCode = it.getString(ARG_STOCK_CODE, "")
+            stockCode = StockAnalysisAgent.normalizeStockCode(it.getString(ARG_STOCK_CODE, ""))
             stockName = it.getString(ARG_STOCK_NAME, "")
             initialPrice = it.getDouble(ARG_STOCK_PRICE, 0.0)
             initialChangePct = it.getDouble(ARG_CHANGE_PCT, 0.0)
@@ -1277,8 +1278,10 @@ class StockDetailFragment : Fragment() {
 
             withContext(Dispatchers.Main) {
                 aiResultContainer.removeAllViews()
+                // 清理 summaryText 中可能殘留的 JSON 碎片
+                val cleanedSummary = cleanJsonArtifacts(result.summaryText)
                 aiResultContainer.addView(TextView(requireContext()).apply {
-                    text = result.summaryText
+                    text = cleanedSummary
                     textSize = if (result.mode == AnalysisMode.DEEP) 9f else 10f
                     setTextColor(Color.parseColor("#1B5E20"))
                     setLineSpacing(2f, 1f)
@@ -1357,7 +1360,7 @@ class StockDetailFragment : Fragment() {
                 // 同步更新 AI 綜合分析區塊
                 root.findViewWithTag<TextView>("aiQuickResult")?.let { tv ->
                     tv.visibility = View.VISIBLE
-                    tv.text = result.summaryText
+                    tv.text = cleanedSummary
                 }
                 root.findViewWithTag<TextView>("aiQuickLoading")?.visibility = View.GONE
             }
@@ -1685,11 +1688,15 @@ class StockDetailFragment : Fragment() {
                             if (result.overallScore > 0) {
                                 appendLine("📊 綜合評分: ${result.overallScore}/100")
                                 appendLine("建議: ${result.recommendation} | 置信度: ${result.confidence}")
-                                appendLine("技術面: ${result.technicalScore}/100 | 基本面: ${result.fundamentalScore}/100 | 資金面: ${result.fundFlowScore}/100")
+                                appendLine()
+                                // 各維度結構化結論
+                                appendLine("📈 技術面: ${result.technicalScore}/100 — ${scoreVerdict(result.technicalScore)}")
+                                appendLine("💼 基本面: ${result.fundamentalScore}/100 — ${scoreVerdict(result.fundamentalScore)}")
+                                appendLine("💰 資金面: ${result.fundFlowScore}/100 — ${scoreVerdict(result.fundFlowScore)}")
                                 appendLine()
                             }
-                            if (result.targetPrice.isNotBlank()) appendLine("目標價: ${result.targetPrice}")
-                            if (result.stopLoss.isNotBlank()) appendLine("止損位: ${result.stopLoss}")
+                            if (result.targetPrice.isNotBlank()) appendLine("🎯 目標價: ${result.targetPrice}")
+                            if (result.stopLoss.isNotBlank()) appendLine("🛑 止損位: ${result.stopLoss}")
                             if (result.riskFactors.isNotEmpty()) {
                                 appendLine()
                                 appendLine("⚠️ 風險因素:")
@@ -1697,10 +1704,12 @@ class StockDetailFragment : Fragment() {
                             }
                             if (result.reasoning.isNotBlank()) {
                                 appendLine()
-                                appendLine(result.reasoning)
+                                // 清理 reasoning 中可能殘留的 JSON 碎片
+                                val cleanedReasoning = cleanJsonArtifacts(result.reasoning)
+                                appendLine(cleanedReasoning)
                             }
                         } else {
-                            append("⚠️ AI 分析載入失敗: ${result.rawOutput}")
+                            append("⚠️ AI 分析載入失敗: ${cleanJsonArtifacts(result.rawOutput)}")
                         }
                     }
                     resultLabel.text = displayText
@@ -1744,5 +1753,30 @@ class StockDetailFragment : Fragment() {
             setPadding(10, 3, 10, 3)
             (layoutParams as? LayoutParams)?.setMargins(0, 0, 8, 0)
         }
+    }
+
+    /** 根據評分給出一句話結論 */
+    private fun scoreVerdict(score: Int): String = when {
+        score >= 70 -> "偏多，表現較好"
+        score >= 50 -> "中性，觀望為主"
+        score >= 30 -> "偏弱，注意風險"
+        else -> "較差，謹慎操作"
+    }
+
+    /** 清理文本中殘留的 JSON 碎片（花括號、鍵值對等），保留可讀分析文字 */
+    private fun cleanJsonArtifacts(text: String): String {
+        return text
+            .replace(Regex("```json[\\s\\S]*?```"), "")
+            .replace(Regex("\\{\\s*\"[^\"]*\"\\s*:[^}]*\\}"), "")
+            .lines()
+            .filter { line ->
+                val trimmed = line.trim()
+                trimmed.isNotBlank() &&
+                    !trimmed.matches(Regex("^[{}\\[\\],:]\\s*$")) &&
+                    !trimmed.startsWith("\"") &&
+                    !trimmed.matches(Regex("^\\d+\\s*[,:]?$"))
+            }
+            .joinToString("\n")
+            .trim()
     }
 }

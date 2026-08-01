@@ -791,11 +791,20 @@ class ChatTabFragment : Fragment() {
 
                 if (isAdded) requireActivity().runOnUiThread {
                     if (result.success) {
-                        // 組合最終文本：用戶問題 + 分析結果
+                        // 組合最終文本：用戶問題 + 分析結果（清理可能殘留的 JSON 碎片）
+                        val cleanedSummary = result.summaryText
+                            .replace(Regex("```json[\\s\\S]*?```"), "")
+                            .lines()
+                            .filter { line ->
+                                val t = line.trim()
+                                t.isNotBlank() && !t.matches(Regex("^[{}\\[\\],:]\\s*$"))
+                            }
+                            .joinToString("\n")
+                            .trim()
                         val fullText = buildString {
                             appendLine("**用戶**：$userText")
                             appendLine()
-                            append(result.summaryText)
+                            append(cleanedSummary)
                         }
                         completeStreamingMessage(loadingIndex, fullText)
                     } else {

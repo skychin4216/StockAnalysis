@@ -938,7 +938,9 @@ abstract class QuantFragmentBase : Fragment() {
             .setTitle("➕ 添加真實持倉")
             .setView(container)
             .setPositiveButton("保存") { _, _ ->
-                val code = codeEt.text.toString().trim()
+                val code = com.chin.stockanalysis.agent.stock.StockAnalysisAgent.normalizeStockCode(
+                    codeEt.text.toString().trim()
+                )
                 val name = nameEt.text.toString().trim()
                 val qty = qtyEt.text.toString().trim().toIntOrNull() ?: 0
                 val price = priceEt.text.toString().trim().toDoubleOrNull() ?: 0.0
@@ -1482,10 +1484,15 @@ abstract class QuantFragmentBase : Fragment() {
                 val today = java.time.LocalDate.now().toString()
                 val dailySummary = tEngine.getDailySummary(today, periodType)
 
+                // 在 IO 線程獲取市場報告（suspend function）
+                val marketReport = try {
+                    com.chin.stockanalysis.strategy.market.MarketAnalyzer.analyze(requireContext(), emptyList())
+                } catch (_: Exception) { null }
+
                 withContext(Dispatchers.Main) {
                     // 更新做T按鈕顯示待處理推薦數
                     tTradeBtn.text = if (recStats.todayPending > 0) "做T(${recStats.todayPending})" else "做T"
-                    showTTradeDialog(allSignals, stats, periodType, todayRecommendations, history, recStats, dailySummary)
+                    showTTradeDialog(allSignals, stats, periodType, todayRecommendations, history, recStats, dailySummary, marketReport)
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -1503,7 +1510,8 @@ abstract class QuantFragmentBase : Fragment() {
         todayRecommendations: List<TTradeRecommendationEntity>,
         history: List<TTradeRecommendationEntity>,
         recStats: RecommendationStats,
-        dailySummary: DailyTSummary
+        dailySummary: DailyTSummary,
+        marketReport: com.chin.stockanalysis.strategy.market.MarketAnalyzer.MarketReport? = null
     ) {
         val dialog = android.app.Dialog(requireContext())
         dialog.setTitle("做T面板 — $periodType")
@@ -1511,6 +1519,50 @@ abstract class QuantFragmentBase : Fragment() {
         val container = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(16, 16, 16, 16)
+        }
+
+        // ── 市場環境區（外盤 + 大盤方向） ──
+        try {
+            if (marketReport != null) {
+            val trend = marketReport.trend
+            val overseas = marketReport.overseas
+            val trendLabel = when (trend.direction) {
+                "BULLISH" -> "多頭 ↑"
+                "BEARISH" -> "空頭 ↓"
+                else -> "震盪 ↔"
+            }
+            val trendColor = when (trend.direction) {
+                "BULLISH" -> "#2E7D32"
+                "BEARISH" -> "#C62828"
+                else -> "#FF9800"
+            }
+            val overseasLabel = when (overseas?.direction) {
+                "BULLISH" -> "偏多 ↑"
+                "BEARISH" -> "偏空 ↓"
+                else -> "中性"
+            }
+            val overseasColor = when (overseas?.direction) {
+                "BULLISH" -> "#2E7D32"
+                "BEARISH" -> "#C62828"
+                else -> "#666666"
+            }
+            val weightedChange = overseas?.weightedChange?.let { "%.2f%%".format(it) } ?: "-"
+            container.addView(TextView(requireContext()).apply {
+                text = "大盤: $trendLabel (強度${trend.strength}) | 外盤: $overseasLabel ($weightedChange)"
+                textSize = 11f
+                setTextColor(Color.parseColor(trendColor))
+                setPadding(0, 0, 0, 2)
+            })
+            if (!overseas?.impactHint.isNullOrEmpty()) {
+                container.addView(TextView(requireContext()).apply {
+                    text = "外盤影響: ${overseas.impactHint}"
+                    textSize = 10f; setTextColor(Color.parseColor(overseasColor))
+                    setPadding(0, 0, 0, 4)
+                })
+            }
+            }
+        } catch (_: Exception) {
+            // 市場數據加載失敗時不阻塞 UI
         }
 
         // ── 做T統計區 ──

@@ -434,40 +434,36 @@ object AppBackgroundRunner {
             try { tEngine.markDayEnd(today) } catch (_: Exception) {}
         }
 
-        // 3. 收集所有持倉（模擬 + 真實）
-        val allSignals = mutableListOf<com.chin.stockanalysis.strategy.trade.TTradeSignal>()
+        // 3. 透過做T Pipeline 進行多維度分析（日K機構意圖 + 外盤情緒 + 板塊新聞）
         val periodTypes = listOf("UltraShortQuant", "ShortTermQuant", "MidTermQuant", "LongTermQuant")
+        var totalSaved = 0
+        var totalSignals = 0
 
-        // 3a. 模擬持倉（按週期）
-        val allOrders = try { db.strategyTradeOrderDao().getRecent(500) } catch (_: Exception) { emptyList() }
         for (periodType in periodTypes) {
-            val holdings = allOrders.filter { (it.status == "BUYING" || it.status == "PENDING") && it.orderType == periodType }
-            for (order in holdings) {
-                try {
-                    if (order.quantity <= 0) continue
-                    val signals = tEngine.generateSignals(order.stockCode, order.quantity, periodType)
-                    allSignals.addAll(signals)
-                } catch (_: Exception) {}
+            try {
+                val result = com.chin.stockanalysis.strategy.topology.xml.DagTradeExecutor
+                    .executeTTradePipeline(context, periodType)
+                totalSignals += result.signalsCount
+                totalSaved += result.savedCount
+            } catch (e: Exception) {
+                Log.w(TAG, "做T Pipeline[$periodType] 失敗: ${e.message}")
             }
         }
 
-        // 3b. 真實持倉
-        val positions = try { db.realPositionDao().getAllActive() } catch (_: Exception) { emptyList() }
-        for (pos in positions) {
-            try {
-                if (pos.quantity <= 0) continue
-                val signals = tEngine.generateSignals(pos.stockCode, pos.quantity, "RealPosition")
-                allSignals.addAll(signals)
-            } catch (_: Exception) {}
+        // 4. 真實持倉也走 Pipeline（periodType = RealPosition）
+        try {
+            val positions = db.realPositionDao().getAllActive()
+            if (positions.isNotEmpty()) {
+                val result = com.chin.stockanalysis.strategy.topology.xml.DagTradeExecutor
+                    .executeTTradePipeline(context, "RealPosition")
+                totalSignals += result.signalsCount
+                totalSaved += result.savedCount
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "做T Pipeline[RealPosition] 失敗: ${e.message}")
         }
 
-        // 4. 保存推薦（自動去重，信號已帶 periodType）
-        var totalSaved = 0
-        if (allSignals.isNotEmpty()) {
-            totalSaved = tEngine.saveRecommendations(allSignals, "SIMULATED")
-        }
-
-        // 5. 跟蹤已有推薦的價格軌跡
+        // 5. 跟蹤已有推薦的價格軌跡（使用 daily snapshot 收盤價）
         val currentPrices = mutableMapOf<String, Double>()
         val snapshots = try { db.dailySnapshotDao().getByDate(today) } catch (_: Exception) { emptyList() }
         for (snap in snapshots) {
@@ -477,9 +473,8 @@ object AppBackgroundRunner {
             try { tEngine.trackOutcomeForRecommendations(currentPrices) } catch (_: Exception) {}
         }
 
-        if (totalSaved > 0) {
-            val totalHoldings = periodTypes.sumOf { pt -> allOrders.count { (it.status == "BUYING" || it.status == "PENDING") && it.orderType == pt } }
-            Log.i(TAG, "做T監控: 掃描 ${totalHoldings} 只模擬持倉 + ${positions.size} 只真實持倉，新增 $totalSaved 條推薦")
+        if (totalSaved > 0 || totalSignals > 0) {
+            Log.i(TAG, "做T Pipeline 監控: 生成 $totalSignals 條信號，保存 $totalSaved 條推薦")
         }
     }
 }

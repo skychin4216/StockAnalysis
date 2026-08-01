@@ -245,24 +245,6 @@
             android:textSize="13sp"
             android:layout_marginBottom="24dp" />
 
-        <!-- 臨時開關（後期刪除） -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="DAG Pipeline 設置"
-            android:textSize="13sp"
-            android:textColor="@android:color/darker_gray"
-            android:layout_marginTop="8dp"
-            android:layout_marginBottom="4dp" />
-
-        <Switch
-            android:id="@+id/swDagPipeline"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:text="DAG Pipeline（所有週期）"
-            android:textSize="14sp"
-            android:layout_marginBottom="24dp" />
-
         <!-- About -->
         <TextView
             android:layout_width="match_parent"

@@ -488,8 +488,8 @@ class DeepAnalystEngine(
         finalScore: Int,
         recommendation: String
     ): String = buildString {
-        appendLine("## 🧠 深度分析報告")
-        appendLine("標的: $target | 綜合評分: $finalScore/100 | 建議: $recommendation")
+        appendLine("## 🧠 深度分析報告：$target")
+        appendLine("綜合評分: $finalScore/100 | 建議: $recommendation")
         appendLine()
 
         // 基礎行情
@@ -501,20 +501,32 @@ class DeepAnalystEngine(
             appendLine()
         }
 
-        // 各子 Agent 分析（按定義順序輸出）
+        // ── 各子 Agent 結構化結論（使用 formatReadable 提取清晰結論，非原始 JSON） ──
+        val sectionConclusions = mutableListOf<String>()
         for (def in agents) {
-            val analysis = analyses[def.agentId] ?: continue
+            val rawAnalysis = analyses[def.agentId] ?: continue
             appendLine()
             appendLine("### ${def.displayName}")
-            // 截取有效內容（去掉 JSON 區塊，保留分析文本）
-            val textPart = analysis.replace(Regex("```json[\\s\\S]*?```"), "").trim()
-            appendLine(textPart.take(800))
+            // 使用 StructuredOutputParser.formatReadable 產生結構化結論
+            val readable = StructuredOutputParser.formatReadable(def.agentId, rawAnalysis)
+            appendLine(readable)
+            // 收集關鍵結論供綜合摘要使用
+            val conclusionLine = extractConclusion(def.agentId, readable)
+            if (conclusionLine.isNotBlank()) sectionConclusions.add("${def.displayName}: $conclusionLine")
+        }
+
+        // ── 綜合摘要（各環節一句話結論） ──
+        if (sectionConclusions.isNotEmpty()) {
+            appendLine()
+            appendLine("### 📋 各環節結論摘要")
+            sectionConclusions.forEach { appendLine("• $it") }
         }
 
         // 產業鏈打分摘要
         chainScore?.let { cs ->
             appendLine()
-            appendLine("### 📈 產業鏈打分: ${cs.totalScore}/100（壁壘: ${cs.barrierLevel}）")
+            val verdict = if (cs.passed) "✅ 通過" else "❌ 未達標"
+            appendLine("### 📈 產業鏈打分: ${cs.totalScore}/100（壁壘: ${cs.barrierLevel}）$verdict")
             if (cs.overseasBonus > 0) appendLine("海外供應鏈加分: +${cs.overseasBonus}")
             if (cs.foreignRatingBonus > 0) appendLine("外資評級加分: +${cs.foreignRatingBonus}")
         }
@@ -522,8 +534,13 @@ class DeepAnalystEngine(
         // 風控終審摘要
         riskResult?.let { rr ->
             appendLine()
-            appendLine("### 🛡 風控終審: ${rr.riskLevel}風險")
-            rr.deductions.forEach { appendLine("- ${it.item}: ${it.description} (-${it.score})") }
+            val riskEmoji = when (rr.riskLevel) { "低" -> "🟢"; "中" -> "🟡"; else -> "🔴" }
+            appendLine("### 🛡 風控終審: $riskEmoji ${rr.riskLevel}風險")
+            if (rr.deductions.isNotEmpty()) {
+                rr.deductions.forEach { appendLine("  • ${it.item}: ${it.description} (-${it.score})") }
+            } else {
+                appendLine("  • 無重大風險扣分項")
+            }
             if (rr.adjustedScore > 0) appendLine("對沖後分數: ${rr.adjustedScore}")
         }
 
@@ -544,5 +561,15 @@ class DeepAnalystEngine(
 
         appendLine()
         appendLine("⚠️ 所有內容僅為數據復盤研究，不構成任何投資建議")
+    }
+
+    /**
+     * 從子 Agent 的可讀輸出中提取一句話結論
+     */
+    private fun extractConclusion(agentId: String, readable: String): String {
+        // 取第一行非空內容作為結論摘要
+        val firstLine = readable.lines().firstOrNull { it.isNotBlank() } ?: return ""
+        // 截斷過長內容
+        return if (firstLine.length > 80) firstLine.take(77) + "..." else firstLine
     }
 }

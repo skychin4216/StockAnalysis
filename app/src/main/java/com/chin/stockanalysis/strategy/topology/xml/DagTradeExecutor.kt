@@ -438,4 +438,96 @@ object DagTradeExecutor {
         }
         appendLine("═══════════════════════════")
     }
+
+    // ═══════════════════════════════════════════════════
+    //  做T Pipeline 執行器
+    // ═══════════════════════════════════════════════════
+
+    /**
+     * 做T Pipeline 執行結果
+     */
+    data class TTradePipelineResult(
+        val success: Boolean,
+        val signalsCount: Int,
+        val savedCount: Int,
+        val marketSummary: String,
+        val overseasSummary: String,
+        val elapsedMs: Long,
+        val errors: Map<String, String>
+    )
+
+    /**
+     * 執行做T決策 Pipeline。
+     *
+     * 對指定週期的持倉進行多維度交叉驗證（日K機構意圖 + 外盤情緒 + 板塊新聞），
+     * 輸出帶置信度的做T/反T建議。
+     *
+     * @param context      Android Context
+     * @param periodType   週期類型（如 "UltraShortQuant"、"MidTermQuant"）
+     * @return Pipeline 執行結果
+     */
+    suspend fun executeTTradePipeline(
+        context: Context,
+        periodType: String
+    ): TTradePipelineResult {
+        val totalStart = System.currentTimeMillis()
+
+        try {
+            // 1. 初始化 UseCaseLoader（做T不需要策略列表，傳空）
+            UseCaseLoader.init(context, emptyList())
+
+            // 2. 執行 Pipeline
+            val result = UseCaseLoader.run("t_trade", java.time.LocalDate.now().toString(), null)
+            val elapsed = System.currentTimeMillis() - totalStart
+
+            if (!result.success) {
+                return TTradePipelineResult(
+                    success = false, signalsCount = 0, savedCount = 0,
+                    marketSummary = "", overseasSummary = "",
+                    elapsedMs = elapsed, errors = result.errors
+                )
+            }
+
+            // 3. 從結果中提取做T信號
+            var signalsCount = 0
+            var savedCount = 0
+            var marketSummary = ""
+            var overseasSummary = ""
+
+            for ((_, pipelineResult) in result.pipelineResults) {
+                val synthOutput = pipelineResult.stageResults["t_synth"]?.output
+                if (synthOutput is com.chin.stockanalysis.strategy.topology.nodes.TSynthesizeResult) {
+                    signalsCount = synthOutput.signals.size
+                    marketSummary = synthOutput.marketSummary
+                    overseasSummary = synthOutput.overseasSummary
+                }
+
+                val saveOutput = pipelineResult.stageResults["t_save"]?.output
+                if (saveOutput is com.chin.stockanalysis.strategy.topology.nodes.TRecommendSaveResult) {
+                    savedCount = saveOutput.saved
+                }
+            }
+
+            Log.i(TAG, "[t_trade/$periodType] 完成: $signalsCount 條信號, 保存 $savedCount 條, ${elapsed}ms, $marketSummary, $overseasSummary")
+
+            return TTradePipelineResult(
+                success = true,
+                signalsCount = signalsCount,
+                savedCount = savedCount,
+                marketSummary = marketSummary,
+                overseasSummary = overseasSummary,
+                elapsedMs = elapsed,
+                errors = result.errors
+            )
+        } catch (e: Exception) {
+            val elapsed = System.currentTimeMillis() - totalStart
+            Log.e(TAG, "[t_trade/$periodType] Pipeline 執行失敗: ${e.message}")
+            return TTradePipelineResult(
+                success = false, signalsCount = 0, savedCount = 0,
+                marketSummary = "", overseasSummary = "",
+                elapsedMs = elapsed,
+                errors = mapOf("pipeline" to (e.message ?: "unknown"))
+            )
+        }
+    }
 }
