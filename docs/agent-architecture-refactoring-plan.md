@@ -623,7 +623,7 @@ DAG Pipeline 與 Hardcode 路徑目前**不等價**。Hardcode 路徑包含若�
 
 ## 十二、當前進度與剩餘計劃
 
-> 更新日期：2026-07-30
+> 更新日期：2026-08-01
 
 ### 12.1 已完成
 
@@ -642,6 +642,7 @@ DAG Pipeline 與 Hardcode 路徑目前**不等價**。Hardcode 路徑包含若�
 | Step 4c：刪除舊編排層 | ✅ | 已刪：UnifiedAgentRunner / AgentPipelineOrchestrator / V2AgentRunner / DataFeeder / PipelineStep / analytics/CapitalFlowData |
 | PipelineProgressView 解耦 | ✅ | `agent/pipeline/ui/PipelineProgressView.kt`（改用 AnalysisStep/AnalysisResult） |
 | StructuredOutputParser.formatReadable | ✅ | `agent/pipeline/StructuredOutputParser.kt`（可讀摘要渲染） |
+| 做T系統增強（v5.1） | ✅ | `TTradeModels.kt`（新增 period_type + 跟蹤字段）、`TTradeEngine.kt`（結果跟蹤 + 收盤統計）、`AppBackgroundRunner.kt`（全週期監控）、`QuantFragmentBase.kt`（虛擬成功率 UI） |
 
 ### 12.2 剩餘計劃
 

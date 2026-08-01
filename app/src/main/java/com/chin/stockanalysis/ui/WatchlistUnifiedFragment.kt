@@ -637,92 +637,35 @@ class WatchlistUnifiedFragment : Fragment() {
     }
 
     // ═══════════════════════════════════════
-    // 趨勢圖片展示（從 assets/trend_images 加載）
+    // 趨勢圖譜展示（WebView 加載 SVG 圖譜）
     // ═══════════════════════════════════════
 
     private fun renderTrendImages() {
         listContainer.removeAllViews()
 
         val ctx = requireContext()
-        val assets = ctx.assets
-        val imageNames = try {
-            assets.list("trend_images")?.filter { it.endsWith(".jpg") || it.endsWith(".png") } ?: emptyList()
-        } catch (e: Exception) {
-            emptyList()
+        val webView = android.webkit.WebView(ctx).apply {
+            settings.javaScriptEnabled = true
+            settings.loadWithOverviewMode = true
+            settings.useWideViewPort = true
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT
+            )
         }
 
-        if (imageNames.isEmpty()) {
+        try {
+            val html = ctx.assets.open("trend_charts/index.html").bufferedReader().use { it.readText() }
+            webView.loadDataWithBaseURL("file:///android_asset/trend_charts/", html, "text/html", "UTF-8", null)
+        } catch (e: Exception) {
             listContainer.addView(TextView(ctx).apply {
-                text = "暫無趨勢圖片\n請將圖片放入 assets/trend_images 目錄"
+                text = "趨勢圖譜加載失敗: ${e.message}"
                 textSize = 14f; setTextColor(Color.parseColor("#999999"))
                 gravity = Gravity.CENTER; setPadding(0, 48, 0, 48)
             })
             return
         }
 
-        // 網格布局：2列
-        val grid = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
-        var row: LinearLayout? = null
-
-        imageNames.forEachIndexed { index, name ->
-            if (index % 2 == 0) {
-                row = LinearLayout(ctx).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    layoutParams = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    )
-                }
-                grid.addView(row)
-            }
-
-            val iv = ImageView(ctx).apply {
-                layoutParams = LinearLayout.LayoutParams(0, 400, 1f).apply {
-                    setMargins(4, 4, 4, 4)
-                }
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                setBackgroundColor(Color.parseColor("#F5F5F5"))
-                setPadding(4, 4, 4, 4)
-            }
-
-            // 異步加載圖片
-            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-                try {
-                    val bmp = android.graphics.BitmapFactory.decodeStream(
-                        assets.open("trend_images/$name")
-                    )
-                    withContext(Dispatchers.Main) {
-                        iv.setImageBitmap(bmp)
-                    }
-                } catch (_: Exception) {}
-            }
-
-            // 點擊圖片全屏預覽
-            iv.setOnClickListener {
-                showFullScreenImage(name)
-            }
-
-            row?.addView(iv)
-        }
-
-        listContainer.addView(grid)
-    }
-
-    private fun showFullScreenImage(imageName: String) {
-        val dialog = android.app.Dialog(requireContext(), android.R.style.Theme_Black_NoTitleBar_Fullscreen)
-        val iv = ImageView(requireContext()).apply {
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            setOnClickListener { dialog.dismiss() }
-        }
-        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val bmp = requireContext().assets.open("trend_images/$imageName").use {
-                    android.graphics.BitmapFactory.decodeStream(it)
-                }
-                withContext(Dispatchers.Main) { iv.setImageBitmap(bmp) }
-            } catch (_: Exception) {}
-        }
-        dialog.setContentView(iv)
-        dialog.show()
+        listContainer.addView(webView)
     }
 }

@@ -1,7 +1,7 @@
 # 策略體系優化計劃 v1.0
 
 > 日期：2026-07-28
-> 狀態：實施中
+> 狀態：✅ 已完成（2026-08-01）
 
 ## 一、修復現有策略缺陷
 
@@ -246,3 +246,69 @@
 | 基礎設施 | 12 | 0 | 0 |
 | 文檔/測試 | 1 | 3 | 1 |
 | **合計** | **34** | **10** | **1** |
+
+---
+
+## 六、做T系統優化（2026-08-01）
+
+### 6.1 問題診斷
+
+原有做T系統存在以下問題：
+1. 後台監控僅掃描真實持倉（`RealPosition`），未覆蓋各週期模擬持倉
+2. 推薦發出後無持續跟蹤，無法知道目標價是否曾觸及
+3. 缺少收盤統計，無法評估做T建議的準確率
+4. 推薦記錄無週期屬性，無法按週期查看統計
+
+### 6.2 優化方案
+
+**1. 全週期監控**
+
+`AppBackgroundRunner.monitorTTradeOpportunities()` 擴展為掃描 4 個週期（UltraShort/Short/Mid/Long）的模擬持倉 + 真實持倉，每 5 分鐘執行一次。
+
+**2. 價格軌跡跟蹤**
+
+新增 `TTradeEngine.trackOutcomeForRecommendations()`：
+- 每次監控時更新推薦的 `peak_price_after` / `trough_price_after`
+- 檢查目標價是否觸及 → `markTargetHit()`
+- T_BUY：目標價 ≥ targetPrice 即成功
+- RT_SELL：目標價 ≤ targetPrice 即成功
+
+**3. 收盤統計**
+
+新增 `TTradeEngine.markDayEnd()`：
+- 15:00-15:05 自動執行
+- 將所有 PENDING 推薦標記為 TARGET_MISSED（未觸及）或保留 TARGET_HIT
+- 計算虛擬盈虧（基於 peak/trough 價格）
+
+**4. 週期維度**
+
+`TTradeRecommendationEntity` 新增 `period_type` 字段，信號生成時自動帶入所屬週期。UI 按週期展示統計。
+
+### 6.3 新增統計指標
+
+| 指標 | 計算方式 | 用途 |
+|------|---------|------|
+| 虛擬成功率 | targetHit 數 / 總推薦數 × 100% | 評估信號質量 |
+| 實際成功率 | 已執行中盈利數 / 已執行數 × 100% | 評估用戶執行效果 |
+| 平均虛擬盈虧 | AVG(virtual_profit_pct) | 評估信號預期收益 |
+
+### 6.4 DB 遷移（v17 → v18）
+
+```sql
+ALTER TABLE t_trade_recommendations ADD COLUMN period_type TEXT NOT NULL DEFAULT '';
+ALTER TABLE t_trade_recommendations ADD COLUMN peak_price_after REAL NOT NULL DEFAULT 0.0;
+ALTER TABLE t_trade_recommendations ADD COLUMN trough_price_after REAL NOT NULL DEFAULT 0.0;
+ALTER TABLE t_trade_recommendations ADD COLUMN target_hit INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE t_trade_recommendations ADD COLUMN virtual_profit_pct REAL NOT NULL DEFAULT 0.0;
+```
+
+### 6.5 修改文件清單
+
+| 文件 | 變更類型 | 內容 |
+|------|---------|------|
+| `TTradeModels.kt` | 修改 | TTradeRecommendationEntity 新增 5 字段；TTradeSignal 新增 periodType；新增 OutcomeStatsRow、DailyTSummary 數據類；DAO 新增 6 個查詢方法 |
+| `TTradeEngine.kt` | 修改 | generateSignals 帶入 periodType；saveRecommendations 支持 periodType；新增 trackOutcomeForRecommendations()、markDayEnd()、getDailySummary()、getDailyAllPeriodSummary() |
+| `AppBackgroundRunner.kt` | 修改 | monitorTTradeOpportunities 擴展為全週期掃描 + 價格軌跡跟蹤 + 收盤結算 |
+| `QuantFragmentBase.kt` | 修改 | showTTradeMenu 獲取 dailySummary；showTTradeDialog 顯示虛擬成功率；推薦歷史支持 TARGET_HIT/TARGET_MISSED 狀態 |
+| `StockDatabase.kt` | 修改 | DB version 17→18；新增 MIGRATION_17_18 |
+

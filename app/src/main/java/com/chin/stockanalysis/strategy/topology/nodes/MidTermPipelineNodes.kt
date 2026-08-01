@@ -992,6 +992,7 @@ class SwapWeakNode(
 
             // ── 趨勢轉換檢測：即使持倉未滿，趨勢轉空的持倉也主動賣出換股 ──
             // 讀取每只持倉最近20天K線，判斷是否空頭排列(MA5<MA10<MA20)或近3日創20日新低
+            // 長線更保守：僅在極端趨勢反轉（空頭排列+創新低同時滿足）才換股
             val trendReversedCodes = mutableListOf<String>()
             for (order in holdingOrders) {
                 try {
@@ -1006,10 +1007,24 @@ class SwapWeakNode(
                     val prior17Low = klines.dropLast(3).minOf { it.low }
                     val bearishAlignment = ma5 < ma10 && ma10 < ma20
                     val newLow = recent3Low < prior17Low
-                    if (bearishAlignment || newLow) {
+
+                    // 長線：需要空頭排列 AND 創新低才換股（更保守）
+                    // 中線：空頭排列 OR 創新低即換股（原有邏輯）
+                    val shouldSwitch = if (period == "long") {
+                        bearishAlignment && newLow
+                    } else {
+                        bearishAlignment || newLow
+                    }
+
+                    if (shouldSwitch) {
                         trendReversedCodes.add(order.stockCode)
-                        val reason = if (bearishAlignment) "空頭排列" else "近3日創新低"
-                        context.log(nodeId, "中期趨勢轉換: ${order.stockName}($reason)，主動賣出換股")
+                        val reason = if (bearishAlignment && newLow) "空頭排列+創新低"
+                            else if (bearishAlignment) "空頭排列" else "近3日創新低"
+                        context.log(nodeId, "${period}線趨勢轉換: ${order.stockName}($reason)，主動賣出換股")
+                    } else if (period == "long" && (bearishAlignment || newLow)) {
+                        // 長線單一信號不換股，但記錄建議做T
+                        val signal = if (bearishAlignment) "空頭排列" else "近3日創新低"
+                        context.log(nodeId, "💡 長線持倉 ${order.stockName} 出現${signal}但未達雙重確認，建議做T降成本而非換股")
                     }
                 } catch (_: Exception) {
                     // 單股查詢失敗不影響整體流程
@@ -1040,6 +1055,10 @@ class SwapWeakNode(
             // 持倉+新買 ≤ 上限時倉位足夠，新票直接買入即可，無需賣出現有持倉騰位置。
             if (currentCount + newBuyCount <= maxHoldings) {
                 context.log(nodeId, "騰龍換鳥: 持倉 $currentCount + 新買 $newBuyCount ≤ $maxHoldings, 倉位足夠, 無需換股")
+                // 💡 中長線建議：已有持倉優先做T，不輕易加新倉
+                if (period == "mid" || period == "long") {
+                    context.log(nodeId, "💡 $period 持倉建議: 優先對現有持倉做T降低成本，而非頻繁換股")
+                }
                 // 📤 輸出日誌
                 context.log(nodeId, "📤 $nodeName 輸出: 0 只換股，持倉不變 $currentCount")
                 context.recordStockFlow(
@@ -1089,18 +1108,25 @@ class SwapWeakNode(
                 .take(needToSell)
 
             // ── 只換「更值得買」的票：新票最高評分須高於待賣邊界持倉的買入評分 ──
-            // 若最佳新票都打不過最弱的待賣持倉，說明這次換股不是「升級」，不執行。
+            // 中長線換股門檻更高：除非新票明顯更優（中線+20%，長線+50%），否則優先做T不換股
+            // 短線維持原始邏輯（只要新票分數 > 持倉分數即可換）
             val bestNewScore = orderResult.orders.maxOfOrNull { it.scoreAtBuy } ?: 0
             val marginalHoldingScore = rankedForSale.lastOrNull()?.order?.scoreAtBuy ?: Int.MAX_VALUE
-            if (bestNewScore <= marginalHoldingScore) {
-                context.log(nodeId, "騰龍換鳥: 新票最高分 $bestNewScore ≤ 持倉分 $marginalHoldingScore, " +
-                    "新票不夠優, 不換股")
-                context.log(nodeId, "📤 $nodeName 輸出: 0 只換股（新票不優於持倉）")
+            val swapThreshold = when (period) {
+                "long" -> (marginalHoldingScore * 1.5).toInt()   // 長線：新票需比持倉高50%才換
+                "mid" -> (marginalHoldingScore * 1.2).toInt()    // 中線：新票需比持倉高20%才換
+                else -> marginalHoldingScore                      // 短線：只要更高即可
+            }
+            if (bestNewScore <= swapThreshold) {
+                context.log(nodeId, "騰龍換鳥: 新票最高分 $bestNewScore ≤ ${period}換股門檻 $swapThreshold " +
+                    "(持倉分 $marginalHoldingScore, 門檻倍數 ${if(period=="long") "1.5" else if(period=="mid") "1.2" else "1.0"}), " +
+                    "新票不夠優, 不換股 → 建議對現有持倉做T")
+                context.log(nodeId, "📤 $nodeName 輸出: 0 只換股（新票不優於持倉，建議做T）")
                 context.recordStockFlow(
                     nodeId = nodeId, nodeName = nodeName,
                     inputCount = orderResult.orders.size, outputCount = 0,
                     filterCount = orderResult.orders.size,
-                    filterReason = "新票不優於持倉",
+                    filterReason = "新票不夠優(${period}門檻未達)，建議做T",
                     inputCodes = orderCodes.take(5), outputCodes = emptyList()
                 )
                 return SwapWeakResult(0, emptyList(), currentCount, currentCount, orderResult.orders)
@@ -1550,18 +1576,140 @@ class GenerateOrdersNode(
             val marketReport = context.getMarketReport()
             if ((period == "mid" || period == "long") && marketReport != null &&
                 MarketAdaptiveStrategy.shouldForceEmpty(marketReport, candidates.size)) {
-                context.log(nodeId, "🛡 $nodeName 大盤防守: BEARISH(強度${marketReport.trend.strength}) + " +
-                    "高分候選僅 ${candidates.size} 只(<2) → 空倉觀望")
-                context.log(nodeId, "📤 $nodeName 輸出: 0 個訂單（空倉防禦）")
-                context.recordStockFlow(
-                    nodeId = nodeId, nodeName = nodeName,
-                    inputCount = topPicks.size, outputCount = 0,
-                    filterCount = topPicks.size,
-                    filterReason = "大盤防守空倉",
-                    inputCodes = topPicks.map { it.stockCode }.take(5),
-                    outputCodes = emptyList()
+
+                // ── 例外：防守個股歷史低位企穩 → 允許打底倉（2手=200股）──
+                // 熊市中如果防守板塊個股（銀行/保險/電力/高速公路等）處於歷史低位，
+                // 且出現三日不新低/企穩/均線趨勢向上信號，可以小倉位打底倉
+                // 條件4：高股息優先 — 低PB + 防禦板塊 + 大市值 → 排序靠前
+                data class BasePickCandidate(
+                    val pick: AIPredictionEngine.AIPick,
+                    val buyPrice: Double,
+                    val stabilizingSignal: String,
+                    val isDefensive: Boolean,
+                    val dividendScore: Double  // 高股息代理評分
                 )
-                return OrderGenerationResult(emptyList(), topPicks.size, true)
+                val baseCandidates = mutableListOf<BasePickCandidate>()
+                val defensiveSectors = setOf("銀行", "保險", "電力", "高速公路", "煤炭", "石油",
+                    "電信", "水務", "燃氣", "鐵路", "港口", "機場", "證券")
+                val bearSnapshots = try {
+                    db.dailySnapshotDao().getByDate(context.tradeDate)
+                } catch (_: Exception) { emptyList() }
+                val bearSnapMap = bearSnapshots.associateBy { it.code }
+
+                for (pick in topPicks.take(10)) {  // 只看前10名候選
+                    try {
+                        val snaps = db.dailySnapshotDao().getByCode(pick.stockCode, 60)
+                            .sortedBy { it.date }
+                        if (snaps.size < 20) continue
+
+                        val latest = snaps.last()
+                        val closes = snaps.map { it.close }
+                        val ma5 = closes.takeLast(5).average()
+                        val ma10 = closes.takeLast(10).average()
+                        val ma20 = closes.takeLast(20).average()
+                        val recent3Lows = snaps.takeLast(3).map { it.low }
+                        val priorLow = snaps.dropLast(3).minOf { it.low }
+                        val high60 = snaps.map { it.high }.maxOrNull() ?: latest.close
+
+                        // 條件1：歷史低位（當前價在60日高點的70%以下，或低於MA20的5%以下）
+                        val isHistoricalLow = latest.close < high60 * 0.75 || latest.close < ma20 * 0.95
+                        if (!isHistoricalLow) continue
+
+                        // 條件2：企穩信號（滿足任一）
+                        // a) 三日不新低：近3日最低點 ≥ 前17日最低點
+                        val threeDayNoNewLow = recent3Lows.minOrNull()!! >= priorLow
+                        // b) 均線趨勢向上：MA5 > MA10（短期均線拐頭）
+                        val maTurningUp = ma5 > ma10
+                        // c) 收盤站上MA5（企穩跡象）
+                        val aboveMa5 = latest.close > ma5
+                        val stabilizing = threeDayNoNewLow || maTurningUp || aboveMa5
+                        if (!stabilizing) continue
+
+                        // 條件3：防守板塊（從個股名稱或候選信息判斷）
+                        val stockName = pick.stockName
+                        val isDefensive = defensiveSectors.any { s -> stockName.contains(s) }
+                        // 非嚴格限制：歷史低位企穩的個股也允許，不僅限防守板塊
+                        if (!isDefensive && !isHistoricalLow) continue
+
+                        val stabilizingSignal = when {
+                            threeDayNoNewLow -> "三日不新低"
+                            maTurningUp -> "均線向上"
+                            else -> "站上MA5"
+                        }
+
+                        // 條件4：高股息代理評分（無真實股息率，用低PB+防禦板塊+大市值近似）
+                        // PB越低分越高（PB<1.0=滿分40，PB<1.5=30，否則0）
+                        val pb = latest.pb
+                        val pbScore = when {
+                            pb > 0 && pb < 1.0 -> 40.0
+                            pb > 0 && pb < 1.5 -> 30.0
+                            else -> 0.0
+                        }
+                        // 防禦板塊加25分（銀行/保險/電力等傳統高息板塊）
+                        val sectorScore = if (isDefensive) 25.0 else 0.0
+                        // 大市值加20分（市值>500億，大盤股通常派息穩定）
+                        val capScore = if (latest.marketCap > 500_0000_0000.0) 20.0 else 0.0
+                        // ROE加15分（盈利能力強才有能力派息）
+                        val roeScore = if (latest.roeTTM > 10.0) 15.0 else 0.0
+                        val dividendScore = pbScore + sectorScore + capScore + roeScore
+
+                        val buyPrice = bearSnapMap[pick.stockCode]?.close ?: latest.close
+                        baseCandidates.add(BasePickCandidate(pick, buyPrice, stabilizingSignal, isDefensive, dividendScore))
+
+                    } catch (_: Exception) {}
+                }
+
+                // 按高股息評分降序排序，高股息優先買入
+                baseCandidates.sortByDescending { it.dividendScore }
+                val basePositionOrders = baseCandidates.take(2).mapIndexed { _, c ->
+                    val isHighDiv = c.dividendScore >= 50
+                    val dividendTag = if (isHighDiv) "🔶高股息" else ""
+                    context.log(nodeId, "🛡💪 熊市打底倉: ${c.pick.stockName}(${c.pick.stockCode}) " +
+                        "價=${"%.2f".format(c.buyPrice)} 歷史低位+企穩(${c.stabilizingSignal})" +
+                        (if (isHighDiv) " $dividendTag(評分${c.dividendScore})" else ""))
+
+                    TradeOrder(
+                        stockCode = c.pick.stockCode,
+                        stockName = c.pick.stockName,
+                        strategyId = "ai_${period}term_${context.tradeDate}",
+                        tradeDate = context.tradeDate,
+                        buyPrice = c.buyPrice,
+                        quantity = 200, // 打底倉2手
+                        reason = "熊市防守打底倉: 歷史低位+企穩(${c.stabilizingSignal})" +
+                            (if (isHighDiv) " +高股息(評分${c.dividendScore})" else "") +
+                            " score=${c.pick.compositeScore} ${c.pick.reason}",
+                        scoreAtBuy = c.pick.compositeScore,
+                        orderType = orderType
+                    )
+                }
+
+                if (basePositionOrders.isNotEmpty()) {
+                    context.log(nodeId, "🛡 $nodeName 大盤防守空倉，但發現 ${basePositionOrders.size} 只" +
+                        "歷史低位企穩個股 → 打底倉（2手/只）")
+                    context.setStageOutput(nodeId, basePositionOrders)
+                    context.recordStockFlow(
+                        nodeId = nodeId, nodeName = nodeName,
+                        inputCount = topPicks.size, outputCount = basePositionOrders.size,
+                        filterCount = topPicks.size - basePositionOrders.size,
+                        filterReason = "大盤防守空倉(打底倉例外)",
+                        inputCodes = topPicks.map { it.stockCode }.take(5),
+                        outputCodes = basePositionOrders.map { it.stockCode }
+                    )
+                    return OrderGenerationResult(basePositionOrders, topPicks.size - basePositionOrders.size, false)
+                } else {
+                    context.log(nodeId, "🛡 $nodeName 大盤防守: BEARISH(強度${marketReport.trend.strength}) + " +
+                        "高分候選僅 ${candidates.size} 只(<2) → 空倉觀望")
+                    context.log(nodeId, "📤 $nodeName 輸出: 0 個訂單（空倉防禦）")
+                    context.recordStockFlow(
+                        nodeId = nodeId, nodeName = nodeName,
+                        inputCount = topPicks.size, outputCount = 0,
+                        filterCount = topPicks.size,
+                        filterReason = "大盤防守空倉",
+                        inputCodes = topPicks.map { it.stockCode }.take(5),
+                        outputCodes = emptyList()
+                    )
+                    return OrderGenerationResult(emptyList(), topPicks.size, true)
+                }
             }
 
             // 數量限制（自適應最大買入數；實際入庫由 position_merge 按可用倉位裁切）
@@ -1576,12 +1724,20 @@ class GenerateOrdersNode(
             } catch (_: Exception) { emptyList() }
             val snapMap = snapshots.associateBy { it.code }
 
+            // 預先補全候選股中缺失的名稱（統一調用 StockNameResolver）
+            val blankNameCodes = finalCandidates.filter { it.stockName.isBlank() }.map { it.stockCode }.distinct()
+            val resolvedNames = if (blankNameCodes.isNotEmpty()) {
+                com.chin.stockanalysis.stock.database.StockNameResolver.resolveBatch(context.androidContext, blankNameCodes)
+            } else emptyMap()
+
             val orders = finalCandidates.mapIndexed { index, pick ->
                 val snap = snapMap[pick.stockCode]
                 val buyPrice = snap?.close ?: 0.0
+                val resolvedName = if (pick.stockName.isNotBlank()) pick.stockName
+                    else resolvedNames[pick.stockCode] ?: pick.stockName
                 TradeOrder(
                     stockCode = pick.stockCode,
-                    stockName = pick.stockName,
+                    stockName = resolvedName,
                     strategyId = "ai_midterm_${context.tradeDate}",
                     tradeDate = context.tradeDate,
                     buyPrice = buyPrice,

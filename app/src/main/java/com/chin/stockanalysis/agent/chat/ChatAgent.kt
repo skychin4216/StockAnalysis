@@ -84,12 +84,10 @@ class ChatAgent(context: Context) : AgentBase(
         // 判斷意圖，決定使用哪種模式
         val intent = detectIntent(userMessage)
 
-        // 非阻塞：嘗試從對話中提取機構線索（研報/評級/目標價）
-        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
-            tryExtractInstitutionalTips(userMessage)
-        }
+        // 同步提取機構線索（含板塊檢測），用於後續回覆增強
+        val instResult = tryExtractInstitutionalTips(userMessage)
 
-        return when (intent) {
+        val baseResult = when (intent) {
             UserIntent.INDEX_ANALYSIS -> {
                 // 提取指數名稱/代碼
                 val indexInfo = extractIndexInfo(userMessage)
@@ -200,6 +198,102 @@ class ChatAgent(context: Context) : AgentBase(
                 )
             }
         }
+
+        // 如果提取到機構線索，附加板塊分析到回覆
+        if (instResult != null && instResult.detectedSectors.isNotEmpty()) {
+            val sectorAnalysis = buildInstitutionalSectorAnalysis(instResult, userMessage)
+            return baseResult.copy(
+                response = baseResult.response + "\n\n" + sectorAnalysis
+            )
+        }
+
+        return baseResult
+    }
+
+    /**
+     * 構建機構推薦板塊分析回覆
+     * 包含：檢測到的板塊、股票歸屬、大盤趨勢判斷、超短/短線跟進建議
+     */
+    private suspend fun buildInstitutionalSectorAnalysis(
+        extraction: InstitutionalTipExtraction,
+        originalMessage: String
+    ): String {
+        val sb = StringBuilder()
+        sb.appendLine("━━━━━━━━━━━━━━━━━━")
+        sb.appendLine("🏦 機構線索板塊分析")
+        sb.appendLine("━━━━━━━━━━━━━━━━━━")
+
+        // 1. 顯式提及的板塊
+        if (extraction.textSectors.isNotEmpty()) {
+            sb.appendLine("📌 消息提及板塊：${extraction.textSectors.joinToString("、")}")
+        }
+
+        // 2. 股票→板塊歸屬
+        sb.appendLine()
+        sb.appendLine("📊 股票板塊歸屬：")
+        for ((code, name) in extraction.stocks) {
+            val sectors = extraction.stockSectors[code] ?: emptyList()
+            val display = if (name.isNotBlank()) "$name(${code.takeLast(6)})" else code.takeLast(6)
+            if (sectors.isNotEmpty()) {
+                sb.appendLine("  • $display → ${sectors.joinToString("/")}")
+            } else {
+                sb.appendLine("  • $display → 未匹配到板塊")
+            }
+        }
+
+        // 3. 合併板塊列表
+        sb.appendLine()
+        sb.appendLine("🎯 綜合板塊判斷：${extraction.detectedSectors.joinToString("、")}")
+
+        // 4. 大盤趨勢判斷
+        try {
+            val appCtx = context.applicationContext
+            val mktCtx = com.chin.stockanalysis.strategy.sector.StrategyMarketContext
+                .build(appCtx, java.time.LocalDate.now().toString())
+            val env = mktCtx.indexSnapshot.tripleVote
+            val envLabel = when (env) {
+                "BULLISH" -> "牛市偏多 🐂"
+                "OSCILLATION" -> "震蕩市 ⚖️"
+                "BEARISH" -> "熊市偏空 🐻"
+                else -> "未知 $env"
+            }
+            sb.appendLine()
+            sb.appendLine("📈 當前大盤環境：$envLabel")
+
+            // 5. 跟進建議
+            sb.appendLine()
+            sb.appendLine("💡 跟進建議：")
+            when (env) {
+                "BULLISH" -> {
+                    sb.appendLine("  • 大盤偏多，機構推薦板塊可積極跟進")
+                    sb.appendLine("  • 建議在【超短線】或【短線】週期建倉")
+                    sb.appendLine("  • 優先關注：${extraction.detectedSectors.take(3).joinToString("、")}")
+                }
+                "OSCILLATION" -> {
+                    sb.appendLine("  • 震蕩市中機構推薦僅供參考，注意倉位控制")
+                    sb.appendLine("  • 建議在【短線】週期輕倉試探，設好止損")
+                    sb.appendLine("  • 優先關注有資金持續流入的板塊：${extraction.detectedSectors.take(2).joinToString("、")}")
+                }
+                "BEARISH" -> {
+                    sb.appendLine("  • ⚠️ 熊市環境，機構推薦需謹慎對待")
+                    sb.appendLine("  • 建議僅觀察，不急於跟進")
+                    sb.appendLine("  • 若必須操作，僅限【超短線】日內做T，嚴控倉位<30%")
+                }
+                else -> {
+                    sb.appendLine("  • 大盤方向不明，建議在【短線】週期觀察")
+                }
+            }
+        } catch (_: Exception) {
+            sb.appendLine("📈 大盤環境：暫無法判斷")
+            sb.appendLine("💡 建議在【短線】週期觀察機構推薦板塊動向")
+        }
+
+        // 6. 已寫入數據庫提示
+        sb.appendLine()
+        sb.appendLine("✅ ${extraction.stockCount} 隻機構推薦股票已記錄，有效期3天")
+        sb.appendLine("   板塊輪動預測器已接收線索（20%權重）")
+
+        return sb.toString().trimEnd()
     }
 
     private fun detectIntent(message: String): UserIntent {
@@ -344,34 +438,57 @@ class ChatAgent(context: Context) : AgentBase(
     private val INST_KEYWORDS = listOf(
         "機構", "研報", "目標價", "買入評級", "增持評級", "推薦買入",
         "券商", "基金", "調研", "機構調研", "主力", "莊家", "游資",
-        "龍虎榜", "機構席位", "量化", "融資", "北向資金"
+        "龍虎榜", "機構席位", "量化", "融資", "北向資金",
+        // 擴展：機構推薦消息常見用語
+        "案例股", "教學案例", "調倉換股", "重點留意", "熱點機會",
+        "新主線", "佈局", "抄底", "加倉", "減倉", "止盈",
+        "投資顧問", "執業編號", "執業證書", "內部服務",
+        "行情已經", "板塊方面", "短期可以", "重點關注"
     )
 
     /**
      * 從用戶對話中提取機構線索，寫入 institutional_tips 表。
      * 觸發條件：消息包含機構相關關鍵詞 + 至少一個股票代碼/名稱。
      * 有效期默認 3 天。
+     *
+     * @return 機構線索提取結果（含板塊檢測），若無線索返回 null
      */
-    private suspend fun tryExtractInstitutionalTips(message: String) {
+    private suspend fun tryExtractInstitutionalTips(message: String): InstitutionalTipExtraction? {
         try {
             val hasInstKeyword = INST_KEYWORDS.any { message.contains(it) }
-            if (!hasInstKeyword) return
+            if (!hasInstKeyword) return null
 
             // 提取股票實體
             val entities = try {
                 com.chin.stockanalysis.ai.StockEntityExtractor.extractSync(message)
             } catch (_: Exception) { emptyList() }
 
-            // 降級：正則提取代碼
-            val codes = if (entities.isNotEmpty()) {
-                entities.map { Triple(it.code, it.name, "") }
+            // 降級：正則提取代碼（支援 sh/sz/bj 前綴 和 純6位數字）
+            val stocks: List<Pair<String, String>> = if (entities.isNotEmpty()) {
+                entities.map { it.code to it.name }
             } else {
-                Regex("(sh|sz|bj)(\\d{6})").findAll(message).map {
-                    Triple(it.value, "", "")
+                // 先嘗試帶前綴的代碼
+                val prefixed = Regex("(sh|sz|bj)(\\d{6})").findAll(message).map {
+                    it.value to ""
                 }.toList()
+                if (prefixed.isNotEmpty()) prefixed
+                else {
+                    // 降級：純6位數字代碼（需要排除非股票數字如日期、電話等）
+                    Regex("(?<!\\d)(\\d{6})(?!\\d)").findAll(message).map { match ->
+                        val code = match.value
+                        // 根據代碼首位判斷市場前綴
+                        val prefix = when (code.first()) {
+                            '6' -> "sh"
+                            '0', '3' -> "sz"
+                            '8', '4' -> "bj"
+                        else -> "sh"
+                        }
+                        "$prefix$code" to ""
+                    }.toList()
+                }
             }
 
-            if (codes.isEmpty()) return
+            if (stocks.isEmpty()) return null
 
             val db = StockDatabase.getInstance(context)
             val dao = db.institutionalTipDao()
@@ -385,10 +502,20 @@ class ChatAgent(context: Context) : AgentBase(
                 else -> "research"
             }
 
-            val tips = codes.map { (code, name, _) ->
+            // 板塊檢測：結合文本關鍵詞 + 股票板塊反查
+            val sectorDetection = com.chin.stockanalysis.ai.SectorDetector
+                .detect(message, stocks, context)
+
+            val tips = stocks.map { (code, name) ->
+                // 為每隻股票確定最佳板塊
+                val stockSector = sectorDetection.stockSectors[code]?.firstOrNull()
+                    ?: sectorDetection.textSectors.firstOrNull()
+                    ?: ""
+
                 com.chin.stockanalysis.strategy.topology.nodes.InstitutionalTipEntity(
                     stockCode = code,
                     stockName = name,
+                    sector = stockSector,
                     source = "ai_chat",
                     tipType = tipType,
                     summary = message.take(100),
@@ -398,12 +525,30 @@ class ChatAgent(context: Context) : AgentBase(
                 )
             }
             dao.insertAll(tips)
-            Log.i(TAG, "🏦 提取機構線索: ${tips.size} 條 (${tips.joinToString { it.stockCode }})")
+            Log.i(TAG, "🏦 提取機構線索: ${tips.size} 條 (${tips.joinToString { "${it.stockCode}(${it.sector})" }})")
+
+            return InstitutionalTipExtraction(
+                stockCount = tips.size,
+                stocks = stocks.map { it.first to it.second },
+                detectedSectors = sectorDetection.allSectors,
+                textSectors = sectorDetection.textSectors,
+                stockSectors = sectorDetection.stockSectors
+            )
         } catch (e: Exception) {
             Log.w(TAG, "機構線索提取失敗: ${e.message}")
+            return null
         }
     }
 }
+
+/** 機構線索提取結果 */
+data class InstitutionalTipExtraction(
+    val stockCount: Int,
+    val stocks: List<Pair<String, String>>,
+    val detectedSectors: List<String>,
+    val textSectors: List<String>,
+    val stockSectors: Map<String, List<String>>
+)
 
 /** 對話結果 */
 data class ChatAgentResult(

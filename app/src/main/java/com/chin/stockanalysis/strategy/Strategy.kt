@@ -147,7 +147,7 @@ enum class HoldingPeriod(val label: String, val icon: String, val holdingDays: I
     ULTRA_SHORT("超短線", "⚡", 1..1),
     SHORT("短線", "🤖", 1..14),
     MID("中線", "📈", 30..180),
-    LONG("長線", "💎", 180..999)
+    LONG("長線", "💎", 180..365)
 }
 
 /** 数据频率 */

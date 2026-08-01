@@ -88,6 +88,52 @@ class UserMarketMemory(context: Context) {
         }
     }
 
+    /** 獲取近期熱門板塊（從 sector_daily_record 表讀取最近5個交易日，按熱度評分排序） */
+    suspend fun getRecentHotSectors(): List<RecentHotSector> = withContext(Dispatchers.IO) {
+        try {
+            val records = db.sectorDailyRecordDao().getRecentDays(5)
+            if (records.isEmpty()) return@withContext emptyList()
+
+            // 按板塊名分組，計算近5日平均熱度評分和累計漲幅
+            val grouped = records.groupBy { it.sectorName }
+            val result = grouped.map { (name, recs) ->
+                val avgScore = recs.map { it.hotScore }.average()
+                val totalChange = recs.sumOf { it.changePct }
+                val hotDays = recs.count { it.isHot == "Y" || it.isHot == "true" }
+                RecentHotSector(name, avgScore, totalChange, hotDays, recs.size)
+            }.sortedByDescending { it.avgHotScore }.take(8)
+
+            result
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /** 獲取最近活躍的新聞板塊（從 news_factor 表提取高頻板塊） */
+    suspend fun getRecentNewsSectors(): List<String> = withContext(Dispatchers.IO) {
+        try {
+            val news = db.newsFactorDao().getAllActive(100)
+            if (news.isEmpty()) return@withContext emptyList()
+            news.groupBy { it.sector.takeIf { s -> s.isNotBlank() } ?: "其他" }
+                .mapValues { (_, items) -> items.size }
+                .filter { it.key != "其他" }
+                .toList()
+                .sortedByDescending { it.second }
+                .take(8)
+                .map { it.first }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    data class RecentHotSector(
+        val sectorName: String,
+        val avgHotScore: Double,
+        val totalChangePct: Double,
+        val hotDays: Int,
+        val recordCount: Int
+    )
+
     data class SectorDropAlert(
         val sectorName: String,
         val dropDays: Int,

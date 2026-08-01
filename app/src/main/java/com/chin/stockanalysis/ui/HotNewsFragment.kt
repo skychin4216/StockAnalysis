@@ -387,9 +387,12 @@ class HotNewsFragment : Fragment() {
 
     // ─── 加载新闻 ───
     private fun loadNews(forceRefresh: Boolean = false) {
-        loadingTv.text = "⏳ ${if (forceRefresh) "正在搜索最新新闻..." else "加载中..."}"
-        loadingTv.visibility = View.VISIBLE
-        recyclerView.visibility = View.GONE; emptyTv.visibility = View.GONE
+        // 僅在新聞 Tab 激活時才顯示 loadingTv，避免與板塊 Tab 重疊
+        if (!showingSectors) {
+            loadingTv.text = "⏳ ${if (forceRefresh) "正在搜索最新新闻..." else "加载中..."}"
+            loadingTv.visibility = View.VISIBLE
+            recyclerView.visibility = View.GONE; emptyTv.visibility = View.GONE
+        }
         lifecycleScope.launch {
             val hasLocalData = withContext(Dispatchers.IO) {
                 try { StockDatabase.getInstance(requireContext()).newsFactorDao().getAllActive(1).isNotEmpty() } catch (_: Exception) { false }
@@ -408,6 +411,8 @@ class HotNewsFragment : Fragment() {
                     .sortedByDescending { it.newsDate }
             }
             withContext(Dispatchers.Main) {
+                // 僅在新聞 Tab 激活時才更新新聞區可見性，避免覆蓋板塊 Tab
+                if (showingSectors) return@withContext
                 loadingTv.visibility = View.GONE
                 if (news.isEmpty()) { emptyTv.visibility = View.VISIBLE; recyclerView.visibility = View.GONE } else { emptyTv.visibility = View.GONE; recyclerView.visibility = View.VISIBLE; (recyclerView.adapter as? NewsAdapter)?.update(news) }
             }

@@ -383,3 +383,46 @@ Layer 9: [n_orders]
 Layer 10: [n_swap, n_merge_pos]
 Layer 11: [n_fit, n_crosstab]
 ```
+
+---
+
+## 八、遷移完成狀態（2026-08-01）
+
+### 8.1 總體狀態：✅ 已完成
+
+4 個 Fragment（UltraShort/Short/Mid/Long）的 hardcode 路徑已全部刪除，`useDagPipeline` 默認 `true`，Settings 保留開關可回退。
+
+### 8.2 已實現的關鍵節點
+
+| 節點 | 文件 | 狀態 |
+|------|------|------|
+| DataImportNode | `DataImportNode.kt` | ✅ |
+| DefensiveDividendNode | `DefensiveDividendNode.kt` | ✅ |
+| CandidatePoolNode | `HardcodeCompatNodes.kt` | ✅ |
+| ZiplineFactorNode | `HardcodeCompatNodes.kt` | ✅ |
+| SectorStockPoolNode | `HardcodeCompatNodes.kt` | ✅ |
+| T1AutoSellNode | `HardcodeCompatNodes.kt` | ✅ |
+| CrossTabPublishNode | `HardcodeCompatNodes.kt` | ✅ |
+| HoldingGuardNode | `MidTermPipelineNodes.kt` | ✅ |
+| PositionMergeNode | `MidTermPipelineNodes.kt` | ✅ |
+| SwapWeakNode | `MidTermPipelineNodes.kt` | ✅ |
+| InstitutionalTipsNode | `InstitutionalTipsNode.kt` | ✅ |
+| MaConvergenceNode | `MaConvergenceNode.kt` | ✅ |
+| BounceReversalNode | `BounceReversalNode.kt` | ✅ |
+
+### 8.3 已刪除的 Hardcode
+
+| Fragment | 刪除行數 | 備註 |
+|----------|---------|------|
+| UltraShortQuantFragment | ~200 行 | 完整 DAG 路徑替換 |
+| ShortTermQuantFragment | ~200 行 | 精簡冗餘代碼 |
+| MidTermQuantFragment | ~250 行 | DAG + HoldingGuard |
+| LongTermQuantFragment | ~250 行 | DAG + DefensiveDividend |
+
+### 8.4 剩餘注意事項
+
+- `SimulationTradeEngine.kt` 保留：雖然執行邏輯是死碼，但 `TradeOrder`、`StrategyTradeOrderEntity`、相關 DAO 仍被 DAG 節點引用
+- `AgentBase.kt` / `AgentTool.kt` 保留：`TradeExecutionAgent` 有 wildcard import 依賴
+- `PipelineResult.kt` 精簡版保留：`DeepAnalystEngine` 引用其數據類
+
+```

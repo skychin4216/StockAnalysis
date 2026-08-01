@@ -28,7 +28,7 @@ import kotlinx.coroutines.withContext
  * - Tab 0：超短線 (UltraShortQuantFragment) — 持倉1天，T+1賣出
  * - Tab 1：短線量化 (ShortTermQuantFragment) — 持倉1天~2周
  * - Tab 2：中線量化 (MidTermQuantFragment) — 持倉1~6個月
- * - Tab 3：長線量化 (LongTermQuantFragment) — 持倉1年+
+ * - Tab 3：長線量化 (LongTermQuantFragment) — 持倉6月~1年
  * - Tab 4：量化選股 (StrategyListFragment) — 策略沙盒
  */
 class StrategyFragment : Fragment() {
@@ -75,11 +75,11 @@ class StrategyFragment : Fragment() {
         // 绑定
         TabLayoutMediator(tabLayout, viewPager) { tab, position ->
             tab.text = when (position) {
-                0 -> "⚡ 超短線"
-                1 -> "🤖 短線"
-                2 -> "📈 中線"
-                3 -> "💎 長線"
-                4 -> "🎯 量化選股"
+                0 -> "超短線"
+                1 -> "短線"
+                2 -> "中線"
+                3 -> "長線"
+                4 -> "量化選股"
                 else -> ""
             }
         }.attach()

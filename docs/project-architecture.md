@@ -584,3 +584,183 @@ datacenter 报表真实列名与旧代码不符（旧值恒为 0）：
 - 历史日期行的基本面为 0（K 线 API 无历史估值，回测场景按需 `enrichFundamentals=false`）。
 - ROE 取最新报告期（季报值），非年化 —— 策略阈值（如 roe_min=15）按此语义理解。
 - B 层只补估值三件套（PE/PB/市值），ROE 等财务字段依赖同步 Step 2.5。
+
+---
+
+## v5.0 Agent 框架与 DAG Pipeline（2026-07-30 ~ 08-01）
+
+### 架构概览
+
+v5.0 引入了两大核心系统：**Agent 框架**（AI 驱动的多角色分析）和 **DAG Pipeline**（声明式量化选股流水线），统一通过 `AgentOrchestrator` 调度。
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    AgentOrchestrator                         │
+│  ┌──────────┐  ┌──────────────┐  ┌──────────────────────┐  │
+│  │ Scout    │  │ DeepAnalyst  │  │ Guardian             │  │
+│  │ (市場環境)│  │ (7子Agent)   │  │ (風控評估)           │  │
+│  └──────────┘  └──────────────┘  └──────────────────────┘  │
+│        │              │                    │                │
+│        └──────────────┼────────────────────┘                │
+│                       ▼                                     │
+│              V2DecisionMatrix                               │
+│         (環境×利潤質量×PE/PB)                               │
+└─────────────────────────────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    DAG Pipeline                              │
+│  XML 聲明式定義 → Kahn 拓撲排序 → 分層並行執行              │
+│                                                              │
+│  4 個 UseCase：screening / ultra_short / short_term /        │
+│                 mid_term / long_term                         │
+│                                                              │
+│  節點類型：DATA_SOURCE → DATA_TRANSFORM → FACTOR_COMPUTE →  │
+│           STRATEGY → ENRICHMENT → FILTER → AI_PREDICTION →  │
+│           AGGREGATION → TRADE_ACTION                        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Agent 框架核心文件
+
+| 文件 | 職責 |
+|------|------|
+| `agent/core/AgentOrchestrator.kt` | 統一入口，管理 Scout/Analyst/Guardian 三角色並行 |
+| `agent/core/DeepAnalystEngine.kt` | 7 子 Agent 3 階段深度分析（V1 流水線等價） |
+| `agent/core/AgentRole.kt` | 角色定義（Scout/Analyst/Guardian/Analyst）+ 權限矩陣 |
+| `agent/core/AgentContext.kt` | Agent 上下文（會話、權限、記憶） |
+| `agent/core/SubAgentSpawner.kt` | 子 Agent 派生與超時管理 |
+| `agent/core/IntentRouter.kt` | 意圖路由：4 意圖 × 4 週期 → Agent 集群組合 |
+| `agent/core/StockAnalysisUseCase.kt` | 統一分析入口 `analyzeStock()` 擴展函數 |
+| `agent/v2/V2DecisionMatrix.kt` | 決策矩陣：環境 × 利潤質量 × 估值 → 操作建議 |
+| `agent/v2/PositionWaterValve.kt` | 倉位水閥：根據市場環境計算倉位上限 |
+| `agent/v2/ProfitQualityAnalyzer.kt` | 利潤質量分析（主營業務/一次性/投資收益） |
+
+### DAG Pipeline 核心文件
+
+| 文件 | 職責 |
+|------|------|
+| `strategy/topology/core/DagPipeline.kt` | DAG 執行引擎（Kahn 拓撲排序 + 分層並行） |
+| `strategy/topology/core/PipelineContext.kt` | Pipeline 上下文（stockFlow、stageOutputs、errors） |
+| `strategy/topology/xml/PipelineXmlParser.kt` | XML 解析器（節點 + 邊 + 自閉合標籤處理） |
+| `strategy/topology/xml/NodeRegistry.kt` | 節點註冊表（module name → factory） |
+| `strategy/topology/xml/UseCaseLoader.kt` | UseCase 加載 + 策略動態注入 |
+| `strategy/topology/nodes/PipelineNodes.kt` | 基礎節點實現 |
+| `strategy/topology/nodes/HardcodeCompatNodes.kt` | Hardcode 兼容層節點（5 個） |
+| `strategy/topology/nodes/MidTermPipelineNodes.kt` | 中長線專用節點（HoldingGuard 等） |
+| `strategy/topology/xml/DagTradeExecutor.kt` | DAG 交易執行器 |
+
+### XML Pipeline 節點統計
+
+| Pipeline | 節點數 | 關鍵節點 |
+|----------|--------|---------|
+| ultra_short | 11 | n_cand（候選池）, n_t1sell（T+1 賣出） |
+| short_term | 17 | +n_zipline（因子預計算）, +n_crosstab（跨 Tab 發布） |
+| mid_term | 20 | +n_sector_pool（板塊精選）, n_guard（持倉風控） |
+| long_term | 12 | +n_cand（候選池過濾） |
+
+### 四週期策略體系
+
+| 週期 | HoldingPeriod | 默認持倉天數 | 策略數量 | 代表策略 |
+|------|--------------|-------------|---------|---------|
+| 超短線 | ULTRA_SHORT | 1 天 | 3+ | MarketSentimentStrategy（情緒週期） |
+| 短線 | SHORT | 3-5 天 | 4+ | SectorRotationStrategy（板塊輪動） |
+| 中線 | MID | 10-30 天 | 4+ | TrendFollowingStrategy（均線趨勢） |
+| 長線 | LONG | 30-180 天 | 3+ | CyclicalLowPositionStrategy（週期低位） |
+
+策略通過 `holdingPeriods` 屬性聲明適用的週期，`UseCaseLoader.injectStrategiesToDag()` 在 Pipeline 啟動時按週期動態注入。
+
+---
+
+## v5.1 做T系統（T+0 日內交易）
+
+### 概述
+
+做T系統實現 A 股 T+0 日內交易（高拋低吸），在持有底倉的前提下，利用日內波動賺取差價。支持兩種模式：
+
+- **做T（正T）**：低買 → 高賣（T_BUY → T_SELL）
+- **反T（倒T）**：高賣 → 低買回（RT_SELL → RT_BUY）
+
+### 核心文件
+
+| 文件 | 職責 |
+|------|------|
+| `strategy/trade/TTradeModels.kt` | 數據模型：TTradeRecordEntity（交易記錄）、TTradeRecommendationEntity（推薦記錄）、TTradeSignal（信號）、TTradeStats（統計） |
+| `strategy/trade/TTradeEngine.kt` | 核心引擎：信號生成、交易執行、推薦管理、結果跟蹤、收盤統計 |
+| `strategy/trade/QuantFragmentBase.kt` | UI 基類：做T按鈕、對話框、推薦卡片、統計展示 |
+| `stock/database/AppBackgroundRunner.kt` | 後台監控：每 5 分鐘掃描所有週期持倉 + 真實持倉 |
+
+### 信號生成邏輯
+
+```
+generateSignals(stockCode, basePositionQty, periodType)
+    │
+    ├─ 讀取 daily_snapshot 近 30 天數據
+    ├─ 計算 MA5, MA10, 20 日高低點, 平均振幅
+    ├─ 支撐位 = max(recentLow, MA5×0.98, MA10×0.97)
+    ├─ 阻力位 = min(recentHigh, MA5×1.02, MA10×1.03)
+    ├─ 做T數量 = 底倉 × 40%（取整到 100 股）
+    │
+    ├─ 當前價接近支撐位（<2%）→ T_BUY 信號
+    ├─ 當前價接近阻力位（<2%）→ RT_SELL 信號
+    └─ 檢查未配對交易 → T_SELL / RT_BUY 配對信號
+```
+
+### 後台監控流程
+
+```
+AppBackgroundRunner.monitorTTradeOpportunities() [每 5 分鐘]
+    │
+    ├─ 1. expireOldRecommendations() — 過期昨日 PENDING 推薦
+    ├─ 2. 收盤結算（15:00-15:05）— markDayEnd()
+    ├─ 3. 掃描 4 個週期模擬持倉 + 真實持倉
+    │      └─ 為每隻持倉 generateSignals() → saveRecommendations()
+    ├─ 4. trackOutcomeForRecommendations() — 更新價格軌跡
+    │      └─ 檢查目標價是否觸及 → markTargetHit()
+    └─ 5. 記錄日誌
+```
+
+### 推薦生命周期
+
+```
+PENDING ──→ EXECUTED     （用戶執行了該推薦）
+PENDING ──→ TARGET_HIT   （目標價觸及，虛擬成功）
+PENDING ──→ TARGET_MISSED（收盤未觸及，虛擬失敗）
+PENDING ──→ EXPIRED     （次日自動過期）
+```
+
+### 做T統計指標
+
+| 指標 | 說明 |
+|------|------|
+| 虛擬成功率 | 目標價觸及數 / 總推薦數 × 100% |
+| 實際成功率 | 已執行中盈利數 / 已執行數 × 100% |
+| 平均虛擬盈虧 | 所有推薦的虛擬盈虧均值 |
+| 總盈虧 | 已平倉交易的實際盈虧總和 |
+
+### DB Schema（v17 → v18）
+
+`t_trade_recommendations` 表新增字段：
+
+| 字段 | 類型 | 說明 |
+|------|------|------|
+| `period_type` | TEXT | 所屬週期（UltraShortQuant/ShortTermQuant/MidTermQuant/LongTermQuant/RealPosition） |
+| `peak_price_after` | REAL | 推薦後最高價 |
+| `trough_price_after` | REAL | 推薦後最低價 |
+| `target_hit` | INTEGER | 目標價是否觸及（0/1） |
+| `virtual_profit_pct` | REAL | 虛擬盈虧百分比 |
+
+---
+
+## 數據庫版本歷史
+
+| 版本 | 變更 |
+|------|------|
+| v11 → v12 | `daily_snapshot` 新增 7 列基本面字段（PE/PB/市值/ROE/毛利率/負債率/現金流） |
+| v12 → v13 | 新增 `institutional_tips` 表（機構線索） |
+| v13 → v14 | 新增 `period_holding_profit` 表（週期持倉盈虧） |
+| v14 → v15 | 新增 `t_trade_records` 表（做T交易記錄） |
+| v15 → v16 | 新增 `real_positions` 表（真實持倉） |
+| v16 → v17 | 新增 `t_trade_recommendations` 表（做T推薦記錄） |
+| v17 → v18 | `t_trade_recommendations` 新增 5 列跟蹤字段（period_type, peak/trough, target_hit, virtual_profit） |
+

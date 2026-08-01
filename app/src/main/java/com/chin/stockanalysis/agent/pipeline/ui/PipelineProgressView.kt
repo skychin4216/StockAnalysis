@@ -34,7 +34,7 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
         setBackgroundColor(Color.parseColor("#FAFAFA"))
         // 標題
         titleTv = TextView(context).apply {
-            text = "🧠 Agent 深度分析"
+            text = "Agent 深度分析"
             textSize = 14f
             setTextColor(Color.parseColor("#1A1A2E"))
             setTypeface(null, Typeface.BOLD)
@@ -67,7 +67,7 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
             stepViews[step.order] = card
             stepsContainer.addView(card)
         }
-        titleTv.text = "🧠 Agent 深度分析（${steps.size} 步）"
+        titleTv.text = "Agent 深度分析（${steps.size} 步）"
     }
 
     /** 標記步驟完成（summary 為可讀摘要） */
@@ -94,7 +94,7 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
 
         if (!result.success && result.errorMessage != null) {
             resultContainer.addView(TextView(context).apply {
-                text = "❌ 分析失敗: ${result.errorMessage}"
+                text = "分析失敗: ${result.errorMessage}"
                 textSize = 12f
                 setTextColor(Color.parseColor(COLOR_ERROR))
             })
@@ -104,7 +104,7 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
         // 最終判定
         val passed = result.passed ?: (result.overallScore >= 40)
         resultContainer.addView(TextView(context).apply {
-            text = if (passed) "✅ 通過分析篩選" else "❌ 未通過篩選"
+            text = if (passed) "通過分析篩選" else "未通過篩選"
             textSize = 13f
             setTextColor(Color.parseColor(if (passed) COLOR_DONE else COLOR_ERROR))
             setTypeface(null, Typeface.BOLD)
@@ -133,9 +133,9 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
         resultContainer.visibility = View.GONE
     }
 
-    // ═══════════════════════════════════════
+    // ----------------------------------------
     //  單步卡片
-    // ═══════════════════════════════════════
+    // ----------------------------------------
     private class StepCard(context: Context, step: AnalysisStep) : LinearLayout(context) {
         private val iconTv: TextView
         private val nameTv: TextView
@@ -150,7 +150,7 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
                 topMargin = 2; bottomMargin = 2
             }
             iconTv = TextView(context).apply {
-                text = "⬜"; textSize = 14f; setPadding(0, 0, 8, 0)
+                text = "[ ]"; textSize = 14f; setPadding(0, 0, 8, 0)
             }
             addView(iconTv)
             val textCol = LinearLayout(context).apply {
@@ -176,19 +176,19 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
         }
 
         fun markDone(summary: String) {
-            iconTv.text = "✅"
+            iconTv.text = "[v]"
             summaryTv.text = summary.take(80)
             summaryTv.setTextColor(Color.parseColor(COLOR_DONE))
         }
 
         fun markError(error: String) {
-            iconTv.text = "❌"
+            iconTv.text = "[x]"
             summaryTv.text = error.take(60)
             summaryTv.setTextColor(Color.parseColor(COLOR_ERROR))
         }
 
         fun reset() {
-            iconTv.text = "⬜"
+            iconTv.text = "[ ]"
             summaryTv.text = "等待中..."
             summaryTv.setTextColor(Color.parseColor("#AAAAAA"))
         }

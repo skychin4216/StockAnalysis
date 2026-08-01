@@ -153,6 +153,8 @@ interface StrategyTradeOrderDao {
     suspend fun updateQuantity(id: Long, quantity: Int)
     @androidx.room.Query("UPDATE strategy_trade_orders SET buy_price = :price, quantity = :qty, trade_date = :date WHERE id = :id")
     suspend fun updateBuyPriceAndQty(id: Long, price: Double, qty: Int, date: String)
+    @androidx.room.Query("UPDATE strategy_trade_orders SET stock_name = :name WHERE id = :id")
+    suspend fun updateStockName(id: Long, name: String)
 }
 
 // ═══ 週期持有收益摘要 Entity（每個週期獨立固化） ═══

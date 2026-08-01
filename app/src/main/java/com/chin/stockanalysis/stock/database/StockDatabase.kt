@@ -120,9 +120,11 @@ interface AiSelectedStockDao {
         AiSelectedStockEntity::class,
         com.chin.stockanalysis.strategy.topology.nodes.InstitutionalTipEntity::class,
         com.chin.stockanalysis.strategy.trade.PeriodHoldingProfitEntity::class,
-        com.chin.stockanalysis.strategy.trade.TTradeRecordEntity::class
+        com.chin.stockanalysis.strategy.trade.TTradeRecordEntity::class,
+        com.chin.stockanalysis.strategy.trade.TTradeRecommendationEntity::class,
+        com.chin.stockanalysis.strategy.trade.RealPositionEntity::class
     ],
-    version = 15,
+    version = 18,
     exportSchema = false
 )
 abstract class StockDatabase : RoomDatabase() {
@@ -145,6 +147,8 @@ abstract class StockDatabase : RoomDatabase() {
     abstract fun institutionalTipDao(): com.chin.stockanalysis.strategy.topology.nodes.InstitutionalTipDao
     abstract fun periodHoldingProfitDao(): com.chin.stockanalysis.strategy.trade.PeriodHoldingProfitDao
     abstract fun tTradeRecordDao(): com.chin.stockanalysis.strategy.trade.TTradeRecordDao
+    abstract fun tTradeRecommendationDao(): com.chin.stockanalysis.strategy.trade.TTradeRecommendationDao
+    abstract fun realPositionDao(): com.chin.stockanalysis.strategy.trade.RealPositionDao
 
     companion object {
         const val DATABASE_NAME = "stock_analysis.db"
@@ -236,6 +240,76 @@ abstract class StockDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v15 → v16 遷移：新增 real_positions 表（真實持倉手動導入）
+         */
+        private val MIGRATION_15_16 = object : androidx.room.migration.Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `real_positions` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `stockCode` TEXT NOT NULL,
+                        `stockName` TEXT NOT NULL,
+                        `quantity` INTEGER NOT NULL,
+                        `avgBuyPrice` REAL NOT NULL,
+                        `buyDate` TEXT NOT NULL,
+                        `periodType` TEXT NOT NULL DEFAULT '',
+                        `sector` TEXT NOT NULL DEFAULT '',
+                        `notes` TEXT NOT NULL DEFAULT '',
+                        `isActive` INTEGER NOT NULL DEFAULT 1,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                Log.i(TAG, "✅ v15→v16 遷移完成：已創建 real_positions 表（真實持倉手動導入）")
+            }
+        }
+
+        /**
+         * v16 → v17 遷移：新增 t_trade_recommendations 表（做T推薦記錄）
+         */
+        private val MIGRATION_16_17 = object : androidx.room.migration.Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `t_trade_recommendations` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `stock_code` TEXT NOT NULL,
+                        `stock_name` TEXT NOT NULL DEFAULT '',
+                        `trade_date` TEXT NOT NULL,
+                        `signal_type` TEXT NOT NULL,
+                        `suggested_price` REAL NOT NULL,
+                        `target_price` REAL NOT NULL,
+                        `quantity` INTEGER NOT NULL,
+                        `expected_profit_pct` REAL NOT NULL,
+                        `reason` TEXT NOT NULL DEFAULT '',
+                        `status` TEXT NOT NULL DEFAULT 'PENDING',
+                        `source` TEXT NOT NULL DEFAULT 'REAL',
+                        `executed_price` REAL NOT NULL DEFAULT 0,
+                        `executed_at` INTEGER NOT NULL DEFAULT 0,
+                        `created_at` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_t_trade_recommendations_stock_code_trade_date_signal_type` ON `t_trade_recommendations` (`stock_code`, `trade_date`, `signal_type`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_t_trade_recommendations_status` ON `t_trade_recommendations` (`status`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_t_trade_recommendations_trade_date` ON `t_trade_recommendations` (`trade_date`)")
+                Log.i(TAG, "✅ v16→v17 遷移完成：已創建 t_trade_recommendations 表（做T推薦記錄）")
+            }
+        }
+
+        /**
+         * v17 → v18 遷移：t_trade_recommendations 新增做T結果跟蹤字段
+         */
+        private val MIGRATION_17_18 = object : androidx.room.migration.Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `t_trade_recommendations` ADD COLUMN `period_type` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `t_trade_recommendations` ADD COLUMN `peak_price_after` REAL NOT NULL DEFAULT 0.0")
+                db.execSQL("ALTER TABLE `t_trade_recommendations` ADD COLUMN `trough_price_after` REAL NOT NULL DEFAULT 0.0")
+                db.execSQL("ALTER TABLE `t_trade_recommendations` ADD COLUMN `target_hit` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `t_trade_recommendations` ADD COLUMN `virtual_profit_pct` REAL NOT NULL DEFAULT 0.0")
+                Log.i(TAG, "✅ v17→v18 遷移完成：做T推薦新增跟蹤字段（period_type, peak/trough, target_hit, virtual_profit）")
+            }
+        }
+
         fun getInstance(context: Context): StockDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -243,7 +317,7 @@ abstract class StockDatabase : RoomDatabase() {
                     StockDatabase::class.java,
                     DATABASE_NAME
                 )
-                    .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
+                    .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18)
                     .fallbackToDestructiveMigration()
                     .addCallback(destructiveCallback)
                     .build()

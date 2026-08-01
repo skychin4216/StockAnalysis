@@ -78,6 +78,17 @@ object AppBackgroundRunner {
             syncMissingTradingDays(context.applicationContext)
         }
 
+        // 啟動時修復 strategy_trade_orders 中缺失的股票名稱
+        // （選股時可能因數據未導入導致名稱為空，此處自動補全）
+        scope.launch(Dispatchers.IO) {
+            fixMissingOrderStockNames(context.applicationContext)
+        }
+
+        // 啟動時監控真實持倉做T機會（後台自動生成推薦）
+        scope.launch(Dispatchers.IO) {
+            monitorTTradeOpportunities(context.applicationContext)
+        }
+
         startPositionMonitor(context.applicationContext, scope)
     }
 
@@ -137,12 +148,117 @@ object AppBackgroundRunner {
         }
     }
 
+    /**
+     * 修復所有數據表中缺失的股票名稱
+     *
+     * 選股管道可能選出尚未導入 daily_snapshot 的股票，導致各表中 stockName 為空。
+     * 使用 StockNameResolver 統一補全，覆蓋以下表：
+     *   - strategy_trade_orders（策略訂單）
+     *   - user_watchlist（自選股）
+     *   - ai_selected_stock（AI 精選）
+     *   - institutional_tips（機構線索）
+     */
+    private suspend fun fixMissingOrderStockNames(context: Context) {
+        try {
+            val db = StockDatabase.getInstance(context)
+            val allMissingCodes = mutableSetOf<String>()
+
+            // 1. strategy_trade_orders
+            val ordersMissing = db.strategyTradeOrderDao().getRecent(200)
+                .filter { it.stockName.isBlank() }
+                .map { it.id to it.stockCode }
+            allMissingCodes += ordersMissing.map { it.second }
+
+            // 2. user_watchlist
+            val watchlistMissing = try {
+                db.userWatchlistDao().getAll()
+                    .filter { it.stockName.isBlank() }
+                    .map { it.stockCode to it.stockCode }
+            } catch (_: Exception) { emptyList() }
+            allMissingCodes += watchlistMissing.map { it.first }
+
+            // 3. ai_selected_stock
+            val aiMissing = try {
+                db.aiSelectedStockDao().getAll()
+                    .filter { it.stockName.isBlank() }
+                    .map { it.id to it.stockCode }
+            } catch (_: Exception) { emptyList() }
+            allMissingCodes += aiMissing.map { it.second }
+
+            // 4. institutional_tips
+            val today = LocalDate.now().format(DATE_FMT)
+            val tipsMissing = try {
+                db.institutionalTipDao().getActiveTips(today)
+                    .filter { it.stockName.isBlank() }
+                    .map { it.id to it.stockCode }
+            } catch (_: Exception) { emptyList() }
+            allMissingCodes += tipsMissing.map { it.second }
+
+            if (allMissingCodes.isEmpty()) return
+
+            Log.i(TAG, "🔧 fixMissingOrderStockNames: ${allMissingCodes.size} 只股票缺少名稱，開始補全")
+
+            // 統一調用 StockNameResolver 批量解析
+            val nameMap = StockNameResolver.resolveBatch(context, allMissingCodes.toList())
+            Log.i(TAG, "  StockNameResolver 解析命中: ${nameMap.size}/${allMissingCodes.size}")
+
+            // 回寫各表
+            var fixed = 0
+
+            // strategy_trade_orders
+            for ((id, code) in ordersMissing) {
+                val name = nameMap[code] ?: continue
+                db.strategyTradeOrderDao().updateStockName(id, name)
+                fixed++
+            }
+
+            // user_watchlist（用 insert REPLACE 覆蓋）
+            for ((code, _) in watchlistMissing) {
+                val name = nameMap[code] ?: continue
+                try {
+                    val existing = db.userWatchlistDao().getByCode(code)
+                    if (existing != null) {
+                        db.userWatchlistDao().insert(existing.copy(stockName = name))
+                        fixed++
+                    }
+                } catch (_: Exception) {}
+            }
+
+            // ai_selected_stock
+            for ((id, code) in aiMissing) {
+                val name = nameMap[code] ?: continue
+                try {
+                    val entity = db.aiSelectedStockDao().getAll().find { it.id == id } ?: continue
+                    db.aiSelectedStockDao().insert(entity.copy(stockName = name))
+                    fixed++
+                } catch (_: Exception) {}
+            }
+
+            // institutional_tips
+            for ((id, code) in tipsMissing) {
+                val name = nameMap[code] ?: continue
+                try {
+                    val tip = db.institutionalTipDao().getActiveTips(today).find { it.id == id } ?: continue
+                    db.institutionalTipDao().insert(tip.copy(stockName = name))
+                    fixed++
+                } catch (_: Exception) {}
+            }
+
+            Log.i(TAG, "  ✅ fixMissingOrderStockNames 完成: 補全 $fixed 筆記錄")
+        } catch (e: Exception) {
+            Log.w(TAG, "fixMissingOrderStockNames 失敗: ${e.message}")
+        }
+    }
+
     private fun startPositionMonitor(context: Context, scope: CoroutineScope) {
         monitorJob?.cancel()
         monitorJob = scope.launch(Dispatchers.IO) {
             while (isActive) {
                 try { monitorWatchlist(context) }
                 catch (e: Exception) { Log.w(TAG, "監控異常: ${e.message}") }
+                // 每5分鐘同時檢查做T機會
+                try { monitorTTradeOpportunities(context) }
+                catch (e: Exception) { Log.w(TAG, "做T監控異常: ${e.message}") }
                 delay(5 * 60 * 1000L)
             }
         }
@@ -291,5 +407,79 @@ object AppBackgroundRunner {
         val db = StockDatabase.getInstance(context)
         val today = LocalDate.now().format(DATE_FMT)
         db.aiSelectedStockDao().deleteByDate(today)
+    }
+
+    /**
+     * 後台監控做T機會（覆蓋所有週期 + 真實持倉）
+     *
+     * 每5分鐘自動執行：
+     * 1. 過期前一天仍為 PENDING 的推薦
+     * 2. 掃描 4 個週期模擬持倉 + 真實持倉，生成做T信號
+     * 3. 跟蹤已有推薦的價格軌跡，檢查目標是否觸及
+     * 4. 收盤時（15:00後）標記當日推薦為 TARGET_MISSED
+     *
+     * 用戶可在「做T」面板查看推薦歷史和執行狀態。
+     */
+    private suspend fun monitorTTradeOpportunities(context: Context) {
+        val db = StockDatabase.getInstance(context)
+        val tEngine = com.chin.stockanalysis.strategy.trade.TTradeEngine(context)
+        val today = java.time.LocalDate.now().toString()
+
+        // 1. 過期舊推薦
+        try { tEngine.expireOldRecommendations() } catch (_: Exception) {}
+
+        // 2. 收盤結算（15:00後只執行一次）
+        val now = java.time.LocalDateTime.now()
+        if (now.hour >= 15 && now.minute < 5) {
+            try { tEngine.markDayEnd(today) } catch (_: Exception) {}
+        }
+
+        // 3. 收集所有持倉（模擬 + 真實）
+        val allSignals = mutableListOf<com.chin.stockanalysis.strategy.trade.TTradeSignal>()
+        val periodTypes = listOf("UltraShortQuant", "ShortTermQuant", "MidTermQuant", "LongTermQuant")
+
+        // 3a. 模擬持倉（按週期）
+        val allOrders = try { db.strategyTradeOrderDao().getRecent(500) } catch (_: Exception) { emptyList() }
+        for (periodType in periodTypes) {
+            val holdings = allOrders.filter { (it.status == "BUYING" || it.status == "PENDING") && it.orderType == periodType }
+            for (order in holdings) {
+                try {
+                    if (order.quantity <= 0) continue
+                    val signals = tEngine.generateSignals(order.stockCode, order.quantity, periodType)
+                    allSignals.addAll(signals)
+                } catch (_: Exception) {}
+            }
+        }
+
+        // 3b. 真實持倉
+        val positions = try { db.realPositionDao().getAllActive() } catch (_: Exception) { emptyList() }
+        for (pos in positions) {
+            try {
+                if (pos.quantity <= 0) continue
+                val signals = tEngine.generateSignals(pos.stockCode, pos.quantity, "RealPosition")
+                allSignals.addAll(signals)
+            } catch (_: Exception) {}
+        }
+
+        // 4. 保存推薦（自動去重，信號已帶 periodType）
+        var totalSaved = 0
+        if (allSignals.isNotEmpty()) {
+            totalSaved = tEngine.saveRecommendations(allSignals, "SIMULATED")
+        }
+
+        // 5. 跟蹤已有推薦的價格軌跡
+        val currentPrices = mutableMapOf<String, Double>()
+        val snapshots = try { db.dailySnapshotDao().getByDate(today) } catch (_: Exception) { emptyList() }
+        for (snap in snapshots) {
+            currentPrices[snap.code] = snap.close
+        }
+        if (currentPrices.isNotEmpty()) {
+            try { tEngine.trackOutcomeForRecommendations(currentPrices) } catch (_: Exception) {}
+        }
+
+        if (totalSaved > 0) {
+            val totalHoldings = periodTypes.sumOf { pt -> allOrders.count { (it.status == "BUYING" || it.status == "PENDING") && it.orderType == pt } }
+            Log.i(TAG, "做T監控: 掃描 ${totalHoldings} 只模擬持倉 + ${positions.size} 只真實持倉，新增 $totalSaved 條推薦")
+        }
     }
 }

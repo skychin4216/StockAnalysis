@@ -3,6 +3,7 @@ package com.chin.stockanalysis.strategy.trade
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
+import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
@@ -13,11 +14,13 @@ import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.ProgressBar
 import android.widget.ScrollView
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
+import com.chin.stockanalysis.stock.database.DataExportImport
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.HoldingPeriod
 import com.chin.stockanalysis.strategy.Strategy
@@ -71,6 +74,9 @@ abstract class QuantFragmentBase : Fragment() {
 
     /** 清除按鈕 */
     protected lateinit var clearBtn: Button
+
+    /** 做T按鈕（顯示待處理推薦數） */
+    protected lateinit var tTradeBtn: Button
 
     // ═══════════════════════════════════════════════════
     // 引擎與數據
@@ -173,7 +179,7 @@ abstract class QuantFragmentBase : Fragment() {
 
         // ── 2. Pipeline（啟動拓撲編輯器） ──
         val pipelineBtn = Button(requireContext()).apply {
-            text = "🔧 Pipeline"
+            text = "Pipeline"
             textSize = 10f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#6A1B9A"))
@@ -198,8 +204,8 @@ abstract class QuantFragmentBase : Fragment() {
         row.addView(posBtn)
 
         // ── 3.5 做T（T+0 日內交易） ──
-        val tTradeBtn = Button(requireContext()).apply {
-            text = "🔄 做T"
+        tTradeBtn = Button(requireContext()).apply {
+            text = "做T"
             textSize = 10f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#BF360C"))
@@ -209,6 +215,19 @@ abstract class QuantFragmentBase : Fragment() {
             setOnClickListener { showTTradeMenu() }
         }
         row.addView(tTradeBtn)
+
+        // ── 3.6 真實持倉（手動導入券商持倉，做T和規劃） ──
+        val realPosBtn = Button(requireContext()).apply {
+            text = "👤 真倉"
+            textSize = 10f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#6A1B9A"))
+            setPadding(4, 1, 4, 1)
+            setMinWidth(0); setMinimumWidth(0)
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 0.8f).apply { marginEnd = 1 }
+            setOnClickListener { showRealPositionMenu() }
+        }
+        row.addView(realPosBtn)
 
         // ── 4. 賣出（帶下拉菜單） ──
         val sellBtn = Button(requireContext()).apply {
@@ -309,6 +328,293 @@ abstract class QuantFragmentBase : Fragment() {
      */
     protected fun dpToPx(dp: Int): Int =
         (dp * resources.displayMetrics.density + 0.5f).toInt()
+
+    // ═══════════════════════════════════════════════════
+    // 通用模板方法（子類可直接調用，消除重複代碼）
+    // ═══════════════════════════════════════════════════
+
+    /**
+     * 創建日期選擇器行（日期標籤 + 交易日選擇器 + 僅主板開關 + 提示文字）
+     * @param tipText 提示標籤文字（如 "⚡ 持倉1天 | 最多3只"）
+     * @param tipColor 提示文字顏色（默認橙色）
+     * @param mainBoardDefault 僅主板開關默認值
+     * @return Triple(行Layout, TradingDayPickerView, Switch)
+     */
+    protected fun createDatePickerRow(
+        tipText: String,
+        tipColor: String = "#E65100",
+        mainBoardDefault: Boolean = true
+    ): Triple<LinearLayout, TradingDayPickerView, Switch> {
+        val ctx = requireContext()
+        val row = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(8, 6, 8, 6); setBackgroundColor(Color.WHITE)
+        }
+        val dateLabelTv = TextView(ctx).apply {
+            text = "📅 交易日:"; textSize = 12f
+            setTextColor(Color.parseColor("#333333")); setTypeface(null, Typeface.BOLD)
+        }
+        row.addView(dateLabelTv)
+        val datePicker = TradingDayPickerView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { marginStart = 4; marginEnd = 6 }
+            onDateChanged = { d ->
+                browsingDate = d
+                val isNonTrading = d.dayOfWeek == java.time.DayOfWeek.SATURDAY ||
+                    d.dayOfWeek == java.time.DayOfWeek.SUNDAY ||
+                    d in TradingDayPickerView.CHINESE_HOLIDAYS
+                dateLabelTv.text = if (isNonTrading) "📅 非交易日:" else "📅 交易日:"
+            }
+        }
+        row.addView(datePicker)
+        val mainBoardSwitch = Switch(ctx).apply {
+            text = "仅主板"; textSize = 11f; isChecked = mainBoardDefault
+            setTextColor(Color.parseColor("#333333"))
+        }
+        row.addView(mainBoardSwitch)
+        if (tipText.isNotBlank()) {
+            row.addView(TextView(ctx).apply {
+                text = tipText; textSize = 10f
+                setTextColor(Color.parseColor(tipColor)); setPadding(8, 0, 0, 0)
+            })
+        }
+        return Triple(row, datePicker, mainBoardSwitch)
+    }
+
+    /** 創建持倉顯示區（ScrollView + positionContainer） */
+    protected fun createContentScrollArea(): ScrollView {
+        positionContainer = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(8, 4, 8, 4)
+        }
+        return ScrollView(requireContext()).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            addView(positionContainer)
+        }
+    }
+
+    /** 添加分隔線 */
+    protected fun addSeparator(topMargin: Int = 8) {
+        rootLayout.addView(View(requireContext()).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1)
+                .apply { this.topMargin = topMargin }
+            setBackgroundColor(Color.parseColor("#DDDDDD"))
+        })
+    }
+
+    /** 添加標題行 */
+    protected fun addTitleRow(text: String, textSize: Float = 14f, textColor: String = "#1A1A2E") {
+        rootLayout.addView(TextView(requireContext()).apply {
+            this.text = text; this.textSize = textSize
+            setTextColor(Color.parseColor(textColor)); setTypeface(null, Typeface.BOLD)
+            setPadding(16, 12, 16, 6)
+        })
+    }
+
+    /**
+     * ═══ 通用 DAG Pipeline 執行模板 ═══
+     *
+     * 超短線/短線/長線共用此方法，只需傳入不同參數。
+     *
+     * @param holdingPeriod 持倉週期
+     * @param useCaseId DAG useCase ID (如 "ultra_short", "short_term", "long_term")
+     * @param orderType 訂單類型 (如 "ultra_short", "shortterm", "long_term")
+     * @param importDays 導入天數
+     * @param titlePrefix 標題前綴 (如 "超短線", "短線", "長線")
+     * @param onComplete 完成後回調（如超短線的 T+1 檢查）
+     */
+    protected fun runDagPipeline(
+        holdingPeriod: HoldingPeriod,
+        useCaseId: String,
+        orderType: String,
+        importDays: Int,
+        titlePrefix: String,
+        onComplete: (() -> Unit)? = null
+    ) {
+        val eng = engine ?: return
+        buildBtn.isEnabled = false; buildBtn.text = "⏳ 執行中..."
+        progressBar.visibility = View.VISIBLE
+        statusTv.text = "🔄 [DAG] ${titlePrefix} Pipeline 執行中..."
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val today = TradingDayPickerView.recentTradingDay().format(DATE_FMT)
+                val tradeDate = browsingDate.format(DATE_FMT)
+                val strategies = eng.getEnabledStrategiesByPeriod(holdingPeriod)
+                val r = com.chin.stockanalysis.strategy.topology.xml.DagTradeExecutor.execute(
+                    context = requireContext(),
+                    useCaseId = useCaseId,
+                    tradeDate = tradeDate,
+                    today = today,
+                    strategies = strategies,
+                    orderType = orderType,
+                    importDays = importDays,
+                    onNodeProgress = { pipelineName, nodeName ->
+                        lifecycleScope.launch(Dispatchers.Main) {
+                            statusTv.text = "🔄 [DAG] ${pipelineName} ${nodeName} 執行中..."
+                        }
+                    }
+                )
+                withContext(Dispatchers.Main) {
+                    showDialog(
+                        "${titlePrefix} DAG Pipeline 報告",
+                        com.chin.stockanalysis.strategy.topology.xml.DagTradeExecutor
+                            .buildReportText("${titlePrefix} DAG Pipeline", r)
+                    )
+                    statusTv.text = r.uiText
+                    buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"
+                    progressBar.visibility = View.GONE
+                    refreshPositions()
+                }
+                onComplete?.invoke()
+            } catch (e: Exception) {
+                Log.e("QuantFragmentBase", "[DAG] ${titlePrefix} 執行異常", e)
+                withContext(Dispatchers.Main) {
+                    statusTv.text = "❌ [DAG] ${e.message?.take(40)}"
+                    buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"
+                    progressBar.visibility = View.GONE
+                }
+            }
+        }
+    }
+
+    /**
+     * ═══ 通用歷史回溯測試模板 ═══
+     *
+     * 超短線/短線/長線共用此方法。
+     *
+     * @param holdingPeriod 持倉週期（null 表示使用所有啟用策略）
+     * @param tradingDays 回測天數
+     * @param titlePrefix 標題前綴
+     * @param extraInfo 額外信息行（如 "持倉: 1天 | 止損: -2%"）
+     */
+    protected fun runHistoricalBacktrack(
+        holdingPeriod: HoldingPeriod?,
+        tradingDays: Int,
+        titlePrefix: String,
+        extraInfo: String = ""
+    ) {
+        val eng = engine ?: return
+        buildBtn.isEnabled = false; buildBtn.text = "⏳ 回溯中..."
+        progressBar.visibility = View.VISIBLE
+        statusTv.text = "${titlePrefix}回溯測試中..."
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val strategies = if (holdingPeriod != null) {
+                    eng.getEnabledStrategiesByPeriod(holdingPeriod)
+                } else {
+                    eng.getStrategies().filter { eng.isEnabled(it.id) }
+                }
+                if (strategies.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        statusTv.text = "⚠️ 無${titlePrefix}策略可回測"
+                        buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"
+                        progressBar.visibility = View.GONE
+                    }
+                    return@launch
+                }
+
+                val backtestEngine = com.chin.stockanalysis.strategy.backtest.HistoricalBacktestEngine(requireContext())
+                val report = backtestEngine.runHistoricalBacktest(strategies, tradingDays = tradingDays)
+
+                val sb = StringBuilder()
+                sb.appendLine("${titlePrefix}回溯測試報告 (${tradingDays}交易日)")
+                if (extraInfo.isNotBlank()) sb.appendLine(extraInfo)
+                sb.appendLine("期間: ${report.dateRange}")
+                sb.appendLine()
+                for (r in report.strategyReports) {
+                    sb.appendLine("📋 ${r.strategyName}")
+                    sb.appendLine("  交易日: ${r.totalDays} 天 | 買入信號: ${r.totalBuys} 次")
+                    sb.appendLine("  買入準確率: ${"%.1f".format(r.buyAccuracy * 100)}% (${r.correctBuys}/${r.totalBuys})")
+                    sb.appendLine("  平均淨收益: ${"%.2f".format(r.avgReturn)}%（已扣交易成本0.3%）")
+                    sb.appendLine("  最大盈利: ${"%.2f".format(r.maxGain)}% | 最大虧損: ${"%.2f".format(r.maxLoss)}%")
+                    sb.appendLine()
+                }
+
+                withContext(Dispatchers.Main) {
+                    showDialog("${titlePrefix}回溯報告", sb.toString())
+                    statusTv.text = "✅ ${titlePrefix}回測完成"
+                    buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"
+                    progressBar.visibility = View.GONE
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    statusTv.text = "❌ 回測失敗: ${e.message?.take(40)}"
+                    buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"
+                    progressBar.visibility = View.GONE
+                }
+            }
+        }
+    }
+
+    /**
+     * ═══ 通用擬合參數報告模板 ═══
+     *
+     * 短線/中線共用此方法展示擬合參數報告。
+     *
+     * @param titlePrefix 標題前綴 (如 "短線", "中線")
+     * @param periodLabel 週期標籤 (如 "3日", 可選)
+     */
+    protected fun showFittingParamsReport(
+        titlePrefix: String,
+        periodLabel: String = ""
+    ) {
+        val eng = engine ?: return
+        buildBtn.isEnabled = false; buildBtn.text = "⏳ 擬合中"
+        progressBar.visibility = View.VISIBLE
+        statusTv.text = "🔧 ${titlePrefix}擬合調優中${if (periodLabel.isNotBlank()) "（週期: $periodLabel）" else ""}..."
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val te = StrategyFittingEngine(requireContext())
+                val strategies = eng.getStrategies().filter { eng.isEnabled(it.id) }
+                val recentDates = db.dailySnapshotDao().getAvailableDates(30).sorted()
+
+                if (strategies.isNotEmpty() && recentDates.size >= 2) {
+                    try {
+                        te.autoFit(strategies, recentDates)
+                    } catch (e: Exception) {
+                        Log.w("QuantFragmentBase", "${titlePrefix}擬合失敗（仍顯示已有數據）: ${e.message}")
+                    }
+                }
+
+                val sb = StringBuilder()
+                sb.appendLine("🔧 ${titlePrefix}擬合參數${if (periodLabel.isNotBlank()) "（當前週期: $periodLabel）" else ""}")
+                sb.appendLine()
+                for (strategy in strategies) {
+                    sb.appendLine("【${strategy.name}】")
+                    val params = db.strategyTradeFittingParamDao().getRecentByStrategy(strategy.id, 50)
+                    if (params.isEmpty()) {
+                        sb.appendLine("  暫無擬合數據")
+                    } else {
+                        val byPeriod = params.groupBy { it.periodDays }
+                        for ((period, items) in byPeriod) {
+                            val best = items.maxByOrNull { it.accuracy }
+                            val worst = items.minByOrNull { it.accuracy }
+                            sb.appendLine("  [${period}日] ${items.size}條")
+                            if (best != null) sb.appendLine("    最佳: 準確率${"%.2f".format(best.accuracy * 100)}% 平均收益${"%.2f".format(best.avgReturn)}%")
+                            if (worst != null) sb.appendLine("    最差: 準確率${"%.2f".format(worst.accuracy * 100)}% 平均收益${"%.2f".format(worst.avgReturn)}%")
+                        }
+                    }
+                    sb.appendLine()
+                }
+                withContext(Dispatchers.Main) {
+                    showDialog("${titlePrefix}擬合參數", sb.toString())
+                    statusTv.text = "✅ 擬合完成: ${strategies.size} 個策略"
+                    buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"
+                    progressBar.visibility = View.GONE
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    statusTv.text = "❌ 擬合失敗: ${e.message?.take(30)}"
+                    buildBtn.isEnabled = true; buildBtn.text = "▶ 建倉"
+                    progressBar.visibility = View.GONE
+                }
+            }
+        }
+    }
 
     // ═══════════════════════════════════════════════════
     // 賣出功能
@@ -499,6 +805,637 @@ abstract class QuantFragmentBase : Fragment() {
     }
 
     // ═══════════════════════════════════════════════════
+    // 真實持倉（手動導入券商持倉）
+    // ═══════════════════════════════════════════════════
+
+    /** 顯示真實持倉管理菜單 */
+    protected open fun showRealPositionMenu() {
+        val items = arrayOf(
+            "📋 查看真實持倉",
+            "➕ 添加真實持倉",
+            "✏️ 編輯持倉",
+            "💰 賣出/減倉",
+            "🔄 對真實持倉做T",
+            "📊 真實持倉做T統計"
+        )
+        val builder = android.app.AlertDialog.Builder(requireContext())
+            .setTitle("👤 真實持倉管理")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> showRealPositionList()
+                    1 -> showAddRealPositionDialog()
+                    2 -> showEditRealPositionDialog()
+                    3 -> showSellRealPositionDialog()
+                    4 -> showRealPositionTSignals()
+                    5 -> showRealPositionTStats()
+                }
+            }
+        builder.show()
+    }
+
+    /** 顯示真實持倉列表 */
+    private fun showRealPositionList() {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext().applicationContext)
+                val positions = db.realPositionDao().getAllActive()
+                withContext(Dispatchers.Main) {
+                    if (positions.isEmpty()) {
+                        showDialog("真實持倉", "暫無真實持倉記錄\n\n點擊「添加真實持倉」錄入您的券商持倉")
+                        return@withContext
+                    }
+
+                    val sb = StringBuilder()
+                    sb.appendLine("📊 真實持倉 (${positions.size} 只):")
+                    sb.appendLine("─".repeat(50))
+                    var totalCost = 0.0
+                    for (p in positions) {
+                        val cost = p.avgBuyPrice * p.quantity
+                        totalCost += cost
+                        sb.appendLine("▸ ${p.stockName}(${p.stockCode})")
+                        sb.appendLine("  數量: ${p.quantity}股 | 均價: ${"%.2f".format(p.avgBuyPrice)} | 成本: ${"%.0f".format(cost)}")
+                        if (p.periodType.isNotEmpty()) {
+                            sb.appendLine("  分類: ${p.periodType}")
+                        }
+                        if (p.notes.isNotEmpty()) {
+                            sb.appendLine("  備註: ${p.notes}")
+                        }
+                        sb.appendLine()
+                    }
+                    sb.appendLine("─".repeat(50))
+                    sb.appendLine("💰 總成本: ${"%.0f".format(totalCost)}")
+                    sb.appendLine()
+                    sb.appendLine("💡 在券商APP查看持倉後，點擊「添加真實持倉」錄入")
+                    sb.appendLine("💡 錄入後可使用「對真實持倉做T」生成做T建議")
+                    showDialog("真實持倉列表", sb.toString())
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    showDialog("真實持倉", "❌ 加載失敗: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /** 添加真實持倉對話框 */
+    private fun showAddRealPositionDialog() {
+        val ctx = requireContext()
+        val container = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(20, 10, 20, 10)
+        }
+
+        val codeEt = android.widget.EditText(ctx).apply {
+            hint = "股票代碼 (如 sh600519)"
+            setSingleLine()
+        }
+        val nameEt = android.widget.EditText(ctx).apply {
+            hint = "股票名稱 (如 貴州茅臺)"
+            setSingleLine()
+        }
+        val qtyEt = android.widget.EditText(ctx).apply {
+            hint = "持有數量 (股)"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setSingleLine()
+        }
+        val priceEt = android.widget.EditText(ctx).apply {
+            hint = "買入均價"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setSingleLine()
+        }
+        val dateEt = android.widget.EditText(ctx).apply {
+            hint = "買入日期 (yyyy-MM-dd)"
+            setSingleLine()
+            val today = java.time.LocalDate.now().toString()
+            setText(today)
+        }
+
+        val periodSpinner = android.widget.ArrayAdapter<String>(
+            ctx, android.R.layout.simple_spinner_dropdown_item,
+            arrayOf("未分類", "短線 ShortTermQuant", "中線 MidTermQuant", "長線 LongTermQuant")
+        )
+        val periodSpinnerView = android.widget.Spinner(ctx).apply {
+            adapter = periodSpinner
+        }
+
+        val notesEt = android.widget.EditText(ctx).apply {
+            hint = "備註 (可選)"
+            setSingleLine()
+        }
+
+        container.addView(codeEt)
+        container.addView(nameEt)
+        container.addView(qtyEt)
+        container.addView(priceEt)
+        container.addView(dateEt)
+        container.addView(android.widget.TextView(ctx).apply {
+            text = "持倉分類:"; textSize = 12f; setPadding(0, 8, 0, 4)
+        })
+        container.addView(periodSpinnerView)
+        container.addView(notesEt)
+
+        android.app.AlertDialog.Builder(ctx)
+            .setTitle("➕ 添加真實持倉")
+            .setView(container)
+            .setPositiveButton("保存") { _, _ ->
+                val code = codeEt.text.toString().trim()
+                val name = nameEt.text.toString().trim()
+                val qty = qtyEt.text.toString().trim().toIntOrNull() ?: 0
+                val price = priceEt.text.toString().trim().toDoubleOrNull() ?: 0.0
+                val date = dateEt.text.toString().trim()
+                val periodIdx = periodSpinnerView.selectedItemPosition
+                val periodType = when (periodIdx) {
+                    1 -> "ShortTermQuant"
+                    2 -> "MidTermQuant"
+                    3 -> "LongTermQuant"
+                    else -> ""
+                }
+                val notes = notesEt.text.toString().trim()
+
+                if (code.isEmpty()) {
+                    android.widget.Toast.makeText(ctx, "請輸入股票代碼", android.widget.Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val db = StockDatabase.getInstance(ctx.applicationContext)
+                        val rowId = db.realPositionDao().insert(
+                            RealPositionEntity(
+                                stockCode = code,
+                                stockName = name,
+                                quantity = qty,
+                                avgBuyPrice = price,
+                                buyDate = date,
+                                periodType = periodType,
+                                notes = notes
+                            )
+                        )
+                        // 名稱為空時，異步用 StockNameResolver 補全
+                        if (name.isEmpty()) {
+                            try {
+                                val resolved = com.chin.stockanalysis.stock.database.StockNameResolver
+                                    .resolve(ctx.applicationContext, code)
+                                if (resolved.isNotBlank() && resolved != code) {
+                                    db.realPositionDao().updateStockName(rowId, resolved)
+                                    Log.i(TAG, "✅ 真實持倉名稱已補全: $code → $resolved")
+                                }
+                            } catch (_: Exception) {}
+                        }
+                        withContext(Dispatchers.Main) {
+                            val label = if (name.isNotEmpty()) name else code
+                            android.widget.Toast.makeText(ctx, "✅ 已添加 $label", android.widget.Toast.LENGTH_SHORT).show()
+                            refreshPositions()
+                        }
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(ctx, "❌ 添加失敗: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 編輯真實持倉（先列出活躍真倉供選擇，再彈出編輯表單） */
+    private fun showEditRealPositionDialog() {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext().applicationContext)
+                val positions = db.realPositionDao().getAllActive()
+                withContext(Dispatchers.Main) {
+                    if (positions.isEmpty()) {
+                        showDialog("編輯持倉", "暫無真實持倉可編輯\n\n請先添加真實持倉")
+                        return@withContext
+                    }
+
+                    val labels = positions.mapIndexed { i, p ->
+                        val nameLabel = p.stockName.ifEmpty { "⚠️待完善" }
+                        "${i + 1}. $nameLabel(${p.stockCode}) ${p.quantity}股 @ ${"%.2f".format(p.avgBuyPrice)}"
+                    }.toTypedArray()
+
+                    android.app.AlertDialog.Builder(requireContext())
+                        .setTitle("✏️ 選擇要編輯的持倉")
+                        .setItems(labels) { _, which ->
+                            showEditRealPositionForm(positions[which])
+                        }
+                        .setNegativeButton("取消", null)
+                        .show()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    showDialog("編輯持倉", "❌ 加載失敗: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /** 編輯真實持倉表單（預填現有數據） */
+    private fun showEditRealPositionForm(position: RealPositionEntity) {
+        val ctx = requireContext()
+        val container = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(20, 10, 20, 10)
+        }
+
+        val codeEt = android.widget.EditText(ctx).apply {
+            setText(position.stockCode); setSingleLine()
+            hint = "股票代碼"
+            isEnabled = false // 代碼不可編輯（updatePosition 不更新代碼）
+        }
+        val nameEt = android.widget.EditText(ctx).apply {
+            setText(position.stockName); setSingleLine()
+            hint = "股票名稱（可留空，自動補全）"
+        }
+        val qtyEt = android.widget.EditText(ctx).apply {
+            setText(position.quantity.toString()); setSingleLine()
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            hint = "持有數量 (股)"
+        }
+        val priceEt = android.widget.EditText(ctx).apply {
+            setText(if (position.avgBuyPrice > 0) "%.2f".format(position.avgBuyPrice) else "")
+            setSingleLine()
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            hint = "買入均價"
+        }
+        val sectorEt = android.widget.EditText(ctx).apply {
+            setText(position.sector); setSingleLine()
+            hint = "板塊 (可選)"
+        }
+        val notesEt = android.widget.EditText(ctx).apply {
+            setText(position.notes); setSingleLine()
+            hint = "備註 (可選)"
+        }
+
+        fun addLabel(text: String) {
+            container.addView(android.widget.TextView(ctx).apply {
+                this.text = text; textSize = 12f; setPadding(0, 8, 0, 2)
+            })
+        }
+        addLabel("股票代碼:"); container.addView(codeEt)
+        addLabel("股票名稱:"); container.addView(nameEt)
+        addLabel("數量:"); container.addView(qtyEt)
+        addLabel("均價:"); container.addView(priceEt)
+        addLabel("板塊:"); container.addView(sectorEt)
+        addLabel("備註:"); container.addView(notesEt)
+
+        android.app.AlertDialog.Builder(ctx)
+            .setTitle("✏️ 編輯持倉")
+            .setView(container)
+            .setPositiveButton("保存") { _, _ ->
+                val name = nameEt.text.toString().trim()
+                val qty = qtyEt.text.toString().trim().toIntOrNull() ?: 0
+                val price = priceEt.text.toString().trim().toDoubleOrNull() ?: 0.0
+                val sector = sectorEt.text.toString().trim()
+                val notes = notesEt.text.toString().trim()
+                // 代碼不可變更，沿用原值
+                val code = position.stockCode
+
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val db = StockDatabase.getInstance(ctx.applicationContext)
+                        db.realPositionDao().updatePosition(
+                            id = position.id,
+                            quantity = qty,
+                            avgBuyPrice = price,
+                            name = name,
+                            sector = sector,
+                            notes = notes
+                        )
+                        // 若原名稱為空、現在仍未填，則異步補全；若已補全也一併寫入
+                        if (name.isEmpty()) {
+                            try {
+                                val resolved = com.chin.stockanalysis.stock.database.StockNameResolver
+                                    .resolve(ctx.applicationContext, code)
+                                if (resolved.isNotBlank() && resolved != code) {
+                                    db.realPositionDao().updateStockName(position.id, resolved)
+                                    Log.i(TAG, "✅ 編輯後名稱已補全: $code → $resolved")
+                                }
+                            } catch (_: Exception) {}
+                        }
+                        withContext(Dispatchers.Main) {
+                            val label = if (name.isNotEmpty()) name else code
+                            android.widget.Toast.makeText(ctx, "✅ 已更新 $label", android.widget.Toast.LENGTH_SHORT).show()
+                            refreshPositions()
+                        }
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(ctx, "❌ 更新失敗: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 賣出/減倉真實持倉（先列出活躍真倉供選擇，再彈出賣出表單） */
+    private fun showSellRealPositionDialog() {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext().applicationContext)
+                val positions = db.realPositionDao().getAllActive()
+                withContext(Dispatchers.Main) {
+                    if (positions.isEmpty()) {
+                        showDialog("賣出/減倉", "暫無真實持倉可賣出\n\n請先添加真實持倉")
+                        return@withContext
+                    }
+
+                    val labels = positions.mapIndexed { i, p ->
+                        val nameLabel = p.stockName.ifEmpty { "⚠️待完善" }
+                        "${i + 1}. $nameLabel(${p.stockCode}) ${p.quantity}股 @ ${"%.2f".format(p.avgBuyPrice)}"
+                    }.toTypedArray()
+
+                    android.app.AlertDialog.Builder(requireContext())
+                        .setTitle("💰 選擇要賣出/減倉的持倉")
+                        .setItems(labels) { _, which ->
+                            showSellRealPositionForm(positions[which])
+                        }
+                        .setNegativeButton("取消", null)
+                        .show()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    showDialog("賣出/減倉", "❌ 加載失敗: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /** 賣出/減倉表單（輸入賣出數量和賣出價格） */
+    private fun showSellRealPositionForm(position: RealPositionEntity) {
+        val ctx = requireContext()
+        val container = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(20, 10, 20, 10)
+        }
+
+        val nameLabel = position.stockName.ifEmpty { "⚠️待完善" }
+        container.addView(android.widget.TextView(ctx).apply {
+            text = "當前: $nameLabel(${position.stockCode})\n持有 ${position.quantity}股 均價 ${"%.2f".format(position.avgBuyPrice)}"
+            textSize = 11f; setTextColor(Color.parseColor("#666666"))
+            setPadding(0, 0, 0, 8)
+        })
+
+        val qtyEt = android.widget.EditText(ctx).apply {
+            hint = "賣出數量 (股，最多 ${position.quantity})"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setSingleLine()
+        }
+        val priceEt = android.widget.EditText(ctx).apply {
+            hint = "賣出價格"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setSingleLine()
+        }
+        container.addView(qtyEt)
+        container.addView(priceEt)
+
+        android.app.AlertDialog.Builder(ctx)
+            .setTitle("💰 賣出/減倉")
+            .setView(container)
+            .setPositiveButton("確認賣出") { _, _ ->
+                val sellQty = qtyEt.text.toString().trim().toIntOrNull() ?: 0
+                val sellPrice = priceEt.text.toString().trim().toDoubleOrNull() ?: 0.0
+
+                if (sellQty <= 0) {
+                    android.widget.Toast.makeText(ctx, "請輸入有效的賣出數量", android.widget.Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                if (sellQty > position.quantity) {
+                    android.widget.Toast.makeText(ctx, "賣出數量不能超過持有數量(${position.quantity})", android.widget.Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val db = StockDatabase.getInstance(ctx.applicationContext)
+                        val periodType = getQuantType()
+                        val tradeDate = java.time.LocalDate.now().toString()
+
+                        if (sellQty >= position.quantity) {
+                            // 全部賣出 → 標記清倉
+                            db.realPositionDao().markInactive(position.id)
+                        } else {
+                            // 部分賣出 → 更新剩餘數量（均價沿用原成本基準）
+                            val remainQty = position.quantity - sellQty
+                            db.realPositionDao().updateQuantity(
+                                id = position.id,
+                                quantity = remainQty,
+                                avgBuyPrice = position.avgBuyPrice
+                            )
+                        }
+
+                        // 記錄賣出信息到 TTradeRecordEntity（復用現有表，tradeType="REAL_SELL"）
+                        val profit = (sellPrice - position.avgBuyPrice) * sellQty
+                        val profitPct = if (position.avgBuyPrice > 0)
+                            (sellPrice - position.avgBuyPrice) / position.avgBuyPrice * 100 else 0.0
+                        db.tTradeRecordDao().insert(
+                            TTradeRecordEntity(
+                                stockCode = position.stockCode,
+                                stockName = position.stockName,
+                                tradeDate = tradeDate,
+                                tradeType = "REAL_SELL",
+                                quantity = sellQty,
+                                price = sellPrice,
+                                pairedPrice = position.avgBuyPrice,
+                                profit = profit,
+                                profitPct = profitPct,
+                                status = "CLOSED",
+                                periodType = periodType,
+                                basePositionQty = position.quantity
+                            )
+                        )
+                        Log.i(TAG, "💰 真倉賣出記錄: ${position.stockCode} ${sellQty}股 @${sellPrice} 盈虧${"%.2f".format(profit)}")
+
+                        withContext(Dispatchers.Main) {
+                            val msg = if (sellQty >= position.quantity)
+                                "✅ 已清倉 ${position.stockName.ifEmpty { position.stockCode }}"
+                            else
+                                "✅ 已減倉 ${position.stockName.ifEmpty { position.stockCode }} 剩餘${position.quantity - sellQty}股"
+                            android.widget.Toast.makeText(ctx, msg, android.widget.Toast.LENGTH_SHORT).show()
+                            statusTv.text = msg
+                            refreshPositions()
+                        }
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(ctx, "❌ 賣出失敗: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 對真實持倉生成做T信號 */
+    private fun showRealPositionTSignals() {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext().applicationContext)
+                val positions = db.realPositionDao().getAllActive()
+
+                if (positions.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        showDialog("真實持倉做T", "暫無真實持倉\n\n請先添加真實持倉")
+                    }
+                    return@launch
+                }
+
+                val tEngine = TTradeEngine(requireContext().applicationContext)
+                val allSignals = mutableListOf<TTradeSignal>()
+
+                for (pos in positions) {
+                    try {
+                        val signals = tEngine.generateSignals(
+                            pos.stockCode,
+                            pos.quantity,
+                            "RealPosition"
+                        )
+                        allSignals.addAll(signals)
+                    } catch (_: Exception) {}
+                }
+
+                // 保存推薦記錄（自動去重）
+                if (allSignals.isNotEmpty()) {
+                    tEngine.saveRecommendations(allSignals, "REAL")
+                }
+
+                withContext(Dispatchers.Main) {
+                    val sb = StringBuilder()
+                    sb.appendLine("真實持倉做T建議")
+                    sb.appendLine("持倉 ${positions.size} 只 | 信號 ${allSignals.size} 個")
+                    sb.appendLine("─".repeat(50))
+
+                    if (allSignals.isEmpty()) {
+                        sb.appendLine()
+                        sb.appendLine("暫無做T信號")
+                        sb.appendLine()
+                        sb.appendLine("做T條件：")
+                        sb.appendLine("• 股價接近支撐位 → 做T買入")
+                        sb.appendLine("• 股價接近阻力位 → 反T賣出")
+                        sb.appendLine("• 需有底倉才能做T")
+                        sb.appendLine()
+                        sb.appendLine("💡 提示：做T信號基於技術分析，")
+                        sb.appendLine("請在券商APP手動執行後記錄結果")
+                    } else {
+                        for (sig in allSignals) {
+                            val typeLabel = when (sig.signalType) {
+                                TTradeType.T_BUY -> "🟢 做T買入"
+                                TTradeType.T_SELL -> "🔴 做T賣出(配對)"
+                                TTradeType.RT_SELL -> "🟡 反T賣出"
+                                TTradeType.RT_BUY -> "🔵 反T買回(配對)"
+                            }
+                            sb.appendLine("▸ $typeLabel ${sig.stockName}(${sig.stockCode})")
+                            sb.appendLine("  數量: ${sig.quantity}股 | 建議價: ${"%.2f".format(sig.suggestedPrice)} → 目標: ${"%.2f".format(sig.targetPrice)}")
+                            sb.appendLine("  原因: ${sig.reason}")
+                            sb.appendLine()
+                        }
+                        sb.appendLine("─".repeat(50))
+                        sb.appendLine("💡 請在券商APP手動執行以上建議")
+                        sb.appendLine("💡 執行後可通過「做T統計」記錄結果")
+                    }
+
+                    showDialog("真實持倉做T建議", sb.toString())
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    showDialog("真實持倉做T", "❌ 加載失敗: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /** 真實持倉做T統計 */
+    private fun showRealPositionTStats() {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext().applicationContext)
+                val periodType = getQuantType()
+                val totalProfit = db.tTradeRecordDao().getTotalProfit(periodType) ?: 0.0
+                val winCount = db.tTradeRecordDao().getWinCount(periodType)
+                val totalClosed = db.tTradeRecordDao().getTotalClosedCount(periodType)
+                val openCount = db.tTradeRecordDao().getOpenCount(periodType)
+                val winRate = if (totalClosed > 0) winCount * 100.0 / totalClosed else 0.0
+
+                withContext(Dispatchers.Main) {
+                    val sb = StringBuilder()
+                    sb.appendLine("📊 做T統計 ($periodType)")
+                    sb.appendLine("─".repeat(40))
+                    sb.appendLine("💰 總盈虧: ${"%.2f".format(totalProfit)}")
+                    sb.appendLine("📈 勝率: ${"%.1f".format(winRate)}% ($winCount/$totalClosed)")
+                    sb.appendLine("✅ 已完成: $totalClosed 筆")
+                    sb.appendLine("⏳ 未平倉: $openCount 筆")
+                    sb.appendLine()
+                    sb.appendLine("💡 做T統計包含模擬持倉和真實持倉的做T記錄")
+                    showDialog("做T統計", sb.toString())
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    showDialog("做T統計", "❌ 加載失敗: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /** 自動檢測真實持倉的做T機會並在狀態欄通知（refreshPositions 渲染完成後調用） */
+    private fun checkRealPositionTSignals() {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext().applicationContext)
+                val positions = db.realPositionDao().getAllActive()
+                if (positions.isEmpty()) return@launch
+
+                val tEngine = TTradeEngine(requireContext().applicationContext)
+                val allSignals = mutableListOf<TTradeSignal>()
+                val details = mutableListOf<String>()
+
+                for (pos in positions) {
+                    try {
+                        val signals = tEngine.generateSignals(
+                            pos.stockCode, pos.quantity, "RealPosition"
+                        )
+                        if (signals.isNotEmpty()) {
+                            allSignals.addAll(signals)
+                            for (sig in signals) {
+                                val typeLabel = when (sig.signalType) {
+                                    TTradeType.T_BUY -> "做T買入"
+                                    TTradeType.T_SELL -> "做T賣出"
+                                    TTradeType.RT_SELL -> "反T賣出"
+                                    TTradeType.RT_BUY -> "反T買回"
+                                }
+                                details.add(
+                                    "${sig.stockName}(${sig.stockCode}) $typeLabel " +
+                                    "建議價${"%.2f".format(sig.suggestedPrice)} → 目標${"%.2f".format(sig.targetPrice)}"
+                                )
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                // 保存推薦記錄（自動去重）
+                if (allSignals.isNotEmpty()) {
+                    tEngine.saveRecommendations(allSignals, "REAL")
+                }
+
+                // 獲取今日待處理推薦數
+                val pendingCount = tEngine.getRecommendationStats().todayPending
+
+                val totalSignals = allSignals.size
+                withContext(Dispatchers.Main) {
+                    // 更新做T按鈕顯示待處理推薦數
+                    tTradeBtn.text = if (pendingCount > 0) "做T($pendingCount)" else "做T"
+
+                    if (totalSignals > 0) {
+                        Log.i(TAG, "真倉做T信號: 共 $totalSignals 個\n${details.joinToString("\n")}")
+                        statusTv.text = "真倉有 $totalSignals 個做T信號"
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    // ═══════════════════════════════════════════════════
     // 做 T（T+0 日內交易）
     // ═══════════════════════════════════════════════════
 
@@ -514,25 +1451,41 @@ abstract class QuantFragmentBase : Fragment() {
                 val holdingOrders = db.strategyTradeOrderDao().getRecent(500)
                     .filter { (it.status == "BUYING" || it.status == "PENDING") && it.orderType == periodType }
 
-                if (holdingOrders.isEmpty()) {
-                    withContext(Dispatchers.Main) {
-                        android.widget.Toast.makeText(requireContext(), "無 $periodType 持倉，無法做T", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                    return@launch
-                }
-
-                // 為每只持倉生成做T信號
+                // 為模擬持倉生成做T信號
                 val allSignals = mutableListOf<TTradeSignal>()
                 for (order in holdingOrders) {
                     val signals = tEngine.generateSignals(order.stockCode, order.quantity, periodType)
                     allSignals.addAll(signals)
                 }
 
+                // 同時檢查真實持倉的做T信號
+                val realPositions = db.realPositionDao().getAllActive()
+                for (pos in realPositions) {
+                    if (pos.quantity <= 0) continue
+                    val realSignals = tEngine.generateSignals(pos.stockCode, pos.quantity, "RealPosition")
+                    allSignals.addAll(realSignals)
+                }
+
                 // 獲取做T統計
                 val stats = tEngine.getTTradeStats(periodType)
 
+                // 獲取今日推薦（後台監控生成的）
+                val todayRecommendations = tEngine.getTodayRecommendations()
+
+                // 獲取推薦歷史（近7天）
+                val history = tEngine.getRecommendationHistory(7)
+
+                // 獲取推薦統計
+                val recStats = tEngine.getRecommendationStats()
+
+                // 獲取今日做T統計摘要（含虛擬成功率）
+                val today = java.time.LocalDate.now().toString()
+                val dailySummary = tEngine.getDailySummary(today, periodType)
+
                 withContext(Dispatchers.Main) {
-                    showTTradeDialog(allSignals, stats, periodType)
+                    // 更新做T按鈕顯示待處理推薦數
+                    tTradeBtn.text = if (recStats.todayPending > 0) "做T(${recStats.todayPending})" else "做T"
+                    showTTradeDialog(allSignals, stats, periodType, todayRecommendations, history, recStats, dailySummary)
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -542,44 +1495,68 @@ abstract class QuantFragmentBase : Fragment() {
         }
     }
 
-    /** 顯示做T交易對話框 */
+    /** 顯示做T交易對話框（含推薦歷史和每日統計） */
     private fun showTTradeDialog(
         signals: List<TTradeSignal>,
         stats: TTradeStats,
-        periodType: String
+        periodType: String,
+        todayRecommendations: List<TTradeRecommendationEntity>,
+        history: List<TTradeRecommendationEntity>,
+        recStats: RecommendationStats,
+        dailySummary: DailyTSummary
     ) {
         val dialog = android.app.Dialog(requireContext())
-        dialog.setTitle("🔄 做T面板 — $periodType")
+        dialog.setTitle("做T面板 — $periodType")
         val scrollView = android.widget.ScrollView(requireContext())
         val container = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(16, 16, 16, 16)
         }
 
-        // 統計區
+        // ── 做T統計區 ──
         val winRateStr = "%.1f%%".format(stats.winRate)
         val profitStr = "%.2f".format(stats.totalProfit)
         container.addView(TextView(requireContext()).apply {
-            text = "📊 做T統計: 總盈虧 $profitStr | 勝率 $winRateStr | 已完成 ${stats.totalTrades} 筆 | 未平倉 ${stats.openCount} 筆"
+            text = "做T統計: 總盈虧 $profitStr | 勝率 $winRateStr | 已完成 ${stats.totalTrades} 筆 | 未平倉 ${stats.openCount} 筆"
             textSize = 11f; setTextColor(Color.parseColor("#333333"))
+            setPadding(0, 0, 0, 4)
+        })
+
+        // 推薦統計
+        container.addView(TextView(requireContext()).apply {
+            text = "推薦統計: 今日待處理 ${recStats.todayPending} 條 | 近7天已執行 ${recStats.weekExecuted} 條"
+            textSize = 10f; setTextColor(Color.parseColor("#666666"))
             setPadding(0, 0, 0, 8)
+        })
+
+        // ── 今日做T統計摘要 ──
+        if (dailySummary.totalRecommendations > 0) {
+            container.addView(TextView(requireContext()).apply {
+                text = "今日做T統計: 推薦 ${dailySummary.totalRecommendations} 條 | " +
+                       "目標觸及 ${dailySummary.targetHitCount} 條 | " +
+                       "虛擬成功率 ${"%.1f".format(dailySummary.virtualSuccessRate)}% | " +
+                       "已執行 ${dailySummary.executedCount} 條"
+                textSize = 10f
+                setTextColor(Color.parseColor(if (dailySummary.virtualSuccessRate >= 50) "#2E7D32" else "#C62828"))
+                setPadding(0, 0, 0, 8)
+            })
+        }
+
+        // ── 當前做T信號（即時生成的） ──
+        container.addView(TextView(requireContext()).apply {
+            text = if (signals.isEmpty()) "即時做T信號: 無" else "即時做T信號 (${signals.size} 個):"
+            textSize = 12f; setTypeface(null, android.graphics.Typeface.BOLD)
+            setTextColor(Color.parseColor("#333333"))
+            setPadding(0, 8, 0, 4)
         })
 
         if (signals.isEmpty()) {
             container.addView(TextView(requireContext()).apply {
-                text = "暫無做T信號\n\n做T條件：\n• 股價接近支撐位 → 做T買入\n• 股價接近阻力位 → 反T賣出\n• 需有底倉才能做T"
-                textSize = 11f; setTextColor(Color.parseColor("#666666"))
-                setPadding(0, 16, 0, 16)
+                text = "暫無做T信號\n做T條件：股價接近支撐位→做T買入 / 接近阻力位→反T賣出"
+                textSize = 10f; setTextColor(Color.parseColor("#999999"))
+                setPadding(0, 4, 0, 8)
             })
         } else {
-            // 信號列表
-            container.addView(TextView(requireContext()).apply {
-                text = "📋 做T信號 (${signals.size} 個):"
-                textSize = 12f; setTypeface(null, android.graphics.Typeface.BOLD)
-                setTextColor(Color.parseColor("#333333"))
-                setPadding(0, 8, 0, 4)
-            })
-
             for (signal in signals) {
                 val signalColor = when (signal.signalType) {
                     TTradeType.T_BUY, TTradeType.T_SELL -> Color.parseColor("#E53935")
@@ -603,7 +1580,11 @@ abstract class QuantFragmentBase : Fragment() {
                     setLineSpacing(2f, 1f)
                 })
                 // 執行按鈕
-                signalCard.addView(Button(requireContext()).apply {
+                val btnRow = LinearLayout(requireContext()).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    setPadding(0, 4, 0, 0)
+                }
+                btnRow.addView(Button(requireContext()).apply {
                     text = "執行 ${signal.signalType.label}"
                     textSize = 10f
                     setTextColor(Color.WHITE)
@@ -611,17 +1592,31 @@ abstract class QuantFragmentBase : Fragment() {
                     setPadding(4, 1, 4, 1)
                     setMinWidth(0); setMinimumWidth(0)
                     layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dpToPx(22)).apply {
-                        topMargin = 4
+                        marginEnd = 8
                     }
                     setOnClickListener {
                         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                             try {
                                 val tEngine = TTradeEngine(requireContext())
                                 tEngine.executeTTrade(signal, periodType)
+                                // 同時在推薦表中查找匹配的推薦並標記為已執行
+                                val today = java.time.LocalDate.now().toString()
+                                val signalTypeStr = when (signal.signalType) {
+                                    TTradeType.T_BUY -> "T_BUY"
+                                    TTradeType.T_SELL -> "T_SELL"
+                                    TTradeType.RT_SELL -> "RT_SELL"
+                                    TTradeType.RT_BUY -> "RT_BUY"
+                                }
+                                val matching = todayRecommendations.find {
+                                    it.stockCode == signal.stockCode && it.signalType == signalTypeStr && it.status == "PENDING"
+                                }
+                                if (matching != null) {
+                                    tEngine.markRecommendationExecuted(matching.id, signal.suggestedPrice)
+                                }
                                 withContext(Dispatchers.Main) {
-                                    android.widget.Toast.makeText(requireContext(), "✅ ${signal.signalType.label} 已執行", android.widget.Toast.LENGTH_SHORT).show()
+                                    android.widget.Toast.makeText(requireContext(), "${signal.signalType.label} 已執行", android.widget.Toast.LENGTH_SHORT).show()
                                     dialog.dismiss()
-                                    showTTradeMenu() // 刷新
+                                    showTTradeMenu()
                                 }
                             } catch (e: Exception) {
                                 withContext(Dispatchers.Main) {
@@ -631,7 +1626,92 @@ abstract class QuantFragmentBase : Fragment() {
                         }
                     }
                 })
+                signalCard.addView(btnRow)
                 container.addView(signalCard)
+            }
+        }
+
+        // ── 今日推薦（後台監控生成的） ──
+        val pendingRecs = todayRecommendations.filter { it.status == "PENDING" }
+        if (pendingRecs.isNotEmpty()) {
+            // 分隔線
+            container.addView(View(requireContext()).apply {
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dpToPx(1))
+                setBackgroundColor(Color.parseColor("#DDDDDD"))
+                setPadding(0, 8, 0, 8)
+            })
+
+            container.addView(TextView(requireContext()).apply {
+                text = "後台推薦 (${pendingRecs.size} 條待處理):"
+                textSize = 12f; setTypeface(null, android.graphics.Typeface.BOLD)
+                setTextColor(Color.parseColor("#1565C0"))
+                setPadding(0, 4, 0, 4)
+            })
+
+            for (rec in pendingRecs) {
+                val recCard = createRecommendationCard(rec, dialog)
+                container.addView(recCard)
+            }
+        }
+
+        // ── 推薦歷史（近7天，含已處理） ──
+        val processedHistory = history.filter { it.status != "PENDING" }.take(20)
+        if (processedHistory.isNotEmpty()) {
+            // 分隔線
+            container.addView(View(requireContext()).apply {
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dpToPx(1))
+                setBackgroundColor(Color.parseColor("#DDDDDD"))
+                setPadding(0, 8, 0, 8)
+            })
+
+            container.addView(TextView(requireContext()).apply {
+                text = "推薦歷史 (近7天 ${processedHistory.size} 條):"
+                textSize = 12f; setTypeface(null, android.graphics.Typeface.BOLD)
+                setTextColor(Color.parseColor("#666666"))
+                setPadding(0, 4, 0, 4)
+            })
+
+            for (rec in processedHistory) {
+                val statusLabel = when (rec.status) {
+                    "EXECUTED" -> "已執行"
+                    "IGNORED" -> "已忽略"
+                    "EXPIRED" -> "已過期"
+                    "TARGET_HIT" -> "目標觸及"
+                    "TARGET_MISSED" -> "目標未達"
+                    else -> rec.status
+                }
+                val statusColor = when (rec.status) {
+                    "EXECUTED" -> "#43A047"
+                    "TARGET_HIT" -> "#2E7D32"
+                    "IGNORED" -> "#9E9E9E"
+                    "EXPIRED" -> "#FF9800"
+                    "TARGET_MISSED" -> "#C62828"
+                    else -> "#666666"
+                }
+                val signalLabel = when (rec.signalType) {
+                    "T_BUY" -> "做T買入"
+                    "T_SELL" -> "做T賣出"
+                    "RT_SELL" -> "反T賣出"
+                    "RT_BUY" -> "反T買回"
+                    else -> rec.signalType
+                }
+
+                val histRow = LinearLayout(requireContext()).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    setPadding(8, 4, 8, 4)
+                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                }
+                histRow.addView(TextView(requireContext()).apply {
+                    text = "${rec.tradeDate.takeLast(5)} ${rec.stockName.take(6)} $signalLabel"
+                    textSize = 9f; setTextColor(Color.parseColor("#555555"))
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                })
+                histRow.addView(TextView(requireContext()).apply {
+                    text = statusLabel
+                    textSize = 9f; setTextColor(Color.parseColor(statusColor))
+                    setTypeface(null, android.graphics.Typeface.BOLD)
+                })
+                container.addView(histRow)
             }
         }
 
@@ -644,39 +1724,346 @@ abstract class QuantFragmentBase : Fragment() {
         dialog.show()
     }
 
+    /** 創建推薦卡片（含執行/忽略按鈕） */
+    private fun createRecommendationCard(
+        rec: TTradeRecommendationEntity,
+        dialog: android.app.Dialog
+    ): LinearLayout {
+        val signalLabel = when (rec.signalType) {
+            "T_BUY" -> "做T買入"
+            "T_SELL" -> "做T賣出"
+            "RT_SELL" -> "反T賣出"
+            "RT_BUY" -> "反T買回"
+            else -> rec.signalType
+        }
+        val signalColor = when (rec.signalType) {
+            "T_BUY", "T_SELL" -> Color.parseColor("#E53935")
+            else -> Color.parseColor("#43A047")
+        }
+
+        val card = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(12, 8, 12, 8)
+            setBackgroundColor(Color.parseColor("#E3F2FD"))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = 6
+            }
+        }
+
+        card.addView(TextView(requireContext()).apply {
+            text = "${rec.stockName} (${rec.stockCode.takeLast(6)})\n" +
+                   "操作: $signalLabel\n" +
+                   "推薦價: ${"%.2f".format(rec.suggestedPrice)} → 目標 ${"%.2f".format(rec.targetPrice)}\n" +
+                   "數量: ${rec.quantity}股 | 預期: ${"%.2f%%".format(rec.expectedProfitPct)}"
+            textSize = 10f; setTextColor(Color.parseColor("#333333"))
+            setLineSpacing(2f, 1f)
+        })
+
+        // 按鈕行
+        val btnRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 4, 0, 0)
+        }
+
+        // 執行按鈕
+        btnRow.addView(Button(requireContext()).apply {
+            text = "已執行"
+            textSize = 10f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(signalColor)
+            setPadding(4, 1, 4, 1)
+            setMinWidth(0); setMinimumWidth(0)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dpToPx(22)).apply {
+                marginEnd = 8
+            }
+            setOnClickListener {
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val tEngine = TTradeEngine(requireContext())
+                        tEngine.markRecommendationExecuted(rec.id, rec.suggestedPrice)
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(requireContext(), "已標記為執行", android.widget.Toast.LENGTH_SHORT).show()
+                            dialog.dismiss()
+                            showTTradeMenu()
+                        }
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(requireContext(), "操作失敗: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+        })
+
+        // 忽略按鈕
+        btnRow.addView(Button(requireContext()).apply {
+            text = "忽略"
+            textSize = 10f
+            setTextColor(Color.parseColor("#666666"))
+            setBackgroundColor(Color.parseColor("#E0E0E0"))
+            setPadding(4, 1, 4, 1)
+            setMinWidth(0); setMinimumWidth(0)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dpToPx(22))
+            setOnClickListener {
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val tEngine = TTradeEngine(requireContext())
+                        tEngine.markRecommendationIgnored(rec.id)
+                        withContext(Dispatchers.Main) {
+                            dialog.dismiss()
+                            showTTradeMenu()
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+        })
+
+        card.addView(btnRow)
+        return card
+    }
+
     // ═══════════════════════════════════════════════════
     // 數據管理
     // ═══════════════════════════════════════════════════
 
-    /** 顯示數據菜單 */
+    /** 顯示數據菜單（統一版，所有週期共用） */
     protected open fun showDataMenu(anchor: View) {
-        val popup = PopupMenu(requireContext(), anchor, Gravity.END)
-        popup.menu.add(0, 1, 0, "📋 查看交易記錄")
-        popup.menu.add(0, 2, 0, "📊 查看持倉詳情")
-        popup.menu.add(0, 3, 0, "🔥 導出熱門板塊數據")
-        popup.menu.add(0, 4, 0, "📋 導出策略報告")
-        popup.menu.add(0, 5, 0, "🧠 市場記憶設置")
-        popup.menu.add(0, 6, 1, "💰 持有收益歷史")
-        popup.menu.add(0, 7, 1, "📅 月度熱點前瞻")
-        popup.menu.add(0, 10, 4, "📈 回溯測試")
-        popup.menu.add(0, 11, 4, "🔧 擬合調優")
-        popup.menu.add(0, 12, 5, "🔄 全周期擬合")
-        popup.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                1 -> showTradeHistory()
-                2 -> loadPositions()
-                3 -> exportHotSectors()
-                4 -> exportStrategyReport()
-                5 -> showMarketMemoryDialog()
-                6 -> showHoldingProfitHistory()
-                7 -> showMonthlyForecast()
-                10 -> onBacktrackClick()
-                11 -> onFittingClick()
-                12 -> runCrossPeriodFitting()
+        val exporter = DataExportImport(requireContext())
+        val periodLabel = getQuantType()
+        val options = arrayOf(
+            "📋 查看交易記錄",
+            "📊 查看量化報告",
+            "📊 查看精選池",
+            "💰 查看持倉詳情",
+            "🧠 市場記憶設置",
+            "💰 持有收益歷史",
+            "📅 月度熱點前瞻",
+            "🔥 查看熱門板塊報告",
+            "📋 查看策略報告",
+            "─ 導出 ─",
+            "📤 導出 JSON (全部數據)",
+            "📂 查看導出文件列表",
+            "📊 數據庫統計信息",
+            "─ 清空 ─",
+            "🧹 清空持倉",
+            "🧹 清空報告",
+            "─ 策略優化 ─",
+            "📈 回溯測試",
+            "🔧 擬合調優",
+            "🔄 全周期擬合"
+        )
+        AlertDialog.Builder(requireContext())
+            .setTitle("🗄️ 數據中心 — $periodLabel")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> showTradeHistory()
+                    1 -> showTradeReportsHistory()
+                    2 -> showFinalPool()
+                    3 -> loadPositions()
+                    4 -> showMarketMemoryDialog()
+                    5 -> showHoldingProfitHistory()
+                    6 -> showMonthlyForecast()
+                    7 -> exportHotSectors()
+                    8 -> exportStrategyReport()
+                    // 9 = 分隔線
+                    10 -> exportToJson(exporter)
+                    11 -> showExportFiles(exporter)
+                    12 -> showDbStats(exporter)
+                    // 13 = 分隔線
+                    14 -> confirmAndClearPositions()
+                    15 -> confirmAndClearReports()
+                    // 16 = 分隔線
+                    17 -> onBacktrackClick()
+                    18 -> onFittingClick()
+                    19 -> runCrossPeriodFitting()
+                }
             }
-            true
+            .setNegativeButton("關閉", null)
+            .show()
+    }
+
+    // ═══════════════════════════════════════
+    // 數據導出/導入（從中線提升到基類，所有週期共用）
+    // ═══════════════════════════════════════
+
+    /** 查看量化報告歷史 */
+    protected open fun showTradeReportsHistory() {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val entities = db.dailyPeriodResultDao().getRecent(100)
+                    .filter { it.strategyId != "FINAL_POOL" && it.strategyId != "BACKTRACK" }
+                if (entities.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(requireContext(), "暫無量化報告記錄", Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+                val codeToName = try { db.stockBasicDao().getAll().associate { it.code to it.name } } catch (_: Exception) { emptyMap() }
+                val grouped = entities.groupBy { it.tradeDate }
+                val sb = StringBuilder()
+                sb.appendLine("📊 量化報告歷史 (共 ${entities.size} 條)")
+                sb.appendLine()
+                for ((date, items) in grouped.toSortedMap().entries.reversed().take(10)) {
+                    sb.appendLine("━━━ $date ━━━")
+                    for (item in items) {
+                        val top3Json = try { org.json.JSONArray(item.finalTop3Json) } catch (_: Exception) { org.json.JSONArray() }
+                        val mainBoardLabel = if (item.mainBoardFilter) " 主板" else ""
+                        sb.appendLine("  ${item.strategyName}[${item.periodDays}日]$mainBoardLabel: ${item.stockCount}只信號")
+                        if (item.newsStrengthScore > 0) sb.appendLine("    新聞力度:${item.newsStrengthScore} 輪動懲罰:${item.rotationPenalty}")
+                        try {
+                            val reasonJson = org.json.JSONArray(item.filteredReasonJson)
+                            if (reasonJson.length() > 0) {
+                                val sampleReason = reasonJson.optJSONObject(0)
+                                if (sampleReason != null) sb.appendLine("    ⚠️ 過濾: ${sampleReason.optString("name")}(${sampleReason.optString("reason")}) 等${reasonJson.length()}只")
+                            }
+                        } catch (_: Exception) {}
+                        if (top3Json.length() > 0) {
+                            for (i in 0 until minOf(top3Json.length(), 3)) {
+                                val obj = top3Json.optJSONObject(i) ?: continue
+                                val code = obj.optString("code")
+                                val name = obj.optString("name").takeIf { it.isNotBlank() } ?: codeToName[code] ?: code.takeLast(6)
+                                val sector = try { com.chin.stockanalysis.stock.database.StockDataCenter.getSectorsByStock(code).firstOrNull() ?: "" } catch (_: Exception) { "" }
+                                val sectorStr = if (sector.isNotBlank()) " [$sector]" else ""
+                                sb.appendLine("    Top${i+1}: $name(${code.takeLast(6)})$sectorStr 得分:${obj.optInt("score")}")
+                            }
+                        }
+                    }
+                    sb.appendLine()
+                }
+                withContext(Dispatchers.Main) { showDialog("量化報告歷史", sb.toString()) }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "加載失敗: ${e.message}", Toast.LENGTH_SHORT).show() }
+            }
         }
-        popup.show()
+    }
+
+    /** 查看精選池 */
+    protected open fun showFinalPool() {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val entities = db.dailyPeriodResultDao().getRecent(100)
+                    .filter { it.strategyId == "FINAL_POOL" }
+                    .sortedByDescending { it.tradeDate }
+                if (entities.isEmpty()) {
+                    withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "暫無精選池記錄", Toast.LENGTH_SHORT).show() }
+                    return@launch
+                }
+                val latest = entities.first()
+                val codes = try { org.json.JSONArray(latest.stockCodesJson) } catch (_: Exception) { org.json.JSONArray() }
+                val crossDayJson = try { org.json.JSONArray(latest.finalTop3Json) } catch (_: Exception) { org.json.JSONArray() }
+                val sb = StringBuilder()
+                sb.appendLine("📋 精選最終池")
+                sb.appendLine("交易日: ${latest.tradeDate}")
+                sb.appendLine("共 ${latest.stockCount} 只股票輸入AI")
+                sb.appendLine()
+                sb.appendLine("🔥 跨日聚合命中 Top10:")
+                for (i in 0 until crossDayJson.length()) {
+                    val obj = crossDayJson.getJSONObject(i)
+                    sb.appendLine("  ${obj.optString("code").takeLast(6)}: ${obj.optInt("days")}天命中")
+                }
+                sb.appendLine()
+                sb.appendLine("📊 完整精選池 (${codes.length()} 只):")
+                for (i in 0 until minOf(codes.length(), 60)) {
+                    sb.appendLine("  ${i+1}. ${codes.optString(i)}")
+                }
+                if (codes.length() > 60) sb.appendLine("  ... 共 ${codes.length()} 只，僅顯示前60")
+                withContext(Dispatchers.Main) { showDialog("精選池_${latest.tradeDate}", sb.toString()) }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "載入精選池失敗: ${e.message}", Toast.LENGTH_SHORT).show() }
+            }
+        }
+    }
+
+    protected open fun exportToJson(exporter: DataExportImport) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val path = exporter.exportAllToJson()
+                withContext(Dispatchers.Main) { showDialog("導出成功", "文件已保存到:\n$path") }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "導出失敗: ${e.message}", Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
+
+    protected open fun showExportFiles(exporter: DataExportImport) {
+        val files = exporter.getExportFiles()
+        if (files.isEmpty()) {
+            Toast.makeText(requireContext(), "暫無導出文件", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val sb = StringBuilder()
+        sb.appendLine("📂 已導出的文件:")
+        sb.appendLine()
+        for (f in files) {
+            sb.appendLine("${f.name} (${f.length()/1024}KB)")
+            sb.appendLine("  修改時間: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(f.lastModified()))}")
+            sb.appendLine()
+        }
+        showDialog("導出文件列表", sb.toString())
+    }
+
+    protected open fun showDbStats(exporter: DataExportImport) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val stats = exporter.getDatabaseStats()
+            withContext(Dispatchers.Main) { showDialog("數據庫統計", stats) }
+        }
+    }
+
+    /** 清空持倉（帶二次確認） */
+    protected open fun confirmAndClearPositions() {
+        val periodType = getQuantType()
+        AlertDialog.Builder(requireContext())
+            .setTitle("🧹 清空持倉")
+            .setMessage("確定要清空所有 $periodType 持倉記錄嗎？此操作不可撤銷。")
+            .setPositiveButton("確定") { _, _ ->
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val db = StockDatabase.getInstance(requireContext())
+                        val orders = db.strategyTradeOrderDao().getRecent(500)
+                            .filter { it.orderType == periodType }
+                        for (order in orders) {
+                            db.strategyTradeOrderDao().deleteByDate(order.tradeDate)
+                        }
+                        withContext(Dispatchers.Main) {
+                            refreshPositions()
+                            statusTv.text = "✅ 已清空 $periodType 持倉"
+                            Toast.makeText(requireContext(), "持倉已清空", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) { statusTv.text = "❌ 清空失敗: ${e.message?.take(40)}" }
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 清空報告（帶二次確認） */
+    protected open fun confirmAndClearReports() {
+        AlertDialog.Builder(requireContext())
+            .setTitle("🧹 清空報告")
+            .setMessage("確定要清空所有量化報告記錄嗎？此操作不可撤銷。")
+            .setPositiveButton("確定") { _, _ ->
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val db = StockDatabase.getInstance(requireContext())
+                        val entities = db.dailyPeriodResultDao().getRecent(1000)
+                        for (e in entities) {
+                            try { db.dailyPeriodResultDao().deleteByDate(e.tradeDate) } catch (_: Exception) {}
+                        }
+                        withContext(Dispatchers.Main) {
+                            statusTv.text = "✅ 已清空報告"
+                            Toast.makeText(requireContext(), "報告已清空", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) { statusTv.text = "❌ 清空失敗: ${e.message?.take(40)}" }
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     /**
@@ -842,20 +2229,69 @@ abstract class QuantFragmentBase : Fragment() {
     // 持倉管理（共用）
     // ═══════════════════════════════════════════════════
 
+    /**
+     * 動態補全持倉訂單中缺失的股票名稱
+     *
+     * 任何週期（超短/短/中/長線）選到的股票，如果訂單中 stockName 為空，
+     * 通過 StockNameResolver 統一補全（stock_basics → daily_snapshot → 新浪API）。
+     * 補全後持久化到 strategy_trade_orders 表，避免重複查詢。
+     *
+     * @return 補全名稱後的訂單列表（與輸入列表同序，但 stockName 可能已更新）
+     */
+    private suspend fun ensureStockNames(
+        db: StockDatabase,
+        orders: List<StrategyTradeOrderEntity>
+    ): List<StrategyTradeOrderEntity> {
+        val missingNameOrders = orders.filter { it.stockName.isBlank() }
+        if (missingNameOrders.isEmpty()) return orders
+
+        val missingCodes = missingNameOrders.map { it.stockCode }.distinct()
+        Log.i("QuantFragmentBase", "🔧 ensureStockNames: ${missingCodes.size} 只股票缺少名稱，開始補全")
+
+        // 統一調用 StockNameResolver 批量解析
+        val nameMap = com.chin.stockanalysis.stock.database.StockNameResolver
+            .resolveBatch(requireContext(), missingCodes)
+        Log.i("QuantFragmentBase", "  StockNameResolver 解析命中: ${nameMap.size}/${missingCodes.size}")
+
+        // 持久化補全結果到數據庫
+        var fixedCount = 0
+        for (order in missingNameOrders) {
+            val name = nameMap[order.stockCode]
+            if (!name.isNullOrBlank()) {
+                db.strategyTradeOrderDao().updateStockName(order.id, name)
+                fixedCount++
+            }
+        }
+        Log.i("QuantFragmentBase", "  ✅ ensureStockNames 完成: 補全 $fixedCount/${missingNameOrders.size} 筆訂單名稱")
+
+        // 返回更新後的列表（用 nameMap 覆蓋空名稱）
+        return if (fixedCount > 0) {
+            orders.map { order ->
+                if (order.stockName.isBlank() && nameMap.containsKey(order.stockCode)) {
+                    order.copy(stockName = nameMap[order.stockCode]!!)
+                } else {
+                    order
+                }
+            }
+        } else {
+            orders
+        }
+    }
+
     /** 刷新持倉 */
     open fun refreshPositions() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val db = StockDatabase.getInstance(requireContext())
                 val quantType = getQuantType()
-                val orders = db.strategyTradeOrderDao().getRecent(100)
+                val rawOrders = db.strategyTradeOrderDao().getRecent(100)
                     .filter {
                         it.orderType == quantType &&
                         (it.status == "BUYING" || it.status == "PENDING")
                     }
                     .sortedByDescending { it.tradeDate }
 
-                if (orders.isEmpty()) {
+                if (rawOrders.isEmpty()) {
                     withContext(Dispatchers.Main) {
                         positionContainer.removeAllViews()
                         positionContainer.addView(TextView(requireContext()).apply {
@@ -867,6 +2303,9 @@ abstract class QuantFragmentBase : Fragment() {
                     }
                     return@launch
                 }
+
+                // 動態補全缺失的股票名稱（任何週期通用）
+                val orders = ensureStockNames(db, rawOrders)
 
                 val minTradeDate = orders.minByOrNull { it.tradeDate }?.tradeDate ?: browsingDate.format(DATE_FMT)
                 val allDates = db.dailySnapshotDao().getAvailableDates(20)
@@ -889,9 +2328,13 @@ abstract class QuantFragmentBase : Fragment() {
                     }
                 }
 
+                // 預加載真實持倉數據（IO 線程），傳入 renderPositions 一併渲染
+                val realPositions = db.realPositionDao().getAllActive()
                 withContext(Dispatchers.Main) {
-                    renderPositions(orders, dates, priceMap)
+                    renderPositions(orders, dates, priceMap, realPositions)
                 }
+                // UI 渲染完成後，異步檢查真倉做T信號並通知
+                checkRealPositionTSignals()
             } catch (_: Exception) {}
         }
     }
@@ -900,7 +2343,8 @@ abstract class QuantFragmentBase : Fragment() {
     protected open fun renderPositions(
         orders: List<StrategyTradeOrderEntity>,
         dates: List<String>,
-        priceMap: Map<String, Map<String, Double>>
+        priceMap: Map<String, Map<String, Double>>,
+        realPositions: List<RealPositionEntity> = emptyList()
     ) {
         positionContainer.removeAllViews()
 
@@ -1071,6 +2515,105 @@ abstract class QuantFragmentBase : Fragment() {
         val verticalScroll = ScrollView(requireContext())
         verticalScroll.addView(scroll)
         positionContainer.addView(verticalScroll)
+
+        // ════════ 真實持倉顯示區域（模擬持倉表格之後） ════════
+        if (realPositions.isNotEmpty()) {
+            // 分隔線
+            positionContainer.addView(View(requireContext()).apply {
+                setBackgroundColor(Color.parseColor("#D0D0D0"))
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, dpToPx(1)
+                ).apply { setMargins(0, 10, 0, 4) }
+            })
+
+            // 計算真實持倉總成本
+            var realTotalCost = 0.0
+            for (rp in realPositions) {
+                realTotalCost += rp.avgBuyPrice * rp.quantity
+            }
+
+            // 真實持倉標題行：「👤 真實持倉 (N只)」+ 總成本
+            val realTitleRow = LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, 2, 0, 2)
+            }
+            realTitleRow.addView(TextView(requireContext()).apply {
+                text = "👤 真實持倉 (${realPositions.size} 只)"
+                textSize = 12f; setTextColor(Color.parseColor("#1A1A2E"))
+                setTypeface(null, Typeface.BOLD)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            realTitleRow.addView(TextView(requireContext()).apply {
+                text = "總成本 ¥${"%.0f".format(realTotalCost)}"
+                textSize = 10f; setTextColor(Color.parseColor("#1565C0")); gravity = Gravity.END
+            })
+            positionContainer.addView(realTitleRow)
+
+            // 真實持倉表格
+            val realTable = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL }
+            val realHeader = LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.HORIZONTAL; setPadding(0, 2, 0, 4)
+                setBackgroundColor(Color.parseColor("#EEEEEE"))
+            }
+            for (h in listOf("股票", "數量", "均價", "成本")) {
+                realHeader.addView(createCell(h, 60, "#666666", 10f, bold = true))
+            }
+            realTable.addView(realHeader)
+
+            for (rp in realPositions) {
+                val row = LinearLayout(requireContext()).apply {
+                    orientation = LinearLayout.HORIZONTAL; setPadding(0, 2, 0, 2)
+                }
+                val needsComplete = rp.quantity <= 0 || rp.avgBuyPrice <= 0.0
+
+                // 股票名/代碼（點擊可跳轉詳情頁）
+                val nameCell = LinearLayout(requireContext()).apply {
+                    orientation = LinearLayout.VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(dpToPx(60), LinearLayout.LayoutParams.WRAP_CONTENT)
+                    gravity = Gravity.CENTER
+                }
+                nameCell.addView(TextView(requireContext()).apply {
+                    text = rp.stockName.take(6).ifEmpty { rp.stockCode.takeLast(6) }
+                    textSize = 11f; setTextColor(Color.parseColor("#222222")); gravity = Gravity.CENTER
+                    setTypeface(null, Typeface.BOLD)
+                })
+                nameCell.addView(TextView(requireContext()).apply {
+                    text = rp.stockCode.takeLast(6); textSize = 8f
+                    setTextColor(Color.parseColor("#AAAAAA")); gravity = Gravity.CENTER
+                })
+                nameCell.setOnClickListener {
+                    com.chin.stockanalysis.ui.StockDetailNavigator.navigateFromFragment(
+                        this@QuantFragmentBase,
+                        rp.stockCode,
+                        rp.stockName.ifEmpty { rp.stockCode },
+                        price = rp.avgBuyPrice
+                    )
+                }
+                nameCell.isClickable = true
+                nameCell.foreground = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(0); setCornerRadius(8f)
+                }
+                row.addView(nameCell)
+
+                // 數量
+                row.addView(createCell(
+                    if (rp.quantity <= 0) "⚠️待完善" else "${rp.quantity}",
+                    60, if (needsComplete) "#E65100" else "#1565C0", 10f
+                ))
+                // 均價
+                row.addView(createCell(
+                    if (rp.avgBuyPrice <= 0.0) "⚠️待完善" else "¥${"%.2f".format(rp.avgBuyPrice)}",
+                    60, if (needsComplete) "#E65100" else "#333333", 10f
+                ))
+                // 成本
+                val cost = rp.avgBuyPrice * rp.quantity
+                row.addView(createCell(
+                    if (needsComplete) "—" else "¥${"%.0f".format(cost)}",
+                    60, "#333333", 10f
+                ))
+                realTable.addView(row)
+            }
+            positionContainer.addView(realTable)
+        }
     }
 
     /** 顯示單筆賣出確認對話框 */
@@ -1384,61 +2927,229 @@ abstract class QuantFragmentBase : Fragment() {
         }
     }
 
-    /** 顯示市場記憶設置對話框 */
+    /** 顯示市場記憶設置對話框（AI檢測 + 人為設置並行顯示） */
     protected fun showMarketMemoryDialog() {
         val memory = com.chin.stockanalysis.strategy.sector.UserMarketMemory(requireContext())
-        val current = memory.focusSectors.joinToString(", ")
-        val input = android.widget.EditText(requireContext()).apply {
-            hint = "輸入關注板塊，用逗號分隔（如：科技,半導體,光通信）"
-            setText(current)
+        val ctx = requireContext()
+
+        // 先顯示載入中的對話框，異步獲取數據後更新內容
+        val container = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(24, 16, 24, 8)
         }
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+        val loadingTv = android.widget.TextView(ctx).apply {
+            text = "⏳ 正在載入市場記憶數據..."
+            textSize = 13f
+            setPadding(16, 24, 16, 24)
+            gravity = android.view.Gravity.CENTER
+        }
+        container.addView(loadingTv)
+
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
             .setTitle("🧠 市場記憶設置")
-            .setMessage("系統會持續追蹤這些板塊，連跌時提醒，選股時優先。\n\nAI 當前判斷：${memory.aiYearDetection}")
-            .setView(input)
+            .setView(container)
             .setPositiveButton("保存") { _, _ ->
-                val sectors = input.text.toString().split(",").map { it.trim() }.filter { it.isNotBlank() }
-                memory.focusSectors = sectors
-                com.chin.stockanalysis.strategy.sector.StrategyMarketContext.invalidateCache()
-                android.widget.Toast.makeText(requireContext(), "已保存 ${sectors.size} 個關注板塊，緩存已清空", android.widget.Toast.LENGTH_SHORT).show()
+                val input = container.findViewWithTag<android.widget.EditText>("sector_input")
+                if (input != null) {
+                    val sectors = input.text.toString().split(",").map { it.trim() }.filter { it.isNotBlank() }
+                    memory.focusSectors = sectors
+                    com.chin.stockanalysis.strategy.sector.StrategyMarketContext.invalidateCache()
+                    android.widget.Toast.makeText(ctx, "已保存 ${sectors.size} 個關注板塊，緩存已清空", android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
             .setNegativeButton("取消", null)
-            .setNeutralButton("AI 檢測板塊大年") { _, _ ->
-                lifecycleScope.launch {
-                    val result = memory.detectSectorYearByIndex()
-                    memory.aiYearDetection = result
-                    com.chin.stockanalysis.strategy.sector.StrategyMarketContext.invalidateCache()
-                    android.widget.Toast.makeText(requireContext(), "AI 檢測：$result", android.widget.Toast.LENGTH_LONG).show()
-                }
-            }
             .show()
-    }
 
-    /** 導出交易數據（保留供子類調用） */
-    protected fun exportTradeData() {
+        // 異步載入 AI 檢測 + 近期熱門板塊 + 新聞板塊
         lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val db = StockDatabase.getInstance(requireContext())
-                val quantType = getQuantType()
-                val orders = db.strategyTradeOrderDao().getRecent(1000)
-                    .filter { it.orderType == quantType }
-                val sb = StringBuilder()
-                sb.appendLine("$quantType 數據導出")
-                sb.appendLine("導出時間: ${LocalDate.now()}"); sb.appendLine()
-                sb.appendLine("=== 交易訂單 ===")
-                sb.appendLine("日期,策略,股票代碼,股票名稱,買入價,數量,狀態,賣出價,收益%")
-                for (order in orders) {
-                    sb.appendLine("${order.tradeDate},${order.strategyId},${order.stockCode},${order.stockName},${order.buyPrice},${order.quantity},${order.status},${order.sellPrice},${order.profitPct}")
+            val aiDetection = memory.aiYearDetection
+            val hotSectors = memory.getRecentHotSectors()
+            val newsSectors = memory.getRecentNewsSectors()
+            val currentFocus = memory.focusSectors
+
+            // 合併所有建議板塊（去重）
+            val allSuggestions = (hotSectors.map { it.sectorName } + newsSectors + currentFocus)
+                .distinct().filter { it.isNotBlank() }
+
+            withContext(Dispatchers.Main) {
+                if (!isAdded) { dialog.dismiss(); return@withContext }
+                container.removeAllViews()
+
+                // ════ AI 檢測區 ════
+                val aiSection = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setBackgroundColor(Color.parseColor("#F0F7FF"))
+                    setPadding(16, 12, 16, 12)
+                    val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    lp.bottomMargin = 8
+                    layoutParams = lp
                 }
-                withContext(Dispatchers.Main) {
-                    showDialog("導出數據", sb.toString())
-                    Toast.makeText(requireContext(), "數據已生成（可複製）", Toast.LENGTH_SHORT).show()
+
+                aiSection.addView(android.widget.TextView(ctx).apply {
+                    text = "🤖 AI 市場檢測"
+                    textSize = 13f
+                    setTextColor(Color.parseColor("#1565C0"))
+                    setTypeface(null, Typeface.BOLD)
+                })
+
+                aiSection.addView(android.widget.TextView(ctx).apply {
+                    text = "📊 風格判斷：$aiDetection"
+                    textSize = 11f
+                    setTextColor(Color.parseColor("#333333"))
+                    setPadding(0, 4, 0, 8)
+                })
+
+                if (hotSectors.isNotEmpty()) {
+                    aiSection.addView(android.widget.TextView(ctx).apply {
+                        text = "🔥 近5日熱門板塊（按熱度排序）："
+                        textSize = 11f
+                        setTextColor(Color.parseColor("#555555"))
+                        setTypeface(null, Typeface.BOLD)
+                    })
+                    val hotSb = StringBuilder()
+                    for (s in hotSectors.take(6)) {
+                        val trendIcon = if (s.totalChangePct > 0) "📈" else if (s.totalChangePct < 0) "📉" else "➡️"
+                        hotSb.appendLine("  $trendIcon ${s.sectorName} 熱度${"%.0f".format(s.avgHotScore)} 累計${"%+.1f".format(s.totalChangePct)}% ${s.hotDays}天熱門")
+                    }
+                    aiSection.addView(android.widget.TextView(ctx).apply {
+                        text = hotSb.toString().trim()
+                        textSize = 10f
+                        setTextColor(Color.parseColor("#666666"))
+                        setPadding(0, 2, 0, 8)
+                    })
                 }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(requireContext(), "導出失敗: ${e.message}", Toast.LENGTH_SHORT).show()
+
+                if (newsSectors.isNotEmpty()) {
+                    aiSection.addView(android.widget.TextView(ctx).apply {
+                        text = "📰 新聞高頻板塊：${newsSectors.joinToString(" · ")}"
+                        textSize = 10f
+                        setTextColor(Color.parseColor("#666666"))
+                        setPadding(0, 2, 0, 4)
+                    })
                 }
+
+                // AI 刷新按鈕
+                aiSection.addView(android.widget.Button(ctx).apply {
+                    text = "🔄 重新檢測市場風格"
+                    textSize = 11f
+                    setOnClickListener {
+                        text = "⏳ 檢測中..."
+                        isEnabled = false
+                        lifecycleScope.launch {
+                            val result = memory.detectSectorYearByIndex()
+                            memory.aiYearDetection = result
+                            com.chin.stockanalysis.strategy.sector.StrategyMarketContext.invalidateCache()
+                            withContext(Dispatchers.Main) {
+                                text = "✅ $result"
+                                isEnabled = true
+                                // 刷新整個對話框
+                                dialog.dismiss()
+                                showMarketMemoryDialog()
+                            }
+                        }
+                    }
+                })
+
+                container.addView(aiSection)
+
+                // ════ 人為設置區 ════
+                val manualSection = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setBackgroundColor(Color.parseColor("#FAFAFA"))
+                    setPadding(16, 12, 16, 12)
+                    val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    lp.topMargin = 4
+                    layoutParams = lp
+                }
+
+                manualSection.addView(android.widget.TextView(ctx).apply {
+                    text = "✍️ 人為設置關注板塊"
+                    textSize = 13f
+                    setTextColor(Color.parseColor("#E65100"))
+                    setTypeface(null, Typeface.BOLD)
+                })
+
+                manualSection.addView(android.widget.TextView(ctx).apply {
+                    text = "系統會持續追蹤這些板塊，連跌時提醒，選股時優先。"
+                    textSize = 10f
+                    setTextColor(Color.parseColor("#888888"))
+                    setPadding(0, 4, 0, 8)
+                })
+
+                val input = android.widget.EditText(ctx).apply {
+                    hint = "輸入關注板塊，用逗號分隔"
+                    setText(currentFocus.joinToString(", "))
+                    textSize = 12f
+                    tag = "sector_input"
+                    val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    layoutParams = lp
+                }
+                manualSection.addView(input)
+
+                // 快速添加板塊標籤
+                if (allSuggestions.isNotEmpty()) {
+                    manualSection.addView(android.widget.TextView(ctx).apply {
+                        text = "點擊下方標籤快速添加/移除："
+                        textSize = 10f
+                        setTextColor(Color.parseColor("#999999"))
+                        setPadding(0, 8, 0, 4)
+                    })
+
+                    val chipsFlow = com.chin.stockanalysis.ui.FlowLayout(ctx).apply {
+                        setPadding(0, 4, 0, 4)
+                    }
+
+                    for (sector in allSuggestions.take(12)) {
+                        val isAdded = currentFocus.any { it == sector }
+                        val chip = android.widget.TextView(ctx).apply {
+                            text = if (isAdded) "✓ $sector" else "+ $sector"
+                            textSize = 11f
+                            setPadding(20, 8, 20, 8)
+                            setTextColor(if (isAdded) Color.WHITE else Color.parseColor("#555555"))
+                            background = android.graphics.drawable.GradientDrawable().apply {
+                                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                                cornerRadius = 16f
+                                setColor(if (isAdded) Color.parseColor("#4CAF50") else Color.parseColor("#EEEEEE"))
+                            }
+                            setOnClickListener {
+                                val currentText = input.text.toString()
+                                val currentList = currentText.split(",").map { it.trim() }.filter { it.isNotBlank() }.toMutableList()
+                                if (currentList.contains(sector)) {
+                                    currentList.remove(sector)
+                                    text = "+ $sector"
+                                    setTextColor(Color.parseColor("#555555"))
+                                    background = android.graphics.drawable.GradientDrawable().apply {
+                                        shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                                        cornerRadius = 16f
+                                        setColor(Color.parseColor("#EEEEEE"))
+                                    }
+                                } else {
+                                    currentList.add(sector)
+                                    text = "✓ $sector"
+                                    setTextColor(Color.WHITE)
+                                    background = android.graphics.drawable.GradientDrawable().apply {
+                                        shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                                        cornerRadius = 16f
+                                        setColor(Color.parseColor("#4CAF50"))
+                                    }
+                                }
+                                input.setText(currentList.joinToString(", "))
+                            }
+                        }
+                        val chipLp = com.chin.stockanalysis.ui.FlowLayout.LayoutParams(
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT
+                        )
+                        chipLp.setMargins(0, 0, 8, 8)
+                        chip.layoutParams = chipLp
+                        chipsFlow.addView(chip)
+                    }
+                    manualSection.addView(chipsFlow)
+                }
+
+                container.addView(manualSection)
             }
         }
     }
+
 }
