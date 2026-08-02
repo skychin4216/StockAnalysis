@@ -311,7 +311,13 @@ class ChatAgent(context: Context) : AgentBase(
                 return when {
                     lower.contains("選股") || lower.contains("推薦") || lower.contains("有什麼好股票") || lower.contains("買什麼")
                         -> UserIntent.STOCK_PICKING
-                    lower.contains("大盤") || lower.contains("市場") || lower.contains("行情")
+                    // 已找到股票實體 + 明確分析意圖 → STOCK_ANALYSIS（優先於市場簡報）
+                    lower.contains("分析") || lower.contains("投資價值") || lower.contains("詳細") ||
+                    lower.contains("基本面") || lower.contains("技術面") || lower.contains("資金面") ||
+                    lower.contains("風險評估") || lower.contains("買入") || lower.contains("走勢")
+                        -> UserIntent.STOCK_ANALYSIS
+                    // 只有在大盤/市場詞彙出現且無具體分析要求時才顯示簡報
+                    lower.contains("大盤") || lower.contains("市場簡報") || lower.contains("行情概覽")
                         -> UserIntent.MARKET_BRIEF
                     else -> UserIntent.STOCK_ANALYSIS
                 }
