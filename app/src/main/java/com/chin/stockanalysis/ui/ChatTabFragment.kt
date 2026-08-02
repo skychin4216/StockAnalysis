@@ -707,7 +707,9 @@ class ChatTabFragment : Fragment() {
                         )
                         addMessage(entityMsg)
                     } else if (result.success) {
-                        completeStreamingMessage(loadingIndex, result.response)
+                        // 清理原始推理過程、JSON 碎片、thinking 標籤
+                        val cleanedResponse = cleanAgentResponse(result.response)
+                        completeStreamingMessage(loadingIndex, cleanedResponse)
                         onMessageComplete()
                     } else {
                         failStreamingMessage(loadingIndex, "Agent 分析失败: ${result.response}")
@@ -1384,5 +1386,34 @@ $memory
 
     /** 分析模式枚举 */
     enum class AnalysisMode { QUICK, DEEP, EXPERT }
+
+    /**
+     * 清理 Agent 回應中的原始推理過程、JSON 碎片、thinking 標籤
+     */
+    private fun cleanAgentResponse(text: String): String {
+        return text
+            // 移除 <thinking>...</thinking> 推理標籤及內容
+            .replace(Regex("<thinking>[\\s\\S]*?</thinking>", RegexOption.IGNORE_CASE), "")
+            // 移除 ```json ... ``` 代碼塊
+            .replace(Regex("```json[\\s\\S]*?```", RegexOption.IGNORE_CASE), "")
+            // 移除 ``` ... ``` 通用代碼塊
+            .replace(Regex("```[\\s\\S]*?```"), "")
+            // 逐行過濾
+            .lines()
+            .filter { line ->
+                val t = line.trim()
+                // 保留非空行
+                if (t.isBlank()) return@filter false
+                // 過濾純大括號/中括號行
+                if (t.matches(Regex("^[{}\\[\\],:]\\s*$"))) return@filter false
+                // 過濾 JSON key-value 行（如 "key": "value"）
+                if (t.matches(Regex("^\"[^\"]+\"\\s*:\\s*.+$"))) return@filter false
+                // 過濾純數字行
+                if (t.matches(Regex("^-?\\d+(\\.\\d+)?$"))) return@filter false
+                true
+            }
+            .joinToString("\n")
+            .trim()
+    }
 }
 

@@ -84,8 +84,10 @@ class ChatAgent(context: Context) : AgentBase(
         // 判斷意圖，決定使用哪種模式
         val intent = detectIntent(userMessage)
 
-        // 同步提取機構線索（含板塊檢測），用於後續回覆增強
-        val instResult = tryExtractInstitutionalTips(userMessage)
+        // 同步提取機構線索（僅在非分析意圖時觸發，避免「分析機構動態」等請求誤觸發）
+        val instResult = if (intent != UserIntent.STOCK_ANALYSIS) {
+            tryExtractInstitutionalTips(userMessage)
+        } else null
 
         val baseResult = when (intent) {
             UserIntent.INDEX_ANALYSIS -> {
