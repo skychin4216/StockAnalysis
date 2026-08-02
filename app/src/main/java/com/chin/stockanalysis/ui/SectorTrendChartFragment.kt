@@ -192,6 +192,10 @@ class SectorTrendChartFragment : Fragment() {
                     val adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, names)
                     adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
                     spinner.adapter = adapter
+                    // 自動載入第一個板塊
+                    if (allTopSectors.isNotEmpty()) {
+                        loadSectorChart(allTopSectors[0].first)
+                    }
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
