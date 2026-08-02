@@ -18,6 +18,9 @@ import com.chin.stockanalysis.strategy.backtest.SectorDailyRecordEntity
 import com.github.mikephil.charting.charts.CombinedChart
 import com.github.mikephil.charting.components.XAxis
 import com.github.mikephil.charting.data.*
+import com.github.mikephil.charting.data.CandleData
+import com.github.mikephil.charting.data.CandleDataSet
+import com.github.mikephil.charting.data.CandleEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -244,51 +247,142 @@ class SectorTrendChartFragment : Fragment() {
             catch (_: Exception) { it.date.takeLast(5) }
         }
 
-        // 漲跌折線
-        val changeEntries = filteredRecords.mapIndexed { index, r ->
-            BarEntry(index.toFloat(), r.changePct.toFloat())
-        }
-        val changeDataSet = BarDataSet(changeEntries, "漲跌%").apply {
-            color = if (filteredRecords.last().changePct >= 0) Color.parseColor("#E53935") else Color.parseColor("#43A047")
-            setDrawValues(false)
-            barShadowColor = Color.TRANSPARENT
+        // ── 構建累計指數（基準=100）──
+        val indexValues = mutableListOf<Double>()
+        var cumulativeIndex = 100.0
+        for (r in filteredRecords) {
+            cumulativeIndex *= (1 + r.changePct / 100)
+            indexValues.add(cumulativeIndex)
         }
 
-        // 資金流入柱狀
+        // ── 構建 OHLC 模擬（用於 K 線顯示）──
+        // 由於板塊只有漲跌幅，我們用漲跌幅模擬 K 線形態
+        val candleEntries = filteredRecords.mapIndexed { index, r ->
+            val baseValue = if (index == 0) 100.0 else indexValues[index - 1]
+            val closeValue = indexValues[index]
+            val openValue = baseValue
+            // 模擬高低點：用漲跌幅的絕對值作為波動範圍
+            val volatility = kotlin.math.abs(r.changePct) * baseValue / 100
+            val highValue = maxOf(openValue, closeValue) + volatility * 0.3
+            val lowValue = minOf(openValue, closeValue) - volatility * 0.3
+            CandleEntry(
+                index.toFloat(),
+                highValue.toFloat(),
+                lowValue.toFloat(),
+                openValue.toFloat(),
+                closeValue.toFloat()
+            )
+        }
+
+        // ── 均線計算 ──
+        val ma5Entries = calcMA(indexValues, 5)
+        val ma10Entries = calcMA(indexValues, 10)
+        val ma20Entries = calcMA(indexValues, 20)
+
+        // ── 成交量柱狀（資金流入）──
         val inflowMax = filteredRecords.map { kotlin.math.abs(it.mainNetInflow) }.maxOrNull() ?: 1.0
-        val inflowEntries = filteredRecords.mapIndexed { index, r ->
+        val volumeEntries = filteredRecords.mapIndexed { index, r ->
             BarEntry(index.toFloat(), (r.mainNetInflow / inflowMax * 30).toFloat())
         }
-        val inflowDataSet = BarDataSet(inflowEntries, "資金流入").apply {
-            color = Color.parseColor("#331565C0")
+
+        // ── 建立圖表 ──
+        chart.apply {
+            setBackgroundColor(Color.WHITE)
+            description.isEnabled = false
+            legend.isEnabled = true
+            legend.textSize = 9f
+            legend.textColor = Color.parseColor("#666666")
+            setScaleEnabled(true)
+            setPinchZoom(true)
+            setDragEnabled(true)
+            setDoubleTapToZoomEnabled(true)
+            setHighlightPerTapEnabled(true)
+            setHighlightPerDragEnabled(true)
+            setVisibleXRangeMaximum(250f)
+            setVisibleXRangeMinimum(10f)
+            drawOrder = arrayOf(
+                CombinedChart.DrawOrder.CANDLE,
+                CombinedChart.DrawOrder.LINE,
+                CombinedChart.DrawOrder.BAR
+            )
+            // 定位到最新數據
+            if (filteredRecords.size > 60) {
+                moveViewToX((filteredRecords.size - 60).toFloat())
+            } else {
+                moveViewToX(0f)
+            }
+        }
+
+        // ── K 線數據 ──
+        val candleDataSet = CandleDataSet(candleEntries, "板塊指數").apply {
+            color = Color.parseColor("#333333")
+            shadowColor = Color.parseColor("#999999")
+            shadowWidth = 1f
+            increasingPaintStyle = android.graphics.Paint.Style.FILL
+            decreasingPaintStyle = android.graphics.Paint.Style.FILL
+            increasingColor = Color.parseColor("#E53935")  // 漲紅
+            decreasingColor = Color.parseColor("#43A047")  // 跌綠
+            setDrawValues(false)
+            isHighlightEnabled = true
+            setDrawHighlightIndicators(true)
+            setHighLightColor(Color.parseColor("#999999"))
+            setHighlightLineWidth(1f)
+            enableDashedHighlightLine(8f, 4f, 0f)
+        }
+
+        // ── 均線數據 ──
+        val lineData = LineData()
+        if (ma5Entries.isNotEmpty()) {
+            lineData.addDataSet(LineDataSet(ma5Entries, "MA5").apply {
+                color = Color.parseColor("#FF9800")
+                lineWidth = 1.2f
+                setDrawCircles(false)
+                setDrawValues(false)
+                isHighlightEnabled = false
+            })
+        }
+        if (ma10Entries.isNotEmpty()) {
+            lineData.addDataSet(LineDataSet(ma10Entries, "MA10").apply {
+                color = Color.parseColor("#2196F3")
+                lineWidth = 1.2f
+                setDrawCircles(false)
+                setDrawValues(false)
+                isHighlightEnabled = false
+            })
+        }
+        if (ma20Entries.isNotEmpty()) {
+            lineData.addDataSet(LineDataSet(ma20Entries, "MA20").apply {
+                color = Color.parseColor("#9C27B0")
+                lineWidth = 1.2f
+                setDrawCircles(false)
+                setDrawValues(false)
+                isHighlightEnabled = false
+            })
+        }
+
+        // ── 成交量數據 ──
+        val volumeDataSet = BarDataSet(volumeEntries, "資金流入").apply {
+            // 根據漲跌著色
+            val colors = filteredRecords.map { r ->
+                if (r.changePct >= 0) Color.parseColor("#33E53935") else Color.parseColor("#3343A047")
+            }
+            setColors(colors)
             setDrawValues(false)
             barShadowColor = Color.TRANSPARENT
         }
 
-        // 熱度折線
-        val hotEntries = filteredRecords.mapIndexed { index, r ->
-            Entry(index.toFloat(), r.hotScore.toFloat())
-        }
-        val hotDataSet = LineDataSet(hotEntries, "熱度").apply {
-            setColor(Color.parseColor("#FF9800"))
-            setCircleColor(Color.parseColor("#FF9800"))
-            circleRadius = 2f
-            lineWidth = 1.5f
-            setDrawValues(false)
-            axisDependency = com.github.mikephil.charting.components.YAxis.AxisDependency.RIGHT
-        }
-
-        // 設定圖表
+        // ── 組合數據 ──
         val combinedData = CombinedData()
-        combinedData.setData(BarData(listOf(changeDataSet, inflowDataSet)))
-        combinedData.setData(LineData(hotDataSet))
+        combinedData.setData(CandleData(candleDataSet))
+        combinedData.setData(lineData)
+        combinedData.setData(BarData(volumeDataSet))
         chart.data = combinedData
 
-        // X 軸
+        // ── X 軸 ──
         chart.xAxis.apply {
             position = XAxis.XAxisPosition.BOTTOM
             setDrawGridLines(false)
-            labelCount = dates.size.coerceAtMost(10)
+            labelCount = dates.size.coerceAtMost(8)
             valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
                 override fun getFormattedValue(value: Float): String {
                     val idx = value.toInt()
@@ -297,17 +391,17 @@ class SectorTrendChartFragment : Fragment() {
             }
         }
 
-        // 左 Y 軸（漲跌%）
+        // ── 左 Y 軸（指數）──
         chart.axisLeft.apply {
-            axisMinimum = -5f
-            axisMaximum = 5f
-            setLabelCount(5, true)
+            setDrawGridLines(true)
+            gridColor = Color.parseColor("#EEEEEE")
+            setLabelCount(6, true)
             valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
-                override fun getFormattedValue(value: Float): String = "${"%.1f".format(value)}%"
+                override fun getFormattedValue(value: Float): String = "${"%.1f".format(value)}"
             }
         }
 
-        // 右 Y 軸（熱度）
+        // ── 右 Y 軸（成交量）──
         chart.axisRight.apply {
             setDrawGridLines(false)
             valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
@@ -315,18 +409,30 @@ class SectorTrendChartFragment : Fragment() {
             }
         }
 
-        chart.legend.isEnabled = true
         chart.invalidate()
 
-        // 更新信息
+        // ── 更新信息欄 ──
         val latest = filteredRecords.last()
+        val latestIndex = indexValues.last()
         val avgChange = filteredRecords.takeLast(5).map { it.changePct }.average()
         val totalInflow = filteredRecords.takeLast(5).sumOf { it.mainNetInflow }
         val hotDays = filteredRecords.takeLast(10).count { it.isHot in listOf("S", "A") }
-        infoTv.text = "$sectorName | 最新: ${"%.2f".format(latest.changePct)}% | " +
+        infoTv.text = "$sectorName | 指數: ${"%.2f".format(latestIndex)} | " +
+            "最新: ${"%.2f".format(latest.changePct)}% | " +
             "5日均漲: ${"%.2f".format(avgChange)}% | " +
             "5日資金: ${"%.0f".format(totalInflow)}億 | " +
             "10日熱天: $hotDays"
+    }
+
+    /** 計算移動平均線 */
+    private fun calcMA(values: List<Double>, period: Int): List<Entry> {
+        if (values.size < period) return emptyList()
+        val result = mutableListOf<Entry>()
+        for (i in (period - 1) until values.size) {
+            val sum = values.subList(i - period + 1, i + 1).sum()
+            result.add(Entry(i.toFloat(), (sum / period).toFloat()))
+        }
+        return result
     }
 
     private fun updateRangeButtons() {
