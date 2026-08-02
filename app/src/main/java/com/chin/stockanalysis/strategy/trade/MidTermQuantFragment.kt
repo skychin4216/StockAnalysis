@@ -30,7 +30,6 @@ class MidTermQuantFragment : QuantFragmentBase() {
     private var screener: StockScreener? = null
     private var selectedPeriods: Set<Int> = setOf(1)
     private var hasTradeReport: Boolean = false
-    private var positionOrderDates: MutableMap<View, String> = mutableMapOf()
 
     companion object {
         private const val TAG = "MidTermQuant"

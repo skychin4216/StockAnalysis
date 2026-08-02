@@ -97,6 +97,8 @@ interface AiSelectedStockDao {
     suspend fun getRecentDays(minDate: String): List<AiSelectedStockEntity>
     @Query("DELETE FROM ai_selected_stock") suspend fun clearAll()
     @Query("DELETE FROM ai_selected_stock WHERE selected_date = :date") suspend fun deleteByDate(date: String)
+    @Query("DELETE FROM ai_selected_stock WHERE stock_code = :code")
+    suspend fun deleteByCode(code: String)
 }
 
 // ── Room Database ────────────────────────────────
@@ -122,9 +124,10 @@ interface AiSelectedStockDao {
         com.chin.stockanalysis.strategy.trade.PeriodHoldingProfitEntity::class,
         com.chin.stockanalysis.strategy.trade.TTradeRecordEntity::class,
         com.chin.stockanalysis.strategy.trade.TTradeRecommendationEntity::class,
-        com.chin.stockanalysis.strategy.trade.RealPositionEntity::class
+        com.chin.stockanalysis.strategy.trade.RealPositionEntity::class,
+        com.chin.stockanalysis.strategy.backtest.SectorPeriodSummaryEntity::class
     ],
-    version = 18,
+    version = 19,
     exportSchema = false
 )
 abstract class StockDatabase : RoomDatabase() {
@@ -136,6 +139,7 @@ abstract class StockDatabase : RoomDatabase() {
     abstract fun strategyPredictionDao(): com.chin.stockanalysis.strategy.backtest.StrategyPredictionDao
     abstract fun strategyWeightSnapshotDao(): com.chin.stockanalysis.strategy.backtest.StrategyWeightSnapshotDao
     abstract fun sectorDailyRecordDao(): com.chin.stockanalysis.strategy.backtest.SectorDailyRecordDao
+    abstract fun sectorPeriodSummaryDao(): com.chin.stockanalysis.strategy.backtest.SectorPeriodSummaryDao
     abstract fun newsFactorDao(): com.chin.stockanalysis.news.NewsFactorDao
     abstract fun weightCalibrationDao(): WeightCalibrationDao
     abstract fun dailyPeriodResultDao(): com.chin.stockanalysis.strategy.trade.DailyPeriodResultDao

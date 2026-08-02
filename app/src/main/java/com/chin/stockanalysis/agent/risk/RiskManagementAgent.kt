@@ -5,6 +5,7 @@ import android.util.Log
 import com.chin.stockanalysis.agent.framework.*
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.trade.AutoSellEngine
+import com.chin.stockanalysis.strategy.trade.StrategyTradeOrderEntity
 import com.chin.stockanalysis.ui.TradingDayPickerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -104,7 +105,16 @@ class RiskManagementAgent(context: Context) : AgentBase(
         }
 
         val result = react(
-            input = "評估股票 $stockCode 的當前風險狀況",
+            input = buildString {
+                appendLine("評估股票 $stockCode 的當前風險狀況")
+                appendLine()
+                appendLine("## 最終答案格式要求（嚴格遵守）")
+                appendLine("請直接輸出結論，不要包含推理過程。格式如下：")
+                appendLine("- 風險等級：低/中/高")
+                appendLine("- 止損位：XX 元（-X%）")
+                appendLine("- 倉位建議：維持 / 減倉 / 觀望")
+                appendLine("- 核心風險：一句話概括")
+            },
             ctx = ctx,
             maxSteps = 4
         )
@@ -115,6 +125,193 @@ class RiskManagementAgent(context: Context) : AgentBase(
             assessment = result.output,
             steps = result.steps
         )
+    }
+
+    /**
+     * 確定性單股風險評估 — 完全繞過 LLM，直接從 DB 讀取數據並計算。
+     *
+     * 邏輯等價於 assessStockRisk()，但無需 LLM 調用，耗時從 ~100s 降至 <1s。
+     * 使用方式：在 IntentRouter 路由到 RISK_CHECK 且 currentStock 不為空時優先調用。
+     */
+    suspend fun assessStockRiskDirect(stockCode: String): StockRiskAssessment =
+        withContext(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(context)
+                val today = TradingDayPickerView.recentTradingDay().toString()
+
+                // ── 1. 查找持倉訂單（同 PortfolioRiskScanTool） ──
+                val orders = db.strategyTradeOrderDao().getRecent(200)
+                    .filter { it.stockCode == stockCode && it.status in listOf("BUYING", "PENDING") }
+
+                if (orders.isEmpty()) {
+                    return@withContext StockRiskAssessment(
+                        success = true,
+                        stockCode = stockCode,
+                        assessment = buildString {
+                            appendLine("- 風險等級：無法評估")
+                            appendLine("- 止損位：N/A")
+                            appendLine("- 倉位建議：N/A")
+                            appendLine("- 核心風險：未找到股票 $stockCode 的持倉記錄")
+                        },
+                        steps = 0
+                    )
+                }
+
+                val order = orders.first()
+                val snapshot = db.dailySnapshotDao().getByDateAndCode(today, stockCode)
+
+                if (snapshot == null) {
+                    return@withContext StockRiskAssessment(
+                        success = true,
+                        stockCode = stockCode,
+                        assessment = buildString {
+                            appendLine("- 風險等級：無法評估")
+                            appendLine("- 止損位：N/A")
+                            appendLine("- 倉位建議：N/A")
+                            appendLine("- 核心風險：無今日行情數據（日期 $today）")
+                        },
+                        steps = 0
+                    )
+                }
+
+                // ── 2. 計算盈虧（同 PortfolioRiskScanTool / StopLossCheckTool） ──
+                val profitPct = (snapshot.close - order.buyPrice) / order.buyPrice * 100
+
+                // ── 3. 計算持倉天數（從訂單日期推算） ──
+                val daysHeld = try {
+                    val buyDate = java.time.LocalDate.parse(order.tradeDate)
+                    val todayDate = java.time.LocalDate.parse(today)
+                    java.time.temporal.ChronoUnit.DAYS.between(buyDate, todayDate).toInt().coerceAtLeast(0)
+                } catch (_: Exception) {
+                    0
+                }
+
+                // ── 4. 計算 ATR（14日）用於動態止損止盈 ──
+                val history = db.dailySnapshotDao().getByCode(stockCode, limit = 20)
+                val atr14 = computeAtr(history)
+
+                // ── 5. 計算最大回撤（持倉期間） ──
+                val maxDrawdown = computeMaxDrawdown(history, order.buyPrice)
+
+                // ── 6. 市場系統性風險（同 MarketRiskTool） ──
+                val allToday = db.dailySnapshotDao().getByDate(today)
+                val avgChange = if (allToday.isNotEmpty()) allToday.map { it.changePct }.average() else 0.0
+                val downRatio = if (allToday.isNotEmpty()) allToday.count { it.changePct < -5 }.toDouble() / allToday.size else 0.0
+                val limitDownCount = allToday.count { it.changePct <= -9.9 }
+                val marketRiskLevel = when {
+                    avgChange < -3 || downRatio > 0.1 || limitDownCount > 50 -> "HIGH"
+                    avgChange < -1.5 || downRatio > 0.05 -> "MEDIUM"
+                    else -> "LOW"
+                }
+
+                // ── 7. 確定止損止盈位（基於 ATR） ──
+                val stopLossPrice = if (atr14 > 0) snapshot.close - 2.0 * atr14 else order.buyPrice * 0.92
+                val stopLossPct = (stopLossPrice - snapshot.close) / snapshot.close * 100
+                val takeProfitPrice = if (atr14 > 0) snapshot.close + 3.0 * atr14 else order.buyPrice * 1.15
+                val takeProfitPct = (takeProfitPrice - snapshot.close) / snapshot.close * 100
+
+                // ── 8. 綜合風險等級 ──
+                val riskLevel = when {
+                    profitPct < -8 || maxDrawdown > 12 -> "高"
+                    profitPct < -5 || maxDrawdown > 8 || marketRiskLevel == "HIGH" -> "中高"
+                    profitPct < 0 || maxDrawdown > 5 || marketRiskLevel == "MEDIUM" -> "中"
+                    profitPct > 15 -> "高（止盈區）"
+                    else -> "低"
+                }
+
+                // ── 9. 倉位建議（同 PositionSizingTool 邏輯） ──
+                val positionAdvice = when {
+                    profitPct < -8 -> "建議止損賣出"
+                    profitPct < -5 -> "建議減倉一半，觀察企穩"
+                    profitPct > 15 -> "建議分批止盈，先賣 1/3"
+                    profitPct > 10 -> "建議上移止盈位，保護利潤"
+                    daysHeld > 10 && profitPct < 2 -> "持倉超 $daysHeld 天無明顯盈利，建議評估換股"
+                    marketRiskLevel == "HIGH" -> "大盤高風險，建議減倉至 30% 以下"
+                    else -> "維持當前倉位"
+                }
+
+                // ── 10. 核心風險一句話 ──
+                val coreRisk = when {
+                    profitPct < -8 -> "虧損 ${"%.1f".format(profitPct)}%，已觸及硬止損線"
+                    profitPct < -5 -> "虧損 ${"%.1f".format(profitPct)}%，接近止損警戒區"
+                    maxDrawdown > 12 -> "最大回撤 ${"%.1f".format(maxDrawdown)}%，超出安全範圍"
+                    daysHeld > 10 && profitPct < 2 -> "持有 $daysHeld 天僅 ${"%.1f".format(profitPct)}%，資金效率低"
+                    marketRiskLevel == "HIGH" -> "大盤系統性風險偏高（均跌 ${"%.1f".format(avgChange)}%）"
+                    profitPct > 15 -> "盈利 ${"%.1f".format(profitPct)}%，注意回調風險"
+                    else -> "盈虧 ${"%.1f".format(profitPct)}%，風險可控"
+                }
+
+                val assessmentText = buildString {
+                    appendLine("- 風險等級：$riskLevel")
+                    appendLine("- 止損位：${"%.2f".format(stopLossPrice)} 元（${"%.1f".format(stopLossPct)}%）")
+                    appendLine("- 止盈位：${"%.2f".format(takeProfitPrice)} 元（+${"%.1f".format(takeProfitPct)}%）")
+                    appendLine("- 當前盈虧：${"%.1f".format(profitPct)}%（買入 ${"%.2f".format(order.buyPrice)} → 現價 ${"%.2f".format(snapshot.close)}）")
+                    appendLine("- 最大回撤：${"%.1f".format(maxDrawdown)}%")
+                    appendLine("- 持倉天數：$daysHeld 天")
+                    appendLine("- 市場環境：$marketRiskLevel（均跌 ${"%.1f".format(avgChange)}%，跌停 $limitDownCount 家）")
+                    appendLine("- 倉位建議：$positionAdvice")
+                    appendLine("- 核心風險：$coreRisk")
+                }
+
+                StockRiskAssessment(
+                    success = true,
+                    stockCode = stockCode,
+                    assessment = assessmentText,
+                    steps = 0
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "assessStockRiskDirect failed for $stockCode", e)
+                StockRiskAssessment(
+                    success = false,
+                    stockCode = stockCode,
+                    assessment = "錯誤: 直接評估失敗: ${e.message}",
+                    steps = 0
+                )
+            }
+        }
+
+    /**
+     * 計算 14 日 ATR（Average True Range）。
+     * True Range = max(high - low, |high - prevClose|, |low - prevClose|)
+     */
+    private fun computeAtr(history: List<com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity>): Double {
+        if (history.size < 2) return 0.0
+        // history 按 date DESC 排列，反轉為時間正序
+        val sorted = history.sortedBy { it.date }
+        val trueRanges = mutableListOf<Double>()
+        for (i in 1 until sorted.size) {
+            val prev = sorted[i - 1]
+            val cur = sorted[i]
+            val tr = maxOf(
+                cur.high - cur.low,
+                kotlin.math.abs(cur.high - prev.close),
+                kotlin.math.abs(cur.low - prev.close)
+            )
+            trueRanges.add(tr)
+        }
+        if (trueRanges.isEmpty()) return 0.0
+        val period = minOf(14, trueRanges.size)
+        return trueRanges.takeLast(period).average()
+    }
+
+    /**
+     * 計算持倉期間最大回撤。
+     * 回撤 = (peak - current) / peak * 100，取歷史最大值。
+     */
+    private fun computeMaxDrawdown(
+        history: List<com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity>,
+        buyPrice: Double
+    ): Double {
+        if (history.isEmpty()) return 0.0
+        val sorted = history.sortedBy { it.date }
+        var peak = buyPrice
+        var maxDd = 0.0
+        for (snap in sorted) {
+            if (snap.close > peak) peak = snap.close
+            val dd = (peak - snap.close) / peak * 100
+            if (dd > maxDd) maxDd = dd
+        }
+        return maxDd
     }
 
     private fun parseRiskResult(result: AgentResult): RiskScanResult {
@@ -203,17 +400,55 @@ class PortfolioRiskScanTool(private val ctx: Context) : AgentTool {
             try {
                 val db = StockDatabase.getInstance(c)
                 val today = TradingDayPickerView.recentTradingDay().toString()
-                val orders = db.strategyTradeOrderDao().getRecent(200).filter { it.status in listOf("BUYING", "PENDING") }
 
-                if (orders.isEmpty()) return@withContext "當前無持倉"
+                // 優先使用 realPositionDao（真實持倉表），比 order 表更可靠
+                val realPositions = db.realPositionDao().getAllActive()
 
-                val results = mutableListOf<String>()
-                for (order in orders) {
-                    val snapshot = db.dailySnapshotDao().getByDateAndCode(today, order.stockCode)
-                    if (snapshot == null) continue
+                if (realPositions.isEmpty()) {
+                    // 降級：嘗試從 strategyTradeOrderDao 查詢
+                    val orders = db.strategyTradeOrderDao().getRecent(200)
+                        .filter { it.status in listOf("BUYING", "PENDING") }
+                    if (orders.isEmpty()) {
+                        return@withContext "當前無持倉記錄（真實持倉表和訂單表均為空）"
+                    }
+                    // 使用 orders 作為降級數據源
+                    return@withContext scanOrders(db, orders, today)
+                }
 
-                    val profitPct = (snapshot.close - order.buyPrice) / order.buyPrice * 100
-                    val daysHeld = 0 // 簡化
+                // 使用 realPositions 掃描
+                scanRealPositions(db, realPositions, today)
+            } catch (e: Exception) {
+                "錯誤: 掃描失敗: ${e.message}"
+            }
+        }
+    }
+
+    private suspend fun scanRealPositions(
+        db: com.chin.stockanalysis.stock.database.StockDatabase,
+        positions: List<com.chin.stockanalysis.strategy.trade.RealPositionEntity>,
+        today: String
+    ): String {
+        // 按週期分組
+        val byPeriod = positions.groupBy { it.periodType.ifEmpty { "未分類" } }
+
+        return buildString {
+            appendLine("【持倉風險掃描】共 ${positions.size} 只")
+            appendLine()
+
+            for ((period, posList) in byPeriod) {
+                appendLine("── $period 週期 ──")
+                for (pos in posList) {
+                    val snapshot = db.dailySnapshotDao().getByDateAndCode(today, pos.stockCode)
+                    val currentPrice = snapshot?.close
+                    if (currentPrice == null || currentPrice <= 0) {
+                        appendLine("- ${pos.stockCode}(${pos.stockName}): 無法獲取當前價格")
+                        continue
+                    }
+
+                    val buyPrice = pos.avgBuyPrice
+                    val profitPct = if (buyPrice > 0) {
+                        (currentPrice - buyPrice) / buyPrice * 100
+                    } else 0.0
 
                     val status = when {
                         profitPct < -8 -> "CRITICAL(止損)"
@@ -222,16 +457,38 @@ class PortfolioRiskScanTool(private val ctx: Context) : AgentTool {
                         else -> "SAFE"
                     }
 
-                    results.add("${order.stockCode}(${order.stockName}): 盈虧 ${"%.1f".format(profitPct)}% | 持有 $daysHeld 天 | $status")
+                    appendLine("- ${pos.stockCode}(${pos.stockName}): 買入價¥${"%.2f".format(buyPrice)} → 現價¥${"%.2f".format(currentPrice)} | 盈虧${"%.1f".format(profitPct)}% | $status")
                 }
-
-                buildString {
-                    appendLine("【持倉風險掃描】共 ${orders.size} 只")
-                    results.forEach { appendLine("- $it") }
-                }
-            } catch (e: Exception) {
-                "錯誤: 掃描失敗: ${e.message}"
+                appendLine()
             }
+        }
+    }
+
+    private suspend fun scanOrders(
+        db: com.chin.stockanalysis.stock.database.StockDatabase,
+        orders: List<com.chin.stockanalysis.strategy.trade.StrategyTradeOrderEntity>,
+        today: String
+    ): String {
+        val results = mutableListOf<String>()
+        for (order in orders) {
+            val snapshot = db.dailySnapshotDao().getByDateAndCode(today, order.stockCode)
+            if (snapshot == null) continue
+
+            val buyPrice = order.buyPrice
+            val profitPct = (snapshot.close - buyPrice) / buyPrice * 100
+            val status = when {
+                profitPct < -8 -> "CRITICAL(止損)"
+                profitPct < -5 -> "WARNING(虧損)"
+                profitPct > 15 -> "WARNING(止盈)"
+                else -> "SAFE"
+            }
+
+            results.add("${order.stockCode}(${order.stockName}): 買入價¥${"%.2f".format(buyPrice)} → 現價¥${"%.2f".format(snapshot.close)} | 盈虧${"%.1f".format(profitPct)}% | $status")
+        }
+
+        return buildString {
+            appendLine("【持倉風險掃描（訂單表降級）】共 ${orders.size} 只")
+            results.forEach { appendLine("- $it") }
         }
     }
 }

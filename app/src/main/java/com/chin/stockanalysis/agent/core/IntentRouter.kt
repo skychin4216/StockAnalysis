@@ -9,7 +9,8 @@ enum class IntentType {
     QUICK_SCAN,      // 快速掃描：純量化，無 LLM（僅 Scout）
     DEEP_ANALYSIS,   // 深度分析：全鏈路 Agent 群
     RISK_CHECK,      // 風控掃描：僅 Guardian
-    FOLLOW_UP        // 追問：僅 Analyst（對已有分析結果的後續提問）
+    FOLLOW_UP,       // 追問：僅 Analyst（對已有分析結果的後續提問）
+    GENERAL_CHAT     // 通用問答：知識問答、閒聊、非股票相關問題
 }
 
 /**
@@ -61,6 +62,10 @@ class IntentRouter {
             normalized.containsAny("為什麼", "追問", "詳細", "解釋", "怎麼理解") && currentStock != null ->
                 UserIntent(IntentType.FOLLOW_UP, target = currentStock, rawInput = userInput)
 
+            // 通用問答：知識問答、閒聊、非股票相關問題（優先於 DEEP_ANALYSIS，避免浪費 LLM 調用）
+            isGeneralChat(normalized, currentStock) ->
+                UserIntent(IntentType.GENERAL_CHAT, rawInput = userInput)
+
             // 深度分析：指定股票或選股（默認路徑）
             else -> {
                 val period = holdingPeriod ?: inferPeriod(normalized)
@@ -80,6 +85,72 @@ class IntentRouter {
             text.containsAny("長線", "長期", "價值", "持有") -> HoldingPeriod.LONG
             else -> HoldingPeriod.SHORT  // 默認短線
         }
+    }
+
+    /**
+     * 判斷是否為通用問答（非股票分析請求）。
+     *
+     * 策略：如果輸入不包含股票代碼、股票名稱或市場分析關鍵詞，
+     * 且看起來像一般問題、閒聊或知識問答，則路由到 GENERAL_CHAT。
+     * 寧可誤判為 GENERAL_CHAT（1 次 LLM 調用），也不要誤判為 DEEP_ANALYSIS（5-17 次 LLM 調用）。
+     */
+    private fun isGeneralChat(text: String, currentStock: String?): Boolean {
+        // 如果有明確的當前股票上下文，且輸入較短（可能是追問），不走 GENERAL_CHAT
+        // 但如果輸入明顯是知識問答，即使有 currentStock 也走 GENERAL_CHAT
+
+        // ── 1. 閒聊/問候語 ──
+        if (text.containsAny(
+                "你好", "您好", "hello", "hi", "嗨", "再見", "bye",
+                "謝謝", "感謝", "thanks", "thank you",
+                "幫助", "help", "能做什麼", "有什麼功能", "功能"
+            )
+        ) return true
+
+        // ── 2. 金融知識/概念問答 ──
+        if (text.containsAny(
+                "什麼是", "是什麼", "怎麼看", "如何看", "怎麼用", "如何用",
+                "怎麼選股", "如何選股", "怎麼分析", "如何分析",
+                "怎麼設置", "如何設置", "怎麼設定", "如何設定",
+                "止損怎麼", "止盈怎麼", "止損如何", "止盈如何",
+                "什麼意思", "是什麼意思", "怎麼理解",
+                "pe", "pb", "roe", "macd", "kdj", "rsi", "布林", "boll",
+                "均線", "成交量", "換手率", "市盈率", "市淨率", "淨資產",
+                "k線", "陽線", "陰線", "十字星", "漲停", "跌停",
+                "基本面", "技術面", "消息面", "政策面",
+                "價值投資", "趨勢交易", "短線技巧", "操盤",
+                "仓位管理", "資金管理", "風險管理",
+                "etf", "指數", "基金", "債券", "期貨", "期權",
+                "牛市", "熊市", "震盪", "行情"
+            )
+        ) {
+            // 排除明確包含股票代碼的情況（如「600519是什麼意思」→ 可能是問股票）
+            if (!containsStockCode(text)) return true
+        }
+
+        // ── 3. 沒有 currentStock 且輸入不包含市場分析關鍵詞 → 大概率閒聊 ──
+        if (currentStock == null && !text.containsAny(
+                "分析", "推薦", "選股", "買入", "賣出", "持倉", "建倉", "加倉",
+                "減倉", "清倉", "目標價", "支撐", "壓力", "突破",
+                "漲", "跌", "走勢", "趨勢", "板塊", "概念", "龍頭",
+                "主力", "資金流", "北向", "外資", "融資", "融券"
+            )
+        ) {
+            // 輸入較短（< 30 字）且是問句形式
+            if (text.length < 30 && (text.contains("？") || text.contains("?") ||
+                        text.containsAny("嗎", "呢", "麼", "嘛", "咋", "怎麼", "如何", "什麼", "为啥", "為什麼"))
+            ) return true
+        }
+
+        return false
+    }
+
+    /**
+     * 簡單檢查文本中是否包含股票代碼（6位數字，可能帶市場前綴）。
+     */
+    private fun containsStockCode(text: String): Boolean {
+        // 匹配 6 位數字股票代碼（可選 sh/sz/sh6/sh9 前綴）
+        val codePattern = Regex("""(?:sh|sz)?\d{6}""")
+        return codePattern.containsMatchIn(text)
     }
 
     private fun String.containsAny(vararg keywords: String): Boolean {

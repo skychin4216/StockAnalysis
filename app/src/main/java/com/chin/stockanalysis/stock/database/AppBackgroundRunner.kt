@@ -89,6 +89,16 @@ object AppBackgroundRunner {
             monitorTTradeOpportunities(context.applicationContext)
         }
 
+        // 啟動時更新板塊週期摘要（每週/每月主要板塊追蹤）
+        scope.launch(Dispatchers.IO) {
+            try {
+                val tracker = com.chin.stockanalysis.strategy.backtest.SectorPeriodTracker(context.applicationContext)
+                tracker.update()
+            } catch (e: Exception) {
+                Log.w(TAG, "板塊週期摘要更新失敗: ${e.message}")
+            }
+        }
+
         startPositionMonitor(context.applicationContext, scope)
     }
 

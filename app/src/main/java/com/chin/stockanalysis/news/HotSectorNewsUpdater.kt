@@ -35,14 +35,10 @@ class HotSectorNewsUpdater(private val context: Context) {
         private const val CACHE_TTL_MINUTES = 60  // 新聞緩存有效期（分鐘）
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
-        /** AI 硬件优先板块关键词 */
-        val PRIORITY_SECTORS = listOf(
-            "光通信", "光模块", "光芯片", "光材料", "CPO",
-            "存储芯片", "HBM", "半导体设备", "半导体材料", "芯片国产替代",
-            "AI服务器", "AI应用", "AIPC", "英伟达产业链",
-            "绿色电力", "电网设备", "特高压", "液冷散热",
-            "华为昇腾", "算力租赁", "PCB", "先进封装"
-        )
+        /** 動態板塊優先列表（從 DB 讀取，無數據時為空） */
+        private var dynamicPriorityCache: List<String>? = null
+        private var dynamicPriorityTimestamp: Long = 0
+        private const val DYNAMIC_CACHE_TTL = 4 * 3600 * 1000L  // 4小時刷新
 
         /**
          * 全局 Mutex：多個 Fragment/Engine 同時調用時，
@@ -174,37 +170,35 @@ class HotSectorNewsUpdater(private val context: Context) {
         }
     }
 
-    /** 从 sector_daily_record 获取近 100 日最热门板块，数据不足时用默认热门关键词 */
+    /** 從 sector_period_summary 獲取近期主要板塊，數據不足時用 sector_daily_record 降級 */
     private suspend fun getTopHotSectors(): List<String> {
         return try {
-            val hotStats = db.sectorDailyRecordDao().getTopHotSectors(15)
-            if (hotStats.isNotEmpty()) {
-                hotStats.map { it.sector_code }
+            // 優先用 sector_period_summary（週/月聚合）
+            val tracker = com.chin.stockanalysis.strategy.backtest.SectorPeriodTracker(context)
+            val weeklySectors = tracker.getCurrentWeekTopSectors(15)
+            if (weeklySectors.isNotEmpty()) {
+                weeklySectors
             } else {
-                Log.i(TAG, "sector_daily_record 为空，使用默认热门板块关键词")
-                PRIORITY_SECTORS.take(10)
+                // 降級到 sector_daily_record
+                Log.i(TAG, "sector_period_summary 為空，降級到 sector_daily_record")
+                val hotStats = db.sectorDailyRecordDao().getTopHotSectors(15)
+                if (hotStats.isNotEmpty()) {
+                    hotStats.map { it.sector_code }
+                } else {
+                    Log.i(TAG, "板塊數據為空，無默認板塊")
+                    emptyList()
+                }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "读取板块记录失败: ${e.message}")
-            PRIORITY_SECTORS.take(10)
+            Log.w(TAG, "讀取板塊記錄失敗: ${e.message}")
+            emptyList()
         }
     }
 
-    /** 优先选择 AI 硬件相关板块，不足时用热门板块/默认关键词补充 */
+    /** 直接使用動態 hot 板塊，不再硬編碼優先級過濾 */
     private fun selectPrioritySectors(hotSectors: List<String>): List<String> {
-        // 先找到 AI 硬件匹配的
-        val priority = hotSectors.filter { sector ->
-            PRIORITY_SECTORS.any { p -> sector.contains(p, ignoreCase = true) || p.contains(sector, ignoreCase = true) }
-        }
-        val others = hotSectors.filter { it !in priority }
-        Log.i(TAG, "AI 硬件优先板块: ${priority.joinToString()}")
-        // 确保始终有 5 个板块可搜索
-        val result = (priority + others).take(5)
-        return if (result.size < 5) {
-            // 不足 5 个时用默认热门关键词补全
-            val fill = PRIORITY_SECTORS.filter { it !in result }.take(5 - result.size)
-            result + fill
-        } else result
+        Log.i(TAG, "動態板塊: ${hotSectors.joinToString()}")
+        return hotSectors.take(5)
     }
 
     /** 三級優先級搜索指定板塊最新新聞（搜索與解析分離） */

@@ -6,6 +6,7 @@ import com.chin.stockanalysis.ai.AiProviderPool
 import com.chin.stockanalysis.ai.ChatTools
 import com.chin.stockanalysis.OpenAiCompatibleProvider
 import kotlinx.coroutines.*
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -610,16 +611,57 @@ abstract class AgentBase(
                     var resumed = false
                     val contentAcc = StringBuilder()
 
+                    // 構建 proper JSONArray：system + messageHistory（含 user/assistant/tool roles）
+                    val messagesJson = JSONArray()
+                    // System message first
+                    messagesJson.put(JSONObject().apply {
+                        put("role", "system")
+                        put("content", buildSystemPrompt())
+                    })
+                    // Then all history messages with proper roles
+                    for (msg in messageHistory) {
+                        val role = msg["role"] as? String ?: continue
+                        val jsonObj = JSONObject()
+                        jsonObj.put("role", role)
+                        when (role) {
+                            "user", "assistant" -> {
+                                jsonObj.put("content", msg["content"]?.toString() ?: "")
+                                // Include tool_calls if present on assistant messages
+                                @Suppress("UNCHECKED_CAST")
+                                val toolCalls = msg["tool_calls"] as? List<Map<String, Any>>
+                                if (toolCalls != null) {
+                                    val tcArray = JSONArray()
+                                    for (tc in toolCalls) {
+                                        tcArray.put(JSONObject().apply {
+                                            put("id", tc["id"] ?: "")
+                                            put("type", tc["type"] ?: "function")
+                                            val func = tc["function"] as? Map<*, *>
+                                            if (func != null) {
+                                                put("function", JSONObject().apply {
+                                                    put("name", func["name"] ?: "")
+                                                    put("arguments", func["arguments"] ?: "")
+                                                })
+                                            }
+                                        })
+                                    }
+                                    jsonObj.put("tool_calls", tcArray)
+                                }
+                            }
+                            "tool" -> {
+                                jsonObj.put("content", msg["content"]?.toString() ?: "")
+                                jsonObj.put("tool_call_id", msg["tool_call_id"] ?: "")
+                            }
+                        }
+                        messagesJson.put(jsonObj)
+                    }
+
                     // 直接使用 OpenAiCompatibleProvider 以取得 tools 參數和 onToolCalls 回呼支援
                     val openAiProvider = slot.provider as? OpenAiCompatibleProvider
                     if (openAiProvider != null) {
-                        openAiProvider.sendMessageStreamWithTools(
-                            messages = emptyList(), // 我們自行管理 messageHistory，透過 systemPrompt 傳遞
-                            systemPrompt = buildSystemPrompt() + "\n\n" + buildMessageHistoryText(messageHistory),
+                        openAiProvider.sendMessageStreamWithRawMessages(
+                            rawMessages = messagesJson,
                             onSuccess = { chunk -> contentAcc.append(chunk) },
                             onComplete = { fullContent ->
-                                // content 已透過 onSuccess 累積，tool_calls 已透過 onToolCalls 收集
-                                // 這裡作為保底：如果 onToolCalls 未觸發（無 tool_calls 的純文本回覆），由這裡 resume
                                 if (!resumed) {
                                     resumed = true
                                     cont.resume(Pair(contentAcc.toString(), emptyList()), null)
@@ -630,7 +672,6 @@ abstract class AgentBase(
                             },
                             tools = ChatTools.allTools,
                             onToolCalls = { toolCalls ->
-                                // tool_calls 收集完成，立即返回結果
                                 if (!resumed) {
                                     resumed = true
                                     cont.resume(Pair(contentAcc.toString(), toolCalls), null)
@@ -638,7 +679,7 @@ abstract class AgentBase(
                             }
                         )
                     } else {
-                        // 降級：不帶 tools 的普通調用
+                        // 降級：不帶 tools 的普通調用（仍使用 rawMessages 保持歷史結構）
                         slot.provider.sendMessageStream(
                             messages = emptyList(),
                             systemPrompt = buildSystemPrompt() + "\n\n" + buildMessageHistoryText(messageHistory),
@@ -661,10 +702,8 @@ abstract class AgentBase(
     /**
      * 將 messageHistory 轉為文字格式，作為 systemPrompt 的一部分傳遞
      *
-     * 由於 ApiProvider.sendMessageStream 的 messages 參數期望 List<Message>，
-     * 而 Function Calling 需要精確的 role/content/tool_calls/tool_call_id 結構，
-     * 這裡將完整的 messageHistory 序列化為文字附加在 systemPrompt 中，
-     * 讓 LLM 能看到完整對話上下文。
+     * 注意：此方法僅作為非 OpenAiCompatibleProvider 降級路徑的後備方案。
+     * 正常情況下，callLLMWithTools 會構建 proper JSONArray 直接傳遞訊息歷史。
      */
     private fun buildMessageHistoryText(messageHistory: List<Map<String, Any>>): String {
         return buildString {

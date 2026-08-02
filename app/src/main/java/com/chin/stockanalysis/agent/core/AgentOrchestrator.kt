@@ -36,6 +36,7 @@ class AgentOrchestrator(internal val appContext: Context) {
     internal val spawner = SubAgentSpawner()
     private val sessionManager = AgentSessionManager.instance
     private val intentRouter = IntentRouter()
+    private val planningAgent = PlanningAgent(appContext)
 
     /**
      * 執行分析任務
@@ -76,6 +77,7 @@ class AgentOrchestrator(internal val appContext: Context) {
                 IntentType.DEEP_ANALYSIS -> executeDeepAnalysis(
                     session, scope, clusterConfig, stockCode, stockName, onProgress
                 )
+                IntentType.GENERAL_CHAT -> executeGeneralChat(session, scope, intent.rawInput, onProgress)
             }
         } catch (e: CancellationException) {
             Log.w(TAG, "會話被取消: $sessionId")
@@ -85,6 +87,44 @@ class AgentOrchestrator(internal val appContext: Context) {
             OrchestratorResult(error = e.message ?: "unknown")
         } finally {
             sessionManager.cancelSession(sessionId)
+        }
+    }
+
+    // ── 通用問答：单次 LLM 調用，不走任何 pipeline ──
+    private suspend fun executeGeneralChat(
+        session: AgentSession,
+        scope: CoroutineScope,
+        userQuestion: String,
+        onProgress: ((String, String) -> Unit)?
+    ): OrchestratorResult {
+        onProgress?.invoke("chat", "回答中...")
+
+        val slot = com.chin.stockanalysis.ai.AiProviderPool.acquire(
+            context = appContext,
+            callerTag = "Orchestrator.GeneralChat",
+            timeoutMs = 25_000L
+        ) ?: return OrchestratorResult(error = "AI 服務未就緒")
+
+        return try {
+            val answer: String = kotlinx.coroutines.withTimeout(25_000L) {
+                kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+                    val sb = StringBuilder()
+                    slot.provider.sendMessageStream(
+                        messages = listOf(com.chin.stockanalysis.ui.Message(content = userQuestion, isUser = true)),
+                        systemPrompt = "你是一個專業的股票投資助手。用戶正在問你一個一般性問題。\n" +
+                            "請用簡潔、專業的方式回答。如果問題與股票投資無關，禮貌地引導回投資話題。\n" +
+                            "回答要點：直接回答問題，不要長篇大論。如果涉及投資概念，給出具體例子。200字以內。",
+                        onSuccess = { chunk: String -> sb.append(chunk) },
+                        onComplete = { full: String -> cont.resume(full.ifEmpty { sb.toString() }, null) },
+                        onError = { err: String -> cont.resumeWith(Result.failure(Exception(err))) }
+                    )
+                }
+            }
+            OrchestratorResult(summary = answer)
+        } catch (e: Exception) {
+            OrchestratorResult(error = "回答失敗: ${e.message}")
+        } finally {
+            com.chin.stockanalysis.ai.AiProviderPool.releaseNonBlocking(slot)
         }
     }
 
@@ -152,7 +192,7 @@ class AgentOrchestrator(internal val appContext: Context) {
         )
     }
 
-    // ── 深度分析：Scout + DeepAnalyst + Guardian 並行 → 決策矩陣 → 彙總 ──
+    // ── 深度分析：PlanningAgent → Scout + DeepAnalyst + Guardian 並行 → 決策矩陣 → 彙總 ──
     private suspend fun executeDeepAnalysis(
         session: AgentSession,
         scope: CoroutineScope,
@@ -162,6 +202,34 @@ class AgentOrchestrator(internal val appContext: Context) {
         onProgress: ((String, String) -> Unit)?
     ): OrchestratorResult {
         val startTime = System.currentTimeMillis()
+
+        // Phase 0: PlanningAgent 智能規劃（失敗不阻塞，15s 超時）
+        val intent = session.getSlot<UserIntent>("intent")
+        val analysisPlan = try {
+            onProgress?.invoke("planner", "🧠 分析規劃中...")
+            val planInput = intent ?: UserIntent(IntentType.DEEP_ANALYSIS, rawInput = "")
+            planningAgent.plan(planInput, stockCode, stockName)
+                .also {
+                    session.setSlot("analysisPlan", it)
+                    onProgress?.invoke("planner", "🧠 規劃完成: depth=${it.depth}, dims=${it.focusDimensions.size}")
+                }
+        } catch (e: Exception) {
+            Log.w(TAG, "PlanningAgent 失敗（降級）: ${e.message}")
+            PlanningAgent.AnalysisPlan(fallback = true)
+        }
+
+        // 根據規劃調整分析參數
+        val adjustedConfig = when (analysisPlan.depth) {
+            PlanningAgent.AnalysisPlan.Depth.QUICK -> config.copy(
+                analystSteps = 2,
+                analystTimeout = 60_000
+            )
+            PlanningAgent.AnalysisPlan.Depth.STANDARD -> config
+            PlanningAgent.AnalysisPlan.Depth.DEEP -> config.copy(
+                analystSteps = (config.analystSteps + 2).coerceAtMost(10),
+                analystTimeout = (config.analystTimeout * 1.3).toLong()
+            )
+        }
 
         // Phase 1: Scout 先行（提供市場環境給 Analyst）
         onProgress?.invoke("scout", "🔍 市場環境偵察...")
@@ -178,17 +246,17 @@ class AgentOrchestrator(internal val appContext: Context) {
         onProgress?.invoke("scout", "🔍 偵察完成: ${scoutAnnounce.status}")
 
         // Phase 2: DeepAnalyst（多子Agent深度分析） + Guardian 並行
-        onProgress?.invoke("analyst", "📊 深度分析中（${config.analystSteps}子Agent）...")
+        onProgress?.invoke("analyst", "📊 深度分析中（${adjustedConfig.analystSteps}子Agent）...")
         onProgress?.invoke("guardian", "🛡️ 風控評估中...")
 
-        val analystRole = AgentRoles.ANALYST.copy(timeoutMs = config.analystTimeout)
+        val analystRole = AgentRoles.ANALYST.copy(timeoutMs = adjustedConfig.analystTimeout)
         val guardianRole = AgentRoles.GUARDIAN.copy(timeoutMs = config.guardianTimeout)
 
         val analystDeferred = spawner.spawn(
             role = analystRole,
             task = AgentTask { ctx ->
                 if (stockCode != null) {
-                    DeepAnalystEngine(appContext, stockCode, stockName, config.analystSteps).execute(ctx)
+                    DeepAnalystEngine(appContext, stockCode, stockName, adjustedConfig.analystSteps).execute(ctx)
                 } else {
                     AnalystTask(appContext, null).execute(ctx)
                 }
@@ -219,7 +287,7 @@ class AgentOrchestrator(internal val appContext: Context) {
 
         // Phase 3: 彙總（Orchestrator 用自己的風格重新組織）
         val allAnnounces = listOf(scoutAnnounce, analystAnnounce, guardianAnnounce)
-        val summary = buildDeepAnalysisSummary(allAnnounces, config, decisionOutput)
+        val summary = buildDeepAnalysisSummary(allAnnounces, adjustedConfig, decisionOutput, analysisPlan)
 
         val elapsed = System.currentTimeMillis() - startTime
         Log.i(TAG, "◀ 深度分析完成: ${elapsed}ms, " +
@@ -364,13 +432,24 @@ class AgentOrchestrator(internal val appContext: Context) {
     private fun buildDeepAnalysisSummary(
         announces: List<AgentAnnounce>,
         config: AgentClusterConfig,
-        decisionOutput: DecisionMatrixOutput? = null
+        decisionOutput: DecisionMatrixOutput? = null,
+        analysisPlan: PlanningAgent.AnalysisPlan? = null
     ): String = buildString {
         val scout = announces.firstOrNull { it.role == "scout" }
         val analyst = announces.firstOrNull { it.role == "analyst" }
         val guardian = announces.firstOrNull { it.role == "guardian" }
 
         appendLine("═══ ${config.period.name} 深度分析報告 ═══")
+
+        // 分析規劃信息
+        if (analysisPlan != null && !analysisPlan.fallback) {
+            appendLine("── 🧠 分析規劃 ──")
+            appendLine("分析深度: ${analysisPlan.depth}")
+            if (analysisPlan.specialNotes.isNotEmpty()) {
+                appendLine("注意事項: ${analysisPlan.specialNotes.joinToString("；")}")
+            }
+            appendLine()
+        }
 
         // 市場環境（來自 Scout）
         if (scout != null && !scout.isFailed) {

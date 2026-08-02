@@ -294,7 +294,7 @@ class StrategyListFragment : Fragment() {
                 if (isAdded) {
                     withContext(Dispatchers.Main) {
                         scanBtn.isEnabled = true; scanBtn.text = "执行策略"; progressBar.visibility = View.GONE
-                        if (result != null && result.getOrNull()?.hitCount ?: 0 > 0) {
+                        if (result != null && (result.getOrNull()?.hitCount ?: 0) > 0) {
                             val r = result.getOrNull()!!
                             statusTv.text = "  🐲 龙头轮动: 主板+科创/创业 共${r.hitCount}只 | 耗时${r.scanTimeMs}ms | 扫描${r.totalScanned}只"
                             showDragonHeadDipResult(r)
@@ -1067,24 +1067,244 @@ class StrategyListFragment : Fragment() {
     // ═══════════════════════════════════════
 
     private fun runAIPipeline() {
-        val inputEt = EditText(requireContext()).apply {
-            hint = "輸入標的（如：生益科技、光通信板塊、半導體）"
-            textSize = 13f; setPadding(16, 12, 16, 12); setSingleLine(true)
+        val ctx = requireContext()
+        val dialog = android.app.Dialog(ctx)
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dialog.setContentView(createAIPipelineDialogView(dialog))
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.92).toInt(),
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+        dialog.show()
+    }
+
+    /** 建立 Agent 分析對話框內容 */
+    private fun createAIPipelineDialogView(dialog: android.app.Dialog): View {
+        val ctx = requireContext()
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.WHITE)
+            setPadding(24, 20, 24, 20)
         }
-        AlertDialog.Builder(requireContext())
-            .setTitle("🧠 Agent 分析")
-            .setMessage("輸入要分析的標的或板塊，AI 將根據賽道自動選擇分析模式：\n• 六智體通用（消費/醫藥/周期）\n• 七智體賣水人（光通信/半導體）")
-            .setView(inputEt)
-            .setPositiveButton("開始分析") { _, _ ->
+
+        // ── 標題區 ──
+        val titleRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, 12)
+        }
+        titleRow.addView(TextView(ctx).apply {
+            text = "🧠"
+            textSize = 22f
+            setPadding(0, 0, 8, 0)
+        })
+        titleRow.addView(TextView(ctx).apply {
+            text = "Agent 智能分析"
+            textSize = 18f
+            setTextColor(Color.parseColor("#333333"))
+            typeface = Typeface.DEFAULT_BOLD
+        })
+        root.addView(titleRow)
+
+        // ── 說明文字 ──
+        root.addView(TextView(ctx).apply {
+            text = "輸入股票或板塊，AI 自動選擇分析模式（六智體/七智體）"
+            textSize = 12f
+            setTextColor(Color.parseColor("#888888"))
+            setPadding(0, 0, 0, 16)
+        })
+
+        // ── 輸入框 ──
+        val inputEt = EditText(ctx).apply {
+            hint = "載入熱門板塊中..."
+            textSize = 14f
+            setTextColor(Color.parseColor("#333333"))
+            setHintTextColor(Color.parseColor("#AAAAAA"))
+            setPadding(16, 14, 16, 14)
+            setSingleLine(true)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.parseColor("#F5F5F5"))
+                setCornerRadius(12f)
+                setStroke(2, Color.parseColor("#E0E0E0"))
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 16 }
+        }
+        root.addView(inputEt)
+
+        // ── 熱門板塊標題 ──
+        val hotSectionTitle = TextView(ctx).apply {
+            text = "🔥 近期熱門板塊"
+            textSize = 13f
+            setTextColor(Color.parseColor("#666666"))
+            setPadding(0, 0, 0, 8)
+        }
+        root.addView(hotSectionTitle)
+
+        // ── 熱門板塊 chips 容器（水平滾動） ──
+        val chipContainer = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val chipScroll = HorizontalScrollView(ctx).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(chipContainer)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 16 }
+        }
+        root.addView(chipScroll)
+
+        // ── 按鈕區 ──
+        val btnRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+            setPadding(0, 8, 0, 0)
+        }
+        val cancelBtn = Button(ctx).apply {
+            text = "取消"
+            textSize = 13f
+            setTextColor(Color.parseColor("#666666"))
+            setBackgroundColor(Color.TRANSPARENT)
+            setMinWidth(0); setMinimumWidth(0)
+            setPadding(16, 8, 16, 8)
+            setOnClickListener { dialog.dismiss() }
+        }
+        val analyzeBtn = Button(ctx).apply {
+            text = "開始分析"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#6A1B9A"))
+            setMinWidth(0); setMinimumWidth(0)
+            setPadding(20, 10, 20, 10)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { marginStart = 8 }
+            setOnClickListener {
                 val target = inputEt.text.toString().trim()
                 if (target.isBlank()) {
-                    Toast.makeText(requireContext(), "請輸入標的", Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
+                    Toast.makeText(ctx, "請輸入標的或選擇熱門板塊", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
                 }
+                dialog.dismiss()
                 executeAIPipeline(target)
             }
-            .setNegativeButton("取消", null)
-            .show()
+        }
+        btnRow.addView(cancelBtn)
+        btnRow.addView(analyzeBtn)
+        root.addView(btnRow)
+
+        // ── 非同步載入熱門板塊 ──
+        loadHotSectorsForDialog(chipContainer, inputEt)
+
+        return root
+    }
+
+    /** 載入熱門板塊並填充對話框 chips */
+    private fun loadHotSectorsForDialog(chipContainer: LinearLayout, inputEt: EditText) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val ctx = requireContext().applicationContext
+                // 優先使用 SectorPeriodTracker 的週/月 top 板塊
+                val tracker = com.chin.stockanalysis.strategy.backtest.SectorPeriodTracker(ctx)
+                val weeklySectors = tracker.getCurrentWeekTopSectors(8)
+                val monthlySectors = tracker.getCurrentMonthTopSectors(8)
+
+                // 合併去重，權重：週榜 x2 + 月榜
+                val sectorScore = mutableMapOf<String, Int>()
+                weeklySectors.forEach { sectorScore[it] = (sectorScore[it] ?: 0) + 2 }
+                monthlySectors.forEach { sectorScore[it] = (sectorScore[it] ?: 0) + 1 }
+                val topSectors = sectorScore.entries
+                    .sortedByDescending { it.value }
+                    .map { it.key }
+                    .take(10)
+
+                // Fallback: 用 StockDataCenter
+                val sectors = if (topSectors.isEmpty()) {
+                    StockDataCenter.getHotSectorsByPeriod(30).take(10)
+                } else {
+                    topSectors
+                }
+
+                // 取得最新熱門股票作為 hint
+                val db = StockDatabase.getInstance(ctx)
+                val recentHotStocks = try {
+                    db.stockBasicDao().searchByName("").take(3).map { it.name }
+                } catch (_: Exception) { emptyList() }
+
+                withContext(Dispatchers.Main) {
+                    if (!isAdded) return@withContext
+
+                    // 更新 hint
+                    val hintText = if (sectors.isNotEmpty()) {
+                        "例如：${sectors.take(2).joinToString("、")}" +
+                            if (recentHotStocks.isNotEmpty()) "、${recentHotStocks.first()}" else ""
+                    } else {
+                        "輸入標的（如：光通信板塊、半導體）"
+                    }
+                    inputEt.hint = hintText
+
+                    // 建立 chips
+                    chipContainer.removeAllViews()
+                    for (sector in sectors.take(10)) {
+                        val chip = createSectorChip(sector) {
+                            inputEt.setText(sector)
+                            inputEt.setSelection(sector.length)
+                        }
+                        chipContainer.addView(chip)
+                    }
+
+                    // 如果沒有數據，顯示提示
+                    if (sectors.isEmpty()) {
+                        chipContainer.addView(TextView(requireContext()).apply {
+                            text = "暫無熱門板塊數據"
+                            textSize = 12f
+                            setTextColor(Color.parseColor("#AAAAAA"))
+                            setPadding(8, 8, 8, 8)
+                        })
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    if (!isAdded) return@withContext
+                    chipContainer.addView(TextView(requireContext()).apply {
+                        text = "載入失敗: ${e.message?.take(30)}"
+                        textSize = 12f
+                        setTextColor(Color.parseColor("#FF5252"))
+                        setPadding(8, 8, 8, 8)
+                    })
+                }
+            }
+        }
+    }
+
+    /** 建立板塊 chip */
+    private fun createSectorChip(text: String, onClick: () -> Unit): View {
+        val ctx = requireContext()
+        return TextView(ctx).apply {
+            this.text = text
+            textSize = 12f
+            setTextColor(Color.parseColor("#6A1B9A"))
+            setPadding(14, 8, 14, 8)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.parseColor("#F3E5F5"))
+                setCornerRadius(20f)
+                setStroke(1, Color.parseColor("#CE93D8"))
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { marginEnd = 8 }
+            setOnClickListener { onClick() }
+        }
     }
 
     private fun executeAIPipeline(target: String) {

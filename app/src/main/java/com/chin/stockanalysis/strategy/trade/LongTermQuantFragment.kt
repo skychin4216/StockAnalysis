@@ -1,15 +1,8 @@
 package com.chin.stockanalysis.strategy.trade
 
 import android.util.Log
-import android.view.Gravity
 import android.view.View
-import android.widget.PopupMenu
-import androidx.lifecycle.lifecycleScope
-import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.HoldingPeriod
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * ## 長線量化 Tab — 持倉 6 月到 1 年+，價值投資
@@ -88,121 +81,5 @@ class LongTermQuantFragment : QuantFragmentBase() {
         rootLayout.addView(createContentScrollArea())
 
         refreshPositions()
-    }
-
-    // ── 覆寫賣出評估：長線使用基本面/估值規則 ──
-
-    override fun showSellMenu(anchor: View) {
-        val popup = PopupMenu(requireContext(), anchor, Gravity.END)
-        popup.menu.add(0, 1, 0, "💎 基本面檢查")
-        popup.menu.add(0, 2, 0, "💰 賣出評估")
-        popup.menu.add(0, 3, 0, "⚡ 執行賣出")
-        popup.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                1 -> checkFundamentalHealth()
-                2 -> runAutoSellEvaluation()
-                3 -> executeAutoSell()
-            }
-            true
-        }
-        popup.show()
-    }
-
-    /**
-     * 基本面健康檢查：檢查長線持倉的基本面是否惡化
-     */
-    private fun checkFundamentalHealth() {
-        progressBar.visibility = View.VISIBLE
-        statusTv.text = "💎 正在檢查基本面..."
-
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val db = StockDatabase.getInstance(requireContext())
-                val orders = db.strategyTradeOrderDao().getRecent(100)
-                    .filter { it.orderType == "LongTermQuant" &&
-                        (it.status == "BUYING" || it.status == "PENDING") }
-
-                if (orders.isEmpty()) {
-                    withContext(Dispatchers.Main) {
-                        progressBar.visibility = View.GONE
-                        statusTv.text = "💎 無長線持倉"
-                        showDialog("基本面檢查", "暫無長線持倉，無需檢查。")
-                    }
-                    return@launch
-                }
-
-                // 獲取實時行情（含基本面數據）
-                val realtimeMap = try {
-                    com.chin.stockanalysis.stock.data.StockDataSourceFactory
-                        .createDefaultRepository(requireContext().applicationContext)
-                        .getRealtime(orders.map { it.stockCode })
-                } catch (e: Exception) {
-                    Log.w(TAG, "實時行情獲取失敗: ${e.message}"); emptyMap()
-                }
-
-                val sb = StringBuilder()
-                sb.appendLine("💎 長線持倉基本面檢查報告")
-                sb.appendLine("持倉數: ${orders.size} 只")
-                sb.appendLine()
-
-                for (order in orders) {
-                    sb.appendLine("📊 ${order.stockName} (${order.stockCode.takeLast(6)})")
-                    sb.appendLine("  建倉日: ${order.tradeDate} | 成本: ¥${"%.2f".format(order.buyPrice)}")
-
-                    val snap = realtimeMap[order.stockCode]
-                    val currentPrice = snap?.price ?: order.buyPrice
-                    val pnlPct = if (order.buyPrice > 0) {
-                        (currentPrice - order.buyPrice) / order.buyPrice * 100
-                    } else 0.0
-                    val pnlStr = if (pnlPct >= 0) "+${"%.2f".format(pnlPct)}%" else "${"%.2f".format(pnlPct)}%"
-                    sb.appendLine("  當前價: ¥${"%.2f".format(currentPrice)} | 盈虧: $pnlStr")
-
-                    if (snap != null) {
-                        sb.appendLine("  ── 基本面 ──")
-                        if (snap.pe > 0) {
-                            val peWarning = if (snap.pe > OVERVALUED_PE) " ⚠️ 估值過高" else ""
-                            sb.appendLine("  PE(TTM): ${"%.1f".format(snap.pe)}$peWarning")
-                        }
-                        if (snap.pb > 0) {
-                            val pbWarning = if (snap.pb > OVERVALUED_PB) " ⚠️ 估值過高" else ""
-                            sb.appendLine("  PB: ${"%.2f".format(snap.pb)}$pbWarning")
-                        }
-                        if (snap.roeTTM > 0) {
-                            val roeWarning = if (snap.roeTTM < 8.0) " ⚠️ ROE偏低" else " ✅"
-                            sb.appendLine("  ROE: ${"%.1f".format(snap.roeTTM)}%$roeWarning")
-                        }
-                        if (snap.debtToAsset > 0) {
-                            val debtWarning = if (snap.debtToAsset > 60.0) " ⚠️ 負債率偏高" else " ✅"
-                            sb.appendLine("  負債率: ${"%.1f".format(snap.debtToAsset)}%$debtWarning")
-                        }
-                        if (snap.grossMarginTTM > 0) {
-                            sb.appendLine("  毛利率: ${"%.1f".format(snap.grossMarginTTM)}%")
-                        }
-                        if (snap.pe <= 0 && snap.pb <= 0 && snap.roeTTM <= 0) {
-                            sb.appendLine("  ── 基本面數據缺失 ──")
-                        }
-                    } else {
-                        sb.appendLine("  ── 基本面數據缺失 ──")
-                    }
-                    sb.appendLine()
-                }
-
-                sb.appendLine("💡 賣出信號：")
-                sb.appendLine("  • PE > $OVERVALUED_PE 或 PB > $OVERVALUED_PB → 估值過高")
-                sb.appendLine("  • ROE < 8% 或連續下滑 → 基本面惡化")
-                sb.appendLine("  • 負債率 > 60% → 財務風險增加")
-
-                withContext(Dispatchers.Main) {
-                    progressBar.visibility = View.GONE
-                    statusTv.text = "✅ 基本面檢查完成 (${orders.size} 只)"
-                    showDialog("基本面檢查報告", sb.toString())
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    progressBar.visibility = View.GONE
-                    statusTv.text = "❌ 基本面檢查失敗: ${e.message?.take(40)}"
-                }
-            }
-        }
     }
 }

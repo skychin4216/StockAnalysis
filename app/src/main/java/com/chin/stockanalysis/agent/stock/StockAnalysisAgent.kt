@@ -60,7 +60,10 @@ class StockAnalysisAgent(context: Context) : AgentBase(
     }
 
     init {
-        // 不再註冊 Tool，改用 StockDataFacade 統一獲取數據
+        // 註冊工具：讓 LLM 主動獲取補充數據
+        registerTool(StockQueryTool(context))
+        registerTool(SectorQueryTool(context))
+        registerTool(MarketBriefTool(context))
     }
 
     override fun buildSystemPrompt(): String = """
@@ -528,3 +531,120 @@ data class StockAnalysisResult(
     val rawOutput: String = "",
     val steps: Int = 0
 )
+
+// ════════════════════════════════════════════════════════════════
+//  工具實現：讓 Agent 主動獲取補充數據
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * 股票查詢工具 — 查詢指定股票的實時行情和基本面
+ */
+class StockQueryTool(private val ctx: Context) : AgentTool {
+    override val name = "stock_query"
+    override val description = "查詢股票實時行情、基本面數據。支援股票名稱和代碼。"
+    override val parameters = listOf("stock_code")
+
+    override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
+        val code = params["stock_code"] ?: return "錯誤: 缺少 stock_code 參數"
+        val normalizedCode = StockAnalysisAgent.normalizeStockCode(code)
+
+        return try {
+            val data = StockDataFacade.getInstance(ctx).getAnalysisData(normalizedCode)
+            val quote = data.quote
+            val fundamental = data.fundamental
+
+            buildString {
+                appendLine("## ${fundamental.name}($normalizedCode)")
+                if (quote != null) {
+                    appendLine("- 當前價: ${quote.price} (${if (quote.changePercent >= 0) "+" else ""}${"%.2f".format(quote.changePercent)}%)")
+                    appendLine("- 最高: ${quote.high}, 最低: ${quote.low}")
+                    appendLine("- 成交量: ${quote.volume}, 成交額: ${"%.0f".format(quote.amount)}萬")
+                    appendLine("- 換手率: ${"%.2f".format(quote.turnoverRate)}%")
+                    if (quote.pe > 0) appendLine("- PE(TTM): ${"%.2f".format(quote.pe)}")
+                    if (quote.pb > 0) appendLine("- PB: ${"%.2f".format(quote.pb)}")
+                }
+                if (fundamental.business.isNotBlank()) {
+                    appendLine("- 主營業務: ${fundamental.business}")
+                }
+                if (fundamental.sectorNames.isNotEmpty()) {
+                    appendLine("- 所屬板塊: ${fundamental.sectorNames.joinToString(", ")}")
+                }
+            }
+        } catch (e: Exception) {
+            "查詢失敗: ${e.message}"
+        }
+    }
+}
+
+/**
+ * 板塊查詢工具 — 查詢板塊/行業信息
+ */
+class SectorQueryTool(private val ctx: Context) : AgentTool {
+    override val name = "sector_query"
+    override val description = "查詢板塊/行業的熱門程度、成分股、資金流向。"
+    override val parameters = listOf("sector_name")
+
+    override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
+        val sectorName = params["sector_name"] ?: return "錯誤: 缺少 sector_name 參數"
+
+        return try {
+            // 使用 MarketAnalyzer 獲取板塊信息
+            val marketReport = com.chin.stockanalysis.strategy.market.MarketAnalyzer.analyze(ctx, emptyList())
+            val matchingSector = marketReport.sectorAdvice.recommendedSectors.firstOrNull {
+                it.sectorName.contains(sectorName) || sectorName.contains(it.sectorName)
+            }
+
+            if (matchingSector != null) {
+                buildString {
+                    appendLine("## 板塊: ${matchingSector.sectorName}")
+                    appendLine("- 置信度: ${"%.0f".format(matchingSector.confidence * 100)}%")
+                    appendLine("- 推薦理由: ${matchingSector.reason}")
+                }
+            } else {
+                // 返回當前熱門板塊列表
+                buildString {
+                    appendLine("未找到精確匹配的板塊「$sectorName」")
+                    appendLine()
+                    appendLine("## 當前熱門板塊")
+                    marketReport.sectorAdvice.recommendedSectors.take(10).forEach { sector ->
+                        appendLine("- ${sector.sectorName}（置信度:${"%.0f".format(sector.confidence * 100)}%）")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            "板塊查詢失敗: ${e.message}"
+        }
+    }
+}
+
+/**
+ * 市場簡報工具 — 獲取 A 股市場總覽
+ */
+class MarketBriefTool(private val ctx: Context) : AgentTool {
+    override val name = "market_brief"
+    override val description = "獲取 A 股市場總覽（大盤指數、漲跌停數、熱門板塊、北向資金）。"
+    override val parameters = emptyList<String>()
+
+    override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
+        return try {
+            val report = com.chin.stockanalysis.strategy.market.MarketAnalyzer.analyze(ctx, emptyList())
+
+            buildString {
+                appendLine("## A 股市場總覽")
+                appendLine("- 大盤趨勢: ${report.trend.direction}（強度${report.trend.strength}/100）")
+                appendLine("- 趨勢描述: ${report.trend.description}")
+                appendLine("- 賣出信號: ${report.sellType.sellType}")
+                if (report.sectorAdvice.recommendedSectors.isNotEmpty()) {
+                    val sectorNames = report.sectorAdvice.recommendedSectors.map { it.sectorName }.joinToString(",")
+                    appendLine("- 推薦板塊: $sectorNames")
+                }
+                appendLine("- 市場摘要: ${report.summary}")
+                if (report.overseas.direction != "UNKNOWN") {
+                    appendLine("- 外圍市場: ${report.overseas.direction}（${report.overseas.impactHint}）")
+                }
+            }
+        } catch (e: Exception) {
+            "市場數據獲取失敗: ${e.message}"
+        }
+    }
+}

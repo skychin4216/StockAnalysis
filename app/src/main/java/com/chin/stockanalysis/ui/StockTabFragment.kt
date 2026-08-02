@@ -84,7 +84,7 @@ class StockTabFragment : Fragment() {
                 0 -> MarketHotFragment()
                 1 -> WatchlistUnifiedFragment()
                 2 -> HotNewsFragment()
-                else -> MarketHotFragment()
+                else -> throw IllegalArgumentException("Unknown position: $position")
             }
         }
     }

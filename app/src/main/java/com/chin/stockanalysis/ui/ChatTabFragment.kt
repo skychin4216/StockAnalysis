@@ -1253,39 +1253,36 @@ $memory
             }
         }
         lifecycleScope.launch(Dispatchers.IO) {
-            CrossTabBus.command.collect { cmd ->
-                if (cmd != null) {
-                    Log.i(TAG, "📢 收到跨Tab指令: ${cmd.action}")
-                    when (cmd.action) {
-                        "CREATE_STRATEGY" -> {
-                            withContext(Dispatchers.Main) {
-                                addBotMessage("🤖 AI 正在生成策略配置...")
-                            }
-                            try {
-                                val gen = com.chin.stockanalysis.ai.StrategyConfigGenerator(requireContext())
-                                val generated = gen.generate(cmd.stockName)
-                                if (generated != null) {
-                                    gen.registerToEngine(generated)
-                                    withContext(Dispatchers.Main) {
-                                        addBotMessage("✅ 策略「${generated.name}」已创建！\n\n" +
-                                            "分类: ${generated.category.label}\n" +
-                                            "因子: ${generated.weightFactors.joinToString { "${it.label}(${it.weight}%)" }}")
-                                        Toast.makeText(requireContext(), "新策略已就绪", Toast.LENGTH_SHORT).show()
-                                    }
-                                } else {
-                                    withContext(Dispatchers.Main) {
-                                        addErrorMessage("⚠️ 策略生成失败，请用更具体的选股逻辑描述")
-                                    }
-                                }
-                            } catch (e: Exception) {
+            CrossTabBus.commandFlow.collect { cmd ->
+                Log.i(TAG, "📢 收到跨Tab指令: ${cmd.action}")
+                when (cmd.action) {
+                    "CREATE_STRATEGY" -> {
+                        withContext(Dispatchers.Main) {
+                            addBotMessage("🤖 AI 正在生成策略配置...")
+                        }
+                        try {
+                            val gen = com.chin.stockanalysis.ai.StrategyConfigGenerator(requireContext())
+                            val generated = gen.generate(cmd.stockName)
+                            if (generated != null) {
+                                gen.registerToEngine(generated)
                                 withContext(Dispatchers.Main) {
-                                    addErrorMessage("⚠️ 策略生成异常: ${e.message?.take(40)}")
+                                    addBotMessage("✅ 策略「${generated.name}」已创建！\n\n" +
+                                        "分类: ${generated.category.label}\n" +
+                                        "因子: ${generated.weightFactors.joinToString { "${it.label}(${it.weight}%)" }}")
+                                    Toast.makeText(requireContext(), "新策略已就绪", Toast.LENGTH_SHORT).show()
                                 }
+                            } else {
+                                withContext(Dispatchers.Main) {
+                                    addErrorMessage("⚠️ 策略生成失败，请用更具体的选股逻辑描述")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                addErrorMessage("⚠️ 策略生成异常: ${e.message?.take(40)}")
                             }
                         }
-                        // 未知命令不处理
                     }
-                    CrossTabBus.consumeCommand()
+                    // 未知命令不处理
                 }
             }
         }

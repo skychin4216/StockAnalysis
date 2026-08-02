@@ -42,7 +42,7 @@ object StrategyEngineHolder {
             registerStrategy(RSIDivergenceStrategy(screener))
             registerStrategy(FundamentalFilterStrategy(screener))
             registerStrategy(EarlyMorningChaseStrategy(screener))
-            registerStrategy(TailLowPickStrategy(screener))
+            registerStrategy(TailLowPickStrategy(screener, context.applicationContext))
             registerStrategy(AIPredictionStrategy(context.applicationContext))
             registerStrategy(HotSpotDrivenStrategy(screener))
             registerStrategy(DragonHeadDipStrategy(context.applicationContext, screener))

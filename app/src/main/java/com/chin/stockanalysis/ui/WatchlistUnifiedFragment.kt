@@ -30,7 +30,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
-import kotlinx.coroutines.isActive
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * ## 精選股票 統一頁面
@@ -57,6 +57,7 @@ class WatchlistUnifiedFragment : Fragment() {
     private lateinit var statusRow: LinearLayout
     private lateinit var listContainer: LinearLayout
     private lateinit var headerRow: LinearLayout
+    private var trendWebView: android.webkit.WebView? = null
 
     /** 切換模式 */
     private enum class ViewMode { WATCHLIST, AI, CANDIDATE, TREND_IMAGES }
@@ -74,7 +75,7 @@ class WatchlistUnifiedFragment : Fragment() {
     /** 備選池數據緩存 */
     private var candidatePoolSnapshot: CandidatePool.PoolSnapshot? = null
     /** 行情緩存 */
-    private val snapshotCache = mutableMapOf<String, DailySnapshotEntity?>()
+    private val snapshotCache = ConcurrentHashMap<String, DailySnapshotEntity?>()
 
     /** 利潤質量計算協程（用於取消） */
     private var qualityJob: Job? = null
@@ -84,7 +85,11 @@ class WatchlistUnifiedFragment : Fragment() {
 
     companion object {
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+        private const val MIN_RELOAD_INTERVAL_MS = 2 * 60 * 1000L  // 2分鐘內不重複加載
     }
+
+    private var lastLoadTime: Long = 0
+    private var dataLoaded: Boolean = false
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
@@ -110,10 +115,15 @@ class WatchlistUnifiedFragment : Fragment() {
         return sv
     }
 
-    /** 每次切換回此 Tab 時自動刷新數據 */
+    /** 每次切換回此 Tab 時檢查是否需要刷新（2分鐘內不重複加載數據） */
     override fun onResume() {
         super.onResume()
-        loadData()
+        val now = System.currentTimeMillis()
+        if (!dataLoaded || now - lastLoadTime > MIN_RELOAD_INTERVAL_MS) {
+            loadData()
+            lastLoadTime = now
+            dataLoaded = true
+        }
         loadMarketEnvironment()
     }
 
@@ -199,6 +209,9 @@ class WatchlistUnifiedFragment : Fragment() {
         super.onDestroyView()
         qualityJob?.cancel()
         marketEnvJob?.cancel()
+        trendWebView?.removeAllViews()
+        trendWebView?.destroy()
+        trendWebView = null
     }
 
     private fun buildUI() {
@@ -536,7 +549,11 @@ class WatchlistUnifiedFragment : Fragment() {
                                 viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                                     try {
                                         val db = StockDatabase.getInstance(requireContext())
-                                        db.userWatchlistDao().deleteByCode(deleted.code)
+                                        if (currentMode == ViewMode.AI) {
+                                            db.aiSelectedStockDao().deleteByCode(deleted.code)
+                                        } else {
+                                            db.userWatchlistDao().deleteByCode(deleted.code)
+                                        }
                                         withContext(Dispatchers.Main) {
                                             Toast.makeText(requireContext(), "✅ 已移除: ${deleted.name}", Toast.LENGTH_SHORT).show()
                                             loadData()
@@ -653,6 +670,7 @@ class WatchlistUnifiedFragment : Fragment() {
                 LinearLayout.LayoutParams.MATCH_PARENT
             )
         }
+        trendWebView = webView
 
         try {
             val html = ctx.assets.open("trend_charts/index.html").bufferedReader().use { it.readText() }

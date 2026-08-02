@@ -29,19 +29,19 @@ object IntentDispatcher {
 
         // ── 中線量化操作指令 ──
         if (text.contains("执行中线量化") || text.contains("开始中线量化")) {
-            CrossTabBus.postCommand(CrossTabCommand(action = "EXECUTE_SIMULATE_TRADE"))
+            CrossTabBus.tryPostCommand(CrossTabCommand(action = "EXECUTE_SIMULATE_TRADE"))
             Log.i(TAG, "📢 系統指令: 执行中线量化"); return true
         }
         if (text.contains("一键买入") || text.contains("自动买入") || text.contains("全部买入")) {
-            CrossTabBus.postCommand(CrossTabCommand(action = "BUY_ALL"))
+            CrossTabBus.tryPostCommand(CrossTabCommand(action = "BUY_ALL"))
             Log.i(TAG, "📢 系統指令: 一键买入"); return true
         }
         if (text.contains("运行短线选股") || text.contains("运行短线量化")) {
-            CrossTabBus.postCommand(CrossTabCommand(action = "RUN_PIPELINE"))
+            CrossTabBus.tryPostCommand(CrossTabCommand(action = "RUN_PIPELINE"))
             Log.i(TAG, "📢 系統指令: 运行短线量化"); return true
         }
         if (text.contains("打开量化选股") || text.contains("量化选股") || text.contains("执行策略")) {
-            CrossTabBus.postCommand(CrossTabCommand(action = "SWITCH_TO_STRATEGY_TAB"))
+            CrossTabBus.tryPostCommand(CrossTabCommand(action = "SWITCH_TO_STRATEGY_TAB"))
             Log.i(TAG, "📢 系統指令: 切换到策略Tab"); return true
         }
 
@@ -49,7 +49,7 @@ object IntentDispatcher {
         if (text.contains("创建") && text.contains("策略")) {
             val desc = text.replace("创建", "").replace("策略", "").trim()
             if (desc.isNotBlank()) {
-                CrossTabBus.postCommand(CrossTabCommand(
+                CrossTabBus.tryPostCommand(CrossTabCommand(
                     action = "CREATE_STRATEGY",
                     stockName = desc
                 ))

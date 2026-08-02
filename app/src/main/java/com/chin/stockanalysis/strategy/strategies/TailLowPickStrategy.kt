@@ -32,7 +32,8 @@ import kotlinx.coroutines.withContext
  * - 无长上影/放量滞涨
  */
 class TailLowPickStrategy(
-    private val screener: StockScreener
+    private val screener: StockScreener,
+    private val appContext: android.content.Context? = null
 ) : Strategy {
 
     override val id = "tail_low_pick"
@@ -98,7 +99,16 @@ class TailLowPickStrategy(
         WeightFactor("volume_health", "日内量能健康度", 10, "量价配合评分")
     )
 
-    private val CORE_SECTORS = setOf("存储", "通信", "光纤", "半导体封测", "算力", "新能源", "稀土", "小金属", "锂矿", "光通信", "商业航天", "AI")
+    /** 動態核心板塊：從 DB 讀取本週 top 板塊，無數據時使用空集（不加分） */
+    private suspend fun getDynamicCoreSectors(): Set<String> {
+        val ctx = appContext ?: return emptySet()
+        return try {
+            val tracker = com.chin.stockanalysis.strategy.backtest.SectorPeriodTracker(ctx)
+            tracker.getCurrentWeekTopSectors(15).toSet()
+        } catch (_: Exception) {
+            emptySet()
+        }
+    }
 
     override suspend fun screen(): Result<ScreeningResult> = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
@@ -239,7 +249,7 @@ class TailLowPickStrategy(
         val bounceScore = try { bounceFactor.getBounceScoreForStock(stock.name) } catch (_: Exception) { 0.0 }
         val focusBoost = marketMemory.getFocusWeightBoost(stock.name)
 
-        val isCoreSector = CORE_SECTORS.any { stock.name.contains(it) }
+        val isCoreSector = getDynamicCoreSectors().any { stock.name.contains(it) }
         val sectorScore = when {
             isCoreSector && bounceScore > 30 -> 25  // 核心板塊 + 回彈
             isCoreSector -> 20 + focusBoost

@@ -42,7 +42,9 @@ class AgentChatFragment : Fragment() {
         private const val ARG_AGENT_ICON = "agentIcon"
         private const val ARG_AGENT_QUICK_PROMPT = "agentQuickPrompt"
         private const val ARG_AGENT_SYSTEM_PROMPT = "agentSystemPrompt"
+        private const val ARG_AGENT_DESCRIPTION = "agentDescription"
         private const val PREFS_AGENT_CHAT = "agent_chats"
+        private const val STREAMING_THROTTLE_MS = 80L
 
         fun newInstance(agent: Agent): AgentChatFragment {
             return AgentChatFragment().apply {
@@ -52,6 +54,7 @@ class AgentChatFragment : Fragment() {
                     putString(ARG_AGENT_ICON, agent.icon)
                     putString(ARG_AGENT_QUICK_PROMPT, agent.quickPrompt)
                     putString(ARG_AGENT_SYSTEM_PROMPT, agent.systemPrompt)
+                    putString(ARG_AGENT_DESCRIPTION, agent.description)
                 }
             }
         }
@@ -65,6 +68,7 @@ class AgentChatFragment : Fragment() {
     private var agentIcon: String = "🤖"
     private var agentQuickPrompt: String = ""
     private var agentSystemPrompt: String = ""
+    private var agentDescription: String = ""
 
     private lateinit var adapter: ChatAdapter
     private val messages: MutableList<com.chin.stockanalysis.ui.Message> = mutableListOf()
@@ -74,6 +78,8 @@ class AgentChatFragment : Fragment() {
     private var aiSlot: AiProviderPool.Slot? = null
     private var providerInitDone = false
     private var providerLoading = false
+    private var lastUserText: String = ""
+    private var lastSendTime: Long = 0
 
     var onBackClick: (() -> Unit)? = null
     var onSettingsClick: ((Agent) -> Unit)? = null
@@ -86,6 +92,7 @@ class AgentChatFragment : Fragment() {
             agentIcon = it.getString(ARG_AGENT_ICON, "🤖")
             agentQuickPrompt = it.getString(ARG_AGENT_QUICK_PROMPT, "")
             agentSystemPrompt = it.getString(ARG_AGENT_SYSTEM_PROMPT, "")
+            agentDescription = it.getString(ARG_AGENT_DESCRIPTION, "")
         }
     }
 
@@ -96,6 +103,16 @@ class AgentChatFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        tts = android.speech.tts.TextToSpeech(requireContext()) { status ->
+            if (status != android.speech.tts.TextToSpeech.SUCCESS) tts = null
+        }
+        // 預熱 Trie 詞庫，確保股票名稱→代碼解析可用
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val trie = com.chin.stockanalysis.stock.data.StockNameTrie
+                if (!trie.isBuilt) trie.build(requireContext())
+            } catch (_: Exception) {}
+        }
         initProvider()
         setupRecyclerView()
         setupInput()
@@ -109,6 +126,7 @@ class AgentChatFragment : Fragment() {
         super.onDestroy()
         cancelApiCall()
         saveAgentConversation()
+        tts?.stop(); tts?.shutdown(); tts = null
         aiSlot?.let { AiProviderPool.releaseNonBlocking(it) }
     }
 
@@ -131,6 +149,8 @@ class AgentChatFragment : Fragment() {
         }
     }
 
+    private var tts: android.speech.tts.TextToSpeech? = null
+
     private fun setupRecyclerView() {
         adapter = ChatAdapter(messages)
         adapter.onCopyMessage = { text ->
@@ -138,8 +158,25 @@ class AgentChatFragment : Fragment() {
                 .setPrimaryClip(ClipData.newPlainText("msg", text))
             Toast.makeText(requireContext(), "✅ 已复制", Toast.LENGTH_SHORT).show()
         }
-        adapter.onPlayVoice = { text -> Toast.makeText(requireContext(), "🔊 语音播放: ${text.take(30)}...", Toast.LENGTH_SHORT).show() }
-        adapter.onFavorite = { text -> Toast.makeText(requireContext(), "⭐ 已收藏", Toast.LENGTH_SHORT).show() }
+        adapter.onPlayVoice = { text ->
+            val t = tts
+            if (t != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                t.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "agent_tts_${System.currentTimeMillis()}")
+            } else {
+                Toast.makeText(requireContext(), "🔊 语音引擎未就绪", Toast.LENGTH_SHORT).show()
+            }
+        }
+        adapter.onFavorite = { text ->
+            try {
+                val prefs = requireContext().getSharedPreferences("agent_favorites", Context.MODE_PRIVATE)
+                val existing = prefs.getStringSet("favorites", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
+                existing.add(text)
+                prefs.edit().putStringSet("favorites", existing).apply()
+                Toast.makeText(requireContext(), "⭐ 已收藏", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(requireContext(), "收藏失败: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
         adapter.onShare = { text ->
             startActivity(android.content.Intent.createChooser(
                 android.content.Intent(android.content.Intent.ACTION_SEND).apply {
@@ -149,6 +186,7 @@ class AgentChatFragment : Fragment() {
         adapter.onRegenerate = { position -> regenerateMessage(position) }
         binding.rvAgentMessages.layoutManager = LinearLayoutManager(requireContext()).apply { stackFromEnd = true }
         binding.rvAgentMessages.adapter = adapter
+        binding.rvAgentMessages.itemAnimator = null
     }
 
     /** 重新生成某个 AI 回复 */
@@ -189,7 +227,7 @@ class AgentChatFragment : Fragment() {
     private fun openSettings() {
         val agt = com.chin.stockanalysis.agent.Agent(
             id = agentId, name = agentName, icon = agentIcon,
-            description = "", quickPrompt = agentQuickPrompt, systemPrompt = agentSystemPrompt
+            description = agentDescription, quickPrompt = agentQuickPrompt, systemPrompt = agentSystemPrompt
         )
         onSettingsClick?.invoke(agt)
     }
@@ -235,6 +273,12 @@ class AgentChatFragment : Fragment() {
     }
 
     private fun sendMessage(userText: String) {
+        // 防重复发送：相同文本 3 秒内不重复发送
+        val now = System.currentTimeMillis()
+        if (userText == lastUserText && now - lastSendTime < 3000L) return
+        lastUserText = userText
+        lastSendTime = now
+
         val provider = apiProvider
         if (provider == null) {
             // Provider 尚未就绪，等待初始化完成
@@ -373,12 +417,25 @@ class AgentChatFragment : Fragment() {
             }
 
             val stockData = stockDataDeferred.await()
+
+            // ═══ 提取股票實體（名稱→代碼解析 + 多股票支持）═══
+            val resolvedStocks = try {
+                com.chin.stockanalysis.ai.StockEntityExtractor.extractSync(userText)
+            } catch (_: Exception) { emptyList() }
+
+            val stockHint = if (resolvedStocks.isNotEmpty()) {
+                val stockList = resolvedStocks.joinToString("\n") { e ->
+                    "  ${e.name}(${e.code}) — 匹配方式:${e.matchType}"
+                }
+                "\n\n【已識別的股票的】\n$stockList\n請針對以上股票進行分析。"
+            } else ""
+
             val finalSystemPrompt = if (stockData.isNotBlank()) {
-                "$stockData\n\n$prompt"
+                "$stockData\n\n$prompt$stockHint"
             } else {
-                prompt
+                "$prompt$stockHint"
             }
-            Log.d(TAG, "System prompt length: ${finalSystemPrompt.length}, stockData: ${stockData.isNotBlank()}, skillTriggered=$isSkillTriggered")
+            Log.d(TAG, "System prompt length: ${finalSystemPrompt.length}, stockData: ${stockData.isNotBlank()}, skillTriggered=$isSkillTriggered, resolvedStocks=${resolvedStocks.size}")
 
             sendWithRetry(provider, finalSystemPrompt, streamingIndex, 3)
         }
@@ -386,25 +443,30 @@ class AgentChatFragment : Fragment() {
 
     private suspend fun sendWithRetry(provider: ApiProvider, systemPrompt: String, streamingIndex: Int, maxRetries: Int, attempt: Int = 1) {
         val accumulated = StringBuilder()
+        var lastUiUpdate = 0L
         try {
             val history = messages.toList().subList(0, streamingIndex)
             kotlinx.coroutines.suspendCancellableCoroutine<Unit> { cont ->
                 provider.sendMessageStream(
                     messages = history, systemPrompt = systemPrompt,
                     onSuccess = { chunk ->
-                        val sanitized = chunk.replace("null", "")
-                        accumulated.append(sanitized)
-                        if (isAdded) requireActivity().runOnUiThread {
-                            if (streamingIndex in messages.indices && messages[streamingIndex].isStreaming) {
-                                val msg = messages[streamingIndex]
-                                messages[streamingIndex] = msg.copy(content = accumulated.toString(), loadingStatus = null)
-                                adapter.notifyItemChanged(streamingIndex)
-                                binding.rvAgentMessages.scrollToPosition(messages.size - 1)
+                        accumulated.append(chunk)
+                        val now = System.currentTimeMillis()
+                        if (now - lastUiUpdate >= STREAMING_THROTTLE_MS) {
+                            lastUiUpdate = now
+                            if (isAdded) requireActivity().runOnUiThread {
+                                if (streamingIndex in messages.indices && messages[streamingIndex].isStreaming) {
+                                    val msg = messages[streamingIndex]
+                                    messages[streamingIndex] = msg.copy(content = accumulated.toString(), loadingStatus = null)
+                                    adapter.notifyItemChanged(streamingIndex)
+                                    binding.rvAgentMessages.scrollToPosition(messages.size - 1)
+                                }
                             }
                         }
                     },
                     onComplete = { full ->
-                        val finalText = full.ifEmpty { accumulated.toString() }.replace("null", "")
+                        val rawText = full.ifEmpty { accumulated.toString() }
+                        val finalText = cleanAgentResponse(rawText)
                         if (isAdded) requireActivity().runOnUiThread {
                             completeStreamingMessage(streamingIndex, finalText)
                             onMessageComplete(finalText)
@@ -425,6 +487,25 @@ class AgentChatFragment : Fragment() {
                 }
             }
         }
+    }
+
+    /** 清理 LLM 原始輸出：移除 thinking 標籤、JSON/代碼塊、無意義行 */
+    private fun cleanAgentResponse(text: String): String {
+        return text
+            .replace(Regex("<thinking>[\\s\\S]*?</thinking>", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("```json[\\s\\S]*?```", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("```[\\s\\S]*?```"), "")
+            .lines()
+            .filter { line ->
+                val t = line.trim()
+                if (t.isBlank()) return@filter false
+                if (t.matches(Regex("^[{}\\[\\],:]\\s*$"))) return@filter false
+                if (t.matches(Regex("^\"[^\"]+\"\\s*:\\s*.+$"))) return@filter false
+                if (t.matches(Regex("^-?\\d+(\\.\\d+)?$"))) return@filter false
+                true
+            }
+            .joinToString("\n")
+            .trim()
     }
 
     private fun onMessageComplete(aiResponse: String) {

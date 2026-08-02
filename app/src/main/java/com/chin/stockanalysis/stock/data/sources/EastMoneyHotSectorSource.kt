@@ -30,6 +30,13 @@ class EastMoneyHotSectorSource {
 
         fun startPoolScheduler(scope: CoroutineScope) {
             if (started) return; started = true
+            scope.launch {
+                try {
+                    coroutineScope { awaitCancellation() }
+                } finally {
+                    started = false
+                }
+            }
             val source = EastMoneyHotSectorSource()
             poolJob = scope.launch(Dispatchers.IO) {
                 // 立即拉取第一次

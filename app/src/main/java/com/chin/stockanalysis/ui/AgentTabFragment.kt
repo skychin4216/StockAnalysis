@@ -326,15 +326,17 @@ class AgentTabFragment : Fragment() {
             "4. 不要添加问候语或解释\n\n" +
             "用户描述：$description"
         var result = ""
+        var errorMsg: String? = null
         kotlinx.coroutines.suspendCancellableCoroutine<Unit> { cont ->
             provider.sendMessageStream(
                 messages = listOf(com.chin.stockanalysis.ui.Message(content = description, isUser = true)),
                 systemPrompt = sysPrompt,
                 onSuccess = { result = it },
                 onComplete = { result = it.ifEmpty { result }; cont.resumeWith(Result.success(Unit)) },
-                onError = { result = ""; cont.resumeWith(Result.success(Unit)) }
+                onError = { errMsg -> errorMsg = errMsg; cont.resumeWith(Result.failure(Exception("AI请求失败: $errMsg"))) }
             )
         }
+        if (errorMsg != null) throw Exception("AI请求失败: $errorMsg")
         if (result.isBlank()) throw Exception("AI生成结果为空")
         return result
     }

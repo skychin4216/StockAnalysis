@@ -50,7 +50,6 @@ class HotNewsFragment : Fragment() {
             setBackgroundColor(Color.parseColor("#F5F6FA"))
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         }
-        root.addView(TextView(ctx).apply { text = "init" }) // placeholder below
 
         return root
     }
@@ -201,7 +200,7 @@ class HotNewsFragment : Fragment() {
 
     // ─── 加载并填充热门板块 ───
     private fun loadAndPopulateDropdown() {
-        lifecycleScope.launch(Dispatchers.IO) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             val display = getHotSectorsDisplay()
             withContext(Dispatchers.Main) {
                 hotSectorTv.text = if (display.isNotEmpty()) display else "暂无热门板块"
@@ -286,7 +285,7 @@ class HotNewsFragment : Fragment() {
     }
 
     private fun startHotSectorRefresh() {
-        lifecycleScope.launch(Dispatchers.IO) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             while (isActive) {
                 delay(3 * 60_000L)
                 val display = getHotSectorsDisplay()
@@ -299,7 +298,7 @@ class HotNewsFragment : Fragment() {
 
     // ─── 下拉弹窗 ───
     private fun showSectorDropdown() {
-        lifecycleScope.launch(Dispatchers.IO) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             val top5 = getTop5HotSectors()
             withContext(Dispatchers.Main) {
                 val ctx = requireContext()
@@ -393,7 +392,7 @@ class HotNewsFragment : Fragment() {
             loadingTv.visibility = View.VISIBLE
             recyclerView.visibility = View.GONE; emptyTv.visibility = View.GONE
         }
-        lifecycleScope.launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             val hasLocalData = withContext(Dispatchers.IO) {
                 try { StockDatabase.getInstance(requireContext()).newsFactorDao().getAllActive(1).isNotEmpty() } catch (_: Exception) { false }
             }

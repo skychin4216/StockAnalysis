@@ -131,7 +131,7 @@ private suspend fun AgentOrchestrator.runQuickAnalysis(
 ): AnalysisResult = withContext(Dispatchers.IO) {
     val (analysis, risk, marketReport) = coroutineScope {
         val a = async { runCatching { StockAnalysisAgent(appContext).analyze(stockCode, stockName) }.getOrNull() }
-        val r = async { runCatching { RiskManagementAgent(appContext).assessStockRisk(stockCode) }.getOrNull() }
+        val r = async { runCatching { RiskManagementAgent(appContext).assessStockRiskDirect(stockCode) }.getOrNull() }
         val m = async { runCatching { MarketAnalyzer.analyze(appContext, emptyList()) }.getOrNull() }
         Triple(a.await(), r.await(), m.await())
     }
@@ -189,7 +189,11 @@ private suspend fun AgentOrchestrator.runQuickAnalysis(
         sb.appendLine("⚠️ AI 綜合分析：失敗或超時")
     }
     sb.appendLine("## 🛡 風控評估")
-    sb.appendLine(if (risk != null && risk.success) risk.assessment else "風控評估：失敗或超時")
+    if (risk != null && risk.success) {
+        sb.appendLine(cleanRiskAssessment(risk.assessment))
+    } else {
+        sb.appendLine("風控評估：失敗或超時")
+    }
     if (marketWarnings.isNotEmpty()) {
         sb.appendLine(); sb.appendLine("## 🌐 大盤環境")
         marketWarnings.forEach { sb.appendLine(it) }
@@ -210,6 +214,38 @@ private suspend fun AgentOrchestrator.runQuickAnalysis(
         errorMessage = if (analysis?.success != true) "AI 分析失敗" else null,
         elapsedMs = System.currentTimeMillis() - startTime
     )
+}
+
+/** 清理風控 Agent 原始輸出，提取結論部分 */
+private fun cleanRiskAssessment(raw: String): String {
+    if (raw.isBlank()) return "暫無評估結果"
+    // 如果已經很簡短（<300字），直接返回
+    if (raw.length < 300 && !raw.contains("<thinking") && !raw.contains("```")) return raw.trim()
+
+    var cleaned = raw
+        // 移除 <thinking> 推理標籤
+        .replace(Regex("<thinking>[\\s\\S]*?</thinking>", RegexOption.IGNORE_CASE), "")
+        // 移除 JSON/程式碼塊
+        .replace(Regex("```[\\s\\S]*?```"), "")
+        // 移除工具調用描述行
+        .replace(Regex("^.*(?:調用|呼叫|calling|tool_call).*$", RegexOption.MULTILINE), "")
+        // 移除純 JSON 結構行
+        .replace(Regex("^\\s*[{}\\[\\],:]\\s*$", RegexOption.MULTILINE), "")
+        // 移除 JSON key-value 行（如 "risk_level": "MEDIUM"）
+        .replace(Regex("^\\s*\"[^\"]+\"\\s*:\\s*.+$", RegexOption.MULTILINE), "")
+
+    // 按行過濾：移除空白行和純數字行
+    cleaned = cleaned.lines()
+        .filter { line ->
+            val t = line.trim()
+            t.isNotBlank() && !t.matches(Regex("^-?\\d+(\\.\\d+)?$"))
+        }
+        .joinToString("\n")
+        .trim()
+
+    // 如果清理後為空，返回摘要提示
+    if (cleaned.isBlank()) return "風險評估完成，但未得出明確結論。建議結合大盤環境綜合判斷。"
+    return cleaned
 }
 
 private fun buildMarketWarnings(marketReport: MarketAnalyzer.MarketReport?): List<String> {

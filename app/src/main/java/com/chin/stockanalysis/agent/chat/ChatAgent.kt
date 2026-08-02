@@ -119,13 +119,10 @@ class ChatAgent(context: Context) : AgentBase(
                 )
             }
             UserIntent.STOCK_ANALYSIS -> {
-                // 分析：提取股票代碼
-                val code = extractStockCode(userMessage)
-                val stockName = extractStockName(userMessage)
+                // 分析：提取所有股票實體（支持名稱和 múltiple stocks）
+                val entities = extractAllStockEntities(userMessage)
 
-                if (code != null) {
-                    // 統一入口：AgentOrchestrator.analyzeStock（輕量直連路徑）
-                    val normalizedCode = StockAnalysisAgent.normalizeStockCode(code)
+                if (entities.isNotEmpty()) {
                     val coreMode = when (analysisMode) {
                         com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.QUICK -> com.chin.stockanalysis.agent.core.AnalysisMode.QUICK
                         com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.DEEP -> com.chin.stockanalysis.agent.core.AnalysisMode.DEEP
@@ -136,48 +133,73 @@ class ChatAgent(context: Context) : AgentBase(
                         com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.DEEP -> "🔍 V1.0 Pipeline"
                         com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.EXPERT -> "📊 V2.0 全周期"
                     }
-                    onStream?.invoke("$modeLabel 分析中：${stockName ?: normalizedCode}\n")
 
-                    val result = com.chin.stockanalysis.agent.core.AgentOrchestrator(context).analyzeStock(
-                        stockCode = normalizedCode,
-                        stockName = stockName,
-                        mode = coreMode,
-                        useAgentFramework = false
-                    )
+                    if (entities.size == 1) {
+                        // 單股票：完整分析
+                        val entity = entities.first()
+                        val normalizedCode = StockAnalysisAgent.normalizeStockCode(entity.code)
+                        onStream?.invoke("$modeLabel 分析中：${entity.name}(${normalizedCode})\n")
 
-                    ChatAgentResult(
-                        success = result.success,
-                        response = if (result.success) result.summaryText
-                            else "${modeLabel} 分析失敗：${result.errorMessage}",
-                        intent = intent.name,
-                        data = mapOf("unifiedResult" to result)
-                    )
-                } else {
-                    // 檢查是否有歧義匹配
-                    try {
-                        val entities = com.chin.stockanalysis.ai.StockEntityExtractor.extractSync(userMessage)
-                        if (entities.size > 1) {
-                            // 歧義：多個匹配，需要用戶確認
-                            ChatAgentResult(
-                                success = false,
-                                response = "找到 ${entities.size} 個匹配，請選擇您要分析的股票。",
-                                intent = intent.name,
-                                ambiguousEntities = entities
-                            )
-                        } else {
-                            ChatAgentResult(
-                                success = false,
-                                response = "請提供具體的股票代碼（如 600519）或名稱，我來為您分析。",
-                                intent = intent.name
-                            )
-                        }
-                    } catch (_: Exception) {
+                        val result = com.chin.stockanalysis.agent.core.AgentOrchestrator(context).analyzeStock(
+                            stockCode = normalizedCode,
+                            stockName = entity.name,
+                            mode = coreMode,
+                            useAgentFramework = false
+                        )
+
                         ChatAgentResult(
-                            success = false,
-                            response = "請提供具體的股票代碼（如 600519）或名稱，我來為您分析。",
+                            success = result.success,
+                            response = if (result.success) result.summaryText
+                                else "${modeLabel} 分析失敗：${result.errorMessage}",
+                            intent = intent.name,
+                            data = mapOf("unifiedResult" to result)
+                        )
+                    } else {
+                        // 多股票：逐一分析後合併摘要
+                        val orchestrator = com.chin.stockanalysis.agent.core.AgentOrchestrator(context)
+                        val results = entities.take(5).map { entity ->
+                            val normalizedCode = StockAnalysisAgent.normalizeStockCode(entity.code)
+                            onStream?.invoke("$modeLabel 分析中：${entity.name}(${normalizedCode})\n")
+                            try {
+                                val r = orchestrator.analyzeStock(
+                                    stockCode = normalizedCode,
+                                    stockName = entity.name,
+                                    mode = coreMode,
+                                    useAgentFramework = false
+                                )
+                                entity to r
+                            } catch (e: Exception) {
+                                entity to null
+                            }
+                        }
+
+                        val sb = StringBuilder()
+                        sb.appendLine("## 📊 多股票對比分析（${results.size} 隻）")
+                        sb.appendLine()
+                        for ((entity, result) in results) {
+                            val normalizedCode = StockAnalysisAgent.normalizeStockCode(entity.code)
+                            if (result != null && result.success) {
+                                sb.appendLine("### ${entity.name}（$normalizedCode）")
+                                sb.appendLine(result.summaryText)
+                                sb.appendLine()
+                            } else {
+                                sb.appendLine("### ${entity.name}（$normalizedCode）— 分析失敗")
+                                sb.appendLine()
+                            }
+                        }
+
+                        ChatAgentResult(
+                            success = true,
+                            response = sb.toString().trimEnd(),
                             intent = intent.name
                         )
                     }
+                } else {
+                    ChatAgentResult(
+                        success = false,
+                        response = "請提供具體的股票代碼（如 600519）或名稱，我來為您分析。",
+                        intent = intent.name
+                    )
                 }
             }
             UserIntent.MARKET_BRIEF -> {
@@ -335,27 +357,19 @@ class ChatAgent(context: Context) : AgentBase(
         }
     }
 
-    private fun extractStockCode(message: String): String? {
-        // 優先使用 StockEntityExtractor（支援名稱→代碼）
+    private fun extractAllStockEntities(message: String): List<com.chin.stockanalysis.ai.StockEntityExtractor.ExtractedEntity> {
         try {
             val entities = com.chin.stockanalysis.ai.StockEntityExtractor.extractSync(message)
-            if (entities.isNotEmpty()) return entities.first().code
+            if (entities.isNotEmpty()) return entities
         } catch (_: Exception) { /* Trie 未構建，繼續 */ }
 
         // 降級：正則提取代碼
-        val match = Regex("(sh|sz|bj)?(\\d{6})").find(message)
-        return match?.groupValues?.get(2)
-    }
-
-    /**
-     * 提取股票名稱（用於 Pipeline 輸入，需要中文名而非代碼）
-     */
-    private fun extractStockName(message: String): String? {
-        try {
-            val entities = com.chin.stockanalysis.ai.StockEntityExtractor.extractSync(message)
-            if (entities.isNotEmpty()) return entities.first().name
-        } catch (_: Exception) { /* Trie 未構建，繼續 */ }
-        return null
+        val codes = Regex("(sh|sz|bj)?(\\d{6})").findAll(message).map { it.groupValues[2] }.toList()
+        return codes.map { com.chin.stockanalysis.ai.StockEntityExtractor.ExtractedEntity(
+            text = it, code = it, name = it,
+            matchType = com.chin.stockanalysis.ai.StockEntityExtractor.MatchType.EXACT_CODE,
+            confidence = 1.0f
+        ) }
     }
 
     private fun extractIndexInfo(message: String): Pair<String, String>? {

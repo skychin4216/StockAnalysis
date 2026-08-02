@@ -93,40 +93,42 @@ class StrategyFragment : Fragment() {
 
     private fun observeCommands() {
         lifecycleScope.launch(Dispatchers.IO) {
-            com.chin.stockanalysis.ui.CrossTabBus.command.collect { cmd ->
-                if (cmd != null) {
-                    Log.i("StrategyFragment", "📢 收到指令: ${cmd.action}")
-                    when (cmd.action) {
-                        "EXECUTE_SIMULATE_TRADE" -> {
-                            // 切换到中线量化Tab并自动触发买入
-                            withContext(Dispatchers.Main) {
-                                viewPager.setCurrentItem(2, true)  // Tab 2 = 中线量化
-                                viewPager.postDelayed({
-                                    val frag = childFragmentManager.fragments
-                                        .firstOrNull { it is com.chin.stockanalysis.strategy.trade.MidTermQuantFragment }
-                                        as? com.chin.stockanalysis.strategy.trade.MidTermQuantFragment
-                                    frag?.autoExecuteTrade()
-                                }, 500)
-                            }
-                        }
-                        "RUN_PIPELINE" -> {
-                            withContext(Dispatchers.Main) {
-                                viewPager.setCurrentItem(1, true)  // Tab 1 = 短线量化
-                                viewPager.postDelayed({
-                                    val frag = childFragmentManager.fragments
-                                        .firstOrNull { it is com.chin.stockanalysis.strategy.trade.ShortTermQuantFragment }
-                                        as? com.chin.stockanalysis.strategy.trade.ShortTermQuantFragment
-                                    frag?.autoRunPipeline()
-                                }, 500)
-                            }
-                        }
-                        "SWITCH_TO_STRATEGY_TAB" -> {
-                            withContext(Dispatchers.Main) {
-                                (activity as? MainActivity)?.switchToStrategyTab()
+            com.chin.stockanalysis.ui.CrossTabBus.commandFlow.collect { cmd ->
+                Log.i("StrategyFragment", "📢 收到指令: ${cmd.action}")
+                when (cmd.action) {
+                    "EXECUTE_SIMULATE_TRADE" -> {
+                        withContext(Dispatchers.Main) {
+                            viewPager.setCurrentItem(2, true)  // Tab 2 = 中线量化
+                            childFragmentManager.executePendingTransactions()
+                            val frag = childFragmentManager.findFragmentByTag("f2")
+                                as? com.chin.stockanalysis.strategy.trade.MidTermQuantFragment
+                            if (frag != null) {
+                                frag.autoExecuteTrade()
+                            } else {
+                                Log.w("StrategyFragment", "MidTermQuantFragment not found")
+                                Toast.makeText(requireContext(), "中线量化模块未就绪，请稍后重试", Toast.LENGTH_SHORT).show()
                             }
                         }
                     }
-                    com.chin.stockanalysis.ui.CrossTabBus.consumeCommand()
+                    "RUN_PIPELINE" -> {
+                        withContext(Dispatchers.Main) {
+                            viewPager.setCurrentItem(1, true)  // Tab 1 = 短线量化
+                            childFragmentManager.executePendingTransactions()
+                            val frag = childFragmentManager.findFragmentByTag("f1")
+                                as? com.chin.stockanalysis.strategy.trade.ShortTermQuantFragment
+                            if (frag != null) {
+                                frag.autoRunPipeline()
+                            } else {
+                                Log.w("StrategyFragment", "ShortTermQuantFragment not found")
+                                Toast.makeText(requireContext(), "短线量化模块未就绪，请稍后重试", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                    "SWITCH_TO_STRATEGY_TAB" -> {
+                        withContext(Dispatchers.Main) {
+                            (activity as? MainActivity)?.switchToStrategyTab()
+                        }
+                    }
                 }
             }
         }
@@ -142,7 +144,7 @@ class StrategyFragment : Fragment() {
                 2 -> com.chin.stockanalysis.strategy.trade.MidTermQuantFragment()
                 3 -> com.chin.stockanalysis.strategy.trade.LongTermQuantFragment()
                 4 -> StrategyListFragment()
-                else -> com.chin.stockanalysis.strategy.trade.ShortTermQuantFragment()
+                else -> throw IllegalStateException("Unknown position: $position")
             }
         }
     }

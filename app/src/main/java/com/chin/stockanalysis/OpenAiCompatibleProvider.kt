@@ -96,6 +96,26 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         doSend(messages, systemPrompt, onSuccess, onComplete, onError, tools, toolChoice, onToolCalls, modelIndex = 0, retryCount = 0, jsonMode = false)
     }
 
+    /**
+     * 帶 Function Calling 的流式請求（使用預構建的 JSONArray 訊息）
+     *
+     * 與 sendMessageStreamWithTools 不同，此方法接受預先構建好的 JSONArray 訊息陣列，
+     * 允許呼叫者直接控制 system/user/assistant/tool 等角色訊息，
+     * 支援完整的 Function Calling 對話歷史（包含 tool_calls 和 tool role 回覆）。
+     */
+    fun sendMessageStreamWithRawMessages(
+        rawMessages: JSONArray,
+        onSuccess: (content: String) -> Unit,
+        onComplete: (fullContent: String) -> Unit,
+        onError: (errorMsg: String) -> Unit,
+        tools: List<ChatTools.ToolDef>? = null,
+        toolChoice: String? = null,
+        onToolCalls: ((List<ChatTools.ToolCall>) -> Unit)? = null
+    ) {
+        doSend(emptyList(), "", onSuccess, onComplete, onError, tools, toolChoice, onToolCalls,
+            modelIndex = 0, retryCount = 0, jsonMode = false, rawMessages = rawMessages)
+    }
+
     private fun doSend(
         messages: List<Message>,
         systemPrompt: String,
@@ -108,11 +128,12 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         modelIndex: Int,
         retryCount: Int,
         jsonMode: Boolean,
-        maxTokens: Int? = null
+        maxTokens: Int? = null,
+        rawMessages: JSONArray? = null
     ) {
         val model = getModel(modelIndex, onError) ?: return
         val url = config.baseUrl.trimEnd('/') + "/chat/completions"
-        val requestBody = buildBody(messages, systemPrompt, model, tools, toolChoice, jsonMode, maxTokens)
+        val requestBody = buildBody(messages, systemPrompt, model, tools, toolChoice, jsonMode, maxTokens, rawMessages)
 
         Log.d(TAG, "📤 请求: $url | 模型: $model | 重试: $retryCount | jsonMode=$jsonMode")
 
@@ -133,7 +154,7 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
 
                 Log.e(TAG, "❌ 网络失败: ${e.message}")
                 handleRetry(messages, systemPrompt, onSuccess, onComplete, onError,
-                    tools, toolChoice, onToolCalls, modelIndex, retryCount + 1, "网络错误: ${e.message}", jsonMode)
+                    tools, toolChoice, onToolCalls, modelIndex, retryCount + 1, "网络错误: ${e.message}", jsonMode, rawMessages = rawMessages)
             }
 
             override fun onResponse(call: Call, response: Response) {
@@ -148,10 +169,10 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
                     if (code in 400..499) {
                         Log.d(TAG, "🔄 客户端错误 $code，跳过重试，直接切换模型")
                         handleRetry(messages, systemPrompt, onSuccess, onComplete, onError,
-                            tools, toolChoice, onToolCalls, modelIndex, 3, "HTTP $code", jsonMode)  // retryCount=3 强制跳过重试
+                            tools, toolChoice, onToolCalls, modelIndex, 3, "HTTP $code", jsonMode, rawMessages = rawMessages)  // retryCount=3 强制跳过重试
                     } else {
                         handleRetry(messages, systemPrompt, onSuccess, onComplete, onError,
-                            tools, toolChoice, onToolCalls, modelIndex, retryCount + 1, "HTTP $code", jsonMode)
+                            tools, toolChoice, onToolCalls, modelIndex, retryCount + 1, "HTTP $code", jsonMode, rawMessages = rawMessages)
                     }
                     return
                 }
@@ -165,7 +186,7 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
                         onComplete(partial)
                     } else {
                         handleRetry(messages, systemPrompt, onSuccess, onComplete, onError,
-                            tools, toolChoice, onToolCalls, modelIndex, retryCount + 1, "流式处理异常: ${e.message}", jsonMode)
+                            tools, toolChoice, onToolCalls, modelIndex, retryCount + 1, "流式处理异常: ${e.message}", jsonMode, rawMessages = rawMessages)
                     }
                 } finally {
                     // 確保 response body 被關閉，避免 OkHttp 連接洩漏
@@ -195,16 +216,17 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         onToolCalls: ((List<ChatTools.ToolCall>) -> Unit)?,
         modelIndex: Int, retryCount: Int, lastError: String,
         jsonMode: Boolean = false,
-        maxTokens: Int? = null
+        maxTokens: Int? = null,
+        rawMessages: JSONArray? = null
     ) {
         when {
             retryCount < 3 -> {
                 Log.d(TAG, "🔄 第 $retryCount 次重试中...")
-                doSend(messages, systemPrompt, onSuccess, onComplete, onError, tools, toolChoice, onToolCalls, modelIndex, retryCount, jsonMode, maxTokens)
+                doSend(messages, systemPrompt, onSuccess, onComplete, onError, tools, toolChoice, onToolCalls, modelIndex, retryCount, jsonMode, maxTokens, rawMessages)
             }
             modelIndex < config.fallbackModels.size -> {
                 Log.d(TAG, "🔄 回退到备用模型 #${modelIndex + 1}")
-                doSend(messages, systemPrompt, onSuccess, onComplete, onError, tools, toolChoice, onToolCalls, modelIndex + 1, 0, jsonMode, maxTokens)
+                doSend(messages, systemPrompt, onSuccess, onComplete, onError, tools, toolChoice, onToolCalls, modelIndex + 1, 0, jsonMode, maxTokens, rawMessages)
             }
             else -> onError(lastError)
         }
@@ -215,17 +237,23 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         tools: List<ChatTools.ToolDef>? = null,
         toolChoice: String? = null,
         jsonMode: Boolean = false,
-        maxTokens: Int? = null
+        maxTokens: Int? = null,
+        rawMessages: JSONArray? = null
     ): JSONObject {
-        val msgArray = JSONArray()
-        if (!systemPrompt.isNullOrBlank())
-            msgArray.put(JSONObject().apply { put("role", "system"); put("content", systemPrompt) })
-        for (msg in messages) {
-            if (msg.isStreaming || msg.isError || msg.content.isBlank()) continue
-            msgArray.put(JSONObject().apply {
-                put("role", if (msg.isUser) "user" else "assistant")
-                put("content", msg.content)
-            })
+        val msgArray = if (rawMessages != null) {
+            rawMessages
+        } else {
+            JSONArray().apply {
+                if (!systemPrompt.isNullOrBlank())
+                    put(JSONObject().apply { put("role", "system"); put("content", systemPrompt) })
+                for (msg in messages) {
+                    if (msg.isStreaming || msg.isError || msg.content.isBlank()) continue
+                    put(JSONObject().apply {
+                        put("role", if (msg.isUser) "user" else "assistant")
+                        put("content", msg.content)
+                    })
+                }
+            }
         }
         return JSONObject().apply {
             put("model", model)

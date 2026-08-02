@@ -97,7 +97,7 @@ class UltraShortQuantFragment : QuantFragmentBase() {
 
         val (configRow, _, _) = createDatePickerRow(
             tipText = "⚡ 持倉1天 | 最多${resolveMaxHoldings()}只 | 止損${resolveStopLossPct()}%/止盈+${resolveTakeProfitPct()}%",
-            mainBoardDefault = false
+            mainBoardDefault = true
         )
         rootLayout.addView(configRow)
         rootLayout.addView(createProgressRow())
@@ -176,16 +176,24 @@ class UltraShortQuantFragment : QuantFragmentBase() {
 
     // ── 覆寫賣出評估：使用超短線止損/止盈規則 ──
 
-    override fun showSellMenu(anchor: View) {
+    override fun showTradeEvaluationMenu(anchor: View) {
         val popup = PopupMenu(requireContext(), anchor, Gravity.END)
-        popup.menu.add(0, 1, 0, "⚡ T+1 賣出檢查")
+        popup.menu.add(0, 1, 0, "🔄 做T信號")
         popup.menu.add(0, 2, 0, "💰 賣出評估")
-        popup.menu.add(0, 3, 0, "⚡ 執行賣出")
+        popup.menu.add(0, 3, 0, "📈 買入評估")
+        popup.menu.add(0, 4, 0, "💎 基本面檢查")
+        popup.menu.add(0, 5, 0, "⚡ T+1 賣出檢查")
+        popup.menu.add(0, 6, 0, "📊 賣出績效")
+        popup.menu.add(0, 7, 0, "⚡ 執行賣出")
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
-                1 -> checkT1AutoSell()
+                1 -> showTTradeMenu()
                 2 -> runAutoSellEvaluation()
-                3 -> executeAutoSell()
+                3 -> showBuyEvaluation()
+                4 -> checkFundamentalHealth()
+                5 -> checkT1AutoSell()
+                6 -> showSellPerformance()
+                7 -> executeAutoSell()
             }
             true
         }

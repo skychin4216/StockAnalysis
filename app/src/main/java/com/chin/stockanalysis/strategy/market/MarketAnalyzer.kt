@@ -74,6 +74,15 @@ object MarketAnalyzer {
     /** 防禦板塊名單（大盤下行時優先推薦）*/
     private val DEFENSIVE_SECTOR_KEYWORDS = listOf("醫藥", "醫療", "食品", "銀行", "保險", "公用事業", "高速公路", "電力")
 
+    // ── TTL 快取：避免短時間內重複計算 ADX/MFI/板塊輪動 ──
+    private const val CACHE_TTL_MS = 30_000L  // 30 seconds
+
+    @Volatile
+    private var cachedReport: MarketReport? = null
+    @Volatile
+    private var cachedTimestamp: Long = 0L
+    private val cacheLock = Any()
+
     // ════════════════════════════════════════════════════
     //  輸出數據結構
     // ════════════════════════════════════════════════════
@@ -228,13 +237,45 @@ object MarketAnalyzer {
     // ════════════════════════════════════════════════════
 
     /**
-     * 主入口方法 — 綜合分析大盤與持倉
+     * 主入口方法 — 綜合分析大盤與持倉（帶 30 秒 TTL 快取）
      *
      * @param context ApplicationContext
      * @param holdingCodes 持倉股票代碼列表（如 ["sh600519", "sz000858"]）
      * @return MarketReport 完整分析報告
      */
-    suspend fun analyze(context: Context, holdingCodes: List<String>): MarketReport =
+    suspend fun analyze(context: Context, holdingCodes: List<String>): MarketReport {
+        val now = System.currentTimeMillis()
+        val cached = cachedReport
+        if (cached != null && now - cachedTimestamp < CACHE_TTL_MS) {
+            Log.i(TAG, "使用快取報告（${now - cachedTimestamp}ms 前）")
+            return cached
+        }
+
+        val report = analyzeInternal(context, holdingCodes)
+
+        synchronized(cacheLock) {
+            cachedReport = report
+            cachedTimestamp = System.currentTimeMillis()
+        }
+
+        return report
+    }
+
+    /**
+     * 清除快取（強制下次重新計算）
+     */
+    fun invalidateCache() {
+        synchronized(cacheLock) {
+            cachedReport = null
+            cachedTimestamp = 0L
+        }
+        Log.i(TAG, "快取已清除")
+    }
+
+    /**
+     * 內部實現 — 實際執行分析計算
+     */
+    private suspend fun analyzeInternal(context: Context, holdingCodes: List<String>): MarketReport =
         withContext(Dispatchers.IO) {
             val startTime = System.currentTimeMillis()
             Log.i(TAG, "========== 開始大盤綜合分析 ==========")
