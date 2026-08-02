@@ -114,13 +114,50 @@ object StockDataCenter {
         return emptyList()
     }
 
+    /** 常用股票 → 板塊的硬編碼映射（DB 無數據時的降級方案） */
+    private val FALLBACK_NAME_SECTOR = mapOf(
+        "兆易創新" to listOf("存儲芯片", "半導體"),
+        "兆易创新" to listOf("存儲芯片", "半導體"),
+        "貴州茅台" to listOf("白酒"),
+        "寧德時代" to listOf("電池"),
+        "比亞迪" to listOf("新能源汽車"),
+        "中芯國際" to listOf("半導體"),
+        "韋爾股份" to listOf("存儲芯片", "半導體"),
+        "北方華創" to listOf("半導體設備"),
+        "中際旭創" to listOf("光模塊", "通信設備"),
+        "立訊精密" to listOf("消費電子"),
+        "海康威視" to listOf("安防"),
+        "招商銀行" to listOf("銀行"),
+        "長江電力" to listOf("電力"),
+        "恒瑞醫藥" to listOf("醫藥"),
+        "藥明康德" to listOf("CXO"),
+        "美的集團" to listOf("家電"),
+        "格力電器" to listOf("家電"),
+        "五糧液" to listOf("白酒"),
+        "中國平安" to listOf("保險")
+    )
+
     suspend fun getSectorsByStock(stockCode: String): List<String> {
         stockSectorCache[stockCode]?.let { return it }
         val ctx = appContext ?: return emptyList()
         val db = StockDatabase.getInstance(ctx)
         val sectors = db.sectorStockDao().getSectorNamesByStockCode(stockCode)
-        if (sectors.isNotEmpty()) stockSectorCache[stockCode] = sectors
-        return sectors
+        if (sectors.isNotEmpty()) {
+            stockSectorCache[stockCode] = sectors
+            return sectors
+        }
+        // 降級：嘗試用股票名稱匹配硬編碼映射
+        try {
+            val snap = db.dailySnapshotDao().getByCode(stockCode).firstOrNull()
+            val name = snap?.name ?: ""
+            for ((key, value) in FALLBACK_NAME_SECTOR) {
+                if (name.contains(key) || key.contains(name)) {
+                    stockSectorCache[stockCode] = value
+                    return value
+                }
+            }
+        } catch (_: Exception) {}
+        return emptyList()
     }
 
     suspend fun getSubSectorByStock(stockCode: String, stockName: String): String {
@@ -250,7 +287,16 @@ object StockDataCenter {
             for (key in allKeys) {
                 if (key !in sectorStockCache) {
                     val codes = db.sectorStockDao().getStockCodesBySector(key)
-                    if (codes.isNotEmpty()) sectorStockCache[key] = codes
+                    if (codes.isNotEmpty()) {
+                        sectorStockCache[key] = codes
+                        // 同時構建反向緩存：stockCode → sectors
+                        for (code in codes) {
+                            val existing = stockSectorCache[code] ?: emptyList()
+                            if (key !in existing) {
+                                stockSectorCache[code] = existing + key
+                            }
+                        }
+                    }
                 }
             }
             if (allKeys.size > 30) yield()

@@ -1517,7 +1517,7 @@ class StockDetailFragment : Fragment() {
         contentContainer.addView(card)
     }
 
-    /** 所属板块区域 */
+    /** 所属板块区域（含趨勢 + 熱度 + 資金流向） */
     private fun buildSectorSection(sectors: List<String>, subSector: String) {
         val card = createSectionCard()
         card.addView(createSectionTitle("🏷 所属板块"))
@@ -1545,6 +1545,88 @@ class StockDetailFragment : Fragment() {
         }
 
         card.addView(tagsLayout)
+
+        // 異步獲取板塊實時數據（趨勢 + 熱度 + 資金流向）
+        if (sectors.isNotEmpty()) {
+            val detailLayout = LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(4, 2, 4, 6)
+                tag = "sectorDetail"
+            }
+            val loadingTv = TextView(requireContext()).apply {
+                text = "⏳ 板塊趨勢載入中..."
+                textSize = 11f; setTextColor(Color.parseColor("#999999"))
+                tag = "sectorLoading"
+            }
+            detailLayout.addView(loadingTv)
+            card.addView(detailLayout)
+
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    val allSectors = com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.industrySectors +
+                            com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.conceptSectors
+                    val matched = allSectors.filter { hot ->
+                        sectors.any { s -> hot.name.contains(s) || s.contains(hot.name) }
+                    }
+
+                    withContext(Dispatchers.Main) {
+                        loadingTv.visibility = View.GONE
+                        if (matched.isNotEmpty()) {
+                            for (hot in matched.take(3)) {
+                                val row = LinearLayout(requireContext()).apply {
+                                    orientation = LinearLayout.HORIZONTAL
+                                    setPadding(4, 4, 4, 4)
+                                }
+                                row.addView(TextView(requireContext()).apply {
+                                    text = hot.name
+                                    textSize = 11f; setTextColor(Color.parseColor("#333333"))
+                                    layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
+                                })
+                                val trendColor = if (hot.changePercent >= 0) "#E53935" else "#43A047"
+                                val trendSign = if (hot.changePercent >= 0) "+" else ""
+                                row.addView(TextView(requireContext()).apply {
+                                    text = "📈 $trendSign${String.format("%.2f", hot.changePercent)}%"
+                                    textSize = 11f; setTextColor(Color.parseColor(trendColor))
+                                    setPadding(8, 0, 8, 0)
+                                })
+                                val heatLabel = when {
+                                    hot.hotScore >= 80 -> "🔥極熱"
+                                    hot.hotScore >= 60 -> "🟠活躍"
+                                    hot.hotScore >= 40 -> "🟡溫和"
+                                    else -> "🟢冷清"
+                                }
+                                row.addView(TextView(requireContext()).apply {
+                                    text = heatLabel
+                                    textSize = 11f; setTextColor(Color.parseColor("#666666"))
+                                    setPadding(8, 0, 8, 0)
+                                })
+                                val inflowStr = when {
+                                    hot.mainNetInflow > 0 -> "+${String.format("%.1f", hot.mainNetInflow / 10000)}億"
+                                    hot.mainNetInflow < 0 -> "${String.format("%.1f", hot.mainNetInflow / 10000)}億"
+                                    else -> "-"
+                                }
+                                val inflowColor = if (hot.mainNetInflow >= 0) "#E53935" else "#43A047"
+                                row.addView(TextView(requireContext()).apply {
+                                    text = "💰 $inflowStr"
+                                    textSize = 11f; setTextColor(Color.parseColor(inflowColor))
+                                })
+                                detailLayout.addView(row)
+                            }
+                        } else {
+                            detailLayout.addView(TextView(requireContext()).apply {
+                                text = "板塊實時數據暫不可用"
+                                textSize = 11f; setTextColor(Color.parseColor("#999999"))
+                            })
+                        }
+                    }
+                } catch (_: Exception) {
+                    withContext(Dispatchers.Main) {
+                        loadingTv.text = "板塊趨勢數據載入失敗"
+                    }
+                }
+            }
+        }
+
         contentContainer.addView(card)
     }
 

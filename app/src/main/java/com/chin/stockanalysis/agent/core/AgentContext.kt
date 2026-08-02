@@ -118,7 +118,8 @@ class AgentContext(
 
     // ── Layer 3: Agent 短期記憶操作 ──
     fun recordToolResult(toolName: String, result: Any?) {
-        toolResults[toolName] = result
+        // ConcurrentHashMap 不接受 null value，用 "N/A" 代替
+        toolResults[toolName] = result ?: "N/A"
     }
 
     @Suppress("UNCHECKED_CAST")
