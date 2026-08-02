@@ -443,6 +443,62 @@ class StockDetailFragment : Fragment() {
         }
         aiResultScrollView.addView(aiResultContainer)
         root.addView(aiResultScrollView)
+
+        // 底部按鈕行：V1.0 / V2.0 / 向AI追問（立即顯示，不等待 K 線加載）
+        val btnRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, 4, 0, 4)
+            tag = "aiBtnRow"
+        }
+        btnRow.addView(Button(requireContext()).apply {
+            tag = "btnRunAi"
+            text = "🤖 V1.0深度分析"
+            textSize = 9f; setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#2E7D32"))
+            setPadding(12, 4, 12, 4)
+            minimumHeight = 0; minHeight = 0
+            setOnClickListener {
+                it.isEnabled = false
+                (it as Button).text = "V1.0分析中..."
+                runAiAgents(AnalysisMode.DEEP)
+            }
+        })
+        btnRow.addView(Button(requireContext()).apply {
+            tag = "btnRunV2"
+            text = "📊 V2.0全周期"
+            textSize = 9f; setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#E65100"))
+            setPadding(12, 4, 12, 4)
+            minimumHeight = 0; minHeight = 0
+            setOnClickListener {
+                it.isEnabled = false
+                (it as Button).text = "V2.0分析中..."
+                runAiAgents(AnalysisMode.EXPERT)
+            }
+        })
+        btnRow.addView(Button(requireContext()).apply {
+            text = "💬 向AI追問"
+            textSize = 9f; setTextColor(Color.parseColor("#1565C0"))
+            setBackgroundColor(Color.parseColor("#E3F2FD"))
+            setPadding(12, 4, 12, 4)
+            minimumHeight = 0; minHeight = 0
+            setOnClickListener {
+                val today = java.time.LocalDate.now()
+                val msg = "請使用【最新交易日（${today}）的實時行情數據】，詳細分析股票 $stockName($stockCode) 的投資價值，包括：\n" +
+                    "1. 基本面分析（財報、估值、業績）\n" +
+                    "2. 技術面分析（K線走勢、支撐阻力位）\n" +
+                    "3. 資金面分析（主力資金流向、機構動態）\n" +
+                    "4. 風險評估與投資建議\n" +
+                    "請嚴格基於實時數據分析，不要使用訓練數據中的舊價格。"
+                val mainActivity = activity as? com.chin.stockanalysis.ui.MainActivity
+                if (mainActivity != null) {
+                    activity?.supportFragmentManager?.popBackStack()
+                    mainActivity.switchToChatAndSend(msg)
+                }
+            }
+        })
+        root.addView(btnRow)
     }
 
     private fun toggleAiAnalysis() {
@@ -1154,60 +1210,7 @@ class StockDetailFragment : Fragment() {
                         textSize = 11f; setTextColor(Color.parseColor("#333333"))
                         setLineSpacing(3f, 1f)
                     })
-                    // 底部按鈕行：運行AI深度分析 + 向AI追問 同一行
-                    val btnRow = LinearLayout(requireContext()).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        gravity = Gravity.CENTER
-                        setPadding(0, 4, 0, 0)
-                    }
-                    btnRow.addView(Button(requireContext()).apply {
-                        tag = "btnRunAi"
-                        text = "🤖 V1.0深度分析"
-                        textSize = 9f; setTextColor(Color.WHITE)
-                        setBackgroundColor(Color.parseColor("#2E7D32"))
-                        setPadding(12, 4, 12, 4)
-                        minimumHeight = 0; minHeight = 0
-                        setOnClickListener {
-                            it.isEnabled = false
-                            text = "V1.0分析中..."
-                            runAiAgents(AnalysisMode.DEEP)
-                        }
-                    })
-                    btnRow.addView(Button(requireContext()).apply {
-                        tag = "btnRunV2"
-                        text = "📊 V2.0全周期"
-                        textSize = 9f; setTextColor(Color.WHITE)
-                        setBackgroundColor(Color.parseColor("#E65100"))
-                        setPadding(12, 4, 12, 4)
-                        minimumHeight = 0; minHeight = 0
-                        setOnClickListener {
-                            it.isEnabled = false
-                            text = "V2.0分析中..."
-                            runAiAgents(AnalysisMode.EXPERT)
-                        }
-                    })
-                    btnRow.addView(Button(requireContext()).apply {
-                        text = "💬 向AI追問"
-                        textSize = 9f; setTextColor(Color.parseColor("#1565C0"))
-                        setBackgroundColor(Color.parseColor("#E3F2FD"))
-                        setPadding(12, 4, 12, 4)
-                        minimumHeight = 0; minHeight = 0
-                        setOnClickListener {
-                            val today = java.time.LocalDate.now()
-                            val msg = "請使用【最新交易日（${today}）的實時行情數據】，詳細分析股票 $stockName($stockCode) 的投資價值，包括：\n" +
-                                "1. 基本面分析（財報、估值、業績）\n" +
-                                "2. 技術面分析（K線走勢、支撐阻力位）\n" +
-                                "3. 資金面分析（主力資金流向、機構動態）\n" +
-                                "4. 風險評估與投資建議\n" +
-                                "請嚴格基於實時數據分析，不要使用訓練數據中的舊價格。"
-                            val mainActivity = activity as? com.chin.stockanalysis.ui.MainActivity
-                            if (mainActivity != null) {
-                                activity?.supportFragmentManager?.popBackStack()
-                                mainActivity.switchToChatAndSend(msg)
-                            }
-                        }
-                    })
-                    aiDetailContainer.addView(btnRow)
+                    // 按鈕行已在 buildAiAnalysisSection() 中創建，此處不再重複
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
