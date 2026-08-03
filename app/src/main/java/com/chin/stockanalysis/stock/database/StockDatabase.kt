@@ -61,7 +61,10 @@ interface SectorStockDao {
     @Query("DELETE FROM sector_stocks") suspend fun clearAll()
     @Query("SELECT stock_code FROM sector_stocks") suspend fun getAllStockCodes(): List<String>
     @Query("SELECT DISTINCT sector_name FROM sector_stocks WHERE stock_code = :stockCode LIMIT 3") suspend fun getSectorNamesByStockCode(stockCode: String): List<String>
+    @Query("SELECT stock_code, sector_name FROM sector_stocks GROUP BY stock_code") suspend fun getAllStockSectorPairs(): List<StockSectorPair>
 }
+
+data class StockSectorPair(val stock_code: String, val sector_name: String)
 
 @Dao
 interface WeightCalibrationDao {
@@ -125,9 +128,10 @@ interface AiSelectedStockDao {
         com.chin.stockanalysis.strategy.trade.TTradeRecordEntity::class,
         com.chin.stockanalysis.strategy.trade.TTradeRecommendationEntity::class,
         com.chin.stockanalysis.strategy.trade.RealPositionEntity::class,
-        com.chin.stockanalysis.strategy.backtest.SectorPeriodSummaryEntity::class
+        com.chin.stockanalysis.strategy.backtest.SectorPeriodSummaryEntity::class,
+        com.chin.stockanalysis.strategy.sector.UserFocusSectorEntity::class
     ],
-    version = 19,
+    version = 20,
     exportSchema = false
 )
 abstract class StockDatabase : RoomDatabase() {
@@ -153,6 +157,7 @@ abstract class StockDatabase : RoomDatabase() {
     abstract fun tTradeRecordDao(): com.chin.stockanalysis.strategy.trade.TTradeRecordDao
     abstract fun tTradeRecommendationDao(): com.chin.stockanalysis.strategy.trade.TTradeRecommendationDao
     abstract fun realPositionDao(): com.chin.stockanalysis.strategy.trade.RealPositionDao
+    abstract fun userFocusSectorDao(): com.chin.stockanalysis.strategy.sector.UserFocusSectorDao
 
     companion object {
         const val DATABASE_NAME = "stock_analysis.db"
@@ -314,6 +319,24 @@ abstract class StockDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v19 → v20 遷移：新增 user_focus_sectors 表（用戶關注板塊歷史記錄）
+         */
+        private val MIGRATION_19_20 = object : androidx.room.migration.Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `user_focus_sectors` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `sector_name` TEXT NOT NULL,
+                        `is_active` INTEGER NOT NULL DEFAULT 1,
+                        `created_at` INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_user_focus_sectors_sector_name` ON `user_focus_sectors` (`sector_name`)")
+                Log.i(TAG, "✅ v19→v20 遷移完成：已創建 user_focus_sectors 表")
+            }
+        }
+
         fun getInstance(context: Context): StockDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -321,7 +344,7 @@ abstract class StockDatabase : RoomDatabase() {
                     StockDatabase::class.java,
                     DATABASE_NAME
                 )
-                    .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18)
+                    .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20)
                     .fallbackToDestructiveMigration()
                     .addCallback(destructiveCallback)
                     .build()

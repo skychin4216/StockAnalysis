@@ -112,6 +112,7 @@ class StrategyListFragment : Fragment() {
                 }
             }
         }
+        preloadSectorLabelMap()
     }
 
     private fun buildUI() {
@@ -250,18 +251,35 @@ class StrategyListFragment : Fragment() {
     private val sectorLabelCache = object : LinkedHashMap<String, String>(200, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 200
     }
+    /** 動態板塊映射（從 DB sector_stocks 預載入，stockCode → sectorName） */
+    @Volatile
+    private var dynamicSectorMap: Map<String, String> = emptyMap()
+
     private fun getSectorLabel(stockCode: String, stockName: String = ""): String {
         val cacheKey = "$stockCode|$stockName"
         sectorLabelCache[cacheKey]?.let { return it }
-        // 優先使用硬編碼映射（無 IO，不會阻塞主線程）
-        val hardcoded = if (stockName.isNotEmpty()) hardcodedSubSector(stockName) else ""
-        if (hardcoded.isNotEmpty()) {
-            sectorLabelCache[cacheKey] = hardcoded
-            return hardcoded
+        // 從動態 DB 映射查找
+        val dynamic = dynamicSectorMap[stockCode]
+        if (!dynamic.isNullOrEmpty()) {
+            sectorLabelCache[cacheKey] = dynamic
+            return dynamic
         }
-        // 無硬編碼匹配時返回佔位符，避免在 RecyclerView 綁定時阻塞主線程
         sectorLabelCache[cacheKey] = "-"
         return "-"
+    }
+
+    /** 後臺預載入 stockCode → sectorName 映射（取代硬編碼） */
+    private fun preloadSectorLabelMap() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val pairs = db.sectorStockDao().getAllStockSectorPairs()
+                dynamicSectorMap = pairs.associate { it.stock_code to it.sector_name }
+                Log.i("SLF", "預載板塊映射: ${dynamicSectorMap.size} 筆")
+            } catch (e: Exception) {
+                Log.w("SLF", "預載板塊映射失敗: ${e.message}")
+            }
+        }
     }
     private fun updateSpinnerLabels(hasSubSectors: Boolean) {
         val s = if (hasSubSectors) "(板块/子板块)" else ""
@@ -275,10 +293,7 @@ class StrategyListFragment : Fragment() {
         }
         hotSectorSpinner.adapter = newAdapter; hotSectorSpinner.setSelection(selectedHotPeriod)
     }
-    private fun hardcodedSubSector(name: String): String {
-        val map = mapOf("生益" to "覆铜板","沪电" to "PCB","深南" to "基板","鹏鼎" to "软板","景旺" to "PCB","世运" to "PCB","超声" to "PCB","三环" to "MLCC","风华" to "MLCC","火炬" to "MLCC","洁美" to "MLCC","中际" to "光模块","新易盛" to "光模块","天孚" to "光器件","光迅" to "光模块","德科立" to "光模块","联特" to "光模块","意华" to "连接器","鼎通" to "连接器","立讯" to "代工","博创" to "光器件","太辰" to "光器件","东山" to "软板","信维" to "射频","闻泰" to "代工","韦尔" to "CIS","兆易" to "存储","长电" to "封测","通富" to "封测","华天" to "封测","北方华创" to "设备","中微" to "刻蚀","盛美" to "清洗","拓荆" to "镀膜","芯源" to "涂胶","江丰" to "靶材","安集" to "抛光液","中芯" to "代工","华虹" to "代工","斯达" to "IGBT","时代电气" to "IGBT","中兴" to "通信","烽火" to "通信","宁德" to "电池","比亚迪" to "整车","亿纬" to "电池","赣锋" to "锂矿","天齐" to "锂矿","华友" to "钴镍","中矿" to "铯矿","紫金" to "金铜","洛阳钼业" to "钼矿","西部矿业" to "铜矿","中科" to "超算","浪潮" to "服务器","曙光" to "超算","海光" to "CPU","寒武纪" to "AI芯","金山" to "办公","中望" to "CAD","德赛西威" to "智驾","均胜" to "安全","阳光" to "逆变器","固德" to "逆变器","锦浪" to "逆变器","晶澳" to "组件","隆基" to "硅片","通威" to "硅料","福莱" to "玻璃","福斯" to "胶膜","泰格" to "CXO","药明" to "CXO","康龙" to "CXO","凯莱英" to "CXO","迈瑞" to "器械","联影" to "影像","鱼跃" to "家用","恒瑞" to "创新药","百济" to "创新药","爱尔" to "眼科","通策" to "口腔")
-        for ((kw, label) in map) { if (name.contains(kw)) return label }; return ""
-    }
+    // hardcodedSubSector 已刪除，改用 preloadSectorLabelMap() 從 DB 動態載入
 
     /** 执行龙头轮动策略 */
     private fun runDragonHeadDip() {
@@ -827,65 +842,8 @@ class StrategyListFragment : Fragment() {
         }
     }
 
-    /** 導出熱門板塊數據（使用統一市場上下文） */
-    private fun exportHotSectorData() {
-        statusTv.text = "  \uD83D\uDD25 正在導出熱門板塊數據..."
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val ctx = com.chin.stockanalysis.strategy.sector.StrategyMarketContext.build(requireContext())
-                val sb = StringBuilder()
-                sb.appendLine("\uD83D\uDD25 熱門板塊數據導出")
-                sb.appendLine("導出時間: ${java.time.LocalDate.now()}")
-                sb.appendLine("大盤方向: ${ctx.indexSnapshot.tripleVote}")
-                sb.appendLine()
+    // exportHotSectorData() 已刪除，改用 exportHotSectorsFormatted()（與長線/中線統一格式）
 
-                // 今日熱門板塊 Top 5
-                if (ctx.todayHotSectors.isNotEmpty()) {
-                    sb.appendLine("━━ 今日熱門板塊 Top 5 ━━")
-                    for (s in ctx.todayHotSectors.take(5)) { sb.appendLine("  • $s") }
-                    sb.appendLine()
-                }
-
-                // 多周期熱門板塊
-                if (ctx.weeklyHotSectors.isNotEmpty()) {
-                    sb.appendLine("━━ 周熱門板塊（近7日）Top 5 ━━")
-                    for (s in ctx.weeklyHotSectors) { sb.appendLine("  • $s") }
-                    sb.appendLine()
-                }
-                if (ctx.monthlyHotSectors.isNotEmpty()) {
-                    sb.appendLine("━━ 月熱門板塊（近30日）Top 5 ━━")
-                    for (s in ctx.monthlyHotSectors) { sb.appendLine("  • $s") }
-                    sb.appendLine()
-                }
-                if (ctx.quarterlyHotSectors.isNotEmpty()) {
-                    sb.appendLine("━━ 季度熱門板塊（近90日）Top 5 ━━")
-                    for (s in ctx.quarterlyHotSectors) { sb.appendLine("  • $s") }
-                    sb.appendLine()
-                }
-
-                // 回彈板塊
-                if (ctx.bounceSectors.isNotEmpty()) {
-                    sb.appendLine("━━ 回彈板塊（連熱≥3天 + 回調後反彈） ━━")
-                    for (b in ctx.bounceSectors.take(10)) {
-                        sb.appendLine("  • ${b.sectorName}: 連熱${b.consecutiveHotDays}天 | 近3天${"%.2f".format(b.recentDropPct)}% | 今日${"%.2f".format(b.todayBouncePct)}% | 反彈分${"%.1f".format(b.bounceScore)}")
-                    }
-                    sb.appendLine()
-                }
-
-                // AI 板塊大年
-                if (ctx.aiYearDetection != "未檢測" && ctx.aiYearDetection != "檢測失敗") {
-                    sb.appendLine("━━ AI 板塊大年檢測 ━━")
-                    sb.appendLine("  ${ctx.aiYearDetection}")
-                }
-
-                val dir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
-                val fileName = "StockAnalysis_hot_sectors_${java.time.LocalDate.now()}.txt"
-                val file = java.io.File(dir, fileName)
-                file.writeText(sb.toString())
-                withContext(Dispatchers.Main) { statusTv.text = "  \u2705 已導出熱門板塊數據"; Toast.makeText(requireContext(), "已保存到: Downloads/$fileName", Toast.LENGTH_LONG).show() }
-            } catch (e: Exception) { withContext(Dispatchers.Main) { statusTv.text = "  導出失敗: ${e.message?.take(30)}"; Toast.makeText(requireContext(), "導出失敗: ${e.message}", Toast.LENGTH_LONG).show() } }
-        }
-    }
 
     /** 導出策略報告 */
     private fun exportStrategyReport() {
@@ -921,35 +879,257 @@ class StrategyListFragment : Fragment() {
         }
     }
 
-    /** 顯示市場記憶設置對話框 */
+    /** 顯示市場記憶設置對話框：多選板塊 + 新增 + AI 檢測 */
     private fun showMarketMemoryDialog() {
         val memory = com.chin.stockanalysis.strategy.sector.UserMarketMemory(requireContext())
-        val current = memory.focusSectors.joinToString(", ")
-        val input = android.widget.EditText(requireContext()).apply {
-            hint = "輸入關注板塊，用逗號分隔（如：科技,半導體,光通信）"
-            setText(current)
+        val ctx = requireContext()
+
+        // 載入中對話框
+        val loadingTv = android.widget.TextView(ctx).apply {
+            text = "⏳ 正在載入..."
+            textSize = 13f
+            setPadding(32, 48, 32, 48)
+            gravity = android.view.Gravity.CENTER
         }
-        AlertDialog.Builder(requireContext())
+        val dialog = AlertDialog.Builder(ctx)
             .setTitle("\uD83E\uDDE0 市場記憶設置")
-            .setMessage("系統會持續追蹤這些板塊，連跌時提醒，選股時優先。\n\nAI 當前判斷：${memory.aiYearDetection}")
-            .setView(input)
-            .setPositiveButton("保存") { _, _ ->
-                val sectors = input.text.toString().split(",").map { it.trim() }.filter { it.isNotBlank() }
-                memory.focusSectors = sectors
-                // 清空緩存，下次執行時重新構建市場上下文
-                com.chin.stockanalysis.strategy.sector.StrategyMarketContext.invalidateCache()
-                Toast.makeText(requireContext(), "已保存 ${sectors.size} 個關注板塊，緩存已清空", Toast.LENGTH_SHORT).show()
+            .setView(loadingTv)
+            .setNegativeButton("關閉", null)
+            .show()
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            val allSectors = memory.getAllFocusSectors()
+            val aiDetection = memory.aiYearDetection
+            val hotNames = memory.getRecentHotSectors().map { it.sectorName }
+            val newsNames = memory.getRecentNewsSectors()
+            val suggestedNames = (hotNames + newsNames).distinct()
+                .filter { name -> allSectors.none { it.sectorName == name } }
+                .take(8)
+
+            withContext(Dispatchers.Main) {
+                if (!isAdded) { dialog.dismiss(); return@withContext }
+                dialog.dismiss()
+                buildMemoryDialogContent(ctx, memory, allSectors, suggestedNames, aiDetection)
             }
-            .setNegativeButton("取消", null)
-            .setNeutralButton("AI 檢測板塊大年") { _, _ ->
+        }
+    }
+
+    /** 構建市場記憶對話框內容視圖 */
+    private fun buildMemoryDialogContent(
+        ctx: android.content.Context,
+        memory: com.chin.stockanalysis.strategy.sector.UserMarketMemory,
+        allSectors: List<com.chin.stockanalysis.strategy.sector.UserFocusSectorEntity>,
+        suggestedNames: List<String>,
+        aiDetection: String
+    ) {
+        val scrollView = android.widget.ScrollView(ctx).apply {
+            setPadding(24, 16, 24, 16)
+        }
+        val container = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+        }
+        scrollView.addView(container)
+
+        // ════ AI 檢測區 ════
+        container.addView(android.widget.TextView(ctx).apply {
+            text = "🤖 AI 市場判斷：$aiDetection"
+            textSize = 12f
+            setTextColor(android.graphics.Color.parseColor("#1565C0"))
+            setPadding(0, 0, 0, 12)
+        })
+
+        container.addView(android.widget.Button(ctx).apply {
+            text = "🔄 重新檢測市場風格"
+            textSize = 11f
+            setOnClickListener {
+                text = "⏳ 檢測中..."
+                isEnabled = false
                 lifecycleScope.launch {
                     val result = memory.detectSectorYearByIndex()
                     memory.aiYearDetection = result
                     com.chin.stockanalysis.strategy.sector.StrategyMarketContext.invalidateCache()
-                    Toast.makeText(requireContext(), "AI 檢測：$result", Toast.LENGTH_LONG).show()
+                    Toast.makeText(ctx, "AI 檢測：$result", Toast.LENGTH_LONG).show()
                 }
             }
+        })
+
+        // ════ 分隔線 ════
+        container.addView(android.view.View(ctx).apply {
+            layoutParams = android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 2
+            ).apply { topMargin = 16; bottomMargin = 16 }
+            setBackgroundColor(android.graphics.Color.parseColor("#E0E0E0"))
+        })
+
+        // ════ 已記錄板塊區 ════
+        container.addView(android.widget.TextView(ctx).apply {
+            text = "📋 已記錄的主力板塊（點擊切換啟用/停用）"
+            textSize = 12f
+            setTextColor(android.graphics.Color.parseColor("#333333"))
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 0, 0, 8)
+        })
+
+        if (allSectors.isEmpty()) {
+            container.addView(android.widget.TextView(ctx).apply {
+                text = "（尚無記錄，請在下方新增）"
+                textSize = 11f
+                setTextColor(android.graphics.Color.parseColor("#999999"))
+                setPadding(0, 4, 0, 12)
+            })
+        } else {
+            val chipsFlow = com.chin.stockanalysis.ui.FlowLayout(ctx).apply {
+                setPadding(0, 0, 0, 8)
+            }
+            for (sector in allSectors) {
+                val chip = buildSectorChip(ctx, memory, sector.sectorName, sector.isActive)
+                chipsFlow.addView(chip)
+            }
+            container.addView(chipsFlow)
+        }
+
+        // ════ 分隔線 ════
+        container.addView(android.view.View(ctx).apply {
+            layoutParams = android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 2
+            ).apply { topMargin = 8; bottomMargin = 16 }
+            setBackgroundColor(android.graphics.Color.parseColor("#E0E0E0"))
+        })
+
+        // ════ 新增板塊區 ════
+        container.addView(android.widget.TextView(ctx).apply {
+            text = "➕ 新增關注板塊"
+            textSize = 12f
+            setTextColor(android.graphics.Color.parseColor("#E65100"))
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 0, 0, 8)
+        })
+
+        val input = android.widget.EditText(ctx).apply {
+            hint = "輸入板塊名稱（如：新能源）"
+            textSize = 12f
+        }
+        container.addView(input)
+
+        container.addView(android.widget.Button(ctx).apply {
+            text = "✅ 新增"
+            textSize = 11f
+            setOnClickListener {
+                val name = input.text.toString().trim()
+                if (name.isEmpty()) {
+                    Toast.makeText(ctx, "請輸入板塊名稱", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                lifecycleScope.launch(Dispatchers.IO) {
+                    memory.addOrActivateSector(name)
+                    com.chin.stockanalysis.strategy.sector.StrategyMarketContext.invalidateCache()
+                    val updated = memory.getAllFocusSectors()
+                    val ai = memory.aiYearDetection
+                    val hot = memory.getRecentHotSectors().map { it.sectorName }
+                    val news = memory.getRecentNewsSectors()
+                    val suggested = (hot + news).distinct()
+                        .filter { n -> updated.none { it.sectorName == n } }.take(8)
+                    withContext(Dispatchers.Main) {
+                        if (isAdded) buildMemoryDialogContent(ctx, memory, updated, suggested, ai)
+                        Toast.makeText(ctx, "已新增「$name」", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        })
+
+        // ════ 建議板塊（尚未記錄的熱門板塊） ════
+        if (suggestedNames.isNotEmpty()) {
+            container.addView(android.widget.TextView(ctx).apply {
+                text = "💡 近期熱門但未記錄的板塊（點擊新增）："
+                textSize = 11f
+                setTextColor(android.graphics.Color.parseColor("#888888"))
+                setPadding(0, 12, 0, 4)
+            })
+            val suggestFlow = com.chin.stockanalysis.ui.FlowLayout(ctx)
+            for (name in suggestedNames) {
+                val chip = android.widget.TextView(ctx).apply {
+                    text = "+ $name"
+                    textSize = 11f
+                    setPadding(20, 8, 20, 8)
+                    setTextColor(android.graphics.Color.parseColor("#555555"))
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                        cornerRadius = 16f
+                        setColor(android.graphics.Color.parseColor("#FFF3E0"))
+                    }
+                    setOnClickListener {
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            memory.addOrActivateSector(name)
+                            com.chin.stockanalysis.strategy.sector.StrategyMarketContext.invalidateCache()
+                            val updated = memory.getAllFocusSectors()
+                            val ai = memory.aiYearDetection
+                            val hot = memory.getRecentHotSectors().map { it.sectorName }
+                            val news = memory.getRecentNewsSectors()
+                            val suggested = (hot + news).distinct()
+                                .filter { n -> updated.none { it.sectorName == n } }.take(8)
+                            withContext(Dispatchers.Main) {
+                                if (isAdded) buildMemoryDialogContent(ctx, memory, updated, suggested, ai)
+                                Toast.makeText(ctx, "已新增「$name」", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                }
+                val lp = com.chin.stockanalysis.ui.FlowLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+                lp.setMargins(0, 0, 8, 8)
+                chip.layoutParams = lp
+                suggestFlow.addView(chip)
+            }
+            container.addView(suggestFlow)
+        }
+
+        // 顯示對話框
+        AlertDialog.Builder(ctx)
+            .setTitle("\uD83E\uDDE0 市場記憶設置")
+            .setView(scrollView)
+            .setNegativeButton("關閉", null)
             .show()
+    }
+
+    /** 構建單個板塊 chip（可點擊切換啟用/停用） */
+    private fun buildSectorChip(
+        ctx: android.content.Context,
+        memory: com.chin.stockanalysis.strategy.sector.UserMarketMemory,
+        name: String,
+        isActive: Boolean
+    ): android.widget.TextView {
+        return android.widget.TextView(ctx).apply {
+            text = if (isActive) "✓ $name" else "☐ $name"
+            textSize = 11f
+            setPadding(20, 8, 20, 8)
+            setTextColor(if (isActive) android.graphics.Color.WHITE else android.graphics.Color.parseColor("#999999"))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                cornerRadius = 16f
+                setColor(if (isActive) android.graphics.Color.parseColor("#4CAF50") else android.graphics.Color.parseColor("#EEEEEE"))
+            }
+            setOnClickListener {
+                val newActive = !isActive
+                lifecycleScope.launch(Dispatchers.IO) {
+                    memory.toggleSector(name, newActive)
+                    com.chin.stockanalysis.strategy.sector.StrategyMarketContext.invalidateCache()
+                    // 刷新對話框
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        val updated = memory.getAllFocusSectors()
+                        val ai = memory.aiYearDetection
+                        val hot = memory.getRecentHotSectors().map { it.sectorName }
+                        val news = memory.getRecentNewsSectors()
+                        val suggested = (hot + news).distinct()
+                            .filter { n -> updated.none { it.sectorName == n } }.take(8)
+                        withContext(Dispatchers.Main) {
+                            if (isAdded) buildMemoryDialogContent(ctx, memory, updated, suggested, ai)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private fun saveBacktestData(results: List<ScreeningResult>) { lifecycleScope.launch { try {
@@ -974,27 +1154,129 @@ class StrategyListFragment : Fragment() {
 
     private fun showDataMenu() {
         val memory = com.chin.stockanalysis.strategy.sector.UserMarketMemory(requireContext())
-        val userSectors = memory.focusSectors.takeIf { it.isNotEmpty() }?.joinToString("、") ?: "未設置"
+        val exporter = com.chin.stockanalysis.stock.database.DataExportImport(requireContext())
         val options = arrayOf(
-            "\uD83D\uDCE5 拉取股票报告",
-            "\uD83D\uDCCA 量化选股报告",
-            "\uD83D\uDD25 導出熱門板塊數據（用戶關注：$userSectors）",
+            "\uD83D\uDCE5 拉取股票報告",
+            "\uD83D\uDCCA 量化選股報告",
+            "\uD83D\uDD25 查看熱門板塊報告",
             "\uD83D\uDCCB 導出策略報告",
             "\uD83E\uDDE0 市場記憶設置",
-            "\uD83D\uDD04 刷新市場上下文緩存"
+            "\uD83D\uDD04 刷新市場上下文緩存",
+            "─ 導出 ─",
+            "\uD83D\uDCCA 數據庫統計信息",
+            "─ 清空 ─",
+            "\uD83E\uDDF9 清空報告"
         )
         AlertDialog.Builder(requireContext())
-            .setTitle("数据中心")
+            .setTitle("📊 數據中心 — 量化選股")
             .setItems(options) { _, which ->
                 when (which) {
                     0 -> showFetchReport()
                     1 -> showScanHistory()
-                    2 -> exportHotSectorData()
+                    2 -> exportHotSectorsFormatted()
                     3 -> exportStrategyReport()
                     4 -> showMarketMemoryDialog()
                     5 -> { com.chin.stockanalysis.strategy.sector.StrategyMarketContext.invalidateCache(); Toast.makeText(requireContext(), "市場上下文緩存已清空", Toast.LENGTH_SHORT).show() }
+                    // 6 = 分隔線
+                    7 -> showDbStats(exporter)
+                    // 8 = 分隔線
+                    9 -> confirmAndClearReports()
                 }
-            }.show()
+            }.setNegativeButton("關閉", null).show()
+    }
+
+    /** 查看熱門板塊報告（與長線/中線等周期相同的格式化輸出） */
+    private fun exportHotSectorsFormatted() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val recentDays = db.sectorDailyRecordDao().getRecentDays(30)
+                if (recentDays.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(requireContext(), "無熱門板塊數據（請先導入或運行量化）", Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+                val sb = StringBuilder()
+                sb.appendLine("🔥 熱門板塊報告（最近 30 個交易日）")
+                sb.appendLine("導出時間: ${java.time.LocalDate.now()}"); sb.appendLine()
+                val grouped = recentDays.groupBy { it.date }.toSortedMap()
+                for ((date, sectors) in grouped) {
+                    val hotCount = sectors.count { it.isHot in listOf("S", "Y", "true", "A") }
+                    sb.appendLine("📅 $date（${sectors.size} 板塊，${hotCount} 熱門）")
+                    for (s in sectors.sortedByDescending { it.hotScore }.take(10)) {
+                        val tag = when (s.rank) { in 1..3 -> "🔥"; in 4..10 -> "⭐"; else -> "  " }
+                        val hotLabel = when (s.isHot) {
+                            "S", "Y", "true" -> "🔥熱門"
+                            "A" -> "⭐關注"
+                            else -> ""
+                        }
+                        val hotSuffix = if (hotLabel.isNotEmpty()) " $hotLabel" else ""
+                        val consecLabel = if (s.consecutiveHotDays > 0) " 連板${s.consecutiveHotDays}天" else ""
+                        sb.appendLine("  $tag ${s.sectorName} 漲幅:${"%.2f".format(s.changePct)}% 主力:${"%.0f".format(s.mainNetInflow)}萬 評分:${"%.1f".format(s.hotScore)}$consecLabel$hotSuffix")
+                    }
+                    sb.appendLine()
+                }
+                withContext(Dispatchers.Main) {
+                    android.app.AlertDialog.Builder(requireContext())
+                        .setTitle("熱門板塊報告")
+                        .setMessage(sb.toString() as CharSequence)
+                        .setPositiveButton("關閉", null)
+                        .show()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(requireContext(), "導出失敗: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    /** 顯示數據庫統計信息 */
+    private fun showDbStats(exporter: com.chin.stockanalysis.stock.database.DataExportImport) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val stats = exporter.getDatabaseStats()
+                withContext(Dispatchers.Main) {
+                    android.app.AlertDialog.Builder(requireContext())
+                        .setTitle("📊 數據庫統計")
+                        .setMessage(stats as CharSequence)
+                        .setPositiveButton("關閉", null)
+                        .show()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(requireContext(), "獲取統計失敗: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    /** 清空報告確認 */
+    private fun confirmAndClearReports() {
+        android.app.AlertDialog.Builder(requireContext())
+            .setTitle("清空報告")
+            .setMessage("確定要清空所有量化報告記錄嗎？此操作不可恢復。")
+            .setPositiveButton("確定清空") { _, _ ->
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val db = StockDatabase.getInstance(requireContext())
+                        val entities = db.dailyPeriodResultDao().getRecent(1000)
+                        for (e in entities) {
+                            try { db.dailyPeriodResultDao().deleteByDate(e.tradeDate) } catch (_: Exception) {}
+                        }
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(requireContext(), "已清空 ${entities.size} 筆報告", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(requireContext(), "清空失敗: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     private fun showFetchReport() {
@@ -1243,7 +1525,7 @@ class StrategyListFragment : Fragment() {
                         "例如：${sectors.take(2).joinToString("、")}" +
                             if (recentHotStocks.isNotEmpty()) "、${recentHotStocks.first()}" else ""
                     } else {
-                        "輸入標的（如：光通信板塊、半導體）"
+                        "輸入標的（如：新能源板塊、醫藥）"
                     }
                     inputEt.hint = hintText
 

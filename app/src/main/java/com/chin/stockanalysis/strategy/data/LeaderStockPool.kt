@@ -18,8 +18,8 @@ import java.time.format.DateTimeFormatter
  * 数据持久化到 SharedPreferences（JSON），应用启动时加载。
  *
  * ### 设计原则
- * - 产业主线（半导体/AI算力/光通信/PCB/电网/新能源/存储/有色金属/小金属）长期保留
- * - 概念炒作（低空经济/量子/人形机器人等）不纳入静态配置，由 AI 动态板块补充
+ * - 默认配置仅用于首次启动，后续由用户/Agent 动态调整
+ * - 概念炒作不纳入静态配置，由 AI 动态板块补充
  * - 每个 Sector 可标记 isConcept=true 用于过滤
  */
 class LeaderStockPool(private val context: Context) {

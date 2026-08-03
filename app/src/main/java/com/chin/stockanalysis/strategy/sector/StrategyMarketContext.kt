@@ -77,7 +77,7 @@ class StrategyMarketContext private constructor(
             Log.i(TAG, "構建市場上下文...")
 
             // 1. 用戶關注板塊
-            val userFocus = memory.focusSectors
+            val userFocus = memory.getActiveSectors()
 
             // 2. 多周期熱門板塊
             // 今日熱門：優先用東方財富實時數據（EastMoneyHotSectorSource）

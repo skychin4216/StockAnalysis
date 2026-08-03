@@ -3468,11 +3468,18 @@ abstract class QuantFragmentBase : Fragment() {
                 // 按日期分組
                 val grouped = recentDays.groupBy { it.date }.toSortedMap()
                 for ((date, sectors) in grouped) {
-                    val hotCount = sectors.count { it.isHot == "Y" || it.isHot == "true" }
+                    val hotCount = sectors.count { it.isHot in listOf("S", "Y", "true", "A") }
                     sb.appendLine("📅 $date（${sectors.size} 板塊，${hotCount} 熱門）")
                     for (s in sectors.sortedByDescending { it.hotScore }.take(10)) {
                         val tag = when (s.rank) { in 1..3 -> "🔥"; in 4..10 -> "⭐"; else -> "  " }
-                        sb.appendLine("  $tag ${s.sectorName} 漲幅:${"%.2f".format(s.changePct)}% 主力:${"%.0f".format(s.mainNetInflow)}萬 評分:${"%.1f".format(s.hotScore)} 連板:${s.consecutiveHotDays}天 $s.isHot")
+                        val hotLabel = when (s.isHot) {
+                            "S", "Y", "true" -> "🔥熱門"
+                            "A" -> "⭐關注"
+                            else -> ""
+                        }
+                        val hotSuffix = if (hotLabel.isNotEmpty()) " $hotLabel" else ""
+                        val consecLabel = if (s.consecutiveHotDays > 0) " 連板${s.consecutiveHotDays}天" else ""
+                        sb.appendLine("  $tag ${s.sectorName} 漲幅:${"%.2f".format(s.changePct)}% 主力:${"%.0f".format(s.mainNetInflow)}萬 評分:${"%.1f".format(s.hotScore)}$consecLabel$hotSuffix")
                     }
                     sb.appendLine()
                 }
@@ -3542,7 +3549,7 @@ abstract class QuantFragmentBase : Fragment() {
         }
     }
 
-    /** 顯示市場記憶設置對話框（AI檢測 + 人為設置並行顯示） */
+    /** 顯示市場記憶設置對話框（AI檢測 + 多選板塊 + 新增） */
     protected fun showMarketMemoryDialog() {
         val memory = com.chin.stockanalysis.strategy.sector.UserMarketMemory(requireContext())
         val ctx = requireContext()
@@ -3563,28 +3570,20 @@ abstract class QuantFragmentBase : Fragment() {
         val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
             .setTitle("🧠 市場記憶設置")
             .setView(container)
-            .setPositiveButton("保存") { _, _ ->
-                val input = container.findViewWithTag<android.widget.EditText>("sector_input")
-                if (input != null) {
-                    val sectors = input.text.toString().split(",").map { it.trim() }.filter { it.isNotBlank() }
-                    memory.focusSectors = sectors
-                    com.chin.stockanalysis.strategy.sector.StrategyMarketContext.invalidateCache()
-                    android.widget.Toast.makeText(ctx, "已保存 ${sectors.size} 個關注板塊，緩存已清空", android.widget.Toast.LENGTH_SHORT).show()
-                }
-            }
-            .setNegativeButton("取消", null)
+            .setNegativeButton("關閉", null)
             .show()
 
-        // 異步載入 AI 檢測 + 近期熱門板塊 + 新聞板塊
+        // 異步載入 AI 檢測 + 近期熱門板塊 + 新聞板塊 + 所有已記錄板塊
         lifecycleScope.launch(Dispatchers.IO) {
             val aiDetection = memory.aiYearDetection
             val hotSectors = memory.getRecentHotSectors()
             val newsSectors = memory.getRecentNewsSectors()
-            val currentFocus = memory.focusSectors
+            val allSectors = memory.getAllFocusSectors()
+            val activeNames = allSectors.filter { it.isActive }.map { it.sectorName }
 
-            // 合併所有建議板塊（去重）
-            val allSuggestions = (hotSectors.map { it.sectorName } + newsSectors + currentFocus)
-                .distinct().filter { it.isNotBlank() }
+            // 建議板塊 = 熱門+新聞 中尚未記錄的
+            val suggestedNames = (hotSectors.map { it.sectorName } + newsSectors)
+                .distinct().filter { name -> allSectors.none { it.sectorName == name } }.take(8)
 
             withContext(Dispatchers.Main) {
                 if (!isAdded) { dialog.dismiss(); return@withContext }
@@ -3657,7 +3656,6 @@ abstract class QuantFragmentBase : Fragment() {
                             withContext(Dispatchers.Main) {
                                 text = "✅ $result"
                                 isEnabled = true
-                                // 刷新整個對話框
                                 dialog.dismiss()
                                 showMarketMemoryDialog()
                             }
@@ -3667,7 +3665,7 @@ abstract class QuantFragmentBase : Fragment() {
 
                 container.addView(aiSection)
 
-                // ════ 人為設置區 ════
+                // ════ 已記錄板塊區（多選 chips） ════
                 val manualSection = LinearLayout(ctx).apply {
                     orientation = LinearLayout.VERTICAL
                     setBackgroundColor(Color.parseColor("#FAFAFA"))
@@ -3678,77 +3676,37 @@ abstract class QuantFragmentBase : Fragment() {
                 }
 
                 manualSection.addView(android.widget.TextView(ctx).apply {
-                    text = "✍️ 人為設置關注板塊"
+                    text = "📋 已記錄的主力板塊（點擊切換啟用/停用）"
                     textSize = 13f
                     setTextColor(Color.parseColor("#E65100"))
                     setTypeface(null, Typeface.BOLD)
                 })
 
-                manualSection.addView(android.widget.TextView(ctx).apply {
-                    text = "系統會持續追蹤這些板塊，連跌時提醒，選股時優先。"
-                    textSize = 10f
-                    setTextColor(Color.parseColor("#888888"))
-                    setPadding(0, 4, 0, 8)
-                })
-
-                val input = android.widget.EditText(ctx).apply {
-                    hint = "輸入關注板塊，用逗號分隔"
-                    setText(currentFocus.joinToString(", "))
-                    textSize = 12f
-                    tag = "sector_input"
-                    val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                    layoutParams = lp
-                }
-                manualSection.addView(input)
-
-                // 快速添加板塊標籤
-                if (allSuggestions.isNotEmpty()) {
-                    manualSection.addView(android.widget.TextView(ctx).apply {
-                        text = "點擊下方標籤快速添加/移除："
-                        textSize = 10f
-                        setTextColor(Color.parseColor("#999999"))
-                        setPadding(0, 8, 0, 4)
-                    })
-
+                if (allSectors.isNotEmpty()) {
                     val chipsFlow = com.chin.stockanalysis.ui.FlowLayout(ctx).apply {
-                        setPadding(0, 4, 0, 4)
+                        setPadding(0, 8, 0, 8)
                     }
-
-                    for (sector in allSuggestions.take(12)) {
-                        val isAdded = currentFocus.any { it == sector }
+                    for (sector in allSectors) {
+                        val isActive = sector.isActive
                         val chip = android.widget.TextView(ctx).apply {
-                            text = if (isAdded) "✓ $sector" else "+ $sector"
+                            text = if (isActive) "✓ ${sector.sectorName}" else "☐ ${sector.sectorName}"
                             textSize = 11f
                             setPadding(20, 8, 20, 8)
-                            setTextColor(if (isAdded) Color.WHITE else Color.parseColor("#555555"))
+                            setTextColor(if (isActive) Color.WHITE else Color.parseColor("#999999"))
                             background = android.graphics.drawable.GradientDrawable().apply {
                                 shape = android.graphics.drawable.GradientDrawable.RECTANGLE
                                 cornerRadius = 16f
-                                setColor(if (isAdded) Color.parseColor("#4CAF50") else Color.parseColor("#EEEEEE"))
+                                setColor(if (isActive) Color.parseColor("#4CAF50") else Color.parseColor("#EEEEEE"))
                             }
                             setOnClickListener {
-                                val currentText = input.text.toString()
-                                val currentList = currentText.split(",").map { it.trim() }.filter { it.isNotBlank() }.toMutableList()
-                                if (currentList.contains(sector)) {
-                                    currentList.remove(sector)
-                                    text = "+ $sector"
-                                    setTextColor(Color.parseColor("#555555"))
-                                    background = android.graphics.drawable.GradientDrawable().apply {
-                                        shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-                                        cornerRadius = 16f
-                                        setColor(Color.parseColor("#EEEEEE"))
-                                    }
-                                } else {
-                                    currentList.add(sector)
-                                    text = "✓ $sector"
-                                    setTextColor(Color.WHITE)
-                                    background = android.graphics.drawable.GradientDrawable().apply {
-                                        shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-                                        cornerRadius = 16f
-                                        setColor(Color.parseColor("#4CAF50"))
+                                lifecycleScope.launch(Dispatchers.IO) {
+                                    memory.toggleSector(sector.sectorName, !isActive)
+                                    com.chin.stockanalysis.strategy.sector.StrategyMarketContext.invalidateCache()
+                                    withContext(Dispatchers.Main) {
+                                        dialog.dismiss()
+                                        showMarketMemoryDialog()
                                     }
                                 }
-                                input.setText(currentList.joinToString(", "))
                             }
                         }
                         val chipLp = com.chin.stockanalysis.ui.FlowLayout.LayoutParams(
@@ -3760,6 +3718,92 @@ abstract class QuantFragmentBase : Fragment() {
                         chipsFlow.addView(chip)
                     }
                     manualSection.addView(chipsFlow)
+                } else {
+                    manualSection.addView(android.widget.TextView(ctx).apply {
+                        text = "（尚無記錄，請在下方新增）"
+                        textSize = 11f
+                        setTextColor(Color.parseColor("#999999"))
+                        setPadding(0, 4, 0, 8)
+                    })
+                }
+
+                // ════ 新增板塊輸入 ════
+                manualSection.addView(android.widget.TextView(ctx).apply {
+                    text = "➕ 新增關注板塊"
+                    textSize = 11f
+                    setTextColor(Color.parseColor("#888888"))
+                    setPadding(0, 8, 0, 4)
+                })
+
+                val input = android.widget.EditText(ctx).apply {
+                    hint = "輸入板塊名稱"
+                    textSize = 12f
+                    tag = "sector_input"
+                }
+                manualSection.addView(input)
+
+                manualSection.addView(android.widget.Button(ctx).apply {
+                    text = "✅ 新增"
+                    textSize = 11f
+                    setOnClickListener {
+                        val name = input.text.toString().trim()
+                        if (name.isEmpty()) {
+                            android.widget.Toast.makeText(ctx, "請輸入板塊名稱", android.widget.Toast.LENGTH_SHORT).show()
+                            return@setOnClickListener
+                        }
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            memory.addOrActivateSector(name)
+                            com.chin.stockanalysis.strategy.sector.StrategyMarketContext.invalidateCache()
+                            withContext(Dispatchers.Main) {
+                                android.widget.Toast.makeText(ctx, "已新增「$name」", android.widget.Toast.LENGTH_SHORT).show()
+                                dialog.dismiss()
+                                showMarketMemoryDialog()
+                            }
+                        }
+                    }
+                })
+
+                // ════ 建議板塊 chips ════
+                if (suggestedNames.isNotEmpty()) {
+                    manualSection.addView(android.widget.TextView(ctx).apply {
+                        text = "💡 近期熱門但未記錄（點擊新增）："
+                        textSize = 10f
+                        setTextColor(Color.parseColor("#999999"))
+                        setPadding(0, 8, 0, 4)
+                    })
+                    val suggestFlow = com.chin.stockanalysis.ui.FlowLayout(ctx)
+                    for (name in suggestedNames) {
+                        val chip = android.widget.TextView(ctx).apply {
+                            text = "+ $name"
+                            textSize = 11f
+                            setPadding(20, 8, 20, 8)
+                            setTextColor(Color.parseColor("#555555"))
+                            background = android.graphics.drawable.GradientDrawable().apply {
+                                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                                cornerRadius = 16f
+                                setColor(Color.parseColor("#FFF3E0"))
+                            }
+                            setOnClickListener {
+                                lifecycleScope.launch(Dispatchers.IO) {
+                                    memory.addOrActivateSector(name)
+                                    com.chin.stockanalysis.strategy.sector.StrategyMarketContext.invalidateCache()
+                                    withContext(Dispatchers.Main) {
+                                        android.widget.Toast.makeText(ctx, "已新增「$name」", android.widget.Toast.LENGTH_SHORT).show()
+                                        dialog.dismiss()
+                                        showMarketMemoryDialog()
+                                    }
+                                }
+                            }
+                        }
+                        val lp = com.chin.stockanalysis.ui.FlowLayout.LayoutParams(
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT
+                        )
+                        lp.setMargins(0, 0, 8, 8)
+                        chip.layoutParams = lp
+                        suggestFlow.addView(chip)
+                    }
+                    manualSection.addView(suggestFlow)
                 }
 
                 container.addView(manualSection)

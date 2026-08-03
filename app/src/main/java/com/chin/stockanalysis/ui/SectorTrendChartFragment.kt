@@ -173,7 +173,7 @@ class SectorTrendChartFragment : Fragment() {
                     } catch (_: Exception) {}
                 }
 
-                // 找所有板塊（不限 rank），統計熱門天數
+                // 找所有板塊，統計熱門天數，限制顯示數量（熱門優先）
                 val sectorMap = mutableMapOf<String, String>()
                 val sectorHotDays = mutableMapOf<String, Int>()
                 for (r in recentDays) {
@@ -182,13 +182,14 @@ class SectorTrendChartFragment : Fragment() {
                         sectorHotDays[r.sectorCode] = (sectorHotDays[r.sectorCode] ?: 0) + 1
                     }
                 }
-                // 排序：熱門優先（按熱門天數降序），同級按名稱
+                // 排序：熱門優先（按熱門天數降序），同級按名稱，最多顯示 30 個
                 allTopSectors = sectorMap.entries
                     .map { it.key to it.value }
                     .sortedWith(
                         compareByDescending<Pair<String, String>> { sectorHotDays[it.first] ?: 0 }
                             .thenBy { it.second }
                     )
+                    .take(30)
                 hotSectorCodes = sectorHotDays.keys
 
                 // 預載每個板塊的完整記錄

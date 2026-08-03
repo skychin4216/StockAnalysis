@@ -19,13 +19,9 @@ import java.time.format.DateTimeFormatter
  * ## 热门板块新闻自动更新引擎
  *
  * App 启动时在后台运行一次：
- * 1. 读取 sector_daily_record 近 100 交易日数据
- * 2. 聚合 Top 5 热门板块（AI 硬件优先）
- * 3. 用豆包 AI 搜索相关板块最新新闻
- * 4. 提取结构化新闻 → 写入 news_factors 表
- *
- * ### AI 硬件优先板块
- * 光通信、光模块、光芯片、光材料、存储、半导体芯片、国产替代、AI 应用、绿色电力、电网设备
+ * 1. 从 sector_period_summary 或 sector_daily_record 动态获取 Top 5 热门板块
+ * 2. 用豆包 AI 搜索相关板块最新新闻
+ * 3. 提取结构化新闻 → 写入 news_factors 表
  */
 class HotSectorNewsUpdater(private val context: Context) {
 
@@ -118,7 +114,7 @@ class HotSectorNewsUpdater(private val context: Context) {
                 val topSectors = getTopHotSectors()
                 Log.i(TAG, "Top 5 热门板块: ${topSectors.joinToString()}")
 
-                // 2. 优先选择 AI 硬件相关板块
+                // 2. 選擇動態熱門板塊
                 val targetSectors = selectPrioritySectors(topSectors)
                 Log.i(TAG, "🎯 目標板塊: ${targetSectors.joinToString()}")
 

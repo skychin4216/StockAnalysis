@@ -16,27 +16,67 @@ class UserMarketMemory(context: Context) {
         const val KEY_AI_YEAR_DETECTION = "ai_year_detection"
         const val KEY_LAST_CHECK_DATE = "last_check_date"
         const val KEY_SECTOR_ALERTS = "sector_alerts"
+        private const val MIGRATED_KEY = "focus_sectors_migrated_v20"
     }
-
-    /** 用戶設置的關注板塊（如「科技,半導體,光通信」） */
-    var focusSectors: List<String>
-        get() = prefs.getString(KEY_FOCUS_SECTORS, "")?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
-        set(value) = prefs.edit().putString(KEY_FOCUS_SECTORS, value.joinToString(",")).apply()
 
     /** AI 檢測的板塊大年結論 */
     var aiYearDetection: String
         get() = prefs.getString(KEY_AI_YEAR_DETECTION, "未檢測") ?: "未檢測"
         set(value) = prefs.edit().putString(KEY_AI_YEAR_DETECTION, value).apply()
 
+    /** 一次性遷移：將 SharedPreferences 中的 focusSectors 寫入 DB */
+    suspend fun migrateIfNeeded() = withContext(Dispatchers.IO) {
+        if (prefs.getBoolean(MIGRATED_KEY, false)) return@withContext
+        val legacy = prefs.getString(KEY_FOCUS_SECTORS, "")
+            ?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList()
+        for (name in legacy) {
+            db.userFocusSectorDao().insert(UserFocusSectorEntity(sectorName = name))
+        }
+        prefs.edit().putBoolean(MIGRATED_KEY, true).apply()
+    }
+
+    /** 獲取當前啟用的關注板塊列表 */
+    suspend fun getActiveSectors(): List<String> {
+        migrateIfNeeded()
+        return db.userFocusSectorDao().getActiveNames()
+    }
+
+    /** 獲取所有關注板塊（含已停用），用於 UI 展示 */
+    suspend fun getAllFocusSectors(): List<UserFocusSectorEntity> {
+        migrateIfNeeded()
+        return db.userFocusSectorDao().getAll()
+    }
+
+    /** 新增或重新啟用板塊 */
+    suspend fun addOrActivateSector(name: String) {
+        val dao = db.userFocusSectorDao()
+        val existing = dao.getAll().find { it.sectorName == name }
+        if (existing != null) {
+            if (!existing.isActive) dao.setActive(name, true)
+        } else {
+            dao.insert(UserFocusSectorEntity(sectorName = name))
+        }
+    }
+
+    /** 切換板塊啟用/停用 */
+    suspend fun toggleSector(name: String, active: Boolean) {
+        db.userFocusSectorDao().setActive(name, active)
+    }
+
+    /** 刪除板塊 */
+    suspend fun removeSector(name: String) {
+        db.userFocusSectorDao().delete(name)
+    }
+
     /** 獲取用戶關注板塊的權重加成（用於策略選股） */
-    fun getFocusWeightBoost(sectorName: String): Int {
-        val focus = focusSectors
+    suspend fun getFocusWeightBoost(sectorName: String): Int {
+        val focus = getActiveSectors()
         return if (focus.any { sectorName.contains(it) || it.contains(sectorName.take(2)) }) 15 else 0
     }
 
     /** 檢查用戶關注板塊是否連跌，返回需要提醒的列表 */
     suspend fun checkFocusSectorDrops(): List<SectorDropAlert> = withContext(Dispatchers.IO) {
-        val focus = focusSectors
+        val focus = getActiveSectors()
         if (focus.isEmpty()) return@withContext emptyList()
 
         val today = try { db.dailySnapshotDao().getAvailableDates(1).firstOrNull() } catch (_: Exception) { null }
