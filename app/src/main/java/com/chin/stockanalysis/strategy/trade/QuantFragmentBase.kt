@@ -28,6 +28,7 @@ import com.chin.stockanalysis.strategy.StrategyEngine
 import com.chin.stockanalysis.ui.TradingDayPickerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -607,7 +608,8 @@ abstract class QuantFragmentBase : Fragment() {
             "📈 買入評估",
             "💎 基本面檢查",
             "📊 賣出績效",
-            "⚡ 執行賣出"
+            "⚡ 執行賣出",
+            "🚀 一鍵執行全部"
         )
         AlertDialog.Builder(requireContext())
             .setTitle("💰 買賣評估")
@@ -619,10 +621,49 @@ abstract class QuantFragmentBase : Fragment() {
                     3 -> checkFundamentalHealth()
                     4 -> showSellPerformance()
                     5 -> executeAutoSell()
+                    6 -> runAllEvaluations()
                 }
             }
             .setNegativeButton("關閉", null)
             .show()
+    }
+
+    /** 一鍵執行所有評估功能 */
+    protected fun runAllEvaluations() {
+        progressBar.visibility = View.VISIBLE
+        statusTv.text = "🚀 一鍵執行全部評估..."
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                // 1. 做T信號
+                withContext(Dispatchers.Main) { statusTv.text = "🔄 正在生成做T信號..." }
+                try { showTTradeMenu() } catch (_: Exception) {}
+
+                // 2. 賣出評估
+                withContext(Dispatchers.Main) { statusTv.text = "💰 正在賣出評估..." }
+                delay(500)
+                try { runAutoSellEvaluation() } catch (_: Exception) {}
+
+                // 3. 買入評估
+                withContext(Dispatchers.Main) { statusTv.text = "📈 正在買入評估..." }
+                delay(500)
+                try { showBuyEvaluation() } catch (_: Exception) {}
+
+                // 4. 基本面檢查
+                withContext(Dispatchers.Main) { statusTv.text = "💎 正在基本面檢查..." }
+                delay(500)
+                try { checkFundamentalHealth() } catch (_: Exception) {}
+
+                withContext(Dispatchers.Main) {
+                    statusTv.text = "✅ 全部評估完成"
+                    progressBar.visibility = View.GONE
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    statusTv.text = "❌ 評估失敗: ${e.message?.take(30)}"
+                    progressBar.visibility = View.GONE
+                }
+            }
+        }
     }
 
     /** 綜合評估對話框：同時顯示做T信號和賣出評估 */
@@ -2894,6 +2935,15 @@ abstract class QuantFragmentBase : Fragment() {
             text = "總盈虧 $pnlStr"
             textSize = 10f; setTextColor(Color.parseColor(pnlColor)); gravity = Gravity.END
         })
+        // 刷新按鈕
+        titleRow.addView(TextView(requireContext()).apply {
+            text = " 🔄"
+            textSize = 14f
+            setTextColor(Color.parseColor("#1976D2"))
+            setPadding(8, 0, 0, 0)
+            isClickable = true
+            setOnClickListener { refreshPositions() }
+        })
         positionContainer.addView(titleRow)
 
         // 多日漲跌表格
@@ -3012,7 +3062,7 @@ abstract class QuantFragmentBase : Fragment() {
                 realTotalCost += rp.avgBuyPrice * rp.quantity
             }
 
-            // 真實持倉標題行：「👤 真實持倉 (N只)」+ 總成本
+            // 真實持倉標題行：「👤 真實持倉 (N只)」+ 總成本 + 刷新
             val realTitleRow = LinearLayout(requireContext()).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, 2, 0, 2)
             }
@@ -3025,6 +3075,15 @@ abstract class QuantFragmentBase : Fragment() {
             realTitleRow.addView(TextView(requireContext()).apply {
                 text = "總成本 ¥${"%.0f".format(realTotalCost)}"
                 textSize = 10f; setTextColor(Color.parseColor("#1565C0")); gravity = Gravity.END
+            })
+            // 刷新按鈕
+            realTitleRow.addView(TextView(requireContext()).apply {
+                text = " 🔄"
+                textSize = 14f
+                setTextColor(Color.parseColor("#1976D2"))
+                setPadding(8, 0, 0, 0)
+                isClickable = true
+                setOnClickListener { refreshPositions() }
             })
             positionContainer.addView(realTitleRow)
 

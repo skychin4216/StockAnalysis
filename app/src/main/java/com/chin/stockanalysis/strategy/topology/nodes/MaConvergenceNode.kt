@@ -2,6 +2,7 @@ package com.chin.stockanalysis.strategy.topology.nodes
 
 import android.util.Log
 import com.chin.stockanalysis.stock.database.StockDatabase
+import com.chin.stockanalysis.strategy.analysis.MaConvergenceAnalyzer
 import com.chin.stockanalysis.strategy.topology.core.*
 
 /**
@@ -51,17 +52,14 @@ class MaConvergenceNode : PipelineNode<Any, MaConvergenceResult> {
 
             // 按日期升序排列（最舊在前）
             val sorted = snaps.sortedBy { it.date }
-            val closes = sorted.map { it.close }
 
-            // ═══ 1. 均線計算 + 粘合度 ═══
-            val ma5 = closes.takeLast(5).average()
-            val ma20 = closes.takeLast(20).average()
-            val ma30 = closes.takeLast(30).average()
-            val maMax = maxOf(ma5, ma20, ma30)
-            val maMin = minOf(ma5, ma20, ma30)
-            val maMid = ma20  // 用 MA20 作為基準
-            val divergence = if (maMid > 0) (maMax - maMin) / maMid else 1.0
-            val maConverged = divergence < CONVERGENCE_THRESHOLD
+            // ═══ 1. 均線粘合 + 方向（共用工具） ═══
+            val maResult = MaConvergenceAnalyzer.analyze(sorted)
+            val maConverged = maResult.converged
+            val divergence = maResult.divergencePct / 100.0
+            val ma5 = maResult.ma5
+            val ma20 = maResult.ma20 ?: 0.0
+            val convergedAndUp = maResult.convergedAndUp
 
             // ═══ 2. 震蕩收割模式 ═══
             val recent5 = sorted.takeLast(OSCILLATION_DAYS + 1)  // +1 for prevClose
@@ -96,25 +94,28 @@ class MaConvergenceNode : PipelineNode<Any, MaConvergenceResult> {
             val riskLevel = when {
                 gapRiskHigh && oscillationHarvest -> "HIGH"
                 oscillationHarvest || volumeDivergence -> "MEDIUM"
+                maConverged && convergedAndUp -> "LOW"
                 maConverged -> "LOW"
                 else -> "MEDIUM"
             }
 
             val hint = buildString {
-                if (maConverged) append("✅ 均線粘合(離散${"%.1f".format(divergence * 100)}%) ")
+                if (convergedAndUp) append("✅ 均線粘合向上(離散${"%.1f".format(divergence * 100)}%) → 蓄勢突破 ")
+                else if (maConverged) append("🟡 均線粘合(離散${"%.1f".format(divergence * 100)}%) 待方向 ")
                 else append("⚠️ 均線分散(離散${"%.1f".format(divergence * 100)}%) ")
                 if (oscillationHarvest) append("⚠️ 震蕩收割(${oscillationCount}天高開低走) ")
                 if (volumeDivergence) append("⚠️ 量價背離(跌量>漲量) ")
                 if (gapRiskHigh) append("⚠️ 缺口回補風險(高開${"%.1f".format(gapPct * 100)}%) ")
-                if (riskLevel == "LOW") append("→ 趨勢修復，可正常進場")
+                if (riskLevel == "LOW" && !convergedAndUp) append("→ 趨勢修復，可正常進場")
             }
 
             context.log(nodeId, "📐 $nodeName: $hint")
 
             MaConvergenceResult(
                 maConverged = maConverged,
+                maConvergedAndUp = convergedAndUp,
                 maDivergence = divergence,
-                ma5 = ma5, ma20 = ma20, ma30 = ma30,
+                ma5 = ma5, ma20 = ma20, ma30 = 0.0,
                 oscillationHarvest = oscillationHarvest,
                 oscillationCount = oscillationCount,
                 volumeDivergence = volumeDivergence,
@@ -137,6 +138,8 @@ class MaConvergenceNode : PipelineNode<Any, MaConvergenceResult> {
 data class MaConvergenceResult(
     /** MA5/MA20/MA30 是否粘合（離散率 < 1.5%） */
     val maConverged: Boolean = false,
+    /** 均線粘合且向上（蓄勢突破） */
+    val maConvergedAndUp: Boolean = false,
     /** 均線離散率 */
     val maDivergence: Double = 1.0,
     val ma5: Double = 0.0,

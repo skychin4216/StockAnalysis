@@ -28,6 +28,7 @@ import com.chin.stockanalysis.agent.core.analyzeStock
 import com.chin.stockanalysis.agent.stock.StockAnalysisAgent
 import com.chin.stockanalysis.config.FeatureFlagManager
 import com.chin.stockanalysis.strategy.analysis.CandlePatternDetector
+import com.chin.stockanalysis.strategy.analysis.MaConvergenceAnalyzer
 import com.chin.stockanalysis.strategy.data.InstitutionalRatingProvider
 import com.github.mikephil.charting.charts.CombinedChart
 import com.github.mikephil.charting.components.XAxis
@@ -810,6 +811,8 @@ class StockDetailFragment : Fragment() {
                 }
                 setOnClickListener {
                     klineRangeDays = rb.days
+                    val count = if (klineRangeDays <= 0) allKlineSnaps.size else allKlineSnaps.takeLast(klineRangeDays).size
+                    android.widget.Toast.makeText(requireContext(), "${rb.label}: $count 根K線 / 總計 ${allKlineSnaps.size} 根", android.widget.Toast.LENGTH_SHORT).show()
                     renderKlineChart()
                 }
             }
@@ -858,6 +861,21 @@ class StockDetailFragment : Fragment() {
             try {
                 val db = StockDatabase.getInstance(requireContext())
                 allKlineSnaps = db.dailySnapshotDao().getByCode(stockCode, 500).sortedBy { it.date }
+                // 數據不足時從網絡補充
+                if (allKlineSnaps.size < 250) {
+                    try {
+                        val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
+                        val endDate = java.time.LocalDate.now()
+                        val startDate = endDate.minusDays(800)
+                        val (fetched, _) = fetcher.fetchOneStock(stockCode, startDate, endDate)
+                        if (fetched.isNotEmpty()) {
+                            db.dailySnapshotDao().insertAll(fetched)
+                            allKlineSnaps = db.dailySnapshotDao().getByCode(stockCode, 500).sortedBy { it.date }
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "網絡補充個股K線失敗: ${e.message}")
+                    }
+                }
                 withContext(Dispatchers.Main) { renderKlineChart() }
             } catch (e: Exception) {
                 Log.w(TAG, "切換個股K線失敗: ${e.message}")
@@ -984,23 +1002,10 @@ class StockDetailFragment : Fragment() {
         } else false
         sb.append("\n三天不新低: ${if (threeDayNoNewLow) "✓ 是（止跌企穩）" else "✗ 否"}")
 
-        // ── 3. 均線粘合向上 ──
-        // 三條均線差距 < 2% 且 MA5 向上 = 蓄勢突破信號
-        val maConvergingUp = if (ma10 != null && ma20 != null && closes.size >= 6) {
-            val maMax = maxOf(ma5, ma10, ma20)
-            val maMin = minOf(ma5, ma10, ma20)
-            val convergePct = (maMax - maMin) / maMin * 100
-            val isConverging = convergePct < 2.0
-            val ma5Yesterday = closes.subList(closes.size - 6, closes.size - 1).average()
-            val isUpward = ma5 > ma5Yesterday
-            isConverging && isUpward
-        } else false
-        val convergePctStr = if (ma10 != null && ma20 != null) {
-            val maMax = maxOf(ma5, ma10, ma20)
-            val maMin = minOf(ma5, ma10, ma20)
-            "%.2f%%".format((maMax - maMin) / maMin * 100)
-        } else "N/A"
-        sb.append(" | 均線粘合向上: ${if (maConvergingUp) "✓ 是（蓄勢突破）" else "✗ 否"} (偏離$convergePctStr)")
+        // ── 3. 均線粘合向上（共用工具） ──
+        val maConvResult = MaConvergenceAnalyzer.analyze(snaps)
+        val maConvergingUp = maConvResult.convergedAndUp
+        sb.append(" | 均線粘合向上: ${if (maConvergingUp) "✓ 是（蓄勢突破）" else "✗ 否"} (偏離${"%.2f".format(maConvResult.divergencePct)}%)")
 
         // ── 4. 近期高低點突破判斷 ──
         val recentHighBreak = if (highs.size >= 20) {
@@ -1104,8 +1109,8 @@ class StockDetailFragment : Fragment() {
                 // 一次性拉取 500 天歷史數據，按時間範圍按鈕動態裁剪
                 allKlineSnaps = db.dailySnapshotDao().getByCode(stockCode, 500).sortedBy { it.date }
 
-                // 如果本地數據不足 30 天，嘗試從網絡補充日K數據
-                if (allKlineSnaps.size < 30) {
+                // 如果本地數據不足 250 天（約1年），嘗試從網絡補充日K數據
+                if (allKlineSnaps.size < 250) {
                     try {
                         val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
                         val endDate = java.time.LocalDate.now()

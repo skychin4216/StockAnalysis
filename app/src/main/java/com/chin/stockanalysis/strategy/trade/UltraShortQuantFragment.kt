@@ -185,7 +185,8 @@ class UltraShortQuantFragment : QuantFragmentBase() {
             "💎 基本面檢查",
             "⚡ T+1 賣出檢查",
             "📊 賣出績效",
-            "⚡ 執行賣出"
+            "⚡ 執行賣出",
+            "🚀 一鍵執行全部"
         )
         AlertDialog.Builder(requireContext())
             .setTitle("💰 買賣評估（超短線）")
@@ -198,6 +199,7 @@ class UltraShortQuantFragment : QuantFragmentBase() {
                     4 -> checkT1AutoSell()
                     5 -> showSellPerformance()
                     6 -> executeAutoSell()
+                    7 -> runAllEvaluations()
                 }
             }
             .setNegativeButton("關閉", null)
