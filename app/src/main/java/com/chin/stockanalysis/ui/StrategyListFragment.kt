@@ -564,9 +564,9 @@ class StrategyListFragment : Fragment() {
                         c.addView(TextView(requireContext()).apply { text = "  \u26A0 ${pr.riskWarning}"; textSize = 11f; setTextColor(Color.parseColor("#EF6C00")); setPadding(0, 0, 0, 8) })
                         // 顯示板塊加權信息
                         val sc = lastSectorContext
-                        if (sc != null && (sc.userFocusSectors.isNotEmpty() || sc.bounceSectors.isNotEmpty())) {
+                        if (sc != null && (sc.todayHotSectors.isNotEmpty() || sc.bounceSectors.isNotEmpty())) {
                             val sectorInfo = buildString {
-                                if (sc.userFocusSectors.isNotEmpty()) append("關注板塊: ${sc.userFocusSectors.joinToString("、")} | ")
+                                if (sc.todayHotSectors.isNotEmpty()) append("今日熱門: ${sc.todayHotSectors.take(5).joinToString("、")} | ")
                                 if (sc.bounceSectors.isNotEmpty()) append("回彈板塊: ${sc.bounceSectors.take(3).joinToString("、") { it.sectorName }}")
                             }
                             c.addView(TextView(requireContext()).apply { text = "  \uD83D\uDD25 $sectorInfo"; textSize = 10f; setTextColor(Color.parseColor("#1565C0")); setPadding(0, 0, 0, 8) })
@@ -839,19 +839,14 @@ class StrategyListFragment : Fragment() {
                 sb.appendLine("大盤方向: ${ctx.indexSnapshot.tripleVote}")
                 sb.appendLine()
 
-                // 用戶關注板塊
-                if (ctx.userFocusSectors.isNotEmpty()) {
-                    sb.appendLine("━━ 用戶關注板塊 ━━")
-                    for (s in ctx.userFocusSectors) { sb.appendLine("  • $s") }
+                // 今日熱門板塊 Top 5
+                if (ctx.todayHotSectors.isNotEmpty()) {
+                    sb.appendLine("━━ 今日熱門板塊 Top 5 ━━")
+                    for (s in ctx.todayHotSectors.take(5)) { sb.appendLine("  • $s") }
                     sb.appendLine()
                 }
 
                 // 多周期熱門板塊
-                if (ctx.todayHotSectors.isNotEmpty()) {
-                    sb.appendLine("━━ 今日熱門板塊 Top 3 ━━")
-                    for (s in ctx.todayHotSectors) { sb.appendLine("  • $s") }
-                    sb.appendLine()
-                }
                 if (ctx.weeklyHotSectors.isNotEmpty()) {
                     sb.appendLine("━━ 周熱門板塊（近7日）Top 5 ━━")
                     for (s in ctx.weeklyHotSectors) { sb.appendLine("  • $s") }

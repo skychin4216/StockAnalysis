@@ -53,6 +53,8 @@ class AIPredictionEngine(private val context: Context) {
     data class SectorContext(
         /** 用戶設置的關注板塊關鍵詞列表 */
         val userFocusSectors: List<String> = emptyList(),
+        /** 今日熱門板塊（動態獲取） */
+        val todayHotSectors: List<String> = emptyList(),
         /** 回彈板塊詳情（連熱天數、回調幅度、今日反彈） */
         val bounceSectors: List<BounceSectorInfo> = emptyList(),
         /** AI 檢測的板塊大年結論 */

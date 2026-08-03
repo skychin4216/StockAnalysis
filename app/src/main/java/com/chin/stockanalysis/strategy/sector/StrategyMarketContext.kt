@@ -246,6 +246,7 @@ class StrategyMarketContext private constructor(
     fun toAiSectorContext(): com.chin.stockanalysis.strategy.predict.AIPredictionEngine.SectorContext {
         return com.chin.stockanalysis.strategy.predict.AIPredictionEngine.SectorContext(
             userFocusSectors = userFocusSectors,
+            todayHotSectors = todayHotSectors,
             bounceSectors = bounceSectors.map {
                 com.chin.stockanalysis.strategy.predict.AIPredictionEngine.SectorContext.BounceSectorInfo(
                     sectorName = it.sectorName,
