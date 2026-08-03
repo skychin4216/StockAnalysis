@@ -40,6 +40,10 @@ object NodeRegistry {
         // 增強
         register("sector_boost") { ctx, _ -> com.chin.stockanalysis.strategy.topology.nodes.SectorBoostNode() }
         register("bounce_reversal") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.BounceReversalNode() }
+        register("ancestral_rules") { _, config ->
+            val period = config["holdingPeriod"] ?: "SHORT"
+            com.chin.stockanalysis.strategy.topology.nodes.AncestralRulesNode(holdingPeriod = period)
+        }
         register("inst_tips") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.InstitutionalTipsNode() }
         register("ma_convergence") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.MaConvergenceNode() }
 

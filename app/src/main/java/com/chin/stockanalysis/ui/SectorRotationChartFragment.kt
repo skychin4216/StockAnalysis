@@ -103,13 +103,21 @@ class SectorRotationChartFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val db = StockDatabase.getInstance(requireContext())
-                val allRecords = db.sectorDailyRecordDao().getRecentDays(120) // 約 4 個月
+                var allRecords = db.sectorDailyRecordDao().getRecentDays(120) // 約 4 個月
 
                 if (allRecords.isEmpty()) {
-                    withContext(Dispatchers.Main) {
-                        infoTv.text = "暫無板塊歷史數據"
+                    // 嘗試即時抓取並保存
+                    try {
+                        val engine = com.chin.stockanalysis.strategy.backtest.SectorRotationEngine(requireContext())
+                        engine.saveDailySectorData()
+                        allRecords = db.sectorDailyRecordDao().getRecentDays(120)
+                    } catch (_: Exception) {}
+                    if (allRecords.isEmpty()) {
+                        withContext(Dispatchers.Main) {
+                            infoTv.text = "暫無板塊歷史數據，請稍後重試"
+                        }
+                        return@launch
                     }
-                    return@launch
                 }
 
                 // 按板塊分組

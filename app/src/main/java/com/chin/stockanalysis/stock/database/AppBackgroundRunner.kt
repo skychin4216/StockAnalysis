@@ -99,6 +99,18 @@ object AppBackgroundRunner {
             }
         }
 
+        // 啟動時保存當日板塊數據（供走勢/輪動 Tab 使用）
+        scope.launch(Dispatchers.IO) {
+            try {
+                // 等待板塊池首次刷新完成
+                kotlinx.coroutines.delay(5000)
+                val engine = com.chin.stockanalysis.strategy.backtest.SectorRotationEngine(context.applicationContext)
+                engine.saveDailySectorData()
+            } catch (e: Exception) {
+                Log.w(TAG, "板塊每日數據保存失敗: ${e.message}")
+            }
+        }
+
         startPositionMonitor(context.applicationContext, scope)
     }
 

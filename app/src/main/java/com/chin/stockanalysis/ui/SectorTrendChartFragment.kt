@@ -173,7 +173,17 @@ class SectorTrendChartFragment : Fragment() {
             try {
                 val db = StockDatabase.getInstance(requireContext())
                 // 取最近 30 天的 top 板塊
-                val recentDays = db.sectorDailyRecordDao().getRecentDays(30)
+                var recentDays = db.sectorDailyRecordDao().getRecentDays(30)
+
+                // 如果本地無數據，嘗試即時抓取
+                if (recentDays.isEmpty()) {
+                    try {
+                        val engine = com.chin.stockanalysis.strategy.backtest.SectorRotationEngine(requireContext())
+                        engine.saveDailySectorData()
+                        recentDays = db.sectorDailyRecordDao().getRecentDays(30)
+                    } catch (_: Exception) {}
+                }
+
                 val sectorMap = mutableMapOf<String, String>() // code to name
                 for (r in recentDays) {
                     if (r.rank <= 15) { // 只取每天前 15 名
