@@ -4,6 +4,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.widget.PopupMenu
+import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.HoldingPeriod
@@ -177,26 +178,29 @@ class UltraShortQuantFragment : QuantFragmentBase() {
     // ── 覆寫賣出評估：使用超短線止損/止盈規則 ──
 
     override fun showTradeEvaluationMenu(anchor: View) {
-        val popup = PopupMenu(requireContext(), anchor, Gravity.END)
-        popup.menu.add(0, 1, 0, "🔄 做T信號")
-        popup.menu.add(0, 2, 0, "💰 賣出評估")
-        popup.menu.add(0, 3, 0, "📈 買入評估")
-        popup.menu.add(0, 4, 0, "💎 基本面檢查")
-        popup.menu.add(0, 5, 0, "⚡ T+1 賣出檢查")
-        popup.menu.add(0, 6, 0, "📊 賣出績效")
-        popup.menu.add(0, 7, 0, "⚡ 執行賣出")
-        popup.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                1 -> showTTradeMenu()
-                2 -> runAutoSellEvaluation()
-                3 -> showBuyEvaluation()
-                4 -> checkFundamentalHealth()
-                5 -> checkT1AutoSell()
-                6 -> showSellPerformance()
-                7 -> executeAutoSell()
+        val items = arrayOf(
+            "🔄 做T信號",
+            "💰 賣出評估",
+            "📈 買入評估",
+            "💎 基本面檢查",
+            "⚡ T+1 賣出檢查",
+            "📊 賣出績效",
+            "⚡ 執行賣出"
+        )
+        AlertDialog.Builder(requireContext())
+            .setTitle("💰 買賣評估（超短線）")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> showTTradeMenu()
+                    1 -> runAutoSellEvaluation()
+                    2 -> showBuyEvaluation()
+                    3 -> checkFundamentalHealth()
+                    4 -> checkT1AutoSell()
+                    5 -> showSellPerformance()
+                    6 -> executeAutoSell()
+                }
             }
-            true
-        }
-        popup.show()
+            .setNegativeButton("關閉", null)
+            .show()
     }
 }

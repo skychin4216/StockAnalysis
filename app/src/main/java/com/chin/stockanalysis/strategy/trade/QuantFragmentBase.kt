@@ -157,9 +157,9 @@ abstract class QuantFragmentBase : Fragment() {
     // ═══════════════════════════════════════════════════
 
     /**
-     * 統一按鈕行（v12）：⚡建倉 | 🔧Pipeline | 📦持倉 ▾ | 📊買賣評估 ▾ | 💾數據
+     * 統一按鈕行（v13）：📈建倉 | 🔀Pipeline | 💰買賣評估 ▾ | 🏦實倉管理 | 💹數據
      * 寬度規則：1漢字=2單位，1英文=1單位，▾=1單位。emoji 不計入寬度。
-     * 持倉按鈕整合模擬持倉和真實持倉，以下拉選單區分。
+     * 實倉管理直接打開真實持倉管理菜單。
      */
     protected fun createButtonRow(): LinearLayout {
         val row = LinearLayout(requireContext()).apply {
@@ -168,7 +168,7 @@ abstract class QuantFragmentBase : Fragment() {
             setPadding(4, 1, 4, 1)
         }
 
-        // ── 1. ⚡建倉（2漢字=4單位） ──
+        // ── 1. 📈建倉（2漢字=4單位） ──
         buildBtn = Button(requireContext()).apply {
             text = "📈建倉"
             textSize = 10f
@@ -181,7 +181,7 @@ abstract class QuantFragmentBase : Fragment() {
         }
         row.addView(buildBtn)
 
-        // ── 2. 🔧Pipeline（8英文=8單位，視覺偏長故降至5） ──
+        // ── 2. 🔀Pipeline（8英文=8單位，視覺偏長故降至5） ──
         val pipelineBtn = Button(requireContext()).apply {
             text = "🔀Pipeline"
             textSize = 10f
@@ -194,20 +194,7 @@ abstract class QuantFragmentBase : Fragment() {
         }
         row.addView(pipelineBtn)
 
-        // ── 3. 📦持倉 ▾（2漢字+▾=5單位，整合模擬+真實持倉） ──
-        val posBtn = Button(requireContext()).apply {
-            text = "🏦持倉 ▾"
-            textSize = 10f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#1565C0"))
-            setPadding(4, 1, 4, 1)
-            setMinWidth(0); setMinimumWidth(0)
-            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 4.0f).apply { marginEnd = 1 }
-            setOnClickListener { showPositionPopupMenu(it) }
-        }
-        row.addView(posBtn)
-
-        // ── 4. 📊買賣評估 ▾（4漢字+▾=9單位，降至5與原真實持倉等寬） ──
+        // ── 3. 💰買賣評估 ▾（4漢字+▾=9單位，權重5） ──
         tTradeBtn = Button(requireContext()).apply {
             text = "💰買賣評估 ▾"
             textSize = 10f
@@ -220,7 +207,20 @@ abstract class QuantFragmentBase : Fragment() {
         }
         row.addView(tTradeBtn)
 
-        // ── 5. 💾數據（2漢字=4單位，與建倉等寬） ──
+        // ── 4. 🏦實倉管理（4漢字=8單位，權重5） ──
+        val realPosBtn = Button(requireContext()).apply {
+            text = "🏦實倉管理"
+            textSize = 10f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#1565C0"))
+            setPadding(4, 1, 4, 1)
+            setMinWidth(0); setMinimumWidth(0)
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 5.0f).apply { marginEnd = 1 }
+            setOnClickListener { showRealPositionMenu() }
+        }
+        row.addView(realPosBtn)
+
+        // ── 5. 💹數據（2漢字=4單位，與建倉等寬） ──
         val dataBtn = Button(requireContext()).apply {
             text = "💹數據"
             textSize = 10f
@@ -234,21 +234,6 @@ abstract class QuantFragmentBase : Fragment() {
         row.addView(dataBtn)
 
         return row
-    }
-
-    /** 持倉下拉選單：整合模擬持倉和真實持倉 */
-    private fun showPositionPopupMenu(anchor: View) {
-        val popup = android.widget.PopupMenu(requireContext(), anchor)
-        popup.menu.add(0, 1, 0, "📋 模擬持倉（刷新）")
-        popup.menu.add(0, 2, 1, "👤 真實持倉管理")
-        popup.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                1 -> { refreshPositions(); true }
-                2 -> { showRealPositionMenu(); true }
-                else -> false
-            }
-        }
-        popup.show()
     }
 
     /** 啟動 Pipeline 拓撲編輯器 */
@@ -614,27 +599,30 @@ abstract class QuantFragmentBase : Fragment() {
     // 買賣評估（整合做T + 賣出）
     // ═══════════════════════════════════════════════════
 
-    /** 買賣評估菜單：統一選項 + 基本面檢查 */
+    /** 買賣評估菜單：統一選項 + 基本面檢查（居中 Dialog） */
     protected open fun showTradeEvaluationMenu(anchor: View) {
-        val popup = PopupMenu(requireContext(), anchor, Gravity.END)
-        popup.menu.add(0, 1, 0, "🔄 做T信號")
-        popup.menu.add(0, 2, 0, "💰 賣出評估")
-        popup.menu.add(0, 3, 0, "📈 買入評估")
-        popup.menu.add(0, 4, 0, "💎 基本面檢查")
-        popup.menu.add(0, 5, 0, "📊 賣出績效")
-        popup.menu.add(0, 6, 0, "⚡ 執行賣出")
-        popup.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                1 -> showTTradeMenu()
-                2 -> runAutoSellEvaluation()
-                3 -> showBuyEvaluation()
-                4 -> checkFundamentalHealth()
-                5 -> showSellPerformance()
-                6 -> executeAutoSell()
+        val items = arrayOf(
+            "🔄 做T信號",
+            "💰 賣出評估",
+            "📈 買入評估",
+            "💎 基本面檢查",
+            "📊 賣出績效",
+            "⚡ 執行賣出"
+        )
+        AlertDialog.Builder(requireContext())
+            .setTitle("💰 買賣評估")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> showTTradeMenu()
+                    1 -> runAutoSellEvaluation()
+                    2 -> showBuyEvaluation()
+                    3 -> checkFundamentalHealth()
+                    4 -> showSellPerformance()
+                    5 -> executeAutoSell()
+                }
             }
-            true
-        }
-        popup.show()
+            .setNegativeButton("關閉", null)
+            .show()
     }
 
     /** 綜合評估對話框：同時顯示做T信號和賣出評估 */

@@ -135,7 +135,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
             if (strategies.isEmpty()) {
                 withContext(Dispatchers.Main) {
                     statusTv.text = "没有启用的策略"; buildBtn.isEnabled = true
-                    buildBtn.text = "▶ 建仓"; progressBar.visibility = View.GONE
+                    buildBtn.text = "📈建倉"; progressBar.visibility = View.GONE
                 }
                 return
             }
@@ -333,7 +333,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
 
                 statusTv.text = uiText.trimEnd()
                 buildBtn.isEnabled = true
-                buildBtn.text = "▶ 建仓"
+                buildBtn.text = "📈建倉"
                 progressBar.visibility = View.GONE
             }
 
@@ -355,7 +355,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
             withContext(Dispatchers.Main) {
                 statusTv.text = "❌ [DAG] 異常: ${e.message}"
                 buildBtn.isEnabled = true
-                buildBtn.text = "▶ 建仓"
+                buildBtn.text = "📈建倉"
                 progressBar.visibility = View.GONE
             }
         }
@@ -368,7 +368,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
             return
         }
 
-        buildBtn.isEnabled = false; buildBtn.text = "⏳ 执行中..."
+        buildBtn.isEnabled = false; buildBtn.text = "⏳ 執行中..."
         progressBar.visibility = View.VISIBLE; statusTv.text = "🔄 初始化中綫量化..."
 
         lifecycleScope.launch(Dispatchers.IO) {
@@ -381,7 +381,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
                 Log.e(TAG, "[MidTerm] executeTrade failed: ${e.message}", e)
                 withContext(Dispatchers.Main) {
                     statusTv.text = "❌ 执行失败: ${e.message?.take(50)}"
-                    buildBtn.isEnabled = true; buildBtn.text = "▶ 建仓"
+                    buildBtn.isEnabled = true; buildBtn.text = "📈建倉"
                     progressBar.visibility = View.GONE
                 }
             }
@@ -435,12 +435,12 @@ class MidTermQuantFragment : QuantFragmentBase() {
                     sb.appendLine("处理交易日: ${tradeDates.joinToString(", ")}"); sb.appendLine()
                     for (r in allReports) { sb.appendLine(r.summary); sb.appendLine() }
                     showDialog("回溯复盘", sb.toString())
-                    buildBtn.isEnabled = true; buildBtn.text = "▶ 建仓"; progressBar.visibility = View.GONE
+                    buildBtn.isEnabled = true; buildBtn.text = "📈建倉"; progressBar.visibility = View.GONE
                     statusTv.text = "✅ 回溯完成: ${allReports.sumOf { it.buyOrdersAnalyzed.size }}笔订单, ${allReports.sumOf { it.missedOpportunities.size }}个遗漏机会"
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    buildBtn.isEnabled = true; buildBtn.text = "▶ 建仓"; progressBar.visibility = View.GONE
+                    buildBtn.isEnabled = true; buildBtn.text = "📈建倉"; progressBar.visibility = View.GONE
                     statusTv.text = "❌ 回溯失败: ${e.message?.take(50)}"
                     Toast.makeText(requireContext(), "回溯失败: ${e.message}", Toast.LENGTH_LONG).show()
                 }
