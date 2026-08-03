@@ -111,6 +111,43 @@ object AppBackgroundRunner {
             }
         }
 
+        // 啟動時刷新熱門板塊-股票映射（確保 sector_stocks 表覆蓋當前熱門板塊）
+        scope.launch(Dispatchers.IO) {
+            try {
+                kotlinx.coroutines.delay(8000) // 等待板塊池刷新完成
+                val hotSource = EastMoneyHotSectorSource
+                val sectorSource = com.chin.stockanalysis.stock.data.sources.EastMoneySectorSource()
+                val db = StockDatabase.getInstance(context.applicationContext)
+                // 取行業+概念熱門板塊（按 code 去重，用中文名作為 sectorKey）
+                val hotSectors = (hotSource.industrySectors + hotSource.conceptSectors)
+                    .distinctBy { it.code }
+                    .map { it.code to it.name }
+                if (hotSectors.isEmpty()) {
+                    Log.i(TAG, "熱門板塊映射：池為空，跳過")
+                    return@launch
+                }
+                var updated = 0
+                for ((bkCode, sectorName) in hotSectors) {
+                    try {
+                        val stocks = sectorSource.fetchSectorComponents(bkCode, topN = 30, excludeKcb = false, excludeCyb = false)
+                        if (stocks.isEmpty()) continue
+                        val entities = stocks.map { s ->
+                            SectorStockEntity(
+                                sectorKey = sectorName,
+                                sectorName = sectorName,
+                                stockCode = s.code
+                            )
+                        }
+                        db.sectorStockDao().insertAll(entities)
+                        updated++
+                    } catch (_: Exception) {}
+                }
+                Log.i(TAG, "🔥 熱門板塊映射刷新: $updated/${hotSectors.size} 個板塊")
+            } catch (e: Exception) {
+                Log.w(TAG, "熱門板塊映射刷新失敗: ${e.message}")
+            }
+        }
+
         startPositionMonitor(context.applicationContext, scope)
     }
 

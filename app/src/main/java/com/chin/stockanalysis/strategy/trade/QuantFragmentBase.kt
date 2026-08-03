@@ -1953,6 +1953,10 @@ abstract class QuantFragmentBase : Fragment() {
                 val today = java.time.LocalDate.now().toString()
                 val dailySummary = tEngine.getDailySummary(today, periodType)
 
+                // 獲取做T成功率（7天 + 30天）
+                val successRate7d = tEngine.getSuccessRate(7)
+                val successRate30d = tEngine.getSuccessRate(30)
+
                 // 在 IO 線程獲取市場報告（suspend function）
                 val marketReport = try {
                     com.chin.stockanalysis.strategy.market.MarketAnalyzer.analyze(requireContext(), emptyList())
@@ -1961,7 +1965,7 @@ abstract class QuantFragmentBase : Fragment() {
                 withContext(Dispatchers.Main) {
                     // 更新買賣評估按鈕顯示待處理推薦數
                     tTradeBtn.text = if (recStats.todayPending > 0) "💰買賣評估(${recStats.todayPending}) ▾" else "💰買賣評估 ▾"
-                    showTTradeDialog(allSignals, stats, periodType, todayRecommendations, history, recStats, dailySummary, marketReport)
+                    showTTradeDialog(allSignals, stats, periodType, todayRecommendations, history, recStats, dailySummary, marketReport, successRate7d, successRate30d)
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -1980,7 +1984,9 @@ abstract class QuantFragmentBase : Fragment() {
         history: List<TTradeRecommendationEntity>,
         recStats: RecommendationStats,
         dailySummary: DailyTSummary,
-        marketReport: com.chin.stockanalysis.strategy.market.MarketAnalyzer.MarketReport? = null
+        marketReport: com.chin.stockanalysis.strategy.market.MarketAnalyzer.MarketReport? = null,
+        successRate7d: TTradeSuccessRate? = null,
+        successRate30d: TTradeSuccessRate? = null
     ) {
         val dialog = android.app.Dialog(requireContext())
         dialog.setTitle("做T面板 — $periodType")
@@ -2061,6 +2067,51 @@ abstract class QuantFragmentBase : Fragment() {
                 setTextColor(Color.parseColor(if (dailySummary.virtualSuccessRate >= 50) "#2E7D32" else "#C62828"))
                 setPadding(0, 0, 0, 8)
             })
+        }
+
+        // ── 做T成功率統計（7天 / 30天） ──
+        val sr7 = successRate7d
+        val sr30 = successRate30d
+        if ((sr7 != null && sr7.total > 0) || (sr30 != null && sr30.total > 0)) {
+            // 分隔線
+            container.addView(View(requireContext()).apply {
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dpToPx(1))
+                setBackgroundColor(Color.parseColor("#E0E0E0"))
+                setPadding(0, 4, 0, 4)
+            })
+
+            container.addView(TextView(requireContext()).apply {
+                text = "做T成功率:"
+                textSize = 12f; setTypeface(null, android.graphics.Typeface.BOLD)
+                setTextColor(Color.parseColor("#1565C0"))
+                setPadding(0, 4, 0, 4)
+            })
+
+            // 7天成功率
+            if (sr7 != null && sr7.total > 0) {
+                val rateColor = if (sr7.overallSuccessRate >= 50) "#2E7D32" else "#C62828"
+                container.addView(TextView(requireContext()).apply {
+                    text = "近7天: 共${sr7.total}條 | 觸及目標 ${sr7.hitCount}條 (${ "%.1f%%".format(sr7.overallSuccessRate)}) | " +
+                           "盈利 ${sr7.profitableCount}條 (${ "%.1f%%".format(sr7.profitRate)}) | " +
+                           "做T ${sr7.tCount}條(${ "%.0f%%".format(sr7.tSuccessRate)}) 反T ${sr7.rtCount}條(${ "%.0f%%".format(sr7.rtSuccessRate)}) | " +
+                           "均盈 ${"%.2f%%".format(sr7.avgVirtualProfitPct)}"
+                    textSize = 10f; setTextColor(Color.parseColor(rateColor))
+                    setPadding(0, 0, 0, 4)
+                })
+            }
+
+            // 30天成功率
+            if (sr30 != null && sr30.total > 0) {
+                val rateColor30 = if (sr30.overallSuccessRate >= 50) "#2E7D32" else "#C62828"
+                container.addView(TextView(requireContext()).apply {
+                    text = "近30天: 共${sr30.total}條 | 觸及目標 ${sr30.hitCount}條 (${ "%.1f%%".format(sr30.overallSuccessRate)}) | " +
+                           "盈利 ${sr30.profitableCount}條 (${ "%.1f%%".format(sr30.profitRate)}) | " +
+                           "做T ${sr30.tCount}條(${ "%.0f%%".format(sr30.tSuccessRate)}) 反T ${sr30.rtCount}條(${ "%.0f%%".format(sr30.rtSuccessRate)}) | " +
+                           "均盈 ${"%.2f%%".format(sr30.avgVirtualProfitPct)}"
+                    textSize = 10f; setTextColor(Color.parseColor(rateColor30))
+                    setPadding(0, 0, 0, 8)
+                })
+            }
         }
 
         // ── 當前做T信號（即時生成的） ──
@@ -2197,8 +2248,8 @@ abstract class QuantFragmentBase : Fragment() {
                     "EXECUTED" -> "已執行"
                     "IGNORED" -> "已忽略"
                     "EXPIRED" -> "已過期"
-                    "TARGET_HIT" -> "目標觸及"
-                    "TARGET_MISSED" -> "目標未達"
+                    "TARGET_HIT" -> "✅目標觸及"
+                    "TARGET_MISSED" -> "❌目標未達"
                     else -> rec.status
                 }
                 val statusColor = when (rec.status) {
@@ -2216,23 +2267,48 @@ abstract class QuantFragmentBase : Fragment() {
                     "RT_BUY" -> "反T買回"
                     else -> rec.signalType
                 }
+                // 判斷時間（從 createdAt 時間戳）
+                val judgeTime = if (rec.createdAt > 0) {
+                    java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+                        .format(java.util.Date(rec.createdAt))
+                } else ""
+                // 虛擬盈虧
+                val profitStr = if (rec.virtualProfitPct != 0.0) {
+                    "${if (rec.virtualProfitPct > 0) "+" else ""}${"%.2f%%".format(rec.virtualProfitPct)}"
+                } else ""
+                val profitColor = if (rec.virtualProfitPct > 0) "#2E7D32" else if (rec.virtualProfitPct < 0) "#C62828" else "#999999"
 
-                val histRow = LinearLayout(requireContext()).apply {
-                    orientation = LinearLayout.HORIZONTAL
+                val histCard = LinearLayout(requireContext()).apply {
+                    orientation = LinearLayout.VERTICAL
                     setPadding(8, 4, 8, 4)
-                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                        bottomMargin = 2
+                    }
                 }
-                histRow.addView(TextView(requireContext()).apply {
-                    text = "${rec.tradeDate.takeLast(5)} ${rec.stockName.take(6)} $signalLabel"
+                // 第一行：日期 股票 信號 狀態
+                val row1 = LinearLayout(requireContext()).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                }
+                row1.addView(TextView(requireContext()).apply {
+                    text = "${rec.tradeDate.takeLast(5)} $judgeTime ${rec.stockName.take(6)} $signalLabel"
                     textSize = 9f; setTextColor(Color.parseColor("#555555"))
                     layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                 })
-                histRow.addView(TextView(requireContext()).apply {
+                row1.addView(TextView(requireContext()).apply {
                     text = statusLabel
                     textSize = 9f; setTextColor(Color.parseColor(statusColor))
                     setTypeface(null, android.graphics.Typeface.BOLD)
                 })
-                container.addView(histRow)
+                histCard.addView(row1)
+                // 第二行：推薦價 目標價 虛擬盈虧
+                val detailLine = "推薦 ${"%.2f".format(rec.suggestedPrice)} → 目標 ${"%.2f".format(rec.targetPrice)}" +
+                        if (profitStr.isNotEmpty()) " | 盈虧 $profitStr" else ""
+                histCard.addView(TextView(requireContext()).apply {
+                    text = detailLine
+                    textSize = 8f; setTextColor(Color.parseColor(profitColor))
+                    setPadding(0, 1, 0, 0)
+                })
+                container.addView(histCard)
             }
         }
 

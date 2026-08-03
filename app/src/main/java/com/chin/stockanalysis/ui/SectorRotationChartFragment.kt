@@ -134,10 +134,16 @@ class SectorRotationChartFragment : Fragment() {
                     "上個月" to now.minusMonths(1).withDayOfMonth(1)
                 )
 
-                // 取得 top 板塊（按出現頻率）
+                // 取得所有板塊，熱門優先（按 S/A 天數降序）
+                val hotCount = mutableMapOf<String, Int>()
+                for ((code, records) in sectorData) {
+                    hotCount[code] = records.count { it.isHot in listOf("S", "A") }
+                }
                 val topSectors = sectorData.entries
-                    .sortedByDescending { it.value.size }
-                    .take(15)
+                    .sortedWith(
+                        compareByDescending<Map.Entry<String, List<SectorDailyRecordEntity>>> { hotCount[it.key] ?: 0 }
+                            .thenByDescending { it.value.size }
+                    )
                     .map { it.key to it.value.first().sectorName }
 
                 // 計算每個板塊在每個時期的漲跌幅

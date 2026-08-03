@@ -174,12 +174,34 @@ interface TTradeRecommendationDao {
         WHERE id = :id""")
     suspend fun markTargetHit(id: Long, profitPct: Double)
 
-    /** 收盤時標記未觸及目標的推薦 */
+    /** 收盤時標記未觸及目標的推薦（按 ID 逐條更新，避免批量覆蓋） */
+    @Query("""UPDATE t_trade_recommendations SET 
+        virtual_profit_pct = :profitPct,
+        status = CASE WHEN status = 'PENDING' THEN 'TARGET_MISSED' ELSE status END
+        WHERE id = :id""")
+    suspend fun markDayEndById(id: Long, profitPct: Double)
+
+    /** 收盤時標記未觸及目標的推薦（兼容舊調用） */
     @Query("""UPDATE t_trade_recommendations SET 
         virtual_profit_pct = :profitPct,
         status = CASE WHEN status = 'PENDING' THEN 'TARGET_MISSED' ELSE status END
         WHERE trade_date = :date AND status = 'PENDING'""")
     suspend fun markDayEnd(date: String, profitPct: Double = 0.0)
+
+    /** 獲取某段時間範圍內的做T成功率統計 */
+    @Query("""SELECT 
+        COUNT(*) as total,
+        SUM(CASE WHEN target_hit = 1 THEN 1 ELSE 0 END) as hit_count,
+        SUM(CASE WHEN status = 'EXECUTED' THEN 1 ELSE 0 END) as executed_count,
+        SUM(CASE WHEN status IN ('TARGET_HIT','TARGET_MISSED','EXECUTED') AND virtual_profit_pct > 0 THEN 1 ELSE 0 END) as profitable_count,
+        AVG(virtual_profit_pct) as avg_virtual_profit,
+        SUM(CASE WHEN signal_type IN ('T_BUY','T_SELL') THEN 1 ELSE 0 END) as t_count,
+        SUM(CASE WHEN signal_type IN ('RT_SELL','RT_BUY') THEN 1 ELSE 0 END) as rt_count,
+        SUM(CASE WHEN signal_type IN ('T_BUY','T_SELL') AND target_hit = 1 THEN 1 ELSE 0 END) as t_hit,
+        SUM(CASE WHEN signal_type IN ('RT_SELL','RT_BUY') AND target_hit = 1 THEN 1 ELSE 0 END) as rt_hit
+        FROM t_trade_recommendations 
+        WHERE trade_date >= :startDate""")
+    suspend fun getSuccessRateStats(startDate: String): SuccessRateStatsRow?
 
     /** 獲取某日某週期的推薦結果統計 */
     @Query("""SELECT 
@@ -228,4 +250,17 @@ data class DailyTSummary(
     val actualSuccessRate: Double,    // executed中盈利 / executed * 100
     val avgVirtualProfitPct: Double,  // 平均虛擬盈虧%
     val details: List<TTradeRecommendationEntity>
+)
+
+/** 做T成功率統計（跨天匯總） */
+data class SuccessRateStatsRow(
+    val total: Int,
+    @ColumnInfo(name = "hit_count") val hitCount: Int,
+    @ColumnInfo(name = "executed_count") val executedCount: Int,
+    @ColumnInfo(name = "profitable_count") val profitableCount: Int,
+    @ColumnInfo(name = "avg_virtual_profit") val avgVirtualProfit: Double?,
+    @ColumnInfo(name = "t_count") val tCount: Int,
+    @ColumnInfo(name = "rt_count") val rtCount: Int,
+    @ColumnInfo(name = "t_hit") val tHit: Int,
+    @ColumnInfo(name = "rt_hit") val rtHit: Int
 )

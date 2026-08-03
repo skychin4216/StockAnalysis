@@ -46,6 +46,10 @@ object NodeRegistry {
         }
         register("inst_tips") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.InstitutionalTipsNode() }
         register("ma_convergence") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.MaConvergenceNode() }
+        register("base_position_guard") { _, config ->
+            val period = config["holdingPeriod"] ?: "MID"
+            com.chin.stockanalysis.strategy.topology.nodes.BasePositionGuardNode(holdingPeriod = period)
+        }
 
         // 過濾（主力資金）
         register("smart_money_filter") { ctx, config ->

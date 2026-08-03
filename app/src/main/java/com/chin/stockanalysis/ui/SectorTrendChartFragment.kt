@@ -61,6 +61,8 @@ class SectorTrendChartFragment : Fragment() {
     private var sectorRecordMap: Map<String, List<SectorDailyRecordEntity>> = emptyMap()
     // 當前選中的板塊 codes
     private val selectedSectors = mutableSetOf<String>()
+    // 熱門板塊 codes（近30天有 S/A 評級）
+    private var hotSectorCodes: Set<String> = emptySet()
     private var rangeDays = 90
 
     override fun onCreateView(
@@ -171,12 +173,23 @@ class SectorTrendChartFragment : Fragment() {
                     } catch (_: Exception) {}
                 }
 
-                // 找 top 板塊（按出現頻率）
+                // 找所有板塊（不限 rank），統計熱門天數
                 val sectorMap = mutableMapOf<String, String>()
+                val sectorHotDays = mutableMapOf<String, Int>()
                 for (r in recentDays) {
-                    if (r.rank <= 15) sectorMap[r.sectorCode] = r.sectorName
+                    sectorMap[r.sectorCode] = r.sectorName
+                    if (r.isHot in listOf("S", "A")) {
+                        sectorHotDays[r.sectorCode] = (sectorHotDays[r.sectorCode] ?: 0) + 1
+                    }
                 }
-                allTopSectors = sectorMap.entries.map { it.key to it.value }.sortedBy { it.second }
+                // 排序：熱門優先（按熱門天數降序），同級按名稱
+                allTopSectors = sectorMap.entries
+                    .map { it.key to it.value }
+                    .sortedWith(
+                        compareByDescending<Pair<String, String>> { sectorHotDays[it.first] ?: 0 }
+                            .thenBy { it.second }
+                    )
+                hotSectorCodes = sectorHotDays.keys
 
                 // 預載每個板塊的完整記錄
                 val recordMap = mutableMapOf<String, List<SectorDailyRecordEntity>>()
@@ -222,6 +235,10 @@ class SectorTrendChartFragment : Fragment() {
                 if (isSelected) {
                     setTextColor(Color.WHITE)
                     setBackgroundColor(Color.parseColor("#1976D2"))
+                } else if (code in hotSectorCodes) {
+                    // 熱門板塊：紅色底
+                    setTextColor(Color.parseColor("#C62828"))
+                    setBackgroundColor(Color.parseColor("#FFEBEE"))
                 } else {
                     setTextColor(Color.parseColor("#666666"))
                     setBackgroundColor(Color.parseColor("#EEEEEE"))

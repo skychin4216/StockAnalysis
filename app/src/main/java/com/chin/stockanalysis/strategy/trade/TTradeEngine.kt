@@ -494,8 +494,8 @@ class TTradeEngine(private val context: Context) {
                 }
                 else -> 0.0
             }
-            // 更新虛擬盈虧
-            db.tTradeRecommendationDao().markDayEnd(date, profitPct)
+            // 逐條更新虛擬盈虧（修復：避免批量覆蓋）
+            db.tTradeRecommendationDao().markDayEndById(rec.id, profitPct)
         }
         android.util.Log.i("TTradeEngine", "收盤統計: $date 共 ${pending.size} 條推薦已結算")
     }
@@ -560,6 +560,43 @@ class TTradeEngine(private val context: Context) {
             details = details
         )
     }
+
+    /**
+     * 獲取做T成功率（跨天匯總）
+     *
+     * @param days 統計天數（默认7天）
+     * @return TTradeSuccessRate 包含總成功率、做T/反T分別成功率、平均盈虧
+     */
+    suspend fun getSuccessRate(days: Int = 7): TTradeSuccessRate {
+        val db = StockDatabase.getInstance(context)
+        val startDate = java.time.LocalDate.now().minusDays(days.toLong()).toString()
+        val stats = db.tTradeRecommendationDao().getSuccessRateStats(startDate)
+            ?: return TTradeSuccessRate(days, 0, 0, 0, 0.0, 0.0, 0, 0, 0.0, 0.0, 0.0)
+
+        val total = stats.total
+        val hitCount = stats.hitCount
+        val profitableCount = stats.profitableCount
+        val settledCount = stats.tCount + stats.rtCount  // 已結算的記錄
+
+        val overallRate = if (settledCount > 0) hitCount.toDouble() / settledCount * 100 else 0.0
+        val profitRate = if (settledCount > 0) profitableCount.toDouble() / settledCount * 100 else 0.0
+        val tRate = if (stats.tCount > 0) stats.tHit.toDouble() / stats.tCount * 100 else 0.0
+        val rtRate = if (stats.rtCount > 0) stats.rtHit.toDouble() / stats.rtCount * 100 else 0.0
+
+        return TTradeSuccessRate(
+            days = days,
+            total = total,
+            hitCount = hitCount,
+            profitableCount = profitableCount,
+            overallSuccessRate = overallRate,
+            profitRate = profitRate,
+            tCount = stats.tCount,
+            rtCount = stats.rtCount,
+            tSuccessRate = tRate,
+            rtSuccessRate = rtRate,
+            avgVirtualProfitPct = stats.avgVirtualProfit ?: 0.0
+        )
+    }
 }
 
 /**
@@ -568,4 +605,19 @@ class TTradeEngine(private val context: Context) {
 data class RecommendationStats(
     val todayPending: Int,     // 今日待處理推薦數
     val weekExecuted: Int      // 近7天已執行推薦數
+)
+
+/** 做T成功率統計（跨天匯總） */
+data class TTradeSuccessRate(
+    val days: Int,
+    val total: Int,
+    val hitCount: Int,
+    val profitableCount: Int,
+    val overallSuccessRate: Double,   // 目標觸及率 %
+    val profitRate: Double,           // 盈利比例 %
+    val tCount: Int,                  // 做T次數
+    val rtCount: Int,                 // 反T次數
+    val tSuccessRate: Double,         // 做T成功率 %
+    val rtSuccessRate: Double,        // 反T成功率 %
+    val avgVirtualProfitPct: Double   // 平均虛擬盈虧 %
 )

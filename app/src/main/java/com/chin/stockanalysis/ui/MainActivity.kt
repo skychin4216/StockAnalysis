@@ -135,19 +135,10 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch(Dispatchers.IO) {
             android.util.Log.i("MainActivity", "sector_stocks 预热开始...")
-            val sectors = listOf(
-                "半导体" to "BK0447",
-                "医药生物" to "BK0465",
-                "有色金属" to "BK0478",
-                "人工智能" to "BK1064",
-                "通信" to "BK0480",
-                "电子" to "BK0448",
-                "计算机" to "BK0446",
-                "新能源" to "BK0811",
-                "光伏" to "BK1026",
-                "储能" to "BK0816",
-                "军工" to "BK0460"
-            )
+            // 從 SECTOR_CODE_MAP 取所有唯一 BK 代碼對應的板塊（去重）
+            val sectors = com.chin.stockanalysis.stock.data.sources.EastMoneySectorSource.SECTOR_CODE_MAP
+                .entries.distinctBy { it.value }  // 按 BK code 去重
+                .map { it.key to it.value }
             var successCount = 0
             for ((sectorName, sectorCode) in sectors) {
                 try {

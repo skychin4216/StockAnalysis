@@ -1055,19 +1055,18 @@ class StockDetailFragment : Fragment() {
         }
         sb.append("\n建議: $advice")
 
-        // ── 7. K 圖譜 — 經典形態識別（自動匹配趨勢圖譜） ──
+        // ── 7. K 線經典形態識別（自動匹配，對照趨勢參考圖） ──
         val patterns = CandlePatternDetector.detect(snaps)
         if (patterns.isNotEmpty()) {
-            sb.append("\n\n📊 K圖譜:")
+            sb.append("\n\n📋 K線形態:")
             for (p in patterns) {
                 val stars = "★".repeat(p.strength) + "☆".repeat(5 - p.strength)
-                val emoji = if (p.direction == CandlePatternDetector.Direction.BULLISH) "🔺" else "🔻"
-                val action = p.direction.signal
-                sb.append("\n  $emoji ${p.patternName} $stars → $action")
+                val emoji = if (p.direction == CandlePatternDetector.Direction.BULLISH) "🔴" else "🟢"
+                sb.append("\n  $emoji ${p.patternName} $stars (${p.direction.label})")
                 sb.append("\n     ${p.description}")
             }
         } else {
-            sb.append("\n\n📊 K圖譜: 無明顯經典形態")
+            sb.append("\n\n📋 K線形態: 無明顯經典形態")
         }
 
         return sb.toString()
