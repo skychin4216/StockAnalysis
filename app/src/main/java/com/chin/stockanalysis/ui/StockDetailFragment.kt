@@ -166,7 +166,7 @@ class StockDetailFragment : Fragment() {
         // 自動展開 AI 分析區（跳過簡單頁面，直接顯示 K 線+評級+分析按鈕）
         if (autoExpandAi) {
             aiExpanded = true
-            root.findViewWithTag<TextView>("aiHeaderBtn")?.text = "🤖 AI分析 ▼"
+            root.findViewWithTag<TextView>("aiHeaderBtn")?.text = "🤖 AI分析 ⌯"
             aiDetailScrollView.visibility = View.VISIBLE
             if (aiDetailContainer.childCount == 0) {
                 loadKlineAndRatings()
@@ -186,7 +186,7 @@ class StockDetailFragment : Fragment() {
                     aiExpanded = false
                     aiDetailScrollView.visibility = View.GONE
                     aiResultScrollView.visibility = View.GONE
-                    root.findViewWithTag<TextView>("aiHeaderBtn")?.text = "🤖 AI分析 ▶"
+                    root.findViewWithTag<TextView>("aiHeaderBtn")?.text = "🤖 AI分析 ⌵"
                     // 恢復分析按鈕狀態
                     root.findViewWithTag<Button>("btnRunAi")?.let {
                         it.isEnabled = true
@@ -256,7 +256,7 @@ class StockDetailFragment : Fragment() {
         // 右側：AI 分析按鈕
         val aiBtn = TextView(requireContext()).apply {
             tag = "aiHeaderBtn"
-            text = "🤖 AI分析 ▶"
+            text = "🤖 AI分析 ⌵"
             textSize = 11f
             setTextColor(Color.parseColor("#FFFFFF"))
             setBackgroundColor(Color.parseColor("#2E7D32"))
@@ -266,14 +266,14 @@ class StockDetailFragment : Fragment() {
                 aiExpanded = !aiExpanded
                 if (aiExpanded) {
                     aiDetailScrollView.visibility = View.VISIBLE
-                    this@apply.text = "🤖 AI分析 ▼"
+                    this@apply.text = "🤖 AI分析 ⌯"
                     if (aiDetailContainer.childCount == 0) {
                         loadKlineAndRatings()
                     }
                 } else {
                     aiDetailScrollView.visibility = View.GONE
                     aiResultScrollView.visibility = View.GONE
-                    this@apply.text = "🤖 AI分析 ▶"
+                    this@apply.text = "🤖 AI分析 ⌵"
                 }
                 if (::aiDetailContainer.isInitialized) {
                     root.post { root.scrollTo(0, aiDetailContainer.top) }
@@ -506,7 +506,7 @@ class StockDetailFragment : Fragment() {
         aiExpanded = !aiExpanded
         // 更新標題行 AI 按鈕的箭頭
         root.findViewWithTag<TextView>("aiHeaderBtn")?.text =
-            if (aiExpanded) "🤖 AI分析 ▼" else "🤖 AI分析 ▶"
+            if (aiExpanded) "🤖 AI分析 ⌯" else "🤖 AI分析 ⌵"
 
         if (aiExpanded) {
             // 展開：優先顯示 K線 + 機構評級
@@ -1055,19 +1055,19 @@ class StockDetailFragment : Fragment() {
         }
         sb.append("\n建議: $advice")
 
-        // ── 7. K 線經典形態識別（自動匹配，對照趨勢參考圖） ──
+        // ── 7. K 圖譜 — 經典形態識別（自動匹配趨勢圖譜） ──
         val patterns = CandlePatternDetector.detect(snaps)
         if (patterns.isNotEmpty()) {
-            sb.append("\n\n📋 K線形態:")
+            sb.append("\n\n📊 K圖譜:")
             for (p in patterns) {
                 val stars = "★".repeat(p.strength) + "☆".repeat(5 - p.strength)
-                val emoji = if (p.direction == CandlePatternDetector.Direction.BULLISH) "🔴" else "🟢"
-                sb.append("\n  $emoji ${p.patternName} $stars (${p.direction.label})")
+                val emoji = if (p.direction == CandlePatternDetector.Direction.BULLISH) "🔺" else "🔻"
+                val action = p.direction.signal
+                sb.append("\n  $emoji ${p.patternName} $stars → $action")
                 sb.append("\n     ${p.description}")
             }
-            sb.append("\n  💡 參考 docs/trend_charts/index.html 查看形態圖譜")
         } else {
-            sb.append("\n\n📋 K線形態: 無明顯經典形態")
+            sb.append("\n\n📊 K圖譜: 無明顯經典形態")
         }
 
         return sb.toString()

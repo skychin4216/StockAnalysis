@@ -6,21 +6,19 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.ArrayAdapter
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
-import android.widget.Spinner
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
-import com.chin.stockanalysis.R
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.backtest.SectorDailyRecordEntity
-import com.github.mikephil.charting.charts.CombinedChart
+import com.github.mikephil.charting.charts.LineChart
 import com.github.mikephil.charting.components.XAxis
-import com.github.mikephil.charting.data.*
-import com.github.mikephil.charting.data.CandleData
-import com.github.mikephil.charting.data.CandleDataSet
-import com.github.mikephil.charting.data.CandleEntry
+import com.github.mikephil.charting.data.Entry
+import com.github.mikephil.charting.data.LineData
+import com.github.mikephil.charting.data.LineDataSet
+import com.github.mikephil.charting.interfaces.datasets.ILineDataSet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -28,24 +26,42 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 /**
- * 板塊走勢圖 — 展示近期熱門板塊的漲跌/資金/熱度趨勢
+ * 板塊走勢對比 — 多板塊累計漲跌疊加顯示
  *
- * 數據來源：sector_daily_record
- * 圖表：CombinedChart（折線 + 柱狀）
+ * 設計概念：
+ * - 多條折線疊加，每條代表一個板塊的累計指數（基準=100）
+ * - 板塊通過 chip 切換/多選，最多同時顯示 5 條
+ * - 時間範圍可選：1月/3月/6月/1年/全部
  */
 class SectorTrendChartFragment : Fragment() {
 
     private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
     private val SHORT_DATE = DateTimeFormatter.ofPattern("MM/dd")
 
-    private lateinit var chart: CombinedChart
-    private lateinit var spinner: Spinner
+    // 板塊顏色盤（最多 8 種）
+    private val SECTOR_COLORS = intArrayOf(
+        0xFF1976D2.toInt(), // 藍
+        0xFFE53935.toInt(), // 紅
+        0xFF43A047.toInt(), // 綠
+        0xFFFF9800.toInt(), // 橙
+        0xFF9C27B0.toInt(), // 紫
+        0xFF00ACC1.toInt(), // 青
+        0xFFF4511E.toInt(), // 深橙
+        0xFF6D4C41.toInt(), // 棕
+    )
+
+    private lateinit var chart: LineChart
     private lateinit var infoTv: TextView
     private lateinit var rangeRow: LinearLayout
+    private lateinit var chipContainer: LinearLayout
 
-    private var sectorRecords: List<SectorDailyRecordEntity> = emptyList()
-    private var allTopSectors: List<Pair<String, String>> = emptyList() // code to name
-    private var rangeDays = 90 // 預設 3 個月
+    // 所有可用板塊
+    private var allTopSectors: List<Pair<String, String>> = emptyList()
+    // 所有板塊的完整記錄（code -> records）
+    private var sectorRecordMap: Map<String, List<SectorDailyRecordEntity>> = emptyMap()
+    // 當前選中的板塊 codes
+    private val selectedSectors = mutableSetOf<String>()
+    private var rangeDays = 90
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
@@ -61,63 +77,36 @@ class SectorTrendChartFragment : Fragment() {
             setPadding(8, 8, 8, 8)
         }
 
-        // 標題行
-        val titleRow = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        // ── 板塊 Chip 行（可橫向滾動）──
+        val chipScroll = HorizontalScrollView(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
+            isHorizontalScrollBarEnabled = false
         }
-        val titleTv = TextView(ctx).apply {
-            text = "板塊走勢"
-            textSize = 16f
-            setTextColor(Color.parseColor("#333333"))
+        chipContainer = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, 6)
         }
-        titleRow.addView(titleTv)
-        root.addView(titleRow)
+        chipScroll.addView(chipContainer)
+        root.addView(chipScroll)
 
-        // 板塊選擇器
-        spinner = Spinner(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = 8 }
-        }
-        spinner.setOnItemSelectedListener(object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
-                if (position < allTopSectors.size) {
-                    loadSectorChart(allTopSectors[position].first)
-                }
-            }
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
-        })
-        root.addView(spinner)
-
-        // 時間範圍選擇按鈕行
+        // ── 時間範圍按鈕行 ──
         rangeRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 4, 0, 4)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
+            setPadding(0, 2, 0, 4)
         }
-        data class RangeBtn(val label: String, val days: Int)
         val rangeBtns = listOf(
-            RangeBtn("1月", 30),
-            RangeBtn("3月", 90),
-            RangeBtn("6月", 120),
-            RangeBtn("1年", 250),
-            RangeBtn("全部", 0)
+            "1月" to 30, "3月" to 90, "6月" to 120, "1年" to 250, "全部" to 0
         )
-        for (rb in rangeBtns) {
-            val isActive = rangeDays == rb.days
+        for ((label, days) in rangeBtns) {
+            val isActive = rangeDays == days
             val btn = TextView(ctx).apply {
-                text = rb.label
+                text = label
                 textSize = 10f
+                tag = days
                 setTextColor(if (isActive) Color.WHITE else Color.parseColor("#666666"))
                 setBackgroundColor(if (isActive) Color.parseColor("#1976D2") else Color.parseColor("#EEEEEE"))
                 setPadding(12, 4, 12, 4)
@@ -126,7 +115,8 @@ class SectorTrendChartFragment : Fragment() {
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 ).apply { marginEnd = 4 }
                 setOnClickListener {
-                    rangeDays = rb.days
+                    rangeDays = days
+                    updateRangeButtons()
                     renderChart()
                 }
             }
@@ -134,48 +124,45 @@ class SectorTrendChartFragment : Fragment() {
         }
         root.addView(rangeRow)
 
-        // 信息文字
+        // ── 信息欄 ──
         infoTv = TextView(ctx).apply {
-            textSize = 11f
+            textSize = 10f
             setTextColor(Color.parseColor("#666666"))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = 4 }
+            setPadding(0, 0, 0, 4)
         }
         root.addView(infoTv)
 
-        // 圖表
-        chart = CombinedChart(ctx).apply {
+        // ── 折線圖 ──
+        chart = LineChart(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0, 1f
-            ).apply { topMargin = 8 }
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+            )
             description.isEnabled = false
             setDrawGridBackground(false)
-            setDrawBarShadow(false)
-            setDrawValueAboveBar(false)
-            setHighlightFullBarEnabled(false)
             setPinchZoom(true)
             setScaleEnabled(true)
             isDoubleTapToZoomEnabled = true
+            legend.isEnabled = true
+            legend.textSize = 9f
+            legend.textColor = Color.parseColor("#666666")
+            legend.setDrawInside(false)
         }
         root.addView(chart)
 
-        // 載入數據
-        loadTopSectors()
-
+        loadAllData()
         return root
     }
 
-    private fun loadTopSectors() {
+    // ══════════════════════════════════════
+    // 數據載入
+    // ══════════════════════════════════════
+
+    private fun loadAllData() {
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val db = StockDatabase.getInstance(requireContext())
-                // 取最近 30 天的 top 板塊
                 var recentDays = db.sectorDailyRecordDao().getRecentDays(30)
 
-                // 如果本地無數據，嘗試即時抓取
                 if (recentDays.isEmpty()) {
                     try {
                         val engine = com.chin.stockanalysis.strategy.backtest.SectorRotationEngine(requireContext())
@@ -184,28 +171,31 @@ class SectorTrendChartFragment : Fragment() {
                     } catch (_: Exception) {}
                 }
 
-                val sectorMap = mutableMapOf<String, String>() // code to name
+                // 找 top 板塊（按出現頻率）
+                val sectorMap = mutableMapOf<String, String>()
                 for (r in recentDays) {
-                    if (r.rank <= 15) { // 只取每天前 15 名
-                        sectorMap[r.sectorCode] = r.sectorName
-                    }
+                    if (r.rank <= 15) sectorMap[r.sectorCode] = r.sectorName
                 }
                 allTopSectors = sectorMap.entries.map { it.key to it.value }.sortedBy { it.second }
 
+                // 預載每個板塊的完整記錄
+                val recordMap = mutableMapOf<String, List<SectorDailyRecordEntity>>()
+                for ((code, _) in allTopSectors) {
+                    recordMap[code] = db.sectorDailyRecordDao()
+                        .getBySectorCode(code, 250).sortedBy { it.date }
+                }
+                sectorRecordMap = recordMap
+
                 withContext(Dispatchers.Main) {
                     if (allTopSectors.isEmpty()) {
-                        infoTv.text = "暫無板塊歷史數據，請等待每日板塊數據更新"
+                        infoTv.text = "暫無板塊數據，請等待更新"
                         return@withContext
                     }
-                    // 填充 Spinner
-                    val names = allTopSectors.map { it.second }
-                    val adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, names)
-                    adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-                    spinner.adapter = adapter
-                    // 自動載入第一個板塊
-                    if (allTopSectors.isNotEmpty()) {
-                        loadSectorChart(allTopSectors[0].first)
-                    }
+                    // 預設選中前 3 個板塊
+                    selectedSectors.clear()
+                    allTopSectors.take(3).forEach { selectedSectors.add(it.first) }
+                    buildChips()
+                    renderChart()
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -215,197 +205,137 @@ class SectorTrendChartFragment : Fragment() {
         }
     }
 
-    private fun loadSectorChart(sectorCode: String) {
-        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val db = StockDatabase.getInstance(requireContext())
-                sectorRecords = db.sectorDailyRecordDao()
-                    .getBySectorCode(sectorCode, 250)
-                    .sortedBy { it.date }
+    // ══════════════════════════════════════
+    // Chip 構建
+    // ══════════════════════════════════════
 
-                withContext(Dispatchers.Main) {
+    private fun buildChips() {
+        chipContainer.removeAllViews()
+        val ctx = requireContext()
+        for ((code, name) in allTopSectors) {
+            val isSelected = code in selectedSectors
+            val chip = TextView(ctx).apply {
+                text = name
+                textSize = 10f
+                setPadding(10, 4, 10, 4)
+                tag = code
+                if (isSelected) {
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(Color.parseColor("#1976D2"))
+                } else {
+                    setTextColor(Color.parseColor("#666666"))
+                    setBackgroundColor(Color.parseColor("#EEEEEE"))
+                }
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { marginEnd = 4 }
+                setOnClickListener {
+                    if (code in selectedSectors) {
+                        if (selectedSectors.size > 1) selectedSectors.remove(code)
+                    } else {
+                        if (selectedSectors.size >= 5) {
+                            // 最多 5 條，移除最早的
+                            selectedSectors.remove(selectedSectors.first())
+                        }
+                        selectedSectors.add(code)
+                    }
+                    buildChips()
                     renderChart()
                 }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    infoTv.text = "載入圖表失敗: ${e.message?.take(50)}"
-                }
             }
+            chipContainer.addView(chip)
         }
     }
 
+    // ══════════════════════════════════════
+    // 圖表渲染
+    // ══════════════════════════════════════
+
     private fun renderChart() {
-        if (sectorRecords.isEmpty()) {
-            infoTv.text = "無歷史數據"
+        if (selectedSectors.isEmpty() || sectorRecordMap.isEmpty()) return
+
+        // 找到所有選中板塊的日期並集（用於 X 軸）
+        val allDates = sortedSetOf<String>()
+        val sectorLineData = mutableListOf<Pair<String, List<SectorDailyRecordEntity>>>()
+
+        for (code in selectedSectors) {
+            val records = sectorRecordMap[code] ?: continue
+            val filtered = if (rangeDays <= 0) records else records.takeLast(rangeDays)
+            if (filtered.isEmpty()) continue
+            filtered.forEach { allDates.add(it.date) }
+            sectorLineData.add(code to filtered)
+        }
+
+        if (allDates.isEmpty() || sectorLineData.isEmpty()) {
+            infoTv.text = "所選範圍無數據"
             return
         }
 
-        // 按時間範圍篩選
-        val filteredRecords = if (rangeDays == 0) {
-            sectorRecords
-        } else {
-            sectorRecords.takeLast(rangeDays)
-        }
+        val dateList = allDates.toList()
+        val dateIndexMap = dateList.withIndex().associate { (i, d) -> d to i }
 
-        if (filteredRecords.isEmpty()) {
-            infoTv.text = "此時間範圍內無數據"
-            return
-        }
+        // 為每個板塊構建累計指數折線
+        val lineDataSets = mutableListOf<LineDataSet>()
+        val infoParts = mutableListOf<String>()
 
-        // 更新按鈕狀態
-        updateRangeButtons()
+        for ((idx, code) in selectedSectors.withIndex()) {
+            val records = sectorRecordMap[code] ?: continue
+            val filtered = if (rangeDays <= 0) records else records.takeLast(rangeDays)
+            if (filtered.isEmpty()) continue
 
-        val sectorName = filteredRecords.first().sectorName
-        val dates = filteredRecords.map {
-            try { LocalDate.parse(it.date, DATE_FMT).format(SHORT_DATE) }
-            catch (_: Exception) { it.date.takeLast(5) }
-        }
+            val name = records.first().sectorName
+            val color = SECTOR_COLORS[idx % SECTOR_COLORS.size]
 
-        // ── 構建累計指數（基準=100）──
-        val indexValues = mutableListOf<Double>()
-        var cumulativeIndex = 100.0
-        for (r in filteredRecords) {
-            cumulativeIndex *= (1 + r.changePct / 100)
-            indexValues.add(cumulativeIndex)
-        }
+            // 構建累計指數
+            val entries = mutableListOf<Entry>()
+            var cumIndex = 100.0
+            for (r in filtered) {
+                cumIndex *= (1 + r.changePct / 100)
+                val xIdx = dateIndexMap[r.date] ?: continue
+                entries.add(Entry(xIdx.toFloat(), cumIndex.toFloat()))
+            }
 
-        // ── 構建 OHLC 模擬（用於 K 線顯示）──
-        // 由於板塊只有漲跌幅，我們用漲跌幅模擬 K 線形態
-        val candleEntries = filteredRecords.mapIndexed { index, r ->
-            val baseValue = if (index == 0) 100.0 else indexValues[index - 1]
-            val closeValue = indexValues[index]
-            val openValue = baseValue
-            // 模擬高低點：用漲跌幅的絕對值作為波動範圍
-            val volatility = kotlin.math.abs(r.changePct) * baseValue / 100
-            val highValue = maxOf(openValue, closeValue) + volatility * 0.3
-            val lowValue = minOf(openValue, closeValue) - volatility * 0.3
-            CandleEntry(
-                index.toFloat(),
-                highValue.toFloat(),
-                lowValue.toFloat(),
-                openValue.toFloat(),
-                closeValue.toFloat()
-            )
-        }
+            if (entries.isNotEmpty()) {
+                lineDataSets.add(LineDataSet(entries, name).apply {
+                    this.color = color
+                    lineWidth = 1.8f
+                    setDrawCircles(false)
+                    setDrawValues(false)
+                    isHighlightEnabled = true
+                    setHighlightLineWidth(1f)
+                    mode = LineDataSet.Mode.LINEAR
+                })
 
-        // ── 均線計算 ──
-        val ma5Entries = calcMA(indexValues, 5)
-        val ma10Entries = calcMA(indexValues, 10)
-        val ma20Entries = calcMA(indexValues, 20)
-
-        // ── 成交量柱狀（資金流入）──
-        val inflowMax = filteredRecords.map { kotlin.math.abs(it.mainNetInflow) }.maxOrNull() ?: 1.0
-        val volumeEntries = filteredRecords.mapIndexed { index, r ->
-            BarEntry(index.toFloat(), (r.mainNetInflow / inflowMax * 30).toFloat())
-        }
-
-        // ── 建立圖表 ──
-        chart.apply {
-            setBackgroundColor(Color.WHITE)
-            description.isEnabled = false
-            legend.isEnabled = true
-            legend.textSize = 9f
-            legend.textColor = Color.parseColor("#666666")
-            setScaleEnabled(true)
-            setPinchZoom(true)
-            setDragEnabled(true)
-            setDoubleTapToZoomEnabled(true)
-            setHighlightPerTapEnabled(true)
-            setHighlightPerDragEnabled(true)
-            setVisibleXRangeMaximum(250f)
-            setVisibleXRangeMinimum(10f)
-            drawOrder = arrayOf(
-                CombinedChart.DrawOrder.CANDLE,
-                CombinedChart.DrawOrder.LINE,
-                CombinedChart.DrawOrder.BAR
-            )
-            // 定位到最新數據
-            if (filteredRecords.size > 60) {
-                moveViewToX((filteredRecords.size - 60).toFloat())
-            } else {
-                moveViewToX(0f)
+                // 信息欄
+                val latestIndex = cumIndex
+                val totalChange = (cumIndex - 100.0) / 100.0 * 100
+                val latest5 = filtered.takeLast(5)
+                val avg5 = latest5.map { it.changePct }.average()
+                infoParts.add("$name: ${"%.1f".format(latestIndex)}(${if (totalChange >= 0) "+" else ""}${"%.1f".format(totalChange)}%)")
             }
         }
 
-        // ── K 線數據 ──
-        val candleDataSet = CandleDataSet(candleEntries, "板塊指數").apply {
-            color = Color.parseColor("#333333")
-            shadowColor = Color.parseColor("#999999")
-            shadowWidth = 1f
-            increasingPaintStyle = android.graphics.Paint.Style.FILL
-            decreasingPaintStyle = android.graphics.Paint.Style.FILL
-            increasingColor = Color.parseColor("#E53935")  // 漲紅
-            decreasingColor = Color.parseColor("#43A047")  // 跌綠
-            setDrawValues(false)
-            isHighlightEnabled = true
-            setDrawHighlightIndicators(true)
-            setHighLightColor(Color.parseColor("#999999"))
-            setHighlightLineWidth(1f)
-            enableDashedHighlightLine(8f, 4f, 0f)
-        }
+        // 更新圖表
+        chart.data = LineData(lineDataSets as List<ILineDataSet>)
 
-        // ── 均線數據 ──
-        val lineData = LineData()
-        if (ma5Entries.isNotEmpty()) {
-            lineData.addDataSet(LineDataSet(ma5Entries, "MA5").apply {
-                color = Color.parseColor("#FF9800")
-                lineWidth = 1.2f
-                setDrawCircles(false)
-                setDrawValues(false)
-                isHighlightEnabled = false
-            })
-        }
-        if (ma10Entries.isNotEmpty()) {
-            lineData.addDataSet(LineDataSet(ma10Entries, "MA10").apply {
-                color = Color.parseColor("#2196F3")
-                lineWidth = 1.2f
-                setDrawCircles(false)
-                setDrawValues(false)
-                isHighlightEnabled = false
-            })
-        }
-        if (ma20Entries.isNotEmpty()) {
-            lineData.addDataSet(LineDataSet(ma20Entries, "MA20").apply {
-                color = Color.parseColor("#9C27B0")
-                lineWidth = 1.2f
-                setDrawCircles(false)
-                setDrawValues(false)
-                isHighlightEnabled = false
-            })
-        }
-
-        // ── 成交量數據 ──
-        val volumeDataSet = BarDataSet(volumeEntries, "資金流入").apply {
-            // 根據漲跌著色
-            val colors = filteredRecords.map { r ->
-                if (r.changePct >= 0) Color.parseColor("#33E53935") else Color.parseColor("#3343A047")
-            }
-            setColors(colors)
-            setDrawValues(false)
-            barShadowColor = Color.TRANSPARENT
-        }
-
-        // ── 組合數據 ──
-        val combinedData = CombinedData()
-        combinedData.setData(CandleData(candleDataSet))
-        combinedData.setData(lineData)
-        combinedData.setData(BarData(volumeDataSet))
-        chart.data = combinedData
-
-        // ── X 軸 ──
+        // X 軸
         chart.xAxis.apply {
             position = XAxis.XAxisPosition.BOTTOM
             setDrawGridLines(false)
-            labelCount = dates.size.coerceAtMost(8)
+            labelCount = dateList.size.coerceAtMost(8)
             valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
                 override fun getFormattedValue(value: Float): String {
-                    val idx = value.toInt()
-                    return if (idx in dates.indices) dates[idx] else ""
+                    val i = value.toInt()
+                    return if (i in dateList.indices) {
+                        try { LocalDate.parse(dateList[i], DATE_FMT).format(SHORT_DATE) }
+                        catch (_: Exception) { dateList[i].takeLast(5) }
+                    } else ""
                 }
             }
         }
 
-        // ── 左 Y 軸（指數）──
+        // Y 軸
         chart.axisLeft.apply {
             setDrawGridLines(true)
             gridColor = Color.parseColor("#EEEEEE")
@@ -414,51 +344,29 @@ class SectorTrendChartFragment : Fragment() {
                 override fun getFormattedValue(value: Float): String = "${"%.1f".format(value)}"
             }
         }
+        chart.axisRight.setDrawGridLines(false)
 
-        // ── 右 Y 軸（成交量）──
-        chart.axisRight.apply {
-            setDrawGridLines(false)
-            valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
-                override fun getFormattedValue(value: Float): String = "${"%.0f".format(value)}"
-            }
+        // 定位到最新
+        if (dateList.size > 60) {
+            chart.moveViewToX((dateList.size - 60).toFloat())
+        } else {
+            chart.moveViewToX(0f)
         }
-
         chart.invalidate()
 
-        // ── 更新信息欄 ──
-        val latest = filteredRecords.last()
-        val latestIndex = indexValues.last()
-        val avgChange = filteredRecords.takeLast(5).map { it.changePct }.average()
-        val totalInflow = filteredRecords.takeLast(5).sumOf { it.mainNetInflow }
-        val hotDays = filteredRecords.takeLast(10).count { it.isHot in listOf("S", "A") }
-        infoTv.text = "$sectorName | 指數: ${"%.2f".format(latestIndex)} | " +
-            "最新: ${"%.2f".format(latest.changePct)}% | " +
-            "5日均漲: ${"%.2f".format(avgChange)}% | " +
-            "5日資金: ${"%.0f".format(totalInflow)}億 | " +
-            "10日熱天: $hotDays"
+        // 信息欄
+        infoTv.text = infoParts.joinToString("  |  ")
+        updateRangeButtons()
     }
 
-    /** 計算移動平均線 */
-    private fun calcMA(values: List<Double>, period: Int): List<Entry> {
-        if (values.size < period) return emptyList()
-        val result = mutableListOf<Entry>()
-        for (i in (period - 1) until values.size) {
-            val sum = values.subList(i - period + 1, i + 1).sum()
-            result.add(Entry(i.toFloat(), (sum / period).toFloat()))
-        }
-        return result
-    }
+    // ══════════════════════════════════════
+    // 工具
+    // ══════════════════════════════════════
 
     private fun updateRangeButtons() {
         for (i in 0 until rangeRow.childCount) {
             val btn = rangeRow.getChildAt(i) as? TextView ?: continue
-            val days = when (btn.text.toString()) {
-                "1月" -> 30
-                "3月" -> 90
-                "6月" -> 120
-                "1年" -> 250
-                else -> 0
-            }
+            val days = btn.tag as? Int ?: continue
             val isActive = rangeDays == days
             btn.setTextColor(if (isActive) Color.WHITE else Color.parseColor("#666666"))
             btn.setBackgroundColor(if (isActive) Color.parseColor("#1976D2") else Color.parseColor("#EEEEEE"))
