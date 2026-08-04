@@ -568,15 +568,21 @@ class TopologyEditorActivity : AppCompatActivity() {
             var pipelineDesc = ""
             val nodes = mutableListOf<PipelineXmlParser.EditableNode>()
             val links = mutableListOf<PipelineXmlParser.EditableLink>()
+            var currentGroupId = ""  // 追蹤當前所在的 Pipeline 分組
 
             var eventType = parser.eventType
             while (eventType != XmlPullParser.END_DOCUMENT) {
                 when (eventType) {
                     XmlPullParser.START_TAG -> when (parser.name) {
-                        "DagPipeline", "dagPipeline", "Pipeline" -> {
+                        "DagPipeline", "dagPipeline" -> {
                             pipelineId = parser.getAttributeValue(null, "id") ?: ""
                             pipelineName = parser.getAttributeValue(null, "name") ?: ""
                             pipelineDesc = parser.getAttributeValue(null, "description") ?: ""
+                        }
+                        // ── 子 Pipeline 分組塊 ──
+                        "Pipeline" -> {
+                            val gId = parser.getAttributeValue(null, "id")
+                            if (!gId.isNullOrBlank()) currentGroupId = gId
                         }
                         "Node", "node" -> {
                             val id = parser.getAttributeValue(null, "id") ?: ""
@@ -604,7 +610,8 @@ class TopologyEditorActivity : AppCompatActivity() {
                                     ne = parser.next()
                                 }
                                 nodes.add(PipelineXmlParser.EditableNode(
-                                    id = id, module = module, name = name, config = config
+                                    id = id, module = module, name = name, config = config,
+                                    pipelineGroup = currentGroupId
                                 ))
                             }
                         }
@@ -641,6 +648,9 @@ class TopologyEditorActivity : AppCompatActivity() {
                                 links.add(PipelineXmlParser.EditableLink(fromId = from, toId = to))
                             }
                         }
+                    }
+                    XmlPullParser.END_TAG -> when (parser.name) {
+                        "Pipeline" -> currentGroupId = ""
                     }
                 }
                 eventType = parser.next()
@@ -741,7 +751,8 @@ class TopologyEditorActivity : AppCompatActivity() {
                 nodeType = nodeType,
                 x = existing?.x ?: 0f,
                 y = existing?.y ?: 0f,
-                config = en.config
+                config = en.config,
+                pipelineGroupId = en.pipelineGroup
             )
         }
 

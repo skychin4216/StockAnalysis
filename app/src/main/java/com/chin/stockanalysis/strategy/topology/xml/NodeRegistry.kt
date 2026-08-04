@@ -47,6 +47,11 @@ object NodeRegistry {
         register("inst_tips") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.InstitutionalTipsNode() }
         register("ma_convergence") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.MaConvergenceNode() }
         register("market_ma_check") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.MarketMaConvergenceCheckNode() }
+        register("market_ma_unified") { _, config ->
+            val threshold = config["threshold"]?.toDoubleOrNull() ?: 0.02
+            val mode = config["checkMode"] ?: "full"
+            com.chin.stockanalysis.strategy.topology.nodes.MarketMaUnifiedNode(threshold = threshold, checkMode = mode)
+        }
         register("strict_selection") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.StrictSelectionNode() }
         register("base_position_guard") { _, config ->
             val period = config["holdingPeriod"] ?: "MID"

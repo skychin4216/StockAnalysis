@@ -445,18 +445,38 @@ object PipelineXmlParser {
 
             val dagNodes = mutableListOf<DagNode>()
             val dagEdges = mutableListOf<DagEdge>()
+            val pipelineGroups = mutableListOf<PipelineGroup>()
 
             var eventType = parser.eventType
             while (eventType != XmlPullParser.END_DOCUMENT) {
                 when (eventType) {
                     XmlPullParser.START_TAG -> when (parser.name) {
-                        "DagPipeline", "dagPipeline", "Pipeline" -> {
+                        "DagPipeline", "dagPipeline" -> {
                             pipelineId = parser.getAttributeValue(null, "id") ?: ""
                             pipelineName = parser.getAttributeValue(null, "name") ?: ""
                             pipelineDesc = parser.getAttributeValue(null, "description") ?: ""
                         }
                         "PipelineName" -> {
                             if (pipelineName.isBlank()) pipelineName = parser.nextText().trim()
+                        }
+                        // ── 子 Pipeline 分組塊 ──
+                        "Pipeline" -> {
+                            val groupId = parser.getAttributeValue(null, "id") ?: ""
+                            val groupName = parser.getAttributeValue(null, "name") ?: ""
+                            val groupParams = parseConfigParams(parser)
+                            if (groupId.isNotBlank()) {
+                                val groupNodes = mutableListOf<DagNode>()
+                                val groupEdges = mutableListOf<DagEdge>()
+                                parsePipelineGroup(parser, context, groupId, groupName, groupParams, groupNodes, groupEdges)
+                                dagNodes.addAll(groupNodes)
+                                dagEdges.addAll(groupEdges)
+                                pipelineGroups.add(PipelineGroup(
+                                    id = groupId,
+                                    name = groupName,
+                                    nodeIds = groupNodes.map { it.nodeId }.toSet(),
+                                    params = groupParams
+                                ))
+                            }
                         }
                         "NodeList", "nodeList" -> {
                             parseDagNodes(parser, context, dagNodes)
@@ -478,18 +498,54 @@ object PipelineXmlParser {
                 return null
             }
 
-            Log.i(TAG, "DAG Pipeline 解析: $pipelineId ($pipelineName) — ${dagNodes.size} nodes, ${dagEdges.size} edges")
+            Log.i(TAG, "DAG Pipeline 解析: $pipelineId ($pipelineName) — ${dagNodes.size} nodes, ${dagEdges.size} edges" +
+                if (pipelineGroups.isNotEmpty()) ", ${pipelineGroups.size} groups" else "")
 
             DagPipeline(
                 id = pipelineId,
                 name = pipelineName,
                 description = pipelineDesc,
                 nodes = dagNodes,
-                edges = dagEdges
+                edges = dagEdges,
+                pipelineGroups = pipelineGroups
             )
         } catch (e: Exception) {
             Log.e(TAG, "DAG Pipeline XML 解析失敗: ${e.message}", e)
             null
+        }
+    }
+
+    /**
+     * 解析 <Pipeline id="..." name="..."> 分組塊。
+     *
+     * 內部包含 <NodeList> 和 <Links>，節點自動標記 pipelineGroup。
+     * 支持 ${param} 模板變量替換。
+     */
+    private fun parsePipelineGroup(
+        parser: XmlPullParser, context: Context,
+        groupId: String, groupName: String, params: Map<String, String>,
+        groupNodes: MutableList<DagNode>, groupEdges: MutableList<DagEdge>
+    ) {
+        val depth = parser.depth
+        var eventType = parser.next()
+        while (!(eventType == XmlPullParser.END_TAG && parser.depth == depth &&
+            parser.name == "Pipeline") && eventType != XmlPullParser.END_DOCUMENT) {
+            if (eventType == XmlPullParser.START_TAG) {
+                when (parser.name) {
+                    "NodeList", "nodeList" -> {
+                        parseDagNodes(parser, context, groupNodes, groupId, params)
+                    }
+                    "Links", "links" -> {
+                        parseDagEdges(parser, groupEdges)
+                    }
+                }
+            }
+            eventType = parser.next()
+        }
+        // 標記 pipelineGroup
+        for (i in groupNodes.indices) {
+            val n = groupNodes[i]
+            groupNodes[i] = n.copy(pipelineGroup = groupId)
         }
     }
 
@@ -501,8 +557,16 @@ object PipelineXmlParser {
      *    <Node><nodeName>市場上下文</nodeName><NodeId>n_ctx</NodeId><module>market_context</module></Node>
      * 2. 屬性風格（簡寫）：
      *    <Node id="n_ctx" name="市場上下文" module="market_context" />
+     *
+     * @param groupId 所屬 Pipeline 分組 ID（空 = 未分組）
+     * @param params 模板變量替換（${key} → value）
      */
-    private fun parseDagNodes(parser: XmlPullParser, context: Context, dagNodes: MutableList<DagNode>) {
+    private fun parseDagNodes(
+        parser: XmlPullParser, context: Context,
+        dagNodes: MutableList<DagNode>,
+        groupId: String = "",
+        params: Map<String, String> = emptyMap()
+    ) {
         val depth = parser.depth
         var eventType = parser.next()
         while (!(eventType == XmlPullParser.END_TAG && parser.depth == depth &&
@@ -513,13 +577,17 @@ object PipelineXmlParser {
                 val attrId = parser.getAttributeValue(null, "id")
                 val attrName = parser.getAttributeValue(null, "name")
                 val attrModule = parser.getAttributeValue(null, "module")
-                val attrConfig = parseConfigParams(parser)
+                val rawConfig = parseConfigParams(parser)
+                // 模板變量替換
+                val attrConfig = if (params.isNotEmpty()) {
+                    rawConfig.mapValues { (_, v) -> resolveTemplateVars(v, params) }
+                } else rawConfig
 
                 if (!attrId.isNullOrBlank() && !attrModule.isNullOrBlank()) {
                     // 屬性風格
                     val node = NodeRegistry.createNode(attrModule, attrConfig, context)
                     if (node != null) {
-                        dagNodes.add(DagNode(attrId, attrName ?: attrModule, node))
+                        dagNodes.add(DagNode(attrId, attrName ?: attrModule, node, groupId))
                     } else {
                         Log.e(TAG, "DAG Node 創建失敗: id=$attrId, module=$attrModule")
                     }
@@ -547,10 +615,15 @@ object PipelineXmlParser {
                         ne = parser.next()
                     }
 
+                    // 模板變量替換
+                    if (params.isNotEmpty()) {
+                        nodeConfig = nodeConfig.mapValues { (_, v) -> resolveTemplateVars(v, params) }.toMutableMap()
+                    }
+
                     if (nodeId.isNotBlank() && module.isNotBlank()) {
                         val node = NodeRegistry.createNode(module, nodeConfig, context)
                         if (node != null) {
-                            dagNodes.add(DagNode(nodeId, nodeName.ifBlank { module }, node))
+                            dagNodes.add(DagNode(nodeId, nodeName.ifBlank { module }, node, groupId))
                         } else {
                             Log.e(TAG, "DAG Node 創建失敗: id=$nodeId, module=$module")
                         }
@@ -559,6 +632,19 @@ object PipelineXmlParser {
             }
             eventType = parser.next()
         }
+    }
+
+    /**
+     * 解析 config value 中的 ${param} 模板變量。
+     * 例：resolveTemplateVars("${threshold}", mapOf("threshold" to "0.015")) → "0.015"
+     */
+    private fun resolveTemplateVars(value: String, params: Map<String, String>): String {
+        if (!value.contains("\${")) return value
+        var result = value
+        for ((k, v) in params) {
+            result = result.replace("\${$k}", v)
+        }
+        return result
     }
 
     /**
@@ -644,7 +730,8 @@ object PipelineXmlParser {
         val id: String,
         val module: String,
         val name: String = "",
-        val config: Map<String, String> = emptyMap()
+        val config: Map<String, String> = emptyMap(),
+        val pipelineGroup: String = ""
     )
 
     /** 編輯器中的 Link 表示 */

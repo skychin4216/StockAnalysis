@@ -1,0 +1,212 @@
+package com.chin.stockanalysis.strategy.topology.nodes
+
+import android.util.Log
+import com.chin.stockanalysis.stock.database.StockDatabase
+import com.chin.stockanalysis.strategy.analysis.MaConvergenceAnalyzer
+import com.chin.stockanalysis.strategy.topology.core.*
+
+/**
+ * ## 大盤均線統一檢查節點（Unified Market MA Check）
+ *
+ * 合併原 MaConvergenceNode（1.5% 閾值）+ MarketMaConvergenceCheckNode（3% 閾值）為一。
+ * 透過 config 參數 `threshold` 控制粘合判定靈敏度，
+ * 同時輸出 [MaConvergenceResult] 和 [MarketMaCheckResult] 以兼容下游。
+ *
+ * ### 偵測項目
+ * 1. 均線粘合度（MaConvergenceAnalyzer，可配置閾值）
+ * 2. 多頭排列（MA5 > MA10 > MA20）+ 斜率
+ * 3. 震盪收割模式（近 5 天 ≥3 天高開低走 + 大振幅）
+ * 4. 量價背離（跌量 > 漲量 × 1.3）
+ * 5. 缺口風險（高開 >1% 且未粘合）
+ *
+ * ### 輸出
+ * - context.stageOutputs["{xmlNodeId}_ma"] = MaConvergenceResult（兼容 BounceReversalNode）
+ * - context.stageOutputs["{xmlNodeId}_check"] = MarketMaCheckResult（兼容報告）
+ * - return value = MarketMaUnifiedResult（完整合併結果）
+ */
+class MarketMaUnifiedNode(
+    private val threshold: Double = 0.02,
+    private val checkMode: String = "full"
+) : PipelineNode<Any, MarketMaUnifiedNode.MarketMaUnifiedResult> {
+
+    companion object {
+        private const val TAG = "MarketMaUnified"
+        private const val INDEX_CODE = "sh000001"
+        private const val OSCILLATION_DAYS = 5
+        private const val OSCILLATION_MIN_COUNT = 3
+        private const val AMPLITUDE_THRESHOLD = 0.02
+    }
+
+    override val nodeId: String = "market_ma_unified"
+    override val nodeName: String = "大盤均線統一檢查"
+    override val nodeType: NodeType = NodeType.FACTOR_COMPUTE
+
+    /**
+     * 合併輸出：同時包含 MaConvergenceResult + MarketMaCheckResult 的所有欄位
+     */
+    data class MarketMaUnifiedResult(
+        // ── 来自 MaConvergenceResult ──
+        val maConverged: Boolean = false,
+        val maConvergedAndUp: Boolean = false,
+        val maDivergence: Double = 1.0,
+        val oscillationHarvest: Boolean = false,
+        val oscillationCount: Int = 0,
+        val volumeDivergence: Boolean = false,
+        val gapRiskHigh: Boolean = false,
+        val gapPct: Double = 0.0,
+        val riskLevel: String = "MEDIUM",
+        // ── 来自 MarketMaCheckResult ──
+        val isConvergedUpward: Boolean = false,
+        val ma5Slope: Double = 0.0,
+        val divergencePct: Double = 0.0,
+        // ── 共用 ──
+        val ma5: Double = 0.0,
+        val ma10: Double = 0.0,
+        val ma20: Double = 0.0,
+        val description: String = "",
+        val hint: String = ""
+    ) {
+        /** 轉為舊版 MaConvergenceResult（向下兼容 BounceReversalNode） */
+        fun toMaConvergenceResult(): MaConvergenceResult = MaConvergenceResult(
+            maConverged = maConverged,
+            maConvergedAndUp = maConvergedAndUp,
+            maDivergence = maDivergence,
+            ma5 = ma5, ma20 = ma20, ma30 = 0.0,
+            oscillationHarvest = oscillationHarvest,
+            oscillationCount = oscillationCount,
+            volumeDivergence = volumeDivergence,
+            gapRiskHigh = gapRiskHigh,
+            gapPct = gapPct,
+            riskLevel = riskLevel,
+            hint = hint
+        )
+
+        /** 轉為舊版 MarketMaCheckResult（向下兼容 DagTradeExecutor / 報告） */
+        fun toMarketMaCheckResult(): MarketMaCheckResult = MarketMaCheckResult(
+            isConvergedUpward = isConvergedUpward,
+            ma5 = ma5, ma10 = ma10, ma20 = ma20,
+            divergencePct = divergencePct,
+            ma5Slope = ma5Slope,
+            description = description
+        )
+    }
+
+    override suspend fun execute(context: PipelineContext, input: Any): MarketMaUnifiedResult {
+        return try {
+            val db = StockDatabase.getInstance(context.androidContext)
+            val snaps = db.dailySnapshotDao().getByCode(INDEX_CODE, 35)
+
+            if (snaps.size < 20) {
+                context.log(nodeId, "$nodeName: 指數數據不足(${snaps.size}條)，跳過")
+                return MarketMaUnifiedResult(description = "數據不足")
+            }
+
+            val sorted = snaps.sortedBy { it.date }
+            val closes = sorted.map { it.close }
+
+            // ═══ 1. 均線粘合度（共用 MaConvergenceAnalyzer） ═══
+            val maResult = MaConvergenceAnalyzer.analyze(sorted, threshold)
+            val maConverged = maResult.converged
+            val divergence = maResult.divergencePct / 100.0
+            val ma5 = maResult.ma5
+            val ma10 = maResult.ma10 ?: 0.0
+            val ma20 = maResult.ma20 ?: 0.0
+            val convergedAndUp = maResult.convergedAndUp
+
+            // ═══ 2. 多頭排列 + 斜率 ═══
+            val isBullishAligned = ma5 > ma10 && ma10 > ma20
+            val ma5Prev = if (closes.size >= 8) closes.takeLast(8).take(5).average() else ma5
+            val slope = if (ma5Prev > 0) (ma5 - ma5Prev) / ma5Prev else 0.0
+
+            // ═══ 3. 震盪收割 ═══
+            val recent5 = sorted.takeLast(OSCILLATION_DAYS + 1)
+            var oscillationCount = 0
+            for (i in 1 until recent5.size) {
+                val prev = recent5[i - 1]
+                val cur = recent5[i]
+                val gapUp = cur.open > prev.close
+                val fadeDown = cur.close < cur.open
+                val amplitude = if (cur.close > 0) (cur.high - cur.low) / cur.close else 0.0
+                if (gapUp && fadeDown && amplitude > AMPLITUDE_THRESHOLD) oscillationCount++
+            }
+            val oscillationHarvest = oscillationCount >= OSCILLATION_MIN_COUNT
+
+            // ═══ 4. 量價背離 ═══
+            val last5 = sorted.takeLast(OSCILLATION_DAYS)
+            val upDays = last5.filter { it.changePct > 0 }
+            val downDays = last5.filter { it.changePct < 0 }
+            val avgUpVol = if (upDays.isNotEmpty()) upDays.map { it.volume.toDouble() }.average() else 0.0
+            val avgDownVol = if (downDays.isNotEmpty()) downDays.map { it.volume.toDouble() }.average() else 0.0
+            val volumeDivergence = avgUpVol > 0 && avgDownVol > avgUpVol * 1.3
+
+            // ═══ 5. 缺口風險 ═══
+            val today = sorted.last()
+            val prevDay = sorted[sorted.size - 2]
+            val gapPct = if (prevDay.close > 0) (today.open - prevDay.close) / prevDay.close else 0.0
+            val gapRiskHigh = gapPct > 0.01 && !maConverged
+
+            // ═══ 綜合判斷 ═══
+            val riskLevel = when {
+                gapRiskHigh && oscillationHarvest -> "HIGH"
+                oscillationHarvest || volumeDivergence -> "MEDIUM"
+                maConverged && convergedAndUp -> "LOW"
+                maConverged -> "LOW"
+                else -> "MEDIUM"
+            }
+
+            val isConvergedUpward = isBullishAligned &&
+                kotlin.math.abs(divergence) < (threshold * 2) && slope > 0
+
+            val desc = buildString {
+                append("MA5=${"%.2f".format(ma5)} MA10=${"%.2f".format(ma10)} MA20=${"%.2f".format(ma20)}")
+                append(" 離散=${"%.2f".format(divergence * 100)}%(閾${"%.1f".format(threshold * 100)}%)")
+                append(" 斜率=${"%.2f".format(slope * 100)}%")
+                append(if (isBullishAligned) " 多頭✓" else " 非多頭")
+                append(if (maConverged) " 粘合✓" else " 未粘合")
+                append(if (slope > 0) " 向上✓" else " 向下")
+            }
+
+            val hint = buildString {
+                if (convergedAndUp) append("✅ 均線粘合向上(離散${"%.1f".format(divergence * 100)}%) → 蓄勢突破 ")
+                else if (maConverged) append("🟡 均線粘合(離散${"%.1f".format(divergence * 100)}%) 待方向 ")
+                else append("⚠️ 均線分散(離散${"%.1f".format(divergence * 100)}%) ")
+                if (oscillationHarvest) append("⚠️ 震蕩收割(${oscillationCount}天) ")
+                if (volumeDivergence) append("⚠️ 量價背離 ")
+                if (gapRiskHigh) append("⚠️ 缺口風險 ")
+            }.trim()
+
+            context.log(nodeId, "📐 $nodeName: $desc → ${if (isConvergedUpward) "適合進場" else "不宜進場"}")
+
+            val result = MarketMaUnifiedResult(
+                maConverged = maConverged,
+                maConvergedAndUp = convergedAndUp,
+                maDivergence = divergence,
+                oscillationHarvest = oscillationHarvest,
+                oscillationCount = oscillationCount,
+                volumeDivergence = volumeDivergence,
+                gapRiskHigh = gapRiskHigh,
+                gapPct = gapPct,
+                riskLevel = riskLevel,
+                isConvergedUpward = isConvergedUpward,
+                ma5Slope = slope * 100,
+                divergencePct = divergence * 100,
+                ma5 = ma5, ma10 = ma10, ma20 = ma20,
+                description = desc,
+                hint = hint
+            )
+
+            // 向下兼容：同時存入舊版結果到 stageOutputs
+            // 下游 BounceReversalNode 讀 "n_ma_conv"，DagTradeExecutor 讀 "n_market_ma"
+            // 使用 XML nodeId（由 DagPipeline 存入 stageOutputs[nodeId]）
+            // 這裡額外存入兼容 key
+            context.setStageOutput("n_ma_conv", result.toMaConvergenceResult())
+            context.setStageOutput("n_market_ma", result.toMarketMaCheckResult())
+
+            result
+        } catch (e: Exception) {
+            Log.e(TAG, "大盤均線統一檢查異常: ${e.message}", e)
+            context.log(nodeId, "⚠ $nodeName: 異常(${e.message})")
+            MarketMaUnifiedResult(description = "異常: ${e.message}")
+        }
+    }
+}

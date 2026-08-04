@@ -38,7 +38,9 @@ data class DagEdge(
 data class DagNode(
     val nodeId: String,
     val nodeName: String,
-    val node: PipelineNode<*, *>
+    val node: PipelineNode<*, *>,
+    /** 所屬 Pipeline 分組 ID（用於 UI 著色，null = 未分組） */
+    val pipelineGroup: String = ""
 ) {
     /** 該節點的所有入邊的源節點 ID 集合 */
     var dependencies: Set<String> = emptySet()
@@ -115,7 +117,8 @@ class DagPipeline(
     val name: String,
     val description: String = "",
     val nodes: List<DagNode>,
-    val edges: List<DagEdge>
+    val edges: List<DagEdge>,
+    val pipelineGroups: List<PipelineGroup> = emptyList()
 ) {
     companion object {
         private const val TAG = "DagPipeline"
@@ -251,7 +254,8 @@ class DagPipeline(
             totalElapsedMs = totalElapsed,
             finalOutput = finalOutput,
             errors = errors,
-            stockFlowLogs = stockFlowMap
+            stockFlowLogs = stockFlowMap,
+            pipelineGroups = pipelineGroups.associateBy { it.id }
         )
     }
 
@@ -430,6 +434,17 @@ class DagPipeline(
 // ============================================================================
 
 /**
+ * Pipeline 分組定義 — 一組邏輯上相關的節點集合。
+ * 用於 UI 著色（同組節點染同色）和模板復用。
+ */
+data class PipelineGroup(
+    val id: String,
+    val name: String,
+    val nodeIds: Set<String>,
+    val params: Map<String, String> = emptyMap()
+)
+
+/**
  * DAG Pipeline 的執行結果
  */
 data class DagPipelineResult(
@@ -446,7 +461,9 @@ data class DagPipelineResult(
     /** 錯誤信息 */
     val errors: Map<String, String> = emptyMap(),
     /** 各節點股票流動記錄（nodeId → StockFlowRecord） */
-    val stockFlowLogs: Map<String, StockFlowRecord> = emptyMap()
+    val stockFlowLogs: Map<String, StockFlowRecord> = emptyMap(),
+    /** Pipeline 分組信息（groupId → PipelineGroup） */
+    val pipelineGroups: Map<String, PipelineGroup> = emptyMap()
 )
 
 /**

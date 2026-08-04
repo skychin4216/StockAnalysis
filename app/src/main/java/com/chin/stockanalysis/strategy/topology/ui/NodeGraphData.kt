@@ -36,7 +36,9 @@ data class VisualNode(
     var y: Float,
     val config: Map<String, String> = emptyMap(),
     val width: Float = 240f,
-    val height: Float = 84f
+    val height: Float = 84f,
+    /** 所屬 Pipeline 分組 ID（用於著色，空 = 按 NodeType 著色） */
+    val pipelineGroupId: String = ""
 )
 
 /**

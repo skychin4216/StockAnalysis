@@ -383,18 +383,34 @@ object DagTradeExecutor {
                     })
                 }
                 pipeObj.put("stockFlows", flows)
-                // 提取大盤均線檢查結果
+                // 提取大盤均線檢查結果（兼容新統一節點 + 舊節點）
+                val maUnifiedResult = pr.stageResults["n_ma_unified"]?.output
                 val marketMaResult = pr.stageResults["n_market_ma"]?.output
-                if (marketMaResult is com.chin.stockanalysis.strategy.topology.nodes.MarketMaCheckResult) {
-                    pipeObj.put("n_market_ma_check", JSONObject().apply {
-                        put("isConvergedUpward", marketMaResult.isConvergedUpward)
-                        put("ma5", marketMaResult.ma5)
-                        put("ma10", marketMaResult.ma10)
-                        put("ma20", marketMaResult.ma20)
-                        put("divergencePct", marketMaResult.divergencePct)
-                        put("ma5Slope", marketMaResult.ma5Slope)
-                        put("description", marketMaResult.description)
-                    })
+                when {
+                    maUnifiedResult is com.chin.stockanalysis.strategy.topology.nodes.MarketMaUnifiedNode.MarketMaUnifiedResult -> {
+                        pipeObj.put("n_market_ma_check", JSONObject().apply {
+                            put("isConvergedUpward", maUnifiedResult.isConvergedUpward)
+                            put("ma5", maUnifiedResult.ma5)
+                            put("ma10", maUnifiedResult.ma10)
+                            put("ma20", maUnifiedResult.ma20)
+                            put("divergencePct", maUnifiedResult.divergencePct)
+                            put("ma5Slope", maUnifiedResult.ma5Slope)
+                            put("description", maUnifiedResult.description)
+                            put("riskLevel", maUnifiedResult.riskLevel)
+                            put("oscillationHarvest", maUnifiedResult.oscillationHarvest)
+                        })
+                    }
+                    marketMaResult is com.chin.stockanalysis.strategy.topology.nodes.MarketMaCheckResult -> {
+                        pipeObj.put("n_market_ma_check", JSONObject().apply {
+                            put("isConvergedUpward", marketMaResult.isConvergedUpward)
+                            put("ma5", marketMaResult.ma5)
+                            put("ma10", marketMaResult.ma10)
+                            put("ma20", marketMaResult.ma20)
+                            put("divergencePct", marketMaResult.divergencePct)
+                            put("ma5Slope", marketMaResult.ma5Slope)
+                            put("description", marketMaResult.description)
+                        })
+                    }
                 }
                 // 提取嚴選檢查結果
                 val strictResult = pr.stageResults["n_strict"]?.output

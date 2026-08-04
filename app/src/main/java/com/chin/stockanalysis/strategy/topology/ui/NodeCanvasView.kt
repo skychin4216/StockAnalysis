@@ -183,7 +183,11 @@ class NodeCanvasView @JvmOverloads constructor(
 
     private fun drawNode(canvas: Canvas, node: VisualNode, selected: Boolean) {
         rectBuffer.set(node.x, node.y, node.x + node.width, node.y + node.height)
-        val bgColor = colorForType(node.nodeType)
+        val bgColor = if (node.pipelineGroupId.isNotBlank()) {
+            colorForPipelineGroup(node.pipelineGroupId)
+        } else {
+            colorForType(node.nodeType)
+        }
         nodePaint.color = bgColor
         canvas.drawRoundRect(rectBuffer, 16f, 16f, nodePaint)
 
@@ -454,6 +458,26 @@ class NodeCanvasView @JvmOverloads constructor(
             NodeType.FACTOR_COMPUTE -> Color.parseColor("#0D9488")
             NodeType.DATA_TRANSFORM -> Color.parseColor("#6B7280")
         }
+    }
+
+    /** Pipeline 分組著色色板 — 高辨識度、深色背景友好 */
+    private val groupColorPalette = intArrayOf(
+        0xFF6366F1.toInt(), // Indigo
+        0xFFEC4899.toInt(), // Pink
+        0xFFF59E0B.toInt(), // Amber
+        0xFF10B981.toInt(), // Emerald
+        0xFF8B5CF6.toInt(), // Violet
+        0xFFEF4444.toInt(), // Red
+        0xFF06B6D4.toInt(), // Cyan
+        0xFF84CC16.toInt(), // Lime
+        0xFFF97316.toInt(), // Orange
+        0xFF14B8A6.toInt()  // Teal
+    )
+
+    /** 根據 group ID 確定性分配顏色（同 group 同色） */
+    private fun colorForPipelineGroup(groupId: String): Int {
+        val idx = kotlin.math.abs(groupId.hashCode()) % groupColorPalette.size
+        return groupColorPalette[idx]
     }
 
     private fun truncate(s: String, max: Int): String {
