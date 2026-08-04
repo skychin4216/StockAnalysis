@@ -298,4 +298,40 @@ object TradeNotifier {
             Log.w(TAG, "PushPlus 推送異常: ${e.message}")
         }
     }
+
+    /**
+     * 推送回溯/擬合報告到微信
+     * 自動截取前 2000 字符（ServerChan 限制）
+     */
+    suspend fun sendBacktestReport(ctx: Context, reportTitle: String, reportContent: String) {
+        val title = "📊 $reportTitle"
+        // ServerChan body 限制 2000 字符
+        val body = if (reportContent.length > 1900) {
+            reportContent.take(1900) + "\n\n... (報告過長已截斷)"
+        } else reportContent
+
+        send(ctx, title, body, "backtest_${System.currentTimeMillis()}")
+    }
+
+    /**
+     * 推送建倉信號到微信
+     */
+    suspend fun sendBuildPositionSignal(
+        ctx: Context,
+        periodLabel: String,
+        stockCode: String,
+        stockName: String,
+        price: Double,
+        passCount: Int,
+        reason: String
+    ) {
+        val title = "🔔 $periodLabel 建倉信號: $stockName"
+        val body = buildString {
+            appendLine("股票: $stockName($stockCode)")
+            appendLine("價格: $price")
+            appendLine("嚴選通過: $passCount/7")
+            appendLine("原因: $reason")
+        }
+        send(ctx, title, body, "build_${stockCode}_${System.currentTimeMillis()}")
+    }
 }

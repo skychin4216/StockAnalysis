@@ -182,6 +182,22 @@ interface DailySnapshotDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(snapshots: List<DailySnapshotEntity>)
 
+    /** Pipeline 回溯用：獲取最近的交易日列表 */
+    @Query("SELECT DISTINCT date FROM daily_snapshot ORDER BY date DESC LIMIT :limit")
+    suspend fun getRecentTradeDates(limit: Int = 30): List<String>
+
+    /** Pipeline 回溯用：獲取某日所有股票代碼 */
+    @Query("SELECT DISTINCT code FROM daily_snapshot WHERE date = :date")
+    suspend fun getStockCodesByDate(date: String): List<String>
+
+    /** Pipeline 回溯用：獲取某日之前（含）的數據 */
+    @Query("SELECT * FROM daily_snapshot WHERE code = :code AND date <= :beforeDate ORDER BY date DESC LIMIT :limit")
+    suspend fun getByCodeBefore(code: String, beforeDate: String, limit: Int = 100): List<DailySnapshotEntity>
+
+    /** Pipeline 回溯用：獲取某日之後的數據 */
+    @Query("SELECT * FROM daily_snapshot WHERE code = :code AND date > :afterDate ORDER BY date ASC LIMIT :limit")
+    suspend fun getByCodeAfter(code: String, afterDate: String, limit: Int = 10): List<DailySnapshotEntity>
+
     /** 删除超过N天的旧数据 */
     @Query("DELETE FROM daily_snapshot WHERE date < :beforeDate")
     suspend fun deleteOlderThan(beforeDate: String): Int
