@@ -383,6 +383,41 @@ object DagTradeExecutor {
                     })
                 }
                 pipeObj.put("stockFlows", flows)
+                // 提取大盤均線檢查結果
+                val marketMaResult = pr.stageResults["n_market_ma"]?.output
+                if (marketMaResult is com.chin.stockanalysis.strategy.topology.nodes.MarketMaCheckResult) {
+                    pipeObj.put("n_market_ma_check", JSONObject().apply {
+                        put("isConvergedUpward", marketMaResult.isConvergedUpward)
+                        put("ma5", marketMaResult.ma5)
+                        put("ma10", marketMaResult.ma10)
+                        put("ma20", marketMaResult.ma20)
+                        put("divergencePct", marketMaResult.divergencePct)
+                        put("ma5Slope", marketMaResult.ma5Slope)
+                        put("description", marketMaResult.description)
+                    })
+                }
+                // 提取嚴選檢查結果
+                val strictResult = pr.stageResults["n_strict"]?.output
+                if (strictResult is com.chin.stockanalysis.strategy.topology.nodes.StrictSelectionResult) {
+                    pipeObj.put("n_strict_selection", JSONObject().apply {
+                        put("totalCount", strictResult.totalCount)
+                        put("passedCount", strictResult.passedCount)
+                        val passedStocksObj = JSONObject()
+                        for ((code, detail) in strictResult.passedStocks) {
+                            passedStocksObj.put(code, JSONObject().apply {
+                                put("name", detail.name)
+                                put("passCount", detail.passCount)
+                                put("maConvergedUp", detail.maConvergedUp)
+                                put("threeDayNoNewLow", detail.threeDayNoNewLow)
+                                put("historicalLow25", detail.historicalLow25)
+                                put("peLow", detail.peLow)
+                                put("cyclicalActive", detail.cyclicalActive)
+                                put("freezingPoint", detail.freezingPoint)
+                            })
+                        }
+                        put("passedStocks", passedStocksObj)
+                    })
+                }
                 pipes.put(pipeName, pipeObj)
             }
             put("pipelines", pipes)

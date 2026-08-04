@@ -185,11 +185,29 @@ class UltraShortQuantFragment : QuantFragmentBase() {
             "💎 基本面檢查",
             "⚡ T+1 賣出檢查",
             "📊 賣出績效",
-            "⚡ 執行賣出",
-            "🚀 一鍵執行全部"
+            "⚡ 執行賣出"
         )
+        val titleView = android.widget.LinearLayout(requireContext()).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(48, 32, 48, 16)
+            addView(android.widget.TextView(requireContext()).apply {
+                text = "💰 買賣評估（超短線）"; textSize = 18f
+                setTextColor(android.graphics.Color.parseColor("#222222"))
+                setTypeface(null, android.graphics.Typeface.BOLD)
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+                )
+            })
+            addView(android.widget.TextView(requireContext()).apply {
+                text = "🔄"; textSize = 20f
+                setPadding(16, 0, 0, 0)
+                isClickable = true; isFocusable = true
+                setOnClickListener { runAllEvaluations() }
+            })
+        }
         AlertDialog.Builder(requireContext())
-            .setTitle("💰 買賣評估（超短線）")
+            .setCustomTitle(titleView)
             .setItems(items) { _, which ->
                 when (which) {
                     0 -> showTTradeMenu()
@@ -199,7 +217,6 @@ class UltraShortQuantFragment : QuantFragmentBase() {
                     4 -> checkT1AutoSell()
                     5 -> showSellPerformance()
                     6 -> executeAutoSell()
-                    7 -> runAllEvaluations()
                 }
             }
             .setNegativeButton("關閉", null)

@@ -56,7 +56,11 @@ data class AnalysisResult(
     /** 壁壘等級（DEEP/EXPERT，供策略列表 CrossTabBus） */
     val barrierLevel: String? = null,
     /** 建議倉位（決策矩陣輸出） */
-    val positionPercent: Int? = null
+    val positionPercent: Int? = null,
+    /** 是否通過六項嚴選檢查（null = 未檢查，如 recommendation 非 BUY） */
+    val strictSelectionPassed: Boolean? = null,
+    /** 嚴選檢查詳情 */
+    val strictSelectionDetail: com.chin.stockanalysis.strategy.topology.nodes.StrictSelectionDetail? = null
 )
 
 /**
@@ -202,6 +206,20 @@ private suspend fun AgentOrchestrator.runQuickAnalysis(
         }
     }
 
+    // 嚴選檢查：BUY 建議時作為最終關卡
+    var strictPassed: Boolean? = null
+    var strictDetail: com.chin.stockanalysis.strategy.topology.nodes.StrictSelectionDetail? = null
+    if (analysis?.recommendation == "BUY") {
+        try {
+            val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(appContext)
+            strictDetail = com.chin.stockanalysis.strategy.topology.nodes.StrictSelectionChecker
+                .evaluate(stockCode, db)
+            strictPassed = strictDetail.passCount >= 4
+            sb.appendLine()
+            sb.append(com.chin.stockanalysis.strategy.topology.nodes.StrictSelectionChecker.formatResult(strictDetail))
+        } catch (_: Exception) {}
+    }
+
     AnalysisResult(
         stockCode = stockCode, stockName = stockName, mode = AnalysisMode.QUICK,
         success = analysis?.success == true,
@@ -212,7 +230,9 @@ private suspend fun AgentOrchestrator.runQuickAnalysis(
         stopLoss = analysis?.stopLoss?.takeIf { it.isNotBlank() },
         summaryText = sb.toString(),
         errorMessage = if (analysis?.success != true) "AI 分析失敗" else null,
-        elapsedMs = System.currentTimeMillis() - startTime
+        elapsedMs = System.currentTimeMillis() - startTime,
+        strictSelectionPassed = strictPassed,
+        strictSelectionDetail = strictDetail
     )
 }
 
@@ -358,9 +378,22 @@ private suspend fun AgentOrchestrator.runDeepAnalysis(
     val riskFactors = analystResult["riskFactors"] as? List<String>
     val passed = (chainScore ?: 0) >= 40 && riskLevel != "高"
 
+    // 嚴選檢查：BUY 建議時作為最終關卡
+    var strictPassed: Boolean? = null
+    var strictDetail: com.chin.stockanalysis.strategy.topology.nodes.StrictSelectionDetail? = null
+    if (recommendation == "BUY") {
+        try {
+            val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(appContext)
+            strictDetail = com.chin.stockanalysis.strategy.topology.nodes.StrictSelectionChecker
+                .evaluate(stockCode, db)
+            strictPassed = strictDetail.passCount >= 4
+        } catch (_: Exception) {}
+    }
+
     val summary = buildUnifiedSummary(
         stockName, stockCode, mode, score, recommendation, report,
-        decision, guardianAnnounce, scoutAnnounce, entryZones, riskFactors
+        decision, guardianAnnounce, scoutAnnounce, entryZones, riskFactors,
+        strictDetail
     )
 
     AnalysisResult(
@@ -378,7 +411,9 @@ private suspend fun AgentOrchestrator.runDeepAnalysis(
         chainScore = chainScore,
         passed = passed,
         barrierLevel = null,
-        positionPercent = decision?.decision?.positionPercent
+        positionPercent = decision?.decision?.positionPercent,
+        strictSelectionPassed = strictPassed,
+        strictSelectionDetail = strictDetail
     )
 }
 
@@ -444,7 +479,8 @@ private fun buildUnifiedSummary(
     stockName: String, stockCode: String, mode: AnalysisMode,
     score: Int, recommendation: String?, report: String,
     decision: AgentOrchestratorDecision?, guardian: AgentAnnounce?, scout: AgentAnnounce?,
-    entryZones: List<String>?, riskFactors: List<String>?
+    entryZones: List<String>?, riskFactors: List<String>?,
+    strictDetail: com.chin.stockanalysis.strategy.topology.nodes.StrictSelectionDetail? = null
 ): String = buildString {
     val modeLabel = when (mode) { AnalysisMode.QUICK -> "快速"; AnalysisMode.DEEP -> "深度"; AnalysisMode.EXPERT -> "專家" }
     appendLine("## 🧠 $modeLabel 分析報告：$stockName($stockCode)")
@@ -497,5 +533,11 @@ private fun buildUnifiedSummary(
     if (riskFactors != null && riskFactors.isNotEmpty()) {
         appendLine("### ⚠️ 風險因素")
         riskFactors.take(3).forEach { appendLine("  • $it") }
+    }
+
+    // 嚴選檢查結果（僅 BUY 建議時顯示）
+    if (strictDetail != null) {
+        appendLine()
+        append(com.chin.stockanalysis.strategy.topology.nodes.StrictSelectionChecker.formatResult(strictDetail))
     }
 }

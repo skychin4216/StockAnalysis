@@ -1162,9 +1162,7 @@ class StrategyListFragment : Fragment() {
             "\uD83D\uDCCB 導出策略報告",
             "\uD83E\uDDE0 市場記憶設置",
             "\uD83D\uDD04 刷新市場上下文緩存",
-            "─ 導出 ─",
             "\uD83D\uDCCA 數據庫統計信息",
-            "─ 清空 ─",
             "\uD83E\uDDF9 清空報告"
         )
         AlertDialog.Builder(requireContext())
@@ -1177,10 +1175,8 @@ class StrategyListFragment : Fragment() {
                     3 -> exportStrategyReport()
                     4 -> showMarketMemoryDialog()
                     5 -> { com.chin.stockanalysis.strategy.sector.StrategyMarketContext.invalidateCache(); Toast.makeText(requireContext(), "市場上下文緩存已清空", Toast.LENGTH_SHORT).show() }
-                    // 6 = 分隔線
-                    7 -> showDbStats(exporter)
-                    // 8 = 分隔線
-                    9 -> confirmAndClearReports()
+                    6 -> showDbStats(exporter)
+                    7 -> confirmAndClearReports()
                 }
             }.setNegativeButton("關閉", null).show()
     }

@@ -22,7 +22,7 @@
   </steps>
   <config>
     <param name="orderType" value="MidTermQuant" />
-    <param name="maxHoldings" value="5" />
+    <param name="maxHoldings" value="3" />
     <param name="maxStocksPerStrategy" value="15" />
     <param name="holdingPeriod" value="mid" />
   </config>

@@ -46,6 +46,8 @@ object NodeRegistry {
         }
         register("inst_tips") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.InstitutionalTipsNode() }
         register("ma_convergence") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.MaConvergenceNode() }
+        register("market_ma_check") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.MarketMaConvergenceCheckNode() }
+        register("strict_selection") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.StrictSelectionNode() }
         register("base_position_guard") { _, config ->
             val period = config["holdingPeriod"] ?: "MID"
             com.chin.stockanalysis.strategy.topology.nodes.BasePositionGuardNode(holdingPeriod = period)

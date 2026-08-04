@@ -595,13 +595,24 @@ enum class UserIntent {
 class StockQueryTool(private val ctx: Context) : AgentTool {
     override val name = "stock_query"
     override val description = "查詢股票基本信息和最新行情"
-    override val parameters = listOf("stock_code")
+    override val parameters = listOf("query")
 
     override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
         val localCtx = ctx
         return withContext(Dispatchers.IO) {
             try {
-                val code = params["stock_code"] ?: return@withContext "錯誤: 未提供股票代碼"
+                val rawQuery = params["query"] ?: params["stock_code"]
+                    ?: return@withContext "錯誤: 未提供股票名稱或代碼"
+                // 解析：可能是代碼（6位數字/sh+代碼）或名稱
+                val code = if (rawQuery.matches(Regex("\\d{6}"))) {
+                    rawQuery
+                } else if (rawQuery.matches(Regex("(?i)(sh|sz|bj)\\d{6}"))) {
+                    rawQuery.takeLast(6)
+                } else {
+                    // 名稱 → 通過 StockEntityExtractor 解析為代碼
+                    val resolved = com.chin.stockanalysis.ai.StockEntityExtractor.resolveSync(rawQuery)
+                    resolved ?: return@withContext "錯誤: 未找到股票「$rawQuery」"
+                }
                 val db = StockDatabase.getInstance(localCtx)
                 val basic = db.stockBasicDao().getByCode(code)
                 val today = TradingDayPickerView.recentTradingDay().toString()

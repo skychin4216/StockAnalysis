@@ -608,11 +608,11 @@ abstract class QuantFragmentBase : Fragment() {
             "📈 買入評估",
             "💎 基本面檢查",
             "📊 賣出績效",
-            "⚡ 執行賣出",
-            "🚀 一鍵執行全部"
+            "⚡ 執行賣出"
         )
+        val titleView = buildEvalTitleView("💰 買賣評估")
         AlertDialog.Builder(requireContext())
-            .setTitle("💰 買賣評估")
+            .setCustomTitle(titleView)
             .setItems(items) { _, which ->
                 when (which) {
                     0 -> showTTradeMenu()
@@ -621,11 +621,34 @@ abstract class QuantFragmentBase : Fragment() {
                     3 -> checkFundamentalHealth()
                     4 -> showSellPerformance()
                     5 -> executeAutoSell()
-                    6 -> runAllEvaluations()
                 }
             }
             .setNegativeButton("關閉", null)
             .show()
+    }
+
+    /** 構建標題視圖：標題文字 + 🔄 刷新按鈕 */
+    private fun buildEvalTitleView(title: String): android.view.View {
+        val layout = android.widget.LinearLayout(requireContext()).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(48, 32, 48, 16)
+        }
+        layout.addView(android.widget.TextView(requireContext()).apply {
+            text = title; textSize = 18f
+            setTextColor(Color.parseColor("#222222"))
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            layoutParams = android.widget.LinearLayout.LayoutParams(
+                0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+            )
+        })
+        layout.addView(android.widget.TextView(requireContext()).apply {
+            text = "🔄"; textSize = 20f
+            setPadding(16, 0, 0, 0)
+            isClickable = true; isFocusable = true
+            setOnClickListener { runAllEvaluations() }
+        })
+        return layout
     }
 
     /** 一鍵執行所有評估功能 */
@@ -2313,6 +2336,17 @@ abstract class QuantFragmentBase : Fragment() {
         }
 
         scrollView.addView(container)
+        // 底部關閉按鈕
+        container.addView(Button(requireContext()).apply {
+            text = "關閉"
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#757575"))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dpToPx(36)).apply {
+                topMargin = dpToPx(12)
+            }
+            setOnClickListener { dialog.dismiss() }
+        })
         dialog.setContentView(scrollView)
         dialog.window?.setLayout(
             android.view.WindowManager.LayoutParams.MATCH_PARENT,
@@ -2425,11 +2459,11 @@ abstract class QuantFragmentBase : Fragment() {
 
     /** 顯示數據菜單（統一版，所有週期共用） */
     protected open fun showDataMenu(anchor: View) {
-        val exporter = DataExportImport(requireContext())
         val periodLabel = getQuantType()
         val options = arrayOf(
             "📋 查看交易記錄",
-            "📊 查看量化報告",
+            "📊 全周期報告",
+            "📊 ${periodLabel}量化報告",
             "📊 查看精選池",
             "💰 查看持倉詳情",
             "🧠 市場記憶設置",
@@ -2437,14 +2471,8 @@ abstract class QuantFragmentBase : Fragment() {
             "📅 月度熱點前瞻",
             "🔥 查看熱門板塊報告",
             "📋 查看策略報告",
-            "─ 導出 ─",
-            "📤 導出 JSON (全部數據)",
-            "📂 查看導出文件列表",
-            "📊 數據庫統計信息",
-            "─ 清空 ─",
             "🧹 清空持倉",
             "🧹 清空報告",
-            "─ 策略優化 ─",
             "📈 回溯測試",
             "🔧 擬合調優",
             "🔄 全周期擬合"
@@ -2455,24 +2483,19 @@ abstract class QuantFragmentBase : Fragment() {
                 when (which) {
                     0 -> showTradeHistory()
                     1 -> showTradeReportsHistory()
-                    2 -> showFinalPool()
-                    3 -> loadPositions()
-                    4 -> showMarketMemoryDialog()
-                    5 -> showHoldingProfitHistory()
-                    6 -> showMonthlyForecast()
-                    7 -> exportHotSectors()
-                    8 -> exportStrategyReport()
-                    // 9 = 分隔線
-                    10 -> exportToJson(exporter)
-                    11 -> showExportFiles(exporter)
-                    12 -> showDbStats(exporter)
-                    // 13 = 分隔線
-                    14 -> confirmAndClearPositions()
-                    15 -> confirmAndClearReports()
-                    // 16 = 分隔線
-                    17 -> onBacktrackClick()
-                    18 -> onFittingClick()
-                    19 -> runCrossPeriodFitting()
+                    2 -> showPeriodReportHistory()
+                    3 -> showFinalPool()
+                    4 -> loadPositions()
+                    5 -> showMarketMemoryDialog()
+                    6 -> showHoldingProfitHistory()
+                    7 -> showMonthlyForecast()
+                    8 -> exportHotSectors()
+                    9 -> exportStrategyReport()
+                    10 -> confirmAndClearPositions()
+                    11 -> confirmAndClearReports()
+                    12 -> onBacktrackClick()
+                    13 -> onFittingClick()
+                    14 -> runCrossPeriodFitting()
                 }
             }
             .setNegativeButton("關閉", null)
@@ -2483,7 +2506,7 @@ abstract class QuantFragmentBase : Fragment() {
     // 數據導出/導入（從中線提升到基類，所有週期共用）
     // ═══════════════════════════════════════
 
-    /** 查看量化報告歷史 */
+    /** 查看全周期量化報告歷史（所有周期匯總，不含大盤/嚴選詳情） */
     protected open fun showTradeReportsHistory() {
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -2499,36 +2522,180 @@ abstract class QuantFragmentBase : Fragment() {
                 val codeToName = try { db.stockBasicDao().getAll().associate { it.code to it.name } } catch (_: Exception) { emptyMap() }
                 val grouped = entities.groupBy { it.tradeDate }
                 val sb = StringBuilder()
-                sb.appendLine("📊 量化報告歷史 (共 ${entities.size} 條)")
+                val timeFmt = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+                sb.appendLine("📊 全周期報告 (共 ${entities.size} 條)")
+                sb.appendLine("总纲：逃頂要快，抄底要慢")
                 sb.appendLine()
                 for ((date, items) in grouped.toSortedMap().entries.reversed().take(10)) {
                     sb.appendLine("━━━ $date ━━━")
                     for (item in items) {
-                        val top3Json = try { org.json.JSONArray(item.finalTop3Json) } catch (_: Exception) { org.json.JSONArray() }
                         val mainBoardLabel = if (item.mainBoardFilter) " 主板" else ""
-                        sb.appendLine("  ${item.strategyName}[${item.periodDays}日]$mainBoardLabel: ${item.stockCount}只信號")
+                        val timeStr = timeFmt.format(java.util.Date(item.createdAt))
+                        sb.appendLine("  [$timeStr] ${item.strategyName}[${item.periodDays}日]$mainBoardLabel: ${item.stockCount}只信號")
                         if (item.newsStrengthScore > 0) sb.appendLine("    新聞力度:${item.newsStrengthScore} 輪動懲罰:${item.rotationPenalty}")
+                        // 解析 finalTop3Json（兼容 flat 和 nested 兩種格式）
+                        val top3Json = try { org.json.JSONArray(item.finalTop3Json) } catch (_: Exception) { org.json.JSONArray() }
+                        if (top3Json.length() > 0) {
+                            val picks = extractTopPicks(top3Json, codeToName)
+                            for ((idx, pick) in picks.withIndex()) {
+                                if (idx >= 3) break
+                                val sector = try { com.chin.stockanalysis.stock.database.StockDataCenter.getSectorsByStock(pick.code).firstOrNull() ?: "" } catch (_: Exception) { "" }
+                                val sectorStr = if (sector.isNotBlank()) " [$sector]" else ""
+                                sb.appendLine("    Top${idx+1}: ${pick.name}(${pick.code.takeLast(6)})$sectorStr 得分:${pick.score}")
+                            }
+                        }
+                        // 從 stockCodesJson 顯示實際選到的股票
                         try {
-                            val reasonJson = org.json.JSONArray(item.filteredReasonJson)
-                            if (reasonJson.length() > 0) {
-                                val sampleReason = reasonJson.optJSONObject(0)
-                                if (sampleReason != null) sb.appendLine("    ⚠️ 過濾: ${sampleReason.optString("name")}(${sampleReason.optString("reason")}) 等${reasonJson.length()}只")
+                            val codesJson = org.json.JSONArray(item.stockCodesJson)
+                            if (codesJson.length() > 0) {
+                                val codes = (0 until codesJson.length()).map { codesJson.optString(it) }.filter { it.isNotBlank() }
+                                if (codes.isNotEmpty()) {
+                                    val names = codes.take(5).map { c ->
+                                        val n = codeToName[c] ?: c.takeLast(6)
+                                        n
+                                    }
+                                    sb.appendLine("    選股: ${names.joinToString("、")}")
+                                }
                             }
                         } catch (_: Exception) {}
+                    }
+                    sb.appendLine()
+                }
+                withContext(Dispatchers.Main) { showDialog("全周期報告", sb.toString()) }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "加載失敗: ${e.message}", Toast.LENGTH_SHORT).show() }
+            }
+        }
+    }
+
+    /** 從 finalTop3Json 提取 top picks（兼容 flat 和 nested DAG 格式） */
+    private data class TopPick(val code: String, val name: String, val score: Int)
+
+    private fun extractTopPicks(top3Json: org.json.JSONArray, codeToName: Map<String, String>): List<TopPick> {
+        val picks = mutableListOf<TopPick>()
+        for (i in 0 until top3Json.length()) {
+            val obj = top3Json.optJSONObject(i) ?: continue
+            // 格式A: flat {code, name, score/reason}
+            val flatCode = obj.optString("code", "")
+            if (flatCode.isNotBlank()) {
+                val name = obj.optString("name").takeIf { it.isNotBlank() } ?: codeToName[flatCode] ?: flatCode.takeLast(6)
+                val score = if (obj.has("score")) obj.optInt("score") else obj.optInt("strength")
+                picks.add(TopPick(flatCode, name, score))
+                continue
+            }
+            // 格式B: nested {strategyId, strategyName, picks: [{code, name, strength}]}
+            val innerPicks = obj.optJSONArray("picks")
+            if (innerPicks != null) {
+                for (j in 0 until innerPicks.length()) {
+                    val inner = innerPicks.optJSONObject(j) ?: continue
+                    val code = inner.optString("code", "")
+                    if (code.isNotBlank()) {
+                        val name = inner.optString("name").takeIf { it.isNotBlank() } ?: codeToName[code] ?: code.takeLast(6)
+                        val score = if (inner.has("score")) inner.optInt("score") else inner.optInt("strength")
+                        picks.add(TopPick(code, name, score))
+                    }
+                }
+            }
+        }
+        return picks.sortedByDescending { it.score }
+    }
+
+    /** 查看當前周期獨立量化報告（含大盤均線 + 6項嚴選詳情） */
+    protected open fun showPeriodReportHistory() {
+        val quantType = getQuantType()
+        val periodStrategyId = when (quantType) {
+            "UltraShortQuant" -> "DAG_ULTRA_SHORT"
+            "ShortTermQuant" -> "DAG_SHORT"
+            "MidTermQuant" -> "DAG_MID"
+            "LongTermQuant" -> "DAG_LONG"
+            else -> "DAG_${quantType.uppercase()}"
+        }
+        val periodLabel = when (quantType) {
+            "UltraShortQuant" -> "超短線"
+            "ShortTermQuant" -> "短線"
+            "MidTermQuant" -> "中線"
+            "LongTermQuant" -> "長線"
+            else -> quantType
+        }
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val entities = db.dailyPeriodResultDao().getRecent(200)
+                    .filter { it.strategyId == periodStrategyId }
+                if (entities.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(requireContext(), "暫無${periodLabel}量化報告", Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+                val codeToName = try { db.stockBasicDao().getAll().associate { it.code to it.name } } catch (_: Exception) { emptyMap() }
+                val grouped = entities.groupBy { it.tradeDate }
+                val sb = StringBuilder()
+                val timeFmt = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+                sb.appendLine("📊 $periodLabel 量化報告 (共 ${entities.size} 條)")
+                sb.appendLine("总纲：逃頂要快，抄底要慢")
+                sb.appendLine()
+                for ((date, items) in grouped.toSortedMap().entries.reversed().take(10)) {
+                    sb.appendLine("━━━ $date ━━━")
+                    for (item in items) {
+                        val timeStr = timeFmt.format(java.util.Date(item.createdAt))
+                        sb.appendLine("  [$timeStr] ${item.strategyName}[${item.periodDays}日]: ${item.stockCount}只信號")
+                        if (item.newsStrengthScore > 0) sb.appendLine("    新聞力度:${item.newsStrengthScore} 輪動懲罰:${item.rotationPenalty}")
+                        // 從 pipelineFlowJson 提取大盤均線 + 嚴選詳情
+                        try {
+                            val flowJson = org.json.JSONObject(item.pipelineFlowJson)
+                            val pipelines = flowJson.optJSONObject("pipelines")
+                            if (pipelines != null) {
+                                val keys = pipelines.keys()
+                                while (keys.hasNext()) {
+                                    val pipeObj = pipelines.optJSONObject(keys.next()) ?: continue
+                                    // 大盤均線檢查
+                                    val marketMa = pipeObj.optJSONObject("n_market_ma_check")
+                                    if (marketMa != null) {
+                                        val converged = marketMa.optBoolean("isConvergedUpward", false)
+                                        val desc = marketMa.optString("description", "")
+                                        sb.appendLine("    大盤均線: ${if (converged) "✅" else "⚠️"} $desc")
+                                    }
+                                    // 嚴選檢查
+                                    val strict = pipeObj.optJSONObject("n_strict_selection")
+                                    if (strict != null) {
+                                        val passed = strict.optInt("passedCount", 0)
+                                        val total = strict.optInt("totalCount", 0)
+                                        sb.appendLine("    嚴選檢查: $passed/$total 只全部通過")
+                                        val passedStocks = strict.optJSONObject("passedStocks")
+                                        if (passedStocks != null && passedStocks.length() > 0) {
+                                            val stockKeys = passedStocks.keys()
+                                            while (stockKeys.hasNext()) {
+                                                val k = stockKeys.next()
+                                                val d = passedStocks.optJSONObject(k) ?: continue
+                                                val n = d.optString("name", k.takeLast(6))
+                                                val cnt = d.optInt("passCount", 0)
+                                                val ma = if (d.optBoolean("maConvergedUp")) "✓" else "✗"
+                                                val noNewLow = if (d.optBoolean("threeDayNoNewLow")) "✓" else "✗"
+                                                val low25 = if (d.optBoolean("historicalLow25")) "✓" else "✗"
+                                                val pe = if (d.optBoolean("peLow")) "✓" else "✗"
+                                                val active = if (d.optBoolean("cyclicalActive")) "✓" else "✗"
+                                                val freeze = if (d.optBoolean("freezingPoint")) "✓" else "✗"
+                                                sb.appendLine("    $n($cnt/6): 均線$ma 不新低$noNewLow 低位$low25 PE$pe 活躍$active 冰點$freeze")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (_: Exception) {}
+                        // 選到的股票 + 評分
+                        val top3Json = try { org.json.JSONArray(item.finalTop3Json) } catch (_: Exception) { org.json.JSONArray() }
                         if (top3Json.length() > 0) {
-                            for (i in 0 until minOf(top3Json.length(), 3)) {
-                                val obj = top3Json.optJSONObject(i) ?: continue
-                                val code = obj.optString("code")
-                                val name = obj.optString("name").takeIf { it.isNotBlank() } ?: codeToName[code] ?: code.takeLast(6)
-                                val sector = try { com.chin.stockanalysis.stock.database.StockDataCenter.getSectorsByStock(code).firstOrNull() ?: "" } catch (_: Exception) { "" }
-                                val sectorStr = if (sector.isNotBlank()) " [$sector]" else ""
-                                sb.appendLine("    Top${i+1}: $name(${code.takeLast(6)})$sectorStr 得分:${obj.optInt("score")}")
+                            val picks = extractTopPicks(top3Json, codeToName)
+                            for ((idx, pick) in picks.withIndex()) {
+                                if (idx >= 5) break
+                                sb.appendLine("    Top${idx+1}: ${pick.name}(${pick.code.takeLast(6)}) 得分:${pick.score}")
                             }
                         }
                     }
                     sb.appendLine()
                 }
-                withContext(Dispatchers.Main) { showDialog("量化報告歷史", sb.toString()) }
+                withContext(Dispatchers.Main) { showDialog("$periodLabel 量化報告", sb.toString()) }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "加載失敗: ${e.message}", Toast.LENGTH_SHORT).show() }
             }
@@ -2906,7 +3073,7 @@ abstract class QuantFragmentBase : Fragment() {
 
                 val minTradeDate = orders.minByOrNull { it.tradeDate }?.tradeDate ?: browsingDate.format(DATE_FMT)
                 val allDates = db.dailySnapshotDao().getAvailableDates(20)
-                val dates = allDates
+                var dates = allDates
                     .filter { it >= minTradeDate && it <= browsingDate.format(DATE_FMT) }
                     .filter { dateStr ->
                         // 自動排除周六日和節假日
@@ -2922,6 +3089,27 @@ abstract class QuantFragmentBase : Fragment() {
                     val snaps = db.dailySnapshotDao().getByDate(date)
                     for (snap in snaps) {
                         priceMap.getOrPut(snap.code) { mutableMapOf() }[date] = snap.close
+                    }
+                }
+
+                // 實時行情補充：獲取今日實時價格，確保盤中也能看到最新價和盈虧
+                val todayStr = browsingDate.format(DATE_FMT)
+                val realtimeMap = try {
+                    com.chin.stockanalysis.stock.data.StockDataSourceFactory
+                        .createDefaultRepository(requireContext().applicationContext)
+                        .getRealtime(orders.map { it.stockCode })
+                } catch (_: Exception) { emptyMap() }
+                if (realtimeMap.isNotEmpty()) {
+                    for ((code, rt) in realtimeMap) {
+                        if (rt.price > 0) {
+                            priceMap.getOrPut(code) { mutableMapOf() }[todayStr] = rt.price
+                        }
+                    }
+                    // 確保今日日期在 dates 列表中（盤中快照可能尚未入库）
+                    if (todayStr !in dates) {
+                        dates.toMutableList().also {
+                            it.add(todayStr); it.sort()
+                        }.let { dates = it }
                     }
                 }
 
@@ -3037,6 +3225,9 @@ abstract class QuantFragmentBase : Fragment() {
                 val label = date.takeLast(5)
                 headerRow.addView(createCell(label, 72, "#666666", 10f, bold = true))
             }
+        } else if (dates.isNotEmpty()) {
+            // 超短線：只顯示今日一列
+            headerRow.addView(createCell("今日", 72, "#666666", 10f, bold = true))
         }
         headerRow.addView(createCell("賣出", 50, "#666666", 9f, bold = true))
         table.addView(headerRow)
@@ -3103,6 +3294,22 @@ abstract class QuantFragmentBase : Fragment() {
                         setPadding(2, 4, 2, 4); setLineSpacing(2f, 1f)
                     })
                 }
+            } else if (dates.isNotEmpty()) {
+                // 超短線：只顯示今日最新價 + 盈虧
+                val todayPrice = priceMap[order.stockCode]?.get(dates.last())
+                val cellText: String; val cellColor: String
+                if (todayPrice == null) { cellText = "—"; cellColor = "#999999" }
+                else {
+                    val pnl = if (order.buyPrice > 0) (todayPrice - order.buyPrice) / order.buyPrice * 100 else 0.0
+                    cellText = "¥${"%.2f".format(todayPrice)}\n${if (pnl >= 0) "+" else ""}${"%.2f".format(pnl)}%"
+                    cellColor = if (pnl >= 0) "#D32F2F" else "#2E7D32"
+                }
+                row.addView(TextView(requireContext()).apply {
+                    text = cellText; textSize = 9f
+                    setTextColor(Color.parseColor(cellColor)); gravity = Gravity.CENTER
+                    layoutParams = LinearLayout.LayoutParams(dpToPx(72), LinearLayout.LayoutParams.WRAP_CONTENT)
+                    setPadding(2, 4, 2, 4); setLineSpacing(2f, 1f)
+                })
             }
 
             // 賣出按鈕

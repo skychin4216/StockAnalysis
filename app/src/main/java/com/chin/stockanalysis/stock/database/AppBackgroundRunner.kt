@@ -534,6 +534,51 @@ object AppBackgroundRunner {
 
         if (totalSaved > 0 || totalSignals > 0) {
             Log.i(TAG, "做T Pipeline 監控: 生成 $totalSignals 條信號，保存 $totalSaved 條推薦")
+
+            // 6. 通知新產生的做T推薦（避免重複通知）
+            try {
+                val prefs = context.getSharedPreferences("t_trade_notification", Context.MODE_PRIVATE)
+                val notifiedIds = prefs.getStringSet("notified_rec_ids", mutableSetOf<String>()) ?: mutableSetOf()
+                val pendingRecs = db.tTradeRecommendationDao().getPendingByDate(today)
+                val newRecs = pendingRecs.filter { it.id.toString() !in notifiedIds }
+
+                if (newRecs.isNotEmpty()) {
+                    val newIds = newRecs.map { it.id.toString() }.toSet()
+                    val updatedNotified = notifiedIds.toMutableSet().apply { addAll(newIds) }
+                    // 只保留最近 200 條記錄，避免無限增長
+                    val trimmed = updatedNotified.toList().takeLast(200).toSet()
+                    prefs.edit().putStringSet("notified_rec_ids", trimmed).apply()
+
+                    val notifier = com.chin.stockanalysis.notification.TradeNotifier
+                    for (rec in newRecs) {
+                        val signalLabel = when (rec.signalType) {
+                            "T_BUY" -> "做T買入"
+                            "T_SELL" -> "做T賣出"
+                            "RT_SELL" -> "反T賣出"
+                            "RT_BUY" -> "反T買回"
+                            else -> rec.signalType
+                        }
+                        val periodLabel = when (rec.periodType) {
+                            "UltraShortQuant" -> "超短"
+                            "ShortTermQuant" -> "短線"
+                            "MidTermQuant" -> "中線"
+                            "LongTermQuant" -> "長線"
+                            "RealPosition" -> "持倉"
+                            else -> rec.periodType.take(4)
+                        }
+                        val title = "$signalLabel — ${rec.stockName}(${rec.stockCode.takeLast(4)})"
+                        val body = buildString {
+                            appendLine("[$periodLabel] ${"%.2f".format(rec.suggestedPrice)} → 目標 ${"%.2f".format(rec.targetPrice)}")
+                            appendLine("建議 ${rec.quantity}股 | 預期 ${"%.2f%%".format(rec.expectedProfitPct)}")
+                            if (rec.reason.isNotBlank()) append(rec.reason)
+                        }.trim()
+                        notifier.send(context, title, body, "TREC_${rec.id}")
+                    }
+                    Log.i(TAG, "做T通知: 發送 ${newRecs.size} 條新推薦通知")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "做T通知發送失敗: ${e.message}")
+            }
         }
     }
 }

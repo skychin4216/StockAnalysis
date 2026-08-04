@@ -84,6 +84,18 @@ class StrategyFragment : Fragment() {
             }
         }.attach()
 
+        // 切換周期 tab 時自動刷新持倉
+        viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
+            override fun onPageSelected(position: Int) {
+                super.onPageSelected(position)
+                childFragmentManager.executePendingTransactions()
+                val frag = childFragmentManager.findFragmentByTag("f$position")
+                if (frag is com.chin.stockanalysis.strategy.trade.QuantFragmentBase) {
+                    frag.refreshPositions()
+                }
+            }
+        })
+
         return root
     }
 
