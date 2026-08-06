@@ -727,7 +727,7 @@ FeatureFlagManager 仍保留，用於控制 `useAgentFramework` 參數的默認�
 “拿不住，是因为你投入了输不起的钱。”
 —— 长线（6个月~1年+）必须用绝对闲钱（3~5年不用的钱）。只有输得起，才能在“低位利空”时冷静加仓，而不是恐慌割肉。如果这笔钱下个月要还房贷，那它天生就不适合做长线。
 
-总纲：长线看势，中线看价，短线看量，超短看情绪. 逃頂要快,抄底要慢 (三天不新低 + 5 10 30 日均綫粘合向上)
+c (三天不新低 + 5 10 30 日均綫粘合向上)
 你现在文档里的四周期（超短、短、中、长）已经齐活了。长线的这套逻辑，刚好回应了你文档里 moat_leader（护城河）和 institutional_accumulation（机构增持）这些策略的底层信仰——坚信价值终究会回归，但回归的时间，往往超出绝大多数人的耐心。 这份表格可以作为“实战心法”附录。
 
 
@@ -739,3 +739,531 @@ BasePositionAnalyzer (strategy/analysis/)
 3天不新低：最近3天 low 全部 > 前3天最低 low
 MA5/MA10/MA30 粘合向上：離散率 < 2% 且 MA5 方向向上
 同時檢測逃頂信號：3天急跌 > 5% 或跌破3日最低
+
+
+### 12.5 A股日内做T的7个关键时间点及操作思路
+结合之前整理的“大A祖训”和四周期体系，日内做T本质上是超短线（1天） 的极致应用——借助底仓在一天内完成“先买后卖”或“先卖后买”，
+赚取差价、降低成本。
+
+以下是A股日内做T的7个关键时间点及操作思路：
+
+一、两种做T模式
+模式	操作顺序	适用场景
+正T（先买后卖）	开盘先低吸 → 盘中冲高卖出底仓	预计股价低开或盘中会探底回升
+倒T（先卖后买）	开盘先高抛 → 盘中回落再接回	预计股价高开或盘中会冲高回落
+二、7个关键时间点详解
+⏰ 时间点1：9:30 - 9:40（早盘冲高/情绪高点）
+特征：刚开盘半小时，往往是散户跟风最踊跃的时候，主力经常利用少量资金拉高诱多。
+
+操作建议：高抛为主，忌追高！ 除非是超级大利好一字板，否则这个时间段急拉，不要追。这是前一天进场资金的最佳出场时机。如果股价急速拉升超过5%且量能衰减，是主力出货信号，应赶紧高抛。
+
+⏰ 时间点2：9:50 - 10:10（短期高点）
+特征：经过第一轮博弈，该出的获利盘出了，该进的跟风盘进了，这个时间段很容易形成一个日内的小高峰。
+
+操作建议：适合高抛（倒T卖点） 。9:50-10:10这个时间容易产生短期高点，适合见好就收。
+
+⏰ 时间点3：10:10 - 10:40（主力动向/观察期）
+特征：这是真正的主力（机构或游资）决定今天是否“干活”的时间。如果个股出现拉升且主力数据良好（看Level2数据或盘口大单），说明今天主力意图做多。
+
+操作建议：观察期，决定去留。如果个股稳步拉升且资金流入明显，可以安心持有；如果此时仍无动静，今天大概率是震荡或下跌行情。
+
+⏰ 时间点4：11:10 - 11:30（午盘收盘/急拉陷阱）
+特征：临近午盘收盘，突然出现直线拉升？大概率是 “做图”给下午看的，吸引下午开盘后的跟风盘。
+
+操作建议：急拉别跟，谨防中招！ 除非当天市场极度强势，否则这种急拉通常持续性很差，追进去容易站岗。
+
+⏰ 时间点5：13:00 - 13:30（午后开盘/警惕“开盘杀”）
+特征：和早盘类似，下午开盘前15分钟，如果出现脉冲式拉升，大概率是诱多。若此时出现快速下跌，反而可能是日内相对低点。
+
+操作建议：警惕“开盘杀” 。13:15-13:30也容易走出当日高点，是离场做T的时机之一。
+
+⏰ 时间点6：13:30 - 14:00（垃圾时间/看戏为主）
+特征：这段时间多空双方往往处于平衡状态，主力要么在洗盘，要么在准备下午的大动作。
+
+操作建议：看戏为主，别激动，别下单。这段时间多为主力控盘表演阶段，多看少动即可。
+
+⏰ 时间点7：14:00 - 15:00（方向选择 + 定调时刻）⭐最重要！
+这是全天最关键的时间段，拆分为两个子时段：
+
+14:00 - 14:30（方向选择） ：
+
+上午涨得好不好不重要，关键看这里。如果此时股价开始回落，全天大概率走弱；如果资金开始抢筹，往往预示着第二天还有行情。
+
+很多游资会在此时偷袭拉涨停。即便个股走势好也要谨慎观察，这一阶段最容易出现趋势反转。
+
+14:30 - 15:00（定调时刻） ：
+
+强势行情：会继续拉高，吸引踏空资金入场，为明天出货做准备，可以持股。
+
+弱势行情：容易冲高回落（诱多）。如果尾盘最后几分钟被直线拉升，不要激动，很可能是做账或骗线。
+
+这是最重要的转折点，决定明天的走势。
+
+三、核心口诀（一句话记忆）
+时间	口诀	动作
+9:30-9:40	早盘冲高	跑（高抛）
+9:50-10:10	短期高点	跑（倒T卖点）
+10:10-10:40	主力动向	看（观察去留）
+11:10-11:30	午盘收盘	防（急拉陷阱）
+13:00-13:30	午后开盘	防（开盘杀）
+13:30-14:00	垃圾时间	等（看戏）
+14:00-14:30	方向选择	盯（关键转折）
+14:30-15:00	定调时刻	决（决定去留）
+四、风险提示（大A祖训版）
+T仓当日了结，不变成加仓：做T的仓位当天必须平掉，不能把T做成加仓。
+
+做错T不恋战：按原止损线处理，不要死扛。
+
+分时背离只管短期：分时的背离技巧只管未来一二十分钟或日内一两个小时，决定不了股票的未来走势。
+
+切忌贪心：不必追求吃满整段行情，有几个点的差价便已足够。
+
+震荡市或高波动行情中做T效果最佳。
+
+结合你之前的“大A祖训”——超短线看情绪、短线看资金、中线看估值、长线看国运——日内做T就是超短线维度上“看情绪+看资金”的极致演绎，
+本质是在跟主力和散户的情绪博弈。以上7个时间点，是无数前人用真金白银换来的经验规律，仅供参考，绝非圣杯。
+
+
+
+### 12.6 根据K图分析大盘趋势
+一、大盘趋势与形态维度（你的核心逻辑已涵盖）
+这是大盘分析的“骨架”。你提的参数非常好，我帮你优化成更严谨的量化定义：
+
+指标参数	你的定义	量化修正/增强建议	逻辑意义
+止跌信号	3天不新低（最近3天 Low > 前3天最低 Low）	改为「3日收盘价不创新低」（Close > Ref(Lowest(Low,3), 3)）。
+因为盘中最低点常被主力瞬间砸穿（毛刺），收盘价不破代表资金真正认可该底部。	确认短期下跌动能衰竭，是左侧抄底的必要非充分条件。
+中继/变盘点	MA5/MA10/MA30 粘合向上（离散率<2%且MA5向上）	增加「MA30走平上翘」条件。
+离散率公式：(MAX(MA5,MA10,MA30) - MIN(...)) / MA30 < 0.02。
+且必须满足 MA5 > MA10 > MA30（多头排列雏形） 。	代表市场平均成本高度一致，一旦放量，容易触发“一阳穿三线”的主升行情。
+逃顶信号	3天急跌 > 5% 或跌破3日最低	增加「跌伴随放量」过滤。
+若缩量急跌（量能小于5日均量），可能是挖坑洗盘，不应逃顶；
+若放量（>1.5倍均量）跌破3日最低，则是恐慌踩踏，必须果断逃顶。	区分“洗盘”与“出货”，避免被主力骗线。
+二、量能与资金流维度（A股的“血液”）
+只看K线不看量，等于开车不看油表。大盘的成交量是大资金的直接态度。
+
+量能均线（VOL_MA5 / VOL_MA60）：
+
+放量站上：当日成交量 > VOL_MA5 且 > VOL_MA60，代表增量资金入场，突破有效。
+
+缩量反弹：股价上涨但成交量 < VOL_MA5，属于量价背离，大概率是诱多，次日容易低开。
+
+北向资金（沪深股通）实时流向：
+
+在A股，北向资金被称为“聪明钱”。连续3日净流入 > 50亿，是大盘阶段性底部的强烈信号；连续3日净流出，则需降低仓位。
+
+涨跌家数比（市场温度计）：
+
+全市场（沪深京）上涨家数 / 下跌家数。比值 > 3 代表情绪过热（短线需高抛），比值 < 0.3 代表情绪冰点（超短线可低吸）。
+
+三、市场情绪与波动维度（隐含的心理博弈）
+炸板率（涨停开板率）：
+
+若当日涨停个股中，炸板率 > 40%，说明封板资金意志不坚定，大盘次日大概率分歧转弱。
+
+昨日涨停表现（同花顺指数 883900）：
+
+这是超短线的命脉。若该指数 < 0%（即昨日涨停的股票今日平均是跌的），说明打板族被埋，市场亏钱效应扩散，超短线、短线必须空仓休息。
+
+股指期货升贴水（IF/IC 主力合约）：
+
+若当月连续合约 贴水（期货价格 < 现货价格）超过 0.5%，代表机构强烈看空后市，大盘面临系统性压力。
+
+四、权重股贡献度（指数的“失真”修复）
+上证指数常被“两桶油（中石油、中石化）”或“银行”绑架。分析大盘必须拆解：
+
+黄白线关系（分时图中的大盘股线/中小盘线）：
+
+白线（权重）在上，黄线（小盘）在下：赚指数不赚钱，只拉权重护盘，实则个股普跌，小心午后跳水。
+
+黄线在上，白线在下：中小盘股活跃，市场赚钱效应好，是良性上涨。
+
+五、宏观事件日历（非量化但极重要）
+技术面永远逃不过基本面的“黑天鹅”：
+
+每月 9:30 发布的 CPI/PPI：若超出预期 0.3% 以上，大盘通常会有 1% 左右的剧烈波动。
+
+周五下午/盘后的 IPO 批文数量：若超过 5 家，视为利空。
+
+六、系统集成：大盘状态机（判断当前该用哪个周期）
+基于以上参数，你可以将这些逻辑输入到你的 FeatureFlagManager 中，自动建议当前最适合的交易周期：
+
+大盘状态	判断条件（量化）	推荐操作周期
+强势单边	大盘 > MA60 且 MA5>MA10>MA30 且 成交量温和放大	中线和长线（仓位 70%）
+震荡结构	大盘在 MA60 附近来回缠绕，且涨跌家数比在 0.7~1.5 之间	短线（仓位 40%，高抛低吸）
+弱势下跌	大盘 < MA30 且 3天急跌 > 3% 且 北向持续流出	超短线（仓位 20%，只做尾盘次日卖）
+系统性风险	大盘 < MA60 且 股指期货贴水 > 0.8% 且 跌停家数 > 50 家	空仓/逆回购（仓位 0%）
+💡 给你的代码集成建议
+直接在 MarketAnalysisEngine.kt 中写一个函数，把这些逻辑串起来：
+
+kotlin
+data class MarketContext(
+    val isBottomConfirmed: Boolean,   // 3日不新低
+    val isTrendUp: Boolean,           // 均线多头离散<2%
+    val isTopDanger: Boolean,         // 放量跌破3日低点
+    val volumeHealth: String,         // "放量" / "缩量" / "平量"
+    val northFlow: Float,             // 北向净流入（亿）
+    val advanceDeclineRatio: Float,   // 涨跌比
+    val suggestedPeriod: HoldingPeriod // 推荐的策略周期
+)
+
+fun getMarketContext(): MarketContext {
+    // 1. 计算你的逃顶/抄底参数
+    // 2. 组合逻辑得出 suggestedPeriod
+}
+总结：分析大盘的核心，不是单一指标，而是趋势（你提的均线）+ 量能（北向/成交量）+ 情绪（涨跌比/炸板率） 的三维共振。你原本的那套“3日低点”和“急跌逃顶”，严格属于 “趋势与形态”维度的核心实战精华，再加上量能和情绪，就能避开绝大多数的“假突破”和“假破位”。
+
+
+// 文件名：MarketAnalysisEngine.kt
+// 包名：根据你的项目自行调整，如 com.your.stock.analysis
+// 功能：大盘环境分析引擎，计算趋势、风险及建议持仓周期
+
+package com.your.stock.analysis
+
+import java.time.LocalDate
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
+
+// ================================
+// 1. 基础数据类定义
+// ================================
+
+/** 大盘日线数据（只需关注核心几个字段） */
+data class IndexDailyData(
+    val date: LocalDate,
+    val open: Double,
+    val high: Double,
+    val low: Double,
+    val close: Double,
+    val volume: Long          // 成交量（手）
+)
+
+/** 市场辅助指标（北向资金、情绪等） */
+data class MarketMetrics(
+    val northNetInflow: Double,     // 北向资金净流入（亿元），正数为流入
+    val advanceCount: Int,           // 上涨家数
+    val declineCount: Int,           // 下跌家数
+    val limitUpCount: Int,           // 涨停家数
+    val limitDownCount: Int          // 跌停家数
+)
+
+/** 大盘分析结果（输出给 UI 或决策系统） */
+data class MarketContext(
+    val isBottomConfirmed: Boolean,     // 是否触底（3日不新低）
+    val isTrendUp: Boolean,             // 是否均线多头粘合向上
+    val isTopDanger: Boolean,           // 是否存在逃顶风险
+    val volumeStatus: String,           // "放量" / "缩量" / "平量"
+    val marketTemp: String,             // "沸腾" / "温和" / "冰点"
+    val suggestedPeriod: HoldingPeriod, // 建议操作周期
+    val summary: String                 // 中文概要描述
+)
+
+// ================================
+// 2. 核心分析引擎
+// ================================
+
+object MarketAnalysisEngine {
+
+    private const val MA_SHORT = 5
+    private const val MA_MID = 10
+    private const val MA_LONG = 30
+    private const val DISPERSION_THRESHOLD = 0.02  // 离散率 < 2%
+
+    /**
+     * 执行大盘全面分析
+     * @param history 最近至少30个交易日的日线数据（按日期升序排列，即 index 0 为最旧）
+     * @param metrics 当日的市场辅助指标
+     * @return MarketContext 分析结果
+     */
+    fun analyze(
+        history: List<IndexDailyData>,
+        metrics: MarketMetrics
+    ): MarketContext {
+        // 数据校验
+        if (history.size < MA_LONG) {
+            return MarketContext(
+                isBottomConfirmed = false,
+                isTrendUp = false,
+                isTopDanger = false,
+                volumeStatus = "数据不足",
+                marketTemp = "未知",
+                suggestedPeriod = HoldingPeriod.SHORT,
+                summary = "历史数据不足 $MA_LONG 天，无法准确分析，默认使用短线"
+            )
+        }
+
+        // 取最近的数据
+        val latest = history.last()
+        val recent3 = history.takeLast(3)  // 最近3天
+        val prev3 = history.takeLast(6).dropLast(3) // 往前推3天（即倒数第4~6天）
+
+        // ---------- 1. 计算核心指标 ----------
+        // (1) 3天不新低（底背离确认）
+        val isBottom = checkBottomConfirmed(recent3, prev3)
+
+        // (2) 均线粘合向上（趋势启动）
+        val (isTrend, ma5, ma10, ma30) = checkMaTrend(history)
+
+        // (3) 逃顶信号（急跌或破位）
+        val isTop = checkTopDanger(recent3, latest)
+
+        // (4) 量能状态（今日 vs 5日均量）
+        val volumeStatus = checkVolumeStatus(history)
+
+        // (5) 市场情绪（涨跌比 + 涨停跌停）
+        val marketTemp = checkMarketTemperature(metrics)
+
+        // (6) 北向资金权重（作为加分项）
+        val northScore = when {
+            metrics.northNetInflow > 50 -> 1.0
+            metrics.northNetInflow > 20 -> 0.5
+            metrics.northNetInflow > 0 -> 0.0
+            else -> -0.5
+        }
+
+        // ---------- 2. 综合判定：建议持仓周期 ----------
+        val suggestedPeriod = decidePeriod(
+            isBottom = isBottom,
+            isTrend = isTrend,
+            isTop = isTop,
+            volumeStatus = volumeStatus,
+            marketTemp = marketTemp,
+            northScore = northScore
+        )
+
+        // ---------- 3. 生成摘要 ----------
+        val summary = buildSummary(
+            isBottom, isTrend, isTop, volumeStatus, marketTemp, suggestedPeriod
+        )
+
+        return MarketContext(
+            isBottomConfirmed = isBottom,
+            isTrendUp = isTrend,
+            isTopDanger = isTop,
+            volumeStatus = volumeStatus,
+            marketTemp = marketTemp,
+            suggestedPeriod = suggestedPeriod,
+            summary = summary
+        )
+    }
+
+    // ================================
+    // 3. 各检测模块具体实现
+    // ================================
+
+    /**
+     * 核心条件：最近3天收盘价的最低值 > 前3天收盘价的最低值
+     * 即 3日不新低
+     */
+    private fun checkBottomConfirmed(recent3: List<IndexDailyData>, prev3: List<IndexDailyData>): Boolean {
+        if (recent3.size < 3 || prev3.size < 3) return false
+        
+        val recentLow = recent3.minOf { it.close }      // 最近3天收盘价最低点
+        val prevLow = prev3.minOf { it.close }          // 前3天收盘价最低点
+        
+        // 加一个缓冲：最近最低点 必须大于 前3天最低点，同时最近3天不能有低于前低的收盘价
+        return recentLow > prevLow
+    }
+
+    /**
+     * 均线粘合向上：
+     * 1. 离散率 (max - min) / MA30 < 2%
+     * 2. MA5 方向向上（即今日MA5 > 昨日MA5）
+     */
+    private fun checkMaTrend(history: List<IndexDailyData>): Triple<Boolean, Double, Double, Double> {
+        val closes = history.map { it.close }
+        
+        // 计算当前均线
+        val ma5 = closes.takeLast(MA_SHORT).average()
+        val ma10 = closes.takeLast(MA_MID).average()
+        val ma30 = closes.takeLast(MA_LONG).average()
+        
+        // 计算前一天的MA5（用于判断方向）
+        val prevCloses = closes.dropLast(1)
+        val prevMa5 = if (prevCloses.size >= MA_SHORT) 
+            prevCloses.takeLast(MA_SHORT).average() 
+        else ma5
+        
+        // 条件1：离散率 < 2%
+        val maxMa = maxOf(ma5, ma10, ma30)
+        val minMa = minOf(ma5, ma10, ma30)
+        val dispersion = (maxMa - minMa) / ma30
+        
+        // 条件2：MA5 向上
+        val isMa5Up = ma5 > prevMa5
+        
+        val isTrend = dispersion < DISPERSION_THRESHOLD && isMa5Up
+        
+        return Triple(isTrend, ma5, ma10, ma30)
+    }
+
+    /**
+     * 逃顶信号检测：
+     * 1. 最近3天累计跌幅 > 5% （对应急跌）
+     * 2. 或 今日收盘价 < 最近3天最低点（破位）
+     */
+    private fun checkTopDanger(recent3: List<IndexDailyData>, latest: IndexDailyData): Boolean {
+        if (recent3.size < 3) return false
+        
+        val firstClose = recent3.first().close
+        val lastClose = recent3.last().close
+        
+        // 条件1：3天跌幅 > 5%
+        val dropPercent = (firstClose - lastClose) / firstClose
+        val isSharpDrop = dropPercent > 0.05
+        
+        // 条件2：今日收盘价跌破最近3天最低点（破位止损）
+        val recent3Low = recent3.minOf { it.low }
+        val isBreakLow = latest.close < recent3Low
+        
+        // 补充条件：逃顶最好伴随放量（外部调用时判定，这里只做技术形态）
+        return isSharpDrop || isBreakLow
+    }
+
+    /**
+     * 量能判定：
+     * 今日成交量 vs 5日均量
+     */
+    private fun checkVolumeStatus(history: List<IndexDailyData>): String {
+        if (history.size < 6) return "数据不足"
+        
+        val todayVolume = history.last().volume
+        val avgVolume5 = history.takeLast(6).dropLast(1).map { it.volume }.average()
+        
+        return when {
+            todayVolume > avgVolume5 * 1.5 -> "放量"
+            todayVolume < avgVolume5 * 0.7 -> "缩量"
+            else -> "平量"
+        }
+    }
+
+    /**
+     * 市场温度：
+     * 涨跌比（上涨/下跌） + 涨停/跌停修正
+     */
+    private fun checkMarketTemperature(metrics: MarketMetrics): String {
+        val total = metrics.advanceCount + metrics.declineCount
+        if (total == 0) return "未知"
+        
+        val ratio = metrics.advanceCount.toDouble() / metrics.declineCount.toDouble()
+        
+        // 涨跌比判断
+        return when {
+            ratio > 3.0 -> "沸腾"      // 极度过热
+            ratio > 1.5 -> "温和偏热"
+            ratio > 0.7 -> "温和"
+            ratio > 0.3 -> "温和偏冷"
+            else -> "冰点"            // 极度恐慌
+        }
+    }
+
+    /**
+     * 综合决策矩阵（核心逻辑）
+     */
+    private fun decidePeriod(
+        isBottom: Boolean,
+        isTrend: Boolean,
+        isTop: Boolean,
+        volumeStatus: String,
+        marketTemp: String,
+        northScore: Double
+    ): HoldingPeriod {
+        
+        // 【优先级1】系统性风险（强制空仓或只做超短）
+        if (isTop && volumeStatus == "放量") {
+            return HoldingPeriod.ULTRA_SHORT  // 只能做尾盘隔夜，次日必跑
+        }
+        if (marketTemp == "冰点" && northScore < 0) {
+            return HoldingPeriod.ULTRA_SHORT
+        }
+
+        // 【优先级2】趋势向上（重仓长线/中线）
+        if (isTrend && volumeStatus == "放量" && marketTemp in listOf("温和", "温和偏热")) {
+            return HoldingPeriod.LONG
+        }
+
+        // 【优先级3】触底回升（中线布局）
+        if (isBottom && marketTemp in listOf("冰点", "温和偏冷")) {
+            return HoldingPeriod.MID
+        }
+
+        // 【优先级4】震荡市（短线和超短结合）
+        if (!isTop && !isBottom && volumeStatus == "平量") {
+            return HoldingPeriod.SHORT
+        }
+
+        // 【默认兜底】保守用短线
+        return HoldingPeriod.SHORT
+    }
+
+    /**
+     * 构建中文摘要
+     */
+    private fun buildSummary(
+        isBottom: Boolean,
+        isTrend: Boolean,
+        isTop: Boolean,
+        volumeStatus: String,
+        marketTemp: String,
+        period: HoldingPeriod
+    ): String {
+        val parts = mutableListOf<String>()
+        
+        when {
+            isTrend -> parts.add("均线多头粘合向上")
+            isBottom -> parts.add("底部确认")
+            isTop -> parts.add("⚠️逃顶信号触发")
+        }
+        
+        parts.add("市场$marketTemp")
+        parts.add("$volumeStatus")
+        parts.add("建议：${period.label}")
+        
+        return parts.joinToString(" | ")
+    }
+}
+
+// ================================
+// 4. 使用示例 & 测试
+// ================================
+
+fun main() {
+    // 模拟生成最近30天的数据（这里仅作演示，实际从数据库或API获取）
+    val mockHistory = (1..30).map { i ->
+        IndexDailyData(
+            date = LocalDate.now().minusDays(30 - i.toLong()),
+            open = 3000.0 + i * 2.0,
+            high = 3020.0 + i * 2.0,
+            low = 2980.0 + i * 2.0,
+            close = 3010.0 + i * 2.0,
+            volume = 100_000_000 + i * 1_000_000L
+        )
+    }
+    
+    val mockMetrics = MarketMetrics(
+        northNetInflow = 25.0,
+        advanceCount = 2500,
+        declineCount = 1500,
+        limitUpCount = 80,
+        limitDownCount = 5
+    )
+
+    val result = MarketAnalysisEngine.analyze(mockHistory, mockMetrics)
+    
+    println("===== 大盘分析结果 =====")
+    println("触底确认: ${result.isBottomConfirmed}")
+    println("趋势向上: ${result.isTrendUp}")
+    println("逃顶风险: ${result.isTopDanger}")
+    println("量能状态: ${result.volumeStatus}")
+    println("市场温度: ${result.marketTemp}")
+    println("建议周期: ${result.suggestedPeriod.label}")
+    println("摘要: ${result.summary}")
+    // 输出示例：
+    // 触底确认: false
+    // 趋势向上: false (因为离散率可能较大)
+    // 逃顶风险: false
+    // 量能状态: 平量
+    // 市场温度: 温和偏热
+    // 建议周期: 短线
+    // 摘要: 市场温和偏热 | 平量 | 建议：短线
+}

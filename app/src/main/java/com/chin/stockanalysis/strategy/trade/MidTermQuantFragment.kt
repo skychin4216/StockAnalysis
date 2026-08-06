@@ -56,7 +56,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
     }
 
     override fun buildUI() {
-        addTitleRow("🤖 中线量化系统 v3.0 (含智能卖出)", textSize = 18f)
+        addTitleRow("🤖 中线量化系统(价值投资，持仓 1-6 个月)", textSize = 18f)
         rootLayout.addView(createConfigSection())
         rootLayout.addView(createProgressRow())
         rootLayout.addView(createButtonRow())

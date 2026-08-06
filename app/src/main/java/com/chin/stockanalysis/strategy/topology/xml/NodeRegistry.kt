@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import com.chin.stockanalysis.strategy.Strategy
 import com.chin.stockanalysis.strategy.topology.core.*
+import com.chin.stockanalysis.strategy.topology.nodes.*
+import com.chin.stockanalysis.strategy.topology.pipelines.*
 
 /**
  * ## Node 註冊表
@@ -28,17 +30,17 @@ object NodeRegistry {
      */
     fun init(appContext: Context) {
         // 數據源
-        register("market_context") { ctx, _ -> com.chin.stockanalysis.strategy.topology.nodes.MarketContextNode() }
-        register("stock_pool") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.StockPoolNode() }
+        register("market_context") { ctx, _ -> MarketContextNode() }
+        register("stock_pool") { _, _ -> StockPoolNode() }
 
         // 過濾
-        register("main_board_filter") { ctx, _ -> com.chin.stockanalysis.strategy.topology.nodes.MainBoardFilterNode() }
+        register("main_board_filter") { ctx, _ -> MainBoardFilterNode() }
 
         // 聚合
-        register("signal_merge") { ctx, _ -> com.chin.stockanalysis.strategy.topology.nodes.SignalMergeNode() }
+        register("signal_merge") { ctx, _ -> SignalMergeNode() }
 
         // 增強
-        register("sector_boost") { ctx, _ -> com.chin.stockanalysis.strategy.topology.nodes.SectorBoostNode() }
+        register("sector_boost") { ctx, _ -> SectorBoostNode() }
         register("bounce_reversal") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.BounceReversalNode() }
         register("ancestral_rules") { _, config ->
             val period = config["holdingPeriod"] ?: "SHORT"
@@ -52,7 +54,20 @@ object NodeRegistry {
             val mode = config["checkMode"] ?: "full"
             com.chin.stockanalysis.strategy.topology.nodes.MarketMaUnifiedNode(threshold = threshold, checkMode = mode)
         }
-        register("strict_selection") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.StrictSelectionNode() }
+        register("strict_selection") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.StockEvaluationNode(
+                peThreshold = config["peThreshold"]?.toDoubleOrNull() ?: 30.0,
+                maDivergenceThreshold = config["maDivergenceThreshold"]?.toDoubleOrNull() ?: 0.03,
+                historicalLowPercentile = config["historicalLowPercentile"]?.toDoubleOrNull() ?: 0.25,
+                activeDaysThreshold = config["activeDaysThreshold"]?.toIntOrNull() ?: 3,
+                activeChangeThreshold = config["activeChangeThreshold"]?.toDoubleOrNull() ?: 3.0,
+                turnoverThreshold = config["turnoverThreshold"]?.toDoubleOrNull() ?: 2.0,
+                volumeRatioThreshold = config["volumeRatioThreshold"]?.toDoubleOrNull() ?: 1.0,
+                lookbackDays = config["lookbackDays"]?.toIntOrNull() ?: 60,
+                marketMaThreshold = config["marketMaThreshold"]?.toDoubleOrNull() ?: 0.02,
+                minPassCount = config["minPassCount"]?.toIntOrNull() ?: 4
+            )
+        }
         register("base_position_guard") { _, config ->
             val period = config["holdingPeriod"] ?: "MID"
             com.chin.stockanalysis.strategy.topology.nodes.BasePositionGuardNode(holdingPeriod = period)
@@ -61,42 +76,42 @@ object NodeRegistry {
         // 過濾（主力資金）
         register("smart_money_filter") { ctx, config ->
             val minScore = config["minScore"]?.toIntOrNull() ?: 55
-            com.chin.stockanalysis.strategy.topology.nodes.SmartMoneyFilterNode(minScore)
+            SmartMoneyFilterNode(minScore)
         }
 
         // K線形態偵測（非關鍵，透傳輸入）
         register("candle_pattern") { _, _ ->
-            com.chin.stockanalysis.strategy.topology.nodes.CandlePatternNode()
+            CandlePatternNode()
         }
 
         // AI
-        register("ai_predict") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.AIPredictNode() }
+        register("ai_predict") { _, _ -> AIPredictNode() }
 
         // ══════════ 中線量化獨有 Node ══════════
 
         // 中線數據源
-        register("adaptive_params") { ctx, _ -> com.chin.stockanalysis.strategy.topology.nodes.AdaptiveParamsNode() }
+        register("adaptive_params") { ctx, _ -> AdaptiveParamsNode() }
         register("multi_period_hot") { ctx, config ->
             val onlyMain = config["onlyMainBoard"]?.toBooleanStrictOrNull() ?: true
-            com.chin.stockanalysis.strategy.topology.nodes.MultiPeriodHotNode(onlyMainBoard = onlyMain)
+            MultiPeriodHotNode(onlyMainBoard = onlyMain)
         }
 
         // 中線聚合
         register("cross_day_aggregation") { ctx, config ->
             val window = config["windowDays"]?.toIntOrNull() ?: 5
             val topN = config["topN"]?.toIntOrNull() ?: 20
-            com.chin.stockanalysis.strategy.topology.nodes.CrossDayAggregationNode(windowDays = window, topN = topN)
+            CrossDayAggregationNode(windowDays = window, topN = topN)
         }
 
         // 中線增強
         register("news_strength") { ctx, config ->
             val days = config["lookbackDays"]?.toIntOrNull() ?: 3
-            com.chin.stockanalysis.strategy.topology.nodes.NewsStrengthNode(lookbackDays = days)
+            NewsStrengthNode(lookbackDays = days)
         }
         register("rotation_penalty") { ctx, config ->
             val threshold = config["thresholdDays"]?.toIntOrNull() ?: 3
             val penalty = config["penaltyPerExcess"]?.toIntOrNull() ?: 10
-            com.chin.stockanalysis.strategy.topology.nodes.RotationPenaltyNode(
+            RotationPenaltyNode(
                 thresholdDays = threshold, penaltyPerExcess = penalty)
         }
 
@@ -104,28 +119,28 @@ object NodeRegistry {
         register("news_guard") { ctx, config ->
             val impact = config["impactThreshold"]?.toIntOrNull() ?: 75
             val sentiment = config["sentimentThreshold"]?.toIntOrNull() ?: -30
-            com.chin.stockanalysis.strategy.topology.nodes.NewsGuardNode(
+            NewsGuardNode(
                 impactThreshold = impact, sentimentThreshold = sentiment)
         }
 
         // 中線交易動作
         register("swap_weak") { ctx, config ->
             val maxH = config["maxHoldings"]?.toIntOrNull() ?: 5
-            com.chin.stockanalysis.strategy.topology.nodes.SwapWeakNode(maxHoldings = maxH)
+            SwapWeakNode(maxHoldings = maxH)
         }
-        register("holding_guard") { ctx, _ -> com.chin.stockanalysis.strategy.topology.nodes.HoldingGuardNode() }
+        register("holding_guard") { ctx, _ -> HoldingGuardNode() }
 
         // ══════════ 中線補齊 Node ══════════
 
-        register("heat_score") { ctx, _ -> com.chin.stockanalysis.strategy.topology.nodes.HeatScoreNode() }
+        register("heat_score") { ctx, _ -> HeatScoreNode() }
         register("generate_orders") { ctx, config ->
             val maxH = config["maxHoldings"]?.toIntOrNull() ?: 5
             val orderType = config["orderType"] ?: "MidTermQuant"
-            com.chin.stockanalysis.strategy.topology.nodes.GenerateOrdersNode(maxHoldings = maxH, orderType = orderType)
+            GenerateOrdersNode(maxHoldings = maxH, orderType = orderType)
         }
-        register("position_merge") { ctx, _ -> com.chin.stockanalysis.strategy.topology.nodes.PositionMergeNode() }
-        register("bg_manager") { ctx, _ -> com.chin.stockanalysis.strategy.topology.nodes.BackgroundManagerNode() }
-        register("fitting_save") { ctx, _ -> com.chin.stockanalysis.strategy.topology.nodes.FittingSaveNode() }
+        register("position_merge") { ctx, _ -> PositionMergeNode() }
+        register("bg_manager") { ctx, _ -> BackgroundManagerNode() }
+        register("fitting_save") { ctx, _ -> FittingSaveNode() }
 
         // ══════════ Hardcode 補齊 Node（HardcodeCompatNodes.kt） ══════════
 
@@ -154,6 +169,15 @@ object NodeRegistry {
             com.chin.stockanalysis.strategy.topology.nodes.DataImportNode(days = days, minSnapshots = minSnaps)
         }
 
+        // 盤中 K 線分析（交易時段自動獲取分鐘線，計算 VWAP/均線/量能指標）
+        register("intraday_analysis") { _, config ->
+            val interval = config["intervalMin"]?.toIntOrNull() ?: 5
+            val minBars = config["minBars"]?.toIntOrNull() ?: 5
+            com.chin.stockanalysis.strategy.topology.nodes.IntradayAnalysisNode(
+                intervalMin = interval, minBars = minBars
+            )
+        }
+
         // T+1 自動賣出（超短線專用）
         register("t1_auto_sell") { _, config ->
             val stopLoss = config["stopLossPct"]?.toDoubleOrNull() ?: -2.0
@@ -168,17 +192,21 @@ object NodeRegistry {
 
         // ══════════ 做T Pipeline Node（TTradePipelineNodes.kt） ══════════
 
-        register("t_trade_import") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.TTradeImportNode() }
+        register("t_trade_import") { _, _ -> TTradeImportNode() }
         register("t_holdings_load") { _, config ->
             val pt = config["periodType"] ?: ""
-            com.chin.stockanalysis.strategy.topology.nodes.THoldingsLoadNode(periodType = pt)
+            THoldingsLoadNode(periodType = pt)
         }
-        register("t_inst_intent") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.TInstIntentNode() }
+        register("t_inst_intent") { _, _ -> TInstIntentNode() }
         register("t_signal_synthesize") { _, config ->
             val minConf = config["minConfidence"]?.toDoubleOrNull() ?: 0.3
-            com.chin.stockanalysis.strategy.topology.nodes.TSignalSynthesizeNode(minConfidence = minConf)
+            TSignalSynthesizeNode(minConfidence = minConf)
         }
-        register("t_recommend_save") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.TRecommendSaveNode() }
+        register("t_recommend_save") { _, _ -> TRecommendSaveNode() }
+
+        // ══════════ 實倉分析 Pipeline Node ══════════
+        register("real_holding_eval") { _, _ -> RealHoldingAnalysisNode() }
+        register("a_market_analysis") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.AMarketAnalysisNode() }
 
         Log.i(TAG, "Node 註冊完成: ${factories.keys}")
     }
@@ -214,7 +242,7 @@ object NodeRegistry {
             val strategyId = moduleType.removePrefix("strategy:")
             val strategy = strategyMap[strategyId]
             if (strategy != null) {
-                return com.chin.stockanalysis.strategy.topology.nodes.StrategyNode(strategy)
+                return StrategyNode(strategy)
             } else {
                 Log.e(TAG, "未找到策略: $strategyId (可用: ${strategyMap.keys})")
                 return null

@@ -18,17 +18,13 @@ import com.chin.stockanalysis.strategy.topology.core.*
  * 短線 / 超短線 XML：與 n_bounce 同層（n_boost → n_bounce → n_inst_tips → n_ai）
  * 或併入 n_bounce 之後。
  */
-class InstitutionalTipsNode : PipelineNode<Any, MergedSignalPool> {
+class InstitutionalTipsNode : BaseNode<Any, MergedSignalPool>("inst_tips", "機構線索加分", NodeType.ENRICHMENT) {
 
     companion object {
         private const val TAG = "InstitutionalTipsNode"
         private const val POINTS_PER_TIP = 8
         private const val MAX_BOOST = 20
     }
-
-    override val nodeId: String = "inst_tips"
-    override val nodeName: String = "機構線索加分"
-    override val nodeType: NodeType = NodeType.ENRICHMENT
 
     override suspend fun execute(context: PipelineContext, input: Any): MergedSignalPool {
         val pool: MergedSignalPool = when (input) {

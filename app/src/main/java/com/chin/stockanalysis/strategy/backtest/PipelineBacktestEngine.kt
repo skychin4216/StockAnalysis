@@ -3,7 +3,7 @@ package com.chin.stockanalysis.strategy.backtest
 import android.content.Context
 import android.util.Log
 import com.chin.stockanalysis.stock.database.StockDatabase
-import com.chin.stockanalysis.strategy.topology.core.StockCheckPipeline
+import com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -232,50 +232,8 @@ class PipelineBacktestEngine(private val context: Context) {
         asOfDate: String
     ): Pair<Boolean, Int> {
         val filtered = snaps.filter { it.date <= asOfDate }.takeLast(pipeline.lookbackDays)
-        if (filtered.size < 20) return false to 0
-
-        val latest = filtered.last()
-        val closes = filtered.map { it.close }
-
-        var passCount = 0
-
-        // 1. 均線粘合向上
-        val ma5 = closes.takeLast(5).average()
-        val ma10 = closes.takeLast(10).average()
-        val ma20 = closes.takeLast(20).average()
-        val divergence = if (ma20 > 0) (ma5 - ma20) / ma20 else 1.0
-        if (ma5 > ma10 && ma10 > ma20 && kotlin.math.abs(divergence) < pipeline.maDivergenceThreshold) passCount++
-
-        // 2. 三日不新低
-        val recent3 = filtered.takeLast(3)
-        if (recent3.size >= 3) {
-            val lows = recent3.map { it.low }
-            if (lows[0] <= lows[1] && lows[1] <= lows[2]) passCount++
-        }
-
-        // 3. 歷史低位
-        val highN = closes.maxOrNull() ?: latest.close
-        val lowN = closes.minOrNull() ?: latest.close
-        val range = highN - lowN
-        val position = if (range > 0) (latest.close - lowN) / range else 0.5
-        if (position <= pipeline.historicalLowPercentile) passCount++
-
-        // 4. PE
-        if (latest.pe > 0 && latest.pe < pipeline.peThreshold) passCount++
-
-        // 5. 活躍度
-        val activeDays = filtered.count { kotlin.math.abs(it.changePct) > pipeline.activeChangeThreshold }
-        if (activeDays >= pipeline.activeDaysThreshold) passCount++
-
-        // 6. 冰點
-        val turnoverOk = latest.turnoverRate < pipeline.turnoverThreshold && latest.turnoverRate > 0
-        val avgVol5 = if (filtered.size >= 6) {
-            filtered.takeLast(6).dropLast(1).map { it.volume.toDouble() }.average()
-        } else latest.volume.toDouble()
-        val volRatio = if (avgVol5 > 0) latest.volume / avgVol5 else 1.0
-        if (turnoverOk && volRatio < pipeline.volumeRatioThreshold) passCount++
-
-        return (passCount >= pipeline.minPassCount) to passCount
+        val result = pipeline.analyzeSnaps(filtered)
+        return result.passed to result.passCount
     }
 
     /**

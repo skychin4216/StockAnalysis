@@ -4,6 +4,7 @@ import android.util.Log
 import com.chin.stockanalysis.strategy.StrategyCategory
 import com.chin.stockanalysis.strategy.models.SignalAction
 import com.chin.stockanalysis.strategy.models.StrategySignal
+import com.chin.stockanalysis.strategy.topology.core.BaseNode
 import com.chin.stockanalysis.strategy.topology.core.NodeType
 import com.chin.stockanalysis.strategy.topology.core.PipelineContext
 import com.chin.stockanalysis.strategy.topology.core.PipelineNode
@@ -35,11 +36,7 @@ class DefensiveDividendNode(
     private val minMarketCap: Double = 500_0000_0000.0,  // 500 億（元）
     private val maxDebt: Double = 70.0,                   // 資產負債率上限 %（銀行豁免）
     private val maxCandidates: Int = 5
-) : PipelineNode<Any, List<StrategySignal>> {
-
-    override val nodeId: String = "defensive_dividend"
-    override val nodeName: String = "防守高息"
-    override val nodeType: NodeType = NodeType.STRATEGY
+) : BaseNode<Any, List<StrategySignal>>("defensive_dividend", "防守高息", NodeType.STRATEGY) {
 
     companion object {
         private const val TAG = "DefensiveDividend"

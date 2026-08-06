@@ -50,10 +50,7 @@ object BasePositionAnalyzer {
         if (snaps.size < 30) return Result.empty()
 
         // ═══ 1. 三天不新低 ═══
-        val recent3 = snaps.takeLast(3)
-        val prev3 = snaps.takeLast(6).take(3)
-        val prevMinLow = prev3.minOf { it.low }
-        val recentAllAbove = recent3.all { it.low > prevMinLow }
+        val recentAllAbove = StabilityChecker.check(snaps, StabilityChecker.Mode.ABOVE_PRIOR_MIN)
 
         // ═══ 2. MA5/MA10/MA30 粘合向上 ═══
         val closes = snaps.map { it.close }

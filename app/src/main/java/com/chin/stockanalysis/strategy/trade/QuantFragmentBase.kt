@@ -158,9 +158,9 @@ abstract class QuantFragmentBase : Fragment() {
     // ═══════════════════════════════════════════════════
 
     /**
-     * 統一按鈕行（v13）：📈建倉 | 🔀Pipeline | 💰買賣評估 ▾ | 🏦實倉管理 | 💹數據
+     * 統一按鈕行（v15）：📈建倉 | 🔀Pipeline | 💰買賣評估 ▾ | 📦持倉 | 📊報告
      * 寬度規則：1漢字=2單位，1英文=1單位，▾=1單位。emoji 不計入寬度。
-     * 實倉管理直接打開真實持倉管理菜單。
+     * 原「數據」多級菜單拆分為「持倉」和「報告」兩個直達按鈕。
      */
     protected fun createButtonRow(): LinearLayout {
         val row = LinearLayout(requireContext()).apply {
@@ -169,7 +169,7 @@ abstract class QuantFragmentBase : Fragment() {
             setPadding(4, 1, 4, 1)
         }
 
-        // ── 1. 📈建倉（2漢字=4單位） ──
+        // ── 1. 📈建倉（2漢字=4單位，權重4） ──
         buildBtn = Button(requireContext()).apply {
             text = "📈建倉"
             textSize = 10f
@@ -177,7 +177,7 @@ abstract class QuantFragmentBase : Fragment() {
             setBackgroundColor(Color.parseColor("#E65100"))
             setPadding(4, 1, 4, 1)
             setMinWidth(0); setMinimumWidth(0)
-            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 3.0f).apply { marginEnd = 1 }
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 4.0f).apply { marginEnd = 1 }
             setOnClickListener { onBuildClick() }
         }
         row.addView(buildBtn)
@@ -208,33 +208,104 @@ abstract class QuantFragmentBase : Fragment() {
         }
         row.addView(tTradeBtn)
 
-        // ── 4. 🏦實倉管理（4漢字=8單位，權重5） ──
-        val realPosBtn = Button(requireContext()).apply {
-            text = "🏦實倉管理"
+        // ── 4. 📦持倉（2漢字=4單位，權重4） ──
+        val holdingBtn = Button(requireContext()).apply {
+            text = "📦持倉"
             textSize = 10f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#1565C0"))
             setPadding(4, 1, 4, 1)
             setMinWidth(0); setMinimumWidth(0)
-            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 5.0f).apply { marginEnd = 1 }
-            setOnClickListener { showRealPositionMenu() }
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 4.0f).apply { marginEnd = 1 }
+            setOnClickListener { showHoldingMenu() }
         }
-        row.addView(realPosBtn)
+        row.addView(holdingBtn)
 
-        // ── 5. 💹數據（2漢字=4單位，與建倉等寬） ──
-        val dataBtn = Button(requireContext()).apply {
-            text = "💹數據"
+        // ── 5. 📊報告（2漢字=4單位，權重4） ──
+        val reportBtn = Button(requireContext()).apply {
+            text = "📊報告"
             textSize = 10f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#455A64"))
             setPadding(4, 1, 4, 1)
             setMinWidth(0); setMinimumWidth(0)
-            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 3.0f)
-            setOnClickListener { showDataMenu(it) }
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(22), 4.0f)
+            setOnClickListener { showReportMenu() }
         }
-        row.addView(dataBtn)
+        row.addView(reportBtn)
 
         return row
+    }
+
+    /** 持倉菜單（合併原「持倉與交易」+「設置與維護」） */
+    protected open fun showHoldingMenu() {
+        val items = arrayOf(
+            "📋 查看真實持倉",
+            "➕ 添加真實持倉",
+            "✏️ 編輯持倉",
+            "💰 賣出/減倉",
+            "🔄 對真實持倉做T",
+            "📊 真實持倉做T統計",
+            "📋 查看交易記錄",
+            "💰 查看持倉詳情",
+            "🧠 市場記憶設置",
+            "🧹 清空持倉"
+        )
+        AlertDialog.Builder(requireContext())
+            .setTitle("📦 持倉管理 — ${getQuantType()}")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> showRealPositionList()
+                    1 -> showAddRealPositionDialog()
+                    2 -> showEditRealPositionDialog()
+                    3 -> showSellRealPositionDialog()
+                    4 -> showRealPositionTSignals()
+                    5 -> showRealPositionTStats()
+                    6 -> showTradeHistory()
+                    7 -> loadPositions()
+                    8 -> showMarketMemoryDialog()
+                    9 -> confirmAndClearPositions()
+                }
+            }
+            .setNegativeButton("關閉", null)
+            .show()
+    }
+
+    /** 報告菜單（原「報告與分析」全部條目） */
+    protected open fun showReportMenu() {
+        val periodLabel = getQuantType()
+        val items = arrayOf(
+            "📊 全周期報告",
+            "📊 ${periodLabel}量化報告",
+            "📊 查看精選池",
+            "💰 持有收益歷史",
+            "📅 月度熱點前瞻",
+            "🔥 查看熱門板塊報告",
+            "📋 查看策略報告",
+            "📈 回溯測試",
+            "🔧 擬合調優",
+            "🔄 全周期擬合",
+            "🧹 清空報告"
+        )
+        AlertDialog.Builder(requireContext())
+            .setTitle("📊 報告中心 — $periodLabel")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> showTradeReportsHistory()
+                    1 -> showPeriodReportHistory()
+                    2 -> showFinalPool()
+                    3 -> showHoldingProfitHistory()
+                    4 -> showMonthlyForecast()
+                    5 -> exportHotSectors()
+                    6 -> exportStrategyReport()
+                    7 -> onBacktrackClick()
+                    8 -> onFittingClick()
+                    9 -> runCrossPeriodFitting()
+                    10 -> confirmAndClearReports()
+                }
+            }
+            .setNegativeButton("關閉", null)
+            .show()
     }
 
     /** 啟動 Pipeline 拓撲編輯器 */
@@ -449,6 +520,24 @@ abstract class QuantFragmentBase : Fragment() {
             } catch (e: Exception) {
                 Log.e("QuantFragmentBase", "[DAG] ${titlePrefix} 執行異常", e)
                 withContext(Dispatchers.Main) {
+                    val errorDetail = buildString {
+                        appendLine("❌ Pipeline 執行異常")
+                        appendLine("異常類型: ${e.javaClass.simpleName}")
+                        appendLine("異常信息: ${e.message}")
+                        val cause = e.cause
+                        if (cause != null) {
+                            appendLine("根因: ${cause.javaClass.simpleName}: ${cause.message}")
+                        }
+                        appendLine()
+                        appendLine("可能原因：")
+                        appendLine("  1. 數據不完整或格式異常")
+                        appendLine("  2. 策略配置錯誤")
+                        appendLine("  3. 內存不足")
+                        appendLine()
+                        appendLine("詳細堆棧：")
+                        appendLine(e.stackTraceToString().take(500))
+                    }
+                    showDialog("${titlePrefix} Pipeline 異常", errorDetail)
                     statusTv.text = "❌ [DAG] ${e.message?.take(40)}"
                     buildBtn.isEnabled = true; buildBtn.text = "📈建倉"
                     progressBar.visibility = View.GONE
@@ -2457,48 +2546,97 @@ abstract class QuantFragmentBase : Fragment() {
     // 數據管理
     // ═══════════════════════════════════════════════════
 
-    /** 顯示數據菜單（統一版，所有週期共用） */
+    /** 顯示數據菜單（兩級分類版，所有週期共用） */
     protected open fun showDataMenu(anchor: View) {
         val periodLabel = getQuantType()
-        val options = arrayOf(
+        val categories = arrayOf(
+            "📋 持倉與交易",
+            "📊 報告與分析",
+            "⚙️ 設置與維護"
+        )
+        AlertDialog.Builder(requireContext())
+            .setTitle("🗄️ 數據中心 — $periodLabel")
+            .setItems(categories) { _, which ->
+                when (which) {
+                    0 -> showDataCategory_Trades()
+                    1 -> showDataCategory_Reports()
+                    2 -> showDataCategory_Maintenance()
+                }
+            }
+            .setNegativeButton("關閉", null)
+            .show()
+    }
+
+    /** 數據分類 1：持倉與交易 */
+    private fun showDataCategory_Trades() {
+        val items = arrayOf(
             "📋 查看交易記錄",
+            "💰 查看持倉詳情"
+        )
+        AlertDialog.Builder(requireContext())
+            .setTitle("📋 持倉與交易")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> showTradeHistory()
+                    1 -> loadPositions()
+                }
+            }
+            .setNegativeButton("返回", null)
+            .show()
+    }
+
+    /** 數據分類 2：報告與分析 */
+    private fun showDataCategory_Reports() {
+        val periodLabel = getQuantType()
+        val items = arrayOf(
             "📊 全周期報告",
             "📊 ${periodLabel}量化報告",
             "📊 查看精選池",
-            "💰 查看持倉詳情",
-            "🧠 市場記憶設置",
             "💰 持有收益歷史",
             "📅 月度熱點前瞻",
             "🔥 查看熱門板塊報告",
             "📋 查看策略報告",
-            "🧹 清空持倉",
-            "🧹 清空報告",
             "📈 回溯測試",
             "🔧 擬合調優",
             "🔄 全周期擬合"
         )
         AlertDialog.Builder(requireContext())
-            .setTitle("🗄️ 數據中心 — $periodLabel")
-            .setItems(options) { _, which ->
+            .setTitle("📊 報告與分析")
+            .setItems(items) { _, which ->
                 when (which) {
-                    0 -> showTradeHistory()
-                    1 -> showTradeReportsHistory()
-                    2 -> showPeriodReportHistory()
-                    3 -> showFinalPool()
-                    4 -> loadPositions()
-                    5 -> showMarketMemoryDialog()
-                    6 -> showHoldingProfitHistory()
-                    7 -> showMonthlyForecast()
-                    8 -> exportHotSectors()
-                    9 -> exportStrategyReport()
-                    10 -> confirmAndClearPositions()
-                    11 -> confirmAndClearReports()
-                    12 -> onBacktrackClick()
-                    13 -> onFittingClick()
-                    14 -> runCrossPeriodFitting()
+                    0 -> showTradeReportsHistory()
+                    1 -> showPeriodReportHistory()
+                    2 -> showFinalPool()
+                    3 -> showHoldingProfitHistory()
+                    4 -> showMonthlyForecast()
+                    5 -> exportHotSectors()
+                    6 -> exportStrategyReport()
+                    7 -> onBacktrackClick()
+                    8 -> onFittingClick()
+                    9 -> runCrossPeriodFitting()
                 }
             }
-            .setNegativeButton("關閉", null)
+            .setNegativeButton("返回", null)
+            .show()
+    }
+
+    /** 數據分類 3：設置與維護 */
+    private fun showDataCategory_Maintenance() {
+        val items = arrayOf(
+            "🧠 市場記憶設置",
+            "🧹 清空持倉",
+            "🧹 清空報告"
+        )
+        AlertDialog.Builder(requireContext())
+            .setTitle("⚙️ 設置與維護")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> showMarketMemoryDialog()
+                    1 -> confirmAndClearPositions()
+                    2 -> confirmAndClearReports()
+                }
+            }
+            .setNegativeButton("返回", null)
             .show()
     }
 

@@ -2,6 +2,7 @@ package com.chin.stockanalysis.strategy.topology.nodes
 
 import android.util.Log
 import com.chin.stockanalysis.strategy.data.HistoricalDataFetcher
+import com.chin.stockanalysis.strategy.topology.core.BaseNode
 import com.chin.stockanalysis.strategy.topology.core.NodeType
 import com.chin.stockanalysis.strategy.topology.core.PipelineContext
 import com.chin.stockanalysis.strategy.topology.core.PipelineNode
@@ -23,11 +24,7 @@ import com.chin.stockanalysis.stock.database.StockDatabase
 class DataImportNode(
     private val days: Int = 60,
     private val minSnapshots: Int = 100
-) : PipelineNode<Any, Int> {
-
-    override val nodeId: String = "data_import"
-    override val nodeName: String = "數據導入檢查"
-    override val nodeType: NodeType = NodeType.DATA_SOURCE
+) : BaseNode<Any, Int>("data_import", "數據導入檢查", NodeType.DATA_SOURCE) {
 
     companion object {
         private const val TAG = "DataImportNode"

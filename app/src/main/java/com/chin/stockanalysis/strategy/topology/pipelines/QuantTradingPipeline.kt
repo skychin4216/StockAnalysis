@@ -1,4 +1,4 @@
-package com.chin.stockanalysis.strategy.topology.nodes
+package com.chin.stockanalysis.strategy.topology.pipelines
 
 import android.content.Context
 import com.chin.stockanalysis.agent.v2.ProfitQualityLevel
@@ -13,7 +13,9 @@ import com.chin.stockanalysis.strategy.backtest.StrategyOptimizer
 import com.chin.stockanalysis.strategy.data.SmartMoneyCache
 import com.chin.stockanalysis.strategy.market.MarketAdaptiveStrategy
 import com.chin.stockanalysis.strategy.predict.AIPredictionEngine
+import com.chin.stockanalysis.strategy.topology.core.BaseNode
 import com.chin.stockanalysis.strategy.topology.core.*
+import com.chin.stockanalysis.strategy.topology.nodes.MainBoardFilterNode
 import com.chin.stockanalysis.strategy.trade.AutoSellEngine
 import com.chin.stockanalysis.strategy.trade.StrategyTradeOrderEntity
 import com.chin.stockanalysis.strategy.trade.StrategyTradeFittingParamEntity
@@ -26,24 +28,29 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 // ════════════════════════════════════════════════════════════════════════════
-//  中線量化獨有 Node
+//  量化交易 Pipeline（QuantTradingPipeline）
 //
-//  相比短線/選股，中線獨有的 12 個步驟：
-//  1. CrossDayAggregationNode    — 跨日聚合（回溯5天策略命中頻次）
-//  2. MultiPeriodHotNode        — 多周期熱門股聚合（3/5/10/30/50/100天漲幅Top3）
-//  3. NewsStrengthNode           — 新聞力度計算（近3天新聞影響力×情緒）
-//  4. RotationPenaltyNode       — 板塊輪動懲罰（防止板塊過度集中）
-//  5. NewsGuardNode              — 新聞攔截（買入前利空攔截）+ 技術過濾（4條規則）
-//  6. AdaptiveParamsNode         — 大盤分析+自適應參數（動態閾值/數量限制）
-//  7. SwapWeakNode               — 騰龍換鳥（倉位不足時自動換股）
-//  8. HeatScoreNode              — 熱度計算（5維熱度分數 0-100）
-//  9. GenerateOrdersNode         — 買入訂單生成（AI精選 + 自適應參數）
-//  10. PositionMergeNode        — 持倉合併（追加加權平均 / 新增PENDING訂單）
-//  11. BackgroundManagerNode     — 後臺暫停/恢復（AI分析前暫停，分析後恢復）
-//  12. FittingSaveNode           — 擬合計算+保存（網格搜索擬合結果保存到DB）
+//  涵蓋完整量化交易流程的節點與數據類型：
+//  ── 市場分析 ──
+//  1. AdaptiveParamsNode         — 大盤分析+自適應參數（動態閾值/數量限制）
+//  2. MultiPeriodHotNode         — 多周期熱門股聚合（3/5/10/30/50/100天漲幅Top3）
+//  3. CrossDayAggregationNode    — 跨日聚合（回溯N天策略命中頻次）
+//  ── 信號增強 ──
+//  4. HeatScoreNode              — 熱度計算（5維熱度分數 0-100）
+//  5. NewsStrengthNode           — 新聞力度計算（近3天新聞影響力×情緒）
+//  6. RotationPenaltyNode        — 板塊輪動懲罰（防止板塊過度集中）
+//  7. NewsGuardNode              — 新聞攔截（買入前利空攔截）+ 技術過濾（4條規則）
+//  ── 交易執行 ──
+//  8. GenerateOrdersNode         — 買入訂單生成（AI精選 + 自適應參數）
+//  9. PositionMergeNode          — 持倉合併（追加加權平均 / 新增PENDING訂單）
+//  10. SwapWeakNode              — 騰龍換鳥（倉位不足時自動換股）
+//  11. HoldingGuardNode          — 持倉風控（止損/止盈/策略退出）
+//  ── 基礎設施 ──
+//  12. BackgroundManagerNode     — 後臺暫停/恢復（AI分析前暫停，分析後恢復）
+//  13. FittingSaveNode           — 擬合計算+保存（網格搜索擬合結果保存到DB）
 // ════════════════════════════════════════════════════════════════════════════
 
-private const val TAG = "MidTermNodes"
+private const val TAG = "QuantTrading"
 private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -57,26 +64,6 @@ private fun formatTopCodes(codes: Collection<String>, limit: Int = 5): String =
 /** 格式化代碼+名稱對用於日誌輸出 */
 private fun formatTopCodeNames(pairs: Collection<Pair<String, String>>, limit: Int = 5): String =
     pairs.take(limit).joinToString(prefix = "[", separator = ", ", postfix = "]") { "${it.first}(${it.second})" }
-
-/**
- * 將 orderType 歸一化為持倉周期標識。
- *
- * 不同寫入路徑的 orderType 取值不一致（如 DAG 寫 "ShortTermQuant"、
- * Fragment 寫 "shortterm"），持倉統計必須按周期聚合而非跨周期累加，
- * 否則短線會把中線持倉也算進自己的倉位数。
- */
-private fun orderTypePeriod(orderType: String): String = when {
-    orderType.contains("UltraShort", ignoreCase = true) ||
-        orderType.contains("ultra_short", ignoreCase = true) -> "ultra_short"
-    orderType.contains("ShortTerm", ignoreCase = true) ||
-        orderType.contains("short_term", ignoreCase = true) ||
-        orderType.equals("shortterm", ignoreCase = true) -> "short"
-    orderType.contains("MidTerm", ignoreCase = true) ||
-        orderType.contains("mid_term", ignoreCase = true) -> "mid"
-    orderType.contains("LongTerm", ignoreCase = true) ||
-        orderType.contains("long_term", ignoreCase = true) -> "long"
-    else -> "other"
-}
 
 // ──────────────────────────────────────────────────────────────────────────────
 //  數據類
@@ -172,11 +159,7 @@ class CrossDayAggregationNode(
     private val windowDays: Int = 5,
     private val topN: Int = 20,
     private val strategies: List<Strategy> = emptyList()
-) : PipelineNode<Any, CrossDayResult> {
-
-    override val nodeId: String = "cross_day_aggregation"
-    override val nodeName: String = "跨日聚合"
-    override val nodeType: NodeType = NodeType.AGGREGATION
+) : BaseNode<Any, CrossDayResult>("cross_day_aggregation", "跨日聚合", NodeType.AGGREGATION) {
 
     override suspend fun execute(context: PipelineContext, input: Any): CrossDayResult {
         // 從不同上游類型中提取股票代碼集合
@@ -332,11 +315,7 @@ class MultiPeriodHotNode(
     private val periods: List<Int> = listOf(3, 5, 10, 30, 50, 100),
     private val topNPerPeriod: Int = 3,
     private val onlyMainBoard: Boolean = true
-) : PipelineNode<Any, MultiPeriodHotResult> {
-
-    override val nodeId: String = "multi_period_hot"
-    override val nodeName: String = "多周期熱門股聚合"
-    override val nodeType: NodeType = NodeType.DATA_SOURCE
+) : BaseNode<Any, MultiPeriodHotResult>("multi_period_hot", "多周期熱門股聚合", NodeType.DATA_SOURCE) {
 
     override suspend fun execute(context: PipelineContext, input: Any): MultiPeriodHotResult {
         val db = StockDatabase.getInstance(context.androidContext)
@@ -428,11 +407,7 @@ class MultiPeriodHotNode(
  */
 class NewsStrengthNode(
     private val lookbackDays: Int = 3
-) : PipelineNode<Any, Int> {
-
-    override val nodeId: String = "news_strength"
-    override val nodeName: String = "新聞力度計算"
-    override val nodeType: NodeType = NodeType.ENRICHMENT
+) : BaseNode<Any, Int>("news_strength", "新聞力度計算", NodeType.ENRICHMENT) {
 
     override suspend fun execute(context: PipelineContext, input: Any): Int {
         // 從 input 或 context 中按需讀取 MergedSignalPool
@@ -607,11 +582,7 @@ class NewsStrengthNode(
 class RotationPenaltyNode(
     private val thresholdDays: Int = 3,
     private val penaltyPerExcess: Int = 10
-) : PipelineNode<Any, Int> {
-
-    override val nodeId: String = "rotation_penalty"
-    override val nodeName: String = "板塊輪動懲罰"
-    override val nodeType: NodeType = NodeType.ENRICHMENT
+) : BaseNode<Any, Int>("rotation_penalty", "板塊輪動懲罰", NodeType.ENRICHMENT) {
 
     override suspend fun execute(context: PipelineContext, input: Any): Int {
         // 從 input 或 context 中按需讀取 MergedSignalPool
@@ -708,11 +679,7 @@ class NewsGuardNode(
     private val lookbackDays: Int = 3,
     private val impactThreshold: Int = 75,
     private val sentimentThreshold: Int = -30
-) : PipelineNode<Any, NewsGuardResult> {
-
-    override val nodeId: String = "news_guard"
-    override val nodeName: String = "新聞攔截+技術過濾"
-    override val nodeType: NodeType = NodeType.FILTER
+) : BaseNode<Any, NewsGuardResult>("news_guard", "新聞攔截+技術過濾", NodeType.FILTER) {
 
     override suspend fun execute(context: PipelineContext, input: Any): NewsGuardResult {
         // 從不同上游類型中提取候選股票代碼
@@ -870,11 +837,7 @@ class NewsGuardNode(
  */
 class AdaptiveParamsNode(
     private val holdingCodes: List<String> = emptyList()
-) : PipelineNode<Any, MarketAdaptiveStrategy.AdaptiveParams?> {
-
-    override val nodeId: String = "adaptive_params"
-    override val nodeName: String = "大盤分析+自適應參數"
-    override val nodeType: NodeType = NodeType.DATA_SOURCE
+) : BaseNode<Any, MarketAdaptiveStrategy.AdaptiveParams?>("adaptive_params", "大盤分析+自適應參數", NodeType.DATA_SOURCE) {
 
     override suspend fun execute(context: PipelineContext, input: Any): MarketAdaptiveStrategy.AdaptiveParams? {
         // 從數據庫讀取持倉（若構造函數未傳入）
@@ -949,11 +912,7 @@ class AdaptiveParamsNode(
 class SwapWeakNode(
     private val maxHoldings: Int = 5,
     private val strategies: List<Strategy> = emptyList()
-) : PipelineNode<Any, SwapWeakResult> {
-
-    override val nodeId: String = "swap_weak"
-    override val nodeName: String = "騰龍換鳥"
-    override val nodeType: NodeType = NodeType.TRADE_ACTION
+) : BaseNode<Any, SwapWeakResult>("swap_weak", "騰龍換鳥", NodeType.TRADE_ACTION) {
 
     override suspend fun execute(context: PipelineContext, input: Any): SwapWeakResult {
         // 從 input 或 context 中按需讀取 OrderGenerationResult
@@ -1208,11 +1167,7 @@ class SwapWeakNode(
  * 4. 從快照計算價格位置得分（距均線距離、漲幅位置）
  * 5. 返回 Map<String, Int>（code → score）
  */
-class HeatScoreNode : PipelineNode<Any, Map<String, Int>> {
-
-    override val nodeId: String = "heat_score"
-    override val nodeName: String = "熱度計算"
-    override val nodeType: NodeType = NodeType.DATA_TRANSFORM
+class HeatScoreNode : BaseNode<Any, Map<String, Int>>("heat_score", "熱度計算", NodeType.DATA_TRANSFORM) {
 
     override suspend fun execute(context: PipelineContext, input: Any): Map<String, Int> {
         // 從 input 或 context 中按需讀取 StockPool
@@ -1384,17 +1339,13 @@ class HeatScoreNode : PipelineNode<Any, Map<String, Int>> {
  *
  * 原始流程對應：SimulationTradeEngine.generateBuyOrders()
  *
- * @property maxHoldings 最大持倉數（默認 5）
+ * @property maxHoldings 最大持倉數（默認 6）
  * @property orderType 訂單類型（默認 "MidTermQuant"）
  */
 class GenerateOrdersNode(
-    private val maxHoldings: Int = 5,
+    private val maxHoldings: Int = 6,
     private val orderType: String = "MidTermQuant"
-) : PipelineNode<Any, OrderGenerationResult> {
-
-    override val nodeId: String = "generate_orders"
-    override val nodeName: String = "買入訂單生成"
-    override val nodeType: NodeType = NodeType.TRADE_ACTION
+) : BaseNode<Any, OrderGenerationResult>("generate_orders", "買入訂單生成", NodeType.TRADE_ACTION) {
 
     override suspend fun execute(context: PipelineContext, input: Any): OrderGenerationResult {
         // 兼容多種上游：AIPrediction / MergedSignalPool / NewsGuardResult
@@ -1462,22 +1413,14 @@ class GenerateOrdersNode(
                 return OrderGenerationResult(emptyList(), topPicks.size, true)
             }
 
-            // 交易時段檢查：非交易時段只記錄報告，不生成實際訂單
+            // 交易時段檢查：非交易時段仍記錄信號，但標記為預信號（下一交易日可執行）
             val now = java.time.LocalDateTime.now()
             val hourMin = now.hour * 100 + now.minute
             val isTradingHours = (hourMin in 930..1130) || (hourMin in 1300..1500)
             val isTradingDay = now.dayOfWeek in java.time.DayOfWeek.MONDAY..java.time.DayOfWeek.FRIDAY
-            if (!isTradingHours || !isTradingDay) {
-                context.log(nodeId, "⏸️ 非交易時段(${now.hour}:${"%02d".format(now.minute)})，僅記錄報告不生成訂單")
-                context.recordStockFlow(
-                    nodeId = nodeId, nodeName = nodeName,
-                    inputCount = topPicks.size, outputCount = 0,
-                    filterCount = topPicks.size,
-                    filterReason = "非交易時段",
-                    inputCodes = topPicks.map { it.stockCode }.take(5),
-                    outputCodes = emptyList()
-                )
-                return OrderGenerationResult(emptyList(), topPicks.size, false)
+            val isPreSignal = !isTradingHours || !isTradingDay
+            if (isPreSignal) {
+                context.log(nodeId, "📡 非交易時段(${now.hour}:${"%02d".format(now.minute)})，記錄預信號供下一交易日參考")
             }
 
             // 獲取當前持倉（按周期統計：只算與本 Pipeline 同周期的持倉，不跨周期累加）
@@ -1546,6 +1489,9 @@ class GenerateOrdersNode(
             // 避免買入不符合條件的「魚尾」股票
             if (candidates.isEmpty()) {
                 context.log(nodeId, "⚠ $nodeName 無候選通過嚴格條件，寧缺勿濫，空倉觀望")
+                if (filteredReasons.isNotEmpty()) {
+                    context.log(nodeId, "📋 過濾詳情: ${filteredReasons.joinToString(" | ")}")
+                }
                 context.log(nodeId, "📤 $nodeName 輸出: 0 個訂單（無候選通過）")
                 context.recordStockFlow(
                     nodeId = nodeId, nodeName = nodeName,
@@ -1845,6 +1791,7 @@ class GenerateOrdersNode(
                 val buyPrice = snap?.close ?: 0.0
                 val resolvedName = if (pick.stockName.isNotBlank()) pick.stockName
                     else resolvedNames[pick.stockCode] ?: pick.stockName
+                val preSignalTag = if (isPreSignal) " [預信號]" else ""
                 TradeOrder(
                     stockCode = pick.stockCode,
                     stockName = resolvedName,
@@ -1852,7 +1799,7 @@ class GenerateOrdersNode(
                     tradeDate = context.tradeDate,
                     buyPrice = buyPrice,
                     quantity = 100, // 默認一手
-                    reason = "AI精選 rank=${pick.rank} score=${pick.compositeScore} ${pick.reason}",
+                    reason = "AI精選 rank=${pick.rank} score=${pick.compositeScore} ${pick.reason}$preSignalTag",
                     scoreAtBuy = pick.compositeScore,
                     orderType = orderType
                 )
@@ -1910,11 +1857,7 @@ class GenerateOrdersNode(
  *
  * 原始流程對應：SimulationTradeEngine.runTradeSession() Step 11
  */
-class PositionMergeNode : PipelineNode<Any, PositionMergeResult> {
-
-    override val nodeId: String = "position_merge"
-    override val nodeName: String = "持倉合併"
-    override val nodeType: NodeType = NodeType.TRADE_ACTION
+class PositionMergeNode : BaseNode<Any, PositionMergeResult>("position_merge", "持倉合併", NodeType.TRADE_ACTION) {
 
     override suspend fun execute(context: PipelineContext, rawInput: Any): PositionMergeResult {
         // 兼容兩種上游輸入：
@@ -2053,11 +1996,7 @@ class PositionMergeNode : PipelineNode<Any, PositionMergeResult> {
  *
  * 原始流程對應：AppBackgroundRunner.isQuantRunning
  */
-class BackgroundManagerNode : PipelineNode<Any, Unit> {
-
-    override val nodeId: String = "bg_manager"
-    override val nodeName: String = "後臺暫停/恢復"
-    override val nodeType: NodeType = NodeType.DATA_SOURCE
+class BackgroundManagerNode : BaseNode<Any, Unit>("bg_manager", "後臺暫停/恢復", NodeType.DATA_SOURCE) {
 
     override suspend fun execute(context: PipelineContext, input: Any): Unit {
         // 📥 輸入日誌
@@ -2114,11 +2053,7 @@ class BackgroundManagerNode : PipelineNode<Any, Unit> {
  *
  * 原始流程對應：SimulationTradeEngine.runFitting()
  */
-class FittingSaveNode : PipelineNode<Any, Unit> {
-
-    override val nodeId: String = "fitting_save"
-    override val nodeName: String = "擬合計算+保存"
-    override val nodeType: NodeType = NodeType.DATA_TRANSFORM
+class FittingSaveNode : BaseNode<Any, Unit>("fitting_save", "擬合計算+保存", NodeType.DATA_TRANSFORM) {
 
     override suspend fun execute(context: PipelineContext, input: Any): Unit {
         // 兼容不同上游類型
@@ -2272,11 +2207,7 @@ class FittingSaveNode : PipelineNode<Any, Unit> {
  */
 class HoldingGuardNode(
     private val strategies: List<Strategy> = emptyList()
-) : PipelineNode<Any, HoldingGuardResult> {
-
-    override val nodeId: String = "holding_guard"
-    override val nodeName: String = "持倉風控"
-    override val nodeType: NodeType = NodeType.TRADE_ACTION
+) : BaseNode<Any, HoldingGuardResult>("holding_guard", "持倉風控", NodeType.TRADE_ACTION) {
 
     override suspend fun execute(context: PipelineContext, input: Any): HoldingGuardResult {
         val effectiveStrategies = strategies.ifEmpty {

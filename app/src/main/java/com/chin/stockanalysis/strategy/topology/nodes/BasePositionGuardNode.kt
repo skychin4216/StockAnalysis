@@ -22,15 +22,11 @@ import com.chin.stockanalysis.strategy.topology.core.*
  */
 class BasePositionGuardNode(
     private val holdingPeriod: String = "MID"
-) : PipelineNode<Any, MergedSignalPool> {
+) : BaseNode<Any, MergedSignalPool>("base_position_guard", "打底倉守門", NodeType.FILTER) {
 
     companion object {
         private const val TAG = "BasePositionGuard"
     }
-
-    override val nodeId: String = "base_position_guard"
-    override val nodeName: String = "打底倉守門"
-    override val nodeType: NodeType = NodeType.FILTER
 
     override suspend fun execute(context: PipelineContext, input: Any): MergedSignalPool {
         val pool: MergedSignalPool = when (input) {

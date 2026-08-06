@@ -3,11 +3,13 @@ package com.chin.stockanalysis.strategy.trade
 import android.content.Context
 import android.util.Log
 import com.chin.stockanalysis.stock.database.StockDatabase
+import com.chin.stockanalysis.stock.data.StockDataSourceFactory
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
 import com.chin.stockanalysis.strategy.Strategy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import kotlin.math.abs
 import kotlin.math.sqrt
@@ -137,8 +139,31 @@ class AutoSellEngine(private val context: Context) {
             if (holdingOrders.isEmpty()) return@withContext decisions
 
             val todayData = getTradingDayData(config.tradeDate)
-            val todayPriceMap = todayData.associate { it.code to it.close }
+            val todayPriceMap = todayData.associate { it.code to it.close }.toMutableMap()
             val todayVolumeMap = todayData.associate { it.code to it.volume }
+
+            // 盤中交易時段：用實時價覆蓋收盤快照，止損/止盈判斷更準確
+            val now = LocalTime.now()
+            val morningSession = now >= LocalTime.of(9, 30) && now <= LocalTime.of(11, 30)
+            val afternoonSession = now >= LocalTime.of(13, 0) && now <= LocalTime.of(15, 0)
+            val isTradingHours = isTradingDay() && (morningSession || afternoonSession)
+            if (isTradingHours) {
+                try {
+                    val repo = StockDataSourceFactory.createDefaultRepository(context)
+                    val codes = holdingOrders.map { it.stockCode }
+                    val realtime = repo.getRealtime(codes)
+                    var overrideCount = 0
+                    for ((code, rt) in realtime) {
+                        if (rt.price > 0) {
+                            todayPriceMap[code] = rt.price
+                            overrideCount++
+                        }
+                    }
+                    Log.i(TAG, "盤中實時價覆蓋: $overrideCount/${codes.size} 只")
+                } catch (e: Exception) {
+                    Log.w(TAG, "盤中實時價獲取失敗: ${e.message}")
+                }
+            }
             val recentDates = db.dailySnapshotDao().getAvailableDates(30).sorted()
             val priceHistory = buildPriceHistory(recentDates)
             val volumeHistory = buildVolumeHistory(recentDates)
@@ -363,12 +388,7 @@ class AutoSellEngine(private val context: Context) {
     }
 
     fun calculateRSI(prices: List<Double>, period: Int = 14): Double {
-        if (prices.size < period + 1) return 50.0
-        val changes = prices.zipWithNext { a, b -> b - a }.takeLast(period)
-        val gains = changes.filter { it > 0 }.sum()
-        val losses = changes.filter { it < 0 }.sum().let { abs(it) }
-        if (losses == 0.0) return 100.0
-        return 100.0 - 100.0 / (1.0 + gains / losses)
+        return com.chin.stockanalysis.strategy.analysis.RsiCalculator.compute(prices, period)
     }
 
     // ═══════════════════════════════════════════════
@@ -378,6 +398,12 @@ class AutoSellEngine(private val context: Context) {
     private fun calculateDaysHeld(buyDate: String, today: String): Int = try {
         java.time.temporal.ChronoUnit.DAYS.between(LocalDate.parse(buyDate, DATE_FMT), LocalDate.parse(today, DATE_FMT)).toInt()
     } catch (_: Exception) { 0 }
+
+    /** 判斷今天是否為交易日（簡化：週一到週五） */
+    private fun isTradingDay(): Boolean {
+        val dow = LocalDate.now().dayOfWeek
+        return dow != java.time.DayOfWeek.SATURDAY && dow != java.time.DayOfWeek.SUNDAY
+    }
 
     private suspend fun getTradingDayData(date: String): List<DailySnapshotEntity> =
         try { db.dailySnapshotDao().getByDate(date) } catch (_: Exception) { emptyList() }

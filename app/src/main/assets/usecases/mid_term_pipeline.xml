@@ -77,8 +77,14 @@
     <Node id="n_merge" name="信號合併" module="signal_merge" />
     <Node id="n_boost" name="板塊加權" module="sector_boost" />
     <Node id="n_bounce" name="跌後反彈加分" module="bounce_reversal" />
-    <Node id="n_strict" name="六項嚴選檢查" module="strict_selection" />
-    <Node id="n_guard" name="打底倉守門" module="base_position_guard">
+    <Node id="n_strict" name="六項嚴選檢查" module="strict_selection">
+      <config>
+        <param name="peThreshold" value="30.0" />
+        <param name="maDivergenceThreshold" value="0.03" />
+        <param name="lookbackDays" value="60" />
+      </config>
+    </Node>
+    <Node id="n_base_guard" name="打底倉守門" module="base_position_guard">
       <config><param name="holdingPeriod" value="MID" /></config>
     </Node>
     <Node id="n_ancestral" name="大A祖訓" module="ancestral_rules">
@@ -117,7 +123,7 @@
     <!-- 中線補齊：訂單生成 Layer 8 -->
     <Node id="n_orders" name="買入訂單生成" module="generate_orders">
       <config>
-        <param name="maxHoldings" value="3" />
+        <param name="maxHoldings" value="6" />
         <param name="orderType" value="MidTermQuant" />
       </config>
     </Node>
@@ -131,7 +137,7 @@
     <!-- 中線獨有：交易動作 Layer 9（並行） -->
     <Node id="n_swap" name="騰龍換鳥" module="swap_weak">
       <config>
-        <param name="maxHoldings" value="3" />
+        <param name="maxHoldings" value="6" />
       </config>
     </Node>
 
@@ -170,6 +176,14 @@
       <SourceNodeId>n_ctx</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_sector_pool</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 0 → 1: 市場上下文 → 持倉風控（並行，每次必評估持倉） -->
+    <Link>
+      <SourceNodeId>n_ctx</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_guard</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
 
@@ -287,13 +301,13 @@
     <Link>
       <SourceNodeId>n_bounce</SourceNodeId>
       <SourcePortId>0</SourcePortId>
-      <TargetNodeId>n_guard</TargetNodeId>
+      <TargetNodeId>n_base_guard</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
 
     <!-- Layer 3.5a → 3.5b: 打底倉守門 → 大A祖訓 -->
     <Link>
-      <SourceNodeId>n_guard</SourceNodeId>
+      <SourceNodeId>n_base_guard</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_ancestral</TargetNodeId>
       <TargetPortId>0</TargetPortId>

@@ -172,19 +172,7 @@ class RSIDivergenceStrategy(
      * 標準 RSI 計算（Wilder 平滑法的簡化版：簡單均值）
      */
     private fun calculateRSI(closes: List<Double>, period: Int): Double {
-        if (closes.size < period + 1) return 50.0
-        val recent = closes.takeLast(period + 1)
-        var gain = 0.0
-        var loss = 0.0
-        for (i in 1 until recent.size) {
-            val diff = recent[i] - recent[i - 1]
-            if (diff > 0) gain += diff else loss += -diff
-        }
-        val avgGain = gain / period
-        val avgLoss = loss / period
-        if (avgGain + avgLoss == 0.0) return 50.0
-        val rs = if (avgLoss == 0.0) 100.0 else avgGain / avgLoss
-        return 100.0 - 100.0 / (1.0 + rs)
+        return com.chin.stockanalysis.strategy.analysis.RsiCalculator.compute(closes, period)
     }
 
     /**

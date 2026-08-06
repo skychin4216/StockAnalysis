@@ -56,6 +56,10 @@ object StrategyEngineHolder {
             registerStrategy(TrendScoreStrategy(context.applicationContext, screener))
             // ── v1.3 週期低位策略（長線左側佈局，防暴雷+52週低位）──
             registerStrategy(CyclicalLowPositionStrategy(context.applicationContext, screener))
+            // ── v1.4 Pipeline-based 策略（復用 DAG 分析工具）──
+            registerStrategy(StrictSelectionStrategy(screener, context.applicationContext))
+            registerStrategy(CandlePatternStrategy(screener, context.applicationContext))
+            registerStrategy(InstitutionalIntentStrategy(screener, context.applicationContext))
             // 啟動時清理過期信號緩存
             cleanExpiredResults()
         }

@@ -3,6 +3,7 @@ package com.chin.stockanalysis.strategy.topology.nodes
 import android.util.Log
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.analysis.MaConvergenceAnalyzer
+import com.chin.stockanalysis.strategy.analysis.MarketMicrostructureAnalyzer
 import com.chin.stockanalysis.strategy.topology.core.*
 
 /**
@@ -27,7 +28,7 @@ import com.chin.stockanalysis.strategy.topology.core.*
 class MarketMaUnifiedNode(
     private val threshold: Double = 0.02,
     private val checkMode: String = "full"
-) : PipelineNode<Any, MarketMaUnifiedNode.MarketMaUnifiedResult> {
+) : BaseNode<Any, MarketMaUnifiedNode.MarketMaUnifiedResult>("market_ma_unified", "大盤均線統一檢查", NodeType.FACTOR_COMPUTE) {
 
     companion object {
         private const val TAG = "MarketMaUnified"
@@ -36,10 +37,6 @@ class MarketMaUnifiedNode(
         private const val OSCILLATION_MIN_COUNT = 3
         private const val AMPLITUDE_THRESHOLD = 0.02
     }
-
-    override val nodeId: String = "market_ma_unified"
-    override val nodeName: String = "大盤均線統一檢查"
-    override val nodeType: NodeType = NodeType.FACTOR_COMPUTE
 
     /**
      * 合併輸出：同時包含 MaConvergenceResult + MarketMaCheckResult 的所有欄位
@@ -118,28 +115,10 @@ class MarketMaUnifiedNode(
             val ma5Prev = if (closes.size >= 8) closes.takeLast(8).take(5).average() else ma5
             val slope = if (ma5Prev > 0) (ma5 - ma5Prev) / ma5Prev else 0.0
 
-            // ═══ 3. 震盪收割 ═══
-            val recent5 = sorted.takeLast(OSCILLATION_DAYS + 1)
-            var oscillationCount = 0
-            for (i in 1 until recent5.size) {
-                val prev = recent5[i - 1]
-                val cur = recent5[i]
-                val gapUp = cur.open > prev.close
-                val fadeDown = cur.close < cur.open
-                val amplitude = if (cur.close > 0) (cur.high - cur.low) / cur.close else 0.0
-                if (gapUp && fadeDown && amplitude > AMPLITUDE_THRESHOLD) oscillationCount++
-            }
-            val oscillationHarvest = oscillationCount >= OSCILLATION_MIN_COUNT
+            // ═══ 3. 震盪收割 + 量價背離（共用工具） ═══
+            val micro = MarketMicrostructureAnalyzer.analyze(sorted)
 
-            // ═══ 4. 量價背離 ═══
-            val last5 = sorted.takeLast(OSCILLATION_DAYS)
-            val upDays = last5.filter { it.changePct > 0 }
-            val downDays = last5.filter { it.changePct < 0 }
-            val avgUpVol = if (upDays.isNotEmpty()) upDays.map { it.volume.toDouble() }.average() else 0.0
-            val avgDownVol = if (downDays.isNotEmpty()) downDays.map { it.volume.toDouble() }.average() else 0.0
-            val volumeDivergence = avgUpVol > 0 && avgDownVol > avgUpVol * 1.3
-
-            // ═══ 5. 缺口風險 ═══
+            // ═══ 4. 缺口風險 ═══
             val today = sorted.last()
             val prevDay = sorted[sorted.size - 2]
             val gapPct = if (prevDay.close > 0) (today.open - prevDay.close) / prevDay.close else 0.0
@@ -147,8 +126,8 @@ class MarketMaUnifiedNode(
 
             // ═══ 綜合判斷 ═══
             val riskLevel = when {
-                gapRiskHigh && oscillationHarvest -> "HIGH"
-                oscillationHarvest || volumeDivergence -> "MEDIUM"
+                gapRiskHigh && micro.oscillationHarvest -> "HIGH"
+                micro.oscillationHarvest || micro.volumeDivergence -> "MEDIUM"
                 maConverged && convergedAndUp -> "LOW"
                 maConverged -> "LOW"
                 else -> "MEDIUM"
@@ -170,8 +149,8 @@ class MarketMaUnifiedNode(
                 if (convergedAndUp) append("✅ 均線粘合向上(離散${"%.1f".format(divergence * 100)}%) → 蓄勢突破 ")
                 else if (maConverged) append("🟡 均線粘合(離散${"%.1f".format(divergence * 100)}%) 待方向 ")
                 else append("⚠️ 均線分散(離散${"%.1f".format(divergence * 100)}%) ")
-                if (oscillationHarvest) append("⚠️ 震蕩收割(${oscillationCount}天) ")
-                if (volumeDivergence) append("⚠️ 量價背離 ")
+                if (micro.oscillationHarvest) append("⚠️ 震蕩收割(${micro.oscillationCount}天) ")
+                if (micro.volumeDivergence) append("⚠️ 量價背離 ")
                 if (gapRiskHigh) append("⚠️ 缺口風險 ")
             }.trim()
 
@@ -181,9 +160,9 @@ class MarketMaUnifiedNode(
                 maConverged = maConverged,
                 maConvergedAndUp = convergedAndUp,
                 maDivergence = divergence,
-                oscillationHarvest = oscillationHarvest,
-                oscillationCount = oscillationCount,
-                volumeDivergence = volumeDivergence,
+                oscillationHarvest = micro.oscillationHarvest,
+                oscillationCount = micro.oscillationCount,
+                volumeDivergence = micro.volumeDivergence,
                 gapRiskHigh = gapRiskHigh,
                 gapPct = gapPct,
                 riskLevel = riskLevel,

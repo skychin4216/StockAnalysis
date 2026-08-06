@@ -98,14 +98,7 @@ class ZiplinePipeline(private val context: Context) {
     }
 
     private fun computeRSI(prices: List<Double>, period: Int): Double {
-        if (prices.size < period + 1) return 50.0
-        val diffs = (1 until prices.size).map { prices[it] - prices[it - 1] }.takeLast(period)
-        var gain = 0.0; var loss = 0.0
-        for (d in diffs) { if (d >= 0) gain += d else loss -= d }
-        if (gain + loss == 0.0) return 50.0
-        val avgGain = gain / period; val avgLoss = loss / period
-        val rs = if (avgLoss == 0.0) 100.0 else avgGain / avgLoss
-        return 100.0 - 100.0 / (1.0 + rs)
+        return com.chin.stockanalysis.strategy.analysis.RsiCalculator.compute(prices, period)
     }
 
     private fun computeATR(prices: List<Double>): Double {

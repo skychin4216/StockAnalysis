@@ -1,4 +1,4 @@
-package com.chin.stockanalysis.strategy.topology.nodes
+package com.chin.stockanalysis.strategy.topology.pipelines
 
 import android.content.Context
 import android.util.Log
@@ -6,6 +6,7 @@ import com.chin.stockanalysis.stock.database.ChinaMarketTradingHours
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.analysis.CandlePatternDetector
 import com.chin.stockanalysis.strategy.market.MarketAnalyzer
+import com.chin.stockanalysis.strategy.topology.core.BaseNode
 import com.chin.stockanalysis.strategy.topology.core.*
 import com.chin.stockanalysis.strategy.trade.*
 import kotlin.math.abs
@@ -91,7 +92,9 @@ data class TSynthesizeResult(
     val signals: List<EnhancedTSignal>,
     val filteredCount: Int,
     val marketSummary: String,
-    val overseasSummary: String
+    val overseasSummary: String,
+    val timeSlotLabel: String = "",
+    val timeSlotHint: String = ""
 )
 
 /** 建議保存結果 */
@@ -105,10 +108,7 @@ data class TRecommendSaveResult(
 //  Node 1: 交易日檢查
 // ═══════════════════════════════════════════════════
 
-class TTradeImportNode : PipelineNode<Unit, TTradeImportResult> {
-    override val nodeId = "t_trade_import"
-    override val nodeName = "交易日檢查"
-    override val nodeType = NodeType.DATA_SOURCE
+class TTradeImportNode : BaseNode<Unit, TTradeImportResult>("t_trade_import", "交易日檢查", NodeType.DATA_SOURCE) {
 
     override suspend fun execute(context: PipelineContext, input: Unit): TTradeImportResult {
         val today = context.tradeDate
@@ -124,10 +124,7 @@ class TTradeImportNode : PipelineNode<Unit, TTradeImportResult> {
 
 class THoldingsLoadNode(
     private val periodType: String = ""
-) : PipelineNode<Any, THoldingsData> {
-    override val nodeId = "t_holdings_load"
-    override val nodeName = "持倉載入+日K數據"
-    override val nodeType = NodeType.DATA_SOURCE
+) : BaseNode<Any, THoldingsData>("t_holdings_load", "持倉載入+日K數據", NodeType.DATA_SOURCE) {
 
     override suspend fun execute(context: PipelineContext, input: Any): THoldingsData {
         val ctx = context.androidContext
@@ -233,10 +230,7 @@ class THoldingsLoadNode(
 //  Node 3: 日K機構意圖判斷（最核心）
 // ═══════════════════════════════════════════════════
 
-class TInstIntentNode : PipelineNode<Any, Map<String, InstIntentResult>> {
-    override val nodeId = "t_inst_intent"
-    override val nodeName = "日K機構意圖判斷"
-    override val nodeType = NodeType.FACTOR_COMPUTE
+class TInstIntentNode : BaseNode<Any, Map<String, InstIntentResult>>("t_inst_intent", "日K機構意圖判斷", NodeType.FACTOR_COMPUTE) {
 
     override suspend fun execute(context: PipelineContext, input: Any): Map<String, InstIntentResult> {
         val holdingsData = when (input) {
@@ -427,15 +421,7 @@ class TInstIntentNode : PipelineNode<Any, Map<String, InstIntentResult>> {
     }
 
     private fun computeRSI(snaps: List<com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity>, period: Int): Double {
-        if (snaps.size < period + 1) return 50.0
-        val changes = snaps.takeLast(period + 1).zipWithNext { a, b -> b.close - a.close }
-        val gains = changes.filter { it > 0 }
-        val losses = changes.filter { it < 0 }.map { abs(it) }
-        val avgGain = if (gains.isNotEmpty()) gains.sum() / period else 0.0
-        val avgLoss = if (losses.isNotEmpty()) losses.sum() / period else 0.0
-        if (avgLoss == 0.0) return 100.0
-        val rs = avgGain / avgLoss
-        return 100.0 - (100.0 / (1.0 + rs))
+        return com.chin.stockanalysis.strategy.analysis.RsiCalculator.fromSnaps(snaps, period)
     }
 }
 
@@ -445,18 +431,28 @@ class TInstIntentNode : PipelineNode<Any, Map<String, InstIntentResult>> {
 
 class TSignalSynthesizeNode(
     private val minConfidence: Double = 0.3
-) : PipelineNode<Any, TSynthesizeResult> {
-    override val nodeId = "t_signal_synthesize"
-    override val nodeName = "交叉驗證+置信度評分"
-    override val nodeType = NodeType.AGGREGATION
+) : BaseNode<Any, TSynthesizeResult>("t_signal_synthesize", "交叉驗證+置信度評分", NodeType.AGGREGATION) {
 
     override suspend fun execute(context: PipelineContext, input: Any): TSynthesizeResult {
-        // 從 context 讀取各上游輸出
-        val holdingsData = context.getStageOutput<THoldingsData>("t_hold")
-        @Suppress("UNCHECKED_CAST")
-        val intentMap = context.getStageOutput<Map<String, InstIntentResult>>("t_inst") ?: emptyMap()
-        @Suppress("UNCHECKED_CAST")
-        val candleMap = context.getStageOutput<Map<String, List<CandlePatternDetector.PatternMatch>>>("t_kline") ?: emptyMap()
+        // AGGREGATION 節點：從 context.stageOutputs 按 XML nodeId 安全讀取上游輸出
+        val holdingsData = context.stageOutputs["t_hold"] as? THoldingsData
+        // 機構意圖：Map<String, InstIntentResult>，用 value 類型安全區分
+        val intentMap: Map<String, InstIntentResult> = run {
+            val raw = context.stageOutputs["t_inst"]
+            if (raw is Map<*, *> && raw.values.firstOrNull() is InstIntentResult) {
+                @Suppress("UNCHECKED_CAST")
+                raw as Map<String, InstIntentResult>
+            } else emptyMap()
+        }
+        // K線形態：Map<String, List<PatternMatch>>，用 value 類型安全區分
+        val candleMap: Map<String, List<CandlePatternDetector.PatternMatch>> = run {
+            val raw = context.stageOutputs["t_kline"]
+            if (raw is Map<*, *> && raw.values.firstOrNull() is List<*>) {
+                @Suppress("UNCHECKED_CAST")
+                raw as Map<String, List<CandlePatternDetector.PatternMatch>>
+            } else emptyMap()
+        }
+
         val marketReport = try { context.getMarketReport() } catch (_: Exception) { null }
         val overseas = marketReport?.overseas
         val trendDir = marketReport?.trend?.direction ?: "UNKNOWN"
@@ -558,9 +554,12 @@ class TSignalSynthesizeNode(
                 }
 
                 // ─── 新聞 (從 context 嘗試讀取 news_strength 輸出) (+10/-20) ───
-                val newsScore = context.getStageOutput<Int>("t_news") ?: 0
+                val newsScore = context.stageOutputs["t_news"] as? Int ?: 0
                 @Suppress("UNCHECKED_CAST")
-                val newsGuardBlocked = context.getStageOutput<Map<String, List<String>>>("t_nguard_blocked") ?: emptyMap()
+                val newsGuardBlocked = run {
+                    val raw = context.stageOutputs["t_nguard_blocked"]
+                    if (raw is Map<*, *>) raw as Map<String, List<String>> else emptyMap<String, List<String>>()
+                }
                 if (newsGuardBlocked.containsKey(code)) {
                     score -= 20; breakdown.add("新聞-20(黑名單)")
                 } else if (newsScore > 60) {
@@ -595,7 +594,21 @@ class TSignalSynthesizeNode(
                     score -= 10; breakdown.add("大盤-10(多頭反T)")
                 }
 
-                val confidence = (score / 100.0).coerceIn(0.0, 1.0)
+                // ─── 時段權重調整（做T七個關鍵時間點） ───
+                val timeAdj = TTimeSlotAdjuster.adjust(signal.signalType)
+                val timeScoreAdj = timeAdj.tBuyScoreAdj + timeAdj.rtSellScoreAdj
+                if (timeScoreAdj != 0) {
+                    score += timeScoreAdj
+                    breakdown.add("時段${if (timeScoreAdj >= 0) "+" else ""}$timeScoreAdj(${timeAdj.slot.label})")
+                }
+                if (timeAdj.slot == TTimeSlot.NON_TRADING) {
+                    // 非交易時段不產生信號
+                    filteredCount++
+                    continue
+                }
+
+                val rawConfidence = (score / 100.0).coerceIn(0.0, 1.0)
+                val confidence = (rawConfidence * timeAdj.confidenceScale).coerceIn(0.0, 1.0)
                 val priority = when {
                     confidence >= 0.7 -> "HIGH"
                     confidence >= 0.5 -> "MEDIUM"
@@ -649,17 +662,22 @@ class TSignalSynthesizeNode(
             else -> "外盤中性"
         }
 
+        val timeSlotSummary = TTimeSlotAdjuster.formatSummary()
         context.log(nodeId, "📊 合成 ${finalSignals.size} 條增強信號（過濾 $filteredCount 條），$marketSummary，$overseasSummary")
+        context.log(nodeId, "⏰ $timeSlotSummary")
         context.recordStockFlow(nodeId, nodeName,
             holdingsData.holdings.size, finalSignals.size, filteredCount,
             "置信度<$minConfidence 或新聞黑名單",
             outputCodes = finalSignals.map { it.baseSignal.stockCode })
 
+        val currentSlot = TTimeSlot.fromTime()
         return TSynthesizeResult(
             signals = finalSignals,
             filteredCount = filteredCount,
             marketSummary = marketSummary,
-            overseasSummary = overseasSummary
+            overseasSummary = overseasSummary,
+            timeSlotLabel = "${currentSlot.emoji} ${currentSlot.label}",
+            timeSlotHint = currentSlot.actionHint
         )
     }
 
@@ -677,10 +695,7 @@ class TSignalSynthesizeNode(
 //  Node 5: 建議保存 + 追蹤結算
 // ═══════════════════════════════════════════════════
 
-class TRecommendSaveNode : PipelineNode<Any, TRecommendSaveResult> {
-    override val nodeId = "t_recommend_save"
-    override val nodeName = "建議保存+追蹤結算"
-    override val nodeType = NodeType.TRADE_ACTION
+class TRecommendSaveNode : BaseNode<Any, TRecommendSaveResult>("t_recommend_save", "建議保存+追蹤結算", NodeType.TRADE_ACTION) {
 
     override suspend fun execute(context: PipelineContext, input: Any): TRecommendSaveResult {
         val synthResult = when (input) {
@@ -696,12 +711,14 @@ class TRecommendSaveNode : PipelineNode<Any, TRecommendSaveResult> {
         val db = StockDatabase.getInstance(context.androidContext)
         val today = context.tradeDate
 
-        // 1. 保存增強信號為推薦記錄（將置信度/機構意圖/評分編入 reason）
+        // 1. 保存增強信號為推薦記錄（將置信度/機構意圖/評分/時段編入 reason）
+        val timeSlot = TTimeSlot.fromTime()
         val enhancedSignals = synthResult.signals.map { es ->
             val prefix = buildString {
                 append("[置信度${(es.confidence * 100).toInt()}%")
                 es.instIntent?.let { append("|機構:${it.intent.label}") }
                 es.klinePattern?.let { append("|$it") }
+                if (timeSlot != TTimeSlot.NON_TRADING) append("|${timeSlot.emoji}${timeSlot.label}")
                 append("] ")
                 append(es.scoreBreakdown)
                 append(" | ")

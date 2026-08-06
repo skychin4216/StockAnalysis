@@ -12,7 +12,7 @@
   </steps>
   <config>
     <param name="orderType" value="UltraShortQuant" />
-    <param name="maxHoldings" value="3" />
+    <param name="maxHoldings" value="6" />
     <param name="maxStocksPerStrategy" value="15" />
     <param name="holdingPeriod" value="ultra_short" />
   </config>

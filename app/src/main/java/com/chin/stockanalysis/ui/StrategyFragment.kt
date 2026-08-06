@@ -22,14 +22,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * ## 策略栏目 — v10.0 四週期改版
+ * ## 策略栏目 — v11.0 四週期+實倉 改版
  *
- * 顶部五 Tab：
+ * 顶部六 Tab：
  * - Tab 0：超短線 (UltraShortQuantFragment) — 持倉1天，T+1賣出
  * - Tab 1：短線量化 (ShortTermQuantFragment) — 持倉1天~2周
  * - Tab 2：中線量化 (MidTermQuantFragment) — 持倉1~6個月
  * - Tab 3：長線量化 (LongTermQuantFragment) — 持倉6月~1年
- * - Tab 4：量化選股 (StrategyListFragment) — 策略沙盒
+ * - Tab 4：實倉 (RealHoldingQuantFragment) — 真實持倉管理
+ * - Tab 5：量化選股 (StrategyListFragment) — 策略沙盒
  */
 class StrategyFragment : Fragment() {
 
@@ -79,7 +80,8 @@ class StrategyFragment : Fragment() {
                 1 -> "短線"
                 2 -> "中線"
                 3 -> "長線"
-                4 -> "量化選股"
+                4 -> "實倉"
+                5 -> "量化選股"
                 else -> ""
             }
         }.attach()
@@ -147,7 +149,7 @@ class StrategyFragment : Fragment() {
     }
 
     private class StrategyTabAdapter(fragment: Fragment) : FragmentStateAdapter(fragment) {
-        override fun getItemCount() = 5
+        override fun getItemCount() = 6
 
         override fun createFragment(position: Int): Fragment {
             return when (position) {
@@ -155,7 +157,8 @@ class StrategyFragment : Fragment() {
                 1 -> com.chin.stockanalysis.strategy.trade.ShortTermQuantFragment()
                 2 -> com.chin.stockanalysis.strategy.trade.MidTermQuantFragment()
                 3 -> com.chin.stockanalysis.strategy.trade.LongTermQuantFragment()
-                4 -> StrategyListFragment()
+                4 -> com.chin.stockanalysis.strategy.trade.RealHoldingQuantFragment()
+                5 -> StrategyListFragment()
                 else -> throw IllegalStateException("Unknown position: $position")
             }
         }

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 大盤K線分析 Pipeline（獨立可復用）
+
+  只做大盤六維分析，不碰個股。
+  其他 UseCase 可在 steps 中引用此 Pipeline 作為第一步：
+    <pipeline ref="usecases/market_analysis_pipeline.xml" name="大盤分析" />
+
+  輸出：AMarketAnalysisEngine.MarketAnalysisResult
+  存入 context.stageOutputs["n_a_market"]，後續 Pipeline 可讀取。
+-->
+<DagPipeline id="market_analysis_dag" name="大盤K線分析Pipeline"
+    description="大盤K線六維分析（趨勢/量能/情緒/狀態機）">
+
+  <NodeList>
+    <Node id="n_import" name="數據導入檢查" module="data_import">
+      <config>
+        <param name="days" value="30" />
+        <param name="minSnapshots" value="50" />
+      </config>
+    </Node>
+    <Node id="n_a_market" name="大盤K線分析" module="a_market_analysis" />
+  </NodeList>
+
+  <Links>
+    <Link>
+      <SourceNodeId>n_import</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_a_market</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+  </Links>
+</DagPipeline>

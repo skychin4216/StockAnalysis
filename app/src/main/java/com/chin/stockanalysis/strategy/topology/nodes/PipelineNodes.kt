@@ -6,12 +6,14 @@ import com.chin.stockanalysis.strategy.analysis.CandlePatternDetector
 import com.chin.stockanalysis.strategy.data.SmartMoneyCache
 import com.chin.stockanalysis.strategy.data.StrategyDataFeed
 import com.chin.stockanalysis.strategy.models.StrategySignal
+import com.chin.stockanalysis.strategy.topology.core.BaseNode
 import com.chin.stockanalysis.strategy.topology.core.MergedSignalPool
 import com.chin.stockanalysis.strategy.topology.core.NodeType
 import com.chin.stockanalysis.strategy.topology.core.PipelineContext
 import com.chin.stockanalysis.strategy.topology.core.PipelineNode
 import com.chin.stockanalysis.strategy.topology.core.SignalPack
 import com.chin.stockanalysis.strategy.topology.core.StockPool
+import com.chin.stockanalysis.strategy.topology.pipelines.NewsGuardResult
 import com.chin.stockanalysis.strategy.predict.AIPredictionEngine
 import com.chin.stockanalysis.strategy.sector.StrategyMarketContext
 
@@ -29,11 +31,7 @@ import com.chin.stockanalysis.strategy.sector.StrategyMarketContext
  */
 class MarketContextNode(
     private val forceRefresh: Boolean = false
-) : PipelineNode<Any, StrategyMarketContext> {
-
-    override val nodeId: String = "market_context"
-    override val nodeName: String = "市場上下文構建"
-    override val nodeType: NodeType = NodeType.DATA_SOURCE
+) : BaseNode<Any, StrategyMarketContext>("market_context", "市場上下文構建", NodeType.DATA_SOURCE) {
 
     override suspend fun execute(context: PipelineContext, input: Any): StrategyMarketContext {
         return try {
@@ -69,11 +67,7 @@ class MarketContextNode(
  * DAG 框架取第一條邊的輸出作為 input。市場上下文統一從
  * `context.marketContext` 讀取（由 `MarketContextNode` 寫入），不依賴 input 參數。
  */
-class StockPoolNode : PipelineNode<Any, StockPool> {
-
-    override val nodeId: String = "stock_pool"
-    override val nodeName: String = "股票池構建"
-    override val nodeType: NodeType = NodeType.DATA_SOURCE
+class StockPoolNode : BaseNode<Any, StockPool>("stock_pool", "股票池構建", NodeType.DATA_SOURCE) {
 
     override suspend fun execute(context: PipelineContext, input: Any): StockPool {
         return try {
@@ -154,11 +148,7 @@ class StockPoolNode : PipelineNode<Any, StockPool> {
  */
 class StrategyNode(
     internal val strategy: Strategy
-) : PipelineNode<Any, SignalPack> {
-
-    override val nodeId: String = "strategy_${strategy.id}"
-    override val nodeName: String = "策略: ${strategy.name}"
-    override val nodeType: NodeType = NodeType.STRATEGY
+) : BaseNode<Any, SignalPack>("strategy_${strategy.id}", "策略: ${strategy.name}", NodeType.STRATEGY) {
 
     override suspend fun execute(context: PipelineContext, input: Any): SignalPack {
         return try {
@@ -227,11 +217,7 @@ class StrategyNode(
  * 將多個策略的 [SignalPack] 合併為一個 [MergedSignalPool]。
  * 按股票代碼聚合，記錄每隻股票被哪些策略命中及其強度。
  */
-class SignalMergeNode : PipelineNode<Any, MergedSignalPool> {
-
-    override val nodeId: String = "signal_merge"
-    override val nodeName: String = "多策略信號聚合"
-    override val nodeType: NodeType = NodeType.AGGREGATION
+class SignalMergeNode : BaseNode<Any, MergedSignalPool>("signal_merge", "多策略信號聚合", NodeType.AGGREGATION) {
 
     override suspend fun execute(context: PipelineContext, input: Any): MergedSignalPool {
         return try {
@@ -318,11 +304,7 @@ class SignalMergeNode : PipelineNode<Any, MergedSignalPool> {
  * - 回彈板塊匹配: +1~5 分（回調天數）
  * - 今日熱門板塊匹配: +10 分
  */
-class SectorBoostNode : PipelineNode<Any, MergedSignalPool> {
-
-    override val nodeId: String = "sector_boost"
-    override val nodeName: String = "板塊加權增強"
-    override val nodeType: NodeType = NodeType.ENRICHMENT
+class SectorBoostNode : BaseNode<Any, MergedSignalPool>("sector_boost", "板塊加權增強", NodeType.ENRICHMENT) {
 
     override suspend fun execute(context: PipelineContext, input: Any): MergedSignalPool {
         // 兼容多依賴：中線 n_boost 有 n_merge + n_heat 兩條入邊，
@@ -395,11 +377,7 @@ class SectorBoostNode : PipelineNode<Any, MergedSignalPool> {
  */
 class SmartMoneyFilterNode(
     private val minScore: Int = 55
-) : PipelineNode<Any, MergedSignalPool> {
-
-    override val nodeId: String = "smart_money_filter"
-    override val nodeName: String = "主力資金過濾"
-    override val nodeType: NodeType = NodeType.FILTER
+) : BaseNode<Any, MergedSignalPool>("smart_money_filter", "主力資金過濾", NodeType.FILTER) {
 
     override suspend fun execute(context: PipelineContext, input: Any): MergedSignalPool {
         // 根據上游類型提取信號池
@@ -504,11 +482,7 @@ class SmartMoneyFilterNode(
  *
  * 非關鍵節點：失敗不影響 Pipeline。
  */
-class CandlePatternNode : PipelineNode<Any, Any> {
-
-    override val nodeId: String = "candle_pattern"
-    override val nodeName: String = "K線形態偵測"
-    override val nodeType: NodeType = NodeType.ENRICHMENT
+class CandlePatternNode : BaseNode<Any, Any>("candle_pattern", "K線形態偵測", NodeType.ENRICHMENT) {
 
     override suspend fun execute(context: PipelineContext, input: Any): Any {
         // 提取候選股代碼
@@ -579,11 +553,7 @@ class CandlePatternNode : PipelineNode<Any, Any> {
  */
 class AIPredictNode(
     private val useEnhancedAi: Boolean = true
-) : PipelineNode<Any, AIPredictionEngine.AIPrediction> {
-
-    override val nodeId: String = "ai_predict"
-    override val nodeName: String = "AI 綜合預測"
-    override val nodeType: NodeType = NodeType.AI_PREDICTION
+) : BaseNode<Any, AIPredictionEngine.AIPrediction>("ai_predict", "AI 綜合預測", NodeType.AI_PREDICTION) {
 
     override suspend fun execute(
         context: PipelineContext,
@@ -595,7 +565,7 @@ class AIPredictNode(
         // - NewsGuardResult（短/中/長線）：從 context 讀取 smart_money_filter 輸出，按 passedCodes 過濾
         val signalPool: MergedSignalPool = when (input) {
             is MergedSignalPool -> input
-            is com.chin.stockanalysis.strategy.topology.nodes.NewsGuardResult -> {
+            is NewsGuardResult -> {
                 // 從 context 讀取主力資金過濾後的信號池，按新聞攔截通過的代碼過濾
                 val pool = context.getStageOutput<MergedSignalPool>("smart_money_filter")
                     ?: context.getStageOutput<MergedSignalPool>("n_smart")
@@ -727,11 +697,7 @@ class AIPredictNode(
  * - `sz16*` — 深證 ETF / LOF
  * - `bj8*`  — 北交所股票
  */
-class MainBoardFilterNode : PipelineNode<Any, StockPool> {
-
-    override val nodeId: String = "main_board_filter"
-    override val nodeName: String = "主板股票過濾"
-    override val nodeType: NodeType = NodeType.FILTER
+class MainBoardFilterNode : BaseNode<Any, StockPool>("main_board_filter", "主板股票過濾", NodeType.FILTER) {
 
     companion object {
         /** 排除的股票代碼前綴集合 */

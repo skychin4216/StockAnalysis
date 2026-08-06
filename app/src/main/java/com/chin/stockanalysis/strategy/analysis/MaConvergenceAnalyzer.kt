@@ -93,4 +93,19 @@ object MaConvergenceAnalyzer {
             hint = hint
         )
     }
+
+    /**
+     * 多頭排列粘合檢查（(MA5-MA20)/MA20 公式）
+     *
+     * 供 StrictSelectionNode / StockCheckPipeline / PipelineBacktestEngine 等使用，
+     * 與 [analyze] 的 (max-min)/min 公式不同，此處用 (MA5-MA20)/MA20 離散率。
+     *
+     * @param closes 按日期升序的收盤價列表
+     * @param threshold 離散率閾值（如 0.03 = 3%）
+     * @return (ma5, ma10, ma20, isBullishConverged)
+     */
+    fun bullishConvergence(
+        closes: List<Double>,
+        threshold: Double = 0.03
+    ): Pair<Triple<Double, Double, Double>, Boolean> = calcMaBullishConvergence(closes, threshold)
 }

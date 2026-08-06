@@ -22,7 +22,7 @@ import com.chin.stockanalysis.strategy.topology.core.*
  * ### 位置
  * 所有周期 XML：n_boost → **n_bounce** → n_ai
  */
-class BounceReversalNode : PipelineNode<Any, MergedSignalPool> {
+class BounceReversalNode : BaseNode<Any, MergedSignalPool>("bounce_reversal", "跌後反彈加分", NodeType.ENRICHMENT) {
 
     companion object {
         private const val TAG = "BounceReversalNode"
@@ -30,10 +30,6 @@ class BounceReversalNode : PipelineNode<Any, MergedSignalPool> {
         private const val NO_NEW_LOW_DAYS = 3
         private const val BOOST_POINTS = 12
     }
-
-    override val nodeId: String = "bounce_reversal"
-    override val nodeName: String = "跌後反彈加分"
-    override val nodeType: NodeType = NodeType.ENRICHMENT
 
     override suspend fun execute(context: PipelineContext, input: Any): MergedSignalPool {
         val pool: MergedSignalPool = when (input) {
@@ -122,9 +118,6 @@ class BounceReversalNode : PipelineNode<Any, MergedSignalPool> {
      * snaps 按日期降序（最新在前），至少需要 4 條數據。
      */
     private fun checkNoNewLow(lows: List<Double>): Boolean {
-        if (lows.size < NO_NEW_LOW_DAYS + 1) return false
-        val baseline = lows[NO_NEW_LOW_DAYS]  // 第 4 天的 low
-        // 最近 3 天的 low 都 >= baseline
-        return lows.take(NO_NEW_LOW_DAYS).all { it >= baseline }
+        return com.chin.stockanalysis.strategy.analysis.StabilityChecker.checkDescendingLows(lows)
     }
 }

@@ -1,9 +1,12 @@
-package com.chin.stockanalysis.strategy.topology.core
+package com.chin.stockanalysis.strategy.topology.pipelines
 
 import android.content.Context
 import android.util.Log
 import com.chin.stockanalysis.stock.database.StockDatabase
+import com.chin.stockanalysis.strategy.analysis.FreezingPointChecker
 import com.chin.stockanalysis.strategy.analysis.MaConvergenceAnalyzer
+import com.chin.stockanalysis.strategy.analysis.PricePositionAnalyzer
+import com.chin.stockanalysis.strategy.analysis.StabilityChecker
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
 import kotlin.math.abs
 
@@ -139,10 +142,17 @@ class StockCheckPipeline(
     )
 
     /**
-     * 分析單只股票
+     * 分析單只股票（Context 版本）
      */
     suspend fun analyze(context: Context, stockCode: String): StockCheckResult {
         val db = StockDatabase.getInstance(context)
+        return analyze(db, stockCode)
+    }
+
+    /**
+     * 分析單只股票（StockDatabase 版本，供 StrictSelectionChecker 等調用）
+     */
+    suspend fun analyze(db: StockDatabase, stockCode: String): StockCheckResult {
         return try {
             val snaps = db.dailySnapshotDao().getByCode(stockCode, lookbackDays + 10)
                 .sortedBy { it.date }
@@ -150,11 +160,7 @@ class StockCheckPipeline(
                 return StockCheckResult(stockCode, "數據不足", summary = "K線數據不足(${snaps.size}條)")
             }
 
-            val latest = snaps.last()
-            val closes = snaps.map { it.close }
-            val name = latest.name
-
-            // ═══ 1. 大盤均線檢查 ═══
+            // 大盤均線檢查
             val indexSnaps = db.dailySnapshotDao().getByCode("sh000001", 35)
             val marketMaResult = if (indexSnaps.size >= 20) {
                 MaConvergenceAnalyzer.analyze(indexSnaps.sortedBy { it.date }, marketMaThreshold)
@@ -162,87 +168,84 @@ class StockCheckPipeline(
                 MaConvergenceAnalyzer.Result.empty()
             }
 
-            // ═══ 2. 個股均線粘合向上 ═══
-            val ma5 = closes.takeLast(5).average()
-            val ma10 = if (closes.size >= 10) closes.takeLast(10).average() else ma5
-            val ma20 = if (closes.size >= 20) closes.takeLast(20).average() else ma5
-            val divergence = if (ma20 > 0) (ma5 - ma20) / ma20 else 1.0
-            val maConvergedUp = ma5 > ma10 && ma10 > ma20 && abs(divergence) < maDivergenceThreshold
-
-            // ═══ 3. 三日不新低 ═══
-            val recent3 = snaps.takeLast(3)
-            val threeDayNoNewLow = if (recent3.size >= 3) {
-                val lows = recent3.map { it.low }
-                lows[0] <= lows[1] && lows[1] <= lows[2]
-            } else false
-
-            // ═══ 4. 歷史低位 ═══
-            val highN = closes.maxOrNull() ?: latest.close
-            val lowN = closes.minOrNull() ?: latest.close
-            val range = highN - lowN
-            val positionInRange = if (range > 0) (latest.close - lowN) / range else 0.5
-            val historicalLow = positionInRange <= historicalLowPercentile
-
-            // ═══ 5. PE ═══
-            val peOk = latest.pe > 0 && latest.pe < peThreshold
-
-            // ═══ 6. 周期活躍度 ═══
-            val activeDays = snaps.takeLast(lookbackDays).count {
-                abs(it.changePct) > activeChangeThreshold
-            }
-            val cyclicalActive = activeDays >= activeDaysThreshold
-
-            // ═══ 7. 冰點買入 ═══
-            val turnoverOk = latest.turnoverRate < turnoverThreshold && latest.turnoverRate > 0
-            val avgVolume5 = if (snaps.size >= 6) {
-                snaps.takeLast(6).dropLast(1).map { it.volume.toDouble() }.average()
-            } else latest.volume.toDouble()
-            val volRatio = if (avgVolume5 > 0) latest.volume / avgVolume5 else 1.0
-            val volumeRatioOk = volRatio < volumeRatioThreshold
-
-            // ═══ 統計通過項數 ═══
-            var passCount = 0
-            if (marketMaResult.convergedAndUp) passCount++
-            if (maConvergedUp) passCount++
-            if (threeDayNoNewLow) passCount++
-            if (historicalLow) passCount++
-            if (peOk) passCount++
-            if (cyclicalActive) passCount++
-            if (turnoverOk && volumeRatioOk) passCount++
-
-            val passed = passCount >= minPassCount
-
-            val summary = buildString {
-                append("$name(${stockCode.takeLast(4)}) ")
-                append("價格:${"%.2f".format(latest.close)} PE:${"%.1f".format(latest.pe)} ")
-                append("通過:$passCount/7 ")
-                if (passed) append("✅ 符合買入") else append("⚠ 未達標")
-            }
-
-            StockCheckResult(
-                stockCode = stockCode,
-                stockName = name,
-                marketMaConverged = marketMaResult.convergedAndUp,
-                marketMaDescription = marketMaResult.hint,
-                maConvergedUp = maConvergedUp,
-                threeDayNoNewLow = threeDayNoNewLow,
-                historicalLow = historicalLow,
-                peOk = peOk,
-                cyclicalActive = cyclicalActive,
-                freezingPoint = turnoverOk,
-                volumeRatioOk = volumeRatioOk,
-                passCount = passCount,
-                passed = passed,
-                currentPrice = latest.close,
-                pe = latest.pe,
-                turnoverRate = latest.turnoverRate,
-                volumeRatio = volRatio,
-                summary = summary
-            )
+            analyzeSnaps(snaps, marketMaResult)
         } catch (e: Exception) {
             Log.e(TAG, "個股分析異常: $stockCode - ${e.message}", e)
             StockCheckResult(stockCode, "異常", summary = "分析異常: ${e.message}")
         }
+    }
+
+    /**
+     * 用預載入的快照分析（不回查 DB，供 PipelineBacktestEngine 回溯用）
+     * 不含大盤均線檢查（回溯時大盤數據未必對齊）
+     */
+    fun analyzeSnaps(
+        snaps: List<DailySnapshotEntity>,
+        marketMaResult: MaConvergenceAnalyzer.Result = MaConvergenceAnalyzer.Result.empty()
+    ): StockCheckResult {
+        if (snaps.size < 20) {
+            return StockCheckResult("", "數據不足", summary = "K線數據不足(${snaps.size}條)")
+        }
+
+        val latest = snaps.last()
+        val closes = snaps.map { it.close }
+        val stockCode = latest.code
+        val name = latest.name
+
+        // ═══ 1. 個股均線粘合向上 ═══
+        val (_, maConvergedUp) = MaConvergenceAnalyzer.bullishConvergence(closes, maDivergenceThreshold)
+
+        // ═══ 2. 三日不新低 ═══
+        val threeDayNoNewLow = StabilityChecker.check(snaps, StabilityChecker.Mode.ASCENDING)
+
+        // ═══ 3. 歷史低位 ═══
+        val positionInRange = PricePositionAnalyzer.fromCloses(closes, latest.close)
+        val historicalLow = positionInRange <= historicalLowPercentile
+
+        // ═══ 4. PE ═══
+        val peOk = latest.pe > 0 && latest.pe < peThreshold
+
+        // ═══ 5. 周期活躍度 ═══
+        val activeDays = snaps.takeLast(lookbackDays).count {
+            abs(it.changePct) > activeChangeThreshold
+        }
+        val cyclicalActive = activeDays >= activeDaysThreshold
+
+        // ═══ 6. 冰點買入 ═══
+        val fp = FreezingPointChecker.check(latest, snaps, turnoverThreshold, volumeRatioThreshold)
+
+        // ═══ 統計通過項數 ═══
+        var passCount = 0
+        if (marketMaResult.convergedAndUp) passCount++
+        if (maConvergedUp) passCount++
+        if (threeDayNoNewLow) passCount++
+        if (historicalLow) passCount++
+        if (peOk) passCount++
+        if (cyclicalActive) passCount++
+        if (fp.isFreezing) passCount++
+
+        val passed = passCount >= minPassCount
+
+        return StockCheckResult(
+            stockCode = stockCode,
+            stockName = name,
+            marketMaConverged = marketMaResult.convergedAndUp,
+            marketMaDescription = marketMaResult.hint,
+            maConvergedUp = maConvergedUp,
+            threeDayNoNewLow = threeDayNoNewLow,
+            historicalLow = historicalLow,
+            peOk = peOk,
+            cyclicalActive = cyclicalActive,
+            freezingPoint = fp.turnoverOk,
+            volumeRatioOk = fp.volumeRatioOk,
+            passCount = passCount,
+            passed = passed,
+            currentPrice = latest.close,
+            pe = latest.pe,
+            turnoverRate = latest.turnoverRate,
+            volumeRatio = fp.volumeRatio,
+            summary = "$name(${stockCode.takeLast(4)}) 通過:$passCount/7"
+        )
     }
 
     /**

@@ -2,6 +2,7 @@ package com.chin.stockanalysis.strategy.topology.nodes
 
 import android.util.Log
 import com.chin.stockanalysis.stock.database.StockDatabase
+import com.chin.stockanalysis.strategy.analysis.PricePositionAnalyzer
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
 import com.chin.stockanalysis.strategy.topology.core.*
 
@@ -38,7 +39,7 @@ import com.chin.stockanalysis.strategy.topology.core.*
  */
 class AncestralRulesNode(
     private val holdingPeriod: String = "SHORT"
-) : PipelineNode<Any, MergedSignalPool> {
+) : BaseNode<Any, MergedSignalPool>("ancestral_rules", "大A祖訓", NodeType.ENRICHMENT) {
 
     companion object {
         private const val TAG = "AncestralRulesNode"
@@ -53,10 +54,6 @@ class AncestralRulesNode(
         private const val LOW_POSITION_PCT = 0.15      // 低位區間：距60日低點15%以內
         private const val HIGH_POSITION_PCT = 0.05     // 高位區間：距60日高點5%以內
     }
-
-    override val nodeId: String = "ancestral_rules"
-    override val nodeName: String = "大A祖訓"
-    override val nodeType: NodeType = NodeType.ENRICHMENT
 
     override suspend fun execute(context: PipelineContext, input: Any): MergedSignalPool {
         val pool: MergedSignalPool = when (input) {
@@ -125,12 +122,9 @@ class AncestralRulesNode(
 
         // 60 日高低點
         val range60 = snaps.takeLast(LOOKBACK_DAYS)
-        val high60 = range60.maxOf { it.high }
-        val low60 = range60.minOf { it.low }
-        val priceRange = high60 - low60
 
         // 當前位置（0=最低，1=最高）
-        val positionPct = if (priceRange > 0) (today.close - low60) / priceRange else 0.5
+        val positionPct = PricePositionAnalyzer.fromHighLow(range60, today.close)
 
         // ═══ 規則 1：高開要跑 ═══
         val gapPct = if (prevDay.close > 0) (today.open - prevDay.close) / prevDay.close else 0.0

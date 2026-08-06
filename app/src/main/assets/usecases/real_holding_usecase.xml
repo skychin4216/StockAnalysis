@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 實倉分析 UseCase v2
+
+  結構設計為可擴展的多 Pipeline 架構：
+    Step 1: 大盤分析 Pipeline（可被其他 UseCase 復用）
+    Step 2: 持倉評估 Pipeline（讀取大盤結論 + 逐股分析）
+
+  後續擴展方向：
+    - Step 3: 持倉報告生成 Pipeline（生成 PDF/圖表報告）
+    - Step 4: 做T建議 Pipeline（綜合大盤+個股K線 → 做T/反T信號）
+    - 其他周期 UseCase 可引用 step 1 的市場分析結果
+
+  大盤分析結果存入 PipelineContext，所有後續 Pipeline 均可讀取。
+-->
+<usecase id="real_holding" name="實倉分析">
+  <description>大盤K線六維分析→逐持倉評估→操作建議(持有/做T/減倉/清倉)</description>
+  <steps>
+    <!-- Step 1: 實倉 DAG Pipeline（大盤分析 + 持倉評估） -->
+    <pipeline ref="usecases/real_holding_pipeline.xml" name="實倉DAG流程" />
+
+    <!--
+      後續擴展：在此添加更多 pipeline step
+      例如：
+      <pipeline ref="usecases/real_holding_report_pipeline.xml" name="持倉報告生成" />
+      <pipeline ref="usecases/real_holding_ttrade_pipeline.xml" name="做T建議" />
+    -->
+  </steps>
+  <config>
+    <param name="orderType" value="RealHolding" />
+    <param name="holdingPeriod" value="all" />
+    <param name="marketAnalysisOnly" value="false" />
+  </config>
+</usecase>

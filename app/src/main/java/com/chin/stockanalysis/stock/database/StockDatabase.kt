@@ -129,9 +129,10 @@ interface AiSelectedStockDao {
         com.chin.stockanalysis.strategy.trade.TTradeRecommendationEntity::class,
         com.chin.stockanalysis.strategy.trade.RealPositionEntity::class,
         com.chin.stockanalysis.strategy.backtest.SectorPeriodSummaryEntity::class,
-        com.chin.stockanalysis.strategy.sector.UserFocusSectorEntity::class
+        com.chin.stockanalysis.strategy.sector.UserFocusSectorEntity::class,
+        com.chin.stockanalysis.strategy.backtest.IntradayKlineEntity::class
     ],
-    version = 20,
+    version = 21,
     exportSchema = false
 )
 abstract class StockDatabase : RoomDatabase() {
@@ -158,6 +159,7 @@ abstract class StockDatabase : RoomDatabase() {
     abstract fun tTradeRecommendationDao(): com.chin.stockanalysis.strategy.trade.TTradeRecommendationDao
     abstract fun realPositionDao(): com.chin.stockanalysis.strategy.trade.RealPositionDao
     abstract fun userFocusSectorDao(): com.chin.stockanalysis.strategy.sector.UserFocusSectorDao
+    abstract fun intradayKlineDao(): com.chin.stockanalysis.strategy.backtest.IntradayKlineDao
 
     companion object {
         const val DATABASE_NAME = "stock_analysis.db"
@@ -337,6 +339,33 @@ abstract class StockDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v20 → v21 遷移：新增 intraday_kline 表（盤中分鐘 K 線）
+         */
+        private val MIGRATION_20_21 = object : androidx.room.migration.Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `intraday_kline` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `code` TEXT NOT NULL,
+                        `name` TEXT NOT NULL DEFAULT '',
+                        `datetime` TEXT NOT NULL,
+                        `date` TEXT NOT NULL,
+                        `open` REAL NOT NULL,
+                        `close` REAL NOT NULL,
+                        `high` REAL NOT NULL,
+                        `low` REAL NOT NULL,
+                        `volume` INTEGER NOT NULL,
+                        `amount` REAL NOT NULL DEFAULT 0.0,
+                        `interval_min` INTEGER NOT NULL DEFAULT 5
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_intraday_kline_code_datetime_interval_min` ON `intraday_kline` (`code`, `datetime`, `interval_min`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_intraday_kline_date` ON `intraday_kline` (`date`)")
+                Log.i(TAG, "✅ v20→v21 遷移完成：已創建 intraday_kline 表（盤中分鐘 K 線）")
+            }
+        }
+
         fun getInstance(context: Context): StockDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -344,7 +373,7 @@ abstract class StockDatabase : RoomDatabase() {
                     StockDatabase::class.java,
                     DATABASE_NAME
                 )
-                    .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20)
+                    .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21)
                     .fallbackToDestructiveMigration()
                     .addCallback(destructiveCallback)
                     .build()

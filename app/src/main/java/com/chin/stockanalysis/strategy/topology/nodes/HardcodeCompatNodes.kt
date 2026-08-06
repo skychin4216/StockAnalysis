@@ -3,12 +3,14 @@ package com.chin.stockanalysis.strategy.topology.nodes
 import android.util.Log
 import com.chin.stockanalysis.stock.StockRealtime
 import com.chin.stockanalysis.stock.data.StockDataSourceFactory
+import com.chin.stockanalysis.strategy.topology.pipelines.PositionMergeResult
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.data.CandidatePool
 import com.chin.stockanalysis.strategy.data.ZiplinePipeline
 import com.chin.stockanalysis.strategy.sector.StrategyMarketContext
 import com.chin.stockanalysis.strategy.trade.HotSectorStockPool
 import com.chin.stockanalysis.strategy.topology.core.*
+import com.chin.stockanalysis.strategy.topology.core.BaseNode
 import com.chin.stockanalysis.stock.database.StockDataCenter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -40,11 +42,7 @@ import java.time.format.DateTimeFormatter
  * ```
  * 放在 stock_pool 之後、signal_merge 之前。
  */
-class CandidatePoolNode : PipelineNode<Any, StockPool> {
-
-    override val nodeId: String = "candidate_pool"
-    override val nodeName: String = "候選池過濾"
-    override val nodeType: NodeType = NodeType.FILTER
+class CandidatePoolNode : BaseNode<Any, StockPool>("candidate_pool", "候選池過濾", NodeType.FILTER) {
 
     override suspend fun execute(context: PipelineContext, input: Any): StockPool {
         // 從 input 或 context 中按需讀取 StockPool
@@ -176,11 +174,7 @@ class CandidatePoolNode : PipelineNode<Any, StockPool> {
  * ```
  * 放在 stock_pool/candidate_pool 之後、signal_merge 之前。
  */
-class ZiplineFactorNode : PipelineNode<Any, StockPool> {
-
-    override val nodeId: String = "zipline_factor"
-    override val nodeName: String = "Zipline 因子計算"
-    override val nodeType: NodeType = NodeType.FACTOR_COMPUTE
+class ZiplineFactorNode : BaseNode<Any, StockPool>("zipline_factor", "Zipline 因子計算", NodeType.FACTOR_COMPUTE) {
 
     override suspend fun execute(context: PipelineContext, input: Any): StockPool {
         // 從 input 或 context 中按需讀取 StockPool
@@ -229,11 +223,7 @@ class ZiplineFactorNode : PipelineNode<Any, StockPool> {
  * ```
  * 放在 market_context 之後、stock_pool/candidate_pool 之前（並行）。
  */
-class SectorStockPoolNode : PipelineNode<Any, StrategyMarketContext> {
-
-    override val nodeId: String = "sector_stock_pool"
-    override val nodeName: String = "板塊精選池"
-    override val nodeType: NodeType = NodeType.DATA_SOURCE
+class SectorStockPoolNode : BaseNode<Any, StrategyMarketContext>("sector_stock_pool", "板塊精選池", NodeType.DATA_SOURCE) {
 
     override suspend fun execute(context: PipelineContext, input: Any): StrategyMarketContext {
         // 從 input 或 context 中按需讀取市場上下文
@@ -288,11 +278,7 @@ class SectorStockPoolNode : PipelineNode<Any, StrategyMarketContext> {
 class T1AutoSellNode(
     private val stopLossPct: Double = -2.0,
     private val takeProfitPct: Double = 3.0
-) : PipelineNode<Any, T1AutoSellResult> {
-
-    override val nodeId: String = "t1_auto_sell"
-    override val nodeName: String = "T+1 自動賣出"
-    override val nodeType: NodeType = NodeType.TRADE_ACTION
+) : BaseNode<Any, T1AutoSellResult>("t1_auto_sell", "T+1 自動賣出", NodeType.TRADE_ACTION) {
 
     override suspend fun execute(context: PipelineContext, input: Any): T1AutoSellResult {
         // 兼容上游 PositionMergeResult 或空輸入（上游失敗時仍執行 T+1 賣出）
@@ -308,7 +294,7 @@ class T1AutoSellNode(
 
             // 獲取所有超短線活躍持倉
             val orders = db.strategyTradeOrderDao().getRecent(100)
-                .filter { it.orderType == "UltraShortQuant" &&
+                .filter { orderTypePeriod(it.orderType) == "ultra_short" &&
                     (it.status == "BUYING" || it.status == "PENDING") }
 
             if (orders.isEmpty()) {
@@ -390,11 +376,7 @@ data class T1AutoSellResult(
  * ```
  * 放在 position_merge 之後（並行於 fitting_save）。
  */
-class CrossTabPublishNode : PipelineNode<Any, PositionMergeResult> {
-
-    override val nodeId: String = "crosstab_publish"
-    override val nodeName: String = "跨 Tab 發布"
-    override val nodeType: NodeType = NodeType.TRADE_ACTION
+class CrossTabPublishNode : BaseNode<Any, PositionMergeResult>("crosstab_publish", "跨 Tab 發布", NodeType.TRADE_ACTION) {
 
     override suspend fun execute(context: PipelineContext, input: Any): PositionMergeResult {
         // 兼容上游 PositionMergeResult 或空輸入

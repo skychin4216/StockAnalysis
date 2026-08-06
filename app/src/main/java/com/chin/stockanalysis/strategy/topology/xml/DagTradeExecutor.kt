@@ -4,10 +4,10 @@ import android.content.Context
 import android.util.Log
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.Strategy
-import com.chin.stockanalysis.strategy.topology.nodes.OrderGenerationResult
-import com.chin.stockanalysis.strategy.topology.nodes.PositionMergeResult
-import com.chin.stockanalysis.strategy.topology.nodes.SwapWeakResult
-import com.chin.stockanalysis.strategy.topology.nodes.HoldingGuardResult
+import com.chin.stockanalysis.strategy.topology.pipelines.OrderGenerationResult
+import com.chin.stockanalysis.strategy.topology.pipelines.PositionMergeResult
+import com.chin.stockanalysis.strategy.topology.pipelines.SwapWeakResult
+import com.chin.stockanalysis.strategy.topology.pipelines.HoldingGuardResult
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -56,7 +56,10 @@ object DagTradeExecutor {
         val totalElapsedMs: Long,
         val pipelineNames: List<String>,
         val errors: Map<String, String>,
-        val uiText: String
+        val uiText: String,
+        val failureAnalysis: PipelineFailureAnalyzer.FailureAnalysis = PipelineFailureAnalyzer.FailureAnalysis(isFailed = false),
+        val diagnosticSummary: String = "",
+        val strictEvalDetail: String = ""
     )
 
     /**
@@ -124,6 +127,8 @@ object DagTradeExecutor {
         var mergeSummary = ""
         var patternSummary = ""
         var savedWatchlist = false
+        var typedGuardResult: HoldingGuardResult? = null
+        var typedSwapResult: SwapWeakResult? = null
 
         try {
             for ((_, pipelineResult) in result.pipelineResults) {
@@ -167,6 +172,7 @@ object DagTradeExecutor {
                 // 提取騰龍換鳥結果
                 val swapOutput = nodeResults["n_swap"]?.output
                 if (swapOutput is SwapWeakResult) {
+                    typedSwapResult = swapOutput
                     swapSummary = buildString {
                         appendLine("騰龍換鳥: 換${swapOutput.swappedCount}筆")
                         appendLine("  換股前: ${swapOutput.beforeCount}筆 → 換股後: ${swapOutput.afterCount}筆")
@@ -180,6 +186,7 @@ object DagTradeExecutor {
                 // 提取持倉風控結果
                 val guardOutput = nodeResults["n_guard"]?.output
                 if (guardOutput is HoldingGuardResult && guardOutput.soldCount > 0) {
+                    typedGuardResult = guardOutput
                     guardSummary = buildString {
                         appendLine("持倉風控: 賣出${guardOutput.soldCount}筆（評估${guardOutput.evaluatedCount}筆）")
                         appendLine("  賣出: ${guardOutput.soldStocks.joinToString(", ")}")
@@ -252,9 +259,81 @@ object DagTradeExecutor {
         } catch (_: Exception) {
         }
 
-        // 8. 保存 Pipeline 報告到 daily_period_result（統一所有週期）
+        // 8. 失敗分析：訂單為 0 時定位殺手節點
+        val failureAnalysis = if (ordersCount == 0) {
+            PipelineFailureAnalyzer.analyze(result.pipelineResults, ordersCount)
+        } else {
+            PipelineFailureAnalyzer.FailureAnalysis(isFailed = false)
+        }
+
+        // 將失敗分析追加到 uiText
+        var finalUiText = if (failureAnalysis.isFailed) {
+            buildString {
+                append(uiText.trimEnd())
+                appendLine()
+                appendLine("⛔ 失敗: ${failureAnalysis.killNodeName} — ${failureAnalysis.reason}")
+                if (failureAnalysis.suggestion.isNotBlank()) {
+                    append("💡 ${failureAnalysis.suggestion}")
+                }
+            }
+        } else uiText
+
+        // 8b. 嚴選詳情：提取逐股過濾原因（當殺手節點為 n_strict 或 n_orders 時）
+        var strictEvalDetail = ""
+        if (ordersCount == 0) {
+            for ((_, pr) in result.pipelineResults) {
+                val evalOutput = pr.stageResults["n_strict_eval"]?.output
+                if (evalOutput is com.chin.stockanalysis.strategy.topology.nodes.StockEvaluationResult && evalOutput.totalCount > 0) {
+                    strictEvalDetail = buildString {
+                        appendLine()
+                        appendLine("── 嚴選詳情 (${evalOutput.passedCount}/${evalOutput.totalCount} 通過) ──")
+                        val details = evalOutput.passedStocks.values.sortedByDescending { it.passCount }
+                        for (d in details.take(10)) {
+                            val checks = listOf(
+                                if (d.maConvergedUp) "✅均線" else "❌均線",
+                                if (d.threeDayNoNewLow) "✅不新低" else "❌不新低",
+                                if (d.historicalLow25) "✅低位" else "❌低位",
+                                if (d.peLow) "✅PE" else "❌PE",
+                                if (d.cyclicalActive) "✅活躍" else "❌活躍",
+                                if (d.freezingPoint) "✅冰點" else "❌冰點"
+                            )
+                            appendLine("  ${d.name}(${d.code}) ${d.passCount}/6 ${checks.joinToString(" ")}")
+                        }
+                        if (details.size > 10) appendLine("  ... 共 ${details.size} 只")
+                    }
+                    break
+                }
+            }
+            if (strictEvalDetail.isNotBlank()) {
+                finalUiText = finalUiText.trimEnd() + "\n" + strictEvalDetail
+            }
+        }
+
+        // 9. 持倉診斷分析：騰龍換鳥/持倉風控賣出股票回溯
+        var diagnosticSummary = ""
+        if (typedGuardResult != null || typedSwapResult != null) {
+            try {
+                val db = StockDatabase.getInstance(context)
+                val diagnostic = HoldingDiagnosticAnalyzer.analyze(typedGuardResult, typedSwapResult, db, tradeDate)
+                diagnosticSummary = diagnostic.summary
+                Log.i(TAG, "[$useCaseId] 持倉診斷: ${diagnostic.soldCount} 只被賣出, 總虧損 ${"%.2f".format(diagnostic.totalLossPct)}%")
+
+                // 追加診斷摘要到 uiText
+                if (diagnostic.hasIssues) {
+                    finalUiText = buildString {
+                        append(finalUiText.trimEnd())
+                        appendLine()
+                        appendLine(diagnostic.summary)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "[$useCaseId] 持倉診斷分析失敗: ${e.message}")
+            }
+        }
+
+        // 10. 保存 Pipeline 報告到 daily_period_result（含診斷數據）
         try {
-            savePipelineReport(context, useCaseId, result, tradeDate, stockFlowLines)
+            savePipelineReport(context, useCaseId, result, tradeDate, stockFlowLines, diagnosticSummary)
         } catch (e: Exception) {
             Log.w(TAG, "[$useCaseId] 保存報告失敗: ${e.message}")
         }
@@ -271,7 +350,10 @@ object DagTradeExecutor {
             totalElapsedMs = elapsed,
             pipelineNames = result.pipelineResults.keys.toList(),
             errors = result.errors,
-            uiText = uiText.trimEnd()
+            uiText = finalUiText.trimEnd(),
+            failureAnalysis = failureAnalysis,
+            diagnosticSummary = diagnosticSummary,
+            strictEvalDetail = strictEvalDetail
         )
     }
 
@@ -299,7 +381,8 @@ object DagTradeExecutor {
         useCaseId: String,
         result: UseCaseLoader.MultiPipelineResult,
         tradeDate: String,
-        stockFlowLines: List<String>
+        stockFlowLines: List<String>,
+        diagnosticSummary: String = ""
     ) {
         val (strategyId, periodDays) = mapUseCaseToStrategy(useCaseId)
         val db = StockDatabase.getInstance(context)
@@ -412,9 +495,9 @@ object DagTradeExecutor {
                         })
                     }
                 }
-                // 提取嚴選檢查結果
-                val strictResult = pr.stageResults["n_strict"]?.output
-                if (strictResult is com.chin.stockanalysis.strategy.topology.nodes.StrictSelectionResult) {
+                // 提取嚴選檢查結果（評估結果存在 n_strict_eval key）
+                val strictResult = pr.stageResults["n_strict_eval"]?.output
+                if (strictResult is com.chin.stockanalysis.strategy.topology.nodes.StockEvaluationResult) {
                     pipeObj.put("n_strict_selection", JSONObject().apply {
                         put("totalCount", strictResult.totalCount)
                         put("passedCount", strictResult.passedCount)
@@ -437,6 +520,20 @@ object DagTradeExecutor {
                 pipes.put(pipeName, pipeObj)
             }
             put("pipelines", pipes)
+            // 失敗分析（訂單為 0 時定位殺手節點）
+            if (finalCodes.isEmpty()) {
+                val fa = PipelineFailureAnalyzer.analyze(result.pipelineResults, 0)
+                put("failureAnalysis", JSONObject().apply {
+                    put("killNodeId", fa.killNodeId)
+                    put("killNodeName", fa.killNodeName)
+                    put("reason", fa.reason)
+                    put("suggestion", fa.suggestion)
+                })
+            }
+            // 持倉診斷分析（騰龍換鳥/持倉風控賣出回溯）
+            if (diagnosticSummary.isNotBlank()) {
+                put("diagnosticSummary", diagnosticSummary)
+            }
         }
 
         val entity = com.chin.stockanalysis.strategy.trade.DailyPeriodResultEntity(
@@ -479,6 +576,18 @@ object DagTradeExecutor {
         if (r.guardSummary.isNotBlank()) appendLine(r.guardSummary.trimEnd())
         if (r.swapSummary.isNotBlank()) appendLine(r.swapSummary.trimEnd())
         if (r.savedWatchlist) appendLine("已保存到自選股")
+        if (r.failureAnalysis.isFailed) {
+            appendLine()
+            appendLine(r.failureAnalysis.flowSummary)
+        }
+        if (r.strictEvalDetail.isNotBlank()) {
+            appendLine()
+            appendLine(r.strictEvalDetail.trimEnd())
+        }
+        if (r.diagnosticSummary.isNotBlank()) {
+            appendLine()
+            appendLine(r.diagnosticSummary.trimEnd())
+        }
         if (r.stockFlowLines.isNotEmpty()) {
             appendLine("── 節點股票流動 ──")
             for (line in r.stockFlowLines) appendLine(line)
@@ -547,14 +656,14 @@ object DagTradeExecutor {
 
             for ((_, pipelineResult) in result.pipelineResults) {
                 val synthOutput = pipelineResult.stageResults["t_synth"]?.output
-                if (synthOutput is com.chin.stockanalysis.strategy.topology.nodes.TSynthesizeResult) {
+                if (synthOutput is com.chin.stockanalysis.strategy.topology.pipelines.TSynthesizeResult) {
                     signalsCount = synthOutput.signals.size
                     marketSummary = synthOutput.marketSummary
                     overseasSummary = synthOutput.overseasSummary
                 }
 
                 val saveOutput = pipelineResult.stageResults["t_save"]?.output
-                if (saveOutput is com.chin.stockanalysis.strategy.topology.nodes.TRecommendSaveResult) {
+                if (saveOutput is com.chin.stockanalysis.strategy.topology.pipelines.TRecommendSaveResult) {
                     savedCount = saveOutput.saved
                 }
             }

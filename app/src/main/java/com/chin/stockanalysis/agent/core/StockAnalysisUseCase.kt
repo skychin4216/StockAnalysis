@@ -60,7 +60,7 @@ data class AnalysisResult(
     /** 是否通過六項嚴選檢查（null = 未檢查，如 recommendation 非 BUY） */
     val strictSelectionPassed: Boolean? = null,
     /** 嚴選檢查詳情 */
-    val strictSelectionDetail: com.chin.stockanalysis.strategy.topology.nodes.StrictSelectionDetail? = null
+    val strictSelectionDetail: com.chin.stockanalysis.strategy.topology.nodes.StockEvaluationDetail? = null
 )
 
 /**
@@ -208,15 +208,15 @@ private suspend fun AgentOrchestrator.runQuickAnalysis(
 
     // 嚴選檢查：BUY 建議時作為最終關卡
     var strictPassed: Boolean? = null
-    var strictDetail: com.chin.stockanalysis.strategy.topology.nodes.StrictSelectionDetail? = null
+    var strictDetail: com.chin.stockanalysis.strategy.topology.nodes.StockEvaluationDetail? = null
     if (analysis?.recommendation == "BUY") {
         try {
             val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(appContext)
-            strictDetail = com.chin.stockanalysis.strategy.topology.nodes.StrictSelectionChecker
+            strictDetail = com.chin.stockanalysis.strategy.topology.nodes.StockEvaluationChecker
                 .evaluate(stockCode, db)
             strictPassed = strictDetail.passCount >= 4
             sb.appendLine()
-            sb.append(com.chin.stockanalysis.strategy.topology.nodes.StrictSelectionChecker.formatResult(strictDetail))
+            sb.append(com.chin.stockanalysis.strategy.topology.nodes.StockEvaluationChecker.formatResult(strictDetail))
         } catch (_: Exception) {}
     }
 
@@ -380,11 +380,11 @@ private suspend fun AgentOrchestrator.runDeepAnalysis(
 
     // 嚴選檢查：BUY 建議時作為最終關卡
     var strictPassed: Boolean? = null
-    var strictDetail: com.chin.stockanalysis.strategy.topology.nodes.StrictSelectionDetail? = null
+    var strictDetail: com.chin.stockanalysis.strategy.topology.nodes.StockEvaluationDetail? = null
     if (recommendation == "BUY") {
         try {
             val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(appContext)
-            strictDetail = com.chin.stockanalysis.strategy.topology.nodes.StrictSelectionChecker
+            strictDetail = com.chin.stockanalysis.strategy.topology.nodes.StockEvaluationChecker
                 .evaluate(stockCode, db)
             strictPassed = strictDetail.passCount >= 4
         } catch (_: Exception) {}
@@ -480,7 +480,7 @@ private fun buildUnifiedSummary(
     score: Int, recommendation: String?, report: String,
     decision: AgentOrchestratorDecision?, guardian: AgentAnnounce?, scout: AgentAnnounce?,
     entryZones: List<String>?, riskFactors: List<String>?,
-    strictDetail: com.chin.stockanalysis.strategy.topology.nodes.StrictSelectionDetail? = null
+    strictDetail: com.chin.stockanalysis.strategy.topology.nodes.StockEvaluationDetail? = null
 ): String = buildString {
     val modeLabel = when (mode) { AnalysisMode.QUICK -> "快速"; AnalysisMode.DEEP -> "深度"; AnalysisMode.EXPERT -> "專家" }
     appendLine("## 🧠 $modeLabel 分析報告：$stockName($stockCode)")
@@ -538,6 +538,6 @@ private fun buildUnifiedSummary(
     // 嚴選檢查結果（僅 BUY 建議時顯示）
     if (strictDetail != null) {
         appendLine()
-        append(com.chin.stockanalysis.strategy.topology.nodes.StrictSelectionChecker.formatResult(strictDetail))
+        append(com.chin.stockanalysis.strategy.topology.nodes.StockEvaluationChecker.formatResult(strictDetail))
     }
 }
