@@ -465,14 +465,22 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
             val jsonArray = org.json.JSONArray(jsonStr)
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
-                val code = obj.optString("code", "")
+                val rawCode = obj.optString("code", "")
                 val name = obj.optString("name", "未知")
                 val quantity = obj.optInt("quantity", 0)
                 val price = obj.optDouble("price", 0.0)
 
-                if (code.length == 6 && quantity > 0 && price > 0) {
+                // 提取6位數字代碼
+                val codeMatch = Regex("""(\d{6})""").find(rawCode)
+                val code = codeMatch?.groupValues?.get(1) ?: continue
+                if (code.length != 6) continue
+
+                // 添加交易所前綴
+                val fullCode = normalizeStockCode(code)
+
+                if (quantity > 0 && price > 0) {
                     results.add(RealPositionEntity(
-                        stockCode = code,
+                        stockCode = fullCode,
                         stockName = name,
                         quantity = quantity,
                         avgBuyPrice = price,
@@ -484,6 +492,18 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
             android.util.Log.e(TAG, "解析 AI 響應失敗: ${e.message}", e)
         }
         return results
+    }
+
+    /**
+     * 為股票代碼添加交易所前綴
+     */
+    private fun normalizeStockCode(code: String): String {
+        return when {
+            code.startsWith("6") -> "sh$code"
+            code.startsWith("0") || code.startsWith("3") -> "sz$code"
+            code.startsWith("4") || code.startsWith("8") -> "bj$code"
+            else -> "sh$code"
+        }
     }
 
     /**
@@ -544,10 +564,12 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
                 ?: continue
 
             if (qty > 0 && price > 0) {
+                // 添加交易所前綴
+                val fullCode = normalizeStockCode(code)
                 // 避免重複添加同一只股票
-                if (results.none { it.stockCode == code }) {
+                if (results.none { it.stockCode == fullCode }) {
                     results.add(RealPositionEntity(
-                        stockCode = code,
+                        stockCode = fullCode,
                         stockName = name,
                         quantity = qty,
                         avgBuyPrice = price,
