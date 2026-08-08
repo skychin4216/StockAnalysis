@@ -329,16 +329,84 @@ abstract class QuantFragmentBase : Fragment() {
 
     /** 啟動 Pipeline 拓撲編輯器 */
     protected open fun openPipelineEditor() {
-        try {
-            val intent = android.content.Intent(
-                requireContext(),
-                com.chin.stockanalysis.strategy.topology.ui.TopologyEditorActivity::class.java
-            )
-            intent.putExtra("usecase_id", getDefaultUseCaseId())
-            startActivity(intent)
-        } catch (e: Exception) {
-            Toast.makeText(requireContext(), "Pipeline 編輯器跳轉失敗: ${e.message}", Toast.LENGTH_SHORT).show()
+        // 顯示 Pipeline 全景圖 HTML
+        showPipelineFrameworkView()
+    }
+
+    /**
+     * 顯示 Pipeline 全景圖（使用 WebView 加載 HTML）
+     * 參考 pipeline_framework.html 的實現
+     */
+    protected fun showPipelineFrameworkView() {
+        val ctx = requireContext()
+        val dialog = android.app.Dialog(ctx).apply {
+            requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
         }
+
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#0F1923"))
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+
+        // 標題欄
+        val titleRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(16, 12, 16, 12)
+            setBackgroundColor(Color.parseColor("#1A237E"))
+        }
+        val titleTv = TextView(ctx).apply {
+            text = "🔀 Pipeline 全景圖"
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        titleRow.addView(titleTv)
+
+        // 關閉按鈕
+        val closeBtn = Button(ctx).apply {
+            text = "關閉"
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#C62828"))
+            setPadding(16, 8, 16, 8)
+            setOnClickListener { dialog.dismiss() }
+        }
+        titleRow.addView(closeBtn)
+        root.addView(titleRow)
+
+        // WebView 顯示 HTML
+        val webView = android.webkit.WebView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.allowFileAccess = true
+            settings.builtInZoomControls = true
+            settings.displayZoomControls = false
+            settings.useWideViewPort = true
+            settings.loadWithOverviewMode = true
+
+            // 加載 assets 中的 HTML
+            loadUrl("file:///android_asset/pipeline_framework.html")
+        }
+        root.addView(webView)
+
+        dialog.setContentView(root)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.window?.setLayout(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        )
+        dialog.show()
     }
 
     /** 子類覆蓋以指定預加載的 UseCase ID */

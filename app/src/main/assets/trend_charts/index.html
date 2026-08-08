@@ -31,6 +31,7 @@ h1{text-align:center;font-size:24px;margin-bottom:8px;color:#1a1a1a}
 .card-rules{font-size:11px;color:#888;margin-top:6px;line-height:1.5;padding-top:6px;border-top:1px dashed #eee}
 .section-title{font-size:18px;font-weight:600;margin:24px 0 12px;padding-left:12px;border-left:4px solid #6200EA;max-width:1400px;margin-left:auto;margin-right:auto}
 .hidden{display:none!important}
+.card.newly-added{border:2px solid #6200EA;box-shadow:0 0 12px rgba(98,0,234,.2)}
 </style>
 </head>
 <body>
@@ -304,7 +305,8 @@ function renderGrid(filter='all'){
       const badgeText=p.type==='bull'?'看漲':p.type==='bear'?'看跌':'中性';
       const svgW=Math.min(340,360);
       const svgH=p.data.length>4?180:150;
-      html+=`<div class="card" data-cat="${p.cat}">
+      const newClass=p._added?' newly-added':'';
+      html+=`<div class="card${newClass}" data-cat="${p.cat}">
         <div class="card-header">
           <span class="card-title">${p.name}<span class="en">${p.en}</span></span>
           <span class="badge ${badgeClass}">${badgeText}</span>
@@ -324,6 +326,26 @@ function filterPattern(cat){
   document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));
   event.target.classList.add('active');
   renderGrid(cat);
+}
+
+// ── 動態添加形態（從 Android OCR 注入）──
+function addPatternFromApp(jsonStr){
+  try{
+    const p=JSON.parse(jsonStr);
+    if(!p.name||!p.data||!p.cat){alert('形態數據不完整');return;}
+    if(!p.type)p.type='neutral';
+    if(!p.en)p.en=p.name;
+    if(!p.desc)p.desc='';
+    if(!p.rules)p.rules='';
+    p._added=true;
+    patterns.push(p);
+    renderGrid('all');
+    // 滾動到新添加的卡片
+    setTimeout(()=>{
+      const cards=document.querySelectorAll('.card');
+      if(cards.length>0)cards[cards.length-1].scrollIntoView({behavior:'smooth',block:'center'});
+    },200);
+  }catch(e){alert('解析形態數據失敗: '+e.message);}
 }
 
 renderGrid('all');

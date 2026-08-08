@@ -1,5 +1,6 @@
 package com.chin.stockanalysis.ui
 
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -9,11 +10,13 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.chin.stockanalysis.agent.v2.ProfitQualityAnalyzer
 import com.chin.stockanalysis.agent.v2.ProfitQualityLevel
 import com.chin.stockanalysis.agent.v2.PositionWaterValve
+import com.chin.stockanalysis.ai.AiProviderPool
 import com.chin.stockanalysis.stock.database.AiSelectedStockEntity
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.stock.database.UserWatchlistEntity
@@ -22,12 +25,17 @@ import com.chin.stockanalysis.strategy.data.CandidatePool
 import com.chin.stockanalysis.strategy.market.MarketAnalyzer
 import com.chin.stockanalysis.common.StockDataService
 import com.chin.stockanalysis.common.StockTableHelper
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONArray
+import org.json.JSONObject
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.ConcurrentHashMap
@@ -58,6 +66,11 @@ class WatchlistUnifiedFragment : Fragment() {
     private lateinit var listContainer: LinearLayout
     private lateinit var headerRow: LinearLayout
     private var trendWebView: android.webkit.WebView? = null
+
+    /** 趨勢圖 OCR 截圖選擇器 */
+    private val trendOcrPicker = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri -> uri?.let { processTrendOcr(it) } }
 
     /** 切換模式 */
     private enum class ViewMode { WATCHLIST, AI, CANDIDATE, TREND_IMAGES }
@@ -761,8 +774,45 @@ class WatchlistUnifiedFragment : Fragment() {
 
     private fun renderTrendImages() {
         listContainer.removeAllViews()
-
         val ctx = requireContext()
+
+        // ── OCR 導入按鈕行 ──
+        val ocrRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(16, 8, 16, 8)
+            setBackgroundColor(Color.WHITE)
+        }
+        val ocrHint = TextView(ctx).apply {
+            text = "截圖導入K線形態："
+            textSize = 13f
+            setTextColor(Color.parseColor("#666666"))
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        ocrRow.addView(ocrHint)
+        val ocrBtn = Button(ctx).apply {
+            text = "📷 選擇截圖"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#6200EA"))
+            setPadding(dp(16), dp(6), dp(16), dp(6))
+            setOnClickListener { trendOcrPicker.launch("image/*") }
+        }
+        ocrRow.addView(ocrBtn)
+        listContainer.addView(ocrRow)
+
+        // ── OCR 狀態提示 ──
+        val ocrStatusTv = TextView(ctx).apply {
+            text = ""
+            textSize = 12f
+            setTextColor(Color.parseColor("#999999"))
+            setPadding(16, 4, 16, 4)
+            visibility = View.GONE
+            tag = "ocrStatus"
+        }
+        listContainer.addView(ocrStatusTv)
+
+        // ── WebView 加載圖譜 ──
         val webView = android.webkit.WebView(ctx).apply {
             settings.javaScriptEnabled = true
             settings.loadWithOverviewMode = true
@@ -787,6 +837,150 @@ class WatchlistUnifiedFragment : Fragment() {
         }
 
         listContainer.addView(webView)
+    }
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    // ═══════════════════════════════════════
+    // 趨勢圖 OCR 識別 + AI 解析 + 動態注入
+    // ═══════════════════════════════════════
+
+    private fun processTrendOcr(uri: android.net.Uri) {
+        val ctx = requireContext()
+        val ocrStatus = listContainer.findViewWithTag<TextView>("ocrStatus")
+        ocrStatus?.apply { text = "🔄 正在識別截圖..."; visibility = View.VISIBLE }
+
+        try {
+            val inputStream = ctx.contentResolver.openInputStream(uri)
+            val bitmap = BitmapFactory.decodeStream(inputStream)
+            inputStream?.close()
+
+            if (bitmap == null) {
+                ocrStatus?.text = "❌ 無法讀取圖片"
+                return
+            }
+
+            val image = InputImage.fromBitmap(bitmap, 0)
+            val recognizer = TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
+
+            recognizer.process(image)
+                .addOnSuccessListener { visionText ->
+                    if (!isAdded) return@addOnSuccessListener
+                    val rawText = visionText.text
+                    ocrStatus?.text = "🤖 AI 正在分析K線形態..."
+
+                    viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                        val patternJson = parseTrendWithAi(rawText)
+                        withContext(Dispatchers.Main) {
+                            if (!isAdded) return@withContext
+                            if (patternJson != null) {
+                                injectPatternToWebView(patternJson)
+                                ocrStatus?.text = "✅ 已添加形態：${patternJson.optString("name")}"
+                            } else {
+                                ocrStatus?.text = "⚠️ 未能識別K線形態，請確保截圖包含清晰的K線圖表"
+                            }
+                        }
+                    }
+                }
+                .addOnFailureListener { e ->
+                    if (!isAdded) return@addOnFailureListener
+                    ocrStatus?.text = "❌ OCR 識別失敗: ${e.message}"
+                }
+        } catch (e: Exception) {
+            if (isAdded) ocrStatus?.text = "❌ 圖片處理失敗: ${e.message}"
+        }
+    }
+
+    /**
+     * 使用 AI 從 OCR 文字中提取 K 線形態數據。
+     * 返回 JSONObject 格式：{cat, type, name, en, data:[{o,h,l,c,label}], desc, rules}
+     */
+    private suspend fun parseTrendWithAi(ocrText: String): JSONObject? {
+        val slot = AiProviderPool.acquire(
+            requireContext(),
+            callerTag = "TrendOcr",
+            timeoutMs = 60_000L
+        ) ?: return null
+
+        try {
+            val prompt = buildString {
+                appendLine("你是一個專業的K線形態分析助手。")
+                appendLine("以下是從K線截圖中OCR識別出的文字，可能包含K線走勢、價格數據、技術指標等信息。")
+                appendLine()
+                appendLine("OCR文字內容：")
+                appendLine("---")
+                appendLine(ocrText)
+                appendLine("---")
+                appendLine()
+                appendLine("請分析這些內容，識別出K線形態，並返回JSON格式數據：")
+                appendLine("{")
+                appendLine("  \"cat\": \"single|two|three|five|trend|complex\",")
+                appendLine("  \"type\": \"bull|bear|neutral\",")
+                appendLine("  \"name\": \"形態中文名稱\",")
+                appendLine("  \"en\": \"English Pattern Name\",")
+                appendLine("  \"data\": [{\"o\":開盤價,\"h\":最高價,\"l\":最低價,\"c\":收盤價,\"label\":\"D1\"}, ...],")
+                appendLine("  \"desc\": \"形態描述（含<strong>標籤</strong>）\",")
+                appendLine("  \"rules\": \"識別要點\"")
+                appendLine("}")
+                appendLine()
+                appendLine("cat分類規則：")
+                appendLine("- single: 單根K線（大陽線、錘子線、十字星等）")
+                appendLine("- two: 雙K線組合（吞沒、孕線等）")
+                appendLine("- three: 三K線組合（早晨之星、紅三兵等）")
+                appendLine("- five: 多K線組合（4-5根K線形態）")
+                appendLine("- trend: 趨勢形態（上升/下跌趨勢、通道等）")
+                appendLine("- complex: 複雜形態（10-30日的大型形態）")
+                appendLine()
+                appendLine("data中的價格應為合理的相對價格，反映截圖中的走勢。")
+                appendLine("如果無法確定準確價格，請根據走勢描述估算合理的OHLC數據。")
+                appendLine("只返回JSON，不要其他文字。")
+            }
+
+            val response = withTimeoutOrNull(90_000L) {
+                kotlinx.coroutines.suspendCancellableCoroutine<String> { cont ->
+                    slot.provider.sendMessageStream(
+                        messages = emptyList(),
+                        systemPrompt = prompt,
+                        onSuccess = {},
+                        onComplete = { full -> cont.resumeWith(Result.success(full)) },
+                        onError = { err -> cont.resumeWith(Result.failure(Exception(err))) }
+                    )
+                }
+            }
+
+            if (response.isNullOrBlank()) return null
+
+            // 提取 JSON
+            val jsonMatch = Regex("\\{[\\s\\S]*\\}").find(response)
+            if (jsonMatch == null) return null
+
+            return try {
+                JSONObject(jsonMatch.value)
+            } catch (e: Exception) {
+                null
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("TrendOCR", "AI 解析失敗: ${e.message}", e)
+            return null
+        } finally {
+            AiProviderPool.releaseNonBlocking(slot)
+        }
+    }
+
+    /**
+     * 將解析到的 K 線形態注入 WebView。
+     */
+    private fun injectPatternToWebView(patternJson: JSONObject) {
+        val webView = trendWebView ?: return
+        val jsonStr = patternJson.toString().replace("'", "\\'")
+        webView.post {
+            webView.evaluateJavascript(
+                "addPatternFromApp('$jsonStr')",
+                android.webkit.ValueCallback<String> { result ->
+                    android.util.Log.i("TrendOCR", "注入結果: $result")
+                }
+            )
+        }
     }
 
     /**
