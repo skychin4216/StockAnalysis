@@ -90,6 +90,10 @@ dependencies {
     }
     implementation("io.noties.markwon:ext-latex:4.6.2")
 
+    // ML Kit 文字識別（截圖OCR導入持倉）
+    implementation("com.google.mlkit:text-recognition:16.0.0")
+    implementation("com.google.mlkit:text-recognition-chinese:16.0.0")
+
     // 协程（由 fragment-ktx 等 AndroidX 库间接依赖，无需显式声明版本）
     // 如果需要显式指定，可取消下面两行注释，并确保网络能访问 Maven Central
     // implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")

@@ -116,7 +116,8 @@ object UseCaseLoader {
     suspend fun run(
         useCaseId: String,
         tradeDate: String,
-        onNodeProgress: ((pipelineName: String, nodeName: String) -> Unit)? = null
+        onNodeProgress: ((pipelineName: String, nodeName: String) -> Unit)? = null,
+        configOverrides: Map<String, String> = emptyMap()
     ): MultiPipelineResult {
         if (!initialized) {
             return MultiPipelineResult(
@@ -197,7 +198,8 @@ object UseCaseLoader {
             }
 
             // 3. 構建共享的 PipelineContext
-            val config = parsePipelineConfig(useCaseConfig.config)
+            val mergedConfig = useCaseConfig.config + configOverrides
+            val config = parsePipelineConfig(mergedConfig)
             val context = PipelineContext(
                 tradeDate = tradeDate,
                 androidContext = appContext,

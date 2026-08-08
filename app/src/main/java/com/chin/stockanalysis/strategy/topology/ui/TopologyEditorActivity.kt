@@ -80,6 +80,8 @@ class TopologyEditorActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 默認橫屏顯示
+        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         viewModel = ViewModelProvider(this)[TopologyEditorViewModel::class.java]
         ensureNodeRegistryInitialized()
 
@@ -209,22 +211,25 @@ class TopologyEditorActivity : AppCompatActivity() {
         bar.addView(titleText)
 
         val saveBtn = Button(this).apply {
-            text = "💾 保存"
-            textSize = 12f
+            text = "💾保存"
+            textSize = 11f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#059669"))
             setOnClickListener { savePipeline() }
-            layoutParams = LinearLayout.LayoutParams(dp(72), dp(32))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)).apply {
+                minWidth = dp(60)
+            }
         }
         bar.addView(saveBtn)
 
         val runBtn = Button(this).apply {
-            text = "▶ 執行"
-            textSize = 12f
+            text = "▶執行"
+            textSize = 11f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#7C3AED"))
             setOnClickListener { runPipeline() }
-            layoutParams = LinearLayout.LayoutParams(dp(72), dp(32)).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)).apply {
+                minWidth = dp(60)
                 marginStart = dp(4)
             }
         }

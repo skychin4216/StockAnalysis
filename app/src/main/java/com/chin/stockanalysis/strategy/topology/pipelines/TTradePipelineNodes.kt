@@ -132,7 +132,16 @@ class THoldingsLoadNode(
         val holdings = mutableListOf<THolding>()
 
         // 1. 模擬持倉
-        val pt = periodType.ifEmpty { context.config.holdingPeriod }
+        val pt = periodType.ifEmpty {
+            // 將 holdingPeriod 配置映射為實際 orderType（與各 Fragment 一致）
+            when (context.config.holdingPeriod) {
+                "ultra_short" -> "ultra_short"
+                "short" -> "shortterm"
+                "mid" -> "midterm"
+                "long" -> "long_term"
+                else -> context.config.holdingPeriod
+            }
+        }
         try {
             val allOrders = db.strategyTradeOrderDao().getRecent(500)
             val periodHoldings = allOrders.filter {

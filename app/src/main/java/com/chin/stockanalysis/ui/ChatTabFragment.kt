@@ -97,6 +97,10 @@ class ChatTabFragment : Fragment() {
 
     private var currentStreamingJob: Job? = null
     private var apiProvider: ApiProvider? = null
+
+    /** 分享內容待處理：AI 分析完成後詢問是否保存到機構推薦 */
+    private var pendingInstitutionalSave = false
+    private var sharedExtractedText: String = ""
     private var aiSlot: AiProviderPool.Slot? = null
     private var tts: TextToSpeech? = null
     private var providerInitDone = false
@@ -948,6 +952,67 @@ $memory
     private fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density + 0.5f).toInt()
     fun sendMessageFromExternal(text: String) { binding.etInput.setText(text); binding.btnSend.performClick() }
 
+    /**
+     * 處理外部分享的內容（圖片/PDF/文字）。
+     * OCR 識別後發送到 AI 對話，分析完成後詢問是否保存到機構推薦。
+     */
+    fun handleSharedContent(sharedUri: android.net.Uri?, sharedText: String?) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            // 等待 UI 就緒
+            kotlinx.coroutines.delay(500)
+            if (!isAdded) return@launch
+
+            if (sharedUri != null) {
+                // 有 URI → 判斷類型（圖片 or PDF）
+                val mimeType = requireContext().contentResolver.getType(sharedUri) ?: ""
+                val path = sharedUri.path ?: ""
+                when {
+                    mimeType.startsWith("image/") || path.matches(Regex(""".*\.(jpg|jpeg|png|bmp|webp)$""", RegexOption.IGNORE_CASE)) -> {
+                        // 圖片 → OCR
+                        val content = extractTextFromImage(sharedUri)
+                        if (content.text.isNotBlank() && content.text != "[圖片: unknownxunknown]") {
+                            val ocrText = content.text
+                            sharedExtractedText = ocrText
+                            pendingInstitutionalSave = true
+                            sendMessage("[分享圖片 OCR]\n$ocrText\n\n請分析以上內容中的股票推薦信息。", skipStockContext = true)
+                        } else {
+                            sendMessage("[分享圖片] 無法提取內容", skipStockContext = true)
+                        }
+                    }
+                    mimeType == "application/pdf" || path.endsWith(".pdf", ignoreCase = true) -> {
+                        // PDF → 提取文字
+                        val fileName = getFileNameFromUri(sharedUri) ?: "PDF"
+                        val extractedText = extractTextFromFile(sharedUri, fileName)
+                        if (extractedText.isNotBlank()) {
+                            sharedExtractedText = extractedText
+                            pendingInstitutionalSave = true
+                            sendMessage("[分享PDF: $fileName]\n$extractedText\n\n請分析以上內容中的股票推薦信息。", skipStockContext = true)
+                        } else {
+                            sendMessage("[分享PDF] 無法提取內容", skipStockContext = true)
+                        }
+                    }
+                    else -> {
+                        // 其他文件 → 嘗試提取
+                        val fileName = getFileNameFromUri(sharedUri) ?: "文件"
+                        val extractedText = extractTextFromFile(sharedUri, fileName)
+                        if (extractedText.isNotBlank()) {
+                            sharedExtractedText = extractedText
+                            pendingInstitutionalSave = true
+                            sendMessage("[分享文件: $fileName]\n$extractedText\n\n請分析以上內容中的股票推薦信息。", skipStockContext = true)
+                        } else {
+                            sendMessage("[分享文件] 無法提取內容: $fileName", skipStockContext = true)
+                        }
+                    }
+                }
+            } else if (!sharedText.isNullOrEmpty()) {
+                // 純文字分享
+                sharedExtractedText = sharedText
+                pendingInstitutionalSave = true
+                sendMessage("[分享文字]\n$sharedText\n\n請分析以上內容中的股票推薦信息。", skipStockContext = true)
+            }
+        }
+    }
+
     private fun showEditMessageDialog(position: Int) {
         if (position !in messages.indices || !messages[position].isUser) return
         val input = EditText(requireContext()).apply { setText(messages[position].content); setSelection(text?.length ?: 0) }
@@ -1091,6 +1156,126 @@ $memory
         // 不再使用固定追問模板，讓 AI 自然對話
         // 檢查最後一條用戶消息是否包含股票代碼，如有則彈窗詢問操作
         tryPromptStockAction()
+
+        // 如果是分享內容的 OCR 分析完成，詢問是否保存到機構推薦
+        if (pendingInstitutionalSave && isAdded) {
+            pendingInstitutionalSave = false
+            promptSaveToInstitutional()
+        }
+    }
+
+    /** AI 分析完成後，詢問用戶是否將識別到的股票保存到機構推薦 */
+    private fun promptSaveToInstitutional() {
+        val text = sharedExtractedText
+        if (text.isBlank()) return
+
+        // 從文字中提取股票
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val entities = com.chin.stockanalysis.ai.StockEntityExtractor.extract(text, requireContext())
+                val stocks = if (entities.isNotEmpty()) {
+                    entities.map { e -> (e.name.ifEmpty { e.text }) to e.code }.distinctBy { it.second }
+                } else {
+                    // fallback: 按行解析
+                    val results = mutableListOf<Pair<String, String>>()
+                    for (line in text.lines()) {
+                        val codeMatch = Regex("""(\d{6})""").find(line)
+                        if (codeMatch != null) {
+                            val code = codeMatch.groupValues[1]
+                            val name = Regex("""[\u4e00-\u9fa5]{2,6}""").find(line)?.value ?: ""
+                            results.add(name to code)
+                        }
+                    }
+                    results.distinctBy { it.second }
+                }
+
+                if (stocks.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        if (!isAdded) return@withContext
+                        android.app.AlertDialog.Builder(requireContext())
+                            .setTitle("機構推薦")
+                            .setMessage("未識別到股票信息。是否仍要手動添加到機構推薦？")
+                            .setPositiveButton("去添加") { _, _ -> navigateToInstitutionalTab() }
+                            .setNegativeButton("不需要", null)
+                            .show()
+                    }
+                    return@launch
+                }
+
+                withContext(Dispatchers.Main) {
+                    if (!isAdded) return@withContext
+                    val msg = buildString {
+                        appendLine("識別到 ${stocks.size} 只股票：\n")
+                        for ((name, code) in stocks) {
+                            appendLine("  ${name.ifEmpty { "?" }} ($code)")
+                        }
+                        appendLine("\n是否保存到機構推薦？")
+                    }
+                    android.app.AlertDialog.Builder(requireContext())
+                        .setTitle("保存到機構推薦")
+                        .setMessage(msg)
+                        .setPositiveButton("保存") { _, _ ->
+                            saveStocksToInstitutional(stocks)
+                        }
+                        .setNegativeButton("不保存") { _, _ ->
+                            navigateToInstitutionalTab()
+                        }
+                        .setNeutralButton("保存並查看") { _, _ ->
+                            saveStocksToInstitutional(stocks, navigateAfter = true)
+                        }
+                        .show()
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("ChatTabFragment", "機構推薦保存失敗", e)
+            }
+        }
+    }
+
+    /** 將股票保存到自選（source 字段記錄來源，如「AI推薦」「分享導入」等） */
+    private fun saveStocksToInstitutional(stocks: List<Pair<String, String>>, navigateAfter: Boolean = false) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(requireContext())
+                val dao = db.userWatchlistDao()
+                val today = java.time.LocalDate.now().toString()
+                var savedCount = 0
+
+                for ((name, code) in stocks) {
+                    val existing = dao.getByCode(code)
+                    if (existing != null) {
+                        // 已存在 → 更新 source 和 notes
+                        dao.update(existing.copy(
+                            source = if (existing.source in listOf("manual", "midterm", "shortterm", "ultra_short", "long_term")) existing.source else "AI推薦",
+                            notes = if (existing.notes.isEmpty()) "AI 分析確認" else existing.notes
+                        ))
+                    } else {
+                        dao.insert(com.chin.stockanalysis.stock.database.UserWatchlistEntity(
+                            stockCode = code,
+                            stockName = name,
+                            source = "AI推薦",
+                            addedDate = today,
+                            notes = "AI 分析確認"
+                        ))
+                    }
+                    savedCount++
+                }
+
+                withContext(Dispatchers.Main) {
+                    if (!isAdded) return@withContext
+                    Toast.makeText(requireContext(), "已保存 $savedCount 只到自選", Toast.LENGTH_SHORT).show()
+                    if (navigateAfter) navigateToInstitutionalTab()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    if (isAdded) Toast.makeText(requireContext(), "保存失敗: ${e.message?.take(30)}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    /** 導航到精選股票 → 機構推薦 Tab */
+    private fun navigateToInstitutionalTab() {
+        (activity as? MainActivity)?.navigateToInstitutional()
     }
 
     /** 如果用戶輸入包含股票代碼，分析完成後彈窗詢問加入自選/買入 */

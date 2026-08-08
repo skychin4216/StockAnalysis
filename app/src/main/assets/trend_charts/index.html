@@ -45,6 +45,7 @@ h1{text-align:center;font-size:24px;margin-bottom:8px;color:#1a1a1a}
   <span class="filter-btn" onclick="filterPattern('three')">三 K 線形態</span>
   <span class="filter-btn" onclick="filterPattern('five')">多 K 線形態</span>
   <span class="filter-btn" onclick="filterPattern('trend')">趨勢形態</span>
+  <span class="filter-btn" onclick="filterPattern('complex')">複雜形態</span>
 </div>
 
 <div id="grid" class="grid"></div>
@@ -223,6 +224,60 @@ const patterns=[
  data:[{o:10.0,l:9.7,h:10.3,c:10.1,label:'D1'},{o:10.1,l:9.8,h:10.4,c:9.9,label:'D2'},{o:9.9,l:9.7,h:10.2,c:10.0,label:'D3'},{o:10.0,l:9.8,h:10.3,c:10.1,label:'D4'},{o:10.1,l:9.9,h:10.5,c:10.3,label:'D5',arrow:'up'},{o:10.3,l:10.1,h:10.8,c:10.7,label:'D6',arrow:'up'}],
  desc:'<strong>均線粘合</strong>：MA5/MA10/MA20 三條均線差距極小（<2%），即將選擇方向。粘合後向上發散=突破信號。',
  rules:'判斷要點：三條均線偏離度 < 2% | 持續時間越長爆發力越強 | 配合成交量放大確認方向 | 向上突破=買入信號 | 向下突破=賣出信號'},
+
+// ═══ 複雜趨勢形態（10-30+ 根 K 線） ═══
+{cat:'complex',type:'bull',name:'W底（雙重底）',en:'W-Bottom / Double Bottom',
+ data:[{o:12.0,l:11.8,h:12.2,c:11.0,label:'D1'},{o:11.0,l:10.5,h:11.2,c:10.6,label:'D2'},{o:10.6,l:10.0,h:10.8,c:10.2,label:'D3',arrow:'down'},{o:10.2,l:10.1,h:11.0,c:10.8,label:'D4'},{o:10.8,l:10.5,h:11.5,c:11.2,label:'D5'},{o:11.2,l:10.8,h:11.8,c:10.9,label:'D6'},{o:10.9,l:10.3,h:11.1,c:10.5,label:'D7'},{o:10.5,l:10.0,h:10.7,c:10.3,label:'D8',arrow:'down'},{o:10.3,l:10.2,h:11.2,c:11.0,label:'D9'},{o:11.0,l:10.8,h:11.8,c:11.5,label:'D10'},{o:11.5,l:11.2,h:12.5,c:12.3,label:'D11',arrow:'up'}],
+ desc:'<strong>W底</strong>出現在長期下跌末期，走勢形似字母W。左底：股價大跌後止跌形成第一個低點；中間高點：止跌後反彈；右底：反彈遇阻回落形成第二個低點（≥左底）。放量突破頸線=W底成立。',
+ rules:'識別要點：兩個低點大致持平（右底≥左底更佳） | 頸線=中間高點連線 | 右側放量突破頸線確認反轉 | 突破後回測頸線不破=最佳買點 | 量價：左底縮量→右底溫和放量→突破大量'},
+{cat:'complex',type:'bear',name:'雙重頂（M頭）',en:'Double Top / M-Head',
+ data:[{o:9.0,l:8.8,h:9.5,c:10.5,label:'D1'},{o:10.5,l:10.2,h:11.5,c:11.2,label:'D2',arrow:'up'},{o:11.2,l:10.8,h:11.6,c:10.5,label:'D3'},{o:10.5,l:10.0,h:10.8,c:10.2,label:'D4'},{o:10.2,l:9.8,h:10.5,c:10.8,label:'D5'},{o:10.8,l:10.5,h:11.4,c:11.1,label:'D6',arrow:'up'},{o:11.1,l:10.6,h:11.3,c:10.3,label:'D7'},{o:10.3,l:9.5,h:10.5,c:9.7,label:'D8',arrow:'down'}],
+ desc:'<strong>雙重頂</strong>：股價兩次衝高到相近水平後回落，形似字母M。左頂和右頂高度接近，中間低點為頸線。有效跌破頸線=確認反轉。',
+ rules:'識別要點：兩個高點大致持平（相差<3%） | 頸線=中間低點水平線 | 右頂成交量通常小於左頂（量價背離） | 跌破頸線=確認反轉 | 頸線不過=最後離場機會'},
+{cat:'complex',type:'bear',name:'頭肩頂',en:'Head & Shoulders Top',
+ data:[{o:8.5,l:8.3,h:9.0,c:10.0,label:'D1'},{o:10.0,l:9.8,h:11.0,c:10.8,label:'D2',arrow:'up'},{o:10.8,l:10.2,h:11.2,c:10.3,label:'D3'},{o:10.3,l:9.8,h:10.6,c:10.5,label:'D4'},{o:10.5,l:10.2,h:12.0,c:11.8,label:'D5',arrow:'up'},{o:11.8,l:11.0,h:12.2,c:11.2,label:'D6'},{o:11.2,l:10.5,h:11.5,c:10.8,label:'D7'},{o:10.8,l:10.3,h:11.2,c:10.6,label:'D8',arrow:'up'},{o:10.6,l:10.0,h:10.9,c:10.2,label:'D9'},{o:10.2,l:9.5,h:10.4,c:9.7,label:'D10',arrow:'down'}],
+ desc:'<strong>頭肩頂</strong>：三個高峰，中間（頭）最高，兩側（肩）較低且大致等高。頸線連接兩個低谷。跌破頸線=逃頂信號，下跌空間≈頭頂到頸線的距離。',
+ rules:'識別要點：左肩→頭（最高）→右肩 | 右肩成交量明顯小於左肩和頭（量價背離） | 頸線=兩低谷連線 | 跌破頸線=確認反轉 | 最小跌幅=頭頂-頸線'},
+{cat:'complex',type:'bull',name:'頭肩底',en:'Head & Shoulders Bottom',
+ data:[{o:12.0,l:11.8,h:12.2,c:11.0,label:'D1'},{o:11.0,l:10.5,h:11.2,c:10.6,label:'D2',arrow:'down'},{o:10.6,l:10.2,h:10.8,c:10.8,label:'D3'},{o:10.8,l:10.3,h:11.0,c:10.5,label:'D4'},{o:10.5,l:9.5,h:10.7,c:9.7,label:'D5',arrow:'down'},{o:9.7,l:9.5,h:10.5,c:10.2,label:'D6'},{o:10.2,l:9.8,h:10.8,c:10.5,label:'D7'},{o:10.5,l:10.0,h:11.0,c:10.8,label:'D8',arrow:'down'},{o:10.8,l:10.5,h:11.2,c:11.0,label:'D9'},{o:11.0,l:10.8,h:12.0,c:11.8,label:'D10',arrow:'up'}],
+ desc:'<strong>頭肩底</strong>：三個低谷，中間（頭）最低，兩側（肩）較高且大致等高。頸線連接兩個高峰。放量突破頸線=反轉確認，上漲空間≈頸線-頭底的距離。',
+ rules:'識別要點：左肩→頭（最低）→右肩 | 右肩成交量大於左肩（資金進場） | 頸線=兩高峰連線 | 放量突破頸線=確認反轉 | 最小漲幅=頸線-頭底'},
+{cat:'complex',type:'bull',name:'圓弧底',en:'Rounded Bottom',
+ data:[{o:12.0,l:11.8,h:12.2,c:11.5,label:'D1'},{o:11.5,l:11.2,h:11.7,c:11.0,label:'D2'},{o:11.0,l:10.8,h:11.2,c:10.6,label:'D3'},{o:10.6,l:10.4,h:10.8,c:10.3,label:'D4'},{o:10.3,l:10.1,h:10.5,c:10.1,label:'D5'},{o:10.1,l:10.0,h:10.3,c:10.0,label:'D6'},{o:10.0,l:9.9,h:10.2,c:10.0,label:'D7'},{o:10.0,l:10.0,h:10.4,c:10.2,label:'D8'},{o:10.2,l:10.1,h:10.8,c:10.6,label:'D9'},{o:10.6,l:10.4,h:11.2,c:11.0,label:'D10'},{o:11.0,l:10.8,h:12.0,c:11.8,label:'D11',arrow:'up'}],
+ desc:'<strong>圓弧底</strong>：股價緩跌→底部盤整→緩漲，形成U形圓弧。左側陰線越來越小，底部波動不劇烈（主力默默吸籌），右側低點逐步抬高。頸線附近放量突破=反轉確認。',
+ rules:'識別要點：左側緩跌、陰線越來越小 | 底部縮量盤整、波動收窄 | 右側緩漲、低點逐步抬高 | V量形態：中間低兩頭高 | 突破上沿明顯放量 | 耗時越長底部越紮實'},
+{cat:'complex',type:'bull',name:'V形底',en:'V-Bottom Reversal',
+ data:[{o:12.0,l:11.8,h:12.2,c:11.5,label:'D1'},{o:11.5,l:11.0,h:11.7,c:10.8,label:'D2'},{o:10.8,l:10.0,h:11.0,c:10.2,label:'D3'},{o:10.2,l:9.5,h:10.4,c:9.7,label:'D4',arrow:'down'},{o:9.7,l:9.5,h:11.0,c:10.8,label:'D5'},{o:10.8,l:10.5,h:11.8,c:11.5,label:'D6'},{o:11.5,l:11.2,h:12.5,c:12.3,label:'D7',arrow:'up'}],
+ desc:'<strong>V形底</strong>：股價急跌後急漲，形成V形反轉。下跌速度快、幅度大，反轉同樣迅速。通常由重大利好或主力突然進場引發。',
+ rules:'識別要點：急跌（連續大陰線，3-5日跌幅>15%） | 底部成交量突然放大（恐慌盤+主力接盤） | 急漲（連續大陽線，速度與下跌相當） | 反轉日通常伴隨跳空高開 | 風險：假V形多，需放量確認'},
+{cat:'complex',type:'bull',name:'黃金坑',en:'Golden Pit Wash',
+ data:[{o:10.0,l:9.8,h:10.5,c:10.3,label:'D1'},{o:10.3,l:10.0,h:10.8,c:10.5,label:'D2'},{o:10.5,l:10.2,h:11.0,c:10.8,label:'D3'},{o:10.8,l:10.5,h:11.2,c:10.2,label:'D4'},{o:10.2,l:9.8,h:10.4,c:9.5,label:'D5'},{o:9.5,l:9.2,h:9.7,c:9.3,label:'D6',arrow:'down'},{o:9.3,l:9.1,h:9.5,c:9.2,label:'D7'},{o:9.2,l:9.0,h:9.4,c:9.1,label:'D8'},{o:9.1,l:9.0,h:10.5,c:10.3,label:'D9'},{o:10.3,l:10.0,h:11.5,c:11.2,label:'D10',arrow:'up'}],
+ desc:'<strong>黃金坑</strong>：主力洗盤形態。股價先小幅上漲→突然急跌挖坑（縮量）→坑底縮量盤整→放量拉升突破前高。坑越深、縮量越徹底，後續漲幅越大。',
+ rules:'識別要點：前期有小幅上漲趨勢 | 突然急跌但成交量萎縮（主力未出逃） | 坑底極度縮量（地量） | 放量拉升突破前高=黃金坑確認 | 坑底是最佳買點 | 區別於真下跌：真下跌放量、黃金坑縮量'},
+{cat:'complex',type:'bull',name:'島形反轉',en:'Island Reversal',
+ data:[{o:10.0,l:9.8,h:10.5,c:10.3,label:'D1'},{o:10.3,l:10.0,h:10.8,c:10.5,label:'D2'},{o:10.5,l:10.2,h:11.0,c:10.8,label:'D3'},{o:10.8,l:10.5,h:11.2,c:9.5,label:'D4',arrow:'down'},{o:9.2,l:9.0,h:9.4,c:9.1,label:'D5'},{o:9.1,l:8.9,h:9.3,c:9.0,label:'D6'},{o:9.0,l:8.8,h:9.2,c:10.5,label:'D7',arrow:'up'},{o:10.5,l:10.2,h:11.5,c:11.2,label:'D8'},{o:11.2,l:11.0,h:12.0,c:11.8,label:'D9',arrow:'up'}],
+ desc:'<strong>島形反轉</strong>：股價先向下跳空缺口→島嶼區間盤整數日→再向上跳空缺口。兩個缺口之間的K線像孤島。底部島形反轉=強烈看多信號。',
+ rules:'識別要點：左側向下跳空缺口（gap down） | 島嶼區間3-10根K線盤整 | 右側向上跳空缺口（gap up） | 兩個缺口價格區間大致重疊 | 右側缺口需放量確認 | 島形反轉可靠性極高'},
+{cat:'complex',type:'bull',name:'上升旗形',en:'Ascending Flag / Bull Flag',
+ data:[{o:9.0,l:8.8,h:9.5,c:11.0,label:'D1',arrow:'up'},{o:11.0,l:10.8,h:11.5,c:10.5,label:'D2'},{o:10.5,l:10.3,h:11.0,c:10.8,label:'D3'},{o:10.8,l:10.5,h:11.2,c:10.3,label:'D4'},{o:10.3,l:10.1,h:10.8,c:10.6,label:'D5'},{o:10.6,l:10.3,h:11.0,c:10.4,label:'D6'},{o:10.4,l:10.2,h:10.9,c:10.7,label:'D7'},{o:10.7,l:10.5,h:12.5,c:12.3,label:'D8',arrow:'up'}],
+ desc:'<strong>上升旗形</strong>：急漲（旗桿）→小幅回調整理（旗面，向下傾斜的平行通道）→再次突破上漲。旗面整理時間短（5-15日），成交量逐漸萎縮，突破時放量。',
+ rules:'識別要點：旗桿=急漲段（3-5日漲幅>15%） | 旗面=向下傾斜的平行通道 | 旗面成交量逐步萎縮 | 突破旗面上沿=買入信號 | 最小漲幅≈旗桿長度 | 整理時間越短越強'},
+{cat:'complex',type:'bear',name:'下降三角形',en:'Descending Triangle',
+ data:[{o:12.0,l:11.5,h:12.5,c:11.8,label:'D1'},{o:11.8,l:11.0,h:12.0,c:11.2,label:'D2'},{o:11.2,l:11.0,h:11.8,c:11.5,label:'D3'},{o:11.5,l:11.0,h:11.6,c:11.1,label:'D4'},{o:11.1,l:11.0,h:11.5,c:11.3,label:'D5'},{o:11.3,l:11.0,h:11.4,c:11.0,label:'D6'},{o:11.0,l:10.5,h:11.2,c:10.6,label:'D7',arrow:'down'}],
+ desc:'<strong>下降三角形</strong>：下降壓力線+水平支撐線。高點不斷降低（拋壓加重），支撐多次被測試。整理末端向下破位概率大。破位=下跌空間打開。',
+ rules:'識別要點：高點逐級降低（下降趨勢線） | 低點大致持平（水平支撐線） | 整理階段持續縮量 | 破位階段放量下破（拋壓釋放） | 反彈越來越弱 | 破支撐=加速下跌'},
+{cat:'complex',type:'bear',name:'擴散三角形',en:'Expanding Triangle / Megaphone',
+ data:[{o:10.0,l:9.5,h:10.5,c:10.3,label:'D1'},{o:10.3,l:9.0,h:11.5,c:9.2,label:'D2'},{o:9.2,l:8.5,h:12.0,c:11.8,label:'D3'},{o:11.8,l:8.0,h:12.5,c:8.2,label:'D4'},{o:8.2,l:7.5,h:13.0,c:12.8,label:'D5'},{o:12.8,l:7.0,h:13.5,c:7.2,label:'D6',arrow:'down'}],
+ desc:'<strong>擴散三角形</strong>：波動區間不斷擴大，高點越來越高、低點越來越低。多空分歧巨大，常見於頂部反轉。主力高位瘋狂出貨，製造劇烈震盪誘多後下殺。',
+ rules:'識別要點：高點越來越高 | 低點越來越低 | 波動區間持續擴大 | 成交量大而混亂、放量無規律 | 情緒失控、走勢極不穩定 | 跌破下軌=頂部反轉確認'},
+{cat:'complex',type:'bull',name:'杯柄形態',en:'Cup and Handle',
+ data:[{o:12.0,l:11.8,h:12.2,c:11.5,label:'D1'},{o:11.5,l:11.0,h:11.7,c:10.8,label:'D2'},{o:10.8,l:10.5,h:11.0,c:10.3,label:'D3'},{o:10.3,l:10.0,h:10.5,c:10.1,label:'D4'},{o:10.1,l:10.0,h:10.3,c:10.0,label:'D5'},{o:10.0,l:10.0,h:10.4,c:10.2,label:'D6'},{o:10.2,l:10.1,h:10.8,c:10.6,label:'D7'},{o:10.6,l:10.4,h:11.0,c:10.8,label:'D8'},{o:10.8,l:10.5,h:11.2,c:10.5,label:'D9'},{o:10.5,l:10.3,h:10.8,c:10.6,label:'D10'},{o:10.6,l:10.4,h:12.0,c:11.8,label:'D11',arrow:'up'}],
+ desc:'<strong>杯柄形態</strong>：先形成圓弧底（杯身）→再小幅回調整理（杯柄，通常為下降通道或橫盤）→放量突破杯柄上沿。杯柄回調不超過杯身高度的1/3-1/2。',
+ rules:'識別要點：杯身=U形圓弧底（非V形） | 杯柄=小幅回調（<杯深1/2） | 杯柄成交量萎縮 | 突破杯柄上沿需放量 | 杯身耗時通常7-65週 | 最小漲幅=杯深'},
+{cat:'complex',type:'bull',name:'底部雙雄',en:'Bottom Double Heroes',
+ data:[{o:10.0,l:9.8,h:10.5,c:10.3,label:'D1'},{o:10.3,l:10.0,h:10.8,c:10.5,label:'D2'},{o:10.5,l:10.2,h:11.0,c:10.2,label:'D3'},{o:10.2,l:9.8,h:10.4,c:9.5,label:'D4'},{o:9.5,l:9.2,h:9.7,c:9.3,label:'D5'},{o:9.3,l:9.0,h:9.5,c:9.1,label:'D6',arrow:'down'},{o:9.1,l:9.0,h:10.2,c:10.0,label:'D7'},{o:10.0,l:9.8,h:11.0,c:10.8,label:'D8'},{o:10.8,l:10.5,h:11.5,c:10.2,label:'D9'},{o:10.2,l:9.8,h:10.5,c:9.6,label:'D10'},{o:9.6,l:9.3,h:10.0,c:9.8,label:'D11',arrow:'down'},{o:9.8,l:9.5,h:11.2,c:11.0,label:'D12'},{o:11.0,l:10.8,h:12.0,c:11.8,label:'D13',arrow:'up'}],
+ desc:'<strong>底部雙雄</strong>：在底部區域出現兩次漲停板（或大陽線），兩次之間有回調洗盤。第一次漲停=主力試盤，回調洗出浮籌，第二次漲停=主力正式進場。',
+ rules:'識別要點：底部區域出現第一次漲停/大陽線 | 其後回調洗盤（縮量） | 再次出現漲停/大陽線 | 兩次漲停之間隔3-10日 | 第二次量能≥第一次 | 雙漲停後突破前高=確認'}
 ];
 
 // ── 渲染 ──
@@ -233,14 +288,15 @@ function renderGrid(filter='all'){
     two:'雙 K 線形態',
     three:'三 K 線形態',
     five:'多 K 線形態',
-    trend:'趨勢形態'
+    trend:'趨勢形態',
+    complex:'複雜趨勢形態（10-30日）'
   };
   let html='';
   const filtered=filter==='all'?patterns:patterns.filter(p=>p.cat===filter);
   const grouped={};
   filtered.forEach(p=>{if(!grouped[p.cat])grouped[p.cat]=[];grouped[p.cat].push(p)});
 
-  for(const cat of ['single','two','three','five','trend']){
+  for(const cat of ['single','two','three','five','trend','complex']){
     if(!grouped[cat])continue;
     html+=`<div style="grid-column:1/-1"><h2 class="section-title">${cats[cat]}</h2></div>`;
     grouped[cat].forEach(p=>{

@@ -143,7 +143,7 @@ object HoldingDiagnosticAnalyzer {
         return DiagnosticResult(
             hasIssues = soldStocks.isNotEmpty(),
             soldCount = soldStocks.size,
-            totalLossPct = totalLoss,
+            totalLossPct = avgLoss,
             diagnosisLines = diagnosisLines,
             summary = summary.trimEnd(),
             improvementSuggestions = suggestions

@@ -68,6 +68,11 @@ class WatchlistUnifiedFragment : Fragment() {
     private lateinit var mainBoardSwitch: Switch
     private lateinit var mainBoardRow: LinearLayout
 
+    /** 來源過濾 */
+    private var selectedSource: String = "" // 空 = 全部
+    private var availableSources: List<String> = emptyList()
+    private lateinit var sourceFilterRow: LinearLayout
+
     /** 自選數據緩存 */
     private var watchlistData: List<UserWatchlistEntity> = emptyList()
     /** AI 精選數據緩存 */
@@ -272,6 +277,19 @@ class WatchlistUnifiedFragment : Fragment() {
         toggleRow.addView(toggleInner)
         rootLayout.addView(toggleRow)
 
+        // ── 來源過濾行（自選模式下可見）──
+        val sourceFilterScroll = HorizontalScrollView(requireContext()).apply {
+            isHorizontalScrollBarEnabled = false
+            setBackgroundColor(Color.WHITE)
+            visibility = View.GONE
+        }
+        sourceFilterRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(12, 4, 12, 8)
+        }
+        sourceFilterScroll.addView(sourceFilterRow)
+        rootLayout.addView(sourceFilterScroll)
+
         // ── 僅主板開關（僅備選池模式可見）──
         mainBoardRow = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -348,6 +366,7 @@ class WatchlistUnifiedFragment : Fragment() {
         listContainer = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, 0, 0, 80)
+            id = View.generateViewId()
         }
         rootLayout.addView(listContainer)
     }
@@ -403,6 +422,8 @@ class WatchlistUnifiedFragment : Fragment() {
 
         // 僅主板開關僅在備選池模式可見
         mainBoardRow.visibility = if (currentMode == ViewMode.CANDIDATE) View.VISIBLE else View.GONE
+        // 來源過濾僅在自選模式可見
+        (sourceFilterRow.parent as? View)?.visibility = if (currentMode == ViewMode.WATCHLIST && availableSources.size > 1) View.VISIBLE else View.GONE
         // 狀態欄在趨勢圖模式隱藏
         statusRow.visibility = if (currentMode == ViewMode.TREND_IMAGES) View.GONE else View.VISIBLE
     }
@@ -428,6 +449,9 @@ class WatchlistUnifiedFragment : Fragment() {
                 // 加載自選
                 watchlistData = db.userWatchlistDao().getAll()
 
+                // 加載來源列表
+                availableSources = db.userWatchlistDao().getDistinctSources()
+
                 // 加載 AI 精選（近 5 天）
                 val minDate = LocalDate.now().minusDays(5).format(DATE_FMT)
                 aiStocksData = db.aiSelectedStockDao().getRecentDays(minDate)
@@ -443,6 +467,7 @@ class WatchlistUnifiedFragment : Fragment() {
                 }
 
                 withContext(Dispatchers.Main) {
+                    renderSourceFilterChips()
                     renderList()
                     val count = if (currentMode == ViewMode.AI) aiStocksData.size else watchlistData.size
                     statusTv.text = "✅ 共 $count 只"
@@ -504,9 +529,86 @@ class WatchlistUnifiedFragment : Fragment() {
         }
     }
 
+    // ═══════════════════════════════════════
+    //  來源過濾 Chips
+    // ═══════════════════════════════════════
+
+    private fun renderSourceFilterChips() {
+        sourceFilterRow.removeAllViews()
+        if (availableSources.isEmpty()) return
+
+        val dp = resources.displayMetrics.density
+
+        // 「全部」 chip
+        sourceFilterRow.addView(createSourceChip("全部", selectedSource.isEmpty()) {
+            selectedSource = ""
+            renderSourceFilterChips()
+            renderList()
+        })
+
+        for (source in availableSources) {
+            val label = sourceLabel(source)
+            sourceFilterRow.addView(createSourceChip(label, selectedSource == source) {
+                selectedSource = if (selectedSource == source) "" else source
+                renderSourceFilterChips()
+                renderList()
+            })
+        }
+    }
+
+    private fun createSourceChip(text: String, selected: Boolean, onClick: () -> Unit): TextView {
+        val dp = resources.displayMetrics.density
+        return TextView(requireContext()).apply {
+            this.text = text
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setPadding((10 * dp).toInt(), (4 * dp).toInt(), (10 * dp).toInt(), (4 * dp).toInt())
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.setMargins((3 * dp).toInt(), 0, (3 * dp).toInt(), 0)
+            layoutParams = lp
+            if (selected) {
+                setTextColor(Color.WHITE)
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    setColor(Color.parseColor("#1565C0"))
+                    cornerRadius = 12f * dp
+                }
+                setTypeface(null, Typeface.BOLD)
+            } else {
+                setTextColor(Color.parseColor("#666666"))
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    setColor(Color.parseColor("#F0F0F0"))
+                    cornerRadius = 12f * dp
+                }
+            }
+            setOnClickListener { onClick() }
+        }
+    }
+
+    private fun sourceLabel(source: String): String = when (source) {
+        "manual" -> "手動"
+        "midterm" -> "中線"
+        "shortterm" -> "短線"
+        "ultra_short" -> "超短"
+        "long_term" -> "長線"
+        "AI推薦" -> "AI推薦"
+        else -> source
+    }
+
     private fun renderWatchlistOrAiList() {
-        val codes = if (currentMode == ViewMode.AI) aiStocksData.map { it.stockCode } else watchlistData.map { it.stockCode }
-        if (codes.isEmpty()) {
+        val allCodes = if (currentMode == ViewMode.AI) {
+            aiStocksData.map { it.stockCode }
+        } else {
+            // 自選模式：按來源過濾
+            val data = if (selectedSource.isNotEmpty()) {
+                watchlistData.filter { it.source == selectedSource }
+            } else {
+                watchlistData
+            }
+            data.map { it.stockCode }
+        }
+        if (allCodes.isEmpty()) {
             listContainer.removeAllViews()
             listContainer.addView(TextView(requireContext()).apply {
                 text = if (currentMode == ViewMode.AI) "暂無 AI 精選数据，请先運行策略" else "暂無自選股，請添加"
@@ -517,7 +619,7 @@ class WatchlistUnifiedFragment : Fragment() {
         }
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val items = StockDataService.enrich(requireContext(), codes)
+                val items = StockDataService.enrich(requireContext(), allCodes)
                 withContext(Dispatchers.Main) {
                     listContainer.removeAllViews()
                     listContainer.addView(
@@ -685,5 +787,25 @@ class WatchlistUnifiedFragment : Fragment() {
         }
 
         listContainer.addView(webView)
+    }
+
+    /**
+     * 外部分享入口：接收其他應用分享的圖片/PDF/文字，
+     * 切換到自選 Tab 並過濾 AI 推薦來源。
+     */
+    fun handleSharedContent(uri: android.net.Uri?, text: String?) {
+        // 切換到自選模式並過濾 AI 推薦
+        currentMode = ViewMode.WATCHLIST
+        selectedSource = "AI推薦"
+        updateToggleState()
+        loadData()
+    }
+
+    /** 切換到自選模式並過濾 AI 推薦來源（從 AI 對話框導航過來時調用） */
+    fun switchToInstitutionalMode() {
+        currentMode = ViewMode.WATCHLIST
+        selectedSource = "AI推薦"
+        updateToggleState()
+        loadData()
     }
 }

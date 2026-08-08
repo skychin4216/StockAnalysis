@@ -153,12 +153,40 @@ class RealHoldingAnalysisNode : BaseNode<Any, RealHoldingAnalysisResult>(
                 (closes.last() - closes[closes.size - 4]) / closes[closes.size - 4] * 100
             } else 0.0
 
+            // ── 交易紀律偵測 ──
+            val prevClose = if (closes.size >= 2) closes[closes.size - 2] else currentPrice
+            val gapUpPct = if (prevClose > 0) (latest.open - prevClose) / prevClose * 100 else 0.0
+            val isHighOpenChase = gapUpPct > 5.0  // 紀律一：高開>5%不追
+            val nearMa5 = ma5 > 0 && Math.abs(currentPrice - ma5) / ma5 * 100 < 2.0  // 紀律一：MA5附近低吸
+            val bodyPct = if (latest.open > 0) (latest.close - latest.open) / latest.open * 100 else 0.0
+            val isBigYin = bodyPct < -3.0  // 大陰線
+            val upperShadow = latest.high - maxOf(latest.open, latest.close)
+            val bodySize = Math.abs(latest.close - latest.open)
+            val isLongUpperShadow = bodySize > 0 && upperShadow > bodySize * 2.0  // 長上影線
+            val isLimitUp = latest.close >= prevClose * 1.095  // 漲停
+            val isLimitUpOpen = isLimitUp && latest.close < latest.high  // 開板
+            val isAtHigh = currentPrice > ma20 * 1.15  // 高位（遠離MA20）
+            val isBigYinAtHigh = isAtHigh && isBigYin  // 高位大陰
+
             val sb = StringBuilder()
 
-            // 操作建議
+            // 操作建議（融入交易紀律）
             val advice = when {
-                pnlPct <= -8 -> "🔴 止損清倉(${String.format("%.1f", pnlPct)}%)"
-                pnlPct >= 15 && !maBullish -> "🟢 止盈減倉(${String.format("%.1f", pnlPct)}%，趨勢減弱)"
+                // 紀律四：止損-10%
+                pnlPct <= -10 -> "🔴 止損清倉(${String.format("%.1f", pnlPct)}%)(紀律四)"
+                // 紀律三：高位大陰必賣
+                isBigYinAtHigh -> "🔴 高位大陰，建議減倉(紀律三)"
+                // 紀律三：長上影線必賣
+                isLongUpperShadow && isAtHigh -> "🔴 高位長上影，建議減倉(紀律三)"
+                // 紀律三：漲停開板必賣
+                isLimitUpOpen -> "🟡 漲停開板，注意風險(紀律三)"
+                // 紀律三：賺錢趨勢減弱→止盈
+                pnlPct >= 15 && !maBullish -> "🟢 止盈減倉(${String.format("%.1f", pnlPct)}%，趨勢減弱)(紀律三)"
+                // 紀律一：高開>5%不追
+                isHighOpenChase -> "⚠ 高開${String.format("%.1f", gapUpPct)}%，不追高(紀律一)"
+                // 紀律一：MA5附近低吸信號
+                nearMa5 && maBullish -> "📈 MA5附近低吸機會，持有/加倉(紀律一)"
+                // 原趨勢判斷
                 maBearish && !aboveMa10 && volRatio > 1.5 && recent3Change < -5 -> "📉 反T機會(超跌放量)"
                 maBearish && !aboveMa10 -> "⚠ 空頭排列，建議減倉或反T"
                 maBullish && aboveMa5 && volRatio > 1.3 -> "📈 多頭放量，持有/加倉"

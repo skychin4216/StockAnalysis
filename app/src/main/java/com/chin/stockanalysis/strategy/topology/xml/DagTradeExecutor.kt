@@ -8,6 +8,12 @@ import com.chin.stockanalysis.strategy.topology.pipelines.OrderGenerationResult
 import com.chin.stockanalysis.strategy.topology.pipelines.PositionMergeResult
 import com.chin.stockanalysis.strategy.topology.pipelines.SwapWeakResult
 import com.chin.stockanalysis.strategy.topology.pipelines.HoldingGuardResult
+import com.chin.stockanalysis.strategy.backtest.StrategyOptimizer
+import com.chin.stockanalysis.strategy.trade.StrategyTradeFittingParamEntity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -59,7 +65,8 @@ object DagTradeExecutor {
         val uiText: String,
         val failureAnalysis: PipelineFailureAnalyzer.FailureAnalysis = PipelineFailureAnalyzer.FailureAnalysis(isFailed = false),
         val diagnosticSummary: String = "",
-        val strictEvalDetail: String = ""
+        val strictEvalDetail: String = "",
+        val selectedStocks: List<Triple<String, String, Int>> = emptyList()
     )
 
     /**
@@ -129,6 +136,7 @@ object DagTradeExecutor {
         var savedWatchlist = false
         var typedGuardResult: HoldingGuardResult? = null
         var typedSwapResult: SwapWeakResult? = null
+        val selectedStocks = mutableListOf<Triple<String, String, Int>>()
 
         try {
             for ((_, pipelineResult) in result.pipelineResults) {
@@ -138,6 +146,9 @@ object DagTradeExecutor {
                 val ordersOutput = nodeResults["n_orders"]?.output
                 if (ordersOutput is OrderGenerationResult) {
                     ordersCount = ordersOutput.orders.size
+                    selectedStocks.addAll(ordersOutput.orders.map {
+                        Triple(it.stockCode, it.stockName, it.scoreAtBuy)
+                    })
                     Log.i(TAG, "[$useCaseId] 訂單生成: $ordersCount 筆")
 
                     // 保存到自選股
@@ -316,7 +327,7 @@ object DagTradeExecutor {
                 val db = StockDatabase.getInstance(context)
                 val diagnostic = HoldingDiagnosticAnalyzer.analyze(typedGuardResult, typedSwapResult, db, tradeDate)
                 diagnosticSummary = diagnostic.summary
-                Log.i(TAG, "[$useCaseId] 持倉診斷: ${diagnostic.soldCount} 只被賣出, 總虧損 ${"%.2f".format(diagnostic.totalLossPct)}%")
+                Log.i(TAG, "[$useCaseId] 持倉診斷: ${diagnostic.soldCount} 只被賣出, 平均虧損 ${"%.2f".format(diagnostic.totalLossPct)}%")
 
                 // 追加診斷摘要到 uiText
                 if (diagnostic.hasIssues) {
@@ -338,6 +349,9 @@ object DagTradeExecutor {
             Log.w(TAG, "[$useCaseId] 保存報告失敗: ${e.message}")
         }
 
+        // 11. 後台異步擬合計算（不阻塞 Pipeline 結果，完成後自動更新報告）
+        launchBackgroundFitting(context, useCaseId, tradeDate, strategies)
+
         return DagExecResult(
             success = result.success,
             ordersCount = ordersCount,
@@ -353,7 +367,8 @@ object DagTradeExecutor {
             uiText = finalUiText.trimEnd(),
             failureAnalysis = failureAnalysis,
             diagnosticSummary = diagnosticSummary,
-            strictEvalDetail = strictEvalDetail
+            strictEvalDetail = strictEvalDetail,
+            selectedStocks = selectedStocks
         )
     }
 
@@ -636,8 +651,18 @@ object DagTradeExecutor {
             // 1. 初始化 UseCaseLoader（做T不需要策略列表，傳空）
             UseCaseLoader.init(context, emptyList())
 
-            // 2. 執行 Pipeline
-            val result = UseCaseLoader.run("t_trade", java.time.LocalDate.now().toString(), null)
+            // 2. 執行 Pipeline（傳入 periodType 以便正確過濾持倉）
+            val orderTypeForPeriod = when (periodType) {
+                "UltraShortQuant" -> "ultra_short"
+                "ShortTermQuant" -> "shortterm"
+                "MidTermQuant" -> "midterm"
+                "LongTermQuant" -> "long_term"
+                else -> "shortterm"
+            }
+            val result = UseCaseLoader.run(
+                "t_trade", java.time.LocalDate.now().toString(), null,
+                configOverrides = mapOf("periodType" to orderTypeForPeriod, "holdingPeriod" to orderTypeForPeriod)
+            )
             val elapsed = System.currentTimeMillis() - totalStart
 
             if (!result.success) {
@@ -688,6 +713,77 @@ object DagTradeExecutor {
                 elapsedMs = elapsed,
                 errors = mapOf("pipeline" to (e.message ?: "unknown"))
             )
+        }
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  後台異步擬合計算
+    // ═══════════════════════════════════════════════════
+
+    /**
+     * 後台異步執行擬合計算。
+     *
+     * 從 DAG 關鍵路徑移除後，擬合不再阻塞 Pipeline 結果。
+     * 在獨立 CoroutineScope 中運行，完成後自動寫入 DB。
+     */
+    private fun launchBackgroundFitting(
+        context: Context,
+        useCaseId: String,
+        tradeDate: String,
+        strategies: List<Strategy>
+    ) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                Log.i(TAG, "[$useCaseId] 🔧 後台擬合開始 (${strategies.size} 個策略)")
+                val db = StockDatabase.getInstance(context)
+
+                val availableDates = db.dailySnapshotDao().getAvailableDates(120)
+                    .sorted()
+                    .filter { it <= tradeDate }
+
+                if (availableDates.size < 20) {
+                    Log.w(TAG, "[$useCaseId] 歷史數據不足（${availableDates.size} 天），跳過擬合")
+                    return@launch
+                }
+
+                val optimizer = StrategyOptimizer(context)
+                val fitJobs = strategies.filter { it.id != "ai_prediction" }
+                val fittingResults = mutableListOf<StrategyTradeFittingParamEntity>()
+
+                kotlinx.coroutines.coroutineScope {
+                    val deferreds = fitJobs.map { strategy ->
+                        async {
+                            try {
+                                val result = optimizer.gridSearch(strategy, availableDates)
+                                val weightsJson = result.bestWeights.joinToString(",") { w -> "${w.key}=${w.weight}" }
+                                Log.i(TAG, "[$useCaseId]   擬合 ${strategy.id}: accuracy=${"%.1f".format(result.bestAccuracy)}%")
+                                StrategyTradeFittingParamEntity(
+                                    strategyId = strategy.id,
+                                    tradeDate = tradeDate,
+                                    periodDays = 20,
+                                    paramJson = weightsJson,
+                                    fittingRound = 1,
+                                    accuracy = result.bestAccuracy.toDouble(),
+                                    avgReturn = result.bestAvgReturn,
+                                    createdAt = System.currentTimeMillis()
+                                )
+                            } catch (e: Exception) {
+                                Log.w(TAG, "[$useCaseId]   擬合 ${strategy.id} 失敗: ${e.message}")
+                                null
+                            }
+                        }
+                    }
+                    val results = deferreds.map { it.await() }
+                    results.filterNotNull().forEach { fittingResults.add(it) }
+                }
+
+                if (fittingResults.isNotEmpty()) {
+                    db.strategyTradeFittingParamDao().insertAll(fittingResults)
+                }
+                Log.i(TAG, "[$useCaseId] ✅ 後台擬合完成: ${fittingResults.size}/${fitJobs.size} 策略成功")
+            } catch (e: Exception) {
+                Log.e(TAG, "[$useCaseId] 後台擬合失敗: ${e.message}")
+            }
         }
     }
 }

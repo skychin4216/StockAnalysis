@@ -337,6 +337,16 @@ class SectorTrendChartFragment : Fragment() {
         // 更新圖表
         chart.data = LineData(lineDataSets as List<ILineDataSet>)
 
+        // 計算 Y 軸範圍（加 padding 避免畸形）
+        var yMin = Float.MAX_VALUE
+        var yMax = Float.MIN_VALUE
+        for (ds in lineDataSets) {
+            for (e in ds.values) {
+                if (e.y < yMin) yMin = e.y
+                if (e.y > yMax) yMax = e.y
+            }
+        }
+
         // X 軸
         chart.xAxis.apply {
             position = XAxis.XAxisPosition.BOTTOM
@@ -353,16 +363,22 @@ class SectorTrendChartFragment : Fragment() {
             }
         }
 
-        // Y 軸
+        // Y 軸（加 padding）
         chart.axisLeft.apply {
             setDrawGridLines(true)
             gridColor = Color.parseColor("#EEEEEE")
             setLabelCount(6, true)
+            axisMinimum = yMin - (yMax - yMin) * 0.15f
+            axisMaximum = yMax + (yMax - yMin) * 0.15f
             valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
                 override fun getFormattedValue(value: Float): String = "${"%.1f".format(value)}"
             }
         }
         chart.axisRight.setDrawGridLines(false)
+
+        // 可見 X 範圍
+        chart.setVisibleXRangeMaximum(60f)
+        chart.setVisibleXRangeMinimum(5f)
 
         // 定位到最新
         if (dateList.size > 60) {

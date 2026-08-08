@@ -5,6 +5,7 @@ import com.chin.stockanalysis.agent.v2.ProfitQualityLevel
 import com.chin.stockanalysis.agent.v2.ProfitQualityAnalyzer
 import com.chin.stockanalysis.stock.StockRealtime
 import com.chin.stockanalysis.stock.database.AppBackgroundRunner
+import com.chin.stockanalysis.stock.database.ChinaMarketTradingHours
 import com.chin.stockanalysis.stock.database.StockDataCenter
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.Strategy
@@ -24,6 +25,8 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -915,6 +918,12 @@ class SwapWeakNode(
 ) : BaseNode<Any, SwapWeakResult>("swap_weak", "騰龍換鳥", NodeType.TRADE_ACTION) {
 
     override suspend fun execute(context: PipelineContext, input: Any): SwapWeakResult {
+        // 非交易時段不執行騰籠換鳥（無法獲取實時價格，賣出無意義）
+        if (!ChinaMarketTradingHours.a股是否交易中()) {
+            context.log(nodeId, "⏸️ 非交易時段，跳過$nodeName")
+            return SwapWeakResult(0, emptyList(), 0, 0, emptyList())
+        }
+
         // 從 input 或 context 中按需讀取 OrderGenerationResult
         val orderResult: OrderGenerationResult = when (input) {
             is OrderGenerationResult -> input
@@ -948,6 +957,14 @@ class SwapWeakNode(
             val holdingOrders = db.strategyTradeOrderDao().getRecent(500)
                 .filter { (it.status == "BUYING" || it.status == "PENDING") && orderTypePeriod(it.orderType) == period }
             var currentCount = holdingOrders.size
+
+            // 選股數量（獨立計數，僅供日誌參考，不影響騰龍換鳥判斷）
+            val pickCount = try {
+                db.userWatchlistDao().getBySourceAndDate(context.config.orderType, context.tradeDate).size
+            } catch (_: Exception) { 0 }
+            if (pickCount > 0) {
+                context.log(nodeId, "持倉 $currentCount | 選股 $pickCount（獨立，不影響換鳥）")
+            }
 
             // ── 趨勢轉換檢測：即使持倉未滿，趨勢轉空的持倉也主動賣出換股 ──
             // 讀取每只持倉最近20天K線，判斷是否空頭排列(MA5<MA10<MA20)或近3日創20日新低
@@ -1435,6 +1452,13 @@ class GenerateOrdersNode(
                 .map { it.stockCode }.toSet()
             val availableSlots = maxHoldings - holdingCodes.size
 
+            // 選股數量（獨立計數，僅供日誌參考，不影響持倉上限）
+            val pickCount = try {
+                db.userWatchlistDao().getBySourceAndDate(orderType, context.tradeDate).size
+            } catch (_: Exception) { 0 }
+            if (pickCount > 0) {
+                context.log(nodeId, "持倉 ${holdingCodes.size}/$maxHoldings | 選股 $pickCount/6（獨立）")
+            }
             if (availableSlots <= 0) {
                 context.log(nodeId, "持倉已滿 ${holdingCodes.size}/$maxHoldings（$period 周期），仍輸出候選供騰龍換鳥評估")
             }
@@ -1456,6 +1480,15 @@ class GenerateOrdersNode(
                 if (pick.stockCode in todayHoldingCodes) {
                     filteredCount++
                     filteredReasons.add("${pick.stockCode}: 今日已買入")
+                    continue
+                }
+
+                // 2.5 風控賣出過濾（持倉風控已賣出的股票不再買回）
+                @Suppress("UNCHECKED_CAST")
+                val guardSoldCodes = context.stageOutputs["guard_sold_codes"] as? Set<String> ?: emptySet()
+                if (pick.stockCode in guardSoldCodes) {
+                    filteredCount++
+                    filteredReasons.add("${pick.stockCode}: 風控已賣出")
                     continue
                 }
 
@@ -2112,35 +2145,40 @@ class FittingSaveNode : BaseNode<Any, Unit>("fitting_save", "擬合計算+保存
             var successCount = 0
             val fittingResults = mutableListOf<StrategyTradeFittingParamEntity>()
 
-            for (strategy in strategies) {
-                try {
-                    // 跳過 AI 預測策略（不適合網格搜索擬合）
-                    if (strategy.id == "ai_prediction") continue
-
-                    val result = optimizer.gridSearch(strategy, availableDates)
-
-                    // 保存擬合結果到 DB
-                    val weightsJson = result.bestWeights.joinToString(",") { "${it.key}=${it.weight}" }
-                    val entity = StrategyTradeFittingParamEntity(
-                        strategyId = strategy.id,
-                        tradeDate = context.tradeDate,
-                        periodDays = 20,
-                        paramJson = weightsJson,
-                        fittingRound = 1,
-                        accuracy = result.bestAccuracy.toDouble(),
-                        avgReturn = result.bestAvgReturn,
-                        createdAt = System.currentTimeMillis()
-                    )
-                    fittingResults.add(entity)
-                    successCount++
-
-                    context.log(nodeId, "  擬合策略 ${strategy.id}: " +
-                        "accuracy=${"%.1f".format(result.bestAccuracy)}%, " +
-                        "avgReturn=${"%.2f".format(result.bestAvgReturn)}%, " +
-                        "combinations=${result.totalCombinations}")
-                } catch (e: Exception) {
-                    context.log(nodeId, "  擬合策略 ${strategy.id} 失敗: ${e.message}")
+            // 並行擬合所有策略（避免串行超時 120s）
+            val fitJobs = strategies.filter { it.id != "ai_prediction" }
+            coroutineScope {
+                val deferreds = fitJobs.map { strategy ->
+                    async(Dispatchers.IO) {
+                        try {
+                            val result = optimizer.gridSearch(strategy, availableDates)
+                            val weightsJson = result.bestWeights.joinToString(",") { "${it.key}=${it.weight}" }
+                            val entity = StrategyTradeFittingParamEntity(
+                                strategyId = strategy.id,
+                                tradeDate = context.tradeDate,
+                                periodDays = 20,
+                                paramJson = weightsJson,
+                                fittingRound = 1,
+                                accuracy = result.bestAccuracy.toDouble(),
+                                avgReturn = result.bestAvgReturn,
+                                createdAt = System.currentTimeMillis()
+                            )
+                            context.log(nodeId, "  擬合策略 ${strategy.id}: " +
+                                "accuracy=${"%.1f".format(result.bestAccuracy)}%, " +
+                                "avgReturn=${"%.2f".format(result.bestAvgReturn)}%, " +
+                                "combinations=${result.totalCombinations}")
+                            entity
+                        } catch (e: Exception) {
+                            context.log(nodeId, "  擬合策略 ${strategy.id} 失敗: ${e.message}")
+                            null
+                        }
+                    }
                 }
+
+                // 等待所有擬合完成，收集成功結果
+                val results = deferreds.map { it.await() }
+                results.filterNotNull().forEach { fittingResults.add(it) }
+                successCount = fittingResults.size
             }
 
             // 批量保存
@@ -2288,6 +2326,10 @@ class HoldingGuardNode(
             val soldNames = mustSell.map { "${it.order.stockName}(${it.reason})" }
             context.log(nodeId, "🚫 $nodeName 賣出: ${soldNames.joinToString(", ")}")
             sellEngine.executeSells(mustSell, context.tradeDate)
+
+            // 將風控賣出的股票代碼存入 context，供下游訂單生成節點過濾
+            val soldCodes = mustSell.map { it.order.stockCode }.toSet()
+            context.setStageOutput("guard_sold_codes", soldCodes)
 
             val remainingCount = db.strategyTradeOrderDao().getRecent(500)
                 .count { (it.status == "BUYING" || it.status == "PENDING") && orderTypePeriod(it.orderType) == period }

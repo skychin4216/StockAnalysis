@@ -39,6 +39,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
     // ── 抽象方法实现 ──
 
     override fun getQuantType() = "MidTermQuant"
+    override val positionTitlePrefix = "中線"
     override fun onBuildClick() {
         runDagPipeline(HoldingPeriod.MID, "mid_term", "midterm", 60, "中線")
     }

@@ -378,7 +378,7 @@ class DagPipeline(
                 context.onNodeProgress?.invoke(name, dagNode.nodeName)
                 context.log(nodeId, "▶ 開始: ${dagNode.nodeName}")
                 val nodeTimeout = when (nodeId) {
-                    "n_fit" -> 120_000L   // 擬合計算耗時較長
+                    "n_fit" -> 180_000L   // 擬合計算耗時較長（已並行化，保留餘量）
                     "n_bg" -> 10_000L     // 後臺管理不需太久
                     else -> 60_000L       // AI精選/策略等需要較長超時
                 }

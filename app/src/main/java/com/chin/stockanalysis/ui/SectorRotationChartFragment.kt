@@ -11,14 +11,9 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
-import com.chin.stockanalysis.stock.database.StockDatabase
-import com.chin.stockanalysis.strategy.backtest.SectorDailyRecordEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
-import java.time.temporal.ChronoUnit
 
 /**
  * 板塊輪動圖 — 熱力圖展示不同時間週期各板塊的表現
@@ -31,9 +26,6 @@ import java.time.temporal.ChronoUnit
  * 用途：一眼看出板塊輪動規律，哪個板塊在哪个时间段表現好
  */
 class SectorRotationChartFragment : Fragment() {
-
-    private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
-    private val WEEK_FMT = DateTimeFormatter.ofPattern("MM/dd")
 
     private lateinit var heatmapContainer: LinearLayout
     private lateinit var infoTv: TextView
@@ -102,72 +94,37 @@ class SectorRotationChartFragment : Fragment() {
     private fun loadRotationData() {
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val db = StockDatabase.getInstance(requireContext())
-                var allRecords = db.sectorDailyRecordDao().getRecentDays(120) // 約 4 個月
+                val source = com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource()
+                // 從 API 直接獲取行業+概念板塊（含多周期漲跌幅）
+                val industry = source.fetchSectorsByTypeDirect(2, 30)
+                val concept = source.fetchSectorsByTypeDirect(3, 30)
+                val allSectors = (industry + concept).distinctBy { it.code }
 
-                if (allRecords.isEmpty()) {
-                    // 嘗試即時抓取並保存
-                    try {
-                        val engine = com.chin.stockanalysis.strategy.backtest.SectorRotationEngine(requireContext())
-                        engine.saveDailySectorData()
-                        allRecords = db.sectorDailyRecordDao().getRecentDays(120)
-                    } catch (_: Exception) {}
-                    if (allRecords.isEmpty()) {
-                        withContext(Dispatchers.Main) {
-                            infoTv.text = "暫無板塊歷史數據，請稍後重試"
-                        }
-                        return@launch
+                if (allSectors.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        infoTv.text = "暫無板塊數據，請稍後重試"
                     }
+                    return@launch
                 }
 
-                // 按板塊分組
-                val sectorData = allRecords.groupBy { it.sectorCode }
+                val periodNames = listOf("今日", "5日", "10日", "20日")
 
-                // 計算每個板塊在各時間週期的表現
-                val now = LocalDate.now()
-                val periods = listOf(
-                    "本週" to now.minusDays(now.dayOfWeek.value.toLong() - 1),
-                    "上週" to now.minusDays(now.dayOfWeek.value.toLong() - 1 + 7),
-                    "2週前" to now.minusDays(now.dayOfWeek.value.toLong() - 1 + 14),
-                    "3週前" to now.minusDays(now.dayOfWeek.value.toLong() - 1 + 21),
-                    "本月" to now.withDayOfMonth(1),
-                    "上個月" to now.minusMonths(1).withDayOfMonth(1)
-                )
+                // 按綜合得分排序，取 top 20
+                val topSectors = allSectors.sortedByDescending { it.compositeScore }.take(20)
 
-                // 取得所有板塊，熱門優先（按 S/A 天數降序）
-                val hotCount = mutableMapOf<String, Int>()
-                for ((code, records) in sectorData) {
-                    hotCount[code] = records.count { it.isHot in listOf("S", "A") }
-                }
-                val topSectors = sectorData.entries
-                    .sortedWith(
-                        compareByDescending<Map.Entry<String, List<SectorDailyRecordEntity>>> { hotCount[it.key] ?: 0 }
-                            .thenByDescending { it.value.size }
-                    )
-                    .map { it.key to it.value.first().sectorName }
-
-                // 計算每個板塊在每個時期的漲跌幅
                 val rotationData = mutableListOf<RotationRow>()
-                for ((code, name) in topSectors) {
-                    val records = sectorData[code] ?: continue
-                    val row = RotationRow(name)
-                    for ((periodName, startDate) in periods) {
-                        val periodRecords = records.filter { r ->
-                            try {
-                                val d = LocalDate.parse(r.date, DATE_FMT)
-                                d >= startDate
-                            } catch (_: Exception) { false }
-                        }
-                        if (periodRecords.isNotEmpty()) {
-                            row.periods[periodName] = periodRecords.sumOf { it.changePct }
-                        }
-                    }
+                for (s in topSectors) {
+                    val row = RotationRow(s.name)
+                    row.periods["今日"] = s.changePercent
+                    if (s.change5d != 0.0) row.periods["5日"] = s.change5d
+                    if (s.change10d != 0.0) row.periods["10日"] = s.change10d
+                    if (s.change20d != 0.0) row.periods["20日"] = s.change20d
                     rotationData.add(row)
                 }
 
                 withContext(Dispatchers.Main) {
                     if (!isAdded) return@withContext
-                    renderHeatmap(rotationData, periods.map { it.first })
+                    renderHeatmap(rotationData, periodNames)
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -256,7 +213,7 @@ class SectorRotationChartFragment : Fragment() {
             setPadding(0, 12, 0, 0)
         })
 
-        infoTv.text = "共 ${data.size} 個板塊 | 數據來源：近 120 日板塊記錄"
+        infoTv.text = "共 ${data.size} 個板塊 | 數據來源：東方財富即時行情"
     }
 
     private data class RotationRow(

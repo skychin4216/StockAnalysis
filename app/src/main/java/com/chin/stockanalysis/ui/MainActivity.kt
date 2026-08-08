@@ -57,6 +57,40 @@ class MainActivity : AppCompatActivity() {
         setupSystemBars()
         setupViewPager()
         setupBottomNavigation()
+        // 處理啟動時的分享意圖
+        handleShareIntent(intent)
+    }
+
+    override fun onNewIntent(intent: android.content.Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleShareIntent(intent)
+    }
+
+    /**
+     * 處理其他應用分享的圖片/PDF/文字 → 路由到 AI 對話框
+     * AI 分析後詢問是否保存到機構推薦
+     */
+    private fun handleShareIntent(intent: android.content.Intent?) {
+        if (intent == null) return
+        val action = intent.action ?: return
+        if (action != android.content.Intent.ACTION_SEND) return
+
+        @Suppress("DEPRECATION")
+        val sharedUri = intent.getParcelableExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)
+        val sharedText = intent.getStringExtra(android.content.Intent.EXTRA_TEXT)
+
+        // 切換到 AI 對話 Tab
+        viewPager.postDelayed({
+            viewPager.setCurrentItem(0, false) // Chat tab
+            bottomNav.selectedItemId = R.id.nav_chat
+
+            viewPager.postDelayed({
+                val chatFragment = supportFragmentManager.fragments
+                    .firstOrNull { it is ChatTabFragment } as? ChatTabFragment
+                chatFragment?.handleSharedContent(sharedUri, sharedText)
+            }, 400)
+        }, 200)
     }
 
     private fun initGlobalServices() {
@@ -286,6 +320,21 @@ class MainActivity : AppCompatActivity() {
     fun switchToStrategyTab() {
         viewPager.setCurrentItem(3, false)
         bottomNav.selectedItemId = R.id.nav_strategy
+    }
+
+    fun switchToStockTab() {
+        viewPager.setCurrentItem(2, false)
+        bottomNav.selectedItemId = R.id.nav_stock
+    }
+
+    /** 導航到精選股票 → 機構推薦 Tab */
+    fun navigateToInstitutional() {
+        switchToStockTab()
+        viewPager.postDelayed({
+            val stockTab = supportFragmentManager.fragments
+                .firstOrNull { it is StockTabFragment } as? StockTabFragment
+            stockTab?.switchToInstitutional()
+        }, 300)
     }
 
     fun switchToChatAndSend(message: String) {

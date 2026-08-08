@@ -1,11 +1,16 @@
 package com.chin.stockanalysis.strategy.trade
 
 import android.graphics.Color
+import android.graphics.BitmapFactory
 import android.widget.*
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.HoldingPeriod
 import com.chin.stockanalysis.strategy.topology.xml.DagTradeExecutor
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -31,18 +36,14 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
         private const val TAG = "RealHolding"
     }
 
-    override fun getQuantType() = "RealHolding"
-
-    /** 建倉按鈕 → 執行實倉分析 Pipeline（大盤行情 + 持倉評估） */
-    override fun onBuildClick() {
-        runDagPipeline(
-            holdingPeriod = HoldingPeriod.MID,  // 實倉涵蓋所有週期，用 MID 作為默認
-            useCaseId = "real_holding",
-            orderType = "RealHolding",
-            importDays = 30,
-            titlePrefix = "實倉分析"
-        )
+    /** 截圖選擇器（用于 OCR 導入） */
+    private val screenshotPicker = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let { processScreenshotOcr(it) }
     }
+
+    override fun getQuantType() = "RealHolding"
 
     override fun onFittingClick() {
         Toast.makeText(requireContext(), "實倉無擬合功能", Toast.LENGTH_SHORT).show()
@@ -67,6 +68,36 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
         addSeparator()
         rootLayout.addView(createContentScrollArea())
         refreshPositions()
+    }
+
+    /** 實倉的建倉按鈕 → 彈出菜單：分析Pipeline / 手動添加 / 截圖導入 */
+    override fun onBuildClick() {
+        val items = arrayOf(
+            "📊 執行實倉分析 Pipeline",
+            "✏️ 手動添加持倉",
+            "📷 截圖識別導入"
+        )
+        android.app.AlertDialog.Builder(requireContext())
+            .setTitle("實倉建倉")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> runRealHoldingPipeline()
+                    1 -> showManualAddDialog()
+                    2 -> screenshotPicker.launch("image/*")
+                }
+            }
+            .show()
+    }
+
+    /** 執行實倉分析 Pipeline */
+    private fun runRealHoldingPipeline() {
+        runDagPipeline(
+            holdingPeriod = HoldingPeriod.MID,
+            useCaseId = "real_holding",
+            orderType = "RealHolding",
+            importDays = 30,
+            titlePrefix = "實倉分析"
+        )
     }
 
     override fun refreshPositions() {
@@ -195,4 +226,272 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
     }
 
     override fun getDefaultUseCaseId(): String = "real_holding"
+
+    // ═══════════════════════════════════════
+    // 手動添加持倉
+    // ═══════════════════════════════════════
+
+    /** 顯示手動添加持倉對話框 */
+    private fun showManualAddDialog() {
+        val ctx = requireContext()
+        val scroll = ScrollView(ctx)
+        val form = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 16, 32, 16)
+        }
+        scroll.addView(form)
+
+        val codeInput = EditText(ctx).apply {
+            hint = "股票代碼（如 sh600519）"; inputType = android.text.InputType.TYPE_CLASS_TEXT
+            setPadding(8, 8, 8, 8)
+        }
+        val nameInput = EditText(ctx).apply {
+            hint = "股票名稱（如 貴州茅台）"; inputType = android.text.InputType.TYPE_CLASS_TEXT
+            setPadding(8, 8, 8, 8)
+        }
+        val qtyInput = EditText(ctx).apply {
+            hint = "持有數量（股）"; inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setPadding(8, 8, 8, 8)
+        }
+        val priceInput = EditText(ctx).apply {
+            hint = "買入均價（元）"; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setPadding(8, 8, 8, 8)
+        }
+        val dateInput = EditText(ctx).apply {
+            hint = "買入日期（yyyy-MM-dd）"; inputType = android.text.InputType.TYPE_CLASS_TEXT
+            setText(LocalDate.now().toString())
+            setPadding(8, 8, 8, 8)
+        }
+        val periodSpinner = Spinner(ctx).apply {
+            adapter = ArrayAdapter(ctx, android.R.layout.simple_spinner_dropdown_item,
+                listOf("未分類", "超短線", "短線", "中線", "長線"))
+        }
+
+        form.addView(TextView(ctx).apply { text = "股票代碼"; textSize = 12f; setPadding(0, 4, 0, 2) })
+        form.addView(codeInput)
+        form.addView(TextView(ctx).apply { text = "股票名稱"; textSize = 12f; setPadding(0, 4, 0, 2) })
+        form.addView(nameInput)
+        form.addView(TextView(ctx).apply { text = "持有數量"; textSize = 12f; setPadding(0, 4, 0, 2) })
+        form.addView(qtyInput)
+        form.addView(TextView(ctx).apply { text = "買入均價"; textSize = 12f; setPadding(0, 4, 0, 2) })
+        form.addView(priceInput)
+        form.addView(TextView(ctx).apply { text = "買入日期"; textSize = 12f; setPadding(0, 4, 0, 2) })
+        form.addView(dateInput)
+        form.addView(TextView(ctx).apply { text = "持倉週期"; textSize = 12f; setPadding(0, 8, 0, 2) })
+        form.addView(periodSpinner)
+
+        android.app.AlertDialog.Builder(ctx)
+            .setTitle("✏️ 手動添加持倉")
+            .setView(scroll)
+            .setPositiveButton("添加") { _, _ ->
+                val code = codeInput.text.toString().trim()
+                val name = nameInput.text.toString().trim()
+                val qty = qtyInput.text.toString().toIntOrNull() ?: 0
+                val price = priceInput.text.toString().toDoubleOrNull() ?: 0.0
+                val date = dateInput.text.toString().trim()
+                val periodIdx = periodSpinner.selectedItemPosition
+                val period = when (periodIdx) {
+                    1 -> "UltraShortQuant"; 2 -> "ShortTermQuant"
+                    3 -> "MidTermQuant"; 4 -> "LongTermQuant"; else -> ""
+                }
+                if (code.isEmpty() || name.isEmpty() || qty <= 0 || price <= 0.0) {
+                    Toast.makeText(ctx, "請填寫完整信息", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                saveRealPosition(code, name, qty, price, date, period)
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 保存真實持倉到數據庫 */
+    private fun saveRealPosition(code: String, name: String, qty: Int, price: Double, date: String, period: String) {
+        val ctx = requireContext().applicationContext
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(ctx)
+                val entity = RealPositionEntity(
+                    stockCode = code, stockName = name, quantity = qty,
+                    avgBuyPrice = price, buyDate = date, periodType = period
+                )
+                db.realPositionDao().insert(entity)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(ctx, "✅ 已添加 $name($code)", Toast.LENGTH_SHORT).show()
+                    refreshPositions()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(ctx, "添加失敗: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════
+    // 截圖 OCR 識別
+    // ═══════════════════════════════════════
+
+    /** 處理截圖 OCR：識別文字 → 解析持倉 → 確認添加 */
+    private fun processScreenshotOcr(uri: android.net.Uri) {
+        val ctx = requireContext()
+        statusTv.text = "🔄 正在識別截圖..."
+
+        try {
+            val inputStream = ctx.contentResolver.openInputStream(uri)
+            val bitmap = BitmapFactory.decodeStream(inputStream)
+            inputStream?.close()
+
+            if (bitmap == null) {
+                statusTv.text = "❌ 無法讀取圖片"
+                return
+            }
+
+            val image = InputImage.fromBitmap(bitmap, 0)
+            val recognizer = TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
+
+            recognizer.process(image)
+                .addOnSuccessListener { visionText ->
+                    if (!isAdded) return@addOnSuccessListener
+                    val rawText = visionText.text
+                    android.util.Log.i(TAG, "OCR 原文:\n$rawText")
+                    val parsed = parseHoldingFromOcr(rawText)
+                    if (parsed.isEmpty()) {
+                        statusTv.text = "⚠️ 未識別到持倉信息，請確保截圖包含持倉數據"
+                        showOcrRawText(rawText)
+                    } else {
+                        showOcrConfirmDialog(parsed)
+                    }
+                }
+                .addOnFailureListener { e ->
+                    if (!isAdded) return@addOnFailureListener
+                    statusTv.text = "❌ OCR 識別失敗: ${e.message}"
+                }
+        } catch (e: Exception) {
+            if (isAdded) statusTv.text = "❌ 圖片處理失敗: ${e.message}"
+        }
+    }
+
+    /**
+     * 從 OCR 文字中解析持倉信息。
+     * 支持常見券商截圖格式，寬鬆匹配：
+     * - 股票代碼（6位數字，可帶 sh/sz/SH/SZ 前綴）
+     * - 股票名稱（中文字符，可在代碼前或後）
+     * - 數量（整數，通常 100 的倍數）
+     * - 價格（帶小數的數字）
+     */
+    private fun parseHoldingFromOcr(text: String): List<RealPositionEntity> {
+        val results = mutableListOf<RealPositionEntity>()
+        val lines = text.lines()
+
+        // 寬鬆匹配：6位數字股票代碼（可帶 sh/sz 前綴，大小寫不限）
+        val codeRegex = Regex("""(?i)(?:sh|sz)?(\d{6})""")
+        val numRegex = Regex("""\d+\.?\d*""")
+        // 中文名稱匹配
+        val nameRegex = Regex("""[\u4e00-\u9fa5]{2,6}""")
+
+        for (line in lines) {
+            val codeMatch = codeRegex.find(line) ?: continue
+            val code = codeMatch.groupValues[1]
+            if (code.length != 6) continue
+
+            // 基本過濾：000000 或全相同數字通常不是真實代碼
+            if (code.all { it == code[0] }) continue
+
+            // 提取所有數字
+            val numbers = numRegex.findAll(line).map { it.value }.toList()
+            if (numbers.size < 2) continue  // 至少需要數量和價格
+
+            // 嘗試提取股票名稱（代碼前或後的中文）
+            val beforeCode = line.substring(0, codeMatch.range.first)
+            val afterCode = line.substring(codeMatch.range.last + 1)
+            val nameBefore = nameRegex.find(beforeCode)?.value
+            val nameAfter = nameRegex.find(afterCode)?.value
+            val name = nameBefore ?: nameAfter ?: "未知"
+
+            // 過濾掉明顯不是數量/價格的數字（如股票代碼本身）
+            val candidateNums = numbers.filter { it != code && it != codeMatch.groupValues[0] }
+            if (candidateNums.size < 2) continue
+
+            // 嘗試識別數量和價格：
+            // 數量通常是整數且 >= 100（A股最小交易單位）
+            // 價格通常帶小數且 > 1
+            val qty = candidateNums.firstOrNull {
+                val d = it.toDouble()
+                d >= 100 && !it.contains(".")
+            }?.toIntOrNull()
+                ?: candidateNums.firstOrNull { it.toDouble() >= 100 }?.toIntOrNull()
+                ?: continue
+
+            val price = candidateNums.firstOrNull {
+                it.contains(".") && it.toDouble() > 1.0
+            }?.toDoubleOrNull()
+                ?: candidateNums.firstOrNull { it.toDouble() > 1.0 }?.toDoubleOrNull()
+                ?: continue
+
+            if (qty > 0 && price > 0) {
+                // 避免重複添加同一只股票
+                if (results.none { it.stockCode == code }) {
+                    results.add(RealPositionEntity(
+                        stockCode = code,
+                        stockName = name,
+                        quantity = qty,
+                        avgBuyPrice = price,
+                        buyDate = LocalDate.now().toString()
+                    ))
+                }
+            }
+        }
+        return results
+    }
+
+    /** 顯示 OCR 識別結果確認對話框 */
+    private fun showOcrConfirmDialog(positions: List<RealPositionEntity>) {
+        if (!isAdded) return
+        val ctx = requireContext()
+        val msg = buildString {
+            appendLine("識別到 ${positions.size} 只持倉：\n")
+            for (p in positions) {
+                appendLine("  ${p.stockName}(${p.stockCode})")
+                appendLine("    ${p.quantity}股 ¥${"%.2f".format(p.avgBuyPrice)}")
+            }
+            appendLine("\n確認添加？")
+        }
+
+        android.app.AlertDialog.Builder(ctx)
+            .setTitle("📷 截圖識別結果")
+            .setMessage(msg)
+            .setPositiveButton("確認添加") { _, _ ->
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val db = StockDatabase.getInstance(ctx)
+                        db.realPositionDao().insertAll(positions)
+                        withContext(Dispatchers.Main) {
+                            if (!isAdded) return@withContext
+                            statusTv.text = "✅ 已添加 ${positions.size} 只持倉"
+                            Toast.makeText(ctx, "✅ 已添加 ${positions.size} 只持倉", Toast.LENGTH_SHORT).show()
+                            refreshPositions()
+                        }
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) {
+                            if (!isAdded) return@withContext
+                            Toast.makeText(ctx, "添加失敗: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .setNeutralButton("查看原文") { _, _ ->
+                // 可選：顯示原始 OCR 文字供用戶核對
+            }
+            .show()
+    }
+
+    /** 顯示 OCR 原始文字（用於調試或識別失敗時） */
+    private fun showOcrRawText(text: String) {
+        android.app.AlertDialog.Builder(requireContext())
+            .setTitle("OCR 識別原文")
+            .setMessage(text.take(2000))
+            .setPositiveButton("確定", null)
+            .show()
+    }
 }

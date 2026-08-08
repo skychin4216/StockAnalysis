@@ -90,6 +90,7 @@
     <Node id="n_ancestral" name="大A祖訓" module="ancestral_rules">
       <config><param name="holdingPeriod" value="MID" /></config>
     </Node>
+    <Node id="n_inst_tips" name="機構線索加分" module="inst_tips" />
 
     <!-- 中線獨有：增強 Layer 4 -->
     <Node id="n_news_str" name="新聞力度計算" module="news_strength" />
@@ -111,6 +112,7 @@
         <param name="minScore" value="55" />
       </config>
     </Node>
+    <Node id="n_candle" name="K線形態偵測" module="candle_pattern" />
 
     <!-- 中線獨有：過濾 Layer 7（依賴 smart_money_filter） -->
     <Node id="n_newsguard" name="新聞攔截+技術過濾" module="news_guard">
@@ -140,9 +142,6 @@
         <param name="maxHoldings" value="6" />
       </config>
     </Node>
-
-    <!-- 中線補齊：擬合保存 Layer 9（並行） -->
-    <Node id="n_fit" name="擬合計算+保存" module="fitting_save" />
   </NodeList>
 
   <!-- ══════════ Links ══════════ -->
@@ -203,6 +202,14 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
+    <!-- Layer 1 → 1.5: 板塊精選池 → 候選池過濾（板塊股票注入候選池） -->
+    <Link>
+      <SourceNodeId>n_sector_pool</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_cand</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
     <!-- Layer 1 → 1.5: 股票池 → 候選池過濾（補齊 Hardcode） -->
     <Link>
       <SourceNodeId>n_pool</SourceNodeId>
@@ -259,6 +266,14 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
+    <!-- Layer 0 → 3: 大盤均線統一檢查 → 板塊加權（MA 收斂影響板塊加權） -->
+    <Link>
+      <SourceNodeId>n_ma_unified</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_boost</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
     <!-- Layer 2 → 3: 熱度計算 → 板塊加權（熱度作為板塊加權輸入） -->
     <Link>
       <SourceNodeId>n_heat</SourceNodeId>
@@ -297,9 +312,9 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 3.5 → 3.5a: 跌後反彈加分 → 打底倉守門 -->
+    <!-- Layer 3.5 → 3.5a: 六項嚴選檢查 → 打底倉守門 -->
     <Link>
-      <SourceNodeId>n_bounce</SourceNodeId>
+      <SourceNodeId>n_strict</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_base_guard</TargetNodeId>
       <TargetPortId>0</TargetPortId>
@@ -313,9 +328,17 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 3.5b → 5: 大A祖訓 → 主力資金過濾（先過濾再AI精選） -->
+    <!-- Layer 3.5b → 3.6: 大A祖訓 → 機構線索加分 -->
     <Link>
       <SourceNodeId>n_ancestral</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_inst_tips</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 3.6 → 5: 機構線索加分 → 主力資金過濾（先過濾再AI精選） -->
+    <Link>
+      <SourceNodeId>n_inst_tips</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_smart</TargetNodeId>
       <TargetPortId>0</TargetPortId>
@@ -334,6 +357,14 @@
       <SourceNodeId>n_smart</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_newsguard</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 5 → 6: 主力資金過濾 → K線形態偵測（並行，輔助提醒） -->
+    <Link>
+      <SourceNodeId>n_smart</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_candle</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
 
@@ -374,14 +405,6 @@
       <SourceNodeId>n_orders</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_swap</TargetNodeId>
-      <TargetPortId>0</TargetPortId>
-    </Link>
-
-    <!-- Layer 8 → 9: 買入訂單生成 → 擬合保存（並行，中線補齊） -->
-    <Link>
-      <SourceNodeId>n_orders</SourceNodeId>
-      <SourcePortId>0</SourcePortId>
-      <TargetNodeId>n_fit</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
   </Links>

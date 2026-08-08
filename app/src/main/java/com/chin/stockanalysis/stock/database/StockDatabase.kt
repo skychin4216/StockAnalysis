@@ -79,10 +79,14 @@ interface UserWatchlistDao {
     @Query("SELECT * FROM user_watchlist WHERE status = :status ORDER BY added_date DESC") suspend fun getByStatus(status: String): List<UserWatchlistEntity>
     @Query("SELECT * FROM user_watchlist ORDER BY added_date DESC") suspend fun getAll(): List<UserWatchlistEntity>
     @Query("SELECT * FROM user_watchlist WHERE stock_code = :code LIMIT 1") suspend fun getByCode(code: String): UserWatchlistEntity?
+    @Query("SELECT DISTINCT source FROM user_watchlist WHERE source != '' ORDER BY source") suspend fun getDistinctSources(): List<String>
+    @Query("SELECT * FROM user_watchlist WHERE source = :source ORDER BY added_date DESC") suspend fun getBySource(source: String): List<UserWatchlistEntity>
+    @Query("SELECT * FROM user_watchlist WHERE source = :source AND added_date = :date ORDER BY added_date DESC") suspend fun getBySourceAndDate(source: String, date: String): List<UserWatchlistEntity>
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(entity: UserWatchlistEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(entities: List<UserWatchlistEntity>)
     @Update suspend fun update(entity: UserWatchlistEntity)
     @Query("DELETE FROM user_watchlist WHERE stock_code = :code") suspend fun deleteByCode(code: String)
+    @Query("DELETE FROM user_watchlist WHERE source = :source AND added_date = :date") suspend fun deleteBySourceAndDate(source: String, date: String)
     @Query("DELETE FROM user_watchlist") suspend fun clearAll()
 }
 
@@ -130,9 +134,10 @@ interface AiSelectedStockDao {
         com.chin.stockanalysis.strategy.trade.RealPositionEntity::class,
         com.chin.stockanalysis.strategy.backtest.SectorPeriodSummaryEntity::class,
         com.chin.stockanalysis.strategy.sector.UserFocusSectorEntity::class,
-        com.chin.stockanalysis.strategy.backtest.IntradayKlineEntity::class
+        com.chin.stockanalysis.strategy.backtest.IntradayKlineEntity::class,
+        InstitutionalPickEntity::class
     ],
-    version = 21,
+    version = 23,
     exportSchema = false
 )
 abstract class StockDatabase : RoomDatabase() {
@@ -160,6 +165,7 @@ abstract class StockDatabase : RoomDatabase() {
     abstract fun realPositionDao(): com.chin.stockanalysis.strategy.trade.RealPositionDao
     abstract fun userFocusSectorDao(): com.chin.stockanalysis.strategy.sector.UserFocusSectorDao
     abstract fun intradayKlineDao(): com.chin.stockanalysis.strategy.backtest.IntradayKlineDao
+    abstract fun institutionalPickDao(): InstitutionalPickDao
 
     companion object {
         const val DATABASE_NAME = "stock_analysis.db"
@@ -366,6 +372,42 @@ abstract class StockDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v21 → v22 遷移：新增 institutional_picks 表（機構推薦股票）
+         */
+        private val MIGRATION_21_22 = object : androidx.room.migration.Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `institutional_picks` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `institution_name` TEXT NOT NULL,
+                        `stock_code` TEXT NOT NULL,
+                        `stock_name` TEXT NOT NULL DEFAULT '',
+                        `recommend_date` TEXT NOT NULL DEFAULT '',
+                        `target_price` REAL NOT NULL DEFAULT 0.0,
+                        `reason` TEXT NOT NULL DEFAULT '',
+                        `source_type` TEXT NOT NULL DEFAULT 'manual',
+                        `sub_group` TEXT NOT NULL DEFAULT '',
+                        `notes` TEXT NOT NULL DEFAULT '',
+                        `created_at` INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_institutional_picks_institution_name` ON `institutional_picks` (`institution_name`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_institutional_picks_stock_code` ON `institutional_picks` (`stock_code`)")
+                Log.i(TAG, "✅ v21→v22 遷移完成：已創建 institutional_picks 表（機構推薦股票）")
+            }
+        }
+
+        /**
+         * v22 → v23 遷移：user_watchlist 新增 notes 字段（統一推薦備註）
+         */
+        private val MIGRATION_22_23 = object : androidx.room.migration.Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `user_watchlist` ADD COLUMN `notes` TEXT NOT NULL DEFAULT ''")
+                Log.i(TAG, "✅ v22→v23 遷移完成：user_watchlist 新增 notes 字段")
+            }
+        }
+
         fun getInstance(context: Context): StockDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -373,7 +415,7 @@ abstract class StockDatabase : RoomDatabase() {
                     StockDatabase::class.java,
                     DATABASE_NAME
                 )
-                    .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21)
+                    .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
                     .fallbackToDestructiveMigration()
                     .addCallback(destructiveCallback)
                     .build()

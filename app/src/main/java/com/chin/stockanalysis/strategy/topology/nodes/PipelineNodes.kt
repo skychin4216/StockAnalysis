@@ -265,8 +265,10 @@ class SignalMergeNode : BaseNode<Any, MergedSignalPool>("signal_merge", "多策�
                 }
             }
 
-            // 按強度降序排序
-            val boostedSignals = allSignals.sortedByDescending { it.strength }
+            // 按強度降序排序 + 去重（同一股票只保留最強信號）
+            val boostedSignals = allSignals
+                .sortedByDescending { it.strength }
+                .distinctBy { it.stockCode }
 
             val merged = MergedSignalPool(
                 stockHits = stockHits,
@@ -312,7 +314,6 @@ class SectorBoostNode : BaseNode<Any, MergedSignalPool>("sector_boost", "板塊�
         val signalPool: MergedSignalPool = when (input) {
             is MergedSignalPool -> input
             else -> {
-                context.log(nodeId, "⚠ 輸入類型=${input::class.simpleName}，從 context 讀取 signal_merge 輸出")
                 context.getStageOutput<MergedSignalPool>("signal_merge")
                     ?: context.getStageOutput<MergedSignalPool>("n_merge")
                     ?: return MergedSignalPool(emptyMap(), emptyMap(), emptyList())
@@ -324,6 +325,14 @@ class SectorBoostNode : BaseNode<Any, MergedSignalPool>("sector_boost", "板塊�
                 context.log(nodeId, "市場上下文為空，跳過板塊加權")
                 return signalPool
             }
+
+        // 讀取熱度評分（n_heat 輸出 Map<String, Int>）
+        val heatScores = context.getStageOutput<Map<String, Int>>("heat_score")
+            ?: context.getStageOutput<Map<String, Int>>("n_heat")
+            ?: emptyMap()
+
+        // 讀取大盤均線收斂結果（n_ma_unified 輸出）
+        val maResult = context.getStageOutput<MaConvergenceResult>("n_ma_conv")
 
         return try {
             val enhancedSignals = signalPool.boostedSignals.map { signal ->
@@ -340,6 +349,17 @@ class SectorBoostNode : BaseNode<Any, MergedSignalPool>("sector_boost", "板塊�
                     boost += 10
                 }
 
+                // 熱度評分加分（5 維熱度，最高 100 分 → 映射到 0~15 加分）
+                val heat = heatScores[signal.stockCode] ?: 0
+                if (heat > 0) {
+                    boost += (heat * 15 / 100).coerceIn(0, 15)
+                }
+
+                // 大盤均線粘合向上加分（市場整體做多氛圍）
+                if (maResult != null && maResult.maConvergedAndUp) {
+                    boost += 8
+                }
+
                 if (boost > 0) {
                     signal.copy(strength = (signal.strength + boost).coerceAtMost(100))
                 } else {
@@ -354,7 +374,9 @@ class SectorBoostNode : BaseNode<Any, MergedSignalPool>("sector_boost", "板塊�
                 original != null && newSignal.strength != original.strength
             }
 
-            context.log(nodeId, "板塊加權完成: ${boostedCount} 個信號被增強")
+            val heatInfo = if (heatScores.isNotEmpty()) "熱度=${heatScores.size}只" else ""
+            val maInfo = if (maResult?.maConvergedAndUp == true) "均線粘合向上✓" else ""
+            context.log(nodeId, "板塊加權完成: ${boostedCount} 個信號被增強 $heatInfo $maInfo")
             boosted
         } catch (e: Exception) {
             context.log(nodeId, "板塊加權異常: ${e.message}")

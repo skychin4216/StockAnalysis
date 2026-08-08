@@ -18,5 +18,6 @@ data class UserWatchlistEntity(
     @ColumnInfo(name = "sell_price") val sellPrice: Double = 0.0,
     @ColumnInfo(name = "sell_date") val sellDate: String = "",
     @ColumnInfo(name = "score_at_add") val scoreAtAdd: Int = 0,
-    @ColumnInfo(name = "last_monitor_time") val lastMonitorTime: Long = 0L
+    @ColumnInfo(name = "last_monitor_time") val lastMonitorTime: Long = 0L,
+    @ColumnInfo(name = "notes") val notes: String = ""
 )

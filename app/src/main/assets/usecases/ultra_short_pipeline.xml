@@ -117,7 +117,6 @@
         <param name="takeProfitPct" value="3.0" />
       </config>
     </Node>
-    <Node id="n_fit" name="擬合計算+保存" module="fitting_save" />
   </NodeList>
 
   <!-- ══════════ Links ══════════ -->
@@ -181,6 +180,14 @@
     <!-- Layer 2 → 3: 信號合併 → 板塊加權 -->
     <Link>
       <SourceNodeId>n_merge</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_boost</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 0 → 3: 大盤均線統一檢查 → 板塊加權（MA 收斂影響板塊加權） -->
+    <Link>
+      <SourceNodeId>n_ma_unified</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_boost</TargetNodeId>
       <TargetPortId>0</TargetPortId>
@@ -279,14 +286,6 @@
       <SourceNodeId>n_merge_pos</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_t1sell</TargetNodeId>
-      <TargetPortId>0</TargetPortId>
-    </Link>
-
-    <!-- Layer 6 → 7: 買入訂單生成 → 擬合保存（並行） -->
-    <Link>
-      <SourceNodeId>n_orders</SourceNodeId>
-      <SourcePortId>0</SourcePortId>
-      <TargetNodeId>n_fit</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
   </Links>
