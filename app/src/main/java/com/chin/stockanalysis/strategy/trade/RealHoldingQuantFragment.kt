@@ -14,6 +14,7 @@ import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
@@ -331,7 +332,7 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
     // 截圖 OCR 識別
     // ═══════════════════════════════════════
 
-    /** 處理截圖 OCR：識別文字 → 解析持倉 → 確認添加 */
+    /** 處理截圖 OCR：識別文字 → AI 解析持倉 → 確認添加 */
     private fun processScreenshotOcr(uri: android.net.Uri) {
         val ctx = requireContext()
         statusTv.text = "🔄 正在識別截圖..."
@@ -354,12 +355,27 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
                     if (!isAdded) return@addOnSuccessListener
                     val rawText = visionText.text
                     android.util.Log.i(TAG, "OCR 原文:\n$rawText")
-                    val parsed = parseHoldingFromOcr(rawText)
-                    if (parsed.isEmpty()) {
-                        statusTv.text = "⚠️ 未識別到持倉信息，請確保截圖包含持倉數據"
-                        showOcrRawText(rawText)
-                    } else {
-                        showOcrConfirmDialog(parsed)
+
+                    // 使用 AI 解析 OCR 文字
+                    viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                        statusTv.text = "🤖 AI 正在解析持倉信息..."
+                        val parsed = parseHoldingWithAi(rawText)
+
+                        withContext(Dispatchers.Main) {
+                            if (!isAdded) return@withContext
+                            if (parsed.isEmpty()) {
+                                // AI 解析失敗，嘗試正則備選
+                                val fallbackParsed = parseHoldingFromOcr(rawText)
+                                if (fallbackParsed.isEmpty()) {
+                                    statusTv.text = "⚠️ 未識別到持倉信息，請確保截圖包含持倉數據"
+                                    showOcrRawText(rawText)
+                                } else {
+                                    showOcrConfirmDialog(fallbackParsed)
+                                }
+                            } else {
+                                showOcrConfirmDialog(parsed)
+                            }
+                        }
                     }
                 }
                 .addOnFailureListener { e ->
@@ -369,6 +385,105 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
         } catch (e: Exception) {
             if (isAdded) statusTv.text = "❌ 圖片處理失敗: ${e.message}"
         }
+    }
+
+    /**
+     * 使用 AI 從 OCR 文字中解析持倉信息。
+     * AI 會理解表格結構，正確關聯股票名稱、代碼、數量、價格等。
+     */
+    private suspend fun parseHoldingWithAi(ocrText: String): List<RealPositionEntity> {
+        val slot = com.chin.stockanalysis.ai.AiProviderPool.acquire(
+            requireContext(),
+            callerTag = "RealHoldingOCR",
+            timeoutMs = 60_000L
+        ) ?: return emptyList()
+
+        try {
+            val prompt = buildString {
+                appendLine("你是一個專業的股票持倉信息提取助手。")
+                appendLine("以下是從券商APP截圖中OCR識別出的文字，格式可能比較混亂。")
+                appendLine("請從中提取所有持倉股票信息，包括：股票代碼(6位)、股票名稱、數量、價格。")
+                appendLine()
+                appendLine("OCR文字內容：")
+                appendLine("---")
+                appendLine(ocrText)
+                appendLine("---")
+                appendLine()
+                appendLine("請以JSON格式返回，格式如下：")
+                appendLine("[")
+                appendLine("  {\"code\": \"601168\", \"name\": \"西部礦業\", \"quantity\": 1000, \"price\": 43.07},")
+                appendLine("  ...")
+                appendLine("]")
+                appendLine()
+                appendLine("注意：")
+                appendLine("1. 股票代碼是6位數字（如601168, 000037）")
+                appendLine("2. 數量通常是100的倍數")
+                appendLine("3. 價格帶小數點")
+                appendLine("4. 如果無法確定某個字段，請根據上下文推斷")
+                appendLine("5. 只返回JSON，不要其他說明文字")
+            }
+
+            val response = withTimeoutOrNull(60_000L) {
+                kotlinx.coroutines.suspendCancellableCoroutine<String> { cont ->
+                    slot.provider.sendMessageStream(
+                        messages = emptyList(),
+                        systemPrompt = prompt,
+                        onSuccess = {},
+                        onComplete = { full -> cont.resumeWith(Result.success(full)) },
+                        onError = { err -> cont.resumeWith(Result.failure(Exception(err))) }
+                    )
+                }
+            }
+
+            if (response == null) {
+                android.util.Log.w(TAG, "AI 解析超時")
+                return emptyList()
+            }
+
+            android.util.Log.i(TAG, "AI 解析結果: $response")
+
+            // 解析 JSON 響應
+            return parseAiResponse(response)
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "AI 解析失敗: ${e.message}", e)
+            return emptyList()
+        } finally {
+            com.chin.stockanalysis.ai.AiProviderPool.releaseNonBlocking(slot)
+        }
+    }
+
+    /**
+     * 解析 AI 返回的 JSON 響應
+     */
+    private fun parseAiResponse(response: String): List<RealPositionEntity> {
+        val results = mutableListOf<RealPositionEntity>()
+        try {
+            // 提取 JSON 部分 (可能包含在 markdown code block 中)
+            val jsonMatch = Regex("""\[[\s\S]*\]""").find(response)
+            val jsonStr = jsonMatch?.value ?: response
+
+            val jsonArray = org.json.JSONArray(jsonStr)
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val code = obj.optString("code", "")
+                val name = obj.optString("name", "未知")
+                val quantity = obj.optInt("quantity", 0)
+                val price = obj.optDouble("price", 0.0)
+
+                if (code.length == 6 && quantity > 0 && price > 0) {
+                    results.add(RealPositionEntity(
+                        stockCode = code,
+                        stockName = name,
+                        quantity = quantity,
+                        avgBuyPrice = price,
+                        buyDate = LocalDate.now().toString()
+                    ))
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "解析 AI 響應失敗: ${e.message}", e)
+        }
+        return results
     }
 
     /**
