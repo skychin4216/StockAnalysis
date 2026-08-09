@@ -526,8 +526,8 @@ abstract class QuantFragmentBase : Fragment() {
                         r.selectedStocks.map { it.first }.toSet() else emptySet()
                     android.util.Log.i("QuantFragmentBase", "lastPickStocks=${lastPickStocks.size}, pickStockCodes=$pickStockCodes")
 
-                    // 顯示可視化 DAG Pipeline 對話框
-                    showDagPipelineDialog("${titlePrefix} DAG Pipeline", useCaseId, r)
+                    // 在內容區顯示 Pipeline 節點執行詳情
+                    showPipelineNodeDetails("${titlePrefix} DAG Pipeline", r)
 
                     statusTv.text = r.uiText
                     buildBtn.isEnabled = true; updateBuildButtonText()
@@ -3560,6 +3560,9 @@ abstract class QuantFragmentBase : Fragment() {
                         // 渲染選股區完整表格
                         if (pickOrders.isNotEmpty()) {
                             renderOrderTable(pickOrders, dates, priceMap, "選股", titleColor = "#6A1B9A")
+                        } else if (lastPickStocks.isNotEmpty()) {
+                            // DB 查無數據（日期不一致），用內存中的 lastPickStocks 渲染
+                            renderPickListSection()
                         } else {
                             renderEmptySection("選股", titleColor = "#6A1B9A")
                         }
@@ -3987,195 +3990,154 @@ abstract class QuantFragmentBase : Fragment() {
     }
 
     /**
-     * 顯示可視化 DAG Pipeline 對話框
-     * 支持雙指縮放、單指拖動、點擊節點查看詳情
+     * 在內容區頂部插入 Pipeline 節點執行詳情（可折叠）。
+     * 每個 Node 顯示：名稱、狀態、輸入/輸出數量、過濾原因、實際股票代碼。
      */
-    protected fun showDagPipelineDialog(
+    protected fun showPipelineNodeDetails(
         title: String,
-        useCaseId: String,
         result: com.chin.stockanalysis.strategy.topology.xml.DagTradeExecutor.DagExecResult
     ) {
         val ctx = requireContext()
-        val dialog = android.app.Dialog(ctx).apply {
-            requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
-        }
+        val density = resources.displayMetrics.density
+        val details = result.nodeFlowDetails
+        if (details.isEmpty()) return
 
-        val root = LinearLayout(ctx).apply {
+        // ── 詳情容器（先聲明，供標題列點擊引用） ──
+        val detailContainer = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#0F1923"))
-            setPadding(16, 16, 16, 16)
-        }
-
-        // 標題欄
-        val titleRow = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, 16)
-        }
-        val titleTv = TextView(ctx).apply {
-            text = title
-            textSize = 18f
-            setTextColor(Color.WHITE)
-            setTypeface(null, Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        titleRow.addView(titleTv)
-
-        // 狀態標籤
-        val statusTv = TextView(ctx).apply {
-            text = if (result.success) "✅ 成功" else "❌ 失敗"
-            textSize = 14f
-            setTextColor(if (result.success) Color.parseColor("#4CAF50") else Color.parseColor("#F44336"))
-        }
-        titleRow.addView(statusTv)
-        root.addView(titleRow)
-
-        // Pipeline 可視化 View
-        val pipelineView = com.chin.stockanalysis.strategy.topology.ui.DagPipelineView(ctx).apply {
+            setBackgroundColor(Color.parseColor("#F5F5F5"))
+            setPadding(8, 4, 8, 4)
+            visibility = View.GONE
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f
+                LinearLayout.LayoutParams.WRAP_CONTENT
             )
         }
-
-        // 從 stockFlowLines 構建節點
-        val nodes = mutableListOf<com.chin.stockanalysis.strategy.topology.ui.DagPipelineView.PipelineNode>()
-        val links = mutableListOf<com.chin.stockanalysis.strategy.topology.ui.DagPipelineView.PipelineLink>()
-
-        // 添加主要節點
-        val mainNodes = listOf(
-            "數據導入" to "data_import",
-            "市場上下文" to "market_context",
-            "股票池" to "stock_pool",
-            "策略篩選" to "strategy_filter",
-            "信號合併" to "signal_merge",
-            "板塊加權" to "sector_boost",
-            "六項嚴選" to "strict_selection",
-            "主力過濾" to "smart_money",
-            "AI精選" to "ai_predict",
-            "訂單生成" to "generate_orders",
-            "持倉合併" to "position_merge"
-        )
-
-        mainNodes.forEachIndexed { index, (name, module) ->
-            val status = when {
-                result.errors.containsKey(module) -> com.chin.stockanalysis.strategy.topology.ui.DagPipelineView.NodeStatus.FAILED
-                result.success -> com.chin.stockanalysis.strategy.topology.ui.DagPipelineView.NodeStatus.SUCCESS
-                else -> com.chin.stockanalysis.strategy.topology.ui.DagPipelineView.NodeStatus.PENDING
-            }
-            nodes.add(com.chin.stockanalysis.strategy.topology.ui.DagPipelineView.PipelineNode(
-                id = module,
-                name = name,
-                module = module,
-                layer = index,
-                status = status
-            ))
-            if (index > 0) {
-                links.add(com.chin.stockanalysis.strategy.topology.ui.DagPipelineView.PipelineLink(
-                    fromId = mainNodes[index - 1].second,
-                    toId = module
-                ))
-            }
+        val arrowTv = TextView(ctx).apply {
+            text = "▶"
+            textSize = 12f
+            setTextColor(Color.parseColor("#3F51B5"))
+            setPadding(0, 0, (8 * density).toInt(), 0)
         }
 
-        pipelineView.setPipelineData(nodes, links)
-
-        // 點擊節點顯示詳情
-        pipelineView.setOnNodeClickListener { node ->
-            val detail = buildString {
-                appendLine("節點: ${node.name}")
-                appendLine("模組: ${node.module}")
-                appendLine("狀態: ${when (node.status) {
-                    com.chin.stockanalysis.strategy.topology.ui.DagPipelineView.NodeStatus.PENDING -> "未執行"
-                    com.chin.stockanalysis.strategy.topology.ui.DagPipelineView.NodeStatus.RUNNING -> "執行中"
-                    com.chin.stockanalysis.strategy.topology.ui.DagPipelineView.NodeStatus.SUCCESS -> "成功"
-                    com.chin.stockanalysis.strategy.topology.ui.DagPipelineView.NodeStatus.FAILED -> "失敗"
-                }}")
-                // 檢查是否有錯誤
-                val error = result.errors[node.module]
-                if (error != null) {
-                    appendLine()
-                    appendLine("錯誤: $error")
-                }
-                // 顯示相關 stockFlowLines
-                val relatedFlows = result.stockFlowLines.filter { it.contains(node.module, ignoreCase = true) }
-                if (relatedFlows.isNotEmpty()) {
-                    appendLine()
-                    appendLine("流動:")
-                    relatedFlows.forEach { appendLine("  $it") }
-                }
-            }
-            showDialog("節點詳情", detail)
-        }
-
-        root.addView(pipelineView)
-
-        // 底部按鈕欄
-        val btnRow = LinearLayout(ctx).apply {
+        // ── 可折叠標題列 ──
+        val headerRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding(0, 16, 0, 0)
-        }
-
-        // 重置視圖按鈕
-        val resetBtn = Button(ctx).apply {
-            text = "🔄 重置"
-            textSize = 12f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#455A64"))
-            setPadding(16, 8, 16, 8)
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(12, (8 * density).toInt(), 12, (8 * density).toInt())
+            setBackgroundColor(Color.parseColor("#E8EAF6"))
             setOnClickListener {
-                pipelineView.resetView()
+                detailContainer.visibility =
+                    if (detailContainer.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                arrowTv.text = if (detailContainer.visibility == View.VISIBLE) "▼" else "▶"
             }
-        }
-        btnRow.addView(resetBtn)
-
-        // 文本報告按鈕
-        val textBtn = Button(ctx).apply {
-            text = "📄 報告"
-            textSize = 12f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#1565C0"))
-            setPadding(16, 8, 16, 8)
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { leftMargin = 16 }
-            setOnClickListener {
-                val reportText = com.chin.stockanalysis.strategy.topology.xml.DagTradeExecutor
-                    .buildReportText(title, result)
-                showDialog("$title 報告", reportText)
-            }
+            )
         }
-        btnRow.addView(textBtn)
-
-        // 關閉按鈕
-        val closeBtn = Button(ctx).apply {
-            text = "關閉"
-            textSize = 12f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#C62828"))
-            setPadding(16, 8, 16, 8)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { leftMargin = 16 }
-            setOnClickListener {
-                dialog.dismiss()
-            }
+        headerRow.addView(arrowTv)
+        val titleTv = TextView(ctx).apply {
+            text = "$title  (${details.size} 個節點, ${result.totalElapsedMs}ms)"
+            textSize = 13f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setTextColor(Color.parseColor("#283593"))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-        btnRow.addView(closeBtn)
+        headerRow.addView(titleTv)
+        val statusBadge = TextView(ctx).apply {
+            text = if (result.success) "✅" else "❌"
+            textSize = 14f
+        }
+        headerRow.addView(statusBadge)
 
-        root.addView(btnRow)
+        for (node in details) {
+            val nodeCard = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(8, 6, 8, 6)
+                setBackgroundColor(Color.WHITE)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = (2 * density).toInt() }
+            }
 
-        dialog.setContentView(root)
-        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-        dialog.window?.setLayout(
-            (resources.displayMetrics.widthPixels * 0.95).toInt(),
-            (resources.displayMetrics.heightPixels * 0.85).toInt()
-        )
-        dialog.show()
+            // 第一行：節點名 + 狀態 + 耗時
+            val row1 = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            val statusIcon = if (node.errorMsg.isNotEmpty()) "❌" else if (node.success) "✅" else "⚠️"
+            val nameTv = TextView(ctx).apply {
+                text = "$statusIcon ${node.nodeName}"
+                textSize = 12f
+                setTypeface(null, android.graphics.Typeface.BOLD)
+                setTextColor(Color.parseColor("#1A237E"))
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            row1.addView(nameTv)
+            if (node.elapsedMs > 0) {
+                val timeTv = TextView(ctx).apply {
+                    text = "${node.elapsedMs}ms"
+                    textSize = 10f
+                    setTextColor(Color.parseColor("#9E9E9E"))
+                }
+                row1.addView(timeTv)
+            }
+            nodeCard.addView(row1)
+
+            // 第二行：輸入 → 輸出
+            val flowTv = TextView(ctx).apply {
+                val flowText = buildString {
+                    append("輸入 ${node.inputCount} → 輸出 ${node.outputCount}")
+                    if (node.filterCount > 0) append(" | 過濾 ${node.filterCount}: ${node.filterReason}")
+                }
+                text = flowText
+                textSize = 11f
+                setTextColor(Color.parseColor("#424242"))
+                setPadding(0, 2, 0, 2)
+            }
+            nodeCard.addView(flowTv)
+
+            // 第三行：輸入股票代碼
+            if (node.inputCodes.isNotEmpty()) {
+                val inTv = TextView(ctx).apply {
+                    text = "⬅ 入: ${node.inputCodes.joinToString(", ")}"
+                    textSize = 10f
+                    setTextColor(Color.parseColor("#1565C0"))
+                    setPadding(0, 1, 0, 1)
+                }
+                nodeCard.addView(inTv)
+            }
+
+            // 第四行：輸出股票代碼
+            if (node.outputCodes.isNotEmpty()) {
+                val outTv = TextView(ctx).apply {
+                    text = "➡ 出: ${node.outputCodes.joinToString(", ")}"
+                    textSize = 10f
+                    setTextColor(Color.parseColor("#2E7D32"))
+                    setPadding(0, 1, 0, 1)
+                }
+                nodeCard.addView(outTv)
+            }
+
+            // 錯誤信息
+            if (node.errorMsg.isNotEmpty()) {
+                val errTv = TextView(ctx).apply {
+                    text = "❌ ${node.errorMsg}"
+                    textSize = 10f
+                    setTextColor(Color.parseColor("#C62828"))
+                    setPadding(0, 2, 0, 0)
+                }
+                nodeCard.addView(errTv)
+            }
+
+            detailContainer.addView(nodeCard)
+        }
+
+        // 插入到 positionContainer 頂部
+        positionContainer.addView(headerRow, 0)
+        positionContainer.addView(detailContainer, 1)
     }
 
     /** 顯示各週期持有收益歷史 */

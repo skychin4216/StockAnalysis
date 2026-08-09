@@ -444,9 +444,9 @@ object AppBackgroundRunner {
         }
     }
 
-    suspend fun addBatchToWatchlist(context: Context, stocks: List<Triple<String, String, Int>>, source: String) {
+    suspend fun addBatchToWatchlist(context: Context, stocks: List<Triple<String, String, Int>>, source: String, tradeDate: String = LocalDate.now().format(DATE_FMT)) {
         StockDatabase.getInstance(context).userWatchlistDao().insertAll(
-            stocks.map { (c, n, s) -> UserWatchlistEntity(stockCode = c, stockName = n, source = source, addedDate = LocalDate.now().format(DATE_FMT), scoreAtAdd = s) }
+            stocks.map { (c, n, s) -> UserWatchlistEntity(stockCode = c, stockName = n, source = source, addedDate = tradeDate, scoreAtAdd = s) }
         )
     }
 

@@ -50,6 +50,21 @@ object DagTradeExecutor {
      * @property errors            錯誤信息
      * @property uiText            預構建的 UI 顯示文本
      */
+    /** 單個 Node 的流動詳情（含實際股票代碼） */
+    data class NodeFlowDetail(
+        val nodeId: String,
+        val nodeName: String,
+        val inputCount: Int,
+        val outputCount: Int,
+        val filterCount: Int,
+        val filterReason: String,
+        val inputCodes: List<String>,
+        val outputCodes: List<String>,
+        val elapsedMs: Long = 0,
+        val success: Boolean = true,
+        val errorMsg: String = ""
+    )
+
     data class DagExecResult(
         val success: Boolean,
         val ordersCount: Int,
@@ -66,7 +81,8 @@ object DagTradeExecutor {
         val failureAnalysis: PipelineFailureAnalyzer.FailureAnalysis = PipelineFailureAnalyzer.FailureAnalysis(isFailed = false),
         val diagnosticSummary: String = "",
         val strictEvalDetail: String = "",
-        val selectedStocks: List<Triple<String, String, Int>> = emptyList()
+        val selectedStocks: List<Triple<String, String, Int>> = emptyList(),
+        val nodeFlowDetails: List<NodeFlowDetail> = emptyList()
     )
 
     /**
@@ -158,7 +174,7 @@ object DagTradeExecutor {
                                 Triple(order.stockCode, order.stockName, order.scoreAtBuy)
                             }
                             com.chin.stockanalysis.stock.database.AppBackgroundRunner.addBatchToWatchlist(
-                                context, watchlistItems, source = orderType
+                                context, watchlistItems, source = orderType, tradeDate = tradeDate
                             )
                             savedWatchlist = true
                             Log.i(TAG, "[$useCaseId] 已保存 ${watchlistItems.size} 只到自選股")
@@ -238,6 +254,27 @@ object DagTradeExecutor {
                     }
                     stockFlowLines.add(line)
                 }
+            }
+        }
+
+        // 5b. 收集各 Node 的完整流動詳情（含股票代碼）
+        val nodeFlowDetails = mutableListOf<NodeFlowDetail>()
+        for ((_, pr) in result.pipelineResults) {
+            for ((nodeId, flow) in pr.stockFlowLogs) {
+                val stageResult = pr.stageResults[nodeId]
+                nodeFlowDetails.add(NodeFlowDetail(
+                    nodeId = nodeId,
+                    nodeName = flow.nodeName,
+                    inputCount = flow.inputCount,
+                    outputCount = flow.outputCount,
+                    filterCount = flow.filterCount,
+                    filterReason = flow.filterReason,
+                    inputCodes = flow.inputCodes,
+                    outputCodes = flow.outputCodes,
+                    elapsedMs = stageResult?.stepTimings?.firstOrNull()?.second ?: 0,
+                    success = stageResult?.success ?: true,
+                    errorMsg = pr.errors[nodeId] ?: ""
+                ))
             }
         }
 
@@ -368,7 +405,8 @@ object DagTradeExecutor {
             failureAnalysis = failureAnalysis,
             diagnosticSummary = diagnosticSummary,
             strictEvalDetail = strictEvalDetail,
-            selectedStocks = selectedStocks
+            selectedStocks = selectedStocks,
+            nodeFlowDetails = nodeFlowDetails
         )
     }
 
