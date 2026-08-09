@@ -428,11 +428,13 @@ class NewsStrengthNode(
         context.log(nodeId, "📥 $nodeName 輸入: ${pool.totalStocks} 只股票 ${formatTopCodes(pool.stockHits.keys)}")
 
         return try {
-            val fromDate = LocalDate.parse(context.tradeDate)
+            // 新聞查詢用實際日期（周日執行也能吃到周末新聞），而非 tradeDate
+            val newsToDate = LocalDate.now().format(DATE_FMT)
+            val fromDate = LocalDate.now()
                 .minusDays(lookbackDays.toLong())
                 .format(DATE_FMT)
 
-            val newsList = db.newsFactorDao().getActiveByDateRange(fromDate, context.tradeDate)
+            val newsList = db.newsFactorDao().getActiveByDateRange(fromDate, newsToDate)
 
             if (newsList.isEmpty()) {
                 context.log(nodeId, "新聞力度: 近 ${lookbackDays} 天無活躍新聞, 默認 50 分")
@@ -706,12 +708,13 @@ class NewsGuardNode(
         val db = StockDatabase.getInstance(context.androidContext)
 
         return try {
-            // 1. 新聞攔截
-            val fromDate = LocalDate.parse(context.tradeDate)
+            // 1. 新聞攔截（用實際日期，周日執行也能吃到周末新聞）
+            val newsToDate = LocalDate.now().format(DATE_FMT)
+            val fromDate = LocalDate.now()
                 .minusDays(lookbackDays.toLong())
                 .format(DATE_FMT)
 
-            val newsList = db.newsFactorDao().getActiveByDateRange(fromDate, context.tradeDate)
+            val newsList = db.newsFactorDao().getActiveByDateRange(fromDate, newsToDate)
             val blockedCodes = mutableSetOf<String>()
             val blockedReasons = mutableMapOf<String, String>()
 
