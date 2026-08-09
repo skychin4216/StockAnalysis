@@ -312,6 +312,8 @@ class TopologyEditorActivity : AppCompatActivity() {
                     ?: ucFile.removeSuffix("_usecase.xml").replace("_", " ")
                 addSidebarItem(ucName) { loadUseCaseFile(ucFile) }
             }
+            // Pipeline 全景圖入口
+            addSidebarItem("🌐 Pipeline 全景") { showPipelinePanorama() }
         }
     }
 
@@ -377,6 +379,73 @@ class TopologyEditorActivity : AppCompatActivity() {
         } else {
             requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         }
+    }
+
+    /** 顯示 Pipeline 全景圖（WebView 加載 pipeline_framework.html） */
+    private fun showPipelinePanorama() {
+        val dialog = android.app.Dialog(this).apply {
+            requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        }
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#0F1923"))
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+
+        // 標題欄
+        val titleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            setBackgroundColor(Color.parseColor("#1A237E"))
+        }
+        val titleTv = TextView(this).apply {
+            text = "Pipeline 全景圖"
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        titleRow.addView(titleTv)
+
+        val closeBtn = Button(this).apply {
+            text = "關閉"
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#C62828"))
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            setOnClickListener { dialog.dismiss() }
+        }
+        titleRow.addView(closeBtn)
+        root.addView(titleRow)
+
+        // WebView
+        val webView = android.webkit.WebView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+            )
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.allowFileAccess = true
+            settings.builtInZoomControls = true
+            settings.displayZoomControls = false
+            settings.useWideViewPort = true
+            settings.loadWithOverviewMode = true
+            loadUrl("file:///android_asset/pipeline_framework.html")
+        }
+        root.addView(webView)
+
+        dialog.setContentView(root)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.window?.setLayout(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        )
+        dialog.show()
     }
 
     // ════════════════════════════════════════════════════
