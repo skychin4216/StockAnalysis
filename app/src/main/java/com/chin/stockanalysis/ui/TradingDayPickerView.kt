@@ -66,6 +66,18 @@ class TradingDayPickerView @JvmOverloads constructor(
         }
 
         /**
+         * 將指定日期校正到最近的交易日（向回退）。
+         * 如果當天是交易日則返回當天，否則向前找到最近的交易日。
+         */
+        fun recentTradingDay(from: LocalDate): LocalDate {
+            var d = from
+            while (d.dayOfWeek == DayOfWeek.SATURDAY || d.dayOfWeek == DayOfWeek.SUNDAY || d in CHINESE_HOLIDAYS) {
+                d = d.minusDays(1)
+            }
+            return d
+        }
+
+        /**
          * 获取上一个交易日（不含当天）。
          * 用于回测拟合：需要 T+1 验证，T 必须是历史日期。
          */

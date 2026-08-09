@@ -503,12 +503,13 @@ abstract class QuantFragmentBase : Fragment() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val today = TradingDayPickerView.recentTradingDay().format(DATE_FMT)
-                val tradeDate = browsingDate.format(DATE_FMT)
+                // 確保 tradeDate 是交易日（周日/假日自動校正到最近交易日）
+                val effectiveTradeDate = TradingDayPickerView.recentTradingDay(browsingDate).format(DATE_FMT)
                 val strategies = eng.getEnabledStrategiesByPeriod(holdingPeriod)
                 val r = com.chin.stockanalysis.strategy.topology.xml.DagTradeExecutor.execute(
                     context = requireContext(),
                     useCaseId = useCaseId,
-                    tradeDate = tradeDate,
+                    tradeDate = effectiveTradeDate,
                     today = today,
                     strategies = strategies,
                     orderType = orderType,
@@ -3873,7 +3874,7 @@ abstract class QuantFragmentBase : Fragment() {
                                 .createDefaultRepository(requireContext().applicationContext)
                                 .getRealtime(codes)
                         } catch (_: Exception) { emptyMap() }
-                        val today = LocalDate.now().format(DATE_FMT)
+                        val today = TradingDayPickerView.recentTradingDay().format(DATE_FMT)
                         val now = java.time.LocalTime.now().toString().take(8)
                         val quantType = getQuantType()
                         val entities = lastPickStocks.map { (code, name, score) ->
