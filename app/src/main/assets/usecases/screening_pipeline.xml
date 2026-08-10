@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  ## 量化選股 Pipeline
+  ## 量化选股 Pipeline
 
   流程：
-    Stage 1 (並行): 市場上下文構建
-    Stage 2 (並行): 多策略篩選（每個策略獨立一條 LinkList）
-    Stage 3 (串行): 信號合併 → 板塊加權
+    Stage 1 (并行): 市场上下文构建
+    Stage 2 (并行): 多策略筛选（每个策略独立一条 LinkList）
+    Stage 3 (串行): 信号合并 → 板块加权
 
   由 ScreeningUseCase 引用。
 -->
-<pipeline id="screening_pipeline" name="量化選股Pipeline" description="全市場掃描→多策略並行篩選→信號合併→板塊加權" version="1">
+<pipeline id="screening_pipeline" name="量化选股Pipeline" description="全市场扫描→多策略并行筛选→信号合并→板块加权" version="1">
 
-  <!-- ══════════ 節點定義 ══════════ -->
+  <!-- ══════════ 节点定义 ══════════ -->
   <nodes>
     <node id="n_ctx" module="market_context" />
     <node id="n_pool" module="stock_pool" />
@@ -19,23 +19,23 @@
     <node id="n_boost" module="sector_boost" />
   </nodes>
 
-  <!-- ══════════ 執行階段 ══════════ -->
+  <!-- ══════════ 执行阶段 ══════════ -->
   <stages>
-    <!-- Stage 1: 數據準備 -->
-    <stage name="數據準備" parallel="true">
-      <linkList name="市場上下文">
+    <!-- Stage 1: 数据准备 -->
+    <stage name="数据准备" parallel="true">
+      <linkList name="市场上下文">
         <link from="n_ctx" to="n_pool" />
       </linkList>
     </stage>
 
-    <!-- Stage 2: 策略篩選（動態注入，XML 只定義結構） -->
-    <stage name="策略篩選" parallel="true">
-      <!-- LinkList 在運行時由 NodeRegistry 根據已註冊策略動態生成 -->
+    <!-- Stage 2: 策略筛选（动态注入，XML 只定义结构） -->
+    <stage name="策略筛选" parallel="true">
+      <!-- LinkList 在运行时由 NodeRegistry 根据已注册策略动态生成 -->
     </stage>
 
-    <!-- Stage 3: 合併加權 -->
-    <stage name="合併加權" parallel="false">
-      <linkList name="合併+板塊加權" description="多策略信號合併後板塊加權">
+    <!-- Stage 3: 合并加权 -->
+    <stage name="合并加权" parallel="false">
+      <linkList name="合并+板块加权" description="多策略信号合并后板块加权">
         <link from="n_merge" to="n_boost" />
       </linkList>
     </stage>

@@ -65,9 +65,9 @@ class StockTabFragment : Fragment() {
 
         TabLayoutMediator(tabLayout, viewPager) { tab, position ->
             tab.text = when (position) {
-                0 -> "🔥 热门行情"
-                1 -> "📊 精选股票"
-                2 -> "📰 热点新闻"
+                0 -> getString(com.chin.stockanalysis.R.string.stock_tab_hot)
+                1 -> getString(com.chin.stockanalysis.R.string.stock_tab_picks)
+                2 -> getString(com.chin.stockanalysis.R.string.stock_tab_news)
                 else -> ""
             }
         }.attach()

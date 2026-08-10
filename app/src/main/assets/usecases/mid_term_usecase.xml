@@ -1,24 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  ## 中線量化 UseCase
+  ## 中线量化 UseCase
 
-  最複雜的 Pipeline，含中線獨有的 7 個步驟：
-    1. 大盤分析+自適應參數（動態閾值/數量限制）
-    2. 多周期熱門股聚合（3/5/10/30/50/100天漲幅Top3）
-    3. 跨日聚合（回溯5天策略命中頻次）
-    4. 新聞力度計算（近3天新聞影響力×情緒）
-    5. 板塊輪動懲罰（防止板塊過度集中）
-    6. 新聞攔截+技術過濾（4條規則）
-    7. 騰龍換鳥（倉位不足時自動換股）
+  最复杂的 Pipeline，含中线独有的 7 个步骤：
+    1. 大盘分析+自适应参数（动态阈值/数量限制）
+    2. 多周期热门股聚合（3/5/10/30/50/100天涨幅Top3）
+    3. 跨日聚合（回溯5天策略命中频次）
+    4. 新闻力度计算（近3天新闻影响力×情绪）
+    5. 板块轮动惩罚（防止板块过度集中）
+    6. 新闻拦截+技术过滤（4条规则）
+    7. 腾龙换鸟（仓位不足时自动换股）
 
-  V1 Pipeline（data_prep + strategy_screening）負責數據準備和策略篩選，
-  V2 DAG Pipeline（mid_term_pipeline.xml）負責中線獨有的完整流程。
-  BEARISH 時 scoreThreshold=55, maxCount=2。
+  V1 Pipeline（data_prep + strategy_screening）负责数据准备和策略筛选，
+  V2 DAG Pipeline（mid_term_pipeline.xml）负责中线独有的完整流程。
+  BEARISH 时 scoreThreshold=55, maxCount=2。
 -->
-<usecase id="mid_term" name="中線量化">
-  <description>自適應參數→多周期熱門→策略篩選→合併增強→跨日聚合→AI精選→主力過濾→新聞攔截→騰龍換鳥</description>
+<usecase id="mid_term" name="中线量化">
+  <description>自适应参数→多周期热门→策略筛选→合并增强→跨日聚合→AI精选→主力过滤→新闻拦截→腾龙换鸟</description>
   <steps>
-    <pipeline ref="usecases/mid_term_pipeline.xml" name="中線DAG流程" />
+    <pipeline ref="usecases/mid_term_pipeline.xml" name="中线DAG流程" />
   </steps>
   <config>
     <param name="orderType" value="MidTermQuant" />

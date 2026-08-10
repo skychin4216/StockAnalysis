@@ -131,4 +131,16 @@
     <string name="title_short_system">🤖 Short-Term Quant (Zipline + AI)</string>
     <string name="title_mid_system">🤖 Mid-Term Quant (Value, 1-6 months)</string>
     <string name="title_long_system">💎 Long-Term Quant (Value, 6mo-1yr+)</string>
+
+    <!-- Stock Tabs -->
+    <string name="stock_tab_hot">🔥 Hot</string>
+    <string name="stock_tab_picks">📊 Picks</string>
+    <string name="stock_tab_news">📰 News</string>
+
+    <!-- Strategy Buttons -->
+    <string name="btn_build_position">📈Build</string>
+    <string name="btn_stock_picking">📈Pick</string>
+    <string name="btn_trade_eval">💰Trade ▾</string>
+    <string name="btn_holdings_label">📦Hold</string>
+    <string name="btn_report_label">📊Report</string>
 </resources>

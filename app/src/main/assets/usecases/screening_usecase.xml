@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  ## 量化選股 UseCase
+  ## 量化选股 UseCase
 
-  純篩選，無交易，AI 在 UI 層異步調用。
-  流程：數據準備 → 策略篩選（並行） → 合併加權
+  纯筛选，无交易，AI 在 UI 层异步调用。
+  流程：数据准备 → 策略筛选（并行） → 合并加权
 -->
-<usecase id="screening" name="量化選股">
-  <description>全市場掃描→多策略並行篩選→信號合併→板塊加權</description>
+<usecase id="screening" name="量化选股">
+  <description>全市场扫描→多策略并行筛选→信号合并→板块加权</description>
   <steps>
-    <pipeline ref="topologies/data_prep_pipeline.xml" name="數據準備" />
-    <pipeline ref="topologies/strategy_screening_pipeline.xml" parallel="true" name="策略篩選" />
-    <pipeline ref="topologies/merge_boost_pipeline.xml" name="合併加權" />
+    <pipeline ref="topologies/data_prep_pipeline.xml" name="数据准备" />
+    <pipeline ref="topologies/strategy_screening_pipeline.xml" parallel="true" name="策略筛选" />
+    <pipeline ref="topologies/merge_boost_pipeline.xml" name="合并加权" />
   </steps>
   <config>
     <param name="orderType" value="Screening" />

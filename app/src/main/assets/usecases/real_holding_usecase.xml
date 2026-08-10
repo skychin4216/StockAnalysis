@@ -1,29 +1,29 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  ## 實倉分析 UseCase v2
+  ## 实仓分析 UseCase v2
 
-  結構設計為可擴展的多 Pipeline 架構：
-    Step 1: 大盤分析 Pipeline（可被其他 UseCase 復用）
-    Step 2: 持倉評估 Pipeline（讀取大盤結論 + 逐股分析）
+  结构设计为可扩展的多 Pipeline 架构：
+    Step 1: 大盘分析 Pipeline（可被其他 UseCase 复用）
+    Step 2: 持仓评估 Pipeline（读取大盘结论 + 逐股分析）
 
-  後續擴展方向：
-    - Step 3: 持倉報告生成 Pipeline（生成 PDF/圖表報告）
-    - Step 4: 做T建議 Pipeline（綜合大盤+個股K線 → 做T/反T信號）
-    - 其他周期 UseCase 可引用 step 1 的市場分析結果
+  后续扩展方向：
+    - Step 3: 持仓报告生成 Pipeline（生成 PDF/图表报告）
+    - Step 4: 做T建议 Pipeline（综合大盘+个股K线 → 做T/反T信号）
+    - 其他周期 UseCase 可引用 step 1 的市场分析结果
 
-  大盤分析結果存入 PipelineContext，所有後續 Pipeline 均可讀取。
+  大盘分析结果存入 PipelineContext，所有后续 Pipeline 均可读取。
 -->
-<usecase id="real_holding" name="實倉分析">
-  <description>大盤K線六維分析→逐持倉評估→操作建議(持有/做T/減倉/清倉)</description>
+<usecase id="real_holding" name="实仓分析">
+  <description>大盘K线六维分析→逐持仓评估→操作建议(持有/做T/减仓/清仓)</description>
   <steps>
-    <!-- Step 1: 實倉 DAG Pipeline（大盤分析 + 持倉評估） -->
-    <pipeline ref="usecases/real_holding_pipeline.xml" name="實倉DAG流程" />
+    <!-- Step 1: 实仓 DAG Pipeline（大盘分析 + 持仓评估） -->
+    <pipeline ref="usecases/real_holding_pipeline.xml" name="实仓DAG流程" />
 
     <!--
-      後續擴展：在此添加更多 pipeline step
+      后续扩展：在此添加更多 pipeline step
       例如：
-      <pipeline ref="usecases/real_holding_report_pipeline.xml" name="持倉報告生成" />
-      <pipeline ref="usecases/real_holding_ttrade_pipeline.xml" name="做T建議" />
+      <pipeline ref="usecases/real_holding_report_pipeline.xml" name="持仓报告生成" />
+      <pipeline ref="usecases/real_holding_ttrade_pipeline.xml" name="做T建议" />
     -->
   </steps>
   <config>

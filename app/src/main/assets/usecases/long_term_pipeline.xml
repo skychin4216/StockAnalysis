@@ -1,44 +1,44 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  ## 長線量化 DAG Pipeline — 高通 Camera Pipeline 風格
+  ## 长线量化 DAG Pipeline — 高通 Camera Pipeline 风格
 
-  長線特徵：持倉 1 年以上，深度基本面，公司成長+價值，重倉持有。
-  不追熱點、不頻繁換股，但需 news_guard 防黑天鵝利空。
+  长线特征：持仓 1 年以上，深度基本面，公司成长+价值，重仓持有。
+  不追热点、不频繁换股，但需 news_guard 防黑天鹅利空。
 
-  共 19 個 Node：
-    Layer 0 (並行): market_context, bg_manager, data_import
-    Layer 1 (並行): stock_pool, ma_convergence, sector_stock_pool, holding_guard（依賴 market_context）
-    Layer 1.5: candidate_pool（候選池過濾，補齊 Hardcode）
-    Layer 2 (並行): signal_merge（策略動態注入）, heat_score（依賴 stock_pool）, defensive_dividend（防守高息）
-    Layer 3: sector_boost（依賴 signal_merge + heat_score）→ bounce_reversal
-    Layer 4: smart_money_filter（依賴 bounce_reversal）
-    Layer 5: news_guard（依賴 smart_money_filter，防重大利空）
-    Layer 6: ai_predict（依賴 news_guard，最終裁切 take 5）
-    Layer 7: generate_orders（依賴 ai_predict）
-    Layer 8 (並行): position_merge, fitting_save（依賴 generate_orders）
+  共 19 个 Node：
+    Layer 0 (并行): market_context, bg_manager, data_import
+    Layer 1 (并行): stock_pool, ma_convergence, sector_stock_pool, holding_guard（依赖 market_context）
+    Layer 1.5: candidate_pool（候选池过滤，补齐 Hardcode）
+    Layer 2 (并行): signal_merge（策略动态注入）, heat_score（依赖 stock_pool）, defensive_dividend（防守高息）
+    Layer 3: sector_boost（依赖 signal_merge + heat_score）→ bounce_reversal
+    Layer 4: smart_money_filter（依赖 bounce_reversal）
+    Layer 5: news_guard（依赖 smart_money_filter，防重大利空）
+    Layer 6: ai_predict（依赖 news_guard，最终裁切 take 5）
+    Layer 7: generate_orders（依赖 ai_predict）
+    Layer 8 (并行): position_merge, fitting_save（依赖 generate_orders）
 -->
-<DagPipeline id="long_term_dag" name="長線量化DAG Pipeline" description="市場上下文→股票池+板塊精選池→策略篩選+熱度→板塊加權→主力過濾→新聞攔截→AI精選→訂單生成→持倉合併/擬合保存">
+<DagPipeline id="long_term_dag" name="长线量化DAG Pipeline" description="市场上下文→股票池+板块精选池→策略筛选+热度→板块加权→主力过滤→新闻拦截→AI精选→订单生成→持仓合并/拟合保存">
 
   <!-- ══════════ NodeList ══════════ -->
   <NodeList>
-    <!-- 數據準備 Layer 0 -->
-    <Node id="n_import" name="數據導入檢查" module="data_import">
+    <!-- 数据准备 Layer 0 -->
+    <Node id="n_import" name="数据导入检查" module="data_import">
       <config>
         <param name="days" value="60" />
         <param name="minSnapshots" value="100" />
       </config>
     </Node>
-    <Node id="n_ctx" name="市場上下文" module="market_context" />
-    <Node id="n_bg" name="後臺暫停/恢復" module="bg_manager" />
-    <Node id="n_adaptive" name="大盤分析+自適應參數" module="adaptive_params" />
+    <Node id="n_ctx" name="市场上下文" module="market_context" />
+    <Node id="n_bg" name="后台暂停/恢复" module="bg_manager" />
+    <Node id="n_adaptive" name="大盘分析+自适应参数" module="adaptive_params" />
 
     <!-- Layer 1 -->
     <Node id="n_pool" name="股票池" module="stock_pool" />
 
-    <!-- 大盤均線檢查 Pipeline 分組 -->
-    <Pipeline id="market_check" name="大盤均線檢查">
+    <!-- 大盘均线检查 Pipeline 分组 -->
+    <Pipeline id="market_check" name="大盘均线检查">
       <NodeList>
-        <Node id="n_ma_unified" name="大盤均線統一檢查" module="market_ma_unified">
+        <Node id="n_ma_unified" name="大盘均线统一检查" module="market_ma_unified">
           <config>
             <param name="threshold" value="0.02" />
             <param name="checkMode" value="full" />
@@ -47,25 +47,25 @@
       </NodeList>
     </Pipeline>
 
-    <!-- Layer 1（並行）: 板塊精選池（依賴 market_context，輸出存入 context 供候選池讀取） -->
-    <Node id="n_sector_pool" name="板塊精選池" module="sector_stock_pool" />
+    <!-- Layer 1（并行）: 板块精选池（依赖 market_context，输出存入 context 供候选池读取） -->
+    <Node id="n_sector_pool" name="板块精选池" module="sector_stock_pool" />
 
-    <!-- Layer 1（並行）: 持倉風控 — 每次必跑，評估止損/止盈/策略退出 -->
-    <Node id="n_guard" name="持倉風控" module="holding_guard" />
+    <!-- Layer 1（并行）: 持仓风控 — 每次必跑，评估止损/止盈/策略退出 -->
+    <Node id="n_guard" name="持仓风控" module="holding_guard" />
 
-    <!-- Layer 1.5: 候選池過濾（補齊 Hardcode） -->
-    <Node id="n_cand" name="候選池過濾" module="candidate_pool" />
+    <!-- Layer 1.5: 候选池过滤（补齐 Hardcode） -->
+    <Node id="n_cand" name="候选池过滤" module="candidate_pool" />
 
     <!-- 聚合 Layer 2 -->
-    <Node id="n_merge" name="信號合併" module="signal_merge" />
+    <Node id="n_merge" name="信号合并" module="signal_merge" />
 
-    <!-- 熱度計算 Layer 2（並行，依賴 stock_pool，輸出存入 context 供板塊加權讀取） -->
-    <Node id="n_heat" name="熱度計算" module="heat_score" />
+    <!-- 热度计算 Layer 2（并行，依赖 stock_pool，输出存入 context 供板块加权读取） -->
+    <Node id="n_heat" name="热度计算" module="heat_score" />
 
-    <!-- 增強 Layer 3 -->
-    <Node id="n_boost" name="板塊加權" module="sector_boost" />
-    <Node id="n_bounce" name="跌後反彈加分" module="bounce_reversal" />
-    <Node id="n_strict" name="六項嚴選檢查" module="strict_selection">
+    <!-- 增强 Layer 3 -->
+    <Node id="n_boost" name="板块加权" module="sector_boost" />
+    <Node id="n_bounce" name="跌后反弹加分" module="bounce_reversal" />
+    <Node id="n_strict" name="六项严选检查" module="strict_selection">
       <config>
         <param name="peThreshold" value="25.0" />
         <param name="maDivergenceThreshold" value="0.035" />
@@ -76,15 +76,15 @@
         <param name="minPassCount" value="5" />
       </config>
     </Node>
-    <Node id="n_base_guard" name="打底倉守門" module="base_position_guard">
+    <Node id="n_base_guard" name="打底仓守门" module="base_position_guard">
       <config><param name="holdingPeriod" value="LONG" /></config>
     </Node>
-    <Node id="n_ancestral" name="大A祖訓" module="ancestral_rules">
+    <Node id="n_ancestral" name="大A祖训" module="ancestral_rules">
       <config><param name="holdingPeriod" value="LONG" /></config>
     </Node>
-    <Node id="n_inst_tips" name="機構線索加分" module="inst_tips" />
+    <Node id="n_inst_tips" name="机构线索加分" module="inst_tips" />
 
-    <!-- 防守高息（熊市/震盪時啟動，尋找銀行/電力/高速公路等高息防禦股） -->
+    <!-- 防守高息（熊市/震荡时启动，寻找银行/电力/高速公路等高息防御股） -->
     <Node id="n_defensive" name="防守高息" module="defensive_dividend">
       <config>
         <param name="maxPb" value="1.5" />
@@ -93,38 +93,38 @@
       </config>
     </Node>
 
-    <!-- AI+過濾 Layer 4-5 -->
-    <Node id="n_ai" name="AI精選" module="ai_predict" />
-    <Node id="n_smart" name="主力資金過濾" module="smart_money_filter">
+    <!-- AI+过滤 Layer 4-5 -->
+    <Node id="n_ai" name="AI精选" module="ai_predict" />
+    <Node id="n_smart" name="主力资金过滤" module="smart_money_filter">
       <config>
         <param name="minScore" value="55" />
       </config>
     </Node>
-    <Node id="n_candle" name="K線形態偵測" module="candle_pattern" />
+    <Node id="n_candle" name="K线形态侦测" module="candle_pattern" />
 
-    <!-- 新聞攔截 Layer 6（防黑天鵝） -->
-    <Node id="n_newsguard" name="新聞攔截+技術過濾" module="news_guard">
+    <!-- 新闻拦截 Layer 6（防黑天鹅） -->
+    <Node id="n_newsguard" name="新闻拦截+技术过滤" module="news_guard">
       <config>
         <param name="impactThreshold" value="75" />
         <param name="sentimentThreshold" value="-30" />
       </config>
     </Node>
 
-    <!-- 訂單生成 Layer 7 -->
-    <Node id="n_orders" name="買入訂單生成" module="generate_orders">
+    <!-- 订单生成 Layer 7 -->
+    <Node id="n_orders" name="买入订单生成" module="generate_orders">
       <config>
         <param name="maxHoldings" value="6" />
         <param name="orderType" value="LongTermQuant" />
       </config>
     </Node>
 
-    <!-- 持倉合併 Layer 8 -->
-    <Node id="n_merge_pos" name="持倉合併" module="position_merge" />
+    <!-- 持仓合并 Layer 8 -->
+    <Node id="n_merge_pos" name="持仓合并" module="position_merge" />
   </NodeList>
 
   <!-- ══════════ Links ══════════ -->
   <Links>
-    <!-- Layer 0 → 1: 數據導入 → 股票池（確保數據充足） -->
+    <!-- Layer 0 → 1: 数据导入 → 股票池（确保数据充足） -->
     <Link>
       <SourceNodeId>n_import</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -132,7 +132,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 0 → 1: 數據導入 → 大盤均線統一檢查（與股票池並行） -->
+    <!-- Layer 0 → 1: 数据导入 → 大盘均线统一检查（与股票池并行） -->
     <Link>
       <SourceNodeId>n_import</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -140,7 +140,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 0 → 1: 市場上下文 → 股票池 -->
+    <!-- Layer 0 → 1: 市场上下文 → 股票池 -->
     <Link>
       <SourceNodeId>n_ctx</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -148,7 +148,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 0 → 1: 市場上下文 → 板塊精選池（並行，輸出存入 context 供候選池讀取） -->
+    <!-- Layer 0 → 1: 市场上下文 → 板块精选池（并行，输出存入 context 供候选池读取） -->
     <Link>
       <SourceNodeId>n_ctx</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -156,7 +156,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 0 → 1: 市場上下文 → 持倉風控（並行，每次必評估持倉） -->
+    <!-- Layer 0 → 1: 市场上下文 → 持仓风控（并行，每次必评估持仓） -->
     <Link>
       <SourceNodeId>n_ctx</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -164,7 +164,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 1 → 1.5: 板塊精選池 → 候選池過濾（板塊股票注入候選池） -->
+    <!-- Layer 1 → 1.5: 板块精选池 → 候选池过滤（板块股票注入候选池） -->
     <Link>
       <SourceNodeId>n_sector_pool</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -172,7 +172,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 1 → 1.5: 股票池 → 候選池過濾（補齊 Hardcode） -->
+    <!-- Layer 1 → 1.5: 股票池 → 候选池过滤（补齐 Hardcode） -->
     <Link>
       <SourceNodeId>n_pool</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -180,7 +180,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 1 → 2: 股票池 → 防守高息（熊市/震盪時啟動） -->
+    <!-- Layer 1 → 2: 股票池 → 防守高息（熊市/震荡时启动） -->
     <Link>
       <SourceNodeId>n_pool</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -188,7 +188,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 1 → 2: 股票池 → 熱度計算（並行，輸出存入 context 供板塊加權讀取） -->
+    <!-- Layer 1 → 2: 股票池 → 热度计算（并行，输出存入 context 供板块加权读取） -->
     <Link>
       <SourceNodeId>n_pool</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -196,7 +196,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 2 → 3: 防守高息 → 信號合併（防守候選併入主流程） -->
+    <!-- Layer 2 → 3: 防守高息 → 信号合并（防守候选并入主流程） -->
     <Link>
       <SourceNodeId>n_defensive</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -204,7 +204,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 1.5 → 2: 候選池過濾 → 信號合併（策略動態注入在 Java 層完成） -->
+    <!-- Layer 1.5 → 2: 候选池过滤 → 信号合并（策略动态注入在 Java 层完成） -->
     <Link>
       <SourceNodeId>n_cand</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -212,7 +212,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 2 → 3: 信號合併 → 板塊加權 -->
+    <!-- Layer 2 → 3: 信号合并 → 板块加权 -->
     <Link>
       <SourceNodeId>n_merge</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -220,7 +220,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 0 → 3: 大盤均線統一檢查 → 板塊加權（MA 收斂影響板塊加權） -->
+    <!-- Layer 0 → 3: 大盘均线统一检查 → 板块加权（MA 收敛影响板块加权） -->
     <Link>
       <SourceNodeId>n_ma_unified</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -228,7 +228,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 2 → 3: 熱度計算 → 板塊加權（熱度作為板塊加權輸入） -->
+    <!-- Layer 2 → 3: 热度计算 → 板块加权（热度作为板块加权输入） -->
     <Link>
       <SourceNodeId>n_heat</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -236,7 +236,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 3 → 3.5: 板塊加權 → 跌後反彈加分 -->
+    <!-- Layer 3 → 3.5: 板块加权 → 跌后反弹加分 -->
     <Link>
       <SourceNodeId>n_boost</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -244,7 +244,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 3.5 → 嚴選: 跌後反彈加分 → 六項嚴選檢查 -->
+    <!-- Layer 3.5 → 严选: 跌后反弹加分 → 六项严选检查 -->
     <Link>
       <SourceNodeId>n_bounce</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -252,7 +252,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 嚴選 → 3.5a: 六項嚴選檢查 → 打底倉守門 -->
+    <!-- Layer 严选 → 3.5a: 六项严选检查 → 打底仓守门 -->
     <Link>
       <SourceNodeId>n_strict</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -260,7 +260,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 3.5a → 3.5b: 打底倉守門 → 大A祖訓 -->
+    <!-- Layer 3.5a → 3.5b: 打底仓守门 → 大A祖训 -->
     <Link>
       <SourceNodeId>n_base_guard</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -268,7 +268,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 3.5b → 3.6: 大A祖訓 → 機構線索加分 -->
+    <!-- Layer 3.5b → 3.6: 大A祖训 → 机构线索加分 -->
     <Link>
       <SourceNodeId>n_ancestral</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -276,7 +276,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 3.6 → 4: 機構線索加分 → 主力資金過濾（先過濾再AI精選） -->
+    <!-- Layer 3.6 → 4: 机构线索加分 → 主力资金过滤（先过滤再AI精选） -->
     <Link>
       <SourceNodeId>n_inst_tips</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -284,7 +284,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 4 → 5: 主力資金過濾 → 新聞截+技術過濾 -->
+    <!-- Layer 4 → 5: 主力资金过滤 → 新闻截+技术过滤 -->
     <Link>
       <SourceNodeId>n_smart</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -292,7 +292,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 4 → 5: 主力資金過濾 → K線形態偵測（並行，輔助提醒） -->
+    <!-- Layer 4 → 5: 主力资金过滤 → K线形态侦测（并行，辅助提醒） -->
     <Link>
       <SourceNodeId>n_smart</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -300,7 +300,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 5 → 6: 新聞攔截 → AI精選（最終裁切 take 5） -->
+    <!-- Layer 5 → 6: 新闻拦截 → AI精选（最终裁切 take 5） -->
     <Link>
       <SourceNodeId>n_newsguard</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -308,7 +308,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 6 → 7: AI精選 → 買入訂單生成 -->
+    <!-- Layer 6 → 7: AI精选 → 买入订单生成 -->
     <Link>
       <SourceNodeId>n_ai</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -316,7 +316,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 0 → 7: 大盤分析 → 買入訂單生成（自適應參數注入，空頭防守） -->
+    <!-- Layer 0 → 7: 大盘分析 → 买入订单生成（自适应参数注入，空头防守） -->
     <Link>
       <SourceNodeId>n_adaptive</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -324,7 +324,7 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 7 → 8: 買入訂單生成 → 持倉合併 -->
+    <!-- Layer 7 → 8: 买入订单生成 → 持仓合并 -->
     <Link>
       <SourceNodeId>n_orders</SourceNodeId>
       <SourcePortId>0</SourcePortId>

@@ -190,7 +190,7 @@ abstract class QuantFragmentBase : Fragment() {
 
         // ── 1. 📈建仓（2汉字=4单位，权重4） ──
         buildBtn = Button(requireContext()).apply {
-            text = "📈建仓"
+            text = getString(com.chin.stockanalysis.R.string.btn_build_position)
             textSize = 10f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#E65100"))
@@ -216,7 +216,7 @@ abstract class QuantFragmentBase : Fragment() {
 
         // ── 3. 💰买卖评估 ▾（4汉字+▾=9单位，权重5） ──
         tTradeBtn = Button(requireContext()).apply {
-            text = "💰买卖评估 ▾"
+            text = getString(com.chin.stockanalysis.R.string.btn_trade_eval)
             textSize = 10f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#BF360C"))
@@ -229,7 +229,7 @@ abstract class QuantFragmentBase : Fragment() {
 
         // ── 4. 📦持仓（2汉字=4单位，权重4） ──
         val holdingBtn = Button(requireContext()).apply {
-            text = "📦持仓"
+            text = getString(com.chin.stockanalysis.R.string.btn_holdings_label)
             textSize = 10f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#1565C0"))
@@ -242,7 +242,7 @@ abstract class QuantFragmentBase : Fragment() {
 
         // ── 5. 📊报告（2汉字=4单位，权重4） ──
         val reportBtn = Button(requireContext()).apply {
-            text = "📊报告"
+            text = getString(com.chin.stockanalysis.R.string.btn_report_label)
             textSize = 10f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#455A64"))
@@ -259,7 +259,10 @@ abstract class QuantFragmentBase : Fragment() {
     /** 根据 A 股交易时段更新建仓按钮文字（交易时间=建仓，非交易时间=选股） */
     protected fun updateBuildButtonText() {
         val isTrading = com.chin.stockanalysis.stock.database.ChinaMarketTradingHours.a股是否交易中()
-        buildBtn?.text = if (isTrading) "📈建仓" else "📈选股"
+        buildBtn?.text = if (isTrading)
+            getString(com.chin.stockanalysis.R.string.btn_build_position)
+        else
+            getString(com.chin.stockanalysis.R.string.btn_stock_picking)
     }
 
     override fun onResume() {

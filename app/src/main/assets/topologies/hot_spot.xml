@@ -1,21 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  ## 熱點驅動短線拓撲
+  ## 热点驱动短线拓扑
 
-  流程：熱門板塊源 → 動量過濾 → 新聞過濾 → 主力資金過濾 → 評分排序 → 輸出
+  流程：热门板块源 → 动量过滤 → 新闻过滤 → 主力资金过滤 → 评分排序 → 输出
 
-  適用場景：追蹤今日熱門板塊，從成分股中篩選動量+新聞+主力資金共振個股。
+  适用场景：追踪今日热门板块，从成分股中筛选动量+新闻+主力资金共振个股。
 -->
-<topology id="hot_spot" name="熱點驅動短線" description="從熱門板塊成分股中篩選動量+新聞+主力資金共振個股" version="1">
+<topology id="hot_spot" name="热点驱动短线" description="从热门板块成分股中筛选动量+新闻+主力资金共振个股" version="1">
     <nodes>
-        <node id="hs_source" module="hot_sector_source" displayName="熱門板塊源">
+        <node id="hs_source" module="hot_sector_source" displayName="热门板块源">
             <position x="50" y="150" />
             <config>
                 <param name="sectorCount" value="3" />
                 <param name="minChangePercent" value="1.0" />
             </config>
         </node>
-        <node id="hs_momentum" module="momentum_filter" displayName="動量過濾">
+        <node id="hs_momentum" module="momentum_filter" displayName="动量过滤">
             <position x="280" y="150" />
             <config>
                 <param name="minChangePercent" value="2.0" />
@@ -23,26 +23,26 @@
                 <param name="priceAboveOpen" value="true" />
             </config>
         </node>
-        <node id="hs_news_filter" module="news_filter" displayName="新聞過濾">
+        <node id="hs_news_filter" module="news_filter" displayName="新闻过滤">
             <position x="510" y="150" />
             <config>
                 <param name="minImpactStrength" value="30" />
                 <param name="sentimentMode" value="POSITIVE_ONLY" />
             </config>
         </node>
-        <node id="hs_smart_money" module="smart_money_filter" displayName="主力資金過濾">
+        <node id="hs_smart_money" module="smart_money_filter" displayName="主力资金过滤">
             <position x="740" y="150" />
             <config>
                 <param name="minScore" value="50" />
             </config>
         </node>
-        <node id="hs_score_sort" module="score_sort" displayName="評分排序">
+        <node id="hs_score_sort" module="score_sort" displayName="评分排序">
             <position x="970" y="150" />
             <config>
                 <param name="maxOutput" value="10" />
             </config>
         </node>
-        <node id="hs_output" module="result_output_sink" displayName="結果輸出">
+        <node id="hs_output" module="result_output_sink" displayName="结果输出">
             <position x="1200" y="150" />
         </node>
     </nodes>

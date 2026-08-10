@@ -131,4 +131,16 @@
     <string name="title_short_system">🤖 단기 퀀트 (Zipline + AI)</string>
     <string name="title_mid_system">🤖 중기 퀀트 (가치투자, 1-6개월)</string>
     <string name="title_long_system">💎 장기 퀀트 (가치투자, 6개월-1년+)</string>
+
+    <!-- 주식 탭 -->
+    <string name="stock_tab_hot">🔥 인기</string>
+    <string name="stock_tab_picks">📊 종목</string>
+    <string name="stock_tab_news">📰 뉴스</string>
+
+    <!-- 전략 버튼 -->
+    <string name="btn_build_position">📈구축</string>
+    <string name="btn_stock_picking">📈선정</string>
+    <string name="btn_trade_eval">💰매매 ▾</string>
+    <string name="btn_holdings_label">📦보유</string>
+    <string name="btn_report_label">📊보고</string>
 </resources>

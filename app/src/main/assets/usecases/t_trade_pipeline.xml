@@ -2,40 +2,40 @@
 <!--
   ## 做T/反T DAG Pipeline v2
 
-  核心: 日K讀機構意圖 + 外盤情緒 + 板塊實時新聞
+  核心: 日K读机构意图 + 外盘情绪 + 板块实时新闻
 
-  共 12 個 Node（7 複用 + 5 新建）:
-    Layer 0 (並行): bg_manager[複用], adaptive_params[複用], t_trade_import[新]
-    Layer 1 (並行): t_holdings_load[新], market_context[複用], zipline_factor[複用]
-    Layer 2 (並行): t_inst_intent[新], candle_pattern[複用], news_strength[複用], news_guard[複用]
+  共 12 个 Node（7 复用 + 5 新建）:
+    Layer 0 (并行): bg_manager[复用], adaptive_params[复用], t_trade_import[新]
+    Layer 1 (并行): t_holdings_load[新], market_context[复用], zipline_factor[复用]
+    Layer 2 (并行): t_inst_intent[新], candle_pattern[复用], news_strength[复用], news_guard[复用]
     Layer 3:        t_signal_synthesize[新]（聚合）
     Layer 4:        t_recommend_save[新]
 -->
-<DagPipeline id="t_trade_dag" name="做T決策DAG Pipeline"
-    description="日K機構意圖+外盤情緒+板塊新聞→做T/反T決策">
+<DagPipeline id="t_trade_dag" name="做T决策DAG Pipeline"
+    description="日K机构意图+外盘情绪+板块新闻→做T/反T决策">
 
   <NodeList>
-    <!-- Layer 0: 基礎設施 -->
-    <Node id="t_bg" name="後臺暫停/恢復" module="bg_manager" />
-    <Node id="t_adaptive" name="大盤分析+外盤+自適應" module="adaptive_params" />
-    <Node id="t_import" name="交易日檢查" module="t_trade_import" />
+    <!-- Layer 0: 基础设施 -->
+    <Node id="t_bg" name="后台暂停/恢复" module="bg_manager" />
+    <Node id="t_adaptive" name="大盘分析+外盘+自适应" module="adaptive_params" />
+    <Node id="t_import" name="交易日检查" module="t_trade_import" />
 
-    <!-- Layer 1: 持倉載入 + 技術指標 -->
-    <Node id="t_hold" name="持倉載入+日K數據" module="t_holdings_load" />
-    <Node id="t_mctx" name="板塊上下文" module="market_context" />
-    <Node id="t_zf" name="技術因子(RSI/BOLL/ATR)" module="zipline_factor" />
+    <!-- Layer 1: 持仓载入 + 技术指标 -->
+    <Node id="t_hold" name="持仓载入+日K数据" module="t_holdings_load" />
+    <Node id="t_mctx" name="板块上下文" module="market_context" />
+    <Node id="t_zf" name="技术因子(RSI/BOLL/ATR)" module="zipline_factor" />
 
-    <!-- Layer 2: 三大核心分析（並行） -->
-    <Node id="t_inst" name="日K機構意圖判斷" module="t_inst_intent" />
-    <Node id="t_kline" name="K線形態識別" module="candle_pattern" />
-    <Node id="t_news" name="新聞熱度" module="news_strength" />
-    <Node id="t_nguard" name="新聞黑名單過濾" module="news_guard" />
+    <!-- Layer 2: 三大核心分析（并行） -->
+    <Node id="t_inst" name="日K机构意图判断" module="t_inst_intent" />
+    <Node id="t_kline" name="K线形态识别" module="candle_pattern" />
+    <Node id="t_news" name="新闻热度" module="news_strength" />
+    <Node id="t_nguard" name="新闻黑名单过滤" module="news_guard" />
 
-    <!-- Layer 3: 信號合成（聚合） -->
-    <Node id="t_synth" name="交叉驗證+置信度評分" module="t_signal_synthesize" />
+    <!-- Layer 3: 信号合成（聚合） -->
+    <Node id="t_synth" name="交叉验证+置信度评分" module="t_signal_synthesize" />
 
     <!-- Layer 4: 保存 -->
-    <Node id="t_save" name="建議保存+追蹤結算" module="t_recommend_save" />
+    <Node id="t_save" name="建议保存+追踪结算" module="t_recommend_save" />
   </NodeList>
 
   <Links>
@@ -51,7 +51,7 @@
     <Link source="t_mctx" target="t_news" />
     <Link source="t_mctx" target="t_nguard" />
 
-    <!-- Layer 2 → 3: 信號合成（聚合所有上游） -->
+    <!-- Layer 2 → 3: 信号合成（聚合所有上游） -->
     <Link source="t_inst" target="t_synth" />
     <Link source="t_kline" target="t_synth" />
     <Link source="t_news" target="t_synth" />

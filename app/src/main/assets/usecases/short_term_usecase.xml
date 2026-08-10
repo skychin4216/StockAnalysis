@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  ## 短線量化 UseCase
+  ## 短线量化 UseCase
 
-  持倉 1 天~2 週，技術面為主，資金情緒脈衝。
-  流程：市場上下文→多周期熱門→股票池→策略篩選+熱度→板塊加權→AI精選→主力過濾→新聞攔截→訂單生成→持倉合併/騰龍換鳥/擬合保存
+  持仓 1 天~2 周，技术面为主，资金情绪脉冲。
+  流程：市场上下文→多周期热门→股票池→策略筛选+热度→板块加权→AI精选→主力过滤→新闻拦截→订单生成→持仓合并/腾龙换鸟/拟合保存
 -->
-<usecase id="short_term" name="短線量化">
-  <description>市場上下文→多周期熱門→股票池→策略篩選+熱度→板塊加權→AI精選→主力過濾→新聞攔截→訂單生成→持倉合併/騰龍換鳥/擬合保存</description>
+<usecase id="short_term" name="短线量化">
+  <description>市场上下文→多周期热门→股票池→策略筛选+热度→板块加权→AI精选→主力过滤→新闻拦截→订单生成→持仓合并/腾龙换鸟/拟合保存</description>
   <steps>
-    <pipeline ref="usecases/short_term_pipeline.xml" name="短線DAG流程" />
+    <pipeline ref="usecases/short_term_pipeline.xml" name="短线DAG流程" />
   </steps>
   <config>
     <param name="orderType" value="ShortTermQuant" />
