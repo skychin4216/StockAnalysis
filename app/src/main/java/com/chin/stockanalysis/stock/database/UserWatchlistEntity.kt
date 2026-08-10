@@ -3,7 +3,7 @@ package com.chin.stockanalysis.stock.database
 import androidx.room.*
 
 /**
- * 用戶自選股（策略精選 → 後臺監控買賣點 → 自動交易）
+ * 用户自选股（策略精选 → 后台监控买卖点 → 自动交易）
  */
 @Entity(tableName = "user_watchlist", indices = [Index(value = ["stock_code"], unique = true)])
 data class UserWatchlistEntity(

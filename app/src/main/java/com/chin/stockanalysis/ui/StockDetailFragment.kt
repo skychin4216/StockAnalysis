@@ -106,19 +106,19 @@ class StockDetailFragment : Fragment() {
     private var initialSector = ""
     private var autoExpandAi = true
 
-    // K 線圖時間範圍狀態
+    // K 线图时间范围状态
     private var allKlineSnaps: List<DailySnapshotEntity> = emptyList()
-    private var klineRangeDays = 90  // 默認顯示近3月
-    private lateinit var klineContentContainer: LinearLayout  // K線專用容器，按鈕切換時只清空此容器
-    private var klineTabIndex = 0  // 0=個股, 1=上證指數, 2=科創50, 3=創業板指
-    private val klineTabLabels = arrayOf("個股", "上證", "科創", "創業")
+    private var klineRangeDays = 90  // 默认显示近3月
+    private lateinit var klineContentContainer: LinearLayout  // K线专用容器，按钮切换时只清空此容器
+    private var klineTabIndex = 0  // 0=个股, 1=上证指数, 2=科创50, 3=创业板指
+    private val klineTabLabels = arrayOf("个股", "上证", "科创", "创业")
     private val klineIndexCodes = arrayOf("", "sh000001", "sh000688", "sz399006")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         arguments?.let {
             val rawCode = it.getString(ARG_STOCK_CODE, "")
-            // 解析中文名稱 → 代碼（如 "兆易創新" → "603986"）
+            // 解析中文名称 → 代码（如 "兆易创新" → "603986"）
             val resolvedCode = com.chin.stockanalysis.ai.StockEntityExtractor.resolveSync(rawCode) ?: rawCode
             stockCode = StockAnalysisAgent.normalizeStockCode(resolvedCode)
             stockName = it.getString(ARG_STOCK_NAME, "")
@@ -159,11 +159,11 @@ class StockDetailFragment : Fragment() {
         contentScrollView.addView(contentContainer)
         root.addView(contentScrollView)
 
-        // 加載數據
+        // 加载数据
         loadDetailData()
         loadMarketRisk()
 
-        // 自動展開 AI 分析區（跳過簡單頁面，直接顯示 K 線+評級+分析按鈕）
+        // 自动展开 AI 分析区（跳过简单页面，直接显示 K 线+评级+分析按钮）
         if (autoExpandAi) {
             aiExpanded = true
             root.findViewWithTag<TextView>("aiHeaderBtn")?.text = "🤖 AI分析 ⌯"
@@ -173,21 +173,21 @@ class StockDetailFragment : Fragment() {
             }
         }
 
-        // 攔截返回鍵：AI 結果顯示時先收起，再按才退出
+        // 拦截返回键：AI 结果显示时先收起，再按才退出
         requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (aiResultScrollView.visibility == View.VISIBLE) {
-                    // AI 結果可見 → 收起結果，回到 K 線+評級
+                    // AI 结果可见 → 收起结果，回到 K 线+评级
                     aiResultScrollView.visibility = View.GONE
                     contentScrollView.visibility = View.VISIBLE
                     aiDetailScrollView.visibility = View.VISIBLE
                 } else if (aiExpanded) {
-                    // AI 展開區可見 → 收起
+                    // AI 展开区可见 → 收起
                     aiExpanded = false
                     aiDetailScrollView.visibility = View.GONE
                     aiResultScrollView.visibility = View.GONE
                     root.findViewWithTag<TextView>("aiHeaderBtn")?.text = "🤖 AI分析 ⌵"
-                    // 恢復分析按鈕狀態
+                    // 恢复分析按钮状态
                     root.findViewWithTag<Button>("btnRunAi")?.let {
                         it.isEnabled = true
                         it.text = "🤖 V1.0深度分析"
@@ -198,7 +198,7 @@ class StockDetailFragment : Fragment() {
                     }
                 } else {
                     // 都已收起 → 正常退出
-                    aiAnalysisJob?.cancel()  // 取消正在進行的分析
+                    aiAnalysisJob?.cancel()  // 取消正在进行的分析
                     isEnabled = false
                     requireActivity().onBackPressed()
                 }
@@ -216,25 +216,25 @@ class StockDetailFragment : Fragment() {
             elevation = 2f
         }
 
-        // 標題行：名稱 + 價格(小字靠右) + AI 按鈕
+        // 标题行：名称 + 价格(小字靠右) + AI 按钮
         val titleRow = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
 
-        // 左側：名稱（左） + 價格（名稱右邊，小字）
+        // 左侧：名称（左） + 价格（名称右边，小字）
         val namePriceCol = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
         }
-        // 股票名稱
+        // 股票名称
         namePriceCol.addView(TextView(requireContext()).apply {
             text = stockName
             textSize = 20f; setTextColor(Color.parseColor("#1A1A2E"))
             setTypeface(null, Typeface.BOLD)
         })
-        // 價格（名稱右邊，小字）
+        // 价格（名称右边，小字）
         namePriceCol.addView(TextView(requireContext()).apply {
             tag = "tvPrice"
             text = if (initialPrice > 0) " ¥${String.format("%.2f", initialPrice)}" else ""
@@ -242,7 +242,7 @@ class StockDetailFragment : Fragment() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(8, 0, 0, 0)
         })
-        // 漲跌幅（更小字）
+        // 涨跌幅（更小字）
         namePriceCol.addView(TextView(requireContext()).apply {
             tag = "tvChangePct"
             val sign = if (initialChangePct >= 0) "+" else ""
@@ -253,7 +253,7 @@ class StockDetailFragment : Fragment() {
         })
         titleRow.addView(namePriceCol)
 
-        // 右側：AI 分析按鈕
+        // 右侧：AI 分析按钮
         val aiBtn = TextView(requireContext()).apply {
             tag = "aiHeaderBtn"
             text = "🤖 AI分析 ⌵"
@@ -283,7 +283,7 @@ class StockDetailFragment : Fragment() {
         titleRow.addView(aiBtn)
         headerCard.addView(titleRow)
 
-        // 代碼 + 板塊標籤行
+        // 代码 + 板块标签行
         val codeSectorRow = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -294,7 +294,7 @@ class StockDetailFragment : Fragment() {
             text = stockCode.takeLast(6)
             textSize = 11f; setTextColor(Color.parseColor("#999999"))
         })
-        // 板塊標籤
+        // 板块标签
         if (initialSector.isNotEmpty()) {
             codeSectorRow.addView(createTagChip(initialSector, "#1565C0"))
         }
@@ -321,7 +321,7 @@ class StockDetailFragment : Fragment() {
         root.addView(statusBar)
     }
 
-    /** 大盤風險提示條（初始隱藏，加載數據後顯示） */
+    /** 大盘风险提示条（初始隐藏，加载数据后显示） */
     private fun buildMarketRiskBar() {
         val riskBar = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -329,7 +329,7 @@ class StockDetailFragment : Fragment() {
             setPadding(12, 4, 12, 4)
             setBackgroundColor(Color.parseColor("#FFEBEE"))
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
-            visibility = View.GONE  // 初始隱藏
+            visibility = View.GONE  // 初始隐藏
             tag = "marketRiskBar"
         }
         val riskTv = TextView(requireContext()).apply {
@@ -341,7 +341,7 @@ class StockDetailFragment : Fragment() {
         root.addView(riskBar)
     }
 
-    /** 加載大盤風險狀態（異步，不阻塞 UI） */
+    /** 加载大盘风险状态（异步，不阻塞 UI） */
     private fun loadMarketRisk() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -354,16 +354,16 @@ class StockDetailFragment : Fragment() {
                 val msg = buildString {
                     when (trend.direction) {
                         "BEARISH" -> {
-                            append("⚠️ 大盤下行（強度${trend.strength}/100）")
-                            if (sellType.sellType == "INSTITUTIONAL_EXIT") append(" | 主力撤資中")
-                            else if (sellType.sellType == "QUANT_CRASH") append(" | 量化砸盤")
-                            append(" — 建議降低倉位，關注防禦板塊")
+                            append("⚠️ 大盘下行（强度${trend.strength}/100）")
+                            if (sellType.sellType == "INSTITUTIONAL_EXIT") append(" | 主力撤资中")
+                            else if (sellType.sellType == "QUANT_CRASH") append(" | 量化砸盘")
+                            append(" — 建议降低仓位，关注防御板块")
                         }
                         "OSCILLATION" -> {
-                            if (trend.strength > 40) append("⚡ 大盤震蕩加劇（強度${trend.strength}） — 控制倉位")
-                            else append("📊 大盤震蕩（強度${trend.strength}） — 輕倉操作")
+                            if (trend.strength > 40) append("⚡ 大盘震荡加剧（强度${trend.strength}） — 控制仓位")
+                            else append("📊 大盘震荡（强度${trend.strength}） — 轻仓操作")
                         }
-                        else -> return@launch // BULLISH 不顯示風險條
+                        else -> return@launch // BULLISH 不显示风险条
                     }
                 }
 
@@ -373,7 +373,7 @@ class StockDetailFragment : Fragment() {
                     if (riskBar != null && riskTv != null) {
                         riskTv.text = msg
                         riskBar.visibility = View.VISIBLE
-                        // 根據風險等級設置背景色
+                        // 根据风险等级设置背景色
                         riskBar.setBackgroundColor(when (trend.direction) {
                             "BEARISH" -> Color.parseColor("#FFCDD2")
                             else -> Color.parseColor("#FFF3E0")
@@ -381,20 +381,20 @@ class StockDetailFragment : Fragment() {
                     }
                 }
             } catch (_: Exception) {
-                // 大盤風險加載失敗不影響頁面
+                // 大盘风险加载失败不影响页面
             }
         }
     }
 
-    /** 動態更新 header 中的板塊標籤（loadDetailData 獲取板塊後回調） */
+    /** 动态更新 header 中的板块标签（loadDetailData 获取板块后回调） */
     private fun updateHeaderSectorTags(sectors: List<String>, subSector: String) {
         val codeSectorRow = root.findViewWithTag<LinearLayout>("codeSectorRow")
             ?: return
-        // 移除舊板塊標籤（保留第一個 TextView 即股票代碼）
+        // 移除旧板块标签（保留第一个 TextView 即股票代码）
         while (codeSectorRow.childCount > 1) {
             codeSectorRow.removeViewAt(codeSectorRow.childCount - 1)
         }
-        // 添加新板塊標籤
+        // 添加新板块标签
         if (subSector.isNotEmpty() && subSector != "-") {
             codeSectorRow.addView(createTagChip(subSector, "#E65100"))
         }
@@ -405,16 +405,16 @@ class StockDetailFragment : Fragment() {
         }
     }
 
-    // ── AI 分析展開區域 ──
+    // ── AI 分析展开区域 ──
     private var aiExpanded = false
     private var aiContentAdded = false
-    private lateinit var aiDetailContainer: LinearLayout  // K線+機構評級
-    private lateinit var aiDetailScrollView: ScrollView   // K線+機構評級的滾動容器
-    private lateinit var aiResultContainer: LinearLayout   // AI Agent 分析結果
-    private lateinit var aiResultScrollView: ScrollView     // AI 結果的滾動容器
+    private lateinit var aiDetailContainer: LinearLayout  // K线+机构评级
+    private lateinit var aiDetailScrollView: ScrollView   // K线+机构评级的滚动容器
+    private lateinit var aiResultContainer: LinearLayout   // AI Agent 分析结果
+    private lateinit var aiResultScrollView: ScrollView     // AI 结果的滚动容器
 
     private fun buildAiAnalysisSection() {
-        // 容器 1：K線走勢 + 機構評級（外層 ScrollView 確保可以滾動）
+        // 容器 1：K线走势 + 机构评级（外层 ScrollView 确保可以滚动）
         aiDetailScrollView = ScrollView(requireContext()).apply {
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f)
             visibility = View.GONE
@@ -429,8 +429,8 @@ class StockDetailFragment : Fragment() {
         aiDetailScrollView.addView(aiDetailContainer)
         root.addView(aiDetailScrollView)
 
-        // 容器 2：AI Agent 分析結果（用戶點擊「運行AI分析」後顯示，替換容器1）
-        // 外層 ScrollView 確保長文本可以滾動
+        // 容器 2：AI Agent 分析结果（用户点击「运行AI分析」后显示，替换容器1）
+        // 外层 ScrollView 确保长文本可以滚动
         aiResultScrollView = ScrollView(requireContext()).apply {
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f)
             visibility = View.GONE
@@ -445,7 +445,7 @@ class StockDetailFragment : Fragment() {
         aiResultScrollView.addView(aiResultContainer)
         root.addView(aiResultScrollView)
 
-        // 底部按鈕行：V1.0 / V2.0 / 向AI追問（立即顯示，不等待 K 線加載）
+        // 底部按钮行：V1.0 / V2.0 / 向AI追问（立即显示，不等待 K 线加载）
         val btnRow = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -479,19 +479,19 @@ class StockDetailFragment : Fragment() {
             }
         })
         btnRow.addView(Button(requireContext()).apply {
-            text = "💬 向AI追問"
+            text = "💬 向AI追问"
             textSize = 9f; setTextColor(Color.parseColor("#1565C0"))
             setBackgroundColor(Color.parseColor("#E3F2FD"))
             setPadding(12, 4, 12, 4)
             minimumHeight = 0; minHeight = 0
             setOnClickListener {
                 val today = java.time.LocalDate.now()
-                val msg = "請使用【最新交易日（${today}）的實時行情數據】，詳細分析股票 $stockName($stockCode) 的投資價值，包括：\n" +
-                    "1. 基本面分析（財報、估值、業績）\n" +
-                    "2. 技術面分析（K線走勢、支撐阻力位）\n" +
-                    "3. 資金面分析（主力資金流向、機構動態）\n" +
-                    "4. 風險評估與投資建議\n" +
-                    "請嚴格基於實時數據分析，不要使用訓練數據中的舊價格。"
+                val msg = "请使用【最新交易日（${today}）的实时行情数据】，详细分析股票 $stockName($stockCode) 的投资价值，包括：\n" +
+                    "1. 基本面分析（财报、估值、业绩）\n" +
+                    "2. 技术面分析（K线走势、支撑阻力位）\n" +
+                    "3. 资金面分析（主力资金流向、机构动态）\n" +
+                    "4. 风险评估与投资建议\n" +
+                    "请严格基于实时数据分析，不要使用训练数据中的旧价格。"
                 val mainActivity = activity as? com.chin.stockanalysis.ui.MainActivity
                 if (mainActivity != null) {
                     activity?.supportFragmentManager?.popBackStack()
@@ -504,12 +504,12 @@ class StockDetailFragment : Fragment() {
 
     private fun toggleAiAnalysis() {
         aiExpanded = !aiExpanded
-        // 更新標題行 AI 按鈕的箭頭
+        // 更新标题行 AI 按钮的箭头
         root.findViewWithTag<TextView>("aiHeaderBtn")?.text =
             if (aiExpanded) "🤖 AI分析 ⌯" else "🤖 AI分析 ⌵"
 
         if (aiExpanded) {
-            // 展開：優先顯示 K線 + 機構評級
+            // 展开：优先显示 K线 + 机构评级
             aiResultScrollView.visibility = View.GONE
             aiDetailScrollView.visibility = View.VISIBLE
             if (aiDetailContainer.childCount == 0) {
@@ -521,7 +521,7 @@ class StockDetailFragment : Fragment() {
         }
     }
 
-    /** 構建真正的 K 線圖表（CombinedChart = K線 + 均線 + 坐標軸） */
+    /** 构建真正的 K 线图表（CombinedChart = K线 + 均线 + 坐标轴） */
     private fun buildCandleStickChart(snaps: List<DailySnapshotEntity>): CombinedChart {
         val chart = CombinedChart(requireContext())
         chart.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dpToPx(280))
@@ -531,59 +531,59 @@ class StockDetailFragment : Fragment() {
         chart.legend.textSize = 9f
         chart.legend.textColor = Color.parseColor("#666666")
         chart.setScaleEnabled(true)
-        chart.setPinchZoom(true)       // 雙指縮放
-        chart.setDragEnabled(true)     // 拖動平移
-        chart.setDoubleTapToZoomEnabled(true)  // 雙擊縮放
-        chart.setHighlightPerTapEnabled(true)  // 點擊高亮
-        chart.setHighlightPerDragEnabled(true) // 拖動時持續顯示十字光標
-        chart.setVisibleXRangeMaximum(250f)  // 最多可見 250 根（1年）
-        chart.setVisibleXRangeMinimum(15f)   // 最少可見 15 根，防止過度放大
+        chart.setPinchZoom(true)       // 双指缩放
+        chart.setDragEnabled(true)     // 拖动平移
+        chart.setDoubleTapToZoomEnabled(true)  // 双击缩放
+        chart.setHighlightPerTapEnabled(true)  // 点击高亮
+        chart.setHighlightPerDragEnabled(true) // 拖动时持续显示十字光标
+        chart.setVisibleXRangeMaximum(250f)  // 最多可见 250 根（1年）
+        chart.setVisibleXRangeMinimum(15f)   // 最少可见 15 根，防止过度放大
         chart.drawOrder = arrayOf(
             CombinedChart.DrawOrder.CANDLE,
             CombinedChart.DrawOrder.LINE
         )
-        // 定位到最新數據（右側）
+        // 定位到最新数据（右侧）
         if (snaps.size > 60) {
             chart.moveViewToX((snaps.size - 60).toFloat())
         } else {
             chart.moveViewToX(0f)
         }
 
-        // 數據
+        // 数据
         val entries = ArrayList<CandleEntry>()
         for (i in snaps.indices) {
             val s = snaps[i]
             entries.add(CandleEntry(
                 i.toFloat(),
-                s.high.toFloat(),       // shadow (上影線)
-                s.low.toFloat(),        // shadow (下影線)
+                s.high.toFloat(),       // shadow (上影线)
+                s.low.toFloat(),        // shadow (下影线)
                 s.open.toFloat(),       // open
                 s.close.toFloat()       // close
             ))
         }
-        val candleDataSet = CandleDataSet(entries, "K線").apply {
+        val candleDataSet = CandleDataSet(entries, "K线").apply {
             color = Color.parseColor("#333333")
             shadowColor = Color.parseColor("#999999")
             shadowWidth = 1f
             increasingPaintStyle = android.graphics.Paint.Style.FILL
             decreasingPaintStyle = android.graphics.Paint.Style.FILL
-            increasingColor = Color.parseColor("#E53935")  // 漲紅
-            decreasingColor = Color.parseColor("#43A047")  // 跌綠
+            increasingColor = Color.parseColor("#E53935")  // 涨红
+            decreasingColor = Color.parseColor("#43A047")  // 跌绿
             valueTextSize = 9f
             isHighlightEnabled = true
             setDrawValues(false)
-            // 十字光標：虛線
+            // 十字光标：虚线
             setDrawHighlightIndicators(true)
             setHighLightColor(Color.parseColor("#999999"))
             setHighlightLineWidth(1f)
-            enableDashedHighlightLine(8f, 4f, 0f)  // 虛線：實線8px 間隙4px
+            enableDashedHighlightLine(8f, 4f, 0f)  // 虚线：实线8px 间隙4px
         }
 
-        // 均線計算
+        // 均线计算
         val closes = snaps.map { it.close }
         val lineData = LineData()
 
-        // MA5 均線
+        // MA5 均线
         val ma5Entries = calcMA(closes, 5, snaps)
         if (ma5Entries.isNotEmpty()) {
             lineData.addDataSet(LineDataSet(ma5Entries, "MA5").apply {
@@ -595,7 +595,7 @@ class StockDetailFragment : Fragment() {
             })
         }
 
-        // MA10 均線
+        // MA10 均线
         val ma10Entries = calcMA(closes, 10, snaps)
         if (ma10Entries.isNotEmpty()) {
             lineData.addDataSet(LineDataSet(ma10Entries, "MA10").apply {
@@ -607,7 +607,7 @@ class StockDetailFragment : Fragment() {
             })
         }
 
-        // MA20 均線
+        // MA20 均线
         val ma20Entries = calcMA(closes, 20, snaps)
         if (ma20Entries.isNotEmpty()) {
             lineData.addDataSet(LineDataSet(ma20Entries, "MA20").apply {
@@ -619,13 +619,13 @@ class StockDetailFragment : Fragment() {
             })
         }
 
-        // 組合數據：K線 + 均線
+        // 组合数据：K线 + 均线
         val combinedData = com.github.mikephil.charting.data.CombinedData()
         combinedData.setData(CandleData(candleDataSet))
         combinedData.setData(lineData)
         chart.data = combinedData
 
-        // X 軸：日期
+        // X 轴：日期
         chart.xAxis.apply {
             position = XAxis.XAxisPosition.BOTTOM
             granularity = 1f
@@ -640,7 +640,7 @@ class StockDetailFragment : Fragment() {
             }
         }
 
-        // Y 軸
+        // Y 轴
         chart.axisLeft.apply {
             textSize = 9f
             textColor = Color.parseColor("#999999")
@@ -653,7 +653,7 @@ class StockDetailFragment : Fragment() {
         }
         chart.axisRight.isEnabled = false
 
-        // ── 十字光標彈窗（點擊/拖動時顯示日期+開高低收） ──
+        // ── 十字光标弹窗（点击/拖动时显示日期+开高低收） ──
         val marker = object : MarkerView(requireContext(), android.R.layout.simple_list_item_1) {
             private val tv: TextView = findViewById(android.R.id.text1)
             private val dp = resources.displayMetrics.density
@@ -677,7 +677,7 @@ class StockDetailFragment : Fragment() {
                         val sign = if (pct >= 0) "+" else ""
                         " $sign${"%.2f".format(pct)}%"
                     } else ""
-                    tv.text = "$date\n開${"%.2f".format(e.open)} 高${"%.2f".format(e.high)}\n低${"%.2f".format(e.low)} 收${"%.2f".format(e.close)}$change"
+                    tv.text = "$date\n开${"%.2f".format(e.open)} 高${"%.2f".format(e.high)}\n低${"%.2f".format(e.low)} 收${"%.2f".format(e.close)}$change"
                 } else if (e != null) {
                     tv.text = "%.2f".format(e.y)
                 }
@@ -685,19 +685,19 @@ class StockDetailFragment : Fragment() {
             }
 
             override fun getOffset(): MPPointF {
-                // 彈窗顯示在觸摸點上方居中
+                // 弹窗显示在触摸点上方居中
                 return MPPointF.getInstance(-(width / 2f), -(height + 6 * dp))
             }
 
             override fun getOffsetForDrawingAtPoint(posX: Float, posY: Float): MPPointF {
                 val offset = getOffset()
-                // 如果彈窗超出右邊界，向左偏移
+                // 如果弹窗超出右边界，向左偏移
                 val adjustedX = when {
                     posX + offset.x + width > chart.width -> -(posX + width - chart.width + 4 * dp)
                     posX + offset.x < 0 -> -posX + 4 * dp
                     else -> offset.x
                 }
-                // 如果彈窗超出頂部，改為顯示在下方
+                // 如果弹窗超出顶部，改为显示在下方
                 val adjustedY = if (posY + offset.y < 0) 6 * dp else offset.y
                 return MPPointF.getInstance(adjustedX, adjustedY)
             }
@@ -709,15 +709,15 @@ class StockDetailFragment : Fragment() {
     }
 
     /**
-     * 渲染 K 線圖區塊（標題 + 時間範圍按鈕 + 圖表 + MA 簡評）
-     * 根據 allKlineSnaps 和 klineRangeDays 動態裁剪數據並重建圖表
+     * 渲染 K 线图区块（标题 + 时间范围按钮 + 图表 + MA 简评）
+     * 根据 allKlineSnaps 和 klineRangeDays 动态裁剪数据并重建图表
      */
     private fun renderKlineChart() {
         if (allKlineSnaps.isEmpty()) return
-        // 清空 K 線專用容器（不影響後續評級內容）
+        // 清空 K 线专用容器（不影响后续评级内容）
         klineContentContainer.removeAllViews()
 
-        // ── 按選擇的時間範圍裁剪數據 ──
+        // ── 按选择的时间范围裁剪数据 ──
         val displaySnaps = if (klineRangeDays <= 0) {
             allKlineSnaps  // 全部
         } else {
@@ -726,14 +726,14 @@ class StockDetailFragment : Fragment() {
 
         if (displaySnaps.size < 2) {
             klineContentContainer.addView(TextView(requireContext()).apply {
-                text = "所選範圍數據不足"
+                text = "所选范围数据不足"
                 textSize = 11f; setTextColor(Color.parseColor("#999999"))
                 setPadding(0, 0, 0, 8)
             })
             return
         }
 
-        // ── Tab 切換行（個股/上證/科創/創業） ──
+        // ── Tab 切换行（个股/上证/科创/创业） ──
         val tabRow = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -753,12 +753,12 @@ class StockDetailFragment : Fragment() {
                 setOnClickListener {
                     if (klineTabIndex == i) return@setOnClickListener
                     klineTabIndex = i
-                    klineRangeDays = 90  // 切換 Tab 時重置為默認範圍
+                    klineRangeDays = 90  // 切换 Tab 时重置为默认范围
                     if (i == 0) {
-                        // 個股：重新從數據庫加載
+                        // 个股：重新从数据库加载
                         switchToStockKline()
                     } else {
-                        // 指數：異步加載
+                        // 指数：异步加载
                         switchToIndexKline(i)
                     }
                 }
@@ -767,7 +767,7 @@ class StockDetailFragment : Fragment() {
         }
         klineContentContainer.addView(tabRow)
 
-        // ── 標題行 ──
+        // ── 标题行 ──
         val rangeLabel = when (klineRangeDays) {
             30 -> "近1月"
             90 -> "近3月"
@@ -776,7 +776,7 @@ class StockDetailFragment : Fragment() {
             0 -> "全部(${allKlineSnaps.size}天)"
             else -> "近${klineRangeDays}日"
         }
-        val tabTitle = if (klineTabIndex == 0) "$stockName 日K線" else "${klineTabLabels[klineTabIndex]}指數 日K線"
+        val tabTitle = if (klineTabIndex == 0) "$stockName 日K线" else "${klineTabLabels[klineTabIndex]}指数 日K线"
         klineContentContainer.addView(TextView(requireContext()).apply {
             text = "## $tabTitle（$rangeLabel · ${displaySnaps.size}根）"
             textSize = 12f; setTextColor(Color.parseColor("#333333"))
@@ -784,7 +784,7 @@ class StockDetailFragment : Fragment() {
             setPadding(0, 0, 0, 4)
         })
 
-        // ── 時間範圍選擇按鈕行 ──
+        // ── 时间范围选择按钮行 ──
         val rangeRow = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -812,20 +812,20 @@ class StockDetailFragment : Fragment() {
                 setOnClickListener {
                     klineRangeDays = rb.days
                     val count = if (klineRangeDays <= 0) allKlineSnaps.size else allKlineSnaps.takeLast(klineRangeDays).size
-                    android.widget.Toast.makeText(requireContext(), "${rb.label}: $count 根K線 / 總計 ${allKlineSnaps.size} 根", android.widget.Toast.LENGTH_SHORT).show()
+                    android.widget.Toast.makeText(requireContext(), "${rb.label}: $count 根K线 / 总计 ${allKlineSnaps.size} 根", android.widget.Toast.LENGTH_SHORT).show()
                     renderKlineChart()
                 }
             }
             rangeRow.addView(btn)
         }
         rangeRow.addView(TextView(requireContext()).apply {
-            text = "  ← 雙指縮放/拖動"
+            text = "  ← 双指缩放/拖动"
             textSize = 8f; setTextColor(Color.parseColor("#AAAAAA"))
             layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
         })
-        // 趨勢圖譜按鈕
+        // 趋势图谱按钮
         rangeRow.addView(TextView(requireContext()).apply {
-            text = " 📐圖譜"
+            text = " 📐图谱"
             textSize = 10f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#7B1FA2"))
@@ -837,11 +837,11 @@ class StockDetailFragment : Fragment() {
         })
         klineContentContainer.addView(rangeRow)
 
-        // ── K 線圖表 ──
+        // ── K 线图表 ──
         val chart = buildCandleStickChart(displaySnaps)
         klineContentContainer.addView(chart)
 
-        // ── 綜合趨勢分析（自動識別，用戶無需自行判斷） ──
+        // ── 综合趋势分析（自动识别，用户无需自行判断） ──
         val trendText = buildTrendAnalysis(displaySnaps)
         klineContentContainer.addView(TextView(requireContext()).apply {
             text = trendText
@@ -850,18 +850,18 @@ class StockDetailFragment : Fragment() {
             setPadding(0, 4, 0, 8)
         })
 
-        // 確保容器重新佈局
+        // 确保容器重新布局
         klineContentContainer.requestLayout()
         klineContentContainer.invalidate()
     }
 
-    /** 切換回個股 K 線 */
+    /** 切换回个股 K 线 */
     private fun switchToStockKline() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val db = StockDatabase.getInstance(requireContext())
                 allKlineSnaps = db.dailySnapshotDao().getByCode(stockCode, 500).sortedBy { it.date }
-                // 數據不足時從網絡補充
+                // 数据不足时从网络补充
                 if (allKlineSnaps.size < 250) {
                     try {
                         val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
@@ -873,22 +873,22 @@ class StockDetailFragment : Fragment() {
                             allKlineSnaps = db.dailySnapshotDao().getByCode(stockCode, 500).sortedBy { it.date }
                         }
                     } catch (e: Exception) {
-                        Log.w(TAG, "網絡補充個股K線失敗: ${e.message}")
+                        Log.w(TAG, "网络补充个股K线失败: ${e.message}")
                     }
                 }
                 withContext(Dispatchers.Main) { renderKlineChart() }
             } catch (e: Exception) {
-                Log.w(TAG, "切換個股K線失敗: ${e.message}")
+                Log.w(TAG, "切换个股K线失败: ${e.message}")
             }
         }
     }
 
-    /** 切換到指數 K 線（異步加載） */
+    /** 切换到指数 K 线（异步加载） */
     private fun switchToIndexKline(tabIndex: Int) {
         val indexCode = klineIndexCodes[tabIndex]
         klineContentContainer.removeAllViews()
         klineContentContainer.addView(TextView(requireContext()).apply {
-            text = "⏳ 正在加載${klineTabLabels[tabIndex]}指數 K 線..."
+            text = "⏳ 正在加载${klineTabLabels[tabIndex]}指数 K 线..."
             textSize = 10f; setTextColor(Color.parseColor("#999999"))
             setPadding(0, 8, 0, 8)
         })
@@ -896,7 +896,7 @@ class StockDetailFragment : Fragment() {
             try {
                 val db = StockDatabase.getInstance(requireContext())
                 var snaps = db.dailySnapshotDao().getByCode(indexCode, 500).sortedBy { it.date }
-                // 如果本地數據不足，從網絡補充
+                // 如果本地数据不足，从网络补充
                 if (snaps.size < 30) {
                     try {
                         val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
@@ -908,7 +908,7 @@ class StockDetailFragment : Fragment() {
                             snaps = db.dailySnapshotDao().getByCode(indexCode, 500).sortedBy { it.date }
                         }
                     } catch (e: Exception) {
-                        Log.w(TAG, "網絡補充指數K線失敗: ${e.message}")
+                        Log.w(TAG, "网络补充指数K线失败: ${e.message}")
                     }
                 }
                 allKlineSnaps = snaps
@@ -918,7 +918,7 @@ class StockDetailFragment : Fragment() {
                     } else {
                         klineContentContainer.removeAllViews()
                         klineContentContainer.addView(TextView(requireContext()).apply {
-                            text = "${klineTabLabels[tabIndex]}指數數據不足（當前${snaps.size}天）"
+                            text = "${klineTabLabels[tabIndex]}指数数据不足（当前${snaps.size}天）"
                             textSize = 11f; setTextColor(Color.parseColor("#999999"))
                             setPadding(0, 8, 0, 8)
                         })
@@ -928,7 +928,7 @@ class StockDetailFragment : Fragment() {
                 withContext(Dispatchers.Main) {
                     klineContentContainer.removeAllViews()
                     klineContentContainer.addView(TextView(requireContext()).apply {
-                        text = "加載失敗: ${e.message}"
+                        text = "加载失败: ${e.message}"
                         textSize = 11f; setTextColor(Color.parseColor("#C62828"))
                         setPadding(0, 8, 0, 8)
                     })
@@ -937,10 +937,10 @@ class StockDetailFragment : Fragment() {
         }
     }
 
-    /** 顯示 K 線趨勢參考圖譜（WebView 加載 assets/trend_charts/index.html） */
+    /** 显示 K 线趋势参考图谱（WebView 加载 assets/trend_charts/index.html） */
     private fun showTrendChartReference() {
         val dialog = android.app.Dialog(requireContext())
-        dialog.setTitle("K 線趨勢參考圖譜")
+        dialog.setTitle("K 线趋势参考图谱")
         val webView = android.webkit.WebView(requireContext())
         dialog.setContentView(webView)
         dialog.window?.setLayout(
@@ -956,14 +956,14 @@ class StockDetailFragment : Fragment() {
             val html = requireContext().assets.open("trend_charts/index.html").bufferedReader().use { it.readText() }
             webView.loadDataWithBaseURL("file:///android_asset/trend_charts/", html, "text/html", "UTF-8", null)
         } catch (e: Exception) {
-            webView.loadData("<html><body><h3>趨勢圖譜加載失敗: ${e.message}</h3></body></html>", "text/html", "UTF-8")
+            webView.loadData("<html><body><h3>趋势图谱加载失败: ${e.message}</h3></body></html>", "text/html", "UTF-8")
         }
         dialog.show()
     }
 
     /**
-     * 綜合趨勢分析 — 自動識別趨勢類型，用戶無需自行判斷
-     * 包含：均線排列、三天不新低、均線粘合向上、綜合趨勢類型
+     * 综合趋势分析 — 自动识别趋势类型，用户无需自行判断
+     * 包含：均线排列、三天不新低、均线粘合向上、综合趋势类型
      */
     private fun buildTrendAnalysis(snaps: List<DailySnapshotEntity>): String {
         val sb = StringBuilder()
@@ -972,7 +972,7 @@ class StockDetailFragment : Fragment() {
         val highs = snaps.map { it.high }
         val currentPrice = closes.last()
 
-        // ── MA 計算 ──
+        // ── MA 计算 ──
         val ma5 = if (closes.size >= 5) closes.takeLast(5).average() else currentPrice
         val ma10 = if (closes.size >= 10) closes.takeLast(10).average() else null
         val ma20 = if (closes.size >= 20) closes.takeLast(20).average() else null
@@ -980,13 +980,13 @@ class StockDetailFragment : Fragment() {
         sb.append("MA5: ${"%.2f".format(ma5)}")
         if (ma10 != null) sb.append(" | MA10: ${"%.2f".format(ma10)}")
         if (ma20 != null) sb.append(" | MA20: ${"%.2f".format(ma20)}")
-        sb.append("\n現價 ${"%.2f".format(currentPrice)}")
+        sb.append("\n现价 ${"%.2f".format(currentPrice)}")
 
-        // ── 1. 均線排列趨勢 ──
+        // ── 1. 均线排列趋势 ──
         val maTrend = if (ma20 != null && ma10 != null) {
             when {
-                currentPrice > ma5 && ma5 > ma10 && ma10 > ma20 -> "多頭排列 ↑↑"
-                currentPrice < ma5 && ma5 < ma10 && ma10 < ma20 -> "空頭排列 ↓↓"
+                currentPrice > ma5 && ma5 > ma10 && ma10 > ma20 -> "多头排列 ↑↑"
+                currentPrice < ma5 && ma5 < ma10 && ma10 < ma20 -> "空头排列 ↓↓"
                 currentPrice > ma20 -> "中期偏多 ↑"
                 else -> "中期偏空 ↓"
             }
@@ -994,20 +994,20 @@ class StockDetailFragment : Fragment() {
         sb.append(" → $maTrend")
 
         // ── 2. 三天不新低 ──
-        // 最近3天的最低價都高於前10天的最低價 = 止跌企穩信號
+        // 最近3天的最低价都高于前10天的最低价 = 止跌企稳信号
         val threeDayNoNewLow = if (lows.size >= 13) {
             val recent3Lows = lows.takeLast(3)
             val prevMinLow = lows.subList(lows.size - 13, lows.size - 3).minOrNull() ?: Double.MAX_VALUE
             recent3Lows.all { it > prevMinLow }
         } else false
-        sb.append("\n三天不新低: ${if (threeDayNoNewLow) "✓ 是（止跌企穩）" else "✗ 否"}")
+        sb.append("\n三天不新低: ${if (threeDayNoNewLow) "✓ 是（止跌企稳）" else "✗ 否"}")
 
-        // ── 3. 均線粘合向上（共用工具） ──
+        // ── 3. 均线粘合向上（共用工具） ──
         val maConvResult = MaConvergenceAnalyzer.analyze(snaps)
         val maConvergingUp = maConvResult.convergedAndUp
-        sb.append(" | 均線粘合向上: ${if (maConvergingUp) "✓ 是（蓄勢突破）" else "✗ 否"} (偏離${"%.2f".format(maConvResult.divergencePct)}%)")
+        sb.append(" | 均线粘合向上: ${if (maConvergingUp) "✓ 是（蓄势突破）" else "✗ 否"} (偏离${"%.2f".format(maConvResult.divergencePct)}%)")
 
-        // ── 4. 近期高低點突破判斷 ──
+        // ── 4. 近期高低点突破判断 ──
         val recentHighBreak = if (highs.size >= 20) {
             val prev20High = highs.subList(0, highs.size - 1).takeLast(20).maxOrNull() ?: 0.0
             currentPrice > prev20High
@@ -1017,48 +1017,48 @@ class StockDetailFragment : Fragment() {
             currentPrice < prev20Low
         } else false
 
-        // ── 5. 綜合趨勢類型（自動判斷，用戶無需自行分析圖形） ──
+        // ── 5. 综合趋势类型（自动判断，用户无需自行分析图形） ──
         val trendType = when {
-            maTrend.contains("多頭排列") && threeDayNoNewLow -> "上升趨勢（強勢）"
-            maTrend.contains("多頭排列") -> "上升趨勢"
-            maConvergingUp && threeDayNoNewLow -> "底部企穩 + 蓄勢突破（關注）"
-            maConvergingUp -> "蓄勢待發（均線粘合）"
-            maTrend.contains("空頭排列") && recentLowBreak -> "下跌趨勢（破位）"
-            maTrend.contains("空頭排列") -> "下跌趨勢"
-            threeDayNoNewLow && maTrend.contains("偏多") -> "震盪偏多（企穩）"
-            threeDayNoNewLow -> "底部企穩（待確認）"
-            maTrend.contains("偏多") -> "震盪偏多"
-            maTrend.contains("偏空") -> "震盪偏空"
-            recentHighBreak -> "突破上行（關注）"
-            else -> "震盪整理"
+            maTrend.contains("多头排列") && threeDayNoNewLow -> "上升趋势（强势）"
+            maTrend.contains("多头排列") -> "上升趋势"
+            maConvergingUp && threeDayNoNewLow -> "底部企稳 + 蓄势突破（关注）"
+            maConvergingUp -> "蓄势待发（均线粘合）"
+            maTrend.contains("空头排列") && recentLowBreak -> "下跌趋势（破位）"
+            maTrend.contains("空头排列") -> "下跌趋势"
+            threeDayNoNewLow && maTrend.contains("偏多") -> "震荡偏多（企稳）"
+            threeDayNoNewLow -> "底部企稳（待确认）"
+            maTrend.contains("偏多") -> "震荡偏多"
+            maTrend.contains("偏空") -> "震荡偏空"
+            recentHighBreak -> "突破上行（关注）"
+            else -> "震荡整理"
         }
         val trendColor = when {
             trendType.contains("上升") || trendType.contains("突破") -> "🔴"
             trendType.contains("下跌") || trendType.contains("破位") -> "🟢"
-            trendType.contains("企穩") || trendType.contains("蓄勢") -> "🟡"
+            trendType.contains("企稳") || trendType.contains("蓄势") -> "🟡"
             else -> "⚪"
         }
-        sb.append("\n趨勢類型: $trendColor $trendType")
+        sb.append("\n趋势类型: $trendColor $trendType")
 
-        // ── 6. 操作建議 ──
+        // ── 6. 操作建议 ──
         val advice = when {
-            trendType.contains("上升趨勢（強勢）") -> "持倉為主，回調可加倉"
-            trendType.contains("上升趨勢") -> "順勢持倉，注意止盈"
-            trendType.contains("蓄勢突破") || trendType.contains("突破上行") -> "關注突破方向，放量可跟進"
-            trendType.contains("底部企穩") -> "觀察確認，輕倉試探"
-            trendType.contains("蓄勢待發") -> "等待方向選擇"
-            trendType.contains("下跌趨勢（破位）") -> "及時止損，空倉觀望"
-            trendType.contains("下跌趨勢") -> "觀望為主，不搶反彈"
-            trendType.contains("震盪偏多") -> "輕倉做多，設好止損"
-            trendType.contains("震盪偏空") -> "謹慎操作，注意風險"
-            else -> "觀望等待方向"
+            trendType.contains("上升趋势（强势）") -> "持仓为主，回调可加仓"
+            trendType.contains("上升趋势") -> "顺势持仓，注意止盈"
+            trendType.contains("蓄势突破") || trendType.contains("突破上行") -> "关注突破方向，放量可跟进"
+            trendType.contains("底部企稳") -> "观察确认，轻仓试探"
+            trendType.contains("蓄势待发") -> "等待方向选择"
+            trendType.contains("下跌趋势（破位）") -> "及时止损，空仓观望"
+            trendType.contains("下跌趋势") -> "观望为主，不抢反弹"
+            trendType.contains("震荡偏多") -> "轻仓做多，设好止损"
+            trendType.contains("震荡偏空") -> "谨慎操作，注意风险"
+            else -> "观望等待方向"
         }
-        sb.append("\n建議: $advice")
+        sb.append("\n建议: $advice")
 
-        // ── 7. K 線經典形態識別（自動匹配，對照趨勢參考圖） ──
+        // ── 7. K 线经典形态识别（自动匹配，对照趋势参考图） ──
         val patterns = CandlePatternDetector.detect(snaps)
         if (patterns.isNotEmpty()) {
-            sb.append("\n\n📋 K線形態:")
+            sb.append("\n\n📋 K线形态:")
             for (p in patterns) {
                 val stars = "★".repeat(p.strength) + "☆".repeat(5 - p.strength)
                 val emoji = if (p.direction == CandlePatternDetector.Direction.BULLISH) "🔴" else "🟢"
@@ -1066,13 +1066,13 @@ class StockDetailFragment : Fragment() {
                 sb.append("\n     ${p.description}")
             }
         } else {
-            sb.append("\n\n📋 K線形態: 無明顯經典形態")
+            sb.append("\n\n📋 K线形态: 无明显经典形态")
         }
 
         return sb.toString()
     }
 
-    /** 計算移動平均線 Entry 列表 */
+    /** 计算移动平均线 Entry 列表 */
     private fun calcMA(
         closes: List<Double>,
         period: Int,
@@ -1090,12 +1090,12 @@ class StockDetailFragment : Fragment() {
     private fun dpToPx(dp: Int): Int =
         (dp * resources.displayMetrics.density + 0.5f).toInt()
 
-    /** 加載 K 線走勢 + 機構評級數據 */
+    /** 加载 K 线走势 + 机构评级数据 */
     private fun loadKlineAndRatings() {
         aiDetailContainer.removeAllViews()
-        // 加載提示
+        // 加载提示
         aiDetailContainer.addView(TextView(requireContext()).apply {
-            text = "⏳ 正在加載 K 線走勢..."
+            text = "⏳ 正在加载 K 线走势..."
             textSize = 10f; setTextColor(Color.parseColor("#999999"))
         })
 
@@ -1104,32 +1104,32 @@ class StockDetailFragment : Fragment() {
                 val db = StockDatabase.getInstance(requireContext())
                 val sb = StringBuilder()
 
-                // ── 1. K 線走勢（用 CandleStickChart 真正的圖表） ──
-                // 一次性拉取 500 天歷史數據，按時間範圍按鈕動態裁剪
+                // ── 1. K 线走势（用 CandleStickChart 真正的图表） ──
+                // 一次性拉取 500 天历史数据，按时间范围按钮动态裁剪
                 allKlineSnaps = db.dailySnapshotDao().getByCode(stockCode, 500).sortedBy { it.date }
 
-                // 如果本地數據不足 250 天（約1年），嘗試從網絡補充日K數據
+                // 如果本地数据不足 250 天（约1年），尝试从网络补充日K数据
                 if (allKlineSnaps.size < 250) {
                     try {
                         val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
                         val endDate = java.time.LocalDate.now()
-                        val startDate = endDate.minusDays(800) // 約 2 年多
+                        val startDate = endDate.minusDays(800) // 约 2 年多
                         val (fetched, _) = fetcher.fetchOneStock(stockCode, startDate, endDate)
                         if (fetched.isNotEmpty()) {
-                            // 寫入數據庫
+                            // 写入数据库
                             db.dailySnapshotDao().insertAll(fetched)
-                            // 重新讀取
+                            // 重新读取
                             allKlineSnaps = db.dailySnapshotDao().getByCode(stockCode, 500).sortedBy { it.date }
                         }
                     } catch (e: Exception) {
-                        Log.w(TAG, "網絡補充K線數據失敗: ${e.message}")
+                        Log.w(TAG, "网络补充K线数据失败: ${e.message}")
                     }
                 }
                 withContext(Dispatchers.Main) { aiDetailContainer.removeAllViews() }
 
                 if (allKlineSnaps.size >= 5) {
                     withContext(Dispatchers.Main) {
-                        // 創建 K 線專用容器，按鈕切換時只清空此容器，不影響後續評級內容
+                        // 创建 K 线专用容器，按钮切换时只清空此容器，不影响后续评级内容
                         klineContentContainer = LinearLayout(requireContext()).apply {
                             orientation = LinearLayout.VERTICAL
                         }
@@ -1139,47 +1139,47 @@ class StockDetailFragment : Fragment() {
                 } else {
                     withContext(Dispatchers.Main) {
                         aiDetailContainer.addView(TextView(requireContext()).apply {
-                            text = "K線數據不足（需要至少5天，當前${allKlineSnaps.size}天）"
+                            text = "K线数据不足（需要至少5天，当前${allKlineSnaps.size}天）"
                             textSize = 11f; setTextColor(Color.parseColor("#999999"))
                             setPadding(0, 0, 0, 8)
                         })
                     }
                 }
 
-                // ── 2. 機構評級 ──
-                sb.appendLine("## 🏦 機構評級（近90天）")
+                // ── 2. 机构评级 ──
+                sb.appendLine("## 🏦 机构评级（近90天）")
                 val ratingProvider = com.chin.stockanalysis.strategy.data.InstitutionalRatingProvider()
                 val ratingSummary = ratingProvider.getRatingSummary(stockCode, days = 90)
 
                 if (ratingSummary.totalReports == 0) {
-                    sb.appendLine("⚠️ 暫無機構評級覆蓋（該股票近90天無研究報告）")
+                    sb.appendLine("⚠️ 暂无机构评级覆盖（该股票近90天无研究报告）")
                 } else {
                     val emoji = when (ratingSummary.consensusRating) {
-                        "買入" -> "🔴"
+                        "买入" -> "🔴"
                         "增持" -> "🟠"
                         "中性" -> "⚪"
                         else -> "🟢"
                     }
-                    sb.appendLine("共識評級: $emoji ${ratingSummary.consensusRating}（${ratingSummary.totalReports}份研報）")
-                    sb.appendLine("買入${ratingSummary.buyCount} / 增持${ratingSummary.overweightCount} / 中性${ratingSummary.neutralCount} / 賣出${ratingSummary.sellCount}")
+                    sb.appendLine("共识评级: $emoji ${ratingSummary.consensusRating}（${ratingSummary.totalReports}份研报）")
+                    sb.appendLine("买入${ratingSummary.buyCount} / 增持${ratingSummary.overweightCount} / 中性${ratingSummary.neutralCount} / 卖出${ratingSummary.sellCount}")
 
                     if (ratingSummary.avgTargetPrice != null) {
                         val upside = if (ratingSummary.avgTargetPrice > 0 && allKlineSnaps.isNotEmpty()) {
                             val last = allKlineSnaps.last().close
                             (ratingSummary.avgTargetPrice - last) / last * 100
                         } else 0.0
-                        sb.appendLine("平均目標價: ¥${"%.2f".format(ratingSummary.avgTargetPrice)}（空間${if (upside >= 0) "↑" else "↓"}${"%.1f".format(kotlin.math.abs(upside))}%）")
+                        sb.appendLine("平均目标价: ¥${"%.2f".format(ratingSummary.avgTargetPrice)}（空间${if (upside >= 0) "↑" else "↓"}${"%.1f".format(kotlin.math.abs(upside))}%）")
                     }
 
                     if (ratingSummary.latestOrgs.isNotEmpty()) {
-                        sb.appendLine("最近評級機構: ${ratingSummary.latestOrgs.take(3).joinToString("、")}")
+                        sb.appendLine("最近评级机构: ${ratingSummary.latestOrgs.take(3).joinToString("、")}")
                     }
 
                     val topRatings = ratingSummary.detailList.take(8)
                     sb.appendLine()
-                    sb.appendLine("### 詳細評級")
+                    sb.appendLine("### 详细评级")
                     for (r in topRatings) {
-                        val target = r.targetPriceHigh?.let { "目標¥${"%.1f".format(it)}" } ?: ""
+                        val target = r.targetPriceHigh?.let { "目标¥${"%.1f".format(it)}" } ?: ""
                         val change = if (r.ratingChange != "未知") "【${r.ratingChange}】" else ""
                         val eps = mutableListOf<String>()
                         r.predictEpsThisYear?.let { eps.add("今年¥${"%.2f".format(it)}") }
@@ -1190,21 +1190,21 @@ class StockDetailFragment : Fragment() {
                 }
                 sb.appendLine()
 
-                // ── 3. 基金持倉 ──
-                sb.appendLine("## 💰 基金持倉（持倉市值TOP10）")
+                // ── 3. 基金持仓 ──
+                sb.appendLine("## 💰 基金持仓（持仓市值TOP10）")
                 val fundHoldings = ratingProvider.getFundHoldings(stockCode, 10)
                 if (fundHoldings.isEmpty()) {
-                    sb.appendLine("⚠️ 暫無基金持倉數據（數據源維護中）")
+                    sb.appendLine("⚠️ 暂无基金持仓数据（数据源维护中）")
                 } else {
                     for (f in fundHoldings) {
                         val capStr = if (f.holdMarketCap >= 10000)
-                            "%.1f億".format(f.holdMarketCap / 10000.0)
-                        else "%.0f萬".format(f.holdMarketCap)
+                            "%.1f亿".format(f.holdMarketCap / 10000.0)
+                        else "%.0f万".format(f.holdMarketCap)
                         sb.appendLine("• ${f.fundName}(${f.fundCode}): ${capStr} 占比${"%.2f".format(f.holdRatio)}% (${f.reportDate})")
                     }
                     val totalCap = fundHoldings.sumOf { it.holdMarketCap }
-                    val totalStr = if (totalCap >= 10000) "%.1f億".format(totalCap / 10000.0) else "%.0f萬".format(totalCap)
-                    sb.appendLine("\n合計持倉市值: $totalStr | ${fundHoldings.size}只基金")
+                    val totalStr = if (totalCap >= 10000) "%.1f亿".format(totalCap / 10000.0) else "%.0f万".format(totalCap)
+                    sb.appendLine("\n合计持仓市值: $totalStr | ${fundHoldings.size}只基金")
                 }
                 sb.appendLine()
 
@@ -1214,13 +1214,13 @@ class StockDetailFragment : Fragment() {
                         textSize = 11f; setTextColor(Color.parseColor("#333333"))
                         setLineSpacing(3f, 1f)
                     })
-                    // 按鈕行已在 buildAiAnalysisSection() 中創建，此處不再重複
+                    // 按钮行已在 buildAiAnalysisSection() 中创建，此处不再重复
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     aiDetailContainer.removeAllViews()
                     aiDetailContainer.addView(TextView(requireContext()).apply {
-                        text = "加載失敗: ${e.message}"
+                        text = "加载失败: ${e.message}"
                         textSize = 11f; setTextColor(Color.parseColor("#C62828"))
                     })
                 }
@@ -1228,15 +1228,15 @@ class StockDetailFragment : Fragment() {
         }
     }
 
-    /** 當前正在進行的 AI 分析 Job（返回鍵可取消） */
+    /** 当前正在进行的 AI 分析 Job（返回键可取消） */
     private var aiAnalysisJob: Job? = null
 
     /**
-     * 統一分析入口（AgentOrchestrator.analyzeStock）。
+     * 统一分析入口（AgentOrchestrator.analyzeStock）。
      *
-     * flag 控制編排深度：
-     * - stockAnalysisRoute = AGENT_FRAMEWORK → 完整角色編排（Scout+Analyst+Guardian 並行）
-     * - 否則 → 輕量直連（DeepAnalystEngine + 決策矩陣）
+     * flag 控制编排深度：
+     * - stockAnalysisRoute = AGENT_FRAMEWORK → 完整角色编排（Scout+Analyst+Guardian 并行）
+     * - 否则 → 轻量直连（DeepAnalystEngine + 决策矩阵）
      */
     private suspend fun runAnalysis(appCtx: Context, mode: AnalysisMode): AnalysisResult {
         val useAgent = FeatureFlagManager.isAgentFramework(FeatureFlagManager.stockAnalysisRoute)
@@ -1248,9 +1248,9 @@ class StockDetailFragment : Fragment() {
         )
     }
 
-    /** 運行 AI Agent 分析，切換到 aiResultContainer */
+    /** 运行 AI Agent 分析，切换到 aiResultContainer */
     private fun runAiAgents(mode: AnalysisMode = AnalysisMode.DEEP) {
-        // 取消之前正在進行的分析
+        // 取消之前正在进行的分析
         aiAnalysisJob?.cancel()
 
         aiResultContainer.removeAllViews()
@@ -1266,29 +1266,29 @@ class StockDetailFragment : Fragment() {
         loadingRow.addView(TextView(requireContext()).apply {
             text = when (mode) {
                 AnalysisMode.DEEP -> "V1.0深度分析中（需要30-60秒）..."
-                AnalysisMode.EXPERT -> "V2.0全周期分析中（市場環境+利潤質量+決策矩陣）..."
+                AnalysisMode.EXPERT -> "V2.0全周期分析中（市场环境+利润质量+决策矩阵）..."
                 else -> "AI 分析中..."
             }
             textSize = 9f; setTextColor(Color.parseColor("#999999"))
         })
         aiResultContainer.addView(loadingRow)
-        // 切換 view：隱藏主內容，顯示AI結果
+        // 切换 view：隐藏主内容，显示AI结果
         aiDetailScrollView.visibility = View.GONE
         contentScrollView.visibility = View.GONE
         aiResultScrollView.visibility = View.VISIBLE
 
         aiAnalysisJob = lifecycleScope.launch(Dispatchers.IO) {
             val appCtx = requireContext().applicationContext
-            // 統一入口：AgentOrchestrator.analyzeStock（flag 控制完整編排 / 輕量直連）
+            // 统一入口：AgentOrchestrator.analyzeStock（flag 控制完整编排 / 轻量直连）
             val result = runAnalysis(appCtx, mode)
 
-            // 檢查是否被取消或 view 已銷毀
+            // 检查是否被取消或 view 已销毁
             ensureActive()
             if (view == null || !isAdded) return@launch
 
             withContext(Dispatchers.Main) {
                 aiResultContainer.removeAllViews()
-                // 清理 summaryText 中可能殘留的 JSON 碎片
+                // 清理 summaryText 中可能残留的 JSON 碎片
                 val cleanedSummary = cleanJsonArtifacts(result.summaryText)
                 aiResultContainer.addView(TextView(requireContext()).apply {
                     text = cleanedSummary
@@ -1297,7 +1297,7 @@ class StockDetailFragment : Fragment() {
                     setLineSpacing(2f, 1f)
                     setPadding(0, 0, 0, 2)
                 })
-                // 模式標籤
+                // 模式标签
                 if (result.mode != AnalysisMode.QUICK) {
                     aiResultContainer.addView(TextView(requireContext()).apply {
                         text = "🧠 ${result.elapsedMs}ms · ${if (result.mode == AnalysisMode.EXPERT) "全周期" else "深度"}分析"
@@ -1306,15 +1306,15 @@ class StockDetailFragment : Fragment() {
                         setPadding(0, 2, 0, 2)
                     })
                 }
-                // 底部按鈕行：返回 + 加倉/減倉/清倉 同一行
+                // 底部按钮行：返回 + 加仓/减仓/清仓 同一行
                 val bottomRow = LinearLayout(requireContext()).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER
                     setPadding(0, 4, 0, 2)
                 }
-                // 返回按鈕
+                // 返回按钮
                 bottomRow.addView(Button(requireContext()).apply {
-                    text = "◀ 返回K綫"
+                    text = "◀ 返回K线"
                     textSize = 9f; setTextColor(Color.WHITE)
                     setBackgroundColor(Color.parseColor("#757575"))
                     setPadding(10, 4, 10, 4)
@@ -1323,7 +1323,7 @@ class StockDetailFragment : Fragment() {
                         aiResultScrollView.visibility = View.GONE
                         contentScrollView.visibility = View.VISIBLE
                         aiDetailScrollView.visibility = View.VISIBLE
-                        // 恢復分析按鈕
+                        // 恢复分析按钮
                         root.findViewWithTag<Button>("btnRunAi")?.let {
                             it.isEnabled = true
                             it.text = "🤖 V1.0深度分析"
@@ -1334,40 +1334,40 @@ class StockDetailFragment : Fragment() {
                         }
                     }
                 })
-                // 操作按鈕
+                // 操作按钮
                 val recommendation = result.recommendation
                 if (recommendation != null) {
                     if (recommendation in listOf("BUY", "WATCH")) {
                         bottomRow.addView(Button(requireContext()).apply {
-                            text = "➕ 加倉"; textSize = 9f
+                            text = "➕ 加仓"; textSize = 9f
                             setBackgroundColor(Color.parseColor("#1565C0"))
                             setPadding(10, 4, 10, 4)
                             minimumHeight = 0; minHeight = 0
-                            setOnClickListener { Toast.makeText(requireContext(), "請在建倉流程中加倉 $stockName", Toast.LENGTH_LONG).show() }
+                            setOnClickListener { Toast.makeText(requireContext(), "请在建仓流程中加仓 $stockName", Toast.LENGTH_LONG).show() }
                         })
                     }
                     if (recommendation in listOf("HOLD", "SELL", "WATCH")) {
                         bottomRow.addView(Button(requireContext()).apply {
-                            text = "➖ 減倉"; textSize = 9f
+                            text = "➖ 减仓"; textSize = 9f
                             setBackgroundColor(Color.parseColor("#F9A825"))
                             setPadding(10, 4, 10, 4)
                             minimumHeight = 0; minHeight = 0
-                            setOnClickListener { Toast.makeText(requireContext(), "減倉功能開發中", Toast.LENGTH_SHORT).show() }
+                            setOnClickListener { Toast.makeText(requireContext(), "减仓功能开发中", Toast.LENGTH_SHORT).show() }
                         })
                     }
                     if (recommendation in listOf("HOLD", "SELL")) {
                         bottomRow.addView(Button(requireContext()).apply {
-                            text = "❌ 清倉"; textSize = 9f
+                            text = "❌ 清仓"; textSize = 9f
                             setBackgroundColor(Color.parseColor("#C62828"))
                             setPadding(10, 4, 10, 4)
                             minimumHeight = 0; minHeight = 0
-                            setOnClickListener { Toast.makeText(requireContext(), "清倉功能開發中", Toast.LENGTH_SHORT).show() }
+                            setOnClickListener { Toast.makeText(requireContext(), "清仓功能开发中", Toast.LENGTH_SHORT).show() }
                         })
                     }
                 }
                 aiResultContainer.addView(bottomRow)
 
-                // 同步更新 AI 綜合分析區塊
+                // 同步更新 AI 综合分析区块
                 root.findViewWithTag<TextView>("aiQuickResult")?.let { tv ->
                     tv.visibility = View.VISIBLE
                     tv.text = cleanedSummary
@@ -1397,7 +1397,7 @@ class StockDetailFragment : Fragment() {
 
                 withContext(Dispatchers.Main) {
                     loadingTv.visibility = View.GONE
-                    // 更新 header：板塊標籤 + 價格/漲跌幅
+                    // 更新 header：板块标签 + 价格/涨跌幅
                     if (leaderData != null) {
                         root.findViewWithTag<TextView>("tvPrice")?.text =
                             " ¥${String.format("%.2f", leaderData.price)}"
@@ -1521,7 +1521,7 @@ class StockDetailFragment : Fragment() {
         contentContainer.addView(card)
     }
 
-    /** 所属板块区域（含趨勢 + 熱度 + 資金流向） */
+    /** 所属板块区域（含趋势 + 热度 + 资金流向） */
     private fun buildSectorSection(sectors: List<String>, subSector: String) {
         val card = createSectionCard()
         card.addView(createSectionTitle("🏷 所属板块"))
@@ -1550,7 +1550,7 @@ class StockDetailFragment : Fragment() {
 
         card.addView(tagsLayout)
 
-        // 異步獲取板塊實時數據（趨勢 + 熱度 + 資金流向）
+        // 异步获取板块实时数据（趋势 + 热度 + 资金流向）
         if (sectors.isNotEmpty()) {
             val detailLayout = LinearLayout(requireContext()).apply {
                 orientation = LinearLayout.VERTICAL
@@ -1558,7 +1558,7 @@ class StockDetailFragment : Fragment() {
                 tag = "sectorDetail"
             }
             val loadingTv = TextView(requireContext()).apply {
-                text = "⏳ 板塊趨勢載入中..."
+                text = "⏳ 板块趋势载入中..."
                 textSize = 11f; setTextColor(Color.parseColor("#999999"))
                 tag = "sectorLoading"
             }
@@ -1594,9 +1594,9 @@ class StockDetailFragment : Fragment() {
                                     setPadding(8, 0, 8, 0)
                                 })
                                 val heatLabel = when {
-                                    hot.hotScore >= 80 -> "🔥極熱"
-                                    hot.hotScore >= 60 -> "🟠活躍"
-                                    hot.hotScore >= 40 -> "🟡溫和"
+                                    hot.hotScore >= 80 -> "🔥极热"
+                                    hot.hotScore >= 60 -> "🟠活跃"
+                                    hot.hotScore >= 40 -> "🟡温和"
                                     else -> "🟢冷清"
                                 }
                                 row.addView(TextView(requireContext()).apply {
@@ -1605,8 +1605,8 @@ class StockDetailFragment : Fragment() {
                                     setPadding(8, 0, 8, 0)
                                 })
                                 val inflowStr = when {
-                                    hot.mainNetInflow > 0 -> "+${String.format("%.1f", hot.mainNetInflow / 10000)}億"
-                                    hot.mainNetInflow < 0 -> "${String.format("%.1f", hot.mainNetInflow / 10000)}億"
+                                    hot.mainNetInflow > 0 -> "+${String.format("%.1f", hot.mainNetInflow / 10000)}亿"
+                                    hot.mainNetInflow < 0 -> "${String.format("%.1f", hot.mainNetInflow / 10000)}亿"
                                     else -> "-"
                                 }
                                 val inflowColor = if (hot.mainNetInflow >= 0) "#E53935" else "#43A047"
@@ -1618,14 +1618,14 @@ class StockDetailFragment : Fragment() {
                             }
                         } else {
                             detailLayout.addView(TextView(requireContext()).apply {
-                                text = "板塊實時數據暫不可用"
+                                text = "板块实时数据暂不可用"
                                 textSize = 11f; setTextColor(Color.parseColor("#999999"))
                             })
                         }
                     }
                 } catch (_: Exception) {
                     withContext(Dispatchers.Main) {
-                        loadingTv.text = "板塊趨勢數據載入失敗"
+                        loadingTv.text = "板块趋势数据载入失败"
                     }
                 }
             }
@@ -1732,7 +1732,7 @@ class StockDetailFragment : Fragment() {
         contentContainer.addView(card)
     }
 
-    /** AI 綜合分析区域 — 自動調用 DeepSeek 快速分析 */
+    /** AI 综合分析区域 — 自动调用 DeepSeek 快速分析 */
     private fun buildAIAnalysisSection(
         leaderData: EastMoneyHotSectorSource.LeaderStock?,
         sectors: List<String>,
@@ -1740,20 +1740,20 @@ class StockDetailFragment : Fragment() {
         newsFactors: List<NewsFactorEntity>
     ) {
         val card = createSectionCard()
-        card.addView(createSectionTitle("🤖 AI 綜合分析"))
+        card.addView(createSectionTitle("🤖 AI 综合分析"))
 
         val ctx = requireContext()
         
-        // 先顯示加載提示
+        // 先显示加载提示
         val loadingLabel = TextView(ctx).apply {
-            text = "⏳ 正在載入 AI 分析..."
+            text = "⏳ 正在载入 AI 分析..."
             textSize = 12f; setTextColor(Color.parseColor("#888888"))
             setPadding(4, 4, 4, 8)
             tag = "aiQuickLoading"
         }
         card.addView(loadingLabel)
 
-        // 結果容器
+        // 结果容器
         val resultLabel = TextView(ctx).apply {
             textSize = 11f; setTextColor(Color.parseColor("#333333"))
             setLineSpacing(4f, 1.2f)
@@ -1765,7 +1765,7 @@ class StockDetailFragment : Fragment() {
 
         contentContainer.addView(card)
 
-        // 自動觸發 DeepSeek 快速分析
+        // 自动触发 DeepSeek 快速分析
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val agent = com.chin.stockanalysis.agent.stock.StockAnalysisAgent(requireContext().applicationContext)
@@ -1774,41 +1774,41 @@ class StockDetailFragment : Fragment() {
                 withContext(Dispatchers.Main) {
                     loadingLabel.visibility = View.GONE
                     resultLabel.visibility = View.VISIBLE
-                    // 格式化顯示分析結果
+                    // 格式化显示分析结果
                     val displayText = buildString {
                         if (result.success) {
                             if (result.overallScore > 0) {
-                                appendLine("📊 綜合評分: ${result.overallScore}/100")
-                                appendLine("建議: ${result.recommendation} | 置信度: ${result.confidence}")
+                                appendLine("📊 综合评分: ${result.overallScore}/100")
+                                appendLine("建议: ${result.recommendation} | 置信度: ${result.confidence}")
                                 appendLine()
-                                // 各維度結構化結論
-                                appendLine("📈 技術面: ${result.technicalScore}/100 — ${scoreVerdict(result.technicalScore)}")
+                                // 各维度结构化结论
+                                appendLine("📈 技术面: ${result.technicalScore}/100 — ${scoreVerdict(result.technicalScore)}")
                                 appendLine("💼 基本面: ${result.fundamentalScore}/100 — ${scoreVerdict(result.fundamentalScore)}")
-                                appendLine("💰 資金面: ${result.fundFlowScore}/100 — ${scoreVerdict(result.fundFlowScore)}")
+                                appendLine("💰 资金面: ${result.fundFlowScore}/100 — ${scoreVerdict(result.fundFlowScore)}")
                                 appendLine()
                             }
-                            if (result.targetPrice.isNotBlank()) appendLine("🎯 目標價: ${result.targetPrice}")
-                            if (result.stopLoss.isNotBlank()) appendLine("🛑 止損位: ${result.stopLoss}")
+                            if (result.targetPrice.isNotBlank()) appendLine("🎯 目标价: ${result.targetPrice}")
+                            if (result.stopLoss.isNotBlank()) appendLine("🛑 止损位: ${result.stopLoss}")
                             if (result.riskFactors.isNotEmpty()) {
                                 appendLine()
-                                appendLine("⚠️ 風險因素:")
+                                appendLine("⚠️ 风险因素:")
                                 result.riskFactors.forEach { appendLine("  • $it") }
                             }
                             if (result.reasoning.isNotBlank()) {
                                 appendLine()
-                                // 清理 reasoning 中可能殘留的 JSON 碎片
+                                // 清理 reasoning 中可能残留的 JSON 碎片
                                 val cleanedReasoning = cleanJsonArtifacts(result.reasoning)
                                 appendLine(cleanedReasoning)
                             }
                         } else {
-                            append("⚠️ AI 分析載入失敗: ${cleanJsonArtifacts(result.rawOutput)}")
+                            append("⚠️ AI 分析载入失败: ${cleanJsonArtifacts(result.rawOutput)}")
                         }
                     }
                     resultLabel.text = displayText
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    loadingLabel.text = "⚠️ AI 分析載入失敗: ${e.message}"
+                    loadingLabel.text = "⚠️ AI 分析载入失败: ${e.message}"
                 }
             }
         }
@@ -1847,15 +1847,15 @@ class StockDetailFragment : Fragment() {
         }
     }
 
-    /** 根據評分給出一句話結論 */
+    /** 根据评分给出一句话结论 */
     private fun scoreVerdict(score: Int): String = when {
-        score >= 70 -> "偏多，表現較好"
-        score >= 50 -> "中性，觀望為主"
-        score >= 30 -> "偏弱，注意風險"
-        else -> "較差，謹慎操作"
+        score >= 70 -> "偏多，表现较好"
+        score >= 50 -> "中性，观望为主"
+        score >= 30 -> "偏弱，注意风险"
+        else -> "较差，谨慎操作"
     }
 
-    /** 清理文本中殘留的 JSON 碎片（花括號、鍵值對等），保留可讀分析文字 */
+    /** 清理文本中残留的 JSON 碎片（花括号、键值对等），保留可读分析文字 */
     private fun cleanJsonArtifacts(text: String): String {
         return text
             .replace(Regex("```json[\\s\\S]*?```"), "")

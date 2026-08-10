@@ -1,57 +1,57 @@
 package com.chin.stockanalysis.agent.core
 
 /**
- * Agent 權限枚舉 — 最小權限原則
+ * Agent 权限枚举 — 最小权限原则
  *
- * 每個 Agent 角色只擁有完成其職責所需的最小權限集合。
- * deny 永遠優先於 allow。
+ * 每个 Agent 角色只拥有完成其职责所需的最小权限集合。
+ * deny 永远优先于 allow。
  */
 enum class AgentPermission {
-    // 數據讀取
-    READ_MARKET_DATA,      // 行情、K線、財報
-    READ_PORTFOLIO,        // 持倉、交易記錄
-    READ_NEWS,             // 新聞 API
-    READ_SECTOR_DATA,      // 板塊數據
+    // 数据读取
+    READ_MARKET_DATA,      // 行情、K线、财报
+    READ_PORTFOLIO,        // 持仓、交易记录
+    READ_NEWS,             // 新闻 API
+    READ_SECTOR_DATA,      // 板块数据
 
-    // LLM 調用
-    CALL_LLM_STRONG,       // 強模型（高 max_tokens）
+    // LLM 调用
+    CALL_LLM_STRONG,       // 强模型（高 max_tokens）
     CALL_LLM_FAST,         // 快速模型（低成本）
 
-    // 寫入操作
-    WRITE_TRADE_ORDER,     // 生成/修改交易訂單
-    WRITE_WATCHLIST,       // 修改自選股
-    PUBLISH_CROSSTAB,      // 跨 Tab 發布
+    // 写入操作
+    WRITE_TRADE_ORDER,     // 生成/修改交易订单
+    WRITE_WATCHLIST,       // 修改自选股
+    PUBLISH_CROSSTAB,      // 跨 Tab 发布
 
-    // 系統操作
+    // 系统操作
     SPAWN_SUBAGENT,        // 派生子 Agent
-    MODIFY_STRATEGY,       // 修改策略參數
-    EXECUTE_TRADE          // 執行交易（永遠拒絕 Agent 直接執行）
+    MODIFY_STRATEGY,       // 修改策略参数
+    EXECUTE_TRADE          // 执行交易（永远拒绝 Agent 直接执行）
 }
 
 /**
- * LLM 模型層級 — 成本分層策略
+ * LLM 模型层级 — 成本分层策略
  *
- * 主 Agent 用強模型，Sub-Agent 用快速模型，純量化節點不調 LLM。
+ * 主 Agent 用强模型，Sub-Agent 用快速模型，纯量化节点不调 LLM。
  */
 enum class LlmTier {
-    NONE,       // 不調用 LLM (Scout, Executor)
-    FAST,       // 快速模型 (Guardian) — 對應 AiProviderSelector 的 STOCK_PICKING
-    STRONG,     // 強模型 (Analyst) — 對應 PIPELINE_EXPERT
-    ULTRA       // 最強模型 (Orchestrator) — 對應 CHAT_LEGACY (reasoning)
+    NONE,       // 不调用 LLM (Scout, Executor)
+    FAST,       // 快速模型 (Guardian) — 对应 AiProviderSelector 的 STOCK_PICKING
+    STRONG,     // 强模型 (Analyst) — 对应 PIPELINE_EXPERT
+    ULTRA       // 最强模型 (Orchestrator) — 对应 CHAT_LEGACY (reasoning)
 }
 
 /**
- * Agent 角色定義
+ * Agent 角色定义
  *
- * @property name 角色標識（小寫，用於日誌和路由）
- * @property displayName 中文顯示名
- * @property emoji UI 圖標
- * @property permissions 允許的權限集合
- * @property denyPermissions 拒絕的權限集合（永遠優先）
- * @property llmModel 使用的 LLM 層級
- * @property maxConcurrent 最大並發數
- * @property timeoutMs 超時時間（毫秒）
- * @property maxSpawnDepth 最大派生深度（0=不能派生, 1=可派生一層）
+ * @property name 角色标识（小写，用于日志和路由）
+ * @property displayName 中文显示名
+ * @property emoji UI 图标
+ * @property permissions 允许的权限集合
+ * @property denyPermissions 拒绝的权限集合（永远优先）
+ * @property llmModel 使用的 LLM 层级
+ * @property maxConcurrent 最大并发数
+ * @property timeoutMs 超时时间（毫秒）
+ * @property maxSpawnDepth 最大派生深度（0=不能派生, 1=可派生一层）
  */
 data class AgentRole(
     val name: String,
@@ -64,7 +64,7 @@ data class AgentRole(
     val timeoutMs: Long = 30_000,
     val maxSpawnDepth: Int = 0
 ) {
-    /** 檢查是否擁有指定權限（deny 優先） */
+    /** 检查是否拥有指定权限（deny 优先） */
     fun hasPermission(permission: AgentPermission): Boolean {
         if (permission in denyPermissions) return false
         return permission in permissions
@@ -72,13 +72,13 @@ data class AgentRole(
 }
 
 /**
- * 預定義角色 — 五種核心 Agent 角色
+ * 预定义角色 — 五种核心 Agent 角色
  */
 object AgentRoles {
 
     val ORCHESTRATOR = AgentRole(
         name = "orchestrator",
-        displayName = "編排者",
+        displayName = "编排者",
         emoji = "🎯",
         permissions = setOf(
             AgentPermission.READ_MARKET_DATA, AgentPermission.READ_PORTFOLIO,
@@ -94,7 +94,7 @@ object AgentRoles {
 
     val SCOUT = AgentRole(
         name = "scout",
-        displayName = "偵察兵",
+        displayName = "侦察兵",
         emoji = "🔍",
         permissions = setOf(
             AgentPermission.READ_MARKET_DATA, AgentPermission.READ_SECTOR_DATA,
@@ -112,7 +112,7 @@ object AgentRoles {
 
     val ANALYST = AgentRole(
         name = "analyst",
-        displayName = "分析師",
+        displayName = "分析师",
         emoji = "📊",
         permissions = setOf(
             AgentPermission.READ_MARKET_DATA, AgentPermission.READ_PORTFOLIO,
@@ -131,7 +131,7 @@ object AgentRoles {
 
     val GUARDIAN = AgentRole(
         name = "guardian",
-        displayName = "風控官",
+        displayName = "风控官",
         emoji = "🛡️",
         permissions = setOf(
             AgentPermission.READ_PORTFOLIO, AgentPermission.CALL_LLM_FAST
@@ -149,7 +149,7 @@ object AgentRoles {
 
     val EXECUTOR = AgentRole(
         name = "executor",
-        displayName = "執行器",
+        displayName = "执行器",
         emoji = "⚡",
         permissions = setOf(
             AgentPermission.READ_MARKET_DATA, AgentPermission.READ_PORTFOLIO,
@@ -166,7 +166,7 @@ object AgentRoles {
         maxSpawnDepth = 0
     )
 
-    /** 按名稱查找角色 */
+    /** 按名称查找角色 */
     fun byName(name: String): AgentRole? = when (name) {
         "orchestrator" -> ORCHESTRATOR
         "scout" -> SCOUT

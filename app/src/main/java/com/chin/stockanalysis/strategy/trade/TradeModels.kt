@@ -3,13 +3,13 @@ package com.chin.stockanalysis.strategy.trade
 import java.time.LocalTime
 
 /**
- * ## 交易模型（從 SimulationTradeEngine 拆分）
+ * ## 交易模型（从 SimulationTradeEngine 拆分）
  *
- * 包含所有交易相關的 data class 和 Room Entity。
- * 保持原 package 不變，所有現有 import 無需修改。
+ * 包含所有交易相关的 data class 和 Room Entity。
+ * 保持原 package 不变，所有现有 import 无需修改。
  */
 
-// ═══ 輕量交易訂單（DAG GenerateOrdersNode 使用） ═══
+// ═══ 轻量交易订单（DAG GenerateOrdersNode 使用） ═══
 
 data class TradeOrder(
     val stockCode: String, val stockName: String, val strategyId: String,
@@ -157,22 +157,22 @@ interface StrategyTradeOrderDao {
     suspend fun updateStockName(id: Long, name: String)
 }
 
-// ═══ 週期持有收益摘要 Entity（每個週期獨立固化） ═══
+// ═══ 周期持有收益摘要 Entity（每个周期独立固化） ═══
 
 /**
- * ## 週期持有收益摘要實體
+ * ## 周期持有收益摘要实体
  *
- * 每次刷新持倉時，將各週期（超短/短/中/長線）的持有收益固化到此表。
- * 同一週期同一交易日只保留一條記錄（REPLACE 策略）。
+ * 每次刷新持仓时，将各周期（超短/短/中/长线）的持有收益固化到此表。
+ * 同一周期同一交易日只保留一条记录（REPLACE 策略）。
  *
- * @property periodType  週期類型（UltraShortQuant / ShortTermQuant / MidTermQuant / LongTermQuant）
+ * @property periodType  周期类型（UltraShortQuant / ShortTermQuant / MidTermQuant / LongTermQuant）
  * @property tradeDate   交易日
- * @property holdingCount 持倉股票數量
- * @property totalCost   總買入成本
- * @property totalValue  最新總市值
- * @property totalPnl    總盈虧金額（totalValue - totalCost）
- * @property totalPnlPct 總盈虧百分比
- * @property stockCodes  持倉股票代碼列表（逗號分隔）
+ * @property holdingCount 持仓股票数量
+ * @property totalCost   总买入成本
+ * @property totalValue  最新总市值
+ * @property totalPnl    总盈亏金额（totalValue - totalCost）
+ * @property totalPnlPct 总盈亏百分比
+ * @property stockCodes  持仓股票代码列表（逗号分隔）
  */
 @androidx.room.Entity(
     tableName = "period_holding_profit",
@@ -196,31 +196,31 @@ interface PeriodHoldingProfitDao {
     @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
     suspend fun insert(entity: PeriodHoldingProfitEntity): Long
 
-    /** 查詢指定週期的最新收益記錄 */
+    /** 查询指定周期的最新收益记录 */
     @androidx.room.Query("SELECT * FROM period_holding_profit WHERE period_type = :periodType ORDER BY trade_date DESC LIMIT :limit")
     suspend fun getByPeriodType(periodType: String, limit: Int = 30): List<PeriodHoldingProfitEntity>
 
-    /** 查詢指定交易日所有週期的收益 */
+    /** 查询指定交易日所有周期的收益 */
     @androidx.room.Query("SELECT * FROM period_holding_profit WHERE trade_date = :date ORDER BY period_type")
     suspend fun getByDate(date: String): List<PeriodHoldingProfitEntity>
 
-    /** 查詢指定週期指定日期的收益 */
+    /** 查询指定周期指定日期的收益 */
     @androidx.room.Query("SELECT * FROM period_holding_profit WHERE period_type = :periodType AND trade_date = :date LIMIT 1")
     suspend fun getByPeriodAndDate(periodType: String, date: String): PeriodHoldingProfitEntity?
 
-    /** 查詢所有週期的最新記錄 */
+    /** 查询所有周期的最新记录 */
     @androidx.room.Query("SELECT * FROM period_holding_profit WHERE id IN (SELECT MAX(id) FROM period_holding_profit GROUP BY period_type) ORDER BY period_type")
     suspend fun getLatestAllPeriods(): List<PeriodHoldingProfitEntity>
 
-    /** 查詢可用日期 */
+    /** 查询可用日期 */
     @androidx.room.Query("SELECT DISTINCT trade_date FROM period_holding_profit ORDER BY trade_date DESC LIMIT :limit")
     suspend fun getAvailableDates(limit: Int = 30): List<String>
 
-    /** 刪除指定週期的歷史記錄 */
+    /** 删除指定周期的历史记录 */
     @androidx.room.Query("DELETE FROM period_holding_profit WHERE period_type = :periodType")
     suspend fun deleteByPeriodType(periodType: String)
 
-    /** 刪除指定日期的記錄 */
+    /** 删除指定日期的记录 */
     @androidx.room.Query("DELETE FROM period_holding_profit WHERE trade_date = :date")
     suspend fun deleteByDate(date: String)
 }

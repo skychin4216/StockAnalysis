@@ -16,14 +16,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 板塊輪動圖 — 熱力圖展示不同時間週期各板塊的表現
+ * 板块轮动图 — 热力图展示不同时间周期各板块的表现
  *
- * 設計概念：
- * - X 軸：時間週期（最近 4 週 / 3 個月 / 每季度）
- * - Y 軸：熱門板塊
- * - 顏色：漲跌幅（紅=漲, 綠=跌, 深淺=幅度）
+ * 设计概念：
+ * - X 轴：时间周期（最近 4 周 / 3 个月 / 每季度）
+ * - Y 轴：热门板块
+ * - 颜色：涨跌幅（红=涨, 绿=跌, 深浅=幅度）
  *
- * 用途：一眼看出板塊輪動規律，哪個板塊在哪个时间段表現好
+ * 用途：一眼看出板块轮动规律，哪个板块在哪个时间段表现好
  */
 class SectorRotationChartFragment : Fragment() {
 
@@ -44,23 +44,23 @@ class SectorRotationChartFragment : Fragment() {
             setPadding(12, 12, 12, 12)
         }
 
-        // 標題
+        // 标题
         root.addView(TextView(ctx).apply {
-            text = "🔄 板塊輪動熱力圖"
+            text = "🔄 板块轮动热力图"
             textSize = 16f
             setTextColor(Color.parseColor("#333333"))
             setPadding(0, 0, 0, 8)
         })
 
-        // 說明
+        // 说明
         root.addView(TextView(ctx).apply {
-            text = "顏色越紅表示漲幅越大，越綠表示跌幅越大"
+            text = "颜色越红表示涨幅越大，越绿表示跌幅越大"
             textSize = 11f
             setTextColor(Color.parseColor("#888888"))
             setPadding(0, 0, 0, 12)
         })
 
-        // 信息欄
+        // 信息栏
         infoTv = TextView(ctx).apply {
             textSize = 11f
             setTextColor(Color.parseColor("#666666"))
@@ -68,7 +68,7 @@ class SectorRotationChartFragment : Fragment() {
         }
         root.addView(infoTv)
 
-        // 熱力圖容器（可滾動）
+        // 热力图容器（可滚动）
         val scrollView = ScrollView(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -85,7 +85,7 @@ class SectorRotationChartFragment : Fragment() {
         scrollView.addView(heatmapContainer)
         root.addView(scrollView)
 
-        // 載入數據
+        // 载入数据
         loadRotationData()
 
         return root
@@ -95,21 +95,21 @@ class SectorRotationChartFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val source = com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource()
-                // 從 API 直接獲取行業+概念板塊（含多周期漲跌幅）
+                // 从 API 直接获取行业+概念板块（含多周期涨跌幅）
                 val industry = source.fetchSectorsByTypeDirect(2, 30)
                 val concept = source.fetchSectorsByTypeDirect(3, 30)
                 val allSectors = (industry + concept).distinctBy { it.code }
 
                 if (allSectors.isEmpty()) {
                     withContext(Dispatchers.Main) {
-                        infoTv.text = "暫無板塊數據，請稍後重試"
+                        infoTv.text = "暂无板块数据，请稍后重试"
                     }
                     return@launch
                 }
 
                 val periodNames = listOf("今日", "5日", "10日", "20日")
 
-                // 按綜合得分排序，取 top 20
+                // 按综合得分排序，取 top 20
                 val topSectors = allSectors.sortedByDescending { it.compositeScore }.take(20)
 
                 val rotationData = mutableListOf<RotationRow>()
@@ -128,7 +128,7 @@ class SectorRotationChartFragment : Fragment() {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    infoTv.text = "載入失敗: ${e.message?.take(50)}"
+                    infoTv.text = "载入失败: ${e.message?.take(50)}"
                 }
             }
         }
@@ -138,13 +138,13 @@ class SectorRotationChartFragment : Fragment() {
         heatmapContainer.removeAllViews()
         val ctx = requireContext()
 
-        // 表頭
+        // 表头
         val headerRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, 4, 0, 8)
         }
         headerRow.addView(TextView(ctx).apply {
-            text = "板塊"
+            text = "板块"
             textSize = 11f
             setTextColor(Color.parseColor("#666666"))
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.5f)
@@ -160,13 +160,13 @@ class SectorRotationChartFragment : Fragment() {
         }
         heatmapContainer.addView(headerRow)
 
-        // 分隔線
+        // 分隔线
         heatmapContainer.addView(View(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1)
             setBackgroundColor(Color.parseColor("#EEEEEE"))
         })
 
-        // 數據行
+        // 数据行
         for (row in data) {
             val dataRow = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -187,13 +187,13 @@ class SectorRotationChartFragment : Fragment() {
                     gravity = Gravity.CENTER
                     setPadding(2, 4, 2, 4)
                     layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                    // 顏色：紅漲綠跌
+                    // 颜色：红涨绿跌
                     if (value != null) {
                         val intensity = (kotlin.math.abs(value) / 5 * 255).toInt().coerceIn(50, 200)
                         val color = if (value >= 0) {
-                            Color.rgb(255, 255 - intensity, 255 - intensity) // 紅色系
+                            Color.rgb(255, 255 - intensity, 255 - intensity) // 红色系
                         } else {
-                            Color.rgb(255 - intensity, 255, 255 - intensity) // 綠色系
+                            Color.rgb(255 - intensity, 255, 255 - intensity) // 绿色系
                         }
                         setBackgroundColor(color)
                         setTextColor(if (intensity > 150) Color.WHITE else Color.parseColor("#333333"))
@@ -205,15 +205,15 @@ class SectorRotationChartFragment : Fragment() {
             heatmapContainer.addView(dataRow)
         }
 
-        // 圖例
+        // 图例
         heatmapContainer.addView(TextView(ctx).apply {
-            text = "\n圖例：深紅=大漲 | 淺紅=小漲 | 淺綠=小跌 | 深綠=大跌"
+            text = "\n图例：深红=大涨 | 浅红=小涨 | 浅绿=小跌 | 深绿=大跌"
             textSize = 10f
             setTextColor(Color.parseColor("#888888"))
             setPadding(0, 12, 0, 0)
         })
 
-        infoTv.text = "共 ${data.size} 個板塊 | 數據來源：東方財富即時行情"
+        infoTv.text = "共 ${data.size} 个板块 | 数据来源：东方财富即时行情"
     }
 
     private data class RotationRow(

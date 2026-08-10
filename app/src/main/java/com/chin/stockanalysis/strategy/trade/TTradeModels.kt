@@ -10,14 +10,14 @@ import androidx.room.Index
 import androidx.room.ColumnInfo
 
 /**
- * T+0 日內交易記錄（做T/反T）
+ * T+0 日内交易记录（做T/反T）
  *
- * 做T：先買後賣 — 日內低買高賣，賺取差價
- * 反T：先賣後買 — 日內高賣低買，賺取差價
+ * 做T：先买后卖 — 日内低买高卖，赚取差价
+ * 反T：先卖后买 — 日内高卖低买，赚取差价
  *
- * 適用於A股「持有底倉、日內高拋低吸」的策略：
- * - 做T買入(T_BUY)後，當日賣出(T_SELL)配對，鎖定差價利潤，底倉數量不變
- * - 反T賣出(RT_SELL)底倉後，當日買回(RT_BUY)配對，鎖定差價利潤，底倉數量不變
+ * 适用于A股「持有底仓、日内高抛低吸」的策略：
+ * - 做T买入(T_BUY)后，当日卖出(T_SELL)配对，锁定差价利润，底仓数量不变
+ * - 反T卖出(RT_SELL)底仓后，当日买回(RT_BUY)配对，锁定差价利润，底仓数量不变
  */
 @Entity(tableName = "t_trade_records")
 data class TTradeRecordEntity(
@@ -25,15 +25,15 @@ data class TTradeRecordEntity(
     val stockCode: String,
     val stockName: String,
     val tradeDate: String,           // 交易日期 yyyy-MM-dd
-    val tradeType: String,           // "T_BUY" 做T買入, "T_SELL" 做T賣出, "RT_SELL" 反T賣出, "RT_BUY" 反T買回
-    val quantity: Int,               // 交易數量
-    val price: Double,               // 交易價格
-    val pairedPrice: Double = 0.0,   // 配對價格（做T的賣出價 / 反T的買回價）
-    val profit: Double = 0.0,        // 本次T交易盈虧
-    val profitPct: Double = 0.0,     // 盈虧百分比
-    val status: String = "OPEN",     // OPEN=未配對, CLOSED=已配對完成
+    val tradeType: String,           // "T_BUY" 做T买入, "T_SELL" 做T卖出, "RT_SELL" 反T卖出, "RT_BUY" 反T买回
+    val quantity: Int,               // 交易数量
+    val price: Double,               // 交易价格
+    val pairedPrice: Double = 0.0,   // 配对价格（做T的卖出价 / 反T的买回价）
+    val profit: Double = 0.0,        // 本次T交易盈亏
+    val profitPct: Double = 0.0,     // 盈亏百分比
+    val status: String = "OPEN",     // OPEN=未配对, CLOSED=已配对完成
     val periodType: String,          // "UltraShortQuant" / "ShortTermQuant" / "MidTermQuant" / "LongTermQuant"
-    val basePositionQty: Int = 0,    // 當時的底倉數量
+    val basePositionQty: Int = 0,    // 当时的底仓数量
     val createdAt: Long = System.currentTimeMillis()
 )
 
@@ -77,18 +77,18 @@ interface TTradeRecordDao {
 }
 
 /**
- * T+0 做T推薦記錄
+ * T+0 做T推荐记录
  *
- * 系統在後台監控真實持倉時，自動生成做T推薦信號並持久化。
- * 與 t_trade_records（實際執行記錄）分離，用於：
- * - 回顧系統推薦了哪些做T機會
- * - 對比推薦 vs 實際執行，評估策略效果
- * - 避免重複推薦同一信號
+ * 系统在后台监控真实持仓时，自动生成做T推荐信号并持久化。
+ * 与 t_trade_records（实际执行记录）分离，用于：
+ * - 回顾系统推荐了哪些做T机会
+ * - 对比推荐 vs 实际执行，评估策略效果
+ * - 避免重复推荐同一信号
  *
- * 生命週期：
- *   PENDING → EXECUTED（用戶執行了該推薦）
- *   PENDING → IGNORED（用戶忽略該推薦）
- *   PENDING → EXPIRED（超過當日未處理，自動過期）
+ * 生命周期：
+ *   PENDING → EXECUTED（用户执行了该推荐）
+ *   PENDING → IGNORED（用户忽略该推荐）
+ *   PENDING → EXPIRED（超过当日未处理，自动过期）
  */
 @Entity(
     tableName = "t_trade_recommendations",
@@ -102,22 +102,22 @@ data class TTradeRecommendationEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     @ColumnInfo(name = "stock_code") val stockCode: String,
     @ColumnInfo(name = "stock_name") val stockName: String = "",
-    @ColumnInfo(name = "trade_date") val tradeDate: String,           // 推薦日期 yyyy-MM-dd
+    @ColumnInfo(name = "trade_date") val tradeDate: String,           // 推荐日期 yyyy-MM-dd
     @ColumnInfo(name = "signal_type") val signalType: String,         // T_BUY / T_SELL / RT_SELL / RT_BUY
-    @ColumnInfo(name = "suggested_price") val suggestedPrice: Double, // 推薦價格
-    @ColumnInfo(name = "target_price") val targetPrice: Double,       // 目標配對價格
-    @ColumnInfo(name = "quantity") val quantity: Int,                 // 建議數量
-    @ColumnInfo(name = "expected_profit_pct") val expectedProfitPct: Double, // 預期收益率
-    @ColumnInfo(name = "reason") val reason: String = "",             // 推薦原因
+    @ColumnInfo(name = "suggested_price") val suggestedPrice: Double, // 推荐价格
+    @ColumnInfo(name = "target_price") val targetPrice: Double,       // 目标配对价格
+    @ColumnInfo(name = "quantity") val quantity: Int,                 // 建议数量
+    @ColumnInfo(name = "expected_profit_pct") val expectedProfitPct: Double, // 预期收益率
+    @ColumnInfo(name = "reason") val reason: String = "",             // 推荐原因
     @ColumnInfo(name = "status") val status: String = "PENDING",      // PENDING / EXECUTED / IGNORED / EXPIRED / TARGET_HIT / TARGET_MISSED
-    @ColumnInfo(name = "source") val source: String = "REAL",         // REAL=真實持倉 / SIMULATED=模擬持倉
-    @ColumnInfo(name = "period_type") val periodType: String = "",    // 所屬週期：UltraShortQuant / ShortTermQuant / MidTermQuant / LongTermQuant / RealPosition
-    @ColumnInfo(name = "executed_price") val executedPrice: Double = 0.0, // 實際執行價格
-    @ColumnInfo(name = "executed_at") val executedAt: Long = 0,       // 執行時間戳
-    @ColumnInfo(name = "peak_price_after") val peakPriceAfter: Double = 0.0,  // 推薦後最高價（T_BUY/RT_SELL用）
-    @ColumnInfo(name = "trough_price_after") val troughPriceAfter: Double = 0.0, // 推薦後最低價（RT_SELL/T_BUY用）
-    @ColumnInfo(name = "target_hit") val targetHit: Boolean = false,  // 目標價是否觸及
-    @ColumnInfo(name = "virtual_profit_pct") val virtualProfitPct: Double = 0.0, // 虛擬盈虧%（假設在目標價配對）
+    @ColumnInfo(name = "source") val source: String = "REAL",         // REAL=真实持仓 / SIMULATED=模拟持仓
+    @ColumnInfo(name = "period_type") val periodType: String = "",    // 所属周期：UltraShortQuant / ShortTermQuant / MidTermQuant / LongTermQuant / RealPosition
+    @ColumnInfo(name = "executed_price") val executedPrice: Double = 0.0, // 实际执行价格
+    @ColumnInfo(name = "executed_at") val executedAt: Long = 0,       // 执行时间戳
+    @ColumnInfo(name = "peak_price_after") val peakPriceAfter: Double = 0.0,  // 推荐后最高价（T_BUY/RT_SELL用）
+    @ColumnInfo(name = "trough_price_after") val troughPriceAfter: Double = 0.0, // 推荐后最低价（RT_SELL/T_BUY用）
+    @ColumnInfo(name = "target_hit") val targetHit: Boolean = false,  // 目标价是否触及
+    @ColumnInfo(name = "virtual_profit_pct") val virtualProfitPct: Double = 0.0, // 虚拟盈亏%（假设在目标价配对）
     @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis()
 )
 
@@ -159,14 +159,14 @@ interface TTradeRecommendationDao {
     @Query("SELECT COUNT(*) FROM t_trade_recommendations WHERE status = 'PENDING' AND trade_date = :date AND stock_code = :code AND signal_type = :signalType")
     suspend fun existsPending(date: String, code: String, signalType: String): Int
 
-    /** 更新推薦後的最高/最低價（每次監控時調用） */
+    /** 更新推荐后的最高/最低价（每次监控时调用） */
     @Query("""UPDATE t_trade_recommendations SET 
         peak_price_after = MAX(peak_price_after, :currentPrice),
         trough_price_after = CASE WHEN trough_price_after = 0.0 THEN :currentPrice ELSE MIN(trough_price_after, :currentPrice) END
         WHERE id = :id""")
     suspend fun updatePriceTracking(id: Long, currentPrice: Double)
 
-    /** 標記目標價已觸及（虛擬成功） */
+    /** 标记目标价已触及（虚拟成功） */
     @Query("""UPDATE t_trade_recommendations SET 
         target_hit = 1, 
         virtual_profit_pct = :profitPct,
@@ -174,21 +174,21 @@ interface TTradeRecommendationDao {
         WHERE id = :id""")
     suspend fun markTargetHit(id: Long, profitPct: Double)
 
-    /** 收盤時標記未觸及目標的推薦（按 ID 逐條更新，避免批量覆蓋） */
+    /** 收盘时标记未触及目标的推荐（按 ID 逐条更新，避免批量覆盖） */
     @Query("""UPDATE t_trade_recommendations SET 
         virtual_profit_pct = :profitPct,
         status = CASE WHEN status = 'PENDING' THEN 'TARGET_MISSED' ELSE status END
         WHERE id = :id""")
     suspend fun markDayEndById(id: Long, profitPct: Double)
 
-    /** 收盤時標記未觸及目標的推薦（兼容舊調用） */
+    /** 收盘时标记未触及目标的推荐（兼容旧调用） */
     @Query("""UPDATE t_trade_recommendations SET 
         virtual_profit_pct = :profitPct,
         status = CASE WHEN status = 'PENDING' THEN 'TARGET_MISSED' ELSE status END
         WHERE trade_date = :date AND status = 'PENDING'""")
     suspend fun markDayEnd(date: String, profitPct: Double = 0.0)
 
-    /** 獲取某段時間範圍內的做T成功率統計 */
+    /** 获取某段时间范围内的做T成功率统计 */
     @Query("""SELECT 
         COUNT(*) as total,
         SUM(CASE WHEN target_hit = 1 THEN 1 ELSE 0 END) as hit_count,
@@ -203,7 +203,7 @@ interface TTradeRecommendationDao {
         WHERE trade_date >= :startDate""")
     suspend fun getSuccessRateStats(startDate: String): SuccessRateStatsRow?
 
-    /** 獲取某日某週期的推薦結果統計 */
+    /** 获取某日某周期的推荐结果统计 */
     @Query("""SELECT 
         COUNT(*) as total,
         SUM(CASE WHEN target_hit = 1 THEN 1 ELSE 0 END) as hit_count,
@@ -214,7 +214,7 @@ interface TTradeRecommendationDao {
         WHERE trade_date = :date AND period_type = :periodType""")
     suspend fun getDayOutcomeStats(date: String, periodType: String): OutcomeStatsRow?
 
-    /** 獲取某日所有週期的推薦結果統計 */
+    /** 获取某日所有周期的推荐结果统计 */
     @Query("""SELECT 
         COUNT(*) as total,
         SUM(CASE WHEN target_hit = 1 THEN 1 ELSE 0 END) as hit_count,
@@ -225,12 +225,12 @@ interface TTradeRecommendationDao {
         WHERE trade_date = :date""")
     suspend fun getDayAllPeriodStats(date: String): OutcomeStatsRow?
 
-    /** 獲取指定週期今日推薦 */
+    /** 获取指定周期今日推荐 */
     @Query("SELECT * FROM t_trade_recommendations WHERE trade_date = :date AND period_type = :periodType ORDER BY created_at DESC")
     suspend fun getByPeriodAndDate(periodType: String, date: String): List<TTradeRecommendationEntity>
 }
 
-/** 推薦結果統計（DAO 查詢返回行） */
+/** 推荐结果统计（DAO 查询返回行） */
 data class OutcomeStatsRow(
     val total: Int,
     @ColumnInfo(name = "hit_count") val hitCount: Int,
@@ -239,7 +239,7 @@ data class OutcomeStatsRow(
     @ColumnInfo(name = "avg_virtual_profit") val avgVirtualProfit: Double?
 )
 
-/** 做T收盤統計摘要 */
+/** 做T收盘统计摘要 */
 data class DailyTSummary(
     val date: String,
     val periodType: String,
@@ -248,11 +248,11 @@ data class DailyTSummary(
     val executedCount: Int,
     val virtualSuccessRate: Double,   // targetHit / total * 100
     val actualSuccessRate: Double,    // executed中盈利 / executed * 100
-    val avgVirtualProfitPct: Double,  // 平均虛擬盈虧%
+    val avgVirtualProfitPct: Double,  // 平均虚拟盈亏%
     val details: List<TTradeRecommendationEntity>
 )
 
-/** 做T成功率統計（跨天匯總） */
+/** 做T成功率统计（跨天汇总） */
 data class SuccessRateStatsRow(
     val total: Int,
     @ColumnInfo(name = "hit_count") val hitCount: Int,

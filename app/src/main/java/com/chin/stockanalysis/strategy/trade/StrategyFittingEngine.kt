@@ -19,10 +19,10 @@ import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 
 /**
- * 策略擬合 + 回溯復盤引擎
+ * 策略拟合 + 回溯复盘引擎
  *
- * 從 SimulationTradeEngine 提取的獨立模塊，
- * 保留 autoFit / backtrackAndOptimize 功能，供 Fragment 數據菜單使用。
+ * 从 SimulationTradeEngine 提取的独立模块，
+ * 保留 autoFit / backtrackAndOptimize 功能，供 Fragment 数据菜单使用。
  */
 class StrategyFittingEngine(private val context: Context) {
 
@@ -36,7 +36,7 @@ class StrategyFittingEngine(private val context: Context) {
     private val db = StockDatabase.getInstance(context)
 
     // ══════════════════════════════════════════════════
-    // 數據類型
+    // 数据类型
     // ══════════════════════════════════════════════════
 
     data class TradeSessionConfig(
@@ -46,7 +46,7 @@ class StrategyFittingEngine(private val context: Context) {
         val maxFitRounds: Int = 1000,
         val targetAccuracy: Float = 0.55f,
         val holdingPeriod: Int = 10,
-        val orderType: String = "AI精選"
+        val orderType: String = "AI精选"
     )
 
     data class StrategyPeriodResult(
@@ -97,7 +97,7 @@ class StrategyFittingEngine(private val context: Context) {
     )
 
     // ══════════════════════════════════════════════════
-    // autoFit — 快速擬合
+    // autoFit — 快速拟合
     // ══════════════════════════════════════════════════
 
     suspend fun autoFit(strategies: List<Strategy>, recentDates: List<String>): List<String> = withContext(Dispatchers.IO) {
@@ -144,7 +144,7 @@ class StrategyFittingEngine(private val context: Context) {
     }
 
     // ══════════════════════════════════════════════════
-    // backtrackAndOptimize — 回溯復盤 + 網格搜索優化
+    // backtrackAndOptimize — 回溯复盘 + 网格搜索优化
     // ══════════════════════════════════════════════════
 
     suspend fun backtrackAndOptimize(strategies: List<Strategy>, config: TradeSessionConfig,
@@ -188,7 +188,7 @@ class StrategyFittingEngine(private val context: Context) {
         val optimizedList = mutableListOf<BacktrackOptimizedStrategy>()
         val btAvailableDates = try { db.dailySnapshotDao().getAvailableDates(31).reversed() } catch (_: Exception) { emptyList() }
         val strategiesForGrid = if (strategies.size > 3) {
-            Log.i(TAG, "backtrackAndOptimize: 策略數=${strategies.size}，僅對前3個執行 gridSearch")
+            Log.i(TAG, "backtrackAndOptimize: 策略数=${strategies.size}，仅对前3个执行 gridSearch")
             strategies.take(3)
         } else strategies
         val gridSearchStart = System.currentTimeMillis()
@@ -211,13 +211,13 @@ class StrategyFittingEngine(private val context: Context) {
                 saveFittingParams(strategy.id, tradeDate, period, listOf(fp))
                 val oldBest = getOldBestAccuracy(strategy.id, tradeDate, period) ?: 0f
                 optimizedList.add(BacktrackOptimizedStrategy(strategy.id, strategy.name, oldBest, gridResult.bestAccuracy,
-                    listOf("網格搜索${gridResult.totalCombinations}組合: ${"%.1f".format(oldBest*100)}%→${"%.1f".format(gridResult.bestAccuracy*100)}%")))
+                    listOf("网格搜索${gridResult.totalCombinations}组合: ${"%.1f".format(oldBest*100)}%→${"%.1f".format(gridResult.bestAccuracy*100)}%")))
             } catch (e: Exception) {
-                Log.w(TAG, "backtrack gridSearch 失敗: ${strategy.name} ${e.message}")
+                Log.w(TAG, "backtrack gridSearch 失败: ${strategy.name} ${e.message}")
             }
         }
         val gridSearchElapsed = System.currentTimeMillis() - gridSearchStart
-        Log.i(TAG, "backtrackAndOptimize gridSearch 總耗時: ${gridSearchElapsed}ms, 策略數=${strategiesForGrid.size}/${strategies.size}")
+        Log.i(TAG, "backtrackAndOptimize gridSearch 总耗时: ${gridSearchElapsed}ms, 策略数=${strategiesForGrid.size}/${strategies.size}")
         val sb = StringBuilder()
         sb.appendLine("📈 回溯复盘").appendLine("交易日: ${config.tradeDate}")
         sb.appendLine("📊 买入分析: ${orderAnalysisList.size}只, ${orderAnalysisList.count{it.wasGood}}盈利")
@@ -292,7 +292,7 @@ class StrategyFittingEngine(private val context: Context) {
     private suspend fun executeStrategy(strategy: Strategy, stockList: List<StockRealtime>): List<StrategySignal>? = try {
         strategy.screenWithData(stockList).getOrNull()?.signals?.filter {
             it.action == SignalAction.BUY || it.action == SignalAction.WATCH }?.sortedByDescending{it.strength}
-    } catch (e: Exception) { Log.w(TAG,"策略失敗:${e.message}"); null }
+    } catch (e: Exception) { Log.w(TAG,"策略失败:${e.message}"); null }
 
     private suspend fun calculateNewsStrength(signals: List<StrategySignal>, tradeDate: String): Int = try {
         val fromDate = LocalDate.parse(tradeDate).minusDays(3).format(DATE_FMT)
@@ -350,7 +350,7 @@ class StrategyFittingEngine(private val context: Context) {
             filteredReasonJson=JSONArray(info.map{JSONObject().apply{put("code",it.stockCode);put("name",it.stockName);put("reason",it.reason)}}).toString(),
             finalTop3Json=JSONArray(top15.map{JSONObject().apply{put("code",it.stockCode);put("name",it.stockName);put("score",it.strength);put("reason",it.reason.take(100))}}).toString(),
             aiSelectionReason="",createdAt=System.currentTimeMillis()))
-        } catch (e: Exception) { Log.w(TAG,"保存失敗:${e.message}") }
+        } catch (e: Exception) { Log.w(TAG,"保存失败:${e.message}") }
     }
 
     private suspend fun saveFittingParams(sid:String,date:String,period:Int,rounds:List<FittingRoundParam>) {

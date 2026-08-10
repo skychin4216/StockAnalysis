@@ -15,11 +15,11 @@ import kotlinx.coroutines.withContext
 /**
  * ## 放量突破策略（修正版）
  *
- * 使用真實量比（今日成交量 / 近 10 日均量）代替絕對成交額。
- * 解決舊版系統性偏好大盤股的問題。
+ * 使用真实量比（今日成交量 / 近 10 日均量）代替绝对成交额。
+ * 解决旧版系统性偏好大盘股的问题。
  *
- * 篩選：量比 >= 2.0 且漲幅 >= 2% 且價格突破開盤價
- * 評分：量比(40%) + 突破幅度(30%) + 漲幅(30%)
+ * 筛选：量比 >= 2.0 且涨幅 >= 2% 且价格突破开盘价
+ * 评分：量比(40%) + 突破幅度(30%) + 涨幅(30%)
  */
 class VolumeBreakStrategy(
     private val screener: StockScreener
@@ -79,34 +79,34 @@ class VolumeBreakStrategy(
         val db = StockDatabase.getInstance(screener.context)
         val dao = db.dailySnapshotDao()
 
-        // 預過濾：當日有漲幅、價格突破開盤價、有基本流動性
+        // 预过滤：当日有涨幅、价格突破开盘价、有基本流动性
         val candidates = pool.filter {
             it.changePercent >= dynamicChangeMin &&
             it.price > it.open &&
             it.amount > 30_000_000 &&
             it.price > 2.0
         }
-        Log.i("VB_Strategy", "大盤: $marketDirection, 候選: ${candidates.size}/${pool.size}, 量比門檻: $volumeRatioMin")
+        Log.i("VB_Strategy", "大盘: $marketDirection, 候选: ${candidates.size}/${pool.size}, 量比门槛: $volumeRatioMin")
 
         val signals = mutableListOf<StrategySignal>()
 
         for (stock in candidates) {
             try {
-                // 從 DB 讀取近 lookbackDays 天歷史成交量
+                // 从 DB 读取近 lookbackDays 天历史成交量
                 val history = dao.getByCode(stock.code, lookbackDays)
                 if (history.isEmpty()) continue
 
                 val avgVolume = history.map { it.volume.toDouble() }.average()
                 if (avgVolume <= 0) continue
 
-                // 計算真實量比
+                // 计算真实量比
                 val volumeRatio = stock.volume.toDouble() / avgVolume
                 if (volumeRatio < volumeRatioMin) continue
 
-                // 突破幅度：價格超出開盤價的百分比
+                // 突破幅度：价格超出开盘价的百分比
                 val breakPercent = if (stock.open > 0) (stock.price - stock.open) / stock.open * 100 else 0.0
 
-                // 評分
+                // 评分
                 val volumeScore = when {
                     volumeRatio > 5.0 -> 40
                     volumeRatio > 3.5 -> 35
@@ -137,14 +137,14 @@ class VolumeBreakStrategy(
                     stockCode = stock.code, stockName = stock.name, strategyId = id, category = category,
                     strength = strength,
                     action = when { strength >= 75 -> SignalAction.BUY; strength >= 55 -> SignalAction.WATCH; else -> SignalAction.HOLD },
-                    reason = "量比${"%.1f".format(volumeRatio)} 漲${"%.1f".format(stock.changePercent)}% 突破${"%.1f".format(breakPercent)}%",
+                    reason = "量比${"%.1f".format(volumeRatio)} 涨${"%.1f".format(stock.changePercent)}% 突破${"%.1f".format(breakPercent)}%",
                     currentPrice = stock.price, changePercent = stock.changePercent
                 ))
             } catch (_: Exception) { continue }
         }
 
         val result = signals.sortedByDescending { it.strength }.take(config.maxResults)
-        Log.i("VB_Strategy", "計算完成: ${candidates.size} 候選 → ${result.size} 信號")
+        Log.i("VB_Strategy", "计算完成: ${candidates.size} 候选 → ${result.size} 信号")
         return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,
             signals = result, totalScanned = pool.size, scanTimeMs = System.currentTimeMillis() - startTime

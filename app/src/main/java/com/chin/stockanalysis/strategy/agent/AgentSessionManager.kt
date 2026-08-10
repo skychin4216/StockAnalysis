@@ -4,9 +4,9 @@ import kotlinx.coroutines.*
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * ## Agent 會話管理器
+ * ## Agent 会话管理器
  *
- * 管理所有活躍的分析會話，支持級聯停止。
+ * 管理所有活跃的分析会话，支持级联停止。
  */
 class AgentSessionManager {
     private val activeSessions = ConcurrentHashMap<String, Job>()

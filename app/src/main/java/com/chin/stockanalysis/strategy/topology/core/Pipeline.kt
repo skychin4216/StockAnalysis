@@ -12,11 +12,11 @@ import kotlin.system.measureTimeMillis
 // ============================================================================
 
 /**
- * ## Link — 連接兩個 Node 的有向邊
+ * ## Link — 连接两个 Node 的有向边
  *
- * 負責在上游節點輸出與下游節點輸入之間進行類型轉換與條件過濾。
- * - [transformer] 可選的類型轉換函數，若為 null 則直接 cast
- * - [condition] 可選的條件判斷，返回 false 時跳過下游節點的執行
+ * 负责在上游节点输出与下游节点输入之间进行类型转换与条件过滤。
+ * - [transformer] 可选的类型转换函数，若为 null 则直接 cast
+ * - [condition] 可选的条件判断，返回 false 时跳过下游节点的执行
  */
 class Link<UPSTREAM_OUT, DOWNSTREAM_IN>(
     val from: PipelineNode<*, UPSTREAM_OUT>,
@@ -26,7 +26,7 @@ class Link<UPSTREAM_OUT, DOWNSTREAM_IN>(
     val label: String = "${from.nodeId} -> ${to.nodeId}"
 ) {
     companion object {
-        /** 虛擬源節點，用於 root Link 的 from。輸出 Unit，表示沒有上游依賴。 */
+        /** 虚拟源节点，用于 root Link 的 from。输出 Unit，表示没有上游依赖。 */
         private val SourceNode: PipelineNode<Unit, Unit> = object : PipelineNode<Unit, Unit> {
             override val nodeId = "__source__"
             override val nodeName = "Source"
@@ -35,9 +35,9 @@ class Link<UPSTREAM_OUT, DOWNSTREAM_IN>(
         }
 
         /**
-         * 創建一個從 root 節點（接受 Unit 輸入）開始的 Link。
+         * 创建一个从 root 节点（接受 Unit 输入）开始的 Link。
          *
-         * 用於 LinkList 的第一個節點沒有上游依賴的情況。
+         * 用于 LinkList 的第一个节点没有上游依赖的情况。
          */
         fun <DOWNSTREAM_IN> root(
             target: PipelineNode<DOWNSTREAM_IN, *>,
@@ -49,18 +49,18 @@ class Link<UPSTREAM_OUT, DOWNSTREAM_IN>(
         )
     }
     /**
-     * 將上游輸出傳播到下游節點。
+     * 将上游输出传播到下游节点。
      *
-     * 1. 先檢查 [condition]，若條件為 false 則返回 null（跳過下游）
-     * 2. 若存在 [transformer] 則使用其轉換數據，否則直接 cast
+     * 1. 先检查 [condition]，若条件为 false 则返回 null（跳过下游）
+     * 2. 若存在 [transformer] 则使用其转换数据，否则直接 cast
      *
-     * @param upstreamOutput 上游節點的輸出結果
-     * @param context 共享的流水線上下文
-     * @return 轉換後的下游輸入，若條件不滿足或轉換失敗則返回 null
+     * @param upstreamOutput 上游节点的输出结果
+     * @param context 共享的流水线上下文
+     * @return 转换后的下游输入，若条件不满足或转换失败则返回 null
      */
     @Suppress("UNCHECKED_CAST")
     suspend fun propagate(upstreamOutput: UPSTREAM_OUT, context: PipelineContext): DOWNSTREAM_IN? {
-        // 檢查條件：若定義了 condition 且返回 false，則跳過下游
+        // 检查条件：若定义了 condition 且返回 false，则跳过下游
         if (condition != null) {
             val shouldPass = try {
                 condition.invoke(upstreamOutput, context)
@@ -71,7 +71,7 @@ class Link<UPSTREAM_OUT, DOWNSTREAM_IN>(
             if (!shouldPass) return null
         }
 
-        // 執行轉換
+        // 执行转换
         return try {
             if (transformer != null) {
                 transformer.invoke(upstreamOutput)
@@ -90,11 +90,11 @@ class Link<UPSTREAM_OUT, DOWNSTREAM_IN>(
 // ============================================================================
 
 /**
- * ## LinkList — 有序鏈路列表
+ * ## LinkList — 有序链路列表
  *
- * 一組串行的 [Link] 組成一條處理鏈，可作為可復用的處理模板。
- * - [links] 按順序依次執行
- * - [skipOnEmpty] 為 true 時，若中間某步產生 null 則跳過後續步驟
+ * 一组串行的 [Link] 组成一条处理链，可作为可复用的处理模板。
+ * - [links] 按顺序依次执行
+ * - [skipOnEmpty] 为 true 时，若中间某步产生 null 则跳过后续步骤
  */
 class LinkList(
     val name: String,
@@ -103,7 +103,7 @@ class LinkList(
     val skipOnEmpty: Boolean = true
 ) {
     /**
-     * 返回鏈路中的第一個節點（頭節點）
+     * 返回链路中的第一个节点（头节点）
      */
     fun headNode(): PipelineNode<*, *> {
         check(links.isNotEmpty()) { "LinkList '$name' has no links" }
@@ -111,7 +111,7 @@ class LinkList(
     }
 
     /**
-     * 返回鏈路中的最後一個節點（尾節點）
+     * 返回链路中的最后一个节点（尾节点）
      */
     fun tailNode(): PipelineNode<*, *> {
         check(links.isNotEmpty()) { "LinkList '$name' has no links" }
@@ -119,7 +119,7 @@ class LinkList(
     }
 
     /**
-     * 返回鏈路中所有不重複的節點（按出現順序）
+     * 返回链路中所有不重复的节点（按出现顺序）
      */
     fun allNodes(): List<PipelineNode<*, *>> {
         val visited = mutableSetOf<String>()
@@ -132,14 +132,14 @@ class LinkList(
     }
 
     /**
-     * 串行執行所有 Link。
+     * 串行执行所有 Link。
      *
-     * 對每個 Link：
-     * 1. 調用 [Link.propagate] 將上游輸出轉換為下游輸入
-     * 2. 調用下游節點的 [PipelineNode.execute] 進行處理
-     * 3. 記錄每步耗時
+     * 对每个 Link：
+     * 1. 调用 [Link.propagate] 将上游输出转换为下游输入
+     * 2. 调用下游节点的 [PipelineNode.execute] 进行处理
+     * 3. 记录每步耗时
      *
-     * 錯誤不中斷整條鏈路，而是記錄到上下文，下游收到 null。
+     * 错误不中断整条链路，而是记录到上下文，下游收到 null。
      */
     @Suppress("UNCHECKED_CAST")
     suspend fun execute(context: PipelineContext): LinkListResult {
@@ -147,7 +147,7 @@ class LinkList(
         var success = true
         var currentOutput: Any? = null
 
-        // 若鏈路為空，直接返回
+        // 若链路为空，直接返回
         if (links.isEmpty()) {
             return LinkListResult(
                 linkListName = name,
@@ -160,16 +160,16 @@ class LinkList(
         for ((index, link) in links.withIndex()) {
             val nodeId = link.to.nodeId
 
-            // 若上一步輸出為 null 且設置了 skipOnEmpty，則跳過
+            // 若上一步输出为 null 且设置了 skipOnEmpty，则跳过
             if (currentOutput == null && skipOnEmpty) {
                 stepTimings.add(nodeId to 0L)
                 continue
             }
 
-            // 將上游輸出傳播為下游輸入（null 時用 Unit 作為佔位）
+            // 将上游输出传播为下游输入（null 时用 Unit 作为占位）
             val downstreamInput = (link as Link<Any, Any>).propagate(currentOutput ?: Unit, context)
 
-            // 若傳播結果為 null（條件不滿足或轉換失敗）
+            // 若传播结果为 null（条件不满足或转换失败）
             if (downstreamInput == null) {
                 stepTimings.add(nodeId to 0L)
                 currentOutput = null
@@ -177,7 +177,7 @@ class LinkList(
                 continue
             }
 
-            // 執行下游節點
+            // 执行下游节点
             var nodeOutput: Any? = null
             val elapsed = measureTimeMillis {
                 try {
@@ -192,7 +192,7 @@ class LinkList(
             }
             stepTimings.add(nodeId to elapsed)
 
-            // 若節點執行失敗，下游收到 null
+            // 若节点执行失败，下游收到 null
             currentOutput = nodeOutput
             if (nodeOutput == null) {
                 success = false
@@ -209,16 +209,16 @@ class LinkList(
 }
 
 /**
- * LinkList 的執行結果
+ * LinkList 的执行结果
  */
 data class LinkListResult(
-    /** 鏈路名稱 */
+    /** 链路名称 */
     val linkListName: String,
-    /** 是否所有步驟均成功 */
+    /** 是否所有步骤均成功 */
     val success: Boolean,
-    /** 最終輸出（最後一個節點的結果） */
+    /** 最终输出（最后一个节点的结果） */
     val output: Any?,
-    /** 每步耗時，(nodeId, 耗時ms) */
+    /** 每步耗时，(nodeId, 耗时ms) */
     val stepTimings: List<Pair<String, Long>>
 )
 
@@ -227,13 +227,13 @@ data class LinkListResult(
 // ============================================================================
 
 /**
- * ## Pipeline — 編排多個 LinkList 的執行引擎
+ * ## Pipeline — 编排多个 LinkList 的执行引擎
  *
- * 以 [Stage] 為單位組織 [LinkList]，支持：
- * - Stage 間串行執行
- * - 同一 Stage 內多個 LinkList 可並行執行（[Stage.parallel] = true）
- * - 每個 Stage 可設置 [Stage.condition] 決定是否執行
- * - Stage 執行結果注入 [PipelineContext.stageOutputs]
+ * 以 [Stage] 为单位组织 [LinkList]，支持：
+ * - Stage 间串行执行
+ * - 同一 Stage 内多个 LinkList 可并行执行（[Stage.parallel] = true）
+ * - 每个 Stage 可设置 [Stage.condition] 决定是否执行
+ * - Stage 执行结果注入 [PipelineContext.stageOutputs]
  */
 data class Pipeline(
     val id: String = "",
@@ -243,29 +243,29 @@ data class Pipeline(
     val stages: List<Stage>,
 ) {
     /**
-     * Pipeline 的一個執行階段
+     * Pipeline 的一个执行阶段
      */
     data class Stage(
-        /** 階段名稱 */
+        /** 阶段名称 */
         val name: String,
-        /** 該階段包含的 LinkList 列表 */
+        /** 该阶段包含的 LinkList 列表 */
         val linkLists: List<LinkList>,
-        /** 同一階段內的 LinkList 是否並行執行，默認串行 */
+        /** 同一阶段内的 LinkList 是否并行执行，默认串行 */
         val parallel: Boolean = false,
-        /** 條件函數：返回 false 時跳過整個 Stage，null 表示始終執行 */
+        /** 条件函数：返回 false 时跳过整个 Stage，null 表示始终执行 */
         val condition: ((PipelineContext) -> Boolean)? = null,
     )
 
     private val contextMutex = Mutex()
 
     /**
-     * 執行整個 Pipeline。
+     * 执行整个 Pipeline。
      *
-     * 按 Stage 順序依次執行：
-     * - 檢查 Stage 的 [Stage.condition]，不滿足則跳過
-     * - 若 [Stage.parallel] 為 true，使用 coroutineScope + async 並行執行 LinkList
-     * - 否則串行執行 LinkList
-     * - 每個 Stage 的結果注入 [PipelineContext.stageOutputs]
+     * 按 Stage 顺序依次执行：
+     * - 检查 Stage 的 [Stage.condition]，不满足则跳过
+     * - 若 [Stage.parallel] 为 true，使用 coroutineScope + async 并行执行 LinkList
+     * - 否则串行执行 LinkList
+     * - 每个 Stage 的结果注入 [PipelineContext.stageOutputs]
      */
     suspend fun execute(context: PipelineContext): PipelineResult {
         val stageResults = mutableMapOf<String, LinkListResult>()
@@ -276,7 +276,7 @@ data class Pipeline(
 
         val totalElapsed = measureTimeMillis {
             for (stage in stages) {
-                // 檢查 Stage 條件
+                // 检查 Stage 条件
                 if (stage.condition != null) {
                     val shouldRun = try {
                         stage.condition.invoke(context)
@@ -295,13 +295,13 @@ data class Pipeline(
                         executeStageSequential(stage, context, errors)
                     }
 
-                    // 收集結果並注入上下文
+                    // 收集结果并注入上下文
                     for ((linkListName, result) in results) {
                         stageResults["${stage.name}:$linkListName"] = result
                         if (!result.success) {
                             allSuccess = false
                         }
-                        // 記錄最後一個非空的輸出作為 finalOutput
+                        // 记录最后一个非空的输出作为 finalOutput
                         if (result.output != null) {
                             finalOutput = result.output
                         }
@@ -315,7 +315,7 @@ data class Pipeline(
             }
         }
 
-        // 收集上下文中的錯誤
+        // 收集上下文中的错误
         errors.putAll(context.errors)
 
         return PipelineResult(
@@ -330,7 +330,7 @@ data class Pipeline(
     }
 
     /**
-     * 串行執行一個 Stage 內的所有 LinkList
+     * 串行执行一个 Stage 内的所有 LinkList
      */
     private suspend fun executeStageSequential(
         stage: Stage,
@@ -356,7 +356,7 @@ data class Pipeline(
     }
 
     /**
-     * 並行執行一個 Stage 內的所有 LinkList（使用 coroutineScope + async）
+     * 并行执行一个 Stage 内的所有 LinkList（使用 coroutineScope + async）
      */
     private suspend fun executeStageParallel(
         stage: Stage,
@@ -390,23 +390,23 @@ data class Pipeline(
 // ============================================================================
 
 /**
- * Pipeline 的執行結果
+ * Pipeline 的执行结果
  */
 data class PipelineResult(
-    /** Pipeline 名稱 */
+    /** Pipeline 名称 */
     val pipelineName: String,
     /** 是否所有 Stage 均成功完成 */
     val success: Boolean,
-    /** 各 Stage 中 LinkList 的執行結果，key 格式為 "stageName:linkListName" */
+    /** 各 Stage 中 LinkList 的执行结果，key 格式为 "stageName:linkListName" */
     val stageResults: Map<String, LinkListResult>,
-    /** 各 Stage 的耗時，key 為 stageName */
+    /** 各 Stage 的耗时，key 为 stageName */
     val timings: Map<String, Long>,
-    /** 總耗時（毫秒） */
+    /** 总耗时（毫秒） */
     val totalElapsedMs: Long,
-    /** 最終輸出（最後一個非空輸出） */
+    /** 最终输出（最后一个非空输出） */
     val finalOutput: Any? = null,
-    /** 錯誤信息，key 為出錯的 stage:linkList 或 nodeId */
+    /** 错误信息，key 为出错的 stage:linkList 或 nodeId */
     val errors: Map<String, String> = emptyMap(),
-    /** 各節點股票流動記錄（nodeId → StockFlowRecord），DAG Pipeline 執行後填充 */
+    /** 各节点股票流动记录（nodeId → StockFlowRecord），DAG Pipeline 执行后填充 */
     val stockFlowLogs: Map<String, StockFlowRecord> = emptyMap()
 )

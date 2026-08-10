@@ -7,24 +7,24 @@ import com.chin.stockanalysis.strategy.topology.core.PipelineNode
 import kotlinx.coroutines.*
 
 /**
- * 降級策略枚舉
+ * 降级策略枚举
  */
 enum class FallbackStrategy {
-    SKIP,            // 跳過，使用 null 輸出（非關鍵節點）
-    CACHE,           // 使用上次成功的緩存結果
-    DEFAULT_VALUE,   // 使用預設值
-    RETRY_ONCE,      // 重試一次
-    DEGRADE_LLM,     // 降級到更小/更快的模型
-    ALGORITHM_BACKUP // 使用純算法後備（不調 LLM）
+    SKIP,            // 跳过，使用 null 输出（非关键节点）
+    CACHE,           // 使用上次成功的缓存结果
+    DEFAULT_VALUE,   // 使用预设值
+    RETRY_ONCE,      // 重试一次
+    DEGRADE_LLM,     // 降级到更小/更快的模型
+    ALGORITHM_BACKUP // 使用纯算法后备（不调 LLM）
 }
 
 /**
- * 節點容錯配置
+ * 节点容错配置
  *
- * @property isCritical 是否關鍵（失敗導致 Pipeline 失敗）
- * @property fallback 降級策略
- * @property retryCount 重試次數
- * @property algorithmBackup 算法後備函數（可選）
+ * @property isCritical 是否关键（失败导致 Pipeline 失败）
+ * @property fallback 降级策略
+ * @property retryCount 重试次数
+ * @property algorithmBackup 算法后备函数（可选）
  */
 data class NodeResilience(
     val isCritical: Boolean = false,
@@ -34,14 +34,14 @@ data class NodeResilience(
 )
 
 /**
- * AgentNode — 將 Agent 包裝為 DAG 節點
+ * AgentNode — 将 Agent 包装为 DAG 节点
  *
- * 使 LLM 推理與量化計算在同一張 DAG 圖中流動。
- * Agent 的分析結果通過此包裝器流入 DAG 的下游節點。
+ * 使 LLM 推理与量化计算在同一张 DAG 图中流动。
+ * Agent 的分析结果通过此包装器流入 DAG 的下游节点。
  *
  * 使用方式：
  * ```kotlin
- * // 在 NodeRegistry 中註冊
+ * // 在 NodeRegistry 中注册
  * register("agent_analyst") { ctx, config ->
  *     AgentNode(
  *         role = AgentRoles.ANALYST,
@@ -51,10 +51,10 @@ data class NodeResilience(
  * }
  * ```
  *
- * @property role Agent 角色（決定權限、超時）
- * @property taskFactory 任務工廠（從 PipelineContext 創建 AgentTask）
- * @property outputKey 輸出存入 PipelineContext 的 key
- * @property resilience 容錯配置
+ * @property role Agent 角色（决定权限、超时）
+ * @property taskFactory 任务工厂（从 PipelineContext 创建 AgentTask）
+ * @property outputKey 输出存入 PipelineContext 的 key
+ * @property resilience 容错配置
  */
 class AgentNode(
     private val role: AgentRole,
@@ -72,7 +72,7 @@ class AgentNode(
     override val nodeType: NodeType = NodeType.AI_PREDICTION
 
     override suspend fun execute(context: PipelineContext, input: Any): Any? {
-        context.log(nodeId, "▶ $nodeName 開始 (timeout=${role.timeoutMs}ms)")
+        context.log(nodeId, "▶ $nodeName 开始 (timeout=${role.timeoutMs}ms)")
 
         val session = AgentSession("dag_${context.tradeDate}_${role.name}")
         val spawner = SubAgentSpawner()
@@ -93,11 +93,11 @@ class AgentNode(
 
                 scope.cancel()
 
-                // 處理結果
+                // 处理结果
                 return when {
                     announce.isSuccess || announce.isDegraded -> {
                         if (announce.isDegraded) {
-                            context.log(nodeId, "⚠️ $nodeName 降級: ${announce.errors}")
+                            context.log(nodeId, "⚠️ $nodeName 降级: ${announce.errors}")
                         }
                         context.log(nodeId, "✓ $nodeName 完成 (${announce.durationMs}ms)")
                         context.setStageOutput(outputKey, announce.result)
@@ -106,7 +106,7 @@ class AgentNode(
                     else -> {
                         lastError = RuntimeException("Agent failed: ${announce.errors}")
                         if (attempt < maxAttempts) {
-                            context.log(nodeId, "⟳ $nodeName 重試 ($attempt/$maxAttempts)")
+                            context.log(nodeId, "⟳ $nodeName 重试 ($attempt/$maxAttempts)")
                             continue
                         }
                         null
@@ -115,7 +115,7 @@ class AgentNode(
             } catch (e: Exception) {
                 lastError = e
                 if (attempt < maxAttempts) {
-                    context.log(nodeId, "⟳ $nodeName 異常重試 ($attempt/$maxAttempts): ${e.message}")
+                    context.log(nodeId, "⟳ $nodeName 异常重试 ($attempt/$maxAttempts): ${e.message}")
                     continue
                 }
             }
@@ -123,30 +123,30 @@ class AgentNode(
 
         scope.cancel()
 
-        // 所有重試失敗 → 執行降級策略
-        context.log(nodeId, "✗ $nodeName 失敗: ${lastError?.message}")
+        // 所有重试失败 → 执行降级策略
+        context.log(nodeId, "✗ $nodeName 失败: ${lastError?.message}")
         return applyFallback(context, lastError)
     }
 
     /**
-     * 應用降級策略
+     * 应用降级策略
      */
     private suspend fun applyFallback(context: PipelineContext, error: Exception?): Any? {
         return when (resilience.fallback) {
             FallbackStrategy.SKIP -> {
-                context.log(nodeId, "⊘ $nodeName 降級: SKIP（跳過）")
+                context.log(nodeId, "⊘ $nodeName 降级: SKIP（跳过）")
                 null
             }
             FallbackStrategy.DEFAULT_VALUE -> {
-                context.log(nodeId, "⊘ $nodeName 降級: DEFAULT_VALUE")
+                context.log(nodeId, "⊘ $nodeName 降级: DEFAULT_VALUE")
                 emptyMap<String, Any>()
             }
             FallbackStrategy.ALGORITHM_BACKUP -> {
-                context.log(nodeId, "⊘ $nodeName 降級: ALGORITHM_BACKUP")
+                context.log(nodeId, "⊘ $nodeName 降级: ALGORITHM_BACKUP")
                 resilience.algorithmBackup?.invoke(context)
             }
             else -> {
-                context.log(nodeId, "⊘ $nodeName 降級: ${resilience.fallback}")
+                context.log(nodeId, "⊘ $nodeName 降级: ${resilience.fallback}")
                 null
             }
         }
@@ -154,9 +154,9 @@ class AgentNode(
 }
 
 /**
- * LLM 響應緩存 — 避免重複調用
+ * LLM 响应缓存 — 避免重复调用
  *
- * 相同股票同一天內的相同分析類型，直接返回緩存。
+ * 相同股票同一天内的相同分析类型，直接返回缓存。
  * key: stockCode_analysisType_tradeDate_tier
  */
 class AnalysisCache(
@@ -202,7 +202,7 @@ class AnalysisCache(
     }
 
     companion object {
-        /** 全局共享緩存實例 */
+        /** 全局共享缓存实例 */
         val global = AnalysisCache(ttlMinutes = 30, maxSize = 200)
     }
 }

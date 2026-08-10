@@ -28,31 +28,31 @@ import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
 
 /**
- * ## TopologyEditorActivity（重寫版）
+ * ## TopologyEditorActivity（重写版）
  *
- * 基於 [NodeCanvasView] 2D 畫布的 Pipeline 拓撲可視化編輯器。
+ * 基于 [NodeCanvasView] 2D 画布的 Pipeline 拓扑可视化编辑器。
  *
- * ### 佈局結構
+ * ### 布局结构
  * ```
  * ┌───────────────────────────────────────────────────┐
- * │ [◀/▶]   UseCase 名稱          [💾 保存] [▶ 執行]   │ ← 頂部欄
+ * │ [◀/▶]   UseCase 名称          [💾 保存] [▶ 执行]   │ ← 顶部栏
  * ├──────────────┬────────────────────────────────────┤
  * │ Collapsible  │                                    │
  * │ Sidebar      │       NodeCanvasView               │
- * │  ▼ Node      │       (2D 畫布，ScrollView 包裹)    │
+ * │  ▼ Node      │       (2D 画布，ScrollView 包裹)    │
  * │  ▼ Pipeline  │                                    │
  * │  ▶ UseCase   │                                    │
  * ├──────────────┴────────────────────────────────────┤
- * │ 狀態文字                                            │ ← 底部欄
+ * │ 状态文字                                            │ ← 底部栏
  * └───────────────────────────────────────────────────┘
  * ```
  *
  * ### 交互
- * - 側邊欄 Node 模板點擊 → 添加節點到畫布
- * - 畫布節點點擊 → 選中（狀態欄顯示信息）
- * - 畫布節點長按 → 彈出 AlertDialog（配置 / 刪除）
- * - 從節點 A 拖拽到節點 B → 建立連線
- * - 連線點擊 → 彈出刪除連線對話框
+ * - 侧边栏 Node 模板点击 → 添加节点到画布
+ * - 画布节点点击 → 选中（状态栏显示信息）
+ * - 画布节点长按 → 弹出 AlertDialog（配置 / 删除）
+ * - 从节点 A 拖拽到节点 B → 建立连线
+ * - 连线点击 → 弹出删除连线对话框
  */
 class TopologyEditorActivity : AppCompatActivity() {
 
@@ -67,7 +67,7 @@ class TopologyEditorActivity : AppCompatActivity() {
     private val sidebarExpandedWidthDp = 80
     private val sidebarCollapsedWidthDp = 24
 
-    // 側邊欄各分區展開狀態（默認全部收起）
+    // 侧边栏各分区展开状态（默认全部收起）
     private val sectionExpanded = mutableMapOf(
         "node" to false,
         "pipeline" to false,
@@ -75,12 +75,12 @@ class TopologyEditorActivity : AppCompatActivity() {
     )
 
     // ════════════════════════════════════════════════════
-    // 生命週期
+    // 生命周期
     // ════════════════════════════════════════════════════
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // 默認橫屏顯示
+        // 默认横屏显示
         requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         viewModel = ViewModelProvider(this)[TopologyEditorViewModel::class.java]
         ensureNodeRegistryInitialized()
@@ -94,10 +94,10 @@ class TopologyEditorActivity : AppCompatActivity() {
             )
         }
 
-        // 頂部欄
+        // 顶部栏
         rootLayout.addView(buildTopBar())
 
-        // 中間：側邊欄 + 畫布
+        // 中间：侧边栏 + 画布
         val middleLayout = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(
@@ -111,9 +111,9 @@ class TopologyEditorActivity : AppCompatActivity() {
         )
         rootLayout.addView(middleLayout)
 
-        // 底部：狀態欄
+        // 底部：状态栏
         statusText = TextView(this).apply {
-            text = "就緒"
+            text = "就绪"
             setPadding(dp(12), dp(6), dp(12), dp(6))
             setTextColor(Color.parseColor("#6B7280"))
             textSize = 12f
@@ -124,13 +124,13 @@ class TopologyEditorActivity : AppCompatActivity() {
 
         setContentView(rootLayout)
 
-        // 畫布交互回調
+        // 画布交互回调
         canvasView.listener = object : NodeCanvasView.NodeCanvasListener {
             override fun onNodeSelected(node: VisualNode?) {
                 if (node != null) {
-                    statusText.text = "選中: ${node.name} (${node.id}) | module: ${node.module}"
+                    statusText.text = "选中: ${node.name} (${node.id}) | module: ${node.module}"
                 } else {
-                    statusText.text = "未選中節點"
+                    statusText.text = "未选中节点"
                 }
             }
 
@@ -141,46 +141,46 @@ class TopologyEditorActivity : AppCompatActivity() {
             override fun onLinkCreated(fromId: String, toId: String) {
                 viewModel.addLink(fromId, toId)
                 syncCanvasFromViewModel()
-                statusText.text = "已連線: $fromId → $toId"
+                statusText.text = "已连线: $fromId → $toId"
             }
 
             override fun onLinkTapped(link: VisualLink) {
-                // 點擊連線 → 高亮起止節點並平移到目標節點
+                // 点击连线 → 高亮起止节点并平移到目标节点
                 val fromNode = canvasView.canvasState.nodes.find { it.id == link.fromId }
                 val toNode = canvasView.canvasState.nodes.find { it.id == link.toId }
                 if (fromNode != null && toNode != null) {
-                    // 選中目標節點
+                    // 选中目标节点
                     canvasView.canvasState.selectedNodeId = link.toId
-                    // 平移畫布使目標節點居中
+                    // 平移画布使目标节点居中
                     canvasView.panToNode(toNode)
-                    statusText.text = "連線: ${fromNode.name} → ${toNode.name}"
-                    // 長按顯示刪除選項
+                    statusText.text = "连线: ${fromNode.name} → ${toNode.name}"
+                    // 长按显示删除选项
                     val dialog = AlertDialog.Builder(this@TopologyEditorActivity)
                         .setTitle("${fromNode.name} → ${toNode.name}")
                         .setMessage("from: ${link.fromId}\nto: ${link.toId}")
-                        .setPositiveButton("確定", null)
-                        .setNegativeButton("🗑️ 刪除連線") { _, _ ->
+                        .setPositiveButton("确定", null)
+                        .setNegativeButton("🗑️ 删除连线") { _, _ ->
                             viewModel.removeLink(link.fromId, link.toId)
                             syncCanvasFromViewModel()
-                            statusText.text = "已刪除連線"
+                            statusText.text = "已删除连线"
                         }
                         .show()
                 }
             }
         }
 
-        // 觀察 ViewModel 狀態消息
+        // 观察 ViewModel 状态消息
         viewModel.statusMessage.observe(this) { msg ->
             statusText.text = msg
         }
 
-        // 從 Intent 讀取 usecase_id 並加載
+        // 从 Intent 读取 usecase_id 并加载
         val usecaseId = intent.getStringExtra("usecase_id") ?: "mid_term"
         loadUseCase(usecaseId)
     }
 
     // ════════════════════════════════════════════════════
-    // 頂部欄
+    // 顶部栏
     // ════════════════════════════════════════════════════
 
     private fun buildTopBar(): View {
@@ -202,7 +202,7 @@ class TopologyEditorActivity : AppCompatActivity() {
         bar.addView(sidebarToggleBtn)
 
         titleText = TextView(this).apply {
-            text = "Pipeline 編輯器"
+            text = "Pipeline 编辑器"
             setTextColor(Color.WHITE)
             textSize = 16f
             setPadding(dp(12), 0, dp(12), 0)
@@ -223,7 +223,7 @@ class TopologyEditorActivity : AppCompatActivity() {
         bar.addView(saveBtn)
 
         val runBtn = Button(this).apply {
-            text = "▶執行"
+            text = "▶执行"
             textSize = 11f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#7C3AED"))
@@ -251,7 +251,7 @@ class TopologyEditorActivity : AppCompatActivity() {
     }
 
     // ════════════════════════════════════════════════════
-    // 側邊欄
+    // 侧边栏
     // ════════════════════════════════════════════════════
 
     private fun buildSidebar(): View {
@@ -269,11 +269,11 @@ class TopologyEditorActivity : AppCompatActivity() {
     private fun refreshSidebarContent() {
         sidebarContainer.removeAllViews()
 
-        // Node 模板分區
+        // Node 模板分区
         addSidebarSection("node", "📦 Node 模板") {
             val modules = NodeRegistry.listModules().sorted()
             if (modules.isEmpty()) {
-                addSidebarItem("(無可用 module，請先初始化)") { }
+                addSidebarItem("(无可用 module，请先初始化)") { }
             }
             for (module in modules) {
                 val displayName = moduleDisplayName(module)
@@ -284,13 +284,13 @@ class TopologyEditorActivity : AppCompatActivity() {
             }
         }
 
-        // Pipeline 分區
+        // Pipeline 分区
         addSidebarSection("pipeline", "📊 Pipeline") {
             val pipelines = listAssetFiles("usecases")
                 ?.filter { it.endsWith("_pipeline.xml") }
                 ?: emptyList()
             if (pipelines.isEmpty()) {
-                addSidebarItem("(無 Pipeline 文件)") { }
+                addSidebarItem("(无 Pipeline 文件)") { }
             }
             for (pipeFile in pipelines) {
                 val pipeName = extractXmlName("usecases/$pipeFile")
@@ -299,20 +299,20 @@ class TopologyEditorActivity : AppCompatActivity() {
             }
         }
 
-        // UseCase 分區
+        // UseCase 分区
         addSidebarSection("usecase", "📋 UseCase") {
             val usecases = listAssetFiles("usecases")
                 ?.filter { it.endsWith("_usecase.xml") }
                 ?: emptyList()
             if (usecases.isEmpty()) {
-                addSidebarItem("(無 UseCase 文件)") { }
+                addSidebarItem("(无 UseCase 文件)") { }
             }
             for (ucFile in usecases) {
                 val ucName = extractXmlName("usecases/$ucFile")
                     ?: ucFile.removeSuffix("_usecase.xml").replace("_", " ")
                 addSidebarItem(ucName) { loadUseCaseFile(ucFile) }
             }
-            // Pipeline 全景圖入口
+            // Pipeline 全景图入口
             addSidebarItem("🌐 Pipeline 全景") { showPipelinePanorama() }
         }
     }
@@ -370,7 +370,7 @@ class TopologyEditorActivity : AppCompatActivity() {
         }
     }
 
-    /** 切換橫屏/竪屏 */
+    /** 切换横屏/竖屏 */
     private fun toggleOrientation() {
         val current = requestedOrientation
         if (current == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE ||
@@ -381,7 +381,7 @@ class TopologyEditorActivity : AppCompatActivity() {
         }
     }
 
-    /** 顯示 Pipeline 全景圖（WebView 加載 pipeline_framework.html） */
+    /** 显示 Pipeline 全景图（WebView 加载 pipeline_framework.html） */
     private fun showPipelinePanorama() {
         val dialog = android.app.Dialog(this).apply {
             requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
@@ -396,7 +396,7 @@ class TopologyEditorActivity : AppCompatActivity() {
             )
         }
 
-        // 標題欄
+        // 标题栏
         val titleRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -404,7 +404,7 @@ class TopologyEditorActivity : AppCompatActivity() {
             setBackgroundColor(Color.parseColor("#1A237E"))
         }
         val titleTv = TextView(this).apply {
-            text = "Pipeline 全景圖"
+            text = "Pipeline 全景图"
             textSize = 16f
             setTextColor(Color.WHITE)
             setTypeface(null, android.graphics.Typeface.BOLD)
@@ -413,7 +413,7 @@ class TopologyEditorActivity : AppCompatActivity() {
         titleRow.addView(titleTv)
 
         val closeBtn = Button(this).apply {
-            text = "關閉"
+            text = "关闭"
             textSize = 12f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#C62828"))
@@ -449,14 +449,14 @@ class TopologyEditorActivity : AppCompatActivity() {
     }
 
     // ════════════════════════════════════════════════════
-    // 畫布
+    // 画布
     // ════════════════════════════════════════════════════
 
     private fun buildCanvas(): View {
         canvasView = NodeCanvasView(this).apply {
             setBackgroundColor(Color.parseColor("#FAFBFC"))
         }
-        // 包裝 ScrollView 支持上下左右滾動
+        // 包装 ScrollView 支持上下左右滚动
         val hScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = true
             addView(canvasView, ViewGroup.LayoutParams(
@@ -473,7 +473,7 @@ class TopologyEditorActivity : AppCompatActivity() {
     }
 
     // ════════════════════════════════════════════════════
-    // 節點操作
+    // 节点操作
     // ════════════════════════════════════════════════════
 
     private fun addNodeFromPalette(module: String, displayName: String, nodeType: NodeType) {
@@ -483,7 +483,7 @@ class TopologyEditorActivity : AppCompatActivity() {
     }
 
     private fun showNodeContextMenu(node: VisualNode) {
-        val options = arrayOf("📋 配置節點", "🗑️ 刪除節點", "取消")
+        val options = arrayOf("📋 配置节点", "🗑️ 删除节点", "取消")
         AlertDialog.Builder(this)
             .setTitle(node.name)
             .setItems(options) { _, which ->
@@ -492,7 +492,7 @@ class TopologyEditorActivity : AppCompatActivity() {
                     1 -> {
                         viewModel.removeNode(node.id)
                         syncCanvasFromViewModel()
-                        statusText.text = "已刪除: ${node.name}"
+                        statusText.text = "已删除: ${node.name}"
                     }
                 }
             }
@@ -503,19 +503,19 @@ class TopologyEditorActivity : AppCompatActivity() {
         val editableNode = viewModel.getSelectedNode()
             ?: viewModel.getNodes().find { it.id == node.id }
         if (editableNode == null) {
-            statusText.text = "找不到節點: ${node.id}"
+            statusText.text = "找不到节点: ${node.id}"
             return
         }
 
         val configItems = editableNode.config.entries.toList()
         val sb = StringBuilder()
-        sb.appendLine("節點 ID: ${editableNode.id}")
+        sb.appendLine("节点 ID: ${editableNode.id}")
         sb.appendLine("Module: ${editableNode.module}")
         sb.appendLine("Name: ${editableNode.name.ifBlank { editableNode.module }}")
         sb.appendLine()
-        sb.appendLine("配置項:")
+        sb.appendLine("配置项:")
         if (configItems.isEmpty()) {
-            sb.appendLine("  (無)")
+            sb.appendLine("  (无)")
         } else {
             for ((k, v) in configItems) {
                 sb.appendLine("  $k = $v")
@@ -523,9 +523,9 @@ class TopologyEditorActivity : AppCompatActivity() {
         }
 
         AlertDialog.Builder(this)
-            .setTitle("節點配置")
+            .setTitle("节点配置")
             .setMessage(sb.toString())
-            .setPositiveButton("確定", null)
+            .setPositiveButton("确定", null)
             .setNeutralButton("添加配置") { _, _ ->
                 showAddConfigDialog(editableNode.id)
             }
@@ -538,9 +538,9 @@ class TopologyEditorActivity : AppCompatActivity() {
             setSingleLine()
         }
         AlertDialog.Builder(this)
-            .setTitle("添加配置項")
+            .setTitle("添加配置项")
             .setView(input)
-            .setPositiveButton("確定") { _, _ ->
+            .setPositiveButton("确定") { _, _ ->
                 val parts = input.text.toString().split("=", limit = 2)
                 if (parts.size == 2) {
                     val node = viewModel.getNodes().find { it.id == nodeId }
@@ -559,7 +559,7 @@ class TopologyEditorActivity : AppCompatActivity() {
 
 
     // ════════════════════════════════════════════════════
-    // 加載 / 保存 / 執行
+    // 加载 / 保存 / 执行
     // ════════════════════════════════════════════════════
 
     private fun loadUseCase(usecaseId: String) {
@@ -583,19 +583,19 @@ class TopologyEditorActivity : AppCompatActivity() {
                 if (useCaseConfig != null) {
                     titleText.text =
                         useCaseConfig.name.ifBlank { fileName.removeSuffix("_usecase.xml") }
-                    // 加載第一個 Pipeline 引用
+                    // 加载第一个 Pipeline 引用
                     val pipeFile = useCaseConfig.steps.firstOrNull { it is PipelineXmlParser.StepRef.pipeline }
                         ?.let { (it as PipelineXmlParser.StepRef.pipeline).ref }
                     if (pipeFile != null) {
                         loadPipelineFile(pipeFile.substringAfterLast("/"))
                     }
-                    statusText.text = "已加載 UseCase: ${useCaseConfig.name}"
+                    statusText.text = "已加载 UseCase: ${useCaseConfig.name}"
                 } else {
-                    // UseCase 文件不存在，嘗試直接加載同名 Pipeline
+                    // UseCase 文件不存在，尝试直接加载同名 Pipeline
                     loadPipelineFile(fileName.removeSuffix("_usecase.xml") + "_pipeline.xml")
                 }
             } catch (e: Exception) {
-                statusText.text = "加載失敗: ${e.message}"
+                statusText.text = "加载失败: ${e.message}"
             }
         }
     }
@@ -603,7 +603,7 @@ class TopologyEditorActivity : AppCompatActivity() {
     private fun loadPipelineFile(fileName: String) {
         lifecycleScope.launch {
             try {
-                // 自動檢測 V1 Pipeline / V2 DagPipeline 格式
+                // 自动检测 V1 Pipeline / V2 DagPipeline 格式
                 val editable = withContext(Dispatchers.IO) {
                     val xml = applicationContext.assets.open("usecases/$fileName").bufferedReader().use { it.readText() }
                     if (PipelineXmlParser.isDagPipelineXml(xml)) {
@@ -618,18 +618,18 @@ class TopologyEditorActivity : AppCompatActivity() {
                     titleText.text = editable.name.ifBlank { fileName.removeSuffix(".xml") }
                     syncCanvasFromViewModel()
                     canvasView.zoomToFit()
-                    statusText.text = "已加載: ${editable.name} (${viewModel.getNodes().size} 節點, ${viewModel.getLinks().size} 連線)"
+                    statusText.text = "已加载: ${editable.name} (${viewModel.getNodes().size} 节点, ${viewModel.getLinks().size} 连线)"
                 } else {
-                    statusText.text = "文件不存在或解析失敗: usecases/$fileName"
+                    statusText.text = "文件不存在或解析失败: usecases/$fileName"
                 }
             } catch (e: Exception) {
-                statusText.text = "加載失敗: ${e.message}"
+                statusText.text = "加载失败: ${e.message}"
             }
         }
     }
 
     /**
-     * 直接解析 DAG XML 為 EditablePipeline（不依賴 NodeRegistry 實例化）。
+     * 直接解析 DAG XML 为 EditablePipeline（不依赖 NodeRegistry 实例化）。
      * 提取 <Node id="..." name="..." module="..." /> 和 <Link source="..." target="..." />。
      */
     private fun parseDagXmlToEditable(xml: String): PipelineXmlParser.EditablePipeline? {
@@ -642,7 +642,7 @@ class TopologyEditorActivity : AppCompatActivity() {
             var pipelineDesc = ""
             val nodes = mutableListOf<PipelineXmlParser.EditableNode>()
             val links = mutableListOf<PipelineXmlParser.EditableLink>()
-            var currentGroupId = ""  // 追蹤當前所在的 Pipeline 分組
+            var currentGroupId = ""  // 追踪当前所在的 Pipeline 分组
 
             var eventType = parser.eventType
             while (eventType != XmlPullParser.END_DOCUMENT) {
@@ -653,7 +653,7 @@ class TopologyEditorActivity : AppCompatActivity() {
                             pipelineName = parser.getAttributeValue(null, "name") ?: ""
                             pipelineDesc = parser.getAttributeValue(null, "description") ?: ""
                         }
-                        // ── 子 Pipeline 分組塊 ──
+                        // ── 子 Pipeline 分组块 ──
                         "Pipeline" -> {
                             val gId = parser.getAttributeValue(null, "id")
                             if (!gId.isNullOrBlank()) currentGroupId = gId
@@ -690,15 +690,15 @@ class TopologyEditorActivity : AppCompatActivity() {
                             }
                         }
                         "Link", "link" -> {
-                            // 支持兩種格式：
-                            // 屬性格式: <Link source="..." target="..." />
-                            // 子標籤格式: <Link><SourceNodeId>...</SourceNodeId><TargetNodeId>...</TargetNodeId></Link>
+                            // 支持两种格式：
+                            // 属性格式: <Link source="..." target="..." />
+                            // 子标签格式: <Link><SourceNodeId>...</SourceNodeId><TargetNodeId>...</TargetNodeId></Link>
                             var from = parser.getAttributeValue(null, "source")
                                 ?: parser.getAttributeValue(null, "from") ?: ""
                             var to = parser.getAttributeValue(null, "target")
                                 ?: parser.getAttributeValue(null, "to") ?: ""
 
-                            // 如果屬性格式沒拿到，嘗試子標籤格式
+                            // 如果属性格式没拿到，尝试子标签格式
                             if (from.isBlank() || to.isBlank()) {
                                 val depth = parser.depth
                                 var le = parser.next()
@@ -739,11 +739,11 @@ class TopologyEditorActivity : AppCompatActivity() {
                 nodes = nodes,
                 stages = listOf(
                     PipelineXmlParser.EditableStage(
-                        name = "DAG 主鏈路",
+                        name = "DAG 主链路",
                         parallel = false,
                         linkLists = listOf(
                             PipelineXmlParser.EditableLinkList(
-                                name = "連線",
+                                name = "连线",
                                 links = links
                             )
                         )
@@ -751,7 +751,7 @@ class TopologyEditorActivity : AppCompatActivity() {
                 )
             )
         } catch (e: Exception) {
-            Log.e("TopologyEditor", "DAG XML 解析失敗: ${e.message}", e)
+            Log.e("TopologyEditor", "DAG XML 解析失败: ${e.message}", e)
             null
         }
     }
@@ -766,12 +766,12 @@ class TopologyEditorActivity : AppCompatActivity() {
             statusText.text = "已保存: ${file.absolutePath}"
             Toast.makeText(this, "已保存到 ${file.name}", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
-            statusText.text = "保存失敗: ${e.message}"
+            statusText.text = "保存失败: ${e.message}"
         }
     }
 
     private fun runPipeline() {
-        statusText.text = "🔄 執行 Pipeline..."
+        statusText.text = "🔄 执行 Pipeline..."
         lifecycleScope.launch {
             try {
                 val useCaseId = viewModel.pipelineId.ifBlank { "mid_term" }
@@ -781,9 +781,9 @@ class TopologyEditorActivity : AppCompatActivity() {
                     UseCaseLoader.run(useCaseId, tradeDate)
                 }
                 val sb = StringBuilder()
-                sb.appendLine(if (result.success) "✅ 執行成功" else "❌ 執行失敗")
+                sb.appendLine(if (result.success) "✅ 执行成功" else "❌ 执行失败")
                 if (result.errors.isNotEmpty()) {
-                    sb.appendLine("錯誤: ${result.errors.values.joinToString("; ")}")
+                    sb.appendLine("错误: ${result.errors.values.joinToString("; ")}")
                 }
                 for ((pipeName, pr) in result.pipelineResults) {
                     sb.appendLine("📊 $pipeName:")
@@ -791,14 +791,14 @@ class TopologyEditorActivity : AppCompatActivity() {
                         sb.appendLine(
                             "  ${flow.nodeName}: ${flow.inputCount}→${flow.outputCount}" +
                                 if (flow.filterCount > 0)
-                                    " (過濾${flow.filterCount}: ${flow.filterReason})"
+                                    " (过滤${flow.filterCount}: ${flow.filterReason})"
                                 else ""
                         )
                     }
                 }
                 statusText.text = sb.toString().trim()
             } catch (e: Exception) {
-                statusText.text = "執行失敗: ${e.message}"
+                statusText.text = "执行失败: ${e.message}"
             }
         }
     }
@@ -811,10 +811,10 @@ class TopologyEditorActivity : AppCompatActivity() {
         val editableNodes = viewModel.getNodes()
         val links = viewModel.getLinks()
 
-        // 構建 id→中文名 映射
+        // 构建 id→中文名 映射
         val nameMap = editableNodes.associate { it.id to it.name.ifBlank { it.module } }
 
-        // EditableNode → VisualNode（保留已有座標，避免重佈局抖動）
+        // EditableNode → VisualNode（保留已有座标，避免重布局抖动）
         val visualNodes = editableNodes.map { en ->
             val nodeType = inferNodeType(en.module)
             val existing = canvasView.canvasState.nodes.find { it.id == en.id }
@@ -830,12 +830,12 @@ class TopologyEditorActivity : AppCompatActivity() {
             )
         }
 
-        // 連線標籤用中文名，不用英文 ID
+        // 连线标签用中文名，不用英文 ID
         val visualLinks = links.map { l ->
             VisualLink(fromId = l.fromId, toId = l.toId, label = "")
         }
 
-        // 若節點尚無座標（新加載/新增），執行自動佈局
+        // 若节点尚无座标（新加载/新增），执行自动布局
         val needsLayout = visualNodes.any { it.x == 0f && it.y == 0f }
         val nodeList = visualNodes.toMutableList()
         val linkList = visualLinks.toMutableList()
@@ -864,7 +864,7 @@ class TopologyEditorActivity : AppCompatActivity() {
         }
     }
 
-    /** 安全初始化 NodeRegistry（避免重複初始化或未初始化崩潰） */
+    /** 安全初始化 NodeRegistry（避免重复初始化或未初始化崩溃） */
     private fun ensureNodeRegistryInitialized() {
         try {
             if (NodeRegistry.listModules().isEmpty()) {
@@ -874,13 +874,13 @@ class TopologyEditorActivity : AppCompatActivity() {
             try {
                 NodeRegistry.init(applicationContext)
             } catch (_: Exception) {
-                // 忽略重複初始化
+                // 忽略重复初始化
             }
         }
     }
 
     /**
-     * 根據 module 字符串推斷 [NodeType]（NodeRegistry 未提供此映射，故在此實現）。
+     * 根据 module 字符串推断 [NodeType]（NodeRegistry 未提供此映射，故在此实现）。
      */
     private fun inferNodeType(module: String): NodeType {
         return when {
@@ -900,7 +900,7 @@ class TopologyEditorActivity : AppCompatActivity() {
         }
     }
 
-    /** 將 module 字符串轉為人類可讀顯示名稱 */
+    /** 将 module 字符串转为人类可读显示名称 */
     private fun moduleDisplayName(module: String): String {
         return module.removePrefix("strategy:")
             .replace("_", " ")
@@ -908,7 +908,7 @@ class TopologyEditorActivity : AppCompatActivity() {
     }
 
     /**
-     * 從 assets XML 文件中快速提取根標籤的 name 屬性（用於側邊欄中文名顯示）。
+     * 从 assets XML 文件中快速提取根标签的 name 属性（用于侧边栏中文名显示）。
      */
     private fun extractXmlName(assetPath: String): String? {
         return try {

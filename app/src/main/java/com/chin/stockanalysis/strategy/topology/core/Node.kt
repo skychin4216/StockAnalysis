@@ -1,85 +1,85 @@
 package com.chin.stockanalysis.strategy.topology.core
 
 /**
- * ## Node -- Pipeline 最小處理單元
+ * ## Node -- Pipeline 最小处理单元
  *
- * 無狀態（或僅持有配置），不持有業務數據。
- * 泛型 IN = 輸入類型, OUT = 輸出類型。
+ * 无状态（或仅持有配置），不持有业务数据。
+ * 泛型 IN = 输入类型, OUT = 输出类型。
  *
- * ### 設計原則
- * - 每個 Node 只做一件事（Single Responsibility）
- * - 通過 [PipelineContext] 讀取共享上下文，不直接持有業務數據
- * - 通過泛型 IN/OUT 實現類型安全的數據流
+ * ### 设计原则
+ * - 每个 Node 只做一件事（Single Responsibility）
+ * - 通过 [PipelineContext] 读取共享上下文，不直接持有业务数据
+ * - 通过泛型 IN/OUT 实现类型安全的数据流
  *
  * ### 使用示例
  * ```kotlin
  * class MarketSourceNode : PipelineNode<Unit, StockPool> {
  *     override val nodeId = "market_source"
- *     override val nodeName = "市場數據源"
+ *     override val nodeName = "市场数据源"
  *     override val nodeType = NodeType.DATA_SOURCE
  *
  *     override suspend fun execute(context: PipelineContext, input: Unit): StockPool {
- *         // 從 context 中讀取配置，返回 StockPool
+ *         // 从 context 中读取配置，返回 StockPool
  *     }
  * }
  * ```
  *
- * @param IN 輸入數據類型
- * @param OUT 輸出數據類型
+ * @param IN 输入数据类型
+ * @param OUT 输出数据类型
  */
 interface PipelineNode<IN, OUT> {
 
-    /** 節點唯一標識（用於日誌、調試、DAG 拓撲引用） */
+    /** 节点唯一标识（用于日志、调试、DAG 拓扑引用） */
     val nodeId: String
 
-    /** 節點人類可讀名稱（用於 UI 展示和日誌） */
+    /** 节点人类可读名称（用于 UI 展示和日志） */
     val nodeName: String
 
-    /** 節點類型（決定在 Pipeline DAG 中的語義角色） */
+    /** 节点类型（决定在 Pipeline DAG 中的语义角色） */
     val nodeType: NodeType
 
     /**
-     * 執行節點處理邏輯
+     * 执行节点处理逻辑
      *
-     * @param context Pipeline 共享上下文（市場數據、緩存、配置等）
-     * @param input 節點輸入數據
-     * @return 節點處理結果
+     * @param context Pipeline 共享上下文（市场数据、缓存、配置等）
+     * @param input 节点输入数据
+     * @return 节点处理结果
      */
     suspend fun execute(context: PipelineContext, input: IN): OUT
 }
 
 /**
- * ## 節點類型枚舉
+ * ## 节点类型枚举
  *
- * 標識節點在 Pipeline 中的語義角色，
- * 用於日誌分類、DAG 拓撲校驗、UI 可視化等場景。
+ * 标识节点在 Pipeline 中的语义角色，
+ * 用于日志分类、DAG 拓扑校验、UI 可视化等场景。
  */
 enum class NodeType {
 
-    /** 數據源：從 API / 數據庫 / 緩存加載原始數據 */
+    /** 数据源：从 API / 数据库 / 缓存加载原始数据 */
     DATA_SOURCE,
 
-    /** 數據轉換：數據格式轉換、映射、清洗 */
+    /** 数据转换：数据格式转换、映射、清洗 */
     DATA_TRANSFORM,
 
-    /** 因子計算：MFI / CMF / A/D / ATR 等量化因子計算 */
+    /** 因子计算：MFI / CMF / A/D / ATR 等量化因子计算 */
     FACTOR_COMPUTE,
 
-    /** 策略篩選：執行量化選股策略，生成信號 */
+    /** 策略筛选：执行量化选股策略，生成信号 */
     STRATEGY,
 
-    /** 數據增強：板塊加權、新聞因子、主力資金加分 */
+    /** 数据增强：板块加权、新闻因子、主力资金加分 */
     ENRICHMENT,
 
-    /** 過濾：基於閾值或規則過濾信號 */
+    /** 过滤：基于阈值或规则过滤信号 */
     FILTER,
 
-    /** AI 預測：調用 LLM 進行綜合預測分析 */
+    /** AI 预测：调用 LLM 进行综合预测分析 */
     AI_PREDICTION,
 
-    /** 聚合：多策略信號合併、去重、排序 */
+    /** 聚合：多策略信号合并、去重、排序 */
     AGGREGATION,
 
-    /** 交易動作：生成買入/賣出/持有等交易決策 */
+    /** 交易动作：生成买入/卖出/持有等交易决策 */
     TRADE_ACTION
 }

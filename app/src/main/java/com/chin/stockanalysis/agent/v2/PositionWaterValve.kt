@@ -22,7 +22,7 @@ object PositionWaterValve {
                 PositionCapResult(
                     capPercent = cap,
                     strategy = "捂股躺赢",
-                    advice = "指數站上MA60且均線多頭排列，可滿倉或接近滿倉操作。逢盤中急跌至MA10/MA20可考慮加倉，嚴禁做T防止賣飛。",
+                    advice = "指数站上MA60且均线多头排列，可满仓或接近满仓操作。逢盘中急跌至MA10/MA20可考虑加仓，严禁做T防止卖飞。",
                     tTradingEnabled = false
                 )
             }
@@ -30,8 +30,8 @@ object PositionWaterValve {
                 val cap = if (sellType.sellType == "INSTITUTIONAL_EXIT") 10 else 20
                 PositionCapResult(
                     capPercent = cap,
-                    strategy = "防守反擊",
-                    advice = "指數跌破MA60且均線空頭排列，${if (sellType.sellType == "INSTITUTIONAL_EXIT") "主力撤資中，" else ""}總倉位控制在${cap}%以下。僅做日內超跌反抽，杜絕隔夜重倉。",
+                    strategy = "防守反击",
+                    advice = "指数跌破MA60且均线空头排列，${if (sellType.sellType == "INSTITUTIONAL_EXIT") "主力撤资中，" else ""}总仓位控制在${cap}%以下。仅做日内超跌反抽，杜绝隔夜重仓。",
                     tTradingEnabled = false
                 )
             }
@@ -39,8 +39,8 @@ object PositionWaterValve {
                 val cap = if (trend.strength > 40) 40 else 50
                 PositionCapResult(
                     capPercent = cap,
-                    strategy = "高拋低吸（做T）",
-                    advice = "指數在MA60上下反覆纏繞，市場處於無序震蕩期。總倉位控制在${cap}%以下，重點狙擊高彈性活躍股的日內波動。",
+                    strategy = "高抛低吸（做T）",
+                    advice = "指数在MA60上下反复缠绕，市场处于无序震荡期。总仓位控制在${cap}%以下，重点狙击高弹性活跃股的日内波动。",
                     tTradingEnabled = true
                 )
             }

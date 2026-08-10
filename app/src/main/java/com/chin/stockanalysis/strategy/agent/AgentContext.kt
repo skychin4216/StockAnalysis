@@ -4,11 +4,11 @@ import android.content.Context
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * ## Agent 上下文（三層記憶）
+ * ## Agent 上下文（三层记忆）
  *
- * Layer 1: Global Memory — App 進程級，所有 Agent 共享只讀
- * Layer 2: Session Memory — 一次分析任務，Orchestrator 獨佔讀寫
- * Layer 3: Agent Memory — Sub-Agent 執行期間，完成後銷毀
+ * Layer 1: Global Memory — App 进程级，所有 Agent 共享只读
+ * Layer 2: Session Memory — 一次分析任务，Orchestrator 独占读写
+ * Layer 3: Agent Memory — Sub-Agent 执行期间，完成后销毁
  */
 class AgentContext(
     val role: AgentRole,
@@ -16,7 +16,7 @@ class AgentContext(
     val androidContext: Context,
     val sessionMemory: AgentSessionMemory? = null
 ) {
-    // Layer 3: Agent 短期記憶
+    // Layer 3: Agent 短期记忆
     private val toolResults = ConcurrentHashMap<String, Any>()
     private val logs = mutableListOf<String>()
     private val errors = mutableListOf<AgentError>()
@@ -36,7 +36,7 @@ class AgentContext(
         errors.add(error)
     }
 
-    // 從 Session Memory 讀取（需權限）
+    // 从 Session Memory 读取（需权限）
     @Suppress("UNCHECKED_CAST")
     fun <T> readSession(slot: String): T? {
         if (sessionMemory == null) return null
@@ -60,7 +60,7 @@ class AgentContext(
 }
 
 /**
- * Session 級記憶 — Orchestrator 管理，Sub-Agent 只讀指定 slot
+ * Session 级记忆 — Orchestrator 管理，Sub-Agent 只读指定 slot
  */
 class AgentSessionMemory {
     private val slots = ConcurrentHashMap<String, Any>()

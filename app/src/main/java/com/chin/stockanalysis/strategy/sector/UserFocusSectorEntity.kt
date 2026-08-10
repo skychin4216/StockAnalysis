@@ -2,7 +2,7 @@ package com.chin.stockanalysis.strategy.sector
 
 import androidx.room.*
 
-/** 用戶關注板塊（歷史記錄 + 啟用狀態） */
+/** 用户关注板块（历史记录 + 启用状态） */
 @Entity(tableName = "user_focus_sectors", indices = [Index(value = ["sector_name"], unique = true)])
 data class UserFocusSectorEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,

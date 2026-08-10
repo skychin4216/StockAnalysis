@@ -8,38 +8,38 @@ import com.chin.stockanalysis.strategy.topology.nodes.*
 import com.chin.stockanalysis.strategy.topology.pipelines.*
 
 /**
- * ## Node 註冊表
+ * ## Node 注册表
  *
- * 將 XML 中的 module 字符串映射到具體的 Node 實例。
+ * 将 XML 中的 module 字符串映射到具体的 Node 实例。
  * XML 中 `<node module="market_context" />` → `NodeRegistry.createNode("market_context", config)`
  *
- * 全局單例，App 啟動時註冊，XML 解析時查找。
+ * 全局单例，App 启动时注册，XML 解析时查找。
  */
 object NodeRegistry {
 
     private const val TAG = "NodeRegistry"
 
-    /** Node 工廠函數：module type + config Map → PipelineNode */
+    /** Node 工厂函数：module type + config Map → PipelineNode */
     private val factories = java.util.concurrent.ConcurrentHashMap<String, (Context, Map<String, String>) -> PipelineNode<*, *>>()
 
-    /** 策略列表（由外部注入，XML 中 module="strategy:ma_golden_cross" 時使用） */
+    /** 策略列表（由外部注入，XML 中 module="strategy:ma_golden_cross" 时使用） */
     private val strategyMap = java.util.concurrent.ConcurrentHashMap<String, Strategy>()
 
     /**
-     * 註冊內置 Node 工廠。
+     * 注册内置 Node 工厂。
      */
     fun init(appContext: Context) {
-        // 數據源
+        // 数据源
         register("market_context") { ctx, _ -> MarketContextNode() }
         register("stock_pool") { _, _ -> StockPoolNode() }
 
-        // 過濾
+        // 过滤
         register("main_board_filter") { ctx, _ -> MainBoardFilterNode() }
 
         // 聚合
         register("signal_merge") { ctx, _ -> SignalMergeNode() }
 
-        // 增強
+        // 增强
         register("sector_boost") { ctx, _ -> SectorBoostNode() }
         register("bounce_reversal") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.BounceReversalNode() }
         register("ancestral_rules") { _, config ->
@@ -73,13 +73,13 @@ object NodeRegistry {
             com.chin.stockanalysis.strategy.topology.nodes.BasePositionGuardNode(holdingPeriod = period)
         }
 
-        // 過濾（主力資金）
+        // 过滤（主力资金）
         register("smart_money_filter") { ctx, config ->
             val minScore = config["minScore"]?.toIntOrNull() ?: 55
             SmartMoneyFilterNode(minScore)
         }
 
-        // K線形態偵測（非關鍵，透傳輸入）
+        // K线形态侦测（非关键，透传输入）
         register("candle_pattern") { _, _ ->
             CandlePatternNode()
         }
@@ -87,23 +87,23 @@ object NodeRegistry {
         // AI
         register("ai_predict") { _, _ -> AIPredictNode() }
 
-        // ══════════ 中線量化獨有 Node ══════════
+        // ══════════ 中线量化独有 Node ══════════
 
-        // 中線數據源
+        // 中线数据源
         register("adaptive_params") { ctx, _ -> AdaptiveParamsNode() }
         register("multi_period_hot") { ctx, config ->
             val onlyMain = config["onlyMainBoard"]?.toBooleanStrictOrNull() ?: true
             MultiPeriodHotNode(onlyMainBoard = onlyMain)
         }
 
-        // 中線聚合
+        // 中线聚合
         register("cross_day_aggregation") { ctx, config ->
             val window = config["windowDays"]?.toIntOrNull() ?: 5
             val topN = config["topN"]?.toIntOrNull() ?: 20
             CrossDayAggregationNode(windowDays = window, topN = topN)
         }
 
-        // 中線增強
+        // 中线增强
         register("news_strength") { ctx, config ->
             val days = config["lookbackDays"]?.toIntOrNull() ?: 3
             NewsStrengthNode(lookbackDays = days)
@@ -115,7 +115,7 @@ object NodeRegistry {
                 thresholdDays = threshold, penaltyPerExcess = penalty)
         }
 
-        // 中線過濾
+        // 中线过滤
         register("news_guard") { ctx, config ->
             val impact = config["impactThreshold"]?.toIntOrNull() ?: 75
             val sentiment = config["sentimentThreshold"]?.toIntOrNull() ?: -30
@@ -123,14 +123,14 @@ object NodeRegistry {
                 impactThreshold = impact, sentimentThreshold = sentiment)
         }
 
-        // 中線交易動作
+        // 中线交易动作
         register("swap_weak") { ctx, config ->
             val maxH = config["maxHoldings"]?.toIntOrNull() ?: 5
             SwapWeakNode(maxHoldings = maxH)
         }
         register("holding_guard") { ctx, _ -> HoldingGuardNode() }
 
-        // ══════════ 中線補齊 Node ══════════
+        // ══════════ 中线补齐 Node ══════════
 
         register("heat_score") { ctx, _ -> HeatScoreNode() }
         register("generate_orders") { ctx, config ->
@@ -142,18 +142,18 @@ object NodeRegistry {
         register("bg_manager") { ctx, _ -> BackgroundManagerNode() }
         register("fitting_save") { ctx, _ -> FittingSaveNode() }
 
-        // ══════════ Hardcode 補齊 Node（HardcodeCompatNodes.kt） ══════════
+        // ══════════ Hardcode 补齐 Node（HardcodeCompatNodes.kt） ══════════
 
-        // 候選池過濾（所有周期共用）
+        // 候选池过滤（所有周期共用）
         register("candidate_pool") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.CandidatePoolNode() }
 
-        // Zipline 因子預計算（短線專用）
+        // Zipline 因子预计算（短线专用）
         register("zipline_factor") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.ZiplineFactorNode() }
 
-        // 板塊精選池（中線專用）
+        // 板块精选池（中线专用）
         register("sector_stock_pool") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.SectorStockPoolNode() }
 
-        // 防守高息（中線/長線，熊市/震盪時啟動）
+        // 防守高息（中线/长线，熊市/震荡时启动）
         register("defensive_dividend") { _, config ->
             val maxPb = config["maxPb"]?.toDoubleOrNull() ?: 1.5
             val maxDebt = config["maxDebt"]?.toDoubleOrNull() ?: 70.0
@@ -162,14 +162,14 @@ object NodeRegistry {
                 maxPb = maxPb, maxDebt = maxDebt, maxCandidates = maxCand)
         }
 
-        // 數據導入檢查（所有周期，Layer 0 首節點）
+        // 数据导入检查（所有周期，Layer 0 首节点）
         register("data_import") { _, config ->
             val days = config["days"]?.toIntOrNull() ?: 60
             val minSnaps = config["minSnapshots"]?.toIntOrNull() ?: 100
             com.chin.stockanalysis.strategy.topology.nodes.DataImportNode(days = days, minSnapshots = minSnaps)
         }
 
-        // 盤中 K 線分析（交易時段自動獲取分鐘線，計算 VWAP/均線/量能指標）
+        // 盘中 K 线分析（交易时段自动获取分钟线，计算 VWAP/均线/量能指标）
         register("intraday_analysis") { _, config ->
             val interval = config["intervalMin"]?.toIntOrNull() ?: 5
             val minBars = config["minBars"]?.toIntOrNull() ?: 5
@@ -178,7 +178,7 @@ object NodeRegistry {
             )
         }
 
-        // T+1 自動賣出（超短線專用）
+        // T+1 自动卖出（超短线专用）
         register("t1_auto_sell") { _, config ->
             val stopLoss = config["stopLossPct"]?.toDoubleOrNull() ?: -2.0
             val takeProfit = config["takeProfitPct"]?.toDoubleOrNull() ?: 3.0
@@ -187,7 +187,7 @@ object NodeRegistry {
             )
         }
 
-        // 跨 Tab 發布（短線/中線共用）
+        // 跨 Tab 发布（短线/中线共用）
         register("crosstab_publish") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.CrossTabPublishNode() }
 
         // ══════════ 做T Pipeline Node（TTradePipelineNodes.kt） ══════════
@@ -204,37 +204,38 @@ object NodeRegistry {
         }
         register("t_recommend_save") { _, _ -> TRecommendSaveNode() }
 
-        // ══════════ 實倉分析 Pipeline Node ══════════
+        // ══════════ 实仓分析 Pipeline Node ══════════
         register("real_holding_eval") { _, _ -> RealHoldingAnalysisNode() }
         register("a_market_analysis") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.AMarketAnalysisNode() }
+        register("t_trade_eval") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.TTradeEvalNode() }
 
-        Log.i(TAG, "Node 註冊完成: ${factories.keys}")
+        Log.i(TAG, "Node 注册完成: ${factories.keys}")
     }
 
     /**
-     * 註冊自定義 Node 工廠。
+     * 注册自定义 Node 工厂。
      */
     fun register(moduleType: String, factory: (Context, Map<String, String>) -> PipelineNode<*, *>) {
         factories[moduleType] = factory
     }
 
     /**
-     * 注入策略列表（供 strategy:xxx 類型的 Node 使用）。
+     * 注入策略列表（供 strategy:xxx 类型的 Node 使用）。
      */
     fun registerStrategies(strategies: List<Strategy>) {
         for (s in strategies) {
             strategyMap[s.id] = s
         }
-        Log.i(TAG, "策略註冊完成: ${strategyMap.keys}")
+        Log.i(TAG, "策略注册完成: ${strategyMap.keys}")
     }
 
     /**
-     * 創建 Node 實例。
+     * 创建 Node 实例。
      *
-     * @param moduleType XML 中的 module 屬性值
+     * @param moduleType XML 中的 module 属性值
      * @param config XML 中的 <param> 配置
      * @param context Android Context
-     * @return Node 實例，失敗返回 null
+     * @return Node 实例，失败返回 null
      */
     fun createNode(moduleType: String, config: Map<String, String>, context: Context): PipelineNode<*, *>? {
         // 策略 Node: module="strategy:ma_golden_cross"
@@ -249,23 +250,23 @@ object NodeRegistry {
             }
         }
 
-        // 內置 Node
+        // 内置 Node
         val factory = factories[moduleType]
         if (factory != null) {
             return try {
                 factory.invoke(context, config)
             } catch (e: Exception) {
-                Log.e(TAG, "創建 Node 失敗: $moduleType — ${e.message}")
+                Log.e(TAG, "创建 Node 失败: $moduleType — ${e.message}")
                 null
             }
         }
 
-        Log.e(TAG, "未知的 module 類型: $moduleType")
+        Log.e(TAG, "未知的 module 类型: $moduleType")
         return null
     }
 
     /**
-     * 列出所有已註冊的 module 類型。
+     * 列出所有已注册的 module 类型。
      */
     fun listModules(): Set<String> = factories.keys + strategyMap.keys.map { "strategy:$it" }
 }

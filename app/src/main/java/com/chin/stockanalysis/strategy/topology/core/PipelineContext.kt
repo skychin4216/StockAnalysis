@@ -11,39 +11,39 @@ import kotlinx.coroutines.sync.withLock
 /**
  * ## Pipeline 共享上下文
  *
- * 在整個 Pipeline 執行生命週期中，各 Node 通過此上下文共享數據。
- * 包含市場環境、策略緩存、配置參數、階段間數據傳遞等。
+ * 在整个 Pipeline 执行生命周期中，各 Node 通过此上下文共享数据。
+ * 包含市场环境、策略缓存、配置参数、阶段间数据传递等。
  *
- * ### 設計原則
- * - 不可變配置（[config]）+ 可變階段輸出（[stageOutputs]）
- * - 延遲加載重型對象（[marketReport]、[adaptiveParams]）
- * - nullable 引用避免強制初始化順序依賴
+ * ### 设计原则
+ * - 不可变配置（[config]）+ 可变阶段输出（[stageOutputs]）
+ * - 延迟加载重型对象（[marketReport]、[adaptiveParams]）
+ * - nullable 引用避免强制初始化顺序依赖
  *
  * ### 使用示例
  * ```kotlin
- * // 構建上下文
+ * // 构建上下文
  * val context = PipelineContext(
  *     tradeDate = "2026-07-10",
  *     androidContext = appContext,
  *     smartMoneyCache = SmartMoneyCache
  * )
  *
- * // 延遲加載市場報告
+ * // 延迟加载市场报告
  * val report = context.getMarketReport()
  *
- * // 階段間數據傳遞
+ * // 阶段间数据传递
  * context.setStageOutput("pool", stockPool)
  * val pool = context.getStageOutput<StockPool>("pool")
  * ```
  *
  * @property tradeDate 交易日（格式 "yyyy-MM-dd"）
- * @property androidContext Android Context（用於數據庫訪問等）
- * @property marketContext 策略市場統一上下文（nullable，按需構建）
- * @property sectorContext AI 預測用的板塊上下文（nullable，按需構建）
- * @property smartMoneyCache 主力資金行為緩存引用
- * @property config Pipeline 執行配置
- * @property stageOutputs 階段間數據傳遞的鍵值存儲
- * @property logger 日誌函數引用（可替換為自定義日誌實現）
+ * @property androidContext Android Context（用于数据库访问等）
+ * @property marketContext 策略市场统一上下文（nullable，按需构建）
+ * @property sectorContext AI 预测用的板块上下文（nullable，按需构建）
+ * @property smartMoneyCache 主力资金行为缓存引用
+ * @property config Pipeline 执行配置
+ * @property stageOutputs 阶段间数据传递的键值存储
+ * @property logger 日志函数引用（可替换为自定义日志实现）
  */
 class PipelineContext(
     val tradeDate: String,
@@ -56,17 +56,17 @@ class PipelineContext(
 ) {
 
     // ════════════════════════════════════════════════════
-    //  市場環境（nullable，按需構建）
+    //  市场环境（nullable，按需构建）
     // ════════════════════════════════════════════════════
 
-    /** 策略市場統一上下文（用戶關注板塊、熱門板塊、回彈板塊、大盤指數快照） */
+    /** 策略市场统一上下文（用户关注板块、热门板块、回弹板块、大盘指数快照） */
     var marketContext: StrategyMarketContext? = null
 
-    /** AI 預測用的板塊上下文 */
+    /** AI 预测用的板块上下文 */
     var sectorContext: AIPredictionEngine.SectorContext? = null
 
     // ════════════════════════════════════════════════════
-    //  延遲加載的重型對象
+    //  延迟加载的重型对象
     // ════════════════════════════════════════════════════
 
     private var _marketReport: MarketAnalyzer.MarketReport? = null
@@ -78,10 +78,10 @@ class PipelineContext(
     private val _adaptiveParamsMutex = kotlinx.coroutines.sync.Mutex()
 
     /**
-     * 獲取大盤綜合分析報告（延遲加載，只計算一次）
+     * 获取大盘综合分析报告（延迟加载，只计算一次）
      *
-     * @param holdingCodes 持倉股票代碼列表（首次加載時需要）
-     * @return 大盤分析報告，加載失敗時返回 null
+     * @param holdingCodes 持仓股票代码列表（首次加载时需要）
+     * @return 大盘分析报告，加载失败时返回 null
      */
     suspend fun getMarketReport(holdingCodes: List<String> = emptyList()): MarketAnalyzer.MarketReport? {
         if (_marketReportLoaded) return _marketReport
@@ -92,16 +92,16 @@ class PipelineContext(
                 _marketReport = MarketAnalyzer.analyze(androidContext, holdingCodes)
                 _marketReport
             } catch (e: Exception) {
-                logger.log("PipelineContext", "大盤分析報告加載失敗: ${e.message}")
+                logger.log("PipelineContext", "大盘分析报告加载失败: ${e.message}")
                 null
             }
         }
     }
 
     /**
-     * 獲取市場自適應參數（延遲加載，依賴 marketReport）
+     * 获取市场自适应参数（延迟加载，依赖 marketReport）
      *
-     * @return 自適應參數，加載失敗時返回 null
+     * @return 自适应参数，加载失败时返回 null
      */
     suspend fun getAdaptiveParams(): MarketAdaptiveStrategy.AdaptiveParams? {
         if (_adaptiveParamsLoaded) return _adaptiveParams
@@ -115,44 +115,44 @@ class PipelineContext(
                 }
                 _adaptiveParams
             } catch (e: Exception) {
-                logger.log("PipelineContext", "自適應參數計算失敗: ${e.message}")
+                logger.log("PipelineContext", "自适应参数计算失败: ${e.message}")
                 null
             }
         }
     }
 
     // ════════════════════════════════════════════════════
-    //  階段間數據傳遞
+    //  阶段间数据传递
     // ════════════════════════════════════════════════════
 
-    /** 階段輸出存儲（NodeId/StageName → 數據）— 線程安全（同層節點並行寫入） */
+    /** 阶段输出存储（NodeId/StageName → 数据）— 线程安全（同层节点并行写入） */
     val stageOutputs: MutableMap<String, Any?> = java.util.Collections.synchronizedMap(mutableMapOf())
 
-    /** 錯誤存儲（NodeId/LinkLabel → 錯誤信息）— 線程安全 */
+    /** 错误存储（NodeId/LinkLabel → 错误信息）— 线程安全 */
     val errors: MutableMap<String, String> = java.util.Collections.synchronizedMap(mutableMapOf())
 
     /**
-     * 記錄錯誤到上下文。
+     * 记录错误到上下文。
      */
     fun recordError(key: String, message: String) {
         errors[key] = message
     }
 
     /**
-     * 存入階段輸出
+     * 存入阶段输出
      *
-     * @param key 階段標識（通常使用 nodeId）
-     * @param value 階段輸出數據
+     * @param key 阶段标识（通常使用 nodeId）
+     * @param value 阶段输出数据
      */
     fun setStageOutput(key: String, value: Any?) {
         stageOutputs[key] = value
     }
 
     /**
-     * 讀取階段輸出（帶類型安全轉換）
+     * 读取阶段输出（带类型安全转换）
      *
-     * @param key 階段標識
-     * @return 階段輸出數據，不存在或類型不匹配時返回 null
+     * @param key 阶段标识
+     * @return 阶段输出数据，不存在或类型不匹配时返回 null
      */
     @Suppress("UNCHECKED_CAST")
     fun <T> getStageOutput(key: String): T? {
@@ -164,7 +164,7 @@ class PipelineContext(
     // ════════════════════════════════════════════════════
 
     /**
-     * 從市場上下文中獲取大盤方向（fallback: "UNKNOWN"）
+     * 从市场上下文中获取大盘方向（fallback: "UNKNOWN"）
      */
     fun getMarketDirection(): String {
         return marketContext?.indexSnapshot?.tripleVote
@@ -173,16 +173,16 @@ class PipelineContext(
     }
 
     // ════════════════════════════════════════════════════
-    //  股票流動追蹤（輸入/輸出/過濾統計）
+    //  股票流动追踪（输入/输出/过滤统计）
     // ════════════════════════════════════════════════════
 
-    /** 各節點的股票流動記錄 — 線程安全（同層節點並行寫入） */
+    /** 各节点的股票流动记录 — 线程安全（同层节点并行写入） */
     val stockFlowLogs: MutableList<StockFlowRecord> = java.util.Collections.synchronizedList(mutableListOf())
 
     /**
-     * 記錄股票流動（輸入→輸出→過濾）。
+     * 记录股票流动（输入→输出→过滤）。
      *
-     * 每個節點在執行後調用，用於追蹤股票數量變化和過濾原因。
+     * 每个节点在执行后调用，用于追踪股票数量变化和过滤原因。
      */
     fun recordStockFlow(
         nodeId: String,
@@ -209,34 +209,34 @@ class PipelineContext(
     }
 
     /**
-     * 獲取所有節點的股票流動摘要。
+     * 获取所有节点的股票流动摘要。
      */
     fun getStockFlowSummary(): String {
-        if (stockFlowLogs.isEmpty()) return "無股票流動記錄"
+        if (stockFlowLogs.isEmpty()) return "无股票流动记录"
         return stockFlowLogs.joinToString("\n") {
             "${it.nodeName}: ${it.inputCount} → ${it.outputCount}" +
-                (if (it.filterCount > 0) " (過濾${it.filterCount}: ${it.filterReason})" else "")
+                (if (it.filterCount > 0) " (过滤${it.filterCount}: ${it.filterReason})" else "")
         }
     }
 
     // ════════════════════════════════════════════════════
-    //  節點執行進度回調（供 UI 實時顯示）
+    //  节点执行进度回调（供 UI 实时显示）
     // ════════════════════════════════════════════════════
 
     /**
-     * DAG 節點開始執行時的進度回調（可選）。
+     * DAG 节点开始执行时的进度回调（可选）。
      *
-     * 參數：(pipelineName, nodeName)。由 [DagPipeline] 在每個節點開始執行前調用，
-     * UI 層可據此顯示「[DAG] xx Pipeline 的 xx 節點 執行中...」。
+     * 参数：(pipelineName, nodeName)。由 [DagPipeline] 在每个节点开始执行前调用，
+     * UI 层可据此显示「[DAG] xx Pipeline 的 xx 节点 执行中...」。
      *
-     * 注意：同層節點並行執行時可能被並發調用，實現方需自行保證線程安全
-     * （如切換到主線程更新 UI）。
+     * 注意：同层节点并行执行时可能被并发调用，实现方需自行保证线程安全
+     * （如切换到主线程更新 UI）。
      */
     @Volatile
     var onNodeProgress: ((pipelineName: String, nodeName: String) -> Unit)? = null
 
     /**
-     * 記錄日誌
+     * 记录日志
      */
     fun log(tag: String, message: String) {
         logger.log(tag, message)
@@ -244,44 +244,44 @@ class PipelineContext(
 }
 
 /**
- * ## 單個 Pipeline 節點的股票流動記錄
+ * ## 单个 Pipeline 节点的股票流动记录
  *
- * 記錄每個節點的輸入/輸出/過濾統計，用於 UI 展示和報告保存。
+ * 记录每个节点的输入/输出/过滤统计，用于 UI 展示和报告保存。
  */
 data class StockFlowRecord(
-    /** 節點 ID */
+    /** 节点 ID */
     val nodeId: String,
-    /** 節點名稱 */
+    /** 节点名称 */
     val nodeName: String,
-    /** 輸入股票數量 */
+    /** 输入股票数量 */
     val inputCount: Int,
-    /** 輸出股票數量 */
+    /** 输出股票数量 */
     val outputCount: Int,
-    /** 過濾掉的數量 */
+    /** 过滤掉的数量 */
     val filterCount: Int = 0,
-    /** 過濾原因（簡短描述，如「未入圍 Top10」「主力資金流出」） */
+    /** 过滤原因（简短描述，如「未入围 Top10」「主力资金流出」） */
     val filterReason: String = "",
-    /** 輸入的股票代碼（前N個，用於調試） */
+    /** 输入的股票代码（前N个，用于调试） */
     val inputCodes: List<String> = emptyList(),
-    /** 輸出的股票代碼（前N個） */
+    /** 输出的股票代码（前N个） */
     val outputCodes: List<String> = emptyList()
 )
 
 /**
- * ## Pipeline 執行配置
+ * ## Pipeline 执行配置
  *
- * 控制 Pipeline 行為的全局配置參數。
+ * 控制 Pipeline 行为的全局配置参数。
  *
- * @property onlyMainBoard 是否只篩選主板股票（滬深主板）
- * @property holdingPeriod 持倉周期："short"（短線）/ "mid"（中線）/ "long"（長線）
- * @property orderType 下單類型："limit"（限價）/ "market"（市價）
- * @property maxHoldings 最大持倉數量
- * @property enableNewsFactor 是否啟用新聞因子增強
- * @property enableSmartMoney 是否啟用主力資金過濾
- * @property enableSectorBoost 是否啟用板塊加權
- * @property enableAIPrediction 是否啟用 AI 綜合預測
- * @property customScoreThreshold 自定義評分閾值（null 時使用 AdaptiveParams 的閾值）
- * @property maxSignalsPerStrategy 每個策略最大信號數量
+ * @property onlyMainBoard 是否只筛选主板股票（沪深主板）
+ * @property holdingPeriod 持仓周期："short"（短线）/ "mid"（中线）/ "long"（长线）
+ * @property orderType 下单类型："limit"（限价）/ "market"（市价）
+ * @property maxHoldings 最大持仓数量
+ * @property enableNewsFactor 是否启用新闻因子增强
+ * @property enableSmartMoney 是否启用主力资金过滤
+ * @property enableSectorBoost 是否启用板块加权
+ * @property enableAIPrediction 是否启用 AI 综合预测
+ * @property customScoreThreshold 自定义评分阈值（null 时使用 AdaptiveParams 的阈值）
+ * @property maxSignalsPerStrategy 每个策略最大信号数量
  */
 data class PipelineConfig(
     val onlyMainBoard: Boolean = true,
@@ -297,26 +297,26 @@ data class PipelineConfig(
 )
 
 /**
- * ## Pipeline 日誌接口
+ * ## Pipeline 日志接口
  *
- * 可替換的日誌函數引用，用於解耦日誌實現。
- * 默認使用 Android Log.i，測試時可替換為 System.out 等。
+ * 可替换的日志函数引用，用于解耦日志实现。
+ * 默认使用 Android Log.i，测试时可替换为 System.out 等。
  *
  * ### 使用示例
  * ```kotlin
- * // 默認 Android 日誌
+ * // 默认 Android 日志
  * val logger = PipelineLogger { tag, msg -> Log.i(tag, msg) }
  *
- * // 測試用標準輸出
+ * // 测试用标准输出
  * val testLogger = PipelineLogger { tag, msg -> println("[$tag] $msg") }
  * ```
  */
 fun interface PipelineLogger {
     /**
-     * 記錄日誌
+     * 记录日志
      *
-     * @param tag 日誌標籤
-     * @param message 日誌消息
+     * @param tag 日志标签
+     * @param message 日志消息
      */
     fun log(tag: String, message: String)
 }

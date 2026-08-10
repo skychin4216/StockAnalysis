@@ -12,71 +12,71 @@ import com.chin.stockanalysis.stock.database.StockDatabase
 import kotlin.math.abs
 
 /**
- * ## 防守型高息節點 (DefensiveDividendNode)
+ * ## 防守型高息节点 (DefensiveDividendNode)
  *
- * 大盤 BEARISH / OSCILLATION 時啟動，專門尋找「熊市避風港」：
- * 高股息、低估值、大市值、財務健康的防禦板塊股票。
+ * 大盘 BEARISH / OSCILLATION 时启动，专门寻找「熊市避风港」：
+ * 高股息、低估值、大市值、财务健康的防御板块股票。
  *
- * 設計理念：
- * - 大盤下跌 ≠ 沒有機會。資金避險時流入銀行/電力/高速公路等高息板塊。
- * - 常規策略在熊市產出為零時，此節點提供防守型候選。
- * - 輸出標記 strategyId="defensive_dividend"，SmartMoneyFilter 對其降閾（minScore=20）。
+ * 设计理念：
+ * - 大盘下跌 ≠ 没有机会。资金避险时流入银行/电力/高速公路等高息板块。
+ * - 常规策略在熊市产出为零时，此节点提供防守型候选。
+ * - 输出标记 strategyId="defensive_dividend"，SmartMoneyFilter 对其降阈（minScore=20）。
  *
- * 篩選條件（從 daily_snapshot v12 基本面欄位讀取）：
- * 1. PB < maxPb（默認 1.5）
- * 2. 市值 > minMarketCap（默認 500 億）
- * 3. 負債率 < maxDebt（默認 70%，銀行除外）
- * 4. PE > 0（非虧損）
- * 5. 板塊關鍵詞匹配（銀行/保險/電力/高速公路/煤炭/石油/電信）
+ * 筛选条件（从 daily_snapshot v12 基本面栏位读取）：
+ * 1. PB < maxPb（默认 1.5）
+ * 2. 市值 > minMarketCap（默认 500 亿）
+ * 3. 负债率 < maxDebt（默认 70%，银行除外）
+ * 4. PE > 0（非亏损）
+ * 5. 板块关键词匹配（银行/保险/电力/高速公路/煤炭/石油/电信）
  *
- * 僅加入 mid_term / long_term pipeline（短線/超短線靠均值回歸，不走防守）。
+ * 仅加入 mid_term / long_term pipeline（短线/超短线靠均值回归，不走防守）。
  */
 class DefensiveDividendNode(
     private val maxPb: Double = 1.5,
-    private val minMarketCap: Double = 500_0000_0000.0,  // 500 億（元）
-    private val maxDebt: Double = 70.0,                   // 資產負債率上限 %（銀行豁免）
+    private val minMarketCap: Double = 500_0000_0000.0,  // 500 亿（元）
+    private val maxDebt: Double = 70.0,                   // 资产负债率上限 %（银行豁免）
     private val maxCandidates: Int = 5
 ) : BaseNode<Any, List<StrategySignal>>("defensive_dividend", "防守高息", NodeType.STRATEGY) {
 
     companion object {
         private const val TAG = "DefensiveDividend"
 
-        /** 防禦板塊關鍵詞 */
+        /** 防御板块关键词 */
         private val DEFENSIVE_SECTORS = listOf(
-            "銀行", "保險", "電力", "高速公路", "煤炭", "石油", "電信",
-            "水務", "燃氣", "鐵路", "港口", "機場"
+            "银行", "保险", "电力", "高速公路", "煤炭", "石油", "电信",
+            "水务", "燃气", "铁路", "港口", "机场"
         )
 
-        /** 高負債豁免板塊（銀行天然高負債） */
-        private val HIGH_DEBT_EXEMPT = listOf("銀行", "保險")
+        /** 高负债豁免板块（银行天然高负债） */
+        private val HIGH_DEBT_EXEMPT = listOf("银行", "保险")
     }
 
     override suspend fun execute(context: PipelineContext, input: Any): List<StrategySignal> {
-        // ── 觸發條件：僅 BEARISH / OSCILLATION 時啟動 ──
+        // ── 触发条件：仅 BEARISH / OSCILLATION 时启动 ──
         val marketReport = context.getMarketReport()
         val direction = marketReport?.trend?.direction ?: "UNKNOWN"
         if (direction != "BEARISH" && direction != "OSCILLATION") {
-            context.log(nodeId, "$nodeName: 大盤 $direction，非防守模式，跳過")
+            context.log(nodeId, "$nodeName: 大盘 $direction，非防守模式，跳过")
             return emptyList()
         }
 
-        context.log(nodeId, "📥 $nodeName: 大盤 $direction(強度${marketReport?.trend?.strength ?: 0})，啟動防守選股")
+        context.log(nodeId, "📥 $nodeName: 大盘 $direction(强度${marketReport?.trend?.strength ?: 0})，启动防守选股")
 
         val db = StockDatabase.getInstance(context.androidContext)
 
         return try {
-            // 讀取最新快照數據
+            // 读取最新快照数据
             val snapshots = db.dailySnapshotDao().getByDate(context.tradeDate)
             if (snapshots.isEmpty()) {
-                context.log(nodeId, "$nodeName: 無快照數據，跳過")
+                context.log(nodeId, "$nodeName: 无快照数据，跳过")
                 return emptyList()
             }
 
-            // 讀取股票名稱
+            // 读取股票名称
             val basics = db.stockBasicDao().getAll()
             val nameMap = basics.associate { it.code to it.name }
 
-            // 第一輪：數值硬性過濾（快速淘汰大部分）
+            // 第一轮：数值硬性过滤（快速淘汰大部分）
             data class PreCandidate(
                 val code: String, val name: String,
                 val pb: Double, val pe: Double, val marketCap: Double,
@@ -95,11 +95,11 @@ class DefensiveDividendNode(
             }
 
             if (preCandidates.isEmpty()) {
-                context.log(nodeId, "📤 $nodeName: 數值過濾後無候選")
+                context.log(nodeId, "📤 $nodeName: 数值过滤后无候选")
                 return emptyList()
             }
 
-            // 第二輪：板塊過濾（僅對數值通過的少量股票查詢板塊，避免 N+1）
+            // 第二轮：板块过滤（仅对数值通过的少量股票查询板块，避免 N+1）
             data class Candidate(
                 val pre: PreCandidate, val sector: String, val changePct20d: Double, val score: Double
             )
@@ -112,11 +112,11 @@ class DefensiveDividendNode(
                 val isDefensive = DEFENSIVE_SECTORS.any { kw -> sectors.any { it.contains(kw) } }
                 if (!isDefensive) continue
 
-                // 負債率檢查（銀行/保險豁免）
+                // 负债率检查（银行/保险豁免）
                 val isExempt = HIGH_DEBT_EXEMPT.any { kw -> sectors.any { it.contains(kw) } }
                 if (!isExempt && pre.debtToAsset > maxDebt && pre.debtToAsset > 0) continue
 
-                // 近 20 日穩定性
+                // 近 20 日稳定性
                 val recentSnaps = db.dailySnapshotDao().getByCode(pre.code, 20)
                 val changePct20d = if (recentSnaps.size >= 10) {
                     val oldest = recentSnaps.minByOrNull { it.date }?.close ?: pre.close
@@ -124,7 +124,7 @@ class DefensiveDividendNode(
                 } else 0.0
                 if (changePct20d < -10.0) continue  // 暴跌票排除
 
-                // 評分
+                // 评分
                 val pbScore = (maxPb - pre.pb) / maxPb * 30.0
                 val roeScore = (pre.roe.coerceAtMost(20.0) / 20.0) * 20.0
                 val capScore = (pre.marketCap / 2000_0000_0000.0).coerceAtMost(1.0) * 20.0
@@ -139,11 +139,11 @@ class DefensiveDividendNode(
             val topCandidates = candidates.sortedByDescending { it.score }.take(maxCandidates)
 
             if (topCandidates.isEmpty()) {
-                context.log(nodeId, "📤 $nodeName: 無符合條件的防守股")
+                context.log(nodeId, "📤 $nodeName: 无符合条件的防守股")
                 return emptyList()
             }
 
-            // 轉換為 StrategySignal
+            // 转换为 StrategySignal
             val signals = topCandidates.map { c ->
                 StrategySignal(
                     stockCode = c.pre.code,
@@ -153,18 +153,18 @@ class DefensiveDividendNode(
                     strength = c.score.toInt(),
                     action = SignalAction.BUY,
                     reason = "防守高息: PB=${"%.2f".format(c.pre.pb)} ROE=${"%.1f".format(c.pre.roe)}% " +
-                        "市值${(c.pre.marketCap / 1_0000_0000).toInt()}億 ${c.sector}"
+                        "市值${(c.pre.marketCap / 1_0000_0000).toInt()}亿 ${c.sector}"
                 )
             }
 
-            context.log(nodeId, "📤 $nodeName 輸出: ${signals.size} 只防守候選 " +
+            context.log(nodeId, "📤 $nodeName 输出: ${signals.size} 只防守候选 " +
                 topCandidates.joinToString(", ") { "${it.pre.name}(PB${"%.2f".format(it.pre.pb)})" })
 
             context.recordStockFlow(
                 nodeId = nodeId, nodeName = nodeName,
                 inputCount = snapshots.size, outputCount = signals.size,
                 filterCount = snapshots.size - signals.size,
-                filterReason = "非防守板塊/估值超標",
+                filterReason = "非防守板块/估值超标",
                 inputCodes = emptyList(),
                 outputCodes = signals.map { it.stockCode }
             )
@@ -172,8 +172,8 @@ class DefensiveDividendNode(
             signals
 
         } catch (e: Exception) {
-            Log.e(TAG, "防守高息節點失敗: ${e.message}", e)
-            context.recordError(nodeId, "防守高息失敗: ${e.message}")
+            Log.e(TAG, "防守高息节点失败: ${e.message}", e)
+            context.recordError(nodeId, "防守高息失败: ${e.message}")
             emptyList()
         }
     }

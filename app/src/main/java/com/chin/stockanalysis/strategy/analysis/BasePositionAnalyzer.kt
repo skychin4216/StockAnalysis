@@ -3,16 +3,16 @@ package com.chin.stockanalysis.strategy.analysis
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
 
 /**
- * ## 打底倉條件分析工具
+ * ## 打底仓条件分析工具
  *
  * 总纲：长线看势，中线看价，短线看量，超短看情绪
- * 逃頂要快，抄底要慢
+ * 逃顶要快，抄底要慢
  *
- * 抄底 / 打底倉兩條件：
+ * 抄底 / 打底仓两条件：
  *   1. 三天不新低 — 最近 3 天 low 均 > 前 3 天最低 low
- *   2. MA5/MA10/MA30 均線粘合向上
+ *   2. MA5/MA10/MA30 均线粘合向上
  *
- * 逃頂信號：
+ * 逃顶信号：
  *   - 3 天急跌 > 5% 或跌破 3 日最低 low
  */
 object BasePositionAnalyzer {
@@ -22,8 +22,8 @@ object BasePositionAnalyzer {
         val maConverged: Boolean,
         val maUpward: Boolean,
         val maConvergedAndUp: Boolean,
-        val basePositionReady: Boolean,   // 兩條件都滿足
-        val escapeUrgent: Boolean,        // 逃頂要快
+        val basePositionReady: Boolean,   // 两条件都满足
+        val escapeUrgent: Boolean,        // 逃顶要快
         val ma5: Double,
         val ma10: Double,
         val ma30: Double,
@@ -34,14 +34,14 @@ object BasePositionAnalyzer {
         companion object {
             fun empty() = Result(
                 false, false, false, false, false, false,
-                0.0, 0.0, 0.0, 999.0, 0.0, "數據不足"
+                0.0, 0.0, 0.0, 999.0, 0.0, "数据不足"
             )
         }
     }
 
     /**
      * @param snaps 按日期升序
-     * @param convergenceThreshold MA 離散率閾值（默認 2%）
+     * @param convergenceThreshold MA 离散率阈值（默认 2%）
      */
     fun analyze(
         snaps: List<DailySnapshotEntity>,
@@ -69,24 +69,24 @@ object BasePositionAnalyzer {
         else ma5
         val upward = ma5 > yesterdayMa5
 
-        // ═══ 3. 逃頂要快 ═══
+        // ═══ 3. 逃顶要快 ═══
         val threeDayChange = if (snaps.size >= 4) {
             val c3 = snaps[snaps.size - 4].close
             if (c3 > 0) (closes.last() - c3) / c3 * 100 else 0.0
         } else 0.0
         val escapeUrgent = threeDayChange < -5.0 || !recentAllAbove
 
-        // ═══ 4. 綜合判定 ═══
+        // ═══ 4. 综合判定 ═══
         val baseReady = recentAllAbove && converged && upward
 
         val hint = buildString {
-            append(if (recentAllAbove) "✅3天不新低" else "⚠️仍在創新低")
+            append(if (recentAllAbove) "✅3天不新低" else "⚠️仍在创新低")
             append(" | ")
-            append("MA離散${"%.1f".format(divergence * 100)}%")
+            append("MA离散${"%.1f".format(divergence * 100)}%")
             append(if (converged) "✅粘合" else "⚠️分散")
             append(if (upward) "↑" else "↓")
             if (escapeUrgent && !baseReady) {
-                append(" | ⚡逃頂要快(${"%.1f".format(threeDayChange)}%)")
+                append(" | ⚡逃顶要快(${"%.1f".format(threeDayChange)}%)")
             }
         }
 

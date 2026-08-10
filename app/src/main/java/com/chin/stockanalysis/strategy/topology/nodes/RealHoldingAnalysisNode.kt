@@ -12,17 +12,17 @@ import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
 /**
- * ## 實倉持倉評估節點 v2
+ * ## 实仓持仓评估节点 v2
  *
- * 讀取 AMarketAnalysisEngine 的大盤結論，
- * 對每只持倉逐股分析 K 線，生成操作建議：
- * - 加倉 / 持有 / 減倉 / 清倉
- * - 做T / 反T / 觀望
+ * 读取 AMarketAnalysisEngine 的大盘结论，
+ * 对每只持仓逐股分析 K 线，生成操作建议：
+ * - 加仓 / 持有 / 减仓 / 清仓
+ * - 做T / 反T / 观望
  *
- * ### 輸入
+ * ### 输入
  * - n_a_market: AMarketAnalysisEngine.MarketAnalysisResult
  *
- * ### 輸出
+ * ### 输出
  * [RealHoldingAnalysisResult]
  */
 data class RealHoldingAnalysisResult(
@@ -35,27 +35,33 @@ data class RealHoldingAnalysisResult(
 )
 
 class RealHoldingAnalysisNode : BaseNode<Any, RealHoldingAnalysisResult>(
-    "n_rh_eval", "實倉持倉評估", NodeType.TRADE_ACTION
+    "n_rh_eval", "实仓持仓评估", NodeType.TRADE_ACTION
 ) {
     companion object {
         private const val TAG = "RealHoldingEval"
     }
 
     override suspend fun execute(context: PipelineContext, input: Any): RealHoldingAnalysisResult {
-        Log.i(TAG, "開始實倉持倉評估...")
+        Log.i(TAG, "开始实仓持仓评估...")
 
-        // 1. 讀取大盤分析結論
+        // 1. 读取大盘分析结论
         val marketResult = context.getStageOutput<AMarketAnalysisEngine.MarketAnalysisResult>("n_a_market")
-        val marketSummary = marketResult?.summary ?: "大盤數據不可用"
+        val marketSummary = marketResult?.summary ?: "大盘数据不可用"
         val marketCondition = when {
             marketResult == null -> "未知"
-            marketResult.isTopDanger -> "危險"
-            marketResult.isTrendUp -> "多頭"
-            marketResult.isBottomConfirmed -> "觸底"
-            else -> "震盪"
+            marketResult.isTopDanger -> "危险"
+            marketResult.isTrendUp -> "多头"
+            marketResult.isBottomConfirmed -> "触底"
+            else -> "震荡"
         }
 
-        // 2. 讀取持倉數據
+        // 1.5 读取新闻力度（如果有的话）
+        val newsScore = context.getStageOutput<Int>("n_news")
+        if (newsScore != null) {
+            context.log("n_rh_eval", "新闻力度: $newsScore")
+        }
+
+        // 2. 读取持仓数据
         val db = StockDatabase.getInstance(context.androidContext)
         val realPositions = withContext(Dispatchers.IO) {
             try { db.realPositionDao().getAllActive() } catch (_: Exception) { emptyList<RealPositionEntity>() }
@@ -69,11 +75,11 @@ class RealHoldingAnalysisNode : BaseNode<Any, RealHoldingAnalysisResult>(
 
         val today = LocalDate.now()
 
-        // 3. 逐持倉分析
+        // 3. 逐持仓分析
         val details = buildString {
-            // 真實持倉
+            // 真实持仓
             if (realPositions.isNotEmpty()) {
-                appendLine("── 真實持倉 (${realPositions.size} 只) ──")
+                appendLine("── 真实持仓 (${realPositions.size} 只) ──")
                 for (p in realPositions) {
                     val analysis = analyzeHolding(context, p.stockCode, p.avgBuyPrice, today)
                     val buyDate = try { LocalDate.parse(p.buyDate) } catch (_: Exception) { today }
@@ -82,9 +88,9 @@ class RealHoldingAnalysisNode : BaseNode<Any, RealHoldingAnalysisResult>(
                     appendLine("    → ${analysis}")
                 }
             }
-            // 策略持倉
+            // 策略持仓
             if (orders.isNotEmpty()) {
-                appendLine("── 策略持倉 (${orders.size} 筆) ──")
+                appendLine("── 策略持仓 (${orders.size} 笔) ──")
                 for (o in orders.take(15)) {
                     val analysis = analyzeHolding(context, o.stockCode, o.buyPrice, today)
                     val buyDate = try { LocalDate.parse(o.tradeDate) } catch (_: Exception) { today }
@@ -94,31 +100,31 @@ class RealHoldingAnalysisNode : BaseNode<Any, RealHoldingAnalysisResult>(
                     appendLine("  ${o.stockName}(${o.stockCode}) ${daysHeld}天 $pnlStr")
                     appendLine("    → ${analysis}")
                 }
-                if (orders.size > 15) appendLine("  ... 共 ${orders.size} 筆")
+                if (orders.size > 15) appendLine("  ... 共 ${orders.size} 笔")
             }
             if (realPositions.isEmpty() && orders.isEmpty()) {
-                appendLine("暫無持倉")
+                appendLine("暂无持仓")
             }
         }
 
-        // 4. 整體建議
-        val advice = buildOverallAdvice(marketCondition, marketResult, realPositions.size + orders.size)
+        // 4. 整体建议
+        val advice = buildOverallAdvice(marketCondition, marketResult, realPositions.size + orders.size, newsScore)
 
         val result = RealHoldingAnalysisResult(
             marketSummary = marketSummary,
-            suggestedPeriod = marketResult?.suggestedPeriod?.label ?: "短線",
+            suggestedPeriod = marketResult?.suggestedPeriod?.label ?: "短线",
             suggestedPositionPct = marketResult?.suggestedPositionPct ?: 40,
             holdingCount = realPositions.size + orders.size,
             holdingDetails = details.trimEnd(),
             overallAdvice = advice
         )
 
-        Log.i(TAG, "實倉評估完成: 大盤=$marketCondition, 持倉=${result.holdingCount}只")
+        Log.i(TAG, "实仓评估完成: 大盘=$marketCondition, 持仓=${result.holdingCount}只")
         return result
     }
 
     /**
-     * 分析單只持倉：讀取 K 線 → 判斷趨勢 → 生成操作建議
+     * 分析单只持仓：读取 K 线 → 判断趋势 → 生成操作建议
      */
     private suspend fun analyzeHolding(
         context: PipelineContext,
@@ -129,7 +135,7 @@ class RealHoldingAnalysisNode : BaseNode<Any, RealHoldingAnalysisResult>(
         try {
             val db = StockDatabase.getInstance(context.androidContext)
             val snapshots = db.dailySnapshotDao().getByCode(stockCode, 30).sortedBy { it.date }
-            if (snapshots.size < 5) return@withContext "數據不足，建議觀望"
+            if (snapshots.size < 5) return@withContext "数据不足，建议观望"
 
             val latest = snapshots.last()
             val currentPrice = latest.close
@@ -153,72 +159,81 @@ class RealHoldingAnalysisNode : BaseNode<Any, RealHoldingAnalysisResult>(
                 (closes.last() - closes[closes.size - 4]) / closes[closes.size - 4] * 100
             } else 0.0
 
-            // ── 交易紀律偵測 ──
+            // ── 交易纪律侦测 ──
             val prevClose = if (closes.size >= 2) closes[closes.size - 2] else currentPrice
             val gapUpPct = if (prevClose > 0) (latest.open - prevClose) / prevClose * 100 else 0.0
-            val isHighOpenChase = gapUpPct > 5.0  // 紀律一：高開>5%不追
-            val nearMa5 = ma5 > 0 && Math.abs(currentPrice - ma5) / ma5 * 100 < 2.0  // 紀律一：MA5附近低吸
+            val isHighOpenChase = gapUpPct > 5.0  // 纪律一：高开>5%不追
+            val nearMa5 = ma5 > 0 && Math.abs(currentPrice - ma5) / ma5 * 100 < 2.0  // 纪律一：MA5附近低吸
             val bodyPct = if (latest.open > 0) (latest.close - latest.open) / latest.open * 100 else 0.0
-            val isBigYin = bodyPct < -3.0  // 大陰線
+            val isBigYin = bodyPct < -3.0  // 大阴线
             val upperShadow = latest.high - maxOf(latest.open, latest.close)
             val bodySize = Math.abs(latest.close - latest.open)
-            val isLongUpperShadow = bodySize > 0 && upperShadow > bodySize * 2.0  // 長上影線
-            val isLimitUp = latest.close >= prevClose * 1.095  // 漲停
-            val isLimitUpOpen = isLimitUp && latest.close < latest.high  // 開板
-            val isAtHigh = currentPrice > ma20 * 1.15  // 高位（遠離MA20）
-            val isBigYinAtHigh = isAtHigh && isBigYin  // 高位大陰
+            val isLongUpperShadow = bodySize > 0 && upperShadow > bodySize * 2.0  // 长上影线
+            val isLimitUp = latest.close >= prevClose * 1.095  // 涨停
+            val isLimitUpOpen = isLimitUp && latest.close < latest.high  // 开板
+            val isAtHigh = currentPrice > ma20 * 1.15  // 高位（远离MA20）
+            val isBigYinAtHigh = isAtHigh && isBigYin  // 高位大阴
 
             val sb = StringBuilder()
 
-            // 操作建議（融入交易紀律）
+            // 操作建议（融入交易纪律）
             val advice = when {
-                // 紀律四：止損-10%
-                pnlPct <= -10 -> "🔴 止損清倉(${String.format("%.1f", pnlPct)}%)(紀律四)"
-                // 紀律三：高位大陰必賣
-                isBigYinAtHigh -> "🔴 高位大陰，建議減倉(紀律三)"
-                // 紀律三：長上影線必賣
-                isLongUpperShadow && isAtHigh -> "🔴 高位長上影，建議減倉(紀律三)"
-                // 紀律三：漲停開板必賣
-                isLimitUpOpen -> "🟡 漲停開板，注意風險(紀律三)"
-                // 紀律三：賺錢趨勢減弱→止盈
-                pnlPct >= 15 && !maBullish -> "🟢 止盈減倉(${String.format("%.1f", pnlPct)}%，趨勢減弱)(紀律三)"
-                // 紀律一：高開>5%不追
-                isHighOpenChase -> "⚠ 高開${String.format("%.1f", gapUpPct)}%，不追高(紀律一)"
-                // 紀律一：MA5附近低吸信號
-                nearMa5 && maBullish -> "📈 MA5附近低吸機會，持有/加倉(紀律一)"
-                // 原趨勢判斷
-                maBearish && !aboveMa10 && volRatio > 1.5 && recent3Change < -5 -> "📉 反T機會(超跌放量)"
-                maBearish && !aboveMa10 -> "⚠ 空頭排列，建議減倉或反T"
-                maBullish && aboveMa5 && volRatio > 1.3 -> "📈 多頭放量，持有/加倉"
-                maBullish && aboveMa5 -> "📈 多頭持有，可做T降成本"
-                aboveMa5 && !aboveMa10 -> "🔄 短線反彈，做T為主"
-                !aboveMa5 && aboveMa10 -> "🔄 回調MA10附近，可做T或觀望"
-                else -> "⏳ 震盪觀望"
+                // 纪律四：止损-10%
+                pnlPct <= -10 -> "🔴 止损清仓(${String.format("%.1f", pnlPct)}%)(纪律四)"
+                // 纪律三：高位大阴必卖
+                isBigYinAtHigh -> "🔴 高位大阴，建议减仓(纪律三)"
+                // 纪律三：长上影线必卖
+                isLongUpperShadow && isAtHigh -> "🔴 高位长上影，建议减仓(纪律三)"
+                // 纪律三：涨停开板必卖
+                isLimitUpOpen -> "🟡 涨停开板，注意风险(纪律三)"
+                // 纪律三：赚钱趋势减弱→止盈
+                pnlPct >= 15 && !maBullish -> "🟢 止盈减仓(${String.format("%.1f", pnlPct)}%，趋势减弱)(纪律三)"
+                // 纪律一：高开>5%不追
+                isHighOpenChase -> "⚠ 高开${String.format("%.1f", gapUpPct)}%，不追高(纪律一)"
+                // 纪律一：MA5附近低吸信号
+                nearMa5 && maBullish -> "📈 MA5附近低吸机会，持有/加仓(纪律一)"
+                // 原趋势判断
+                maBearish && !aboveMa10 && volRatio > 1.5 && recent3Change < -5 -> "📉 反T机会(超跌放量)"
+                maBearish && !aboveMa10 -> "⚠ 空头排列，建议减仓或反T"
+                maBullish && aboveMa5 && volRatio > 1.3 -> "📈 多头放量，持有/加仓"
+                maBullish && aboveMa5 -> "📈 多头持有，可做T降成本"
+                aboveMa5 && !aboveMa10 -> "🔄 短线反弹，做T为主"
+                !aboveMa5 && aboveMa10 -> "🔄 回调MA10附近，可做T或观望"
+                else -> "⏳ 震荡观望"
             }
 
             sb.append(advice)
-            sb.append(" | 現價${String.format("%.2f", currentPrice)} 盈虧${String.format("%.1f", pnlPct)}%")
+            sb.append(" | 现价${String.format("%.2f", currentPrice)} 盈亏${String.format("%.1f", pnlPct)}%")
             sb.append(" | MA5${String.format("%.0f", ma5)}${if (aboveMa5) "↑" else "↓"}")
             if (volRatio > 1.3) {
                 sb.append(" | 放量${String.format("%.1f", volRatio)}x")
             }
             sb.toString()
         } catch (e: Exception) {
-            "分析失敗: ${e.message}"
+            "分析失败: ${e.message}"
         }
     }
 
     private fun buildOverallAdvice(
         marketCondition: String,
         marketResult: AMarketAnalysisEngine.MarketAnalysisResult?,
-        holdingCount: Int
+        holdingCount: Int,
+        newsScore: Int? = null
     ): String {
-        if (holdingCount == 0) return "暫無持倉，等待建倉機會"
+        if (holdingCount == 0) return "暂无持仓，等待建仓机会"
+
+        val newsHint = when {
+            newsScore == null -> ""
+            newsScore >= 70 -> " | 新闻面偏多📰+"
+            newsScore <= 30 -> " | 新闻面偏空📰-"
+            else -> " | 新闻面中性"
+        }
+
         return when (marketCondition) {
-            "危險" -> "⚠️ 大盤逃頂信號，建議收緊止損，倉位降至 ${marketResult?.suggestedPositionPct ?: 10}% 以下"
-            "多頭" -> "✅ 大盤多頭排列，持倉可繼續持有，倉位可達 ${marketResult?.suggestedPositionPct ?: 70}%"
-            "觸底" -> "🔄 大盤底部確認，可逐步建倉，倉位 ${marketResult?.suggestedPositionPct ?: 50}%"
-            else -> "⏳ 大盤震盪，高拋低吸為主，倉位 ${marketResult?.suggestedPositionPct ?: 40}%"
+            "危险" -> "⚠️ 大盘逃顶信号，建议收紧止损，仓位降至 ${marketResult?.suggestedPositionPct ?: 10}% 以下$newsHint"
+            "多头" -> "✅ 大盘多头排列，持仓可继续持有，仓位可达 ${marketResult?.suggestedPositionPct ?: 70}%$newsHint"
+            "触底" -> "🔄 大盘底部确认，可逐步建仓，仓位 ${marketResult?.suggestedPositionPct ?: 50}%$newsHint"
+            else -> "⏳ 大盘震荡，高抛低吸为主，仓位 ${marketResult?.suggestedPositionPct ?: 40}%$newsHint"
         }
     }
 }

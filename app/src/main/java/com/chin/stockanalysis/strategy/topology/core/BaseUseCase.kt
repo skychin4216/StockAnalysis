@@ -1,24 +1,24 @@
 package com.chin.stockanalysis.strategy.topology.core
 
 /**
- * ## UseCase 抽象基類
+ * ## UseCase 抽象基类
  *
- * UseCase = 完整業務流程，可包含多個 Pipeline 和多個 Node。
+ * UseCase = 完整业务流程，可包含多个 Pipeline 和多个 Node。
  *
- * 一個 UseCase 對應一個完整場景（如「短線選股」「中線交易」），
- * 由多個 Pipeline 步驟組成，每個步驟可串行或並行執行。
+ * 一个 UseCase 对应一个完整场景（如「短线选股」「中线交易」），
+ * 由多个 Pipeline 步骤组成，每个步骤可串行或并行执行。
  *
- * ### 層級
+ * ### 层级
  * ```
- * UseCase (1 個完整場景)
- *   ├─ Pipeline A (節點 1 → 節點 2 → 節點 3)
- *   ├─ Pipeline B (節點 4 → 節點 5)     ← 可選，並行或串行
- *   └─ Pipeline C (節點 6 → 節點 7)
+ * UseCase (1 个完整场景)
+ *   ├─ Pipeline A (节点 1 → 节点 2 → 节点 3)
+ *   ├─ Pipeline B (节点 4 → 节点 5)     ← 可选，并行或串行
+ *   └─ Pipeline C (节点 6 → 节点 7)
  * ```
  *
- * ### 子類實現
+ * ### 子类实现
  * ```kotlin
- * class ShortTermUseCase : BaseUseCase("short_term", "短線交易") {
+ * class ShortTermUseCase : BaseUseCase("short_term", "短线交易") {
  *     override fun buildSteps() = listOf(
  *           Step("main", dagPipeline)
  *       )
@@ -32,11 +32,11 @@ abstract class BaseUseCase(
 ) {
 
     /**
-     * 一個執行步驟，引用一個 Pipeline 節點。
+     * 一个执行步骤，引用一个 Pipeline 节点。
      *
-     * @property name 步驟名稱（用於日誌和結果索引）
-     * @property pipeline 要執行的 Pipeline（本身也是 PipelineNode）
-     * @property parallel 是否與同一步驟組並行執行
+     * @property name 步骤名称（用于日志和结果索引）
+     * @property pipeline 要执行的 Pipeline（本身也是 PipelineNode）
+     * @property parallel 是否与同一步骤组并行执行
      */
     data class Step(
         val name: String,
@@ -44,36 +44,36 @@ abstract class BaseUseCase(
         val parallel: Boolean = false
     )
 
-    /** 配置參數（對應 XML <config><param>） */
+    /** 配置参数（对应 XML <config><param>） */
     val config: MutableMap<String, String> = mutableMapOf()
 
-    /** 構建執行步驟列表。子類實現以定義包含哪些 Pipeline。 */
+    /** 构建执行步骤列表。子类实现以定义包含哪些 Pipeline。 */
     protected abstract fun buildSteps(): List<Step>
 
-    /** 前置校驗。返回 false 可中止執行。 */
+    /** 前置校验。返回 false 可中止执行。 */
     protected open suspend fun validate(context: PipelineContext): Boolean = true
 
-    /** 後處理。在所有步驟完成後調用，用於保存報告、推送通知等。 */
+    /** 后处理。在所有步骤完成后调用，用于保存报告、推送通知等。 */
     protected open suspend fun postProcess(
         context: PipelineContext,
         results: Map<String, Any?>
     ) {}
 
     /**
-     * 執行完整 UseCase 流程。
+     * 执行完整 UseCase 流程。
      *
-     * @return 步驟名 → 執行結果 的映射
+     * @return 步骤名 → 执行结果 的映射
      */
     open suspend fun run(context: PipelineContext): Map<String, Any?> {
         if (!validate(context)) {
-            context.log(useCaseId, "UseCase [$useCaseName] 校驗未通過，中止")
+            context.log(useCaseId, "UseCase [$useCaseName] 校验未通过，中止")
             return emptyMap()
         }
 
         val steps = buildSteps()
         val results = mutableMapOf<String, Any?>()
 
-        context.log(useCaseId, "UseCase [$useCaseName] 開始 (${steps.size} 個步驟)")
+        context.log(useCaseId, "UseCase [$useCaseName] 开始 (${steps.size} 个步骤)")
 
         for (step in steps) {
             @Suppress("UNCHECKED_CAST")

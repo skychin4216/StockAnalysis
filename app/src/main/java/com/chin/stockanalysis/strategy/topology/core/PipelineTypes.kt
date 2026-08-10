@@ -4,10 +4,10 @@ import com.chin.stockanalysis.stock.StockRealtime
 import com.chin.stockanalysis.strategy.models.StrategySignal
 
 /**
- * ## Pipeline 標準化數據包
+ * ## Pipeline 标准化数据包
  *
- * 定義 Pipeline 各階段之間傳遞的數據類型。
- * 每個數據包對應一種典型的 Node 輸入/輸出：
+ * 定义 Pipeline 各阶段之间传递的数据类型。
+ * 每个数据包对应一种典型的 Node 输入/输出：
  *
  * ```
  * DATA_SOURCE       → StockPool
@@ -16,22 +16,22 @@ import com.chin.stockanalysis.strategy.models.StrategySignal
  * FILTER            → FilterResult
  * ```
  *
- * 所有數據包均為不可變 data class，確保線程安全。
+ * 所有数据包均为不可变 data class，确保线程安全。
  */
 
 // ════════════════════════════════════════════════════
-//  數據源 → 策略
+//  数据源 → 策略
 // ════════════════════════════════════════════════════
 
 /**
  * ## 股票池
  *
- * 數據源節點的輸出類型，包裝一組待篩選的股票實時數據。
+ * 数据源节点的输出类型，包装一组待筛选的股票实时数据。
  *
- * @property stocks 股票實時數據列表
- * @property source 數據來源標識（如 "market_all", "hot_sector", "watchlist"）
- * @property totalCount 原始總數（過濾前的數量，用於計算命中率）
- * @property filterReason 如果經過初步過濾，記錄過濾原因
+ * @property stocks 股票实时数据列表
+ * @property source 数据来源标识（如 "market_all", "hot_sector", "watchlist"）
+ * @property totalCount 原始总数（过滤前的数量，用于计算命中率）
+ * @property filterReason 如果经过初步过滤，记录过滤原因
  */
 data class StockPool(
     val stocks: List<StockRealtime>,
@@ -39,10 +39,10 @@ data class StockPool(
     val totalCount: Int = stocks.size,
     val filterReason: String = ""
 ) {
-    /** 股票代碼集合（快速查找） */
+    /** 股票代码集合（快速查找） */
     val codeSet: Set<String> get() = stocks.map { it.code }.toSet()
 
-    /** 空池判斷 */
+    /** 空池判断 */
     val isEmpty: Boolean get() = stocks.isEmpty()
 
     /** 池大小 */
@@ -50,19 +50,19 @@ data class StockPool(
 }
 
 // ════════════════════════════════════════════════════
-//  策略 → 增強 / 過濾
+//  策略 → 增强 / 过滤
 // ════════════════════════════════════════════════════
 
 /**
- * ## 信號包
+ * ## 信号包
  *
- * 單個策略篩選後的輸出，包含命中的信號列表和增強分數。
+ * 单个策略筛选后的输出，包含命中的信号列表和增强分数。
  *
- * @property strategyId 策略唯一標識
- * @property strategyName 策略名稱（人類可讀）
- * @property signals 命中的策略信號列表
- * @property newsStrengthScore 新聞因子加分（由新聞增強節點計算，0 表示未增強）
- * @property rotationPenalty 板塊輪動懲罰分數（由輪動檢測節點計算，0 表示無懲罰）
+ * @property strategyId 策略唯一标识
+ * @property strategyName 策略名称（人类可读）
+ * @property signals 命中的策略信号列表
+ * @property newsStrengthScore 新闻因子加分（由新闻增强节点计算，0 表示未增强）
+ * @property rotationPenalty 板块轮动惩罚分数（由轮动检测节点计算，0 表示无惩罚）
  */
 data class SignalPack(
     val strategyId: String,
@@ -71,89 +71,89 @@ data class SignalPack(
     val newsStrengthScore: Int = 0,
     val rotationPenalty: Int = 0
 ) {
-    /** 命中數量 */
+    /** 命中数量 */
     val hitCount: Int get() = signals.size
 
-    /** 信號總強度 */
+    /** 信号总强度 */
     val totalStrength: Int get() = signals.sumOf { it.strength }
 
-    /** 有效信號數（去掉懲罰後仍為正的信號） */
+    /** 有效信号数（去掉惩罚后仍为正的信号） */
     val effectiveCount: Int get() = signals.count {
         (it.strength + newsStrengthScore - rotationPenalty) > 0
     }
 }
 
 // ════════════════════════════════════════════════════
-//  聚合 → 過濾 / 輸出
+//  聚合 → 过滤 / 输出
 // ════════════════════════════════════════════════════
 
 /**
- * ## 合併信號池
+ * ## 合并信号池
  *
- * 多策略信號聚合後的輸出，包含跨策略的股票命中統計。
+ * 多策略信号聚合后的输出，包含跨策略的股票命中统计。
  *
- * @property stockHits 每隻股票被命中的策略列表：stockCode → [(strategyId, strength), ...]
- * @property stockNames 股票代碼 → 名稱映射
- * @property boostedSignals 經過板塊加權 / 新聞增強後的排序信號列表
+ * @property stockHits 每只股票被命中的策略列表：stockCode → [(strategyId, strength), ...]
+ * @property stockNames 股票代码 → 名称映射
+ * @property boostedSignals 经过板块加权 / 新闻增强后的排序信号列表
  */
 data class MergedSignalPool(
     val stockHits: Map<String, List<Pair<String, Int>>>,
     val stockNames: Map<String, String>,
     val boostedSignals: List<StrategySignal>
 ) {
-    /** 涉及的股票總數 */
+    /** 涉及的股票总数 */
     val totalStocks: Int get() = stockHits.size
 
-    /** 多策略命中的股票（被 >= 2 個策略命中） */
+    /** 多策略命中的股票（被 >= 2 个策略命中） */
     val multiHitStocks: List<String> get() = stockHits.filter { it.value.size >= 2 }.keys.toList()
 
-    /** 按命中策略數排序的股票列表 */
+    /** 按命中策略数排序的股票列表 */
     val rankedStocks: List<String> get() = stockHits.entries
         .sortedByDescending { it.value.size }
         .map { it.key }
 }
 
 // ════════════════════════════════════════════════════
-//  過濾 → AI 預測 / 交易動作
+//  过滤 → AI 预测 / 交易动作
 // ════════════════════════════════════════════════════
 
 /**
- * ## 過濾結果
+ * ## 过滤结果
  *
- * 過濾節點的輸出，明確區分通過和被淘汰的信號。
+ * 过滤节点的输出，明确区分通过和被淘汰的信号。
  *
- * @property passed 通過過濾的信號列表
+ * @property passed 通过过滤的信号列表
  * @property rejected 被淘汰的股票信息（含淘汰原因）
  */
 data class FilterResult(
     val passed: List<StrategySignal>,
     val rejected: List<FilteredStockInfo>
 ) {
-    /** 通過數量 */
+    /** 通过数量 */
     val passCount: Int get() = passed.size
 
-    /** 淘汰數量 */
+    /** 淘汰数量 */
     val rejectCount: Int get() = rejected.size
 
-    /** 通過率 */
+    /** 通过率 */
     val passRate: Float get() {
         val total = passCount + rejectCount
         return if (total > 0) passCount.toFloat() / total else 0f
     }
 
-    /** 合併通過 + 淘汰的總數 */
+    /** 合并通过 + 淘汰的总数 */
     val totalCount: Int get() = passCount + rejectCount
 }
 
 /**
- * ## 被過濾的股票信息
+ * ## 被过滤的股票信息
  *
- * 記錄被淘汰股票的詳細信息，用於調試分析和日誌記錄。
+ * 记录被淘汰股票的详细信息，用于调试分析和日志记录。
  *
- * @property code 股票代碼
- * @property name 股票名稱
- * @property reason 淘汰原因（人類可讀，如 "強度低於門檻 55"）
- * @property originalStrength 原始信號強度（過濾前的值）
+ * @property code 股票代码
+ * @property name 股票名称
+ * @property reason 淘汰原因（人类可读，如 "强度低于门槛 55"）
+ * @property originalStrength 原始信号强度（过滤前的值）
  */
 data class FilteredStockInfo(
     val code: String,

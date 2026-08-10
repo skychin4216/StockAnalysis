@@ -6,8 +6,8 @@ import kotlinx.coroutines.*
 /**
  * ## Sub-Agent 派生器
  *
- * 借鑒 OpenCode sessions_spawn 的非阻塞派生設計。
- * 每個 Sub-Agent 在獨立 coroutine 中執行，完成後產生 AgentAnnounce。
+ * 借鉴 OpenCode sessions_spawn 的非阻塞派生设计。
+ * 每个 Sub-Agent 在独立 coroutine 中执行，完成后产生 AgentAnnounce。
  */
 class SubAgentSpawner(
     private val appContext: Context
@@ -15,8 +15,8 @@ class SubAgentSpawner(
     /**
      * 派生子 Agent（非阻塞）
      * @param role Agent 角色
-     * @param task 任務執行體
-     * @param session Session 記憶
+     * @param task 任务执行体
+     * @param session Session 记忆
      * @return Deferred<AgentAnnounce>
      */
     fun spawn(
@@ -60,7 +60,7 @@ class SubAgentSpawner(
 }
 
 /**
- * Agent 任務 — 由 SubAgentSpawner 執行
+ * Agent 任务 — 由 SubAgentSpawner 执行
  */
 interface AgentTask {
     val id: String
@@ -69,7 +69,7 @@ interface AgentTask {
 }
 
 /**
- * 簡單任務實現 — 用 lambda 構造
+ * 简单任务实现 — 用 lambda 构造
  */
 class SimpleAgentTask(
     override val id: String,

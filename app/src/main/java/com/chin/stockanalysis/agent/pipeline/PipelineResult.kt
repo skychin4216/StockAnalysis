@@ -1,19 +1,19 @@
 package com.chin.stockanalysis.agent.pipeline
 
 /**
- * 流水線子 Agent 輸出結構（供 StructuredOutputParser 解析、DeepAnalystEngine 使用）
+ * 流水线子 Agent 输出结构（供 StructuredOutputParser 解析、DeepAnalystEngine 使用）
  *
- * 精簡後僅保留仍被引用的數據類。
+ * 精简后仅保留仍被引用的数据类。
  */
 
-/** Agent 1 初選池中的個股 */
+/** Agent 1 初选池中的个股 */
 data class FilteredStock(
     val stockCode: String,
     val stockName: String,
     val filterReason: String
 )
 
-/** Agent 2 產業鏈打分結果（唯一打分核心） */
+/** Agent 2 产业链打分结果（唯一打分核心） */
 data class ChainScoreResult(
     val stockCode: String,
     val stockName: String,
@@ -30,7 +30,7 @@ data class ChainScoreResult(
     val passed: Boolean
 )
 
-/** Agent 5 風控終審結果 */
+/** Agent 5 风控终审结果 */
 data class RiskValidationResult(
     val stockCode: String,
     val riskLevel: String,
@@ -46,14 +46,14 @@ data class RiskDeduction(
     val score: Int
 )
 
-/** Agent D 輿情微調結果 */
+/** Agent D 舆情微调结果 */
 data class SentimentAdjustResult(
     val sentimentScore: Int,
     val positionAdjust: String,
     val reason: String
 )
 
-/** Agent 4 交易執行方案 */
+/** Agent 4 交易执行方案 */
 data class TradeExecutionPlan(
     val stockCode: String,
     val stockName: String,

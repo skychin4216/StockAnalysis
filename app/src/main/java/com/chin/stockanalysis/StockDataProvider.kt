@@ -6,65 +6,65 @@ import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
 /**
- * 股票實時數據提供商
+ * 股票实时数据提供商
  *
- * 封裝新浪財經免費 API，用於獲取A股實時行情。
- * 原理：在發送給 AI 之前，先掃描用戶輸入中的股票代碼，
- * 調用免費接口獲取實時數據，然後注入到 system prompt 中。
+ * 封装新浪财经免费 API，用于获取A股实时行情。
+ * 原理：在发送给 AI 之前，先扫描用户输入中的股票代码，
+ * 调用免费接口获取实时数据，然后注入到 system prompt 中。
  *
- * 這樣做的好處：
- * - 不需要改動 LLM 接口（仍用 OpenAI 兼容格式）
+ * 这样做的好处：
+ * - 不需要改动 LLM 接口（仍用 OpenAI 兼容格式）
  * - 不需要 Function Calling 支持
- * - 兼容 DeepSeek/硅基流動/OpenAI 所有模型
+ * - 兼容 DeepSeek/硅基流动/OpenAI 所有模型
  *
- * 新浪財經 API (免費、無需 Key)：
+ * 新浪财经 API (免费、无需 Key)：
  *   URL: https://hq.sinajs.cn/list={prefix}{code}
  *   prefix: sh=上海, sz=深圳, bj=北交所
- *   返回格式：var hq_str_sh600519="名稱,開盤價,昨收,當前價,最高,最低,..."
+ *   返回格式：var hq_str_sh600519="名称,开盘价,昨收,当前价,最高,最低,..."
  */
 class StockDataProvider {
 
     companion object {
-        // 常見股票代碼 → 前綴映射
+        // 常见股票代码 → 前缀映射
         private val PREFIX_MAP = mapOf(
-            "6" to "sh",    // 6開頭: 上海主板
-            "9" to "sh",    // 9開頭: 上海B股
-            "0" to "sz",    // 0開頭: 深圳主板
-            "3" to "sz",    // 3開頭: 創業板
-            "4" to "bj",    // 4開頭: 北交所
-            "8" to "bj"     // 8開頭: 北交所
+            "6" to "sh",    // 6开头: 上海主板
+            "9" to "sh",    // 9开头: 上海B股
+            "0" to "sz",    // 0开头: 深圳主板
+            "3" to "sz",    // 3开头: 创业板
+            "4" to "bj",    // 4开头: 北交所
+            "8" to "bj"     // 8开头: 北交所
         )
 
-        // 股票名稱 → 代碼映射（熱門股票）
+        // 股票名称 → 代码映射（热门股票）
         private val NAME_TO_CODE = mapOf(
             // 白酒
-            "貴州茅台" to "600519", "茅台" to "600519",
-            "五糧液" to "000858", "瀘州老窖" to "000568",
-            // 銀行
-            "工商銀行" to "601398", "建設銀行" to "601939",
-            "招商銀行" to "600036",
+            "贵州茅台" to "600519", "茅台" to "600519",
+            "五粮液" to "000858", "泸州老窖" to "000568",
+            // 银行
+            "工商银行" to "601398", "建设银行" to "601939",
+            "招商银行" to "600036",
             // 科技
-            "寧德時代" to "300750", "比亞迪" to "002594",
-            "中興通訊" to "000063", "華為" to "002502", // 間接
-            // 醫藥
-            "恒瑞醫藥" to "600276", "藥明康德" to "603259",
-            // 保險
-            "中國平安" to "601318", "中國人壽" to "601628",
+            "宁德时代" to "300750", "比亚迪" to "002594",
+            "中兴通讯" to "000063", "华为" to "002502", // 间接
+            // 医药
+            "恒瑞医药" to "600276", "药明康德" to "603259",
+            // 保险
+            "中国平安" to "601318", "中国人寿" to "601628",
             // 其他
-            "萬科A" to "000002", "格力電器" to "000651",
-            "美的集團" to "000333", "海康威視" to "002415",
-            // 指數
-            "上證指數" to "000001", "上證" to "000001",
-            "深證成指" to "399001", "深成指" to "399001",
-            "創業板指" to "399006"
+            "万科A" to "000002", "格力电器" to "000651",
+            "美的集团" to "000333", "海康威视" to "002415",
+            // 指数
+            "上证指数" to "000001", "上证" to "000001",
+            "深证成指" to "399001", "深成指" to "399001",
+            "创业板指" to "399006"
         )
 
         private val TIMEOUT_SECONDS = 10L
 
-        // A股主要指數代碼
+        // A股主要指数代码
         private val INDEX_CODES = setOf("000001", "399001", "399006")
 
-        // 用於識別股票代碼的正則
+        // 用于识别股票代码的正则
         private val STOCK_CODE_REGEX = Regex("""[0-9]{6}""")
 
         // 共享 OkHttpClient 实例，避免重复创建
@@ -80,24 +80,24 @@ class StockDataProvider {
     private val client: OkHttpClient get() = sharedClient
 
     /**
-     * 從用戶消息中提取股票代碼列表
+     * 从用户消息中提取股票代码列表
      *
      * 例如：
      * - "600519" → ["sh600519"]
-     * - "茅台今天怎麼樣" → ["sh600519"]
-     * - "上證指數和茅台" → ["sh000001", "sh600519"]
+     * - "茅台今天怎么样" → ["sh600519"]
+     * - "上证指数和茅台" → ["sh000001", "sh600519"]
      */
     fun extractStockCodes(text: String): List<String> {
         val codes = mutableSetOf<String>()
 
-        // 1. 先按股票名稱匹配
+        // 1. 先按股票名称匹配
         for ((name, code) in NAME_TO_CODE) {
             if (text.contains(name)) {
                 codes.add(formatCode(code))
             }
         }
 
-        // 2. 再按純數字代碼匹配
+        // 2. 再按纯数字代码匹配
         STOCK_CODE_REGEX.findAll(text).forEach { match ->
             val rawCode = match.value
             codes.add(formatCode(rawCode))
@@ -107,21 +107,21 @@ class StockDataProvider {
     }
 
     /**
-     * 將6位數字代碼轉為新浪格式（前綴+代碼）
+     * 将6位数字代码转为新浪格式（前缀+代码）
      * 例如: "600519" → "sh600519", "000001" → "sh000001"
      */
     private fun formatCode(code: String): String {
-        // 如果已經是前綴格式，直接返回
+        // 如果已经是前缀格式，直接返回
         if (code.length > 6 && code.substring(2).all { it.isDigit() }) {
             return code
         }
 
-        // 指數特殊處理
+        // 指数特殊处理
         if (code in INDEX_CODES) {
             return when (code) {
-                "000001" -> "sh000001"  // 上證指數
-                "399001" -> "sz399001"  // 深證成指
-                "399006" -> "sz399006"  // 創業板指
+                "000001" -> "sh000001"  // 上证指数
+                "399001" -> "sz399001"  // 深证成指
+                "399006" -> "sz399006"  // 创业板指
                 else -> "sh$code"
             }
         }
@@ -131,10 +131,10 @@ class StockDataProvider {
     }
 
     /**
-     * 批量查詢股票實時數據
+     * 批量查询股票实时数据
      *
-     * @param stockCodes 股票代碼列表（如 ["sh600519", "sz000858"]）
-     * @return Map<代碼, Map<字段名, 值>>
+     * @param stockCodes 股票代码列表（如 ["sh600519", "sz000858"]）
+     * @return Map<代码, Map<字段名, 值>>
      */
     fun fetchBatch(stockCodes: List<String>): Map<String, Map<String, String>> {
         if (stockCodes.isEmpty()) return emptyMap()
@@ -142,7 +142,7 @@ class StockDataProvider {
         val result = mutableMapOf<String, Map<String, String>>()
 
         try {
-            // 新浪 API 支持批量查詢，多個代碼用逗號分隔
+            // 新浪 API 支持批量查询，多个代码用逗号分隔
             val codesParam = stockCodes.joinToString(",")
             val url = "${DataConfig.sinaHq}/list=$codesParam"
 
@@ -159,7 +159,7 @@ class StockDataProvider {
             val body = response.body?.string() ?: return result
 
             // 解析返回的每一行
-            // 格式: var hq_str_sh600519="貴州茅台,1690.00,1688.00,1702.00,1710.00,1685.00,....";
+            // 格式: var hq_str_sh600519="贵州茅台,1690.00,1688.00,1702.00,1710.00,1685.00,....";
             val lines = body.split("\n")
             for (line in lines) {
                 val trimmed = line.trim()
@@ -174,21 +174,21 @@ class StockDataProvider {
 
                     if (fields.size >= 32) {
                         result[code] = mapOf(
-                            "name" to fields[0],           // 股票名稱
-                            "open" to fields[1],           // 開盤價
-                            "yestClose" to fields[2],      // 昨日收盤價
-                            "price" to fields[3],          // 當前價
+                            "name" to fields[0],           // 股票名称
+                            "open" to fields[1],           // 开盘价
+                            "yestClose" to fields[2],      // 昨日收盘价
+                            "price" to fields[3],          // 当前价
                             "high" to fields[4],           // 最高
                             "low" to fields[5],            // 最低
                             "volume" to fields[8],         // 成交量(手)
-                            "amount" to fields[9],         // 成交額
-                            "buy1" to fields[11],          // 買一
-                            "sell1" to fields[21],         // 賣一
+                            "amount" to fields[9],         // 成交额
+                            "buy1" to fields[11],          // 买一
+                            "sell1" to fields[21],         // 卖一
                             "date" to fields[30],          // 日期
-                            "time" to fields[31]           // 時間
+                            "time" to fields[31]           // 时间
                         )
                     } else if (fields.size >= 4 && (code.startsWith("sh000") || code.startsWith("sz399"))) {
-                        // 指數格式較短
+                        // 指数格式较短
                         result[code] = mapOf(
                             "name" to fields[0],
                             "open" to fields[1],
@@ -203,20 +203,20 @@ class StockDataProvider {
                 }
             }
         } catch (e: Exception) {
-            // 靜默失敗，不影響主流程
+            // 静默失败，不影响主流程
         }
 
         return result
     }
 
     /**
-     * 從用戶消息中提取股票代碼並異步獲取實時數據
-     * 返回格式化的字符串，適合注入 system prompt
+     * 从用户消息中提取股票代码并异步获取实时数据
+     * 返回格式化的字符串，适合注入 system prompt
      *
-     * ⚠️ 此方法包含網絡請求，必須在後台線程調用！
+     * ⚠️ 此方法包含网络请求，必须在后台线程调用！
      *
-     * @param userMessage 用戶輸入的消息
-     * @return 格式化後的實時數據字符串，如果沒檢測到股票代碼則返回 null
+     * @param userMessage 用户输入的消息
+     * @return 格式化后的实时数据字符串，如果没检测到股票代码则返回 null
      */
     fun getRealtimeDataForPromptAsync(userMessage: String): String? {
         val stockCodes = extractStockCodes(userMessage)
@@ -229,12 +229,12 @@ class StockDataProvider {
     }
 
     /**
-     * 格式化股票數據為可讀字符串
+     * 格式化股票数据为可读字符串
      */
     private fun formatStockData(data: Map<String, Map<String, String>>): String {
         val sb = StringBuilder()
-        sb.appendLine("【實時行情數據】")
-        sb.appendLine("（以下是用戶提問涉及的股票實時數據，請根據這些數據回答）")
+        sb.appendLine("【实时行情数据】")
+        sb.appendLine("（以下是用户提问涉及的股票实时数据，请根据这些数据回答）")
 
         for ((code, fields) in data) {
             val name = fields["name"] ?: code
@@ -246,19 +246,19 @@ class StockDataProvider {
             val time = fields["time"] ?: ""
 
             sb.appendLine("• $name ($code)：")
-            sb.appendLine("  當前價: $price 元")
+            sb.appendLine("  当前价: $price 元")
             if (change != null) {
-                sb.appendLine("  漲跌: ${change.first} (${change.second})")
+                sb.appendLine("  涨跌: ${change.first} (${change.second})")
             }
             sb.appendLine("  最高: $high  最低: $low")
             if (volume != "--") {
                 val volumeNum = volume.toLongOrNull()
                 if (volumeNum != null) {
-                    sb.appendLine("  成交量: ${volumeNum / 10000} 萬手")
+                    sb.appendLine("  成交量: ${volumeNum / 10000} 万手")
                 }
             }
             if (time.isNotEmpty()) {
-                sb.appendLine("  更新時間: $time")
+                sb.appendLine("  更新时间: $time")
             }
             sb.appendLine()
         }
@@ -267,8 +267,8 @@ class StockDataProvider {
     }
 
     /**
-     * 計算漲跌幅
-     * @return (漲跌額, 漲跌幅%) 或 null（計算失敗）
+     * 计算涨跌幅
+     * @return (涨跌额, 涨跌幅%) 或 null（计算失败）
      */
     private fun calculateChange(price: String, yestClose: String): Pair<String, String>? {
         val p = price.toDoubleOrNull() ?: return null

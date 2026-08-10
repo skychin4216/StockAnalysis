@@ -5,17 +5,17 @@ import android.view.View
 import com.chin.stockanalysis.strategy.HoldingPeriod
 
 /**
- * ## 長線量化 Tab — 持倉 6 月到 1 年+，價值投資
+ * ## 长线量化 Tab — 持仓 6 月到 1 年+，价值投资
  *
- * 核心特點：
- * - 策略池：LONG 週期（低估值、基本面篩選、機構增持、行業龍頭護城河）
- * - 持倉週期：6 個月 ~ 1 年+
- * - 最大持倉：5 只
- * - 賣出規則：基本面惡化 / 估值過高
- * - 數據頻率：週K + 季報
+ * 核心特点：
+ * - 策略池：LONG 周期（低估值、基本面筛选、机构增持、行业龙头护城河）
+ * - 持仓周期：6 个月 ~ 1 年+
+ * - 最大持仓：5 只
+ * - 卖出规则：基本面恶化 / 估值过高
+ * - 数据频率：周K + 季报
  * - 分析重心：深度基本面
  *
- * onCreateView / initEngine / DAG Pipeline / 回溯測試 已由基類 QuantFragmentBase 統一提供。
+ * onCreateView / initEngine / DAG Pipeline / 回溯测试 已由基类 QuantFragmentBase 统一提供。
  */
 class LongTermQuantFragment : QuantFragmentBase() {
 
@@ -27,7 +27,7 @@ class LongTermQuantFragment : QuantFragmentBase() {
     }
 
     override fun getQuantType() = "LongTermQuant"
-    override val positionTitlePrefix = "長線"
+    override val positionTitlePrefix = "长线"
     override fun getDefaultUseCaseId() = "long_term"
 
     override fun onBuildClick() {
@@ -36,30 +36,30 @@ class LongTermQuantFragment : QuantFragmentBase() {
             useCaseId = "long_term",
             orderType = "long_term",
             importDays = 60,
-            titlePrefix = "長線"
+            titlePrefix = "长线"
         )
     }
 
     override fun onFittingClick() {
-        showDialog("長線擬合提示",
-            "長線策略（持倉6月-1年+）基於深度基本面分析，參數穩定。\n\n" +
+        showDialog("长线拟合提示",
+            "长线策略（持仓6月-1年+）基于深度基本面分析，参数稳定。\n\n" +
             "核心策略：\n" +
-            "• 低估值 — PE/PB 歷史分位篩選\n" +
-            "• 基本面三層篩選 — ROE/負債率/現金流\n" +
-            "• 機構增持 — 高ROE+低負債+穩健現金流\n" +
-            "• 行業龍頭護城河 — 技術壁壘+龍頭地位+高毛利\n\n" +
-            "賣出條件：\n" +
-            "• 基本面惡化（ROE 連續下滑）\n" +
-            "• 估值過高（PE > $OVERVALUED_PE 或 PB > $OVERVALUED_PB）\n" +
-            "• 行業格局發生重大變化")
+            "• 低估值 — PE/PB 历史分位筛选\n" +
+            "• 基本面三层筛选 — ROE/负债率/现金流\n" +
+            "• 机构增持 — 高ROE+低负债+稳健现金流\n" +
+            "• 行业龙头护城河 — 技术壁垒+龙头地位+高毛利\n\n" +
+            "卖出条件：\n" +
+            "• 基本面恶化（ROE 连续下滑）\n" +
+            "• 估值过高（PE > $OVERVALUED_PE 或 PB > $OVERVALUED_PB）\n" +
+            "• 行业格局发生重大变化")
     }
 
     override fun onBacktrackClick() {
         runHistoricalBacktrack(
             holdingPeriod = HoldingPeriod.LONG,
             tradingDays = 60,
-            titlePrefix = "長線",
-            extraInfo = "持倉: 6月-1年+ | 賣出: 基本面惡化 / 估值過高"
+            titlePrefix = "长线",
+            extraInfo = "持仓: 6月-1年+ | 卖出: 基本面恶化 / 估值过高"
         )
     }
 
@@ -68,10 +68,10 @@ class LongTermQuantFragment : QuantFragmentBase() {
     // ── buildUI ──
 
     override fun buildUI() {
-        addTitleRow("💎 長線量化系統 (價值投資，持倉6月-1年+)")
+        addTitleRow(getString(com.chin.stockanalysis.R.string.title_long_system))
 
         val (configRow, _, _) = createDatePickerRow(
-            tipText = "💎 持倉6月-1年+ | 最多${MAX_HOLDINGS}只 | 深度基本面",
+            tipText = "💎 持仓6月-1年+ | 最多${MAX_HOLDINGS}只 | 深度基本面",
             tipColor = "#1565C0"
         )
         rootLayout.addView(configRow)

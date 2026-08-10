@@ -25,7 +25,7 @@ import java.time.format.DateTimeFormatter
 class LeaderStockPool(private val context: Context) {
 
     // ════════════════════════════════════
-    // 数据模型（類級別，外部可直接 import）
+    // 数据模型（类级别，外部可直接 import）
     // ════════════════════════════════════
     data class SubSector(val name: String, val stocks: List<String>)
 

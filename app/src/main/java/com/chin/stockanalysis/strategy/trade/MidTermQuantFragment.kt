@@ -21,7 +21,7 @@ import java.time.LocalDate
  * ## 中线量化面板 v3.0 — 继承 QuantFragmentBase
  *
  * 共用基类的：卖出评估/执行、数据管理、持仓刷新、交易历史、导出等功能。
- * 建倉邏輯走標準 runDagPipeline() 路徑（與超短線/短線/長線一致）。
+ * 建仓逻辑走标准 runDagPipeline() 路径（与超短线/短线/长线一致）。
  */
 class MidTermQuantFragment : QuantFragmentBase() {
 
@@ -39,11 +39,11 @@ class MidTermQuantFragment : QuantFragmentBase() {
     // ── 抽象方法实现 ──
 
     override fun getQuantType() = "MidTermQuant"
-    override val positionTitlePrefix = "中線"
+    override val positionTitlePrefix = "中线"
     override fun onBuildClick() {
-        runDagPipeline(HoldingPeriod.MID, "mid_term", "midterm", 60, "中線")
+        runDagPipeline(HoldingPeriod.MID, "mid_term", "midterm", 60, "中线")
     }
-    override fun onFittingClick() { showFittingParamsReport(titlePrefix = "中線") }
+    override fun onFittingClick() { showFittingParamsReport(titlePrefix = "中线") }
     override fun onBacktrackClick() { runNextDayBacktrack() }
     override fun onClearClick() { clearData() }
 
@@ -57,7 +57,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
     }
 
     override fun buildUI() {
-        addTitleRow("🤖 中线量化系统(价值投资，持仓 1-6 个月)", textSize = 18f)
+        addTitleRow(getString(com.chin.stockanalysis.R.string.title_mid_system), textSize = 18f)
         rootLayout.addView(createConfigSection())
         rootLayout.addView(createProgressRow())
         rootLayout.addView(createButtonRow())
@@ -79,15 +79,15 @@ class MidTermQuantFragment : QuantFragmentBase() {
             )
         }
 
-        // 日期選擇行（復用基類 createDatePickerRow）
+        // 日期选择行（复用基类 createDatePickerRow）
         val (dateRow, _, switch) = createDatePickerRow(
-            tipText = "📈 持倉1-6月 | 最多5只 | 基本面+技術面",
+            tipText = "📈 持仓1-6月 | 最多5只 | 基本面+技术面",
             tipColor = "#1565C0"
         )
         mainBoardSwitch = switch
         container.addView(dateRow)
 
-        // 週期選擇
+        // 周期选择
         container.addView(android.widget.TextView(requireContext()).apply {
             text = "📊 数据周期:"; textSize = 11f
             setTextColor(Color.parseColor("#333333"))
@@ -133,9 +133,9 @@ class MidTermQuantFragment : QuantFragmentBase() {
                     val nextDate = getNextTradingDayFromDB(order.tradeDate) ?: continue
                     val nextDaySnaps = db.dailySnapshotDao().getByDate(nextDate)
                     val nextDayStock = nextDaySnaps.find { it.code == order.stockCode } ?: continue
-                    // 使用次日開盤價作為模擬賣出價（修正未來函數）
+                    // 使用次日开盘价作为模拟卖出价（修正未来函数）
                     val sellPrice = nextDayStock.open
-                    // 扣除賣出成本（佣金+印花稅+滑點 ≈ 0.15%）
+                    // 扣除卖出成本（佣金+印花税+滑点 ≈ 0.15%）
                     val netSellPrice = sellPrice * (1.0 - 0.0015)
                     val profitPct = (netSellPrice - order.buyPrice) / order.buyPrice * 100
                     db.strategyTradeOrderDao().updateSellInfo(
@@ -160,12 +160,12 @@ class MidTermQuantFragment : QuantFragmentBase() {
                     sb.appendLine("处理交易日: ${tradeDates.joinToString(", ")}"); sb.appendLine()
                     for (r in allReports) { sb.appendLine(r.summary); sb.appendLine() }
                     showDialog("回溯复盘", sb.toString())
-                    buildBtn.isEnabled = true; buildBtn.text = "📈建倉"; progressBar.visibility = View.GONE
+                    buildBtn.isEnabled = true; buildBtn.text = "📈建仓"; progressBar.visibility = View.GONE
                     statusTv.text = "✅ 回溯完成: ${allReports.sumOf { it.buyOrdersAnalyzed.size }}笔订单, ${allReports.sumOf { it.missedOpportunities.size }}个遗漏机会"
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    buildBtn.isEnabled = true; buildBtn.text = "📈建倉"; progressBar.visibility = View.GONE
+                    buildBtn.isEnabled = true; buildBtn.text = "📈建仓"; progressBar.visibility = View.GONE
                     statusTv.text = "❌ 回溯失败: ${e.message?.take(50)}"
                     Toast.makeText(requireContext(), "回溯失败: ${e.message}", Toast.LENGTH_LONG).show()
                 }
@@ -176,7 +176,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
     private suspend fun getNextTradingDayFromDB(date: String): String? =
         com.chin.stockanalysis.ui.TradingDayPickerView.getNextTradingDayFromDb(date) { requireContext() }
 
-    // showFittingParams 已由基類 showFittingParamsReport 統一提供
+    // showFittingParams 已由基类 showFittingParamsReport 统一提供
     // showFinalPool / confirmAndClearPositions / confirmAndClearReports
-    // 已由基類 QuantFragmentBase 統一提供，所有週期共用相同實現
+    // 已由基类 QuantFragmentBase 统一提供，所有周期共用相同实现
 }

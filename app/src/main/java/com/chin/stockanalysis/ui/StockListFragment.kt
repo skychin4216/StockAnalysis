@@ -162,7 +162,7 @@ class StockListFragment : Fragment() {
         StockItem("sz000001", "平安银行", "10.75", "-0.28%", "🔴"),
     )
 
-    // 日/周/月主線（指數 + ETF 板塊）
+    // 日/周/月主线（指数 + ETF 板块）
     private fun mainlineSampleData() = listOf(
         StockItem("INDEX", "📈 上证指数", "3387.12", "+0.65%", "🟢"),
         StockItem("INDEX", "📉 深证成指", "10972.85", "-0.42%", "🔴"),

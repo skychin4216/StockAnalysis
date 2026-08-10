@@ -3,15 +3,15 @@ package com.chin.stockanalysis.stock.database
 import androidx.room.*
 
 /**
- * ## AI 精選股（獨立於自選股）
+ * ## AI 精选股（独立于自选股）
  *
- * 只保存當天的最新精選結果。
- * 下一個交易日 AppBackgroundRunner 會將前一天的 AI 精選股自動遷移到 user_watchlist（股票中心）。
+ * 只保存当天的最新精选结果。
+ * 下一个交易日 AppBackgroundRunner 会将前一天的 AI 精选股自动迁移到 user_watchlist（股票中心）。
  *
- * 設計原則：
- * - 每天運行策略時先清除舊數據，再寫入當天最新精選
- * - AppBackgroundRunner 同時監控 user_watchlist 和 ai_selected_stock
- * - 切換交易日時自動遷移前一天數據到 user_watchlist
+ * 设计原则：
+ * - 每天运行策略时先清除旧数据，再写入当天最新精选
+ * - AppBackgroundRunner 同时监控 user_watchlist 和 ai_selected_stock
+ * - 切换交易日时自动迁移前一天数据到 user_watchlist
  */
 @Entity(tableName = "ai_selected_stock", indices = [Index(value = ["stock_code", "selected_date"], unique = true)])
 data class AiSelectedStockEntity(

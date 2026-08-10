@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Stock Analysis</string>
+
+    <!-- Bottom Navigation -->
+    <string name="nav_chat">Chat</string>
+    <string name="nav_agent">Agent</string>
+    <string name="nav_stock">Stocks</string>
+    <string name="nav_strategy">Strategy</string>
+    <string name="nav_mine">Me</string>
+
+    <!-- AI Chat -->
+    <string name="chat_title">AI Assistant</string>
+    <string name="chat_input_hint">Type a message or hold to speak...</string>
+    <string name="chat_send">Send</string>
+
+    <!-- Conversation -->
+    <string name="new_conversation">New Chat</string>
+    <string name="conversation_title">Chats</string>
+    <string name="new_topic_hint">Ask something new</string>
+    <string name="ai_content_hint">AI-generated content, please verify</string>
+
+    <!-- Message Actions -->
+    <string name="msg_copy">Copy</string>
+    <string name="msg_play_voice">🔊</string>
+    <string name="msg_favorite">⭐</string>
+    <string name="msg_share">Share</string>
+    <string name="msg_regenerate">🔄 Regenerate</string>
+    <string name="msg_edit">Edit</string>
+    <string name="msg_delete">Delete</string>
+
+    <!-- Stock Browser -->
+    <string name="stocks_title">Stocks</string>
+    <string name="stocks_a_shares">A-Shares</string>
+    <string name="stocks_etf">ETF</string>
+    <string name="stocks_search_hint">Search stock code or name</string>
+    <string name="stocks_hot">Hot</string>
+    <string name="stocks_gain">Gainers</string>
+    <string name="stocks_lose">Losers</string>
+
+    <!-- Strategy Tabs -->
+    <string name="tab_ultra_short">Ultra</string>
+    <string name="tab_short">Short</string>
+    <string name="tab_mid">Mid</string>
+    <string name="tab_long">Long</string>
+    <string name="tab_real">Real</string>
+    <string name="tab_stock_picking">Stock Pick</string>
+
+    <!-- Real Holdings -->
+    <string name="real_holding_title">📌 Real Holdings</string>
+    <string name="real_holding_build_title">Add Position</string>
+    <string name="real_holding_pipeline">📊 Run Portfolio Analysis Pipeline</string>
+    <string name="real_holding_manual_add">✏️ Manual Add</string>
+    <string name="real_holding_ocr_import">📷 Import from Screenshot</string>
+    <string name="real_holding_no_data">No positions yet\n\nTap 📈Build to run market analysis\nTap 📦Holdings to add positions</string>
+    <string name="real_holding_section">🏦 Real Holdings</string>
+    <string name="real_holding_strategy_section">📊 Strategy Holdings</string>
+    <string name="real_holding_pick_section">🎯 Stock Picks</string>
+    <string name="real_holding_no_fitting">No fitting for real holdings</string>
+    <string name="real_holding_no_backtrack">No backtrack for real holdings</string>
+    <string name="real_holding_no_clear">Cannot clear real holdings data</string>
+    <string name="real_holding_unit">stocks</string>
+    <string name="real_holding_unit_order">orders</string>
+    <string name="real_holding_shares">shares</string>
+
+    <!-- Common Buttons -->
+    <string name="btn_build">📈Build</string>
+    <string name="btn_pipeline">🔀Pipeline</string>
+    <string name="btn_sell_eval">💰Trade</string>
+    <string name="btn_holdings">📦Holdings</string>
+    <string name="btn_report">📊Report</string>
+    <string name="btn_backtrack">🔙Back</string>
+    <string name="btn_fitting">📐Fit</string>
+    <string name="btn_sell">💰Sell</string>
+    <string name="btn_data">📦Data</string>
+    <string name="btn_t_trade">🔄T+0</string>
+
+    <!-- Section Titles -->
+    <string name="section_holding">Holdings</string>
+    <string name="section_picking">Picks</string>
+    <string name="section_total_holding">Total</string>
+    <string name="section_total_pnl">P&amp;L</string>
+    <string name="section_clear">Clear</string>
+    <string name="section_refresh">🔄</string>
+
+    <!-- Settings -->
+    <string name="settings_title">⚙️ Settings</string>
+    <string name="settings_ai_config">AI Config</string>
+    <string name="settings_select_provider">Provider / Model / API Key</string>
+    <string name="settings_data_mgmt">Data Management</string>
+    <string name="settings_clear_cache">Clear Cache</string>
+    <string name="settings_cache_info">Cache size: %s</string>
+    <string name="settings_cache_cleared">Cache cleared</string>
+    <string name="settings_agent_framework">Agent Framework</string>
+    <string name="settings_global_mode">Global Mode</string>
+    <string name="settings_module_config">Module Config</string>
+    <string name="settings_stock_picking_module">Stock Picking (AI Pipeline)</string>
+    <string name="settings_analysis_module">Analysis (Deep Analysis)</string>
+    <string name="settings_trade_module">Trading (Buy/Sell)</string>
+    <string name="settings_chat_module">Chat (AI Chat)</string>
+    <string name="settings_news_module">News Monitor</string>
+    <string name="settings_risk_module">Risk Control</string>
+    <string name="settings_period_route">Period Routes (Strategy)</string>
+    <string name="settings_about">About</string>
+
+    <!-- Language Settings -->
+    <string name="settings_language">Language</string>
+    <string name="settings_select_language">Select Language</string>
+    <string name="settings_follow_system">Follow System</string>
+    <string name="settings_language_changed">Language changed</string>
+
+    <!-- Common -->
+    <string name="dialog_cancel">Cancel</string>
+    <string name="dialog_confirm">Confirm</string>
+    <string name="dialog_save">Save</string>
+    <string name="dialog_add">Add</string>
+    <string name="dialog_delete">Delete</string>
+    <string name="status_loading">Loading...</string>
+    <string name="status_empty">No data</string>
+    <string name="status_error">Load failed</string>
+    <string name="status_success">Success</string>
+
+    <!-- Period Labels -->
+    <string name="period_ultra_short">⚡ Ultra Short</string>
+    <string name="period_short">📈 Short Term</string>
+    <string name="period_mid">📊 Mid Term</string>
+    <string name="period_long">💎 Long Term</string>
+
+    <!-- System Titles -->
+    <string name="title_ultra_short_system">⚡ Ultra-Short Quant (T+1, SL-2%/TP+3%)</string>
+    <string name="title_short_system">🤖 Short-Term Quant (Zipline + AI)</string>
+    <string name="title_mid_system">🤖 Mid-Term Quant (Value, 1-6 months)</string>
+    <string name="title_long_system">💎 Long-Term Quant (Value, 6mo-1yr+)</string>
+</resources>

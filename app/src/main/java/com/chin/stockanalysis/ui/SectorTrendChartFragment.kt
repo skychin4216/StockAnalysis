@@ -26,23 +26,23 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 /**
- * 板塊走勢對比 — 多板塊累計漲跌疊加顯示
+ * 板块走势对比 — 多板块累计涨跌叠加显示
  *
- * 設計概念：
- * - 多條折線疊加，每條代表一個板塊的累計指數（基準=100）
- * - 板塊通過 chip 切換/多選，最多同時顯示 5 條
- * - 時間範圍可選：1月/3月/6月/1年/全部
+ * 设计概念：
+ * - 多条折线叠加，每条代表一个板块的累计指数（基准=100）
+ * - 板块通过 chip 切换/多选，最多同时显示 5 条
+ * - 时间范围可选：1月/3月/6月/1年/全部
  */
 class SectorTrendChartFragment : Fragment() {
 
     private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
     private val SHORT_DATE = DateTimeFormatter.ofPattern("MM/dd")
 
-    // 板塊顏色盤（最多 8 種）
+    // 板块颜色盘（最多 8 种）
     private val SECTOR_COLORS = intArrayOf(
-        0xFF1976D2.toInt(), // 藍
-        0xFFE53935.toInt(), // 紅
-        0xFF43A047.toInt(), // 綠
+        0xFF1976D2.toInt(), // 蓝
+        0xFFE53935.toInt(), // 红
+        0xFF43A047.toInt(), // 绿
         0xFFFF9800.toInt(), // 橙
         0xFF9C27B0.toInt(), // 紫
         0xFF00ACC1.toInt(), // 青
@@ -55,13 +55,13 @@ class SectorTrendChartFragment : Fragment() {
     private lateinit var rangeRow: LinearLayout
     private lateinit var chipContainer: LinearLayout
 
-    // 所有可用板塊
+    // 所有可用板块
     private var allTopSectors: List<Pair<String, String>> = emptyList()
-    // 所有板塊的完整記錄（code -> records）
+    // 所有板块的完整记录（code -> records）
     private var sectorRecordMap: Map<String, List<SectorDailyRecordEntity>> = emptyMap()
-    // 當前選中的板塊 codes
+    // 当前选中的板块 codes
     private val selectedSectors = mutableSetOf<String>()
-    // 熱門板塊 codes（近30天有 S/A 評級）
+    // 热门板块 codes（近30天有 S/A 评级）
     private var hotSectorCodes: Set<String> = emptySet()
     private var rangeDays = 90
 
@@ -79,7 +79,7 @@ class SectorTrendChartFragment : Fragment() {
             setPadding(8, 8, 8, 8)
         }
 
-        // ── 板塊 Chip 行（可橫向滾動）──
+        // ── 板块 Chip 行（可横向滚动）──
         val chipScroll = HorizontalScrollView(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -94,7 +94,7 @@ class SectorTrendChartFragment : Fragment() {
         chipScroll.addView(chipContainer)
         root.addView(chipScroll)
 
-        // ── 時間範圍按鈕行 ──
+        // ── 时间范围按钮行 ──
         rangeRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -126,7 +126,7 @@ class SectorTrendChartFragment : Fragment() {
         }
         root.addView(rangeRow)
 
-        // ── 信息欄 ──
+        // ── 信息栏 ──
         infoTv = TextView(ctx).apply {
             textSize = 10f
             setTextColor(Color.parseColor("#666666"))
@@ -134,7 +134,7 @@ class SectorTrendChartFragment : Fragment() {
         }
         root.addView(infoTv)
 
-        // ── 折線圖 ──
+        // ── 折线图 ──
         chart = LineChart(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
@@ -156,7 +156,7 @@ class SectorTrendChartFragment : Fragment() {
     }
 
     // ══════════════════════════════════════
-    // 數據載入
+    // 数据载入
     // ══════════════════════════════════════
 
     private fun loadAllData() {
@@ -173,7 +173,7 @@ class SectorTrendChartFragment : Fragment() {
                     } catch (_: Exception) {}
                 }
 
-                // 找所有板塊，統計熱門天數，限制顯示數量（熱門優先）
+                // 找所有板块，统计热门天数，限制显示数量（热门优先）
                 val sectorMap = mutableMapOf<String, String>()
                 val sectorHotDays = mutableMapOf<String, Int>()
                 for (r in recentDays) {
@@ -182,7 +182,7 @@ class SectorTrendChartFragment : Fragment() {
                         sectorHotDays[r.sectorCode] = (sectorHotDays[r.sectorCode] ?: 0) + 1
                     }
                 }
-                // 排序：熱門優先（按熱門天數降序），同級按名稱，最多顯示 30 個
+                // 排序：热门优先（按热门天数降序），同级按名称，最多显示 30 个
                 allTopSectors = sectorMap.entries
                     .map { it.key to it.value }
                     .sortedWith(
@@ -192,7 +192,7 @@ class SectorTrendChartFragment : Fragment() {
                     .take(30)
                 hotSectorCodes = sectorHotDays.keys
 
-                // 預載每個板塊的完整記錄
+                // 预载每个板块的完整记录
                 val recordMap = mutableMapOf<String, List<SectorDailyRecordEntity>>()
                 for ((code, _) in allTopSectors) {
                     recordMap[code] = db.sectorDailyRecordDao()
@@ -202,10 +202,10 @@ class SectorTrendChartFragment : Fragment() {
 
                 withContext(Dispatchers.Main) {
                     if (allTopSectors.isEmpty()) {
-                        infoTv.text = "暫無板塊數據，請等待更新"
+                        infoTv.text = "暂无板块数据，请等待更新"
                         return@withContext
                     }
-                    // 預設選中前 3 個板塊
+                    // 预设选中前 3 个板块
                     selectedSectors.clear()
                     allTopSectors.take(3).forEach { selectedSectors.add(it.first) }
                     buildChips()
@@ -213,14 +213,14 @@ class SectorTrendChartFragment : Fragment() {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    infoTv.text = "載入失敗: ${e.message?.take(50)}"
+                    infoTv.text = "载入失败: ${e.message?.take(50)}"
                 }
             }
         }
     }
 
     // ══════════════════════════════════════
-    // Chip 構建
+    // Chip 构建
     // ══════════════════════════════════════
 
     private fun buildChips() {
@@ -237,7 +237,7 @@ class SectorTrendChartFragment : Fragment() {
                     setTextColor(Color.WHITE)
                     setBackgroundColor(Color.parseColor("#1976D2"))
                 } else if (code in hotSectorCodes) {
-                    // 熱門板塊：紅色底
+                    // 热门板块：红色底
                     setTextColor(Color.parseColor("#C62828"))
                     setBackgroundColor(Color.parseColor("#FFEBEE"))
                 } else {
@@ -253,7 +253,7 @@ class SectorTrendChartFragment : Fragment() {
                         if (selectedSectors.size > 1) selectedSectors.remove(code)
                     } else {
                         if (selectedSectors.size >= 5) {
-                            // 最多 5 條，移除最早的
+                            // 最多 5 条，移除最早的
                             selectedSectors.remove(selectedSectors.first())
                         }
                         selectedSectors.add(code)
@@ -267,13 +267,13 @@ class SectorTrendChartFragment : Fragment() {
     }
 
     // ══════════════════════════════════════
-    // 圖表渲染
+    // 图表渲染
     // ══════════════════════════════════════
 
     private fun renderChart() {
         if (selectedSectors.isEmpty() || sectorRecordMap.isEmpty()) return
 
-        // 找到所有選中板塊的日期並集（用於 X 軸）
+        // 找到所有选中板块的日期并集（用于 X 轴）
         val allDates = sortedSetOf<String>()
         val sectorLineData = mutableListOf<Pair<String, List<SectorDailyRecordEntity>>>()
 
@@ -286,14 +286,14 @@ class SectorTrendChartFragment : Fragment() {
         }
 
         if (allDates.isEmpty() || sectorLineData.isEmpty()) {
-            infoTv.text = "所選範圍無數據"
+            infoTv.text = "所选范围无数据"
             return
         }
 
         val dateList = allDates.toList()
         val dateIndexMap = dateList.withIndex().associate { (i, d) -> d to i }
 
-        // 為每個板塊構建累計指數折線
+        // 为每个板块构建累计指数折线
         val lineDataSets = mutableListOf<LineDataSet>()
         val infoParts = mutableListOf<String>()
 
@@ -305,7 +305,7 @@ class SectorTrendChartFragment : Fragment() {
             val name = records.first().sectorName
             val color = SECTOR_COLORS[idx % SECTOR_COLORS.size]
 
-            // 構建累計指數
+            // 构建累计指数
             val entries = mutableListOf<Entry>()
             var cumIndex = 100.0
             for (r in filtered) {
@@ -325,7 +325,7 @@ class SectorTrendChartFragment : Fragment() {
                     mode = LineDataSet.Mode.LINEAR
                 })
 
-                // 信息欄
+                // 信息栏
                 val latestIndex = cumIndex
                 val totalChange = (cumIndex - 100.0) / 100.0 * 100
                 val latest5 = filtered.takeLast(5)
@@ -334,10 +334,10 @@ class SectorTrendChartFragment : Fragment() {
             }
         }
 
-        // 更新圖表
+        // 更新图表
         chart.data = LineData(lineDataSets as List<ILineDataSet>)
 
-        // 計算 Y 軸範圍（加 padding 避免畸形）
+        // 计算 Y 轴范围（加 padding 避免畸形）
         var yMin = Float.MAX_VALUE
         var yMax = Float.MIN_VALUE
         for (ds in lineDataSets) {
@@ -347,7 +347,7 @@ class SectorTrendChartFragment : Fragment() {
             }
         }
 
-        // X 軸
+        // X 轴
         chart.xAxis.apply {
             position = XAxis.XAxisPosition.BOTTOM
             setDrawGridLines(false)
@@ -363,7 +363,7 @@ class SectorTrendChartFragment : Fragment() {
             }
         }
 
-        // Y 軸（加 padding）
+        // Y 轴（加 padding）
         chart.axisLeft.apply {
             setDrawGridLines(true)
             gridColor = Color.parseColor("#EEEEEE")
@@ -376,7 +376,7 @@ class SectorTrendChartFragment : Fragment() {
         }
         chart.axisRight.setDrawGridLines(false)
 
-        // 可見 X 範圍
+        // 可见 X 范围
         chart.setVisibleXRangeMaximum(60f)
         chart.setVisibleXRangeMinimum(5f)
 
@@ -388,7 +388,7 @@ class SectorTrendChartFragment : Fragment() {
         }
         chart.invalidate()
 
-        // 信息欄
+        // 信息栏
         infoTv.text = infoParts.joinToString("  |  ")
         updateRangeButtons()
     }

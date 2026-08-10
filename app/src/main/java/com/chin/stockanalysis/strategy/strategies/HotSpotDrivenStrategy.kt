@@ -16,31 +16,31 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * ## 熱點驅動短線策略（午盤精選）
+ * ## 热点驱动短线策略（午盘精选）
  *
- * 核心邏輯：「短線一定要熱點熱點熱點」
- * 三大驅動因子：
- * 1. 板塊熱度：今日熱門板塊 Top 中的龍頭股（漲幅前3名）
- * 2. 新聞因子：AI 新聞監控的利好股票
- * 3. 基金增持：基金持倉數據中，本期增持的股票
+ * 核心逻辑：「短线一定要热点热点热点」
+ * 三大驱动因子：
+ * 1. 板块热度：今日热门板块 Top 中的龙头股（涨幅前3名）
+ * 2. 新闻因子：AI 新闻监控的利好股票
+ * 3. 基金增持：基金持仓数据中，本期增持的股票
  *
- * 適用場景：
- * - 午盤追漲（13:00-13:30）：上午放量拉升，下午確認延續
- * - 熱點爆發：板塊突然暴漲，提前埋伏龍頭
- * - 新聞驅動：突發利好，掃描相關板塊龍頭
- * - 尾盤埋伏：接近收盤時埋伏，第二天賣出
+ * 适用场景：
+ * - 午盘追涨（13:00-13:30）：上午放量拉升，下午确认延续
+ * - 热点爆发：板块突然暴涨，提前埋伏龙头
+ * - 新闻驱动：突发利好，扫描相关板块龙头
+ * - 尾盘埋伏：接近收盘时埋伏，第二天卖出
  */
 class HotSpotDrivenStrategy(
     private val screener: StockScreener
 ) : Strategy {
 
     override val id = "hotspot_driven"
-    override var name = "熱點驅動短線"
-    override var description = "板塊熱度+新聞因子+基金增持，三重驅動的短線精選策略"
+    override var name = "热点驱动短线"
+    override var description = "板块热度+新闻因子+基金增持，三重驱动的短线精选策略"
     override val category = StrategyCategory.MOMENTUM
     override val holdingPeriods = listOf(HoldingPeriod.SHORT)
     override val source = StrategySource.BUILTIN
-    override val signalExpiryHours = 24    // 24小時
+    override val signalExpiryHours = 24    // 24小时
 
     override val config = StrategyConfig.custom(
         params = mapOf(
@@ -53,10 +53,10 @@ class HotSpotDrivenStrategy(
     )
 
     override var weightFactors: List<WeightFactor> = listOf(
-        WeightFactor("sector_heat", "板塊熱度", 40, "板塊排名加權"),
-        WeightFactor("news_impact", "新聞因子", 30, "新聞利好強度"),
-        WeightFactor("fund_boost", "基金增持", 20, "基金持倉變化"),
-        WeightFactor("momentum", "動量", 10, "漲幅和量比")
+        WeightFactor("sector_heat", "板块热度", 40, "板块排名加权"),
+        WeightFactor("news_impact", "新闻因子", 30, "新闻利好强度"),
+        WeightFactor("fund_boost", "基金增持", 20, "基金持仓变化"),
+        WeightFactor("momentum", "动量", 10, "涨幅和量比")
     )
 
     private val db by lazy { StockDatabase.getInstance(screener.context) }
@@ -87,7 +87,7 @@ class HotSpotDrivenStrategy(
         ))
 
         // ════════════════════════════════════════════════════
-        // 因子 1: 板塊熱度（今日熱門板塊中的領漲股）
+        // 因子 1: 板块热度（今日热门板块中的领涨股）
         // ════════════════════════════════════════════════════
         val sectorHotStocks = mutableMapOf<String, Double>()  // code → sectorHeatScore
         try {
@@ -106,11 +106,11 @@ class HotSpotDrivenStrategy(
                     sectorHotStocks[code] = maxOf(sectorHotStocks[code] ?: 0.0, heatScore)
                 }
             }
-            Log.i("HotSpot", "板塊熱度因子: ${sectorHotStocks.size} 隻股票命中熱門板塊")
+            Log.i("HotSpot", "板块热度因子: ${sectorHotStocks.size} 只股票命中热门板块")
         } catch (_: Exception) {}
 
         // ════════════════════════════════════════════════════
-        // 因子 2: 新聞因子（最近6小時的利好新聞）
+        // 因子 2: 新闻因子（最近6小时的利好新闻）
         // ════════════════════════════════════════════════════
         val newsImpactStocks = mutableMapOf<String, Double>()  // code → newsScore
         try {
@@ -118,56 +118,56 @@ class HotSpotDrivenStrategy(
             val recentFactors = factors.filter { it.sentiment == 1 }
             for (f in recentFactors) {
                 val score = if (f.impactStrength >= 80) 30.0 else if (f.impactStrength >= 50) 20.0 else 10.0
-                // 新聞因子可能包含股票代碼或名稱
+                // 新闻因子可能包含股票代码或名称
                 val codes = extractStockCodes(f, pool)
                 for (code in codes) {
                     newsImpactStocks[code] = maxOf(newsImpactStocks[code] ?: 0.0, score)
                 }
             }
-            Log.i("HotSpot", "新聞因子: ${newsImpactStocks.size} 隻股票有利好新聞")
+            Log.i("HotSpot", "新闻因子: ${newsImpactStocks.size} 只股票有利好新闻")
         } catch (_: Exception) {}
 
         // ════════════════════════════════════════════════════
-        // 因子 3: 基金增持（非量化，採樣Top5查詢）
+        // 因子 3: 基金增持（非量化，采样Top5查询）
         // ════════════════════════════════════════════════════
         val fundBoostStocks = mutableSetOf<String>()
         try {
-            // 取漲幅前5的股票查詢基金持倉
+            // 取涨幅前5的股票查询基金持仓
             val topGainers = pool.sortedByDescending { it.changePercent }.take(5)
             for (stock in topGainers) {
                 val holdings = ratingProvider.getFundHoldings(stock.code, 5)
                 if (holdings.isNotEmpty()) {
                     val totalHoldRatio = holdings.sumOf { it.holdRatio }
-                    if (totalHoldRatio > 1.0) {  // 基金合計持股 > 1%
+                    if (totalHoldRatio > 1.0) {  // 基金合计持股 > 1%
                         fundBoostStocks.add(stock.code)
                         Log.i("HotSpot", "  基金增持: ${stock.name}(${stock.code}) 基金持股${"%.2f".format(totalHoldRatio)}%")
                     }
                 }
             }
-            Log.i("HotSpot", "基金增持因子: ${fundBoostStocks.size} 隻")
+            Log.i("HotSpot", "基金增持因子: ${fundBoostStocks.size} 只")
         } catch (_: Exception) {}
 
         // ════════════════════════════════════════════════════
-        // 因子 4: 基本過濾（漲幅 > 0.5%，成交額 > 5000萬）
+        // 因子 4: 基本过滤（涨幅 > 0.5%，成交额 > 5000万）
         // ════════════════════════════════════════════════════
         val filtered = pool.filter { it.changePercent >= 0.5 && it.amount >= 50_000_000.0 }
 
         // ════════════════════════════════════════════════════
-        // 綜合打分
+        // 综合打分
         // ════════════════════════════════════════════════════
         val signals = filtered.map { stock ->
             var strength = 0
 
-            // 板塊熱度加成 (0-40)
+            // 板块热度加成 (0-40)
             strength += sectorHotStocks[stock.code]?.toInt() ?: 0
 
-            // 新聞因子加成 (0-30)
+            // 新闻因子加成 (0-30)
             strength += newsImpactStocks[stock.code]?.toInt() ?: 0
 
             // 基金增持加成 (0-20)
             if (stock.code in fundBoostStocks) strength += 20
 
-            // 動量加成 (0-10)
+            // 动量加成 (0-10)
             strength += when {
                 stock.changePercent > 5 -> 10
                 stock.changePercent > 3 -> 7
@@ -175,19 +175,19 @@ class HotSpotDrivenStrategy(
                 else -> 1
             }
 
-            // 至少需要有一個因子命中才給分（避免無熱點股票入選）
+            // 至少需要有一个因子命中才给分（避免无热点股票入选）
             val hasFactor = sectorHotStocks.containsKey(stock.code)
                     || newsImpactStocks.containsKey(stock.code)
                     || fundBoostStocks.contains(stock.code)
 
-            if (!hasFactor) return@map null  // 跳過無熱點的股票
+            if (!hasFactor) return@map null  // 跳过无热点的股票
 
             val reason = buildString {
-                append("熱點驅動:")
-                if (sectorHotStocks.containsKey(stock.code)) append("板塊熱門+${sectorHotStocks[stock.code]?.toInt()};")
-                if (newsImpactStocks.containsKey(stock.code)) append("新聞利好+${newsImpactStocks[stock.code]?.toInt()};")
+                append("热点驱动:")
+                if (sectorHotStocks.containsKey(stock.code)) append("板块热门+${sectorHotStocks[stock.code]?.toInt()};")
+                if (newsImpactStocks.containsKey(stock.code)) append("新闻利好+${newsImpactStocks[stock.code]?.toInt()};")
                 if (fundBoostStocks.contains(stock.code)) append("基金增持+20;")
-                append("漲${"%.2f".format(stock.changePercent)}%")
+                append("涨${"%.2f".format(stock.changePercent)}%")
             }
 
             StrategySignal(
@@ -213,24 +213,24 @@ class HotSpotDrivenStrategy(
     override suspend fun isAvailable(): Boolean = true
 
     /**
-     * 從新聞因子中提取匹配的股票代碼
+     * 从新闻因子中提取匹配的股票代码
      */
     private suspend fun extractStockCodes(factor: NewsFactorEntity, pool: List<StockRealtime>): List<String> {
         val codes = mutableListOf<String>()
-        // 1. 直接匹配代碼
+        // 1. 直接匹配代码
         if (factor.stockCode.isNotBlank()) {
             codes.add(factor.stockCode)
         }
-        // 2. 名稱模糊匹配（取前4個字）
+        // 2. 名称模糊匹配（取前4个字）
         val namePrefix = factor.companyName.take(4)
         if (namePrefix.length >= 2) {
             val matched = pool.filter { it.name.contains(namePrefix) }.take(3)
             codes.addAll(matched.map { it.code })
         }
-        // 3. 板塊匹配（新聞因子的 sector 欄位直接包含股票代碼或板塊名）
+        // 3. 板块匹配（新闻因子的 sector 栏位直接包含股票代码或板块名）
         if (factor.sector.isNotBlank()) {
             try {
-                // newsFactorDao 按 sector 查不到股票，改用 tags 關聯
+                // newsFactorDao 按 sector 查不到股票，改用 tags 关联
                 val tags = factor.tags.split(",").map { it.trim() }.filter { it.length >= 2 }
                 for (tag in tags.take(3)) {
                     val matched = pool.filter { it.name.contains(tag) || tag.contains(it.name.take(2)) }.take(3)

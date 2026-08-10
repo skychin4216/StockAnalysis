@@ -7,28 +7,28 @@ import com.chin.stockanalysis.strategy.analysis.MarketMicrostructureAnalyzer
 import com.chin.stockanalysis.strategy.topology.core.*
 
 /**
- * ## 大盤均線統一檢查節點（Unified Market MA Check）
+ * ## 大盘均线统一检查节点（Unified Market MA Check）
  *
- * 合併原 MaConvergenceNode（1.5% 閾值）+ MarketMaConvergenceCheckNode（3% 閾值）為一。
- * 透過 config 參數 `threshold` 控制粘合判定靈敏度，
- * 同時輸出 [MaConvergenceResult] 和 [MarketMaCheckResult] 以兼容下游。
+ * 合并原 MaConvergenceNode（1.5% 阈值）+ MarketMaConvergenceCheckNode（3% 阈值）为一。
+ * 透过 config 参数 `threshold` 控制粘合判定灵敏度，
+ * 同时输出 [MaConvergenceResult] 和 [MarketMaCheckResult] 以兼容下游。
  *
- * ### 偵測項目
- * 1. 均線粘合度（MaConvergenceAnalyzer，可配置閾值）
- * 2. 多頭排列（MA5 > MA10 > MA20）+ 斜率
- * 3. 震盪收割模式（近 5 天 ≥3 天高開低走 + 大振幅）
- * 4. 量價背離（跌量 > 漲量 × 1.3）
- * 5. 缺口風險（高開 >1% 且未粘合）
+ * ### 侦测项目
+ * 1. 均线粘合度（MaConvergenceAnalyzer，可配置阈值）
+ * 2. 多头排列（MA5 > MA10 > MA20）+ 斜率
+ * 3. 震荡收割模式（近 5 天 ≥3 天高开低走 + 大振幅）
+ * 4. 量价背离（跌量 > 涨量 × 1.3）
+ * 5. 缺口风险（高开 >1% 且未粘合）
  *
- * ### 輸出
+ * ### 输出
  * - context.stageOutputs["{xmlNodeId}_ma"] = MaConvergenceResult（兼容 BounceReversalNode）
- * - context.stageOutputs["{xmlNodeId}_check"] = MarketMaCheckResult（兼容報告）
- * - return value = MarketMaUnifiedResult（完整合併結果）
+ * - context.stageOutputs["{xmlNodeId}_check"] = MarketMaCheckResult（兼容报告）
+ * - return value = MarketMaUnifiedResult（完整合并结果）
  */
 class MarketMaUnifiedNode(
     private val threshold: Double = 0.02,
     private val checkMode: String = "full"
-) : BaseNode<Any, MarketMaUnifiedNode.MarketMaUnifiedResult>("market_ma_unified", "大盤均線統一檢查", NodeType.FACTOR_COMPUTE) {
+) : BaseNode<Any, MarketMaUnifiedNode.MarketMaUnifiedResult>("market_ma_unified", "大盘均线统一检查", NodeType.FACTOR_COMPUTE) {
 
     companion object {
         private const val TAG = "MarketMaUnified"
@@ -39,7 +39,7 @@ class MarketMaUnifiedNode(
     }
 
     /**
-     * 合併輸出：同時包含 MaConvergenceResult + MarketMaCheckResult 的所有欄位
+     * 合并输出：同时包含 MaConvergenceResult + MarketMaCheckResult 的所有栏位
      */
     data class MarketMaUnifiedResult(
         // ── 来自 MaConvergenceResult ──
@@ -63,7 +63,7 @@ class MarketMaUnifiedNode(
         val description: String = "",
         val hint: String = ""
     ) {
-        /** 轉為舊版 MaConvergenceResult（向下兼容 BounceReversalNode） */
+        /** 转为旧版 MaConvergenceResult（向下兼容 BounceReversalNode） */
         fun toMaConvergenceResult(): MaConvergenceResult = MaConvergenceResult(
             maConverged = maConverged,
             maConvergedAndUp = maConvergedAndUp,
@@ -78,7 +78,7 @@ class MarketMaUnifiedNode(
             hint = hint
         )
 
-        /** 轉為舊版 MarketMaCheckResult（向下兼容 DagTradeExecutor / 報告） */
+        /** 转为旧版 MarketMaCheckResult（向下兼容 DagTradeExecutor / 报告） */
         fun toMarketMaCheckResult(): MarketMaCheckResult = MarketMaCheckResult(
             isConvergedUpward = isConvergedUpward,
             ma5 = ma5, ma10 = ma10, ma20 = ma20,
@@ -94,14 +94,14 @@ class MarketMaUnifiedNode(
             val snaps = db.dailySnapshotDao().getByCode(INDEX_CODE, 35)
 
             if (snaps.size < 20) {
-                context.log(nodeId, "$nodeName: 指數數據不足(${snaps.size}條)，跳過")
-                return MarketMaUnifiedResult(description = "數據不足")
+                context.log(nodeId, "$nodeName: 指数数据不足(${snaps.size}条)，跳过")
+                return MarketMaUnifiedResult(description = "数据不足")
             }
 
             val sorted = snaps.sortedBy { it.date }
             val closes = sorted.map { it.close }
 
-            // ═══ 1. 均線粘合度（共用 MaConvergenceAnalyzer） ═══
+            // ═══ 1. 均线粘合度（共用 MaConvergenceAnalyzer） ═══
             val maResult = MaConvergenceAnalyzer.analyze(sorted, threshold)
             val maConverged = maResult.converged
             val divergence = maResult.divergencePct / 100.0
@@ -110,21 +110,21 @@ class MarketMaUnifiedNode(
             val ma20 = maResult.ma20 ?: 0.0
             val convergedAndUp = maResult.convergedAndUp
 
-            // ═══ 2. 多頭排列 + 斜率 ═══
+            // ═══ 2. 多头排列 + 斜率 ═══
             val isBullishAligned = ma5 > ma10 && ma10 > ma20
             val ma5Prev = if (closes.size >= 8) closes.takeLast(8).take(5).average() else ma5
             val slope = if (ma5Prev > 0) (ma5 - ma5Prev) / ma5Prev else 0.0
 
-            // ═══ 3. 震盪收割 + 量價背離（共用工具） ═══
+            // ═══ 3. 震荡收割 + 量价背离（共用工具） ═══
             val micro = MarketMicrostructureAnalyzer.analyze(sorted)
 
-            // ═══ 4. 缺口風險 ═══
+            // ═══ 4. 缺口风险 ═══
             val today = sorted.last()
             val prevDay = sorted[sorted.size - 2]
             val gapPct = if (prevDay.close > 0) (today.open - prevDay.close) / prevDay.close else 0.0
             val gapRiskHigh = gapPct > 0.01 && !maConverged
 
-            // ═══ 綜合判斷 ═══
+            // ═══ 综合判断 ═══
             val riskLevel = when {
                 gapRiskHigh && micro.oscillationHarvest -> "HIGH"
                 micro.oscillationHarvest || micro.volumeDivergence -> "MEDIUM"
@@ -138,23 +138,23 @@ class MarketMaUnifiedNode(
 
             val desc = buildString {
                 append("MA5=${"%.2f".format(ma5)} MA10=${"%.2f".format(ma10)} MA20=${"%.2f".format(ma20)}")
-                append(" 離散=${"%.2f".format(divergence * 100)}%(閾${"%.1f".format(threshold * 100)}%)")
+                append(" 离散=${"%.2f".format(divergence * 100)}%(阈${"%.1f".format(threshold * 100)}%)")
                 append(" 斜率=${"%.2f".format(slope * 100)}%")
-                append(if (isBullishAligned) " 多頭✓" else " 非多頭")
+                append(if (isBullishAligned) " 多头✓" else " 非多头")
                 append(if (maConverged) " 粘合✓" else " 未粘合")
                 append(if (slope > 0) " 向上✓" else " 向下")
             }
 
             val hint = buildString {
-                if (convergedAndUp) append("✅ 均線粘合向上(離散${"%.1f".format(divergence * 100)}%) → 蓄勢突破 ")
-                else if (maConverged) append("🟡 均線粘合(離散${"%.1f".format(divergence * 100)}%) 待方向 ")
-                else append("⚠️ 均線分散(離散${"%.1f".format(divergence * 100)}%) ")
-                if (micro.oscillationHarvest) append("⚠️ 震蕩收割(${micro.oscillationCount}天) ")
-                if (micro.volumeDivergence) append("⚠️ 量價背離 ")
-                if (gapRiskHigh) append("⚠️ 缺口風險 ")
+                if (convergedAndUp) append("✅ 均线粘合向上(离散${"%.1f".format(divergence * 100)}%) → 蓄势突破 ")
+                else if (maConverged) append("🟡 均线粘合(离散${"%.1f".format(divergence * 100)}%) 待方向 ")
+                else append("⚠️ 均线分散(离散${"%.1f".format(divergence * 100)}%) ")
+                if (micro.oscillationHarvest) append("⚠️ 震荡收割(${micro.oscillationCount}天) ")
+                if (micro.volumeDivergence) append("⚠️ 量价背离 ")
+                if (gapRiskHigh) append("⚠️ 缺口风险 ")
             }.trim()
 
-            context.log(nodeId, "📐 $nodeName: $desc → ${if (isConvergedUpward) "適合進場" else "不宜進場"}")
+            context.log(nodeId, "📐 $nodeName: $desc → ${if (isConvergedUpward) "适合进场" else "不宜进场"}")
 
             val result = MarketMaUnifiedResult(
                 maConverged = maConverged,
@@ -174,18 +174,18 @@ class MarketMaUnifiedNode(
                 hint = hint
             )
 
-            // 向下兼容：同時存入舊版結果到 stageOutputs
-            // 下游 BounceReversalNode 讀 "n_ma_conv"，DagTradeExecutor 讀 "n_market_ma"
+            // 向下兼容：同时存入旧版结果到 stageOutputs
+            // 下游 BounceReversalNode 读 "n_ma_conv"，DagTradeExecutor 读 "n_market_ma"
             // 使用 XML nodeId（由 DagPipeline 存入 stageOutputs[nodeId]）
-            // 這裡額外存入兼容 key
+            // 这里额外存入兼容 key
             context.setStageOutput("n_ma_conv", result.toMaConvergenceResult())
             context.setStageOutput("n_market_ma", result.toMarketMaCheckResult())
 
             result
         } catch (e: Exception) {
-            Log.e(TAG, "大盤均線統一檢查異常: ${e.message}", e)
-            context.log(nodeId, "⚠ $nodeName: 異常(${e.message})")
-            MarketMaUnifiedResult(description = "異常: ${e.message}")
+            Log.e(TAG, "大盘均线统一检查异常: ${e.message}", e)
+            context.log(nodeId, "⚠ $nodeName: 异常(${e.message})")
+            MarketMaUnifiedResult(description = "异常: ${e.message}")
         }
     }
 }

@@ -15,21 +15,21 @@ import android.view.View
 import com.chin.stockanalysis.strategy.topology.core.NodeType
 
 /**
- * ## NodeCanvasView — 2D 拓撲畫布自定義 View
+ * ## NodeCanvasView — 2D 拓扑画布自定义 View
  *
- * 負責渲染節點（圓角矩形卡片）與連線（貝塞爾曲線 + 箭頭），
- * 並處理觸摸手勢：點擊選中、長按彈出菜單、從節點拖拽到另一節點建立連線、點擊連線。
+ * 负责渲染节点（圆角矩形卡片）与连线（贝塞尔曲线 + 箭头），
+ * 并处理触摸手势：点击选中、长按弹出菜单、从节点拖拽到另一节点建立连线、点击连线。
  *
- * ### 手勢
- * | 手勢 | 動作 |
+ * ### 手势
+ * | 手势 | 动作 |
  * |------|------|
- * | 點擊節點 | 選中節點 → [NodeCanvasListener.onNodeSelected] |
- * | 長按節點 | 彈出節點菜單 → [NodeCanvasListener.onNodeLongPressed] |
- * | 從節點 A 拖拽到節點 B | 建立連線 → [NodeCanvasListener.onLinkCreated] |
- * | 點擊連線 | 選中連線 → [NodeCanvasListener.onLinkTapped] |
- * | 點擊空白 | 取消選中 → [NodeCanvasListener.onNodeSelected](null) |
+ * | 点击节点 | 选中节点 → [NodeCanvasListener.onNodeSelected] |
+ * | 长按节点 | 弹出节点菜单 → [NodeCanvasListener.onNodeLongPressed] |
+ * | 从节点 A 拖拽到节点 B | 建立连线 → [NodeCanvasListener.onLinkCreated] |
+ * | 点击连线 | 选中连线 → [NodeCanvasListener.onLinkTapped] |
+ * | 点击空白 | 取消选中 → [NodeCanvasListener.onNodeSelected](null) |
  *
- * 畫布尺寸根據節點座標自動計算（[onMeasure]），適配外層 ScrollView 滾動。
+ * 画布尺寸根据节点座标自动计算（[onMeasure]），适配外层 ScrollView 滚动。
  */
 class NodeCanvasView @JvmOverloads constructor(
     context: Context,
@@ -37,35 +37,35 @@ class NodeCanvasView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
-    /** 畫布狀態（節點、連線、選中態） */
+    /** 画布状态（节点、连线、选中态） */
     val canvasState = NodeCanvasState()
 
-    /** 交互回調 */
+    /** 交互回调 */
     var listener: NodeCanvasListener? = null
 
     // ════════════════════════════════════════════════════
-    // 監聽器介面
+    // 监听器介面
     // ════════════════════════════════════════════════════
 
     interface NodeCanvasListener {
-        /** 節點被選中（node=null 表示取消選中） */
+        /** 节点被选中（node=null 表示取消选中） */
         fun onNodeSelected(node: VisualNode?)
 
-        /** 節點被長按 */
+        /** 节点被长按 */
         fun onNodeLongPressed(node: VisualNode)
 
-        /** 從 fromId 節點拖拽到 toId 節點，請求建立連線 */
+        /** 从 fromId 节点拖拽到 toId 节点，请求建立连线 */
         fun onLinkCreated(fromId: String, toId: String)
 
-        /** 連線被點擊 */
+        /** 连线被点击 */
         fun onLinkTapped(link: VisualLink)
     }
 
     // ════════════════════════════════════════════════════
-    // 數據設置
+    // 数据设置
     // ════════════════════════════════════════════════════
 
-    /** 替換畫布上的所有節點 */
+    /** 替换画布上的所有节点 */
     fun setNodes(nodes: List<VisualNode>) {
         canvasState.nodes.clear()
         canvasState.nodes.addAll(nodes)
@@ -73,21 +73,21 @@ class NodeCanvasView @JvmOverloads constructor(
         invalidate()
     }
 
-    /** 替換畫布上的所有連線 */
+    /** 替换画布上的所有连线 */
     fun setLinks(links: List<VisualLink>) {
         canvasState.links.clear()
         canvasState.links.addAll(links)
         invalidate()
     }
 
-    /** 縮放/平移以適配所有節點（當前實現為重新計算尺寸並重繪） */
+    /** 缩放/平移以适配所有节点（当前实现为重新计算尺寸并重绘） */
     fun zoomToFit() {
         requestLayout()
         invalidate()
     }
 
     /**
-     * 平移畫布使指定節點居中顯示。
+     * 平移画布使指定节点居中显示。
      */
     fun panToNode(node: VisualNode) {
         canvasState.translateX = width / 2f - (node.x + node.width / 2f) * canvasState.scale
@@ -97,7 +97,7 @@ class NodeCanvasView @JvmOverloads constructor(
     }
 
     // ════════════════════════════════════════════════════
-    // 測量
+    // 测量
     // ════════════════════════════════════════════════════
 
     private val padding = 48f
@@ -118,7 +118,7 @@ class NodeCanvasView @JvmOverloads constructor(
     }
 
     // ════════════════════════════════════════════════════
-    // 繪製
+    // 绘制
     // ════════════════════════════════════════════════════
 
     private val nodePaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -148,25 +148,25 @@ class NodeCanvasView @JvmOverloads constructor(
             val hint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.parseColor("#CBD5E1"); textSize = 32f; textAlign = Paint.Align.CENTER
             }
-            canvas.drawText("畫布為空，從左側側邊欄添加節點", width / 2f, height / 2f, hint)
+            canvas.drawText("画布为空，从左侧侧边栏添加节点", width / 2f, height / 2f, hint)
             return
         }
 
         val nodeMap = canvasState.nodes.associateBy { it.id }
 
-        // 1. 先繪製節點（底層）
+        // 1. 先绘制节点（底层）
         for (node in canvasState.nodes) {
             drawNode(canvas, node, node.id == canvasState.selectedNodeId)
         }
 
-        // 2. 再繪製連線（上層，確保不被節點覆蓋）
+        // 2. 再绘制连线（上层，确保不被节点覆盖）
         for (link in canvasState.links) {
             val from = nodeMap[link.fromId] ?: continue
             val to = nodeMap[link.toId] ?: continue
             drawLink(canvas, from, to, link.label)
         }
 
-        // 3. 繪製拖拽預覽連線
+        // 3. 绘制拖拽预览连线
         if (linkDragging && dragFromNode != null) {
             val from = dragFromNode!!
             val startX = from.x + from.width
@@ -191,13 +191,13 @@ class NodeCanvasView @JvmOverloads constructor(
         nodePaint.color = bgColor
         canvas.drawRoundRect(rectBuffer, 16f, 16f, nodePaint)
 
-        // 選中邊框
+        // 选中边框
         if (selected) {
             nodeBorderPaint.color = Color.parseColor("#0F172A")
             canvas.drawRoundRect(rectBuffer, 16f, 16f, nodeBorderPaint)
         }
 
-        // 只顯示中文名稱（居中）
+        // 只显示中文名称（居中）
         val displayName = node.name.ifBlank { node.module }
         val textY = node.y + node.height / 2f - (titlePaint.ascent() + titlePaint.descent()) / 2f
         canvas.drawText(
@@ -209,43 +209,43 @@ class NodeCanvasView @JvmOverloads constructor(
     }
 
     private fun drawLink(canvas: Canvas, from: VisualNode, to: VisualNode, label: String) {
-        // 起點：from 節點右邊緣中點；終點：to 節點左邊緣中點
+        // 起点：from 节点右边缘中点；终点：to 节点左边缘中点
         val startX = from.x + from.width
         val startY = from.y + from.height / 2f
         val endX = to.x
         val endY = to.y + to.height / 2f
 
-        // 貝塞爾曲線控制點：水平距離的一半，保持曲線圓滑
+        // 贝塞尔曲线控制点：水平距离的一半，保持曲线圆滑
         val dx = Math.abs(endX - startX)
         val ctrlOffset = Math.max(dx * 0.5f, 60f)
 
         pathBuffer.reset()
         pathBuffer.moveTo(startX, startY)
         pathBuffer.cubicTo(
-            startX + ctrlOffset, startY,   // 控制點1：向右延伸
-            endX - ctrlOffset, endY,       // 控制點2：從左側進入
+            startX + ctrlOffset, startY,   // 控制点1：向右延伸
+            endX - ctrlOffset, endY,       // 控制点2：从左侧进入
             endX, endY
         )
         canvas.drawPath(pathBuffer, linkPaint)
 
-        // 箭頭（三角形填充，更醒目）
+        // 箭头（三角形填充，更醒目）
         val angle = Math.atan2((endY - (endY)).toDouble(), (endX - (endX - ctrlOffset)).toDouble())
-        // 簡化：直接根據進入方向畫箭頭
+        // 简化：直接根据进入方向画箭头
         val arrowLen = 20f
         val arrowAngle = 0.5 // 弧度
-        // 箭頭方向：從控制點2指向終點
+        // 箭头方向：从控制点2指向终点
         val dirX = endX - (endX - ctrlOffset)
         val dirY = endY - endY
         val dirLen = Math.hypot(dirX.toDouble(), dirY.toDouble()).toFloat()
         val nx = if (dirLen > 0) dirX / dirLen else 1f
         val ny = if (dirLen > 0) dirY / dirLen else 0f
 
-        // 箭頭三個點
+        // 箭头三个点
         val tipX = endX
         val tipY = endY
         val baseX = endX - nx * arrowLen
         val baseY = endY - ny * arrowLen
-        // 垂直於方向的偏移
+        // 垂直于方向的偏移
         val perpX = -ny * arrowLen * 0.5f
         val perpY = nx * arrowLen * 0.5f
 
@@ -257,11 +257,11 @@ class NodeCanvasView @JvmOverloads constructor(
         }
         canvas.drawPath(arrowPath, arrowPaint)
 
-        // 標籤
+        // 标签
         if (label.isNotBlank()) {
             val midX = (startX + endX) / 2f
             val midY = (startY + endY) / 2f
-            // 繪製標籤背景
+            // 绘制标签背景
             val labelW = labelPaint.measureText(label) + 16f
             val labelH = 32f
             val labelRect = RectF(midX - labelW / 2f, midY - labelH, midX + labelW / 2f, midY)
@@ -274,7 +274,7 @@ class NodeCanvasView @JvmOverloads constructor(
     }
 
     // ════════════════════════════════════════════════════
-    // 觸摸處理
+    // 触摸处理
     // ════════════════════════════════════════════════════
 
     private val touchSlop = 16f
@@ -299,7 +299,7 @@ class NodeCanvasView @JvmOverloads constructor(
         }
     }
 
-    /** 雙指縮放偵測器 */
+    /** 双指缩放侦测器 */
     private val scaleDetector = ScaleGestureDetector(context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -313,7 +313,7 @@ class NodeCanvasView @JvmOverloads constructor(
     )
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        // 雙指縮放：禁止父 ScrollView 攔截
+        // 双指缩放：禁止父 ScrollView 拦截
         scaleDetector.onTouchEvent(event)
         if (event.pointerCount >= 2) {
             parent?.requestDisallowInterceptTouchEvent(true)
@@ -400,9 +400,9 @@ class NodeCanvasView @JvmOverloads constructor(
         return super.onTouchEvent(event)
     }
 
-    /** 命中測試：返回包含觸點的節點 */
+    /** 命中测试：返回包含触点的节点 */
     private fun hitTestNode(x: Float, y: Float): VisualNode? {
-        // 從後往前測（後繪製的在上層）
+        // 从后往前测（后绘制的在上层）
         for (i in canvasState.nodes.indices.reversed()) {
             val n = canvasState.nodes[i]
             if (x >= n.x && x <= n.x + n.width && y >= n.y && y <= n.y + n.height) {
@@ -412,7 +412,7 @@ class NodeCanvasView @JvmOverloads constructor(
         return null
     }
 
-    /** 命中測試：返回距離觸點足夠近的連線 */
+    /** 命中测试：返回距离触点足够近的连线 */
     private fun hitTestLink(x: Float, y: Float): VisualLink? {
         val nodeMap = canvasState.nodes.associateBy { it.id }
         val threshold = 18f
@@ -460,7 +460,7 @@ class NodeCanvasView @JvmOverloads constructor(
         }
     }
 
-    /** Pipeline 分組著色色板 — 高辨識度、深色背景友好 */
+    /** Pipeline 分组著色色板 — 高辨识度、深色背景友好 */
     private val groupColorPalette = intArrayOf(
         0xFF6366F1.toInt(), // Indigo
         0xFFEC4899.toInt(), // Pink
@@ -474,7 +474,7 @@ class NodeCanvasView @JvmOverloads constructor(
         0xFF14B8A6.toInt()  // Teal
     )
 
-    /** 根據 group ID 確定性分配顏色（同 group 同色） */
+    /** 根据 group ID 确定性分配颜色（同 group 同色） */
     private fun colorForPipelineGroup(groupId: String): Int {
         val idx = kotlin.math.abs(groupId.hashCode()) % groupColorPalette.size
         return groupColorPalette[idx]

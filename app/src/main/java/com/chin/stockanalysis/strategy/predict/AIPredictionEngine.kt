@@ -20,12 +20,12 @@ import org.json.JSONObject
  * 通过 AI（LLM）综合分析多策略打分 + 历史数据特征 + 新闻因子，
  * 动态选择预测方案，输出 3-5 只最可能上涨的股票。
  *
- * ### 綜合分析方案（V2.0 全周期融合）
- * - **技術面分析**: 近5日/10日 OHLCV 序列 + 均線趨勢 + 量價關係
- * - **消息面分析**: NewsFactor 利好利空因子 + 板塊輿情
- * - **大盤環境適應**: 自動檢測 BULLISH/BEARISH/OSCILLATION，動態調整推薦門檻
- * - **市場時機**: 結合大盤趨勢、板塊輪動、主力資金流向
- * AI 不再二選一，而是綜合所有維度做全周期研判。
+ * ### 综合分析方案（V2.0 全周期融合）
+ * - **技术面分析**: 近5日/10日 OHLCV 序列 + 均线趋势 + 量价关系
+ * - **消息面分析**: NewsFactor 利好利空因子 + 板块舆情
+ * - **大盘环境适应**: 自动检测 BULLISH/BEARISH/OSCILLATION，动态调整推荐门槛
+ * - **市场时机**: 结合大盘趋势、板块轮动、主力资金流向
+ * AI 不再二选一，而是综合所有维度做全周期研判。
  *
  * ### 使用方式
  * ```kotlin
@@ -35,7 +35,7 @@ import org.json.JSONObject
  *     selectedDate = "2026-05-30"
  * )
  * // prediction.topPicks → 3-5 只推荐股票
- * // prediction.mode → "COMPOSITE" (綜合方案)
+ * // prediction.mode → "COMPOSITE" (综合方案)
  * ```
  */
 class AIPredictionEngine(private val context: Context) {
@@ -48,18 +48,18 @@ class AIPredictionEngine(private val context: Context) {
     private val newsManager = NewsFactorManager(context)
 
     /**
-     * 板塊上下文：用戶關注 + 回彈板塊 + AI 大年檢測
+     * 板块上下文：用户关注 + 回弹板块 + AI 大年检测
      */
     data class SectorContext(
-        /** 用戶設置的關注板塊關鍵詞列表 */
+        /** 用户设置的关注板块关键词列表 */
         val userFocusSectors: List<String> = emptyList(),
-        /** 今日熱門板塊（動態獲取） */
+        /** 今日热门板块（动态获取） */
         val todayHotSectors: List<String> = emptyList(),
-        /** 回彈板塊詳情（連熱天數、回調幅度、今日反彈） */
+        /** 回弹板块详情（连热天数、回调幅度、今日反弹） */
         val bounceSectors: List<BounceSectorInfo> = emptyList(),
-        /** AI 檢測的板塊大年結論 */
-        val aiYearDetection: String = "未檢測",
-        /** 回調加權規則：回調 N 天加 N 分 */
+        /** AI 检测的板块大年结论 */
+        val aiYearDetection: String = "未检测",
+        /** 回调加权规则：回调 N 天加 N 分 */
         val pullbackBonusEnabled: Boolean = true
     ) {
         data class BounceSectorInfo(
@@ -75,7 +75,7 @@ class AIPredictionEngine(private val context: Context) {
      * AI 预测结果
      */
     data class AIPrediction(
-        /** 使用的方案: "COMPOSITE"(綜合方案) 或 "A" 或 "B" */
+        /** 使用的方案: "COMPOSITE"(综合方案) 或 "A" 或 "B" */
         val mode: String,
         /** 方案选择的理由 */
         val modeReason: String,
@@ -85,7 +85,7 @@ class AIPredictionEngine(private val context: Context) {
         val marketOutlook: String,
         /** 风险提示 */
         val riskWarning: String,
-        /** 大盤方向: BULLISH/BEARISH/OSCILLATION */
+        /** 大盘方向: BULLISH/BEARISH/OSCILLATION */
         val marketDirection: String = "UNKNOWN"
     )
 
@@ -144,14 +144,14 @@ class AIPredictionEngine(private val context: Context) {
             onProgress?.invoke("正在获取新闻因子...")
             val newsFactors = newsManager.getActiveFactors(50)
 
-            // 自動檢測大盤環境（如果外部未傳入）
+            // 自动检测大盘环境（如果外部未传入）
             val effectiveMarketContext = if (marketContext.isNotBlank()) {
                 marketContext
             } else {
                 detectMarketDirection(selectedDate)
             }
 
-            onProgress?.invoke("正在构建AI提示（含板塊權重）...")
+            onProgress?.invoke("正在构建AI提示（含板块权重）...")
             val prompt = buildPredictionPrompt(
                 strategyResults = strategyResults,
                 candidateStocks = candidateStocks,
@@ -199,7 +199,7 @@ class AIPredictionEngine(private val context: Context) {
             }
 
             val rawPrediction = parsePrediction(response)
-            // 後處理：板塊權重加權（回調天數越多加分越多）
+            // 后处理：板块权重加权（回调天数越多加分越多）
             return rawPrediction?.let { applySectorBoost(it, candidateStocks, sectorContext) }
 
         } catch (e: Exception) {
@@ -248,7 +248,7 @@ class AIPredictionEngine(private val context: Context) {
         val strength: Int
     )
 
-    /** 获取候选股票近 N 日的 OHLCV 特徵（批量查詢避免 N+1） */
+    /** 获取候选股票近 N 日的 OHLCV 特征（批量查询避免 N+1） */
     private suspend fun buildMultiDayFeatures(
         candidates: List<StockStrategyScore>,
         selectedDate: String,
@@ -261,7 +261,7 @@ class AIPredictionEngine(private val context: Context) {
 
         if (availableDates.isEmpty()) return result
 
-        // 批量查詢：每個日期一次查全部，然後在內存中過濾候選股
+        // 批量查询：每个日期一次查全部，然后在内存中过滤候选股
         val candidateCodes = candidates.map { it.stockCode }.toSet()
         val dateToSnaps = mutableMapOf<String, Map<String, DayFeature>>()
         for (date in availableDates) {
@@ -274,7 +274,7 @@ class AIPredictionEngine(private val context: Context) {
             }
         }
 
-        // 組裝每隻股票的特徵序列
+        // 组装每只股票的特征序列
         for (cand in candidates) {
             val features = availableDates.mapNotNull { date ->
                 dateToSnaps[date]?.get(cand.stockCode)
@@ -294,7 +294,7 @@ class AIPredictionEngine(private val context: Context) {
         val changePct: Double
     )
 
-    /** 自動檢測大盤環境（上證指數MA排列） */
+    /** 自动检测大盘环境（上证指数MA排列） */
     private suspend fun detectMarketDirection(selectedDate: String): String {
         return try {
             val indexSnaps = db.dailySnapshotDao().getByCode("sh000001", 30).sortedBy { it.date }
@@ -309,25 +309,25 @@ class AIPredictionEngine(private val context: Context) {
                     ma5 < ma10 && ma10 < ma20 -> "BEARISH"
                     else -> "OSCILLATION"
                 }
-                // 構建環境描述
+                // 构建环境描述
                 val changePct = if (indexSnaps.isNotEmpty()) indexSnaps.last().changePct else 0.0
                 val trendDesc = when (direction) {
-                    "BULLISH" -> "多頭排列（MA5>MA10>MA20），大盤處於上升趨勢"
-                    "BEARISH" -> "空頭排列（MA5<MA10<MA20），大盤處於下降趨勢"
-                    else -> "均線糾纏，大盤震蕩格局"
+                    "BULLISH" -> "多头排列（MA5>MA10>MA20），大盘处于上升趋势"
+                    "BEARISH" -> "空头排列（MA5<MA10<MA20），大盘处于下降趋势"
+                    else -> "均线纠缠，大盘震荡格局"
                 }
-                "大盤方向: $direction | $trendDesc | 上證指數最新日漲跌幅: ${"%.2f".format(changePct)}% | 上證MA5=${"%.2f".format(ma5)} MA10=${"%.2f".format(ma10)} MA20=${"%.2f".format(ma20)}\n" +
-                "選股策略建議: ${when(direction) {
-                    "BULLISH" -> "可適度進攻，優先選擇多策略命中且放量的領漲股"
-                    "BEARISH" -> "防禦為主，優先選擇抗跌+逆勢板塊（醫藥/食品/公用事業），提高入選門檻至70分以上"
-                    else -> "高拋低吸，優先選擇震蕩區間底部反彈+有新聞催化的股票"
+                "大盘方向: $direction | $trendDesc | 上证指数最新日涨跌幅: ${"%.2f".format(changePct)}% | 上证MA5=${"%.2f".format(ma5)} MA10=${"%.2f".format(ma10)} MA20=${"%.2f".format(ma20)}\n" +
+                "选股策略建议: ${when(direction) {
+                    "BULLISH" -> "可适度进攻，优先选择多策略命中且放量的领涨股"
+                    "BEARISH" -> "防御为主，优先选择抗跌+逆势板块（医药/食品/公用事业），提高入选门槛至70分以上"
+                    else -> "高抛低吸，优先选择震荡区间底部反弹+有新闻催化的股票"
                 }}"
             } else {
-                "大盤環境數據不足（<20個交易日），無法判斷方向。建議保守選股。"
+                "大盘环境数据不足（<20个交易日），无法判断方向。建议保守选股。"
             }
         } catch (e: Exception) {
-            Log.w(TAG, "檢測大盤環境失敗: ${e.message}")
-            "大盤環境檢測失敗，建議保守選股。"
+            Log.w(TAG, "检测大盘环境失败: ${e.message}")
+            "大盘环境检测失败，建议保守选股。"
         }
     }
 
@@ -346,51 +346,51 @@ class AIPredictionEngine(private val context: Context) {
     ): String {
         val sb = StringBuilder()
 
-        sb.appendLine("你是一个A股量化选股AI助手（V2.0全周期融合版本）。请综合技术面+消息面+大盤环境，预测下一个交易日最可能上涨的3-5只股票。")
+        sb.appendLine("你是一个A股量化选股AI助手（V2.0全周期融合版本）。请综合技术面+消息面+大盘环境，预测下一个交易日最可能上涨的3-5只股票。")
         sb.appendLine()
         sb.appendLine("## 分析框架（综合方案，非二选一）")
-        sb.appendLine("你必須同時考慮以下三個維度，綜合打分：")
-        sb.appendLine("1. **技術面**: 從OHLCV序列中識別趨勢、支撐阻力、量價背離")
-        sb.appendLine("2. **消息面**: 從新聞因子中識別催化劑（利好）和風險（利空）")
-        sb.appendLine("3. **大盤環境**: 根據大盤方向調整選股策略（見下方大盤環境段落）")
+        sb.appendLine("你必须同时考虑以下三个维度，综合打分：")
+        sb.appendLine("1. **技术面**: 从OHLCV序列中识别趋势、支撑阻力、量价背离")
+        sb.appendLine("2. **消息面**: 从新闻因子中识别催化剂（利好）和风险（利空）")
+        sb.appendLine("3. **大盘环境**: 根据大盘方向调整选股策略（见下方大盘环境段落）")
         sb.appendLine()
 
-        // ── 大盤環境分析 ──
-        sb.appendLine("## 当前大盤环境（重要参考）")
+        // ── 大盘环境分析 ──
+        sb.appendLine("## 当前大盘环境（重要参考）")
         if (marketContext.isNotBlank()) {
             sb.appendLine(marketContext)
         } else {
-            sb.appendLine("⚠️ 未獲取到大盤環境數據，建議保守選股。")
+            sb.appendLine("⚠️ 未获取到大盘环境数据，建议保守选股。")
         }
         sb.appendLine()
-        sb.appendLine("### 選股門檻規則（必須遵守）")
-        sb.appendLine("- BULLISH（多頭）: composite_score ≥ 60 即可入選")
-        sb.appendLine("- OSCILLATION（震蕩）: composite_score ≥ 65")
-        sb.appendLine("- BEARISH（空頭）: composite_score ≥ 75，且只推薦防禦板塊（醫藥/食品/銀行/公用事業）或逆勢強勢股")
-        sb.appendLine("- 如果大盤環境中標註了 BEARISH，你必須在 risk_warning 中明確提醒「大盤空頭，控制倉位」")
+        sb.appendLine("### 选股门槛规则（必须遵守）")
+        sb.appendLine("- BULLISH（多头）: composite_score ≥ 60 即可入选")
+        sb.appendLine("- OSCILLATION（震荡）: composite_score ≥ 65")
+        sb.appendLine("- BEARISH（空头）: composite_score ≥ 75，且只推荐防御板块（医药/食品/银行/公用事业）或逆势强势股")
+        sb.appendLine("- 如果大盘环境中标注了 BEARISH，你必须在 risk_warning 中明确提醒「大盘空头，控制仓位」")
         sb.appendLine()
 
-        // ── 板塊輪動與用戶關注 ──
-        sb.appendLine("## 板塊權重與回調加分（重要參考）")
+        // ── 板块轮动与用户关注 ──
+        sb.appendLine("## 板块权重与回调加分（重要参考）")
         if (sectorContext.userFocusSectors.isNotEmpty()) {
-            sb.appendLine("### 用戶關注板塊（年度熱門，需加權）")
-            sb.appendLine("用戶持續追蹤: ${sectorContext.userFocusSectors.joinToString("、")}")
-            sb.appendLine("選股規則：命中用戶關注板塊的股票，composite_score 額外 +10~15 分")
+            sb.appendLine("### 用户关注板块（年度热门，需加权）")
+            sb.appendLine("用户持续追踪: ${sectorContext.userFocusSectors.joinToString("、")}")
+            sb.appendLine("选股规则：命中用户关注板块的股票，composite_score 额外 +10~15 分")
             sb.appendLine()
         }
         if (sectorContext.bounceSectors.isNotEmpty()) {
-            sb.appendLine("### 回彈板塊（回調後加權：回調1天+1分，2天+2分...）")
+            sb.appendLine("### 回弹板块（回调后加权：回调1天+1分，2天+2分...）")
             for (b in sectorContext.bounceSectors.take(8)) {
                 val dropDays = (-b.recentDropPct / 1.0).toInt().coerceAtMost(5).coerceAtLeast(1)
-                sb.appendLine("- ${b.sectorName}: 連熱${b.consecutiveHotDays}天 | 近3天${"%.2f".format(b.recentDropPct)}%（回調${dropDays}天）| 今日反彈${"%.2f".format(b.todayBouncePct)}% | 基礎反彈分${"%.1f".format(b.bounceScore)}")
-                sb.appendLine("  → 該板塊股票 composite_score 額外 +$dropDays 分（回調天數加分）")
+                sb.appendLine("- ${b.sectorName}: 连热${b.consecutiveHotDays}天 | 近3天${"%.2f".format(b.recentDropPct)}%（回调${dropDays}天）| 今日反弹${"%.2f".format(b.todayBouncePct)}% | 基础反弹分${"%.1f".format(b.bounceScore)}")
+                sb.appendLine("  → 该板块股票 composite_score 额外 +$dropDays 分（回调天数加分）")
             }
             sb.appendLine()
         }
-        if (sectorContext.aiYearDetection != "未檢測" && sectorContext.aiYearDetection != "檢測失敗") {
-            sb.appendLine("### AI 板塊大年檢測")
-            sb.appendLine("結論：${sectorContext.aiYearDetection}")
-            sb.appendLine("選股規則：順應大年風格的股票給予額外 +5 分")
+        if (sectorContext.aiYearDetection != "未检测" && sectorContext.aiYearDetection != "检测失败") {
+            sb.appendLine("### AI 板块大年检测")
+            sb.appendLine("结论：${sectorContext.aiYearDetection}")
+            sb.appendLine("选股规则：顺应大年风格的股票给予额外 +5 分")
             sb.appendLine()
         }
 
@@ -415,9 +415,9 @@ class AIPredictionEngine(private val context: Context) {
         }
         sb.appendLine()
 
-        // ── 技術面分析數據 ──
+        // ── 技术面分析数据 ──
         if (multiDayFeatures.isNotEmpty()) {
-            sb.appendLine("## 技術面分析數據：近5日 OHLCV 序列")
+            sb.appendLine("## 技术面分析数据：近5日 OHLCV 序列")
             for ((code, features) in multiDayFeatures.entries.take(8)) {
                 val name = candidateStocks.firstOrNull { it.stockCode == code }?.stockName ?: code
                 sb.appendLine("### $name(${code.takeLast(6)})")
@@ -430,9 +430,9 @@ class AIPredictionEngine(private val context: Context) {
             }
         }
 
-        // ── 消息面分析數據 ──
+        // ── 消息面分析数据 ──
         if (newsFactors.isNotEmpty()) {
-            sb.appendLine("## 消息面分析數據：近期新聞利好利空因子")
+            sb.appendLine("## 消息面分析数据：近期新闻利好利空因子")
             val bullish = newsFactors.filter { it.sentiment > 0 }.take(10)
             val bearish = newsFactors.filter { it.sentiment < 0 }.take(10)
             if (bullish.isNotEmpty()) {
@@ -455,19 +455,19 @@ class AIPredictionEngine(private val context: Context) {
         sb.appendLine("```json")
         sb.appendLine("{")
         sb.appendLine("  \"selected_mode\": \"COMPOSITE\",")
-        sb.appendLine("  \"mode_reason\": \"綜合技術面+消息面分析(20字內)\",")
+        sb.appendLine("  \"mode_reason\": \"综合技术面+消息面分析(20字内)\",")
         sb.appendLine("  \"market_direction\": \"BULLISH/BEARISH/OSCILLATION\",")
-        sb.appendLine("  \"market_outlook\": \"市場總體判斷(30字內)\",")
-        sb.appendLine("  \"risk_warning\": \"風險提示(30字內，大盤空頭時必須提醒)\",")
+        sb.appendLine("  \"market_outlook\": \"市场总体判断(30字内)\",")
+        sb.appendLine("  \"risk_warning\": \"风险提示(30字内，大盘空头时必须提醒)\",")
         sb.appendLine("  \"top_picks\": [")
         sb.appendLine("    {")
         sb.appendLine("      \"rank\": 1,")
         sb.appendLine("      \"stock_code\": \"sh600519\",")
-        sb.appendLine("      \"stock_name\": \"貴州茅台\",")
+        sb.appendLine("      \"stock_name\": \"贵州茅台\",")
         sb.appendLine("      \"composite_score\": 85,")
         sb.appendLine("      \"up_probability\": 70,")
-        sb.appendLine("      \"reason\": \"綜合理由: 技術面均線金叉+放量突破, 消息面新聞利好催化(30字內)\",")
-        sb.appendLine("      \"action\": \"建議逢低建倉，止損位-3%\"")
+        sb.appendLine("      \"reason\": \"综合理由: 技术面均线金叉+放量突破, 消息面新闻利好催化(30字内)\",")
+        sb.appendLine("      \"action\": \"建议逢低建仓，止损位-3%\"")
         sb.appendLine("    }")
         sb.appendLine("  ]")
         sb.appendLine("}")
@@ -485,14 +485,14 @@ class AIPredictionEngine(private val context: Context) {
     }
 
     // ════════════════════════════════════════
-    // 板塊權重後處理
+    // 板块权重后处理
     // ════════════════════════════════════════
 
     /**
-     * 對 AI 預測結果應用板塊權重加權：
-     * - 用戶關注板塊：+10~15 分
-     * - 回彈板塊：回調 N 天 + N 分（1天+1, 2天+2...最多+5）
-     * - 板塊大年順應：+5 分
+     * 对 AI 预测结果应用板块权重加权：
+     * - 用户关注板块：+10~15 分
+     * - 回弹板块：回调 N 天 + N 分（1天+1, 2天+2...最多+5）
+     * - 板块大年顺应：+5 分
      */
     private fun applySectorBoost(
         prediction: AIPrediction,
@@ -507,29 +507,29 @@ class AIPredictionEngine(private val context: Context) {
             var bonus = 0
             val stockName = pick.stockName
 
-            // 1. 用戶關注板塊加成
+            // 1. 用户关注板块加成
             if (sectorContext.userFocusSectors.any {
                     stockName.contains(it) || it.contains(stockName.take(2))
                 }) {
                 bonus += 12
             }
 
-            // 2. 回彈板塊加成（回調天數越多加分越多）
+            // 2. 回弹板块加成（回调天数越多加分越多）
             val matchedBounce = sectorContext.bounceSectors.find {
                 stockName.contains(it.sectorName) || it.sectorName.contains(stockName.take(2))
             }
             matchedBounce?.let { b ->
                 val dropDays = (-b.recentDropPct / 1.0).toInt().coerceAtMost(5).coerceAtLeast(1)
-                bonus += dropDays  // 回調1天+1, 2天+2, 3天+3...
+                bonus += dropDays  // 回调1天+1, 2天+2, 3天+3...
             }
 
-            // 3. 板塊大年順應加成
+            // 3. 板块大年顺应加成
             val yearDetection = sectorContext.aiYearDetection
-            if (yearDetection.contains("科技") && (stockName.contains("芯") || stockName.contains("半導") || stockName.contains("光") || stockName.contains("AI") || stockName.contains("軟件"))) {
+            if (yearDetection.contains("科技") && (stockName.contains("芯") || stockName.contains("半导") || stockName.contains("光") || stockName.contains("AI") || stockName.contains("软件"))) {
                 bonus += 5
-            } else if (yearDetection.contains("主板") && (stockName.contains("銀行") || stockName.contains("保險") || stockName.contains("地產") || stockName.contains("煤炭") || stockName.contains("鋼鐵"))) {
+            } else if (yearDetection.contains("主板") && (stockName.contains("银行") || stockName.contains("保险") || stockName.contains("地产") || stockName.contains("煤炭") || stockName.contains("钢铁"))) {
                 bonus += 5
-            } else if (yearDetection.contains("成長") && (stockName.contains("新能") || stockName.contains("生物") || stockName.contains("醫藥") || stockName.contains("創新"))) {
+            } else if (yearDetection.contains("成长") && (stockName.contains("新能") || stockName.contains("生物") || stockName.contains("医药") || stockName.contains("创新"))) {
                 bonus += 5
             }
 
@@ -537,7 +537,7 @@ class AIPredictionEngine(private val context: Context) {
                 pick.copy(
                     compositeScore = (pick.compositeScore + bonus).coerceAtMost(100),
                     upProbability = (pick.upProbability + bonus / 2).coerceAtMost(95),
-                    reason = pick.reason + " [板塊加權+${bonus}分]"
+                    reason = pick.reason + " [板块加权+${bonus}分]"
                 )
             } else pick
         }.sortedByDescending { it.compositeScore }
@@ -580,7 +580,7 @@ class AIPredictionEngine(private val context: Context) {
                 modeReason = obj.optString("mode_reason", ""),
                 topPicks = picks.sortedBy { it.rank },
                 marketOutlook = obj.optString("market_outlook", ""),
-                riskWarning = obj.optString("risk_warning", "投資有風險，入市需謹慎"),
+                riskWarning = obj.optString("risk_warning", "投资有风险，入市需谨慎"),
                 marketDirection = obj.optString("market_direction", "UNKNOWN")
             )
         } catch (e: Exception) {
@@ -589,7 +589,7 @@ class AIPredictionEngine(private val context: Context) {
         }
     }
 
-    /** 發送同步請求（30s 超時，最多 2 次重試，DNS 錯誤快速跳過） */
+    /** 发送同步请求（30s 超时，最多 2 次重试，DNS 错误快速跳过） */
     private suspend fun sendSyncRequest(provider: ApiProvider, prompt: String): String {
         var lastErr: Exception? = null
         repeat(2) { attempt ->
@@ -607,11 +607,11 @@ class AIPredictionEngine(private val context: Context) {
                 } ?: throw java.io.IOException("AI 请求超时（60秒）")
             } catch (e: Exception) {
                 lastErr = e
-                // DNS 錯誤不重試，直接拋出讓外層換 provider
+                // DNS 错误不重试，直接抛出让外层换 provider
                 if (e.message?.contains("Unable to resolve host") == true ||
                     e.message?.contains("UnknownHostException") == true ||
                     e.message?.contains("No address associated") == true) {
-                    Log.w(TAG, "DNS 解析失敗，跳過此 Provider: ${e.message}")
+                    Log.w(TAG, "DNS 解析失败，跳过此 Provider: ${e.message}")
                     throw e
                 }
                 Log.w(TAG, "AI 请求失败（第${attempt+1}/2次）: ${e.message}")

@@ -43,21 +43,21 @@ class TailLowPickStrategy(
     override val holdingPeriods = listOf(HoldingPeriod.ULTRA_SHORT)
     override val source = StrategySource.USER_CUSTOM
 
-    // ── 風控默認值（下沉自 Fragment） ──
-    override val defaultStopLoss = -0.02f      // -2% 硬止損
+    // ── 风控默认值（下沉自 Fragment） ──
+    override val defaultStopLoss = -0.02f      // -2% 硬止损
     override val defaultTakeProfit = 0.03f     // +3% 止盈
     override val maxPositions = 3
-    override val signalExpiryHours = 1         // 僅當日 14:30-15:00 有效
+    override val signalExpiryHours = 1         // 仅当日 14:30-15:00 有效
 
-    // ── 數據依賴 ──
+    // ── 数据依赖 ──
     override val requiresL2Data = true
     override val dataFrequency = DataFrequency.TICK
 
-    // ── 動態開關（核心修正：基於時間計算，非寫死 false） ──
-    // 資金過濾：14:30 之前查 SmartMoney（防範誘多），之後放棄查詢（保證尾盤速度）
+    // ── 动态开关（核心修正：基于时间计算，非写死 false） ──
+    // 资金过滤：14:30 之前查 SmartMoney（防范诱多），之后放弃查询（保证尾盘速度）
     override val requiresSmartMoney: Boolean
         get() = java.time.LocalTime.now().isBefore(java.time.LocalTime.of(14, 30))
-    // AI 精選：僅盤後（15:00-16:00）啟用，盤中為速度強制關閉
+    // AI 精选：仅盘后（15:00-16:00）启用，盘中为速度强制关闭
     override val requiresAIRefine: Boolean
         get() {
             val now = java.time.LocalTime.now()
@@ -66,14 +66,14 @@ class TailLowPickStrategy(
         }
 
     /**
-     * 超輕量級 Level2 即時過濾（取代笨重的 AI，僅耗時 ~5ms）。
-     * 尾盤集合競價前，看特大單（單筆>50萬）買入佔比是否 > 15%，且買賣價差小（流動性佳）。
-     * 支持部分數據：僅有 largeOrderBuyRatio 時只檢查主力資金，僅有 bidAskSpread 時只檢查流動性。
+     * 超轻量级 Level2 即时过滤（取代笨重的 AI，仅耗时 ~5ms）。
+     * 尾盘集合竞价前，看特大单（单笔>50万）买入占比是否 > 15%，且买卖价差小（流动性佳）。
+     * 支持部分数据：仅有 largeOrderBuyRatio 时只检查主力资金，仅有 bidAskSpread 时只检查流动性。
      */
     fun fastLevel2Filter(largeOrderBuyRatio: Double, bidAskSpread: Double): Boolean {
-        // 超大單買入佔比過低（主力未進場），僅有數據時檢查
+        // 超大单买入占比过低（主力未进场），仅有数据时检查
         if (largeOrderBuyRatio > 0 && largeOrderBuyRatio <= 0.15) return false
-        // 買賣價差過大（流動性差），僅有數據時檢查
+        // 买卖价差过大（流动性差），仅有数据时检查
         if (bidAskSpread > 0 && bidAskSpread >= 0.02) return false
         return true
     }
@@ -99,7 +99,7 @@ class TailLowPickStrategy(
         WeightFactor("volume_health", "日内量能健康度", 10, "量价配合评分")
     )
 
-    /** 動態核心板塊：從 DB 讀取本週 top 板塊，無數據時使用空集（不加分） */
+    /** 动态核心板块：从 DB 读取本周 top 板块，无数据时使用空集（不加分） */
     private suspend fun getDynamicCoreSectors(): Set<String> {
         val ctx = appContext ?: return emptySet()
         return try {
@@ -139,33 +139,33 @@ class TailLowPickStrategy(
             signals = emptyList(), totalScanned = 0, scanTimeMs = System.currentTimeMillis() - startTime
         ))
 
-        // 大盤環境預檢
+        // 大盘环境预检
         val marketDir = try { screener.detectMarketDirection() } catch (_: Exception) { "OSCILLATION" }
         val isBearish = marketDir == "BEARISH"
         val scoreThreshold = if (isBearish) 75 else config.getInt("score_threshold", 60)
-        Log.i("TL_Strategy", "大盤環境: $marketDir → 尾盤低吸門檻 ${if (isBearish) "60→75" else "標準門檻60"}")
+        Log.i("TL_Strategy", "大盘环境: $marketDir → 尾盘低吸门槛 ${if (isBearish) "60→75" else "标准门槛60"}")
 
         // Step 1: 硬性过滤
         val filtered = pool.filter { passesHardFilters(it) }
         Log.i("TL_Strategy", "硬性过滤: pool=${pool.size} → ${filtered.size}")
 
-        // Step 1.5: Level2 數據填充 + 即時過濾
+        // Step 1.5: Level2 数据填充 + 即时过滤
         val enrichedFiltered = Level2DataProvider.enrichStocks(filtered)
         val l2Filtered = enrichedFiltered.filter { stock ->
             if (stock.largeOrderBuyRatio > 0 || stock.bidAskSpread > 0) {
                 val passed = fastLevel2Filter(stock.largeOrderBuyRatio, stock.bidAskSpread)
                 if (!passed) {
-                    Log.d("TL_Strategy", "Level2過濾淘汰: ${stock.code} ${stock.name} " +
-                        "大單買入比=${"%.3f".format(stock.largeOrderBuyRatio)} 買賣價差=${"%.4f".format(stock.bidAskSpread)}")
+                    Log.d("TL_Strategy", "Level2过滤淘汰: ${stock.code} ${stock.name} " +
+                        "大单买入比=${"%.3f".format(stock.largeOrderBuyRatio)} 买卖价差=${"%.4f".format(stock.bidAskSpread)}")
                 }
                 passed
             } else {
-                // 無 Level2 數據，不阻塞，放行
+                // 无 Level2 数据，不阻塞，放行
                 true
             }
         }
         if (l2Filtered.size < filtered.size) {
-            Log.i("TL_Strategy", "Level2過濾: ${filtered.size} → ${l2Filtered.size} (淘汰${filtered.size - l2Filtered.size}只)")
+            Log.i("TL_Strategy", "Level2过滤: ${filtered.size} → ${l2Filtered.size} (淘汰${filtered.size - l2Filtered.size}只)")
         }
 
         // Step 2: 7维打分
@@ -241,7 +241,7 @@ class TailLowPickStrategy(
         val w = weightFactors.associateBy { it.key }
 
         // 1. 主线赛道匹配 0~25
-        // 現改為：硬編碼關鍵詞 + 用戶市場記憶 + 回彈板塊
+        // 现改为：硬编码关键词 + 用户市场记忆 + 回弹板块
         val marketMemory = com.chin.stockanalysis.strategy.sector.UserMarketMemory(screener.context)
         val bounceFactor = com.chin.stockanalysis.strategy.sector.SectorBounceFactor(
             com.chin.stockanalysis.stock.database.StockDatabase.getInstance(screener.context)
@@ -251,7 +251,7 @@ class TailLowPickStrategy(
 
         val isCoreSector = getDynamicCoreSectors().any { stock.name.contains(it) }
         val sectorScore = when {
-            isCoreSector && bounceScore > 30 -> 25  // 核心板塊 + 回彈
+            isCoreSector && bounceScore > 30 -> 25  // 核心板块 + 回弹
             isCoreSector -> 20 + focusBoost
             bounceScore > 20 -> 15 + focusBoost
             focusBoost > 0 -> 10 + focusBoost

@@ -12,18 +12,18 @@ import android.view.ScaleGestureDetector
 import android.view.View
 
 /**
- * ## DagPipelineView — DAG Pipeline 可視化 View
+ * ## DagPipelineView — DAG Pipeline 可视化 View
  *
- * 顯示 Pipeline 的節點拓撲結構，支持：
- * - 雙指縮放 (Pinch-to-Zoom)
- * - 單指拖動平移
- * - 點擊節點顯示詳情
+ * 显示 Pipeline 的节点拓扑结构，支持：
+ * - 双指缩放 (Pinch-to-Zoom)
+ * - 单指拖动平移
+ * - 点击节点显示详情
  *
- * 節點按層級排列，顏色表示執行狀態：
- * - 灰色: 未執行
- * - 藍色: 執行中
- * - 綠色: 成功
- * - 紅色: 失敗
+ * 节点按层级排列，颜色表示执行状态：
+ * - 灰色: 未执行
+ * - 蓝色: 执行中
+ * - 绿色: 成功
+ * - 红色: 失败
  */
 class DagPipelineView @JvmOverloads constructor(
     context: Context,
@@ -32,7 +32,7 @@ class DagPipelineView @JvmOverloads constructor(
 ) : View(context, attrs, defStyleAttr) {
 
     // ════════════════════════════════════════════════════
-    // 數據模型
+    // 数据模型
     // ════════════════════════════════════════════════════
 
     data class PipelineNode(
@@ -45,10 +45,10 @@ class DagPipelineView @JvmOverloads constructor(
     )
 
     enum class NodeStatus {
-        PENDING,    // 未執行
-        RUNNING,    // 執行中
+        PENDING,    // 未执行
+        RUNNING,    // 执行中
         SUCCESS,    // 成功
-        FAILED      // 失敗
+        FAILED      // 失败
     }
 
     data class PipelineLink(
@@ -57,7 +57,7 @@ class DagPipelineView @JvmOverloads constructor(
     )
 
     // ════════════════════════════════════════════════════
-    // 畫布狀態
+    // 画布状态
     // ════════════════════════════════════════════════════
 
     private val nodes = mutableListOf<PipelineNode>()
@@ -72,7 +72,7 @@ class DagPipelineView @JvmOverloads constructor(
     private var onNodeClickListener: ((PipelineNode) -> Unit)? = null
 
     // ════════════════════════════════════════════════════
-    // 手勢檢測
+    // 手势检测
     // ════════════════════════════════════════════════════
 
     private val scaleDetector = ScaleGestureDetector(context,
@@ -108,7 +108,7 @@ class DagPipelineView @JvmOverloads constructor(
     )
 
     // ════════════════════════════════════════════════════
-    // 繪畫工具
+    // 绘画工具
     // ════════════════════════════════════════════════════
 
     private val nodePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -147,7 +147,7 @@ class DagPipelineView @JvmOverloads constructor(
     }
 
     // ════════════════════════════════════════════════════
-    // 數據設置
+    // 数据设置
     // ════════════════════════════════════════════════════
 
     fun setPipelineData(
@@ -183,7 +183,7 @@ class DagPipelineView @JvmOverloads constructor(
     }
 
     // ════════════════════════════════════════════════════
-    // 佈局計算
+    // 布局计算
     // ════════════════════════════════════════════════════
 
     private fun calculateLayout() {
@@ -195,7 +195,7 @@ class DagPipelineView @JvmOverloads constructor(
         val horizontalGap = 80f
         val verticalGap = 120f
 
-        // 按層級分組
+        // 按层级分组
         val layers = nodes.groupBy { it.layer }
 
         for ((layer, layerNodes) in layers) {
@@ -216,7 +216,7 @@ class DagPipelineView @JvmOverloads constructor(
     }
 
     // ════════════════════════════════════════════════════
-    // 繪製
+    // 绘制
     // ════════════════════════════════════════════════════
 
     override fun onDraw(canvas: Canvas) {
@@ -226,10 +226,10 @@ class DagPipelineView @JvmOverloads constructor(
         canvas.translate(translateX + width / 2f, translateY + 100f)
         canvas.scale(currentScale, currentScale)
 
-        // 繪製連線
+        // 绘制连线
         drawLinks(canvas)
 
-        // 繪製節點
+        // 绘制节点
         drawNodes(canvas)
 
         canvas.restore()
@@ -245,14 +245,14 @@ class DagPipelineView @JvmOverloads constructor(
             val endX = toRect.centerX()
             val endY = toRect.top
 
-            // 貝塞爾曲線
+            // 贝塞尔曲线
             val path = Path()
             path.moveTo(startX, startY)
             val controlY = (startY + endY) / 2
             path.cubicTo(startX, controlY, endX, controlY, endX, endY)
             canvas.drawPath(path, linkPaint)
 
-            // 箭頭
+            // 箭头
             val arrowSize = 15f
             val arrowPath = Path()
             arrowPath.moveTo(endX, endY)
@@ -267,7 +267,7 @@ class DagPipelineView @JvmOverloads constructor(
         for (node in nodes) {
             val rect = nodePositions[node.id] ?: continue
 
-            // 節點顏色
+            // 节点颜色
             val color = when (node.status) {
                 NodeStatus.PENDING -> Color.parseColor("#455A64")
                 NodeStatus.RUNNING -> Color.parseColor("#1565C0")
@@ -275,26 +275,26 @@ class DagPipelineView @JvmOverloads constructor(
                 NodeStatus.FAILED -> Color.parseColor("#C62828")
             }
 
-            // 繪製節點背景
+            // 绘制节点背景
             nodePaint.color = color
             canvas.drawRoundRect(rect, 16f, 16f, nodePaint)
 
-            // 繪製邊框（選中時高亮）
+            // 绘制边框（选中时高亮）
             if (node.id == selectedNodeId) {
                 canvas.drawRoundRect(rect, 16f, 16f, nodeBorderPaint)
             }
 
-            // 繪製文字
+            // 绘制文字
             val textY = rect.centerY() - 10f
             canvas.drawText(node.name, rect.centerX(), textY, textPaint)
 
-            // 繪製模組名稱
+            // 绘制模组名称
             canvas.drawText(node.module, rect.centerX(), textY + 30f, moduleTextPaint)
         }
     }
 
     // ════════════════════════════════════════════════════
-    // 觸摸處理
+    // 触摸处理
     // ════════════════════════════════════════════════════
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -315,7 +315,7 @@ class DagPipelineView @JvmOverloads constructor(
                 }
             }
         }
-        // 點擊空白處取消選中
+        // 点击空白处取消选中
         selectedNodeId = null
         invalidate()
     }

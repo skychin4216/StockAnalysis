@@ -4,22 +4,22 @@ import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
 import kotlin.math.abs
 
 /**
- * ## 個股分析共用工具函數庫
+ * ## 个股分析共用工具函数库
  *
  * 抽取自 CommonAnalysisNodes / StockCheckPipeline / PipelineBacktestEngine /
  * BounceReversalNode / BasePositionAnalyzer / AncestralRulesNode / TTradePipelineNodes
- * 中的重複邏輯，統一管理。
+ * 中的重复逻辑，统一管理。
  */
 
 // ═══════════════════════════════════════════════════
-//  均線計算
+//  均线计算
 // ═══════════════════════════════════════════════════
 
 /**
- * 計算 MA5/MA10/MA20 及多頭排列粘合判斷
+ * 计算 MA5/MA10/MA20 及多头排列粘合判断
  *
- * @param closes 按日期升序的收盤價列表
- * @param threshold 離散率閾值（如 0.03 = 3%）
+ * @param closes 按日期升序的收盘价列表
+ * @param threshold 离散率阈值（如 0.03 = 3%）
  * @return (ma5, ma10, ma20, divergence, isBullishConverged)
  */
 fun calcMaBullishConvergence(
@@ -39,11 +39,11 @@ fun calcMaBullishConvergence(
 // ═══════════════════════════════════════════════════
 
 /**
- * 檢查「三日不新低」的三種語義
+ * 检查「三日不新低」的三种语义
  */
 object StabilityChecker {
     enum class Mode {
-        /** 遞增序：lows[0] ≤ lows[1] ≤ lows[2]（StrictSelection / StockCheckPipeline） */
+        /** 递增序：lows[0] ≤ lows[1] ≤ lows[2]（StrictSelection / StockCheckPipeline） */
         ASCENDING,
         /** vs 第4日：近3日 low 均 >= 第4日 low（BounceReversalNode） */
         ABOVE_FOURTH_DAY,
@@ -52,7 +52,7 @@ object StabilityChecker {
     }
 
     /**
-     * @param snaps 按日期升序排列的日線數據
+     * @param snaps 按日期升序排列的日线数据
      */
     fun check(snaps: List<DailySnapshotEntity>, mode: Mode = Mode.ASCENDING): Boolean {
         if (snaps.size < 4) return false
@@ -75,7 +75,7 @@ object StabilityChecker {
         }
     }
 
-    /** 從已有的 low 列表檢查（降序，供 BounceReversalNode 用） */
+    /** 从已有的 low 列表检查（降序，供 BounceReversalNode 用） */
     fun checkDescendingLows(lows: List<Double>): Boolean {
         if (lows.size < 4) return false
         val baseline = lows[3]
@@ -84,15 +84,15 @@ object StabilityChecker {
 }
 
 // ═══════════════════════════════════════════════════
-//  價格區間位置
+//  价格区间位置
 // ═══════════════════════════════════════════════════
 
 /**
- * 計算當前價在 N 日區間的位置（0.0=最低, 1.0=最高）
+ * 计算当前价在 N 日区间的位置（0.0=最低, 1.0=最高）
  */
 object PricePositionAnalyzer {
 
-    /** 用收盤價計算區間位置 */
+    /** 用收盘价计算区间位置 */
     fun fromCloses(closes: List<Double>, currentPrice: Double): Double {
         if (closes.isEmpty()) return 0.5
         val high = closes.maxOrNull() ?: currentPrice
@@ -101,7 +101,7 @@ object PricePositionAnalyzer {
         return if (range > 0) (currentPrice - low) / range else 0.5
     }
 
-    /** 用 high/low 計算區間位置（AncestralRulesNode 用） */
+    /** 用 high/low 计算区间位置（AncestralRulesNode 用） */
     fun fromHighLow(snaps: List<DailySnapshotEntity>, currentPrice: Double): Double {
         if (snaps.isEmpty()) return 0.5
         val high = snaps.maxOf { it.high }
@@ -112,11 +112,11 @@ object PricePositionAnalyzer {
 }
 
 // ═══════════════════════════════════════════════════
-//  冰點買入
+//  冰点买入
 // ═══════════════════════════════════════════════════
 
 /**
- * 冰點買入檢查：低換手率 + 低量比
+ * 冰点买入检查：低换手率 + 低量比
  */
 object FreezingPointChecker {
 
@@ -129,8 +129,8 @@ object FreezingPointChecker {
 
     /**
      * @param latest 最新一日快照
-     * @param snaps 按日期升序的日線數據（用於計算量比）
-     * @param volumeDays 量比基准天數（默認5日）
+     * @param snaps 按日期升序的日线数据（用于计算量比）
+     * @param volumeDays 量比基准天数（默认5日）
      */
     fun check(
         latest: DailySnapshotEntity,
@@ -155,15 +155,15 @@ object FreezingPointChecker {
 }
 
 // ═══════════════════════════════════════════════════
-//  RSI 計算
+//  RSI 计算
 // ═══════════════════════════════════════════════════
 
 /**
- * 標準 Wilder RSI（簡單平均版），統一 4 處重複實現
+ * 标准 Wilder RSI（简单平均版），统一 4 处重复实现
  */
 object RsiCalculator {
 
-    /** 從收盤價列表計算 RSI */
+    /** 从收盘价列表计算 RSI */
     fun compute(closes: List<Double>, period: Int = 14): Double {
         if (closes.size < period + 1) return 50.0
         val recent = closes.takeLast(period + 1)
@@ -180,20 +180,20 @@ object RsiCalculator {
         return 100.0 - 100.0 / (1.0 + rs)
     }
 
-    /** 從 DailySnapshotEntity 列表計算 RSI */
+    /** 从 DailySnapshotEntity 列表计算 RSI */
     fun fromSnaps(snaps: List<DailySnapshotEntity>, period: Int = 14): Double {
         return compute(snaps.map { it.close }, period)
     }
 }
 
 // ═══════════════════════════════════════════════════
-//  市場微結構（震盪收割 + 量價背離 + 跳空風險）
+//  市场微结构（震荡收割 + 量价背离 + 跳空风险）
 // ═══════════════════════════════════════════════════
 
 /**
- * 市場微結構分析：震盪收割、量價背離、跳空風險
+ * 市场微结构分析：震荡收割、量价背离、跳空风险
  *
- * 原 MaConvergenceNode 和 MarketMaUnifiedNode 中完全相同的代碼塊
+ * 原 MaConvergenceNode 和 MarketMaUnifiedNode 中完全相同的代码块
  */
 object MarketMicrostructureAnalyzer {
 
@@ -205,10 +205,10 @@ object MarketMicrostructureAnalyzer {
     )
 
     /**
-     * @param snaps 按日期升序排列的日線數據（至少 6 條）
-     * @param days 分析天數（默認5）
-     * @param minCount 震盪收割最低次數（默認3）
-     * @param amplitudeThreshold 振幅閾值（默認0.02=2%）
+     * @param snaps 按日期升序排列的日线数据（至少 6 条）
+     * @param days 分析天数（默认5）
+     * @param minCount 震荡收割最低次数（默认3）
+     * @param amplitudeThreshold 振幅阈值（默认0.02=2%）
      */
     fun analyze(
         snaps: List<DailySnapshotEntity>,
@@ -219,7 +219,7 @@ object MarketMicrostructureAnalyzer {
         if (snaps.size < days + 1) return Result(false, 0, false, false)
         val sorted = snaps.sortedBy { it.date }
 
-        // 震盪收割：高開低走 + 振幅 > 2%
+        // 震荡收割：高开低走 + 振幅 > 2%
         val recent = sorted.takeLast(days + 1)
         var oscillationCount = 0
         for (i in 1 until recent.size) {
@@ -231,7 +231,7 @@ object MarketMicrostructureAnalyzer {
             if (gapUp && fadeDown && amplitude > amplitudeThreshold) oscillationCount++
         }
 
-        // 量價背離：下跌日成交量 > 上漲日成交量 × 1.3
+        // 量价背离：下跌日成交量 > 上涨日成交量 × 1.3
         val lastN = sorted.takeLast(days)
         val upDays = lastN.filter { it.changePct > 0 }
         val downDays = lastN.filter { it.changePct < 0 }
@@ -239,7 +239,7 @@ object MarketMicrostructureAnalyzer {
         val avgDownVol = if (downDays.isNotEmpty()) downDays.map { it.volume.toDouble() }.average() else 0.0
         val volumeDivergence = avgUpVol > 0 && avgDownVol > avgUpVol * 1.3
 
-        // 跳空風險
+        // 跳空风险
         val gapRisk = sorted.takeLast(3).any {
             it.close > 0 && abs(it.open - it.close) / it.close > 0.02
         }
@@ -254,29 +254,29 @@ object MarketMicrostructureAnalyzer {
 }
 
 // ═══════════════════════════════════════════════════
-//  防守板塊評分
+//  防守板块评分
 // ═══════════════════════════════════════════════════
 
 /**
- * 防守板塊評分（PB + 板塊 + 市值 + ROE）
+ * 防守板块评分（PB + 板块 + 市值 + ROE）
  *
- * 供 DefensiveDividendNode 和 MidTermPipelineNodes 熊市打底倉共用
+ * 供 DefensiveDividendNode 和 MidTermPipelineNodes 熊市打底仓共用
  */
 object DefensiveScoring {
 
-    /** 默認防守板塊列表 */
+    /** 默认防守板块列表 */
     val DEFAULT_SECTORS = setOf(
-        "銀行", "保險", "電力", "高速公路", "煤炭", "石油",
-        "電信", "水務", "燃氣", "鐵路", "港口", "機場", "證券"
+        "银行", "保险", "电力", "高速公路", "煤炭", "石油",
+        "电信", "水务", "燃气", "铁路", "港口", "机场", "证券"
     )
 
     /**
-     * 計算防守評分（滿分 100）
+     * 计算防守评分（满分 100）
      *
-     * @param pb 市淨率
+     * @param pb 市净率
      * @param marketCap 市值（元）
      * @param roe ROE（%）
-     * @param isDefensiveSector 是否屬防守板塊
+     * @param isDefensiveSector 是否属防守板块
      */
     fun score(
         pb: Double,
@@ -295,7 +295,7 @@ object DefensiveScoring {
         return pbScore + sectorScore + capScore + roeScore
     }
 
-    /** 判斷板塊名稱是否屬防守板塊 */
+    /** 判断板块名称是否属防守板块 */
     fun isDefensiveSector(sectorName: String?): Boolean {
         if (sectorName.isNullOrBlank()) return false
         return DEFAULT_SECTORS.any { sectorName.contains(it) }

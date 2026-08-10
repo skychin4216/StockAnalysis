@@ -106,7 +106,7 @@ class AgentChatFragment : Fragment() {
         tts = android.speech.tts.TextToSpeech(requireContext()) { status ->
             if (status != android.speech.tts.TextToSpeech.SUCCESS) tts = null
         }
-        // 預熱 Trie 詞庫，確保股票名稱→代碼解析可用
+        // 预热 Trie 词库，确保股票名称→代码解析可用
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val trie = com.chin.stockanalysis.stock.data.StockNameTrie
@@ -418,7 +418,7 @@ class AgentChatFragment : Fragment() {
 
             val stockData = stockDataDeferred.await()
 
-            // ═══ 提取股票實體（名稱→代碼解析 + 多股票支持）═══
+            // ═══ 提取股票实体（名称→代码解析 + 多股票支持）═══
             val resolvedStocks = try {
                 com.chin.stockanalysis.ai.StockEntityExtractor.extractSync(userText)
             } catch (_: Exception) { emptyList() }
@@ -427,7 +427,7 @@ class AgentChatFragment : Fragment() {
                 val stockList = resolvedStocks.joinToString("\n") { e ->
                     "  ${e.name}(${e.code}) — 匹配方式:${e.matchType}"
                 }
-                "\n\n【已識別的股票的】\n$stockList\n請針對以上股票進行分析。"
+                "\n\n【已识别的股票的】\n$stockList\n请针对以上股票进行分析。"
             } else ""
 
             val finalSystemPrompt = if (stockData.isNotBlank()) {
@@ -489,7 +489,7 @@ class AgentChatFragment : Fragment() {
         }
     }
 
-    /** 清理 LLM 原始輸出：移除 thinking 標籤、JSON/代碼塊、無意義行 */
+    /** 清理 LLM 原始输出：移除 thinking 标签、JSON/代码块、无意义行 */
     private fun cleanAgentResponse(text: String): String {
         return text
             .replace(Regex("<thinking>[\\s\\S]*?</thinking>", RegexOption.IGNORE_CASE), "")

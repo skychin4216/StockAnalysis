@@ -15,12 +15,12 @@ import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
 
 /**
- * ## 盤中分鐘 K 線獲取器
+ * ## 盘中分钟 K 线获取器
  *
- * 從 EastMoney API 獲取盤中 5 分鐘 K 線數據。
- * 使用 `push2his/stock/kline/get` 接口，`klt=5` 表示 5 分鐘線。
+ * 从 EastMoney API 获取盘中 5 分钟 K 线数据。
+ * 使用 `push2his/stock/kline/get` 接口，`klt=5` 表示 5 分钟线。
  *
- * 返回 [IntradayKlineEntity] 列表，可直接存入 DB 或用於盤中分析。
+ * 返回 [IntradayKlineEntity] 列表，可直接存入 DB 或用于盘中分析。
  */
 class IntradayKlineFetcher(private val context: Context) {
 
@@ -42,11 +42,11 @@ class IntradayKlineFetcher(private val context: Context) {
     }
 
     /**
-     * 獲取指定股票當日的 5 分鐘 K 線。
+     * 获取指定股票当日的 5 分钟 K 线。
      *
-     * @param code 股票代碼（如 "sh600519"）
-     * @param intervalMin K 線週期（1=1min, 5=5min, 15=15min, 30=30min, 60=60min）
-     * @return 盤中 K 線列表，按時間升序
+     * @param code 股票代码（如 "sh600519"）
+     * @param intervalMin K 线周期（1=1min, 5=5min, 15=15min, 30=30min, 60=60min）
+     * @return 盘中 K 线列表，按时间升序
      */
     suspend fun fetchIntradayKline(
         code: String,
@@ -57,10 +57,10 @@ class IntradayKlineFetcher(private val context: Context) {
     }
 
     /**
-     * 批量獲取多只股票的盤中 K 線。
+     * 批量获取多只股票的盘中 K 线。
      *
-     * @param codes 股票代碼列表
-     * @param intervalMin K 線週期
+     * @param codes 股票代码列表
+     * @param intervalMin K 线周期
      * @return code → klines 映射
      */
     suspend fun fetchBatchIntraday(
@@ -75,10 +75,10 @@ class IntradayKlineFetcher(private val context: Context) {
                 if (klines.isNotEmpty()) {
                     result[code] = klines
                 }
-                // 避免請求過快被限流
+                // 避免请求过快被限流
                 kotlinx.coroutines.delay(200)
             } catch (e: Exception) {
-                Log.w(TAG, "獲取 $code 盤中K線失敗: ${e.message}")
+                Log.w(TAG, "获取 $code 盘中K线失败: ${e.message}")
             }
         }
         result
@@ -124,7 +124,7 @@ class IntradayKlineFetcher(private val context: Context) {
                 for (i in 0 until klines.length()) {
                     val line = klines.getString(i)
                     val parts = line.split(",")
-                    // 盤中 K 線格式: "2025-01-15 10:30,open,close,high,low,volume,amount,..."
+                    // 盘中 K 线格式: "2025-01-15 10:30,open,close,high,low,volume,amount,..."
                     if (parts.size < 7) continue
                     val datetime = parts[0]  // "2025-01-15 10:30"
                     val barDate = datetime.split(" ").firstOrNull() ?: date
@@ -143,7 +143,7 @@ class IntradayKlineFetcher(private val context: Context) {
                         intervalMin = intervalMin
                     ))
                 }
-                Log.d(TAG, "獲取 $code 盤中K線: ${results.size} 根 ${intervalMin}分鐘線")
+                Log.d(TAG, "获取 $code 盘中K线: ${results.size} 根 ${intervalMin}分钟线")
                 return results
             } catch (e: Exception) {
                 Log.d(TAG, "EastMoney intraday #$attempt for $code: ${e.message}")

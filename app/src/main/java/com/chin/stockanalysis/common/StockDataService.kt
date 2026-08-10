@@ -9,17 +9,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * ## 股票數據填充服務
+ * ## 股票数据填充服务
  *
- * 為備選池/自選/AI精選等頁面批量填充 StockDisplayItem 的 8 列數據。
- * 數據來源優先級：daily_snapshot > stock_basics > sector_stocks > LeaderStockPool
+ * 为备选池/自选/AI精选等页面批量填充 StockDisplayItem 的 8 列数据。
+ * 数据来源优先级：daily_snapshot > stock_basics > sector_stocks > LeaderStockPool
  */
 object StockDataService {
 
     /**
-     * 批量填充股票顯示數據
+     * 批量填充股票显示数据
      * @param context Context
-     * @param codes 股票代碼列表
+     * @param codes 股票代码列表
      * @return 已填充所有字段的 StockDisplayItem 列表
      */
     suspend fun enrich(
@@ -31,25 +31,25 @@ object StockDataService {
         val db = StockDatabase.getInstance(context)
         val today = java.time.LocalDate.now().toString()
 
-        // ── 1. 從 daily_snapshot 獲取行情數據（本地快照，可能有名稱但缺少 PE/市值） ──
+        // ── 1. 从 daily_snapshot 获取行情数据（本地快照，可能有名称但缺少 PE/市值） ──
         val availableDates = try { db.dailySnapshotDao().getAvailableDates(5) } catch (_: Exception) { emptyList() }
         val targetDate = availableDates.filter { it <= today }.maxOrNull() ?: today
         val snaps = try { db.dailySnapshotDao().getByDate(targetDate) } catch (_: Exception) { emptyList() }
         val snapMap = snaps.associateBy { it.code }.toMutableMap()
 
-        // ── 2. 從 stock_basics 獲取名稱 ──
+        // ── 2. 从 stock_basics 获取名称 ──
         val basicsMap = try {
             db.stockBasicDao().getAll().associateBy { it.code }
         } catch (_: Exception) { emptyMap() }
 
-        // ── 3. 從東方財富 API 獲取完整實時數據（名稱+價格+PE+市值+換手率）──
+        // ── 3. 从东方财富 API 获取完整实时数据（名称+价格+PE+市值+换手率）──
         val rtMap = try {
             EastMoneyStockSource().fetchRealtime(codes)
         } catch (e: Exception) {
-            Log.w("StockDataService", "API 獲取實時數據失敗: ${e.message}")
+            Log.w("StockDataService", "API 获取实时数据失败: ${e.message}")
             emptyMap()
         }
-        // 對於本地快照缺失的股票，用 API 數據補充
+        // 对于本地快照缺失的股票，用 API 数据补充
         rtMap.forEach { (code, rt) ->
             if (snapMap[code] == null) {
                 snapMap[code] = com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity(
@@ -63,21 +63,21 @@ object StockDataService {
             }
         }
 
-        // ── 4. 從 sector_stocks 批量查板塊 ──
+        // ── 4. 从 sector_stocks 批量查板块 ──
         val sectorCache = mutableMapOf<String, Pair<String, String>>()
         for (code in codes) {
             val pair = findSector(context, db, code)
             sectorCache[code] = pair
         }
 
-        // ── 5. 構建結果（API 數據優先用於填充 PE/市值/換手率） ──
+        // ── 5. 构建结果（API 数据优先用于填充 PE/市值/换手率） ──
         codes.map { code ->
             val snap = snapMap[code]
             val basic = basicsMap[code]
             val rt = rtMap[code]
             val (sector, subSector) = sectorCache[code] ?: ("其他" to "")
 
-            // 名稱優先級：snap.name > basic.name > rt.name > code
+            // 名称优先级：snap.name > basic.name > rt.name > code
             val name = snap?.name?.takeIf { it.isNotBlank() && it != code }
                 ?: basic?.name?.takeIf { it.isNotBlank() }
                 ?: rt?.name?.takeIf { it.isNotBlank() }
@@ -106,12 +106,12 @@ object StockDataService {
         }
     }
 
-    // ── 輔助 ──
+    // ── 辅助 ──
 
     /**
-     * 查找股票所屬板塊（三級 fallback）
-     * 1. LeaderStockPool 靜態配置
-     * 2. sector_stocks DB 查詢
+     * 查找股票所属板块（三级 fallback）
+     * 1. LeaderStockPool 静态配置
+     * 2. sector_stocks DB 查询
      * 3. 返回 "其他"
      */
     private suspend fun findSector(
@@ -127,7 +127,7 @@ object StockDataService {
                 }
             }
         }
-        // 2. DB sector_stocks 查詢
+        // 2. DB sector_stocks 查询
         try {
             val sectorNames = db.sectorStockDao().getSectorNamesByStockCode(code)
             if (sectorNames.isNotEmpty()) {

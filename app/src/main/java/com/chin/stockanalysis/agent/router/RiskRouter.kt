@@ -9,16 +9,16 @@ import com.chin.stockanalysis.strategy.StrategyEngineHolder
 import com.chin.stockanalysis.strategy.trade.AutoSellEngine
 
 /**
- * ## 風控路由層
+ * ## 风控路由层
  *
- * Legacy: AutoSellEngine.evaluateAll() → 轉換為 RiskScanResult
+ * Legacy: AutoSellEngine.evaluateAll() → 转换为 RiskScanResult
  * Agent: RiskManagementAgent.scanPortfolio()
  */
 interface RiskManagementService {
     suspend fun scanPortfolio(context: Context): RiskScanResult
 }
 
-/** Legacy 實現 — 調用 AutoSellEngine.evaluateAll() */
+/** Legacy 实现 — 调用 AutoSellEngine.evaluateAll() */
 class LegacyRiskManagementService : RiskManagementService {
     override suspend fun scanPortfolio(context: Context): RiskScanResult {
         val engine = StrategyEngineHolder.get()
@@ -31,7 +31,7 @@ class LegacyRiskManagementService : RiskManagementService {
             return RiskScanResult(
                 success = true,
                 portfolioRiskLevel = "LOW",
-                rawOutput = "無活躍持倉，無需風控掃描"
+                rawOutput = "无活跃持仓，无需风控扫描"
             )
         }
 
@@ -48,7 +48,7 @@ class LegacyRiskManagementService : RiskManagementService {
                 profitPct = d.profitPct,
                 maxDrawdown = 0.0, // AutoSellEngine 不提供此字段
                 daysHeld = 0,     // AutoSellEngine 不提供此字段
-                recommendation = if (d.shouldSell) "建議賣出" else "繼續持有",
+                recommendation = if (d.shouldSell) "建议卖出" else "继续持有",
                 reason = d.reason
             )
         }
@@ -74,7 +74,7 @@ class LegacyRiskManagementService : RiskManagementService {
     }
 }
 
-/** Agent 實現 */
+/** Agent 实现 */
 class AgentRiskManagementService : RiskManagementService {
     override suspend fun scanPortfolio(context: Context): RiskScanResult {
         val agent = RiskManagementAgent(context)

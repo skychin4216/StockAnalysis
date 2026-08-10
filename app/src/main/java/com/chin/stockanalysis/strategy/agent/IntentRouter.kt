@@ -3,9 +3,9 @@ package com.chin.stockanalysis.strategy.agent
 import com.chin.stockanalysis.strategy.HoldingPeriod
 
 /**
- * ## 意圖路由器
+ * ## 意图路由器
  *
- * 基於用戶輸入的關鍵字確定性路由到不同場景，無需 LLM。
+ * 基于用户输入的关键字确定性路由到不同场景，无需 LLM。
  */
 class IntentRouter {
 
@@ -17,16 +17,16 @@ class IntentRouter {
         val normalized = userInput.lowercase()
 
         return when {
-            // 風控掃描
-            normalized.containsAny("風險", "止損", "止盈", "風控", "持倉安全") ->
+            // 风控扫描
+            normalized.containsAny("风险", "止损", "止盈", "风控", "持仓安全") ->
                 UserIntent(IntentType.RISK_CHECK, target = currentStock)
 
-            // 追問
-            normalized.containsAny("為什麼", "追問", "詳細", "解釋") && currentStock != null ->
+            // 追问
+            normalized.containsAny("为什么", "追问", "详细", "解释") && currentStock != null ->
                 UserIntent(IntentType.FOLLOW_UP, target = currentStock)
 
-            // 快速掃描
-            normalized.containsAny("快速", "概覽", "掃描", "市場怎麼樣") ->
+            // 快速扫描
+            normalized.containsAny("快速", "概览", "扫描", "市场怎么样") ->
                 UserIntent(IntentType.QUICK_SCAN, target = null)
 
             // 深度分析
@@ -39,10 +39,10 @@ class IntentRouter {
 
     private fun inferPeriod(text: String): HoldingPeriod {
         return when {
-            text.containsAny("超短", "日內", "打板", "做t") -> HoldingPeriod.ULTRA_SHORT
-            text.containsAny("短線", "幾天") -> HoldingPeriod.SHORT
-            text.containsAny("中線", "波段", "幾週") -> HoldingPeriod.MID
-            text.containsAny("長線", "長期", "價值") -> HoldingPeriod.LONG
+            text.containsAny("超短", "日内", "打板", "做t") -> HoldingPeriod.ULTRA_SHORT
+            text.containsAny("短线", "几天") -> HoldingPeriod.SHORT
+            text.containsAny("中线", "波段", "几周") -> HoldingPeriod.MID
+            text.containsAny("长线", "长期", "价值") -> HoldingPeriod.LONG
             else -> HoldingPeriod.SHORT
         }
     }

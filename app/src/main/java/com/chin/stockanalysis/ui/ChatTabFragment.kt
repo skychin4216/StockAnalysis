@@ -83,7 +83,7 @@ class ChatTabFragment : Fragment() {
         private const val TAG = "ChatTabFragment"
         private const val PREFS_NAME = "chat_prefs"
         private const val KEY_FIRST_LAUNCH_DONE = "first_launch_welcome_done"
-        /** P1: 串流渲染節流閥值 (ms) — 避免頻繁 UI 更新導致卡頓 */
+        /** P1: 串流渲染节流阀值 (ms) — 避免频繁 UI 更新导致卡顿 */
         private const val STREAMING_THROTTLE_MS = 80L
 
         private val BASE_SYSTEM_PROMPT = com.chin.stockanalysis.ai.StockAIPromptBuilder.buildBaseSystemPrompt()
@@ -98,7 +98,7 @@ class ChatTabFragment : Fragment() {
     private var currentStreamingJob: Job? = null
     private var apiProvider: ApiProvider? = null
 
-    /** 分享內容待處理：AI 分析完成後詢問是否保存到機構推薦 */
+    /** 分享内容待处理：AI 分析完成后询问是否保存到机构推荐 */
     private var pendingInstitutionalSave = false
     private var sharedExtractedText: String = ""
     private var aiSlot: AiProviderPool.Slot? = null
@@ -138,12 +138,12 @@ class ChatTabFragment : Fragment() {
     private var cachedHotSectorsTime: Long = 0L
     private var hotSectorsHideJob: Job? = null
 
-    // ═══ 媒體與檔案選擇器 ═══
+    // ═══ 媒体与档案选择器 ═══
     private var photoUri: Uri? = null
 
     private val cameraLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK) {
-            photoUri?.let { sendMessage("[圖片]") }
+            photoUri?.let { sendMessage("[图片]") }
         }
     }
 
@@ -153,11 +153,11 @@ class ChatTabFragment : Fragment() {
                 lifecycleScope.launch {
                     val content = extractTextFromImage(uri)
                     if (content.isImage && content.base64Image.isNotBlank()) {
-                        sendMessageWithImage("[請分析這張圖片]", content.base64Image, content.mimeType)
-                    } else if (content.text.isNotBlank() && content.text != "[圖片: unknownxunknown]") {
-                        sendMessage("[圖片內容]\n${content.text}", skipStockContext = true)
+                        sendMessageWithImage("[请分析这张图片]", content.base64Image, content.mimeType)
+                    } else if (content.text.isNotBlank() && content.text != "[图片: unknownxunknown]") {
+                        sendMessage("[图片内容]\n${content.text}", skipStockContext = true)
                     } else {
-                        sendMessage("[圖片] 無法提取內容", skipStockContext = true)
+                        sendMessage("[图片] 无法提取内容", skipStockContext = true)
                     }
                 }
             }
@@ -168,7 +168,7 @@ class ChatTabFragment : Fragment() {
         if (result.resultCode == android.app.Activity.RESULT_OK) {
             result.data?.data?.let { uri ->
                 lifecycleScope.launch {
-                    val fileName = getFileNameFromUri(uri) ?: "未知檔案"
+                    val fileName = getFileNameFromUri(uri) ?: "未知档案"
                     val extractedText = extractTextFromFile(uri, fileName)
                     if (extractedText.isNotBlank()) {
                         sendMessage("[文件: $fileName]\n$extractedText", skipStockContext = true)
@@ -197,12 +197,12 @@ class ChatTabFragment : Fragment() {
         initAiProbe()
         setupRecyclerView()
         setupInput()
-        setAnalysisMode(analysisMode)  // 初始化提示（快速為默認，無按鈕）
+        setAnalysisMode(analysisMode)  // 初始化提示（快速为默认，无按钮）
         setupTitleBar()
         initTts()
         showWelcomeMessage()
         showHotSectors()
-        // 熱門板塊關閉按鈕
+        // 热门板块关闭按钮
         binding.btnCloseHotSectors.setOnClickListener { binding.frameHotSectors.visibility = View.GONE }
         preloadMarketData()
         observeCrossTabBus()
@@ -239,9 +239,9 @@ class ChatTabFragment : Fragment() {
         }
 
         val modeHint = when (mode) {
-            AnalysisMode.QUICK -> "⚡ V1.0 Quick：Agent 並行快速分析"
-            AnalysisMode.DEEP -> "🔍 V1.0 Pipeline：多 Agent 流水線深度分析"
-            AnalysisMode.EXPERT -> "📊 V2.0 全周期：市場環境+利潤質量+決策矩陣"
+            AnalysisMode.QUICK -> "⚡ V1.0 Quick：Agent 并行快速分析"
+            AnalysisMode.DEEP -> "🔍 V1.0 Pipeline：多 Agent 流水线深度分析"
+            AnalysisMode.EXPERT -> "📊 V2.0 全周期：市场环境+利润质量+决策矩阵"
         }
         binding.etInput.hint = modeHint
     }
@@ -293,13 +293,13 @@ class ChatTabFragment : Fragment() {
                 val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(requireContext())
                 val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().toString()
                 val existingCount = db.dailySnapshotDao().getByDate(today).size
-                if (existingCount >= 30) { Log.i(TAG, "📊 今日數據已完整 (${existingCount}隻)"); return@launch }
-                Log.i(TAG, "📊 後台預取全市場數據 (現有${existingCount}隻)...")
+                if (existingCount >= 30) { Log.i(TAG, "📊 今日数据已完整 (${existingCount}只)"); return@launch }
+                Log.i(TAG, "📊 后台预取全市场数据 (现有${existingCount}只)...")
                 val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
                 val count = fetcher.fetchAllHistoricalData(days = 1)
-                Log.i(TAG, "📊 預取完成: $count 條")
+                Log.i(TAG, "📊 预取完成: $count 条")
                 cachedHotSectorsTime = 0L
-            } catch (e: Exception) { Log.w(TAG, "預取失敗: ${e.message}") }
+            } catch (e: Exception) { Log.w(TAG, "预取失败: ${e.message}") }
         }
     }
 
@@ -315,7 +315,7 @@ class ChatTabFragment : Fragment() {
         adapter.onShare = { text -> startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(android.content.Intent.EXTRA_TEXT, text) }, "分享到")) }
         adapter.onRegenerate = { position -> regenerateMessage(position) }
         binding.recyclerView.layoutManager = LinearLayoutManager(requireContext()).apply { stackFromEnd = true }
-        binding.recyclerView.itemAnimator = null // 禁用動畫，避免 loading view 閃現
+        binding.recyclerView.itemAnimator = null // 禁用动画，避免 loading view 闪现
         binding.recyclerView.adapter = adapter
     }
 
@@ -412,7 +412,7 @@ class ChatTabFragment : Fragment() {
 
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                // 第一步：獲取10個東方財富概念板塊漲幅
+                // 第一步：获取10个东方财富概念板块涨幅
                 var hotSectors = com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.conceptSectors
                     .sortedByDescending { it.changePercent }.take(10)
                 if (hotSectors.isEmpty()) {
@@ -420,7 +420,7 @@ class ChatTabFragment : Fragment() {
                     hotSectors = source.fetchSectorsByTypeDirect(type = 3, topN = 10).sortedByDescending { it.changePercent }.take(10)
                 }
 
-                // 第二步：對每個板塊獲取漲幅前5的成分股
+                // 第二步：对每个板块获取涨幅前5的成分股
                 val eastSource = com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource()
                 val allLeaders = mutableMapOf<String, List<com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.LeaderStock>>()
                 for (s in hotSectors) {
@@ -429,7 +429,7 @@ class ChatTabFragment : Fragment() {
                     } catch (_: Exception) { allLeaders[s.name] = emptyList() }
                 }
 
-                // 第三步：格式化輸出
+                // 第三步：格式化输出
                 val sectorLines = if (hotSectors.isNotEmpty()) {
                     val lines = mutableListOf<String>()
                     for (s in hotSectors) {
@@ -445,7 +445,7 @@ class ChatTabFragment : Fragment() {
                             lines.add("  ├─ $stockStr")
                         }
                     }
-                    // Top5 個股匯總
+                    // Top5 个股汇总
                     val allStocks = allLeaders.values.flatten().sortedByDescending { it.changePercent }
                     if (allStocks.isNotEmpty()) {
                         lines.add("")
@@ -462,7 +462,7 @@ class ChatTabFragment : Fragment() {
                 // 第五步仍需要 db
                 val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(requireContext())
 
-                // 第五步：保持 Top5 個股行不變
+                // 第五步：保持 Top5 个股行不变
                 val recentTradingDay = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().toString()
                 val allDates = db.dailySnapshotDao().getAvailableDates(5).sorted()
                 val effectiveDate = if (allDates.contains(recentTradingDay)) recentTradingDay else allDates.lastOrNull() ?: recentTradingDay
@@ -546,27 +546,27 @@ class ChatTabFragment : Fragment() {
     // ════════════════════════════════════════
 
     private var lastUserText: String = ""
-    /** 暫存最後一張圖片的 base64，供 AI 分析時使用 */
+    /** 暂存最后一张图片的 base64，供 AI 分析时使用 */
     private var lastImageBase64: String? = null
 
     /**
-     * 發送帶圖片的訊息（使用 base64 data URL）
+     * 发送带图片的讯息（使用 base64 data URL）
      */
     private fun sendMessageWithImage(userText: String, base64Image: String, mimeType: String) {
         lastImageBase64 = base64Image
-        val displayText = if (userText.isNotBlank()) userText else "[圖片]"
+        val displayText = if (userText.isNotBlank()) userText else "[图片]"
         addMessage(Message(content = "🖼️ $displayText", isUser = true))
         binding.etInput.setText(""); hideKeyboard()
 
         val provider = apiProvider
         if (provider == null) {
-            addErrorMessage("❌ AI 尚未連接，請稍候重試")
+            addErrorMessage("❌ AI 尚未连接，请稍候重试")
             return
         }
 
-        // 使用快速模式分析圖片
+        // 使用快速模式分析图片
         val loadingMsg = Message(content = "", isUser = false, isStreaming = true,
-            loadingStatus = "🖼️ 正在分析圖片...")
+            loadingStatus = "🖼️ 正在分析图片...")
         addMessage(loadingMsg)
         val loadingIndex = messages.size - 1
 
@@ -574,16 +574,16 @@ class ChatTabFragment : Fragment() {
             try {
                 val imageDataUrl = "data:$mimeType;base64,$base64Image"
                 val prompt = buildString {
-                    appendLine("【圖片分析請求】")
-                    appendLine("用戶上傳了一張圖片，請分析圖片內容並給出詳細解答。")
+                    appendLine("【图片分析请求】")
+                    appendLine("用户上传了一张图片，请分析图片内容并给出详细解答。")
                     appendLine()
-                    appendLine("圖片數據 (data URL):")
-                    appendLine(imageDataUrl.take(100))  // 只提示，實際圖片通過其他方式傳遞
-                    appendLine("... (base64 圖片數據)")
+                    appendLine("图片数据 (data URL):")
+                    appendLine(imageDataUrl.take(100))  // 只提示，实际图片通过其他方式传递
+                    appendLine("... (base64 图片数据)")
                     appendLine()
-                    appendLine("用戶問題: ${userText.ifBlank { "請分析這張圖片的內容" }}")
+                    appendLine("用户问题: ${userText.ifBlank { "请分析这张图片的内容" }}")
                     appendLine()
-                    appendLine("注意：如果當前 AI 模型支援圖片分析，請直接分析圖片。如果不支援，請告知用戶。")
+                    appendLine("注意：如果当前 AI 模型支援图片分析，请直接分析图片。如果不支援，请告知用户。")
                 }
                 val history = messages.toList().subList(0, loadingIndex).filter {
                     !it.content.startsWith("🖼️")
@@ -591,7 +591,7 @@ class ChatTabFragment : Fragment() {
                 sendWithRetry(provider, history, prompt, loadingIndex, 2)
             } catch (e: Exception) {
                 if (isAdded) requireActivity().runOnUiThread {
-                    failStreamingMessage(loadingIndex, "圖片分析失败: ${e.message}")
+                    failStreamingMessage(loadingIndex, "图片分析失败: ${e.message}")
                 }
             }
         }
@@ -648,23 +648,23 @@ class ChatTabFragment : Fragment() {
         binding.etInput.setText(""); hideKeyboard()
         if (!hasAutoTitle) { hasAutoTitle = true; binding.tvChatTitle.text = extractSmartTitle(userText) }
 
-        // 🎯 Agent 模式：如果全局開啟了 Agent，走 ChatRouter → ChatAgent
+        // 🎯 Agent 模式：如果全局开启了 Agent，走 ChatRouter → ChatAgent
         if (FeatureFlagManager.isAgentFramework(FeatureFlagManager.chatRoute)) {
             runAgentAnalysis(userText, provider, skipStockContext)
             return
         }
 
-        // 🎯 新引擎：嘗試提取股票代碼，走 UnifiedAgentRunner
+        // 🎯 新引擎：尝试提取股票代码，走 UnifiedAgentRunner
         val stockCode = extractStockCodeFromText(userText)
         if (stockCode != null) {
             runUnifiedAnalysis(userText, stockCode)
         } else {
-            // 無股票代碼 → 通用問答（非股票問題、生活/技術等）
+            // 无股票代码 → 通用问答（非股票问题、生活/技术等）
             runGeneralChat(userText, provider, skipStockContext)
         }
     }
 
-    /** 🤖 Agent 模式：ChatRouter → ChatAgent 智能對話 */
+    /** 🤖 Agent 模式：ChatRouter → ChatAgent 智能对话 */
     private fun runAgentAnalysis(userText: String, provider: ApiProvider, skipStockContext: Boolean = false) {
         val loadingMsg = Message(content = "", isUser = false, isStreaming = true,
             loadingStatus = "🤖 Agent 正在分析...")
@@ -673,7 +673,7 @@ class ChatTabFragment : Fragment() {
 
         currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
             try {
-                updateLoadingStatus(loadingIndex, "🤖 正在啟動 Agent 框架...")
+                updateLoadingStatus(loadingIndex, "🤖 正在启动 Agent 框架...")
                 val service = ChatRouter.getService()
 
                 val result = withContext(Dispatchers.IO) {
@@ -681,7 +681,7 @@ class ChatTabFragment : Fragment() {
                         context = requireContext(),
                         message = userText,
                         onStream = { chunk ->
-                            // 專家模式 Pipeline 進度：實時更新對話消息
+                            // 专家模式 Pipeline 进度：实时更新对话消息
                             if (isAdded) requireActivity().runOnUiThread {
                                 updateLoadingStatus(loadingIndex, chunk)
                             }
@@ -690,28 +690,28 @@ class ChatTabFragment : Fragment() {
                     )
                 }
                 if (isAdded) requireActivity().runOnUiThread {
-                    // 歧義實體：需要用戶確認
+                    // 歧义实体：需要用户确认
                     if (result.ambiguousEntities != null && result.ambiguousEntities.isNotEmpty()) {
                         // 移除 loading 消息
                         messages.removeAt(loadingIndex)
                         adapter.notifyItemRemoved(loadingIndex)
-                        // 創建 EntityConfirmCard 消息
+                        // 创建 EntityConfirmCard 消息
                         val entityMsg = Message(
                             content = result.response,
                             isUser = false,
                             ambiguousEntities = result.ambiguousEntities,
                             onEntityConfirm = { selected ->
-                                // 用戶選擇後，將選中的股票代碼作為新消息發送
+                                // 用户选择后，将选中的股票代码作为新消息发送
                                 sendMessage("分析 ${selected.code}")
                             },
                             onEntityCancel = {
-                                // 用戶取消
+                                // 用户取消
                                 addBotMessage("已取消")
                             }
                         )
                         addMessage(entityMsg)
                     } else if (result.success) {
-                        // 清理原始推理過程、JSON 碎片、thinking 標籤
+                        // 清理原始推理过程、JSON 碎片、thinking 标签
                         val cleanedResponse = cleanAgentResponse(result.response)
                         completeStreamingMessage(loadingIndex, cleanedResponse)
                         onMessageComplete()
@@ -720,8 +720,8 @@ class ChatTabFragment : Fragment() {
                     }
                 }
             } catch (e: UnsupportedOperationException) {
-                // LegacyChatService 拋出 UnsupportedOperationException，fallback 到通用問答
-                Log.i(TAG, "Agent Legacy 模式，fallback 到通用問答")
+                // LegacyChatService 抛出 UnsupportedOperationException，fallback 到通用问答
+                Log.i(TAG, "Agent Legacy 模式，fallback 到通用问答")
                 if (isAdded) requireActivity().runOnUiThread {
                     messages.removeAt(loadingIndex)
                     adapter.notifyItemRemoved(loadingIndex)
@@ -729,25 +729,25 @@ class ChatTabFragment : Fragment() {
                 }
             } catch (e: Exception) {
                 if (isAdded) requireActivity().runOnUiThread {
-                    failStreamingMessage(loadingIndex, "Agent 異常: ${e.message}")
+                    failStreamingMessage(loadingIndex, "Agent 异常: ${e.message}")
                 }
             }
         }
     }
 
-    /** 從用戶輸入文本中提取股票代碼 */
+    /** 从用户输入文本中提取股票代码 */
     private fun extractStockCodeFromText(text: String): String? {
-        // 匹配帶前綴的格式：sh600519, sz000001, bj830799
+        // 匹配带前缀的格式：sh600519, sz000001, bj830799
         val prefixed = Regex("(?i)(sh|sz|bj)(\\d{6})").find(text)
         if (prefixed != null) {
             return StockAnalysisAgent.normalizeStockCode(prefixed.value)
         }
-        // 匹配純6位數字代碼
+        // 匹配纯6位数字代码
         val pure = Regex("\\b(\\d{6})\\b").find(text)
         if (pure != null) {
             return StockAnalysisAgent.normalizeStockCode(pure.groupValues[1])
         }
-        // 降級：嘗試用 StockEntityExtractor 解析中文名稱
+        // 降级：尝试用 StockEntityExtractor 解析中文名称
         val resolved = com.chin.stockanalysis.ai.StockEntityExtractor.resolveSync(text)
         if (resolved != null) {
             return StockAnalysisAgent.normalizeStockCode(resolved)
@@ -755,7 +755,7 @@ class ChatTabFragment : Fragment() {
         return null
     }
 
-    /** 根據股票代碼解析股票名稱 */
+    /** 根据股票代码解析股票名称 */
     private suspend fun resolveStockName(code: String): String? {
         return try {
             withContext(Dispatchers.IO) {
@@ -767,7 +767,7 @@ class ChatTabFragment : Fragment() {
         } catch (_: Exception) { null }
     }
 
-    /** 🚀 統一引擎分析：Chat 和詳情頁共用 UnifiedAgentRunner */
+    /** 🚀 统一引擎分析：Chat 和详情页共用 UnifiedAgentRunner */
     private fun runUnifiedAnalysis(userText: String, stockCode: String) {
         val modeLabel = when (analysisMode) {
             AnalysisMode.QUICK -> "⚡ V1.0 Quick 快速分析"
@@ -788,7 +788,7 @@ class ChatTabFragment : Fragment() {
 
         currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
             try {
-                // 在協程中解析股票名稱
+                // 在协程中解析股票名称
                 val stockName = resolveStockName(stockCode)
 
                 val result = withContext(Dispatchers.IO) {
@@ -802,7 +802,7 @@ class ChatTabFragment : Fragment() {
 
                 if (isAdded) requireActivity().runOnUiThread {
                     if (result.success) {
-                        // 組合最終文本：用戶問題 + 分析結果（清理可能殘留的 JSON 碎片）
+                        // 组合最终文本：用户问题 + 分析结果（清理可能残留的 JSON 碎片）
                         val cleanedSummary = result.summaryText
                             .replace(Regex("```json[\\s\\S]*?```"), "")
                             .lines()
@@ -813,26 +813,26 @@ class ChatTabFragment : Fragment() {
                             .joinToString("\n")
                             .trim()
                         val fullText = buildString {
-                            appendLine("**用戶**：$userText")
+                            appendLine("**用户**：$userText")
                             appendLine()
                             append(cleanedSummary)
                         }
                         completeStreamingMessage(loadingIndex, fullText)
                     } else {
-                        failStreamingMessage(loadingIndex, "$modeLabel 失敗: ${result.errorMessage}")
+                        failStreamingMessage(loadingIndex, "$modeLabel 失败: ${result.errorMessage}")
                     }
                     onMessageComplete()
                 }
             } catch (e: Exception) {
                 if (isAdded) requireActivity().runOnUiThread {
-                    failStreamingMessage(loadingIndex, "$modeLabel 異常: ${e.message}")
+                    failStreamingMessage(loadingIndex, "$modeLabel 异常: ${e.message}")
                 }
             }
         }
     }
 
 
-    /** 💬 通用問答：非股票問題的簡潔 LLM 對話 */
+    /** 💬 通用问答：非股票问题的简洁 LLM 对话 */
     private fun runGeneralChat(userText: String, provider: ApiProvider, skipStockContext: Boolean = false) {
         val loadingMsg = Message(content = "", isUser = false, isStreaming = true,
             loadingStatus = "💬 正在思考...")
@@ -844,7 +844,7 @@ class ChatTabFragment : Fragment() {
                 val contextInfo = if (skipStockContext) {
                     ""
                 } else {
-                    updateLoadingStatus(loadingIndex, "💬 正在搜索相關數據...")
+                    updateLoadingStatus(loadingIndex, "💬 正在搜索相关数据...")
                     withContext(Dispatchers.IO) {
                         smartContext.getOrBuild(userText = userText, baseSystemPrompt = BASE_SYSTEM_PROMPT, onPreferenceLeaned = {})
                     }
@@ -852,25 +852,25 @@ class ChatTabFragment : Fragment() {
                 updateLoadingStatus(loadingIndex, "💬 正在回答...")
                 val memory = withContext(Dispatchers.IO) { memoryManager.buildMemorySuffix() }
 
-                val prompt = """你是用戶的 AI 投資助手，專業簡潔。
+                val prompt = """你是用户的 AI 投资助手，专业简洁。
 
-用戶輸入：$userText
+用户输入：$userText
 
 $contextInfo
 $memory
 
 回答要求：
-1. 直接回答用戶問題，保持專業簡潔
-2. 如果涉及股票/投資，使用結構化格式（bullet points、表格）
-3. 字數控制在 300-800 字
-4. 如果涉及投資建議，末尾加免責聲明：「以上不構成投資建議」
-5. 以上數據來自實時行情，嚴禁使用訓練數據中的舊價格或過時資訊"""
+1. 直接回答用户问题，保持专业简洁
+2. 如果涉及股票/投资，使用结构化格式（bullet points、表格）
+3. 字数控制在 300-800 字
+4. 如果涉及投资建议，末尾加免责声明：「以上不构成投资建议」
+5. 以上数据来自实时行情，严禁使用训练数据中的旧价格或过时资讯"""
 
                 val history = messages.toList().subList(0, loadingIndex)
                 sendWithRetry(provider, history, prompt, loadingIndex, 2)
             } catch (e: Exception) {
                 if (isAdded) requireActivity().runOnUiThread {
-                    failStreamingMessage(loadingIndex, "回答失敗: ${e.message}")
+                    failStreamingMessage(loadingIndex, "回答失败: ${e.message}")
                 }
             }
         }
@@ -886,7 +886,7 @@ $memory
                         val sanitized = chunk.replace("null", "")
                         accumulated.append(sanitized)
                         val now = System.currentTimeMillis()
-                        // P1: 80ms 節流，避免串流期間過度刷新
+                        // P1: 80ms 节流，避免串流期间过度刷新
                         if (isAdded && (now - lastUiUpdate >= STREAMING_THROTTLE_MS)) {
                             lastUiUpdate = now
                             requireActivity().runOnUiThread {
@@ -899,7 +899,7 @@ $memory
                         }
                     },
                     onComplete = { full ->
-                        // 完成時強制刷新最後一次（確保最後的內容完整顯示）
+                        // 完成时强制刷新最后一次（确保最后的内容完整显示）
                         val finalText = full.ifEmpty { accumulated.toString() }.replace("null", "")
                         if (isAdded) requireActivity().runOnUiThread {
                             completeStreamingMessage(streamingIndex, finalText)
@@ -953,30 +953,30 @@ $memory
     fun sendMessageFromExternal(text: String) { binding.etInput.setText(text); binding.btnSend.performClick() }
 
     /**
-     * 處理外部分享的內容（圖片/PDF/文字）。
-     * OCR 識別後發送到 AI 對話，分析完成後詢問是否保存到機構推薦。
+     * 处理外部分享的内容（图片/PDF/文字）。
+     * OCR 识别后发送到 AI 对话，分析完成后询问是否保存到机构推荐。
      */
     fun handleSharedContent(sharedUri: android.net.Uri?, sharedText: String?) {
         viewLifecycleOwner.lifecycleScope.launch {
-            // 等待 UI 就緒
+            // 等待 UI 就绪
             kotlinx.coroutines.delay(500)
             if (!isAdded) return@launch
 
             if (sharedUri != null) {
-                // 有 URI → 判斷類型（圖片 or PDF）
+                // 有 URI → 判断类型（图片 or PDF）
                 val mimeType = requireContext().contentResolver.getType(sharedUri) ?: ""
                 val path = sharedUri.path ?: ""
                 when {
                     mimeType.startsWith("image/") || path.matches(Regex(""".*\.(jpg|jpeg|png|bmp|webp)$""", RegexOption.IGNORE_CASE)) -> {
-                        // 圖片 → OCR
+                        // 图片 → OCR
                         val content = extractTextFromImage(sharedUri)
-                        if (content.text.isNotBlank() && content.text != "[圖片: unknownxunknown]") {
+                        if (content.text.isNotBlank() && content.text != "[图片: unknownxunknown]") {
                             val ocrText = content.text
                             sharedExtractedText = ocrText
                             pendingInstitutionalSave = true
-                            sendMessage("[分享圖片 OCR]\n$ocrText\n\n請分析以上內容中的股票推薦信息。", skipStockContext = true)
+                            sendMessage("[分享图片 OCR]\n$ocrText\n\n请分析以上内容中的股票推荐信息。", skipStockContext = true)
                         } else {
-                            sendMessage("[分享圖片] 無法提取內容", skipStockContext = true)
+                            sendMessage("[分享图片] 无法提取内容", skipStockContext = true)
                         }
                     }
                     mimeType == "application/pdf" || path.endsWith(".pdf", ignoreCase = true) -> {
@@ -986,29 +986,29 @@ $memory
                         if (extractedText.isNotBlank()) {
                             sharedExtractedText = extractedText
                             pendingInstitutionalSave = true
-                            sendMessage("[分享PDF: $fileName]\n$extractedText\n\n請分析以上內容中的股票推薦信息。", skipStockContext = true)
+                            sendMessage("[分享PDF: $fileName]\n$extractedText\n\n请分析以上内容中的股票推荐信息。", skipStockContext = true)
                         } else {
-                            sendMessage("[分享PDF] 無法提取內容", skipStockContext = true)
+                            sendMessage("[分享PDF] 无法提取内容", skipStockContext = true)
                         }
                     }
                     else -> {
-                        // 其他文件 → 嘗試提取
+                        // 其他文件 → 尝试提取
                         val fileName = getFileNameFromUri(sharedUri) ?: "文件"
                         val extractedText = extractTextFromFile(sharedUri, fileName)
                         if (extractedText.isNotBlank()) {
                             sharedExtractedText = extractedText
                             pendingInstitutionalSave = true
-                            sendMessage("[分享文件: $fileName]\n$extractedText\n\n請分析以上內容中的股票推薦信息。", skipStockContext = true)
+                            sendMessage("[分享文件: $fileName]\n$extractedText\n\n请分析以上内容中的股票推荐信息。", skipStockContext = true)
                         } else {
-                            sendMessage("[分享文件] 無法提取內容: $fileName", skipStockContext = true)
+                            sendMessage("[分享文件] 无法提取内容: $fileName", skipStockContext = true)
                         }
                     }
                 }
             } else if (!sharedText.isNullOrEmpty()) {
-                // 純文字分享
+                // 纯文字分享
                 sharedExtractedText = sharedText
                 pendingInstitutionalSave = true
-                sendMessage("[分享文字]\n$sharedText\n\n請分析以上內容中的股票推薦信息。", skipStockContext = true)
+                sendMessage("[分享文字]\n$sharedText\n\n请分析以上内容中的股票推荐信息。", skipStockContext = true)
             }
         }
     }
@@ -1040,7 +1040,7 @@ $memory
     }
 
     // ════════════════════════════════════════
-    // 相機 / 相簿 / 檔案 / 語音
+    // 相机 / 相簿 / 档案 / 语音
     // ════════════════════════════════════════
 
     // ════════════════════════════════════════
@@ -1076,7 +1076,7 @@ $memory
             intent.putExtra(MediaStore.EXTRA_OUTPUT, photoUri)
             cameraLauncher.launch(intent)
         } else {
-            Toast.makeText(requireContext(), "無法啟動相機", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), "无法启动相机", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -1112,14 +1112,14 @@ $memory
     }
 
     /**
-     * 從圖片提取內容（用於 AI 分析）
-     * 返回 FileContentExtractor.ExtractedContent 包含 base64 圖片
+     * 从图片提取内容（用于 AI 分析）
+     * 返回 FileContentExtractor.ExtractedContent 包含 base64 图片
      */
     private suspend fun extractTextFromImage(uri: Uri): FileContentExtractor.ExtractedContent =
         FileContentExtractor.extract(requireContext(), uri)
 
     /**
-     * 從文件提取文字
+     * 从文件提取文字
      * 支持 txt、csv、pdf、docx、xlsx 等格式
      */
     private suspend fun extractTextFromFile(uri: Uri, fileName: String): String =
@@ -1127,8 +1127,8 @@ $memory
 
     private fun startVoiceInput() {
         val dialog = AlertDialog.Builder(requireContext())
-            .setTitle("🎤 語音輸入")
-            .setMessage("錄音中...")
+            .setTitle("🎤 语音输入")
+            .setMessage("录音中...")
             .setNegativeButton("取消") { d, _ -> d.dismiss() }
             .setCancelable(false)
             .show()
@@ -1140,7 +1140,7 @@ $memory
                     dialog.dismiss()
                     Toast.makeText(
                         requireContext(),
-                        "語音轉文字功能需要整合語音辨識SDK",
+                        "语音转文字功能需要整合语音辨识SDK",
                         Toast.LENGTH_LONG
                     ).show()
                 }
@@ -1153,23 +1153,23 @@ $memory
     // ════════════════════════════════════════
 
     private fun onMessageComplete() {
-        // 不再使用固定追問模板，讓 AI 自然對話
-        // 檢查最後一條用戶消息是否包含股票代碼，如有則彈窗詢問操作
+        // 不再使用固定追问模板，让 AI 自然对话
+        // 检查最后一条用户消息是否包含股票代码，如有则弹窗询问操作
         tryPromptStockAction()
 
-        // 如果是分享內容的 OCR 分析完成，詢問是否保存到機構推薦
+        // 如果是分享内容的 OCR 分析完成，询问是否保存到机构推荐
         if (pendingInstitutionalSave && isAdded) {
             pendingInstitutionalSave = false
             promptSaveToInstitutional()
         }
     }
 
-    /** AI 分析完成後，詢問用戶是否將識別到的股票保存到機構推薦 */
+    /** AI 分析完成后，询问用户是否将识别到的股票保存到机构推荐 */
     private fun promptSaveToInstitutional() {
         val text = sharedExtractedText
         if (text.isBlank()) return
 
-        // 從文字中提取股票
+        // 从文字中提取股票
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val entities = com.chin.stockanalysis.ai.StockEntityExtractor.extract(text, requireContext())
@@ -1193,8 +1193,8 @@ $memory
                     withContext(Dispatchers.Main) {
                         if (!isAdded) return@withContext
                         android.app.AlertDialog.Builder(requireContext())
-                            .setTitle("機構推薦")
-                            .setMessage("未識別到股票信息。是否仍要手動添加到機構推薦？")
+                            .setTitle("机构推荐")
+                            .setMessage("未识别到股票信息。是否仍要手动添加到机构推荐？")
                             .setPositiveButton("去添加") { _, _ -> navigateToInstitutionalTab() }
                             .setNegativeButton("不需要", null)
                             .show()
@@ -1205,14 +1205,14 @@ $memory
                 withContext(Dispatchers.Main) {
                     if (!isAdded) return@withContext
                     val msg = buildString {
-                        appendLine("識別到 ${stocks.size} 只股票：\n")
+                        appendLine("识别到 ${stocks.size} 只股票：\n")
                         for ((name, code) in stocks) {
                             appendLine("  ${name.ifEmpty { "?" }} ($code)")
                         }
-                        appendLine("\n是否保存到機構推薦？")
+                        appendLine("\n是否保存到机构推荐？")
                     }
                     android.app.AlertDialog.Builder(requireContext())
-                        .setTitle("保存到機構推薦")
+                        .setTitle("保存到机构推荐")
                         .setMessage(msg)
                         .setPositiveButton("保存") { _, _ ->
                             saveStocksToInstitutional(stocks)
@@ -1220,18 +1220,18 @@ $memory
                         .setNegativeButton("不保存") { _, _ ->
                             navigateToInstitutionalTab()
                         }
-                        .setNeutralButton("保存並查看") { _, _ ->
+                        .setNeutralButton("保存并查看") { _, _ ->
                             saveStocksToInstitutional(stocks, navigateAfter = true)
                         }
                         .show()
                 }
             } catch (e: Exception) {
-                android.util.Log.w("ChatTabFragment", "機構推薦保存失敗", e)
+                android.util.Log.w("ChatTabFragment", "机构推荐保存失败", e)
             }
         }
     }
 
-    /** 將股票保存到自選（source 字段記錄來源，如「AI推薦」「分享導入」等） */
+    /** 将股票保存到自选（source 字段记录来源，如「AI推荐」「分享导入」等） */
     private fun saveStocksToInstitutional(stocks: List<Pair<String, String>>, navigateAfter: Boolean = false) {
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -1245,16 +1245,16 @@ $memory
                     if (existing != null) {
                         // 已存在 → 更新 source 和 notes
                         dao.update(existing.copy(
-                            source = if (existing.source in listOf("manual", "midterm", "shortterm", "ultra_short", "long_term")) existing.source else "AI推薦",
-                            notes = if (existing.notes.isEmpty()) "AI 分析確認" else existing.notes
+                            source = if (existing.source in listOf("manual", "midterm", "shortterm", "ultra_short", "long_term")) existing.source else "AI推荐",
+                            notes = if (existing.notes.isEmpty()) "AI 分析确认" else existing.notes
                         ))
                     } else {
                         dao.insert(com.chin.stockanalysis.stock.database.UserWatchlistEntity(
                             stockCode = code,
                             stockName = name,
-                            source = "AI推薦",
+                            source = "AI推荐",
                             addedDate = today,
-                            notes = "AI 分析確認"
+                            notes = "AI 分析确认"
                         ))
                     }
                     savedCount++
@@ -1262,23 +1262,23 @@ $memory
 
                 withContext(Dispatchers.Main) {
                     if (!isAdded) return@withContext
-                    Toast.makeText(requireContext(), "已保存 $savedCount 只到自選", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(requireContext(), "已保存 $savedCount 只到自选", Toast.LENGTH_SHORT).show()
                     if (navigateAfter) navigateToInstitutionalTab()
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    if (isAdded) Toast.makeText(requireContext(), "保存失敗: ${e.message?.take(30)}", Toast.LENGTH_SHORT).show()
+                    if (isAdded) Toast.makeText(requireContext(), "保存失败: ${e.message?.take(30)}", Toast.LENGTH_SHORT).show()
                 }
             }
         }
     }
 
-    /** 導航到精選股票 → 機構推薦 Tab */
+    /** 导航到精选股票 → 机构推荐 Tab */
     private fun navigateToInstitutionalTab() {
         (activity as? MainActivity)?.navigateToInstitutional()
     }
 
-    /** 如果用戶輸入包含股票代碼，分析完成後彈窗詢問加入自選/買入 */
+    /** 如果用户输入包含股票代码，分析完成后弹窗询问加入自选/买入 */
     private fun tryPromptStockAction() {
         val lastUserMsg = messages.lastOrNull { it.isUser && !it.isStreaming && !it.isError } ?: return
         val codeMatch = Regex("(sh|sz|bj)?\\d{6}").find(lastUserMsg.content)
@@ -1298,7 +1298,7 @@ $memory
         val changePct: Double, val score: Int, val hits: List<String>
     )
 
-    /** 快速分析單只股票（本地策略，不調 AI） */
+    /** 快速分析单只股票（本地策略，不调 AI） */
     private suspend fun analyzeStockBrief(stockCode: String): StockBriefResult? {
         val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().toString()
         val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(requireContext())
@@ -1326,36 +1326,36 @@ $memory
         return StockBriefResult(stockCode, stockName, snap.close, snap.changePct, maxScore, hits)
     }
 
-    /** 顯示股票操作彈窗：加入自選 + 買入（符合條件時綠色，否則灰色） */
+    /** 显示股票操作弹窗：加入自选 + 买入（符合条件时绿色，否则灰色） */
     private fun showStockActionDialog(result: StockBriefResult) {
         if (!isAdded) return
         val canBuy = result.score >= 60 && result.hits.isNotEmpty()
         val actionColor = if (canBuy) "#4CAF50" else "#9E9E9E"
         val msg = buildString {
             appendLine("${result.name} (${result.code})")
-            appendLine("現價 ¥${"%.2f".format(result.price)} (${if(result.changePct>=0)"+" else ""}${"%.2f".format(result.changePct)}%)")
-            appendLine("策略命中: ${result.hits.size} 個 (${result.hits.joinToString()})")
-            appendLine("綜合評分: ${result.score}分")
+            appendLine("现价 ¥${"%.2f".format(result.price)} (${if(result.changePct>=0)"+" else ""}${"%.2f".format(result.changePct)}%)")
+            appendLine("策略命中: ${result.hits.size} 个 (${result.hits.joinToString()})")
+            appendLine("综合评分: ${result.score}分")
             appendLine()
-            appendLine(if (canBuy) "🟢 符合買入條件" else "🔴 暫不符合買入條件")
+            appendLine(if (canBuy) "🟢 符合买入条件" else "🔴 暂不符合买入条件")
         }
 
         val dialog = androidx.appcompat.app.AlertDialog.Builder(requireContext())
             .setTitle("📌 分析完成")
             .setMessage(msg)
-            .setPositiveButton("➕ 加入自選") { _, _ ->
+            .setPositiveButton("➕ 加入自选") { _, _ ->
                 lifecycleScope.launch(Dispatchers.IO) {
                     try {
                         com.chin.stockanalysis.stock.database.AppBackgroundRunner.addToWatchlist(
                             requireContext(), result.code, result.name, "chat_analysis", result.score)
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(requireContext(), "✅ 已加入自選: ${result.name}", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(requireContext(), "✅ 已加入自选: ${result.name}", Toast.LENGTH_SHORT).show()
                         }
                     } catch (_: Exception) {}
                 }
             }
             .setNegativeButton("取消", null)
-            .setNeutralButton("▶ 買入") { _, _ ->
+            .setNeutralButton("▶ 买入") { _, _ ->
                 if (!canBuy) return@setNeutralButton
                 lifecycleScope.launch(Dispatchers.IO) {
                     try {
@@ -1366,14 +1366,14 @@ $memory
                             com.chin.stockanalysis.strategy.trade.StrategyTradeOrderEntity(
                                 strategyId = "Chat_Analysis", stockCode = result.code,
                                 stockName = result.name, tradeDate = today,
-                                buyPrice = result.price, quantity = 100, orderType = "對話買入",
-                                status = "BUYING", reason = "對話分析命中: ${result.hits.joinToString()}",
+                                buyPrice = result.price, quantity = 100, orderType = "对话买入",
+                                status = "BUYING", reason = "对话分析命中: ${result.hits.joinToString()}",
                                 scoreAtBuy = result.score, createdAt = System.currentTimeMillis(),
                                 buyTime = java.time.LocalTime.now().toString().take(8)
                             )
                         )
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(requireContext(), "✅ 已買入 ${result.name}", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(requireContext(), "✅ 已买入 ${result.name}", Toast.LENGTH_SHORT).show()
                         }
                     } catch (_: Exception) {}
                 }
@@ -1386,7 +1386,7 @@ $memory
             if (canBuy) {
                 neutralBtn?.setTextColor(android.graphics.Color.parseColor("#4CAF50"))
             } else {
-                neutralBtn?.text = "▶ 買入 (條件不足)"
+                neutralBtn?.text = "▶ 买入 (条件不足)"
                 neutralBtn?.setTextColor(android.graphics.Color.parseColor("#9E9E9E"))
             }
         }
@@ -1570,27 +1570,27 @@ $memory
     enum class AnalysisMode { QUICK, DEEP, EXPERT }
 
     /**
-     * 清理 Agent 回應中的原始推理過程、JSON 碎片、thinking 標籤
+     * 清理 Agent 回应中的原始推理过程、JSON 碎片、thinking 标签
      */
     private fun cleanAgentResponse(text: String): String {
         return text
-            // 移除 <thinking>...</thinking> 推理標籤及內容
+            // 移除 <thinking>...</thinking> 推理标签及内容
             .replace(Regex("<thinking>[\\s\\S]*?</thinking>", RegexOption.IGNORE_CASE), "")
-            // 移除 ```json ... ``` 代碼塊
+            // 移除 ```json ... ``` 代码块
             .replace(Regex("```json[\\s\\S]*?```", RegexOption.IGNORE_CASE), "")
-            // 移除 ``` ... ``` 通用代碼塊
+            // 移除 ``` ... ``` 通用代码块
             .replace(Regex("```[\\s\\S]*?```"), "")
-            // 逐行過濾
+            // 逐行过滤
             .lines()
             .filter { line ->
                 val t = line.trim()
                 // 保留非空行
                 if (t.isBlank()) return@filter false
-                // 過濾純大括號/中括號行
+                // 过滤纯大括号/中括号行
                 if (t.matches(Regex("^[{}\\[\\],:]\\s*$"))) return@filter false
-                // 過濾 JSON key-value 行（如 "key": "value"）
+                // 过滤 JSON key-value 行（如 "key": "value"）
                 if (t.matches(Regex("^\"[^\"]+\"\\s*:\\s*.+$"))) return@filter false
-                // 過濾純數字行
+                // 过滤纯数字行
                 if (t.matches(Regex("^-?\\d+(\\.\\d+)?$"))) return@filter false
                 true
             }

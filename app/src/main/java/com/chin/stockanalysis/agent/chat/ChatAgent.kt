@@ -15,25 +15,25 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * ## 對話 Agent（ReAct + 子 Agent 協作）
+ * ## 对话 Agent（ReAct + 子 Agent 协作）
  *
- * 替代現有 ChatTabFragment 中硬編碼的對話邏輯，實現智能對話：
- * 1. 理解用戶意圖（選股/分析/交易/閒聊）
- * 2. 規劃回覆步驟（可能需要調用子 Agent）
- * 3. 執行並匯總結果
- * 4. 生成自然語言回覆
+ * 替代现有 ChatTabFragment 中硬编码的对话逻辑，实现智能对话：
+ * 1. 理解用户意图（选股/分析/交易/闲聊）
+ * 2. 规划回复步骤（可能需要调用子 Agent）
+ * 3. 执行并汇总结果
+ * 4. 生成自然语言回复
  */
 class ChatAgent(context: Context) : AgentBase(
     id = "chat",
-    name = "對話 Agent",
-    description = "理解用戶意圖，協調其他 Agent 完成任務，生成自然語言回覆",
+    name = "对话 Agent",
+    description = "理解用户意图，协调其他 Agent 完成任务，生成自然语言回复",
     context = context
 ) {
     companion object {
         private const val TAG = "ChatAgent"
     }
 
-    /** 分析模式（由 ChatTabFragment 傳入） */
+    /** 分析模式（由 ChatTabFragment 传入） */
     var analysisMode: com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode = com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.QUICK
 
     private val pickingAgent = StockPickingAgent(context)
@@ -47,30 +47,30 @@ class ChatAgent(context: Context) : AgentBase(
     }
 
     override fun buildSystemPrompt(): String = """
-        你是一位專業的股票投資助手，擅長理解用戶意圖並協調專業 Agent 完成任務。
+        你是一位专业的股票投资助手，擅长理解用户意图并协调专业 Agent 完成任务。
 
         ## 你能做的事情
-        1. 選股：調用選股 Agent 為用戶推薦股票
-        2. 分析：調用分析 Agent 深度分析單只股票
-        3. 閒聊：與用戶進行自然對話，回答投資相關問題
-        4. 市場概覽：提供當日市場簡報
+        1. 选股：调用选股 Agent 为用户推荐股票
+        2. 分析：调用分析 Agent 深度分析单只股票
+        3. 闲聊：与用户进行自然对话，回答投资相关问题
+        4. 市场概览：提供当日市场简报
 
-        ## 對話風格
-        - 專業但親切，像一位經驗豐富的投資顧問
-        - 回答簡潔有力，避免冗長
-        - 涉及具體股票時，給出明確的代碼和理由
-        - 不確定時坦誠說明，不瞎猜
+        ## 对话风格
+        - 专业但亲切，像一位经验丰富的投资顾问
+        - 回答简洁有力，避免冗长
+        - 涉及具体股票时，给出明确的代码和理由
+        - 不确定时坦诚说明，不瞎猜
 
-        ## 意圖識別
-        用戶輸入可能包含以下意圖：
-        - "幫我選股" / "今天有什麼好股票" → 調用選股 Agent
-        - "分析一下 600519" / "茅台怎麼樣" → 調用分析 Agent
-        - "市場怎麼樣" / "今天大盤" → 提供市場簡報
+        ## 意图识别
+        用户输入可能包含以下意图：
+        - "帮我选股" / "今天有什么好股票" → 调用选股 Agent
+        - "分析一下 600519" / "茅台怎么样" → 调用分析 Agent
+        - "市场怎么样" / "今天大盘" → 提供市场简报
         - 其他 → 直接回答
     """.trimIndent()
 
     /**
-     * 處理用戶消息
+     * 处理用户消息
      */
     suspend fun handleMessage(
         userMessage: String,
@@ -81,35 +81,35 @@ class ChatAgent(context: Context) : AgentBase(
             put("session_id", sessionId)
         }
 
-        // 判斷意圖，決定使用哪種模式
+        // 判断意图，决定使用哪种模式
         val intent = detectIntent(userMessage)
 
-        // 同步提取機構線索（僅在非分析意圖時觸發，避免「分析機構動態」等請求誤觸發）
+        // 同步提取机构线索（仅在非分析意图时触发，避免「分析机构动态」等请求误触发）
         val instResult = if (intent != UserIntent.STOCK_ANALYSIS) {
             tryExtractInstitutionalTips(userMessage)
         } else null
 
         val baseResult = when (intent) {
             UserIntent.INDEX_ANALYSIS -> {
-                // 提取指數名稱/代碼
+                // 提取指数名称/代码
                 val indexInfo = extractIndexInfo(userMessage)
                 if (indexInfo != null) {
                     val result = IndexAnalysisAgent.analyze(context, indexInfo.first, indexInfo.second)
                     if (result != null) {
                         ChatAgentResult(
                             success = true,
-                            response = "📊 ${result.indexName} 技術面分析\n\n${result.summary}\n\n${result.technicalView}\n\n🔮 短線預判：${result.prediction}\n\n⚠️ 風險提示：\n${result.risks.joinToString("\n") { "• $it" }}",
+                            response = "📊 ${result.indexName} 技术面分析\n\n${result.summary}\n\n${result.technicalView}\n\n🔮 短线预判：${result.prediction}\n\n⚠️ 风险提示：\n${result.risks.joinToString("\n") { "• $it" }}",
                             intent = intent.name
                         )
                     } else {
-                        ChatAgentResult(success = false, response = "暫無指數歷史數據，請先確保已導入歷史數據。", intent = intent.name)
+                        ChatAgentResult(success = false, response = "暂无指数历史数据，请先确保已导入历史数据。", intent = intent.name)
                     }
                 } else {
-                    ChatAgentResult(success = false, response = "請提供具體的指數名稱（如上證指數、深證成指）。", intent = intent.name)
+                    ChatAgentResult(success = false, response = "请提供具体的指数名称（如上证指数、深证成指）。", intent = intent.name)
                 }
             }
             UserIntent.STOCK_PICKING -> {
-                // 選股：使用 Plan-and-Execute
+                // 选股：使用 Plan-and-Execute
                 val result = pickingAgent.pickStocks()
                 ChatAgentResult(
                     success = result.success,
@@ -119,7 +119,7 @@ class ChatAgent(context: Context) : AgentBase(
                 )
             }
             UserIntent.STOCK_ANALYSIS -> {
-                // 分析：提取所有股票實體（支持名稱和 múltiple stocks）
+                // 分析：提取所有股票实体（支持名称和 múltiple stocks）
                 val entities = extractAllStockEntities(userMessage)
 
                 if (entities.isNotEmpty()) {
@@ -135,7 +135,7 @@ class ChatAgent(context: Context) : AgentBase(
                     }
 
                     if (entities.size == 1) {
-                        // 單股票：完整分析
+                        // 单股票：完整分析
                         val entity = entities.first()
                         val normalizedCode = StockAnalysisAgent.normalizeStockCode(entity.code)
                         onStream?.invoke("$modeLabel 分析中：${entity.name}(${normalizedCode})\n")
@@ -150,12 +150,12 @@ class ChatAgent(context: Context) : AgentBase(
                         ChatAgentResult(
                             success = result.success,
                             response = if (result.success) result.summaryText
-                                else "${modeLabel} 分析失敗：${result.errorMessage}",
+                                else "${modeLabel} 分析失败：${result.errorMessage}",
                             intent = intent.name,
                             data = mapOf("unifiedResult" to result)
                         )
                     } else {
-                        // 多股票：逐一分析後合併摘要
+                        // 多股票：逐一分析后合并摘要
                         val orchestrator = com.chin.stockanalysis.agent.core.AgentOrchestrator(context)
                         val results = entities.take(5).map { entity ->
                             val normalizedCode = StockAnalysisAgent.normalizeStockCode(entity.code)
@@ -174,7 +174,7 @@ class ChatAgent(context: Context) : AgentBase(
                         }
 
                         val sb = StringBuilder()
-                        sb.appendLine("## 📊 多股票對比分析（${results.size} 隻）")
+                        sb.appendLine("## 📊 多股票对比分析（${results.size} 只）")
                         sb.appendLine()
                         for ((entity, result) in results) {
                             val normalizedCode = StockAnalysisAgent.normalizeStockCode(entity.code)
@@ -183,7 +183,7 @@ class ChatAgent(context: Context) : AgentBase(
                                 sb.appendLine(result.summaryText)
                                 sb.appendLine()
                             } else {
-                                sb.appendLine("### ${entity.name}（$normalizedCode）— 分析失敗")
+                                sb.appendLine("### ${entity.name}（$normalizedCode）— 分析失败")
                                 sb.appendLine()
                             }
                         }
@@ -197,13 +197,13 @@ class ChatAgent(context: Context) : AgentBase(
                 } else {
                     ChatAgentResult(
                         success = false,
-                        response = "請提供具體的股票代碼（如 600519）或名稱，我來為您分析。",
+                        response = "请提供具体的股票代码（如 600519）或名称，我来为您分析。",
                         intent = intent.name
                     )
                 }
             }
             UserIntent.MARKET_BRIEF -> {
-                // 市場簡報
+                // 市场简报
                 val brief = generateMarketBrief()
                 ChatAgentResult(
                     success = true,
@@ -212,7 +212,7 @@ class ChatAgent(context: Context) : AgentBase(
                 )
             }
             else -> {
-                // 一般對話：使用 ReAct
+                // 一般对话：使用 ReAct
                 val result = react(userMessage, ctx, maxSteps = 4)
                 ChatAgentResult(
                     success = result.success,
@@ -223,7 +223,7 @@ class ChatAgent(context: Context) : AgentBase(
             }
         }
 
-        // 如果提取到機構線索，附加板塊分析到回覆
+        // 如果提取到机构线索，附加板块分析到回复
         if (instResult != null && instResult.detectedSectors.isNotEmpty()) {
             val sectorAnalysis = buildInstitutionalSectorAnalysis(instResult, userMessage)
             return baseResult.copy(
@@ -235,8 +235,8 @@ class ChatAgent(context: Context) : AgentBase(
     }
 
     /**
-     * 構建機構推薦板塊分析回覆
-     * 包含：檢測到的板塊、股票歸屬、大盤趨勢判斷、超短/短線跟進建議
+     * 构建机构推荐板块分析回复
+     * 包含：检测到的板块、股票归属、大盘趋势判断、超短/短线跟进建议
      */
     private suspend fun buildInstitutionalSectorAnalysis(
         extraction: InstitutionalTipExtraction,
@@ -244,32 +244,32 @@ class ChatAgent(context: Context) : AgentBase(
     ): String {
         val sb = StringBuilder()
         sb.appendLine("━━━━━━━━━━━━━━━━━━")
-        sb.appendLine("🏦 機構線索板塊分析")
+        sb.appendLine("🏦 机构线索板块分析")
         sb.appendLine("━━━━━━━━━━━━━━━━━━")
 
-        // 1. 顯式提及的板塊
+        // 1. 显式提及的板块
         if (extraction.textSectors.isNotEmpty()) {
-            sb.appendLine("📌 消息提及板塊：${extraction.textSectors.joinToString("、")}")
+            sb.appendLine("📌 消息提及板块：${extraction.textSectors.joinToString("、")}")
         }
 
-        // 2. 股票→板塊歸屬
+        // 2. 股票→板块归属
         sb.appendLine()
-        sb.appendLine("📊 股票板塊歸屬：")
+        sb.appendLine("📊 股票板块归属：")
         for ((code, name) in extraction.stocks) {
             val sectors = extraction.stockSectors[code] ?: emptyList()
             val display = if (name.isNotBlank()) "$name(${code.takeLast(6)})" else code.takeLast(6)
             if (sectors.isNotEmpty()) {
                 sb.appendLine("  • $display → ${sectors.joinToString("/")}")
             } else {
-                sb.appendLine("  • $display → 未匹配到板塊")
+                sb.appendLine("  • $display → 未匹配到板块")
             }
         }
 
-        // 3. 合併板塊列表
+        // 3. 合并板块列表
         sb.appendLine()
-        sb.appendLine("🎯 綜合板塊判斷：${extraction.detectedSectors.joinToString("、")}")
+        sb.appendLine("🎯 综合板块判断：${extraction.detectedSectors.joinToString("、")}")
 
-        // 4. 大盤趨勢判斷
+        // 4. 大盘趋势判断
         try {
             val appCtx = context.applicationContext
             val mktCtx = com.chin.stockanalysis.strategy.sector.StrategyMarketContext
@@ -277,45 +277,45 @@ class ChatAgent(context: Context) : AgentBase(
             val env = mktCtx.indexSnapshot.tripleVote
             val envLabel = when (env) {
                 "BULLISH" -> "牛市偏多 🐂"
-                "OSCILLATION" -> "震蕩市 ⚖️"
+                "OSCILLATION" -> "震荡市 ⚖️"
                 "BEARISH" -> "熊市偏空 🐻"
                 else -> "未知 $env"
             }
             sb.appendLine()
-            sb.appendLine("📈 當前大盤環境：$envLabel")
+            sb.appendLine("📈 当前大盘环境：$envLabel")
 
-            // 5. 跟進建議
+            // 5. 跟进建议
             sb.appendLine()
-            sb.appendLine("💡 跟進建議：")
+            sb.appendLine("💡 跟进建议：")
             when (env) {
                 "BULLISH" -> {
-                    sb.appendLine("  • 大盤偏多，機構推薦板塊可積極跟進")
-                    sb.appendLine("  • 建議在【超短線】或【短線】週期建倉")
-                    sb.appendLine("  • 優先關注：${extraction.detectedSectors.take(3).joinToString("、")}")
+                    sb.appendLine("  • 大盘偏多，机构推荐板块可积极跟进")
+                    sb.appendLine("  • 建议在【超短线】或【短线】周期建仓")
+                    sb.appendLine("  • 优先关注：${extraction.detectedSectors.take(3).joinToString("、")}")
                 }
                 "OSCILLATION" -> {
-                    sb.appendLine("  • 震蕩市中機構推薦僅供參考，注意倉位控制")
-                    sb.appendLine("  • 建議在【短線】週期輕倉試探，設好止損")
-                    sb.appendLine("  • 優先關注有資金持續流入的板塊：${extraction.detectedSectors.take(2).joinToString("、")}")
+                    sb.appendLine("  • 震荡市中机构推荐仅供参考，注意仓位控制")
+                    sb.appendLine("  • 建议在【短线】周期轻仓试探，设好止损")
+                    sb.appendLine("  • 优先关注有资金持续流入的板块：${extraction.detectedSectors.take(2).joinToString("、")}")
                 }
                 "BEARISH" -> {
-                    sb.appendLine("  • ⚠️ 熊市環境，機構推薦需謹慎對待")
-                    sb.appendLine("  • 建議僅觀察，不急於跟進")
-                    sb.appendLine("  • 若必須操作，僅限【超短線】日內做T，嚴控倉位<30%")
+                    sb.appendLine("  • ⚠️ 熊市环境，机构推荐需谨慎对待")
+                    sb.appendLine("  • 建议仅观察，不急于跟进")
+                    sb.appendLine("  • 若必须操作，仅限【超短线】日内做T，严控仓位<30%")
                 }
                 else -> {
-                    sb.appendLine("  • 大盤方向不明，建議在【短線】週期觀察")
+                    sb.appendLine("  • 大盘方向不明，建议在【短线】周期观察")
                 }
             }
         } catch (_: Exception) {
-            sb.appendLine("📈 大盤環境：暫無法判斷")
-            sb.appendLine("💡 建議在【短線】週期觀察機構推薦板塊動向")
+            sb.appendLine("📈 大盘环境：暂无法判断")
+            sb.appendLine("💡 建议在【短线】周期观察机构推荐板块动向")
         }
 
-        // 6. 已寫入數據庫提示
+        // 6. 已写入数据库提示
         sb.appendLine()
-        sb.appendLine("✅ ${extraction.stockCount} 隻機構推薦股票已記錄，有效期3天")
-        sb.appendLine("   板塊輪動預測器已接收線索（20%權重）")
+        sb.appendLine("✅ ${extraction.stockCount} 只机构推荐股票已记录，有效期3天")
+        sb.appendLine("   板块轮动预测器已接收线索（20%权重）")
 
         return sb.toString().trimEnd()
     }
@@ -323,35 +323,35 @@ class ChatAgent(context: Context) : AgentBase(
     private fun detectIntent(message: String): UserIntent {
         val lower = message.lowercase()
 
-        // 指數查詢意圖識別
-        val indexKeywords = listOf("上證", "深證", "創業板", "科創板", "滬深300", "上證50", "大盤", "指數")
+        // 指数查询意图识别
+        val indexKeywords = listOf("上证", "深证", "创业板", "科创板", "沪深300", "上证50", "大盘", "指数")
         val hasIndex = indexKeywords.any { lower.contains(it) }
         if (hasIndex) return UserIntent.INDEX_ANALYSIS
 
-        // 優先用 StockEntityExtractor 做本地詞典匹配
+        // 优先用 StockEntityExtractor 做本地词典匹配
         try {
             val entities = com.chin.stockanalysis.ai.StockEntityExtractor.extractSync(message)
             if (entities.isNotEmpty()) {
                 return when {
-                    lower.contains("選股") || lower.contains("推薦") || lower.contains("有什麼好股票") || lower.contains("買什麼")
+                    lower.contains("选股") || lower.contains("推荐") || lower.contains("有什么好股票") || lower.contains("买什么")
                         -> UserIntent.STOCK_PICKING
-                    // 已找到股票實體 + 明確分析意圖 → STOCK_ANALYSIS（優先於市場簡報）
-                    lower.contains("分析") || lower.contains("投資價值") || lower.contains("詳細") ||
-                    lower.contains("基本面") || lower.contains("技術面") || lower.contains("資金面") ||
-                    lower.contains("風險評估") || lower.contains("買入") || lower.contains("走勢")
+                    // 已找到股票实体 + 明确分析意图 → STOCK_ANALYSIS（优先于市场简报）
+                    lower.contains("分析") || lower.contains("投资价值") || lower.contains("详细") ||
+                    lower.contains("基本面") || lower.contains("技术面") || lower.contains("资金面") ||
+                    lower.contains("风险评估") || lower.contains("买入") || lower.contains("走势")
                         -> UserIntent.STOCK_ANALYSIS
-                    // 只有在大盤/市場詞彙出現且無具體分析要求時才顯示簡報
-                    lower.contains("大盤") || lower.contains("市場簡報") || lower.contains("行情概覽")
+                    // 只有在大盘/市场词汇出现且无具体分析要求时才显示简报
+                    lower.contains("大盘") || lower.contains("市场简报") || lower.contains("行情概览")
                         -> UserIntent.MARKET_BRIEF
                     else -> UserIntent.STOCK_ANALYSIS
                 }
             }
-        } catch (_: Exception) { /* Trie 未構建，繼續 */ }
+        } catch (_: Exception) { /* Trie 未构建，继续 */ }
 
         return when {
-            lower.contains("選股") || lower.contains("推薦") || lower.contains("有什麼好股票") || lower.contains("買什麼") -> UserIntent.STOCK_PICKING
-            lower.contains("分析") || lower.contains("怎麼樣") || lower.contains("看一下") || lower.contains("點評") -> UserIntent.STOCK_ANALYSIS
-            lower.contains("大盤") || lower.contains("市場") || lower.contains("行情") || lower.contains("走勢") -> UserIntent.MARKET_BRIEF
+            lower.contains("选股") || lower.contains("推荐") || lower.contains("有什么好股票") || lower.contains("买什么") -> UserIntent.STOCK_PICKING
+            lower.contains("分析") || lower.contains("怎么样") || lower.contains("看一下") || lower.contains("点评") -> UserIntent.STOCK_ANALYSIS
+            lower.contains("大盘") || lower.contains("市场") || lower.contains("行情") || lower.contains("走势") -> UserIntent.MARKET_BRIEF
             Regex("(sh|sz|bj)?\\d{6}").containsMatchIn(lower) -> UserIntent.STOCK_ANALYSIS
             else -> UserIntent.GENERAL_CHAT
         }
@@ -361,9 +361,9 @@ class ChatAgent(context: Context) : AgentBase(
         try {
             val entities = com.chin.stockanalysis.ai.StockEntityExtractor.extractSync(message)
             if (entities.isNotEmpty()) return entities
-        } catch (_: Exception) { /* Trie 未構建，繼續 */ }
+        } catch (_: Exception) { /* Trie 未构建，继续 */ }
 
-        // 降級：正則提取代碼
+        // 降级：正则提取代码
         val codes = Regex("(sh|sz|bj)?(\\d{6})").findAll(message).map { it.groupValues[2] }.toList()
         return codes.map { com.chin.stockanalysis.ai.StockEntityExtractor.ExtractedEntity(
             text = it, code = it, name = it,
@@ -374,12 +374,12 @@ class ChatAgent(context: Context) : AgentBase(
 
     private fun extractIndexInfo(message: String): Pair<String, String>? {
         val indexMap = mapOf(
-            "上證指數" to "sh000001", "上證" to "sh000001", "大盤" to "sh000001",
-            "深證成指" to "sz399001", "深證" to "sz399001",
-            "創業板指" to "sz399006", "創業板" to "sz399006",
-            "科創50" to "sh000688", "科創板" to "sh000688",
-            "滬深300" to "sh000300", "上證50" to "sh000016",
-            "中證500" to "sh000905", "中證1000" to "sh000852"
+            "上证指数" to "sh000001", "上证" to "sh000001", "大盘" to "sh000001",
+            "深证成指" to "sz399001", "深证" to "sz399001",
+            "创业板指" to "sz399006", "创业板" to "sz399006",
+            "科创50" to "sh000688", "科创板" to "sh000688",
+            "沪深300" to "sh000300", "上证50" to "sh000016",
+            "中证500" to "sh000905", "中证1000" to "sh000852"
         )
         for ((name, code) in indexMap) {
             if (message.contains(name)) return Pair(code, name)
@@ -389,38 +389,38 @@ class ChatAgent(context: Context) : AgentBase(
 
     private fun formatPickingResponse(result: com.chin.stockanalysis.agent.stock.StockPickingResult): String {
         return buildString {
-            appendLine("🎯 選股 Agent 為您推薦以下股票：")
+            appendLine("🎯 选股 Agent 为您推荐以下股票：")
             appendLine()
             result.recommendations.forEachIndexed { index, rec ->
-                appendLine("${index + 1}. **${rec.name} (${rec.code})** — 評分 ${rec.score}分")
+                appendLine("${index + 1}. **${rec.name} (${rec.code})** — 评分 ${rec.score}分")
                 appendLine("   命中策略: ${rec.strategies.joinToString(", ")}")
                 appendLine("   理由: ${rec.reason}")
                 appendLine()
             }
             if (result.riskWarning.isNotBlank()) {
-                appendLine("⚠️ 風險提示: ${result.riskWarning}")
+                appendLine("⚠️ 风险提示: ${result.riskWarning}")
             }
         }
     }
 
     private fun formatAnalysisResponse(result: com.chin.stockanalysis.agent.stock.StockAnalysisResult): String {
         return buildString {
-            appendLine("📊 **${result.stockCode} 分析報告**")
+            appendLine("📊 **${result.stockCode} 分析报告**")
             appendLine()
-            appendLine("綜合評分: ${result.overallScore}分 | 建議: ${result.recommendation} | 置信度: ${result.confidence}")
+            appendLine("综合评分: ${result.overallScore}分 | 建议: ${result.recommendation} | 置信度: ${result.confidence}")
             appendLine()
-            appendLine("各維度評分:")
-            appendLine("- 技術面: ${result.technicalScore}分")
+            appendLine("各维度评分:")
+            appendLine("- 技术面: ${result.technicalScore}分")
             appendLine("- 基本面: ${result.fundamentalScore}分")
-            appendLine("- 資金面: ${result.fundFlowScore}分")
+            appendLine("- 资金面: ${result.fundFlowScore}分")
             appendLine()
             appendLine("分析理由: ${result.reasoning}")
             if (result.targetPrice.isNotBlank()) {
-                appendLine("目標價: ${result.targetPrice} | 止損位: ${result.stopLoss}")
+                appendLine("目标价: ${result.targetPrice} | 止损位: ${result.stopLoss}")
             }
             if (result.riskFactors.isNotEmpty()) {
                 appendLine()
-                appendLine("⚠️ 風險因素:")
+                appendLine("⚠️ 风险因素:")
                 result.riskFactors.forEach { appendLine("- $it") }
             }
         }
@@ -439,66 +439,66 @@ class ChatAgent(context: Context) : AgentBase(
                 val topGainers = data.sortedByDescending { it.changePct }.take(5)
 
                 buildString {
-                    appendLine("📈 **今日市場簡報** ($today)")
+                    appendLine("📈 **今日市场简报** ($today)")
                     appendLine()
-                    appendLine("大盤環境: ${if (avgChange > 1) "強勢" else if (avgChange > 0) "偏多" else if (avgChange > -1) "偏弱" else "弱勢"}（平均 ${"%.2f".format(avgChange)}%）")
-                    appendLine("漲跌家數: 上漲 $upCount / 下跌 $downCount")
+                    appendLine("大盘环境: ${if (avgChange > 1) "强势" else if (avgChange > 0) "偏多" else if (avgChange > -1) "偏弱" else "弱势"}（平均 ${"%.2f".format(avgChange)}%）")
+                    appendLine("涨跌家数: 上涨 $upCount / 下跌 $downCount")
                     appendLine()
-                    appendLine("漲幅榜 TOP 5:")
+                    appendLine("涨幅榜 TOP 5:")
                     topGainers.forEachIndexed { i, s ->
                         appendLine("${i + 1}. ${s.name} (${s.code}): +${"%.2f".format(s.changePct)}%")
                     }
                 }
             } catch (e: Exception) {
-                "暫時無法獲取市場數據，請稍後再試。"
+                "暂时无法获取市场数据，请稍后再试。"
             }
         }
     }
 
-    // ═══ 機構線索提取 ═══
+    // ═══ 机构线索提取 ═══
 
     private val INST_KEYWORDS = listOf(
-        "機構", "研報", "目標價", "買入評級", "增持評級", "推薦買入",
-        "券商", "基金", "調研", "機構調研", "主力", "莊家", "游資",
-        "龍虎榜", "機構席位", "量化", "融資", "北向資金",
-        // 擴展：機構推薦消息常見用語
-        "案例股", "教學案例", "調倉換股", "重點留意", "熱點機會",
-        "新主線", "佈局", "抄底", "加倉", "減倉", "止盈",
-        "投資顧問", "執業編號", "執業證書", "內部服務",
-        "行情已經", "板塊方面", "短期可以", "重點關注"
+        "机构", "研报", "目标价", "买入评级", "增持评级", "推荐买入",
+        "券商", "基金", "调研", "机构调研", "主力", "庄家", "游资",
+        "龙虎榜", "机构席位", "量化", "融资", "北向资金",
+        // 扩展：机构推荐消息常见用语
+        "案例股", "教学案例", "调仓换股", "重点留意", "热点机会",
+        "新主线", "布局", "抄底", "加仓", "减仓", "止盈",
+        "投资顾问", "执业编号", "执业证书", "内部服务",
+        "行情已经", "板块方面", "短期可以", "重点关注"
     )
 
     /**
-     * 從用戶對話中提取機構線索，寫入 institutional_tips 表。
-     * 觸發條件：消息包含機構相關關鍵詞 + 至少一個股票代碼/名稱。
-     * 有效期默認 3 天。
+     * 从用户对话中提取机构线索，写入 institutional_tips 表。
+     * 触发条件：消息包含机构相关关键词 + 至少一个股票代码/名称。
+     * 有效期默认 3 天。
      *
-     * @return 機構線索提取結果（含板塊檢測），若無線索返回 null
+     * @return 机构线索提取结果（含板块检测），若无线索返回 null
      */
     private suspend fun tryExtractInstitutionalTips(message: String): InstitutionalTipExtraction? {
         try {
             val hasInstKeyword = INST_KEYWORDS.any { message.contains(it) }
             if (!hasInstKeyword) return null
 
-            // 提取股票實體
+            // 提取股票实体
             val entities = try {
                 com.chin.stockanalysis.ai.StockEntityExtractor.extractSync(message)
             } catch (_: Exception) { emptyList() }
 
-            // 降級：正則提取代碼（支援 sh/sz/bj 前綴 和 純6位數字）
+            // 降级：正则提取代码（支援 sh/sz/bj 前缀 和 纯6位数字）
             val stocks: List<Pair<String, String>> = if (entities.isNotEmpty()) {
                 entities.map { it.code to it.name }
             } else {
-                // 先嘗試帶前綴的代碼
+                // 先尝试带前缀的代码
                 val prefixed = Regex("(sh|sz|bj)(\\d{6})").findAll(message).map {
                     it.value to ""
                 }.toList()
                 if (prefixed.isNotEmpty()) prefixed
                 else {
-                    // 降級：純6位數字代碼（需要排除非股票數字如日期、電話等）
+                    // 降级：纯6位数字代码（需要排除非股票数字如日期、电话等）
                     Regex("(?<!\\d)(\\d{6})(?!\\d)").findAll(message).map { match ->
                         val code = match.value
-                        // 根據代碼首位判斷市場前綴
+                        // 根据代码首位判断市场前缀
                         val prefix = when (code.first()) {
                             '6' -> "sh"
                             '0', '3' -> "sz"
@@ -517,19 +517,19 @@ class ChatAgent(context: Context) : AgentBase(
             val today = java.time.LocalDate.now().toString()
             val expire = java.time.LocalDate.now().plusDays(3).toString()
 
-            // 判斷線索類型
+            // 判断线索类型
             val tipType = when {
-                message.contains("目標價") -> "target"
-                message.contains("評級") || message.contains("增持") -> "rating"
+                message.contains("目标价") -> "target"
+                message.contains("评级") || message.contains("增持") -> "rating"
                 else -> "research"
             }
 
-            // 板塊檢測：結合文本關鍵詞 + 股票板塊反查
+            // 板块检测：结合文本关键词 + 股票板块反查
             val sectorDetection = com.chin.stockanalysis.ai.SectorDetector
                 .detect(message, stocks, context)
 
             val tips = stocks.map { (code, name) ->
-                // 為每隻股票確定最佳板塊
+                // 为每只股票确定最佳板块
                 val stockSector = sectorDetection.stockSectors[code]?.firstOrNull()
                     ?: sectorDetection.textSectors.firstOrNull()
                     ?: ""
@@ -547,7 +547,7 @@ class ChatAgent(context: Context) : AgentBase(
                 )
             }
             dao.insertAll(tips)
-            Log.i(TAG, "🏦 提取機構線索: ${tips.size} 條 (${tips.joinToString { "${it.stockCode}(${it.sector})" }})")
+            Log.i(TAG, "🏦 提取机构线索: ${tips.size} 条 (${tips.joinToString { "${it.stockCode}(${it.sector})" }})")
 
             return InstitutionalTipExtraction(
                 stockCount = tips.size,
@@ -557,13 +557,13 @@ class ChatAgent(context: Context) : AgentBase(
                 stockSectors = sectorDetection.stockSectors
             )
         } catch (e: Exception) {
-            Log.w(TAG, "機構線索提取失敗: ${e.message}")
+            Log.w(TAG, "机构线索提取失败: ${e.message}")
             return null
         }
     }
 }
 
-/** 機構線索提取結果 */
+/** 机构线索提取结果 */
 data class InstitutionalTipExtraction(
     val stockCount: Int,
     val stocks: List<Pair<String, String>>,
@@ -572,7 +572,7 @@ data class InstitutionalTipExtraction(
     val stockSectors: Map<String, List<String>>
 )
 
-/** 對話結果 */
+/** 对话结果 */
 data class ChatAgentResult(
     val success: Boolean,
     val response: String,
@@ -591,10 +591,10 @@ enum class UserIntent {
 }
 
 /** ================================================================ */
-/** 股票查詢工具 */
+/** 股票查询工具 */
 class StockQueryTool(private val ctx: Context) : AgentTool {
     override val name = "stock_query"
-    override val description = "查詢股票基本信息和最新行情"
+    override val description = "查询股票基本信息和最新行情"
     override val parameters = listOf("query")
 
     override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
@@ -602,16 +602,16 @@ class StockQueryTool(private val ctx: Context) : AgentTool {
         return withContext(Dispatchers.IO) {
             try {
                 val rawQuery = params["query"] ?: params["stock_code"]
-                    ?: return@withContext "錯誤: 未提供股票名稱或代碼"
-                // 解析：可能是代碼（6位數字/sh+代碼）或名稱
+                    ?: return@withContext "错误: 未提供股票名称或代码"
+                // 解析：可能是代码（6位数字/sh+代码）或名称
                 val code = if (rawQuery.matches(Regex("\\d{6}"))) {
                     rawQuery
                 } else if (rawQuery.matches(Regex("(?i)(sh|sz|bj)\\d{6}"))) {
                     rawQuery.takeLast(6)
                 } else {
-                    // 名稱 → 通過 StockEntityExtractor 解析為代碼
+                    // 名称 → 通过 StockEntityExtractor 解析为代码
                     val resolved = com.chin.stockanalysis.ai.StockEntityExtractor.resolveSync(rawQuery)
-                    resolved ?: return@withContext "錯誤: 未找到股票「$rawQuery」"
+                    resolved ?: return@withContext "错误: 未找到股票「$rawQuery」"
                 }
                 val db = StockDatabase.getInstance(localCtx)
                 val basic = db.stockBasicDao().getByCode(code)
@@ -621,28 +621,28 @@ class StockQueryTool(private val ctx: Context) : AgentTool {
                 if (basic == null && snapshot == null) return@withContext "未找到股票 $code"
 
                 buildString {
-                    appendLine("【股票查詢】 $code")
+                    appendLine("【股票查询】 $code")
                     basic?.let {
-                        appendLine("- 名稱: ${it.name}")
-                        appendLine("- 主營: ${it.business}")
+                        appendLine("- 名称: ${it.name}")
+                        appendLine("- 主营: ${it.business}")
                     }
                     snapshot?.let {
-                        appendLine("- 最新價: ${it.close} (${if(it.changePct>=0)"+" else ""}${"%.2f".format(it.changePct)}%)")
-                        appendLine("- 成交額: ${"%.0f".format(it.amount)}萬")
-                        appendLine("- 換手率: ${"%.2f".format(it.turnoverRate)}%")
+                        appendLine("- 最新价: ${it.close} (${if(it.changePct>=0)"+" else ""}${"%.2f".format(it.changePct)}%)")
+                        appendLine("- 成交额: ${"%.0f".format(it.amount)}万")
+                        appendLine("- 换手率: ${"%.2f".format(it.turnoverRate)}%")
                     }
                 }
             } catch (e: Exception) {
-                "錯誤: 查詢失敗: ${e.message}"
+                "错误: 查询失败: ${e.message}"
             }
         }
     }
 }
 
-/** 市場簡報工具 */
+/** 市场简报工具 */
 class MarketBriefTool(private val ctx: Context) : AgentTool {
     override val name = "market_brief"
-    override val description = "獲取當日市場簡要概況"
+    override val description = "获取当日市场简要概况"
     override val parameters = listOf<String>()
 
     override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
@@ -656,41 +656,41 @@ class MarketBriefTool(private val ctx: Context) : AgentTool {
                 val upCount = data.count { it.changePct > 0 }
                 val downCount = data.count { it.changePct < 0 }
 
-                "今日市場: 平均 ${"%.2f".format(avgChange)}%, 上漲 $upCount 家, 下跌 $downCount 家"
+                "今日市场: 平均 ${"%.2f".format(avgChange)}%, 上涨 $upCount 家, 下跌 $downCount 家"
             } catch (e: Exception) {
-                "錯誤: 獲取市場簡報失敗: ${e.message}"
+                "错误: 获取市场简报失败: ${e.message}"
             }
         }
     }
 }
 
-/** 意圖解析工具 */
+/** 意图解析工具 */
 class IntentParseTool : AgentTool {
     override val name = "intent_parse"
-    override val description = "解析用戶輸入的意圖（選股/分析/閒聊）"
+    override val description = "解析用户输入的意图（选股/分析/闲聊）"
     override val parameters = listOf("message")
 
     override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
-        val message = params["message"] ?: return "錯誤: 未提供消息"
+        val message = params["message"] ?: return "错误: 未提供消息"
         val lower = message.lowercase()
         val intent = when {
-            lower.contains("選股") || lower.contains("推薦") -> "STOCK_PICKING"
+            lower.contains("选股") || lower.contains("推荐") -> "STOCK_PICKING"
             lower.contains("分析") || Regex("\\d{6}").containsMatchIn(lower) -> "STOCK_ANALYSIS"
-            lower.contains("大盤") || lower.contains("市場") -> "MARKET_BRIEF"
+            lower.contains("大盘") || lower.contains("市场") -> "MARKET_BRIEF"
             else -> "GENERAL_CHAT"
         }
-        return "意圖識別結果: $intent"
+        return "意图识别结果: $intent"
     }
 }
 
-/** 龍頭股池管理工具 — 支持對話式增刪改查 */
+/** 龙头股池管理工具 — 支持对话式增删改查 */
 class LeaderPoolManageTool(private val ctx: Context) : AgentTool {
     override val name = "leader_pool_manage"
-    override val description = "管理龍頭股池：列出板塊、添加/移除板塊、添加/移除股票、標記概念炒作。參數: action=list|add_sector|remove_sector|add_stock|remove_stock|set_concept, sector_name, sub_sector_name, stock_code, is_concept(true/false)"
+    override val description = "管理龙头股池：列出板块、添加/移除板块、添加/移除股票、标记概念炒作。参数: action=list|add_sector|remove_sector|add_stock|remove_stock|set_concept, sector_name, sub_sector_name, stock_code, is_concept(true/false)"
     override val parameters = listOf("action", "sector_name", "sub_sector_name", "stock_code", "is_concept")
 
     override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
-        val action = params["action"] ?: return "錯誤: 缺少 action 參數"
+        val action = params["action"] ?: return "错误: 缺少 action 参数"
         val sectorName = params["sector_name"] ?: ""
         val subSectorName = params["sub_sector_name"] ?: ""
         val stockCode = params["stock_code"] ?: ""
@@ -701,65 +701,65 @@ class LeaderPoolManageTool(private val ctx: Context) : AgentTool {
                 val sectors = LeaderStockPool.listSectors(ctx)
                 val details = sectors.joinToString("\n") { name ->
                     val cfg = LeaderStockPool.getAllConfigs(ctx).find { it.name == name }
-                    val tag = if (cfg?.isConcept == true) "[概念]" else "[產業]"
+                    val tag = if (cfg?.isConcept == true) "[概念]" else "[产业]"
                     val stocks = cfg?.subSectors?.sumOf { it.stocks.size } ?: 0
                     "- $tag $name ($stocks 只)"
                 }
-                "當前龍頭股池共 ${sectors.size} 個板塊:\n$details"
+                "当前龙头股池共 ${sectors.size} 个板块:\n$details"
             }
 
             "list_detail" -> {
-                if (sectorName.isBlank()) return "錯誤: 請提供 sector_name"
+                if (sectorName.isBlank()) return "错误: 请提供 sector_name"
                 val subs = LeaderStockPool.listSubSectors(ctx, sectorName)
-                if (subs.isEmpty()) return "板塊 [$sectorName] 不存在或為空"
+                if (subs.isEmpty()) return "板块 [$sectorName] 不存在或为空"
                 subs.joinToString("\n") { (subName, stocks) ->
                     "  [$subName]: ${stocks.joinToString(", ")}"
                 }
             }
 
             "add_sector" -> {
-                if (sectorName.isBlank()) return "錯誤: 請提供 sector_name"
+                if (sectorName.isBlank()) return "错误: 请提供 sector_name"
                 val ok = LeaderStockPool.addSector(ctx, sectorName, isConcept)
-                if (ok) "✅ 已添加板塊 [$sectorName]${if (isConcept) " (標記為概念)" else ""}"
-                else "⚠️ 板塊 [$sectorName] 已存在"
+                if (ok) "✅ 已添加板块 [$sectorName]${if (isConcept) " (标记为概念)" else ""}"
+                else "⚠️ 板块 [$sectorName] 已存在"
             }
 
             "remove_sector" -> {
-                if (sectorName.isBlank()) return "錯誤: 請提供 sector_name"
+                if (sectorName.isBlank()) return "错误: 请提供 sector_name"
                 val ok = LeaderStockPool.removeSector(ctx, sectorName)
-                if (ok) "✅ 已移除板塊 [$sectorName]"
-                else "⚠️ 板塊 [$sectorName] 不存在"
+                if (ok) "✅ 已移除板块 [$sectorName]"
+                else "⚠️ 板块 [$sectorName] 不存在"
             }
 
             "add_stock" -> {
                 if (sectorName.isBlank() || subSectorName.isBlank() || stockCode.isBlank())
-                    return "錯誤: 請提供 sector_name, sub_sector_name, stock_code"
+                    return "错误: 请提供 sector_name, sub_sector_name, stock_code"
                 val ok = LeaderStockPool.addStock(ctx, sectorName, subSectorName, stockCode)
                 if (ok) "✅ 已添加 [$stockCode] 到 [$sectorName / $subSectorName]"
-                else "⚠️ 添加失敗（可能已存在或板塊不存在）"
+                else "⚠️ 添加失败（可能已存在或板块不存在）"
             }
 
             "remove_stock" -> {
                 if (sectorName.isBlank() || subSectorName.isBlank() || stockCode.isBlank())
-                    return "錯誤: 請提供 sector_name, sub_sector_name, stock_code"
+                    return "错误: 请提供 sector_name, sub_sector_name, stock_code"
                 val ok = LeaderStockPool.removeStock(ctx, sectorName, subSectorName, stockCode)
-                if (ok) "✅ 已從 [$sectorName / $subSectorName] 移除 [$stockCode]"
-                else "⚠️ 移除失敗（股票不存在）"
+                if (ok) "✅ 已从 [$sectorName / $subSectorName] 移除 [$stockCode]"
+                else "⚠️ 移除失败（股票不存在）"
             }
 
             "set_concept" -> {
-                if (sectorName.isBlank()) return "錯誤: 請提供 sector_name"
+                if (sectorName.isBlank()) return "错误: 请提供 sector_name"
                 val ok = LeaderStockPool.setSectorConcept(ctx, sectorName, isConcept)
-                if (ok) "✅ 已將 [$sectorName] 標記為${if (isConcept) "概念炒作" else "產業主線"}"
-                else "⚠️ 板塊 [$sectorName] 不存在"
+                if (ok) "✅ 已将 [$sectorName] 标记为${if (isConcept) "概念炒作" else "产业主线"}"
+                else "⚠️ 板块 [$sectorName] 不存在"
             }
 
             "reset" -> {
                 LeaderStockPool.resetToDefault(ctx)
-                "✅ 龍頭股池已重置為默認配置"
+                "✅ 龙头股池已重置为默认配置"
             }
 
-            else -> "錯誤: 未知 action [$action]。支持: list, list_detail, add_sector, remove_sector, add_stock, remove_stock, set_concept, reset"
+            else -> "错误: 未知 action [$action]。支持: list, list_detail, add_sector, remove_sector, add_stock, remove_stock, set_concept, reset"
         }
     }
 }

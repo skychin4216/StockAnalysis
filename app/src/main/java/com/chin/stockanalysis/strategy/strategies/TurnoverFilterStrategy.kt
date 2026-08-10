@@ -13,14 +13,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * ## 換手率活躍策略（修正版）
+ * ## 换手率活跃策略（修正版）
  *
- * 直接使用 StockRealtime.turnoverRate 字段（來源於 DailySnapshotEntity.turnover_rate）。
- * 廢除舊版用成交額代替換手率的錯誤邏輯。
+ * 直接使用 StockRealtime.turnoverRate 字段（来源于 DailySnapshotEntity.turnover_rate）。
+ * 废除旧版用成交额代替换手率的错误逻辑。
  *
- * 篩選：換手率 3%-15%（過低不活躍，過高可能是出貨）且漲幅 >= 1%
- * 評分：換手率適中度(40%) + 漲幅(30%) + 連續放量(30%)
- * 新增：連續 3 日換手率遞增加分
+ * 筛选：换手率 3%-15%（过低不活跃，过高可能是出货）且涨幅 >= 1%
+ * 评分：换手率适中度(40%) + 涨幅(30%) + 连续放量(30%)
+ * 新增：连续 3 日换手率递增加分
  */
 class TurnoverFilterStrategy(
     private val screener: StockScreener
@@ -40,9 +40,9 @@ class TurnoverFilterStrategy(
     )
 
     override var weightFactors: List<WeightFactor> = listOf(
-        WeightFactor("turnover", "換手率適中度", 40, "3-10%最佳區間"),
+        WeightFactor("turnover", "换手率适中度", 40, "3-10%最佳区间"),
         WeightFactor("change", "涨幅得分", 30, "当日涨跌幅"),
-        WeightFactor("continuity", "連續放量", 30, "近3日換手率遞增")
+        WeightFactor("continuity", "连续放量", 30, "近3日换手率递增")
     )
 
     override suspend fun screen(): Result<ScreeningResult> = withContext(Dispatchers.IO) {
@@ -80,7 +80,7 @@ class TurnoverFilterStrategy(
         val db = StockDatabase.getInstance(screener.context)
         val dao = db.dailySnapshotDao()
 
-        // 使用真實換手率過濾
+        // 使用真实换手率过滤
         val candidates = pool.filter {
             it.turnoverRate >= turnoverMin &&
             it.turnoverRate <= turnoverMax &&
@@ -88,19 +88,19 @@ class TurnoverFilterStrategy(
             it.price > 2.0 &&
             it.amount > 30_000_000
         }
-        Log.i("TO_Strategy", "大盤: $marketDir, 候選: ${candidates.size}/${pool.size} (換手率${turnoverMin}-${turnoverMax}%)")
+        Log.i("TO_Strategy", "大盘: $marketDir, 候选: ${candidates.size}/${pool.size} (换手率${turnoverMin}-${turnoverMax}%)")
 
         val signals = mutableListOf<StrategySignal>()
 
         for (stock in candidates) {
             try {
-                // 讀取近 3 天歷史換手率，檢測連續放量
+                // 读取近 3 天历史换手率，检测连续放量
                 val history = dao.getByCode(stock.code, 3)
                 val histTurnovers = history.sortedBy { it.date }.map { it.turnoverRate }
                 val isIncreasing = histTurnovers.size >= 3 &&
                     histTurnovers[2] > histTurnovers[1] && histTurnovers[1] > histTurnovers[0]
 
-                // 換手率適中度評分 (0-40)：5-10% 最佳
+                // 换手率适中度评分 (0-40)：5-10% 最佳
                 val turnoverScore = when {
                     stock.turnoverRate in 5.0..10.0 -> 40
                     stock.turnoverRate in 4.0..12.0 -> 32
@@ -108,7 +108,7 @@ class TurnoverFilterStrategy(
                     else -> 15
                 }
 
-                // 漲幅評分 (0-30)
+                // 涨幅评分 (0-30)
                 val changeScore = when {
                     stock.changePercent > 7 -> 30
                     stock.changePercent > 5 -> 25
@@ -118,7 +118,7 @@ class TurnoverFilterStrategy(
                     else -> 5
                 }
 
-                // 連續放量評分 (0-30)
+                // 连续放量评分 (0-30)
                 val continuityScore = when {
                     isIncreasing && stock.turnoverRate > (histTurnovers.firstOrNull() ?: 0.0) * 1.3 -> 30
                     isIncreasing -> 24
@@ -130,9 +130,9 @@ class TurnoverFilterStrategy(
                 if (strength < strengthThreshold) continue
 
                 val reason = buildString {
-                    append("換手${"%.1f".format(stock.turnoverRate)}%")
-                    append(" 漲${"%.1f".format(stock.changePercent)}%")
-                    if (isIncreasing) append(" 連續放量")
+                    append("换手${"%.1f".format(stock.turnoverRate)}%")
+                    append(" 涨${"%.1f".format(stock.changePercent)}%")
+                    if (isIncreasing) append(" 连续放量")
                 }
 
                 signals.add(StrategySignal(
@@ -146,7 +146,7 @@ class TurnoverFilterStrategy(
         }
 
         val result = signals.sortedByDescending { it.strength }.take(config.maxResults)
-        Log.i("TO_Strategy", "計算完成: ${candidates.size} 候選 → ${result.size} 信號")
+        Log.i("TO_Strategy", "计算完成: ${candidates.size} 候选 → ${result.size} 信号")
         return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,
             signals = result, totalScanned = pool.size, scanTimeMs = System.currentTimeMillis() - startTime

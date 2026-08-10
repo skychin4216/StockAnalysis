@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  ## 實倉分析 DAG Pipeline v2
+  ## 實倉分析 DAG Pipeline v3
 
   使用 AMarketAnalysisEngine 進行六維大盤分析：
     1. 趨勢與形態（3日不新低 / 均線粘合 / 逃頂信號）
@@ -8,20 +8,22 @@
     3. 市場情緒（漲跌比 → 沸騰/溫和/冰點）
     4. 狀態機決策（推薦週期 + 倉位建議）
 
+  v3 新增：
+    - 新聞因子：實時新聞力度計算（使用 LocalDate.now() 獲取最新新聞）
+    - 做T評估：基於支撐/阻力位生成做T/反T信號
+
   結構：
     Layer 0: data_import, bg_manager
-    Layer 1: a_market_analysis（大盤K線六維分析）
-    Layer 2: real_holding_eval（逐持倉K線分析 + 操作建議）
-
-  擴展方式（在 NodeList 和 Links 中添加）：
-    Layer 3: t_trade_eval（做T/反T建議，讀取 n_a_market + n_rh_eval）
-    Layer 4: report_gen（持倉報告生成，聚合所有分析結果）
+    Layer 1: a_market_analysis, news_strength（並行）
+    Layer 2: real_holding_eval（逐持倉K線分析 + 新聞因子 + 操作建議）
+    Layer 3: t_trade_eval（做T/反T建議）
 
   大盤分析結果存入 context["n_a_market"]，
-  其他周期 Pipeline 也可直接加入 n_a_market 節點復用大盤分析。
+  新聞力度存入 context["n_news"]，
+  其他周期 Pipeline 也可直接加入這些節點復用。
 -->
-<DagPipeline id="real_holding_dag" name="實倉分析DAG Pipeline v2"
-    description="大盤K線六維分析→逐持倉評估→操作建議">
+<DagPipeline id="real_holding_dag" name="實倉分析DAG Pipeline v3"
+    description="大盤分析+新聞因子→逐持倉評估→做T建議">
 
   <NodeList>
     <!-- Layer 0: 數據源（並行） -->
@@ -33,11 +35,25 @@
     </Node>
     <Node id="n_bg" name="後臺暫停/恢復" module="bg_manager" />
 
-    <!-- Layer 1: A股大盤K線分析（六維綜合） -->
+    <!-- Layer 1: A股大盤K線分析 + 新聞力度（並行） -->
     <Node id="n_a_market" name="大盤K線分析" module="a_market_analysis" />
+    <Node id="n_news" name="新聞力度" module="news_strength">
+      <config>
+        <!-- 使用實時新聞，不依賴 tradeDate -->
+        <param name="useRealTime" value="true" />
+      </config>
+    </Node>
 
-    <!-- Layer 2: 實倉持倉評估（逐股K線分析 + 操作建議） -->
+    <!-- Layer 2: 實倉持倉評估（逐股K線分析 + 新聞因子 + 操作建議） -->
     <Node id="n_rh_eval" name="實倉持倉評估" module="real_holding_eval" />
+
+    <!-- Layer 3: 做T/反T建議 -->
+    <Node id="n_t_trade" name="做T評估" module="t_trade_eval">
+      <config>
+        <param name="basePositionRatio" value="0.3" />
+        <param name="maxSignalsPerStock" value="2" />
+      </config>
+    </Node>
   </NodeList>
 
   <Links>
@@ -49,11 +65,33 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 1 → 2: 大盤分析 → 實倉評估 -->
+    <!-- Layer 0 → 1: 數據導入 → 新聞力度 -->
+    <Link>
+      <SourceNodeId>n_import</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_news</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 1 → 2: 大盤分析 + 新聞 → 實倉評估 -->
     <Link>
       <SourceNodeId>n_a_market</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_rh_eval</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_news</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_rh_eval</TargetNodeId>
+      <TargetPortId>1</TargetPortId>
+    </Link>
+
+    <!-- Layer 2 → 3: 實倉評估 → 做T評估 -->
+    <Link>
+      <SourceNodeId>n_rh_eval</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_t_trade</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
   </Links>

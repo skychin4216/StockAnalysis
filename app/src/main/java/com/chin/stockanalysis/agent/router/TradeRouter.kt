@@ -13,7 +13,7 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 /**
- * ## 交易執行路由層
+ * ## 交易执行路由层
  *
  * Legacy: DagTradeExecutor (mid_term pipeline)
  * Agent: TradeExecutionAgent.executeTrade()
@@ -22,7 +22,7 @@ interface TradeExecutionService {
     suspend fun executeTrade(context: Context): TradeExecutionResult
 }
 
-/** Legacy 實現 — 調用 DAG Pipeline (mid_term) */
+/** Legacy 实现 — 调用 DAG Pipeline (mid_term) */
 class LegacyTradeExecutionService : TradeExecutionService {
     companion object {
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
@@ -32,7 +32,7 @@ class LegacyTradeExecutionService : TradeExecutionService {
         val engine = StrategyEngineHolder.get()
         val strategies = engine.getEnabledStrategiesByPeriod(HoldingPeriod.MID)
         if (strategies.isEmpty()) {
-            return TradeExecutionResult(success = false, reasoning = "無可用策略")
+            return TradeExecutionResult(success = false, reasoning = "无可用策略")
         }
 
         val today = LocalDate.now().format(DATE_FMT)
@@ -45,7 +45,7 @@ class LegacyTradeExecutionService : TradeExecutionService {
             orderType = "MidTermQuant"
         )
 
-        // 從 DB 讀取今日訂單構建 BuyOrder 列表
+        // 从 DB 读取今日订单构建 BuyOrder 列表
         val db = StockDatabase.getInstance(context)
         val orders = try { db.strategyTradeOrderDao().getByDate(today) } catch (_: Exception) { emptyList() }
         val buyOrders = orders.filter { it.status == "BUYING" || it.status == "PENDING" }.map { order ->
@@ -70,7 +70,7 @@ class LegacyTradeExecutionService : TradeExecutionService {
     }
 }
 
-/** Agent 實現 */
+/** Agent 实现 */
 class AgentTradeExecutionService : TradeExecutionService {
     override suspend fun executeTrade(context: Context): TradeExecutionResult {
         val agent = TradeExecutionAgent(context)

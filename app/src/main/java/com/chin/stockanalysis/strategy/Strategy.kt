@@ -144,16 +144,16 @@ enum class StrategySource(val label: String) {
 
 /** 持仓周期 */
 enum class HoldingPeriod(val label: String, val icon: String, val holdingDays: IntRange) {
-    ULTRA_SHORT("超短線", "⚡", 1..1),
-    SHORT("短線", "🤖", 1..14),
-    MID("中線", "📈", 30..180),
-    LONG("長線", "💎", 180..365)
+    ULTRA_SHORT("超短线", "⚡", 1..1),
+    SHORT("短线", "🤖", 1..14),
+    MID("中线", "📈", 30..180),
+    LONG("长线", "💎", 180..365)
 }
 
 /** 数据频率 */
 enum class DataFrequency(val label: String) {
-    TICK("逐筆"),
-    MIN5("5分鐘"),
+    TICK("逐笔"),
+    MIN5("5分钟"),
     DAILY("日K"),
-    WEEKLY("週K")
+    WEEKLY("周K")
 }

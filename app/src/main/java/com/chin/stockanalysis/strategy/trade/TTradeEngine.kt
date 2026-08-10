@@ -5,37 +5,44 @@ import com.chin.stockanalysis.stock.database.StockDatabase
 import kotlin.math.abs
 
 /**
- * 做T信號
+ * 做T信号
  */
 data class TTradeSignal(
     val stockCode: String,
     val stockName: String,
     val signalType: TTradeType,
     val suggestedPrice: Double,
-    val targetPrice: Double,      // 目標配對價格
-    val quantity: Int,            // 建議數量（底倉的30%-50%）
+    val targetPrice: Double,      // 目标配对价格
+    val quantity: Int,            // 建议数量（底仓的30%-50%）
     val reason: String,
-    val expectedProfitPct: Double, // 預期收益率
-    val periodType: String = ""   // 所屬週期
+    val expectedProfitPct: Double, // 预期收益率
+    val periodType: String = "",   // 所属周期
+    // ── v2 增强：趋势分析 ──
+    val trendDirection: String = "",  // "准备上升" / "准备下跌" / "上升中" / "下跌中" / "盘整"
+    val rsi: Double = 50.0,
+    val volumeRatio: Double = 1.0,   // 量比（今日/5日均量）
+    val patternName: String = "",     // 匹配到的K线形态名称
+    val patternDirection: String = "", // "BULLISH" / "BEARISH"
+    val confidence: Int = 50          // 信号置信度 0-100
 )
 
 /**
- * 做T交易類型
+ * 做T交易类型
  *
- * - T_BUY  ：做T買入（開倉腿），日內低買，等待高賣配對
- * - T_SELL ：做T賣出（配對腿），賣出之前做T買入的倉位，鎖定利潤
- * - RT_SELL：反T賣出（開倉腿），日內高賣底倉，等待低買回配對
- * - RT_BUY ：反T買回（配對腿），買回之前反T賣出的倉位，鎖定利潤
+ * - T_BUY  ：做T买入（开仓腿），日内低买，等待高卖配对
+ * - T_SELL ：做T卖出（配对腿），卖出之前做T买入的仓位，锁定利润
+ * - RT_SELL：反T卖出（开仓腿），日内高卖底仓，等待低买回配对
+ * - RT_BUY ：反T买回（配对腿），买回之前反T卖出的仓位，锁定利润
  */
 enum class TTradeType(val label: String, val desc: String) {
-    T_BUY("做T買入", "低買後當日高賣"),
-    T_SELL("做T賣出", "賣出之前做T買入的倉位"),
-    RT_SELL("反T賣出", "高賣後當日低買回"),
-    RT_BUY("反T買回", "買回之前反T賣出的倉位")
+    T_BUY("做T买入", "低买后当日高卖"),
+    T_SELL("做T卖出", "卖出之前做T买入的仓位"),
+    RT_SELL("反T卖出", "高卖后当日低买回"),
+    RT_BUY("反T买回", "买回之前反T卖出的仓位")
 }
 
 /**
- * 做T統計
+ * 做T统计
  */
 data class TTradeStats(
     val openCount: Int,
@@ -47,20 +54,20 @@ data class TTradeStats(
 /**
  * 做T/反T 引擎
  *
- * 在持有底倉的前提下，利用日內波動進行高拋低吸：
- * - 做T：價格接近支撐位時買入，反彈至阻力位賣出
- * - 反T：價格接近阻力位時賣出，回落至支撐位買回
+ * 在持有底仓的前提下，利用日内波动进行高抛低吸：
+ * - 做T：价格接近支撑位时买入，反弹至阻力位卖出
+ * - 反T：价格接近阻力位时卖出，回落至支撑位买回
  *
- * 每次做T不改變底倉總量，僅賺取日內差價。
+ * 每次做T不改变底仓总量，仅赚取日内差价。
  */
 class TTradeEngine(private val context: Context) {
 
     /**
-     * 生成做T信號
-     * @param stockCode 股票代碼
-     * @param basePositionQty 底倉數量
-     * @param periodType 週期類型
-     * @return 做T信號列表
+     * 生成做T信号（v2 - 增强版：RSI + 量能 + K线形态 + 趋势方向）
+     * @param stockCode 股票代码
+     * @param basePositionQty 底仓数量
+     * @param periodType 周期类型
+     * @return 做T信号列表
      */
     suspend fun generateSignals(
         stockCode: String,
@@ -75,108 +82,167 @@ class TTradeEngine(private val context: Context) {
         val latest = snaps.last()
         val stockName = latest.name
 
-        // 計算關鍵價位
+        // ── 基础均线和价位 ──
         val ma5 = snaps.takeLast(5).map { it.close }.average()
         val ma10 = snaps.takeLast(10).map { it.close }.average()
+        val ma20 = snaps.takeLast(minOf(20, snaps.size)).map { it.close }.average()
         val window20 = snaps.takeLast(minOf(20, snaps.size))
         val recentLow = window20.map { it.low }.minOrNull() ?: latest.close
         val recentHigh = window20.map { it.high }.maxOrNull() ?: latest.close
         val avgBody = snaps.takeLast(10).map { abs(it.close - it.open) }.average()
 
-        // 支撐位和阻力位
+        // 支撑位和阻力位
         val supportPrice = listOf(recentLow, ma5 * 0.98, ma10 * 0.97).maxOrNull() ?: latest.close
         val resistancePrice = listOf(recentHigh, ma5 * 1.02, ma10 * 1.03).minOrNull() ?: latest.close
 
-        // 做T數量：底倉的30%-50%（取40%），並取整到100股
+        // ── v2 增强分析 ──
+        val closes = snaps.map { it.close }
+        val rsi = com.chin.stockanalysis.strategy.analysis.RsiCalculator.compute(closes)
+        val vol5 = snaps.takeLast(5).map { it.volume }.average()
+        val volumeRatio = if (vol5 > 0) latest.volume / vol5 else 1.0
+
+        // K线形态检测
+        val patterns = com.chin.stockanalysis.strategy.analysis.CandlePatternDetector.detect(snaps)
+        val topPattern = patterns.maxByOrNull { it.strength }
+        val patternName = topPattern?.patternName ?: ""
+        val patternDir = topPattern?.direction?.name ?: ""
+
+        // 趋势方向判断
+        val trendDir = analyzeTrendDirection(snaps, ma5, ma10, ma20, rsi, topPattern)
+
+        // 做T数量：底仓的 40%
         val tQty = if (basePositionQty > 0) {
             ((basePositionQty * 0.4).toInt().coerceAtLeast(100) / 100) * 100
         } else 0
 
-        // 當前價接近支撐位 → 做T買入信號（先買後賣）
+        // ── 做T买入信号 ──
         if (supportPrice > 0) {
             val priceToSupport = (latest.close - supportPrice) / supportPrice
             if (priceToSupport < 0.02 && tQty > 0) {
-                val targetPrice = ma5 // 目標賣出在MA5附近
+                val targetPrice = ma5
                 val expectedPct = (targetPrice - latest.close) / latest.close * 100
-                if (expectedPct > 0.5) { // 至少0.5%的預期收益
+                if (expectedPct > 0.5) {
+                    // 置信度评分
+                    var conf = 50
+                    val reasons = mutableListOf<String>()
+                    reasons.add("接近支撑位 ${"%.2f".format(supportPrice)}")
+
+                    if (rsi < 30) { conf += 20; reasons.add("RSI超卖${"%.0f".format(rsi)}") }
+                    else if (rsi < 40) { conf += 10; reasons.add("RSI偏低${"%.0f".format(rsi)}") }
+                    else if (rsi > 70) { conf -= 20; reasons.add("⚠️RSI超买${"%.0f".format(rsi)}") }
+
+                    if (volumeRatio < 0.7) { conf += 10; reasons.add("缩量回调") }
+                    if (volumeRatio > 2.0) { conf -= 10; reasons.add("⚠️放量异常") }
+
+                    if (topPattern?.direction == com.chin.stockanalysis.strategy.analysis.CandlePatternDetector.Direction.BULLISH) {
+                        conf += 15; reasons.add("K线形态:$patternName(看多)")
+                    } else if (topPattern?.direction == com.chin.stockanalysis.strategy.analysis.CandlePatternDetector.Direction.BEARISH) {
+                        conf -= 15; reasons.add("⚠️K线形态:$patternName(看空)")
+                    }
+
+                    if (trendDir.contains("上升")) { conf += 10; reasons.add("趋势:$trendDir") }
+                    if (trendDir.contains("下跌")) { conf -= 15; reasons.add("⚠️趋势:$trendDir") }
+
+                    conf = conf.coerceIn(0, 100)
+
                     signals.add(
                         TTradeSignal(
-                            stockCode = stockCode,
-                            stockName = stockName,
+                            stockCode = stockCode, stockName = stockName,
                             signalType = TTradeType.T_BUY,
-                            suggestedPrice = latest.close,
-                            targetPrice = targetPrice,
+                            suggestedPrice = latest.close, targetPrice = targetPrice,
                             quantity = tQty,
-                            reason = "股價接近支撐位(${ "%.2f".format(supportPrice) })，MA5=${ "%.2f".format(ma5) }，預期反彈至MA5附近；近10日平均振幅${ "%.2f".format(avgBody) }",
-                            expectedProfitPct = expectedPct,
-                            periodType = periodType
+                            reason = reasons.joinToString("；"),
+                            expectedProfitPct = expectedPct, periodType = periodType,
+                            trendDirection = trendDir, rsi = rsi,
+                            volumeRatio = volumeRatio, patternName = patternName,
+                            patternDirection = patternDir, confidence = conf
                         )
                     )
                 }
             }
         }
 
-        // 當前價接近阻力位 → 反T賣出信號（先賣後買）
+        // ── 反T卖出信号 ──
         if (resistancePrice > 0) {
             val priceToResistance = (resistancePrice - latest.close) / resistancePrice
             if (priceToResistance < 0.02 && tQty > 0) {
-                val targetPrice = ma5 // 目標買回在MA5附近
+                val targetPrice = ma5
                 val expectedPct = (latest.close - targetPrice) / latest.close * 100
                 if (expectedPct > 0.5) {
+                    var conf = 50
+                    val reasons = mutableListOf<String>()
+                    reasons.add("接近阻力位 ${"%.2f".format(resistancePrice)}")
+
+                    if (rsi > 70) { conf += 20; reasons.add("RSI超买${"%.0f".format(rsi)}") }
+                    else if (rsi > 60) { conf += 10; reasons.add("RSI偏高${"%.0f".format(rsi)}") }
+                    else if (rsi < 30) { conf -= 20; reasons.add("⚠️RSI超卖${"%.0f".format(rsi)}") }
+
+                    if (volumeRatio > 1.5) { conf += 10; reasons.add("放量冲高") }
+                    if (volumeRatio < 0.5) { conf -= 10; reasons.add("⚠️缩量无力") }
+
+                    if (topPattern?.direction == com.chin.stockanalysis.strategy.analysis.CandlePatternDetector.Direction.BEARISH) {
+                        conf += 15; reasons.add("K线形态:$patternName(看空)")
+                    } else if (topPattern?.direction == com.chin.stockanalysis.strategy.analysis.CandlePatternDetector.Direction.BULLISH) {
+                        conf -= 15; reasons.add("⚠️K线形态:$patternName(看多)")
+                    }
+
+                    if (trendDir.contains("下跌")) { conf += 10; reasons.add("趋势:$trendDir") }
+                    if (trendDir.contains("上升")) { conf -= 15; reasons.add("⚠️趋势:$trendDir") }
+
+                    conf = conf.coerceIn(0, 100)
+
                     signals.add(
                         TTradeSignal(
-                            stockCode = stockCode,
-                            stockName = stockName,
+                            stockCode = stockCode, stockName = stockName,
                             signalType = TTradeType.RT_SELL,
-                            suggestedPrice = latest.close,
-                            targetPrice = targetPrice,
+                            suggestedPrice = latest.close, targetPrice = targetPrice,
                             quantity = tQty,
-                            reason = "股價接近阻力位(${ "%.2f".format(resistancePrice) })，MA5=${ "%.2f".format(ma5) }，預期回落至MA5附近；近10日平均振幅${ "%.2f".format(avgBody) }",
-                            expectedProfitPct = expectedPct,
-                            periodType = periodType
+                            reason = reasons.joinToString("；"),
+                            expectedProfitPct = expectedPct, periodType = periodType,
+                            trendDirection = trendDir, rsi = rsi,
+                            volumeRatio = volumeRatio, patternName = patternName,
+                            patternDirection = patternDir, confidence = conf
                         )
                     )
                 }
             }
         }
 
-        // 檢查是否有未配對的T交易需要配對
+        // ── 配对腿信号 ──
         val openTrades = db.tTradeRecordDao().getOpenTrades(periodType)
             .filter { it.stockCode == stockCode }
         for (openTrade in openTrades) {
             when (openTrade.tradeType) {
                 "T_BUY" -> {
-                    // 做T買入後，如果價格到達目標，生成賣出配對信號
-                    if (latest.close >= openTrade.price * 1.005) { // 至少0.5%收益
+                    if (latest.close >= openTrade.price * 1.005) {
                         signals.add(
                             TTradeSignal(
-                                stockCode = stockCode,
-                                stockName = stockName,
+                                stockCode = stockCode, stockName = stockName,
                                 signalType = TTradeType.T_SELL,
-                                suggestedPrice = latest.close,
-                                targetPrice = latest.close,
+                                suggestedPrice = latest.close, targetPrice = latest.close,
                                 quantity = openTrade.quantity,
-                                reason = "做T買入(${openTrade.price})已到目標，賣出配對鎖定利潤",
+                                reason = "做T买入(${openTrade.price})已到目标，卖出配对锁定利润；趋势:$trendDir",
                                 expectedProfitPct = (latest.close - openTrade.price) / openTrade.price * 100,
-                                periodType = periodType
+                                periodType = periodType,
+                                trendDirection = trendDir, rsi = rsi,
+                                volumeRatio = volumeRatio, confidence = 80
                             )
                         )
                     }
                 }
                 "RT_SELL" -> {
-                    // 反T賣出後，如果價格回落到目標，生成買回配對信號
                     if (latest.close <= openTrade.price * 0.995) {
                         signals.add(
                             TTradeSignal(
-                                stockCode = stockCode,
-                                stockName = stockName,
+                                stockCode = stockCode, stockName = stockName,
                                 signalType = TTradeType.RT_BUY,
-                                suggestedPrice = latest.close,
-                                targetPrice = latest.close,
+                                suggestedPrice = latest.close, targetPrice = latest.close,
                                 quantity = openTrade.quantity,
-                                reason = "反T賣出(${openTrade.price})已到目標，買回配對鎖定利潤",
+                                reason = "反T卖出(${openTrade.price})已到目标，买回配对锁定利润；趋势:$trendDir",
                                 expectedProfitPct = (openTrade.price - latest.close) / openTrade.price * 100,
-                                periodType = periodType
+                                periodType = periodType,
+                                trendDirection = trendDir, rsi = rsi,
+                                volumeRatio = volumeRatio, confidence = 80
                             )
                         )
                     }
@@ -188,12 +254,64 @@ class TTradeEngine(private val context: Context) {
     }
 
     /**
-     * 執行做T交易
+     * 趋势方向判断：综合均线排列、RSI、K线形态
+     */
+    private fun analyzeTrendDirection(
+        snaps: List<com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity>,
+        ma5: Double, ma10: Double, ma20: Double,
+        rsi: Double,
+        pattern: com.chin.stockanalysis.strategy.analysis.CandlePatternDetector.PatternMatch?
+    ): String {
+        val latest = snaps.last()
+        val price = latest.close
+
+        // 均线排列评分
+        var maScore = 0
+        if (ma5 > ma10 && ma10 > ma20) maScore = 2        // 多头排列
+        else if (ma5 < ma10 && ma10 < ma20) maScore = -2   // 空头排列
+        else if (price > ma5 && ma5 > ma10) maScore = 1    // 偏多
+        else if (price < ma5 && ma5 < ma10) maScore = -1   // 偏空
+
+        // 近3日涨跌
+        val last3 = snaps.takeLast(3)
+        val change3 = if (last3.size >= 2 && last3.first().close > 0)
+            (last3.last().close - last3.first().close) / last3.first().close * 100
+        else 0.0
+
+        // 综合评分
+        val totalScore = maScore + when {
+            rsi > 70 -> 1
+            rsi < 30 -> -1
+            else -> 0
+        } + when {
+            change3 > 3 -> 1
+            change3 < -3 -> -1
+            else -> 0
+        } + when {
+            pattern?.direction == com.chin.stockanalysis.strategy.analysis.CandlePatternDetector.Direction.BULLISH -> 1
+            pattern?.direction == com.chin.stockanalysis.strategy.analysis.CandlePatternDetector.Direction.BEARISH -> -1
+            else -> 0
+        }
+
+        // 判断趋势方向 + 是否准备转折
+        return when {
+            totalScore >= 3 -> "上升中"
+            totalScore == 2 -> if (change3 > 0) "准备上升" else "盘整偏多"
+            totalScore == 1 -> "盘整偏多"
+            totalScore == 0 -> "盘整"
+            totalScore == -1 -> "盘整偏空"
+            totalScore == -2 -> if (change3 < 0) "准备下跌" else "盘整偏空"
+            else -> "下跌中"
+        }
+    }
+
+    /**
+     * 执行做T交易
      *
-     * - 開倉腿（T_BUY / RT_SELL）：插入新的 OPEN 記錄
-     * - 配對腿（T_SELL / RT_BUY）：找到對應的 OPEN 開倉腿並關閉，計算盈虧
+     * - 开仓腿（T_BUY / RT_SELL）：插入新的 OPEN 记录
+     * - 配对腿（T_SELL / RT_BUY）：找到对应的 OPEN 开仓腿并关闭，计算盈亏
      *
-     * @return 開倉腿返回新記錄 id；配對腿返回被關閉的開倉腿 id（找不到時插入新記錄並返回其 id）
+     * @return 开仓腿返回新记录 id；配对腿返回被关闭的开仓腿 id（找不到时插入新记录并返回其 id）
      */
     suspend fun executeTTrade(signal: TTradeSignal, periodType: String): Long {
         val db = StockDatabase.getInstance(context)
@@ -206,7 +324,7 @@ class TTradeEngine(private val context: Context) {
             TTradeType.RT_BUY -> "RT_BUY"
         }
 
-        // 配對腿：T_SELL 配對 T_BUY，RT_BUY 配對 RT_SELL
+        // 配对腿：T_SELL 配对 T_BUY，RT_BUY 配对 RT_SELL
         if (signal.signalType == TTradeType.T_SELL || signal.signalType == TTradeType.RT_BUY) {
             val targetType = if (signal.signalType == TTradeType.T_SELL) "T_BUY" else "RT_SELL"
             val openTrade = db.tTradeRecordDao()
@@ -228,10 +346,10 @@ class TTradeEngine(private val context: Context) {
                 db.tTradeRecordDao().closeTrade(openTrade.id, pairedPrice, profit, profitPct)
                 return openTrade.id
             }
-            // 找不到對應開倉腿時，仍記錄該筆交易（便於事後核對）
+            // 找不到对应开仓腿时，仍记录该笔交易（便于事后核对）
         }
 
-        // 開倉腿：插入新的 OPEN 記錄
+        // 开仓腿：插入新的 OPEN 记录
         val record = TTradeRecordEntity(
             stockCode = signal.stockCode,
             stockName = signal.stockName,
@@ -246,9 +364,9 @@ class TTradeEngine(private val context: Context) {
     }
 
     /**
-     * 手動配對完成一筆未平倉的T交易
-     * @param tradeId 開倉腿記錄 id（T_BUY 或 RT_SELL）
-     * @param pairedPrice 配對價格（做T的賣出價 / 反T的買回價）
+     * 手动配对完成一笔未平仓的T交易
+     * @param tradeId 开仓腿记录 id（T_BUY 或 RT_SELL）
+     * @param pairedPrice 配对价格（做T的卖出价 / 反T的买回价）
      */
     suspend fun closeTTrade(tradeId: Long, pairedPrice: Double) {
         val db = StockDatabase.getInstance(context)
@@ -271,7 +389,7 @@ class TTradeEngine(private val context: Context) {
     }
 
     /**
-     * 獲取做T統計
+     * 获取做T统计
      */
     suspend fun getTTradeStats(periodType: String): TTradeStats {
         val db = StockDatabase.getInstance(context)
@@ -290,18 +408,18 @@ class TTradeEngine(private val context: Context) {
     }
 
     // ═══════════════════════════════════════════════════
-    // 做T推薦記錄管理
+    // 做T推荐记录管理
     // ═══════════════════════════════════════════════════
 
     /**
-     * 將生成的做T信號保存為推薦記錄（自動去重）
+     * 将生成的做T信号保存为推荐记录（自动去重）
      *
-     * 同一股票、同一天、同一信號類型只保存一條。
-     * 使用 IGNORE 策略，重複插入會被忽略。
+     * 同一股票、同一天、同一信号类型只保存一条。
+     * 使用 IGNORE 策略，重复插入会被忽略。
      *
-     * @param signals 做T信號列表
-     * @param source 來源："REAL"=真實持倉 / "SIMULATED"=模擬持倉
-     * @return 新保存的推薦數量
+     * @param signals 做T信号列表
+     * @param source 来源："REAL"=真实持仓 / "SIMULATED"=模拟持仓
+     * @return 新保存的推荐数量
      */
     suspend fun saveRecommendations(
         signals: List<TTradeSignal>,
@@ -321,7 +439,7 @@ class TTradeEngine(private val context: Context) {
                 TTradeType.RT_BUY -> "RT_BUY"
             }
 
-            // 檢查是否已存在相同的待處理推薦
+            // 检查是否已存在相同的待处理推荐
             val exists = db.tTradeRecommendationDao().existsPending(today, signal.stockCode, signalTypeStr)
             if (exists > 0) continue
 
@@ -344,13 +462,13 @@ class TTradeEngine(private val context: Context) {
         }
 
         if (saved > 0) {
-            android.util.Log.i("TTradeEngine", "保存 $saved 條做T推薦 (source=$source, period=$periodType)")
+            android.util.Log.i("TTradeEngine", "保存 $saved 条做T推荐 (source=$source, period=$periodType)")
         }
         return saved
     }
 
     /**
-     * 獲取今日待處理的做T推薦
+     * 获取今日待处理的做T推荐
      */
     suspend fun getTodayPendingRecommendations(): List<TTradeRecommendationEntity> {
         val db = StockDatabase.getInstance(context)
@@ -359,7 +477,7 @@ class TTradeEngine(private val context: Context) {
     }
 
     /**
-     * 獲取今日所有做T推薦（含已處理）
+     * 获取今日所有做T推荐（含已处理）
      */
     suspend fun getTodayRecommendations(): List<TTradeRecommendationEntity> {
         val db = StockDatabase.getInstance(context)
@@ -368,7 +486,7 @@ class TTradeEngine(private val context: Context) {
     }
 
     /**
-     * 獲取最近N天的做T推薦歷史
+     * 获取最近N天的做T推荐历史
      */
     suspend fun getRecommendationHistory(days: Int = 7): List<TTradeRecommendationEntity> {
         val db = StockDatabase.getInstance(context)
@@ -377,16 +495,16 @@ class TTradeEngine(private val context: Context) {
     }
 
     /**
-     * 標記推薦為已執行
+     * 标记推荐为已执行
      */
     suspend fun markRecommendationExecuted(recommendationId: Long, executedPrice: Double) {
         val db = StockDatabase.getInstance(context)
         db.tTradeRecommendationDao().markExecuted(recommendationId, executedPrice)
-        android.util.Log.i("TTradeEngine", "✅ 推薦 #$recommendationId 已標記為執行 @ $executedPrice")
+        android.util.Log.i("TTradeEngine", "✅ 推荐 #$recommendationId 已标记为执行 @ $executedPrice")
     }
 
     /**
-     * 標記推薦為已忽略
+     * 标记推荐为已忽略
      */
     suspend fun markRecommendationIgnored(recommendationId: Long) {
         val db = StockDatabase.getInstance(context)
@@ -394,20 +512,20 @@ class TTradeEngine(private val context: Context) {
     }
 
     /**
-     * 過期處理：將前一天仍為 PENDING 的推薦標記為 EXPIRED
+     * 过期处理：将前一天仍为 PENDING 的推荐标记为 EXPIRED
      */
     suspend fun expireOldRecommendations(): Int {
         val db = StockDatabase.getInstance(context)
         val today = java.time.LocalDate.now().toString()
         val expired = db.tTradeRecommendationDao().expireOld(today)
         if (expired > 0) {
-            android.util.Log.i("TTradeEngine", "⏰ $expired 條做T推薦已過期")
+            android.util.Log.i("TTradeEngine", "⏰ $expired 条做T推荐已过期")
         }
         return expired
     }
 
     /**
-     * 獲取今日推薦統計
+     * 获取今日推荐统计
      */
     suspend fun getRecommendationStats(): RecommendationStats {
         val db = StockDatabase.getInstance(context)
@@ -424,17 +542,17 @@ class TTradeEngine(private val context: Context) {
     }
 
     // ═══════════════════════════════════════════════════
-    // 做T推薦結果跟蹤（收盤統計）
+    // 做T推荐结果跟踪（收盘统计）
     // ═══════════════════════════════════════════════════
 
     /**
-     * 跟蹤推薦結果：更新價格軌跡並檢查目標是否觸及
+     * 跟踪推荐结果：更新价格轨迹并检查目标是否触及
      *
-     * 每次後台監控時調用，對所有 PENDING/TARGET_HIT 的推薦：
-     * - 更新 peak/trough 價格
-     * - 檢查目標價是否觸及
+     * 每次后台监控时调用，对所有 PENDING/TARGET_HIT 的推荐：
+     * - 更新 peak/trough 价格
+     * - 检查目标价是否触及
      *
-     * @param currentPrices 當前價格 Map(stockCode -> price)
+     * @param currentPrices 当前价格 Map(stockCode -> price)
      */
     suspend fun trackOutcomeForRecommendations(currentPrices: Map<String, Double>) {
         if (currentPrices.isEmpty()) return
@@ -445,14 +563,14 @@ class TTradeEngine(private val context: Context) {
 
         for (rec in recs) {
             val price = currentPrices[rec.stockCode] ?: continue
-            // 更新價格軌跡
+            // 更新价格轨迹
             db.tTradeRecommendationDao().updatePriceTracking(rec.id, price)
 
-            // 檢查目標是否觸及
+            // 检查目标是否触及
             if (!rec.targetHit) {
                 val hit = when (rec.signalType) {
-                    "T_BUY" -> price >= rec.targetPrice  // 低買後價格漲到目標
-                    "RT_SELL" -> price <= rec.targetPrice // 高賣後價格跌到目標
+                    "T_BUY" -> price >= rec.targetPrice  // 低买后价格涨到目标
+                    "RT_SELL" -> price <= rec.targetPrice // 高卖后价格跌到目标
                     else -> false
                 }
                 if (hit) {
@@ -468,40 +586,40 @@ class TTradeEngine(private val context: Context) {
         }
 
         if (hitCount > 0) {
-            android.util.Log.i("TTradeEngine", "做T跟蹤: $hitCount 條推薦目標價已觸及")
+            android.util.Log.i("TTradeEngine", "做T跟踪: $hitCount 条推荐目标价已触及")
         }
     }
 
     /**
-     * 收盤時標記當日所有未處理的推薦為 TARGET_MISSED
-     * 並計算虛擬盈虧（基於收盤價 vs 推薦價）
+     * 收盘时标记当日所有未处理的推荐为 TARGET_MISSED
+     * 并计算虚拟盈亏（基于收盘价 vs 推荐价）
      */
     suspend fun markDayEnd(date: String) {
         val db = StockDatabase.getInstance(context)
-        // 先計算所有 PENDING 推薦的虛擬盈虧
+        // 先计算所有 PENDING 推荐的虚拟盈亏
         val pending = db.tTradeRecommendationDao().getPendingByDate(date)
         for (rec in pending) {
             val profitPct = when (rec.signalType) {
                 "T_BUY" -> {
-                    // 假設在推薦價買入，收盤時賣出
+                    // 假设在推荐价买入，收盘时卖出
                     val peakOrClose = if (rec.peakPriceAfter > 0) rec.peakPriceAfter else rec.suggestedPrice
                     (peakOrClose - rec.suggestedPrice) / rec.suggestedPrice * 100
                 }
                 "RT_SELL" -> {
-                    // 假設在推薦價賣出，收盤時買回
+                    // 假设在推荐价卖出，收盘时买回
                     val troughOrClose = if (rec.troughPriceAfter > 0) rec.troughPriceAfter else rec.suggestedPrice
                     (rec.suggestedPrice - troughOrClose) / rec.suggestedPrice * 100
                 }
                 else -> 0.0
             }
-            // 逐條更新虛擬盈虧（修復：避免批量覆蓋）
+            // 逐条更新虚拟盈亏（修复：避免批量覆盖）
             db.tTradeRecommendationDao().markDayEndById(rec.id, profitPct)
         }
-        android.util.Log.i("TTradeEngine", "收盤統計: $date 共 ${pending.size} 條推薦已結算")
+        android.util.Log.i("TTradeEngine", "收盘统计: $date 共 ${pending.size} 条推荐已结算")
     }
 
     /**
-     * 獲取某日某週期的做T統計摘要
+     * 获取某日某周期的做T统计摘要
      */
     suspend fun getDailySummary(date: String, periodType: String): DailyTSummary {
         val db = StockDatabase.getInstance(context)
@@ -513,7 +631,7 @@ class TTradeEngine(private val context: Context) {
         val executedCount = stats?.executedCount ?: 0
         val virtualSuccessRate = if (total > 0) hitCount.toDouble() / total * 100 else 0.0
 
-        // 實際成功率：已執行中盈利的比例
+        // 实际成功率：已执行中盈利的比例
         val executedList = details.filter { it.status == "EXECUTED" }
         val executedProfitable = executedList.count { it.executedPrice > 0 }
         val actualSuccessRate = if (executedList.isNotEmpty()) executedProfitable.toDouble() / executedList.size * 100 else 0.0
@@ -532,7 +650,7 @@ class TTradeEngine(private val context: Context) {
     }
 
     /**
-     * 獲取某日所有週期的做T統計摘要
+     * 获取某日所有周期的做T统计摘要
      */
     suspend fun getDailyAllPeriodSummary(date: String): DailyTSummary {
         val db = StockDatabase.getInstance(context)
@@ -562,10 +680,10 @@ class TTradeEngine(private val context: Context) {
     }
 
     /**
-     * 獲取做T成功率（跨天匯總）
+     * 获取做T成功率（跨天汇总）
      *
-     * @param days 統計天數（默认7天）
-     * @return TTradeSuccessRate 包含總成功率、做T/反T分別成功率、平均盈虧
+     * @param days 统计天数（默认7天）
+     * @return TTradeSuccessRate 包含总成功率、做T/反T分别成功率、平均盈亏
      */
     suspend fun getSuccessRate(days: Int = 7): TTradeSuccessRate {
         val db = StockDatabase.getInstance(context)
@@ -576,7 +694,7 @@ class TTradeEngine(private val context: Context) {
         val total = stats.total
         val hitCount = stats.hitCount
         val profitableCount = stats.profitableCount
-        val settledCount = stats.tCount + stats.rtCount  // 已結算的記錄
+        val settledCount = stats.tCount + stats.rtCount  // 已结算的记录
 
         val overallRate = if (settledCount > 0) hitCount.toDouble() / settledCount * 100 else 0.0
         val profitRate = if (settledCount > 0) profitableCount.toDouble() / settledCount * 100 else 0.0
@@ -600,24 +718,24 @@ class TTradeEngine(private val context: Context) {
 }
 
 /**
- * 做T推薦統計
+ * 做T推荐统计
  */
 data class RecommendationStats(
-    val todayPending: Int,     // 今日待處理推薦數
-    val weekExecuted: Int      // 近7天已執行推薦數
+    val todayPending: Int,     // 今日待处理推荐数
+    val weekExecuted: Int      // 近7天已执行推荐数
 )
 
-/** 做T成功率統計（跨天匯總） */
+/** 做T成功率统计（跨天汇总） */
 data class TTradeSuccessRate(
     val days: Int,
     val total: Int,
     val hitCount: Int,
     val profitableCount: Int,
-    val overallSuccessRate: Double,   // 目標觸及率 %
+    val overallSuccessRate: Double,   // 目标触及率 %
     val profitRate: Double,           // 盈利比例 %
-    val tCount: Int,                  // 做T次數
-    val rtCount: Int,                 // 反T次數
+    val tCount: Int,                  // 做T次数
+    val rtCount: Int,                 // 反T次数
     val tSuccessRate: Double,         // 做T成功率 %
     val rtSuccessRate: Double,        // 反T成功率 %
-    val avgVirtualProfitPct: Double   // 平均虛擬盈虧 %
+    val avgVirtualProfitPct: Double   // 平均虚拟盈亏 %
 )

@@ -17,11 +17,11 @@ import com.chin.stockanalysis.strategy.HoldingPeriod
  *   3. AI 精选 Top3-5 → 最终推荐
  *   4. 独立持仓 (orderType="ShortTermQuant")  顶部显示
  *
- * onCreateView / initEngine / DAG Pipeline / 回溯測試 / 擬合報告 已由基類 QuantFragmentBase 統一提供。
+ * onCreateView / initEngine / DAG Pipeline / 回溯测试 / 拟合报告 已由基类 QuantFragmentBase 统一提供。
  */
 class ShortTermQuantFragment : QuantFragmentBase() {
 
-    /** 短線週期選擇（持倉 1 天 ~ 2 週） */
+    /** 短线周期选择（持仓 1 天 ~ 2 周） */
     private var selectedPeriods: Set<Int> = setOf(3)
 
     companion object {
@@ -33,7 +33,7 @@ class ShortTermQuantFragment : QuantFragmentBase() {
     }
 
     override fun getQuantType() = "ShortTermQuant"
-    override val positionTitlePrefix = "短線量化"
+    override val positionTitlePrefix = "短线量化"
     override fun getDefaultUseCaseId() = "short_term"
 
     override fun onBuildClick() {
@@ -42,13 +42,13 @@ class ShortTermQuantFragment : QuantFragmentBase() {
             useCaseId = "short_term",
             orderType = "shortterm",
             importDays = 60,
-            titlePrefix = "短線"
+            titlePrefix = "短线"
         )
     }
 
     override fun onFittingClick() {
         showFittingParamsReport(
-            titlePrefix = "短線",
+            titlePrefix = "短线",
             periodLabel = selectedPeriods.joinToString(",") + "日"
         )
     }
@@ -57,7 +57,7 @@ class ShortTermQuantFragment : QuantFragmentBase() {
         runHistoricalBacktrack(
             holdingPeriod = null,
             tradingDays = 30,
-            titlePrefix = "短線"
+            titlePrefix = "短线"
         )
     }
 
@@ -66,21 +66,21 @@ class ShortTermQuantFragment : QuantFragmentBase() {
     // ── buildUI ──
 
     override fun buildUI() {
-        addTitleRow("🤖 短线量化系统 (Zipline Pipeline + AI精选)", textSize = 16f)
+        addTitleRow(getString(com.chin.stockanalysis.R.string.title_short_system), textSize = 16f)
 
         val (configRow, _, _) = createDatePickerRow(
-            tipText = "📊 持倉1-14天 | 最多5只 | 技術+資金",
+            tipText = "📊 持仓1-14天 | 最多5只 | 技术+资金",
             tipColor = "#1565C0"
         )
         rootLayout.addView(configRow)
 
-        // ── 週期選擇行（短線持倉 1 日 ~ 2 週） ──
+        // ── 周期选择行（短线持仓 1 日 ~ 2 周） ──
         val periodRow = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             setPadding(8, 4, 8, 4); setBackgroundColor(Color.WHITE)
         }
         periodRow.addView(android.widget.TextView(requireContext()).apply {
-            text = "📊 週期:"; textSize = 11f
+            text = "📊 周期:"; textSize = 11f
             setTextColor(Color.parseColor("#333333"))
             setTypeface(null, Typeface.BOLD); setPadding(0, 0, 4, 0)
         })
@@ -101,7 +101,7 @@ class ShortTermQuantFragment : QuantFragmentBase() {
         periodRow.addView(periodRadioGroup)
         rootLayout.addView(periodRow)
 
-        // ── 進度行 + 按鈕行 + 分隔線 + 持倉區 ──
+        // ── 进度行 + 按钮行 + 分隔线 + 持仓区 ──
         rootLayout.addView(createButtonRow())
         rootLayout.addView(createProgressRow())
         addSeparator()

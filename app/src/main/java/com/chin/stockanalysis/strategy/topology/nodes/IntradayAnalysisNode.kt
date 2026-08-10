@@ -10,16 +10,16 @@ import java.time.LocalDate
 import java.time.LocalTime
 
 /**
- * ## 盤中 K 線分析節點
+ * ## 盘中 K 线分析节点
  *
- * 在交易時段（9:30-11:30, 13:00-15:00）自動獲取候選股的 5 分鐘 K 線，
- * 計算 VWAP、盤中均線、量能變化等指標，存入 context 供下游節點使用。
+ * 在交易时段（9:30-11:30, 13:00-15:00）自动获取候选股的 5 分钟 K 线，
+ * 计算 VWAP、盘中均线、量能变化等指标，存入 context 供下游节点使用。
  *
- * 非交易時段自動跳過（不影響 Pipeline 流程）。
+ * 非交易时段自动跳过（不影响 Pipeline 流程）。
  *
- * ### 輸出
+ * ### 输出
  * - `context.setStageOutput(nodeId, IntradayAnalysisResult)`
- * - 盤中指標存入 `context["intraday_indicators"]`
+ * - 盘中指标存入 `context["intraday_indicators"]`
  */
 data class IntradayAnalysisResult(
     val indicators: Map<String, IntradayAnalyzer.IntradayIndicators> = emptyMap(),
@@ -32,52 +32,52 @@ data class IntradayAnalysisResult(
 class IntradayAnalysisNode(
     private val intervalMin: Int = 5,
     private val minBars: Int = 5
-) : BaseNode<Any, IntradayAnalysisResult>("intraday_analysis", "盤中K線分析", NodeType.DATA_SOURCE) {
+) : BaseNode<Any, IntradayAnalysisResult>("intraday_analysis", "盘中K线分析", NodeType.DATA_SOURCE) {
 
     companion object {
         private const val TAG = "IntradayAnalysis"
     }
 
     override suspend fun execute(context: PipelineContext, input: Any): IntradayAnalysisResult {
-        // 判斷是否在交易時段
+        // 判断是否在交易时段
         val now = LocalTime.now()
         val morningSession = now >= LocalTime.of(9, 30) && now <= LocalTime.of(11, 30)
         val afternoonSession = now >= LocalTime.of(13, 0) && now <= LocalTime.of(15, 0)
         val isTradingHours = isTradingDay() && (morningSession || afternoonSession)
 
         if (!isTradingHours) {
-            context.log(nodeId, "⏸️ 非交易時段(${now.hour}:${"%02d".format(now.minute)})，跳過盤中K線分析")
-            return IntradayAnalysisResult(skipped = true, skipReason = "非交易時段")
+            context.log(nodeId, "⏸️ 非交易时段(${now.hour}:${"%02d".format(now.minute)})，跳过盘中K线分析")
+            return IntradayAnalysisResult(skipped = true, skipReason = "非交易时段")
         }
 
-        // 從上游輸入提取候選股代碼
+        // 从上游输入提取候选股代码
         val candidateCodes = extractCandidateCodes(input)
         if (candidateCodes.isEmpty()) {
-            context.log(nodeId, "無候選股，跳過盤中分析")
-            return IntradayAnalysisResult(skipped = true, skipReason = "無候選股")
+            context.log(nodeId, "无候选股，跳过盘中分析")
+            return IntradayAnalysisResult(skipped = true, skipReason = "无候选股")
         }
 
-        context.log(nodeId, "📊 開始盤中K線分析: ${candidateCodes.size} 只候選股, ${intervalMin}分鐘線")
+        context.log(nodeId, "📊 开始盘中K线分析: ${candidateCodes.size} 只候选股, ${intervalMin}分钟线")
 
         return try {
             val db = StockDatabase.getInstance(context.androidContext)
             val today = LocalDate.now().format(java.time.format.DateTimeFormatter.ISO_LOCAL_DATE)
             val fetcher = IntradayKlineFetcher(context.androidContext)
 
-            // 先檢查 DB 中是否已有今日數據
+            // 先检查 DB 中是否已有今日数据
             val existingCount = db.intradayKlineDao().countToday(today)
             val barsMap: Map<String, List<IntradayKlineEntity>>
 
             if (existingCount > candidateCodes.size * 3) {
-                // DB 已有足夠數據，直接讀取
-                context.log(nodeId, "從 DB 讀取今日盤中數據 ($existingCount 條)")
+                // DB 已有足够数据，直接读取
+                context.log(nodeId, "从 DB 读取今日盘中数据 ($existingCount 条)")
                 barsMap = candidateCodes.associateWith { code ->
                     try { db.intradayKlineDao().getByCodeToday(code, today) }
                     catch (_: Exception) { emptyList() }
                 }
             } else {
-                // 從 API 獲取
-                context.log(nodeId, "從 EastMoney 獲取盤中K線...")
+                // 从 API 获取
+                context.log(nodeId, "从 EastMoney 获取盘中K线...")
                 val fetched = fetcher.fetchBatchIntraday(candidateCodes, intervalMin)
                 barsMap = fetched
 
@@ -86,13 +86,13 @@ class IntradayAnalysisNode(
                 if (allBars.isNotEmpty()) {
                     try {
                         db.intradayKlineDao().insertAll(allBars)
-                        context.log(nodeId, "已保存 ${allBars.size} 條盤中K線到 DB")
+                        context.log(nodeId, "已保存 ${allBars.size} 条盘中K线到 DB")
                     } catch (e: Exception) {
-                        Log.w(TAG, "保存盤中K線失敗: ${e.message}")
+                        Log.w(TAG, "保存盘中K线失败: ${e.message}")
                     }
                 }
 
-                // 清理 3 天前的舊數據
+                // 清理 3 天前的旧数据
                 try {
                     val threeDaysAgo = LocalDate.now().minusDays(3).format(java.time.format.DateTimeFormatter.ISO_LOCAL_DATE)
                     db.intradayKlineDao().deleteOlderThan(threeDaysAgo)
@@ -109,7 +109,7 @@ class IntradayAnalysisNode(
                 }
             }
 
-            // 存入 context 供下游讀取
+            // 存入 context 供下游读取
             context.setStageOutput(nodeId, IntradayAnalysisResult(
                 indicators = indicators,
                 fetchedCount = barsMap.values.sumOf { it.size },
@@ -117,10 +117,10 @@ class IntradayAnalysisNode(
             ))
             context.setStageOutput("intraday_indicators", indicators)
 
-            context.log(nodeId, "✅ 盤中分析完成: ${barsMap.size} 只獲取 → ${indicators.size} 只分析成功")
+            context.log(nodeId, "✅ 盘中分析完成: ${barsMap.size} 只获取 → ${indicators.size} 只分析成功")
             if (indicators.isNotEmpty()) {
                 val sample = indicators.values.take(3)
-                context.log(nodeId, "  樣本: ${sample.map { "${it.code} ${it.trendDirection} ${"%.1f".format(it.intradayReturn)}%" }.joinToString(", ")}")
+                context.log(nodeId, "  样本: ${sample.map { "${it.code} ${it.trendDirection} ${"%.1f".format(it.intradayReturn)}%" }.joinToString(", ")}")
             }
 
             IntradayAnalysisResult(
@@ -129,19 +129,19 @@ class IntradayAnalysisNode(
                 analyzedCount = indicators.size
             )
         } catch (e: Exception) {
-            context.log(nodeId, "❌ 盤中分析異常: ${e.message}")
-            IntradayAnalysisResult(skipped = true, skipReason = "異常: ${e.message}")
+            context.log(nodeId, "❌ 盘中分析异常: ${e.message}")
+            IntradayAnalysisResult(skipped = true, skipReason = "异常: ${e.message}")
         }
     }
 
-    /** 從各種上游輸入中提取候選股代碼 */
+    /** 从各种上游输入中提取候选股代码 */
     private fun extractCandidateCodes(input: Any): List<String> {
         return when (input) {
             is MergedSignalPool -> input.stockHits.keys.toList()
             is Set<*> -> input.filterIsInstance<String>()
             is List<*> -> input.filterIsInstance<String>()
             else -> {
-                // 嘗試從 context 中讀取 stock_pool 結果
+                // 尝试从 context 中读取 stock_pool 结果
                 emptyList()
             }
         }

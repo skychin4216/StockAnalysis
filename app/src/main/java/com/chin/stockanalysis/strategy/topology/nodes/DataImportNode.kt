@@ -9,22 +9,22 @@ import com.chin.stockanalysis.strategy.topology.core.PipelineNode
 import com.chin.stockanalysis.stock.database.StockDatabase
 
 /**
- * ## 數據導入檢查節點 (DataImportNode)
+ * ## 数据导入检查节点 (DataImportNode)
  *
- * 補齊 Hardcode 路徑的「首次數據導入」邏輯：
- * 如果 DB 中 daily_snapshot 數量不足（< minSnapshots），
- * 則阻塞拉取歷史 K 線數據，確保下游策略有足夠數據計算。
+ * 补齐 Hardcode 路径的「首次数据导入」逻辑：
+ * 如果 DB 中 daily_snapshot 数量不足（< minSnapshots），
+ * 则阻塞拉取历史 K 线数据，确保下游策略有足够数据计算。
  *
- * 正常情況下（數據已充足）此節點 < 5ms 完成。
- * 僅首次使用或數據被清空後觸發實際拉取（可能耗時數分鐘）。
+ * 正常情况下（数据已充足）此节点 < 5ms 完成。
+ * 仅首次使用或数据被清空后触发实际拉取（可能耗时数分钟）。
  *
- * @property days 拉取天數（默認 60）
- * @property minSnapshots 最低快照數量閾值（默認 100）
+ * @property days 拉取天数（默认 60）
+ * @property minSnapshots 最低快照数量阈值（默认 100）
  */
 class DataImportNode(
     private val days: Int = 60,
     private val minSnapshots: Int = 100
-) : BaseNode<Any, Int>("data_import", "數據導入檢查", NodeType.DATA_SOURCE) {
+) : BaseNode<Any, Int>("data_import", "数据导入检查", NodeType.DATA_SOURCE) {
 
     companion object {
         private const val TAG = "DataImportNode"
@@ -34,34 +34,34 @@ class DataImportNode(
         val db = StockDatabase.getInstance(context.androidContext)
         val dao = db.dailySnapshotDao()
 
-        // 快速檢查：數據充足則直接返回
+        // 快速检查：数据充足则直接返回
         val count = try {
             dao.count()
         } catch (e: Exception) {
-            Log.w(TAG, "getCount 失敗: ${e.message}")
+            Log.w(TAG, "getCount 失败: ${e.message}")
             0
         }
 
         if (count >= minSnapshots) {
-            context.log(nodeId, "$nodeName: 數據充足($count 條)，跳過導入")
+            context.log(nodeId, "$nodeName: 数据充足($count 条)，跳过导入")
             return count
         }
 
-        // 數據不足，觸發歷史數據拉取
-        context.log(nodeId, "📥 $nodeName: 數據不足($count/$minSnapshots)，開始拉取 ${days} 天歷史數據...")
+        // 数据不足，触发历史数据拉取
+        context.log(nodeId, "📥 $nodeName: 数据不足($count/$minSnapshots)，开始拉取 ${days} 天历史数据...")
 
         return try {
             val fetcher = HistoricalDataFetcher(context.androidContext)
             fetcher.fetchAllHistoricalData(days)
 
             val newCount = dao.count()
-            context.log(nodeId, "📤 $nodeName: 導入完成，當前 $newCount 條快照")
+            context.log(nodeId, "📤 $nodeName: 导入完成，当前 $newCount 条快照")
             newCount
         } catch (e: Exception) {
-            Log.e(TAG, "數據導入失敗: ${e.message}", e)
-            context.log(nodeId, "⚠ $nodeName: 導入失敗(${e.message})，使用現有數據繼續")
-            context.recordError(nodeId, "數據導入失敗: ${e.message}")
-            count  // 返回原有數量，不阻斷 pipeline
+            Log.e(TAG, "数据导入失败: ${e.message}", e)
+            context.log(nodeId, "⚠ $nodeName: 导入失败(${e.message})，使用现有数据继续")
+            context.recordError(nodeId, "数据导入失败: ${e.message}")
+            count  // 返回原有数量，不阻断 pipeline
         }
     }
 }

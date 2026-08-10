@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">股票分析</string>
+
+    <!-- 底部導航 -->
+    <string name="nav_chat">對話</string>
+    <string name="nav_agent">智能體</string>
+    <string name="nav_stock">股票</string>
+    <string name="nav_strategy">策略</string>
+    <string name="nav_mine">我的</string>
+
+    <!-- AI 聊天 -->
+    <string name="chat_title">AI 智能助手</string>
+    <string name="chat_input_hint">傳訊息或按住說話...</string>
+    <string name="chat_send">傳送</string>
+
+    <!-- 對話頁 -->
+    <string name="new_conversation">新建對話</string>
+    <string name="conversation_title">對話</string>
+    <string name="new_topic_hint">聊聊新話題</string>
+    <string name="ai_content_hint">內容由AI生成，請仔細甄別</string>
+
+    <!-- 訊息操作 -->
+    <string name="msg_copy">複製</string>
+    <string name="msg_play_voice">🔊</string>
+    <string name="msg_favorite">⭐</string>
+    <string name="msg_share">轉發</string>
+    <string name="msg_regenerate">🔄重新生成</string>
+    <string name="msg_edit">編輯</string>
+    <string name="msg_delete">刪除</string>
+
+    <!-- 股票瀏覽 -->
+    <string name="stocks_title">股票瀏覽</string>
+    <string name="stocks_a_shares">A股</string>
+    <string name="stocks_etf">ETF</string>
+    <string name="stocks_search_hint">搜尋股票代碼或名稱</string>
+    <string name="stocks_hot">熱門</string>
+    <string name="stocks_gain">漲幅</string>
+    <string name="stocks_lose">跌幅</string>
+
+    <!-- 策略 Tab 名稱 -->
+    <string name="tab_ultra_short">超短線</string>
+    <string name="tab_short">短線</string>
+    <string name="tab_mid">中線</string>
+    <string name="tab_long">長線</string>
+    <string name="tab_real">實倉</string>
+    <string name="tab_stock_picking">量化選股</string>
+
+    <!-- 實倉 -->
+    <string name="real_holding_title">📌 真實持倉</string>
+    <string name="real_holding_build_title">實倉建倉</string>
+    <string name="real_holding_pipeline">📊 執行實倉分析 Pipeline</string>
+    <string name="real_holding_manual_add">✏️ 手動添加持倉</string>
+    <string name="real_holding_ocr_import">📷 截圖識別導入</string>
+    <string name="real_holding_no_data">暫無持倉記錄\n\n點擊「📈建倉」執行大盤分析 Pipeline\n點擊「📦持倉」添加真實持倉</string>
+    <string name="real_holding_section">🏦 真實持倉</string>
+    <string name="real_holding_strategy_section">📊 策略持倉</string>
+    <string name="real_holding_pick_section">🎯 實倉選股</string>
+    <string name="real_holding_no_fitting">實倉無擬合功能</string>
+    <string name="real_holding_no_backtrack">實倉無回溯功能</string>
+    <string name="real_holding_no_clear">實倉數據不可清除</string>
+    <string name="real_holding_unit">隻</string>
+    <string name="real_holding_unit_order">筆</string>
+    <string name="real_holding_shares">股</string>
+
+    <!-- 通用按鈕 -->
+    <string name="btn_build">📈建倉</string>
+    <string name="btn_pipeline">🔀Pipeline</string>
+    <string name="btn_sell_eval">💰買賣評估</string>
+    <string name="btn_holdings">📦持倉</string>
+    <string name="btn_report">📊報告</string>
+    <string name="btn_backtrack">🔙回溯</string>
+    <string name="btn_fitting">📐擬合</string>
+    <string name="btn_sell">💰賣出</string>
+    <string name="btn_data">📦數據</string>
+    <string name="btn_t_trade">🔄做T</string>
+
+    <!-- 持倉/選股區域標題 -->
+    <string name="section_holding">持倉</string>
+    <string name="section_picking">選股</string>
+    <string name="section_total_holding">總持倉</string>
+    <string name="section_total_pnl">總盈虧</string>
+    <string name="section_clear">清空</string>
+    <string name="section_refresh">🔄</string>
+
+    <!-- 設置頁 -->
+    <string name="settings_title">⚙️ 設置</string>
+    <string name="settings_ai_config">AI 配置</string>
+    <string name="settings_select_provider">選擇提供商 / 模型 / 用戶 API Key</string>
+    <string name="settings_data_mgmt">數據管理</string>
+    <string name="settings_clear_cache">清除快取</string>
+    <string name="settings_cache_info">快取大小: %s</string>
+    <string name="settings_cache_cleared">快取已清除</string>
+    <string name="settings_agent_framework">Agent Framework</string>
+    <string name="settings_global_mode">全域模式</string>
+    <string name="settings_module_config">模組層級配置</string>
+    <string name="settings_stock_picking_module">選股模組（AI Pipeline）</string>
+    <string name="settings_analysis_module">分析模組（單股深度分析）</string>
+    <string name="settings_trade_module">交易模組（買賣執行）</string>
+    <string name="settings_chat_module">對話模組（AI 聊天）</string>
+    <string name="settings_news_module">新聞監控模組</string>
+    <string name="settings_risk_module">風控模組</string>
+    <string name="settings_period_route">週期級別路線（策略執行）</string>
+    <string name="settings_about">關於應用</string>
+
+    <!-- 語言設置 -->
+    <string name="settings_language">語言設置</string>
+    <string name="settings_select_language">選擇語言</string>
+    <string name="settings_follow_system">跟隨系統</string>
+    <string name="settings_language_changed">語言已切換</string>
+
+    <!-- 通用 -->
+    <string name="dialog_cancel">取消</string>
+    <string name="dialog_confirm">確認</string>
+    <string name="dialog_save">儲存</string>
+    <string name="dialog_add">新增</string>
+    <string name="dialog_delete">刪除</string>
+    <string name="status_loading">載入中...</string>
+    <string name="status_empty">暫無數據</string>
+    <string name="status_error">載入失敗</string>
+    <string name="status_success">操作成功</string>
+
+    <!-- 週期標籤 -->
+    <string name="period_ultra_short">⚡ 超短線</string>
+    <string name="period_short">📈 短線</string>
+    <string name="period_mid">📊 中線</string>
+    <string name="period_long">💎 長線</string>
+
+    <!-- 量化系統標題 -->
+    <string name="title_ultra_short_system">⚡ 超短線量化系統 (T+1 賣出，止損-2%/止盈+3%)</string>
+    <string name="title_short_system">🤖 短線量化系統 (Zipline Pipeline + AI精選)</string>
+    <string name="title_mid_system">🤖 中線量化系統(價值投資，持倉 1-6 個月)</string>
+    <string name="title_long_system">💎 長線量化系統 (價值投資，持倉6月-1年+)</string>
+</resources>

@@ -12,18 +12,18 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * ## A股大盤分析引擎（AMarketAnalysisEngine）
+ * ## A股大盘分析引擎（AMarketAnalysisEngine）
  *
- * 參考 agent-architecture-refactoring-plan.md §12.6 實現。
- * 六維分析：
- *   1. 趨勢與形態（3日不新低 / 均線粘合 / 逃頂信號）
- *   2. 量能與資金（放量/縮量/平量）
- *   3. 市場情緒與波動（漲跌比 → 沸騰/溫和/冰點）
- *   4. 權重股貢獻度（黃白線偏離，暫用大盤股 vs 小盤股漲幅差替代）
- *   5. 宏觀事件日曆（CPI/PPI 等，預留接口）
- *   6. 大盤狀態機（綜合決策 → 推薦交易週期 + 倉位建議）
+ * 参考 agent-architecture-refactoring-plan.md §12.6 实现。
+ * 六维分析：
+ *   1. 趋势与形态（3日不新低 / 均线粘合 / 逃顶信号）
+ *   2. 量能与资金（放量/缩量/平量）
+ *   3. 市场情绪与波动（涨跌比 → 沸腾/温和/冰点）
+ *   4. 权重股贡献度（黄白线偏离，暂用大盘股 vs 小盘股涨幅差替代）
+ *   5. 宏观事件日历（CPI/PPI 等，预留接口）
+ *   6. 大盘状态机（综合决策 → 推荐交易周期 + 仓位建议）
  *
- * 數據來源：本地 daily_snapshot 表（sh000001 上證指數 + 全市場個股）
+ * 数据来源：本地 daily_snapshot 表（sh000001 上证指数 + 全市场个股）
  */
 object AMarketAnalysisEngine {
 
@@ -36,10 +36,10 @@ object AMarketAnalysisEngine {
     private const val DISPERSION_THRESHOLD = 0.02
 
     // ═══════════════════════════════════════
-    //  數據類
+    //  数据类
     // ═══════════════════════════════════════
 
-    /** 大盤分析結果 */
+    /** 大盘分析结果 */
     data class MarketAnalysisResult(
         val isBottomConfirmed: Boolean,
         val isTrendUp: Boolean,
@@ -63,7 +63,7 @@ object AMarketAnalysisEngine {
     // ═══════════════════════════════════════
 
     /**
-     * 執行大盤全面分析
+     * 执行大盘全面分析
      * @param ctx Android Context
      * @return MarketAnalysisResult
      */
@@ -76,9 +76,9 @@ object AMarketAnalysisEngine {
             if (snapshots.size < MA_LONG) {
                 return@withContext MarketAnalysisResult(
                     isBottomConfirmed = false, isTrendUp = false, isTopDanger = false,
-                    volumeStatus = "數據不足", marketTemp = "未知",
+                    volumeStatus = "数据不足", marketTemp = "未知",
                     suggestedPeriod = HoldingPeriod.SHORT, suggestedPositionPct = 40,
-                    summary = "上證指數歷史數據不足 ${MA_LONG} 天，默認短線"
+                    summary = "上证指数历史数据不足 ${MA_LONG} 天，默认短线"
                 )
             }
 
@@ -86,7 +86,7 @@ object AMarketAnalysisEngine {
             val recent3 = snapshots.takeLast(3)
             val prev3 = if (snapshots.size >= 6) snapshots.takeLast(6).dropLast(3) else recent3
 
-            // 1. 趨勢與形態
+            // 1. 趋势与形态
             val isBottom = checkBottomConfirmed(recent3, prev3)
             val (isTrend, ma5, ma10, ma30, dispersion) = checkMaTrend(snapshots)
             val isTop = checkTopDanger(recent3, latest)
@@ -94,18 +94,18 @@ object AMarketAnalysisEngine {
             // 2. 量能
             val volumeStatus = checkVolumeStatus(snapshots)
 
-            // 3. 市場情緒（漲跌比）
+            // 3. 市场情绪（涨跌比）
             val todayDate = latest.date
             val allToday = db.dailySnapshotDao().getByDate(todayDate)
             val (advCount, decCount) = countAdvanceDecline(allToday)
             val ratio = if (decCount > 0) advCount.toDouble() / decCount.toDouble() else if (advCount > 0) 99.0 else 1.0
             val marketTemp = checkMarketTemperature(ratio)
 
-            // 4. 指數漲跌幅
+            // 4. 指数涨跌幅
             val prevClose = if (snapshots.size >= 2) snapshots[snapshots.size - 2].close else latest.open
             val changePct = (latest.close - prevClose) / prevClose * 100
 
-            // 5. 狀態機決策
+            // 5. 状态机决策
             val (period, posPct) = decidePeriod(isBottom, isTrend, isTop, volumeStatus, marketTemp)
 
             // 6. 摘要
@@ -127,21 +127,21 @@ object AMarketAnalysisEngine {
                 summary = summary
             )
         } catch (e: Exception) {
-            Log.e(TAG, "大盤分析失敗: ${e.message}", e)
+            Log.e(TAG, "大盘分析失败: ${e.message}", e)
             MarketAnalysisResult(
                 isBottomConfirmed = false, isTrendUp = false, isTopDanger = false,
-                volumeStatus = "異常", marketTemp = "未知",
+                volumeStatus = "异常", marketTemp = "未知",
                 suggestedPeriod = HoldingPeriod.SHORT, suggestedPositionPct = 30,
-                summary = "分析異常: ${e.message}"
+                summary = "分析异常: ${e.message}"
             )
         }
     }
 
     // ═══════════════════════════════════════
-    //  各檢測模塊
+    //  各检测模块
     // ═══════════════════════════════════════
 
-    /** 3日不新低：最近3天收盤價最低 > 前3天收盤價最低 */
+    /** 3日不新低：最近3天收盘价最低 > 前3天收盘价最低 */
     private fun checkBottomConfirmed(recent3: List<DailySnapshotEntity>, prev3: List<DailySnapshotEntity>): Boolean {
         if (recent3.size < 3 || prev3.size < 3) return false
         val recentLow = recent3.minOf { it.close }
@@ -149,7 +149,7 @@ object AMarketAnalysisEngine {
         return recentLow > prevLow
     }
 
-    /** 均線粘合向上：離散率 < 2% 且 MA5 向上 */
+    /** 均线粘合向上：离散率 < 2% 且 MA5 向上 */
     private fun checkMaTrend(history: List<DailySnapshotEntity>): MaTrendResult {
         val closes = history.map { it.close }
         val ma5 = closes.takeLast(MA_SHORT).average()
@@ -170,7 +170,7 @@ object AMarketAnalysisEngine {
 
     private data class MaTrendResult(val isTrend: Boolean, val ma5: Double, val ma10: Double, val ma30: Double, val dispersion: Double)
 
-    /** 逃頂信號：3天急跌 > 5% 或收盤跌破3日最低 */
+    /** 逃顶信号：3天急跌 > 5% 或收盘跌破3日最低 */
     private fun checkTopDanger(recent3: List<DailySnapshotEntity>, latest: DailySnapshotEntity): Boolean {
         if (recent3.size < 3) return false
         val firstClose = recent3.first().close
@@ -184,17 +184,17 @@ object AMarketAnalysisEngine {
 
     /** 量能判定：今日量 vs 5日均量 */
     private fun checkVolumeStatus(history: List<DailySnapshotEntity>): String {
-        if (history.size < 6) return "數據不足"
+        if (history.size < 6) return "数据不足"
         val todayVol = history.last().volume.toDouble()
         val avgVol5 = history.takeLast(6).dropLast(1).map { it.volume.toDouble() }.average()
         return when {
             todayVol > avgVol5 * 1.5 -> "放量"
-            todayVol < avgVol5 * 0.7 -> "縮量"
+            todayVol < avgVol5 * 0.7 -> "缩量"
             else -> "平量"
         }
     }
 
-    /** 漲跌家數統計 */
+    /** 涨跌家数统计 */
     private fun countAdvanceDecline(snapshots: List<DailySnapshotEntity>): Pair<Int, Int> {
         var adv = 0; var dec = 0
         for (s in snapshots) {
@@ -204,40 +204,40 @@ object AMarketAnalysisEngine {
         return adv to dec
     }
 
-    /** 市場溫度 */
+    /** 市场温度 */
     private fun checkMarketTemperature(ratio: Double): String = when {
-        ratio > 3.0 -> "沸騰"
-        ratio > 1.5 -> "溫和偏熱"
-        ratio > 0.7 -> "溫和"
-        ratio > 0.3 -> "溫和偏冷"
-        else -> "冰點"
+        ratio > 3.0 -> "沸腾"
+        ratio > 1.5 -> "温和偏热"
+        ratio > 0.7 -> "温和"
+        ratio > 0.3 -> "温和偏冷"
+        else -> "冰点"
     }
 
-    /** 狀態機決策：返回 (建議週期, 建議倉位%) */
+    /** 状态机决策：返回 (建议周期, 建议仓位%) */
     private fun decidePeriod(
         isBottom: Boolean, isTrend: Boolean, isTop: Boolean,
         volumeStatus: String, marketTemp: String
     ): Pair<HoldingPeriod, Int> {
-        // 優先級1：系統性風險
+        // 优先级1：系统性风险
         if (isTop && volumeStatus == "放量") return HoldingPeriod.ULTRA_SHORT to 10
-        if (marketTemp == "冰點") return HoldingPeriod.ULTRA_SHORT to 10
+        if (marketTemp == "冰点") return HoldingPeriod.ULTRA_SHORT to 10
 
-        // 優先級2：趨勢向上
-        if (isTrend && volumeStatus in listOf("放量", "平量") && marketTemp in listOf("溫和", "溫和偏熱"))
+        // 优先级2：趋势向上
+        if (isTrend && volumeStatus in listOf("放量", "平量") && marketTemp in listOf("温和", "温和偏热"))
             return HoldingPeriod.LONG to 70
 
-        // 優先級3：觸底回升
-        if (isBottom && marketTemp in listOf("冰點", "溫和偏冷"))
+        // 优先级3：触底回升
+        if (isBottom && marketTemp in listOf("冰点", "温和偏冷"))
             return HoldingPeriod.MID to 50
 
-        // 優先級4：震盪
+        // 优先级4：震荡
         if (!isTop && !isBottom && volumeStatus == "平量")
             return HoldingPeriod.SHORT to 40
 
         return HoldingPeriod.SHORT to 30
     }
 
-    /** 構建中文摘要 */
+    /** 构建中文摘要 */
     private fun buildSummary(
         isBottom: Boolean, isTrend: Boolean, isTop: Boolean,
         volumeStatus: String, marketTemp: String,
@@ -245,13 +245,13 @@ object AMarketAnalysisEngine {
         ma5: Double, ma10: Double, ma30: Double,
         dispersion: Double, adRatio: Double
     ): String = buildString {
-        append("上證")
-        if (isTrend) append(" | 均線多頭粘合向上(離散${"%.2f".format(dispersion * 100)}%)")
-        if (isBottom) append(" | 底部確認(3日不新低)")
-        if (isTop) append(" | ⚠逃頂信號")
-        append(" | $marketTemp(漲跌比${"%.1f".format(adRatio)})")
+        append("上证")
+        if (isTrend) append(" | 均线多头粘合向上(离散${"%.2f".format(dispersion * 100)}%)")
+        if (isBottom) append(" | 底部确认(3日不新低)")
+        if (isTop) append(" | ⚠逃顶信号")
+        append(" | $marketTemp(涨跌比${"%.1f".format(adRatio)})")
         append(" | $volumeStatus")
         append(" | MA5/10/30=${"%.0f".format(ma5)}/${"%.0f".format(ma10)}/${"%.0f".format(ma30)}")
-        append(" | 建議: ${period.label}(倉位${posPct}%)")
+        append(" | 建议: ${period.label}(仓位${posPct}%)")
     }
 }

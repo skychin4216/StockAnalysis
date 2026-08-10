@@ -3,29 +3,29 @@ package com.chin.stockanalysis.strategy.topology.ui
 import com.chin.stockanalysis.strategy.topology.core.NodeType
 
 /**
- * ## NodeGraphData — 可視化數據模型
+ * ## NodeGraphData — 可视化数据模型
  *
- * 定義畫布上節點與連線的純數據表示，不依賴 Android UI 組件，
- * 供 [NodeCanvasView] 渲染、[NodeAutoLayout] 佈局、[TopologyEditorViewModel] 同步使用。
+ * 定义画布上节点与连线的纯数据表示，不依赖 Android UI 组件，
+ * 供 [NodeCanvasView] 渲染、[NodeAutoLayout] 布局、[TopologyEditorViewModel] 同步使用。
  *
- * ### 數據類
- * - [VisualNode]：畫布節點，含世界座標 (x, y) 和語義類型 [NodeType]
- * - [VisualLink]：節點間有向連線
- * - [NodeCanvasState]：畫布狀態容器，持有節點/連線列表及視圖變換參數
+ * ### 数据类
+ * - [VisualNode]：画布节点，含世界座标 (x, y) 和语义类型 [NodeType]
+ * - [VisualLink]：节点间有向连线
+ * - [NodeCanvasState]：画布状态容器，持有节点/连线列表及视图变换参数
  */
 
 /**
- * 畫布上的可視化節點。
+ * 画布上的可视化节点。
  *
- * @property id 節點唯一標識（與 EditableNode.id 對應）
- * @property module Node 的 module 類型（如 "market_context"）
- * @property name 人類可讀名稱（顯示在節點卡片上）
- * @property nodeType 節點語義類型（決定著色）
- * @property x 世界座標 X（畫布像素）
- * @property y 世界座標 Y（畫布像素）
- * @property config 節點配置鍵值對
- * @property width 節點卡片寬度（像素）
- * @property height 節點卡片高度（像素）
+ * @property id 节点唯一标识（与 EditableNode.id 对应）
+ * @property module Node 的 module 类型（如 "market_context"）
+ * @property name 人类可读名称（显示在节点卡片上）
+ * @property nodeType 节点语义类型（决定著色）
+ * @property x 世界座标 X（画布像素）
+ * @property y 世界座标 Y（画布像素）
+ * @property config 节点配置键值对
+ * @property width 节点卡片宽度（像素）
+ * @property height 节点卡片高度（像素）
  */
 data class VisualNode(
     val id: String,
@@ -37,16 +37,16 @@ data class VisualNode(
     val config: Map<String, String> = emptyMap(),
     val width: Float = 240f,
     val height: Float = 84f,
-    /** 所屬 Pipeline 分組 ID（用於著色，空 = 按 NodeType 著色） */
+    /** 所属 Pipeline 分组 ID（用于著色，空 = 按 NodeType 著色） */
     val pipelineGroupId: String = ""
 )
 
 /**
- * 畫布上的可視化連線（有向邊）。
+ * 画布上的可视化连线（有向边）。
  *
- * @property fromId 源節點 ID
- * @property toId 目標節點 ID
- * @property label 連線標籤（可選，顯示在連線中點）
+ * @property fromId 源节点 ID
+ * @property toId 目标节点 ID
+ * @property label 连线标签（可选，显示在连线中点）
  */
 data class VisualLink(
     val fromId: String,
@@ -55,27 +55,27 @@ data class VisualLink(
 )
 
 /**
- * 畫布狀態容器。
+ * 画布状态容器。
  *
- * 持有當前畫布上的節點列表、連線列表以及視圖變換參數（縮放/平移）。
- * [NodeCanvasView] 直接讀寫此狀態進行渲染。
+ * 持有当前画布上的节点列表、连线列表以及视图变换参数（缩放/平移）。
+ * [NodeCanvasView] 直接读写此状态进行渲染。
  */
 class NodeCanvasState {
-    /** 畫布上的所有節點 */
+    /** 画布上的所有节点 */
     val nodes: MutableList<VisualNode> = mutableListOf()
 
-    /** 畫布上的所有連線 */
+    /** 画布上的所有连线 */
     val links: MutableList<VisualLink> = mutableListOf()
 
-    /** 當前縮放比例（1f = 原始大小） */
+    /** 当前缩放比例（1f = 原始大小） */
     var scale: Float = 1f
 
-    /** X 軸平移量（像素） */
+    /** X 轴平移量（像素） */
     var translateX: Float = 0f
 
-    /** Y 軸平移量（像素） */
+    /** Y 轴平移量（像素） */
     var translateY: Float = 0f
 
-    /** 當前選中的節點 ID（null 表示未選中） */
+    /** 当前选中的节点 ID（null 表示未选中） */
     var selectedNodeId: String? = null
 }

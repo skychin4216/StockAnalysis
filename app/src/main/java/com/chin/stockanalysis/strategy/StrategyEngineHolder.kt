@@ -52,15 +52,15 @@ object StrategyEngineHolder {
             registerStrategy(TrendFollowingStrategy(context.applicationContext, screener))
             registerStrategy(SectorRotationStrategy(context.applicationContext, screener))
             registerStrategy(MarketSentimentStrategy(context.applicationContext, screener))
-            // ── v1.2 趨勢加減分策略（不過濾標的，只加減分）──
+            // ── v1.2 趋势加减分策略（不过滤标的，只加减分）──
             registerStrategy(TrendScoreStrategy(context.applicationContext, screener))
-            // ── v1.3 週期低位策略（長線左側佈局，防暴雷+52週低位）──
+            // ── v1.3 周期低位策略（长线左侧布局，防暴雷+52周低位）──
             registerStrategy(CyclicalLowPositionStrategy(context.applicationContext, screener))
-            // ── v1.4 Pipeline-based 策略（復用 DAG 分析工具）──
+            // ── v1.4 Pipeline-based 策略（复用 DAG 分析工具）──
             registerStrategy(StrictSelectionStrategy(screener, context.applicationContext))
             registerStrategy(CandlePatternStrategy(screener, context.applicationContext))
             registerStrategy(InstitutionalIntentStrategy(screener, context.applicationContext))
-            // 啟動時清理過期信號緩存
+            // 启动时清理过期信号缓存
             cleanExpiredResults()
         }
     }

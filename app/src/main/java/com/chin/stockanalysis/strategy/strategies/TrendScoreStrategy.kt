@@ -15,29 +15,29 @@ import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
 /**
- * ## 趨勢加減分策略
+ * ## 趋势加减分策略
  *
- * 參考現有趨勢圖（K線 + 均線排列），對輸入端的標的進行趨勢評分：
- * - 滿足上升趨勢 → 加分（增強買入信號）
- * - 滿足下降趨勢 → 減分（可能觸發賣出參考）
- * - 趨勢不明顯 → 中性評分（不影響原有排序）
+ * 参考现有趋势图（K线 + 均线排列），对输入端的标的进行趋势评分：
+ * - 满足上升趋势 → 加分（增强买入信号）
+ * - 满足下降趋势 → 减分（可能触发卖出参考）
+ * - 趋势不明显 → 中性评分（不影响原有排序）
  *
- * 與其他策略不同，本策略 **不過濾標的**：
- * 所有輸入股票都會保留在結果中，只調整評分。
- * 這使得它可以用作其他策略的「趨勢修正器」。
+ * 与其他策略不同，本策略 **不过滤标的**：
+ * 所有输入股票都会保留在结果中，只调整评分。
+ * 这使得它可以用作其他策略的「趋势修正器」。
  *
- * 評分邏輯：
- * - 基礎分：50（中性）
- * - 均線排列（MA5/MA10/MA20/MA60）：多頭 +5~+20，空頭 -5~-20
- * - 趨勢強度（ADX）：強趨勢額外 ±5~±10
- * - 價格動量（5日/10日漲幅）：順勢 ±3~±10，逆勢 ∓3~∓10
- * - 量價配合：放量上漲 +5，放量下跌 -5
+ * 评分逻辑：
+ * - 基础分：50（中性）
+ * - 均线排列（MA5/MA10/MA20/MA60）：多头 +5~+20，空头 -5~-20
+ * - 趋势强度（ADX）：强趋势额外 ±5~±10
+ * - 价格动量（5日/10日涨幅）：顺势 ±3~±10，逆势 ∓3~∓10
+ * - 量价配合：放量上涨 +5，放量下跌 -5
  *
- * 最終評分範圍：0~100
- * - >= 70：BUY（趨勢強多，強烈推薦）
- * - >= 55：WATCH（趨勢偏多，保持關注）
- * - >= 40：HOLD（趨勢中性，持有觀察）
- * - < 40：SELL（趨勢走弱，減倉參考）
+ * 最终评分范围：0~100
+ * - >= 70：BUY（趋势强多，强烈推荐）
+ * - >= 55：WATCH（趋势偏多，保持关注）
+ * - >= 40：HOLD（趋势中性，持有观察）
+ * - < 40：SELL（趋势走弱，减仓参考）
  */
 class TrendScoreStrategy(
     private val context: Context,
@@ -45,8 +45,8 @@ class TrendScoreStrategy(
 ) : Strategy {
 
     override val id = "trend_score"
-    override var name = "趨勢加減分"
-    override var description = "參考趨勢圖對標的加減分：上升趨勢加分，下降趨勢減分，不過濾標的"
+    override var name = "趋势加减分"
+    override var description = "参考趋势图对标的加减分：上升趋势加分，下降趋势减分，不过滤标的"
     override val category = StrategyCategory.TREND
     override val holdingPeriods = listOf(HoldingPeriod.SHORT, HoldingPeriod.MID)
     override val source = StrategySource.BUILTIN
@@ -64,14 +64,14 @@ class TrendScoreStrategy(
             "adx_threshold" to 25.0,
             "momentum_days" to 5
         ),
-        maxResults = 50  // 不過濾，保留所有標的
+        maxResults = 50  // 不过滤，保留所有标的
     )
 
     override var weightFactors: List<WeightFactor> = listOf(
-        WeightFactor("ma_alignment", "均線排列", 40, "MA5/MA10/MA20/MA60 多空排列"),
-        WeightFactor("adx_strength", "趨勢強度", 25, "ADX 判斷趨勢是否明確"),
-        WeightFactor("momentum", "價格動量", 20, "5日/10日漲跌幅動量"),
-        WeightFactor("volume_confirm", "量價配合", 15, "放量方向與價格方向一致性")
+        WeightFactor("ma_alignment", "均线排列", 40, "MA5/MA10/MA20/MA60 多空排列"),
+        WeightFactor("adx_strength", "趋势强度", 25, "ADX 判断趋势是否明确"),
+        WeightFactor("momentum", "价格动量", 20, "5日/10日涨跌幅动量"),
+        WeightFactor("volume_confirm", "量价配合", 15, "放量方向与价格方向一致性")
     )
 
     override suspend fun screen(): Result<ScreeningResult> = withContext(Dispatchers.IO) {
@@ -96,7 +96,7 @@ class TrendScoreStrategy(
     override suspend fun isAvailable(): Boolean = true
 
     // ════════════════════════════════════════
-    // 核心邏輯：不過濾，只加減分
+    // 核心逻辑：不过滤，只加减分
     // ════════════════════════════════════════
 
     private suspend fun screenWithPool(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
@@ -106,12 +106,12 @@ class TrendScoreStrategy(
         ))
 
         val marketDir = try { screener?.detectMarketDirection() } catch (_: Exception) { null } ?: "OSCILLATION"
-        Log.i("TrendScore", "大盤環境: $marketDir, 輸入標的: ${pool.size}")
+        Log.i("TrendScore", "大盘环境: $marketDir, 输入标的: ${pool.size}")
 
         val db = StockDatabase.getInstance(context)
         val dao = db.dailySnapshotDao()
 
-        // 基本流動性過濾（只排除明顯不可交易的，不做趨勢過濾）
+        // 基本流动性过滤（只排除明显不可交易的，不做趋势过滤）
         val candidates = pool.filter {
             it.price > 1.0 &&
             !it.name.contains("ST", ignoreCase = true) &&
@@ -125,11 +125,11 @@ class TrendScoreStrategy(
 
         for (stock in candidates) {
             try {
-                // 讀取 65 天歷史數據（MA60 需要 60 天 + 緩衝）
+                // 读取 65 天历史数据（MA60 需要 60 天 + 缓冲）
                 val history = dao.getByCode(stock.code, 65)
                 if (history.size < 20) {
-                    // 數據不足，給中性評分保留標的
-                    signals.add(buildNeutralSignal(stock, "歷史數據不足(${history.size}天)，中性保留"))
+                    // 数据不足，给中性评分保留标的
+                    signals.add(buildNeutralSignal(stock, "历史数据不足(${history.size}天)，中性保留"))
                     neutralCount++
                     continue
                 }
@@ -140,7 +140,7 @@ class TrendScoreStrategy(
                 val highs = sorted.map { it.high }
                 val lows = sorted.map { it.low }
 
-                // ── 1. 均線排列評分 (基礎分 50, 加減 -20~+20) ──
+                // ── 1. 均线排列评分 (基础分 50, 加减 -20~+20) ──
                 val ma5 = if (closes.size >= 5) closes.takeLast(5).average() else closes.average()
                 val ma10 = if (closes.size >= 10) closes.takeLast(10).average() else closes.average()
                 val ma20 = closes.takeLast(20).average()
@@ -148,35 +148,35 @@ class TrendScoreStrategy(
 
                 val alignmentScore = calculateAlignmentScore(ma5, ma10, ma20, ma60, stock.price)
 
-                // ── 2. ADX 趨勢強度評分 (加減 -10~+10) ──
+                // ── 2. ADX 趋势强度评分 (加减 -10~+10) ──
                 val adxScore = if (closes.size >= 28) {
                     val adx = calculateADX(highs, lows, closes, 14)
                     calculateAdxScore(adx, ma5, ma20)
                 } else 0.0
 
-                // ── 3. 價格動量評分 (加減 -10~+10) ──
+                // ── 3. 价格动量评分 (加减 -10~+10) ──
                 val momentumScore = calculateMomentumScore(closes, 5)
 
-                // ── 4. 量價配合評分 (加減 -8~+8) ──
+                // ── 4. 量价配合评分 (加减 -8~+8) ──
                 val volumeScore = calculateVolumeScore(volumes, closes, stock)
 
-                // ── 最終評分 = 50 + 各項加減分 ──
+                // ── 最终评分 = 50 + 各项加减分 ──
                 val totalAdjustment = alignmentScore + adxScore + momentumScore + volumeScore
                 val strength = (50 + totalAdjustment).toInt().coerceIn(0, 100)
 
-                // 統計
+                // 统计
                 when {
                     strength >= 60 -> bullishCount++
                     strength <= 40 -> bearishCount++
                     else -> neutralCount++
                 }
 
-                // ── 生成信號（不過濾，所有標的都保留）──
+                // ── 生成信号（不过滤，所有标的都保留）──
                 val action = when {
                     strength >= 70 -> SignalAction.BUY
                     strength >= 55 -> SignalAction.WATCH
                     strength >= 40 -> SignalAction.HOLD
-                    else -> SignalAction.SELL  // 趨勢走弱，觸發賣出參考
+                    else -> SignalAction.SELL  // 趋势走弱，触发卖出参考
                 }
 
                 val reason = buildReason(strength, alignmentScore, adxScore, momentumScore, volumeScore,
@@ -196,15 +196,15 @@ class TrendScoreStrategy(
                     )
                 ))
             } catch (e: Exception) {
-                // 單股計算失敗，給中性評分保留標的
-                signals.add(buildNeutralSignal(stock, "計算異常: ${e.message?.take(30)}"))
+                // 单股计算失败，给中性评分保留标的
+                signals.add(buildNeutralSignal(stock, "计算异常: ${e.message?.take(30)}"))
                 neutralCount++
             }
         }
 
-        // 按評分排序（高分在前，低分在後方便查看賣出參考）
+        // 按评分排序（高分在前，低分在后方便查看卖出参考）
         val result = signals.sortedByDescending { it.strength }
-        Log.i("TrendScore", "完成: ${candidates.size}標的 → 多${bullishCount} 空${bearishCount} 中性${neutralCount}")
+        Log.i("TrendScore", "完成: ${candidates.size}标的 → 多${bullishCount} 空${bearishCount} 中性${neutralCount}")
 
         return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,
@@ -213,38 +213,38 @@ class TrendScoreStrategy(
     }
 
     // ════════════════════════════════════════
-    // 評分計算函數
+    // 评分计算函数
     // ════════════════════════════════════════
 
     /**
-     * 均線排列評分
-     * 多頭排列 (MA5>MA10>MA20>MA60): +5~+20
-     * 空頭排列 (MA5<MA10<MA20<MA60): -5~-20
-     * 混亂排列: -3~+3
+     * 均线排列评分
+     * 多头排列 (MA5>MA10>MA20>MA60): +5~+20
+     * 空头排列 (MA5<MA10<MA20<MA60): -5~-20
+     * 混乱排列: -3~+3
      */
     private fun calculateAlignmentScore(
         ma5: Double, ma10: Double, ma20: Double, ma60: Double, currentPrice: Double
     ): Double {
         var score = 0.0
 
-        // 多頭排列檢查
+        // 多头排列检查
         val bullishCount = listOf(
             ma5 > ma10, ma10 > ma20, ma20 > ma60, currentPrice > ma5
         ).count { it }
 
-        // 空頭排列檢查
+        // 空头排列检查
         val bearishCount = listOf(
             ma5 < ma10, ma10 < ma20, ma20 < ma60, currentPrice < ma5
         ).count { it }
 
         when {
             bullishCount == 4 -> {
-                // 完美多頭排列
+                // 完美多头排列
                 score = 20.0
-                // 額外獎勵：均線發散程度（MA5 vs MA60 的距離）
+                // 额外奖励：均线发散程度（MA5 vs MA60 的距离）
                 val spread = if (ma60 > 0) (ma5 - ma60) / ma60 * 100 else 0.0
                 score += when {
-                    spread > 10 -> 0.0  // 已經給滿分
+                    spread > 10 -> 0.0  // 已经给满分
                     spread > 5 -> 0.0
                     else -> 0.0
                 }
@@ -252,13 +252,13 @@ class TrendScoreStrategy(
             bullishCount == 3 -> score = 12.0
             bullishCount == 2 -> score = 5.0
             bearishCount == 4 -> {
-                // 完美空頭排列
+                // 完美空头排列
                 score = -20.0
             }
             bearishCount == 3 -> score = -12.0
             bearishCount == 2 -> score = -5.0
             else -> {
-                // 排列混亂，微調
+                // 排列混乱，微调
                 score = if (currentPrice > ma20) 3.0 else -3.0
             }
         }
@@ -267,18 +267,18 @@ class TrendScoreStrategy(
     }
 
     /**
-     * ADX 趨勢強度評分
-     * ADX > 25 且價格在 MA20 上方 → +5~+10（上升趨勢強）
-     * ADX > 25 且價格在 MA20 下方 → -5~-10（下降趨勢強）
-     * ADX < 20 → 0（無趨勢，不加減分）
+     * ADX 趋势强度评分
+     * ADX > 25 且价格在 MA20 上方 → +5~+10（上升趋势强）
+     * ADX > 25 且价格在 MA20 下方 → -5~-10（下降趋势强）
+     * ADX < 20 → 0（无趋势，不加减分）
      */
     private fun calculateAdxScore(adx: Double, ma5: Double, ma20: Double): Double {
-        if (adx < 20) return 0.0  // 無明確趨勢
+        if (adx < 20) return 0.0  // 无明确趋势
 
         val isAboveMA20 = ma5 > ma20
         return when {
-            adx > 40 && isAboveMA20 -> 10.0   // 極強上升趨勢
-            adx > 40 && !isAboveMA20 -> -10.0  // 極強下降趨勢
+            adx > 40 && isAboveMA20 -> 10.0   // 极强上升趋势
+            adx > 40 && !isAboveMA20 -> -10.0  // 极强下降趋势
             adx > 30 && isAboveMA20 -> 7.0
             adx > 30 && !isAboveMA20 -> -7.0
             adx > 25 && isAboveMA20 -> 5.0
@@ -288,10 +288,10 @@ class TrendScoreStrategy(
     }
 
     /**
-     * 價格動量評分
-     * 5日漲幅 > 3% → +5~+10
+     * 价格动量评分
+     * 5日涨幅 > 3% → +5~+10
      * 5日跌幅 > 3% → -5~-10
-     * 小幅波動 → -2~+2
+     * 小幅波动 → -2~+2
      */
     private fun calculateMomentumScore(closes: List<Double>, days: Int): Double {
         if (closes.size < days + 1) return 0.0
@@ -316,10 +316,10 @@ class TrendScoreStrategy(
     }
 
     /**
-     * 量價配合評分
-     * 放量上漲 → +5~+8
+     * 量价配合评分
+     * 放量上涨 → +5~+8
      * 放量下跌 → -5~-8
-     * 縮量 → -2~+2
+     * 缩量 → -2~+2
      */
     private fun calculateVolumeScore(
         volumes: List<Double>, closes: List<Double>, stock: StockRealtime
@@ -333,17 +333,17 @@ class TrendScoreStrategy(
         val priceUp = stock.price > stock.open
 
         return when {
-            volRatio > 2.0 && priceUp -> 8.0    // 放量大漲
-            volRatio > 1.5 && priceUp -> 5.0    // 放量上漲
+            volRatio > 2.0 && priceUp -> 8.0    // 放量大涨
+            volRatio > 1.5 && priceUp -> 5.0    // 放量上涨
             volRatio > 2.0 && !priceUp -> -8.0  // 放量大跌
             volRatio > 1.5 && !priceUp -> -5.0  // 放量下跌
-            volRatio < 0.5 -> if (priceUp) 2.0 else -2.0  // 縮量
+            volRatio < 0.5 -> if (priceUp) 2.0 else -2.0  // 缩量
             else -> 0.0
         }
     }
 
     // ════════════════════════════════════════
-    // ADX 計算（Wilder 平滑法）
+    // ADX 计算（Wilder 平滑法）
     // ════════════════════════════════════════
 
     private fun calculateADX(
@@ -406,7 +406,7 @@ class TrendScoreStrategy(
     }
 
     // ════════════════════════════════════════
-    // 輔助函數
+    // 辅助函数
     // ════════════════════════════════════════
 
     private fun buildNeutralSignal(stock: StockRealtime, reason: String): StrategySignal {
@@ -425,18 +425,18 @@ class TrendScoreStrategy(
     ): String {
         val trendDir = if (strength >= 60) "↑上升" else if (strength <= 40) "↓下降" else "→中性"
         val alignmentDesc = when {
-            ma5 > ma10 && ma10 > ma20 && ma20 > ma60 -> "多頭排列"
-            ma5 < ma10 && ma10 < ma20 && ma20 < ma60 -> "空頭排列"
-            else -> "均線糾纏"
+            ma5 > ma10 && ma10 > ma20 && ma20 > ma60 -> "多头排列"
+            ma5 < ma10 && ma10 < ma20 && ma20 < ma60 -> "空头排列"
+            else -> "均线纠缠"
         }
         return buildString {
-            append("${trendDir}趨勢($strength) ")
+            append("${trendDir}趋势($strength) ")
             append(alignmentDesc)
-            append(" 加減分: 均線${"%+.1f".format(alignment)}")
+            append(" 加减分: 均线${"%+.1f".format(alignment)}")
             if (adx != 0.0) append(" ADX${"%+.1f".format(adx)}")
-            append(" 動量${"%+.1f".format(momentum)}")
-            append(" 量價${"%+.1f".format(volume)}")
-            if (strength < 40) append(" ⚠️趨勢走弱注意減倉")
+            append(" 动量${"%+.1f".format(momentum)}")
+            append(" 量价${"%+.1f".format(volume)}")
+            if (strength < 40) append(" ⚠️趋势走弱注意减仓")
         }
     }
 }

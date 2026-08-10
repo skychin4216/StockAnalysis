@@ -28,39 +28,39 @@ class HotSectorNewsUpdater(private val context: Context) {
     companion object {
         private const val TAG = "HotSectorNewsUpdater"
         private const val PREFS_NAME = "hot_sector_news_cache"
-        private const val CACHE_TTL_MINUTES = 60  // 新聞緩存有效期（分鐘）
+        private const val CACHE_TTL_MINUTES = 60  // 新闻缓存有效期（分钟）
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
-        /** 動態板塊優先列表（從 DB 讀取，無數據時為空） */
+        /** 动态板块优先列表（从 DB 读取，无数据时为空） */
         private var dynamicPriorityCache: List<String>? = null
         private var dynamicPriorityTimestamp: Long = 0
-        private const val DYNAMIC_CACHE_TTL = 4 * 3600 * 1000L  // 4小時刷新
+        private const val DYNAMIC_CACHE_TTL = 4 * 3600 * 1000L  // 4小时刷新
 
         /**
-         * 全局 Mutex：多個 Fragment/Engine 同時調用時，
-         * 只有第一個執行實際拉取，其餘掛起等待，完成後共享結果。
+         * 全局 Mutex：多个 Fragment/Engine 同时调用时，
+         * 只有第一个执行实际拉取，其余挂起等待，完成后共享结果。
          */
         private val globalMutex = kotlinx.coroutines.sync.Mutex()
 
         /**
-         * 便捷靜態方法：全局只啟動一次 async，後續調用返回同一個 Deferred。
+         * 便捷静态方法：全局只启动一次 async，后续调用返回同一个 Deferred。
          */
         private var pendingJob: Deferred<Unit>? = null
 
         @Synchronized
         fun ensureFreshGlobal(scope: CoroutineScope, context: Context, forceRefresh: Boolean = true): Deferred<Unit> {
             Log.i(TAG, "ensureFreshGlobal called, forceRefresh=$forceRefresh, pendingJob=${pendingJob}, isActive=${pendingJob?.isActive}")
-            // 如果已有正在執行或已完成的 job，直接返回
+            // 如果已有正在执行或已完成的 job，直接返回
             if (pendingJob != null && pendingJob!!.isActive) {
-                Log.i(TAG, "⏭️ 新聞因子拉取已在進行中，共享同一個 job")
+                Log.i(TAG, "⏭️ 新闻因子拉取已在进行中，共享同一个 job")
                 return pendingJob!!
             }
             val job = HotSectorNewsUpdater(context).ensureFreshAsync(scope, forceRefresh, ignoreQuantPause = true)
             pendingJob = job
-            Log.i(TAG, "🆕 創建新聞因子拉取 job=${job}")
-            // 完成後清理引用
+            Log.i(TAG, "🆕 创建新闻因子拉取 job=${job}")
+            // 完成后清理引用
             job.invokeOnCompletion {
-                Log.i(TAG, "✅ 新聞因子 job 完成，異常=${it?.message}")
+                Log.i(TAG, "✅ 新闻因子 job 完成，异常=${it?.message}")
                 pendingJob = null
             }
             return job
@@ -75,26 +75,26 @@ class HotSectorNewsUpdater(private val context: Context) {
 
     /**
      * App 启动或用户手动刷新时调用。
-     * 全局 Mutex 保證多個調用方共享同一次拉取：
-     * - 第一個調用：執行實際拉取
-     * - 後續調用：掛起等待，完成後直接返回（不重複拉取）
+     * 全局 Mutex 保证多个调用方共享同一次拉取：
+     * - 第一个调用：执行实际拉取
+     * - 后续调用：挂起等待，完成后直接返回（不重复拉取）
      *
-     * @param forceRefresh true=忽略緩存強制重新拉取
+     * @param forceRefresh true=忽略缓存强制重新拉取
      */
     suspend fun updateIfNeeded(forceRefresh: Boolean = false, ignoreQuantPause: Boolean = false) {
-        // 快速路徑：非強制且已完成，直接返回
+        // 快速路径：非强制且已完成，直接返回
         if (!forceRefresh && hasRun) {
-            Log.i(TAG, "⏭️ 新聞因子已更新過，跳過")
+            Log.i(TAG, "⏭️ 新闻因子已更新过，跳过")
             return
         }
 
-        Log.i(TAG, "🔒 請求 globalMutex...")
+        Log.i(TAG, "🔒 请求 globalMutex...")
         globalMutex.lock()
-        Log.i(TAG, "🔒 獲得 globalMutex")
+        Log.i(TAG, "🔒 获得 globalMutex")
         try {
-            // 雙重檢查：獲得鎖後再判斷（可能已被其他線程完成）
+            // 双重检查：获得锁后再判断（可能已被其他线程完成）
                 if (!forceRefresh && hasRun) {
-                    Log.i(TAG, "⏭️ 新聞因子已被其他調用更新，共享結果")
+                    Log.i(TAG, "⏭️ 新闻因子已被其他调用更新，共享结果")
                     return
                 }
                 hasRun = true
@@ -108,25 +108,25 @@ class HotSectorNewsUpdater(private val context: Context) {
                     return
                 }
 
-                Log.i(TAG, "━━━ 開始檢查熱門板塊新聞（${CACHE_TTL_MINUTES}分鐘內有緩存則跳過） ━━━")
+                Log.i(TAG, "━━━ 开始检查热门板块新闻（${CACHE_TTL_MINUTES}分钟内有缓存则跳过） ━━━")
 
                 // 1. 获取 Top 5 热门板块
                 val topSectors = getTopHotSectors()
                 Log.i(TAG, "Top 5 热门板块: ${topSectors.joinToString()}")
 
-                // 2. 選擇動態熱門板塊
+                // 2. 选择动态热门板块
                 val targetSectors = selectPrioritySectors(topSectors)
-                Log.i(TAG, "🎯 目標板塊: ${targetSectors.joinToString()}")
+                Log.i(TAG, "🎯 目标板块: ${targetSectors.joinToString()}")
 
-                // 3. 並行搜索所有板塊新聞
+                // 3. 并行搜索所有板块新闻
                 val allNews = mutableListOf<NewsFactorEntity>()
                 coroutineScope {
                     val sectorJobs = targetSectors.map { sector ->
                         async(Dispatchers.IO) {
-                            Log.i(TAG, "🔍 [$sector] 並行開始搜索...")
+                            Log.i(TAG, "🔍 [$sector] 并行开始搜索...")
                             val sectorStart = System.currentTimeMillis()
                             val news = searchSectorNews(sector, ignoreQuantPause = ignoreQuantPause)
-                            Log.i(TAG, "🔍 [$sector] 搜索完成，耗時=${System.currentTimeMillis()-sectorStart}ms, 獲取=${news.size}條")
+                            Log.i(TAG, "🔍 [$sector] 搜索完成，耗时=${System.currentTimeMillis()-sectorStart}ms, 获取=${news.size}条")
                             news
                         }
                     }
@@ -144,20 +144,20 @@ class HotSectorNewsUpdater(private val context: Context) {
             Log.w(TAG, "后台新闻更新失败: ${e.message}")
         } finally {
             globalMutex.unlock()
-            Log.i(TAG, "🔓 釋放 globalMutex")
+            Log.i(TAG, "🔓 释放 globalMutex")
         }
     }
 
     /**
-     * 非阻塞版本：返回一個 Deferred，調用方可：
-     * 1. 先做其他任務
-     * 2. 到需要新聞因子時 `.await()`
+     * 非阻塞版本：返回一个 Deferred，调用方可：
+     * 1. 先做其他任务
+     * 2. 到需要新闻因子时 `.await()`
      *
      * 典型用法：
      * ```
      * val newsJob = HotSectorNewsUpdater.ensureFreshAsync(context)
-     * doOtherWork()  // 並行執行不需要新聞的任務
-     * newsJob.await() // 到需要新聞因子時才等待
+     * doOtherWork()  // 并行执行不需要新闻的任务
+     * newsJob.await() // 到需要新闻因子时才等待
      * ```
      */
     fun ensureFreshAsync(scope: CoroutineScope, forceRefresh: Boolean = true, ignoreQuantPause: Boolean = false): Deferred<Unit> {
@@ -166,46 +166,46 @@ class HotSectorNewsUpdater(private val context: Context) {
         }
     }
 
-    /** 從 sector_period_summary 獲取近期主要板塊，數據不足時用 sector_daily_record 降級 */
+    /** 从 sector_period_summary 获取近期主要板块，数据不足时用 sector_daily_record 降级 */
     private suspend fun getTopHotSectors(): List<String> {
         return try {
-            // 優先用 sector_period_summary（週/月聚合）
+            // 优先用 sector_period_summary（周/月聚合）
             val tracker = com.chin.stockanalysis.strategy.backtest.SectorPeriodTracker(context)
             val weeklySectors = tracker.getCurrentWeekTopSectors(15)
             if (weeklySectors.isNotEmpty()) {
                 weeklySectors
             } else {
-                // 降級到 sector_daily_record
-                Log.i(TAG, "sector_period_summary 為空，降級到 sector_daily_record")
+                // 降级到 sector_daily_record
+                Log.i(TAG, "sector_period_summary 为空，降级到 sector_daily_record")
                 val hotStats = db.sectorDailyRecordDao().getTopHotSectors(15)
                 if (hotStats.isNotEmpty()) {
                     hotStats.map { it.sector_code }
                 } else {
-                    Log.i(TAG, "板塊數據為空，無默認板塊")
+                    Log.i(TAG, "板块数据为空，无默认板块")
                     emptyList()
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "讀取板塊記錄失敗: ${e.message}")
+            Log.w(TAG, "读取板块记录失败: ${e.message}")
             emptyList()
         }
     }
 
-    /** 直接使用動態 hot 板塊，不再硬編碼優先級過濾 */
+    /** 直接使用动态 hot 板块，不再硬编码优先级过滤 */
     private fun selectPrioritySectors(hotSectors: List<String>): List<String> {
-        Log.i(TAG, "動態板塊: ${hotSectors.joinToString()}")
+        Log.i(TAG, "动态板块: ${hotSectors.joinToString()}")
         return hotSectors.take(5)
     }
 
-    /** 三級優先級搜索指定板塊最新新聞（搜索與解析分離） */
+    /** 三级优先级搜索指定板块最新新闻（搜索与解析分离） */
     private suspend fun searchSectorNews(sector: String, ignoreQuantPause: Boolean = false): List<NewsFactorEntity> {
-        // 量化選股運行時暫停新聞搜索（除非是量化主動調用）
+        // 量化选股运行时暂停新闻搜索（除非是量化主动调用）
         if (!ignoreQuantPause && com.chin.stockanalysis.stock.database.AppBackgroundRunner.isQuantRunning) {
-            Log.i(TAG, "⏸️ 量化選股運行中，跳過新聞搜索: $sector")
+            Log.i(TAG, "⏸️ 量化选股运行中，跳过新闻搜索: $sector")
             return emptyList()
         }
 
-        // 緩存檢查
+        // 缓存检查
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val lastFetchKey = "last_fetch_$sector"
         val lastFetch = prefs.getLong(lastFetchKey, 0L)
@@ -216,7 +216,7 @@ class HotSectorNewsUpdater(private val context: Context) {
 
         val today = LocalDate.now().format(DATE_FMT)
 
-        // === 第一步：搜索新聞 ===
+        // === 第一步：搜索新闻 ===
         val rawNews = fetchNewsFromEastMoney(sector, today)
             .ifEmpty { fetchNewsFromDuckDuckGo(sector, today) }
             .ifEmpty { fetchNewsWithTavily(sector, today) }
@@ -228,20 +228,20 @@ class HotSectorNewsUpdater(private val context: Context) {
                 prefs.edit().putLong(lastFetchKey, System.currentTimeMillis()).apply()
                 return parsed
             }
-            // AI 解析失敗，繼續到 fallback
+            // AI 解析失败，继续到 fallback
         }
 
         // === Fallback 1：AI provider 直接搜索+分析 ===
-        Log.w(TAG, "⚠️ [$sector] 分離搜索解析失敗，fallback 到 AI provider")
+        Log.w(TAG, "⚠️ [$sector] 分离搜索解析失败，fallback 到 AI provider")
         val aiNews = searchWithAiProvider(sector, today)
         if (aiNews.isNotEmpty()) {
             prefs.edit().putLong(lastFetchKey, System.currentTimeMillis()).apply()
             return aiNews
         }
 
-        // === Fallback 2：關鍵詞匹配 ===
+        // === Fallback 2：关键词匹配 ===
         if (rawNews.isNotEmpty()) {
-            Log.w(TAG, "⚠️ [$sector] AI provider 也失敗，fallback 到關鍵詞匹配")
+            Log.w(TAG, "⚠️ [$sector] AI provider 也失败，fallback 到关键词匹配")
             val keywordParsed = parseWithKeywords(rawNews, sector, today)
             if (keywordParsed.isNotEmpty()) {
                 prefs.edit().putLong(lastFetchKey, System.currentTimeMillis()).apply()
@@ -249,7 +249,7 @@ class HotSectorNewsUpdater(private val context: Context) {
             }
         }
 
-        Log.w(TAG, "⚠️ [$sector] 所有新聞源均失敗")
+        Log.w(TAG, "⚠️ [$sector] 所有新闻源均失败")
         return emptyList()
     }
 
@@ -287,7 +287,7 @@ class HotSectorNewsUpdater(private val context: Context) {
         }
     }
 
-    /** 從數據庫加載今日該板塊的緩存新聞 */
+    /** 从数据库加载今日该板块的缓存新闻 */
     private suspend fun loadCachedNews(sector: String): List<NewsFactorEntity> {
         return try {
             val today = LocalDate.now().format(DATE_FMT)
@@ -298,23 +298,23 @@ class HotSectorNewsUpdater(private val context: Context) {
         }
     }
 
-    /** 使用 AI 解析新聞列表，返回結構化結果 */
+    /** 使用 AI 解析新闻列表，返回结构化结果 */
     private suspend fun parseNewsWithAi(newsList: List<NewsFactorEntity>, sector: String, today: String): List<NewsFactorEntity> {
         return try {
             val titles = newsList.joinToString("\n") { "- ${it.title}" }
             val prompt = """
-你是一位 A 股財經分析師。請分析以下關於「$sector」板塊的新聞，返回 JSON 格式：
+你是一位 A 股财经分析师。请分析以下关于「$sector」板块的新闻，返回 JSON 格式：
 
-新聞列表：
+新闻列表：
 $titles
 
-請返回：
+请返回：
 {
   "news": [
     {
       "stock_code": "",
       "company": "",
-      "title": "新聞標題",
+      "title": "新闻标题",
       "content": "摘要",
       "sentiment": 1,
       "strength": 60,
@@ -323,7 +323,7 @@ $titles
   ]
 }
 "sentiment": 1=利好, -1=利空, 0=中性
-"strength": 0-100 影響力度
+"strength": 0-100 影响力度
 只返回 JSON，不要其他文字。
 """.trimIndent()
 
@@ -349,7 +349,7 @@ $titles
                 }
 
                 if (response == null) {
-                    Log.w(TAG, "⏱️ [$sector] AI 解析新聞超時")
+                    Log.w(TAG, "⏱️ [$sector] AI 解析新闻超时")
                     return emptyList()
                 }
                 parseNewsResponse(response, sector, today)
@@ -357,15 +357,15 @@ $titles
                 com.chin.stockanalysis.ai.AiProviderPool.release(slot)
             }
         } catch (e: Exception) {
-            Log.w(TAG, "AI 解析新聞失敗 [$sector]: ${e.message}")
+            Log.w(TAG, "AI 解析新闻失败 [$sector]: ${e.message}")
             emptyList()
         }
     }
 
-    /** 關鍵詞匹配解析（AI 解析失敗時的 fallback） */
+    /** 关键词匹配解析（AI 解析失败时的 fallback） */
     private fun parseWithKeywords(newsList: List<NewsFactorEntity>, sector: String, today: String): List<NewsFactorEntity> {
-        val positive = setOf("漲", "漲停", "利好", "訂單", "增長", "突破", "超預期", "業績", "盈利", "創新高", "爆發", "強勢")
-        val negative = setOf("跌", "跌停", "利空", "虧損", "下滑", "減持", "召回", "監管", "調查", "暴跌", "疲軟")
+        val positive = setOf("涨", "涨停", "利好", "订单", "增长", "突破", "超预期", "业绩", "盈利", "创新高", "爆发", "强势")
+        val negative = setOf("跌", "跌停", "利空", "亏损", "下滑", "减持", "召回", "监管", "调查", "暴跌", "疲软")
         return newsList.map { news ->
             val titleLower = news.title
             val posCount = positive.count { titleLower.contains(it) }
@@ -385,19 +385,19 @@ $titles
         }
     }
 
-    /** AI provider 直接搜索+分析（最終 fallback） */
+    /** AI provider 直接搜索+分析（最终 fallback） */
     private suspend fun searchWithAiProvider(sector: String, today: String): List<NewsFactorEntity> {
         return try {
             val prompt = """
-你是一位 A 股財經分析師。請搜索並分析關於「$sector」板塊的最新新聞，返回 JSON 格式：
+你是一位 A 股财经分析师。请搜索并分析关于「$sector」板块的最新新闻，返回 JSON 格式：
 
-請返回：
+请返回：
 {
   "news": [
     {
       "stock_code": "",
       "company": "",
-      "title": "新聞標題",
+      "title": "新闻标题",
       "content": "摘要",
       "sentiment": 1,
       "strength": 60,
@@ -406,8 +406,8 @@ $titles
   ]
 }
 "sentiment": 1=利好, -1=利空, 0=中性
-"strength": 0-100 影響力度
-請根據你的知識庫提供該板塊的最新動態，只返回 JSON，不要其他文字。
+"strength": 0-100 影响力度
+请根据你的知识库提供该板块的最新动态，只返回 JSON，不要其他文字。
 """.trimIndent()
 
             val slot = com.chin.stockanalysis.ai.AiProviderPool.acquire(
@@ -432,7 +432,7 @@ $titles
                 }
 
                 if (response == null) {
-                    Log.w(TAG, "⏱️ [$sector] AI provider 搜索超時")
+                    Log.w(TAG, "⏱️ [$sector] AI provider 搜索超时")
                     return emptyList()
                 }
                 parseNewsResponse(response, sector, today)
@@ -440,7 +440,7 @@ $titles
                 com.chin.stockanalysis.ai.AiProviderPool.release(slot)
             }
         } catch (e: Exception) {
-            Log.w(TAG, "AI provider 搜索失敗 [$sector]: ${e.message}")
+            Log.w(TAG, "AI provider 搜索失败 [$sector]: ${e.message}")
             emptyList()
         }
     }
@@ -455,7 +455,7 @@ $titles
             if (response == null || !response.isSuccessful) return emptyList()
 
             val body = response.body?.string() ?: return emptyList()
-            // 東方財富返回 {"QuotationCodeTable":{"Data":[...]}} 格式
+            // 东方财富返回 {"QuotationCodeTable":{"Data":[...]}} 格式
             val arr = try {
                 val root = JSONObject(body)
                 if (root.has("QuotationCodeTable")) {
@@ -490,7 +490,7 @@ $titles
             }
             news
         } catch (e: Exception) {
-            Log.w(TAG, "東方財富新聞搜索失敗 [$sector]: ${e.message}")
+            Log.w(TAG, "东方财富新闻搜索失败 [$sector]: ${e.message}")
             emptyList()
         }
     }
@@ -510,7 +510,7 @@ $titles
             if (response == null || !response.isSuccessful) return emptyList()
 
             val html = response.body?.string() ?: return emptyList()
-            // 簡單解析：提取 result__a 和 result__snippet
+            // 简单解析：提取 result__a 和 result__snippet
             val news = mutableListOf<NewsFactorEntity>()
             val titleRegex = Regex("<a[^>]+class=\"result__a\"[^>]*>(.*?)</a>", RegexOption.DOT_MATCHES_ALL)
             val snippetRegex = Regex("<a[^>]+class=\"result__snippet\"[^>]*>(.*?)</a>", RegexOption.DOT_MATCHES_ALL)
@@ -536,7 +536,7 @@ $titles
             }
             news
         } catch (e: Exception) {
-            Log.w(TAG, "DuckDuckGo 搜索失敗 [$sector]: ${e.message}")
+            Log.w(TAG, "DuckDuckGo 搜索失败 [$sector]: ${e.message}")
             emptyList()
         }
     }
@@ -544,7 +544,7 @@ $titles
     private suspend fun fetchNewsWithTavily(sector: String, today: String): List<NewsFactorEntity> {
         val apiKey = com.chin.stockanalysis.config.DataConfig.searchTavilyApiKey
         if (apiKey.isEmpty()) {
-            Log.i(TAG, "Tavily API Key 未配置，跳過 Tavily 搜索 [$sector]")
+            Log.i(TAG, "Tavily API Key 未配置，跳过 Tavily 搜索 [$sector]")
             return emptyList()
         }
         return try {
@@ -567,7 +567,7 @@ $titles
                 withContext(Dispatchers.IO) { client.newCall(request).execute() }
             }
             if (response == null || !response.isSuccessful) {
-                Log.w(TAG, "Tavily 搜索失敗: ${response?.code}")
+                Log.w(TAG, "Tavily 搜索失败: ${response?.code}")
                 return emptyList()
             }
             val bodyStr = response.body?.string() ?: return emptyList()
@@ -592,10 +592,10 @@ $titles
                     isActive = true
                 ))
             }
-            Log.i(TAG, "Tavily 搜索 [$sector] 獲取 ${news.size} 條新聞")
+            Log.i(TAG, "Tavily 搜索 [$sector] 获取 ${news.size} 条新闻")
             news
         } catch (e: Exception) {
-            Log.w(TAG, "Tavily 搜索 [$sector] 失敗: ${e.message}")
+            Log.w(TAG, "Tavily 搜索 [$sector] 失败: ${e.message}")
             emptyList()
         }
     }

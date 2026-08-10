@@ -15,11 +15,11 @@ import kotlin.math.pow
 import kotlin.math.sqrt
 
 /**
- * ## 布林帶突破策略（修正版）
+ * ## 布林带突破策略（修正版）
  *
- * 從 DB 讀取單股連續 N 天收盤價計算標準布林帶（MA20 ± 2σ）。
- * 突破判定：當日收盤價 > upper band 且成交量 > 1.5× 均量。
- * 新增 squeeze breakout 加分：帶寬收窄至近期低位後突破。
+ * 从 DB 读取单股连续 N 天收盘价计算标准布林带（MA20 ± 2σ）。
+ * 突破判定：当日收盘价 > upper band 且成交量 > 1.5× 均量。
+ * 新增 squeeze breakout 加分：带宽收窄至近期低位后突破。
  */
 class BollingerBandStrategy(
     private val screener: StockScreener
@@ -41,7 +41,7 @@ class BollingerBandStrategy(
     override var weightFactors: List<WeightFactor> = listOf(
         WeightFactor("breakout", "突破强度", 40, "距离上轨的偏移百分比"),
         WeightFactor("volume", "量能确认", 35, "成交量/均量比值"),
-        WeightFactor("squeeze", "带寬收窄", 25, "突破前帶寬是否處於低位")
+        WeightFactor("squeeze", "带宽收窄", 25, "突破前带宽是否处于低位")
     )
 
     override suspend fun screen(): Result<ScreeningResult> = withContext(Dispatchers.IO) {
@@ -81,15 +81,15 @@ class BollingerBandStrategy(
         val db = StockDatabase.getInstance(screener.context)
         val dao = db.dailySnapshotDao()
 
-        // 預過濾：只對有基本成交量的股票計算布林帶（減少 DB 查詢）
+        // 预过滤：只对有基本成交量的股票计算布林带（减少 DB 查询）
         val candidates = pool.filter { it.amount > 50_000_000 && it.price > 2.0 }
-        Log.i("BB_Strategy", "大盤: $marketDir, 候選: ${candidates.size}/${pool.size}")
+        Log.i("BB_Strategy", "大盘: $marketDir, 候选: ${candidates.size}/${pool.size}")
 
         val signals = mutableListOf<StrategySignal>()
 
         for (stock in candidates) {
             try {
-                // 從 DB 讀取該股近 period+5 天歷史數據（多取 5 天用於計算均量）
+                // 从 DB 读取该股近 period+5 天历史数据（多取 5 天用于计算均量）
                 val history = dao.getByCode(stock.code, period + 5)
                 if (history.size < period) continue
 
@@ -98,7 +98,7 @@ class BollingerBandStrategy(
                 val closes = sorted.map { it.close }
                 val volumes = sorted.map { it.volume.toDouble() }
 
-                // 計算布林帶（取最近 period 天）
+                // 计算布林带（取最近 period 天）
                 val recentCloses = closes.takeLast(period)
                 val ma = recentCloses.average()
                 val variance = recentCloses.map { (it - ma).pow(2) }.average()
@@ -109,17 +109,17 @@ class BollingerBandStrategy(
 
                 val currentPrice = stock.price
 
-                // 突破判定：價格突破上軌
+                // 突破判定：价格突破上轨
                 val breakoutPct = if (upper > 0) (currentPrice - upper) / upper * 100 else 0.0
-                if (breakoutPct < -1.0) continue // 允許 1% 容差（接近上軌也算）
+                if (breakoutPct < -1.0) continue // 允许 1% 容差（接近上轨也算）
 
-                // 量能確認：今日成交量 > volConfirmRatio × 均量
+                // 量能确认：今日成交量 > volConfirmRatio × 均量
                 val avgVolume = volumes.takeLast(period).average()
                 val todayVolume = stock.volume.toDouble()
                 val volumeRatio = if (avgVolume > 0) todayVolume / avgVolume else 1.0
-                if (volumeRatio < volConfirmRatio && breakoutPct > 0) continue // 突破時必須放量
+                if (volumeRatio < volConfirmRatio && breakoutPct > 0) continue // 突破时必须放量
 
-                // Squeeze 檢測：當前帶寬是否處於近期低位
+                // Squeeze 检测：当前带宽是否处于近期低位
                 val historicalBandWidths = mutableListOf<Double>()
                 if (closes.size >= period + 5) {
                     for (offset in 0 until 5) {
@@ -132,15 +132,15 @@ class BollingerBandStrategy(
                     }
                 }
                 val avgBandWidth = historicalBandWidths.average().takeIf { it > 0 } ?: bandWidth
-                val isSqueeze = bandWidth < avgBandWidth * 0.7 // 帶寬收窄至均值 70% 以下
+                val isSqueeze = bandWidth < avgBandWidth * 0.7 // 带宽收窄至均值 70% 以下
 
-                // 評分
+                // 评分
                 val breakoutScore = when {
                     breakoutPct > 3.0 -> 40
                     breakoutPct > 1.5 -> 35
                     breakoutPct > 0.5 -> 30
                     breakoutPct > 0.0 -> 25
-                    else -> 15 // 接近上軌但未突破
+                    else -> 15 // 接近上轨但未突破
                 }
                 val volumeScore = when {
                     volumeRatio > 3.0 -> 35
@@ -159,11 +159,11 @@ class BollingerBandStrategy(
                 if (strength < strengthThreshold) continue
 
                 val reason = buildString {
-                    append("BB上軌${"%.2f".format(upper)}")
+                    append("BB上轨${"%.2f".format(upper)}")
                     if (breakoutPct > 0) append(" 突破+${"%.1f".format(breakoutPct)}%")
-                    else append(" 觸及")
+                    else append(" 触及")
                     append(" 量比${"%.1f".format(volumeRatio)}")
-                    if (isSqueeze) append(" 帶寬收窄突破")
+                    if (isSqueeze) append(" 带宽收窄突破")
                 }
 
                 signals.add(StrategySignal(
@@ -177,7 +177,7 @@ class BollingerBandStrategy(
         }
 
         val result = signals.sortedByDescending { it.strength }.take(config.maxResults)
-        Log.i("BB_Strategy", "計算完成: ${candidates.size} 候選 → ${result.size} 信號")
+        Log.i("BB_Strategy", "计算完成: ${candidates.size} 候选 → ${result.size} 信号")
         return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,
             signals = result, totalScanned = pool.size, scanTimeMs = System.currentTimeMillis() - startTime

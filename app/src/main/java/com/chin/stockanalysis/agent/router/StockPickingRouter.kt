@@ -11,9 +11,9 @@ import com.chin.stockanalysis.strategy.topology.xml.DagTradeExecutor
 import com.chin.stockanalysis.stock.database.StockDatabase
 
 /**
- * ## 選股路由層
+ * ## 选股路由层
  *
- * Legacy: DagTradeExecutor (mid_term pipeline) → 從 DB 讀取訂單轉為推薦
+ * Legacy: DagTradeExecutor (mid_term pipeline) → 从 DB 读取订单转为推荐
  * Agent: StockPickingAgent.pickStocks()
  */
 interface StockPickingService {
@@ -26,7 +26,7 @@ interface StockPickingService {
     ): StockPickingResult
 }
 
-/** Legacy 實現 — 調用 DAG Pipeline (mid_term) */
+/** Legacy 实现 — 调用 DAG Pipeline (mid_term) */
 class LegacyStockPickingService : StockPickingService {
     override suspend fun pickStocks(
         context: Context,
@@ -38,13 +38,13 @@ class LegacyStockPickingService : StockPickingService {
         val engine = StrategyEngineHolder.get()
         val strategies = engine.getEnabledStrategiesByPeriod(HoldingPeriod.MID)
         if (strategies.isEmpty()) {
-            return StockPickingResult(success = false, rawOutput = "無可用策略")
+            return StockPickingResult(success = false, rawOutput = "无可用策略")
         }
 
         val tradeDate = date ?: java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
         val today = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
 
-        onProgress?.invoke("正在執行 DAG 選股 Pipeline...")
+        onProgress?.invoke("正在执行 DAG 选股 Pipeline...")
         val result = DagTradeExecutor.execute(
             context = context,
             useCaseId = "mid_term",
@@ -53,10 +53,10 @@ class LegacyStockPickingService : StockPickingService {
             strategies = strategies,
             orderType = "MidTermQuant"
         ) { _, nodeName ->
-            onProgress?.invoke("🔄 $nodeName 執行中...")
+            onProgress?.invoke("🔄 $nodeName 执行中...")
         }
 
-        // 從 DB 讀取今日訂單轉為推薦列表
+        // 从 DB 读取今日订单转为推荐列表
         val db = StockDatabase.getInstance(context)
         val orders = try { db.strategyTradeOrderDao().getByDate(tradeDate) } catch (_: Exception) { emptyList() }
         val recommendations = orders
@@ -83,7 +83,7 @@ class LegacyStockPickingService : StockPickingService {
     }
 }
 
-/** Agent 實現 */
+/** Agent 实现 */
 class AgentStockPickingService : StockPickingService {
     override suspend fun pickStocks(
         context: Context,
@@ -97,7 +97,7 @@ class AgentStockPickingService : StockPickingService {
     }
 }
 
-/** 路由工廠 */
+/** 路由工厂 */
 object StockPickingRouter {
     fun getService(): StockPickingService {
         return when (FeatureFlagManager.resolveRoute(FeatureFlagManager.stockPickingRoute)) {

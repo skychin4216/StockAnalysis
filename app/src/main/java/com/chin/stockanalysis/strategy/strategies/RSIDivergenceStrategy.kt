@@ -13,11 +13,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * ## RSI 背離策略（修正版）
+ * ## RSI 背离策略（修正版）
  *
- * 從 DB 讀取單股連續 N 天收盤價計算標準 RSI(14)。
- * 超賣反彈：RSI < 30 且當日收陽（反轉確認）。
- * 底背離加分：股價創近期新低但 RSI 未創新低。
+ * 从 DB 读取单股连续 N 天收盘价计算标准 RSI(14)。
+ * 超卖反弹：RSI < 30 且当日收阳（反转确认）。
+ * 底背离加分：股价创近期新低但 RSI 未创新低。
  */
 class RSIDivergenceStrategy(
     private val screener: StockScreener
@@ -38,8 +38,8 @@ class RSIDivergenceStrategy(
 
     override var weightFactors: List<WeightFactor> = listOf(
         WeightFactor("rsi", "RSI得分", 40, "RSI值越低得分越高"),
-        WeightFactor("divergence", "底背離", 30, "股價新低但RSI未新低"),
-        WeightFactor("volume", "量能确认", 30, "反轉日放量確認")
+        WeightFactor("divergence", "底背离", 30, "股价新低但RSI未新低"),
+        WeightFactor("volume", "量能确认", 30, "反转日放量确认")
     )
 
     override suspend fun screen(): Result<ScreeningResult> = withContext(Dispatchers.IO) {
@@ -79,41 +79,41 @@ class RSIDivergenceStrategy(
         val db = StockDatabase.getInstance(screener.context)
         val dao = db.dailySnapshotDao()
 
-        // 預過濾：有基本流動性、當日有反彈跡象的股票
+        // 预过滤：有基本流动性、当日有反弹迹象的股票
         val candidates = pool.filter {
             it.amount > minAmount && it.price > 2.0 && it.changePercent > -5.0
         }
-        Log.i("RSI_Strategy", "大盤: $marketDir, 候選: ${candidates.size}/${pool.size}")
+        Log.i("RSI_Strategy", "大盘: $marketDir, 候选: ${candidates.size}/${pool.size}")
 
         val signals = mutableListOf<StrategySignal>()
 
         for (stock in candidates) {
             try {
-                // 讀取 period+10 天歷史（多取 10 天用於背離檢測）
+                // 读取 period+10 天历史（多取 10 天用于背离检测）
                 val history = dao.getByCode(stock.code, period + 10)
                 if (history.size < period + 1) continue
 
                 val sorted = history.sortedBy { it.date }
                 val closes = sorted.map { it.close }
 
-                // 計算當前 RSI
+                // 计算当前 RSI
                 val currentRsi = calculateRSI(closes, period)
 
-                // 只關注超賣區或接近超賣的股票
-                if (currentRsi > oversoldLevel + 15) continue // RSI > 45 直接跳過
+                // 只关注超卖区或接近超卖的股票
+                if (currentRsi > oversoldLevel + 15) continue // RSI > 45 直接跳过
 
-                // 反轉確認：當日收陽或漲幅 > 0
+                // 反转确认：当日收阳或涨幅 > 0
                 val hasReversal = stock.price > stock.open || stock.changePercent > 0
 
-                // 底背離檢測：近 5 日股價創新低但 RSI 未創新低
+                // 底背离检测：近 5 日股价创新低但 RSI 未创新低
                 val hasDivergence = detectBullishDivergence(closes, period)
 
-                // 量能確認：今日成交量 vs 近 5 日均量
+                // 量能确认：今日成交量 vs 近 5 日均量
                 val recentVolumes = sorted.takeLast(6).map { it.volume.toDouble() }
                 val avgVol5 = if (recentVolumes.size > 1) recentVolumes.dropLast(1).average() else 1.0
                 val volumeRatio = if (avgVol5 > 0) stock.volume.toDouble() / avgVol5 else 1.0
 
-                // 評分
+                // 评分
                 val rsiScore = when {
                     currentRsi < 15 -> 40
                     currentRsi < 20 -> 36
@@ -145,8 +145,8 @@ class RSIDivergenceStrategy(
 
                 val reason = buildString {
                     append("RSI=${"%.0f".format(currentRsi)}")
-                    if (hasDivergence) append(" 底背離")
-                    if (hasReversal) append(" 反轉確認")
+                    if (hasDivergence) append(" 底背离")
+                    if (hasReversal) append(" 反转确认")
                     append(" 量比${"%.1f".format(volumeRatio)}")
                 }
 
@@ -161,7 +161,7 @@ class RSIDivergenceStrategy(
         }
 
         val result = signals.sortedByDescending { it.strength }.take(config.maxResults)
-        Log.i("RSI_Strategy", "計算完成: ${candidates.size} 候選 → ${result.size} 信號")
+        Log.i("RSI_Strategy", "计算完成: ${candidates.size} 候选 → ${result.size} 信号")
         return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,
             signals = result, totalScanned = pool.size, scanTimeMs = System.currentTimeMillis() - startTime
@@ -169,33 +169,33 @@ class RSIDivergenceStrategy(
     }
 
     /**
-     * 標準 RSI 計算（Wilder 平滑法的簡化版：簡單均值）
+     * 标准 RSI 计算（Wilder 平滑法的简化版：简单均值）
      */
     private fun calculateRSI(closes: List<Double>, period: Int): Double {
         return com.chin.stockanalysis.strategy.analysis.RsiCalculator.compute(closes, period)
     }
 
     /**
-     * 底背離檢測：近 5 日股價創近期新低，但 RSI 未創新低
+     * 底背离检测：近 5 日股价创近期新低，但 RSI 未创新低
      */
     private fun detectBullishDivergence(closes: List<Double>, period: Int): Boolean {
         if (closes.size < period + 10) return false
 
-        // 當前價格和 RSI
+        // 当前价格和 RSI
         val currentPrice = closes.last()
         val currentRsi = calculateRSI(closes, period)
 
-        // 5 天前的價格和 RSI
+        // 5 天前的价格和 RSI
         val prevCloses = closes.dropLast(5)
         val prevPrice = prevCloses.last()
         val prevRsi = calculateRSI(prevCloses, period)
 
-        // 10 天前的價格和 RSI（更遠的參照）
+        // 10 天前的价格和 RSI（更远的参照）
         val olderCloses = closes.dropLast(10)
         val olderPrice = olderCloses.last()
         val olderRsi = calculateRSI(olderCloses, period)
 
-        // 底背離：股價低於前期低點，但 RSI 高於前期 RSI
+        // 底背离：股价低于前期低点，但 RSI 高于前期 RSI
         val priceLower = currentPrice < prevPrice && currentPrice < olderPrice
         val rsiHigher = currentRsi > prevRsi || currentRsi > olderRsi
 

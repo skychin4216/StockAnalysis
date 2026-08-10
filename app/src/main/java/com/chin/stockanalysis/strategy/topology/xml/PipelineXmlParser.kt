@@ -10,23 +10,23 @@ import java.io.StringReader
 /**
  * ## Pipeline XML 解析器
  *
- * 將 XML 文件解析為 Pipeline 對象。
- * XML 格式參考高通 Camera Pipeline 的拓撲描述方式。
+ * 将 XML 文件解析为 Pipeline 对象。
+ * XML 格式参考高通 Camera Pipeline 的拓扑描述方式。
  *
  * ### XML Schema
  * ```xml
- * <pipeline id="screening" name="量化選股" version="1">
+ * <pipeline id="screening" name="量化选股" version="1">
  *   <stages>
- *     <stage name="數據準備" parallel="true">
- *       <linkList name="市場上下文">
+ *     <stage name="数据准备" parallel="true">
+ *       <linkList name="市场上下文">
  *         <link from="n1" fromPort="out" to="n2" toPort="in" />
  *       </linkList>
  *       <linkList name="股票池">
  *         <link from="n2" fromPort="out" to="n3" toPort="in" />
  *       </linkList>
  *     </stage>
- *     <stage name="策略篩選" parallel="true">
- *       <linkList name="均線金叉">
+ *     <stage name="策略筛选" parallel="true">
+ *       <linkList name="均线金叉">
  *         <link from="n3" fromPort="out" to="n4" toPort="in" />
  *       </linkList>
  *       <linkList name="放量突破">
@@ -44,13 +44,13 @@ import java.io.StringReader
  * </pipeline>
  * ```
  *
- * ### UseCase XML Schema（多 Pipeline，推薦）
+ * ### UseCase XML Schema（多 Pipeline，推荐）
  * ```xml
- * <usecase id="short_term" name="短線量化">
- *   <description>短線量化選股流程</description>
+ * <usecase id="short_term" name="短线量化">
+ *   <description>短线量化选股流程</description>
  *   <pipelines>
- *     <pipeline ref="usecases/data_prep_pipeline.xml" parallel="false" name="數據準備" />
- *     <pipeline ref="usecases/strategy_screening_pipeline.xml" parallel="true" name="策略篩選" />
+ *     <pipeline ref="usecases/data_prep_pipeline.xml" parallel="false" name="数据准备" />
+ *     <pipeline ref="usecases/strategy_screening_pipeline.xml" parallel="true" name="策略筛选" />
  *     <pipeline ref="usecases/ai_trade_pipeline.xml" parallel="false" name="AI+交易" />
  *   </pipelines>
  *   <config>
@@ -60,10 +60,10 @@ import java.io.StringReader
  * </usecase>
  * ```
  *
- * ### 向後兼容：單 Pipeline 格式
+ * ### 向后兼容：单 Pipeline 格式
  * ```xml
- * <usecase id="short_term" name="短線量化">
- *   <description>短線量化選股流程</description>
+ * <usecase id="short_term" name="短线量化">
+ *   <description>短线量化选股流程</description>
  *   <pipeline ref="usecases/short_term_pipeline.xml" />
  *   <config>
  *     <param name="orderType" value="ShortTermQuant" />
@@ -77,11 +77,11 @@ object PipelineXmlParser {
     private const val TAG = "PipelineXmlParser"
 
     // ════════════════════════════════════════════════════
-    // Pipeline XML → Pipeline 對象
+    // Pipeline XML → Pipeline 对象
     // ════════════════════════════════════════════════════
 
     /**
-     * 解析 Pipeline XML 字符串為 Pipeline 對象。
+     * 解析 Pipeline XML 字符串为 Pipeline 对象。
      */
     fun parsePipeline(xml: String, context: Context): Pipeline? {
         return try {
@@ -120,13 +120,13 @@ object PipelineXmlParser {
             Pipeline(id = pipelineId, name = pipelineName, description = pipelineDesc,
                 version = version, stages = stages)
         } catch (e: Exception) {
-            Log.e(TAG, "Pipeline XML 解析失敗: ${e.message}", e)
+            Log.e(TAG, "Pipeline XML 解析失败: ${e.message}", e)
             null
         }
     }
 
     /**
-     * 解析 <nodes> 區塊，填充 nodeId → Node 映射。
+     * 解析 <nodes> 区块，填充 nodeId → Node 映射。
      */
     private fun parseNodes(parser: XmlPullParser, context: Context, nodes: MutableMap<String, PipelineNode<*, *>>) {
         val depth = parser.depth
@@ -141,7 +141,7 @@ object PipelineXmlParser {
                 if (node != null) {
                     nodes[nodeId] = node
                 } else {
-                    Log.e(TAG, "Node 創建失敗: id=$nodeId, module=$module")
+                    Log.e(TAG, "Node 创建失败: id=$nodeId, module=$module")
                 }
             }
             eventType = parser.next()
@@ -149,7 +149,7 @@ object PipelineXmlParser {
     }
 
     /**
-     * 解析 <stages> 區塊，生成 Stage 列表。
+     * 解析 <stages> 区块，生成 Stage 列表。
      */
     private fun parseStages(parser: XmlPullParser, nodes: Map<String, PipelineNode<*, *>>, stages: MutableList<Pipeline.Stage>) {
         val depth = parser.depth
@@ -173,7 +173,7 @@ object PipelineXmlParser {
     }
 
     /**
-     * 解析 <linkList> 區塊，生成 LinkList 列表。
+     * 解析 <linkList> 区块，生成 LinkList 列表。
      */
     private fun parseLinkLists(parser: XmlPullParser, nodes: Map<String, PipelineNode<*, *>>, linkLists: MutableList<LinkList>) {
         val depth = parser.depth
@@ -193,7 +193,7 @@ object PipelineXmlParser {
     }
 
     /**
-     * 解析 <link> 元素，生成 Link 對象。
+     * 解析 <link> 元素，生成 Link 对象。
      */
     private fun parseLinks(parser: XmlPullParser, nodes: Map<String, PipelineNode<*, *>>, links: MutableList<Link<*, *>>) {
         val depth = parser.depth
@@ -222,17 +222,17 @@ object PipelineXmlParser {
     }
 
     /**
-     * 解析 <config> 區塊中的 <param> 元素。
+     * 解析 <config> 区块中的 <param> 元素。
      */
     private fun parseConfigParams(parser: XmlPullParser): Map<String, String> {
         val config = mutableMapOf<String, String>()
-        // 自閉合標籤（如 <Node ... />）無子元素，直接返回
+        // 自闭合标签（如 <Node ... />）无子元素，直接返回
         if (parser.isEmptyElementTag) return config
 
         val depth = parser.depth
         var eventType = parser.next()
         while (eventType != XmlPullParser.END_DOCUMENT) {
-            // 退出：回到同層或更外層的 END_TAG（不消費越界事件）
+            // 退出：回到同层或更外层的 END_TAG（不消费越界事件）
             if (eventType == XmlPullParser.END_TAG && parser.depth <= depth) break
             if (eventType == XmlPullParser.START_TAG && parser.name == "param") {
                 val name = parser.getAttributeValue(null, "name") ?: ""
@@ -245,17 +245,17 @@ object PipelineXmlParser {
     }
 
     // ════════════════════════════════════════════════════
-    // UseCase XML → UseCaseConfig 對象
+    // UseCase XML → UseCaseConfig 对象
     // ════════════════════════════════════════════════════
 
     /**
-     * UseCase 配置（從 XML 解析），支持 Pipeline 引用和直接 Node 定義。
+     * UseCase 配置（从 XML 解析），支持 Pipeline 引用和直接 Node 定义。
      *
-     * UseCase 的執行步驟分為「有序步驟列表」，每個步驟可以是：
-     * - [StepRef.pipeline]：引用一個 Pipeline XML 文件
-     * - [StepRef.node]：直接定義一個單獨 Node（module + config）
+     * UseCase 的执行步骤分为「有序步骤列表」，每个步骤可以是：
+     * - [StepRef.pipeline]：引用一个 Pipeline XML 文件
+     * - [StepRef.node]：直接定义一个单独 Node（module + config）
      *
-     * 步驟之間默認串行；當 [parallel] = true 時，與前一個步驟並行執行。
+     * 步骤之间默认串行；当 [parallel] = true 时，与前一个步骤并行执行。
      */
     data class UseCaseConfig(
         val id: String,
@@ -266,17 +266,17 @@ object PipelineXmlParser {
     )
 
     /**
-     * UseCase 中的一個執行步驟。
+     * UseCase 中的一个执行步骤。
      */
     sealed class StepRef {
-        /** 引用一個 Pipeline XML 文件 */
+        /** 引用一个 Pipeline XML 文件 */
         data class pipeline(
             val ref: String,
             val parallel: Boolean = false,
             val name: String = ""
         ) : StepRef()
 
-        /** 直接定義一個單獨 Node（不需要獨立 Pipeline XML） */
+        /** 直接定义一个单独 Node（不需要独立 Pipeline XML） */
         data class node(
             val id: String,
             val module: String,
@@ -288,18 +288,18 @@ object PipelineXmlParser {
     /**
      * 解析 UseCase XML 字符串。
      *
-     * 支持三種格式：
-     * 1. 新格式（推薦）：`<pipelines>` 內混合 `<pipeline ref="...">` 和 `<node id="..." module="...">`
-     * 2. 舊格式兼容：`<pipeline ref="..." />` 不在 `<pipelines>` 包裹
+     * 支持三种格式：
+     * 1. 新格式（推荐）：`<pipelines>` 内混合 `<pipeline ref="...">` 和 `<node id="..." module="...">`
+     * 2. 旧格式兼容：`<pipeline ref="..." />` 不在 `<pipelines>` 包裹
      * 3. 直接 node：`<node id="..." module="..." />` 不在 `<pipelines>` 包裹
      *
      * ```xml
-     * <usecase id="short_term" name="短線量化">
+     * <usecase id="short_term" name="短线量化">
      *   <steps>
-     *     <pipeline ref="data_prep.xml" parallel="false" name="數據準備" />
-     *     <pipeline ref="strategy_screening.xml" parallel="true" name="策略篩選" />
-     *     <pipeline ref="merge_boost.xml" parallel="false" name="合併加權" />
-     *     <pipeline ref="ai_filter.xml" parallel="false" name="AI+主力過濾" />
+     *     <pipeline ref="data_prep.xml" parallel="false" name="数据准备" />
+     *     <pipeline ref="strategy_screening.xml" parallel="true" name="策略筛选" />
+     *     <pipeline ref="merge_boost.xml" parallel="false" name="合并加权" />
+     *     <pipeline ref="ai_filter.xml" parallel="false" name="AI+主力过滤" />
      *   </steps>
      *   <config><param name="maxHoldings" value="3" /></config>
      * </usecase>
@@ -327,7 +327,7 @@ object PipelineXmlParser {
                             desc = parser.nextText().trim()
                         }
                         "steps", "pipelines" -> {
-                            // 解析 <steps> 或 <pipelines> 內的步驟
+                            // 解析 <steps> 或 <pipelines> 内的步骤
                             val stepsDepth = parser.depth
                             var pe = parser.next()
                             while (!(pe == XmlPullParser.END_TAG && parser.depth == stepsDepth &&
@@ -354,7 +354,7 @@ object PipelineXmlParser {
                                 pe = parser.next()
                             }
                         }
-                        // 向後兼容：頂級的 <pipeline ref="..."> 或 <node id="..." module="...">
+                        // 向后兼容：顶级的 <pipeline ref="..."> 或 <node id="..." module="...">
                         "pipeline" -> {
                             val ref = parser.getAttributeValue(null, "ref") ?: ""
                             val parallel = parser.getAttributeValue(null, "parallel")?.toBooleanStrictOrNull() ?: false
@@ -394,32 +394,32 @@ object PipelineXmlParser {
 
             UseCaseConfig(id = id, name = name, description = desc, steps = steps, config = config)
         } catch (e: Exception) {
-            Log.e(TAG, "UseCase XML 解析失敗: ${e.message}")
+            Log.e(TAG, "UseCase XML 解析失败: ${e.message}")
             null
         }
     }
 
     // ════════════════════════════════════════════════════
-    // V2: 高通風格 DAG Pipeline 解析（NodeList + Links）
+    // V2: 高通风格 DAG Pipeline 解析（NodeList + Links）
     // ════════════════════════════════════════════════════
 
     /**
-     * 檢測 XML 是否為高通風格 V2 格式（含 <NodeList> 和 <Links> 標籤）。
+     * 检测 XML 是否为高通风格 V2 格式（含 <NodeList> 和 <Links> 标签）。
      */
     fun isDagPipelineXml(xml: String): Boolean {
         return xml.contains("<NodeList>") || xml.contains("<nodeList>")
     }
 
     /**
-     * 解析高通風格 V2 DAG Pipeline XML 字符串。
+     * 解析高通风格 V2 DAG Pipeline XML 字符串。
      *
-     * XML 格式（對應高通 Camera Pipeline XML）：
+     * XML 格式（对应高通 Camera Pipeline XML）：
      * ```xml
-     * <DagPipeline id="mid_term" name="中線量化" description="...">
+     * <DagPipeline id="mid_term" name="中线量化" description="...">
      *   <PipelineName>MidTermPipeline</PipelineName>
      *   <NodeList>
      *     <Node>
-     *       <nodeName>市場上下文</nodeName>
+     *       <nodeName>市场上下文</nodeName>
      *       <NodeId>n_ctx</NodeId>
      *       <module>market_context</module>
      *     </Node>
@@ -459,7 +459,7 @@ object PipelineXmlParser {
                         "PipelineName" -> {
                             if (pipelineName.isBlank()) pipelineName = parser.nextText().trim()
                         }
-                        // ── 子 Pipeline 分組塊 ──
+                        // ── 子 Pipeline 分组块 ──
                         "Pipeline" -> {
                             val groupId = parser.getAttributeValue(null, "id") ?: ""
                             val groupName = parser.getAttributeValue(null, "name") ?: ""
@@ -494,7 +494,7 @@ object PipelineXmlParser {
             }
 
             if (dagNodes.isEmpty()) {
-                Log.e(TAG, "DAG Pipeline XML 無任何 Node")
+                Log.e(TAG, "DAG Pipeline XML 无任何 Node")
                 return null
             }
 
@@ -510,16 +510,16 @@ object PipelineXmlParser {
                 pipelineGroups = pipelineGroups
             )
         } catch (e: Exception) {
-            Log.e(TAG, "DAG Pipeline XML 解析失敗: ${e.message}", e)
+            Log.e(TAG, "DAG Pipeline XML 解析失败: ${e.message}", e)
             null
         }
     }
 
     /**
-     * 解析 <Pipeline id="..." name="..."> 分組塊。
+     * 解析 <Pipeline id="..." name="..."> 分组块。
      *
-     * 內部包含 <NodeList> 和 <Links>，節點自動標記 pipelineGroup。
-     * 支持 ${param} 模板變量替換。
+     * 内部包含 <NodeList> 和 <Links>，节点自动标记 pipelineGroup。
+     * 支持 ${param} 模板变量替换。
      */
     private fun parsePipelineGroup(
         parser: XmlPullParser, context: Context,
@@ -542,7 +542,7 @@ object PipelineXmlParser {
             }
             eventType = parser.next()
         }
-        // 標記 pipelineGroup
+        // 标记 pipelineGroup
         for (i in groupNodes.indices) {
             val n = groupNodes[i]
             groupNodes[i] = n.copy(pipelineGroup = groupId)
@@ -550,16 +550,16 @@ object PipelineXmlParser {
     }
 
     /**
-     * 解析 <NodeList> 區塊。
+     * 解析 <NodeList> 区块。
      *
-     * 支持兩種格式：
-     * 1. 高通風格（嵌套標籤）：
-     *    <Node><nodeName>市場上下文</nodeName><NodeId>n_ctx</NodeId><module>market_context</module></Node>
-     * 2. 屬性風格（簡寫）：
-     *    <Node id="n_ctx" name="市場上下文" module="market_context" />
+     * 支持两种格式：
+     * 1. 高通风格（嵌套标签）：
+     *    <Node><nodeName>市场上下文</nodeName><NodeId>n_ctx</NodeId><module>market_context</module></Node>
+     * 2. 属性风格（简写）：
+     *    <Node id="n_ctx" name="市场上下文" module="market_context" />
      *
-     * @param groupId 所屬 Pipeline 分組 ID（空 = 未分組）
-     * @param params 模板變量替換（${key} → value）
+     * @param groupId 所属 Pipeline 分组 ID（空 = 未分组）
+     * @param params 模板变量替换（${key} → value）
      */
     private fun parseDagNodes(
         parser: XmlPullParser, context: Context,
@@ -573,26 +573,26 @@ object PipelineXmlParser {
             (parser.name == "NodeList" || parser.name == "nodeList")) &&
             eventType != XmlPullParser.END_DOCUMENT) {
             if (eventType == XmlPullParser.START_TAG && (parser.name == "Node" || parser.name == "node")) {
-                // 先嘗試屬性風格
+                // 先尝试属性风格
                 val attrId = parser.getAttributeValue(null, "id")
                 val attrName = parser.getAttributeValue(null, "name")
                 val attrModule = parser.getAttributeValue(null, "module")
                 val rawConfig = parseConfigParams(parser)
-                // 模板變量替換
+                // 模板变量替换
                 val attrConfig = if (params.isNotEmpty()) {
                     rawConfig.mapValues { (_, v) -> resolveTemplateVars(v, params) }
                 } else rawConfig
 
                 if (!attrId.isNullOrBlank() && !attrModule.isNullOrBlank()) {
-                    // 屬性風格
+                    // 属性风格
                     val node = NodeRegistry.createNode(attrModule, attrConfig, context)
                     if (node != null) {
                         dagNodes.add(DagNode(attrId, attrName ?: attrModule, node, groupId))
                     } else {
-                        Log.e(TAG, "DAG Node 創建失敗: id=$attrId, module=$attrModule")
+                        Log.e(TAG, "DAG Node 创建失败: id=$attrId, module=$attrModule")
                     }
                 } else {
-                    // 高通風格（嵌套標籤）
+                    // 高通风格（嵌套标签）
                     var nodeName = ""
                     var nodeId = ""
                     var module = ""
@@ -615,7 +615,7 @@ object PipelineXmlParser {
                         ne = parser.next()
                     }
 
-                    // 模板變量替換
+                    // 模板变量替换
                     if (params.isNotEmpty()) {
                         nodeConfig = nodeConfig.mapValues { (_, v) -> resolveTemplateVars(v, params) }.toMutableMap()
                     }
@@ -625,7 +625,7 @@ object PipelineXmlParser {
                         if (node != null) {
                             dagNodes.add(DagNode(nodeId, nodeName.ifBlank { module }, node, groupId))
                         } else {
-                            Log.e(TAG, "DAG Node 創建失敗: id=$nodeId, module=$module")
+                            Log.e(TAG, "DAG Node 创建失败: id=$nodeId, module=$module")
                         }
                     }
                 }
@@ -635,7 +635,7 @@ object PipelineXmlParser {
     }
 
     /**
-     * 解析 config value 中的 ${param} 模板變量。
+     * 解析 config value 中的 ${param} 模板变量。
      * 例：resolveTemplateVars("${threshold}", mapOf("threshold" to "0.015")) → "0.015"
      */
     private fun resolveTemplateVars(value: String, params: Map<String, String>): String {
@@ -648,12 +648,12 @@ object PipelineXmlParser {
     }
 
     /**
-     * 解析 <Links> 區塊。
+     * 解析 <Links> 区块。
      *
-     * 支持兩種格式：
-     * 1. 高通風格（嵌套標籤）：
+     * 支持两种格式：
+     * 1. 高通风格（嵌套标签）：
      *    <Link><SourceNodeId>n_ctx</SourceNodeId><TargetNodeId>n_pool</TargetNodeId></Link>
-     * 2. 屬性風格（簡寫）：
+     * 2. 属性风格（简写）：
      *    <Link source="n_ctx" target="n_pool" />
      */
     private fun parseDagEdges(parser: XmlPullParser, dagEdges: MutableList<DagEdge>) {
@@ -663,7 +663,7 @@ object PipelineXmlParser {
             (parser.name == "Links" || parser.name == "links")) &&
             eventType != XmlPullParser.END_DOCUMENT) {
             if (eventType == XmlPullParser.START_TAG && (parser.name == "Link" || parser.name == "link")) {
-                // 先嘗試屬性風格
+                // 先尝试属性风格
                 val attrSource = parser.getAttributeValue(null, "source") ?: parser.getAttributeValue(null, "from")
                 val attrTarget = parser.getAttributeValue(null, "target") ?: parser.getAttributeValue(null, "to")
                 val attrSourcePort = parser.getAttributeValue(null, "sourcePortId")?.toIntOrNull() ?: 0
@@ -672,7 +672,7 @@ object PipelineXmlParser {
                 if (!attrSource.isNullOrBlank() && !attrTarget.isNullOrBlank()) {
                     dagEdges.add(DagEdge(attrSource, attrSourcePort, attrTarget, attrTargetPort))
                 } else {
-                    // 高通風格（嵌套標籤）
+                    // 高通风格（嵌套标签）
                     var sourceId = ""
                     var targetId = ""
                     var sourcePort = 0
@@ -703,7 +703,7 @@ object PipelineXmlParser {
     }
 
     /**
-     * 從 assets 加載 DAG Pipeline XML，自動檢測 V1/V2 格式。
+     * 从 assets 加载 DAG Pipeline XML，自动检测 V1/V2 格式。
      */
     fun loadDagPipelineFromAssets(context: Context, assetPath: String): DagPipeline? {
         return try {
@@ -711,21 +711,21 @@ object PipelineXmlParser {
             if (isDagPipelineXml(xml)) {
                 parseDagPipeline(xml, context)
             } else {
-                // V1 格式轉為 V1 Pipeline，不適用於 DagPipeline
-                Log.w(TAG, "$assetPath 不是 DAG 格式，跳過")
+                // V1 格式转为 V1 Pipeline，不适用于 DagPipeline
+                Log.w(TAG, "$assetPath 不是 DAG 格式，跳过")
                 null
             }
         } catch (e: Exception) {
-            Log.e(TAG, "加載 DAG Pipeline 失敗: $assetPath — ${e.message}")
+            Log.e(TAG, "加载 DAG Pipeline 失败: $assetPath — ${e.message}")
             null
         }
     }
 
     // ════════════════════════════════════════════════════
-    // 編輯器模型（用於 UI 編輯器的增改刪操作）
+    // 编辑器模型（用于 UI 编辑器的增改删操作）
     // ════════════════════════════════════════════════════
 
-    /** 編輯器中的 Node 表示（不依賴具體 Node 實例） */
+    /** 编辑器中的 Node 表示（不依赖具体 Node 实例） */
     data class EditableNode(
         val id: String,
         val module: String,
@@ -734,27 +734,27 @@ object PipelineXmlParser {
         val pipelineGroup: String = ""
     )
 
-    /** 編輯器中的 Link 表示 */
+    /** 编辑器中的 Link 表示 */
     data class EditableLink(
         val fromId: String,
         val toId: String
     )
 
-    /** 編輯器中的 LinkList 表示 */
+    /** 编辑器中的 LinkList 表示 */
     data class EditableLinkList(
         val name: String,
         val description: String = "",
         val links: List<EditableLink>
     )
 
-    /** 編輯器中的 Stage 表示 */
+    /** 编辑器中的 Stage 表示 */
     data class EditableStage(
         val name: String,
         val parallel: Boolean = false,
         val linkLists: List<EditableLinkList>
     )
 
-    /** 編輯器中的 Pipeline 表示 */
+    /** 编辑器中的 Pipeline 表示 */
     data class EditablePipeline(
         val id: String,
         val name: String,
@@ -765,11 +765,11 @@ object PipelineXmlParser {
     )
 
     // ════════════════════════════════════════════════════
-    // 反向序列化：對象 → XML（供編輯器保存使用）
+    // 反向序列化：对象 → XML（供编辑器保存使用）
     // ════════════════════════════════════════════════════
 
     /**
-     * 將 EditablePipeline 序列化為 Pipeline XML 字符串。
+     * 将 EditablePipeline 序列化为 Pipeline XML 字符串。
      */
     fun pipelineToXml(p: EditablePipeline): String {
         val sb = StringBuilder()
@@ -817,7 +817,7 @@ object PipelineXmlParser {
     }
 
     /**
-     * 將 UseCaseConfig 序列化為 UseCase XML 字符串。
+     * 将 UseCaseConfig 序列化为 UseCase XML 字符串。
      */
     fun useCaseToXml(config: UseCaseConfig): String {
         val sb = StringBuilder()
@@ -852,7 +852,7 @@ object PipelineXmlParser {
     }
 
     /**
-     * 將 Pipeline 對象轉為 EditablePipeline（供編輯器加載使用）。
+     * 将 Pipeline 对象转为 EditablePipeline（供编辑器加载使用）。
      */
     fun pipelineToEditable(pipeline: Pipeline): EditablePipeline {
         val nodes = mutableMapOf<String, EditableNode>()
@@ -899,12 +899,12 @@ object PipelineXmlParser {
     }
 
     /**
-     * 從 PipelineNode 推斷 module 字符串。
+     * 从 PipelineNode 推断 module 字符串。
      */
     private fun inferModule(node: PipelineNode<*, *>): String {
         return when (node.nodeType) {
             NodeType.STRATEGY -> {
-                // StrategyNode 的 nodeId 格式為 "strategy_xxx"
+                // StrategyNode 的 nodeId 格式为 "strategy_xxx"
                 val strategyId = node.nodeId.removePrefix("strategy_")
                 "strategy:$strategyId"
             }
@@ -942,7 +942,7 @@ object PipelineXmlParser {
             val xml = context.assets.open(assetPath).bufferedReader().use { it.readText() }
             parsePipeline(xml, context)
         } catch (e: Exception) {
-            Log.e(TAG, "加載 Pipeline 失敗: $assetPath — ${e.message}")
+            Log.e(TAG, "加载 Pipeline 失败: $assetPath — ${e.message}")
             null
         }
     }
@@ -952,7 +952,7 @@ object PipelineXmlParser {
             val xml = context.assets.open(assetPath).bufferedReader().use { it.readText() }
             parseUseCase(xml)
         } catch (e: Exception) {
-            Log.e(TAG, "加載 UseCase 失敗: $assetPath — ${e.message}")
+            Log.e(TAG, "加载 UseCase 失败: $assetPath — ${e.message}")
             null
         }
     }

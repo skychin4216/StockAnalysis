@@ -20,22 +20,22 @@ import java.net.URL
 import java.net.URLEncoder
 
 /**
- * 交易通知服務 — 做T信號 / 建倉信號 推送
+ * 交易通知服务 — 做T信号 / 建仓信号 推送
  *
- * 支持兩種通知渠道：
- * 1. Android 系統通知（狀態欄推送）
- * 2. 微信推送（ServerChan — 通過 ServerChan 公眾號推送到微信）
+ * 支持两种通知渠道：
+ * 1. Android 系统通知（状态栏推送）
+ * 2. 微信推送（ServerChan — 通过 ServerChan 公众号推送到微信）
  *
- * 用戶可在設置中配置：
- * - 是否啟用系統通知
- * - 是否啟用微信推送
+ * 用户可在设置中配置：
+ * - 是否启用系统通知
+ * - 是否启用微信推送
  * - ServerChan SendKey
  */
 object TradeNotifier {
 
     private const val TAG = "TradeNotifier"
     private const val CHANNEL_ID = "trade_signals"
-    private const val CHANNEL_NAME = "交易信號"
+    private const val CHANNEL_NAME = "交易信号"
     private const val PREFS_NAME = "trade_notification"
     private const val KEY_SYSTEM_ENABLED = "system_enabled"
     private const val KEY_WECHAT_ENABLED = "wechat_enabled"
@@ -45,7 +45,7 @@ object TradeNotifier {
     private const val NOTIFICATION_ID_BASE = 9000
 
     // ═══════════════════════════════════════
-    //  偏好設置
+    //  偏好设置
     // ═══════════════════════════════════════
 
     fun isSystemEnabled(ctx: Context): Boolean =
@@ -99,7 +99,7 @@ object TradeNotifier {
                 val channel = NotificationChannel(
                     CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH
                 ).apply {
-                    description = "做T信號、建倉信號等交易通知"
+                    description = "做T信号、建仓信号等交易通知"
                     enableVibration(true)
                 }
                 manager.createNotificationChannel(channel)
@@ -108,19 +108,19 @@ object TradeNotifier {
     }
 
     // ═══════════════════════════════════════
-    //  發送通知（統一入口）
+    //  发送通知（统一入口）
     // ═══════════════════════════════════════
 
     /**
-     * 發送交易信號通知
+     * 发送交易信号通知
      * @param ctx Context
-     * @param title 通知標題（如 "做T買入信號"）
-     * @param body 通知內容
-     * @param tag 信號標籤（用於去重，如 "T_BUY_000650_20240804"）
+     * @param title 通知标题（如 "做T买入信号"）
+     * @param body 通知内容
+     * @param tag 信号标签（用于去重，如 "T_BUY_000650_20240804"）
      */
     suspend fun send(ctx: Context, title: String, body: String, tag: String = "") {
         val appCtx = ctx.applicationContext
-        // 1. Android 系統通知
+        // 1. Android 系统通知
         if (isSystemEnabled(appCtx)) {
             sendSystemNotification(appCtx, title, body, tag)
         }
@@ -138,7 +138,7 @@ object TradeNotifier {
     }
 
     /**
-     * 批量發送做T信號通知
+     * 批量发送做T信号通知
      */
     suspend fun sendTTradeSignals(
         ctx: Context,
@@ -148,26 +148,26 @@ object TradeNotifier {
         if (signals.isEmpty()) return
         val appCtx = ctx.applicationContext
         val periodLabel = when (periodType) {
-            "UltraShortQuant" -> "超短線"
-            "ShortTermQuant" -> "短線"
-            "MidTermQuant" -> "中線"
-            "LongTermQuant" -> "長線"
-            "RealPosition" -> "真實持倉"
+            "UltraShortQuant" -> "超短线"
+            "ShortTermQuant" -> "短线"
+            "MidTermQuant" -> "中线"
+            "LongTermQuant" -> "长线"
+            "RealPosition" -> "真实持仓"
             else -> periodType
         }
 
-        // 逐條發送系統通知
+        // 逐条发送系统通知
         for ((idx, signal) in signals.withIndex()) {
             val title = "${signal.signalType.label} — ${signal.stockName}(${signal.stockCode.takeLast(4)})"
             val body = buildString {
-                appendLine("週期: $periodLabel")
-                appendLine("價格: ${"%.2f".format(signal.suggestedPrice)} → 目標 ${"%.2f".format(signal.targetPrice)}")
-                appendLine("數量: ${signal.quantity}股 | 預期: ${"%.2f%%".format(signal.expectedProfitPct)}")
+                appendLine("周期: $periodLabel")
+                appendLine("价格: ${"%.2f".format(signal.suggestedPrice)} → 目标 ${"%.2f".format(signal.targetPrice)}")
+                appendLine("数量: ${signal.quantity}股 | 预期: ${"%.2f%%".format(signal.expectedProfitPct)}")
                 append("原因: ${signal.reason}")
             }
             val tag = "T_${signal.signalType.name}_${signal.stockCode}_${System.currentTimeMillis()}"
             send(appCtx, title, body.trim(), tag)
-            // 系統通知限流：避免短時間內大量推送
+            // 系统通知限流：避免短时间内大量推送
             if (idx > 0 && idx % 3 == 0) {
                 kotlinx.coroutines.delay(1000)
             }
@@ -175,23 +175,23 @@ object TradeNotifier {
     }
 
     // ═══════════════════════════════════════
-    //  Android 系統通知
+    //  Android 系统通知
     // ═══════════════════════════════════════
 
     private fun sendSystemNotification(ctx: Context, title: String, body: String, tag: String) {
         try {
             ensureChannel(ctx)
 
-            // 檢查通知權限（Android 13+）
+            // 检查通知权限（Android 13+）
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 if (ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.POST_NOTIFICATIONS)
                     != PackageManager.PERMISSION_GRANTED) {
-                    Log.w(TAG, "無通知權限，跳過系統通知")
+                    Log.w(TAG, "无通知权限，跳过系统通知")
                     return
                 }
             }
 
-            // 點擊通知後打開主界面
+            // 点击通知后打开主界面
             val intent = Intent(ctx, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             }
@@ -215,9 +215,9 @@ object TradeNotifier {
                 NOTIFICATION_ID_BASE + title.hashCode() % 1000,
                 notification
             )
-            Log.i(TAG, "系統通知已發送: $title")
+            Log.i(TAG, "系统通知已发送: $title")
         } catch (e: Exception) {
-            Log.w(TAG, "系統通知發送失敗: ${e.message}")
+            Log.w(TAG, "系统通知发送失败: ${e.message}")
         }
     }
 
@@ -228,8 +228,8 @@ object TradeNotifier {
     /**
      * ServerChan 推送（https://sctapi.ftqq.com/）
      *
-     * 用戶在 https://sct.ftqq.com 註冊獲取 SendKey，
-     * 關注「ServerChan」公眾號即可收到微信推送。
+     * 用户在 https://sct.ftqq.com 注册获取 SendKey，
+     * 关注「ServerChan」公众号即可收到微信推送。
      */
     private suspend fun sendServerChan(sendKey: String, title: String, body: String) = withContext(Dispatchers.IO) {
         try {
@@ -253,22 +253,22 @@ object TradeNotifier {
             if (code == 200 && resp.contains("\"code\":0")) {
                 Log.i(TAG, "ServerChan 推送成功: $title")
             } else {
-                Log.w(TAG, "ServerChan 推送失敗: $code $resp")
+                Log.w(TAG, "ServerChan 推送失败: $code $resp")
             }
         } catch (e: Exception) {
-            Log.w(TAG, "ServerChan 推送異常: ${e.message}")
+            Log.w(TAG, "ServerChan 推送异常: ${e.message}")
         }
     }
 
     // ═══════════════════════════════════════
-    //  PushPlus 微信推送（備選）
+    //  PushPlus 微信推送（备选）
     // ═══════════════════════════════════════
 
     /**
      * PushPlus 推送（https://www.pushplus.plus/）
      *
-     * 用戶在 PushPlus 註冊獲取 Token，
-     * 關注「pushplus推送助手」公眾號即可收到微信推送。
+     * 用户在 PushPlus 注册获取 Token，
+     * 关注「pushplus推送助手」公众号即可收到微信推送。
      */
     private suspend fun sendPushPlus(token: String, title: String, body: String) = withContext(Dispatchers.IO) {
         try {
@@ -292,29 +292,29 @@ object TradeNotifier {
             if (code == 200 && resp.contains("\"code\":200")) {
                 Log.i(TAG, "PushPlus 推送成功: $title")
             } else {
-                Log.w(TAG, "PushPlus 推送失敗: $code $resp")
+                Log.w(TAG, "PushPlus 推送失败: $code $resp")
             }
         } catch (e: Exception) {
-            Log.w(TAG, "PushPlus 推送異常: ${e.message}")
+            Log.w(TAG, "PushPlus 推送异常: ${e.message}")
         }
     }
 
     /**
-     * 推送回溯/擬合報告到微信
-     * 自動截取前 2000 字符（ServerChan 限制）
+     * 推送回溯/拟合报告到微信
+     * 自动截取前 2000 字符（ServerChan 限制）
      */
     suspend fun sendBacktestReport(ctx: Context, reportTitle: String, reportContent: String) {
         val title = "📊 $reportTitle"
         // ServerChan body 限制 2000 字符
         val body = if (reportContent.length > 1900) {
-            reportContent.take(1900) + "\n\n... (報告過長已截斷)"
+            reportContent.take(1900) + "\n\n... (报告过长已截断)"
         } else reportContent
 
         send(ctx, title, body, "backtest_${System.currentTimeMillis()}")
     }
 
     /**
-     * 推送建倉信號到微信
+     * 推送建仓信号到微信
      */
     suspend fun sendBuildPositionSignal(
         ctx: Context,
@@ -325,11 +325,11 @@ object TradeNotifier {
         passCount: Int,
         reason: String
     ) {
-        val title = "🔔 $periodLabel 建倉信號: $stockName"
+        val title = "🔔 $periodLabel 建仓信号: $stockName"
         val body = buildString {
             appendLine("股票: $stockName($stockCode)")
-            appendLine("價格: $price")
-            appendLine("嚴選通過: $passCount/7")
+            appendLine("价格: $price")
+            appendLine("严选通过: $passCount/7")
             appendLine("原因: $reason")
         }
         send(ctx, title, body, "build_${stockCode}_${System.currentTimeMillis()}")

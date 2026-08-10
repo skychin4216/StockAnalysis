@@ -1,7 +1,7 @@
 # StockAnalysis 项目需求与实现状汇编
 
 > 本文档整理了项目所有核心需求文档，包括架构设计、交易规则、策略分类、迁移计划等。
-> 最后更新：2026-08-08
+> 最後更新：2026-08-10
 
 ---
 
@@ -17,6 +17,7 @@
 8. [Pipeline编辑器设计](#8-pipeline编辑器设计)
 9. [T-trade交易时段](#9-t-trade交易时段)
 10. [日志分析指南](#10-日志分析指南)
+11. [2026-08-10 實倉OCR與T+Trade增強](#11-2026-08-10-實倉ocr與ttrade增強)
 
 ---
 
@@ -310,7 +311,180 @@
 
 ---
 
-## 附录：关键文件索引
+## 11. 2026-08-10 實倉OCR與T+Trade增強
+
+### 11.1 實倉管理 Tab（RealHoldingQuantFragment）
+
+**文件**: `strategy/trade/RealHoldingQuantFragment.kt`
+
+獨立的實倉管理界面，支持三種持倉導入方式：
+
+| 方式 | 說明 |
+|------|------|
+| 📊 執行實倉分析 Pipeline | DAG Pipeline：大盤行情分析 → 實倉評估 → 做T評估 |
+| ✏️ 手動添加持倉 | 表單輸入：代碼/名稱/數量/價格/日期/周期 |
+| 📷 截圖識別導入 | ML Kit OCR → AI解析 → 確認添加 |
+
+**數據源**：
+- `real_positions` 表 — 真實持倉記錄
+- `strategy_trade_orders` 表 — 策略持倉
+- `user_watchlist` 表 — Pipeline選股
+
+**持倉自動分類規則**：持倉≤1天→超短線，2-14天→短線，15-180天→中線，>180天→長線
+
+### 11.2 OCR 截圖識別系統
+
+#### 解析流程
+
+```
+截圖 → ML Kit OCR → 預處理(去UI噪音) → AI解析(90s)
+                                          ↓
+                              JSON提取成功？→ 是 → 確認對話框 → 插入DB
+                                          ↓ 否
+                              正則備選解析（代碼/價格分離提取+位置匹配）
+                                          ↓
+                              有結果？→ 是 → 確認對話框 → 插入DB
+                                      → 否 → 顯示原文
+```
+
+#### AiParseResult 密封類
+
+```kotlin
+sealed class AiParseResult {
+    data class Success(val positions: List<RealPositionEntity>) : AiParseResult()
+    object Timeout : AiParseResult()           // AI超時 → 彈出重試對話框
+    object AcquireFailed : AiParseResult()     // AI池繁忙 → 彈出重試對話框
+    data class ParseError(val msg: String) : AiParseResult()  // 解析失敗 → 正則備選
+}
+```
+
+#### AI JSON 提取策略
+
+1. **逐對象正則提取**：從AI思考過程中提取 `{code, name, quantity, price}` 對象
+2. **完整JSON數組**：嘗試解析完整 `[{...}, {...}]` 數組
+
+#### 正則備選解析器（parseHoldingFromOcr）
+
+針對券商APP截圖OCR特點（代碼和價格分散在不同區域）：
+1. 提取全文所有6位股票代碼（按出現順序）
+2. 為每個代碼關聯名稱（同行匹配 + 向上查找）
+3. 定位價格區域（通過「交易/現價/客戶號」標記）
+4. 按位置順序匹配代碼與價格
+
+### 11.3 持倉插入去重（Upsert）
+
+**問題**：同一只股票可能被多次OCR掃描重複插入（stockCode可能帶或不帶sh/sz/bj前綴）
+
+**解決方案**：
+```
+OCR識別結果 → 讀取現有real_positions
+    → 按bareCode（去掉前綴）匹配
+        → 已存在 → updateQuantity(id, qty, price) 原地更新
+        → 不存在 → 分配唯一ID → insertAll
+```
+
+**關鍵DAO方法**：
+- `deleteByBareCode(bareCode)` — SQL REPLACE去前綴匹配所有變體
+- `getMaxId()` — 獲取當前最大ID，用於分配唯一ID
+- `updateQuantity(id, quantity, avgBuyPrice)` — 原地更新持倉
+
+**顯示去重**：`buildRealHoldingReport` 按 `stockCode.replace(Regex("^(sh|sz|bj)"), "")` 分組，每組取maxId
+
+### 11.4 T+Trade Engine 增強
+
+**文件**: `strategy/trade/TTradeEngine.kt`
+
+#### 新增分析維度
+
+| 維度 | 實現 | 置信度加成 |
+|------|------|------------|
+| RSI | RsiCalculator計算14日RSI | RSI<30→+20(做T買入)，RSI>70→+20(反T賣出) |
+| 量能比 | 當日成交量/5日均量 | 縮量(<0.8)→+10 |
+| K線形態 | CandlePatternDetector 27種形態 | 看漲形態→+15，看跌→-15 |
+| 趨勢方向 | MA排列+RSI+3日漲幅 | 7級分類 |
+
+#### 趨勢方向7級分類
+
+```
+準備上升 → 上升中 → 盤整 → 下跌中 → 準備下跌
+```
+
+判定邏輯：MA多頭排列+RSI>50+3日漲>0 → 上升；空頭排列 → 下跌；混合信號 → 盤整
+
+#### TTradeSignal 數據類擴展
+
+```kotlin
+data class TTradeSignal(
+    // ...原有字段...
+    val trendDirection: String = "",   // 趨勢方向
+    val rsi: Double = 50.0,            // RSI值
+    val volumeRatio: Double = 1.0,     // 量能比
+    val patternName: String = "",      // K線形態名稱
+    val patternDirection: String = "", // 形態方向
+    val confidence: Int = 50           // 綜合置信度 0-100
+)
+```
+
+### 11.5 Pipeline 更新
+
+#### real_holding_pipeline.xml (v2 → v3)
+
+```
+data_import
+    ├── a_market_analysis (大盤行情分析)
+    └── news_strength (新聞因子)
+         ↓
+real_holding_eval (實倉評估)
+         ↓
+t_trade_eval (做T評估 + 微信推送)
+```
+
+新增節點：
+- `n_news` (news_strength) — Layer 1，與大盤分析並行
+- `n_t_trade` (t_trade_eval) — Layer 3，調用TTradeEngine生成做T信號
+
+#### TTradeEvalNode
+
+**文件**: `strategy/topology/nodes/TTradeEvalNode.kt`
+
+- 讀取real_positions → 逐只調用TTradeEngine.generateSignals()
+- 顯示趨勢圖標（📈/📉/➡️）
+- 準備上升/下跌時顯示⚡警報
+- 通過TradeNotifier推送微信通知（ServerChan + PushPlus）
+
+### 11.6 Bug修復記錄 (2026-08-10)
+
+| Bug | 根因 | 修復 |
+|-----|------|------|
+| OCR Fatal Crash | `statusTv.text = ...` 在 `Dispatchers.IO` 線程執行 | 移到 `launch(Dispatchers.IO)` 之前（主線程） |
+| 持倉添加不生效 | `insertAll` 用 REPLACE + 全部 id=0 → 互相覆蓋 | 插入前 `getMaxId()` 分配唯一ID |
+| 持倉/選股重複 | `DagTradeExecutor` 同時寫 `strategy_trade_orders` 和 `user_watchlist` | 移除 `addBatchToWatchlist` 調用，選股用内存 `lastPickStocks` |
+| 選股查詢日期不匹配 | 寫入用 `recentTradingDay(browsingDate)`，查詢用 raw `browsingDate` | 查詢也改用 `recentTradingDay()` |
+| OCR AI返回思考過程 | AI不遵循純JSON格式 | 逐對象正則提取 + JSON數組兩級策略 |
+| 正則備選無法解析 | 代碼和價格在不同行 | 重寫 `parseHoldingFromOcr`：分離提取+位置匹配 |
+| 持倉重複記錄 | 每次OCR掃描追加不清理 | 插入前 `deleteByBareCode` + Upsert邏輯 |
+| stockCode前綴不一致 | `601168` vs `sh601168` 被當不同股票 | 去重時 `replace(Regex("^(sh|sz|bj)"), "")` 標準化 |
+| 空持倉時title不顯示 | `rawOrders.isEmpty()` 時 early return | 仍調用 `renderPositions(emptyList(), ...)` |
+
+### 11.7 關鍵文件變更清單
+
+| 文件 | 變更類型 | 說明 |
+|------|----------|------|
+| RealHoldingQuantFragment.kt | 新建→大量修改 | 實倉Tab、OCR、Upsert、去重 |
+| TTradeEngine.kt | 大量修改 | RSI/量能/K線/趨勢/置信度 |
+| TTradeEvalNode.kt | 新建 | Pipeline做T評估節點 |
+| QuantFragmentBase.kt | 修改 | 日期校正、title始終顯示、選股區 |
+| real_holding_pipeline.xml | 修改 v2→v3 | 新增news_strength + t_trade_eval |
+| DagTradeExecutor.kt | 修改 | 移除addBatchToWatchlist |
+| RealPositionModels.kt | 修改 | 新增deleteByCode/deleteByBareCode/getMaxId |
+| NodeRegistry.kt | 修改 | 註冊t_trade_eval |
+| CandlePatternDetector.kt | 引用 | 27種K線形態檢測 |
+| RsiCalculator.kt | 引用 | RSI計算 |
+| TradeNotifier.kt | 引用 | 微信推送 |
+
+---
+
+## 附錄：關鍵文件索引
 
 ### 核心代码文件
 

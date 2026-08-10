@@ -19,6 +19,7 @@ import com.chin.stockanalysis.ApiProviderConfig
 import com.chin.stockanalysis.config.AgentRoute
 import com.chin.stockanalysis.config.FeatureFlagManager
 import com.chin.stockanalysis.config.GlobalMode
+import com.chin.stockanalysis.config.LanguageManager
 import com.chin.stockanalysis.databinding.FragmentSettingsBinding
 import com.chin.stockanalysis.stock.StockService
 import com.chin.stockanalysis.stock.data.StockDataSourceFactory
@@ -50,12 +51,52 @@ class SettingsFragment : Fragment() {
 
     private fun setupUI() {
         refreshProviderInfo()
+        refreshLanguageInfo()
         binding.apply {
             btnChangeApiKey.setOnClickListener { showApiConfigDialog() }
             btnClearCache.setOnClickListener { clearAppCache() }
+            btnLanguage.setOnClickListener { showLanguageDialog() }
             tvAbout.text = buildAboutText()
         }
         setupAgentFramework()
+    }
+
+    private fun refreshLanguageInfo() {
+        val currentLang = LanguageManager.getCurrentLanguageName(requireContext())
+        binding.tvCurrentLanguage.text = "当前语言: $currentLang"
+    }
+
+    private fun showLanguageDialog() {
+        val context = requireContext()
+        val languages = LanguageManager.SUPPORTED_LANGUAGES
+        val currentLang = LanguageManager.getSavedLanguage(context)
+
+        // 构建选项列表：第一项是"跟随系统"
+        val displayNames = mutableListOf("跟随系统")
+        displayNames.addAll(languages.map { it.second })
+
+        val currentIndex = if (currentLang == null) 0
+        else languages.indexOfFirst { it.first == currentLang } + 1
+
+        AlertDialog.Builder(context)
+            .setTitle("选择语言")
+            .setSingleChoiceItems(
+                displayNames.toTypedArray(),
+                currentIndex
+            ) { dialog, which ->
+                val selectedCode = if (which == 0) null
+                else languages[which - 1].first
+
+                LanguageManager.setLanguage(context, selectedCode)
+                refreshLanguageInfo()
+                dialog.dismiss()
+
+                // 重建 Activity 以应用新语言
+                Toast.makeText(context, "语言已切换", Toast.LENGTH_SHORT).show()
+                activity?.recreate()
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     private fun refreshProviderInfo() {
@@ -335,17 +376,17 @@ class SettingsFragment : Fragment() {
                 }
             }
 
-            // ── 週期級別路線開關（Phase 10） ──
+            // ── 周期级别路线开关（Phase 10） ──
             setupPeriodRouteSwitch(swRouteUltraShort, HoldingPeriod.ULTRA_SHORT)
             setupPeriodRouteSwitch(swRouteShort, HoldingPeriod.SHORT)
             setupPeriodRouteSwitch(swRouteMid, HoldingPeriod.MID)
             setupPeriodRouteSwitch(swRouteLong, HoldingPeriod.LONG)
 
-            // 通用 DAG 開關已移除（pipeline 已全面啟用）
+            // 通用 DAG 开关已移除（pipeline 已全面启用）
         }
     }
 
-    /** 設置單個週期路線開關的初始狀態和監聽器（Phase 10） */
+    /** 设置单个周期路线开关的初始状态和监听器（Phase 10） */
     private fun setupPeriodRouteSwitch(switch: android.widget.Switch, period: HoldingPeriod) {
         switch.isChecked = FeatureFlagManager.getRoute(period) == AgentRoute.AGENT_FRAMEWORK
         switch.setOnCheckedChangeListener { _, isChecked ->
@@ -366,7 +407,7 @@ class SettingsFragment : Fragment() {
             swChat.isChecked = FeatureFlagManager.chatRoute == AgentRoute.AGENT_FRAMEWORK
             swNewsMonitor.isChecked = FeatureFlagManager.newsMonitoringRoute == AgentRoute.AGENT_FRAMEWORK
             swRiskManagement.isChecked = FeatureFlagManager.riskManagementRoute == AgentRoute.AGENT_FRAMEWORK
-            // 週期路線開關
+            // 周期路线开关
             swRouteUltraShort.isChecked = FeatureFlagManager.getRoute(HoldingPeriod.ULTRA_SHORT) == AgentRoute.AGENT_FRAMEWORK
             swRouteShort.isChecked = FeatureFlagManager.getRoute(HoldingPeriod.SHORT) == AgentRoute.AGENT_FRAMEWORK
             swRouteMid.isChecked = FeatureFlagManager.getRoute(HoldingPeriod.MID) == AgentRoute.AGENT_FRAMEWORK
@@ -394,7 +435,7 @@ class SettingsFragment : Fragment() {
             swChat.isEnabled = enabled; swChat.alpha = alpha
             swNewsMonitor.isEnabled = enabled; swNewsMonitor.alpha = alpha
             swRiskManagement.isEnabled = enabled; swRiskManagement.alpha = alpha
-            // 週期路線開關（同樣只在 HYBRID 模式下可操作）
+            // 周期路线开关（同样只在 HYBRID 模式下可操作）
             tvPeriodRouteTitle.alpha = alpha
             swRouteUltraShort.isEnabled = enabled; swRouteUltraShort.alpha = alpha
             swRouteShort.isEnabled = enabled; swRouteShort.alpha = alpha
@@ -418,7 +459,7 @@ class SettingsFragment : Fragment() {
         • BottomNavigationView + ViewPager2
         • OkHttp + org.json/Gson
         • MPAndroidChart
-        • DAG 拓撲引擎（Pipeline 並行調度）
+        • DAG 拓扑引擎（Pipeline 并行调度）
         
         © 2026 StockAnalysis Team
     """.trimIndent()

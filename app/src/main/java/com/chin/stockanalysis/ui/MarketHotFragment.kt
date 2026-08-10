@@ -77,7 +77,7 @@ class MarketHotFragment : Fragment() {
         }
         root.addView(viewPager, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
         TabLayoutMediator(tabLayout, viewPager) { tab, pos ->
-            tab.text = when(pos) { 0 -> "🏭 行业" 1 -> "💡 概念" 2 -> "📈 指数" 3 -> "📊 走勢" 4 -> "🔄 輪動" else -> "" }
+            tab.text = when(pos) { 0 -> "🏭 行业" 1 -> "💡 概念" 2 -> "📈 指数" 3 -> "📊 走势" 4 -> "🔄 轮动" else -> "" }
         }.attach()
 
         startPoolScheduler(lifecycleScope)

@@ -66,7 +66,7 @@ class StockTabFragment : Fragment() {
         TabLayoutMediator(tabLayout, viewPager) { tab, position ->
             tab.text = when (position) {
                 0 -> "🔥 热门行情"
-                1 -> "📊 精選股票"
+                1 -> "📊 精选股票"
                 2 -> "📰 热点新闻"
                 else -> ""
             }
@@ -89,12 +89,12 @@ class StockTabFragment : Fragment() {
         }
     }
 
-    /** 切換到精選股票 sub-tab */
+    /** 切换到精选股票 sub-tab */
     fun switchToWatchlist() {
         viewPager.setCurrentItem(1, false)
     }
 
-    /** 切換到精選股票 → 機構推薦模式 */
+    /** 切换到精选股票 → 机构推荐模式 */
     fun switchToInstitutional() {
         viewPager.setCurrentItem(1, false)
         viewPager.postDelayed({
@@ -102,7 +102,7 @@ class StockTabFragment : Fragment() {
         }, 300)
     }
 
-    /** 獲取精選股票 Fragment */
+    /** 获取精选股票 Fragment */
     fun getWatchlistFragment(): WatchlistUnifiedFragment? {
         return childFragmentManager.findFragmentByTag("f1") as? WatchlistUnifiedFragment
     }

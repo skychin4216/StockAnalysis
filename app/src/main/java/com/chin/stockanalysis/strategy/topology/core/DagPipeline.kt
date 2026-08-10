@@ -8,19 +8,19 @@ import kotlinx.coroutines.sync.withLock
 import kotlin.system.measureTimeMillis
 
 // ============================================================================
-// DagPipeline — 高通 Camera 風格 DAG 拓撲執行引擎
+// DagPipeline — 高通 Camera 风格 DAG 拓扑执行引擎
 // ============================================================================
 
 /**
- * ## DAG 邊定義（高通 Links 等價）
+ * ## DAG 边定义（高通 Links 等价）
  *
- * 源節點 → 目標節點的有向邊，帶端口標識。
- * 對應高通 XML 中的 `<Link><SourcePortId>...<TargetPortId>`。
+ * 源节点 → 目标节点的有向边，带端口标识。
+ * 对应高通 XML 中的 `<Link><SourcePortId>...<TargetPortId>`。
  *
- * @property sourceNodeId 源節點 ID
- * @property sourcePortId 源端口 ID（高通兼容，預留）
- * @property targetNodeId 目標節點 ID
- * @property targetPortId 目標端口 ID（高通兼容，預留）
+ * @property sourceNodeId 源节点 ID
+ * @property sourcePortId 源端口 ID（高通兼容，预留）
+ * @property targetNodeId 目标节点 ID
+ * @property targetPortId 目标端口 ID（高通兼容，预留）
  */
 data class DagEdge(
     val sourceNodeId: String,
@@ -30,79 +30,79 @@ data class DagEdge(
 )
 
 /**
- * ## DAG 節點定義（高通 NodeList 等價）
+ * ## DAG 节点定义（高通 NodeList 等价）
  *
- * 封裝一個 [PipelineNode] 及其 ID。
- * 對應高通 XML 中的 `<Node><nodeName>...<NodeId>`。
+ * 封装一个 [PipelineNode] 及其 ID。
+ * 对应高通 XML 中的 `<Node><nodeName>...<NodeId>`。
  */
 data class DagNode(
     val nodeId: String,
     val nodeName: String,
     val node: PipelineNode<*, *>,
-    /** 所屬 Pipeline 分組 ID（用於 UI 著色，null = 未分組） */
+    /** 所属 Pipeline 分组 ID（用于 UI 著色，null = 未分组） */
     val pipelineGroup: String = ""
 ) {
-    /** 該節點的所有入邊的源節點 ID 集合 */
+    /** 该节点的所有入边的源节点 ID 集合 */
     var dependencies: Set<String> = emptySet()
 
-    /** 該節點的所有出邊的目標節點 ID 集合 */
+    /** 该节点的所有出边的目标节点 ID 集合 */
     var dependents: Set<String> = emptySet()
 
-    /** 是否為關鍵節點（失敗會導致 Pipeline 失敗） */
+    /** 是否为关键节点（失败会导致 Pipeline 失败） */
     val isCritical: Boolean get() = nodeId !in NON_CRITICAL_NODE_IDS &&
         !nodeId.startsWith("strategy_")
 
     companion object {
-        /** 非關鍵節點：失敗不影響 Pipeline 最終結果（僅記錄警告） */
+        /** 非关键节点：失败不影响 Pipeline 最终结果（仅记录警告） */
         val NON_CRITICAL_NODE_IDS = setOf(
-            "n_bg",       // 後臺暫停/恢復（輔助）
-            "n_fit",      // 擬合計算（耗時，不影響建倉）
-            "n_swap",     // 騰龍換鳥（輔助優化）
-            "n_guard",    // 持倉風控（輔助，失敗不阻斷買入）
-            "n_heat",     // 熱度計算（輔助數據）
-            "n_candle",   // K線形態偵測（輔助提醒）
-            "n_news_str", // 新聞力度（輔助評分）
-            "n_rot_pen",  // 輪動懲罰（輔助評分）
-            "n_crossday", // 跨日聚合（輔助數據）
-            "n_multihot"  // 多周期熱門（輔助數據）
+            "n_bg",       // 后台暂停/恢复（辅助）
+            "n_fit",      // 拟合计算（耗时，不影响建仓）
+            "n_swap",     // 腾龙换鸟（辅助优化）
+            "n_guard",    // 持仓风控（辅助，失败不阻断买入）
+            "n_heat",     // 热度计算（辅助数据）
+            "n_candle",   // K线形态侦测（辅助提醒）
+            "n_news_str", // 新闻力度（辅助评分）
+            "n_rot_pen",  // 轮动惩罚（辅助评分）
+            "n_crossday", // 跨日聚合（辅助数据）
+            "n_multihot"  // 多周期热门（辅助数据）
         )
 
         /**
-         * 輔助節點：僅提供執行順序保證（如先賣後買），其輸出為空/失敗時
-         * 下游節點自動回退到輔助節點的上游輸出，永遠不阻斷下游執行。
+         * 辅助节点：仅提供执行顺序保证（如先卖后买），其输出为空/失败时
+         * 下游节点自动回退到辅助节点的上游输出，永远不阻断下游执行。
          */
         val AUXILIARY_NODES = setOf("n_swap")
     }
 }
 
 /**
- * ## DagPipeline — 高通 Camera 風格的 DAG 拓撲執行引擎
+ * ## DagPipeline — 高通 Camera 风格的 DAG 拓扑执行引擎
  *
- * 與 [Pipeline]（Stage → LinkList → Link）不同，DagPipeline 採用：
- * - **扁平 DAG 結構**：NodeList + Links，無嵌套
- * - **拓撲排序自動推導並行度**：Kahn 算法分層，同層節點自動並行
- * - **無自環 Link 問題**：源節點若無入邊（根節點），自動用 `Unit` 作為初始輸入
+ * 与 [Pipeline]（Stage → LinkList → Link）不同，DagPipeline 采用：
+ * - **扁平 DAG 结构**：NodeList + Links，无嵌套
+ * - **拓扑排序自动推导并行度**：Kahn 算法分层，同层节点自动并行
+ * - **无自环 Link 问题**：源节点若无入边（根节点），自动用 `Unit` 作为初始输入
  *
- * ### 高通 XML 對應關係
+ * ### 高通 XML 对应关系
  * ```
  * <NodeList>        → nodes: List<DagNode>
  * <Links>           → edges: List<DagEdge>
  * <PipelineName>    → name
- * <UsecaseName>      → (由 UseCase 層管理)
+ * <UsecaseName>      → (由 UseCase 层管理)
  * ```
  *
- * ### 執行流程
- * 1. 構建鄰接表 + 入度表
- * 2. Kahn 拓撲排序，分層（同層可並行）
- * 3. 逐層執行：同層節點用 coroutineScope + async 並行
- * 4. 每個節點從 context.stageOutputs 讀取依賴的輸出，執行後存入 context.stageOutputs
+ * ### 执行流程
+ * 1. 构建邻接表 + 入度表
+ * 2. Kahn 拓扑排序，分层（同层可并行）
+ * 3. 逐层执行：同层节点用 coroutineScope + async 并行
+ * 4. 每个节点从 context.stageOutputs 读取依赖的输出，执行后存入 context.stageOutputs
  *
  * ### 使用示例
  * ```kotlin
  * val dag = DagPipeline(
  *     name = "MidTermPipeline",
  *     nodes = listOf(
- *         DagNode("n_ctx", "市場上下文", MarketContextNode()),
+ *         DagNode("n_ctx", "市场上下文", MarketContextNode()),
  *         DagNode("n_pool", "股票池", StockPoolNode()),
  *     ),
  *     edges = listOf(
@@ -124,10 +124,10 @@ class DagPipeline(
         private const val TAG = "DagPipeline"
 
         /**
-         * 主流節點：輸出 0 代表「無股票可處理」，後續節點無意義 → 提前終止。
+         * 主流节点：输出 0 代表「无股票可处理」，后续节点无意义 → 提前终止。
          * 使用 internal nodeId（node.nodeId）。
-         * 不含：swap_weak（0=無需換鳥，merge 仍需跑）、adaptive_params/market_context（非股票輸出）、
-         *       sector_boost/ai_predict（enrichment，不直接決定有無候選）。
+         * 不含：swap_weak（0=无需换鸟，merge 仍需跑）、adaptive_params/market_context（非股票输出）、
+         *       sector_boost/ai_predict（enrichment，不直接决定有无候选）。
          */
         val FLOW_CRITICAL_NODES = setOf(
             "stock_pool", "candidate_pool", "signal_merge",
@@ -135,7 +135,7 @@ class DagPipeline(
         )
     }
 
-    // 鄰接表
+    // 邻接表
     private val nodeMap: Map<String, DagNode> = nodes.associateBy { it.nodeId }
     private val adjacency: Map<String, List<DagEdge>> = edges.groupBy { it.sourceNodeId }
     private val inDegree: Map<String, Int> = run {
@@ -151,11 +151,11 @@ class DagPipeline(
     private val contextMutex = Mutex()
 
     /**
-     * 執行 DAG Pipeline。
+     * 执行 DAG Pipeline。
      *
-     * 使用 Kahn 算法進行拓撲排序，分層並行執行。
-     * 每個節點的輸出存入 `context.stageOutputs[nodeId]`，
-     * 下游節點從 `context.stageOutputs[sourceNodeId]` 讀取上游輸出。
+     * 使用 Kahn 算法进行拓扑排序，分层并行执行。
+     * 每个节点的输出存入 `context.stageOutputs[nodeId]`，
+     * 下游节点从 `context.stageOutputs[sourceNodeId]` 读取上游输出。
      */
     suspend fun execute(context: PipelineContext): DagPipelineResult {
         val nodeResults = mutableMapOf<String, DagNodeResult>()
@@ -163,25 +163,25 @@ class DagPipeline(
         var allSuccess = true
         var finalOutput: Any? = null
 
-        Log.i(TAG, "▶ DAG Pipeline 開始執行: $name (${nodes.size} nodes, ${edges.size} edges)")
+        Log.i(TAG, "▶ DAG Pipeline 开始执行: $name (${nodes.size} nodes, ${edges.size} edges)")
 
         val totalElapsed = measureTimeMillis {
-            // 1. Kahn 拓撲排序 → 分層
+            // 1. Kahn 拓扑排序 → 分层
             val layers = topologicalSort()
 
             if (layers.isEmpty()) {
-                errors["topology"] = "拓撲排序失敗：可能存在環"
+                errors["topology"] = "拓扑排序失败：可能存在环"
                 allSuccess = false
             } else {
-                Log.i(TAG, "  拓撲分層: ${layers.size} 層" +
+                Log.i(TAG, "  拓扑分层: ${layers.size} 层" +
                     layers.mapIndexed { i, layer -> "\n    Layer $i: [${layer.joinToString { it.nodeId }}]" }
                         .joinToString())
 
-                // 2. 逐層執行
+                // 2. 逐层执行
                 for ((layerIndex, layer) in layers.withIndex()) {
                     val layerElapsed = measureTimeMillis {
                         if (layer.size == 1) {
-                            // 單節點串行
+                            // 单节点串行
                             val dagNode = layer[0]
                             val result = executeNode(dagNode, context)
                             nodeResults[dagNode.nodeId] = result
@@ -189,8 +189,8 @@ class DagPipeline(
                             if (result.output != null) finalOutput = result.output
                             if (result.error != null && dagNode.isCritical) errors[dagNode.nodeId] = result.error
                         } else {
-                            // 多節點並行
-                            Log.i(TAG, "  Layer $layerIndex: 並行執行 ${layer.size} 個節點")
+                            // 多节点并行
+                            Log.i(TAG, "  Layer $layerIndex: 并行执行 ${layer.size} 个节点")
                             coroutineScope {
                                 val deferred = layer.map { dagNode ->
                                     async {
@@ -209,7 +209,7 @@ class DagPipeline(
                     }
                     Log.i(TAG, "  Layer $layerIndex 完成: ${layerElapsed}ms")
 
-                    // ── Fail-fast：主流節點輸出 0 → 無股票可處理，提前終止 ──
+                    // ── Fail-fast：主流节点输出 0 → 无股票可处理，提前终止 ──
                     val emptyCritical = layer.firstOrNull { dagNode ->
                         dagNode.node.nodeId in FLOW_CRITICAL_NODES &&
                             nodeResults[dagNode.nodeId]?.let { r ->
@@ -218,10 +218,10 @@ class DagPipeline(
                     }
                     if (emptyCritical != null) {
                         val nodeName = emptyCritical.nodeName
-                        Log.w(TAG, "⛔ $nodeName 輸出 0，無股票可處理，提前終止 Pipeline")
+                        Log.w(TAG, "⛔ $nodeName 输出 0，无股票可处理，提前终止 Pipeline")
                         context.log(emptyCritical.nodeId,
-                            "⛔ $nodeName 輸出 0 → Pipeline 提前終止，後續節點不執行")
-                        errors[emptyCritical.nodeId] = "輸出為0，提前終止"
+                            "⛔ $nodeName 输出 0 → Pipeline 提前终止，后续节点不执行")
+                        errors[emptyCritical.nodeId] = "输出为0，提前终止"
                         allSuccess = false
                         break
                     }
@@ -229,9 +229,9 @@ class DagPipeline(
             }
         }
 
-        // 僅合併關鍵節點的 context 錯誤
-        // 注意：節點內部用 internal nodeId（如 "heat_score"）記錄錯誤，
-        // 而 NON_CRITICAL_NODE_IDS 使用 XML nodeId（如 "n_heat"），兩者都需過濾
+        // 仅合并关键节点的 context 错误
+        // 注意：节点内部用 internal nodeId（如 "heat_score"）记录错误，
+        // 而 NON_CRITICAL_NODE_IDS 使用 XML nodeId（如 "n_heat"），两者都需过滤
         val nonCriticalInternalIds = nodes.filter { !it.isCritical }.map { it.node.nodeId }.toSet()
         context.errors.filterKeys { key ->
             !DagNode.NON_CRITICAL_NODE_IDS.contains(key) &&
@@ -239,10 +239,10 @@ class DagPipeline(
                 !key.startsWith("strategy_")
         }.let { errors.putAll(it) }
 
-        Log.i(TAG, "◀ DAG Pipeline 完成: ${if (allSuccess) "成功" else "失敗"}, 耗時 ${totalElapsed}ms" +
-            (if (errors.isNotEmpty()) ", 錯誤: ${errors.keys}" else ""))
+        Log.i(TAG, "◀ DAG Pipeline 完成: ${if (allSuccess) "成功" else "失败"}, 耗时 ${totalElapsed}ms" +
+            (if (errors.isNotEmpty()) ", 错误: ${errors.keys}" else ""))
 
-        // 收集所有節點的股票流動記錄
+        // 收集所有节点的股票流动记录
         val stockFlowMap = nodeResults.mapNotNull { (id, result) ->
             result.stockFlow?.let { id to it }
         }.toMap()
@@ -260,14 +260,14 @@ class DagPipeline(
     }
 
     // ════════════════════════════════════════════════════
-    //  拓撲排序（Kahn 算法）
+    //  拓扑排序（Kahn 算法）
     // ════════════════════════════════════════════════════
 
     /**
-     * Kahn 拓撲排序，返回分層列表。
-     * 每層內的節點無依賴關係，可以並行執行。
+     * Kahn 拓扑排序，返回分层列表。
+     * 每层内的节点无依赖关系，可以并行执行。
      *
-     * @return 分層列表，外層為層級，內層為該層的節點
+     * @return 分层列表，外层为层级，内层为该层的节点
      */
     private fun topologicalSort(): List<List<DagNode>> {
         val remainingInDegree = inDegree.toMutableMap()
@@ -275,18 +275,18 @@ class DagPipeline(
         val layers = mutableListOf<List<DagNode>>()
 
         while (remaining.isNotEmpty()) {
-            // 找出所有入度為 0 的節點
+            // 找出所有入度为 0 的节点
             val ready = remaining.filter { (remainingInDegree[it] ?: 0) == 0 }
             if (ready.isEmpty()) {
-                // 存在環
-                Log.e(TAG, "拓撲排序失敗: 剩餘 ${remaining.size} 個節點存在環依賴")
+                // 存在环
+                Log.e(TAG, "拓扑排序失败: 剩余 ${remaining.size} 个节点存在环依赖")
                 return layers.takeIf { remaining.isEmpty() } ?: emptyList()
             }
 
             val layerNodes = ready.mapNotNull { nodeMap[it] }
             layers.add(layerNodes)
 
-            // 移除已處理的節點，更新入度
+            // 移除已处理的节点，更新入度
             for (nodeId in ready) {
                 remaining.remove(nodeId)
                 val outEdges = adjacency[nodeId] ?: emptyList()
@@ -303,95 +303,95 @@ class DagPipeline(
     }
 
     // ════════════════════════════════════════════════════
-    //  節點執行
+    //  节点执行
     // ════════════════════════════════════════════════════
 
     /**
-     * 執行單個 DAG 節點。
+     * 执行单个 DAG 节点。
      *
-     * 1. 從 context.stageOutputs 收集所有依賴節點的輸出
-     * 2. 如果有單一依賴，用其輸出作為本節點的輸入
-     * 3. 如果有多個依賴，用第一個依賴的輸出作為輸入（其餘通過 context 傳遞）
-     * 4. 如果無依賴（根節點），用 `Unit` 作為輸入
-     * 5. 執行後將輸出存入 context.stageOutputs[nodeId]
+     * 1. 从 context.stageOutputs 收集所有依赖节点的输出
+     * 2. 如果有单一依赖，用其输出作为本节点的输入
+     * 3. 如果有多个依赖，用第一个依赖的输出作为输入（其余通过 context 传递）
+     * 4. 如果无依赖（根节点），用 `Unit` 作为输入
+     * 5. 执行后将输出存入 context.stageOutputs[nodeId]
      */
     @Suppress("UNCHECKED_CAST")
     private suspend fun executeNode(dagNode: DagNode, context: PipelineContext): DagNodeResult {
         val nodeId = dagNode.nodeId
         val node = dagNode.node
 
-        // 收集依賴輸入
+        // 收集依赖输入
         val depEdges = edges.filter { it.targetNodeId == nodeId }
         var input: Any? = when {
-            depEdges.isEmpty() -> Unit  // 根節點：無依賴，輸入 Unit
+            depEdges.isEmpty() -> Unit  // 根节点：无依赖，输入 Unit
             depEdges.size == 1 -> {
-                // 單一依賴：直接用上游輸出
+                // 单一依赖：直接用上游输出
                 val sourceId = depEdges[0].sourceNodeId
                 context.stageOutputs[sourceId]
             }
             node.nodeType == NodeType.AGGREGATION -> {
-                // 聚合節點：收集所有上游輸出為 List
+                // 聚合节点：收集所有上游输出为 List
                 depEdges.mapNotNull { context.stageOutputs[it.sourceNodeId] }
             }
             else -> {
-                // 非聚合多依賴：用首個上游輸出作為主輸入，其餘通過 context.stageOutputs 讀取
+                // 非聚合多依赖：用首个上游输出作为主输入，其余通过 context.stageOutputs 读取
                 val sourceId = depEdges[0].sourceNodeId
                 context.stageOutputs[sourceId]
             }
         }
 
-        // ── 輔助節點容錯 ──
-        // 如果所有上游都是輔助節點（如 n_swap）且輸出為空（失敗/超時），
-        // 回退到輔助節點的上游輸出（如 n_orders 的 OrderGenerationResult），
-        // 確保輔助節點永遠不阻斷下游執行
+        // ── 辅助节点容错 ──
+        // 如果所有上游都是辅助节点（如 n_swap）且输出为空（失败/超时），
+        // 回退到辅助节点的上游输出（如 n_orders 的 OrderGenerationResult），
+        // 确保辅助节点永远不阻断下游执行
         if (input == null && depEdges.isNotEmpty() &&
             depEdges.all { it.sourceNodeId in DagNode.AUXILIARY_NODES }) {
             input = depEdges
                 .flatMap { e -> edges.filter { it.targetNodeId == e.sourceNodeId } }
                 .firstNotNullOfOrNull { context.stageOutputs[it.sourceNodeId] }
             if (input != null) {
-                context.log(nodeId, "⚠ 輔助節點上游無輸出，回退使用間接上游: ${dagNode.nodeName}")
+                context.log(nodeId, "⚠ 辅助节点上游无输出，回退使用间接上游: ${dagNode.nodeName}")
             }
         }
 
-        // 跳過空輸入（非根節點且上游失敗）
+        // 跳过空输入（非根节点且上游失败）
         if (input == null && depEdges.isNotEmpty()) {
-            context.log(nodeId, "⚠ 上游輸出為空，跳過: ${dagNode.nodeName}")
+            context.log(nodeId, "⚠ 上游输出为空，跳过: ${dagNode.nodeName}")
             return DagNodeResult(
                 nodeId = nodeId,
                 nodeName = dagNode.nodeName,
                 success = false,
                 output = null,
                 elapsedMs = 0,
-                error = "上游輸出為空"
+                error = "上游输出为空"
             )
         }
 
-        // 執行節點
+        // 执行节点
         var output: Any? = null
         var error: String? = null
         var success = true
 
         val elapsed = measureTimeMillis {
             try {
-                // 通知 UI 層當前正在執行的節點（pipeline 名 + node 名）
+                // 通知 UI 层当前正在执行的节点（pipeline 名 + node 名）
                 context.onNodeProgress?.invoke(name, dagNode.nodeName)
-                context.log(nodeId, "▶ 開始: ${dagNode.nodeName}")
+                context.log(nodeId, "▶ 开始: ${dagNode.nodeName}")
                 val nodeTimeout = when (nodeId) {
-                    "n_fit" -> 180_000L   // 擬合計算耗時較長（已並行化，保留餘量）
-                    "n_bg" -> 10_000L     // 後臺管理不需太久
-                    else -> 60_000L       // AI精選/策略等需要較長超時
+                    "n_fit" -> 180_000L   // 拟合计算耗时较长（已并行化，保留余量）
+                    "n_bg" -> 10_000L     // 后台管理不需太久
+                    else -> 60_000L       // AI精选/策略等需要较长超时
                 }
                 output = kotlinx.coroutines.withTimeout(nodeTimeout) {
                     (node as PipelineNode<Any, Any>).execute(context, input ?: Unit)
                 }
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                val msg = "Node 超時: ${dagNode.nodeName}"
+                val msg = "Node 超时: ${dagNode.nodeName}"
                 error = msg
                 context.recordError(nodeId, msg)
                 success = false
             } catch (e: Exception) {
-                val msg = "Node 執行失敗: ${e.message}"
+                val msg = "Node 执行失败: ${e.message}"
                 error = msg
                 context.recordError(nodeId, msg)
                 success = false
@@ -401,7 +401,7 @@ class DagPipeline(
         if (success) {
             context.log(nodeId, "✓ 完成: ${dagNode.nodeName} (${elapsed}ms)")
         } else {
-            context.log(nodeId, "✗ 失敗: ${dagNode.nodeName} (${elapsed}ms) — $error")
+            context.log(nodeId, "✗ 失败: ${dagNode.nodeName} (${elapsed}ms) — $error")
         }
 
         // 存入上下文
@@ -409,9 +409,9 @@ class DagPipeline(
             context.stageOutputs[nodeId] = output
         }
 
-        // 提取該節點的股票流動記錄（節點執行過程中調用 recordStockFlow 寫入）
-        // 注意：節點內部用 internal nodeId（如 "generate_orders"）記錄，
-        // 而 DAG 用 XML nodeId（如 "n_orders"），兩者都需匹配，否則提取不到
+        // 提取该节点的股票流动记录（节点执行过程中调用 recordStockFlow 写入）
+        // 注意：节点内部用 internal nodeId（如 "generate_orders"）记录，
+        // 而 DAG 用 XML nodeId（如 "n_orders"），两者都需匹配，否则提取不到
         val internalNodeId = node.nodeId
         val nodeStockFlow = synchronized(context.stockFlowLogs) {
             context.stockFlowLogs.lastOrNull { it.nodeId == nodeId || it.nodeId == internalNodeId }
@@ -434,8 +434,8 @@ class DagPipeline(
 // ============================================================================
 
 /**
- * Pipeline 分組定義 — 一組邏輯上相關的節點集合。
- * 用於 UI 著色（同組節點染同色）和模板復用。
+ * Pipeline 分组定义 — 一组逻辑上相关的节点集合。
+ * 用于 UI 著色（同组节点染同色）和模板复用。
  */
 data class PipelineGroup(
     val id: String,
@@ -445,43 +445,43 @@ data class PipelineGroup(
 )
 
 /**
- * DAG Pipeline 的執行結果
+ * DAG Pipeline 的执行结果
  */
 data class DagPipelineResult(
-    /** Pipeline 名稱 */
+    /** Pipeline 名称 */
     val pipelineName: String,
-    /** 是否所有節點均成功 */
+    /** 是否所有节点均成功 */
     val success: Boolean,
-    /** 各節點的執行結果 */
+    /** 各节点的执行结果 */
     val nodeResults: Map<String, DagNodeResult>,
-    /** 總耗時（毫秒） */
+    /** 总耗时（毫秒） */
     val totalElapsedMs: Long,
-    /** 最後一個非空輸出 */
+    /** 最后一个非空输出 */
     val finalOutput: Any? = null,
-    /** 錯誤信息 */
+    /** 错误信息 */
     val errors: Map<String, String> = emptyMap(),
-    /** 各節點股票流動記錄（nodeId → StockFlowRecord） */
+    /** 各节点股票流动记录（nodeId → StockFlowRecord） */
     val stockFlowLogs: Map<String, StockFlowRecord> = emptyMap(),
-    /** Pipeline 分組信息（groupId → PipelineGroup） */
+    /** Pipeline 分组信息（groupId → PipelineGroup） */
     val pipelineGroups: Map<String, PipelineGroup> = emptyMap()
 )
 
 /**
- * 單個 DAG 節點的執行結果
+ * 单个 DAG 节点的执行结果
  */
 data class DagNodeResult(
-    /** 節點 ID */
+    /** 节点 ID */
     val nodeId: String,
-    /** 節點名稱 */
+    /** 节点名称 */
     val nodeName: String,
     /** 是否成功 */
     val success: Boolean,
-    /** 節點輸出 */
+    /** 节点输出 */
     val output: Any?,
-    /** 耗時（毫秒） */
+    /** 耗时（毫秒） */
     val elapsedMs: Long,
-    /** 錯誤信息（成功時為 null） */
+    /** 错误信息（成功时为 null） */
     val error: String? = null,
-    /** 該節點的股票流動記錄 */
+    /** 该节点的股票流动记录 */
     val stockFlow: StockFlowRecord? = null
 )

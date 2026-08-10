@@ -11,16 +11,16 @@ import org.json.JSONObject
 import java.net.URLEncoder
 
 /**
- * ## 即時股票資料爬蟲
+ * ## 即时股票资料爬虫
  *
- * 從權威來源獲取最新的公告、新聞、資金流向數據，
- * 注入 AI 對話上下文，確保分析基於即時數據而非 2024 年訓練數據。
+ * 从权威来源获取最新的公告、新闻、资金流向数据，
+ * 注入 AI 对话上下文，确保分析基于即时数据而非 2024 年训练数据。
  *
- * ### 數據來源優先級
- * 1. 巨潮資訊網 (cninfo.com.cn) — 證監會官方公告
- * 2. 財聯社 (cls.cn) — 7×24 即時快訊
- * 3. 東方財富 (eastmoney.com) — 行情+資金+新聞
- * 4. 雪球 (xueqiu.com) — 深度討論
+ * ### 数据来源优先级
+ * 1. 巨潮资讯网 (cninfo.com.cn) — 证监会官方公告
+ * 2. 财联社 (cls.cn) — 7×24 即时快讯
+ * 3. 东方财富 (eastmoney.com) — 行情+资金+新闻
+ * 4. 雪球 (xueqiu.com) — 深度讨论
  */
 class StockNewsFetcher {
 
@@ -28,19 +28,19 @@ class StockNewsFetcher {
         private const val TAG = "StockNewsFetcher"
     }
 
-    // 使用模擬瀏覽器的 client，避免 403
+    // 使用模拟浏览器的 client，避免 403
     private val client = HttpClientProvider.webScrapeClient
 
     /**
-     * 為指定股票獲取完整的即時數據上下文
-     * 包含：公告摘要、財聯社快訊、東方財富新聞、雪球討論、資金流向
+     * 为指定股票获取完整的即时数据上下文
+     * 包含：公告摘要、财联社快讯、东方财富新闻、雪球讨论、资金流向
      */
     suspend fun fetchStockContext(
         stockCode: String,
         stockName: String
     ): StockNewsContext = withContext(Dispatchers.IO) {
         val pureCode = stockCode.removePrefix("sh").removePrefix("sz").removePrefix("bj")
-        Log.i(TAG, "開始獲取 $stockName ($stockCode) 的即時數據")
+        Log.i(TAG, "开始获取 $stockName ($stockCode) 的即时数据")
 
         val announcements = fetchAnnouncements(pureCode, stockName)
         val clsNews = fetchClsNews(stockName)
@@ -61,7 +61,7 @@ class StockNewsFetcher {
     }
 
     // ═══════════════════════════════════════════════════
-    // 1. 巨潮資訊網 — 證監會官方公告
+    // 1. 巨潮资讯网 — 证监会官方公告
     // ═══════════════════════════════════════════════════
 
     private suspend fun fetchAnnouncements(stockCode: String, stockName: String): List<Announcement> {
@@ -80,19 +80,19 @@ class StockNewsFetcher {
             val body = response.body?.string() ?: return emptyList()
             parseAnnouncements(body)
         } catch (e: Exception) {
-            Log.w(TAG, "巨潮公告獲取失敗: ${e.message}")
+            Log.w(TAG, "巨潮公告获取失败: ${e.message}")
             emptyList()
         }
     }
 
     // ═══════════════════════════════════════════════════
-    // 2. 財聯社 — 7×24 即時快訊
+    // 2. 财联社 — 7×24 即时快讯
     // ═══════════════════════════════════════════════════
 
     private suspend fun fetchClsNews(stockName: String): List<NewsItem> {
         return try {
             val encoded = URLEncoder.encode(stockName, "UTF-8")
-            // 財聯社搜索 API
+            // 财联社搜索 API
             val url = "${DataConfig.newsCls}?" +
                 "q=$encoded&type=article&page=1&size=5"
 
@@ -107,13 +107,13 @@ class StockNewsFetcher {
             val body = response.body?.string() ?: return emptyList()
             parseClsNews(body)
         } catch (e: Exception) {
-            Log.w(TAG, "財聯社快訊獲取失敗: ${e.message}")
+            Log.w(TAG, "财联社快讯获取失败: ${e.message}")
             emptyList()
         }
     }
 
     // ═══════════════════════════════════════════════════
-    // 3. 東方財富 — 個股新聞
+    // 3. 东方财富 — 个股新闻
     // ═══════════════════════════════════════════════════
 
     private suspend fun fetchEastMoneyNews(stockName: String): List<NewsItem> {
@@ -133,13 +133,13 @@ class StockNewsFetcher {
             val body = response.body?.string() ?: return emptyList()
             parseEastNews(body)
         } catch (e: Exception) {
-            Log.w(TAG, "東方財富新聞獲取失敗: ${e.message}")
+            Log.w(TAG, "东方财富新闻获取失败: ${e.message}")
             emptyList()
         }
     }
 
     // ═══════════════════════════════════════════════════
-    // 4. 雪球 — 深度討論
+    // 4. 雪球 — 深度讨论
     // ═══════════════════════════════════════════════════
 
     private suspend fun fetchXueqiuDiscussion(stockCode: String, stockName: String): List<NewsItem> {
@@ -150,7 +150,7 @@ class StockNewsFetcher {
             val url = "${DataConfig.newsXueqiu}?" +
                 "count=5&comment=0&symbol=$symbol&hl=0&source=stock&sort=time&page=1"
 
-            // 雪球需要 Cookie（先用空請求獲取，再帶 Cookie）
+            // 雪球需要 Cookie（先用空请求获取，再带 Cookie）
             val request = Request.Builder()
                 .url(url)
                 .addHeader("Referer", "https://xueqiu.com/S/$symbol")
@@ -163,13 +163,13 @@ class StockNewsFetcher {
             val body = response.body?.string() ?: return emptyList()
             parseXueqiu(body)
         } catch (e: Exception) {
-            Log.w(TAG, "雪球討論獲取失敗: ${e.message}")
+            Log.w(TAG, "雪球讨论获取失败: ${e.message}")
             emptyList()
         }
     }
 
     // ═══════════════════════════════════════════════════
-    // 5. 東方財富 — 資金流向
+    // 5. 东方财富 — 资金流向
     // ═══════════════════════════════════════════════════
 
     private suspend fun fetchCapitalFlow(stockCode: String): CapitalFlowData {
@@ -189,7 +189,7 @@ class StockNewsFetcher {
             val body = response.body?.string() ?: return CapitalFlowData()
             parseCapitalFlow(body)
         } catch (e: Exception) {
-            Log.w(TAG, "資金流向獲取失敗: ${e.message}")
+            Log.w(TAG, "资金流向获取失败: ${e.message}")
             CapitalFlowData()
         }
     }
@@ -299,7 +299,7 @@ class StockNewsFetcher {
     }
 
     // ═══════════════════════════════════════════════════
-    // 數據模型
+    // 数据模型
     // ═══════════════════════════════════════════════════
 
     data class StockNewsContext(

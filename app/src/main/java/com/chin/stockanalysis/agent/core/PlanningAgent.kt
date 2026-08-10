@@ -10,19 +10,19 @@ import org.json.JSONObject
 import kotlin.coroutines.resume
 
 /**
- * PlanningAgent — 智能分析規劃層
+ * PlanningAgent — 智能分析规划层
  *
- * 在 IntentRouter 確定性路由之後，Orchestrator 執行之前，
- * 用一次輕量 LLM 調用決定：
- * - 分析深度（快速/標準/深度）
- * - 需要關注的分析維度（技術面/基本面/資金面/輿情/產業鏈）
- * - 是否需要對比分析（同板塊競品）
- * - 特殊注意事項（財報窗口、除權除息等）
+ * 在 IntentRouter 确定性路由之后，Orchestrator 执行之前，
+ * 用一次轻量 LLM 调用决定：
+ * - 分析深度（快速/标准/深度）
+ * - 需要关注的分析维度（技术面/基本面/资金面/舆情/产业链）
+ * - 是否需要对比分析（同板块竞品）
+ * - 特殊注意事项（财报窗口、除权除息等）
  *
- * 設計原則：
- * - 單次 LLM 調用，15s 超時
- * - 失敗時降級為默認計劃，不阻塞主流程
- * - 輸出結構化 AnalysisPlan，Orchestrator 據此調整參數
+ * 设计原则：
+ * - 单次 LLM 调用，15s 超时
+ * - 失败时降级为默认计划，不阻塞主流程
+ * - 输出结构化 AnalysisPlan，Orchestrator 据此调整参数
  */
 class PlanningAgent(private val appContext: Context) {
 
@@ -32,7 +32,7 @@ class PlanningAgent(private val appContext: Context) {
     }
 
     /**
-     * 分析計劃 — Orchestrator 據此調整執行策略
+     * 分析计划 — Orchestrator 据此调整执行策略
      */
     data class AnalysisPlan(
         val depth: Depth = Depth.STANDARD,
@@ -48,24 +48,24 @@ class PlanningAgent(private val appContext: Context) {
     }
 
     /**
-     * 生成分析計劃
+     * 生成分析计划
      *
-     * @param userIntent 已路由的用戶意圖
-     * @param stockCode 目標股票代碼
-     * @param stockName 股票名稱
-     * @return AnalysisPlan（失敗時返回默認計劃）
+     * @param userIntent 已路由的用户意图
+     * @param stockCode 目标股票代码
+     * @param stockName 股票名称
+     * @return AnalysisPlan（失败时返回默认计划）
      */
     suspend fun plan(
         userIntent: UserIntent,
         stockCode: String?,
         stockName: String?
     ): AnalysisPlan {
-        // 非 DEEP_ANALYSIS 不走規劃
+        // 非 DEEP_ANALYSIS 不走规划
         if (userIntent.type != IntentType.DEEP_ANALYSIS) {
             return AnalysisPlan()
         }
 
-        // 無目標股票（全市場掃描）不需要規劃
+        // 无目标股票（全市场扫描）不需要规划
         if (stockCode == null) {
             return AnalysisPlan()
         }
@@ -74,7 +74,7 @@ class PlanningAgent(private val appContext: Context) {
             val planJson = callLLMForPlan(userIntent, stockCode, stockName)
             parsePlan(planJson)
         } catch (e: Exception) {
-            Log.w(TAG, "規劃失敗，使用默認計劃: ${e.message}")
+            Log.w(TAG, "规划失败，使用默认计划: ${e.message}")
             AnalysisPlan(fallback = true)
         }
     }
@@ -97,8 +97,8 @@ class PlanningAgent(private val appContext: Context) {
                     val sb = StringBuilder()
 
                     val systemPrompt = """
-                        你是股票分析規劃師。根據用戶意圖和股票信息，決定分析策略。
-                        輸出嚴格 JSON，不要其他文字。
+                        你是股票分析规划师。根据用户意图和股票信息，决定分析策略。
+                        输出严格 JSON，不要其他文字。
 
                         格式：
                         {
@@ -109,19 +109,19 @@ class PlanningAgent(private val appContext: Context) {
                           "notes": []
                         }
 
-                        規則：
-                        - depth=QUICK：超短線/日內交易，只需技術面+資金面
-                        - depth=STANDARD：短線/中線，技術+基本面+資金面
-                        - depth=DEEP：長線/價值投資，全維度+產業鏈+同業對比
-                        - focus：只選需要的維度，不要全選
-                        - compare_peers：長線/中線時可考慮同業對比
-                        - notes：特殊注意事項（如"注意財報窗口期"）
+                        规则：
+                        - depth=QUICK：超短线/日内交易，只需技术面+资金面
+                        - depth=STANDARD：短线/中线，技术+基本面+资金面
+                        - depth=DEEP：长线/价值投资，全维度+产业链+同业对比
+                        - focus：只选需要的维度，不要全选
+                        - compare_peers：长线/中线时可考虑同业对比
+                        - notes：特殊注意事项（如"注意财报窗口期"）
                     """.trimIndent()
 
                     val userPrompt = buildString {
                         appendLine("股票: ${stockName ?: "未知"}($stockCode)")
-                        appendLine("週期: ${intent.period?.name ?: "SHORT"}")
-                        appendLine("用戶問題: ${intent.rawInput.take(200)}")
+                        appendLine("周期: ${intent.period?.name ?: "SHORT"}")
+                        appendLine("用户问题: ${intent.rawInput.take(200)}")
                     }
 
                     slot.provider.sendMessageStream(
@@ -166,7 +166,7 @@ class PlanningAgent(private val appContext: Context) {
                     }
                 }
             }
-            // 如果 LLM 沒指定，用默認全維度
+            // 如果 LLM 没指定，用默认全维度
             if (focusDimensions.isEmpty()) {
                 focusDimensions.addAll(AnalysisPlan.Dimension.entries)
             }
@@ -191,7 +191,7 @@ class PlanningAgent(private val appContext: Context) {
                 }
             )
         } catch (e: Exception) {
-            Log.w(TAG, "解析計劃失敗: ${e.message}")
+            Log.w(TAG, "解析计划失败: ${e.message}")
             AnalysisPlan(fallback = true)
         }
     }

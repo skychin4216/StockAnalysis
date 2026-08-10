@@ -145,7 +145,7 @@ class MultiSourceStockRepository(
      * 基本面跨源回填。
      *
      * 价格/成交量以最快源（winner）为准；但 PE/PB/市值/换手率只有东方财富源提供，
-     * 当 winner 是新浪/腾讯时这些字段为 0。此函数从其余源的結果中补齐缺失字段，
+     * 当 winner 是新浪/腾讯时这些字段为 0。此函数从其余源的结果中补齐缺失字段，
      * 保证下游（V2 决策矩阵、基本面策略、聊天行情卡）读到的基本面不为 0。
      */
     private fun mergeFundamentals(

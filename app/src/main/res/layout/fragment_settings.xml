@@ -15,7 +15,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="⚙️ 设置"
+            android:text="@string/settings_title"
             android:textSize="24sp"
             android:textStyle="bold"
             android:layout_marginBottom="24dp" />
@@ -52,7 +52,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="AI 配置"
+            android:text="@string/settings_ai_config"
             android:textSize="16sp"
             android:textStyle="bold"
             android:layout_marginBottom="8dp" />
@@ -61,7 +61,7 @@
             android:id="@+id/btnChangeApiKey"
             android:layout_width="match_parent"
             android:layout_height="48dp"
-            android:text="选择提供商 / 模型 / 用户 API Key"
+            android:text="@string/settings_select_provider"
             android:textSize="14sp"
             android:layout_marginBottom="24dp" />
 
@@ -69,7 +69,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="数据管理"
+            android:text="@string/settings_data_mgmt"
             android:textSize="16sp"
             android:textStyle="bold"
             android:layout_marginBottom="8dp" />
@@ -78,7 +78,7 @@
             android:id="@+id/btnClearCache"
             android:layout_width="match_parent"
             android:layout_height="48dp"
-            android:text="清除缓存"
+            android:text="@string/settings_clear_cache"
             android:textSize="14sp"
             android:layout_marginBottom="16dp" />
 
@@ -245,11 +245,44 @@
             android:textSize="13sp"
             android:layout_marginBottom="24dp" />
 
+        <!-- 语言设置 -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@android:color/darker_gray"
+            android:layout_marginBottom="16dp"
+            android:layout_marginTop="16dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_language"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btnLanguage"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="@string/settings_select_language"
+            android:textSize="14sp"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:id="@+id/tvCurrentLanguage"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="当前语言: 跟随系统"
+            android:textSize="12sp"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginBottom="24dp" />
+
         <!-- About -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="关于应用"
+            android:text="@string/settings_about"
             android:textSize="16sp"
             android:textStyle="bold"
             android:layout_marginBottom="8dp" />

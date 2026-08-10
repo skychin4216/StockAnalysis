@@ -3,10 +3,10 @@ package com.chin.stockanalysis.strategy.backtest
 import androidx.room.*
 
 /**
- * ## 盤中分鐘 K 線實體
+ * ## 盘中分钟 K 线实体
  *
- * 存儲盤中分鐘級 OHLCV 數據，用於盤中分析。
- * 僅保留當日數據，每日自動清理過期記錄。
+ * 存储盘中分钟级 OHLCV 数据，用于盘中分析。
+ * 仅保留当日数据，每日自动清理过期记录。
  */
 @Entity(
     tableName = "intraday_kline",
@@ -54,16 +54,16 @@ data class IntradayKlineEntity(
 )
 
 /**
- * ## 盤中 K 線 DAO
+ * ## 盘中 K 线 DAO
  */
 @Dao
 interface IntradayKlineDao {
 
-    /** 獲取某只股票當日的全部分鐘線 */
+    /** 获取某只股票当日的全部分钟线 */
     @Query("SELECT * FROM intraday_kline WHERE code = :code AND date = :date ORDER BY datetime ASC")
     suspend fun getByCodeToday(code: String, date: String): List<IntradayKlineEntity>
 
-    /** 獲取多只股票當日的分鐘線 */
+    /** 获取多只股票当日的分钟线 */
     @Query("SELECT * FROM intraday_kline WHERE code IN (:codes) AND date = :date ORDER BY code, datetime ASC")
     suspend fun getByCodesToday(codes: List<String>, date: String): List<IntradayKlineEntity>
 
@@ -71,15 +71,15 @@ interface IntradayKlineDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(klines: List<IntradayKlineEntity>)
 
-    /** 清理指定日期之前的數據 */
+    /** 清理指定日期之前的数据 */
     @Query("DELETE FROM intraday_kline WHERE date < :beforeDate")
     suspend fun deleteOlderThan(beforeDate: String)
 
-    /** 清理指定日期的數據 */
+    /** 清理指定日期的数据 */
     @Query("DELETE FROM intraday_kline WHERE date = :date")
     suspend fun deleteByDate(date: String)
 
-    /** 統計當日記錄數 */
+    /** 统计当日记录数 */
     @Query("SELECT COUNT(*) FROM intraday_kline WHERE date = :date")
     suspend fun countToday(date: String): Int
 }

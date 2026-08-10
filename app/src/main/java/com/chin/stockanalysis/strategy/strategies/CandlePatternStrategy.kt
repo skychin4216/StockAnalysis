@@ -14,15 +14,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * ## K線形態策略（Pipeline-based）
+ * ## K线形态策略（Pipeline-based）
  *
- * 復用 CandlePatternDetector 的 16 種形態識別，對全市場掃描。
- * 只取看多形態，按形態強度（1-5）評分。
+ * 复用 CandlePatternDetector 的 16 种形态识别，对全市场扫描。
+ * 只取看多形态，按形态强度（1-5）评分。
  *
- * 核心形態：
- * - 晨星/三白兵/看漲吞沒/穿刺線 → 高強度
- * - 錘子線/倒錘(底部) → 中等強度
- * - 上升三法 → 趨勢延續
+ * 核心形态：
+ * - 晨星/三白兵/看涨吞没/穿刺线 → 高强度
+ * - 锤子线/倒锤(底部) → 中等强度
+ * - 上升三法 → 趋势延续
  */
 class CandlePatternStrategy(
     private val screener: StockScreener,
@@ -30,8 +30,8 @@ class CandlePatternStrategy(
 ) : Strategy {
 
     override val id = "candle_pattern"
-    override var name = "K線形態精選"
-    override var description = "復用 CandlePatternDetector 16種形態識別，篩選看多信號（晨星/三白兵/吞沒/錘子等），按強度評分"
+    override var name = "K线形态精选"
+    override var description = "复用 CandlePatternDetector 16种形态识别，筛选看多信号（晨星/三白兵/吞没/锤子等），按强度评分"
     override val category = StrategyCategory.MOMENTUM
     override val holdingPeriods = listOf(HoldingPeriod.SHORT)
     override val source = StrategySource.BUILTIN
@@ -45,9 +45,9 @@ class CandlePatternStrategy(
     override val maxPositions = 5
 
     override var weightFactors = listOf(
-        WeightFactor("pattern_strength", "形態強度", 40, "看多形態強度加總"),
-        WeightFactor("multi_pattern", "多形態共振", 30, "多個看多形態同時出現"),
-        WeightFactor("volume_confirm", "量價配合", 30, "成交量確認價格突破")
+        WeightFactor("pattern_strength", "形态强度", 40, "看多形态强度加总"),
+        WeightFactor("multi_pattern", "多形态共振", 30, "多个看多形态同时出现"),
+        WeightFactor("volume_confirm", "量价配合", 30, "成交量确认价格突破")
     )
 
     override suspend fun screen(): Result<ScreeningResult> = withContext(Dispatchers.Default) {
@@ -80,7 +80,7 @@ class CandlePatternStrategy(
             val codes = candidates.map { it.code }
             val nameMap = candidates.associate { it.code to it.name }
 
-            // 批量獲取 K 線數據
+            // 批量获取 K 线数据
             val candleMap = mutableMapOf<String, List<DailySnapshotEntity>>()
             for (code in codes) {
                 val snaps = dao.getByCode(code, 30)
@@ -89,18 +89,18 @@ class CandlePatternStrategy(
                 }
             }
 
-            // 批量檢測形態
+            // 批量检测形态
             val patternResults = CandlePatternDetector.detectBatch(candleMap)
 
             for ((code, patterns) in patternResults) {
-                // 只看多形態
+                // 只看多形态
                 val bullish = patterns.filter { it.direction == CandlePatternDetector.Direction.BULLISH }
                 if (bullish.isEmpty()) continue
 
                 val totalStrength = bullish.sumOf { it.strength }
                 val patternNames = bullish.joinToString("/") { it.patternName }
 
-                // 評分：形態強度加總 * 15，上限 100
+                // 评分：形态强度加总 * 15，上限 100
                 val strength = (totalStrength * 15).coerceAtMost(100)
                 val realtime = candidates.find { it.code == code }
 
@@ -118,7 +118,7 @@ class CandlePatternStrategy(
                         category = category,
                         strength = strength,
                         action = if (strength >= 70) SignalAction.BUY else SignalAction.WATCH,
-                        reason = "K線形態: $patternNames (強度$totalStrength)",
+                        reason = "K线形态: $patternNames (强度$totalStrength)",
                         details = details,
                         currentPrice = realtime?.price ?: 0.0,
                         changePercent = realtime?.changePercent ?: 0.0

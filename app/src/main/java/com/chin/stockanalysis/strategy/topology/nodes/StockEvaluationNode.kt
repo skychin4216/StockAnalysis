@@ -6,18 +6,18 @@ import com.chin.stockanalysis.strategy.topology.core.*
 import com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline
 
 /**
- * ## 個股評估檢查節點（6 項嚴選）
+ * ## 个股评估检查节点（6 项严选）
  *
- * 對 MergedSignalPool 中的每只股票評估 6 項條件：
- * 1. 均線粘合向上：MA5 > MA10 > MA20，離散率 < threshold
- * 2. 三日不新低：最近 3 日最低價均 > 前低
- * 3. 歷史低位：當前價在 N 日區間底部 percentile
- * 4. PE < peThreshold：無泡沫
- * 5. 周期活躍度：N 日內 ≥activeDays 天漲跌幅 > activeChange%
- * 6. 冰點買入：換手率 < turnoverThreshold 且 量比 < volumeRatioThreshold
+ * 对 MergedSignalPool 中的每只股票评估 6 项条件：
+ * 1. 均线粘合向上：MA5 > MA10 > MA20，离散率 < threshold
+ * 2. 三日不新低：最近 3 日最低价均 > 前低
+ * 3. 历史低位：当前价在 N 日区间底部 percentile
+ * 4. PE < peThreshold：无泡沫
+ * 5. 周期活跃度：N 日内 ≥activeDays 天涨跌幅 > activeChange%
+ * 6. 冰点买入：换手率 < turnoverThreshold 且 量比 < volumeRatioThreshold
  *
  * ### XML 配置
- * 所有參數均可通過 XML `<config><param>` 傳入，不同周期配不同參數：
+ * 所有参数均可通过 XML `<config><param>` 传入，不同周期配不同参数：
  * ```xml
  * <Node id="n_eval" module="stock_evaluation">
  *   <config>
@@ -28,7 +28,7 @@ import com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline
  * </Node>
  * ```
  *
- * ### 輸出
+ * ### 输出
  * [StockEvaluationResult] 存入 context.setStageOutput(nodeId, result)
  */
 data class StockEvaluationResult(
@@ -46,7 +46,7 @@ data class StockEvaluationDetail(
     val peLow: Boolean = false,
     val cyclicalActive: Boolean = false,
     val freezingPoint: Boolean = false,
-    val passCount: Int = 0,  // 通過幾項（滿 6 項）
+    val passCount: Int = 0,  // 通过几项（满 6 项）
     val allPassed: Boolean = false
 )
 
@@ -61,13 +61,13 @@ class StockEvaluationNode(
     val lookbackDays: Int = 60,
     val marketMaThreshold: Double = 0.02,
     val minPassCount: Int = 4
-) : BaseNode<MergedSignalPool, MergedSignalPool>("strict_selection", "六項嚴選檢查", NodeType.FILTER) {
+) : BaseNode<MergedSignalPool, MergedSignalPool>("strict_selection", "六项严选检查", NodeType.FILTER) {
 
     companion object {
         private const val TAG = "StockEvaluation"
     }
 
-    /** 內部使用的 StockCheckPipeline（由構造參數構建） */
+    /** 内部使用的 StockCheckPipeline（由构造参数构建） */
     private val pipeline = StockCheckPipeline(
         peThreshold = peThreshold,
         maDivergenceThreshold = maDivergenceThreshold,
@@ -84,15 +84,15 @@ class StockEvaluationNode(
     override suspend fun execute(context: PipelineContext, input: MergedSignalPool): MergedSignalPool {
         val passedMap = mutableMapOf<String, StockEvaluationDetail>()
 
-        // 遍歷所有候選股票
+        // 遍历所有候选股票
         for ((code, _) in input.stockHits) {
             try {
                 val result = pipeline.analyze(context.androidContext, code)
-                if (result.stockName == "數據不足" || result.stockName == "異常") continue
+                if (result.stockName == "数据不足" || result.stockName == "异常") continue
 
                 val name = input.stockNames[code] ?: result.stockName
 
-                // 轉換為 StockEvaluationDetail（6 項，不含大盤 MA）
+                // 转换为 StockEvaluationDetail（6 项，不含大盘 MA）
                 val passCount = listOf(
                     result.maConvergedUp, result.threeDayNoNewLow, result.historicalLow,
                     result.peOk, result.cyclicalActive,
@@ -119,7 +119,7 @@ class StockEvaluationNode(
             } catch (_: Exception) {}
         }
 
-        // 評估結果另存，供報告使用
+        // 评估结果另存，供报告使用
         val evalResult = StockEvaluationResult(
             passedStocks = passedMap,
             totalCount = input.stockHits.size,
@@ -127,14 +127,14 @@ class StockEvaluationNode(
         )
         context.setStageOutput(nodeId + "_eval", evalResult)
 
-        context.log(nodeId, "$nodeName: ${input.stockHits.size} 只候選 → " +
-            "${passedMap.size} 只通過≥${minPassCount}項，${evalResult.passedCount} 只全部通過")
+        context.log(nodeId, "$nodeName: ${input.stockHits.size} 只候选 → " +
+            "${passedMap.size} 只通过≥${minPassCount}项，${evalResult.passedCount} 只全部通过")
         if (passedMap.isNotEmpty()) {
             val top3 = passedMap.values.sortedByDescending { it.passCount }.take(3)
             context.log(nodeId, "$nodeName TOP3: ${top3.joinToString { "${it.name}(${it.passCount}/6)" }}")
         }
 
-        // 過濾信號池，只保留通過嚴選的股票
+        // 过滤信号池，只保留通过严选的股票
         val passedCodes = passedMap.keys
         val filteredSignals = input.boostedSignals.filter { it.stockCode in passedCodes }
         val filteredHits = input.stockHits.filterKeys { it in passedCodes }
@@ -145,10 +145,10 @@ class StockEvaluationNode(
 }
 
 /**
- * ## 個股評估單股檢查（供 Agent 分析流程調用）
+ * ## 个股评估单股检查（供 Agent 分析流程调用）
  *
- * 從 [StockEvaluationNode] 提取核心邏輯，不依賴 PipelineContext。
- * Agent 完成分析後，作為最終買入關卡調用。
+ * 从 [StockEvaluationNode] 提取核心逻辑，不依赖 PipelineContext。
+ * Agent 完成分析后，作为最终买入关卡调用。
  */
 object StockEvaluationChecker {
 
@@ -158,7 +158,7 @@ object StockEvaluationChecker {
         pipeline: StockCheckPipeline = StockCheckPipeline.midTermParams()
     ): StockEvaluationDetail {
         val result = pipeline.analyze(db, stockCode)
-        if (result.stockName == "數據不足" || result.stockName == "異常") {
+        if (result.stockName == "数据不足" || result.stockName == "异常") {
             return StockEvaluationDetail(code = stockCode, name = result.stockName, passCount = 0)
         }
 
@@ -181,20 +181,20 @@ object StockEvaluationChecker {
         )
     }
 
-    /** 格式化成可讀摘要，供報告附加 */
+    /** 格式化成可读摘要，供报告附加 */
     fun formatResult(detail: StockEvaluationDetail): String = buildString {
         val passed = detail.passCount >= 4
         append(if (passed) "✅" else "⚠️")
-        append(" 嚴選檢查: ${detail.passCount}/6")
+        append(" 严选检查: ${detail.passCount}/6")
         if (detail.name.isNotBlank()) append(" (${detail.name})")
         appendLine()
-        append("  ${if (detail.maConvergedUp) "✓" else "✗"}均線粘合向上")
+        append("  ${if (detail.maConvergedUp) "✓" else "✗"}均线粘合向上")
         append("  ${if (detail.threeDayNoNewLow) "✓" else "✗"}三日不新低")
-        append("  ${if (detail.historicalLow25) "✓" else "✗"}歷史低位")
+        append("  ${if (detail.historicalLow25) "✓" else "✗"}历史低位")
         appendLine()
         append("  ${if (detail.peLow) "✓" else "✗"}PE<30")
-        append("  ${if (detail.cyclicalActive) "✓" else "✗"}周期活躍")
-        append("  ${if (detail.freezingPoint) "✓" else "✗"}冰點買入")
-        if (!passed) appendLine("\n  ⚠️ 未達≥4項門檻，建議觀望")
+        append("  ${if (detail.cyclicalActive) "✓" else "✗"}周期活跃")
+        append("  ${if (detail.freezingPoint) "✓" else "✗"}冰点买入")
+        if (!passed) appendLine("\n  ⚠️ 未达≥4项门槛，建议观望")
     }
 }

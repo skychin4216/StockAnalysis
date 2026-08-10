@@ -1,10 +1,10 @@
 package com.chin.stockanalysis.strategy.agent
 
 /**
- * ## Agent 結構化彙報
+ * ## Agent 结构化汇报
  *
- * 借鑒 OpenCode Sub-Agent 的 Announce 機制。
- * 子 Agent 完成後以結構化格式向 Orchestrator 彙報。
+ * 借鉴 OpenCode Sub-Agent 的 Announce 机制。
+ * 子 Agent 完成后以结构化格式向 Orchestrator 汇报。
  */
 data class AgentAnnounce(
     val taskId: String,

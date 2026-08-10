@@ -7,19 +7,19 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * ## 股票名稱統一解析器
+ * ## 股票名称统一解析器
  *
- * 不管在策略管道、AI對話、自選股、候選池等任何場景選到的股票，
- * 如果缺少名稱，都可以通過此解析器動態補全。
+ * 不管在策略管道、AI对话、自选股、候选池等任何场景选到的股票，
+ * 如果缺少名称，都可以通过此解析器动态补全。
  *
- * 三級查找策略（由快到慢）：
- *  1. stock_basics 表（本地快取，毫秒級）
- *  2. daily_snapshot 表（取最近一條有名稱的記錄）
- *  3. 新浪即時行情 API（網絡拉取，同時寫入快取）
+ * 三级查找策略（由快到慢）：
+ *  1. stock_basics 表（本地快取，毫秒级）
+ *  2. daily_snapshot 表（取最近一条有名称的记录）
+ *  3. 新浪即时行情 API（网络拉取，同时写入快取）
  *
  * 使用方式：
  * ```
- * val name = StockNameResolver.resolve(context, "sh600000")  // 返回 "浦發銀行"
+ * val name = StockNameResolver.resolve(context, "sh600000")  // 返回 "浦发银行"
  * val map = StockNameResolver.resolveBatch(context, listOf("sh600000", "sz000001"))
  * ```
  */
@@ -28,8 +28,8 @@ object StockNameResolver {
     private const val TAG = "StockNameResolver"
 
     /**
-     * 解析單個股票名稱
-     * @return 股票名稱；如果三級查找都失敗，返回股票代碼本身
+     * 解析单个股票名称
+     * @return 股票名称；如果三级查找都失败，返回股票代码本身
      */
     suspend fun resolve(context: Context, stockCode: String): String {
         if (stockCode.isBlank()) return stockCode
@@ -38,12 +38,12 @@ object StockNameResolver {
     }
 
     /**
-     * 批量解析股票名稱
+     * 批量解析股票名称
      *
-     * 對傳入的代碼列表，先檢查本地數據庫，再從網絡補全缺失的。
-     * 網絡拉取的名稱會同時寫入 stock_basics 表快取，下次無需網絡。
+     * 对传入的代码列表，先检查本地数据库，再从网络补全缺失的。
+     * 网络拉取的名称会同时写入 stock_basics 表快取，下次无需网络。
      *
-     * @return code → name 的映射；未找到的代碼不在結果中
+     * @return code → name 的映射；未找到的代码不在结果中
      */
     suspend fun resolveBatch(
         context: Context,
@@ -54,17 +54,17 @@ object StockNameResolver {
         val db = StockDatabase.getInstance(appCtx)
         val result = mutableMapOf<String, String>()
 
-        // ── 第一級：stock_basics 表 ──
+        // ── 第一级：stock_basics 表 ──
         try {
             val basics = db.stockBasicDao().getByCodes(codes)
             for (b in basics) {
                 if (b.name.isNotBlank()) result[b.code] = b.name
             }
         } catch (e: Exception) {
-            Log.w(TAG, "stock_basics 查詢失敗: ${e.message}")
+            Log.w(TAG, "stock_basics 查询失败: ${e.message}")
         }
 
-        // ── 第二級：daily_snapshot 表（取最近5條中有名稱的） ──
+        // ── 第二级：daily_snapshot 表（取最近5条中有名称的） ──
         val stillMissing = codes.filter { it !in result }
         for (code in stillMissing) {
             try {
@@ -74,14 +74,14 @@ object StockNameResolver {
             } catch (_: Exception) {}
         }
 
-        // ── 第三級：新浪即時行情 API ──
+        // ── 第三级：新浪即时行情 API ──
         val networkMissing = codes.filter { it !in result }
         if (networkMissing.isNotEmpty()) {
             try {
                 val fetched = fetchFromSina(appCtx, networkMissing)
                 result.putAll(fetched)
             } catch (e: Exception) {
-                Log.w(TAG, "新浪API拉取失敗: ${e.message}")
+                Log.w(TAG, "新浪API拉取失败: ${e.message}")
             }
         }
 
@@ -89,7 +89,7 @@ object StockNameResolver {
     }
 
     /**
-     * 補全單個股票名稱，如果原名不為空則直接返回
+     * 补全单个股票名称，如果原名不为空则直接返回
      */
     suspend fun resolveIfBlank(
         context: Context,
@@ -101,8 +101,8 @@ object StockNameResolver {
     }
 
     /**
-     * 批量補全：傳入 code→name 的映射，返回補全後的映射
-     * 只對名稱為空的條目進行查找
+     * 批量补全：传入 code→name 的映射，返回补全后的映射
+     * 只对名称为空的条目进行查找
      */
     suspend fun fillBlanks(
         context: Context,
@@ -119,9 +119,9 @@ object StockNameResolver {
     }
 
     /**
-     * 從新浪即時行情 API 批量拉取股票名稱
-     * 新浪返回格式（GBK編碼）: var hq_str_sh600000="浦發銀行,10.50,...";
-     * 拉取成功後同時寫入 stock_basics 表快取
+     * 从新浪即时行情 API 批量拉取股票名称
+     * 新浪返回格式（GBK编码）: var hq_str_sh600000="浦发银行,10.50,...";
+     * 拉取成功后同时写入 stock_basics 表快取
      */
     private suspend fun fetchFromSina(
         context: Context,
@@ -151,7 +151,7 @@ object StockNameResolver {
                     val name = match.groupValues[2].trim()
                     if (name.isNotBlank()) {
                         result[code] = name
-                        // 寫入 stock_basics 快取
+                        // 写入 stock_basics 快取
                         try {
                             db.stockBasicDao().insert(
                                 StockBasicEntity(code = code, name = name, business = "")

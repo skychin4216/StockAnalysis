@@ -5,32 +5,32 @@ import com.chin.stockanalysis.strategy.HoldingPeriod
 import kotlin.math.max
 
 /**
- * ## ATR 動態追蹤止損
+ * ## ATR 动态追踪止损
  *
- * 不是選股策略，是持倉管理工具，供 AutoSellEngine / Fragment 調用。
+ * 不是选股策略，是持仓管理工具，供 AutoSellEngine / Fragment 调用。
  *
- * 邏輯：
+ * 逻辑：
  * - ATR(14) = 14 日 True Range 均值
- * - 追蹤止損線 = 持倉期間最高價 - N × ATR
- * - 止損線只上移不下移（棘輪機制）
- * - 觸發條件：當前價 < 止損線 → 賣出
+ * - 追踪止损线 = 持仓期间最高价 - N × ATR
+ * - 止损线只上移不下移（棘轮机制）
+ * - 触发条件：当前价 < 止损线 → 卖出
  *
- * 不同週期 N 值：
- * - ULTRA_SHORT: 1.5（緊貼，快速止損）
+ * 不同周期 N 值：
+ * - ULTRA_SHORT: 1.5（紧贴，快速止损）
  * - SHORT: 2.0
  * - MID: 2.5
- * - LONG: 3.0（寬容，避免被洗出）
+ * - LONG: 3.0（宽容，避免被洗出）
  */
 object ATRTrailingStop {
 
     /**
-     * 計算 ATR(14)
+     * 计算 ATR(14)
      *
-     * @param highs 近 N 天最高價（升序，最後一個是今天）
-     * @param lows 近 N 天最低價
-     * @param closes 近 N 天收盤價
-     * @param period ATR 周期（默認 14）
-     * @return ATR 值，數據不足時返回 0
+     * @param highs 近 N 天最高价（升序，最后一个是今天）
+     * @param lows 近 N 天最低价
+     * @param closes 近 N 天收盘价
+     * @param period ATR 周期（默认 14）
+     * @return ATR 值，数据不足时返回 0
      */
     fun calculateATR(
         highs: List<Double>,
@@ -50,17 +50,17 @@ object ATRTrailingStop {
             trueRanges.add(tr)
         }
 
-        // 取最近 period 個 TR 的均值
+        // 取最近 period 个 TR 的均值
         return trueRanges.takeLast(period).average()
     }
 
     /**
-     * 計算追蹤止損價
+     * 计算追踪止损价
      *
-     * @param highestSinceBuy 買入後的最高價
-     * @param atr 當前 ATR 值
-     * @param period 持倉週期（決定 N 倍數）
-     * @return 止損價格
+     * @param highestSinceBuy 买入后的最高价
+     * @param atr 当前 ATR 值
+     * @param period 持仓周期（决定 N 倍数）
+     * @return 止损价格
      */
     fun calculateStopPrice(
         highestSinceBuy: Double,
@@ -72,14 +72,14 @@ object ATRTrailingStop {
     }
 
     /**
-     * 判斷是否觸發止損
+     * 判断是否触发止损
      *
-     * @param currentPrice 當前價格
-     * @param highestSinceBuy 買入後最高價
-     * @param atr 當前 ATR
-     * @param period 持倉週期
-     * @param previousStopPrice 上一次計算的止損價（用於棘輪：只上移不下移）
-     * @return Triple(是否觸發, 新止損價, 止損原因)
+     * @param currentPrice 当前价格
+     * @param highestSinceBuy 买入后最高价
+     * @param atr 当前 ATR
+     * @param period 持仓周期
+     * @param previousStopPrice 上一次计算的止损价（用于棘轮：只上移不下移）
+     * @return Triple(是否触发, 新止损价, 止损原因)
      */
     fun checkTrailingStop(
         currentPrice: Double,
@@ -92,13 +92,13 @@ object ATRTrailingStop {
 
         val rawStop = calculateStopPrice(highestSinceBuy, atr, period)
 
-        // 棘輪機制：止損線只上移不下移
+        // 棘轮机制：止损线只上移不下移
         val effectiveStop = if (previousStopPrice > 0) max(rawStop, previousStopPrice) else rawStop
 
         val triggered = currentPrice < effectiveStop
         val reason = if (triggered) {
             val multiplier = getMultiplier(period)
-            "ATR追蹤止損: 當前${"%.2f".format(currentPrice)} < 止損線${"%.2f".format(effectiveStop)} " +
+            "ATR追踪止损: 当前${"%.2f".format(currentPrice)} < 止损线${"%.2f".format(effectiveStop)} " +
                 "(最高${"%.2f".format(highestSinceBuy)} - ${multiplier}×ATR${"%.2f".format(atr)})"
         } else ""
 
@@ -106,17 +106,17 @@ object ATRTrailingStop {
     }
 
     /**
-     * 從 DB 計算某股票的 ATR 並判斷止損
+     * 从 DB 计算某股票的 ATR 并判断止损
      *
-     * 便捷方法：一次性完成 DB 查詢 + ATR 計算 + 止損判斷
+     * 便捷方法：一次性完成 DB 查询 + ATR 计算 + 止损判断
      *
-     * @param db StockDatabase 實例
-     * @param stockCode 股票代碼
-     * @param currentPrice 當前價格
-     * @param highestSinceBuy 買入後最高價
-     * @param period 持倉週期
-     * @param previousStopPrice 上次止損價
-     * @return Triple(是否觸發, 新止損價, 原因)
+     * @param db StockDatabase 实例
+     * @param stockCode 股票代码
+     * @param currentPrice 当前价格
+     * @param highestSinceBuy 买入后最高价
+     * @param period 持仓周期
+     * @param previousStopPrice 上次止损价
+     * @return Triple(是否触发, 新止损价, 原因)
      */
     suspend fun checkFromDb(
         db: StockDatabase,

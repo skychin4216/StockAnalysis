@@ -73,7 +73,7 @@ interface WeightCalibrationDao {
     @Query("DELETE FROM weight_calibrations WHERE strategy_id = :strategyId") suspend fun deleteByStrategy(strategyId: String)
 }
 
-/** 用戶自選股 DAO */
+/** 用户自选股 DAO */
 @Dao
 interface UserWatchlistDao {
     @Query("SELECT * FROM user_watchlist WHERE status = :status ORDER BY added_date DESC") suspend fun getByStatus(status: String): List<UserWatchlistEntity>
@@ -90,7 +90,7 @@ interface UserWatchlistDao {
     @Query("DELETE FROM user_watchlist") suspend fun clearAll()
 }
 
-/** AI 精選股 DAO */
+/** AI 精选股 DAO */
 @Dao
 interface AiSelectedStockDao {
     @Query("SELECT * FROM ai_selected_stock WHERE selected_date = :date ORDER BY score DESC") suspend fun getByDate(date: String): List<AiSelectedStockEntity>
@@ -185,7 +185,7 @@ abstract class StockDatabase : RoomDatabase() {
         @Volatile private var INSTANCE: StockDatabase? = null
 
         /**
-         * v12 → v13 遷移：新增 institutional_tips 表（不破壞已有數據）
+         * v12 → v13 迁移：新增 institutional_tips 表（不破坏已有数据）
          */
         private val MIGRATION_12_13 = object : androidx.room.migration.Migration(12, 13) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -205,7 +205,7 @@ abstract class StockDatabase : RoomDatabase() {
                 """.trimIndent())
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_institutional_tips_stock_code` ON `institutional_tips` (`stock_code`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_institutional_tips_expire_date` ON `institutional_tips` (`expire_date`)")
-                Log.i(TAG, "✅ v12→v13 遷移完成：已創建 institutional_tips 表（保留已有數據）")
+                Log.i(TAG, "✅ v12→v13 迁移完成：已创建 institutional_tips 表（保留已有数据）")
             }
         }
 
@@ -226,12 +226,12 @@ abstract class StockDatabase : RoomDatabase() {
                     )
                 """.trimIndent())
                 db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_period_holding_profit_period_type_trade_date` ON `period_holding_profit` (`period_type`, `trade_date`)")
-                Log.i(TAG, "✅ v13→v14 遷移完成：已創建 period_holding_profit 表（各週期持有收益獨立固化）")
+                Log.i(TAG, "✅ v13→v14 迁移完成：已创建 period_holding_profit 表（各周期持有收益独立固化）")
             }
         }
 
         /**
-         * v14 → v15 遷移：新增 t_trade_records 表（做T/反T 日內交易記錄）
+         * v14 → v15 迁移：新增 t_trade_records 表（做T/反T 日内交易记录）
          */
         private val MIGRATION_14_15 = object : androidx.room.migration.Migration(14, 15) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -253,12 +253,12 @@ abstract class StockDatabase : RoomDatabase() {
                         `createdAt` INTEGER NOT NULL
                     )
                 """.trimIndent())
-                Log.i(TAG, "✅ v14→v15 遷移完成：已創建 t_trade_records 表（做T/反T日內交易記錄）")
+                Log.i(TAG, "✅ v14→v15 迁移完成：已创建 t_trade_records 表（做T/反T日内交易记录）")
             }
         }
 
         /**
-         * v15 → v16 遷移：新增 real_positions 表（真實持倉手動導入）
+         * v15 → v16 迁移：新增 real_positions 表（真实持仓手动导入）
          */
         private val MIGRATION_15_16 = object : androidx.room.migration.Migration(15, 16) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -278,12 +278,12 @@ abstract class StockDatabase : RoomDatabase() {
                         `updatedAt` INTEGER NOT NULL
                     )
                 """.trimIndent())
-                Log.i(TAG, "✅ v15→v16 遷移完成：已創建 real_positions 表（真實持倉手動導入）")
+                Log.i(TAG, "✅ v15→v16 迁移完成：已创建 real_positions 表（真实持仓手动导入）")
             }
         }
 
         /**
-         * v16 → v17 遷移：新增 t_trade_recommendations 表（做T推薦記錄）
+         * v16 → v17 迁移：新增 t_trade_recommendations 表（做T推荐记录）
          */
         private val MIGRATION_16_17 = object : androidx.room.migration.Migration(16, 17) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -309,12 +309,12 @@ abstract class StockDatabase : RoomDatabase() {
                 db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_t_trade_recommendations_stock_code_trade_date_signal_type` ON `t_trade_recommendations` (`stock_code`, `trade_date`, `signal_type`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_t_trade_recommendations_status` ON `t_trade_recommendations` (`status`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_t_trade_recommendations_trade_date` ON `t_trade_recommendations` (`trade_date`)")
-                Log.i(TAG, "✅ v16→v17 遷移完成：已創建 t_trade_recommendations 表（做T推薦記錄）")
+                Log.i(TAG, "✅ v16→v17 迁移完成：已创建 t_trade_recommendations 表（做T推荐记录）")
             }
         }
 
         /**
-         * v17 → v18 遷移：t_trade_recommendations 新增做T結果跟蹤字段
+         * v17 → v18 迁移：t_trade_recommendations 新增做T结果跟踪字段
          */
         private val MIGRATION_17_18 = object : androidx.room.migration.Migration(17, 18) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -323,12 +323,12 @@ abstract class StockDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE `t_trade_recommendations` ADD COLUMN `trough_price_after` REAL NOT NULL DEFAULT 0.0")
                 db.execSQL("ALTER TABLE `t_trade_recommendations` ADD COLUMN `target_hit` INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE `t_trade_recommendations` ADD COLUMN `virtual_profit_pct` REAL NOT NULL DEFAULT 0.0")
-                Log.i(TAG, "✅ v17→v18 遷移完成：做T推薦新增跟蹤字段（period_type, peak/trough, target_hit, virtual_profit）")
+                Log.i(TAG, "✅ v17→v18 迁移完成：做T推荐新增跟踪字段（period_type, peak/trough, target_hit, virtual_profit）")
             }
         }
 
         /**
-         * v19 → v20 遷移：新增 user_focus_sectors 表（用戶關注板塊歷史記錄）
+         * v19 → v20 迁移：新增 user_focus_sectors 表（用户关注板块历史记录）
          */
         private val MIGRATION_19_20 = object : androidx.room.migration.Migration(19, 20) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -341,12 +341,12 @@ abstract class StockDatabase : RoomDatabase() {
                     )
                 """.trimIndent())
                 db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_user_focus_sectors_sector_name` ON `user_focus_sectors` (`sector_name`)")
-                Log.i(TAG, "✅ v19→v20 遷移完成：已創建 user_focus_sectors 表")
+                Log.i(TAG, "✅ v19→v20 迁移完成：已创建 user_focus_sectors 表")
             }
         }
 
         /**
-         * v20 → v21 遷移：新增 intraday_kline 表（盤中分鐘 K 線）
+         * v20 → v21 迁移：新增 intraday_kline 表（盘中分钟 K 线）
          */
         private val MIGRATION_20_21 = object : androidx.room.migration.Migration(20, 21) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -368,12 +368,12 @@ abstract class StockDatabase : RoomDatabase() {
                 """.trimIndent())
                 db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_intraday_kline_code_datetime_interval_min` ON `intraday_kline` (`code`, `datetime`, `interval_min`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_intraday_kline_date` ON `intraday_kline` (`date`)")
-                Log.i(TAG, "✅ v20→v21 遷移完成：已創建 intraday_kline 表（盤中分鐘 K 線）")
+                Log.i(TAG, "✅ v20→v21 迁移完成：已创建 intraday_kline 表（盘中分钟 K 线）")
             }
         }
 
         /**
-         * v21 → v22 遷移：新增 institutional_picks 表（機構推薦股票）
+         * v21 → v22 迁移：新增 institutional_picks 表（机构推荐股票）
          */
         private val MIGRATION_21_22 = object : androidx.room.migration.Migration(21, 22) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -394,17 +394,17 @@ abstract class StockDatabase : RoomDatabase() {
                 """.trimIndent())
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_institutional_picks_institution_name` ON `institutional_picks` (`institution_name`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_institutional_picks_stock_code` ON `institutional_picks` (`stock_code`)")
-                Log.i(TAG, "✅ v21→v22 遷移完成：已創建 institutional_picks 表（機構推薦股票）")
+                Log.i(TAG, "✅ v21→v22 迁移完成：已创建 institutional_picks 表（机构推荐股票）")
             }
         }
 
         /**
-         * v22 → v23 遷移：user_watchlist 新增 notes 字段（統一推薦備註）
+         * v22 → v23 迁移：user_watchlist 新增 notes 字段（统一推荐备注）
          */
         private val MIGRATION_22_23 = object : androidx.room.migration.Migration(22, 23) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `user_watchlist` ADD COLUMN `notes` TEXT NOT NULL DEFAULT ''")
-                Log.i(TAG, "✅ v22→v23 遷移完成：user_watchlist 新增 notes 字段")
+                Log.i(TAG, "✅ v22→v23 迁移完成：user_watchlist 新增 notes 字段")
             }
         }
 

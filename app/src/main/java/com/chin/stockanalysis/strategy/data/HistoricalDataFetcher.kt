@@ -41,24 +41,24 @@ class HistoricalDataFetcher(private val context: Context) {
             (getDefaultIndexCodes() + LeaderStockPool.getMainlineCodes(context) + getPool(context, "core_stock_pool_json", "core_stock_pool.json")).toList()
 
         /**
-         * 默認指數/ETF 列表，確保每次數據同步都會更新
-         * 包含：A 股主要指數、熱門 ETF
-         * 注意：美股/韓國需要不同 API 格式，暫不加入
+         * 默认指数/ETF 列表，确保每次数据同步都会更新
+         * 包含：A 股主要指数、热门 ETF
+         * 注意：美股/韩国需要不同 API 格式，暂不加入
          */
         fun getDefaultIndexCodes(): Set<String> = setOf(
-            // A 股主要指數
-            "sh000001", // 上證指數
-            "sz399001", // 深證成指
-            "sz399006", // 創業板指
-            "sh000688", // 科創50
-            "sz399303", // 國證2000
-            // A 股熱門 ETF
-            "sh510300", // 滬深300ETF
-            "sh510500", // 中證500ETF
-            "sz159915", // 創業板ETF
-            "sh588000", // 科創50ETF
-            "sz159949", // 創業板50ETF
-            "sh512100"  // 中證1000ETF
+            // A 股主要指数
+            "sh000001", // 上证指数
+            "sz399001", // 深证成指
+            "sz399006", // 创业板指
+            "sh000688", // 科创50
+            "sz399303", // 国证2000
+            // A 股热门 ETF
+            "sh510300", // 沪深300ETF
+            "sh510500", // 中证500ETF
+            "sz159915", // 创业板ETF
+            "sh588000", // 科创50ETF
+            "sz159949", // 创业板50ETF
+            "sh512100"  // 中证1000ETF
         )
 
         fun getCoreStockPool(context: Context) = getPool(context, PREFS_KEY_CORE_POOL, ASSET_FILE)
@@ -255,7 +255,7 @@ class HistoricalDataFetcher(private val context: Context) {
 
         // Step 2: K-line API for full coverage
         val step2Start = System.currentTimeMillis()
-        val concurrency = 10 // 降低併發，避免被限流
+        val concurrency = 10 // 降低并发，避免被限流
         Log.i(TAG, "--- Step 2: K-line API (${stocks.size} stocks, concurrency=$concurrency) ---")
         var failedStocks = 0
         var successStocks = 0
@@ -369,7 +369,7 @@ class HistoricalDataFetcher(private val context: Context) {
         try {
             val recentDates = db.dailySnapshotDao().getAvailableDates(10)
             if (recentDates.isEmpty()) return 0
-            // 只獲取缺少名稱的股票，而非全部
+            // 只获取缺少名称的股票，而非全部
             val missingNameCodes = mutableSetOf<String>()
             for (date in recentDates) {
                 val shots = db.dailySnapshotDao().getByDate(date)
@@ -385,7 +385,7 @@ class HistoricalDataFetcher(private val context: Context) {
             val fillStart = System.currentTimeMillis()
             var corrected = 0
 
-            // 1. 先從 stock_basic 表查找已有名稱
+            // 1. 先从 stock_basic 表查找已有名称
             val existingBasics = db.stockBasicDao().getAll().associate { it.code to it.name }
             for (code in missingNameCodes.toList()) {
                 val existingName = existingBasics[code]
@@ -399,7 +399,7 @@ class HistoricalDataFetcher(private val context: Context) {
             }
             Log.i(TAG, "  fillMissingNames: $corrected fixed from stock_basic, ${remainingCodes.size} remaining")
 
-            // 2. 用新浪批量 API 輕量獲取剩餘名稱
+            // 2. 用新浪批量 API 轻量获取剩余名称
             if (remainingCodes.isNotEmpty()) {
                 val sinaFixed = fetchNamesFromSinaBatch(remainingCodes)
                 corrected += sinaFixed
@@ -414,7 +414,7 @@ class HistoricalDataFetcher(private val context: Context) {
         }
     }
 
-    /** 新浪批量 API 輕量獲取名稱：一個請求最多 60 個股票 */
+    /** 新浪批量 API 轻量获取名称：一个请求最多 60 个股票 */
     private suspend fun fetchNamesFromSinaBatch(codes: List<String>): Int {
         var fixed = 0
         val batches = codes.chunked(60)
@@ -432,7 +432,7 @@ class HistoricalDataFetcher(private val context: Context) {
                 val body = try {
                     String(bodyBytes, java.nio.charset.Charset.forName("GBK"))
                 } catch (_: Exception) { String(bodyBytes) }
-                // 解析: var hq_str_sh600000="浦發銀行,10.50,...";
+                // 解析: var hq_str_sh600000="浦发银行,10.50,...";
                 val regex = Regex("var hq_str_(sh\\d+|sz\\d+|bj\\d+)=\"([^,]*)")
                 val matches = regex.findAll(body)
                 for (match in matches) {
@@ -526,7 +526,7 @@ class HistoricalDataFetcher(private val context: Context) {
         for (attempt in 0..maxRetries) {
             try {
                 if (attempt > 0) {
-                    val delayMs = 500L * (1 shl attempt) // 指數退避: 1000ms, 2000ms
+                    val delayMs = 500L * (1 shl attempt) // 指数退避: 1000ms, 2000ms
                     Log.d(TAG, "  EastMoney retry $attempt for $code after ${delayMs}ms")
                     kotlinx.coroutines.delay(delayMs)
                 }

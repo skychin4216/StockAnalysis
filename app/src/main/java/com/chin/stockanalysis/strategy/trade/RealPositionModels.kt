@@ -9,29 +9,29 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Delete
 
 /**
- * 真實持倉記錄（手動導入）
+ * 真实持仓记录（手动导入）
  *
- * 用戶從券商APP查看真實持倉後，手動輸入到本表。
- * 系統對真實持倉生成做T信號和持倉規劃建議，
- * 但不直接下單到券商——僅提供決策參考。
+ * 用户从券商APP查看真实持仓后，手动输入到本表。
+ * 系统对真实持仓生成做T信号和持仓规划建议，
+ * 但不直接下单到券商——仅提供决策参考。
  *
- * 使用場景：
- * 1. 用戶在券商APP查看持倉 → 手動錄入到此 → 系統生成做T建議
- * 2. 用戶按建議在券商APP手動執行 → 回來記錄做T結果
- * 3. 系統統計真實持倉的做T收益
+ * 使用场景：
+ * 1. 用户在券商APP查看持仓 → 手动录入到此 → 系统生成做T建议
+ * 2. 用户按建议在券商APP手动执行 → 回来记录做T结果
+ * 3. 系统统计真实持仓的做T收益
  */
 @Entity(tableName = "real_positions")
 data class RealPositionEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val stockCode: String,            // 股票代碼 sh600xxx / sz000xxx
-    val stockName: String,            // 股票名稱
-    val quantity: Int,                // 持有數量（股）
-    val avgBuyPrice: Double,          // 買入均價
-    val buyDate: String,              // 首次買入日期 yyyy-MM-dd
-    val periodType: String = "",      // 分類：ShortTermQuant / MidTermQuant / LongTermQuant（空串=未分類）
-    val sector: String = "",          // 板塊
-    val notes: String = "",           // 備註
-    val isActive: Boolean = true,     // 是否仍持有（false=已清倉）
+    val stockCode: String,            // 股票代码 sh600xxx / sz000xxx
+    val stockName: String,            // 股票名称
+    val quantity: Int,                // 持有数量（股）
+    val avgBuyPrice: Double,          // 买入均价
+    val buyDate: String,              // 首次买入日期 yyyy-MM-dd
+    val periodType: String = "",      // 分类：ShortTermQuant / MidTermQuant / LongTermQuant（空串=未分类）
+    val sector: String = "",          // 板块
+    val notes: String = "",           // 备注
+    val isActive: Boolean = true,     // 是否仍持有（false=已清仓）
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )
@@ -49,6 +49,12 @@ interface RealPositionDao {
 
     @Query("DELETE FROM real_positions WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM real_positions WHERE stockCode = :code")
+    suspend fun deleteByCode(code: String)
+
+    @Query("DELETE FROM real_positions WHERE REPLACE(REPLACE(REPLACE(stockCode, 'sh', ''), 'sz', ''), 'bj', '') = :bareCode")
+    suspend fun deleteByBareCode(bareCode: String)
 
     @Query("UPDATE real_positions SET isActive = 0, updatedAt = :updatedAt WHERE id = :id")
     suspend fun markInactive(id: Long, updatedAt: Long = System.currentTimeMillis())
@@ -76,4 +82,7 @@ interface RealPositionDao {
 
     @Query("SELECT * FROM real_positions ORDER BY updatedAt DESC")
     suspend fun getAll(): List<RealPositionEntity>
+
+    @Query("SELECT COALESCE(MAX(id), 0) FROM real_positions")
+    suspend fun getMaxId(): Long
 }

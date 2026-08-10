@@ -14,17 +14,17 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * ## 超短線量化 Tab — 持倉 1 天，T+1 賣出
+ * ## 超短线量化 Tab — 持仓 1 天，T+1 卖出
  *
- * 核心特點：
- * - 策略池：ULTRA_SHORT 週期（尾盤低吸、早盤追漲）
- * - 持倉週期：1 天（T+1 自動賣出）
- * - 最大持倉：3 只
- * - 止損 -2% / 止盈 +3%
- * - 無 AI 精選（時效優先）
- * - 建倉時機：14:30 尾盤低吸 / 開盤 30 分鐘追漲
+ * 核心特点：
+ * - 策略池：ULTRA_SHORT 周期（尾盘低吸、早盘追涨）
+ * - 持仓周期：1 天（T+1 自动卖出）
+ * - 最大持仓：3 只
+ * - 止损 -2% / 止盈 +3%
+ * - 无 AI 精选（时效优先）
+ * - 建仓时机：14:30 尾盘低吸 / 开盘 30 分钟追涨
  *
- * onCreateView / initEngine / DAG Pipeline / 回溯測試 已由基類 QuantFragmentBase 統一提供。
+ * onCreateView / initEngine / DAG Pipeline / 回溯测试 已由基类 QuantFragmentBase 统一提供。
  */
 class UltraShortQuantFragment : QuantFragmentBase() {
 
@@ -54,7 +54,7 @@ class UltraShortQuantFragment : QuantFragmentBase() {
     }
 
     override fun getQuantType() = "UltraShortQuant"
-    override val positionTitlePrefix = "超短線"
+    override val positionTitlePrefix = "超短线"
     override val showMultiDayPrices = false
     override fun getDefaultUseCaseId() = "ultra_short"
 
@@ -64,28 +64,28 @@ class UltraShortQuantFragment : QuantFragmentBase() {
             useCaseId = "ultra_short",
             orderType = "ultra_short",
             importDays = 30,
-            titlePrefix = "超短線",
+            titlePrefix = "超短线",
             onComplete = { checkT1AutoSell() }
         )
     }
 
     override fun onFittingClick() {
-        showDialog("超短線擬合提示",
-            "超短線策略（持倉1天）參數固定，無需擬合調優。\n\n" +
-            "核心參數：\n" +
-            "• 止損: ${resolveStopLossPct()}%\n" +
+        showDialog("超短线拟合提示",
+            "超短线策略（持仓1天）参数固定，无需拟合调优。\n\n" +
+            "核心参数：\n" +
+            "• 止损: ${resolveStopLossPct()}%\n" +
             "• 止盈: +${resolveTakeProfitPct()}%\n" +
-            "• 最大持倉: ${resolveMaxHoldings()} 只\n" +
-            "• 持倉週期: 1天 (T+1)\n\n" +
-            "如需調整，請在回溯測試中驗證不同參數組合。")
+            "• 最大持仓: ${resolveMaxHoldings()} 只\n" +
+            "• 持仓周期: 1天 (T+1)\n\n" +
+            "如需调整，请在回溯测试中验证不同参数组合。")
     }
 
     override fun onBacktrackClick() {
         runHistoricalBacktrack(
             holdingPeriod = HoldingPeriod.ULTRA_SHORT,
             tradingDays = 30,
-            titlePrefix = "超短線",
-            extraInfo = "持倉: 1天 | 止損: ${resolveStopLossPct()}% | 止盈: +${resolveTakeProfitPct()}%"
+            titlePrefix = "超短线",
+            extraInfo = "持仓: 1天 | 止损: ${resolveStopLossPct()}% | 止盈: +${resolveTakeProfitPct()}%"
         )
     }
 
@@ -94,10 +94,10 @@ class UltraShortQuantFragment : QuantFragmentBase() {
     // ── buildUI ──
 
     override fun buildUI() {
-        addTitleRow("⚡ 超短線量化系統 (T+1 賣出，止損-2%/止盈+3%)")
+        addTitleRow(getString(com.chin.stockanalysis.R.string.title_ultra_short_system))
 
         val (configRow, _, _) = createDatePickerRow(
-            tipText = "⚡ 持倉1天 | 最多${resolveMaxHoldings()}只 | 止損${resolveStopLossPct()}%/止盈+${resolveTakeProfitPct()}%",
+            tipText = "⚡ 持仓1天 | 最多${resolveMaxHoldings()}只 | 止损${resolveStopLossPct()}%/止盈+${resolveTakeProfitPct()}%",
             mainBoardDefault = true
         )
         rootLayout.addView(configRow)
@@ -110,13 +110,13 @@ class UltraShortQuantFragment : QuantFragmentBase() {
     }
 
     // ═══════════════════════════════════════
-    // T+1 自動賣出（超短線專有）
+    // T+1 自动卖出（超短线专有）
     // ═══════════════════════════════════════
 
     /**
-     * T+1 自動賣出：
-     * - 建倉日早於今日（T+1 到期）→ 次日集合競價無論盈虧強制清倉
-     * - 當日建倉 → 僅在觸發止損/止盈時賣出
+     * T+1 自动卖出：
+     * - 建仓日早于今日（T+1 到期）→ 次日集合竞价无论盈亏强制清仓
+     * - 当日建仓 → 仅在触发止损/止盈时卖出
      */
     private fun checkT1AutoSell() {
         lifecycleScope.launch(Dispatchers.IO) {
@@ -136,7 +136,7 @@ class UltraShortQuantFragment : QuantFragmentBase() {
                         .createDefaultRepository(requireContext().applicationContext)
                         .getRealtime(orders.map { it.stockCode })
                 } catch (e: Exception) {
-                    Log.w(TAG, "T+1 實時行情獲取失敗: ${e.message}"); emptyMap()
+                    Log.w(TAG, "T+1 实时行情获取失败: ${e.message}"); emptyMap()
                 }
 
                 val today = TradingDayPickerView.recentTradingDay().format(DATE_FMT)
@@ -159,40 +159,40 @@ class UltraShortQuantFragment : QuantFragmentBase() {
                         )
                         sellCount++
                         if (isT1Due) forcedCount++
-                        Log.i(TAG, "[UltraShort] T+1 賣出: ${order.stockName} " +
-                            "盈虧=${"%.2f".format(pnlPct)}% ${if (isT1Due) "(次日強制清倉)" else "(止損/止盈)"}")
+                        Log.i(TAG, "[UltraShort] T+1 卖出: ${order.stockName} " +
+                            "盈亏=${"%.2f".format(pnlPct)}% ${if (isT1Due) "(次日强制清仓)" else "(止损/止盈)"}")
                     }
                 }
                 if (sellCount > 0) {
                     withContext(Dispatchers.Main) {
-                        statusTv.text = "⚡ T+1 賣出: ${sellCount} 只 (強制清倉 ${forcedCount})"
+                        statusTv.text = "⚡ T+1 卖出: ${sellCount} 只 (强制清仓 ${forcedCount})"
                         refreshPositions()
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "T+1 賣出檢查失敗: ${e.message}")
+                Log.w(TAG, "T+1 卖出检查失败: ${e.message}")
             }
         }
     }
 
-    // ── 覆寫賣出評估：使用超短線止損/止盈規則 ──
+    // ── 覆写卖出评估：使用超短线止损/止盈规则 ──
 
     override fun showTradeEvaluationMenu(anchor: View) {
         val items = arrayOf(
-            "🔄 做T信號",
-            "💰 賣出評估",
-            "📈 買入評估",
-            "💎 基本面檢查",
-            "⚡ T+1 賣出檢查",
-            "📊 賣出績效",
-            "⚡ 執行賣出"
+            "🔄 做T信号",
+            "💰 卖出评估",
+            "📈 买入评估",
+            "💎 基本面检查",
+            "⚡ T+1 卖出检查",
+            "📊 卖出绩效",
+            "⚡ 执行卖出"
         )
         val titleView = android.widget.LinearLayout(requireContext()).apply {
             orientation = android.widget.LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
             setPadding(48, 32, 48, 16)
             addView(android.widget.TextView(requireContext()).apply {
-                text = "💰 買賣評估（超短線）"; textSize = 18f
+                text = "💰 买卖评估（超短线）"; textSize = 18f
                 setTextColor(android.graphics.Color.parseColor("#222222"))
                 setTypeface(null, android.graphics.Typeface.BOLD)
                 layoutParams = android.widget.LinearLayout.LayoutParams(
@@ -219,7 +219,7 @@ class UltraShortQuantFragment : QuantFragmentBase() {
                     6 -> executeAutoSell()
                 }
             }
-            .setNegativeButton("關閉", null)
+            .setNegativeButton("关闭", null)
             .show()
     }
 }

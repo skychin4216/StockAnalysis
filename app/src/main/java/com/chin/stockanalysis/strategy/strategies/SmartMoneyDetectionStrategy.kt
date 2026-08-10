@@ -17,22 +17,22 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * ## 主力資金行為偵測策略
+ * ## 主力资金行为侦测策略
  *
- * 基於 MFI / CMF / A/D 背離 / 主力淨流入趨勢 四個因子，
- * 偵測主力埋伏、拉升、出貨三種行為模式。
+ * 基于 MFI / CMF / A/D 背离 / 主力净流入趋势 四个因子，
+ * 侦测主力埋伏、拉升、出货三种行为模式。
  *
- * ### 因子構成
- * | 因子 | 權重 | 數據源 |
+ * ### 因子构成
+ * | 因子 | 权重 | 数据源 |
  * |------|------|--------|
- * | MFI(14日) | 30% | DailySnapshotEntity 本地計算 |
- * | CMF(20日) | 25% | DailySnapshotEntity 本地計算 |
- * | A/D 背離信號 | 25% | DailySnapshotEntity 本地計算 |
- * | 主力淨流入趨勢 | 20% | 東方財富 f62/f184/f66/f69 |
+ * | MFI(14日) | 30% | DailySnapshotEntity 本地计算 |
+ * | CMF(20日) | 25% | DailySnapshotEntity 本地计算 |
+ * | A/D 背离信号 | 25% | DailySnapshotEntity 本地计算 |
+ * | 主力净流入趋势 | 20% | 东方财富 f62/f184/f66/f69 |
  *
- * ### 信號判斷
- * - combined >= 75 → BUY（主力持續流入 + 背離吸籌信號）
- * - combined >= 55 → WATCH（溫和流入）
+ * ### 信号判断
+ * - combined >= 75 → BUY（主力持续流入 + 背离吸筹信号）
+ * - combined >= 55 → WATCH（温和流入）
  * - combined < 55 → HOLD
  */
 class SmartMoneyDetectionStrategy(
@@ -40,13 +40,13 @@ class SmartMoneyDetectionStrategy(
 ) : Strategy {
 
     override val id = "smart_money_detection"
-    override var name = "主力資金行為偵測"
+    override var name = "主力资金行为侦测"
     override var description =
-        "MFI(30%) + CMF(25%) + A/D背離(25%) + 主力淨流入趨勢(20%) → 綜合評分偵測埋伏/拉升/出貨"
+        "MFI(30%) + CMF(25%) + A/D背离(25%) + 主力净流入趋势(20%) → 综合评分侦测埋伏/拉升/出货"
     override val category = StrategyCategory.VOLUME
     override val holdingPeriods = listOf(HoldingPeriod.MID)
     override val source = StrategySource.BUILTIN
-    override val signalExpiryHours = 72    // 3個交易日
+    override val signalExpiryHours = 72    // 3个交易日
 
     override val config = StrategyConfig.custom(
         params = mapOf("min_score" to 55.0, "max_results" to 30.0),
@@ -54,10 +54,10 @@ class SmartMoneyDetectionStrategy(
     )
 
     override var weightFactors: List<WeightFactor> = listOf(
-        WeightFactor("mfi", "MFI資金流量", 30, "MFI(14日) 資金流量指數"),
-        WeightFactor("cmf", "CMF蔡金流向", 25, "CMF(20日) 蔡金資金流向"),
-        WeightFactor("ad", "A/D背離", 25, "A/D 累積線背離偵測"),
-        WeightFactor("flow", "主力淨流入", 20, "f62/f184/f66 主力淨流入趨勢")
+        WeightFactor("mfi", "MFI资金流量", 30, "MFI(14日) 资金流量指数"),
+        WeightFactor("cmf", "CMF蔡金流向", 25, "CMF(20日) 蔡金资金流向"),
+        WeightFactor("ad", "A/D背离", 25, "A/D 累积线背离侦测"),
+        WeightFactor("flow", "主力净流入", 20, "f62/f184/f66 主力净流入趋势")
     )
 
     companion object {
@@ -73,7 +73,7 @@ class SmartMoneyDetectionStrategy(
             else screener.scanSpecific(config.stockPool).values.toList()
             doScreen(pool, start)
         } catch (e: Exception) {
-            Log.e(TAG, "篩選失敗", e)
+            Log.e(TAG, "筛选失败", e)
             Result.failure(e)
         }
     }
@@ -84,7 +84,7 @@ class SmartMoneyDetectionStrategy(
             val pool = if (config.stockPool.isNotEmpty()) stocks.filter { it.code in config.stockPool } else stocks
             doScreen(pool, start)
         } catch (e: Exception) {
-            Log.e(TAG, "篩選失敗", e)
+            Log.e(TAG, "筛选失败", e)
             Result.failure(e)
         }
     }
@@ -96,11 +96,11 @@ class SmartMoneyDetectionStrategy(
     private suspend fun doScreen(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
         if (pool.isEmpty()) return success(emptyList(), 0, startTime)
 
-        // 大盤環境預檢
+        // 大盘环境预检
         val marketDir = try { screener.detectMarketDirection() } catch (_: Exception) { "OSCILLATION" }
         val isBearish = marketDir == "BEARISH"
         val minScore = if (isBearish) 70 else ((config.params["min_score"] as? Number)?.toInt() ?: 55)
-        Log.i(id, "大盤環境: $marketDir → 智慧資金門檻 ${if (isBearish) "55→70" else "標準門檻55"}")
+        Log.i(id, "大盘环境: $marketDir → 智慧资金门槛 ${if (isBearish) "55→70" else "标准门槛55"}")
 
         val scored = pool.mapNotNull { s ->
             val sm = SmartMoneyCache.getScore(s.code)
@@ -117,7 +117,7 @@ class SmartMoneyDetectionStrategy(
     private fun buildSignal(s: StockRealtime, sm: SmartMoneyCache.SmartMoneyScore): StrategySignal {
         val str = sm.combined.toInt().coerceIn(0, 100)
 
-        // 判斷主力行為模式
+        // 判断主力行为模式
         val pattern = detectPattern(s, sm)
 
         val sb = StringBuilder(pattern)
@@ -153,33 +153,33 @@ class SmartMoneyDetectionStrategy(
     }
 
     /**
-     * 偵測主力行為模式
-     * - 埋伏吸籌：MFI 40~60 + A/D 底背離 + 主力淨流入為正但不大
-     * - 拉升啟動：MFI > 60 + CMF > 0 + 主力淨流入放大
-     * - 出貨風險：MFI > 80 + A/D 頂背離 + 主力淨流出
-     * - 中性觀察：其他情況
+     * 侦测主力行为模式
+     * - 埋伏吸筹：MFI 40~60 + A/D 底背离 + 主力净流入为正但不大
+     * - 拉升启动：MFI > 60 + CMF > 0 + 主力净流入放大
+     * - 出货风险：MFI > 80 + A/D 顶背离 + 主力净流出
+     * - 中性观察：其他情况
      */
     private fun detectPattern(s: StockRealtime, sm: SmartMoneyCache.SmartMoneyScore): String {
-        val isBullishDivergence = sm.adScore >= 85  // 底背離
-        val isBearishDivergence = sm.adScore <= 15  // 頂背離
+        val isBullishDivergence = sm.adScore >= 85  // 底背离
+        val isBearishDivergence = sm.adScore <= 15  // 顶背离
         val isStrongInflow = sm.flowScore >= 80
-        val isOverboughtMFI = sm.mfiScore >= 60 && sm.mfiScore < 100 // MFI > 80 但 score=60（非超買）
-        val isHighMFI = sm.mfiScore == 60.0  // MFI > 80 超買區
+        val isOverboughtMFI = sm.mfiScore >= 60 && sm.mfiScore < 100 // MFI > 80 但 score=60（非超买）
+        val isHighMFI = sm.mfiScore == 60.0  // MFI > 80 超买区
 
         return when {
-            // 出貨風險：頂背離 + 超買 + 流出
-            isBearishDivergence && sm.flowScore < 30 -> "⚠️出貨"
-            // 超買回落
-            isHighMFI && sm.flowScore < 40 -> "⚠️超買"
-            // 埋伏吸籌：底背離 + 溫和流入
-            isBullishDivergence && sm.flowScore in 40.0..80.0 -> "埋伏吸籌"
-            // 拉升啟動：強流入 + MFI 流入區
+            // 出货风险：顶背离 + 超买 + 流出
+            isBearishDivergence && sm.flowScore < 30 -> "⚠️出货"
+            // 超买回落
+            isHighMFI && sm.flowScore < 40 -> "⚠️超买"
+            // 埋伏吸筹：底背离 + 温和流入
+            isBullishDivergence && sm.flowScore in 40.0..80.0 -> "埋伏吸筹"
+            // 拉升启动：强流入 + MFI 流入区
             isStrongInflow && isOverboughtMFI -> "🚀拉升"
-            // 持續流入
-            isStrongInflow -> "持續流入"
-            // 溫和流入
-            sm.combined >= 55 -> "溫和流入"
-            else -> "觀察"
+            // 持续流入
+            isStrongInflow -> "持续流入"
+            // 温和流入
+            sm.combined >= 55 -> "温和流入"
+            else -> "观察"
         }
     }
 

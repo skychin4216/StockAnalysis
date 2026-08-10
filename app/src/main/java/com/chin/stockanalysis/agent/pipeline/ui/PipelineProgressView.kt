@@ -11,10 +11,10 @@ import com.chin.stockanalysis.agent.core.AnalysisResult
 import com.chin.stockanalysis.agent.core.AnalysisStep
 
 /**
- * 智能體流水線進度面板
+ * 智能体流水线进度面板
  *
- * 已解除對 AgentPipelineOrchestrator 的耦合，改用統一 [AnalysisStep] / [AnalysisResult]。
- * 步驟卡片由 [updateSteps] 動態傳入（來自 DeepAnalystEngine.stepsFor）。
+ * 已解除对 AgentPipelineOrchestrator 的耦合，改用统一 [AnalysisStep] / [AnalysisResult]。
+ * 步骤卡片由 [updateSteps] 动态传入（来自 DeepAnalystEngine.stepsFor）。
  */
 class PipelineProgressView(context: Context) : LinearLayout(context) {
     companion object {
@@ -32,7 +32,7 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
         orientation = VERTICAL
         setPadding(8, 8, 8, 8)
         setBackgroundColor(Color.parseColor("#FAFAFA"))
-        // 標題
+        // 标题
         titleTv = TextView(context).apply {
             text = "Agent 深度分析"
             textSize = 14f
@@ -41,15 +41,15 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
             setPadding(0, 0, 0, 8)
         }
         addView(titleTv)
-        // 步驟卡片容器
+        // 步骤卡片容器
         stepsContainer = LinearLayout(context).apply { orientation = VERTICAL }
         addView(stepsContainer)
-        // 分割線
+        // 分割线
         addView(View(context).apply {
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, 1).apply { topMargin = 8 }
             setBackgroundColor(Color.parseColor("#DDDDDD"))
         })
-        // 最終結果區
+        // 最终结果区
         resultContainer = LinearLayout(context).apply {
             orientation = VERTICAL
             setPadding(0, 8, 0, 0)
@@ -58,7 +58,7 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
         addView(resultContainer)
     }
 
-    /** 動態更新步驟列表（執行前由 DeepAnalystEngine.stepsFor 提供） */
+    /** 动态更新步骤列表（执行前由 DeepAnalystEngine.stepsFor 提供） */
     fun updateSteps(steps: List<AnalysisStep>) {
         stepViews.clear()
         stepsContainer.removeAllViews()
@@ -70,10 +70,10 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
         titleTv.text = "Agent 深度分析（${steps.size} 步）"
     }
 
-    /** 標記步驟完成（summary 為可讀摘要） */
+    /** 标记步骤完成（summary 为可读摘要） */
     fun markStepComplete(step: AnalysisStep, summary: String) {
         val card = stepViews[step.order] ?: run {
-            // 卡片未預建時動態補建
+            // 卡片未预建时动态补建
             val c = StepCard(context, step)
             stepViews[step.order] = c
             stepsContainer.addView(c)
@@ -82,40 +82,40 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
         card.markDone(summary)
     }
 
-    /** 標記步驟錯誤 */
+    /** 标记步骤错误 */
     fun markStepError(step: AnalysisStep, error: String) {
         stepViews[step.order]?.markError(error)
     }
 
-    /** 顯示最終結果 */
+    /** 显示最终结果 */
     fun showResult(result: AnalysisResult) {
         resultContainer.removeAllViews()
         resultContainer.visibility = View.VISIBLE
 
         if (!result.success && result.errorMessage != null) {
             resultContainer.addView(TextView(context).apply {
-                text = "分析失敗: ${result.errorMessage}"
+                text = "分析失败: ${result.errorMessage}"
                 textSize = 12f
                 setTextColor(Color.parseColor(COLOR_ERROR))
             })
             return
         }
 
-        // 最終判定
+        // 最终判定
         val passed = result.passed ?: (result.overallScore >= 40)
         resultContainer.addView(TextView(context).apply {
-            text = if (passed) "通過分析篩選" else "未通過篩選"
+            text = if (passed) "通过分析筛选" else "未通过筛选"
             textSize = 13f
             setTextColor(Color.parseColor(if (passed) COLOR_DONE else COLOR_ERROR))
             setTypeface(null, Typeface.BOLD)
         })
-        // 綜合摘要
+        // 综合摘要
         val sb = StringBuilder()
-        if (result.overallScore > 0) sb.append("評分: ${result.overallScore}/100 | ")
-        result.recommendation?.let { sb.append("建議: $it | ") }
-        result.riskLevel?.let { sb.append("風控: $it | ") }
-        result.positionPercent?.let { sb.append("倉位: $it% | ") }
-        result.stopLoss?.let { sb.append("止損: $it") }
+        if (result.overallScore > 0) sb.append("评分: ${result.overallScore}/100 | ")
+        result.recommendation?.let { sb.append("建议: $it | ") }
+        result.riskLevel?.let { sb.append("风控: $it | ") }
+        result.positionPercent?.let { sb.append("仓位: $it% | ") }
+        result.stopLoss?.let { sb.append("止损: $it") }
         if (sb.isNotEmpty()) {
             resultContainer.addView(TextView(context).apply {
                 text = sb.toString()
@@ -126,7 +126,7 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
         }
     }
 
-    /** 重置所有步驟狀態 */
+    /** 重置所有步骤状态 */
     fun reset() {
         stepViews.values.forEach { it.reset() }
         resultContainer.removeAllViews()
@@ -134,7 +134,7 @@ class PipelineProgressView(context: Context) : LinearLayout(context) {
     }
 
     // ----------------------------------------
-    //  單步卡片
+    //  单步卡片
     // ----------------------------------------
     private class StepCard(context: Context, step: AnalysisStep) : LinearLayout(context) {
         private val iconTv: TextView

@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">주식 분석</string>
+
+    <!-- 하단 네비게이션 -->
+    <string name="nav_chat">채팅</string>
+    <string name="nav_agent">에이전트</string>
+    <string name="nav_stock">주식</string>
+    <string name="nav_strategy">전략</string>
+    <string name="nav_mine">나의</string>
+
+    <!-- AI 채팅 -->
+    <string name="chat_title">AI 어시스턴트</string>
+    <string name="chat_input_hint">메시지를 입력하거나 길게 눌러 음성 입력...</string>
+    <string name="chat_send">전송</string>
+
+    <!-- 대화 -->
+    <string name="new_conversation">새 대화</string>
+    <string name="conversation_title">대화</string>
+    <string name="new_topic_hint">새로운 주제</string>
+    <string name="ai_content_hint">AI가 생성한 내용입니다. 확인 후 사용하세요</string>
+
+    <!-- 메시지 작업 -->
+    <string name="msg_copy">복사</string>
+    <string name="msg_play_voice">🔊</string>
+    <string name="msg_favorite">⭐</string>
+    <string name="msg_share">공유</string>
+    <string name="msg_regenerate">🔄 다시 생성</string>
+    <string name="msg_edit">편집</string>
+    <string name="msg_delete">삭제</string>
+
+    <!-- 주식 탐색 -->
+    <string name="stocks_title">주식 탐색</string>
+    <string name="stocks_a_shares">A주</string>
+    <string name="stocks_etf">ETF</string>
+    <string name="stocks_search_hint">주식 코드 또는 이름 검색</string>
+    <string name="stocks_hot">인기</string>
+    <string name="stocks_gain">상승</string>
+    <string name="stocks_lose">하락</string>
+
+    <!-- 전략 탭 -->
+    <string name="tab_ultra_short">초단기</string>
+    <string name="tab_short">단기</string>
+    <string name="tab_mid">중기</string>
+    <string name="tab_long">장기</string>
+    <string name="tab_real">실계좌</string>
+    <string name="tab_stock_picking">종목선정</string>
+
+    <!-- 실계좌 -->
+    <string name="real_holding_title">📌 실제 보유</string>
+    <string name="real_holding_build_title">포지션 추가</string>
+    <string name="real_holding_pipeline">📊 포트폴리오 분석 실행</string>
+    <string name="real_holding_manual_add">✏️ 수동 추가</string>
+    <string name="real_holding_ocr_import">📷 스크린샷 가져오기</string>
+    <string name="real_holding_no_data">보유 포지션 없음\n\n📈구축을 눌러 시장 분석 실행\n📦보유를 눌러 포지션 추가</string>
+    <string name="real_holding_section">🏦 실제 보유</string>
+    <string name="real_holding_strategy_section">📊 전략 보유</string>
+    <string name="real_holding_pick_section">🎯 종목 선정</string>
+    <string name="real_holding_no_fitting">실계좌 피팅 기능 없음</string>
+    <string name="real_holding_no_backtrack">실계좌 백테스트 기능 없음</string>
+    <string name="real_holding_no_clear">실계좌 데이터 삭제 불가</string>
+    <string name="real_holding_unit">종목</string>
+    <string name="real_holding_unit_order">건</string>
+    <string name="real_holding_shares">주</string>
+
+    <!-- 공통 버튼 -->
+    <string name="btn_build">📈구축</string>
+    <string name="btn_pipeline">🔀파이프라인</string>
+    <string name="btn_sell_eval">💰매매</string>
+    <string name="btn_holdings">📦보유</string>
+    <string name="btn_report">📊보고</string>
+    <string name="btn_backtrack">🔙백테스트</string>
+    <string name="btn_fitting">📐피팅</string>
+    <string name="btn_sell">💰매도</string>
+    <string name="btn_data">📦데이터</string>
+    <string name="btn_t_trade">🔄T+0</string>
+
+    <!-- 섹션 제목 -->
+    <string name="section_holding">보유</string>
+    <string name="section_picking">선정</string>
+    <string name="section_total_holding">총 보유</string>
+    <string name="section_total_pnl">총 손익</string>
+    <string name="section_clear">비우기</string>
+    <string name="section_refresh">🔄</string>
+
+    <!-- 설정 -->
+    <string name="settings_title">⚙️ 설정</string>
+    <string name="settings_ai_config">AI 설정</string>
+    <string name="settings_select_provider">제공자 / 모델 / API Key</string>
+    <string name="settings_data_mgmt">데이터 관리</string>
+    <string name="settings_clear_cache">캐시 삭제</string>
+    <string name="settings_cache_info">캐시 크기: %s</string>
+    <string name="settings_cache_cleared">캐시가 삭제되었습니다</string>
+    <string name="settings_agent_framework">에이전트 프레임워크</string>
+    <string name="settings_global_mode">글로벌 모드</string>
+    <string name="settings_module_config">모듈 설정</string>
+    <string name="settings_stock_picking_module">종목 선정 (AI 파이프라인)</string>
+    <string name="settings_analysis_module">분석 (심층 분석)</string>
+    <string name="settings_trade_module">거래 (매수/매도)</string>
+    <string name="settings_chat_module">채팅 (AI 채팅)</string>
+    <string name="settings_news_module">뉴스 모니터링</string>
+    <string name="settings_risk_module">리스크 관리</string>
+    <string name="settings_period_route">기간별 라우트 (전략)</string>
+    <string name="settings_about">앱 정보</string>
+
+    <!-- 언어 설정 -->
+    <string name="settings_language">언어 설정</string>
+    <string name="settings_select_language">언어 선택</string>
+    <string name="settings_follow_system">시스템 설정 따르기</string>
+    <string name="settings_language_changed">언어가 변경되었습니다</string>
+
+    <!-- 공통 -->
+    <string name="dialog_cancel">취소</string>
+    <string name="dialog_confirm">확인</string>
+    <string name="dialog_save">저장</string>
+    <string name="dialog_add">추가</string>
+    <string name="dialog_delete">삭제</string>
+    <string name="status_loading">로딩 중...</string>
+    <string name="status_empty">데이터 없음</string>
+    <string name="status_error">로딩 실패</string>
+    <string name="status_success">성공</string>
+
+    <!-- 기간 라벨 -->
+    <string name="period_ultra_short">⚡ 초단기</string>
+    <string name="period_short">📈 단기</string>
+    <string name="period_mid">📊 중기</string>
+    <string name="period_long">💎 장기</string>
+
+    <!-- 시스템 제목 -->
+    <string name="title_ultra_short_system">⚡ 초단기 퀀트 (T+1, 손절-2%/익절+3%)</string>
+    <string name="title_short_system">🤖 단기 퀀트 (Zipline + AI)</string>
+    <string name="title_mid_system">🤖 중기 퀀트 (가치투자, 1-6개월)</string>
+    <string name="title_long_system">💎 장기 퀀트 (가치투자, 6개월-1년+)</string>
+</resources>

@@ -3,23 +3,23 @@ package com.chin.stockanalysis.agent.core
 import com.chin.stockanalysis.strategy.HoldingPeriod
 
 /**
- * 用戶意圖類型
+ * 用户意图类型
  */
 enum class IntentType {
-    QUICK_SCAN,      // 快速掃描：純量化，無 LLM（僅 Scout）
-    DEEP_ANALYSIS,   // 深度分析：全鏈路 Agent 群
-    RISK_CHECK,      // 風控掃描：僅 Guardian
-    FOLLOW_UP,       // 追問：僅 Analyst（對已有分析結果的後續提問）
-    GENERAL_CHAT     // 通用問答：知識問答、閒聊、非股票相關問題
+    QUICK_SCAN,      // 快速扫描：纯量化，无 LLM（仅 Scout）
+    DEEP_ANALYSIS,   // 深度分析：全链路 Agent 群
+    RISK_CHECK,      // 风控扫描：仅 Guardian
+    FOLLOW_UP,       // 追问：仅 Analyst（对已有分析结果的后续提问）
+    GENERAL_CHAT     // 通用问答：知识问答、闲聊、非股票相关问题
 }
 
 /**
- * 用戶意圖解析結果
+ * 用户意图解析结果
  *
- * @property type 意圖類型
- * @property target 目標股票代碼（null 表示全市場掃描）
- * @property period 交易週期（DEEP_ANALYSIS 時必填）
- * @property rawInput 原始用戶輸入
+ * @property type 意图类型
+ * @property target 目标股票代码（null 表示全市场扫描）
+ * @property period 交易周期（DEEP_ANALYSIS 时必填）
+ * @property rawInput 原始用户输入
  */
 data class UserIntent(
     val type: IntentType,
@@ -29,16 +29,16 @@ data class UserIntent(
 )
 
 /**
- * 意圖路由器 — 確定性路由，無需 LLM
+ * 意图路由器 — 确定性路由，无需 LLM
  *
- * 基於「消息來源」（交易週期 + 用戶意圖類型）進行確定性分流。
- * 規則明確，零 token 消耗。
+ * 基于「消息来源」（交易周期 + 用户意图类型）进行确定性分流。
+ * 规则明确，零 token 消耗。
  *
- * 路由優先級（從高到低）：
- * 1. RISK_CHECK — 用戶只想看持倉風險
- * 2. QUICK_SCAN — 快速市場概覽
- * 3. DEEP_ANALYSIS + HoldingPeriod — 全鏈路分析
- * 4. FOLLOW_UP — 對已有結果追問
+ * 路由优先级（从高到低）：
+ * 1. RISK_CHECK — 用户只想看持仓风险
+ * 2. QUICK_SCAN — 快速市场概览
+ * 3. DEEP_ANALYSIS + HoldingPeriod — 全链路分析
+ * 4. FOLLOW_UP — 对已有结果追问
  */
 class IntentRouter {
 
@@ -50,23 +50,23 @@ class IntentRouter {
         val normalized = userInput.lowercase()
 
         return when {
-            // 風控掃描：用戶想看持倉風險
-            normalized.containsAny("風險", "止損", "止盈", "風控", "持倉安全", "倉位") ->
+            // 风控扫描：用户想看持仓风险
+            normalized.containsAny("风险", "止损", "止盈", "风控", "持仓安全", "仓位") ->
                 UserIntent(IntentType.RISK_CHECK, target = currentStock, rawInput = userInput)
 
-            // 快速掃描：市場概覽
-            normalized.containsAny("快速", "概覽", "掃描", "市場怎麼樣", "大盤", "盤面") ->
+            // 快速扫描：市场概览
+            normalized.containsAny("快速", "概览", "扫描", "市场怎么样", "大盘", "盘面") ->
                 UserIntent(IntentType.QUICK_SCAN, rawInput = userInput)
 
-            // 追問：對已有分析結果的後續提問
-            normalized.containsAny("為什麼", "追問", "詳細", "解釋", "怎麼理解") && currentStock != null ->
+            // 追问：对已有分析结果的后续提问
+            normalized.containsAny("为什么", "追问", "详细", "解释", "怎么理解") && currentStock != null ->
                 UserIntent(IntentType.FOLLOW_UP, target = currentStock, rawInput = userInput)
 
-            // 通用問答：知識問答、閒聊、非股票相關問題（優先於 DEEP_ANALYSIS，避免浪費 LLM 調用）
+            // 通用问答：知识问答、闲聊、非股票相关问题（优先于 DEEP_ANALYSIS，避免浪费 LLM 调用）
             isGeneralChat(normalized, currentStock) ->
                 UserIntent(IntentType.GENERAL_CHAT, rawInput = userInput)
 
-            // 深度分析：指定股票或選股（默認路徑）
+            // 深度分析：指定股票或选股（默认路径）
             else -> {
                 val period = holdingPeriod ?: inferPeriod(normalized)
                 UserIntent(IntentType.DEEP_ANALYSIS, target = currentStock, period = period, rawInput = userInput)
@@ -75,69 +75,69 @@ class IntentRouter {
     }
 
     /**
-     * 從文本推斷交易週期
+     * 从文本推断交易周期
      */
     private fun inferPeriod(text: String): HoldingPeriod {
         return when {
-            text.containsAny("超短", "日內", "打板", "隔日", "T+1") -> HoldingPeriod.ULTRA_SHORT
-            text.containsAny("短線", "幾天", "一週", "短線") -> HoldingPeriod.SHORT
-            text.containsAny("中線", "波段", "幾週", "一個月") -> HoldingPeriod.MID
-            text.containsAny("長線", "長期", "價值", "持有") -> HoldingPeriod.LONG
-            else -> HoldingPeriod.SHORT  // 默認短線
+            text.containsAny("超短", "日内", "打板", "隔日", "T+1") -> HoldingPeriod.ULTRA_SHORT
+            text.containsAny("短线", "几天", "一周", "短线") -> HoldingPeriod.SHORT
+            text.containsAny("中线", "波段", "几周", "一个月") -> HoldingPeriod.MID
+            text.containsAny("长线", "长期", "价值", "持有") -> HoldingPeriod.LONG
+            else -> HoldingPeriod.SHORT  // 默认短线
         }
     }
 
     /**
-     * 判斷是否為通用問答（非股票分析請求）。
+     * 判断是否为通用问答（非股票分析请求）。
      *
-     * 策略：如果輸入不包含股票代碼、股票名稱或市場分析關鍵詞，
-     * 且看起來像一般問題、閒聊或知識問答，則路由到 GENERAL_CHAT。
-     * 寧可誤判為 GENERAL_CHAT（1 次 LLM 調用），也不要誤判為 DEEP_ANALYSIS（5-17 次 LLM 調用）。
+     * 策略：如果输入不包含股票代码、股票名称或市场分析关键词，
+     * 且看起来像一般问题、闲聊或知识问答，则路由到 GENERAL_CHAT。
+     * 宁可误判为 GENERAL_CHAT（1 次 LLM 调用），也不要误判为 DEEP_ANALYSIS（5-17 次 LLM 调用）。
      */
     private fun isGeneralChat(text: String, currentStock: String?): Boolean {
-        // 如果有明確的當前股票上下文，且輸入較短（可能是追問），不走 GENERAL_CHAT
-        // 但如果輸入明顯是知識問答，即使有 currentStock 也走 GENERAL_CHAT
+        // 如果有明确的当前股票上下文，且输入较短（可能是追问），不走 GENERAL_CHAT
+        // 但如果输入明显是知识问答，即使有 currentStock 也走 GENERAL_CHAT
 
-        // ── 1. 閒聊/問候語 ──
+        // ── 1. 闲聊/问候语 ──
         if (text.containsAny(
-                "你好", "您好", "hello", "hi", "嗨", "再見", "bye",
-                "謝謝", "感謝", "thanks", "thank you",
-                "幫助", "help", "能做什麼", "有什麼功能", "功能"
+                "你好", "您好", "hello", "hi", "嗨", "再见", "bye",
+                "谢谢", "感谢", "thanks", "thank you",
+                "帮助", "help", "能做什么", "有什么功能", "功能"
             )
         ) return true
 
-        // ── 2. 金融知識/概念問答 ──
+        // ── 2. 金融知识/概念问答 ──
         if (text.containsAny(
-                "什麼是", "是什麼", "怎麼看", "如何看", "怎麼用", "如何用",
-                "怎麼選股", "如何選股", "怎麼分析", "如何分析",
-                "怎麼設置", "如何設置", "怎麼設定", "如何設定",
-                "止損怎麼", "止盈怎麼", "止損如何", "止盈如何",
-                "什麼意思", "是什麼意思", "怎麼理解",
+                "什么是", "是什么", "怎么看", "如何看", "怎么用", "如何用",
+                "怎么选股", "如何选股", "怎么分析", "如何分析",
+                "怎么设置", "如何设置", "怎么设定", "如何设定",
+                "止损怎么", "止盈怎么", "止损如何", "止盈如何",
+                "什么意思", "是什么意思", "怎么理解",
                 "pe", "pb", "roe", "macd", "kdj", "rsi", "布林", "boll",
-                "均線", "成交量", "換手率", "市盈率", "市淨率", "淨資產",
-                "k線", "陽線", "陰線", "十字星", "漲停", "跌停",
-                "基本面", "技術面", "消息面", "政策面",
-                "價值投資", "趨勢交易", "短線技巧", "操盤",
-                "仓位管理", "資金管理", "風險管理",
-                "etf", "指數", "基金", "債券", "期貨", "期權",
-                "牛市", "熊市", "震盪", "行情"
+                "均线", "成交量", "换手率", "市盈率", "市净率", "净资产",
+                "k线", "阳线", "阴线", "十字星", "涨停", "跌停",
+                "基本面", "技术面", "消息面", "政策面",
+                "价值投资", "趋势交易", "短线技巧", "操盘",
+                "仓位管理", "资金管理", "风险管理",
+                "etf", "指数", "基金", "债券", "期货", "期权",
+                "牛市", "熊市", "震荡", "行情"
             )
         ) {
-            // 排除明確包含股票代碼的情況（如「600519是什麼意思」→ 可能是問股票）
+            // 排除明确包含股票代码的情况（如「600519是什么意思」→ 可能是问股票）
             if (!containsStockCode(text)) return true
         }
 
-        // ── 3. 沒有 currentStock 且輸入不包含市場分析關鍵詞 → 大概率閒聊 ──
+        // ── 3. 没有 currentStock 且输入不包含市场分析关键词 → 大概率闲聊 ──
         if (currentStock == null && !text.containsAny(
-                "分析", "推薦", "選股", "買入", "賣出", "持倉", "建倉", "加倉",
-                "減倉", "清倉", "目標價", "支撐", "壓力", "突破",
-                "漲", "跌", "走勢", "趨勢", "板塊", "概念", "龍頭",
-                "主力", "資金流", "北向", "外資", "融資", "融券"
+                "分析", "推荐", "选股", "买入", "卖出", "持仓", "建仓", "加仓",
+                "减仓", "清仓", "目标价", "支撑", "压力", "突破",
+                "涨", "跌", "走势", "趋势", "板块", "概念", "龙头",
+                "主力", "资金流", "北向", "外资", "融资", "融券"
             )
         ) {
-            // 輸入較短（< 30 字）且是問句形式
+            // 输入较短（< 30 字）且是问句形式
             if (text.length < 30 && (text.contains("？") || text.contains("?") ||
-                        text.containsAny("嗎", "呢", "麼", "嘛", "咋", "怎麼", "如何", "什麼", "为啥", "為什麼"))
+                        text.containsAny("吗", "呢", "么", "嘛", "咋", "怎么", "如何", "什么", "为啥", "为什么"))
             ) return true
         }
 
@@ -145,10 +145,10 @@ class IntentRouter {
     }
 
     /**
-     * 簡單檢查文本中是否包含股票代碼（6位數字，可能帶市場前綴）。
+     * 简单检查文本中是否包含股票代码（6位数字，可能带市场前缀）。
      */
     private fun containsStockCode(text: String): Boolean {
-        // 匹配 6 位數字股票代碼（可選 sh/sz/sh6/sh9 前綴）
+        // 匹配 6 位数字股票代码（可选 sh/sz/sh6/sh9 前缀）
         val codePattern = Regex("""(?:sh|sz)?\d{6}""")
         return codePattern.containsMatchIn(text)
     }
@@ -159,15 +159,15 @@ class IntentRouter {
 }
 
 /**
- * Agent 集群配置 — 每個交易週期的 Agent 組合和參數
+ * Agent 集群配置 — 每个交易周期的 Agent 组合和参数
  *
- * @property period 交易週期
- * @property orchestratorTimeout 編排者超時
- * @property analystSteps 分析師步驟數
- * @property analystTimeout 分析師超時
- * @property guardianTimeout 風控官超時
- * @property cacheTtlMinutes 緩存有效期
- * @property maxTotalConcurrent 最大總並發數
+ * @property period 交易周期
+ * @property orchestratorTimeout 编排者超时
+ * @property analystSteps 分析师步骤数
+ * @property analystTimeout 分析师超时
+ * @property guardianTimeout 风控官超时
+ * @property cacheTtlMinutes 缓存有效期
+ * @property maxTotalConcurrent 最大总并发数
  */
 data class AgentClusterConfig(
     val period: HoldingPeriod,
@@ -179,12 +179,12 @@ data class AgentClusterConfig(
     val maxTotalConcurrent: Int
 ) {
     companion object {
-        // DeepAnalystEngine 最多 3 階段串行 LLM（每階段 ≤90s），超時需覆蓋完整流程
+        // DeepAnalystEngine 最多 3 阶段串行 LLM（每阶段 ≤90s），超时需覆盖完整流程
         fun forPeriod(period: HoldingPeriod): AgentClusterConfig = when (period) {
             HoldingPeriod.ULTRA_SHORT -> AgentClusterConfig(
                 period = period,
                 orchestratorTimeout = 120_000,
-                analystSteps = 3,       // 技術+輿情+風控（2階段）
+                analystSteps = 3,       // 技术+舆情+风控（2阶段）
                 analystTimeout = 90_000,
                 guardianTimeout = 5_000,
                 cacheTtlMinutes = 5,
@@ -193,7 +193,7 @@ data class AgentClusterConfig(
             HoldingPeriod.SHORT -> AgentClusterConfig(
                 period = period,
                 orchestratorTimeout = 180_000,
-                analystSteps = 5,       // +基本面+賽道
+                analystSteps = 5,       // +基本面+赛道
                 analystTimeout = 150_000,
                 guardianTimeout = 15_000,
                 cacheTtlMinutes = 15,
@@ -202,7 +202,7 @@ data class AgentClusterConfig(
             HoldingPeriod.MID -> AgentClusterConfig(
                 period = period,
                 orchestratorTimeout = 240_000,
-                analystSteps = 6,       // +產業鏈（全量）
+                analystSteps = 6,       // +产业链（全量）
                 analystTimeout = 210_000,
                 guardianTimeout = 30_000,
                 cacheTtlMinutes = 60,

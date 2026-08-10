@@ -5,17 +5,17 @@ import com.chin.stockanalysis.strategy.HoldingPeriod
 import kotlinx.coroutines.*
 
 /**
- * ## Agent 編排器
+ * ## Agent 编排器
  *
- * 根據 UserIntent 路由到對應的 Agent 組合，
- * 派生 Scout / Analyst / Guardian 並行執行，
- * 收集所有 Announce 後彙總生成最終報告。
+ * 根据 UserIntent 路由到对应的 Agent 组合，
+ * 派生 Scout / Analyst / Guardian 并行执行，
+ * 收集所有 Announce 后汇总生成最终报告。
  *
- * ### 路由規則
+ * ### 路由规则
  * - QUICK_SCAN → Scout only
  * - RISK_CHECK → Guardian only
  * - FOLLOW_UP → Analyst only
- * - DEEP_ANALYSIS → Scout + Analyst + Guardian + Executor（按週期配超時）
+ * - DEEP_ANALYSIS → Scout + Analyst + Guardian + Executor（按周期配超时）
  */
 class AgentOrchestrator(
     private val appContext: Context
@@ -24,7 +24,7 @@ class AgentOrchestrator(
     private val sessionManager = AgentSessionManager()
 
     /**
-     * 執行意圖 → 返回最終報告
+     * 执行意图 → 返回最终报告
      */
     suspend fun execute(intent: UserIntent): OrchestratorResult {
         return when (intent.type) {
@@ -36,7 +36,7 @@ class AgentOrchestrator(
     }
 
     /**
-     * 取消指定會話
+     * 取消指定会话
      */
     fun cancel(sessionId: String) {
         sessionManager.cancelSession(sessionId)
@@ -49,13 +49,13 @@ class AgentOrchestrator(
         sessionManager.cancelAll()
     }
 
-    // ─── 快速掃描：Scout only ───
+    // ─── 快速扫描：Scout only ───
     private suspend fun executeQuickScan(intent: UserIntent): OrchestratorResult {
         val sessionId = "quick_${System.currentTimeMillis()}"
         val session = AgentSessionMemory()
 
         return coroutineScope {
-            val scoutTask = SimpleAgentTask("scout_market", "市場環境掃描") { ctx ->
+            val scoutTask = SimpleAgentTask("scout_market", "市场环境扫描") { ctx ->
                 scanMarketEnvironment(ctx)
             }
             val scoutDeferred = spawner.spawn(AgentRoles.SCOUT, scoutTask, session, this)
@@ -72,13 +72,13 @@ class AgentOrchestrator(
         }
     }
 
-    // ─── 風控掃描：Guardian only ───
+    // ─── 风控扫描：Guardian only ───
     private suspend fun executeRiskCheck(intent: UserIntent): OrchestratorResult {
         val sessionId = "risk_${System.currentTimeMillis()}"
         val session = AgentSessionMemory()
 
         return coroutineScope {
-            val guardianTask = SimpleAgentTask("guardian_risk", "持倉風險掃描") { ctx ->
+            val guardianTask = SimpleAgentTask("guardian_risk", "持仓风险扫描") { ctx ->
                 scanPortfolioRisk(ctx, intent.target)
             }
             val guardianDeferred = spawner.spawn(AgentRoles.GUARDIAN, guardianTask, session, this)
@@ -95,13 +95,13 @@ class AgentOrchestrator(
         }
     }
 
-    // ─── 追問：Analyst only ───
+    // ─── 追问：Analyst only ───
     private suspend fun executeFollowUp(intent: UserIntent): OrchestratorResult {
         val sessionId = "followup_${System.currentTimeMillis()}"
         val session = AgentSessionMemory()
 
         return coroutineScope {
-            val analystTask = SimpleAgentTask("analyst_followup", "追問分析: ${intent.target}") { ctx ->
+            val analystTask = SimpleAgentTask("analyst_followup", "追问分析: ${intent.target}") { ctx ->
                 analyzeStock(ctx, intent.target ?: "")
             }
             val analystDeferred = spawner.spawn(AgentRoles.ANALYST, analystTask, session, this)
@@ -118,35 +118,35 @@ class AgentOrchestrator(
         }
     }
 
-    // ─── 深度分析：Scout + Analyst + Guardian 並行 ───
+    // ─── 深度分析：Scout + Analyst + Guardian 并行 ───
     private suspend fun executeDeepAnalysis(intent: UserIntent): OrchestratorResult {
         val sessionId = "deep_${System.currentTimeMillis()}"
         val session = AgentSessionMemory()
         val timeout = getTimeoutForPeriod(intent.period)
 
         return coroutineScope {
-            // Phase 1: Scout 先行（市場環境）
-            val scoutTask = SimpleAgentTask("scout_env", "市場環境感知") { ctx ->
+            // Phase 1: Scout 先行（市场环境）
+            val scoutTask = SimpleAgentTask("scout_env", "市场环境感知") { ctx ->
                 scanMarketEnvironment(ctx)
             }
             val scoutDeferred = spawner.spawn(AgentRoles.SCOUT, scoutTask, session, this)
             val scoutAnnounce = scoutDeferred.await()
 
-            // 將 Scout 結果存入 Session 供其他 Agent 讀取
+            // 将 Scout 结果存入 Session 供其他 Agent 读取
             session.putSlot("market_context", scoutAnnounce.result)
 
-            // Phase 2: Analyst + Guardian 並行
-            val analystTask = SimpleAgentTask("analyst_deep", "深度分析: ${intent.target ?: "全市場"}") { ctx ->
+            // Phase 2: Analyst + Guardian 并行
+            val analystTask = SimpleAgentTask("analyst_deep", "深度分析: ${intent.target ?: "全市场"}") { ctx ->
                 analyzeStock(ctx, intent.target ?: "")
             }
-            val guardianTask = SimpleAgentTask("guardian_risk", "風控評估") { ctx ->
+            val guardianTask = SimpleAgentTask("guardian_risk", "风控评估") { ctx ->
                 scanPortfolioRisk(ctx, intent.target)
             }
 
             val analystDeferred = spawner.spawn(AgentRoles.ANALYST, analystTask, session, this)
             val guardianDeferred = spawner.spawn(AgentRoles.GUARDIAN, guardianTask, session, this)
 
-            // 註冊一個父 Job 用於級聯取消
+            // 注册一个父 Job 用于级联取消
             val parentJob = launch {
                 listOf(analystDeferred, guardianDeferred).awaitAll()
             }
@@ -155,7 +155,7 @@ class AgentOrchestrator(
             val analystAnnounce = withTimeout(timeout) { analystDeferred.await() }
             val guardianAnnounce = withTimeout(timeout) { guardianDeferred.await() }
 
-            // Phase 3: 彙總
+            // Phase 3: 汇总
             val announces = listOf(scoutAnnounce, analystAnnounce, guardianAnnounce)
             OrchestratorResult(
                 sessionId = sessionId,
@@ -176,39 +176,39 @@ class AgentOrchestrator(
         }
     }
 
-    // ─── 任務實現（佔位，後續接入實際分析邏輯）───
+    // ─── 任务实现（占位，后续接入实际分析逻辑）───
 
     private suspend fun scanMarketEnvironment(ctx: AgentContext) {
-        ctx.log("掃描市場環境...")
+        ctx.log("扫描市场环境...")
         // TODO: 接入 MarketAnalyzer, SectorRotationEngine, Level2DataProvider
         ctx.recordToolResult("marketDirection", "OSCILLATION")
         ctx.recordToolResult("hotSectors", listOf<String>())
         ctx.recordToolResult("sentiment", mapOf("limitUp" to 0, "limitDown" to 0))
-        ctx.log("市場環境掃描完成")
+        ctx.log("市场环境扫描完成")
     }
 
     private suspend fun analyzeStock(ctx: AgentContext, stockCode: String) {
         ctx.log("分析股票: $stockCode")
-        // TODO: 接入 DAG Pipeline 分析鏈
+        // TODO: 接入 DAG Pipeline 分析链
         ctx.recordToolResult("score", 0)
         ctx.recordToolResult("recommendation", "WATCH")
         ctx.log("分析完成")
     }
 
     private suspend fun scanPortfolioRisk(ctx: AgentContext, targetStock: String?) {
-        ctx.log("掃描持倉風險...")
-        // TODO: 接入 ATR 止損, 倉位控制
+        ctx.log("扫描持仓风险...")
+        // TODO: 接入 ATR 止损, 仓位控制
         ctx.recordToolResult("riskLevel", "LOW")
         ctx.recordToolResult("stopLoss", emptyMap<String, Double>())
-        ctx.log("風險掃描完成")
+        ctx.log("风险扫描完成")
     }
 
-    // ─── 報告生成 ───
+    // ─── 报告生成 ───
 
     private fun buildQuickSummary(scout: AgentAnnounce): String {
         return buildString {
-            appendLine("📊 快速市場掃描")
-            appendLine("狀態: ${scout.status}")
+            appendLine("📊 快速市场扫描")
+            appendLine("状态: ${scout.status}")
             if (scout.result.isNotEmpty()) {
                 scout.result.forEach { (k, v) -> appendLine("  $k: $v") }
             }
@@ -217,8 +217,8 @@ class AgentOrchestrator(
 
     private fun buildRiskSummary(guardian: AgentAnnounce): String {
         return buildString {
-            appendLine("🛡️ 持倉風險報告")
-            appendLine("狀態: ${guardian.status}")
+            appendLine("🛡️ 持仓风险报告")
+            appendLine("状态: ${guardian.status}")
             if (guardian.result.isNotEmpty()) {
                 guardian.result.forEach { (k, v) -> appendLine("  $k: $v") }
             }
@@ -227,8 +227,8 @@ class AgentOrchestrator(
 
     private fun buildFollowUpSummary(analyst: AgentAnnounce): String {
         return buildString {
-            appendLine("📊 追問分析結果")
-            appendLine("狀態: ${analyst.status}")
+            appendLine("📊 追问分析结果")
+            appendLine("状态: ${analyst.status}")
             if (analyst.result.isNotEmpty()) {
                 analyst.result.forEach { (k, v) -> appendLine("  $k: $v") }
             }
@@ -237,7 +237,7 @@ class AgentOrchestrator(
 
     private fun buildDeepSummary(announces: List<AgentAnnounce>, period: HoldingPeriod?): String {
         return buildString {
-            appendLine("📈 深度分析報告 (${period?.label ?: "短線"})")
+            appendLine("📈 深度分析报告 (${period?.label ?: "短线"})")
             appendLine()
             for (announce in announces) {
                 val emoji = when (announce.role) {
@@ -259,7 +259,7 @@ class AgentOrchestrator(
 }
 
 /**
- * 編排器執行結果
+ * 编排器执行结果
  */
 data class OrchestratorResult(
     val sessionId: String,

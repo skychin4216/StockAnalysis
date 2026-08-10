@@ -1,11 +1,11 @@
 package com.chin.stockanalysis.strategy.topology.core
 
 /**
- * 將 orderType 歸一化為持倉周期標識。
+ * 将 orderType 归一化为持仓周期标识。
  *
- * 不同寫入路徑的 orderType 取值不一致（如 DAG 寫 "ShortTermQuant"、
- * Fragment 寫 "shortterm"），持倉統計必須按周期聚合而非跨周期累加，
- * 否則短線會把中線持倉也算進自己的倉位数。
+ * 不同写入路径的 orderType 取值不一致（如 DAG 写 "ShortTermQuant"、
+ * Fragment 写 "shortterm"），持仓统计必须按周期聚合而非跨周期累加，
+ * 否则短线会把中线持仓也算进自己的仓位数。
  */
 fun orderTypePeriod(orderType: String): String = when {
     orderType.contains("UltraShort", ignoreCase = true) ||

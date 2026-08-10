@@ -11,26 +11,26 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * ## AI Provider 共享池（v3 - 防凍結超時版）
+ * ## AI Provider 共享池（v3 - 防冻结超时版）
  *
- * 核心改進：
- * 1. 超時自動釋放：acquire 超過 90 秒未 release 的佔用自動清理
- * 2. 前後台切換清理：App 回到前臺時強制清掃過期佔用
- * 3. 進程解凍檢測：系統凍結後恢復時自動重置狀態
- * 4. 降級模式：所有 Provider 被鎖時創建臨時 Provider
- * 5. 詳細日誌：記錄佔用者調用棧，方便排查
+ * 核心改进：
+ * 1. 超时自动释放：acquire 超过 90 秒未 release 的占用自动清理
+ * 2. 前后台切换清理：App 回到前台时强制清扫过期占用
+ * 3. 进程解冻检测：系统冻结后恢复时自动重置状态
+ * 4. 降级模式：所有 Provider 被锁时创建临时 Provider
+ * 5. 详细日志：记录占用者调用栈，方便排查
  */
 object AiProviderPool {
 
     private const val TAG = "AiProviderPool"
 
-        /** 佔用超時時間（秒）：30 秒自動釋放，避免任何鎖死 */
+        /** 占用超时时间（秒）：30 秒自动释放，避免任何锁死 */
     private const val OCCUPY_TIMEOUT_MS = 30_000L
 
-    /** 健康檢測超時（秒）：豆包等火山引擎 API 需更長時間 */
+    /** 健康检测超时（秒）：豆包等火山引擎 API 需更长时间 */
     private const val HEALTH_PROBE_TIMEOUT_MS = 5_000L
 
-    /** AI 請求超時（秒） */
+    /** AI 请求超时（秒） */
     private const val AI_REQUEST_TIMEOUT_MS = 30_000L
 
     /** 优先级顺序 */
@@ -62,10 +62,10 @@ object AiProviderPool {
     private var lastSweepTime = 0L
 
     /**
-     * 獲取最優可用 AI Provider
+     * 获取最优可用 AI Provider
      *
-     * @param callerTag 調用方標識（用於日誌排查）
-     * @param timeoutMs 等待超時（默認 60 秒）
+     * @param callerTag 调用方标识（用于日志排查）
+     * @param timeoutMs 等待超时（默认 60 秒）
      */
     suspend fun acquire(
         context: Context,
@@ -78,10 +78,10 @@ object AiProviderPool {
 
         while (System.currentTimeMillis() < deadline) {
             mutex.withLock {
-                // 1. 清掃過期佔用
+                // 1. 清扫过期占用
                 sweepExpiredLocked()
 
-                // 2. 嘗試獲取空閒 Provider
+                // 2. 尝试获取空闲 Provider
                 for (preferredId in PRIORITY_ORDER) {
                     val config = mgr.getProviderConfig(preferredId) ?: continue
                     if (config.apiKey.isBlank()) continue
@@ -96,7 +96,7 @@ object AiProviderPool {
                     return slot
                 }
 
-                // 3. 全部被佔用 → 嘗試共享第一個有 key 的（不論健康狀態）
+                // 3. 全部被占用 → 尝试共享第一个有 key 的（不论健康状态）
                 for (preferredId in PRIORITY_ORDER) {
                     val config = mgr.getProviderConfig(preferredId) ?: continue
                     if (config.apiKey.isBlank()) continue
@@ -108,17 +108,17 @@ object AiProviderPool {
                 }
             }
 
-            // 4. 等待 1 秒後重試（最多 5 秒）
-            Log.d(TAG, "⏳ 等待釋放... [by: $callerTag]")
+            // 4. 等待 1 秒后重试（最多 5 秒）
+            Log.d(TAG, "⏳ 等待释放... [by: $callerTag]")
             delay(1_000L)
         }
 
-        Log.e(TAG, "❌ ${timeoutMs}ms 內無可用 AI [by: $callerTag]")
+        Log.e(TAG, "❌ ${timeoutMs}ms 内无可用 AI [by: $callerTag]")
         return null
     }
 
     /**
-     * 取得所有健康的 AI Provider（不佔用，用於並行任務）
+     * 取得所有健康的 AI Provider（不占用，用于并行任务）
      */
     suspend fun acquireAllHealthy(context: Context): List<Slot> {
         initIfNeeded(context); val result = mutableListOf<Slot>()
@@ -133,12 +133,12 @@ object AiProviderPool {
                 result.add(Slot(config.id, config.name, provider))
             }
         }
-        Log.i(TAG, "📊 acquireAllHealthy → ${result.size} 個可用: ${result.joinToString { it.configName }}")
+        Log.i(TAG, "📊 acquireAllHealthy → ${result.size} 个可用: ${result.joinToString { it.configName }}")
         return result
     }
 
     /**
-     * 釋放 Slot（務必在 try-finally 中調用）
+     * 释放 Slot（务必在 try-finally 中调用）
      */
     suspend fun release(slot: Slot?) {
         if (slot == null) return
@@ -147,7 +147,7 @@ object AiProviderPool {
             if (removed != null) {
                 Log.i(TAG, "🔓 release: ${slot.configName} [held: ${System.currentTimeMillis() - slot.allocatedAt}ms, by: ${slot.allocatedBy}]")
             } else {
-                Log.w(TAG, "🔓 release: ${slot.configName} 已不在 occupied 中（可能超時自動釋放了）")
+                Log.w(TAG, "🔓 release: ${slot.configName} 已不在 occupied 中（可能超时自动释放了）")
             }
         }
     }
@@ -158,37 +158,37 @@ object AiProviderPool {
     }
 
     /**
-     * 強制清掃所有過期佔用（App 回到前臺或進程解凍時調用）
+     * 强制清扫所有过期占用（App 回到前台或进程解冻时调用）
      */
     fun sweepExpired() {
         val now = System.currentTimeMillis()
-        if (now - lastSweepTime < 10_000L) return // 10 秒內不重複清掃
+        if (now - lastSweepTime < 10_000L) return // 10 秒内不重复清扫
         lastSweepTime = now
         scope.launch {
             mutex.withLock { sweepExpiredLocked() }
         }
     }
 
-    /** 內部：清掃超時佔用 */
+    /** 内部：清扫超时占用 */
     private fun sweepExpiredLocked() {
         val now = System.currentTimeMillis()
         val expired = occupied.filterValues { now - it.allocatedAt > OCCUPY_TIMEOUT_MS }
         if (expired.isNotEmpty()) {
-            Log.w(TAG, "🧹 自動清掃 ${expired.size} 個超時佔用:")
+            Log.w(TAG, "🧹 自动清扫 ${expired.size} 个超时占用:")
             for ((id, slot) in expired) {
                 occupied.remove(id)
-                Log.w(TAG, "   • ${slot.configName} 超時 ${(now - slot.allocatedAt) / 1000}秒 [by: ${slot.allocatedBy}]")
+                Log.w(TAG, "   • ${slot.configName} 超时 ${(now - slot.allocatedAt) / 1000}秒 [by: ${slot.allocatedBy}]")
             }
         }
     }
 
-    /** 強制重置所有狀態（進程被凍結後恢復時調用） */
+    /** 强制重置所有状态（进程被冻结后恢复时调用） */
     fun emergencyReset(reason: String) {
         scope.launch {
             mutex.withLock {
                 val count = occupied.size
                 if (count > 0) {
-                    Log.e(TAG, "🚨 緊急重置: $reason，清理 $count 個佔用")
+                    Log.e(TAG, "🚨 紧急重置: $reason，清理 $count 个占用")
                     for ((id, slot) in occupied) {
                         Log.e(TAG, "   • $id: ${slot.configName} 已持有 ${(System.currentTimeMillis() - slot.allocatedAt) / 1000}秒 [by: ${slot.allocatedBy}]")
                     }
@@ -196,12 +196,12 @@ object AiProviderPool {
                 }
             }
             healthyCache.clear()
-            Log.i(TAG, "🚨 緊急重置完成: $reason")
+            Log.i(TAG, "🚨 紧急重置完成: $reason")
         }
     }
 
     /**
-     * 快速连通性检测（缓存 60 秒，超時 5 秒）
+     * 快速连通性检测（缓存 60 秒，超时 5 秒）
      */
     private suspend fun isHealthy(configId: String, config: ApiProviderConfig): Boolean {
         // 缓存 10 秒有效（避免进程冻结局导致缓存永不更新）
@@ -246,16 +246,16 @@ object AiProviderPool {
         healthyCacheTime.clear()
     }
 
-    /** 獲取當前佔用狀態（用於調試） */
+    /** 获取当前占用状态（用于调试） */
     fun dumpStatus(): String {
         val now = System.currentTimeMillis()
         return buildString {
-            appendLine("=== AiProviderPool 狀態 ===")
-            appendLine("佔用數: ${occupied.size}")
+            appendLine("=== AiProviderPool 状态 ===")
+            appendLine("占用数: ${occupied.size}")
             for ((id, slot) in occupied) {
                 appendLine("  $id: ${slot.configName} 已持有 ${(now - slot.allocatedAt) / 1000}秒 [by: ${slot.allocatedBy}]")
             }
-            appendLine("健康緩存: ${healthyCache.entries.joinToString()}")
+            appendLine("健康缓存: ${healthyCache.entries.joinToString()}")
         }
     }
 

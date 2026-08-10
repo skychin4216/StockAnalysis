@@ -9,9 +9,9 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.TemporalAdjusters
 
 /**
- * 板塊週期追蹤器：從 sector_daily_record 聚合計算每週/每月的主要板塊
+ * 板块周期追踪器：从 sector_daily_record 聚合计算每周/每月的主要板块
  *
- * 用途：替代硬編碼板塊列表，讓 AI 分析和量化選股能根據近期大盤交易情況動態更新
+ * 用途：替代硬编码板块列表，让 AI 分析和量化选股能根据近期大盘交易情况动态更新
  */
 class SectorPeriodTracker(private val context: Context) {
 
@@ -19,20 +19,20 @@ class SectorPeriodTracker(private val context: Context) {
         private const val TAG = "SectorPeriodTracker"
         private val DATE_FMT = DateTimeFormatter.ISO_LOCAL_DATE
 
-        /** 每週保留數量上限 */
+        /** 每周保留数量上限 */
         private const val MAX_WEEKLY_ENTRIES = 20
-        /** 每月保留數量上限 */
+        /** 每月保留数量上限 */
         private const val MAX_MONTHLY_ENTRIES = 20
-        /** 週數據保留週數 */
+        /** 周数据保留周数 */
         private const val WEEKLY_RETENTION_WEEKS = 12
-        /** 月數據保留月數 */
+        /** 月数据保留月数 */
         private const val MONTHLY_RETENTION_MONTHS = 6
     }
 
     /**
-     * 更新週期板塊摘要（每日調用一次即可）
-     * - 計算本週 top 板塊
-     * - 如果是月末，還計算上月 top 板塊
+     * 更新周期板块摘要（每日调用一次即可）
+     * - 计算本周 top 板块
+     * - 如果是月末，还计算上月 top 板块
      */
     suspend fun update() {
         val db = StockDatabase.getInstance(context)
@@ -40,26 +40,26 @@ class SectorPeriodTracker(private val context: Context) {
         val dailyDao = db.sectorDailyRecordDao()
 
         try {
-            // 1. 更新每週摘要
+            // 1. 更新每周摘要
             updateWeekly(dailyDao, dao)
 
             // 2. 更新每月摘要
             updateMonthly(dailyDao, dao)
 
-            // 3. 清理過期數據
+            // 3. 清理过期数据
             val weeklyCutoff = LocalDate.now().minusWeeks(WEEKLY_RETENTION_WEEKS.toLong()).format(DATE_FMT)
             val monthlyCutoff = LocalDate.now().minusMonths(MONTHLY_RETENTION_MONTHS.toLong()).format(DATE_FMT)
             dao.deleteOlderThan("weekly", weeklyCutoff)
             dao.deleteOlderThan("monthly", monthlyCutoff)
 
-            Log.i(TAG, "板塊週期摘要更新完成")
+            Log.i(TAG, "板块周期摘要更新完成")
         } catch (e: Exception) {
-            Log.e(TAG, "板塊週期摘要更新失敗: ${e.message}")
+            Log.e(TAG, "板块周期摘要更新失败: ${e.message}")
         }
     }
 
     /**
-     * 獲取當前週的 top 板塊名稱（動態替代硬編碼）
+     * 获取当前周的 top 板块名称（动态替代硬编码）
      */
     suspend fun getCurrentWeekTopSectors(limit: Int = 10): List<String> {
         val db = StockDatabase.getInstance(context)
@@ -67,7 +67,7 @@ class SectorPeriodTracker(private val context: Context) {
     }
 
     /**
-     * 獲取當前月的 top 板塊名稱
+     * 获取当前月的 top 板块名称
      */
     suspend fun getCurrentMonthTopSectors(limit: Int = 10): List<String> {
         val db = StockDatabase.getInstance(context)
@@ -75,7 +75,7 @@ class SectorPeriodTracker(private val context: Context) {
     }
 
     /**
-     * 獲取綜合 hot 板塊（合併週+月數據，按權重排序）
+     * 获取综合 hot 板块（合并周+月数据，按权重排序）
      */
     suspend fun getHotSectors(limit: Int = 15): List<SectorPeriodSummaryEntity> {
         val db = StockDatabase.getInstance(context)
@@ -83,7 +83,7 @@ class SectorPeriodTracker(private val context: Context) {
         val weekly = dao.getTopSectors("weekly", limit).map { it to (limit - it.rank + 1) * 0.6 }
         val monthly = dao.getTopSectors("monthly", limit).map { it to (limit - it.rank + 1) * 0.4 }
 
-        // 合併同板塊得分
+        // 合并同板块得分
         val merged = mutableMapOf<String, Pair<SectorPeriodSummaryEntity, Double>>()
         for ((entity, score) in weekly + monthly) {
             val key = entity.sectorCode
@@ -101,7 +101,7 @@ class SectorPeriodTracker(private val context: Context) {
             .map { it.first }
     }
 
-    // ── 內部方法 ──
+    // ── 内部方法 ──
 
     private suspend fun updateWeekly(
         dailyDao: SectorDailyRecordDao,
@@ -111,15 +111,15 @@ class SectorPeriodTracker(private val context: Context) {
         val weekStart = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         val weekEnd = weekStart.plusDays(4) // Friday
 
-        // 取本週交易日數據
-        val records = dailyDao.getRecentDays(7) // 取最近 7 天（覆蓋 5 個交易日）
+        // 取本周交易日数据
+        val records = dailyDao.getRecentDays(7) // 取最近 7 天（覆盖 5 个交易日）
         val weekRecords = records.filter { record ->
             val date = try { LocalDate.parse(record.date, DATE_FMT) } catch (_: Exception) { return@filter false }
             !date.isBefore(weekStart) && !date.isAfter(weekEnd)
         }
 
         if (weekRecords.isEmpty()) {
-            Log.w(TAG, "本週無交易日數據，跳過週摘要更新")
+            Log.w(TAG, "本周无交易日数据，跳过周摘要更新")
             return
         }
 
@@ -133,7 +133,7 @@ class SectorPeriodTracker(private val context: Context) {
 
         summaryDao.deleteByPeriodType("weekly")
         summaryDao.insertAll(summaries)
-        Log.i(TAG, "週摘要更新: ${summaries.size} 個板塊 (${weekStart}~${weekEnd})")
+        Log.i(TAG, "周摘要更新: ${summaries.size} 个板块 (${weekStart}~${weekEnd})")
     }
 
     private suspend fun updateMonthly(
@@ -144,7 +144,7 @@ class SectorPeriodTracker(private val context: Context) {
         val monthStart = today.with(TemporalAdjusters.firstDayOfMonth())
         val monthEnd = today.with(TemporalAdjusters.lastDayOfMonth())
 
-        // 取本月交易日數據（最近 30 天覆蓋）
+        // 取本月交易日数据（最近 30 天覆盖）
         val records = dailyDao.getRecentDays(30)
         val monthRecords = records.filter { record ->
             val date = try { LocalDate.parse(record.date, DATE_FMT) } catch (_: Exception) { return@filter false }
@@ -152,7 +152,7 @@ class SectorPeriodTracker(private val context: Context) {
         }
 
         if (monthRecords.isEmpty()) {
-            Log.w(TAG, "本月無交易日數據，跳過月摘要更新")
+            Log.w(TAG, "本月无交易日数据，跳过月摘要更新")
             return
         }
 
@@ -166,11 +166,11 @@ class SectorPeriodTracker(private val context: Context) {
 
         summaryDao.deleteByPeriodType("monthly")
         summaryDao.insertAll(summaries)
-        Log.i(TAG, "月摘要更新: ${summaries.size} 個板塊 (${monthStart}~${today})")
+        Log.i(TAG, "月摘要更新: ${summaries.size} 个板块 (${monthStart}~${today})")
     }
 
     /**
-     * 聚合板塊日記錄為週期摘要
+     * 聚合板块日记录为周期摘要
      */
     private fun aggregateRecords(
         records: List<SectorDailyRecordEntity>,
@@ -179,7 +179,7 @@ class SectorPeriodTracker(private val context: Context) {
         endDate: String,
         maxEntries: Int
     ): List<SectorPeriodSummaryEntity> {
-        // 按板塊分組
+        // 按板块分组
         val grouped = records.groupBy { it.sectorCode }
 
         return grouped.map { (sectorCode, sectorRecords) ->
@@ -190,7 +190,7 @@ class SectorPeriodTracker(private val context: Context) {
             val totalDays = sectorRecords.size
             val sectorName = sectorRecords.first().sectorName
 
-            // 綜合得分：漲幅 30% + 資金流入 30% + 熱度 25% + 連續熱天 15%
+            // 综合得分：涨幅 30% + 资金流入 30% + 热度 25% + 连续热天 15%
             val compositeScore = avgChange * 0.30 +
                 (totalInflow / 10.0).coerceIn(-5.0, 5.0) * 0.30 +
                 avgHotScore * 0.25 +
@@ -207,7 +207,7 @@ class SectorPeriodTracker(private val context: Context) {
                 avgHotScore = avgHotScore,
                 hotDays = hotDays,
                 totalDays = totalDays,
-                rank = 0 // 稍後賦值
+                rank = 0 // 稍后赋值
             ) to compositeScore
         }
             .sortedByDescending { it.second }

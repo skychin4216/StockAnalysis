@@ -5,71 +5,71 @@ import android.util.Log
 import com.chin.stockanalysis.stock.database.StockDatabase
 
 /**
- * 板塊檢測器 — 從用戶文本中識別板塊名稱
+ * 板块检测器 — 从用户文本中识别板块名称
  *
- * 用於機構推薦消息的板塊歸屬判斷，支援：
- * 1. 顯式板塊關鍵詞匹配（紅利、消費、AI硬件等）
- * 2. 股票代碼→板塊反查（通過 StockDataCenter）
- * 3. 股票名稱→板塊推斷（通過名稱關鍵詞）
+ * 用于机构推荐消息的板块归属判断，支援：
+ * 1. 显式板块关键词匹配（红利、消费、AI硬件等）
+ * 2. 股票代码→板块反查（通过 StockDataCenter）
+ * 3. 股票名称→板块推断（通过名称关键词）
  */
 object SectorDetector {
 
     private const val TAG = "SectorDetector"
 
     /**
-     * 板塊關鍵詞映射表 — 每個板塊的多個別名/關鍵詞
-     * 按優先級排列：精確匹配優先，模糊匹配在後
+     * 板块关键词映射表 — 每个板块的多个别名/关键词
+     * 按优先级排列：精确匹配优先，模糊匹配在后
      */
     private val SECTOR_KEYWORDS: List<Pair<String, List<String>>> = listOf(
-        // 科技/電子
-        "半導體" to listOf("半導體", "芯片", "集成電路", "晶圓", "封測", "光刻", "存儲芯片", "DRAM", "NAND"),
-        "AI算力" to listOf("AI算力", "算力", "服務器", "AI服務器", "液冷", "GPU", "高速計算"),
-        "光通信" to listOf("光通信", "光模塊", "光纖", "CPO", "硅光", "光連接"),
-        "消費電子" to listOf("消費電子", "手機產業鏈", "折叠屏", "VR", "AR", "MR", "智能穿戴"),
-        "PCB" to listOf("PCB", "印製電路板", "覆銅板"),
-        "存儲" to listOf("存儲", "存儲芯片", "HBM", "內存"),
+        // 科技/电子
+        "半导体" to listOf("半导体", "芯片", "集成电路", "晶圆", "封测", "光刻", "存储芯片", "DRAM", "NAND"),
+        "AI算力" to listOf("AI算力", "算力", "服务器", "AI服务器", "液冷", "GPU", "高速计算"),
+        "光通信" to listOf("光通信", "光模块", "光纤", "CPO", "硅光", "光连接"),
+        "消费电子" to listOf("消费电子", "手机产业链", "折叠屏", "VR", "AR", "MR", "智能穿戴"),
+        "PCB" to listOf("PCB", "印制电路板", "覆铜板"),
+        "存储" to listOf("存储", "存储芯片", "HBM", "内存"),
 
         // 新能源
-        "新能源" to listOf("新能源", "光伏", "風電", "儲能", "氫能", "鋰電池", "鈣鈦礦", "固態電池"),
-        "電力設備" to listOf("電力設備", "電網", "特高壓", "充電樁", "配電"),
-        "汽車" to listOf("汽車", "新能源汽車", "整車", "汽車零部件", "智能駕駛", "無人駕駛", "車路雲"),
+        "新能源" to listOf("新能源", "光伏", "风电", "储能", "氢能", "锂电池", "钙钛矿", "固态电池"),
+        "电力设备" to listOf("电力设备", "电网", "特高压", "充电桩", "配电"),
+        "汽车" to listOf("汽车", "新能源汽车", "整车", "汽车零部件", "智能驾驶", "无人驾驶", "车路云"),
 
-        // 金融/價值
-        "銀行" to listOf("銀行", "大行", "股份行", "城商行"),
-        "保險" to listOf("保險", "壽險", "財險"),
-        "證券" to listOf("證券", "券商", "投行"),
-        "紅利" to listOf("紅利", "高股息", "股息", "派息", "現金分紅"),
+        // 金融/价值
+        "银行" to listOf("银行", "大行", "股份行", "城商行"),
+        "保险" to listOf("保险", "寿险", "财险"),
+        "证券" to listOf("证券", "券商", "投行"),
+        "红利" to listOf("红利", "高股息", "股息", "派息", "现金分红"),
 
-        // 消費
-        "消費" to listOf("消費", "大消費", "食品飲料", "白酒", "啤酒", "乳品", "調味品", "免稅", "零售", "百貨", "紡織服裝", "服裝", "家紡", "化妝品", "美容護理", "家用電器", "小家電"),
-        "醫藥" to listOf("醫藥", "生物醫藥", "創新藥", "CXO", "醫療器械", "中藥", "疫苗", "體外診斷"),
+        // 消费
+        "消费" to listOf("消费", "大消费", "食品饮料", "白酒", "啤酒", "乳品", "调味品", "免税", "零售", "百货", "纺织服装", "服装", "家纺", "化妆品", "美容护理", "家用电器", "小家电"),
+        "医药" to listOf("医药", "生物医药", "创新药", "CXO", "医疗器械", "中药", "疫苗", "体外诊断"),
 
-        // 資源/材料
-        "有色金屬" to listOf("有色金屬", "有色", "銅", "鋁", "鋅", "鎳", "黃金", "白銀", "稀土"),
-        "稀缺小金屬" to listOf("稀缺小金屬", "小金屬", "鎢", "鉬", "鍺", "銦", "鎵", "鍺", "銻", "錫"),
-        "煤炭" to listOf("煤炭", "焦煤", "焦炭", "動力煤"),
-        "石油石化" to listOf("石油", "石化", "原油", "天然氣", "油服"),
-        "鋼鐵" to listOf("鋼鐵", "特鋼", "板材", "鐵礦石"),
-        "化工" to listOf("化工", "化學", "農藥", "化肥", "聚氨酯", "鈦白粉", "維生素", "氟化工", "磷化工"),
+        // 资源/材料
+        "有色金属" to listOf("有色金属", "有色", "铜", "铝", "锌", "镍", "黄金", "白银", "稀土"),
+        "稀缺小金属" to listOf("稀缺小金属", "小金属", "钨", "钼", "锗", "铟", "镓", "锗", "锑", "锡"),
+        "煤炭" to listOf("煤炭", "焦煤", "焦炭", "动力煤"),
+        "石油石化" to listOf("石油", "石化", "原油", "天然气", "油服"),
+        "钢铁" to listOf("钢铁", "特钢", "板材", "铁矿石"),
+        "化工" to listOf("化工", "化学", "农药", "化肥", "聚氨酯", "钛白粉", "维生素", "氟化工", "磷化工"),
         "建材" to listOf("建材", "水泥", "玻璃", "防水材料"),
 
-        // 基礎設施
-        "電力" to listOf("電力", "火電", "水電", "核電", "綠電"),
-        "交通運輸" to listOf("交通運輸", "高速公路", "港口", "機場", "航空", "航運", "物流"),
-        "房地產" to listOf("房地產", "地產", "物業", "房地產開發"),
+        // 基础设施
+        "电力" to listOf("电力", "火电", "水电", "核电", "绿电"),
+        "交通运输" to listOf("交通运输", "高速公路", "港口", "机场", "航空", "航运", "物流"),
+        "房地产" to listOf("房地产", "地产", "物业", "房地产开发"),
 
         // 其他概念
-        "軍工" to listOf("軍工", "國防", "航天", "航空裝備", "衛星", "商業航天"),
-        "機器人" to listOf("機器人", "人形機器人", "工業機器人", "減速器", "伺服"),
-        "低空經濟" to listOf("低空經濟", "eVTOL", "無人機", "飛行汽車"),
-        "數據要素" to listOf("數據要素", "數據中心", "算力網絡", "數字經濟"),
-        "國產替代" to listOf("國產替代", "自主可控", "信創", "操作系統", "數據庫")
+        "军工" to listOf("军工", "国防", "航天", "航空装备", "卫星", "商业航天"),
+        "机器人" to listOf("机器人", "人形机器人", "工业机器人", "减速器", "伺服"),
+        "低空经济" to listOf("低空经济", "eVTOL", "无人机", "飞行汽车"),
+        "数据要素" to listOf("数据要素", "数据中心", "算力网络", "数字经济"),
+        "国产替代" to listOf("国产替代", "自主可控", "信创", "操作系统", "数据库")
     )
 
     /**
-     * 從用戶文本中檢測板塊
-     * @param text 用戶輸入文本
-     * @return 檢測到的板塊名稱列表（去重，按出現順序）
+     * 从用户文本中检测板块
+     * @param text 用户输入文本
+     * @return 检测到的板块名称列表（去重，按出现顺序）
      */
     fun detectSectors(text: String): List<String> {
         val result = mutableListOf<String>()
@@ -82,16 +82,16 @@ object SectorDetector {
     }
 
     /**
-     * 查詢股票所屬板塊（通過 StockDataCenter）
-     * @param stockCode 股票代碼（如 sh600519）
+     * 查询股票所属板块（通过 StockDataCenter）
+     * @param stockCode 股票代码（如 sh600519）
      * @param context Android Context
-     * @return 板塊名稱列表，可能為空
+     * @return 板块名称列表，可能为空
      */
     suspend fun detectSectorForStock(stockCode: String, context: Context): List<String> {
         return try {
             com.chin.stockanalysis.stock.database.StockDataCenter.getSectorsByStock(stockCode)
         } catch (_: Exception) {
-            // 降級：從數據庫 sector_stock 表查詢
+            // 降级：从数据库 sector_stock 表查询
             try {
                 val db = StockDatabase.getInstance(context)
                 db.sectorStockDao().getSectorNamesByStockCode(stockCode)
@@ -102,9 +102,9 @@ object SectorDetector {
     }
 
     /**
-     * 根據股票名稱推斷板塊（名稱關鍵詞匹配）
-     * @param stockName 股票名稱（如「美邦股份」）
-     * @return 推斷的板塊名稱，可能為空
+     * 根据股票名称推断板块（名称关键词匹配）
+     * @param stockName 股票名称（如「美邦股份」）
+     * @return 推断的板块名称，可能为空
      */
     fun inferSectorByName(stockName: String): String? {
         for ((sectorName, keywords) in SECTOR_KEYWORDS) {
@@ -112,44 +112,44 @@ object SectorDetector {
                 return sectorName
             }
         }
-        // 常見股票名稱模式推斷
+        // 常见股票名称模式推断
         return when {
-            stockName.contains("銀行") || stockName.contains("商行") -> "銀行"
-            stockName.contains("保險") -> "保險"
-            stockName.contains("證券") || stockName.contains("證") -> "證券"
-            stockName.contains("醫藥") || stockName.contains("製藥") || stockName.contains("生物") -> "醫藥"
-            stockName.contains("化工") || stockName.contains("化學") -> "化工"
-            stockName.contains("電子") || stockName.contains("半導體") || stockName.contains("芯片") -> "半導體"
-            stockName.contains("汽車") -> "汽車"
-            stockName.contains("電力") || stockName.contains("水電") || stockName.contains("火電") -> "電力"
+            stockName.contains("银行") || stockName.contains("商行") -> "银行"
+            stockName.contains("保险") -> "保险"
+            stockName.contains("证券") || stockName.contains("证") -> "证券"
+            stockName.contains("医药") || stockName.contains("制药") || stockName.contains("生物") -> "医药"
+            stockName.contains("化工") || stockName.contains("化学") -> "化工"
+            stockName.contains("电子") || stockName.contains("半导体") || stockName.contains("芯片") -> "半导体"
+            stockName.contains("汽车") -> "汽车"
+            stockName.contains("电力") || stockName.contains("水电") || stockName.contains("火电") -> "电力"
             stockName.contains("煤炭") -> "煤炭"
-            stockName.contains("鋼鐵") || stockName.contains("鋼") -> "鋼鐵"
-            stockName.contains("地產") || stockName.contains("置業") || stockName.contains("地產") -> "房地產"
+            stockName.contains("钢铁") || stockName.contains("钢") -> "钢铁"
+            stockName.contains("地产") || stockName.contains("置业") || stockName.contains("地产") -> "房地产"
             else -> null
         }
     }
 
     /**
-     * 綜合檢測：結合文本板塊關鍵詞 + 股票板塊反查 + 名稱推斷
+     * 综合检测：结合文本板块关键词 + 股票板块反查 + 名称推断
      *
-     * @param message 用戶完整消息文本
+     * @param message 用户完整消息文本
      * @param stocks 股票列表 (code, name)
      * @param context Android Context
-     * @return 板塊檢測結果
+     * @return 板块检测结果
      */
     suspend fun detect(
         message: String,
         stocks: List<Pair<String, String>>,
         context: Context
     ): DetectionResult {
-        // 1. 從消息文本中檢測顯式提及的板塊
+        // 1. 从消息文本中检测显式提及的板块
         val textSectors = detectSectors(message)
 
-        // 2. 為每隻股票查找板塊
+        // 2. 为每只股票查找板块
         val stockSectors = mutableMapOf<String, List<String>>()
         for ((code, name) in stocks) {
             val sectors = detectSectorForStock(code, context).ifEmpty {
-                // 降級：名稱推斷
+                // 降级：名称推断
                 listOfNotNull(inferSectorByName(name))
             }
             if (sectors.isNotEmpty()) {
@@ -157,10 +157,10 @@ object SectorDetector {
             }
         }
 
-        // 3. 合併所有板塊（文本檢測 + 股票反查）
+        // 3. 合并所有板块（文本检测 + 股票反查）
         val allSectors = (textSectors + stockSectors.values.flatten()).distinct()
 
-        Log.i(TAG, "板塊檢測: 文本檢測=${textSectors}, 股票板塊=$stockSectors, 合併=$allSectors")
+        Log.i(TAG, "板块检测: 文本检测=${textSectors}, 股票板块=$stockSectors, 合并=$allSectors")
 
         return DetectionResult(
             textSectors = textSectors,
@@ -170,14 +170,14 @@ object SectorDetector {
     }
 
     /**
-     * 板塊檢測結果
+     * 板块检测结果
      */
     data class DetectionResult(
-        /** 從消息文本中檢測到的板塊 */
+        /** 从消息文本中检测到的板块 */
         val textSectors: List<String>,
-        /** 每隻股票對應的板塊 (stockCode -> sectors) */
+        /** 每只股票对应的板块 (stockCode -> sectors) */
         val stockSectors: Map<String, List<String>>,
-        /** 合併後所有板塊（去重） */
+        /** 合并后所有板块（去重） */
         val allSectors: List<String>
     )
 }

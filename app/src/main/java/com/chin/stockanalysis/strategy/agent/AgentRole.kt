@@ -1,9 +1,9 @@
 package com.chin.stockanalysis.strategy.agent
 
 /**
- * ## Agent 角色定義
+ * ## Agent 角色定义
  *
- * 預定義 5 種角色：Orchestrator / Scout / Analyst / Guardian / Executor
+ * 预定义 5 种角色：Orchestrator / Scout / Analyst / Guardian / Executor
  */
 data class AgentRole(
     val name: String,
@@ -26,7 +26,7 @@ object AgentRoles {
 
     val ORCHESTRATOR = AgentRole(
         name = "orchestrator",
-        displayName = "編排者",
+        displayName = "编排者",
         emoji = "🎯",
         permissions = setOf(
             AgentPermission.READ_MARKET_DATA, AgentPermission.READ_PORTFOLIO,
@@ -41,7 +41,7 @@ object AgentRoles {
 
     val SCOUT = AgentRole(
         name = "scout",
-        displayName = "偵察兵",
+        displayName = "侦察兵",
         emoji = "🔍",
         permissions = setOf(
             AgentPermission.READ_MARKET_DATA, AgentPermission.READ_SECTOR_DATA,
@@ -59,7 +59,7 @@ object AgentRoles {
 
     val ANALYST = AgentRole(
         name = "analyst",
-        displayName = "分析師",
+        displayName = "分析师",
         emoji = "📊",
         permissions = setOf(
             AgentPermission.READ_MARKET_DATA, AgentPermission.READ_PORTFOLIO,
@@ -75,7 +75,7 @@ object AgentRoles {
 
     val GUARDIAN = AgentRole(
         name = "guardian",
-        displayName = "風控官",
+        displayName = "风控官",
         emoji = "🛡️",
         permissions = setOf(AgentPermission.READ_PORTFOLIO, AgentPermission.CALL_LLM_FAST),
         denyPermissions = setOf(
@@ -91,7 +91,7 @@ object AgentRoles {
 
     val EXECUTOR = AgentRole(
         name = "executor",
-        displayName = "執行器",
+        displayName = "执行器",
         emoji = "⚡",
         permissions = setOf(
             AgentPermission.READ_MARKET_DATA, AgentPermission.READ_PORTFOLIO,

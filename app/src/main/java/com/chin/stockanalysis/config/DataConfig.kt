@@ -8,12 +8,12 @@ import java.io.InputStreamReader
 import java.net.URLEncoder
 
 /**
- * ## 統一配置管理器
+ * ## 统一配置管理器
  *
- * 從 `assets/data/app_config.json` 加載數據源 URL、AI API 地址等配置。
- * 支持運行時通過 `override()` 覆蓋（用於用戶自定義配置）。
+ * 从 `assets/data/app_config.json` 加载数据源 URL、AI API 地址等配置。
+ * 支持运行时通过 `override()` 覆盖（用于用户自定义配置）。
  *
- * ### Key 命名規則（按域名片段）
+ * ### Key 命名规则（按域名片段）
  * - `data_sources.sina.hq` → https://hq.sinajs.cn
  * - `data_sources.eastmoney.push2` → https://push2.eastmoney.com/api/qt
  * - `data_sources.search.duckduckgo` → https://html.duckduckgo.com/...
@@ -42,9 +42,9 @@ object DataConfig {
             }
             parseJson(JSONObject(json), "")
             loaded = true
-            Log.i(TAG, "配置加載完成，共 ${config.size} 項")
+            Log.i(TAG, "配置加载完成，共 ${config.size} 项")
         } catch (e: Exception) {
-            Log.e(TAG, "配置加載失敗: ${e.message}")
+            Log.e(TAG, "配置加载失败: ${e.message}")
         }
     }
 
@@ -69,7 +69,7 @@ object DataConfig {
 
     fun override(key: String, value: String) { config[key] = value }
 
-    /** 替換 %s 佔位符 */
+    /** 替换 %s 占位符 */
     fun getUrl(key: String, vararg args: String): String {
         var url = get(key)
         args.forEach { url = url.replaceFirst("%s", it) }
@@ -85,12 +85,12 @@ object DataConfig {
     val sinaFinance get() = get("data_sources.sina.finance")
 
     // ═══════════════════════════════════════════════
-    // 騰訊 (tencent)
+    // 腾讯 (tencent)
     // ═══════════════════════════════════════════════
     val tencentGtimg get() = get("data_sources.tencent.gtimg")
 
     // ═══════════════════════════════════════════════
-    // 東方財富 (eastmoney)
+    // 东方财富 (eastmoney)
     // ═══════════════════════════════════════════════
     val eastmoneyPush2 get() = get("data_sources.eastmoney.push2")
     val eastmoneyPush2his get() = get("data_sources.eastmoney.push2his")
@@ -110,7 +110,7 @@ object DataConfig {
     val searchTavilyApiKey get() = get("data_sources.search.tavily_api_key")
 
     // ═══════════════════════════════════════════════
-    // 新聞 (news)
+    // 新闻 (news)
     // ═══════════════════════════════════════════════
     val newsCninfo get() = get("data_sources.news.cninfo")
     val newsCls get() = get("data_sources.news.cls")
@@ -125,21 +125,21 @@ object DataConfig {
     val otherJoinquants get() = get("data_sources.other.joinquants")
 
     // ═══════════════════════════════════════════════
-    // 構建方法
+    // 构建方法
     // ═══════════════════════════════════════════════
 
-    /** 構建東方財富搜索 URL */
+    /** 构建东方财富搜索 URL */
     fun eastmoneySearchUrl(input: String, type: String = "14", count: Int = 1): String =
         "${eastmoneySearchapi}?input=${URLEncoder.encode(input, "UTF-8")}&type=$type&token=$eastmoneySearchToken&count=$count"
 
-    /** 構建 DuckDuckGo 搜索 URL */
+    /** 构建 DuckDuckGo 搜索 URL */
     fun duckduckgoUrl(query: String): String =
         getUrl("data_sources.search.duckduckgo", URLEncoder.encode(query, "UTF-8"))
 
-    /** 構建東方財富 push2 路徑 URL */
+    /** 构建东方财富 push2 路径 URL */
     fun eastmoneyPush2Api(path: String): String = "${eastmoneyPush2}$path"
 
-    /** 獲取 AI Provider 配置 */
+    /** 获取 AI Provider 配置 */
     fun getAiProvider(providerId: String): AiProviderConfig? {
         val prefix = "ai_providers.$providerId"
         val name = get("$prefix.name")

@@ -15,12 +15,12 @@ import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
 /**
- * ## 主力意圖策略（Pipeline-based）
+ * ## 主力意图策略（Pipeline-based）
  *
- * 復用 TTradePipelineNodes 的主力意圖分析邏輯，對全市場掃描。
- * 分析主力當前行為：建倉吸貨 / 震倉洗盤 / 拉升中 / 出貨 / 無法判斷。
+ * 复用 TTradePipelineNodes 的主力意图分析逻辑，对全市场扫描。
+ * 分析主力当前行为：建仓吸货 / 震仓洗盘 / 拉升中 / 出货 / 无法判断。
  *
- * 只輸出「建倉吸貨」和「震倉洗盤」（低買機會）的股票。
+ * 只输出「建仓吸货」和「震仓洗盘」（低买机会）的股票。
  */
 class InstitutionalIntentStrategy(
     private val screener: StockScreener,
@@ -28,8 +28,8 @@ class InstitutionalIntentStrategy(
 ) : Strategy {
 
     override val id = "institutional_intent"
-    override var name = "主力意圖追蹤"
-    override var description = "復用主力意圖分析：量價關係+K線特徵+RSI+布林位置+均線排列，識別建倉/洗盤信號"
+    override var name = "主力意图追踪"
+    override var description = "复用主力意图分析：量价关系+K线特征+RSI+布林位置+均线排列，识别建仓/洗盘信号"
     override val category = StrategyCategory.VOLUME
     override val holdingPeriods = listOf(HoldingPeriod.MID)
     override val source = StrategySource.BUILTIN
@@ -43,11 +43,11 @@ class InstitutionalIntentStrategy(
     override val maxPositions = 5
 
     override var weightFactors = listOf(
-        WeightFactor("volume_price", "量價信號", 30, "放量/縮量+價格變化"),
-        WeightFactor("kline_feature", "K線特徵", 20, "上下影線+陰陽線"),
-        WeightFactor("rsi_zone", "RSI區間", 15, "超賣/中性/超買"),
-        WeightFactor("boll_pos", "布林位置", 15, "上中下軌位置"),
-        WeightFactor("ma_align", "均線排列", 20, "多頭/空頭排列")
+        WeightFactor("volume_price", "量价信号", 30, "放量/缩量+价格变化"),
+        WeightFactor("kline_feature", "K线特征", 20, "上下影线+阴阳线"),
+        WeightFactor("rsi_zone", "RSI区间", 15, "超卖/中性/超买"),
+        WeightFactor("boll_pos", "布林位置", 15, "上中下轨位置"),
+        WeightFactor("ma_align", "均线排列", 20, "多头/空头排列")
     )
 
     override suspend fun screen(): Result<ScreeningResult> = withContext(Dispatchers.Default) {
@@ -86,8 +86,8 @@ class InstitutionalIntentStrategy(
                     val intent = analyzeIntent(sorted)
                     if (intent == null) continue
 
-                    // 只取建倉吸貨和震倉洗盤
-                    if (intent.intent != "建倉吸貨" && intent.intent != "震倉洗盤") continue
+                    // 只取建仓吸货和震仓洗盘
+                    if (intent.intent != "建仓吸货" && intent.intent != "震仓洗盘") continue
 
                     val strength = (intent.confidence * 100).toInt().coerceIn(0, 100)
                     val details = buildMap {
@@ -105,7 +105,7 @@ class InstitutionalIntentStrategy(
                             strategyId = id,
                             category = category,
                             strength = strength,
-                            action = if (intent.intent == "建倉吸貨" && strength >= 65) SignalAction.BUY else SignalAction.WATCH,
+                            action = if (intent.intent == "建仓吸货" && strength >= 65) SignalAction.BUY else SignalAction.WATCH,
                             reason = "主力${intent.intent}: ${intent.volumeSignal}",
                             details = details,
                             currentPrice = stock.price,
@@ -130,7 +130,7 @@ class InstitutionalIntentStrategy(
         }
     }
 
-    // ─── 主力意圖分析（簡化版，復用 TInstIntentNode 核心邏輯）───
+    // ─── 主力意图分析（简化版，复用 TInstIntentNode 核心逻辑）───
 
     data class SimpleIntent(
         val intent: String,
@@ -146,7 +146,7 @@ class InstitutionalIntentStrategy(
         val recent5 = snaps.takeLast(5)
         val recent10 = snaps.takeLast(10)
 
-        // 1. 量價信號
+        // 1. 量价信号
         val avgVol5 = recent5.map { it.volume.toDouble() }.average()
         val avgVol10 = recent10.map { it.volume.toDouble() }.average()
         val volRatio = if (avgVol10 > 0) avgVol5 / avgVol10 else 1.0
@@ -158,22 +158,22 @@ class InstitutionalIntentStrategy(
         } else 0.0
 
         val volumeSignal = when {
-            volRatio > 1.3 && priceChange5 > 0.02 -> "放量上漲"
-            volRatio > 1.3 && abs(priceChange5) < 0.02 -> "放量滯漲"
-            volRatio < 0.7 && abs(priceChange5) < 0.02 -> "縮量橫盤"
-            volRatio < 0.7 && priceChange5 < -0.02 -> "縮量下跌"
+            volRatio > 1.3 && priceChange5 > 0.02 -> "放量上涨"
+            volRatio > 1.3 && abs(priceChange5) < 0.02 -> "放量滞涨"
+            volRatio < 0.7 && abs(priceChange5) < 0.02 -> "缩量横盘"
+            volRatio < 0.7 && priceChange5 < -0.02 -> "缩量下跌"
             volRatio > 1.3 && priceChange5 < -0.02 -> "放量下跌"
-            else -> "量價平穩"
+            else -> "量价平稳"
         }
 
         // 2. RSI
         val rsi = RsiCalculator.fromSnaps(snaps)
         val rsiZone = when {
-            rsi < 30 -> "超賣"
+            rsi < 30 -> "超卖"
             rsi < 40 -> "偏弱"
             rsi < 60 -> "中性"
-            rsi < 70 -> "偏強"
-            else -> "超買"
+            rsi < 70 -> "偏强"
+            else -> "超买"
         }
 
         // 3. 布林位置
@@ -188,40 +188,40 @@ class InstitutionalIntentStrategy(
         val currentPrice = snaps.last().close
         val bollPos = if (upper > lower) (currentPrice - lower) / (upper - lower) else 0.5
         val bollPosition = when {
-            bollPos < 0.2 -> "下軌附近"
-            bollPos < 0.4 -> "中下軌"
-            bollPos < 0.6 -> "中軌"
-            bollPos < 0.8 -> "中上軌"
-            else -> "上軌附近"
+            bollPos < 0.2 -> "下轨附近"
+            bollPos < 0.4 -> "中下轨"
+            bollPos < 0.6 -> "中轨"
+            bollPos < 0.8 -> "中上轨"
+            else -> "上轨附近"
         }
 
-        // 4. 均線排列
+        // 4. 均线排列
         val ma5 = snaps.takeLast(5).map { it.close }.average()
         val ma10 = snaps.takeLast(10).map { it.close }.average()
         val ma20val = snaps.takeLast(20).map { it.close }.average()
         val maBullish = ma5 > ma10 && ma10 > ma20val
         val maBearish = ma5 < ma10 && ma10 < ma20val
 
-        // 5. 綜合判斷
+        // 5. 综合判断
         val (intent, confidence) = when {
-            // 建倉吸貨：縮量橫盤/低量 + 價格低位 + RSI偏弱
-            (volumeSignal == "縮量橫盤" || volumeSignal == "量價平穩") &&
+            // 建仓吸货：缩量横盘/低量 + 价格低位 + RSI偏弱
+            (volumeSignal == "缩量横盘" || volumeSignal == "量价平稳") &&
                 bollPos < 0.4 && rsi < 45 && !maBearish ->
-                "建倉吸貨" to 0.7
+                "建仓吸货" to 0.7
 
-            // 震倉洗盤：放量下跌但RSI不極端 + 均線未完全破壞
+            // 震仓洗盘：放量下跌但RSI不极端 + 均线未完全破坏
             volumeSignal == "放量下跌" && rsi >= 30 && rsi <= 50 && ma10 > ma20val ->
-                "震倉洗盤" to 0.6
+                "震仓洗盘" to 0.6
 
-            // 拉升中：放量上漲 + 均線多頭
-            volumeSignal == "放量上漲" && maBullish && rsi > 50 ->
+            // 拉升中：放量上涨 + 均线多头
+            volumeSignal == "放量上涨" && maBullish && rsi > 50 ->
                 "拉升中" to 0.75
 
-            // 出貨：放量滯漲/放量下跌 + RSI偏高
-            (volumeSignal == "放量滯漲" || volumeSignal == "放量下跌") && rsi > 60 ->
-                "出貨" to 0.65
+            // 出货：放量滞涨/放量下跌 + RSI偏高
+            (volumeSignal == "放量滞涨" || volumeSignal == "放量下跌") && rsi > 60 ->
+                "出货" to 0.65
 
-            else -> "無法判斷" to 0.3
+            else -> "无法判断" to 0.3
         }
 
         return SimpleIntent(intent, confidence, volumeSignal, rsiZone, bollPosition)

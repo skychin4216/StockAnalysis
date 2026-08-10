@@ -20,18 +20,18 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 /**
- * ## AI 精選股 Tab
+ * ## AI 精选股 Tab
  *
- * 顯示當天 AI 精選的股票（從 ai_selected_stock 表讀取），
- * 不合併到自選股（獨立於 WatchlistGroupFragment）。
+ * 显示当天 AI 精选的股票（从 ai_selected_stock 表读取），
+ * 不合并到自选股（独立于 WatchlistGroupFragment）。
  *
- * AppBackgroundRunner 會在切換交易日時自動遷移歷史數據到 user_watchlist。
+ * AppBackgroundRunner 会在切换交易日时自动迁移历史数据到 user_watchlist。
  *
- * UI 採用東方財富風格：
- * - 頂部標題 + 統計摘要
- * - 表格化列表：股票 | 來源 | 分數 | 最新價 | 漲跌幅
- * - 紅漲綠跌
- * - 點擊加入自選股
+ * UI 采用东方财富风格：
+ * - 顶部标题 + 统计摘要
+ * - 表格化列表：股票 | 来源 | 分数 | 最新价 | 涨跌幅
+ * - 红涨绿跌
+ * - 点击加入自选股
  */
 class AiSelectedStocksFragment : Fragment() {
 
@@ -72,7 +72,7 @@ class AiSelectedStocksFragment : Fragment() {
     }
 
     private fun buildUI() {
-        // ── 頂部──
+        // ── 顶部──
         val topBar = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -88,7 +88,7 @@ class AiSelectedStocksFragment : Fragment() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
 
-        // 刷新按鈕
+        // 刷新按钮
         val refreshBtn = TextView(requireContext()).apply {
             text = "🔄"
             textSize = 18f
@@ -98,7 +98,7 @@ class AiSelectedStocksFragment : Fragment() {
         topBar.addView(refreshBtn)
         rootLayout.addView(topBar)
 
-        // ── 狀態欄 ──
+        // ── 状态栏 ──
         val statusRow = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(16, 8, 16, 8)
@@ -120,9 +120,9 @@ class AiSelectedStocksFragment : Fragment() {
         statusRow.addView(lastUpdateTv)
         rootLayout.addView(statusRow)
 
-        // ── 說明 ──
+        // ── 说明 ──
         rootLayout.addView(TextView(requireContext()).apply {
-            text = "⚡ 顯示近 5 天 AI 精選，不同日期用分隔線區分"
+            text = "⚡ 显示近 5 天 AI 精选，不同日期用分隔线区分"
             textSize = 10f
             setTextColor(Color.parseColor("#AAAAAA"))
             setPadding(16, 4, 16, 8)
@@ -144,10 +144,10 @@ class AiSelectedStocksFragment : Fragment() {
                 val today = LocalDate.now().format(DATE_FMT)
                 val minDate = LocalDate.now().minusDays(5).format(DATE_FMT)
 
-                // 讀取近 5 天 AI 精選（按日期降序）
+                // 读取近 5 天 AI 精选（按日期降序）
                 val allStocks = db.aiSelectedStockDao().getRecentDays(minDate)
 
-                // 補全名稱：從 daily_snapshot 查詢缺失名稱的股票
+                // 补全名称：从 daily_snapshot 查询缺失名称的股票
                 stockDataCache.clear()
                 val nameFixedStocks = mutableListOf<AiSelectedStockEntity>()
                 for (stock in allStocks) {
@@ -159,7 +159,7 @@ class AiSelectedStocksFragment : Fragment() {
                     } else stock.stockName
                     nameFixedStocks.add(stock.copy(stockName = fixedName))
 
-                    // 緩存即時行情
+                    // 缓存即时行情
                     val snap = try { db.dailySnapshotDao().getByDateAndCode(today, stock.stockCode) }
                         catch (_: Exception) { null }
                     stockDataCache[stock.stockCode] = snap
@@ -171,9 +171,9 @@ class AiSelectedStocksFragment : Fragment() {
                     renderStockList()
                     val dates = aiStocks.map { it.selectedDate }.distinct().sortedDescending()
                     statusTv.text = if (aiStocks.isNotEmpty())
-                        "✅ 共 ${aiStocks.size} 只 AI 精選股（${dates.size} 天）"
+                        "✅ 共 ${aiStocks.size} 只 AI 精选股（${dates.size} 天）"
                     else
-                        "📌 暫無 AI 精選數據，請先在策略頁面運行選股"
+                        "📌 暂无 AI 精选数据，请先在策略页面运行选股"
 
                     lastUpdateTv.text = java.text.SimpleDateFormat(
                         "HH:mm:ss", java.util.Locale.getDefault()
@@ -181,7 +181,7 @@ class AiSelectedStocksFragment : Fragment() {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    statusTv.text = "❌ 加載失敗: ${e.message?.take(30)}"
+                    statusTv.text = "❌ 加载失败: ${e.message?.take(30)}"
                 }
             }
         }
@@ -192,7 +192,7 @@ class AiSelectedStocksFragment : Fragment() {
 
         if (aiStocks.isEmpty()) {
             stockListContainer.addView(TextView(requireContext()).apply {
-                text = "暫無 AI 精選股"
+                text = "暂无 AI 精选股"
                 textSize = 14f
                 setTextColor(Color.parseColor("#999999"))
                 gravity = Gravity.CENTER
@@ -201,12 +201,12 @@ class AiSelectedStocksFragment : Fragment() {
             return
         }
 
-        // 按日期分組（降序）
+        // 按日期分组（降序）
         val today = LocalDate.now().format(DATE_FMT)
         val grouped = aiStocks.groupBy { it.selectedDate }.toSortedMap(compareByDescending { it })
 
         for ((date, stocks) in grouped) {
-            // ── 日期標題分隔線 ──
+            // ── 日期标题分隔线 ──
             val isToday = date == today
             val dateLabel = if (isToday) "📅 今天 ($date)" else "📅 $date"
             val dateBg = if (isToday) "#FFF8E1" else "#F5F6FA"
@@ -234,14 +234,14 @@ class AiSelectedStocksFragment : Fragment() {
                 ).apply { setMargins(0, if (date != grouped.keys.first()) 12 else 0, 0, 0) }
             })
 
-            // ── 該日期的表頭 ──
+            // ── 该日期的表头 ──
             val headerRow = LinearLayout(requireContext()).apply {
                 orientation = LinearLayout.HORIZONTAL
                 setBackgroundColor(Color.parseColor("#EEEEEE"))
                 setPadding(8, 6, 8, 6)
                 gravity = Gravity.CENTER_VERTICAL
             }
-            for ((text, weight) in listOf("股票" to 2.5f, "來源" to 1.2f, "分數" to 0.8f, "最新價" to 1.2f, "漲跌幅" to 1.0f)) {
+            for ((text, weight) in listOf("股票" to 2.5f, "来源" to 1.2f, "分数" to 0.8f, "最新价" to 1.2f, "涨跌幅" to 1.0f)) {
                 headerRow.addView(TextView(requireContext()).apply {
                     this.text = text
                     textSize = 10f
@@ -267,7 +267,7 @@ class AiSelectedStocksFragment : Fragment() {
             setBackgroundColor(Color.WHITE)
             setPadding(8, 10, 8, 10)
             gravity = Gravity.CENTER_VERTICAL
-            // 點擊跳轉到股票詳情頁
+            // 点击跳转到股票详情页
             setOnClickListener {
                 StockDetailNavigator.navigateFromFragment(
                     this@AiSelectedStocksFragment,
@@ -277,7 +277,7 @@ class AiSelectedStocksFragment : Fragment() {
                     changePct = snap?.changePct ?: 0.0
                 )
             }
-            // 底部分隔線
+            // 底部分隔线
             val divider = View(requireContext()).apply {
                 setBackgroundColor(Color.parseColor("#F0F0F0"))
                 layoutParams = LinearLayout.LayoutParams(
@@ -286,7 +286,7 @@ class AiSelectedStocksFragment : Fragment() {
             }
         }
 
-        // 股票名稱 + 代碼
+        // 股票名称 + 代码
         val nameCell = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2.5f)
@@ -307,10 +307,10 @@ class AiSelectedStocksFragment : Fragment() {
         })
         row.addView(nameCell)
 
-        // 來源
+        // 来源
         val sourceLabel = when (stock.source) {
-            "shortterm" -> "短線"
-            "midterm" -> "中線"
+            "shortterm" -> "短线"
+            "midterm" -> "中线"
             "agent" -> "Agent"
             else -> stock.source.take(4)
         }
@@ -322,7 +322,7 @@ class AiSelectedStocksFragment : Fragment() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.2f)
         })
 
-        // 分數
+        // 分数
         val scoreColor = when {
             stock.score >= 80 -> "#E65100"
             stock.score >= 60 -> "#2E7D32"
@@ -337,7 +337,7 @@ class AiSelectedStocksFragment : Fragment() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 0.8f)
         })
 
-        // 最新價 & 漲跌幅
+        // 最新价 & 涨跌幅
         if (snap != null) {
             row.addView(TextView(requireContext()).apply {
                 text = "¥${"%.2f".format(snap.close)}"
@@ -374,9 +374,9 @@ class AiSelectedStocksFragment : Fragment() {
             })
         }
 
-        // ── 加入自選按鈕（獨立點擊，不觸發行跳轉） ──
+        // ── 加入自选按钮（独立点击，不触发行跳转） ──
         row.addView(TextView(requireContext()).apply {
-            text = "+自選"
+            text = "+自选"
             textSize = 10f
             setTextColor(Color.parseColor("#FFFFFF"))
             setBackgroundColor(Color.parseColor("#43A047"))
@@ -389,7 +389,7 @@ class AiSelectedStocksFragment : Fragment() {
             setOnClickListener { addToWatchlist(stock) }
         })
 
-        // ── 分隔線 ──
+        // ── 分隔线 ──
         val wrapper = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
         }
@@ -404,7 +404,7 @@ class AiSelectedStocksFragment : Fragment() {
     }
 
     /**
-     * 手動將 AI 精選股加入自選股
+     * 手动将 AI 精选股加入自选股
      */
     private fun addToWatchlist(stock: AiSelectedStockEntity) {
         lifecycleScope.launch(Dispatchers.IO) {
@@ -416,7 +416,7 @@ class AiSelectedStocksFragment : Fragment() {
                     withContext(Dispatchers.Main) {
                         Toast.makeText(
                             requireContext(),
-                            "「${stock.stockName}」已在自選股中",
+                            "「${stock.stockName}」已在自选股中",
                             Toast.LENGTH_SHORT
                         ).show()
                     }
@@ -435,7 +435,7 @@ class AiSelectedStocksFragment : Fragment() {
                 withContext(Dispatchers.Main) {
                     Toast.makeText(
                         requireContext(),
-                        "✅ 已加入自選股: ${stock.stockName}",
+                        "✅ 已加入自选股: ${stock.stockName}",
                         Toast.LENGTH_SHORT
                     ).show()
                 }
@@ -443,7 +443,7 @@ class AiSelectedStocksFragment : Fragment() {
                 withContext(Dispatchers.Main) {
                     Toast.makeText(
                         requireContext(),
-                        "❌ 加入失敗: ${e.message?.take(30)}",
+                        "❌ 加入失败: ${e.message?.take(30)}",
                         Toast.LENGTH_SHORT
                     ).show()
                 }

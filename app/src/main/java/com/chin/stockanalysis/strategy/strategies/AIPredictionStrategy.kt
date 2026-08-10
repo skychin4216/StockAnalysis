@@ -32,7 +32,7 @@ class AIPredictionStrategy(private val context: Context) : Strategy {
     override val category = StrategyCategory.CUSTOM
     override val holdingPeriods = listOf(HoldingPeriod.MID)
     override val source = StrategySource.USER_CUSTOM
-    override val signalExpiryHours = 72    // 3個交易日
+    override val signalExpiryHours = 72    // 3个交易日
 
     override val config = StrategyConfig.custom(
         params = mapOf(
@@ -52,9 +52,9 @@ class AIPredictionStrategy(private val context: Context) : Strategy {
     /** 由外部注入：其他策略已执行完的结果。注入模式下设置，独立模式下留空。 */
     var strategyResults: List<ScreeningResult> = emptyList()
     var targetDate: String = ""
-    /** 由外部注入：大盤分析報告，AI 預測時參考市場環境 */
+    /** 由外部注入：大盘分析报告，AI 预测时参考市场环境 */
     var marketContext: String = ""
-    /** 由外部注入：板塊上下文（用戶關注/回彈板塊/板塊大年） */
+    /** 由外部注入：板块上下文（用户关注/回弹板块/板块大年） */
     var sectorContext: com.chin.stockanalysis.strategy.predict.AIPredictionEngine.SectorContext? = null
 
     override suspend fun screen(): Result<ScreeningResult> = withContext(Dispatchers.IO) {
@@ -99,7 +99,7 @@ class AIPredictionStrategy(private val context: Context) : Strategy {
                     category = category,
                     strength = pick.compositeScore,
                     action = when { pick.rank <= 3 -> SignalAction.BUY; else -> SignalAction.WATCH },
-                    reason = "AI綜合推薦(${prediction.mode}): ${pick.reason.take(60)}",
+                    reason = "AI综合推荐(${prediction.mode}): ${pick.reason.take(60)}",
                     details = mapOf(
                         "ai_rank" to "${pick.rank}",
                         "composite_score" to "${pick.compositeScore}",

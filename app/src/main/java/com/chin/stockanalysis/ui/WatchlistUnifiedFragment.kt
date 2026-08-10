@@ -41,17 +41,17 @@ import java.time.format.DateTimeFormatter
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * ## 精選股票 統一頁面
+ * ## 精选股票 统一页面
  *
- * 頂部三個切換按鈕：⭐ 自選 | 🤖 AI精選 | 🎯 備選池
- * 共用同一個表格 View，切換時僅刷新數據源：
+ * 顶部三个切换按钮：⭐ 自选 | 🤖 AI精选 | 🎯 备选池
+ * 共用同一个表格 View，切换时仅刷新数据源：
  *
- * | 股票名稱 | 現價 | 漲幅 | 漲跌 |
+ * | 股票名称 | 现价 | 涨幅 | 涨跌 |
  * | 603629   | 12.50| +3.2%| +0.39|
  *
- * - 自選模式：讀取 user_watchlist 表
- * - AI精選模式：讀取 ai_selected_stock 表，當天數據
- * - 備選池模式：CandidatePool.getPool() → 核心龍頭 + AI熱門板塊龍頭
+ * - 自选模式：读取 user_watchlist 表
+ * - AI精选模式：读取 ai_selected_stock 表，当天数据
+ * - 备选池模式：CandidatePool.getPool() → 核心龙头 + AI热门板块龙头
  */
 class WatchlistUnifiedFragment : Fragment() {
 
@@ -67,43 +67,43 @@ class WatchlistUnifiedFragment : Fragment() {
     private lateinit var headerRow: LinearLayout
     private var trendWebView: android.webkit.WebView? = null
 
-    /** 趨勢圖 OCR 截圖選擇器 */
+    /** 趋势图 OCR 截图选择器 */
     private val trendOcrPicker = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri -> uri?.let { processTrendOcr(it) } }
 
-    /** 切換模式 */
+    /** 切换模式 */
     private enum class ViewMode { WATCHLIST, AI, CANDIDATE, TREND_IMAGES }
     private var currentMode = ViewMode.WATCHLIST
 
-    /** 僅主板開關（僅備選池模式可見） */
+    /** 仅主板开关（仅备选池模式可见） */
     private var showOnlyMainBoard = true
     private lateinit var mainBoardSwitch: Switch
     private lateinit var mainBoardRow: LinearLayout
 
-    /** 來源過濾 */
+    /** 来源过滤 */
     private var selectedSource: String = "" // 空 = 全部
     private var availableSources: List<String> = emptyList()
     private lateinit var sourceFilterRow: LinearLayout
 
-    /** 自選數據緩存 */
+    /** 自选数据缓存 */
     private var watchlistData: List<UserWatchlistEntity> = emptyList()
-    /** AI 精選數據緩存 */
+    /** AI 精选数据缓存 */
     private var aiStocksData: List<AiSelectedStockEntity> = emptyList()
-    /** 備選池數據緩存 */
+    /** 备选池数据缓存 */
     private var candidatePoolSnapshot: CandidatePool.PoolSnapshot? = null
-    /** 行情緩存 */
+    /** 行情缓存 */
     private val snapshotCache = ConcurrentHashMap<String, DailySnapshotEntity?>()
 
-    /** 利潤質量計算協程（用於取消） */
+    /** 利润质量计算协程（用于取消） */
     private var qualityJob: Job? = null
 
-    /** 市場環境分析協程 */
+    /** 市场环境分析协程 */
     private var marketEnvJob: Job? = null
 
     companion object {
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
-        private const val MIN_RELOAD_INTERVAL_MS = 2 * 60 * 1000L  // 2分鐘內不重複加載
+        private const val MIN_RELOAD_INTERVAL_MS = 2 * 60 * 1000L  // 2分钟内不重复加载
     }
 
     private var lastLoadTime: Long = 0
@@ -129,11 +129,11 @@ class WatchlistUnifiedFragment : Fragment() {
         }
         sv.addView(rootLayout)
         buildUI()
-        // loadData 由 onResume 統一觸發，避免重複
+        // loadData 由 onResume 统一触发，避免重复
         return sv
     }
 
-    /** 每次切換回此 Tab 時檢查是否需要刷新（2分鐘內不重複加載數據） */
+    /** 每次切换回此 Tab 时检查是否需要刷新（2分钟内不重复加载数据） */
     override fun onResume() {
         super.onResume()
         val now = System.currentTimeMillis()
@@ -146,14 +146,14 @@ class WatchlistUnifiedFragment : Fragment() {
     }
 
     /**
-     * 異步加載市場環境數據，更新頂部 marketEnvBar
+     * 异步加载市场环境数据，更新顶部 marketEnvBar
      */
     private fun loadMarketEnvironment() {
         marketEnvJob?.cancel()
         marketEnvJob = viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val marketEnvBar = rootLayout.findViewWithTag<TextView>("marketEnvBar") ?: return@launch
-                marketEnvBar.text = "正在分析市場環境..."
+                marketEnvBar.text = "正在分析市场环境..."
                 marketEnvBar.setBackgroundColor(Color.parseColor("#FFF3E0"))
                 marketEnvBar.visibility = View.VISIBLE
 
@@ -190,8 +190,8 @@ class WatchlistUnifiedFragment : Fragment() {
     }
 
     /**
-     * 異步計算每只股票的利潤質量，並更新表格中的質量標籤。
-     * 標籤通過 tag "qualityLabel_${code}" 定位。
+     * 异步计算每只股票的利润质量，并更新表格中的质量标签。
+     * 标签通过 tag "qualityLabel_${code}" 定位。
      */
     private fun computeProfitQualityLabels(items: List<StockTableHelper.StockDisplayItem>) {
         qualityJob?.cancel()
@@ -233,7 +233,7 @@ class WatchlistUnifiedFragment : Fragment() {
     }
 
     private fun buildUI() {
-        // ── 切換按鈕行 (3 個按鈕) ──
+        // ── 切换按钮行 (3 个按钮) ──
         val toggleRow = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(Color.WHITE)
@@ -290,7 +290,7 @@ class WatchlistUnifiedFragment : Fragment() {
         toggleRow.addView(toggleInner)
         rootLayout.addView(toggleRow)
 
-        // ── 來源過濾行（自選模式下可見）──
+        // ── 来源过滤行（自选模式下可见）──
         val sourceFilterScroll = HorizontalScrollView(requireContext()).apply {
             isHorizontalScrollBarEnabled = false
             setBackgroundColor(Color.WHITE)
@@ -303,7 +303,7 @@ class WatchlistUnifiedFragment : Fragment() {
         sourceFilterScroll.addView(sourceFilterRow)
         rootLayout.addView(sourceFilterScroll)
 
-        // ── 僅主板開關（僅備選池模式可見）──
+        // ── 仅主板开关（仅备选池模式可见）──
         mainBoardRow = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -312,7 +312,7 @@ class WatchlistUnifiedFragment : Fragment() {
             visibility = View.GONE
         }
         mainBoardRow.addView(TextView(requireContext()).apply {
-            text = "僅主板"
+            text = "仅主板"
             textSize = 13f
             setTextColor(Color.parseColor("#333333"))
             setPadding(0, 0, 8, 0)
@@ -327,10 +327,10 @@ class WatchlistUnifiedFragment : Fragment() {
         mainBoardRow.addView(mainBoardSwitch)
         rootLayout.addView(mainBoardRow)
 
-        // ── 市場環境信息條 ──
+        // ── 市场环境信息条 ──
         val marketEnvBar = TextView(requireContext()).apply {
             tag = "marketEnvBar"
-            text = "正在分析市場環境..."
+            text = "正在分析市场环境..."
             textSize = 12f
             setTextColor(Color.parseColor("#333333"))
             setPadding(16, 8, 16, 8)
@@ -339,7 +339,7 @@ class WatchlistUnifiedFragment : Fragment() {
         }
         rootLayout.addView(marketEnvBar)
 
-        // ── 狀態列 ──
+        // ── 状态列 ──
         statusRow = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(16, 6, 16, 6)
@@ -361,7 +361,7 @@ class WatchlistUnifiedFragment : Fragment() {
         statusRow.addView(lastUpdateTv)
         rootLayout.addView(statusRow)
 
-        // ── 表頭 ──
+        // ── 表头 ──
         headerRow = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -433,16 +433,16 @@ class WatchlistUnifiedFragment : Fragment() {
         candidateBtn.setTypeface(null, if (currentMode == ViewMode.CANDIDATE) Typeface.BOLD else Typeface.NORMAL)
         trendImagesBtn.setTypeface(null, if (currentMode == ViewMode.TREND_IMAGES) Typeface.BOLD else Typeface.NORMAL)
 
-        // 僅主板開關僅在備選池模式可見
+        // 仅主板开关仅在备选池模式可见
         mainBoardRow.visibility = if (currentMode == ViewMode.CANDIDATE) View.VISIBLE else View.GONE
-        // 來源過濾僅在自選模式可見
+        // 来源过滤仅在自选模式可见
         (sourceFilterRow.parent as? View)?.visibility = if (currentMode == ViewMode.WATCHLIST && availableSources.size > 1) View.VISIBLE else View.GONE
-        // 狀態欄在趨勢圖模式隱藏
+        // 状态栏在趋势图模式隐藏
         statusRow.visibility = if (currentMode == ViewMode.TREND_IMAGES) View.GONE else View.VISIBLE
     }
 
     // ═══════════════════════════════════════
-    // 數據加載
+    // 数据加载
     // ═══════════════════════════════════════
 
     private fun loadData() {
@@ -459,17 +459,17 @@ class WatchlistUnifiedFragment : Fragment() {
                 val db = StockDatabase.getInstance(requireContext())
                 val today = LocalDate.now().format(DATE_FMT)
 
-                // 加載自選
+                // 加载自选
                 watchlistData = db.userWatchlistDao().getAll()
 
-                // 加載來源列表
+                // 加载来源列表
                 availableSources = db.userWatchlistDao().getDistinctSources()
 
-                // 加載 AI 精選（近 5 天）
+                // 加载 AI 精选（近 5 天）
                 val minDate = LocalDate.now().minusDays(5).format(DATE_FMT)
                 aiStocksData = db.aiSelectedStockDao().getRecentDays(minDate)
 
-                // 獲取行情
+                // 获取行情
                 val allCodes = (watchlistData.map { it.stockCode } + aiStocksData.map { it.stockCode }).distinct()
                 snapshotCache.clear()
                 for (code in allCodes) {
@@ -498,7 +498,7 @@ class WatchlistUnifiedFragment : Fragment() {
 
     private fun loadCandidatePool(forceRefresh: Boolean) {
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
-            statusTv.text = "加載備選池..."
+            statusTv.text = "加载备选池..."
             listContainer.removeAllViews()
         }
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
@@ -512,19 +512,19 @@ class WatchlistUnifiedFragment : Fragment() {
                     } else {
                         snapshot.stocks.size
                     }
-                    statusTv.text = "✅ 備選池 ${filtered} 只（總 ${snapshot.stocks.size}）"
+                    statusTv.text = "✅ 备选池 ${filtered} 只（总 ${snapshot.stocks.size}）"
                     lastUpdateTv.text = "更新: ${snapshot.updateTime}"
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    statusTv.text = "❌ 加載失敗: ${e.message?.take(30)}"
+                    statusTv.text = "❌ 加载失败: ${e.message?.take(30)}"
                 }
             }
         }
     }
 
     // ═══════════════════════════════════════
-    // 渲染列表（使用 StockTableHelper 公共函數）
+    // 渲染列表（使用 StockTableHelper 公共函数）
     // ═══════════════════════════════════════
 
     private fun renderList() {
@@ -543,7 +543,7 @@ class WatchlistUnifiedFragment : Fragment() {
     }
 
     // ═══════════════════════════════════════
-    //  來源過濾 Chips
+    //  来源过滤 Chips
     // ═══════════════════════════════════════
 
     private fun renderSourceFilterChips() {
@@ -600,12 +600,12 @@ class WatchlistUnifiedFragment : Fragment() {
     }
 
     private fun sourceLabel(source: String): String = when (source) {
-        "manual" -> "手動"
-        "midterm" -> "中線"
-        "shortterm" -> "短線"
+        "manual" -> "手动"
+        "midterm" -> "中线"
+        "shortterm" -> "短线"
         "ultra_short" -> "超短"
-        "long_term" -> "長線"
-        "AI推薦" -> "AI推薦"
+        "long_term" -> "长线"
+        "AI推荐" -> "AI推荐"
         else -> source
     }
 
@@ -613,7 +613,7 @@ class WatchlistUnifiedFragment : Fragment() {
         val allCodes = if (currentMode == ViewMode.AI) {
             aiStocksData.map { it.stockCode }
         } else {
-            // 自選模式：按來源過濾
+            // 自选模式：按来源过滤
             val data = if (selectedSource.isNotEmpty()) {
                 watchlistData.filter { it.source == selectedSource }
             } else {
@@ -624,7 +624,7 @@ class WatchlistUnifiedFragment : Fragment() {
         if (allCodes.isEmpty()) {
             listContainer.removeAllViews()
             listContainer.addView(TextView(requireContext()).apply {
-                text = if (currentMode == ViewMode.AI) "暂無 AI 精選数据，请先運行策略" else "暂無自選股，請添加"
+                text = if (currentMode == ViewMode.AI) "暂无 AI 精选数据，请先运行策略" else "暂无自选股，请添加"
                 textSize = 14f; setTextColor(Color.parseColor("#999999"))
                 gravity = Gravity.CENTER; setPadding(0, 48, 0, 48)
             })
@@ -678,7 +678,7 @@ class WatchlistUnifiedFragment : Fragment() {
                             }
                         )
                     )
-                    // 表格構建完成後，異步計算利潤質量標籤
+                    // 表格构建完成后，异步计算利润质量标签
                     computeProfitQualityLabels(items)
                 }
             } catch (e: Exception) {
@@ -694,7 +694,7 @@ class WatchlistUnifiedFragment : Fragment() {
         if (snapshot == null || snapshot.stocks.isEmpty()) {
             listContainer.removeAllViews()
             listContainer.addView(TextView(requireContext()).apply {
-                text = "暫無備選池數據"
+                text = "暂无备选池数据"
                 textSize = 14f; setTextColor(Color.parseColor("#999999"))
                 gravity = Gravity.CENTER; setPadding(0, 48, 0, 48)
             })
@@ -712,7 +712,7 @@ class WatchlistUnifiedFragment : Fragment() {
         if (filteredStocks.isEmpty()) {
             listContainer.removeAllViews()
             listContainer.addView(TextView(ctx).apply {
-                text = "暫無符合條件的股票"; textSize = 14f
+                text = "暂无符合条件的股票"; textSize = 14f
                 setTextColor(Color.parseColor("#999999"))
                 gravity = Gravity.CENTER; setPadding(0, 48, 0, 48)
             })
@@ -758,7 +758,7 @@ class WatchlistUnifiedFragment : Fragment() {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    statusTv.text = "❌ 渲染失敗: ${e.message?.take(30)}"
+                    statusTv.text = "❌ 渲染失败: ${e.message?.take(30)}"
                 }
             }
         }
@@ -769,14 +769,14 @@ class WatchlistUnifiedFragment : Fragment() {
     }
 
     // ═══════════════════════════════════════
-    // 趨勢圖譜展示（WebView 加載 SVG 圖譜）
+    // 趋势图谱展示（WebView 加载 SVG 图谱）
     // ═══════════════════════════════════════
 
     private fun renderTrendImages() {
         listContainer.removeAllViews()
         val ctx = requireContext()
 
-        // ── OCR 導入按鈕行 ──
+        // ── OCR 导入按钮行 ──
         val ocrRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -784,14 +784,14 @@ class WatchlistUnifiedFragment : Fragment() {
             setBackgroundColor(Color.WHITE)
         }
         val ocrHint = TextView(ctx).apply {
-            text = "截圖導入K線形態："
+            text = "截图导入K线形态："
             textSize = 13f
             setTextColor(Color.parseColor("#666666"))
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         ocrRow.addView(ocrHint)
         val ocrBtn = Button(ctx).apply {
-            text = "📷 選擇截圖"
+            text = "📷 选择截图"
             textSize = 13f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#6200EA"))
@@ -801,7 +801,7 @@ class WatchlistUnifiedFragment : Fragment() {
         ocrRow.addView(ocrBtn)
         listContainer.addView(ocrRow)
 
-        // ── OCR 狀態提示 ──
+        // ── OCR 状态提示 ──
         val ocrStatusTv = TextView(ctx).apply {
             text = ""
             textSize = 12f
@@ -812,7 +812,7 @@ class WatchlistUnifiedFragment : Fragment() {
         }
         listContainer.addView(ocrStatusTv)
 
-        // ── WebView 加載圖譜 ──
+        // ── WebView 加载图谱 ──
         val webView = android.webkit.WebView(ctx).apply {
             settings.javaScriptEnabled = true
             settings.loadWithOverviewMode = true
@@ -829,7 +829,7 @@ class WatchlistUnifiedFragment : Fragment() {
             webView.loadDataWithBaseURL("file:///android_asset/trend_charts/", html, "text/html", "UTF-8", null)
         } catch (e: Exception) {
             listContainer.addView(TextView(ctx).apply {
-                text = "趨勢圖譜加載失敗: ${e.message}"
+                text = "趋势图谱加载失败: ${e.message}"
                 textSize = 14f; setTextColor(Color.parseColor("#999999"))
                 gravity = Gravity.CENTER; setPadding(0, 48, 0, 48)
             })
@@ -842,13 +842,13 @@ class WatchlistUnifiedFragment : Fragment() {
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     // ═══════════════════════════════════════
-    // 趨勢圖 OCR 識別 + AI 解析 + 動態注入
+    // 趋势图 OCR 识别 + AI 解析 + 动态注入
     // ═══════════════════════════════════════
 
     private fun processTrendOcr(uri: android.net.Uri) {
         val ctx = requireContext()
         val ocrStatus = listContainer.findViewWithTag<TextView>("ocrStatus")
-        ocrStatus?.apply { text = "🔄 正在識別截圖..."; visibility = View.VISIBLE }
+        ocrStatus?.apply { text = "🔄 正在识别截图..."; visibility = View.VISIBLE }
 
         try {
             val inputStream = ctx.contentResolver.openInputStream(uri)
@@ -856,7 +856,7 @@ class WatchlistUnifiedFragment : Fragment() {
             inputStream?.close()
 
             if (bitmap == null) {
-                ocrStatus?.text = "❌ 無法讀取圖片"
+                ocrStatus?.text = "❌ 无法读取图片"
                 return
             }
 
@@ -867,7 +867,7 @@ class WatchlistUnifiedFragment : Fragment() {
                 .addOnSuccessListener { visionText ->
                     if (!isAdded) return@addOnSuccessListener
                     val rawText = visionText.text
-                    ocrStatus?.text = "🤖 AI 正在分析K線形態..."
+                    ocrStatus?.text = "🤖 AI 正在分析K线形态..."
 
                     viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                         val patternJson = parseTrendWithAi(rawText)
@@ -875,24 +875,24 @@ class WatchlistUnifiedFragment : Fragment() {
                             if (!isAdded) return@withContext
                             if (patternJson != null) {
                                 injectPatternToWebView(patternJson)
-                                ocrStatus?.text = "✅ 已添加形態：${patternJson.optString("name")}"
+                                ocrStatus?.text = "✅ 已添加形态：${patternJson.optString("name")}"
                             } else {
-                                ocrStatus?.text = "⚠️ 未能識別K線形態，請確保截圖包含清晰的K線圖表"
+                                ocrStatus?.text = "⚠️ 未能识别K线形态，请确保截图包含清晰的K线图表"
                             }
                         }
                     }
                 }
                 .addOnFailureListener { e ->
                     if (!isAdded) return@addOnFailureListener
-                    ocrStatus?.text = "❌ OCR 識別失敗: ${e.message}"
+                    ocrStatus?.text = "❌ OCR 识别失败: ${e.message}"
                 }
         } catch (e: Exception) {
-            if (isAdded) ocrStatus?.text = "❌ 圖片處理失敗: ${e.message}"
+            if (isAdded) ocrStatus?.text = "❌ 图片处理失败: ${e.message}"
         }
     }
 
     /**
-     * 使用 AI 從 OCR 文字中提取 K 線形態數據。
+     * 使用 AI 从 OCR 文字中提取 K 线形态数据。
      * 返回 JSONObject 格式：{cat, type, name, en, data:[{o,h,l,c,label}], desc, rules}
      */
     private suspend fun parseTrendWithAi(ocrText: String): JSONObject? {
@@ -904,35 +904,35 @@ class WatchlistUnifiedFragment : Fragment() {
 
         try {
             val prompt = buildString {
-                appendLine("你是一個專業的K線形態分析助手。")
-                appendLine("以下是從K線截圖中OCR識別出的文字，可能包含K線走勢、價格數據、技術指標等信息。")
+                appendLine("你是一个专业的K线形态分析助手。")
+                appendLine("以下是从K线截图中OCR识别出的文字，可能包含K线走势、价格数据、技术指标等信息。")
                 appendLine()
-                appendLine("OCR文字內容：")
+                appendLine("OCR文字内容：")
                 appendLine("---")
                 appendLine(ocrText)
                 appendLine("---")
                 appendLine()
-                appendLine("請分析這些內容，識別出K線形態，並返回JSON格式數據：")
+                appendLine("请分析这些内容，识别出K线形态，并返回JSON格式数据：")
                 appendLine("{")
                 appendLine("  \"cat\": \"single|two|three|five|trend|complex\",")
                 appendLine("  \"type\": \"bull|bear|neutral\",")
-                appendLine("  \"name\": \"形態中文名稱\",")
+                appendLine("  \"name\": \"形态中文名称\",")
                 appendLine("  \"en\": \"English Pattern Name\",")
-                appendLine("  \"data\": [{\"o\":開盤價,\"h\":最高價,\"l\":最低價,\"c\":收盤價,\"label\":\"D1\"}, ...],")
-                appendLine("  \"desc\": \"形態描述（含<strong>標籤</strong>）\",")
-                appendLine("  \"rules\": \"識別要點\"")
+                appendLine("  \"data\": [{\"o\":开盘价,\"h\":最高价,\"l\":最低价,\"c\":收盘价,\"label\":\"D1\"}, ...],")
+                appendLine("  \"desc\": \"形态描述（含<strong>标签</strong>）\",")
+                appendLine("  \"rules\": \"识别要点\"")
                 appendLine("}")
                 appendLine()
-                appendLine("cat分類規則：")
-                appendLine("- single: 單根K線（大陽線、錘子線、十字星等）")
-                appendLine("- two: 雙K線組合（吞沒、孕線等）")
-                appendLine("- three: 三K線組合（早晨之星、紅三兵等）")
-                appendLine("- five: 多K線組合（4-5根K線形態）")
-                appendLine("- trend: 趨勢形態（上升/下跌趨勢、通道等）")
-                appendLine("- complex: 複雜形態（10-30日的大型形態）")
+                appendLine("cat分类规则：")
+                appendLine("- single: 单根K线（大阳线、锤子线、十字星等）")
+                appendLine("- two: 双K线组合（吞没、孕线等）")
+                appendLine("- three: 三K线组合（早晨之星、红三兵等）")
+                appendLine("- five: 多K线组合（4-5根K线形态）")
+                appendLine("- trend: 趋势形态（上升/下跌趋势、通道等）")
+                appendLine("- complex: 复杂形态（10-30日的大型形态）")
                 appendLine()
-                appendLine("data中的價格應為合理的相對價格，反映截圖中的走勢。")
-                appendLine("如果無法確定準確價格，請根據走勢描述估算合理的OHLC數據。")
+                appendLine("data中的价格应为合理的相对价格，反映截图中的走势。")
+                appendLine("如果无法确定准确价格，请根据走势描述估算合理的OHLC数据。")
                 appendLine("只返回JSON，不要其他文字。")
             }
 
@@ -960,7 +960,7 @@ class WatchlistUnifiedFragment : Fragment() {
                 null
             }
         } catch (e: Exception) {
-            android.util.Log.e("TrendOCR", "AI 解析失敗: ${e.message}", e)
+            android.util.Log.e("TrendOCR", "AI 解析失败: ${e.message}", e)
             return null
         } finally {
             AiProviderPool.releaseNonBlocking(slot)
@@ -968,7 +968,7 @@ class WatchlistUnifiedFragment : Fragment() {
     }
 
     /**
-     * 將解析到的 K 線形態注入 WebView。
+     * 将解析到的 K 线形态注入 WebView。
      */
     private fun injectPatternToWebView(patternJson: JSONObject) {
         val webView = trendWebView ?: return
@@ -977,28 +977,28 @@ class WatchlistUnifiedFragment : Fragment() {
             webView.evaluateJavascript(
                 "addPatternFromApp('$jsonStr')",
                 android.webkit.ValueCallback<String> { result ->
-                    android.util.Log.i("TrendOCR", "注入結果: $result")
+                    android.util.Log.i("TrendOCR", "注入结果: $result")
                 }
             )
         }
     }
 
     /**
-     * 外部分享入口：接收其他應用分享的圖片/PDF/文字，
-     * 切換到自選 Tab 並過濾 AI 推薦來源。
+     * 外部分享入口：接收其他应用分享的图片/PDF/文字，
+     * 切换到自选 Tab 并过滤 AI 推荐来源。
      */
     fun handleSharedContent(uri: android.net.Uri?, text: String?) {
-        // 切換到自選模式並過濾 AI 推薦
+        // 切换到自选模式并过滤 AI 推荐
         currentMode = ViewMode.WATCHLIST
-        selectedSource = "AI推薦"
+        selectedSource = "AI推荐"
         updateToggleState()
         loadData()
     }
 
-    /** 切換到自選模式並過濾 AI 推薦來源（從 AI 對話框導航過來時調用） */
+    /** 切换到自选模式并过滤 AI 推荐来源（从 AI 对话框导航过来时调用） */
     fun switchToInstitutionalMode() {
         currentMode = ViewMode.WATCHLIST
-        selectedSource = "AI推薦"
+        selectedSource = "AI推荐"
         updateToggleState()
         loadData()
     }

@@ -142,7 +142,7 @@ class AutoSellEngine(private val context: Context) {
             val todayPriceMap = todayData.associate { it.code to it.close }.toMutableMap()
             val todayVolumeMap = todayData.associate { it.code to it.volume }
 
-            // 盤中交易時段：用實時價覆蓋收盤快照，止損/止盈判斷更準確
+            // 盘中交易时段：用实时价覆盖收盘快照，止损/止盈判断更准确
             val now = LocalTime.now()
             val morningSession = now >= LocalTime.of(9, 30) && now <= LocalTime.of(11, 30)
             val afternoonSession = now >= LocalTime.of(13, 0) && now <= LocalTime.of(15, 0)
@@ -159,9 +159,9 @@ class AutoSellEngine(private val context: Context) {
                             overrideCount++
                         }
                     }
-                    Log.i(TAG, "盤中實時價覆蓋: $overrideCount/${codes.size} 只")
+                    Log.i(TAG, "盘中实时价覆盖: $overrideCount/${codes.size} 只")
                 } catch (e: Exception) {
-                    Log.w(TAG, "盤中實時價獲取失敗: ${e.message}")
+                    Log.w(TAG, "盘中实时价获取失败: ${e.message}")
                 }
             }
             val recentDates = db.dailySnapshotDao().getAvailableDates(30).sorted()
@@ -217,7 +217,7 @@ class AutoSellEngine(private val context: Context) {
                     "drawdown%" to "%.2f".format(-drawdownFromPeak)))
         }
 
-        // ③ 時間+無進展止損 (Time + No Progress Stop)
+        // ③ 时间+无进展止损 (Time + No Progress Stop)
         // 持仓超时且近3日无正向动量（涨幅<1%）→ 死钱换股
         if (snap.daysHeld >= config.timeForceCloseDays && snap.priceHistory.size >= 4) {
             val recent3 = snap.priceHistory.takeLast(4)
@@ -399,7 +399,7 @@ class AutoSellEngine(private val context: Context) {
         java.time.temporal.ChronoUnit.DAYS.between(LocalDate.parse(buyDate, DATE_FMT), LocalDate.parse(today, DATE_FMT)).toInt()
     } catch (_: Exception) { 0 }
 
-    /** 判斷今天是否為交易日（簡化：週一到週五） */
+    /** 判断今天是否为交易日（简化：周一到周五） */
     private fun isTradingDay(): Boolean {
         val dow = LocalDate.now().dayOfWeek
         return dow != java.time.DayOfWeek.SATURDAY && dow != java.time.DayOfWeek.SUNDAY
@@ -470,9 +470,9 @@ class AutoSellEngine(private val context: Context) {
         reason.contains("放量滞涨") -> "VolumeClimax"
         reason.contains("RSI超买") -> "RSIOverbought"
         reason.contains("板块弱势") -> "SectorWeakness"
-        reason.contains("ATR止損") || reason.contains("ATR止损") -> "ATRStop"
-        reason.contains("動量衰竭") || reason.contains("动量衰竭") -> "MomentumDecay"
-        reason.contains("目標止盈") || reason.contains("目标止盈") -> "TakeProfit"
+        reason.contains("ATR止损") || reason.contains("ATR止损") -> "ATRStop"
+        reason.contains("动量衰竭") || reason.contains("动量衰竭") -> "MomentumDecay"
+        reason.contains("目标止盈") || reason.contains("目标止盈") -> "TakeProfit"
         else -> "Other"
     }
 }

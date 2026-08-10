@@ -94,7 +94,7 @@ class StockPoolManager(private val context: Context) {
         val allStocks = basicFilterFromDB()
         Log.i(TAG, "Step1 basic: ${allStocks.size}")
 
-        // 刷新主力資金行為緩存（策略篩選時需要）
+        // 刷新主力资金行为缓存（策略筛选时需要）
         val codesForCache = allStocks.map { it.code }
         if (codesForCache.isNotEmpty()) {
             try {

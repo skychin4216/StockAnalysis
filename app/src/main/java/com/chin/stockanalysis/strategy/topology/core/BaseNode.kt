@@ -1,14 +1,14 @@
 package com.chin.stockanalysis.strategy.topology.core
 
 /**
- * ## Node 抽象基類
+ * ## Node 抽象基类
  *
- * Node = 單一功能、可復用的最小執行單元。
+ * Node = 单一功能、可复用的最小执行单元。
  *
- * 提供 nodeId / nodeName / nodeType 的標準實現與 log 便捷方法，
- * 子類只需實現 [execute]。
+ * 提供 nodeId / nodeName / nodeType 的标准实现与 log 便捷方法，
+ * 子类只需实现 [execute]。
  *
- * ### 遷移
+ * ### 迁移
  * ```kotlin
  * // Before
  * class FooNode : PipelineNode<Any, FooResult> {
@@ -36,6 +36,6 @@ abstract class BaseNode<IN, OUT>(
 
     override fun toString(): String = "$nodeName($nodeId)"
 
-    /** 便捷日誌：自動帶 nodeId 前綴 */
+    /** 便捷日志：自动带 nodeId 前缀 */
     protected fun PipelineContext.log(message: String) = log(nodeId, message)
 }

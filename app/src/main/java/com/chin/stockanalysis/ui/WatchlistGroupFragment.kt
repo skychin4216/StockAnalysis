@@ -25,14 +25,14 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 /**
- * 自選組管理頁（東方財富風格 v3.0）
+ * 自选组管理页（东方财富风格 v3.0）
  *
- * 東方財富自選股特點：
- * - 頂部搜索欄 + 編輯/排序按鈕
- * - 表格化列表：股票名稱 | 最新價 | 漲跌幅 | 漲跌額 | 換手率 | 成交量
- * - 紅漲綠跌，漲跌幅帶背景色
- * - 左滑刪除，點擊進入詳情
- * - 分組標籤頁切換
+ * 东方财富自选股特点：
+ * - 顶部搜索栏 + 编辑/排序按钮
+ * - 表格化列表：股票名称 | 最新价 | 涨跌幅 | 涨跌额 | 换手率 | 成交量
+ * - 红涨绿跌，涨跌幅带背景色
+ * - 左滑删除，点击进入详情
+ * - 分组标签页切换
  */
 class WatchlistGroupFragment : Fragment() {
 
@@ -115,7 +115,7 @@ class WatchlistGroupFragment : Fragment() {
         prefs.edit().putString("groups", arr.toString()).apply()
     }
 
-    // ======================== 數據獲取 ========================
+    // ======================== 数据获取 ========================
 
     private fun refreshStockData() {
         lifecycleScope.launch(Dispatchers.IO) {
@@ -141,7 +141,7 @@ class WatchlistGroupFragment : Fragment() {
     // ======================== UI ========================
 
     private fun buildUI(outer: LinearLayout) {
-        // ── 頂部導航欄 ──
+        // ── 顶部导航栏 ──
         val topBar = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -157,7 +157,7 @@ class WatchlistGroupFragment : Fragment() {
             layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
         })
 
-        // 搜索按鈕
+        // 搜索按钮
         val searchBtn = ImageView(requireContext()).apply {
             setImageResource(android.R.drawable.ic_menu_search)
             setColorFilter(Color.parseColor("#666666"))
@@ -166,7 +166,7 @@ class WatchlistGroupFragment : Fragment() {
         }
         topBar.addView(searchBtn)
 
-        // 新建組
+        // 新建组
         val addGroupBtn = TextView(requireContext()).apply {
             text = "+"
             textSize = 22f
@@ -177,7 +177,7 @@ class WatchlistGroupFragment : Fragment() {
         }
         topBar.addView(addGroupBtn)
 
-        // 更多菜單（導入/導出）
+        // 更多菜单（导入/导出）
         val moreBtn = TextView(requireContext()).apply {
             text = "⋮"
             textSize = 20f
@@ -188,7 +188,7 @@ class WatchlistGroupFragment : Fragment() {
         topBar.addView(moreBtn)
         outer.addView(topBar)
 
-        // ── 分組標籤欄 ──
+        // ── 分组标签栏 ──
         val tabRow = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(Color.WHITE)
@@ -209,7 +209,7 @@ class WatchlistGroupFragment : Fragment() {
         tabContainer.addView(tabInner)
         tabRow.addView(tabContainer)
 
-        // 編輯按鈕
+        // 编辑按钮
         val editBtn = TextView(requireContext()).apply {
             text = "编辑"
             textSize = 13f
@@ -219,13 +219,13 @@ class WatchlistGroupFragment : Fragment() {
         tabRow.addView(editBtn)
         outer.addView(tabRow)
 
-        // 分隔線
+        // 分隔线
         outer.addView(View(requireContext()).apply {
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, 1)
             setBackgroundColor(Color.parseColor("#EEEEEE"))
         })
 
-        // ── 更新時間 ──
+        // ── 更新时间 ──
         lastUpdateTv = TextView(requireContext()).apply {
             textSize = 11f
             setTextColor(Color.parseColor("#AAAAAA"))
@@ -234,7 +234,7 @@ class WatchlistGroupFragment : Fragment() {
         }
         outer.addView(lastUpdateTv)
 
-        // ── 表頭 ──
+        // ── 表头 ──
         val headerRow = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -267,7 +267,7 @@ class WatchlistGroupFragment : Fragment() {
             setOnClickListener {
                 currentGroupId = group.id
                 refreshGroupsUI()
-                // 重建標籤欄
+                // 重建标签栏
                 val parent = parent as? LinearLayout ?: return@setOnClickListener
                 rebuildTabs(parent)
             }
@@ -275,7 +275,7 @@ class WatchlistGroupFragment : Fragment() {
     }
 
     private fun rebuildTabs(parent: LinearLayout) {
-        // 找到 tabRow 並重建
+        // 找到 tabRow 并重建
         if (parent.childCount > 1) {
             val tabRow = parent.getChildAt(1) as? LinearLayout ?: return
             val tabContainer = tabRow.getChildAt(0) as? HorizontalScrollView ?: return
@@ -339,7 +339,7 @@ class WatchlistGroupFragment : Fragment() {
             setBackgroundColor(Color.WHITE)
         }
 
-        // 內容行
+        // 内容行
         val row = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -347,7 +347,7 @@ class WatchlistGroupFragment : Fragment() {
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
         }
 
-        // 股票名稱 + 代碼
+        // 股票名称 + 代码
         val nameCol = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 2f)
@@ -368,7 +368,7 @@ class WatchlistGroupFragment : Fragment() {
         })
         row.addView(nameCol)
 
-        // 最新價
+        // 最新价
         val price = snapshot?.close ?: 0.0
         val isUp = snapshot != null && snapshot.changePct > 0
         val isDown = snapshot != null && snapshot.changePct < 0
@@ -387,7 +387,7 @@ class WatchlistGroupFragment : Fragment() {
             layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
         })
 
-        // 漲跌幅（帶背景色）
+        // 涨跌幅（带背景色）
         val changePct = snapshot?.changePct ?: 0.0
         val changeText = when {
             snapshot == null -> "--"
@@ -415,7 +415,7 @@ class WatchlistGroupFragment : Fragment() {
             layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
         })
 
-        // 換手率
+        // 换手率
         val turnoverRate = snapshot?.turnoverRate ?: 0.0
         row.addView(TextView(ctx).apply {
             text = if (snapshot != null) "${String.format("%.2f", turnoverRate)}%" else "--"
@@ -425,7 +425,7 @@ class WatchlistGroupFragment : Fragment() {
             layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 0.8f)
         })
 
-        // 刪除按鈕
+        // 删除按钮
         row.addView(TextView(ctx).apply {
             text = "✕"
             textSize = 16f
@@ -444,7 +444,7 @@ class WatchlistGroupFragment : Fragment() {
 
         wrapper.addView(row)
 
-        // 底部分隔線
+        // 底部分隔线
         if (!isLast) {
             wrapper.addView(View(ctx).apply {
                 layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, 1).apply {
@@ -454,7 +454,7 @@ class WatchlistGroupFragment : Fragment() {
             })
         }
 
-        // 點擊行進入詳情
+        // 点击行进入详情
         row.setOnClickListener {
             StockDetailNavigator.navigateFromFragment(
                 this@WatchlistGroupFragment,
@@ -533,13 +533,13 @@ class WatchlistGroupFragment : Fragment() {
     }
 
     // ═══════════════════════════════════════
-    // 導入 / 導出
+    // 导入 / 导出
     // ═══════════════════════════════════════
 
     private fun showMoreMenu(anchor: View) {
         val popup = android.widget.PopupMenu(requireContext(), anchor)
-        popup.menu.add(0, 1, 0, "📥 導入自選股")
-        popup.menu.add(0, 2, 1, "📤 導出自選股")
+        popup.menu.add(0, 1, 0, "📥 导入自选股")
+        popup.menu.add(0, 2, 1, "📤 导出自选股")
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 1 -> importWatchlist()
@@ -552,17 +552,17 @@ class WatchlistGroupFragment : Fragment() {
 
     private fun importWatchlist() {
         val input = EditText(requireContext()).apply {
-            hint = "粘貼JSON格式自選股數據"
+            hint = "粘贴JSON格式自选股数据"
             setPadding(24, 16, 24, 16)
             minLines = 4
             maxLines = 8
-            setText("[{\"code\":\"sh600519\",\"name\":\"貴州茅臺\"},{\"code\":\"sz002594\",\"name\":\"比亞迪\"}]")
+            setText("[{\"code\":\"sh600519\",\"name\":\"贵州茅台\"},{\"code\":\"sz002594\",\"name\":\"比亚迪\"}]")
         }
         AlertDialog.Builder(requireContext())
-            .setTitle("📥 導入自選股")
+            .setTitle("📥 导入自选股")
             .setView(input)
             .setNegativeButton("取消", null)
-            .setPositiveButton("導入") { _, _ ->
+            .setPositiveButton("导入") { _, _ ->
                 try {
                     val json = input.text.toString().trim()
                     val arr = JSONArray(json)
@@ -577,10 +577,10 @@ class WatchlistGroupFragment : Fragment() {
                         groups[idx] = group.copy(stocks = group.stocks + imported)
                         saveGroups()
                         refreshStockData()
-                        Toast.makeText(requireContext(), "✅ 已導入 ${imported.size} 只股票", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), "✅ 已导入 ${imported.size} 只股票", Toast.LENGTH_SHORT).show()
                     }
                 } catch (e: Exception) {
-                    Toast.makeText(requireContext(), "❌ 格式錯誤: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(requireContext(), "❌ 格式错误: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }.show()
     }
@@ -606,13 +606,13 @@ class WatchlistGroupFragment : Fragment() {
         }
 
         AlertDialog.Builder(requireContext())
-            .setTitle("📤 導出「${group.name}」")
+            .setTitle("📤 导出「${group.name}」")
             .setView(input)
-            .setNegativeButton("關閉", null)
-            .setPositiveButton("複製") { _, _ ->
+            .setNegativeButton("关闭", null)
+            .setPositiveButton("复制") { _, _ ->
                 val clipboard = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("自選股", json))
-                Toast.makeText(requireContext(), "✅ 已複製到剪貼板", Toast.LENGTH_SHORT).show()
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("自选股", json))
+                Toast.makeText(requireContext(), "✅ 已复制到剪贴板", Toast.LENGTH_SHORT).show()
             }.show()
     }
 }

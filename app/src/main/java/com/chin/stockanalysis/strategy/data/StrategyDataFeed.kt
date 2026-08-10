@@ -32,8 +32,8 @@ class StrategyDataFeed(private val context: Context) {
         private const val TAG = "StrategyDataFeed"
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
-        // ── 基本面日級緩存（PE/PB/市值/換手率，東財批量API，每日僅拉一次）──
-        // DB快照只有OHLCV，基本面策略依賴這些字段；多線程併發時用鎖避免重複拉取
+        // ── 基本面日级缓存（PE/PB/市值/换手率，东财批量API，每日仅拉一次）──
+        // DB快照只有OHLCV，基本面策略依赖这些字段；多线程并发时用锁避免重复拉取
         private data class FundamentalsCache(val date: String, val map: Map<String, StockRealtime>)
         @Volatile private var fundamentalsCache: FundamentalsCache? = null
         private val fundamentalsLock = Any()

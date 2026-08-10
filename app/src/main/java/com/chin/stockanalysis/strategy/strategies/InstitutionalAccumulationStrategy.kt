@@ -24,13 +24,13 @@ class InstitutionalAccumulationStrategy(
 ) : Strategy {
 
     override val id = "institutional_accumulation"
-    override var name = "機構增持"
+    override var name = "机构增持"
     override var description =
-        "篩選高ROE、低負債、正現金流、低換手率的績優股，模擬機構增持吸籌行為"
+        "筛选高ROE、低负债、正现金流、低换手率的绩优股，模拟机构增持吸筹行为"
     override val category = StrategyCategory.VALUE
     override val holdingPeriods = listOf(HoldingPeriod.LONG)
     override val source = StrategySource.BUILTIN
-    override val signalExpiryHours = 720   // 30個交易日
+    override val signalExpiryHours = 720   // 30个交易日
 
     override val config = StrategyConfig.custom(
         params = mapOf(
@@ -46,11 +46,11 @@ class InstitutionalAccumulationStrategy(
     )
 
     override var weightFactors: List<WeightFactor> = listOf(
-        WeightFactor("roe", "ROE盈利能力", 25, "ROE TTM反映機構青睞程度"),
-        WeightFactor("debt", "負債率", 20, "低負債率代表財務穩健"),
-        WeightFactor("cashflow", "經營現金流", 15, "真實盈利能力驗證"),
-        WeightFactor("mcap", "市值規模", 20, "大市值機構配置偏好"),
-        WeightFactor("turnover", "換手率", 10, "低換手率暗示吸籌階段"),
+        WeightFactor("roe", "ROE盈利能力", 25, "ROE TTM反映机构青睐程度"),
+        WeightFactor("debt", "负债率", 20, "低负债率代表财务稳健"),
+        WeightFactor("cashflow", "经营现金流", 15, "真实盈利能力验证"),
+        WeightFactor("mcap", "市值规模", 20, "大市值机构配置偏好"),
+        WeightFactor("turnover", "换手率", 10, "低换手率暗示吸筹阶段"),
         WeightFactor("valuation", "估值", 10, "PE/PB估值合理性")
     )
 
@@ -85,19 +85,19 @@ class InstitutionalAccumulationStrategy(
     ): Result<ScreeningResult> {
         if (pool.isEmpty()) return success(emptyList(), 0, startTime)
 
-        // 大盤環境預檢
+        // 大盘环境预检
         val marketDir = try {
             screener.detectMarketDirection()
         } catch (_: Exception) { "OSCILLATION" }
         val isBearish = marketDir == "BEARISH"
         val strengthThreshold = if (isBearish) 35 else 20
         Log.i(
-            id, "大盤環境: $marketDir → 機構增持門檻 ${
-                if (isBearish) "20->35" else "標準門檻20"
+            id, "大盘环境: $marketDir → 机构增持门槛 ${
+                if (isBearish) "20->35" else "标准门槛20"
             }"
         )
 
-        // Step 1: 基礎過濾
+        // Step 1: 基础过滤
         val marketCapMin = config.getDouble("market_cap_min", 200e8)
         val step1 = pool.filter { stock ->
             stock.marketCap >= marketCapMin &&
@@ -106,9 +106,9 @@ class InstitutionalAccumulationStrategy(
             !stock.name.contains("ST", true) &&
             !stock.name.contains("退", true)
         }
-        Log.i(id, "pool=${pool.size} -> 基礎過濾(mcap>=${marketCapMin/1e8}億, PE>0, PB>0, 非ST)=${step1.size}")
+        Log.i(id, "pool=${pool.size} -> 基础过滤(mcap>=${marketCapMin/1e8}亿, PE>0, PB>0, 非ST)=${step1.size}")
 
-        // Step 2: 機構增持信號過濾
+        // Step 2: 机构增持信号过滤
         val roeMin = config.getDouble("roe_min", 15.0)
         val debtMax = config.getDouble("debt_max", 50.0)
         val turnoverMin = config.getDouble("turnover_min", 1.0)
@@ -121,12 +121,12 @@ class InstitutionalAccumulationStrategy(
             stock.turnoverRate in turnoverMin..turnoverMax &&
             stock.changePercent < changeMax
         }
-        Log.i(id, "機構增持信號過濾(ROE>=$roeMin, 負債<$debtMax, OCF>0, 換手$turnoverMin~$turnoverMax%, 漲跌<$changeMax%)=${step2.size}")
+        Log.i(id, "机构增持信号过滤(ROE>=$roeMin, 负债<$debtMax, OCF>0, 换手$turnoverMin~$turnoverMax%, 涨跌<$changeMax%)=${step2.size}")
 
         // Step 3: 打分
         val scored = step2.map { calculateSignal(it) }
             .filter { it.strength >= strengthThreshold }
-        Log.i(id, "打分後 strength>=$strengthThreshold: ${scored.size}")
+        Log.i(id, "打分后 strength>=$strengthThreshold: ${scored.size}")
 
         // Step 4: 排序截取
         val signals = scored
@@ -140,7 +140,7 @@ class InstitutionalAccumulationStrategy(
     private fun calculateSignal(stock: StockRealtime): StrategySignal {
         val w = weightFactors.associateBy { it.key }
 
-        // ROE評分 (满分25)
+        // ROE评分 (满分25)
         val roeScore = when {
             stock.roeTTM >= 25.0 -> 25
             stock.roeTTM >= 20.0 -> 20
@@ -149,7 +149,7 @@ class InstitutionalAccumulationStrategy(
             else -> 0
         } * (w["roe"]?.weight ?: 25) / 100
 
-        // 負債率評分 (满分20)
+        // 负债率评分 (满分20)
         val debtScore = when {
             stock.debtToAsset <= 0 -> 20
             stock.debtToAsset < 30.0 -> 20
@@ -159,7 +159,7 @@ class InstitutionalAccumulationStrategy(
             else -> 0
         } * (w["debt"]?.weight ?: 20) / 100
 
-        // 經營現金流評分 (满分15)
+        // 经营现金流评分 (满分15)
         val cashflowScore = when {
             stock.operatingCashFlow > 50e8 -> 15
             stock.operatingCashFlow > 10e8 -> 12
@@ -167,7 +167,7 @@ class InstitutionalAccumulationStrategy(
             else -> 0
         } * (w["cashflow"]?.weight ?: 15) / 100
 
-        // 市值規模評分 (满分20)
+        // 市值规模评分 (满分20)
         val mcapScore = when {
             stock.marketCap >= 1000e8 -> 20
             stock.marketCap >= 500e8 -> 16
@@ -176,7 +176,7 @@ class InstitutionalAccumulationStrategy(
             else -> 0
         } * (w["mcap"]?.weight ?: 20) / 100
 
-        // 換手率評分 (满分10)
+        // 换手率评分 (满分10)
         val turnoverScore = when {
             stock.turnoverRate in 1.0..2.0 -> 10
             stock.turnoverRate in 2.0..4.0 -> 8
@@ -184,7 +184,7 @@ class InstitutionalAccumulationStrategy(
             else -> 0
         } * (w["turnover"]?.weight ?: 10) / 100
 
-        // 估值評分 (满分10)
+        // 估值评分 (满分10)
         val peScore = when {
             stock.pe in 8.0..15.0 -> 10
             stock.pe in 15.0..25.0 -> 7
@@ -196,7 +196,7 @@ class InstitutionalAccumulationStrategy(
         val rawStrength = roeScore + debtScore + cashflowScore + mcapScore + turnoverScore + peScore
         val strength = rawStrength.coerceIn(0, 100)
 
-        val sb = StringBuilder("機構增持候選")
+        val sb = StringBuilder("机构增持候选")
         if (stock.marketCap > 0) sb.append(" | MCap").append(String.format("%.0f", stock.marketCap / 1e8)).append("B")
         if (stock.roeTTM > 0) sb.append(" | ROE").append(String.format("%.1f", stock.roeTTM)).append("%")
         if (stock.debtToAsset > 0) sb.append(" | D/A").append(String.format("%.1f", stock.debtToAsset)).append("%")
@@ -220,9 +220,9 @@ class InstitutionalAccumulationStrategy(
             category = category,
             strength = strength,
             action = action,
-            reason = "機構增持候選: ROE=${String.format("%.1f", stock.roeTTM)}%, " +
-                    "負債率=${String.format("%.1f", stock.debtToAsset)}%, " +
-                    "換手${String.format("%.1f", stock.turnoverRate)}%",
+            reason = "机构增持候选: ROE=${String.format("%.1f", stock.roeTTM)}%, " +
+                    "负债率=${String.format("%.1f", stock.debtToAsset)}%, " +
+                    "换手${String.format("%.1f", stock.turnoverRate)}%",
             currentPrice = stock.price,
             changePercent = stock.changePercent
         )

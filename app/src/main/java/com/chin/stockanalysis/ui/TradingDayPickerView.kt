@@ -66,8 +66,8 @@ class TradingDayPickerView @JvmOverloads constructor(
         }
 
         /**
-         * 將指定日期校正到最近的交易日（向回退）。
-         * 如果當天是交易日則返回當天，否則向前找到最近的交易日。
+         * 将指定日期校正到最近的交易日（向回退）。
+         * 如果当天是交易日则返回当天，否则向前找到最近的交易日。
          */
         fun recentTradingDay(from: LocalDate): LocalDate {
             var d = from

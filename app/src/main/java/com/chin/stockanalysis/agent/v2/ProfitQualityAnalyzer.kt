@@ -30,7 +30,7 @@ object ProfitQualityAnalyzer {
                     operatingCashFlowRatio = 0.0,
                     revenueYoY = 0.0, netProfitYoY = 0.0, deductNpYoY = 0.0,
                     grossMargin = 0.0, roe = 0.0,
-                    warningFlags = listOf("⚠️ 季度財報數據不足，無法評估利潤質量"),
+                    warningFlags = listOf("⚠️ 季度财报数据不足，无法评估利润质量"),
                     reportDate = ""
                 )
             }
@@ -47,36 +47,36 @@ object ProfitQualityAnalyzer {
             // 规则1：利润质量剪刀差（一次性利润识别）
             val qualityLevel = when {
                 netProfit <= 0 || deductNp <= 0 -> {
-                    warnings.add("⚠️ 淨利潤或扣非淨利潤為負，基本面惡化")
+                    warnings.add("⚠️ 净利润或扣非净利润为负，基本面恶化")
                     ProfitQualityLevel.PROFIT_INFLATION
                 }
                 profitGapRatio > 0.3 -> {
-                    warnings.add("🔴 一次性非經常性損益佔比 ${(profitGapRatio * 100).toInt()}%，紙面富貴")
+                    warnings.add("🔴 一次性非经常性损益占比 ${(profitGapRatio * 100).toInt()}%，纸面富贵")
                     ProfitQualityLevel.ONE_TIME_PROFIT
                 }
                 ocfRatio < 0.5 && ocfRatio > 0 -> {
-                    warnings.add("🟡 經營現金流覆蓋率僅 ${(ocfRatio * 100).toInt()}%，利潤質量存疑")
+                    warnings.add("🟡 经营现金流覆盖率仅 ${(ocfRatio * 100).toInt()}%，利润质量存疑")
                     ProfitQualityLevel.PROFIT_INFLATION
                 }
                 ocfRatio >= 0.8 && profitGapRatio < 0.1 -> {
-                    warnings.add("🟢 現金流充裕 + 扣非淨利潤佔比高，內生性增長")
+                    warnings.add("🟢 现金流充裕 + 扣非净利润占比高，内生性增长")
                     ProfitQualityLevel.ENDOGENOUS_GROWTH
                 }
                 else -> {
-                    warnings.add("📊 利潤質量一般，需持續觀察")
+                    warnings.add("📊 利润质量一般，需持续观察")
                     ProfitQualityLevel.ONE_TIME_PROFIT
                 }
             }
 
             // 规则2：增速一致性检查
             if (latest.netProfitYoY > 50 && latest.revenueYoY < 10) {
-                warnings.add("🔴 淨利潤暴增但營收微增，利潤可能來自非主業")
+                warnings.add("🔴 净利润暴增但营收微增，利润可能来自非主业")
             }
             if (latest.deductNpQoQ < -20 && qc.deductNpQoQ < -20) {
-                warnings.add("🔴 扣非淨利潤連續下滑，主業承壓")
+                warnings.add("🔴 扣非净利润连续下滑，主业承压")
             }
 
-            Log.i(TAG, "利潤質量分析: $stockCode → $qualityLevel, 剪刀差=${String.format("%.2f", profitGapRatio * 100)}%")
+            Log.i(TAG, "利润质量分析: $stockCode → $qualityLevel, 剪刀差=${String.format("%.2f", profitGapRatio * 100)}%")
 
             ProfitQualityAnalysis(
                 qualityLevel = qualityLevel,
@@ -94,7 +94,7 @@ object ProfitQualityAnalyzer {
                 reportDate = latest.reportDate
             )
         } catch (e: Exception) {
-            Log.w(TAG, "利潤質量分析異常: ${e.message}")
+            Log.w(TAG, "利润质量分析异常: ${e.message}")
             ProfitQualityAnalysis(
                 qualityLevel = ProfitQualityLevel.INSUFFICIENT_DATA,
                 netProfit = 0.0, deductNetProfit = 0.0,
@@ -102,7 +102,7 @@ object ProfitQualityAnalyzer {
                 operatingCashFlowRatio = 0.0,
                 revenueYoY = 0.0, netProfitYoY = 0.0, deductNpYoY = 0.0,
                 grossMargin = 0.0, roe = 0.0,
-                warningFlags = listOf("⚠️ 分析異常: ${e.message}"),
+                warningFlags = listOf("⚠️ 分析异常: ${e.message}"),
                 reportDate = ""
             )
         }

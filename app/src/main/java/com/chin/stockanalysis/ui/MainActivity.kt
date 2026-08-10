@@ -1,6 +1,7 @@
 package com.chin.stockanalysis.ui
 
 import android.app.AlertDialog
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
@@ -13,6 +14,7 @@ import androidx.viewpager2.adapter.FragmentStateAdapter
 import androidx.viewpager2.widget.ViewPager2
 import com.chin.stockanalysis.ApiConfigManager
 import com.chin.stockanalysis.config.FeatureFlagManager
+import com.chin.stockanalysis.config.LanguageManager
 import com.chin.stockanalysis.R
 import com.chin.stockanalysis.conversation.ConversationRepository
 import com.chin.stockanalysis.databinding.ActivityMainBinding
@@ -49,6 +51,10 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(LanguageManager.applyLanguage(newBase))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -57,7 +63,7 @@ class MainActivity : AppCompatActivity() {
         setupSystemBars()
         setupViewPager()
         setupBottomNavigation()
-        // 處理啟動時的分享意圖
+        // 处理启动时的分享意图
         handleShareIntent(intent)
     }
 
@@ -68,8 +74,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 處理其他應用分享的圖片/PDF/文字 → 路由到 AI 對話框
-     * AI 分析後詢問是否保存到機構推薦
+     * 处理其他应用分享的图片/PDF/文字 → 路由到 AI 对话框
+     * AI 分析后询问是否保存到机构推荐
      */
     private fun handleShareIntent(intent: android.content.Intent?) {
         if (intent == null) return
@@ -80,7 +86,7 @@ class MainActivity : AppCompatActivity() {
         val sharedUri = intent.getParcelableExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)
         val sharedText = intent.getStringExtra(android.content.Intent.EXTRA_TEXT)
 
-        // 切換到 AI 對話 Tab
+        // 切换到 AI 对话 Tab
         viewPager.postDelayed({
             viewPager.setCurrentItem(0, false) // Chat tab
             bottomNav.selectedItemId = R.id.nav_chat
@@ -96,7 +102,7 @@ class MainActivity : AppCompatActivity() {
     private fun initGlobalServices() {
         FeatureFlagManager.init(applicationContext)
         ApiConfigManager.getInstance(applicationContext)
-        // 統一數據源配置
+        // 统一数据源配置
         com.chin.stockanalysis.config.DataConfig.load(applicationContext)
         // 数据备份初始化
         initBackupSystem()
@@ -107,15 +113,15 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             HotSectorNewsUpdater(applicationContext).updateIfNeeded()
         }
-        // 構建股票名稱 Trie 詞典（供意圖解析使用）
+        // 构建股票名称 Trie 词典（供意图解析使用）
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 if (!com.chin.stockanalysis.stock.data.StockNameTrie.isBuilt) {
                     com.chin.stockanalysis.stock.data.StockNameTrie.build(applicationContext)
-                    android.util.Log.i("MainActivity", "StockNameTrie 構建完成")
+                    android.util.Log.i("MainActivity", "StockNameTrie 构建完成")
                 }
             } catch (e: Exception) {
-                android.util.Log.w("MainActivity", "StockNameTrie 構建失敗: ${e.message}")
+                android.util.Log.w("MainActivity", "StockNameTrie 构建失败: ${e.message}")
             }
         }
         // 后台预热 sector_stocks：自动拉取热门板块成分股写入本地数据库
@@ -169,7 +175,7 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch(Dispatchers.IO) {
             android.util.Log.i("MainActivity", "sector_stocks 预热开始...")
-            // 從 SECTOR_CODE_MAP 取所有唯一 BK 代碼對應的板塊（去重）
+            // 从 SECTOR_CODE_MAP 取所有唯一 BK 代码对应的板块（去重）
             val sectors = com.chin.stockanalysis.stock.data.sources.EastMoneySectorSource.SECTOR_CODE_MAP
                 .entries.distinctBy { it.value }  // 按 BK code 去重
                 .map { it.key to it.value }
@@ -215,7 +221,7 @@ class MainActivity : AppCompatActivity() {
     /** App 进入后台时自动备份 */
     override fun onStart() {
         super.onStart()
-        // App 回到前臺時清掃過期 AI Provider 佔用（應對系統凍結導致的釋放遺漏）
+        // App 回到前台时清扫过期 AI Provider 占用（应对系统冻结导致的释放遗漏）
         com.chin.stockanalysis.ai.AiProviderPool.sweepExpired()
     }
 
@@ -327,7 +333,7 @@ class MainActivity : AppCompatActivity() {
         bottomNav.selectedItemId = R.id.nav_stock
     }
 
-    /** 導航到精選股票 → 機構推薦 Tab */
+    /** 导航到精选股票 → 机构推荐 Tab */
     fun navigateToInstitutional() {
         switchToStockTab()
         viewPager.postDelayed({

@@ -5,24 +5,24 @@ import com.chin.stockanalysis.strategy.backtest.SectorDailyRecordEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** 板塊回調反彈因子：識別「近期熱門但連跌後今日反彈」的板塊 */
+/** 板块回调反弹因子：识别「近期热门但连跌后今日反弹」的板块 */
 class SectorBounceFactor(private val db: StockDatabase) {
 
     data class BounceSector(
         val sectorName: String,
         val consecutiveHotDays: Int,
-        val recentDropPct: Double,    // 近3天總漲幅（負數表示下跌）
-        val todayBouncePct: Double,   // 今日漲幅
+        val recentDropPct: Double,    // 近3天总涨幅（负数表示下跌）
+        val todayBouncePct: Double,   // 今日涨幅
         val compositeScore: Double,
-        val bounceScore: Double       // 0-100，越高越值得關注
+        val bounceScore: Double       // 0-100，越高越值得关注
     )
 
-    /** 檢測回彈板塊：連續熱門≥3天 + 近3天跌 + 今日反彈>0 */
+    /** 检测回弹板块：连续热门≥3天 + 近3天跌 + 今日反弹>0 */
     suspend fun detectBounceSectors(date: String? = null): List<BounceSector> = withContext(Dispatchers.IO) {
         val targetDate = date ?: getLatestDate()
         if (targetDate == null) return@withContext emptyList()
 
-        // 獲取最近 7 天的板塊數據
+        // 获取最近 7 天的板块数据
         val recentRecords = db.sectorDailyRecordDao().getRecentDays(7)
         if (recentRecords.isEmpty()) return@withContext emptyList()
 
@@ -39,7 +39,7 @@ class SectorBounceFactor(private val db: StockDatabase) {
             val recentDrop = recent3Days.sum()
             val todayBounce = latest.changePct
 
-            // 條件：連續熱門≥3天 + 近3天總和<0（回調）+ 今日>0（反彈）
+            // 条件：连续热门≥3天 + 近3天总和<0（回调）+ 今日>0（反弹）
             if (consecutiveHot >= 3 && recentDrop < 0 && todayBounce > 0) {
                 val score = (consecutiveHot * 3.0).coerceAtMost(30.0) +
                            (todayBounce * 8.0).coerceAtMost(40.0) +
@@ -58,7 +58,7 @@ class SectorBounceFactor(private val db: StockDatabase) {
         result.sortedByDescending { it.bounceScore }
     }
 
-    /** 檢查某股票是否屬於回彈板塊（名稱匹配） */
+    /** 检查某股票是否属于回弹板块（名称匹配） */
     suspend fun getBounceScoreForStock(stockName: String, date: String? = null): Double {
         val bounces = detectBounceSectors(date)
         val match = bounces.find { stockName.contains(it.sectorName) || it.sectorName.contains(stockName.take(2)) }

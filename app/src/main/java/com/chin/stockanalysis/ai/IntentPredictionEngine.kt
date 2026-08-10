@@ -158,36 +158,36 @@ class IntentPredictionEngine {
             )
         }
 
-        // 5.5 本地詞典匹配（Trie 樹，<10ms，覆蓋 5000+ A 股）
-        // 延遲初始化：Trie 在首次調用時構建，後續查詢純內存
+        // 5.5 本地词典匹配（Trie 树，<10ms，覆盖 5000+ A 股）
+        // 延迟初始化：Trie 在首次调用时构建，后续查询纯内存
         try {
             val entities = com.chin.stockanalysis.ai.StockEntityExtractor.extractSync(t)
             if (entities.isNotEmpty()) {
                 val best = entities.first()
-                Log.d(TAG, "🔮 预判意图: Trie詞典命中 (${best.name}/${best.code}, ${best.matchType})")
+                Log.d(TAG, "🔮 预判意图: Trie词典命中 (${best.name}/${best.code}, ${best.matchType})")
                 return UserIntent.StockQuery(
                     code = best.code,
                     name = best.name,
                     confidence = best.confidence
                 )
             }
-        } catch (_: Exception) { /* Trie 未構建，繼續 */ }
+        } catch (_: Exception) { /* Trie 未构建，继续 */ }
 
         // 6. 股票名称关键词（从文本中提取 2~6 字中文股票名）
-        // 常见知名股票名稱快速匹配
+        // 常见知名股票名称快速匹配
         val stockNamePatterns = listOf("茅台", "宁德", "比亚迪", "腾讯", "阿里", "平安", "招商", "格力")
         val matchedName = stockNamePatterns.firstOrNull { t.contains(it) }
         if (matchedName != null) {
             return UserIntent.StockQuery(code = null, name = matchedName, confidence = 0.90f)
         }
 
-        // 通用中文股票名提取：2~6個中文字（排除常见非股票詞）
-        // 先剝離常見動詞/查詢詞，避免貪婪匹配到非股票名
+        // 通用中文股票名提取：2~6个中文字（排除常见非股票词）
+        // 先剥离常见动词/查询词，避免贪婪匹配到非股票名
         val queryStripWords = listOf("分析", "走势", "行情", "价格", "查询", "查看", "帮我", "请问",
             "看看", "怎么样", "是多少", "多少钱", "最新价", "技术面", "基本面",
-            "符合", "趋势", "图", "么", "吗", "呢", "是否", "能不能", "可以", "適合",
-            "帮我看", "分析下", "看看下", "的", "了", "在", "和", "與", "或", "還是",
-            "能不能买", "值得", "好不好", "咋样", "咋樣")
+            "符合", "趋势", "图", "么", "吗", "呢", "是否", "能不能", "可以", "适合",
+            "帮我看", "分析下", "看看下", "的", "了", "在", "和", "与", "或", "还是",
+            "能不能买", "值得", "好不好", "咋样", "咋样")
         var stripped = text
         for (w in queryStripWords) { stripped = stripped.replace(w, " ") }
         stripped = stripped.replace(Regex("[\\s，。？！、,.?！]"), " ").trim()
@@ -196,7 +196,7 @@ class IntentPredictionEngine {
         val chineseMatch = chineseNameRegex.find(stripped)
         if (chineseMatch != null) {
             val candidate = chineseMatch.value.trim()
-            // 排除明顯不是股票名的詞
+            // 排除明显不是股票名的词
             val excludeWords = listOf("分析", "走势", "行情", "价格", "最新价", "多少",
                 "推荐", "策略", "选股", "回测", "排名", "打分", "买入", "卖出",
                 "持仓", "仓位", "调仓", "板块", "行业", "概念", "量化", "请问",

@@ -5,8 +5,8 @@ import android.view.View
 import android.view.ViewGroup
 
 /**
- * 簡易 FlowLayout — 子 View 自動換行排列
- * 用於板塊標籤 chips 等場景
+ * 简易 FlowLayout — 子 View 自动换行排列
+ * 用于板块标签 chips 等场景
  */
 class FlowLayout @JvmOverloads constructor(
     context: Context,
@@ -32,7 +32,7 @@ class FlowLayout @JvmOverloads constructor(
             val childHeightWithMargins = childHeight + lp.topMargin + lp.bottomMargin
 
             if (currentLineWidth + childWidthWithMargins > maxWidth && currentLineWidth > 0) {
-                // 換行
+                // 换行
                 totalHeight += lineHeight
                 currentLineWidth = childWidthWithMargins
                 lineHeight = childHeightWithMargins
@@ -67,7 +67,7 @@ class FlowLayout @JvmOverloads constructor(
             val childHeightWithMargins = childHeight + lp.topMargin + lp.bottomMargin
 
             if (currentX + childWidthWithMargins > maxWidth && currentX > paddingLeft) {
-                // 換行
+                // 换行
                 currentY += lineHeight
                 currentX = paddingLeft
                 lineHeight = 0

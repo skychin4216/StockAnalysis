@@ -10,16 +10,16 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 /**
- * ## 機構評級數據提供者
+ * ## 机构评级数据提供者
  *
- * 獲取券商研報評級數據，包括：
- * - 最新機構評級（買入/增持/中性/賣出）
- * - 目標價區間
- * - 預測 EPS
- * - 近 90 天研報數量
+ * 获取券商研报评级数据，包括：
+ * - 最新机构评级（买入/增持/中性/卖出）
+ * - 目标价区间
+ * - 预测 EPS
+ * - 近 90 天研报数量
  *
- * ### 數據來源
- * - 東方財富研報 API (reportapi.eastmoney.com)
+ * ### 数据来源
+ * - 东方财富研报 API (reportapi.eastmoney.com)
  *
  * ### 使用方式
  * ```kotlin
@@ -37,52 +37,52 @@ class InstitutionalRatingProvider {
 
     private val client = HttpClientProvider.realtimeClient
 
-    /** 研報 API 基礎 URL */
+    /** 研报 API 基础 URL */
     private val baseUrl = "https://reportapi.eastmoney.com/report/list"
 
     /**
-     * 機構評級結果
+     * 机构评级结果
      */
     data class RatingResult(
-        val stockCode: String,          // 股票代碼
-        val stockName: String,          // 股票名稱
-        val orgName: String,            // 券商名稱
-        val rating: String,             // 評級（買入/增持/中性/賣出）
-        val ratingChange: String,       // 評級變動（上調/下調/維持/首次）
-        val publishDate: String,        // 發布日期
-        val researcher: String,         // 研究員
-        val targetPriceHigh: Double?,   // 目標價上限
-        val targetPriceLow: Double?,    // 目標價下限
-        val predictEpsThisYear: Double?,// 今年預測 EPS
-        val predictEpsNextYear: Double?,// 明年預測 EPS
-        val reportCount90d: Int         // 近90天報告數量
+        val stockCode: String,          // 股票代码
+        val stockName: String,          // 股票名称
+        val orgName: String,            // 券商名称
+        val rating: String,             // 评级（买入/增持/中性/卖出）
+        val ratingChange: String,       // 评级变动（上调/下调/维持/首次）
+        val publishDate: String,        // 发布日期
+        val researcher: String,         // 研究员
+        val targetPriceHigh: Double?,   // 目标价上限
+        val targetPriceLow: Double?,    // 目标价下限
+        val predictEpsThisYear: Double?,// 今年预测 EPS
+        val predictEpsNextYear: Double?,// 明年预测 EPS
+        val reportCount90d: Int         // 近90天报告数量
     )
 
     /**
-     * 評級匯總
+     * 评级汇总
      */
     data class RatingSummary(
         val stockCode: String,
         val stockName: String,
-        val totalReports: Int,          // 總研報數
-        val buyCount: Int,              // 買入數
-        val overweightCount: Int,       // 增持數
-        val neutralCount: Int,          // 中性數
-        val sellCount: Int,             // 賣出數
-        val avgTargetPrice: Double?,    // 平均目標價
-        val consensusRating: String,    // 共識評級
-        val latestDate: String?,        // 最新研報日期
-        val latestOrgs: List<String>,   // 最近評級機構
+        val totalReports: Int,          // 总研报数
+        val buyCount: Int,              // 买入数
+        val overweightCount: Int,       // 增持数
+        val neutralCount: Int,          // 中性数
+        val sellCount: Int,             // 卖出数
+        val avgTargetPrice: Double?,    // 平均目标价
+        val consensusRating: String,    // 共识评级
+        val latestDate: String?,        // 最新研报日期
+        val latestOrgs: List<String>,   // 最近评级机构
         val detailList: List<RatingResult>
     )
 
     /**
-     * 獲取個股機構評級列表
+     * 获取个股机构评级列表
      *
-     * @param code 股票代碼 (如 sh600519)
-     * @param days 查詢近 N 天的評級，預設 180 天
-     * @param pageSize 每頁數量，預設 50
-     * @return 評級列表（按日期倒序）
+     * @param code 股票代码 (如 sh600519)
+     * @param days 查询近 N 天的评级，预设 180 天
+     * @param pageSize 每页数量，预设 50
+     * @return 评级列表（按日期倒序）
      */
     suspend fun getRatings(
         code: String,
@@ -91,8 +91,8 @@ class InstitutionalRatingProvider {
     ): List<RatingResult> = withContext(Dispatchers.IO) {
         try {
             val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
-            // 東方財富 API 需要 rcode 參數，格式為「市場代號.股票代碼」
-            // 1=上海, 0=深圳/創業板
+            // 东方财富 API 需要 rcode 参数，格式为「市场代号.股票代码」
+            // 1=上海, 0=深圳/创业板
             val marketId = when {
                 code.startsWith("sh") -> "1"
                 code.startsWith("sz") || code.startsWith("bj") -> "0"
@@ -121,7 +121,7 @@ class InstitutionalRatingProvider {
                 append("&qType=0")
             }
 
-            Log.i(TAG, "獲取機構評級: $code, URL長度=${url.length}")
+            Log.i(TAG, "获取机构评级: $code, URL长度=${url.length}")
 
             val req = Request.Builder()
                 .url(url)
@@ -131,12 +131,12 @@ class InstitutionalRatingProvider {
 
             val resp = client.newCall(req).execute()
             if (!resp.isSuccessful) {
-                Log.w(TAG, "機構評級 API 失敗: ${resp.code}")
+                Log.w(TAG, "机构评级 API 失败: ${resp.code}")
                 return@withContext emptyList()
             }
 
             val body = resp.body?.string() ?: return@withContext emptyList()
-            // 處理可能的 JSONP 回調包裝
+            // 处理可能的 JSONP 回调包装
             val jsonStr = body.trim()
             val json = try {
                 val pure = if (jsonStr.startsWith("jQuery") || jsonStr.startsWith("callback"))
@@ -144,7 +144,7 @@ class InstitutionalRatingProvider {
                 else jsonStr
                 JSONObject(pure)
             } catch (e: Exception) {
-                Log.w(TAG, "JSON 解析失敗: ${e.message}, body前100字=${jsonStr.take(100)}")
+                Log.w(TAG, "JSON 解析失败: ${e.message}, body前100字=${jsonStr.take(100)}")
                 return@withContext emptyList()
             }
             val dataArray = json.optJSONObject("data")?.optJSONArray("data") ?: return@withContext emptyList()
@@ -155,20 +155,20 @@ class InstitutionalRatingProvider {
                 results.add(parseRatingItem(item, pureCode))
             }
 
-            Log.i(TAG, "獲取機構評級成功: $code, ${results.size} 條")
+            Log.i(TAG, "获取机构评级成功: $code, ${results.size} 条")
             results
         } catch (e: Exception) {
-            Log.w(TAG, "獲取機構評級異常: ${e.message}")
+            Log.w(TAG, "获取机构评级异常: ${e.message}")
             emptyList()
         }
     }
 
     /**
-     * 獲取評級匯總摘要
+     * 获取评级汇总摘要
      *
-     * @param code 股票代碼
-     * @param days 查詢近 N 天
-     * @return RatingSummary 匯總對象
+     * @param code 股票代码
+     * @param days 查询近 N 天
+     * @return RatingSummary 汇总对象
      */
     suspend fun getRatingSummary(code: String, days: Int = 180): RatingSummary {
         val ratings = getRatings(code, days)
@@ -177,30 +177,30 @@ class InstitutionalRatingProvider {
                 stockCode = code, stockName = "",
                 totalReports = 0, buyCount = 0, overweightCount = 0,
                 neutralCount = 0, sellCount = 0,
-                avgTargetPrice = null, consensusRating = "無數據",
+                avgTargetPrice = null, consensusRating = "无数据",
                 latestDate = null, latestOrgs = emptyList(),
                 detailList = emptyList()
             )
         }
 
-        val buyCount = ratings.count { it.rating.contains("買入") || it.rating.contains("买入") || it.rating == "Buy" }
+        val buyCount = ratings.count { it.rating.contains("买入") || it.rating.contains("买入") || it.rating == "Buy" }
         val overweightCount = ratings.count { it.rating.contains("增持") || it.rating == "Overweight" }
         val neutralCount = ratings.count { it.rating.contains("中性") || it.rating == "Neutral" }
-        val sellCount = ratings.count { it.rating.contains("賣出") || it.rating.contains("卖出") || it.rating == "Sell" }
+        val sellCount = ratings.count { it.rating.contains("卖出") || it.rating.contains("卖出") || it.rating == "Sell" }
 
-        // 平均目標價
+        // 平均目标价
         val validTargets = ratings.mapNotNull { it.targetPriceHigh }
         val avgTarget = if (validTargets.isNotEmpty()) validTargets.average() else null
 
-        // 共識評級
+        // 共识评级
         val consensus = when {
-            buyCount >= overweightCount && buyCount >= neutralCount && buyCount >= sellCount -> "買入"
+            buyCount >= overweightCount && buyCount >= neutralCount && buyCount >= sellCount -> "买入"
             overweightCount >= buyCount && overweightCount >= neutralCount && overweightCount >= sellCount -> "增持"
             neutralCount >= sellCount -> "中性"
-            else -> "賣出"
+            else -> "卖出"
         }
 
-        // 最新日期和機構
+        // 最新日期和机构
         val latestDate = ratings.firstOrNull()?.publishDate
         val latestOrgs = ratings.take(5).map { it.orgName }.distinct()
 
@@ -221,13 +221,13 @@ class InstitutionalRatingProvider {
     }
 
     /**
-     * 解析單條評級數據
+     * 解析单条评级数据
      */
     private fun parseRatingItem(item: JSONObject, code: String): RatingResult {
         val ratingMap = mapOf(
-            "007" to "買入", "006" to "增持", "005" to "中性", "004" to "減持", "003" to "賣出",
-            "0301" to "買入", "0302" to "增持", "0303" to "中性", "0304" to "減持", "0305" to "賣出",
-            "0103" to "買入", "0201" to "買入"
+            "007" to "买入", "006" to "增持", "005" to "中性", "004" to "减持", "003" to "卖出",
+            "0301" to "买入", "0302" to "增持", "0303" to "中性", "0304" to "减持", "0305" to "卖出",
+            "0103" to "买入", "0201" to "买入"
         )
 
         val emRatingCode = item.optString("emRatingCode", "")
@@ -241,20 +241,20 @@ class InstitutionalRatingProvider {
             else -> "未知"
         }
 
-        // 評級變動
+        // 评级变动
         val ratingChange = when (item.optInt("ratingChange", 0)) {
-            1 -> "上調"
+            1 -> "上调"
             2 -> "首次"
-            3 -> "維持"
-            4 -> "下調"
+            3 -> "维持"
+            4 -> "下调"
             else -> "未知"
         }
 
-        // 目標價
+        // 目标价
         val targetHigh = item.optString("indvAimPriceT", "").toDoubleOrNull()
         val targetLow = item.optString("indvAimPriceL", "").toDoubleOrNull()
 
-        // 預測 EPS
+        // 预测 EPS
         val epsThis = item.optString("predictThisYearEps", "").toDoubleOrNull()
         val epsNext = item.optString("predictNextYearEps", "").toDoubleOrNull()
 
@@ -275,21 +275,21 @@ class InstitutionalRatingProvider {
     }
 
     // ════════════════════════════════════════════════════
-    //  基金持倉數據
+    //  基金持仓数据
     // ════════════════════════════════════════════════════
 
     data class FundHolding(
         val fundName: String,
         val fundCode: String,
         val holdShares: Double,
-        val holdMarketCap: Double,  // 持倉市值（萬元）
+        val holdMarketCap: Double,  // 持仓市值（万元）
         val holdRatio: Double,       // 占流通股比例 %
         val reportDate: String
     )
 
     /**
-     * 獲取某只股票的基金持倉數據
-     * 使用東方財富 F10 基金持股接口（替代已棄用的 RPT_FUND_HOLDERSTOCK）
+     * 获取某只股票的基金持仓数据
+     * 使用东方财富 F10 基金持股接口（替代已弃用的 RPT_FUND_HOLDERSTOCK）
      * API: https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax?code={SECUCODE}
      */
     suspend fun getFundHoldings(code: String, pageSize: Int = 20): List<FundHolding> = withContext(Dispatchers.IO) {
@@ -297,7 +297,7 @@ class InstitutionalRatingProvider {
             val secuCode = normalizeToSecuCode(code)
             val url = "https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax?code=$secuCode"
 
-            Log.i(TAG, "獲取基金持倉: $code → $secuCode, URL=$url")
+            Log.i(TAG, "获取基金持仓: $code → $secuCode, URL=$url")
 
             val req = Request.Builder()
                 .url(url)
@@ -307,7 +307,7 @@ class InstitutionalRatingProvider {
 
             val resp = client.newCall(req).execute()
             if (!resp.isSuccessful) {
-                Log.w(TAG, "基金持倉 API 失敗: ${resp.code}")
+                Log.w(TAG, "基金持仓 API 失败: ${resp.code}")
                 return@withContext emptyList()
             }
 
@@ -318,31 +318,31 @@ class InstitutionalRatingProvider {
             val list = mutableListOf<FundHolding>()
             for (i in 0 until dataArray.length()) {
                 val item = dataArray.getJSONObject(i)
-                // 只取機構類型為 01（基金）的數據
+                // 只取机构类型为 01（基金）的数据
                 if (item.optString("ORG_TYPE", "") != "01") continue
                 val holdValue = item.optDouble("HOLD_VALUE", 0.0)
                 list.add(FundHolding(
                     fundName = item.optString("HOLDER_NAME", ""),
                     fundCode = item.optString("FUND_CODE", ""),
                     holdShares = item.optDouble("TOTAL_SHARES", 0.0),
-                    holdMarketCap = if (holdValue > 0) holdValue / 10000.0 else 0.0,  // 元 → 萬元
-                    holdRatio = item.optDouble("FREESHARES_RATIO", 0.0) * 100,         // 小數 → %
+                    holdMarketCap = if (holdValue > 0) holdValue / 10000.0 else 0.0,  // 元 → 万元
+                    holdRatio = item.optDouble("FREESHARES_RATIO", 0.0) * 100,         // 小数 → %
                     reportDate = item.optString("REPORT_DATE", "").take(10)
                 ))
             }
 
-            // 按持股市值降序排列，取前 pageSize 條
+            // 按持股市值降序排列，取前 pageSize 条
             val sorted = list.sortedByDescending { it.holdMarketCap }.take(pageSize)
-            Log.i(TAG, "基金持倉成功: $code, ${sorted.size}/${list.size} 條（已按市值排序取TOP）")
+            Log.i(TAG, "基金持仓成功: $code, ${sorted.size}/${list.size} 条（已按市值排序取TOP）")
             sorted
         } catch (e: Exception) {
-            Log.w(TAG, "基金持倉異常: ${e.message}")
+            Log.w(TAG, "基金持仓异常: ${e.message}")
             emptyList()
         }
     }
 
     /**
-     * 將標準股票代碼轉換為東方財富 F10 格式（如 sh603986 → SH603986）
+     * 将标准股票代码转换为东方财富 F10 格式（如 sh603986 → SH603986）
      */
     private fun normalizeToSecuCode(code: String): String {
         val trimmed = code.trim().lowercase()

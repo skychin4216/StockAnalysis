@@ -3,10 +3,10 @@ package com.chin.stockanalysis.stock.database
 import androidx.room.*
 
 /**
- * 機構推薦股票實體
+ * 机构推荐股票实体
  *
- * 支持自定義分組（如中金、中信、高盛等），每條記錄屬於一個分組。
- * 支持子級別（subGroup）用於更細粒度的分類。
+ * 支持自定义分组（如中金、中信、高盛等），每条记录属于一个分组。
+ * 支持子级别（subGroup）用于更细粒度的分类。
  */
 @Entity(
     tableName = "institutional_picks",

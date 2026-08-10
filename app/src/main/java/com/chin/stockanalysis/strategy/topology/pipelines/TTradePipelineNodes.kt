@@ -12,16 +12,16 @@ import com.chin.stockanalysis.strategy.trade.*
 import kotlin.math.abs
 
 // ═══════════════════════════════════════════════════
-//  做T Pipeline 數據類
+//  做T Pipeline 数据类
 // ═══════════════════════════════════════════════════
 
-/** 做T Pipeline 導入檢查結果 */
+/** 做T Pipeline 导入检查结果 */
 data class TTradeImportResult(
     val isTradingDay: Boolean,
     val tradeDate: String
 )
 
-/** 持倉基本信息 */
+/** 持仓基本信息 */
 data class THolding(
     val stockCode: String,
     val stockName: String,
@@ -32,7 +32,7 @@ data class THolding(
     val source: String  // "SIMULATED" or "REAL"
 )
 
-/** 持倉基礎技術指標 */
+/** 持仓基础技术指标 */
 data class THoldingBasics(
     val ma5: Double,
     val ma10: Double,
@@ -44,7 +44,7 @@ data class THoldingBasics(
     val pricePosition: Double
 )
 
-/** 持倉載入結果 */
+/** 持仓载入结果 */
 data class THoldingsData(
     val holdings: List<THolding>,
     val snapshots: Map<String, List<com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity>>,
@@ -52,16 +52,16 @@ data class THoldingsData(
     val stockCodes: List<String>
 )
 
-/** 機構意圖枚舉 */
+/** 机构意图枚举 */
 enum class InstIntent(val label: String) {
-    ACCUMULATING("建倉吸貨"),
-    SHAKING("震倉洗盤"),
+    ACCUMULATING("建仓吸货"),
+    SHAKING("震仓洗盘"),
     PULLING_UP("拉升中"),
-    DISTRIBUTING("出貨"),
-    NEUTRAL("無法判斷")
+    DISTRIBUTING("出货"),
+    NEUTRAL("无法判断")
 }
 
-/** 機構意圖分析結果 */
+/** 机构意图分析结果 */
 data class InstIntentResult(
     val stockCode: String,
     val intent: InstIntent,
@@ -75,7 +75,7 @@ data class InstIntentResult(
     val reasoning: String
 )
 
-/** 增強信號 */
+/** 增强信号 */
 data class EnhancedTSignal(
     val baseSignal: TTradeSignal,
     val confidence: Double,
@@ -87,7 +87,7 @@ data class EnhancedTSignal(
     val priority: String
 )
 
-/** 信號合成結果 */
+/** 信号合成结果 */
 data class TSynthesizeResult(
     val signals: List<EnhancedTSignal>,
     val filteredCount: Int,
@@ -97,7 +97,7 @@ data class TSynthesizeResult(
     val timeSlotHint: String = ""
 )
 
-/** 建議保存結果 */
+/** 建议保存结果 */
 data class TRecommendSaveResult(
     val saved: Int,
     val tracked: Int,
@@ -105,35 +105,35 @@ data class TRecommendSaveResult(
 )
 
 // ═══════════════════════════════════════════════════
-//  Node 1: 交易日檢查
+//  Node 1: 交易日检查
 // ═══════════════════════════════════════════════════
 
-class TTradeImportNode : BaseNode<Unit, TTradeImportResult>("t_trade_import", "交易日檢查", NodeType.DATA_SOURCE) {
+class TTradeImportNode : BaseNode<Unit, TTradeImportResult>("t_trade_import", "交易日检查", NodeType.DATA_SOURCE) {
 
     override suspend fun execute(context: PipelineContext, input: Unit): TTradeImportResult {
         val today = context.tradeDate
         val isTrading = !ChinaMarketTradingHours.a股是否休市()
-        context.log(nodeId, if (isTrading) "✅ 今日($today)為交易日" else "⛔ 今日($today)休市，Pipeline 跳過")
+        context.log(nodeId, if (isTrading) "✅ 今日($today)为交易日" else "⛔ 今日($today)休市，Pipeline 跳过")
         return TTradeImportResult(isTradingDay = isTrading, tradeDate = today)
     }
 }
 
 // ═══════════════════════════════════════════════════
-//  Node 2: 持倉載入 + 日K數據
+//  Node 2: 持仓载入 + 日K数据
 // ═══════════════════════════════════════════════════
 
 class THoldingsLoadNode(
     private val periodType: String = ""
-) : BaseNode<Any, THoldingsData>("t_holdings_load", "持倉載入+日K數據", NodeType.DATA_SOURCE) {
+) : BaseNode<Any, THoldingsData>("t_holdings_load", "持仓载入+日K数据", NodeType.DATA_SOURCE) {
 
     override suspend fun execute(context: PipelineContext, input: Any): THoldingsData {
         val ctx = context.androidContext
         val db = StockDatabase.getInstance(ctx)
         val holdings = mutableListOf<THolding>()
 
-        // 1. 模擬持倉
+        // 1. 模拟持仓
         val pt = periodType.ifEmpty {
-            // 將 holdingPeriod 配置映射為實際 orderType（與各 Fragment 一致）
+            // 将 holdingPeriod 配置映射为实际 orderType（与各 Fragment 一致）
             when (context.config.holdingPeriod) {
                 "ultra_short" -> "ultra_short"
                 "short" -> "shortterm"
@@ -160,10 +160,10 @@ class THoldingsLoadNode(
                 ))
             }
         } catch (e: Exception) {
-            context.log(nodeId, "讀取模擬持倉失敗: ${e.message}")
+            context.log(nodeId, "读取模拟持仓失败: ${e.message}")
         }
 
-        // 2. 真實持倉
+        // 2. 真实持仓
         try {
             val positions = db.realPositionDao().getAllActive()
             for (pos in positions) {
@@ -179,15 +179,15 @@ class THoldingsLoadNode(
                 ))
             }
         } catch (e: Exception) {
-            context.log(nodeId, "讀取真實持倉失敗: ${e.message}")
+            context.log(nodeId, "读取真实持仓失败: ${e.message}")
         }
 
         if (holdings.isEmpty()) {
-            context.log(nodeId, "⚠️ 無持倉，跳過做T分析")
+            context.log(nodeId, "⚠️ 无持仓，跳过做T分析")
             return THoldingsData(emptyList(), emptyMap(), emptyMap(), emptyList())
         }
 
-        // 3. 讀取每支持倉的 30 日 K 線 + 計算基礎指標
+        // 3. 读取每支持仓的 30 日 K 线 + 计算基础指标
         val dao = db.dailySnapshotDao()
         val snapshots = mutableMapOf<String, List<com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity>>()
         val basics = mutableMapOf<String, THoldingBasics>()
@@ -227,7 +227,7 @@ class THoldingsLoadNode(
         }
 
         val codes = holdings.map { it.stockCode }.distinct()
-        context.log(nodeId, "📥 載入 ${holdings.size} 支持倉（${codes.size} 只不重複），有效K線 ${snapshots.size} 只")
+        context.log(nodeId, "📥 载入 ${holdings.size} 支持仓（${codes.size} 只不重复），有效K线 ${snapshots.size} 只")
         context.recordStockFlow(nodeId, nodeName, holdings.size, holdings.size, 0,
             outputCodes = codes)
 
@@ -236,10 +236,10 @@ class THoldingsLoadNode(
 }
 
 // ═══════════════════════════════════════════════════
-//  Node 3: 日K機構意圖判斷（最核心）
+//  Node 3: 日K机构意图判断（最核心）
 // ═══════════════════════════════════════════════════
 
-class TInstIntentNode : BaseNode<Any, Map<String, InstIntentResult>>("t_inst_intent", "日K機構意圖判斷", NodeType.FACTOR_COMPUTE) {
+class TInstIntentNode : BaseNode<Any, Map<String, InstIntentResult>>("t_inst_intent", "日K机构意图判断", NodeType.FACTOR_COMPUTE) {
 
     override suspend fun execute(context: PipelineContext, input: Any): Map<String, InstIntentResult> {
         val holdingsData = when (input) {
@@ -247,11 +247,11 @@ class TInstIntentNode : BaseNode<Any, Map<String, InstIntentResult>>("t_inst_int
             else -> context.getStageOutput<THoldingsData>("t_hold")
         }
         if (holdingsData == null || holdingsData.holdings.isEmpty()) {
-            context.log(nodeId, "⚠️ 無持倉數據，跳過機構意圖分析")
+            context.log(nodeId, "⚠️ 无持仓数据，跳过机构意图分析")
             return emptyMap()
         }
 
-        // 讀取外盤數據
+        // 读取外盘数据
         val overseas = try { context.getMarketReport()?.overseas } catch (_: Exception) { null }
         val overseasDir = overseas?.direction ?: "UNKNOWN"
         val overseasHint = overseas?.impactHint ?: ""
@@ -265,7 +265,7 @@ class TInstIntentNode : BaseNode<Any, Map<String, InstIntentResult>>("t_inst_int
 
             val intent = analyzeInstitutionalIntent(snaps, basics, overseasDir)
             val overseasImpact = if (overseasDir != "UNKNOWN" && overseasHint.isNotEmpty()) {
-                "外盤${if (overseasDir == "BULLISH") "偏多" else if (overseasDir == "BEARISH") "偏空" else "中性"}，$overseasHint"
+                "外盘${if (overseasDir == "BULLISH") "偏多" else if (overseasDir == "BEARISH") "偏空" else "中性"}，$overseasHint"
             } else ""
 
             results[code] = intent.copy(overseasImpact = overseasImpact)
@@ -274,7 +274,7 @@ class TInstIntentNode : BaseNode<Any, Map<String, InstIntentResult>>("t_inst_int
         val summary = results.entries.joinToString { (code, r) ->
             "$code:${r.intent.label}(${r.tDirection})"
         }
-        context.log(nodeId, "📊 機構意圖: $summary")
+        context.log(nodeId, "📊 机构意图: $summary")
         context.setStageOutput(nodeId, results)
         return results
     }
@@ -288,26 +288,26 @@ class TInstIntentNode : BaseNode<Any, Map<String, InstIntentResult>>("t_inst_int
         val prev5 = snaps.takeLast(5)
         val prev10 = snaps.takeLast(10)
 
-        // ─── 1. 量價分析 ───
+        // ─── 1. 量价分析 ───
         val avgVol5 = prev5.map { it.volume }.average()
         val avgVol10 = prev10.map { it.volume }.average()
-        val volTrend = if (avgVol5 > avgVol10 * 1.1) "放量" else if (avgVol5 < avgVol10 * 0.9) "縮量" else "平量"
+        val volTrend = if (avgVol5 > avgVol10 * 1.1) "放量" else if (avgVol5 < avgVol10 * 0.9) "缩量" else "平量"
 
         val priceChange5 = if (snaps.size >= 5) {
             (latest.close - snaps[snaps.size - 5].close) / snaps[snaps.size - 5].close * 100
         } else 0.0
 
         val volumePriceSignal = when {
-            volTrend == "放量" && abs(priceChange5) < 1.0 -> "放量滯漲"
-            volTrend == "放量" && priceChange5 > 2.0 -> "放量上漲"
+            volTrend == "放量" && abs(priceChange5) < 1.0 -> "放量滞涨"
+            volTrend == "放量" && priceChange5 > 2.0 -> "放量上涨"
             volTrend == "放量" && priceChange5 < -2.0 -> "放量下跌"
-            volTrend == "縮量" && abs(priceChange5) < 1.0 -> "量縮價穩"
-            volTrend == "縮量" && priceChange5 < -1.0 -> "量縮回調"
-            volTrend == "縮量" && priceChange5 > 1.0 -> "量縮反彈"
-            else -> "量價正常"
+            volTrend == "缩量" && abs(priceChange5) < 1.0 -> "量缩价稳"
+            volTrend == "缩量" && priceChange5 < -1.0 -> "量缩回调"
+            volTrend == "缩量" && priceChange5 > 1.0 -> "量缩反弹"
+            else -> "量价正常"
         }
 
-        // ─── 2. K線特徵分析 ───
+        // ─── 2. K线特征分析 ───
         val lowerShadowCount = prev5.count {
             val body = abs(it.close - it.open)
             val lowerShadow = minOf(it.open, it.close) - it.low
@@ -322,14 +322,14 @@ class TInstIntentNode : BaseNode<Any, Map<String, InstIntentResult>>("t_inst_int
         val bearishCount = prev5.count { it.close < it.open }
 
         val klineSummary = when {
-            lowerShadowCount >= 3 -> "連續下影線，下方有承接"
-            upperShadowCount >= 3 -> "連續上影線，上方拋壓重"
-            bullishCount >= 4 -> "連續陽線，多頭強勢"
-            bearishCount >= 4 -> "連續陰線，空頭主導"
-            else -> "K線無明顯特徵"
+            lowerShadowCount >= 3 -> "连续下影线，下方有承接"
+            upperShadowCount >= 3 -> "连续上影线，上方抛压重"
+            bullishCount >= 4 -> "连续阳线，多头强势"
+            bearishCount >= 4 -> "连续阴线，空头主导"
+            else -> "K线无明显特征"
         }
 
-        // ─── 3. RSI 區間 ───
+        // ─── 3. RSI 区间 ───
         val rsi = computeRSI(snaps, 14)
         val rsiZone = when {
             rsi < 30 -> "oversold"
@@ -339,8 +339,8 @@ class TInstIntentNode : BaseNode<Any, Map<String, InstIntentResult>>("t_inst_int
             else -> "overbought"
         }
 
-        // ─── 4. 布林帶位置 ───
-        val bollPos = basics.pricePosition  // 0=下軌, 0.5=中軌, 1=上軌
+        // ─── 4. 布林带位置 ───
+        val bollPos = basics.pricePosition  // 0=下轨, 0.5=中轨, 1=上轨
         val bollPosition = when {
             bollPos < 0.2 -> "lower"
             bollPos < 0.4 -> "lower_middle"
@@ -349,11 +349,11 @@ class TInstIntentNode : BaseNode<Any, Map<String, InstIntentResult>>("t_inst_int
             else -> "upper"
         }
 
-        // ─── 5. 均線排列 ───
+        // ─── 5. 均线排列 ───
         val maBullish = basics.ma5 > basics.ma10 && basics.ma10 > basics.ma20
         val maBearish = basics.ma5 < basics.ma10 && basics.ma10 < basics.ma20
 
-        // ─── 6. 綜合判斷機構意圖 ───
+        // ─── 6. 综合判断机构意图 ───
         val intent: InstIntent
         val confidence: Double
         val tDirection: String
@@ -361,57 +361,57 @@ class TInstIntentNode : BaseNode<Any, Map<String, InstIntentResult>>("t_inst_int
 
         when {
             // 拉升中 — 不宜做T
-            maBullish && bullishCount >= 3 && volTrend != "縮量" && priceChange5 > 3.0 -> {
+            maBullish && bullishCount >= 3 && volTrend != "缩量" && priceChange5 > 3.0 -> {
                 intent = InstIntent.PULLING_UP
                 confidence = 0.7
                 tDirection = "hold"
-                reasoning = "均線多頭排列+連續陽線+放量上漲，主力拉升中，不宜做T以免賣飛"
+                reasoning = "均线多头排列+连续阳线+放量上涨，主力拉升中，不宜做T以免卖飞"
             }
-            // 震倉吸貨 — 最佳正T時機
-            volumePriceSignal == "量縮價穩" && lowerShadowCount >= 2 && rsi in 35.0..50.0 && bollPos < 0.4 -> {
+            // 震仓吸货 — 最佳正T时机
+            volumePriceSignal == "量缩价稳" && lowerShadowCount >= 2 && rsi in 35.0..50.0 && bollPos < 0.4 -> {
                 intent = InstIntent.SHAKING
                 confidence = 0.75
                 tDirection = "favor_正T"
-                reasoning = "量縮價穩+下影線承接+RSI中性偏弱，主力震倉洗盤，正T低接好時機"
+                reasoning = "量缩价稳+下影线承接+RSI中性偏弱，主力震仓洗盘，正T低接好时机"
             }
-            // 建倉吸貨
-            volumePriceSignal == "量縮價穩" && rsi in 30.0..50.0 && bollPos < 0.5 -> {
+            // 建仓吸货
+            volumePriceSignal == "量缩价稳" && rsi in 30.0..50.0 && bollPos < 0.5 -> {
                 intent = InstIntent.ACCUMULATING
                 confidence = 0.6
                 tDirection = "favor_正T"
-                reasoning = "量縮價穩+RSI偏低區間，浮動籌碼減少，主力控盤吸貨中"
+                reasoning = "量缩价稳+RSI偏低区间，浮动筹码减少，主力控盘吸货中"
             }
-            // 出貨 — 反T時機
-            volumePriceSignal == "放量滯漲" && upperShadowCount >= 2 && rsi > 65 -> {
+            // 出货 — 反T时机
+            volumePriceSignal == "放量滞涨" && upperShadowCount >= 2 && rsi > 65 -> {
                 intent = InstIntent.DISTRIBUTING
                 confidence = 0.7
                 tDirection = "favor_反T"
-                reasoning = "放量滯漲+上影線頻現+RSI超買，主力出貨信號，反T高賣時機"
+                reasoning = "放量滞涨+上影线频现+RSI超买，主力出货信号，反T高卖时机"
             }
             volumePriceSignal == "放量下跌" && bearishCount >= 3 -> {
                 intent = InstIntent.DISTRIBUTING
                 confidence = 0.65
                 tDirection = "favor_反T"
-                reasoning = "放量下跌+連續陰線，主力出逃，反T高賣或考慮減倉"
+                reasoning = "放量下跌+连续阴线，主力出逃，反T高卖或考虑减仓"
             }
-            // 外盤加持判斷
+            // 外盘加持判断
             overseasDir == "BEARISH" && rsi > 60 -> {
                 intent = InstIntent.DISTRIBUTING
                 confidence = 0.5
                 tDirection = "favor_反T"
-                reasoning = "外盤偏空+RSI偏高，注意防守，反T賣出為宜"
+                reasoning = "外盘偏空+RSI偏高，注意防守，反T卖出为宜"
             }
             overseasDir == "BULLISH" && rsi < 40 && bollPos < 0.3 -> {
                 intent = InstIntent.ACCUMULATING
                 confidence = 0.55
                 tDirection = "favor_正T"
-                reasoning = "外盤偏多+RSI超賣+接近布林下軌，正T低接機會"
+                reasoning = "外盘偏多+RSI超卖+接近布林下轨，正T低接机会"
             }
             else -> {
                 intent = InstIntent.NEUTRAL
                 confidence = 0.3
                 tDirection = "neutral"
-                reasoning = "量價關係不明確，無法判斷機構意圖，觀望為宜"
+                reasoning = "量价关系不明确，无法判断机构意图，观望为宜"
             }
         }
 
@@ -435,17 +435,17 @@ class TInstIntentNode : BaseNode<Any, Map<String, InstIntentResult>>("t_inst_int
 }
 
 // ═══════════════════════════════════════════════════
-//  Node 4: 交叉驗證 + 置信度評分（聚合節點）
+//  Node 4: 交叉验证 + 置信度评分（聚合节点）
 // ═══════════════════════════════════════════════════
 
 class TSignalSynthesizeNode(
     private val minConfidence: Double = 0.3
-) : BaseNode<Any, TSynthesizeResult>("t_signal_synthesize", "交叉驗證+置信度評分", NodeType.AGGREGATION) {
+) : BaseNode<Any, TSynthesizeResult>("t_signal_synthesize", "交叉验证+置信度评分", NodeType.AGGREGATION) {
 
     override suspend fun execute(context: PipelineContext, input: Any): TSynthesizeResult {
-        // AGGREGATION 節點：從 context.stageOutputs 按 XML nodeId 安全讀取上游輸出
+        // AGGREGATION 节点：从 context.stageOutputs 按 XML nodeId 安全读取上游输出
         val holdingsData = context.stageOutputs["t_hold"] as? THoldingsData
-        // 機構意圖：Map<String, InstIntentResult>，用 value 類型安全區分
+        // 机构意图：Map<String, InstIntentResult>，用 value 类型安全区分
         val intentMap: Map<String, InstIntentResult> = run {
             val raw = context.stageOutputs["t_inst"]
             if (raw is Map<*, *> && raw.values.firstOrNull() is InstIntentResult) {
@@ -453,7 +453,7 @@ class TSignalSynthesizeNode(
                 raw as Map<String, InstIntentResult>
             } else emptyMap()
         }
-        // K線形態：Map<String, List<PatternMatch>>，用 value 類型安全區分
+        // K线形态：Map<String, List<PatternMatch>>，用 value 类型安全区分
         val candleMap: Map<String, List<CandlePatternDetector.PatternMatch>> = run {
             val raw = context.stageOutputs["t_kline"]
             if (raw is Map<*, *> && raw.values.firstOrNull() is List<*>) {
@@ -467,7 +467,7 @@ class TSignalSynthesizeNode(
         val trendDir = marketReport?.trend?.direction ?: "UNKNOWN"
 
         if (holdingsData == null || holdingsData.holdings.isEmpty()) {
-            context.log(nodeId, "⚠️ 無持倉數據，跳過信號合成")
+            context.log(nodeId, "⚠️ 无持仓数据，跳过信号合成")
             return TSynthesizeResult(emptyList(), 0, "", "")
         }
 
@@ -477,19 +477,19 @@ class TSignalSynthesizeNode(
 
         for (holding in holdingsData.holdings) {
             val code = holding.stockCode
-            // 調用 TTradeEngine 生成基礎信號
+            // 调用 TTradeEngine 生成基础信号
             val baseSignals = try {
                 tEngine.generateSignals(code, holding.quantity, holding.periodType)
             } catch (_: Exception) { emptyList() }
 
             for (signal in baseSignals) {
-                // 只處理開倉腿（T_BUY / RT_SELL），配對腿直接保存
+                // 只处理开仓腿（T_BUY / RT_SELL），配对腿直接保存
                 if (signal.signalType == TTradeType.T_SELL || signal.signalType == TTradeType.RT_BUY) {
                     enhancedSignals.add(EnhancedTSignal(
                         baseSignal = signal, confidence = 0.8,
                         instIntent = null, klinePattern = null,
                         newsScore = 0, overseasImpact = "",
-                        scoreBreakdown = "配對腿信號，高優先級", priority = "HIGH"
+                        scoreBreakdown = "配对腿信号，高优先级", priority = "HIGH"
                     ))
                     continue
                 }
@@ -497,32 +497,32 @@ class TSignalSynthesizeNode(
                 var score = 50
                 val breakdown = mutableListOf<String>()
 
-                // ─── 機構意圖 (權重最高 +20/-15/-30) ───
+                // ─── 机构意图 (权重最高 +20/-15/-30) ───
                 val intent = intentMap[code]
                 if (intent != null) {
                     when {
                         signal.signalType == TTradeType.T_BUY && intent.intent in listOf(InstIntent.ACCUMULATING, InstIntent.SHAKING) -> {
-                            score += 20; breakdown.add("機構+20(${intent.intent.label})")
+                            score += 20; breakdown.add("机构+20(${intent.intent.label})")
                         }
                         signal.signalType == TTradeType.RT_SELL && intent.intent == InstIntent.DISTRIBUTING -> {
-                            score += 20; breakdown.add("機構+20(${intent.intent.label})")
+                            score += 20; breakdown.add("机构+20(${intent.intent.label})")
                         }
                         intent.intent == InstIntent.PULLING_UP && signal.signalType == TTradeType.RT_SELL -> {
-                            score -= 30; breakdown.add("機構-30(拉升中勿賣)")
+                            score -= 30; breakdown.add("机构-30(拉升中勿卖)")
                         }
                         signal.signalType == TTradeType.T_BUY && intent.intent == InstIntent.DISTRIBUTING -> {
-                            score -= 15; breakdown.add("機構-15(出貨勿接)")
+                            score -= 15; breakdown.add("机构-15(出货勿接)")
                         }
                         signal.signalType == TTradeType.RT_SELL && intent.intent in listOf(InstIntent.ACCUMULATING, InstIntent.SHAKING) -> {
-                            score -= 15; breakdown.add("機構-15(吸貨勿賣)")
+                            score -= 15; breakdown.add("机构-15(吸货勿卖)")
                         }
-                        else -> { breakdown.add("機構+0(中性)") }
+                        else -> { breakdown.add("机构+0(中性)") }
                     }
                 } else {
-                    breakdown.add("機構+0(無數據)")
+                    breakdown.add("机构+0(无数据)")
                 }
 
-                // ─── K線形態 (+15/-10) ───
+                // ─── K线形态 (+15/-10) ───
                 val patterns = candleMap[code]
                 val patternDesc = patterns?.firstOrNull()?.let { "${it.patternName}(${it.direction.signal})" }
                 if (patterns != null && patterns.isNotEmpty()) {
@@ -530,39 +530,39 @@ class TSignalSynthesizeNode(
                     val bearishPattern = patterns.any { it.direction == CandlePatternDetector.Direction.BEARISH }
                     when {
                         signal.signalType == TTradeType.T_BUY && bullishPattern -> {
-                            score += 15; breakdown.add("K線+15(看多形態)")
+                            score += 15; breakdown.add("K线+15(看多形态)")
                         }
                         signal.signalType == TTradeType.RT_SELL && bearishPattern -> {
-                            score += 15; breakdown.add("K線+15(看空形態)")
+                            score += 15; breakdown.add("K线+15(看空形态)")
                         }
                         signal.signalType == TTradeType.T_BUY && bearishPattern -> {
-                            score -= 10; breakdown.add("K線-10(看空矛盾)")
+                            score -= 10; breakdown.add("K线-10(看空矛盾)")
                         }
                         signal.signalType == TTradeType.RT_SELL && bullishPattern -> {
-                            score -= 10; breakdown.add("K線-10(看多矛盾)")
+                            score -= 10; breakdown.add("K线-10(看多矛盾)")
                         }
-                        else -> { breakdown.add("K線+0") }
+                        else -> { breakdown.add("K线+0") }
                     }
                 } else {
-                    breakdown.add("K線+0(無形態)")
+                    breakdown.add("K线+0(无形态)")
                 }
 
-                // ─── 外盤情緒 (+10/-15) ───
+                // ─── 外盘情绪 (+10/-15) ───
                 val overseasDesc = when (overseas?.direction) {
                     "BULLISH" -> {
-                        if (signal.signalType == TTradeType.T_BUY) { score += 10; breakdown.add("外盤+10(多頭)") }
-                        else { score -= 5; breakdown.add("外盤-5(多頭反T)") }
-                        "外盤偏多"
+                        if (signal.signalType == TTradeType.T_BUY) { score += 10; breakdown.add("外盘+10(多头)") }
+                        else { score -= 5; breakdown.add("外盘-5(多头反T)") }
+                        "外盘偏多"
                     }
                     "BEARISH" -> {
-                        if (signal.signalType == TTradeType.RT_SELL) { score += 10; breakdown.add("外盤+10(空頭)") }
-                        else { score -= 15; breakdown.add("外盤-15(空頭正T)") }
-                        "外盤偏空"
+                        if (signal.signalType == TTradeType.RT_SELL) { score += 10; breakdown.add("外盘+10(空头)") }
+                        else { score -= 15; breakdown.add("外盘-15(空头正T)") }
+                        "外盘偏空"
                     }
-                    else -> { breakdown.add("外盤+0"); "外盤中性" }
+                    else -> { breakdown.add("外盘+0"); "外盘中性" }
                 }
 
-                // ─── 新聞 (從 context 嘗試讀取 news_strength 輸出) (+10/-20) ───
+                // ─── 新闻 (从 context 尝试读取 news_strength 输出) (+10/-20) ───
                 val newsScore = context.stageOutputs["t_news"] as? Int ?: 0
                 @Suppress("UNCHECKED_CAST")
                 val newsGuardBlocked = run {
@@ -570,48 +570,48 @@ class TSignalSynthesizeNode(
                     if (raw is Map<*, *>) raw as Map<String, List<String>> else emptyMap<String, List<String>>()
                 }
                 if (newsGuardBlocked.containsKey(code)) {
-                    score -= 20; breakdown.add("新聞-20(黑名單)")
+                    score -= 20; breakdown.add("新闻-20(黑名单)")
                 } else if (newsScore > 60) {
-                    score += 5; breakdown.add("新聞+5(正面)")
+                    score += 5; breakdown.add("新闻+5(正面)")
                 } else {
-                    breakdown.add("新聞+0(中性)")
+                    breakdown.add("新闻+0(中性)")
                 }
 
-                // ─── 技術指標 (+10/-10) ───
+                // ─── 技术指标 (+10/-10) ───
                 val basics = holdingsData.basics[code]
                 if (basics != null) {
                     val rsi = intent?.let { parseRSIZone(it.rsiZone) } ?: 50.0
                     when {
                         signal.signalType == TTradeType.T_BUY && rsi in 30.0..50.0 -> {
-                            score += 10; breakdown.add("技術+10(RSI合理)")
+                            score += 10; breakdown.add("技术+10(RSI合理)")
                         }
                         signal.signalType == TTradeType.RT_SELL && rsi in 65.0..85.0 -> {
-                            score += 10; breakdown.add("技術+10(RSI超買)")
+                            score += 10; breakdown.add("技术+10(RSI超买)")
                         }
                         basics.avgIntradayRange < 0.015 -> {
-                            score -= 10; breakdown.add("技術-10(振幅不足)")
+                            score -= 10; breakdown.add("技术-10(振幅不足)")
                         }
-                        else -> { breakdown.add("技術+0") }
+                        else -> { breakdown.add("技术+0") }
                     }
                 }
 
-                // ─── 大盤方向過濾 ───
+                // ─── 大盘方向过滤 ───
                 if (trendDir == "BEARISH" && signal.signalType == TTradeType.T_BUY) {
-                    score -= 10; breakdown.add("大盤-10(空頭正T)")
+                    score -= 10; breakdown.add("大盘-10(空头正T)")
                 }
                 if (trendDir == "BULLISH" && signal.signalType == TTradeType.RT_SELL) {
-                    score -= 10; breakdown.add("大盤-10(多頭反T)")
+                    score -= 10; breakdown.add("大盘-10(多头反T)")
                 }
 
-                // ─── 時段權重調整（做T七個關鍵時間點） ───
+                // ─── 时段权重调整（做T七个关键时间点） ───
                 val timeAdj = TTimeSlotAdjuster.adjust(signal.signalType)
                 val timeScoreAdj = timeAdj.tBuyScoreAdj + timeAdj.rtSellScoreAdj
                 if (timeScoreAdj != 0) {
                     score += timeScoreAdj
-                    breakdown.add("時段${if (timeScoreAdj >= 0) "+" else ""}$timeScoreAdj(${timeAdj.slot.label})")
+                    breakdown.add("时段${if (timeScoreAdj >= 0) "+" else ""}$timeScoreAdj(${timeAdj.slot.label})")
                 }
                 if (timeAdj.slot == TTimeSlot.NON_TRADING) {
-                    // 非交易時段不產生信號
+                    // 非交易时段不产生信号
                     filteredCount++
                     continue
                 }
@@ -629,7 +629,7 @@ class TSignalSynthesizeNode(
                     continue
                 }
 
-                // 新聞黑名單直接阻擋
+                // 新闻黑名单直接阻挡
                 if (newsGuardBlocked.containsKey(code) && signal.signalType == TTradeType.T_BUY) {
                     filteredCount++
                     continue
@@ -648,7 +648,7 @@ class TSignalSynthesizeNode(
             }
         }
 
-        // 每支持倉最多保留 1 個信號（正T/反T互斥，取置信度高的）
+        // 每支持仓最多保留 1 个信号（正T/反T互斥，取置信度高的）
         val deduped = enhancedSignals
             .filter { it.baseSignal.signalType == TTradeType.T_BUY || it.baseSignal.signalType == TTradeType.RT_SELL }
             .groupBy { it.baseSignal.stockCode }
@@ -658,25 +658,25 @@ class TSignalSynthesizeNode(
             }
             .sortedByDescending { it.confidence }
 
-        // 配對腿信號也加入
+        // 配对腿信号也加入
         val pairingSignals = enhancedSignals.filter {
             it.baseSignal.signalType == TTradeType.T_SELL || it.baseSignal.signalType == TTradeType.RT_BUY
         }
         val finalSignals = (deduped + pairingSignals).sortedByDescending { it.confidence }
 
-        val marketSummary = "大盤${when (trendDir) { "BULLISH" -> "多頭"; "BEARISH" -> "空頭"; else -> "震盪" }}"
+        val marketSummary = "大盘${when (trendDir) { "BULLISH" -> "多头"; "BEARISH" -> "空头"; else -> "震荡" }}"
         val overseasSummary = when (overseas?.direction) {
-            "BULLISH" -> "外盤偏多（${overseas.weightedChange?.let { "%.2f".format(it) } ?: ""}%）"
-            "BEARISH" -> "外盤偏空（${overseas.weightedChange?.let { "%.2f".format(it) } ?: ""}%）"
-            else -> "外盤中性"
+            "BULLISH" -> "外盘偏多（${overseas.weightedChange?.let { "%.2f".format(it) } ?: ""}%）"
+            "BEARISH" -> "外盘偏空（${overseas.weightedChange?.let { "%.2f".format(it) } ?: ""}%）"
+            else -> "外盘中性"
         }
 
         val timeSlotSummary = TTimeSlotAdjuster.formatSummary()
-        context.log(nodeId, "📊 合成 ${finalSignals.size} 條增強信號（過濾 $filteredCount 條），$marketSummary，$overseasSummary")
+        context.log(nodeId, "📊 合成 ${finalSignals.size} 条增强信号（过滤 $filteredCount 条），$marketSummary，$overseasSummary")
         context.log(nodeId, "⏰ $timeSlotSummary")
         context.recordStockFlow(nodeId, nodeName,
             holdingsData.holdings.size, finalSignals.size, filteredCount,
-            "置信度<$minConfidence 或新聞黑名單",
+            "置信度<$minConfidence 或新闻黑名单",
             outputCodes = finalSignals.map { it.baseSignal.stockCode })
 
         val currentSlot = TTimeSlot.fromTime()
@@ -701,10 +701,10 @@ class TSignalSynthesizeNode(
 }
 
 // ═══════════════════════════════════════════════════
-//  Node 5: 建議保存 + 追蹤結算
+//  Node 5: 建议保存 + 追踪结算
 // ═══════════════════════════════════════════════════
 
-class TRecommendSaveNode : BaseNode<Any, TRecommendSaveResult>("t_recommend_save", "建議保存+追蹤結算", NodeType.TRADE_ACTION) {
+class TRecommendSaveNode : BaseNode<Any, TRecommendSaveResult>("t_recommend_save", "建议保存+追踪结算", NodeType.TRADE_ACTION) {
 
     override suspend fun execute(context: PipelineContext, input: Any): TRecommendSaveResult {
         val synthResult = when (input) {
@@ -712,7 +712,7 @@ class TRecommendSaveNode : BaseNode<Any, TRecommendSaveResult>("t_recommend_save
             else -> context.getStageOutput<TSynthesizeResult>("t_synth")
         }
         if (synthResult == null) {
-            context.log(nodeId, "⚠️ 無合成結果，跳過保存")
+            context.log(nodeId, "⚠️ 无合成结果，跳过保存")
             return TRecommendSaveResult(0, 0, false)
         }
 
@@ -720,12 +720,12 @@ class TRecommendSaveNode : BaseNode<Any, TRecommendSaveResult>("t_recommend_save
         val db = StockDatabase.getInstance(context.androidContext)
         val today = context.tradeDate
 
-        // 1. 保存增強信號為推薦記錄（將置信度/機構意圖/評分/時段編入 reason）
+        // 1. 保存增强信号为推荐记录（将置信度/机构意图/评分/时段编入 reason）
         val timeSlot = TTimeSlot.fromTime()
         val enhancedSignals = synthResult.signals.map { es ->
             val prefix = buildString {
                 append("[置信度${(es.confidence * 100).toInt()}%")
-                es.instIntent?.let { append("|機構:${it.intent.label}") }
+                es.instIntent?.let { append("|机构:${it.intent.label}") }
                 es.klinePattern?.let { append("|$it") }
                 if (timeSlot != TTimeSlot.NON_TRADING) append("|${timeSlot.emoji}${timeSlot.label}")
                 append("] ")
@@ -738,7 +738,7 @@ class TRecommendSaveNode : BaseNode<Any, TRecommendSaveResult>("t_recommend_save
             tEngine.saveRecommendations(enhancedSignals, "SIMULATED")
         } else 0
 
-        // 2. 跟蹤已有推薦的價格軌跡
+        // 2. 跟踪已有推荐的价格轨迹
         var tracked = 0
         try {
             val currentPrices = mutableMapOf<String, Double>()
@@ -752,7 +752,7 @@ class TRecommendSaveNode : BaseNode<Any, TRecommendSaveResult>("t_recommend_save
             }
         } catch (_: Exception) {}
 
-        // 3. 收盤結算（15:00~15:05）
+        // 3. 收盘结算（15:00~15:05）
         var dayEnded = false
         val now = java.time.LocalDateTime.now()
         if (now.hour >= 15 && now.minute < 5) {
@@ -762,8 +762,8 @@ class TRecommendSaveNode : BaseNode<Any, TRecommendSaveResult>("t_recommend_save
             } catch (_: Exception) {}
         }
 
-        context.log(nodeId, "💾 保存 $saved 條推薦，追蹤 $tracked 只價格" +
-            if (dayEnded) "，收盤結算完成" else "")
+        context.log(nodeId, "💾 保存 $saved 条推荐，追踪 $tracked 只价格" +
+            if (dayEnded) "，收盘结算完成" else "")
         context.recordStockFlow(nodeId, nodeName,
             synthResult.signals.size, saved, synthResult.signals.size - saved,
             "去重/已存在")
