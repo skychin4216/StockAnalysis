@@ -102,8 +102,8 @@ class StockTabFragment : Fragment() {
         }, 300)
     }
 
-    /** 获取精选股票 Fragment */
+    /** 获取精选股票 Fragment（遍历 childFragmentManager，避免依赖 ViewPager2 内部 tag） */
     fun getWatchlistFragment(): WatchlistUnifiedFragment? {
-        return childFragmentManager.findFragmentByTag("f1") as? WatchlistUnifiedFragment
+        return childFragmentManager.fragments.firstOrNull { it is WatchlistUnifiedFragment } as? WatchlistUnifiedFragment
     }
 }

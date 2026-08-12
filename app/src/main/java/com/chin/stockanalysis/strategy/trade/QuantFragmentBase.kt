@@ -96,6 +96,15 @@ abstract class QuantFragmentBase : Fragment() {
     protected var clearMode: Boolean = false
     protected var selectedDateForClear: String? = null
 
+    /** 当前展示的评估对话框（弹新框前先关闭旧的，避免叠加） */
+    private var activeEvalDialog: android.app.Dialog? = null
+
+    /** 关闭当前评估对话框（防叠加） */
+    protected fun dismissActiveEvalDialog() {
+        try { activeEvalDialog?.dismiss() } catch (_: Exception) {}
+        activeEvalDialog = null
+    }
+
     /** 最近一次 Pipeline 选股结果（用于非交易时间显示「选股」区块） */
     protected var lastPickStocks: List<Triple<String, String, Int>> = emptyList()
     /** 选股中的股票代码集合（从持仓区排除，避免重叠） */
@@ -723,28 +732,35 @@ abstract class QuantFragmentBase : Fragment() {
     // 买卖评估（整合做T + 卖出）
     // ═══════════════════════════════════════════════════
 
+    /** 子类可在"基本面检查"后插入额外菜单项（保持菜单结构统一） */
+    protected open fun getExtraEvalMenuItems(): List<Pair<String, () -> Unit>> = emptyList()
+
     /** 买卖评估菜单：统一选项 + 基本面检查（居中 Dialog） */
     protected open fun showTradeEvaluationMenu(anchor: View) {
-        val items = arrayOf(
+        val items = mutableListOf(
             "🔄 做T信号",
             "💰 卖出评估",
             "📈 买入评估",
-            "💎 基本面检查",
-            "📊 卖出绩效",
-            "⚡ 执行卖出"
+            "💎 基本面检查"
         )
+        val handlers = mutableListOf<() -> Unit>(
+            { showTTradeMenu() },
+            { runAutoSellEvaluation() },
+            { showBuyEvaluation() },
+            { checkFundamentalHealth() }
+        )
+        // 子类扩展项（如超短线的 T+1 卖出检查）
+        getExtraEvalMenuItems().forEach { (label, action) ->
+            items.add(label); handlers.add(action)
+        }
+        items.add("📊 卖出绩效"); handlers.add({ showSellPerformance() })
+        items.add("⚡ 执行卖出"); handlers.add({ executeAutoSell() })
+
         val titleView = buildEvalTitleView("💰 买卖评估")
         AlertDialog.Builder(requireContext())
             .setCustomTitle(titleView)
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> showTTradeMenu()
-                    1 -> runAutoSellEvaluation()
-                    2 -> showBuyEvaluation()
-                    3 -> checkFundamentalHealth()
-                    4 -> showSellPerformance()
-                    5 -> executeAutoSell()
-                }
+            .setItems(items.toTypedArray()) { _, which ->
+                handlers.getOrNull(which)?.invoke()
             }
             .setNegativeButton("关闭", null)
             .show()
@@ -2357,8 +2373,10 @@ abstract class QuantFragmentBase : Fragment() {
         successRate7d: TTradeSuccessRate? = null,
         successRate30d: TTradeSuccessRate? = null
     ) {
+        dismissActiveEvalDialog()  // 做T面板弹出前关闭旧的评估对话框，避免一键评估时叠加
         val dialog = android.app.Dialog(requireContext())
         dialog.setTitle("做T面板 — $periodType")
+        activeEvalDialog = dialog
         val scrollView = android.widget.ScrollView(requireContext())
         val container = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
@@ -3598,7 +3616,16 @@ abstract class QuantFragmentBase : Fragment() {
                 withContext(Dispatchers.Main) {
                     renderPositions(orders, dates, priceMap)
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                Log.w(TAG, "持仓刷新失败: ${e.message}", e)
+                try {
+                    withContext(Dispatchers.Main) {
+                        if (isAdded) {
+                            Toast.makeText(requireContext(), "持仓刷新失败: ${e.message?.take(30)}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
         }
     }
 
@@ -3825,16 +3852,16 @@ abstract class QuantFragmentBase : Fragment() {
             setBackgroundColor(Color.parseColor("#EEEEEE"))
         }
         for (header in listOf("股票", "建仓日", "成本"))
-            headerRow.addView(createCell(header, 60, "#666666", 10f, bold = true))
+            headerRow.addView(createCell(header, 84, "#666666", 10f, bold = true))
         headerRow.addView(createCell(sectionTitle, 45, "#666666", 9f, bold = true))
         if (showMultiDayPrices) {
             for (date in dates) {
-                headerRow.addView(createCell(date.takeLast(5), 72, "#666666", 10f, bold = true))
+                headerRow.addView(createCell(date.takeLast(5), 60, "#666666", 10f, bold = true))
             }
         } else if (dates.isNotEmpty()) {
-            headerRow.addView(createCell("今日", 72, "#666666", 10f, bold = true))
+            headerRow.addView(createCell("今日", 60, "#666666", 10f, bold = true))
         }
-        headerRow.addView(createCell("卖出", 50, "#666666", 9f, bold = true))
+        headerRow.addView(createCell("卖出", 48, "#666666", 9f, bold = true))
         table.addView(headerRow)
 
         for (order in orders) {
@@ -3844,7 +3871,7 @@ abstract class QuantFragmentBase : Fragment() {
             // 股票名/代码
             val nameCell = LinearLayout(requireContext()).apply {
                 orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(dpToPx(60), LinearLayout.LayoutParams.WRAP_CONTENT)
+                layoutParams = LinearLayout.LayoutParams(dpToPx(84), LinearLayout.LayoutParams.WRAP_CONTENT)
                 gravity = Gravity.CENTER
             }
             nameCell.addView(TextView(requireContext()).apply {
@@ -3885,7 +3912,7 @@ abstract class QuantFragmentBase : Fragment() {
                     row.addView(TextView(requireContext()).apply {
                         text = cellText; textSize = 9f
                         setTextColor(Color.parseColor(cellColor)); gravity = Gravity.CENTER
-                        layoutParams = LinearLayout.LayoutParams(dpToPx(72), LinearLayout.LayoutParams.WRAP_CONTENT)
+                        layoutParams = LinearLayout.LayoutParams(dpToPx(60), LinearLayout.LayoutParams.WRAP_CONTENT)
                         setPadding(2, 4, 2, 4); setLineSpacing(2f, 1f)
                     })
                 }
@@ -3901,7 +3928,7 @@ abstract class QuantFragmentBase : Fragment() {
                 row.addView(TextView(requireContext()).apply {
                     text = cellText; textSize = 9f
                     setTextColor(Color.parseColor(cellColor)); gravity = Gravity.CENTER
-                    layoutParams = LinearLayout.LayoutParams(dpToPx(72), LinearLayout.LayoutParams.WRAP_CONTENT)
+                    layoutParams = LinearLayout.LayoutParams(dpToPx(60), LinearLayout.LayoutParams.WRAP_CONTENT)
                     setPadding(2, 4, 2, 4); setLineSpacing(2f, 1f)
                 })
             }
@@ -4083,7 +4110,8 @@ abstract class QuantFragmentBase : Fragment() {
             text = content; textSize = 10f; setTextColor(Color.parseColor("#333333"))
             setPadding(16, 12, 16, 12); setLineSpacing(2f, 1.1f); setTypeface(Typeface.MONOSPACE)
         })
-        AlertDialog.Builder(requireContext())
+        dismissActiveEvalDialog()  // 弹新框前先关闭旧的，避免一键评估时 Dialog 叠加
+        val dialog = AlertDialog.Builder(requireContext())
             .setTitle(title)
             .setView(sv)
             .setPositiveButton("关闭", null)
@@ -4092,6 +4120,7 @@ abstract class QuantFragmentBase : Fragment() {
                 show()
                 window?.setLayout(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT)
             }
+        activeEvalDialog = dialog
     }
 
     /**

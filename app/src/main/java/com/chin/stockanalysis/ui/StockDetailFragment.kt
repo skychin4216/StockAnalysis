@@ -303,6 +303,29 @@ class StockDetailFragment : Fragment() {
         root.addView(headerCard)
     }
 
+    /**
+     * 将交易动作（加仓/减仓/清仓）路由到 AI 对话闭环：
+     * 若宿主为 MainActivity 则切换对话 Tab 并发送指令，否则提示用户。
+     */
+    private fun routeTradeAction(action: String) {
+        val activity = activity
+        if (activity is MainActivity) {
+            val prompt = when (action) {
+                "加仓" -> "帮我分析 $stockName（$stockCode）现在是否适合加仓，并给出加仓建议"
+                "减仓" -> "帮我分析 $stockName（$stockCode）现在是否适合减仓，并给出减仓建议"
+                else   -> "帮我分析 $stockName（$stockCode）现在是否适合清仓离场"
+            }
+            Toast.makeText(requireContext(), "${action}指令已发送给 AI", Toast.LENGTH_SHORT).show()
+            activity.switchToChatAndSend(prompt)
+        } else {
+            Toast.makeText(
+                requireContext(),
+                "请在策略页使用「建仓/持仓」功能对 $stockName 执行$action",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
     private fun buildMarketStatusBar() {
         val statusBar = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1334,7 +1357,7 @@ class StockDetailFragment : Fragment() {
                         }
                     }
                 })
-                // 操作按钮
+                // 操作按钮（跳转 AI 对话闭环：将加仓/减仓/清仓指令发给 AI 执行）
                 val recommendation = result.recommendation
                 if (recommendation != null) {
                     if (recommendation in listOf("BUY", "WATCH")) {
@@ -1343,7 +1366,7 @@ class StockDetailFragment : Fragment() {
                             setBackgroundColor(Color.parseColor("#1565C0"))
                             setPadding(10, 4, 10, 4)
                             minimumHeight = 0; minHeight = 0
-                            setOnClickListener { Toast.makeText(requireContext(), "请在建仓流程中加仓 $stockName", Toast.LENGTH_LONG).show() }
+                            setOnClickListener { routeTradeAction("加仓") }
                         })
                     }
                     if (recommendation in listOf("HOLD", "SELL", "WATCH")) {
@@ -1352,7 +1375,7 @@ class StockDetailFragment : Fragment() {
                             setBackgroundColor(Color.parseColor("#F9A825"))
                             setPadding(10, 4, 10, 4)
                             minimumHeight = 0; minHeight = 0
-                            setOnClickListener { Toast.makeText(requireContext(), "减仓功能开发中", Toast.LENGTH_SHORT).show() }
+                            setOnClickListener { routeTradeAction("减仓") }
                         })
                     }
                     if (recommendation in listOf("HOLD", "SELL")) {
@@ -1361,7 +1384,7 @@ class StockDetailFragment : Fragment() {
                             setBackgroundColor(Color.parseColor("#C62828"))
                             setPadding(10, 4, 10, 4)
                             minimumHeight = 0; minHeight = 0
-                            setOnClickListener { Toast.makeText(requireContext(), "清仓功能开发中", Toast.LENGTH_SHORT).show() }
+                            setOnClickListener { routeTradeAction("清仓") }
                         })
                     }
                 }

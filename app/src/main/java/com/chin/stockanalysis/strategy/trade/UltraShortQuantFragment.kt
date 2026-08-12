@@ -70,14 +70,7 @@ class UltraShortQuantFragment : QuantFragmentBase() {
     }
 
     override fun onFittingClick() {
-        showDialog("超短线拟合提示",
-            "超短线策略（持仓1天）参数固定，无需拟合调优。\n\n" +
-            "核心参数：\n" +
-            "• 止损: ${resolveStopLossPct()}%\n" +
-            "• 止盈: +${resolveTakeProfitPct()}%\n" +
-            "• 最大持仓: ${resolveMaxHoldings()} 只\n" +
-            "• 持仓周期: 1天 (T+1)\n\n" +
-            "如需调整，请在回溯测试中验证不同参数组合。")
+        showFittingParamsReport(titlePrefix = "超短线")
     }
 
     override fun onBacktrackClick() {
@@ -179,49 +172,8 @@ class UltraShortQuantFragment : QuantFragmentBase() {
 
     // ── 覆写卖出评估：使用超短线止损/止盈规则 ──
 
-    override fun showTradeEvaluationMenu(anchor: View) {
-        val items = arrayOf(
-            "🔄 做T信号",
-            "💰 卖出评估",
-            "📈 买入评估",
-            "💎 基本面检查",
-            "⚡ T+1 卖出检查",
-            "📊 卖出绩效",
-            "⚡ 执行卖出"
-        )
-        val titleView = android.widget.LinearLayout(requireContext()).apply {
-            orientation = android.widget.LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.CENTER_VERTICAL
-            setPadding(48, 32, 48, 16)
-            addView(android.widget.TextView(requireContext()).apply {
-                text = "💰 买卖评估（超短线）"; textSize = 18f
-                setTextColor(android.graphics.Color.parseColor("#222222"))
-                setTypeface(null, android.graphics.Typeface.BOLD)
-                layoutParams = android.widget.LinearLayout.LayoutParams(
-                    0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f
-                )
-            })
-            addView(android.widget.TextView(requireContext()).apply {
-                text = "🔄"; textSize = 20f
-                setPadding(16, 0, 0, 0)
-                isClickable = true; isFocusable = true
-                setOnClickListener { runAllEvaluations() }
-            })
-        }
-        AlertDialog.Builder(requireContext())
-            .setCustomTitle(titleView)
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> showTTradeMenu()
-                    1 -> runAutoSellEvaluation()
-                    2 -> showBuyEvaluation()
-                    3 -> checkFundamentalHealth()
-                    4 -> checkT1AutoSell()
-                    5 -> showSellPerformance()
-                    6 -> executeAutoSell()
-                }
-            }
-            .setNegativeButton("关闭", null)
-            .show()
-    }
+    /** 超短线额外菜单项：T+1 卖出检查 */
+    override fun getExtraEvalMenuItems(): List<Pair<String, () -> Unit>> = listOf(
+        "⚡ T+1 卖出检查" to { checkT1AutoSell() }
+    )
 }

@@ -65,6 +65,22 @@ class MainActivity : AppCompatActivity() {
         setupBottomNavigation()
         // 处理启动时的分享意图
         handleShareIntent(intent)
+        // 返回键：智能体对话页返回时应回到智能体列表，而非退出 App
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val agentChatFragment = supportFragmentManager.findFragmentByTag("agent_chat")
+                if (agentChatFragment != null) {
+                    val agentTab = supportFragmentManager.fragments
+                        .firstOrNull { it is AgentTabFragment } as? AgentTabFragment
+                    if (agentTab != null) {
+                        agentTab.closeAgentChat()
+                        return
+                    }
+                }
+                isEnabled = false
+                onBackPressedDispatcher.onBackPressed()
+            }
+        })
     }
 
     override fun onNewIntent(intent: android.content.Intent?) {
@@ -135,26 +151,31 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun initBackupSystem() {
-        BackupManager.initialize(
-            this,
-            onNeedSetup = {
-                runOnUiThread {
-                    AlertDialog.Builder(this)
-                        .setTitle("💾 数据备份")
-                        .setMessage("选择备份文件夹可保护你的数据（卸载重装后可恢复）。\n\n建议选择 /Documents/StockAnalysis")
-                        .setPositiveButton("选择文件夹") { _, _ ->
-                            BackupManager.openFolderPicker(this, REQUEST_BACKUP_FOLDER)
-                        }
-                        .setNegativeButton("稍后", null)
-                        .show()
+        // 仅首次启动弹备份引导框，避免每次启动都打扰用户
+        val prefs = getSharedPreferences("backup_setup", MODE_PRIVATE)
+        if (!prefs.getBoolean("setup_prompted", false)) {
+            BackupManager.initialize(
+                this,
+                onNeedSetup = {
+                    runOnUiThread {
+                        prefs.edit().putBoolean("setup_prompted", true).apply()
+                        AlertDialog.Builder(this)
+                            .setTitle("💾 数据备份")
+                            .setMessage("选择备份文件夹可保护你的数据（卸载重装后可恢复）。\n\n建议选择 /Documents/StockAnalysis")
+                            .setPositiveButton("选择文件夹") { _, _ ->
+                                BackupManager.openFolderPicker(this, REQUEST_BACKUP_FOLDER)
+                            }
+                            .setNegativeButton("稍后", null)
+                            .show()
+                    }
+                },
+                onRestored = {
+                    runOnUiThread {
+                        Toast.makeText(this, "✅ 数据已从备份恢复", Toast.LENGTH_LONG).show()
+                    }
                 }
-            },
-            onRestored = {
-                runOnUiThread {
-                    Toast.makeText(this, "✅ 数据已从备份恢复", Toast.LENGTH_LONG).show()
-                }
-            }
-        )
+            )
+        }
     }
 
     /**
@@ -269,20 +290,6 @@ class MainActivity : AppCompatActivity() {
         viewPager.isUserInputEnabled = true   // 允许左右滑动切换 Tab
         viewPager.offscreenPageLimit = tabFragments.size - 1
         viewPager.setCurrentItem(0, false)   // 默认「对话」tab
-    }
-
-    override fun onBackPressed() {
-        // Bug fix: 在智能体对话页面按返回键应返回智能体列表，而不是退出app
-        val agentChatFragment = supportFragmentManager.findFragmentByTag("agent_chat")
-        if (agentChatFragment != null) {
-            val agentTab = supportFragmentManager.fragments
-                .firstOrNull { it is AgentTabFragment } as? AgentTabFragment
-            if (agentTab != null) {
-                agentTab.closeAgentChat()
-                return
-            }
-        }
-        super.onBackPressed()
     }
 
     private fun setupBottomNavigation() {

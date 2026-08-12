@@ -41,17 +41,7 @@ class LongTermQuantFragment : QuantFragmentBase() {
     }
 
     override fun onFittingClick() {
-        showDialog("长线拟合提示",
-            "长线策略（持仓6月-1年+）基于深度基本面分析，参数稳定。\n\n" +
-            "核心策略：\n" +
-            "• 低估值 — PE/PB 历史分位筛选\n" +
-            "• 基本面三层筛选 — ROE/负债率/现金流\n" +
-            "• 机构增持 — 高ROE+低负债+稳健现金流\n" +
-            "• 行业龙头护城河 — 技术壁垒+龙头地位+高毛利\n\n" +
-            "卖出条件：\n" +
-            "• 基本面恶化（ROE 连续下滑）\n" +
-            "• 估值过高（PE > $OVERVALUED_PE 或 PB > $OVERVALUED_PB）\n" +
-            "• 行业格局发生重大变化")
+        showFittingParamsReport(titlePrefix = "长线")
     }
 
     override fun onBacktrackClick() {

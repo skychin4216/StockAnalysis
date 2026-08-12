@@ -141,12 +141,20 @@ class StrategyStatsFragment : Fragment() {
             val strategyAcc = mutableListOf<StrategyAccuracyRow>()
             val accuracyStats = db.strategyPredictionDao().getAccuracyStats()
             for (stat in accuracyStats.take(7)) {
+                // 均收益：取该策略最近预测记录的实际次日涨跌幅（无次日数据时依次回退 5 日/10 日）
+                val avgReturn = try {
+                    val preds = db.strategyPredictionDao().getByStrategy(stat.strategy_id, 200)
+                    val returns = preds.mapNotNull { p ->
+                        p.actualNextDayPct ?: p.actual5DayPct ?: p.actual10DayPct
+                    }
+                    if (returns.isEmpty()) 0.0 else returns.average()
+                } catch (_: Exception) { 0.0 }
                 strategyAcc.add(StrategyAccuracyRow(
                     strategyName = stat.strategy_id,
                     totalBuys = stat.total,
                     correct = stat.correct_count,
                     accuracy = stat.accuracy,
-                    avgReturn = 0.0  // getAccuracyStats() 不含 avgReturn，后续扩展
+                    avgReturn = avgReturn
                 ))
             }
 

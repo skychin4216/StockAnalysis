@@ -246,20 +246,20 @@
 2. **第二批（P1，交互闭环）**：UI-P1-3 至 UI-P1-9 — 按钮功能闭环、统计真实化、对话框/切换健壮性。
 3. **第三批（P2，打磨）**：UI-P2-10 至 UI-P2-14 — 异常反馈、空态、菜单一致性、遗留 API 清理。
 
-### 完成状态核对
+### 完成状态核对（2026-08-12 已全部实施）
 
 - [x] 拓扑编辑器全屏重构（`TopologyEditorActivity` / `NodeCanvasView`）+ pipeline 空白根因修复
-- [ ] UI-P0-1 股票列表接入真实行情数据
-- [ ] UI-P0-2 股票搜索接入真实数据源
-- [ ] UI-P1-3 个股详情交易按钮功能闭环
-- [ ] UI-P1-4 长线/超短线拟合调优接入真实流程
-- [ ] UI-P1-5 策略准确率"均收益"真实化
-- [ ] UI-P1-6 删除策略详情死代码 / 空态兜底
-- [ ] UI-P1-7 一键评估 Dialog 叠加修复
-- [ ] UI-P1-8 精选页 Fragment Tag 查找加固
-- [ ] UI-P1-9 搜索面板高度自适应
-- [ ] UI-P2-10 持仓刷新异常可见化
-- [ ] UI-P2-11 持仓表格列宽自适应
-- [ ] UI-P2-12 空态统一
-- [ ] UI-P2-13 买卖评估菜单统一
-- [ ] UI-P2-14 MainActivity 遗留清理
+- [x] UI-P0-1 股票列表接入真实行情数据（`StockListFragment`：stock_basics + 批量实时行情 + daily_snapshot 排序 + 热门板块）
+- [x] UI-P0-2 股票搜索接入真实数据源（`StockBrowserFragment`：`StockDataCenter.searchStocks` + 实时行情）
+- [x] UI-P1-3 个股详情交易按钮功能闭环（加仓/减仓/清仓 → 跳转 AI 对话指令）
+- [x] UI-P1-4 长线/超短线拟合调优接入真实流程（复用 `showFittingParamsReport`）
+- [x] UI-P1-5 策略准确率"均收益"真实化（按策略聚合 `actualNextDayPct`）
+- [x] UI-P1-6 删除策略详情死代码 / 空态兜底
+- [x] UI-P1-7 一键评估 Dialog 叠加修复（统一 `activeEvalDialog` 单例 + 弹新关旧）
+- [x] UI-P1-8 精选页 Fragment Tag 查找加固（遍历 `childFragmentManager.fragments`）
+- [x] UI-P1-9 搜索面板高度自适应（`BottomSheetBehavior` + `skipCollapsed` + `STATE_EXPANDED`）
+- [x] UI-P2-10 持仓刷新异常可见化（日志 + Toast）
+- [x] UI-P2-11 持仓表格列宽自适应（股票列 60→84dp，日期列 72→60dp）
+- [x] UI-P2-12 空态统一（股票列表/搜索/统计页均有"暂无数据"提示）
+- [x] UI-P2-13 买卖评估菜单统一（基类 `getExtraEvalMenuItems` 扩展点，子类不再重复实现）
+- [x] UI-P2-14 MainActivity 遗留清理（`onBackPressed` → `OnBackPressedCallback`；备份引导仅首次弹窗）
