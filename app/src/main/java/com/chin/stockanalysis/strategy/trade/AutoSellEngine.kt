@@ -22,7 +22,7 @@ import kotlin.math.sqrt
  * ### 层级1: 强制风控层（优先级最高）
  * 1. **硬止损 (Hard Stop)**: 亏损 > 8% → 无条件卖出
  * 2. **最大回撤止损 (Max Drawdown Stop)**: 从持仓最高点回撤 > 12% → 卖出
- * 3. **时间强制平仓 (Time Force Close)**: 持仓 > 15天 → 强制卖出
+ * 3. **时间无进展强制平仓 (Time + No Progress Stop)**: 持仓 ≥ 10天且近3日动量 < 1% → 卖出（死钱换股）
  *
  * ### 层级2: 动态止盈层
  * 4. **阶梯止盈 (Tiered Take Profit)**: +10%卖1/3, +15%卖1/3, +20%卖剩余
@@ -231,15 +231,18 @@ class AutoSellEngine(private val context: Context) {
             }
         }
 
-        // ④ 阶梯止盈
+        // ④ 阶梯止盈（已减仓过的档位不再重复触发，避免多次评估重复减仓）
         if (config.enableTieredTP) {
+            val takenTiers = takenTpTiers(snap.order.reason)
             for (tier in TP_TIERS.reversed()) {
+                val tierIndex = TP_TIERS.indexOf(tier)
+                if (takenTiers.contains(tierIndex)) continue
                 if (snap.profitPct >= tier.profitPct) {
                     return SellDecision(snap.order,
-                        "🎯 阶梯止盈: +${"%.1f".format(snap.profitPct)}% 触发第${TP_TIERS.indexOf(tier)+1}档",
+                        "🎯 阶梯止盈: +${"%.1f".format(snap.profitPct)}% 触发第${tierIndex+1}档",
                         snap.currentPrice, snap.profitPct, true, "TieredTP", tier.sellRatio, 5,
                         mapOf("trigger" to "阶梯止盈",
-                            "tier" to "${TP_TIERS.indexOf(tier)+1}/${TP_TIERS.size}",
+                            "tier" to "${tierIndex+1}/${TP_TIERS.size}",
                             "sellRatio" to "${(tier.sellRatio*100).toInt()}%"))
                 }
             }
@@ -355,6 +358,14 @@ class AutoSellEngine(private val context: Context) {
                 } else {
                     val soldQuantity = (dec.order.quantity * dec.sellRatio).toInt().coerceAtLeast(1)
                     db.strategyTradeOrderDao().updateQuantity(dec.order.id, dec.order.quantity - soldQuantity)
+                    // 记录已减仓的档位，防止后续评估对同一档重复减仓
+                    if (dec.strategy == "TieredTP") {
+                        val tierIndex = TP_TIERS.indexOfFirst { kotlin.math.abs(it.sellRatio - dec.sellRatio) < 1e-6 }
+                        if (tierIndex >= 0 && !takenTpTiers(dec.order.reason).contains(tierIndex)) {
+                            db.strategyTradeOrderDao().updateReason(
+                                dec.order.id, dec.order.reason + "[TP_TIER_${tierIndex + 1}]")
+                        }
+                    }
                     db.strategyTradeOrderDao().insert(StrategyTradeOrderEntity(
                         strategyId = dec.order.strategyId, stockCode = dec.order.stockCode,
                         stockName = dec.order.stockName, tradeDate = dec.order.tradeDate,
@@ -426,10 +437,30 @@ class AutoSellEngine(private val context: Context) {
         return map
     }
 
+    /**
+     * 计算每只持仓个股所属板块的涨跌幅（板块真实涨跌，而非个股自身涨跌幅）。
+     *
+     * 匹配链路：个股 stockCode → sector_stocks.sector_name → sector_daily_record.change_pct。
+     * 一只股票可能属于多个板块，取跌幅最大的板块作为参考（最坏情形）。
+     */
     private suspend fun getSectorChangePct(date: String): Map<String, Double> {
         val map = mutableMapOf<String, Double>()
-        try { db.dailySnapshotDao().getByDate(date).forEach { map[it.code] = it.changePct } }
-        catch (_: Exception) {}
+        try {
+            // 当日板块涨跌（sector_name → changePct）
+            val sectorNameToChange = db.sectorDailyRecordDao().getByDate(date)
+                .associate { it.sectorName to it.changePct }
+            if (sectorNameToChange.isEmpty()) return map
+            // 每只持仓股票 → 所属板块跌幅（取最差）
+            val holdings = db.strategyTradeOrderDao().getRecent(500)
+                .filter { it.status == "BUYING" || it.status == "PENDING" || it.status == "HELD" }
+            for (order in holdings) {
+                val sectorChanges = db.sectorStockDao().getSectorNamesByStockCode(order.stockCode)
+                    .mapNotNull { sectorNameToChange[it] }
+                if (sectorChanges.isNotEmpty()) {
+                    map[order.stockCode] = sectorChanges.minOrNull() ?: 0.0
+                }
+            }
+        } catch (_: Exception) {}
         return map
     }
 
@@ -458,6 +489,12 @@ class AutoSellEngine(private val context: Context) {
         stats
     }
 
+    /** 从持仓 reason 中解析已减仓的阶梯止盈档位（0-based index） */
+    private fun takenTpTiers(reason: String): Set<Int> {
+        if (!reason.contains("[TP_TIER_")) return emptySet()
+        return TP_TIERS.indices.filter { reason.contains("[TP_TIER_${it + 1}]") }.toSet()
+    }
+
     private fun extractStrategyFromReason(reason: String): String = when {
         reason.contains("硬止损") -> "HardStop"
         reason.contains("最大回撤") -> "MaxDrawdown"
@@ -470,9 +507,9 @@ class AutoSellEngine(private val context: Context) {
         reason.contains("放量滞涨") -> "VolumeClimax"
         reason.contains("RSI超买") -> "RSIOverbought"
         reason.contains("板块弱势") -> "SectorWeakness"
-        reason.contains("ATR止损") || reason.contains("ATR止损") -> "ATRStop"
-        reason.contains("动量衰竭") || reason.contains("动量衰竭") -> "MomentumDecay"
-        reason.contains("目标止盈") || reason.contains("目标止盈") -> "TakeProfit"
+        reason.contains("ATR止损") -> "ATRStop"
+        reason.contains("动量衰竭") -> "MomentumDecay"
+        reason.contains("目标止盈") -> "TakeProfit"
         else -> "Other"
     }
 }

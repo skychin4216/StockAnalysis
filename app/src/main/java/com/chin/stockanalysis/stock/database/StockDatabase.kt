@@ -137,7 +137,7 @@ interface AiSelectedStockDao {
         com.chin.stockanalysis.strategy.backtest.IntradayKlineEntity::class,
         InstitutionalPickEntity::class
     ],
-    version = 23,
+    version = 24,
     exportSchema = false
 )
 abstract class StockDatabase : RoomDatabase() {
@@ -408,6 +408,18 @@ abstract class StockDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v23 → v24 迁移：real_positions 新增 currentPrice/pe/turnoverRate 字段（OCR 后网络行情增强）
+         */
+        private val MIGRATION_23_24 = object : androidx.room.migration.Migration(23, 24) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `real_positions` ADD COLUMN `currentPrice` REAL NOT NULL DEFAULT 0.0")
+                db.execSQL("ALTER TABLE `real_positions` ADD COLUMN `pe` REAL NOT NULL DEFAULT 0.0")
+                db.execSQL("ALTER TABLE `real_positions` ADD COLUMN `turnoverRate` REAL NOT NULL DEFAULT 0.0")
+                Log.i(TAG, "✅ v23→v24 迁移完成：real_positions 新增 currentPrice/pe/turnoverRate 字段")
+            }
+        }
+
         fun getInstance(context: Context): StockDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -415,7 +427,7 @@ abstract class StockDatabase : RoomDatabase() {
                     StockDatabase::class.java,
                     DATABASE_NAME
                 )
-                    .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
+                    .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24)
                     .fallbackToDestructiveMigration()
                     .addCallback(destructiveCallback)
                     .build()

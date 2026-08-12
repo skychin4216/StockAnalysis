@@ -32,6 +32,9 @@ data class RealPositionEntity(
     val sector: String = "",          // 板块
     val notes: String = "",           // 备注
     val isActive: Boolean = true,     // 是否仍持有（false=已清仓）
+    val currentPrice: Double = 0.0,   // 最新价（网络API获取）
+    val pe: Double = 0.0,             // 市盈率
+    val turnoverRate: Double = 0.0,   // 换手率
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )
@@ -85,4 +88,7 @@ interface RealPositionDao {
 
     @Query("SELECT COALESCE(MAX(id), 0) FROM real_positions")
     suspend fun getMaxId(): Long
+
+    @Query("UPDATE real_positions SET currentPrice = :currentPrice, pe = :pe, turnoverRate = :turnoverRate, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun updateMarketData(id: Long, currentPrice: Double, pe: Double, turnoverRate: Double, updatedAt: Long = System.currentTimeMillis())
 }

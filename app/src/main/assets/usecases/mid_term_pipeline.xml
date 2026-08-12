@@ -12,7 +12,7 @@
     Layer 2 (并行): signal_merge（策略动态注入）, heat_score（依赖 stock_pool）, cross_day_aggregation（依赖 stock_pool）
     Layer 3: sector_boost（依赖 signal_merge）→ bounce_reversal
     Layer 4 (并行): news_strength, rotation_penalty（依赖 sector_boost）
-    Layer 5: smart_money_filter（依赖 bounce_reversal + news_strength）
+    Layer 5: smart_money_filter（依赖 bounce_reversal + news_strength + rotation_penalty，受罚板块降分）
     Layer 6: news_guard（依赖 smart_money_filter）
     Layer 7: ai_predict（依赖 news_guard，最终裁切 take 5）
     Layer 8: generate_orders（依赖 ai_predict）
@@ -77,11 +77,18 @@
     <Node id="n_merge" name="信号合并" module="signal_merge" />
     <Node id="n_boost" name="板块加权" module="sector_boost" />
     <Node id="n_bounce" name="跌后反弹加分" module="bounce_reversal" />
-    <Node id="n_strict" name="六项严选检查" module="strict_selection">
+    <Node id="n_strict" name="均线粘合严选" module="strict_selection">
       <config>
-        <param name="peThreshold" value="30.0" />
-        <param name="maDivergenceThreshold" value="0.03" />
-        <param name="lookbackDays" value="60" />
+        <param name="convergenceThreshold" value="2.5" />
+        <param name="useMA60" value="true" />
+        <param name="convergenceDurationDays" value="15" />
+        <param name="moderateVolumeLower" value="1.2" />
+        <param name="moderateVolumeUpper" value="1.8" />
+        <param name="minDrawdownPct" value="30.0" />
+        <param name="requireMA60Rising" value="true" />
+        <param name="requireAboveAllMAs" value="true" />
+        <param name="lookbackDays" value="120" />
+        <param name="minPassCount" value="7" />
       </config>
     </Node>
     <Node id="n_base_guard" name="打底仓守门" module="base_position_guard">
@@ -347,6 +354,14 @@
     <!-- Layer 4 → 5: 新闻力度 → 主力资金过滤（新闻评分存入context供后续读取） -->
     <Link>
       <SourceNodeId>n_news_str</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_smart</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 4 → 5: 板块轮动惩罚 → 主力资金过滤（受罚板块股票降分，实现惩罚闭环） -->
+    <Link>
+      <SourceNodeId>n_rot_pen</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_smart</TargetNodeId>
       <TargetPortId>0</TargetPortId>

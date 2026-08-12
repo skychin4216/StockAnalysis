@@ -1,5 +1,6 @@
 package com.chin.stockanalysis.strategy.topology.nodes
 
+import com.chin.stockanalysis.stock.database.StockDataCenter
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.Strategy
 import com.chin.stockanalysis.strategy.analysis.CandlePatternDetector
@@ -14,6 +15,7 @@ import com.chin.stockanalysis.strategy.topology.core.PipelineNode
 import com.chin.stockanalysis.strategy.topology.core.SignalPack
 import com.chin.stockanalysis.strategy.topology.core.StockPool
 import com.chin.stockanalysis.strategy.topology.pipelines.NewsGuardResult
+import com.chin.stockanalysis.strategy.topology.pipelines.RotationPenaltyResult
 import com.chin.stockanalysis.strategy.predict.AIPredictionEngine
 import com.chin.stockanalysis.strategy.sector.StrategyMarketContext
 
@@ -81,7 +83,8 @@ class StockPoolNode : BaseNode<Any, StockPool>("stock_pool", "股票池构建", 
             val allStocks = feed.prepareFromDb(
                 date = context.tradeDate,
                 config = StrategyDataFeed.DataFeedConfig(
-                    onlyMainBoard = context.config.onlyMainBoard
+                    onlyMainBoard = context.config.onlyMainBoard,
+                    enrichFundamentals = false  // 候选池不需要基本面，避免阻塞在网络API
                 )
             )
 
@@ -442,8 +445,23 @@ class SmartMoneyFilterNode(
             val passed = mutableListOf<StrategySignal>()
             var rejectCount = 0
 
+            // 读取板块轮动惩罚结果（v2）：命中受罚板块的股票在主力资金评分上降分，
+            // 使轮动惩罚真正影响选股（闭环），而非仅写入报表字段
+            val rotationResult = context.getStageOutput<RotationPenaltyResult>("n_rot_pen")
+                ?: context.getStageOutput<RotationPenaltyResult>("rotation_penalty")
+
             for (signal in pool.boostedSignals) {
-                val score = SmartMoneyCache.getScore(signal.stockCode).combined
+                var score = SmartMoneyCache.getScore(signal.stockCode).combined
+                // 轮动惩罚降分：股票所属任一板块受罚则扣分（取最重惩罚）
+                if (rotationResult != null && rotationResult.sectorPenalties.isNotEmpty()) {
+                    val sectors = StockDataCenter.getSectorsByStock(signal.stockCode)
+                    val sectorPenalty = sectors
+                        .mapNotNull { rotationResult.sectorPenalties[it] }
+                        .minOrNull() ?: 0
+                    if (sectorPenalty < 0) {
+                        score += sectorPenalty
+                    }
+                }
                 // 防守高息股（银行/电力等）主力资金分天然低，降阈到 20
                 val effectiveMin = if (signal.strategyId == "defensive_dividend") 20 else minScore
                 if (score >= effectiveMin) {
@@ -477,10 +495,16 @@ class SmartMoneyFilterNode(
             )
 
             context.setStageOutput(nodeId, result)
+            val rotationInfo = if (rotationResult?.sectorPenalties?.isNotEmpty() == true) {
+                ", 轮动惩罚板块=${rotationResult.sectorPenalties.size}个"
+            } else {
+                ""
+            }
             context.log(
                 nodeId,
                 "主力资金过滤完成: 通过 ${passed.size} 只, " +
-                    "淘汰 $rejectCount 只, 通过率 ${"%.1f".format(if (pool.boostedSignals.isEmpty()) 100.0 else passed.size * 100.0 / pool.boostedSignals.size)}%"
+                    "淘汰 $rejectCount 只, 通过率 ${"%.1f".format(if (pool.boostedSignals.isEmpty()) 100.0 else passed.size * 100.0 / pool.boostedSignals.size)}%" +
+                    rotationInfo
             )
             result
         } catch (e: Exception) {

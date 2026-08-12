@@ -298,7 +298,7 @@ class PipelineBacktestEngine(private val context: Context) {
             if (report.failureAnalysis.isNotEmpty()) {
                 appendLine("━━━ 失败案例分析 ━━━")
                 for (fc in report.failureAnalysis.take(10)) {
-                    appendLine("${fc.date} ${fc.stockName}(${fc.stockCode}) 通过${fc.passCount}/7 收益${"%.2f".format(fc.returnPct)}%")
+                    appendLine("${fc.date} ${fc.stockName}(${fc.stockCode}) 通过${fc.passCount}项 收益${"%.2f".format(fc.returnPct)}%")
                     for (r in fc.reasons) {
                         appendLine("  → $r")
                     }

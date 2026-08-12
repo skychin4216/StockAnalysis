@@ -69,15 +69,17 @@
     <!-- 增强 Layer 3 -->
     <Node id="n_boost" name="板块加权" module="sector_boost" />
     <Node id="n_bounce" name="跌后反弹加分" module="bounce_reversal" />
-    <Node id="n_strict" name="六项严选检查" module="strict_selection">
+    <Node id="n_strict" name="均线粘合严选" module="strict_selection">
       <config>
-        <param name="peThreshold" value="50.0" />
-        <param name="maDivergenceThreshold" value="0.02" />
-        <param name="activeDaysThreshold" value="5" />
-        <param name="turnoverThreshold" value="3.0" />
+        <param name="convergenceThreshold" value="3.0" />
+        <param name="useMA60" value="false" />
+        <param name="convergenceDurationDays" value="5" />
+        <param name="volumeBreakoutRatio" value="2.5" />
+        <param name="minChangePct" value="4.0" />
+        <param name="requireChangePct" value="true" />
+        <param name="minDrawdownPct" value="10.0" />
         <param name="lookbackDays" value="30" />
-        <param name="marketMaThreshold" value="0.015" />
-        <param name="minPassCount" value="4" />
+        <param name="minPassCount" value="6" />
       </config>
     </Node>
     <Node id="n_ancestral" name="大A祖训" module="ancestral_rules">

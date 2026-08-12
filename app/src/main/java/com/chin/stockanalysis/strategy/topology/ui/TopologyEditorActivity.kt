@@ -1,7 +1,9 @@
 package com.chin.stockanalysis.strategy.topology.ui
 
 import android.app.AlertDialog
+import android.content.pm.ActivityInfo
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.util.Log
 import android.view.Gravity
@@ -9,12 +11,16 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
-import android.widget.HorizontalScrollView
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.chin.stockanalysis.strategy.topology.core.NodeType
@@ -28,51 +34,70 @@ import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
 
 /**
- * ## TopologyEditorActivity（重写版）
+ * ## TopologyEditorActivity — Pipeline 拓扑编辑器（全屏 v2）
  *
- * 基于 [NodeCanvasView] 2D 画布的 Pipeline 拓扑可视化编辑器。
+ * ### 设计目标
+ * 沉浸式全屏展示，画布占满整屏，不再使用 ScrollView 包裹（[NodeCanvasView] 内置平移/缩放）。
  *
  * ### 布局结构
  * ```
- * ┌───────────────────────────────────────────────────┐
- * │ [◀/▶]   UseCase 名称          [💾 保存] [▶ 执行]   │ ← 顶部栏
- * ├──────────────┬────────────────────────────────────┤
- * │ Collapsible  │                                    │
- * │ Sidebar      │       NodeCanvasView               │
- * │  ▼ Node      │       (2D 画布，ScrollView 包裹)    │
- * │  ▼ Pipeline  │                                    │
- * │  ▶ UseCase   │                                    │
- * ├──────────────┴────────────────────────────────────┤
- * │ 状态文字                                            │ ← 底部栏
- * └───────────────────────────────────────────────────┘
+ * ┌───────────────────────────────────────────────────────────┐
+ * │ [✕]  超短线量化          ultra_short_pipeline.xml        │ ← 悬浮顶部工具条
+ * │       ▶ UseCase · 15 节点 · 12 连线                        │    (半透明深色渐变)
+ * ├───────────────────────────────────────────────────────────┤
+ * │                                                           │
+ * │                NodeCanvasView (全屏画布)                    │
+ * │        单指拖拽空白 = 平移 · 双指捏合 = 缩放                  │
+ * │                                                           │
+ * │  [📦 模板] [🖼 适配]                                       │ ← 右下角悬浮操作
+ * ├───────────────────────────────────────────────────────────┤
+ * │ 状态信息 (悬浮左下角 chip)                                    │
+ * └───────────────────────────────────────────────────────────┘
  * ```
  *
  * ### 交互
- * - 侧边栏 Node 模板点击 → 添加节点到画布
- * - 画布节点点击 → 选中（状态栏显示信息）
- * - 画布节点长按 → 弹出 AlertDialog（配置 / 删除）
- * - 从节点 A 拖拽到节点 B → 建立连线
- * - 连线点击 → 弹出删除连线对话框
+ * - 顶部工具条：返回 / 标题（UseCase 名 + Pipeline 文件信息）/ 保存 / 执行
+ * - 右下角按钮组：打开模板面板 / 适配全图（zoomToFit）
+ * - 模板面板（右侧悬浮抽屉）：UseCase 快速切换 · Pipeline 快速加载 · Node 模板添加
+ * - 画布节点点击 → 选中；长按 → 菜单（配置 / 删除）；A 拖到 B → 连线
  */
 class TopologyEditorActivity : AppCompatActivity() {
 
     private lateinit var viewModel: TopologyEditorViewModel
     private lateinit var canvasView: NodeCanvasView
-    private lateinit var sidebarContainer: LinearLayout
+
+    // 顶部工具条
     private lateinit var titleText: TextView
+    private lateinit var subtitleText: TextView
+
+    // 底部状态 chip
     private lateinit var statusText: TextView
-    private lateinit var sidebarToggleBtn: Button
 
-    private var sidebarCollapsed = false
-    private val sidebarExpandedWidthDp = 80
-    private val sidebarCollapsedWidthDp = 24
+    // 右侧悬浮面板
+    private lateinit var sidePanel: LinearLayout
+    private lateinit var panelContent: LinearLayout
+    private var panelVisible = false
 
-    // 侧边栏各分区展开状态（默认全部收起）
+    /** 当前 UseCase id（用于执行） */
+    private var currentUseCaseId = "mid_term"
+
+    /** 侧边栏各分区展开状态（默认全部展开） */
     private val sectionExpanded = mutableMapOf(
-        "node" to false,
-        "pipeline" to false,
-        "usecase" to false
+        "usecase" to true,
+        "pipeline" to true,
+        "node" to true
     )
+
+    // 颜色常量
+    private val cBg = Color.parseColor("#0B1220")
+    private val cBar = Color.parseColor("#CC0F1B30")
+    private val cBarBorder = Color.parseColor("#2A3B5A")
+    private val cText = Color.WHITE
+    private val cSub = Color.parseColor("#8FA3C0")
+    private val cPanel = Color.parseColor("#E6101B33")
+    private val cItem = Color.parseColor("#0E223D")
+    private val cItemText = Color.parseColor("#D6E2F5")
+    private val cAccent = Color.parseColor("#3B82F6")
 
     // ════════════════════════════════════════════════════
     // 生命周期
@@ -80,49 +105,41 @@ class TopologyEditorActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // 默认横屏显示
-        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        // 默认横屏显示（DAG 横向链路更适合宽屏）
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         viewModel = ViewModelProvider(this)[TopologyEditorViewModel::class.java]
         ensureNodeRegistryInitialized()
 
-        val rootLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#FAFBFC"))
-            layoutParams = ViewGroup.LayoutParams(
+        // ── 沉浸式全屏（edge-to-edge，隐藏系统状态栏/导航栏） ──
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            hide(WindowInsetsCompat.Type.systemBars())
+        }
+
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(cBg)
+            layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
         }
 
-        // 顶部栏
-        rootLayout.addView(buildTopBar())
+        // 画布（全屏）
+        canvasView = NodeCanvasView(this)
+        root.addView(canvasView, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ))
 
-        // 中间：侧边栏 + 画布
-        val middleLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
-            )
-        }
-        middleLayout.addView(buildSidebar())
-        middleLayout.addView(
-            buildCanvas(),
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
-        )
-        rootLayout.addView(middleLayout)
+        // 悬浮层
+        root.addView(buildTopBar(), topBarParams())
+        root.addView(buildStatusChip(), statusChipParams())
+        root.addView(buildSidePanel(), sidePanelParams())
+        root.addView(buildFloatingActions(), floatingActionsParams())
 
-        // 底部：状态栏
-        statusText = TextView(this).apply {
-            text = "就绪"
-            setPadding(dp(12), dp(6), dp(12), dp(6))
-            setTextColor(Color.parseColor("#6B7280"))
-            textSize = 12f
-            maxLines = 3
-            setBackgroundColor(Color.WHITE)
-        }
-        rootLayout.addView(statusText)
-
-        setContentView(rootLayout)
+        setContentView(root)
+        applySystemBarPadding(root)
 
         // 画布交互回调
         canvasView.listener = object : NodeCanvasView.NodeCanvasListener {
@@ -130,7 +147,7 @@ class TopologyEditorActivity : AppCompatActivity() {
                 if (node != null) {
                     statusText.text = "选中: ${node.name} (${node.id}) | module: ${node.module}"
                 } else {
-                    statusText.text = "未选中节点"
+                    statusText.text = currentPipelineSummary()
                 }
             }
 
@@ -145,17 +162,13 @@ class TopologyEditorActivity : AppCompatActivity() {
             }
 
             override fun onLinkTapped(link: VisualLink) {
-                // 点击连线 → 高亮起止节点并平移到目标节点
                 val fromNode = canvasView.canvasState.nodes.find { it.id == link.fromId }
                 val toNode = canvasView.canvasState.nodes.find { it.id == link.toId }
                 if (fromNode != null && toNode != null) {
-                    // 选中目标节点
                     canvasView.canvasState.selectedNodeId = link.toId
-                    // 平移画布使目标节点居中
                     canvasView.panToNode(toNode)
                     statusText.text = "连线: ${fromNode.name} → ${toNode.name}"
-                    // 长按显示删除选项
-                    val dialog = AlertDialog.Builder(this@TopologyEditorActivity)
+                    AlertDialog.Builder(this@TopologyEditorActivity)
                         .setTitle("${fromNode.name} → ${toNode.name}")
                         .setMessage("from: ${link.fromId}\nto: ${link.toId}")
                         .setPositiveButton("确定", null)
@@ -180,204 +193,286 @@ class TopologyEditorActivity : AppCompatActivity() {
     }
 
     // ════════════════════════════════════════════════════
-    // 顶部栏
+    // 布局构建
     // ════════════════════════════════════════════════════
 
+    /** 顶部悬浮工具条：返回 / 标题 / 操作按钮 */
     private fun buildTopBar(): View {
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.parseColor("#1E293B"))
-            setPadding(dp(8), dp(6), dp(8), dp(6))
+            setPadding(dp(8), dp(10), dp(8), dp(10))
+            setBackgroundColor(cBar)
         }
+        // 底部 1px 分隔线
+        bar.addView(View(this).apply {
+            setBackgroundColor(cBarBorder)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)
+        }, 0)
 
-        sidebarToggleBtn = Button(this).apply {
-            text = "◀"
-            textSize = 14f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.TRANSPARENT)
-            setOnClickListener { toggleSidebar() }
-            layoutParams = LinearLayout.LayoutParams(dp(36), dp(32))
+        val backBtn = flatButton("✕", 0xFF64748B.toInt()) {
+            finish()
         }
-        bar.addView(sidebarToggleBtn)
+        bar.addView(backBtn)
 
-        titleText = TextView(this).apply {
-            text = "Pipeline 编辑器"
-            setTextColor(Color.WHITE)
-            textSize = 16f
-            setPadding(dp(12), 0, dp(12), 0)
+        // 标题列
+        val titleCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), 0, dp(8), 0)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
-        bar.addView(titleText)
+        titleText = TextView(this).apply {
+            text = "Pipeline 编辑器"
+            setTextColor(cText)
+            textSize = 16f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            maxLines = 1
+        }
+        titleCol.addView(titleText)
+        subtitleText = TextView(this).apply {
+            text = "加载中…"
+            setTextColor(cSub)
+            textSize = 10f
+            maxLines = 1
+        }
+        titleCol.addView(subtitleText)
+        bar.addView(titleCol)
 
-        val saveBtn = Button(this).apply {
-            text = "💾保存"
-            textSize = 11f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#059669"))
-            setOnClickListener { savePipeline() }
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)).apply {
-                minWidth = dp(60)
-            }
+        val fitBtn = accentButton("🖼 适配", 0xFF059669.toInt()) {
+            canvasView.zoomToFit()
+        }
+        bar.addView(fitBtn)
+
+        val panelBtn = accentButton("📦 模板", 0xFF7C3AED.toInt()) {
+            togglePanel()
+        }
+        bar.addView(panelBtn)
+
+        val saveBtn = accentButton("💾 保存", 0xFF0284C7.toInt()) {
+            savePipeline()
         }
         bar.addView(saveBtn)
 
-        val runBtn = Button(this).apply {
-            text = "▶执行"
-            textSize = 11f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#7C3AED"))
-            setOnClickListener { runPipeline() }
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)).apply {
-                minWidth = dp(60)
-                marginStart = dp(4)
-            }
+        val runBtn = accentButton("▶ 执行", 0xFFDC2626.toInt()) {
+            runPipeline()
         }
         bar.addView(runBtn)
-
-        val orientationBtn = Button(this).apply {
-            text = "🔄"
-            textSize = 14f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.TRANSPARENT)
-            setOnClickListener { toggleOrientation() }
-            layoutParams = LinearLayout.LayoutParams(dp(36), dp(32)).apply {
-                marginStart = dp(4)
-            }
-        }
-        bar.addView(orientationBtn)
 
         return bar
     }
 
-    // ════════════════════════════════════════════════════
-    // 侧边栏
-    // ════════════════════════════════════════════════════
+    private fun topBarParams() = FrameLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        Gravity.TOP
+    )
 
-    private fun buildSidebar(): View {
-        sidebarContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#F1F5F9"))
-            layoutParams = LinearLayout.LayoutParams(
-                dp(sidebarExpandedWidthDp), ViewGroup.LayoutParams.MATCH_PARENT
-            )
+    /** 底部悬浮状态 chip（左下角） */
+    private fun buildStatusChip(): View {
+        statusText = TextView(this).apply {
+            text = "就绪"
+            setTextColor(cSub)
+            textSize = 11f
+            maxLines = 4
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            setBackgroundResource(android.R.color.transparent)
+            background = roundedRect(Color.parseColor("#CC0B1526"), dp(14))
+            setOnClickListener { canvasView.zoomToFit() }
         }
-        refreshSidebarContent()
-        return sidebarContainer
+        return statusText
     }
 
-    private fun refreshSidebarContent() {
-        sidebarContainer.removeAllViews()
+    private fun statusChipParams() = FrameLayout.LayoutParams(
+        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        Gravity.BOTTOM or Gravity.START
+    ).apply { setMargins(dp(12), 0, 0, dp(12)) }
 
-        // Node 模板分区
-        addSidebarSection("node", "📦 Node 模板") {
-            val modules = NodeRegistry.listModules().sorted()
-            if (modules.isEmpty()) {
-                addSidebarItem("(无可用 module，请先初始化)") { }
-            }
-            for (module in modules) {
-                val displayName = moduleDisplayName(module)
-                val nodeType = inferNodeType(module)
-                addSidebarItem(displayName) {
-                    addNodeFromPalette(module, displayName, nodeType)
-                }
-            }
+    /** 右下角悬浮操作按钮组 */
+    private fun buildFloatingActions(): View {
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            setBackgroundResource(android.R.color.transparent)
+            background = roundedRect(Color.parseColor("#E60E1B30"), dp(12))
+        }
+        col.addView(iconButton("📦", 0xFF7C3AED.toInt()) { togglePanel() })
+        col.addView(iconButton("🖼", 0xFF059669.toInt()) { canvasView.zoomToFit() })
+        return col
+    }
+
+    private fun floatingActionsParams() = FrameLayout.LayoutParams(
+        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        Gravity.BOTTOM or Gravity.END
+    ).apply { setMargins(0, 0, dp(12), dp(12)) }
+
+    /** 右侧悬浮模板面板（默认隐藏） */
+    private fun buildSidePanel(): View {
+        sidePanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(cPanel)
+            visibility = View.GONE
         }
 
-        // Pipeline 分区
-        addSidebarSection("pipeline", "📊 Pipeline") {
-            val pipelines = listAssetFiles("usecases")
-                ?.filter { it.endsWith("_pipeline.xml") }
-                ?: emptyList()
-            if (pipelines.isEmpty()) {
-                addSidebarItem("(无 Pipeline 文件)") { }
-            }
-            for (pipeFile in pipelines) {
-                val pipeName = extractXmlName("usecases/$pipeFile")
-                    ?: pipeFile.removeSuffix(".xml").replace("_", " ")
-                addSidebarItem(pipeName) { loadPipelineFile(pipeFile) }
-            }
+        // 面板标题
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(12), dp(8), dp(8))
+            setBackgroundColor(Color.parseColor("#1A2B4A"))
         }
+        val headerTitle = TextView(this).apply {
+            text = "资源面板"
+            setTextColor(cText)
+            textSize = 13f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        header.addView(headerTitle)
+        val collapseBtn = flatButton("✕", 0xFF64748B.toInt()) { togglePanel() }
+        header.addView(collapseBtn)
+        sidePanel.addView(header)
+
+        // 可滚动内容
+        val scroll = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+            )
+        }
+        panelContent = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(4), dp(4), dp(4), dp(12))
+        }
+        scroll.addView(panelContent, ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        sidePanel.addView(scroll)
+
+        // 底部：旋转屏幕
+        val orientationBtn = accentButton("🔄 旋转屏幕", 0xFF334155.toInt()) { toggleOrientation() }
+        sidePanel.addView(orientationBtn)
+
+        refreshPanelContent()
+        return sidePanel
+    }
+
+    private fun sidePanelParams() = FrameLayout.LayoutParams(
+        dp(250), ViewGroup.LayoutParams.MATCH_PARENT,
+        Gravity.END
+    )
+
+    private fun togglePanel() {
+        panelVisible = !panelVisible
+        sidePanel.visibility = if (panelVisible) View.VISIBLE else View.GONE
+        if (panelVisible) refreshPanelContent()
+    }
+
+    // ════════════════════════════════════════════════════
+    // 面板内容
+    // ════════════════════════════════════════════════════
+
+    private fun refreshPanelContent() {
+        panelContent.removeAllViews()
 
         // UseCase 分区
-        addSidebarSection("usecase", "📋 UseCase") {
+        addPanelSection("usecase", "📋 UseCase 周期") {
             val usecases = listAssetFiles("usecases")
                 ?.filter { it.endsWith("_usecase.xml") }
                 ?: emptyList()
             if (usecases.isEmpty()) {
-                addSidebarItem("(无 UseCase 文件)") { }
+                addPanelItem("(无 UseCase 文件)") { }
             }
             for (ucFile in usecases) {
                 val ucName = extractXmlName("usecases/$ucFile")
                     ?: ucFile.removeSuffix("_usecase.xml").replace("_", " ")
-                addSidebarItem(ucName) { loadUseCaseFile(ucFile) }
+                addPanelItem(ucName) { loadUseCaseFile(ucFile) }
             }
-            // Pipeline 全景图入口
-            addSidebarItem("🌐 Pipeline 全景") { showPipelinePanorama() }
+            addPanelItem("🌐 Pipeline 全景") { showPipelinePanorama() }
+        }
+
+        // Pipeline 分区
+        addPanelSection("pipeline", "📊 Pipeline 文件") {
+            val pipelines = listAssetFiles("usecases")
+                ?.filter { it.endsWith("_pipeline.xml") }
+                ?: emptyList()
+            if (pipelines.isEmpty()) {
+                addPanelItem("(无 Pipeline 文件)") { }
+            }
+            for (pipeFile in pipelines) {
+                val pipeName = extractXmlName("usecases/$pipeFile")
+                    ?: pipeFile.removeSuffix(".xml").replace("_", " ")
+                addPanelItem(pipeName) { loadPipelineFile(pipeFile) }
+            }
+        }
+
+        // Node 模板分区
+        addPanelSection("node", "📦 Node 模板") {
+            val modules = NodeRegistry.listModules().sorted()
+            if (modules.isEmpty()) {
+                addPanelItem("(无可用 module，请先初始化)") { }
+            }
+            for (module in modules) {
+                val displayName = moduleDisplayName(module)
+                val nodeType = inferNodeType(module)
+                addPanelItem(displayName) {
+                    addNodeFromPalette(module, displayName, nodeType)
+                }
+            }
         }
     }
 
-    private fun addSidebarItem(label: String, onClick: () -> Unit) {
+    private fun addPanelItem(label: String, onClick: () -> Unit) {
         val itemBtn = TextView(this).apply {
-            text = label
-            textSize = 10f
-            setTextColor(Color.parseColor("#334155"))
-            setPadding(dp(4), dp(4), dp(4), dp(4))
-            setBackgroundColor(Color.WHITE)
+            text = "• $label"
+            textSize = 11f
+            setTextColor(cItemText)
+            setPadding(dp(10), dp(7), dp(10), dp(7))
+            setBackgroundResource(android.R.color.transparent)
+            background = roundedRect(cItem, dp(8))
             textAlignment = View.TEXT_ALIGNMENT_VIEW_START
             setOnClickListener { onClick() }
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(dp(2), dp(1), dp(2), 0) }
+            ).apply { setMargins(0, dp(2), 0, dp(2)) }
         }
-        sidebarContainer.addView(itemBtn)
+        panelContent.addView(itemBtn)
     }
 
-    private fun addSidebarSection(key: String, title: String, contentBuilder: () -> Unit) {
+    private fun addPanelSection(key: String, title: String, contentBuilder: () -> Unit) {
         val isExpanded = sectionExpanded[key] ?: true
 
         val header = Button(this).apply {
             text = if (isExpanded) "▼ $title" else "▶ $title"
             textSize = 12f
-            setTextColor(Color.parseColor("#1E293B"))
-            setBackgroundColor(Color.parseColor("#E2E8F0"))
+            setTextColor(cText)
+            setBackgroundColor(Color.TRANSPARENT)
+            background = roundedRect(Color.parseColor("#22365C"), dp(8))
             isAllCaps = false
             setOnClickListener {
                 sectionExpanded[key] = !(sectionExpanded[key] ?: true)
-                refreshSidebarContent()
+                refreshPanelContent()
             }
             layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(32)
-            ).apply { setMargins(0, dp(4), 0, 0) }
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(34)
+            ).apply { setMargins(0, dp(6), 0, dp(4)) }
         }
-        sidebarContainer.addView(header)
+        panelContent.addView(header)
 
         if (isExpanded) {
             contentBuilder()
         }
     }
 
-    private fun toggleSidebar() {
-        sidebarCollapsed = !sidebarCollapsed
-        val width = if (sidebarCollapsed) dp(sidebarCollapsedWidthDp) else dp(sidebarExpandedWidthDp)
-        sidebarContainer.layoutParams =
-            LinearLayout.LayoutParams(width, ViewGroup.LayoutParams.MATCH_PARENT)
-        sidebarToggleBtn.text = if (sidebarCollapsed) "▶" else "◀"
-        if (sidebarCollapsed) {
-            sidebarContainer.removeAllViews()
-        } else {
-            refreshSidebarContent()
-        }
-    }
-
     /** 切换横屏/竖屏 */
     private fun toggleOrientation() {
         val current = requestedOrientation
-        if (current == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE ||
-            current == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
-            requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        if (current == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE ||
+            current == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        ) {
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         } else {
-            requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         }
     }
 
@@ -396,7 +491,6 @@ class TopologyEditorActivity : AppCompatActivity() {
             )
         }
 
-        // 标题栏
         val titleRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -423,7 +517,6 @@ class TopologyEditorActivity : AppCompatActivity() {
         titleRow.addView(closeBtn)
         root.addView(titleRow)
 
-        // WebView
         val webView = android.webkit.WebView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
@@ -446,30 +539,6 @@ class TopologyEditorActivity : AppCompatActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT
         )
         dialog.show()
-    }
-
-    // ════════════════════════════════════════════════════
-    // 画布
-    // ════════════════════════════════════════════════════
-
-    private fun buildCanvas(): View {
-        canvasView = NodeCanvasView(this).apply {
-            setBackgroundColor(Color.parseColor("#FAFBFC"))
-        }
-        // 包装 ScrollView 支持上下左右滚动
-        val hScroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = true
-            addView(canvasView, ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ))
-        }
-        val vScroll = ScrollView(this).apply {
-            isVerticalScrollBarEnabled = true
-            addView(hScroll, ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ))
-        }
-        return vScroll
     }
 
     // ════════════════════════════════════════════════════
@@ -500,8 +569,7 @@ class TopologyEditorActivity : AppCompatActivity() {
     }
 
     private fun showNodeConfigDialog(node: VisualNode) {
-        val editableNode = viewModel.getSelectedNode()
-            ?: viewModel.getNodes().find { it.id == node.id }
+        val editableNode = viewModel.getNodes().find { it.id == node.id }
         if (editableNode == null) {
             statusText.text = "找不到节点: ${node.id}"
             return
@@ -556,19 +624,26 @@ class TopologyEditorActivity : AppCompatActivity() {
             .show()
     }
 
-
-
     // ════════════════════════════════════════════════════
     // 加载 / 保存 / 执行
     // ════════════════════════════════════════════════════
 
+    /**
+     * 根据 usecase id 加载对应 UseCase 文件。
+     * 支持 "ultra_short" / "short_term" / "mid_term" / "long_term" / "real_holding" 等周期 id。
+     */
     private fun loadUseCase(usecaseId: String) {
-        val usecaseFile = when (usecaseId) {
+        val id = usecaseId.trim().lowercase()
+        val usecaseFile = when (id) {
             "mid_term", "midterm" -> "mid_term_usecase.xml"
             "short_term", "shortterm" -> "short_term_usecase.xml"
+            "ultra_short", "ultrashort" -> "ultra_short_usecase.xml"
+            "long_term", "longterm" -> "long_term_usecase.xml"
+            "real_holding", "realholding", "real_hold" -> "real_holding_usecase.xml"
             "screening" -> "screening_usecase.xml"
-            else -> "${usecaseId}_usecase.xml"
+            else -> if (id.endsWith(".xml")) id else "${id}_usecase.xml"
         }
+        currentUseCaseId = id
         loadUseCaseFile(usecaseFile)
     }
 
@@ -581,17 +656,20 @@ class TopologyEditorActivity : AppCompatActivity() {
                     )
                 }
                 if (useCaseConfig != null) {
-                    titleText.text =
-                        useCaseConfig.name.ifBlank { fileName.removeSuffix("_usecase.xml") }
+                    titleText.text = useCaseConfig.name.ifBlank {
+                        fileName.removeSuffix("_usecase.xml")
+                    }
+                    subtitleText.text = "$fileName · 点击「📦 模板」可切换资源"
+                    statusText.text = "✅ UseCase: ${useCaseConfig.name} ($fileName)"
                     // 加载第一个 Pipeline 引用
                     val pipeFile = useCaseConfig.steps.firstOrNull { it is PipelineXmlParser.StepRef.pipeline }
                         ?.let { (it as PipelineXmlParser.StepRef.pipeline).ref }
                     if (pipeFile != null) {
                         loadPipelineFile(pipeFile.substringAfterLast("/"))
                     }
-                    statusText.text = "已加载 UseCase: ${useCaseConfig.name}"
                 } else {
                     // UseCase 文件不存在，尝试直接加载同名 Pipeline
+                    statusText.text = "⚠️ 未找到 $fileName，尝试直接加载 Pipeline…"
                     loadPipelineFile(fileName.removeSuffix("_usecase.xml") + "_pipeline.xml")
                 }
             } catch (e: Exception) {
@@ -616,11 +694,12 @@ class TopologyEditorActivity : AppCompatActivity() {
                 if (editable != null) {
                     viewModel.loadFromEditable(editable)
                     titleText.text = editable.name.ifBlank { fileName.removeSuffix(".xml") }
+                    subtitleText.text = "$fileName · ${viewModel.getNodes().size} 节点 · ${viewModel.getLinks().size} 连线"
                     syncCanvasFromViewModel()
-                    canvasView.zoomToFit()
-                    statusText.text = "已加载: ${editable.name} (${viewModel.getNodes().size} 节点, ${viewModel.getLinks().size} 连线)"
+                    canvasView.post { canvasView.zoomToFit() }
+                    statusText.text = "✅ 已加载: ${editable.name} · ${viewModel.getNodes().size} 节点 · ${viewModel.getLinks().size} 连线"
                 } else {
-                    statusText.text = "文件不存在或解析失败: usecases/$fileName"
+                    statusText.text = "❌ 文件不存在或解析失败: usecases/$fileName"
                 }
             } catch (e: Exception) {
                 statusText.text = "加载失败: ${e.message}"
@@ -774,7 +853,7 @@ class TopologyEditorActivity : AppCompatActivity() {
         statusText.text = "🔄 执行 Pipeline..."
         lifecycleScope.launch {
             try {
-                val useCaseId = viewModel.pipelineId.ifBlank { "mid_term" }
+                val useCaseId = currentUseCaseId.ifBlank { "mid_term" }
                 val tradeDate = com.chin.stockanalysis.ui.TradingDayPickerView
                     .recentTradingDay().toString()
                 val result = withContext(Dispatchers.IO) {
@@ -811,9 +890,6 @@ class TopologyEditorActivity : AppCompatActivity() {
         val editableNodes = viewModel.getNodes()
         val links = viewModel.getLinks()
 
-        // 构建 id→中文名 映射
-        val nameMap = editableNodes.associate { it.id to it.name.ifBlank { it.module } }
-
         // EditableNode → VisualNode（保留已有座标，避免重布局抖动）
         val visualNodes = editableNodes.map { en ->
             val nodeType = inferNodeType(en.module)
@@ -830,7 +906,6 @@ class TopologyEditorActivity : AppCompatActivity() {
             )
         }
 
-        // 连线标签用中文名，不用英文 ID
         val visualLinks = links.map { l ->
             VisualLink(fromId = l.fromId, toId = l.toId, label = "")
         }
@@ -848,12 +923,71 @@ class TopologyEditorActivity : AppCompatActivity() {
         canvasView.invalidate()
     }
 
+    /** 当前 Pipeline 概要（未选中节点时状态栏显示） */
+    private fun currentPipelineSummary(): String {
+        return "就绪 · ${viewModel.getNodes().size} 节点 · ${viewModel.getLinks().size} 连线"
+    }
+
     // ════════════════════════════════════════════════════
     // 工具
     // ════════════════════════════════════════════════════
 
     private fun dp(value: Int): Int {
         return (value * resources.displayMetrics.density).toInt()
+    }
+
+    /** 创建圆角背景 Drawable */
+    private fun roundedRect(color: Int, radiusDp: Int): GradientDrawable {
+        return GradientDrawable().apply {
+            setColor(color)
+            cornerRadius = dp(radiusDp).toFloat()
+        }
+    }
+
+    /** 普通文字按钮（圆角） */
+    private fun flatButton(text: String, color: Int, onClick: () -> Unit): Button {
+        return Button(this).apply {
+            this.text = text
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            background = roundedRect(color, 8)
+            setOnClickListener { onClick() }
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)
+            ).apply { minWidth = dp(36) }
+        }
+    }
+
+    /** 强调色按钮（圆角） */
+    private fun accentButton(text: String, color: Int, onClick: () -> Unit): Button {
+        return Button(this).apply {
+            this.text = text
+            textSize = 11f
+            setTextColor(Color.WHITE)
+            background = roundedRect(color, 8)
+            isAllCaps = false
+            setOnClickListener { onClick() }
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)
+            ).apply {
+                minWidth = dp(58)
+                marginStart = dp(4)
+            }
+        }
+    }
+
+    /** 圆形图标按钮 */
+    private fun iconButton(text: String, color: Int, onClick: () -> Unit): Button {
+        return Button(this).apply {
+            this.text = text
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            background = roundedRect(color, 20)
+            setOnClickListener { onClick() }
+            layoutParams = LinearLayout.LayoutParams(
+                dp(40), dp(40)
+            ).apply { setMargins(0, dp(6), 0, 0) }
+        }
     }
 
     private fun listAssetFiles(path: String): List<String>? {
@@ -918,6 +1052,15 @@ class TopologyEditorActivity : AppCompatActivity() {
             regex.find(xml)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
         } catch (_: Exception) {
             null
+        }
+    }
+
+    /** 沉浸式全屏后，给悬浮层补上系统栏安全边距（刘海屏/圆角屏保护） */
+    private fun applySystemBarPadding(root: View) {
+        ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
         }
     }
 }

@@ -149,12 +149,16 @@ interface StrategyTradeOrderDao {
     suspend fun getTotalSoldCount(sid: String): Int
     @androidx.room.Query("DELETE FROM strategy_trade_orders WHERE trade_date = :date")
     suspend fun deleteByDate(date: String)
+    @androidx.room.Query("DELETE FROM strategy_trade_orders WHERE id = :id")
+    suspend fun deleteById(id: Long)
     @androidx.room.Query("UPDATE strategy_trade_orders SET quantity = :quantity WHERE id = :id")
     suspend fun updateQuantity(id: Long, quantity: Int)
     @androidx.room.Query("UPDATE strategy_trade_orders SET buy_price = :price, quantity = :qty, trade_date = :date WHERE id = :id")
     suspend fun updateBuyPriceAndQty(id: Long, price: Double, qty: Int, date: String)
     @androidx.room.Query("UPDATE strategy_trade_orders SET stock_name = :name WHERE id = :id")
     suspend fun updateStockName(id: Long, name: String)
+    @androidx.room.Query("UPDATE strategy_trade_orders SET reason = :reason WHERE id = :id")
+    suspend fun updateReason(id: Long, reason: String)
 }
 
 // ═══ 周期持有收益摘要 Entity（每个周期独立固化） ═══

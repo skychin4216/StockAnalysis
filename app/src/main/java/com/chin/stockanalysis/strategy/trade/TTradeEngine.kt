@@ -346,7 +346,11 @@ class TTradeEngine(private val context: Context) {
                 db.tTradeRecordDao().closeTrade(openTrade.id, pairedPrice, profit, profitPct)
                 return openTrade.id
             }
-            // 找不到对应开仓腿时，仍记录该笔交易（便于事后核对）
+            // 找不到对应开仓腿：配对腿不能作为开仓腿落库（generateSignals 只会为
+            // T_BUY/RT_SELL 生成配对，落库成 OPEN 将形成永久未平仓的孤儿记录），直接忽略
+            android.util.Log.w("TTradeEngine",
+                "⚠️ 配对腿 ${signal.signalType} 未找到开仓腿($targetType)，已忽略: ${signal.stockCode}")
+            return 0L
         }
 
         // 开仓腿：插入新的 OPEN 记录
@@ -566,17 +570,19 @@ class TTradeEngine(private val context: Context) {
             // 更新价格轨迹
             db.tTradeRecommendationDao().updatePriceTracking(rec.id, price)
 
-            // 检查目标是否触及
+            // 检查目标是否触及（含配对腿 T_SELL / RT_BUY）
             if (!rec.targetHit) {
                 val hit = when (rec.signalType) {
                     "T_BUY" -> price >= rec.targetPrice  // 低买后价格涨到目标
                     "RT_SELL" -> price <= rec.targetPrice // 高卖后价格跌到目标
+                    "T_SELL" -> price >= rec.targetPrice  // 做T卖出：价格涨到目标卖出配对
+                    "RT_BUY" -> price <= rec.targetPrice  // 反T买回：价格跌到目标买回配对
                     else -> false
                 }
                 if (hit) {
                     val profitPct = when (rec.signalType) {
-                        "T_BUY" -> (rec.targetPrice - rec.suggestedPrice) / rec.suggestedPrice * 100
-                        "RT_SELL" -> (rec.suggestedPrice - rec.targetPrice) / rec.suggestedPrice * 100
+                        "T_BUY", "T_SELL" -> (rec.targetPrice - rec.suggestedPrice) / rec.suggestedPrice * 100
+                        "RT_SELL", "RT_BUY" -> (rec.suggestedPrice - rec.targetPrice) / rec.suggestedPrice * 100
                         else -> 0.0
                     }
                     db.tTradeRecommendationDao().markTargetHit(rec.id, profitPct)
@@ -610,6 +616,16 @@ class TTradeEngine(private val context: Context) {
                     val troughOrClose = if (rec.troughPriceAfter > 0) rec.troughPriceAfter else rec.suggestedPrice
                     (rec.suggestedPrice - troughOrClose) / rec.suggestedPrice * 100
                 }
+                "T_SELL" -> {
+                    // 做T卖出配对：推荐卖出，收盘价若能高于建议价即为虚拟盈利
+                    val peakOrClose = if (rec.peakPriceAfter > 0) rec.peakPriceAfter else rec.suggestedPrice
+                    (peakOrClose - rec.suggestedPrice) / rec.suggestedPrice * 100
+                }
+                "RT_BUY" -> {
+                    // 反T买回配对：推荐买回，收盘价若能低于建议价即为虚拟盈利
+                    val troughOrClose = if (rec.troughPriceAfter > 0) rec.troughPriceAfter else rec.suggestedPrice
+                    (rec.suggestedPrice - troughOrClose) / rec.suggestedPrice * 100
+                }
                 else -> 0.0
             }
             // 逐条更新虚拟盈亏（修复：避免批量覆盖）
@@ -631,9 +647,9 @@ class TTradeEngine(private val context: Context) {
         val executedCount = stats?.executedCount ?: 0
         val virtualSuccessRate = if (total > 0) hitCount.toDouble() / total * 100 else 0.0
 
-        // 实际成功率：已执行中盈利的比例
+        // 实际成功率：已执行中真正盈利的比例（按建议价 vs 执行价方向计算）
         val executedList = details.filter { it.status == "EXECUTED" }
-        val executedProfitable = executedList.count { it.executedPrice > 0 }
+        val executedProfitable = executedList.count { isExecutedProfitable(it) }
         val actualSuccessRate = if (executedList.isNotEmpty()) executedProfitable.toDouble() / executedList.size * 100 else 0.0
 
         return DailyTSummary(
@@ -663,7 +679,7 @@ class TTradeEngine(private val context: Context) {
         val virtualSuccessRate = if (total > 0) hitCount.toDouble() / total * 100 else 0.0
 
         val executedList = details.filter { it.status == "EXECUTED" }
-        val executedProfitable = executedList.count { it.executedPrice > 0 }
+        val executedProfitable = executedList.count { isExecutedProfitable(it) }
         val actualSuccessRate = if (executedList.isNotEmpty()) executedProfitable.toDouble() / executedList.size * 100 else 0.0
 
         return DailyTSummary(
@@ -677,6 +693,22 @@ class TTradeEngine(private val context: Context) {
             avgVirtualProfitPct = stats?.avgVirtualProfit ?: 0.0,
             details = details
         )
+    }
+
+    /**
+     * 判断一条已执行的推荐是否真正盈利（按信号方向用建议价 vs 执行价计算）。
+     *
+     * - T_BUY   ：低买做T，执行价应高于建议价 → 盈利（执行价 > 建议价）
+     * - RT_SELL ：高卖反T，执行价应低于建议价 → 盈利（执行价 < 建议价）
+     * - T_SELL / RT_BUY：配对腿，需结合建议价方向判断（做T卖出价高于买入价、反T买回价低于卖出价）
+     */
+    private fun isExecutedProfitable(rec: TTradeRecommendationEntity): Boolean {
+        if (rec.executedPrice <= 0 || rec.suggestedPrice <= 0) return false
+        return when (rec.signalType) {
+            "T_BUY", "T_SELL" -> rec.executedPrice > rec.suggestedPrice
+            "RT_SELL", "RT_BUY" -> rec.executedPrice < rec.suggestedPrice
+            else -> false
+        }
     }
 
     /**

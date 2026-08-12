@@ -28,6 +28,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlin.math.abs
+import kotlin.math.log2
 import kotlin.math.roundToInt
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -573,24 +574,48 @@ class NewsStrengthNode(
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
- * ## 板块轮动惩罚节点
+ * ## 板块轮动惩罚结果（v2）
  *
- * 统计信号股票所属板块的集中度，如果某板块被超过阈值天数的股票命中，
- * 则施加惩罚分数，防止板块轮动过快。
+ * 不再只输出单一总惩罚（死值），而是携带**板块级惩罚映射**，
+ * 供下游 [SmartMoneyFilterNode] 对受罚板块中的股票逐股降分，真正影响选股。
  *
- * 规则：某板块被 >= [thresholdDays] 个信号命中 → 每多一个惩罚 10 分
- * 范围：0 ~ -100
+ * @property rotationPenalty 总惩罚分（≤0，供报表 rotationPenalty 字段 / 历史记录）
+ * @property sectorPenalties 板块名 → 惩罚分（负值，命中受罚板块的股票在主力资金过滤中降分）
+ * @property rotationSpeedFactor 跨日轮动因子（1.3 快速轮动加重 / 0.7 持续性强放宽 / 1.0 中性）
+ * @property overlap 今日与昨日 top10 板块重合度（0~1）
+ */
+data class RotationPenaltyResult(
+    val rotationPenalty: Int,
+    val sectorPenalties: Map<String, Int>,
+    val rotationSpeedFactor: Double = 1.0,
+    val overlap: Double = 0.5
+)
+
+/**
+ * ## 板块轮动惩罚节点 v2
+ *
+ * 三维度惩罚机制：
+ * 1. **集中度惩罚**（对数衰减）：某板块信号数超过阈值后施加惩罚，但用 log2 衰减而非线性
+ * 2. **板块生命周期**：结合 consecutiveHotDays 判断板块所处阶段
+ *    - 刚启动(≤2天) → 不惩罚
+ *    - 高潮期(3-4天) → 轻度惩罚
+ *    - 退潮期(≥5天) → 重度惩罚
+ * 3. **跨日轮动检测**：比较今天和昨天的选股板块分布
+ *    - 重合度低(<30%) → 轮动快，分散持仓惩罚加重
+ *    - 重合度高(>70%) → 板块持续性强，集中度惩罚放宽
+ *
+ * 输出为 [RotationPenaltyResult]，其中 `sectorPenalties` 供下游
+ * 主力资金过滤（smart_money_filter）对受罚板块个股降分，实现惩罚闭环。
  *
  * @property thresholdDays 板块集中度阈值（默认 3）
- * @property penaltyPerExcess 每超出一个的惩罚分数（默认 10）
+ * @property penaltyPerExcess 基础惩罚分数（默认 10）
  */
 class RotationPenaltyNode(
     private val thresholdDays: Int = 3,
     private val penaltyPerExcess: Int = 10
-) : BaseNode<Any, Int>("rotation_penalty", "板块轮动惩罚", NodeType.ENRICHMENT) {
+) : BaseNode<Any, RotationPenaltyResult>("rotation_penalty", "板块轮动惩罚", NodeType.ENRICHMENT) {
 
-    override suspend fun execute(context: PipelineContext, input: Any): Int {
-        // 从 input 或 context 中按需读取 MergedSignalPool
+    override suspend fun execute(context: PipelineContext, input: Any): RotationPenaltyResult {
         val pool: MergedSignalPool = when (input) {
             is MergedSignalPool -> input
             else -> context.getStageOutput<MergedSignalPool>("sector_boost")
@@ -599,12 +624,18 @@ class RotationPenaltyNode(
                 ?: context.getStageOutput<MergedSignalPool>("n_merge")
                 ?: MergedSignalPool(emptyMap(), emptyMap(), emptyList())
         }
-        // 📥 输入日志
         context.log(nodeId, "📥 $nodeName 输入: ${pool.totalStocks} 只股票 ${formatTopCodes(pool.stockHits.keys)}")
 
         return try {
-            val sectorCounts = mutableMapOf<String, Int>()
+            val db = StockDatabase.getInstance(context.androidContext)
+            val today = LocalDate.now().toString()
+            val yesterday = try {
+                val tradingDays = db.dailySnapshotDao().getByCode("sh000001", 5).sortedBy { it.date }
+                if (tradingDays.size >= 2) tradingDays[tradingDays.size - 2].date else today
+            } catch (_: Exception) { today }
 
+            // ── 1. 板块集中度统计 ──
+            val sectorCounts = mutableMapOf<String, Int>()
             for (code in pool.stockHits.keys) {
                 val sectors = StockDataCenter.getSectorsByStock(code)
                 for (sector in sectors) {
@@ -612,30 +643,89 @@ class RotationPenaltyNode(
                 }
             }
 
+            // ── 2. 板块连续热门天数（生命周期） ──
+            val sectorHotDays = mutableMapOf<String, Int>()
+            try {
+                val todayRecords = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    db.sectorDailyRecordDao().getByDate(today)
+                }
+                for (record in todayRecords) {
+                    sectorHotDays[record.sectorName] = record.consecutiveHotDays
+                }
+            } catch (_: Exception) { /* 数据可能不存在 */ }
+
+            // ── 3. 跨日轮动检测 ──
+            val yesterdaySectors = try {
+                val yesterdayRecords = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    db.sectorDailyRecordDao().getByDate(yesterday)
+                }
+                yesterdayRecords.filter { it.rank <= 10 }.map { it.sectorName }.toSet()
+            } catch (_: Exception) { emptySet() }
+
+            val todayTopSectors = sectorCounts.keys.filter { (sectorCounts[it] ?: 0) >= 2 }.toSet()
+            val overlap = if (todayTopSectors.isNotEmpty() && yesterdaySectors.isNotEmpty()) {
+                todayTopSectors.intersect(yesterdaySectors).size.toDouble() / todayTopSectors.size
+            } else 0.5  // 无数据时默认中等轮动
+            val rotationSpeedFactor = when {
+                overlap < 0.3 -> 1.3   // 快速轮动 → 惩罚加重
+                overlap > 0.7 -> 0.7   // 板块持续性强 → 惩罚放宽
+                else -> 1.0
+            }
+
+            // ── 4. 综合惩罚计算 ──
             var penalty = 0
+            val sectorPenalties = mutableMapOf<String, Int>()  // 板块 → 惩罚分（负值，供下游逐股降分）
             val penalizedSectors = mutableListOf<String>()
             for ((sector, count) in sectorCounts) {
-                if (count >= thresholdDays) {
-                    val excess = count - thresholdDays + 1
-                    penalty -= excess * penaltyPerExcess
-                    penalizedSectors.add("$sector(${count}次)")
+                if (count < thresholdDays) continue
+
+                // 4a. 集中度惩罚（对数衰减）
+                val excess = count - thresholdDays + 1
+                val basePenalty = (log2(excess + 1.0) * penaltyPerExcess).toInt()
+
+                // 4b. 板块生命周期系数
+                val hotDays = sectorHotDays[sector] ?: 0
+                val lifecycleFactor = when {
+                    hotDays <= 2 -> 0.5   // 刚启动，惩罚减半
+                    hotDays <= 4 -> 1.0   // 高潮期，正常惩罚
+                    else -> 1.5            // 退潮期，惩罚加重50%
                 }
+
+                val sectorPenalty = (basePenalty * lifecycleFactor).toInt()
+                penalty -= sectorPenalty
+                sectorPenalties[sector] = -sectorPenalty
+
+                val lifecycleLabel = when {
+                    hotDays <= 2 -> "启动${hotDays}d"
+                    hotDays <= 4 -> "高潮${hotDays}d"
+                    else -> "退潮${hotDays}d"
+                }
+                penalizedSectors.add("$sector(${count}次/$lifecycleLabel/-${sectorPenalty})")
             }
 
+            // 4c. 跨日轮动因子（总惩罚与板块级惩罚同步缩放，保持口径一致）
+            penalty = (penalty * rotationSpeedFactor).toInt()
             val finalPenalty = penalty.coerceIn(-100, 0)
+            val scaledSectorPenalties = sectorPenalties.mapValues { (_, p) ->
+                (p * rotationSpeedFactor).toInt().coerceIn(-100, 0)
+            }
+            val result = RotationPenaltyResult(
+                rotationPenalty = finalPenalty,
+                sectorPenalties = scaledSectorPenalties,
+                rotationSpeedFactor = rotationSpeedFactor,
+                overlap = overlap
+            )
 
-            context.setStageOutput(nodeId, finalPenalty)
+            context.setStageOutput(nodeId, result)
 
-            // 📤 输出日志
-            context.log(nodeId, "📤 $nodeName 输出: penalty=$finalPenalty")
+            context.log(nodeId, "📤 $nodeName 输出: penalty=$finalPenalty (轮动因子=${"%.1f".format(rotationSpeedFactor)})")
 
             if (finalPenalty < 0) {
-                context.log(nodeId, "板块轮动惩罚: $finalPenalty 分, " +
-                    "惩罚板块: ${penalizedSectors.joinToString()}")
-                // 🚫 过滤日志
-                context.log(nodeId, "🚫 $nodeName 惩罚板块: ${penalizedSectors.size} 个板块超过阈值($thresholdDays)")
+                context.log(nodeId, "板块轮动惩罚v2: $finalPenalty 分, " +
+                    "惩罚板块: ${penalizedSectors.joinToString()}, " +
+                    "跨日重合度=${"%.0f".format(overlap * 100)}%")
             } else {
-                context.log(nodeId, "板块轮动惩罚: 无惩罚（板块分散度正常）")
+                context.log(nodeId, "板块轮动惩罚v2: 无惩罚（板块分散度正常）")
             }
             context.recordStockFlow(
                 nodeId = nodeId, nodeName = nodeName,
@@ -645,9 +735,9 @@ class RotationPenaltyNode(
                 outputCodes = pool.stockHits.keys.toList().take(5)
             )
 
-            finalPenalty
+            result
         } catch (e: Exception) {
-            context.log(nodeId, "轮动惩罚计算失败: ${e.message}, 默认 0")
+            context.log(nodeId, "轮动惩罚v2计算失败: ${e.message}, 默认 0")
             context.recordStockFlow(
                 nodeId = nodeId, nodeName = nodeName,
                 inputCount = pool.totalStocks, outputCount = pool.totalStocks,
@@ -655,7 +745,7 @@ class RotationPenaltyNode(
                 inputCodes = pool.stockHits.keys.toList().take(5),
                 outputCodes = pool.stockHits.keys.toList().take(5)
             )
-            0
+            RotationPenaltyResult(0, emptyMap())
         }
     }
 }

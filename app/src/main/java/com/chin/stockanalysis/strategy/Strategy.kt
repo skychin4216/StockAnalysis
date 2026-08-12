@@ -142,10 +142,16 @@ enum class StrategySource(val label: String) {
     USER_CUSTOM("用户自定义")
 }
 
-/** 持仓周期 */
+/**
+ * 持仓周期。
+ *
+ * [holdingDays] 为"已持有天数归类区间"，必须与实仓 Fragment 的 classifyPeriod 边界保持一致：
+ * ULTRA_SHORT=1天、SHORT=2~29天、MID=30~180天、LONG=181天以上。
+ * （SHORT 曾为 1..14，与 classifyPeriod 的 <=29 冲突，15~29 天会落入真空区，已修正。）
+ */
 enum class HoldingPeriod(val label: String, val icon: String, val holdingDays: IntRange) {
     ULTRA_SHORT("超短线", "⚡", 1..1),
-    SHORT("短线", "🤖", 1..14),
+    SHORT("短线", "🤖", 2..29),
     MID("中线", "📈", 30..180),
     LONG("长线", "💎", 180..365)
 }

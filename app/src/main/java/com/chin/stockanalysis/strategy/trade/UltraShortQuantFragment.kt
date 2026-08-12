@@ -145,6 +145,8 @@ class UltraShortQuantFragment : QuantFragmentBase() {
                 for (order in orders) {
                     val currentPrice = realtime[order.stockCode]?.price ?: continue
                     if (currentPrice <= 0) continue
+                    // 成本价缺失/为 0 时无法计算真实盈亏，跳过以免出现 Infinity 误判止盈
+                    if (order.buyPrice <= 0) continue
                     val pnlPct = (currentPrice - order.buyPrice) / order.buyPrice * 100
 
                     val isT1Due = order.tradeDate < today

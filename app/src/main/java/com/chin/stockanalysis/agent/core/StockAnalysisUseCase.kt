@@ -214,7 +214,7 @@ private suspend fun AgentOrchestrator.runQuickAnalysis(
             val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(appContext)
             strictDetail = com.chin.stockanalysis.strategy.topology.nodes.StockEvaluationChecker
                 .evaluate(stockCode, db)
-            strictPassed = strictDetail.passCount >= 4
+            strictPassed = strictDetail.allPassed
             sb.appendLine()
             sb.append(com.chin.stockanalysis.strategy.topology.nodes.StockEvaluationChecker.formatResult(strictDetail))
         } catch (_: Exception) {}
@@ -384,9 +384,15 @@ private suspend fun AgentOrchestrator.runDeepAnalysis(
     if (recommendation == "BUY") {
         try {
             val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(appContext)
+            val strictPipeline = when (period) {
+                HoldingPeriod.SHORT -> com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline.shortTermParams()
+                HoldingPeriod.MID -> com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline.midTermParams()
+                HoldingPeriod.LONG -> com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline.longTermParams()
+                else -> com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline.midTermParams()
+            }
             strictDetail = com.chin.stockanalysis.strategy.topology.nodes.StockEvaluationChecker
-                .evaluate(stockCode, db)
-            strictPassed = strictDetail.passCount >= 4
+                .evaluate(stockCode, db, strictPipeline)
+            strictPassed = strictDetail.allPassed
         } catch (_: Exception) {}
     }
 

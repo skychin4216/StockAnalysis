@@ -336,7 +336,7 @@ abstract class QuantFragmentBase : Fragment() {
     /** 启动 Pipeline 拓扑编辑器 */
     protected open fun openPipelineEditor() {
         val intent = android.content.Intent(requireContext(), com.chin.stockanalysis.strategy.topology.ui.TopologyEditorActivity::class.java)
-        intent.putExtra("usecase_id", getQuantType())
+        intent.putExtra("usecase_id", getDefaultUseCaseId())
         startActivity(intent)
     }
 
@@ -502,18 +502,26 @@ abstract class QuantFragmentBase : Fragment() {
         onComplete: (() -> Unit)? = null
     ) {
         val eng = engine ?: return
-        buildBtn.isEnabled = false; buildBtn.text = "⏳ 执行中..."
+        buildBtn.isEnabled = false; buildBtn.text = "⏳ 排队中..."
         progressBar.visibility = View.VISIBLE
-        statusTv.text = "🔄 [DAG] ${titlePrefix} Pipeline 执行中..."
+        statusTv.text = "🔄 [DAG] ${titlePrefix} 等待执行..."
 
-        lifecycleScope.launch(Dispatchers.IO) {
+        val ctx = requireContext()
+        com.chin.stockanalysis.service.QuantTaskScheduler.submit(ctx, titlePrefix) {
             try {
                 val today = TradingDayPickerView.recentTradingDay().format(DATE_FMT)
-                // 确保 tradeDate 是交易日（周日/假日自动校正到最近交易日）
                 val effectiveTradeDate = TradingDayPickerView.recentTradingDay(browsingDate).format(DATE_FMT)
                 val strategies = eng.getEnabledStrategiesByPeriod(holdingPeriod)
+
+                withContext(Dispatchers.Main) {
+                    if (isAdded) {
+                        statusTv.text = "🔄 [DAG] ${titlePrefix} Pipeline 执行中..."
+                        buildBtn.text = "⏳ 执行中..."
+                    }
+                }
+
                 val r = com.chin.stockanalysis.strategy.topology.xml.DagTradeExecutor.execute(
-                    context = requireContext(),
+                    context = ctx,
                     useCaseId = useCaseId,
                     tradeDate = effectiveTradeDate,
                     today = today,
@@ -522,18 +530,18 @@ abstract class QuantFragmentBase : Fragment() {
                     importDays = importDays,
                     onNodeProgress = { pipelineName, nodeName ->
                         lifecycleScope.launch(Dispatchers.Main) {
-                            statusTv.text = "🔄 [DAG] ${pipelineName} ${nodeName} 执行中..."
+                            if (isAdded) statusTv.text = "🔄 [DAG] ${pipelineName} ${nodeName} 执行中..."
                         }
                     }
                 )
                 withContext(Dispatchers.Main) {
+                    if (!isAdded) return@withContext
                     android.util.Log.i("QuantFragmentBase", "Pipeline 完成: selectedStocks=${r.selectedStocks.size} 只")
                     lastPickStocks = r.selectedStocks
                     pickStockCodes = if (r.selectedStocks.isNotEmpty())
                         r.selectedStocks.map { it.first }.toSet() else emptySet()
                     android.util.Log.i("QuantFragmentBase", "lastPickStocks=${lastPickStocks.size}, pickStockCodes=$pickStockCodes")
 
-                    // 在内容区显示 Pipeline 节点执行详情
                     showPipelineNodeDetails("${titlePrefix} DAG Pipeline", r)
 
                     statusTv.text = r.uiText
@@ -545,6 +553,7 @@ abstract class QuantFragmentBase : Fragment() {
             } catch (e: Exception) {
                 Log.e("QuantFragmentBase", "[DAG] ${titlePrefix} 执行异常", e)
                 withContext(Dispatchers.Main) {
+                    if (!isAdded) return@withContext
                     val errorDetail = buildString {
                         appendLine("❌ Pipeline 执行异常")
                         appendLine("异常类型: ${e.javaClass.simpleName}")
@@ -1085,7 +1094,8 @@ abstract class QuantFragmentBase : Fragment() {
                 // 2. 评估选股 (user_watchlist)
                 val db = StockDatabase.getInstance(requireContext())
                 val periodType = getQuantType()
-                val watchlistItems = db.userWatchlistDao().getBySource(periodType)
+                // 选股保存时用的是 getWatchlistSource()（小写），这里必须一致才能查得到
+                val watchlistItems = db.userWatchlistDao().getBySource(getWatchlistSource())
                     .filter { it.status == "WATCHING" }
 
                 val watchlistDecisions = mutableListOf<AutoSellEngine.SellDecision>()
@@ -1305,8 +1315,8 @@ abstract class QuantFragmentBase : Fragment() {
                         (it.status == "BUYING" || it.status == "PENDING") }
                     .map { it to "持仓" }
 
-                // 2. 查询选股 (user_watchlist)
-                val watchlistOrders = db.userWatchlistDao().getBySource(periodType)
+                // 2. 查询选股 (user_watchlist) — source 用小写（getWatchlistSource），与保存时一致
+                val watchlistOrders = db.userWatchlistDao().getBySource(getWatchlistSource())
                     .filter { it.status == "WATCHING" }
                     .map { watch ->
                         // 转换为 StrategyTradeOrderEntity 格式
@@ -1464,12 +1474,10 @@ abstract class QuantFragmentBase : Fragment() {
                 var holdingSoldCount = 0
                 var watchlistRemovedCount = 0
 
-                // 1. 执行持仓卖出
+                // 1. 执行持仓卖出（只卖本周期已评估命中的持仓，避免跨周期误卖）
                 if (holdingToSell.isNotEmpty()) {
                     val sellEngine = AutoSellEngine(appCtx)
-                    val strategies = engine?.getStrategies()?.filter { engine!!.isEnabled(it.id) } ?: emptyList()
-                    val decisions = sellEngine.evaluateAll(strategies, AutoSellEngine.AutoSellConfig(tradeDate = browsingDate.format(DATE_FMT)))
-                    sellEngine.executeSells(decisions, browsingDate.format(DATE_FMT))
+                    sellEngine.executeSells(holdingToSell, browsingDate.format(DATE_FMT))
                     holdingSoldCount = holdingToSell.size
                 }
 
@@ -1806,7 +1814,7 @@ abstract class QuantFragmentBase : Fragment() {
     }
 
     /** 编辑真实持仓（先列出活跃真仓供选择，再弹出编辑表单） */
-    private fun showEditRealPositionDialog() {
+    protected fun showEditRealPositionDialog() {
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val db = StockDatabase.getInstance(requireContext().applicationContext)
@@ -1938,7 +1946,7 @@ abstract class QuantFragmentBase : Fragment() {
     }
 
     /** 卖出/减仓真实持仓（先列出活跃真仓供选择，再弹出卖出表单） */
-    private fun showSellRealPositionDialog() {
+    protected fun showSellRealPositionDialog() {
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val db = StockDatabase.getInstance(requireContext().applicationContext)
@@ -3072,13 +3080,17 @@ abstract class QuantFragmentBase : Fragment() {
                                                 val d = passedStocks.optJSONObject(k) ?: continue
                                                 val n = d.optString("name", k.takeLast(6))
                                                 val cnt = d.optInt("passCount", 0)
-                                                val ma = if (d.optBoolean("maConvergedUp")) "✓" else "✗"
-                                                val noNewLow = if (d.optBoolean("threeDayNoNewLow")) "✓" else "✗"
-                                                val low25 = if (d.optBoolean("historicalLow25")) "✓" else "✗"
-                                                val pe = if (d.optBoolean("peLow")) "✓" else "✗"
-                                                val active = if (d.optBoolean("cyclicalActive")) "✓" else "✗"
-                                                val freeze = if (d.optBoolean("freezingPoint")) "✓" else "✗"
-                                                sb.appendLine("    $n($cnt/6): 均线$ma 不新低$noNewLow 低位$low25 PE$pe 活跃$active 冰点$freeze")
+                                                val total = d.optInt("totalChecks", 7)
+                                                val conv = if (d.optBoolean("convergenceOk")) "✓" else "✗"
+                                                val bull = if (d.optBoolean("bullishAligned")) "✓" else "✗"
+                                                val dur = if (d.optBoolean("convergenceDurationOk")) "✓" else "✗"
+                                                val vol = if (d.optBoolean("volumeConditionOk")) "✓" else "✗"
+                                                val dd = if (d.optBoolean("drawdownOk")) "✓" else "✗"
+                                                val ma60 = if (d.optBoolean("ma60Rising")) "✓" else "✗"
+                                                val year = if (d.optBoolean("aboveYearLine")) "✓" else "✗"
+                                                val chg = if (d.optBoolean("changePctOk")) "✓" else "✗"
+                                                val above = if (d.optBoolean("aboveAllMAs")) "✓" else "✗"
+                                                sb.appendLine("    $n($cnt/$total): 粘合$conv 多头$bull 持续$dur 量能$vol 跌幅$dd MA60$ma60 年线$year 涨幅$chg 站上$above")
                                             }
                                         }
                                     }
@@ -3190,7 +3202,7 @@ abstract class QuantFragmentBase : Fragment() {
                         val orders = db.strategyTradeOrderDao().getRecent(500)
                             .filter { it.orderType == periodType }
                         for (order in orders) {
-                            db.strategyTradeOrderDao().deleteByDate(order.tradeDate)
+                            db.strategyTradeOrderDao().deleteById(order.id)
                         }
                         withContext(Dispatchers.Main) {
                             refreshPositions()

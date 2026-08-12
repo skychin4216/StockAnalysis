@@ -4,8 +4,10 @@ import android.graphics.Color
 import android.graphics.BitmapFactory
 import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
 import com.chin.stockanalysis.stock.database.StockDatabase
+import com.chin.stockanalysis.stock.data.StockDataSourceFactory
 import com.chin.stockanalysis.strategy.HoldingPeriod
 import com.chin.stockanalysis.strategy.topology.xml.DagTradeExecutor
 import com.chin.stockanalysis.ui.TradingDayPickerView
@@ -16,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import android.webkit.WebView
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
@@ -56,12 +59,193 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
     }
 
     override fun onClearClick() {
-        Toast.makeText(requireContext(), com.chin.stockanalysis.R.string.real_holding_no_clear, Toast.LENGTH_SHORT).show()
+        val items = arrayOf(
+            "做T信号记录 (t_trade_records)",
+            "做T推荐记录 (t_trade_recommendations)",
+            "卖出评估缓存",
+            "Pipeline 报告",
+            "── 全部清空 ──"
+        )
+        AlertDialog.Builder(requireContext())
+            .setTitle("🧹 清空实仓数据")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> clearTTradeRecords()
+                    1 -> clearTTradeRecommendations()
+                    2 -> clearSellCache()
+                    3 -> clearPipelineReports()
+                    4 -> clearAllRealPositionData()
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun clearTTradeRecords() {
+        AlertDialog.Builder(requireContext())
+            .setTitle("🧹 清空做T信号记录")
+            .setMessage("确定要清空所有做T执行记录吗？此操作不可撤销。")
+            .setPositiveButton("确定") { _, _ ->
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val db = StockDatabase.getInstance(requireContext())
+                        db.tTradeRecordDao().deleteAll()
+                        withContext(Dispatchers.Main) {
+                            statusTv.text = "✅ 做T信号记录已清空"
+                            Toast.makeText(requireContext(), "做T信号记录已清空", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) { statusTv.text = "❌ 清空失败: ${e.message?.take(40)}" }
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun clearTTradeRecommendations() {
+        AlertDialog.Builder(requireContext())
+            .setTitle("🧹 清空做T推荐记录")
+            .setMessage("确定要清空所有做T推荐信号吗？此操作不可撤销。")
+            .setPositiveButton("确定") { _, _ ->
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val db = StockDatabase.getInstance(requireContext())
+                        db.tTradeRecommendationDao().deleteAll()
+                        withContext(Dispatchers.Main) {
+                            statusTv.text = "✅ 做T推荐记录已清空"
+                            Toast.makeText(requireContext(), "做T推荐记录已清空", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) { statusTv.text = "❌ 清空失败: ${e.message?.take(40)}" }
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun clearSellCache() {
+        sellDecisionsCache = emptyList()
+        statusTv.text = "✅ 卖出评估缓存已清空"
+        Toast.makeText(requireContext(), "卖出评估缓存已清空", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun clearPipelineReports() {
+        AlertDialog.Builder(requireContext())
+            .setTitle("🧹 清空Pipeline报告")
+            .setMessage("确定要清空所有实仓Pipeline报告记录吗？")
+            .setPositiveButton("确定") { _, _ ->
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val db = StockDatabase.getInstance(requireContext())
+                        val entities = db.dailyPeriodResultDao().getRecent(1000)
+                        for (e in entities) {
+                            try { db.dailyPeriodResultDao().deleteByDate(e.tradeDate) } catch (_: Exception) {}
+                        }
+                        withContext(Dispatchers.Main) {
+                            statusTv.text = "✅ Pipeline报告已清空"
+                            Toast.makeText(requireContext(), "Pipeline报告已清空", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) { statusTv.text = "❌ 清空失败: ${e.message?.take(40)}" }
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun clearAllRealPositionData() {
+        AlertDialog.Builder(requireContext())
+            .setTitle("🧹 全部清空")
+            .setMessage("确定要清空实仓所有数据吗？\n\n• 做T信号记录\n• 做T推荐记录\n• 卖出评估缓存\n• Pipeline报告\n\n此操作不可撤销！")
+            .setPositiveButton("确定") { _, _ ->
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val db = StockDatabase.getInstance(requireContext())
+                        db.tTradeRecordDao().deleteAll()
+                        db.tTradeRecommendationDao().deleteAll()
+                        val entities = db.dailyPeriodResultDao().getRecent(1000)
+                        for (e in entities) {
+                            try { db.dailyPeriodResultDao().deleteByDate(e.tradeDate) } catch (_: Exception) {}
+                        }
+                        withContext(Dispatchers.Main) {
+                            sellDecisionsCache = emptyList()
+                            statusTv.text = "✅ 实仓数据已全部清空"
+                            Toast.makeText(requireContext(), "实仓数据已全部清空", Toast.LENGTH_SHORT).show()
+                            refreshPositions()
+                        }
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) { statusTv.text = "❌ 清空失败: ${e.message?.take(40)}" }
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     override fun initEngine() {
         super.initEngine()
     }
+
+    /** 实仓持仓菜单：增加「清空实仓数据」选项 */
+    override fun showHoldingMenu() {
+        val items = arrayOf(
+            "✏️ 编辑持仓",
+            "💰 卖出/减仓",
+            "📋 查看交易记录",
+            "💰 查看持仓详情",
+            "🧠 市场记忆设置",
+            "🧹 清空持仓",
+            "🧹 清空实仓数据 (做T/评估/报告)"
+        )
+        AlertDialog.Builder(requireContext())
+            .setTitle("📦 持仓管理 — 实仓")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> showEditRealPositionDialog()
+                    1 -> showSellRealPositionDialog()
+                    2 -> showTradeHistory()
+                    3 -> loadPositions()
+                    4 -> showMarketMemoryDialog()
+                    5 -> confirmClearRealPositions()
+                    6 -> onClearClick()
+                }
+            }
+            .setNegativeButton("关闭", null)
+            .show()
+    }
+
+    /** 清空真实持仓（从 realPositionDao 删除，而非 strategyTradeOrderDao） */
+    private fun confirmClearRealPositions() {
+        AlertDialog.Builder(requireContext())
+            .setTitle("🧹 清空真实持仓")
+            .setMessage("确定要清空所有真实持仓记录吗？此操作不可撤销。")
+            .setPositiveButton("确定") { _, _ ->
+                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val db = StockDatabase.getInstance(requireContext())
+                        val positions = db.realPositionDao().getAllActive()
+                        for (p in positions) {
+                            db.realPositionDao().delete(p)
+                        }
+                        withContext(Dispatchers.Main) {
+                            refreshPositions()
+                            statusTv.text = "✅ 真实持仓已清空 (${positions.size} 只)"
+                            Toast.makeText(requireContext(), "真实持仓已清空", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) { statusTv.text = "❌ 清空失败: ${e.message?.take(40)}" }
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 覆盖基类：实仓的「清空持仓」应清空 realPositionDao */
+    override fun confirmAndClearPositions() = confirmClearRealPositions()
 
     override fun buildUI() {
         addTitleRow(getString(com.chin.stockanalysis.R.string.real_holding_title), textSize = 18f)
@@ -97,9 +281,79 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
             holdingPeriod = HoldingPeriod.MID,
             useCaseId = "real_holding",
             orderType = "RealHolding",
-            importDays = 30,
+            importDays = 120,
             titlePrefix = "实仓分析"
         )
+    }
+
+    /** Pipeline 按钮 → 显示流程图弹窗 */
+    override fun openPipelineEditor() {
+        val html = """
+            <!DOCTYPE html>
+            <html><head><meta charset="utf-8">
+            <style>
+              * { margin:0; padding:0; box-sizing:border-box; }
+              body { background:#1a1a2e; font-family:'Microsoft YaHei',sans-serif; color:#e0e0e0; padding:12px; }
+              h3 { text-align:center; font-size:14px; color:#90caf9; margin-bottom:12px; }
+              .dag { display:flex; flex-direction:column; gap:8px; }
+              .layer { display:flex; gap:8px; align-items:center; }
+              .label { font-size:9px; color:#546e7a; min-width:50px; text-align:right; padding-right:6px; }
+              .nodes { display:flex; gap:6px; flex-wrap:wrap; }
+              .node { padding:6px 10px; border-radius:8px; font-size:11px; font-weight:600;
+                      border:1px solid #334; min-width:90px; text-align:center; }
+              .arrow { text-align:center; color:#455a64; font-size:16px; line-height:1; padding:2px 0 2px 50px; }
+              .n-import { background:#2e7d32; border-color:#4caf50; color:#fff; }
+              .n-market { background:#1565c0; border-color:#2196f3; color:#fff; }
+              .n-news { background:#e65100; border-color:#ff9800; color:#fff; }
+              .n-eval { background:#6a1b9a; border-color:#9c27b0; color:#fff; }
+              .n-diag { background:#ad1457; border-color:#e91e63; color:#fff; }
+              .n-predict { background:#00838f; border-color:#00bcd4; color:#fff; }
+              .n-ttrade { background:#c62828; border-color:#f44336; color:#fff; }
+              .desc { font-size:9px; color:#78909c; margin-top:8px; line-height:1.4; padding:0 50px; }
+            </style></head><body>
+            <h3>实仓分析 Pipeline v4</h3>
+            <div class="dag">
+              <div class="layer"><div class="label">L0 数据</div><div class="nodes">
+                <div class="node n-import">数据导入(120天)</div>
+                <div class="node n-import" style="opacity:.6">后台暂停</div>
+              </div></div>
+              <div class="arrow">↓ ↓</div>
+              <div class="layer"><div class="label">L1 环境</div><div class="nodes">
+                <div class="node n-market">大盘K线六维分析</div>
+                <div class="node n-news">新闻力度(实时)</div>
+              </div></div>
+              <div class="arrow">↓ ↓ &nbsp;&nbsp; ↓ ↓</div>
+              <div class="layer"><div class="label">L2 诊断</div><div class="nodes">
+                <div class="node n-eval">逐股K线评估</div>
+                <div class="node n-diag">持仓诊断<br><span style="font-size:9px;font-weight:normal">技术·风险·资金·板块</span></div>
+              </div></div>
+              <div class="arrow">↓</div>
+              <div class="layer"><div class="label">L3 预测</div><div class="nodes">
+                <div class="node n-predict">走势预测 + 场景分析<br><span style="font-size:9px;font-weight:normal">支撑/阻力·操作计划</span></div>
+              </div></div>
+              <div class="arrow">↓</div>
+              <div class="layer"><div class="label">L4 操作</div><div class="nodes">
+                <div class="node n-ttrade">做T/反T建议</div>
+              </div></div>
+            </div>
+            <div class="desc">
+              诊断维度: 技术健康分(MA排列+动量) + 风险分(止损距离+回撤) + 资金分(量价关系) + 板块集中度<br>
+              预测输出: 短期趋势(看涨/震荡/看跌) + 支撑/阻力位 + 乐观/悲观场景 + 操作计划
+            </div>
+            </body></html>
+        """.trimIndent()
+
+        val webView = WebView(requireContext()).apply {
+            settings.javaScriptEnabled = false
+            loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
+        }
+
+        AlertDialog.Builder(requireContext())
+            .setTitle("📊 实仓 Pipeline 流程")
+            .setView(webView)
+            .setPositiveButton("关闭", null)
+            .setNeutralButton("执行 Pipeline") { _, _ -> runRealHoldingPipeline() }
+            .show()
     }
 
     override fun refreshPositions() {
@@ -171,27 +425,23 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
         }
 
         val db = StockDatabase.getInstance(ctx)
-        val orders = withContext(Dispatchers.IO) {
-            db.strategyTradeOrderDao().getRecent(500)
-        }.filter { it.status == "BUYING" || it.status == "PENDING" || it.status == "HOLDING" }
 
-        // 也读取真实持仓（去重：同一 stockCode 只保留最新一笔）
-        // 注意：旧记录可能没有交易所前缀（601168 vs sh601168），需标准化后再去重
+        // 只读取真实持仓（去重：同一 stockCode 只保留最新一笔）
         val allRealPositions = withContext(Dispatchers.IO) {
             db.realPositionDao().getAllActive()
         }
-        android.util.Log.i(TAG, "📋 buildRealHoldingReport: DB raw — orders=${orders.size}, allRealPositions=${allRealPositions.size}")
+        android.util.Log.i(TAG, "📋 buildRealHoldingReport: DB raw — allRealPositions=${allRealPositions.size}")
         if (allRealPositions.isNotEmpty()) {
             for (rp in allRealPositions) {
                 android.util.Log.d(TAG, "   DB row: id=${rp.id} code=${rp.stockCode} name=${rp.stockName} qty=${rp.quantity} price=${rp.avgBuyPrice} active=${rp.isActive}")
             }
         }
         val realPositions = allRealPositions
-            .groupBy { it.stockCode.replace(Regex("^(sh|sz|bj)"), "") }  // 去掉前缀再分组
+            .groupBy { it.stockCode.replace(Regex("^(sh|sz|bj)"), "") }
             .mapValues { (_, list) -> list.maxByOrNull { it.id }!! }
             .values.toList()
             .sortedByDescending { it.id }
-        android.util.Log.i(TAG, "📊 buildRealHoldingReport: orders=${orders.size}, realPositions=${realPositions.size} (去重前${allRealPositions.size})")
+        android.util.Log.i(TAG, "📊 buildRealHoldingReport: realPositions=${realPositions.size} (去重前${allRealPositions.size})")
 
         // 读取选股（Pipeline 选出的股票存在 user_watchlist）
         val pickDate = TradingDayPickerView.recentTradingDay(browsingDate).format(DATE_FMT)
@@ -199,8 +449,8 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
             db.userWatchlistDao().getBySourceAndDate("RealHolding", pickDate)
         }
 
-        if (orders.isEmpty() && realPositions.isEmpty() && picks.isEmpty()) {
-            android.util.Log.i(TAG, "📋 buildRealHoldingReport: all empty (orders/realPositions/picks), showing placeholder")
+        if (realPositions.isEmpty() && picks.isEmpty()) {
+            android.util.Log.i(TAG, "📋 buildRealHoldingReport: all empty (realPositions/picks), showing placeholder")
             container.addView(TextView(ctx).apply {
                 text = "暂无持仓记录\n\n点击「📈建仓」执行大盘分析 Pipeline\n点击「📦持仓」添加真实持仓"
                 setTextColor(Color.GRAY)
@@ -211,81 +461,73 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
             return container
         }
 
-        val today = LocalDate.now()
+        // ── 将真实持仓转换为 StrategyTradeOrderEntity 格式，复用表格渲染 ──
+        val orders = realPositions.map { rp ->
+            val bareCode = rp.stockCode.replace(Regex("^(sh|sz|bj)"), "")
+            StrategyTradeOrderEntity(
+                id = rp.id,
+                strategyId = "RealHolding",
+                stockCode = bareCode,
+                stockName = rp.stockName,
+                tradeDate = rp.buyDate.ifEmpty { LocalDate.now().format(DATE_FMT) },
+                buyPrice = rp.avgBuyPrice,
+                buyTime = rp.buyDate.ifEmpty { LocalDate.now().format(DATE_FMT) },
+                quantity = rp.quantity,
+                orderType = "RealHolding",
+                status = "BUYING",
+                reason = "真实持仓",
+                scoreAtBuy = 0
+            )
+        }
 
-        // 真实持仓区
-        if (realPositions.isNotEmpty()) {
-            android.util.Log.i(TAG, "📋 buildRealHoldingReport: rendering ${realPositions.size} real positions")
-            container.addView(TextView(ctx).apply {
-                text = "🏦 真实持仓 (${realPositions.size} 只)"
-                setTextColor(Color.parseColor("#1565C0"))
-                textSize = 14f
-                setPadding(0, 8, 0, 4)
-            })
-            for (p in realPositions) {
-                container.addView(TextView(ctx).apply {
-                    text = buildString {
-                        append("▸ ${p.stockName}(${p.stockCode}) ")
-                        append("${p.quantity}股 ¥${"%.2f".format(p.avgBuyPrice)}")
-                        if (p.periodType.isNotEmpty()) append(" [${p.periodType}]")
-                    }
-                    setTextColor(Color.parseColor("#333333"))
-                    textSize = 12f
-                    setPadding(16, 2, 0, 2)
-                })
+        // ── 获取日期列表和价格数据 ──
+        val minTradeDate = orders.minByOrNull { it.tradeDate }?.tradeDate ?: browsingDate.format(DATE_FMT)
+        val allDates = db.dailySnapshotDao().getAvailableDates(20)
+        var dates = allDates
+            .filter { it >= minTradeDate && it <= browsingDate.format(DATE_FMT) }
+            .filter { dateStr ->
+                try {
+                    val d = java.time.LocalDate.parse(dateStr)
+                    com.chin.stockanalysis.ui.TradingDayPickerView.isTradingDay(d)
+                } catch (_: Exception) { false }
+            }
+            .sorted().takeLast(10)
+
+        val priceMap = mutableMapOf<String, MutableMap<String, Double>>()
+        for (date in dates) {
+            val snaps = db.dailySnapshotDao().getByDate(date)
+            for (snap in snaps) {
+                priceMap.getOrPut(snap.code) { mutableMapOf() }[date] = snap.close
             }
         }
 
-        // 策略持仓区
-        if (orders.isNotEmpty()) {
-            // 按周期分组
-            val grouped = orders.groupBy { order ->
-                val buyDate = try { LocalDate.parse(order.tradeDate) } catch (_: Exception) { today }
-                val daysHeld = ChronoUnit.DAYS.between(buyDate, today).toInt().coerceAtLeast(0)
-                classifyPeriod(daysHeld)
-            }
-
-            container.addView(TextView(ctx).apply {
-                text = "📊 策略持仓 (${orders.size} 笔)"
-                setTextColor(Color.parseColor("#E65100"))
-                textSize = 14f
-                setPadding(0, 12, 0, 4)
-            })
-
-            val periodOrder = listOf(HoldingPeriod.ULTRA_SHORT, HoldingPeriod.SHORT, HoldingPeriod.MID, HoldingPeriod.LONG)
-            for (period in periodOrder) {
-                val periodOrders = grouped[period] ?: continue
-                val label = period.label
-                val icon = period.icon
-
-                container.addView(TextView(ctx).apply {
-                    text = "$icon $label（${periodOrders.size} 笔）"
-                    setTextColor(Color.parseColor("#E65100"))
-                    textSize = 13f
-                    setPadding(8, 8, 0, 2)
-                })
-
-                for (order in periodOrders) {
-                    val buyDate = try { LocalDate.parse(order.tradeDate) } catch (_: Exception) { today }
-                    val daysHeld = ChronoUnit.DAYS.between(buyDate, today).toInt().coerceAtLeast(0)
-                    val pnl = order.profitPct
-
-                    container.addView(TextView(ctx).apply {
-                        text = buildString {
-                            append("${order.stockName}(${order.stockCode}) ")
-                            append("持仓${daysHeld}天 ")
-                            append("买入¥${"%.2f".format(order.buyPrice)} ")
-                            append("盈亏${"%.2f".format(pnl)}%")
-                        }
-                        setTextColor(if (pnl >= 0) Color.parseColor("#C62828") else Color.parseColor("#2E7D32"))
-                        textSize = 12f
-                        setPadding(16, 2, 0, 2)
-                    })
+        // 实时行情补充
+        val todayStr = browsingDate.format(DATE_FMT)
+        val realtimeMap = try {
+            com.chin.stockanalysis.stock.data.StockDataSourceFactory
+                .createDefaultRepository(ctx)
+                .getRealtime(orders.map { it.stockCode })
+        } catch (_: Exception) { emptyMap() }
+        if (realtimeMap.isNotEmpty()) {
+            for ((code, rt) in realtimeMap) {
+                if (rt.price > 0) {
+                    priceMap.getOrPut(code) { mutableMapOf() }[todayStr] = rt.price
                 }
             }
+            if (todayStr !in dates) {
+                dates.toMutableList().also {
+                    it.add(todayStr); it.sort()
+                }.let { dates = it }
+            }
         }
 
-        // 选股区（Pipeline 选出的股票）
+        // ── 真实持仓区（表格格式，参考其他周期） ──
+        if (orders.isNotEmpty()) {
+            android.util.Log.i(TAG, "📋 buildRealHoldingReport: rendering ${orders.size} real positions as table")
+            buildOrderTableView(container, ctx, orders, dates, priceMap, "真实持仓", "#1565C0")
+        }
+
+        // ── 选股区（Pipeline 选出的股票） ──
         if (picks.isNotEmpty()) {
             container.addView(TextView(ctx).apply {
                 text = "🎯 实仓选股 (${picks.size} 只)"
@@ -311,10 +553,165 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
         return container
     }
 
+    /**
+     * 构建持仓表格视图（参考 QuantFragmentBase.renderOrderTable 格式）
+     * 显示：标题行（总持仓 X 只 + 总盈亏）+ 多日价格表格
+     */
+    private fun buildOrderTableView(
+        container: LinearLayout,
+        ctx: android.content.Context,
+        orders: List<StrategyTradeOrderEntity>,
+        dates: List<String>,
+        priceMap: Map<String, Map<String, Double>>,
+        sectionTitle: String,
+        titleColor: String
+    ) {
+        val lastDate = dates.lastOrNull() ?: browsingDate.format(DATE_FMT)
+        var totalCost = 0.0; var totalValue = 0.0
+        for (order in orders) {
+            totalCost += order.buyPrice * order.quantity
+            val lastPrice = priceMap[order.stockCode]?.get(lastDate) ?: order.buyPrice
+            totalValue += lastPrice * order.quantity
+        }
+        val totalPnl = totalValue - totalCost
+        val totalPnlPct = if (totalCost > 0) (totalPnl / totalCost * 100) else 0.0
+        val pnlColor = if (totalPnl >= 0) "#D32F2F" else "#2E7D32"
+        val pnlStr = "${if (totalPnl >= 0) "+" else ""}¥${"%.0f".format(totalPnl)} (${"%.2f".format(totalPnlPct)}%)"
+
+        // 标题行
+        val titleRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(0, 2, 0, 2)
+        }
+        titleRow.addView(TextView(ctx).apply {
+            text = "📌 $sectionTitle"
+            textSize = 12f; setTextColor(Color.parseColor(titleColor))
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        titleRow.addView(TextView(ctx).apply {
+            text = "总持仓 ${orders.size} 只"
+            textSize = 10f; setTextColor(Color.parseColor("#666666"))
+            setPadding(0, 0, 6, 0)
+        })
+        titleRow.addView(TextView(ctx).apply {
+            text = "清空"
+            textSize = 10f; setTextColor(Color.parseColor("#C62828"))
+            setPadding(0, 0, 6, 0)
+            isClickable = true
+            setOnClickListener { confirmClearRealPositions() }
+        })
+        titleRow.addView(TextView(ctx).apply {
+            text = "总盈亏 $pnlStr"
+            textSize = 10f; setTextColor(Color.parseColor(pnlColor))
+            setPadding(0, 0, 4, 0)
+        })
+        titleRow.addView(TextView(ctx).apply {
+            text = "🔄"; textSize = 14f
+            setTextColor(Color.parseColor("#1976D2"))
+            isClickable = true; setOnClickListener { refreshPositions() }
+        })
+        container.addView(titleRow)
+
+        // 多日价格表格
+        val scroll = android.widget.HorizontalScrollView(ctx).apply {
+            isHorizontalScrollBarEnabled = true
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val table = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+
+        // 表头
+        val headerRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL; setPadding(0, 2, 0, 4)
+            setBackgroundColor(Color.parseColor("#EEEEEE"))
+        }
+        for (header in listOf("股票", "买入日", "成本"))
+            headerRow.addView(makeCell(ctx, header, 60, "#666666", 10f, bold = true))
+        headerRow.addView(makeCell(ctx, "持仓", 45, "#666666", 9f, bold = true))
+        for (date in dates)
+            headerRow.addView(makeCell(ctx, date.takeLast(5), 72, "#666666", 10f, bold = true))
+        table.addView(headerRow)
+
+        // 每只股票一行
+        for (order in orders) {
+            val row = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL; setPadding(0, 2, 0, 2)
+            }
+            // 股票名/代码
+            val nameCell = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(dpToPx(60), LinearLayout.LayoutParams.WRAP_CONTENT)
+            }
+            nameCell.addView(TextView(ctx).apply {
+                text = order.stockName; textSize = 9f
+                setTextColor(Color.parseColor("#1A1A2E"))
+                maxLines = 1; isSingleLine = true
+            })
+            nameCell.addView(TextView(ctx).apply {
+                text = order.stockCode; textSize = 8f
+                setTextColor(Color.parseColor("#999999"))
+            })
+            row.addView(nameCell)
+            // 买入日
+            row.addView(makeCell(ctx, order.tradeDate.takeLast(5), 60, "#333333", 9f))
+            // 成本
+            row.addView(makeCell(ctx, "¥${"%.1f".format(order.buyPrice)}", 60, "#333333", 9f))
+            // 持仓天数
+            val buyDate = try { java.time.LocalDate.parse(order.tradeDate) } catch (_: Exception) { java.time.LocalDate.now() }
+            val daysHeld = java.time.temporal.ChronoUnit.DAYS.between(buyDate, java.time.LocalDate.now()).toInt().coerceAtLeast(0)
+            row.addView(makeCell(ctx, "${daysHeld}天", 45, "#333333", 9f))
+            // 每日价格
+            for (date in dates) {
+                val price = priceMap[order.stockCode]?.get(date)
+                val prevIdx = dates.indexOf(date) - 1
+                val prevPrice = if (prevIdx >= 0) priceMap[order.stockCode]?.get(dates[prevIdx]) else null
+                val changeStr = if (price != null && prevPrice != null && prevPrice > 0) {
+                    val chg = (price - prevPrice) / prevPrice * 100
+                    "${if (chg >= 0) "+" else ""}${"%.1f".format(chg)}%"
+                } else if (price != null) {
+                    "¥${"%.1f".format(price)}"
+                } else { "-" }
+                val chgColor = when {
+                    price == null -> "#999999"
+                    prevPrice == null -> "#333333"
+                    price > prevPrice -> "#D32F2F"
+                    price < prevPrice -> "#2E7D32"
+                    else -> "#333333"
+                }
+                row.addView(makeCell(ctx, changeStr, 72, chgColor, 9f))
+            }
+            table.addView(row)
+        }
+        scroll.addView(table)
+        container.addView(scroll)
+    }
+
+    /** 构建表格单元格 */
+    private fun makeCell(
+        ctx: android.content.Context, text: String, widthDp: Int,
+        color: String, textSize: Float, bold: Boolean = false
+    ): TextView {
+        return TextView(ctx).apply {
+            this.text = text; this.textSize = textSize
+            setTextColor(Color.parseColor(color))
+            if (bold) setTypeface(null, android.graphics.Typeface.BOLD)
+            val w = (widthDp * ctx.resources.displayMetrics.density).toInt()
+            layoutParams = LinearLayout.LayoutParams(w, LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+    }
+
+    /**
+     * 按持仓天数归类周期，边界与 [HoldingPeriod.holdingDays] 保持一致：
+     * ULTRA_SHORT=1天、SHORT=2~29天、MID=30~180天、LONG=181天以上。
+     */
     private fun classifyPeriod(daysHeld: Int): HoldingPeriod {
         return when {
             daysHeld <= 1 -> HoldingPeriod.ULTRA_SHORT
-            daysHeld <= 14 -> HoldingPeriod.SHORT
+            daysHeld <= 29 -> HoldingPeriod.SHORT
             daysHeld <= 180 -> HoldingPeriod.MID
             else -> HoldingPeriod.LONG
         }
@@ -885,6 +1282,47 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
         return if (lastIdxPos > 0) lastIdxPos else -1
     }
 
+    /**
+     * 用网络实时行情数据增强 OCR 解析结果。
+     * - 补充 PE、换手率、当前价等字段（OCR 现价经常不准，用 API 现价替换 currentPrice）
+     * - 同时更新 stockName（以 API 返回的为准）
+     *
+     * 注意：avgBuyPrice 是**持仓成本价**，来自 OCR 截图，不能被 API 现价覆盖，
+     * 否则后续统计盈亏会把成本当成现价，导致利润恒为 0。
+     */
+    private suspend fun enrichWithRealtimeData(positions: List<RealPositionEntity>): List<RealPositionEntity> {
+        if (positions.isEmpty()) return positions
+        val ctx = requireContext()
+        val codes = positions.map { it.stockCode }
+        android.util.Log.i(TAG, "📡 enrichWithRealtimeData: 获取 ${codes.size} 只股票实时行情: $codes")
+
+        return try {
+            val realtimeMap = withContext(Dispatchers.IO) {
+                StockDataSourceFactory.createDefaultRepository(ctx).getRealtime(codes)
+            }
+            android.util.Log.i(TAG, "📡 enrichWithRealtimeData: 获取到 ${realtimeMap.size} 只行情")
+
+            positions.map { p ->
+                val rt = realtimeMap[p.stockCode]
+                if (rt != null && rt.price > 0) {
+                    android.util.Log.i(TAG, "📡 ${p.stockName}(${p.stockCode}): 成本=${p.avgBuyPrice} 现价=${rt.price}, PE=${rt.pe}, 换手率=${rt.turnoverRate}")
+                    p.copy(
+                        currentPrice = rt.price,
+                        pe = rt.pe,
+                        turnoverRate = rt.turnoverRate,
+                        stockName = if (rt.name.isNotBlank()) rt.name else p.stockName
+                    )
+                } else {
+                    android.util.Log.w(TAG, "⚠️ ${p.stockName}(${p.stockCode}): 未获取到行情，保留OCR数据")
+                    p
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "❌ enrichWithRealtimeData 失败: ${e.message}", e)
+            positions
+        }
+    }
+
     /** 显示 OCR 识别结果确认对话框 */
     private fun showOcrConfirmDialog(positions: List<RealPositionEntity>) {
         if (!isAdded) return
@@ -894,11 +1332,31 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
             android.util.Log.i(TAG, "   → ${p.stockName}(${p.stockCode}) id=${p.id} qty=${p.quantity} price=${p.avgBuyPrice} date=${p.buyDate} active=${p.isActive}")
         }
 
+        // 先获取实时行情增强数据，再显示确认框
+        statusTv.text = "📡 正在获取实时行情..."
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val enriched = enrichWithRealtimeData(positions)
+
+            withContext(Dispatchers.Main) {
+                if (!isAdded) return@withContext
+                showOcrConfirmDialogInner(enriched)
+            }
+        }
+    }
+
+    /** 显示确认对话框（内部，数据已增强） */
+    private fun showOcrConfirmDialogInner(positions: List<RealPositionEntity>) {
+        val ctx = requireContext()
+        android.util.Log.i(TAG, "📋 showOcrConfirmDialogInner: ${positions.size} 只（已增强）")
+
         val msg = buildString {
-            appendLine("识别到 ${positions.size} 只持仓：\n")
+            appendLine("识别到 ${positions.size} 只持仓（已获取实时行情）：\n")
             for (p in positions) {
                 appendLine("  ${p.stockName}(${p.stockCode})")
-                appendLine("    ${p.quantity}股 ¥${"%.2f".format(p.avgBuyPrice)}")
+                append("    ${p.quantity}股 ¥${"%.2f".format(p.avgBuyPrice)}")
+                if (p.pe > 0) append("  PE ${"%.1f".format(p.pe)}")
+                if (p.turnoverRate > 0) append("  换手 ${"%.2f".format(p.turnoverRate)}%")
+                appendLine()
             }
             appendLine("\n确认添加？")
         }
@@ -926,11 +1384,16 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
                             val bareCode = p.stockCode.replace(Regex("^(sh|sz|bj)"), "")
                             val existing = existingMap[bareCode]
                             if (existing != null) {
-                                // 已有持仓 → 直接更新数量和价格
+                                // 已有持仓 → 直接更新数量和价格 + 行情数据
                                 android.util.Log.i(TAG, "📥 updateQuantity: id=${existing.id} ${p.stockName}($bareCode) oldQty=${existing.quantity} → newQty=${p.quantity} price=${p.avgBuyPrice}")
                                 db.realPositionDao().updateQuantity(
                                     existing.id, p.quantity, p.avgBuyPrice
                                 )
+                                if (p.currentPrice > 0 || p.pe > 0 || p.turnoverRate > 0) {
+                                    db.realPositionDao().updateMarketData(
+                                        existing.id, p.currentPrice, p.pe, p.turnoverRate
+                                    )
+                                }
                                 updatedCount++
                             } else {
                                 // 新持仓 → 加入待插入列表

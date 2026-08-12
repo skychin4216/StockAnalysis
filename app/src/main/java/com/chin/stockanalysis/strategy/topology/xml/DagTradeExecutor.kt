@@ -6,12 +6,14 @@ import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.Strategy
 import com.chin.stockanalysis.strategy.topology.pipelines.OrderGenerationResult
 import com.chin.stockanalysis.strategy.topology.pipelines.PositionMergeResult
+import com.chin.stockanalysis.strategy.topology.pipelines.RotationPenaltyResult
 import com.chin.stockanalysis.strategy.topology.pipelines.SwapWeakResult
 import com.chin.stockanalysis.strategy.topology.pipelines.HoldingGuardResult
 import com.chin.stockanalysis.strategy.backtest.StrategyOptimizer
 import com.chin.stockanalysis.strategy.trade.StrategyTradeFittingParamEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import org.json.JSONArray
@@ -325,14 +327,17 @@ object DagTradeExecutor {
                         val details = evalOutput.passedStocks.values.sortedByDescending { it.passCount }
                         for (d in details.take(10)) {
                             val checks = listOf(
-                                if (d.maConvergedUp) "✅均线" else "❌均线",
-                                if (d.threeDayNoNewLow) "✅不新低" else "❌不新低",
-                                if (d.historicalLow25) "✅低位" else "❌低位",
-                                if (d.peLow) "✅PE" else "❌PE",
-                                if (d.cyclicalActive) "✅活跃" else "❌活跃",
-                                if (d.freezingPoint) "✅冰点" else "❌冰点"
+                                if (d.convergenceOk) "✅粘合" else "❌粘合",
+                                if (d.bullishAligned) "✅多头" else "❌多头",
+                                if (d.convergenceDurationOk) "✅持续" else "❌持续",
+                                if (d.volumeConditionOk) "✅量能" else "❌量能",
+                                if (d.drawdownOk) "✅跌幅" else "❌跌幅",
+                                if (d.ma60Rising) "✅MA60" else "❌MA60",
+                                if (d.aboveYearLine) "✅年线" else "❌年线",
+                                if (d.changePctOk) "✅涨幅" else "❌涨幅",
+                                if (d.aboveAllMAs) "✅站上" else "❌站上"
                             )
-                            appendLine("  ${d.name}(${d.code}) ${d.passCount}/6 ${checks.joinToString(" ")}")
+                            appendLine("  ${d.name}(${d.code}) ${d.passCount}/${d.totalChecks} ${checks.joinToString(" ")}")
                         }
                         if (details.size > 10) appendLine("  ... 共 ${details.size} 只")
                     }
@@ -445,9 +450,9 @@ object DagTradeExecutor {
                 newsStrengthScore = it
             }
 
-            // 板块轮动惩罚（Int 输出）
-            (pr.stageResults["n_rot_pen"]?.output as? Int)?.let {
-                rotationPenalty = it
+            // 板块轮动惩罚（v2：RotationPenaltyResult 输出，取总惩罚写入报表）
+            (pr.stageResults["n_rot_pen"]?.output as? RotationPenaltyResult)?.let {
+                rotationPenalty = it.rotationPenalty
             }
 
             // 逐策略 Top3：从信号合并节点提取 MergedSignalPool，按 strategyId 分组取 Top3
@@ -546,12 +551,16 @@ object DagTradeExecutor {
                             passedStocksObj.put(code, JSONObject().apply {
                                 put("name", detail.name)
                                 put("passCount", detail.passCount)
-                                put("maConvergedUp", detail.maConvergedUp)
-                                put("threeDayNoNewLow", detail.threeDayNoNewLow)
-                                put("historicalLow25", detail.historicalLow25)
-                                put("peLow", detail.peLow)
-                                put("cyclicalActive", detail.cyclicalActive)
-                                put("freezingPoint", detail.freezingPoint)
+                                put("totalChecks", detail.totalChecks)
+                                put("convergenceOk", detail.convergenceOk)
+                                put("bullishAligned", detail.bullishAligned)
+                                put("convergenceDurationOk", detail.convergenceDurationOk)
+                                put("volumeConditionOk", detail.volumeConditionOk)
+                                put("drawdownOk", detail.drawdownOk)
+                                put("ma60Rising", detail.ma60Rising)
+                                put("aboveYearLine", detail.aboveYearLine)
+                                put("changePctOk", detail.changePctOk)
+                                put("aboveAllMAs", detail.aboveAllMAs)
                             })
                         }
                         put("passedStocks", passedStocksObj)
@@ -751,13 +760,19 @@ object DagTradeExecutor {
      * 从 DAG 关键路径移除后，拟合不再阻塞 Pipeline 结果。
      * 在独立 CoroutineScope 中运行，完成后自动写入 DB。
      */
+    /** 共享拟合 Scope — 所有周期的拟合共用一个受监督的 Scope，可统一取消 */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val fittingScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO.limitedParallelism(2)
+    )
+
     private fun launchBackgroundFitting(
         context: Context,
         useCaseId: String,
         tradeDate: String,
         strategies: List<Strategy>
     ) {
-        CoroutineScope(Dispatchers.IO).launch {
+        fittingScope.launch {
             try {
                 Log.i(TAG, "[$useCaseId] 🔧 后台拟合开始 (${strategies.size} 个策略)")
                 val db = StockDatabase.getInstance(context)
@@ -775,31 +790,27 @@ object DagTradeExecutor {
                 val fitJobs = strategies.filter { it.id != "ai_prediction" }
                 val fittingResults = mutableListOf<StrategyTradeFittingParamEntity>()
 
-                kotlinx.coroutines.coroutineScope {
-                    val deferreds = fitJobs.map { strategy ->
-                        async {
-                            try {
-                                val result = optimizer.gridSearch(strategy, availableDates)
-                                val weightsJson = result.bestWeights.joinToString(",") { w -> "${w.key}=${w.weight}" }
-                                Log.i(TAG, "[$useCaseId]   拟合 ${strategy.id}: accuracy=${"%.1f".format(result.bestAccuracy)}%")
-                                StrategyTradeFittingParamEntity(
-                                    strategyId = strategy.id,
-                                    tradeDate = tradeDate,
-                                    periodDays = 20,
-                                    paramJson = weightsJson,
-                                    fittingRound = 1,
-                                    accuracy = result.bestAccuracy.toDouble(),
-                                    avgReturn = result.bestAvgReturn,
-                                    createdAt = System.currentTimeMillis()
-                                )
-                            } catch (e: Exception) {
-                                Log.w(TAG, "[$useCaseId]   拟合 ${strategy.id} 失败: ${e.message}")
-                                null
-                            }
-                        }
+                // 串行拟合（避免多策略并发 CPU 竞争），每策略之间无依赖
+                for (strategy in fitJobs) {
+                    try {
+                        val result = optimizer.gridSearch(strategy, availableDates)
+                        val weightsJson = result.bestWeights.joinToString(",") { w -> "${w.key}=${w.weight}" }
+                        Log.i(TAG, "[$useCaseId]   拟合 ${strategy.id}: accuracy=${"%.1f".format(result.bestAccuracy)}%")
+                        fittingResults.add(
+                            StrategyTradeFittingParamEntity(
+                                strategyId = strategy.id,
+                                tradeDate = tradeDate,
+                                periodDays = 20,
+                                paramJson = weightsJson,
+                                fittingRound = 1,
+                                accuracy = result.bestAccuracy.toDouble(),
+                                avgReturn = result.bestAvgReturn,
+                                createdAt = System.currentTimeMillis()
+                            )
+                        )
+                    } catch (e: Exception) {
+                        Log.w(TAG, "[$useCaseId]   拟合 ${strategy.id} 失败: ${e.message}")
                     }
-                    val results = deferreds.map { it.await() }
-                    results.filterNotNull().forEach { fittingResults.add(it) }
                 }
 
                 if (fittingResults.isNotEmpty()) {

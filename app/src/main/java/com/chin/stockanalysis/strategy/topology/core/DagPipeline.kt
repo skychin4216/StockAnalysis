@@ -131,7 +131,8 @@ class DagPipeline(
          */
         val FLOW_CRITICAL_NODES = setOf(
             "stock_pool", "candidate_pool", "signal_merge",
-            "smart_money_filter", "news_guard", "generate_orders"
+            "smart_money_filter", "news_guard"
+            // generate_orders 不在其中：0 订单是正常结果（如非交易时段/无候选通过），不算失败
         )
     }
 

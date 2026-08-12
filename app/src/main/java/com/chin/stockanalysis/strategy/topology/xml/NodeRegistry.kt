@@ -56,16 +56,21 @@ object NodeRegistry {
         }
         register("strict_selection") { _, config ->
             com.chin.stockanalysis.strategy.topology.nodes.StockEvaluationNode(
-                peThreshold = config["peThreshold"]?.toDoubleOrNull() ?: 30.0,
-                maDivergenceThreshold = config["maDivergenceThreshold"]?.toDoubleOrNull() ?: 0.03,
-                historicalLowPercentile = config["historicalLowPercentile"]?.toDoubleOrNull() ?: 0.25,
-                activeDaysThreshold = config["activeDaysThreshold"]?.toIntOrNull() ?: 3,
-                activeChangeThreshold = config["activeChangeThreshold"]?.toDoubleOrNull() ?: 3.0,
-                turnoverThreshold = config["turnoverThreshold"]?.toDoubleOrNull() ?: 2.0,
-                volumeRatioThreshold = config["volumeRatioThreshold"]?.toDoubleOrNull() ?: 1.0,
-                lookbackDays = config["lookbackDays"]?.toIntOrNull() ?: 60,
-                marketMaThreshold = config["marketMaThreshold"]?.toDoubleOrNull() ?: 0.02,
-                minPassCount = config["minPassCount"]?.toIntOrNull() ?: 4
+                convergenceThreshold = config["convergenceThreshold"]?.toDoubleOrNull() ?: 2.5,
+                useMA60 = config["useMA60"]?.toBooleanStrictOrNull() ?: true,
+                convergenceDurationDays = config["convergenceDurationDays"]?.toIntOrNull() ?: 15,
+                volumeBreakoutRatio = config["volumeBreakoutRatio"]?.toDoubleOrNull() ?: 1.5,
+                minChangePct = config["minChangePct"]?.toDoubleOrNull() ?: 0.0,
+                requireChangePct = config["requireChangePct"]?.toBooleanStrictOrNull() ?: false,
+                minDrawdownPct = config["minDrawdownPct"]?.toDoubleOrNull() ?: 30.0,
+                requireMA60Rising = config["requireMA60Rising"]?.toBooleanStrictOrNull() ?: true,
+                requireVolumeShrink = config["requireVolumeShrink"]?.toBooleanStrictOrNull() ?: false,
+                requireAboveYearLine = config["requireAboveYearLine"]?.toBooleanStrictOrNull() ?: false,
+                requireAboveAllMAs = config["requireAboveAllMAs"]?.toBooleanStrictOrNull() ?: true,
+                moderateVolumeLower = config["moderateVolumeLower"]?.toDoubleOrNull() ?: 1.2,
+                moderateVolumeUpper = config["moderateVolumeUpper"]?.toDoubleOrNull() ?: 1.8,
+                lookbackDays = config["lookbackDays"]?.toIntOrNull() ?: 120,
+                minPassCount = config["minPassCount"]?.toIntOrNull() ?: 7
             )
         }
         register("base_position_guard") { _, config ->
@@ -208,6 +213,8 @@ object NodeRegistry {
         register("real_holding_eval") { _, _ -> RealHoldingAnalysisNode() }
         register("a_market_analysis") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.AMarketAnalysisNode() }
         register("t_trade_eval") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.TTradeEvalNode() }
+        register("holding_diagnostic") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.HoldingDiagnosticNode() }
+        register("holding_prediction") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.HoldingPredictionNode() }
 
         Log.i(TAG, "Node 注册完成: ${factories.keys}")
     }

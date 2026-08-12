@@ -8,6 +8,8 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
+import java.util.concurrent.ConcurrentHashMap
+
 /**
  * ## 多源股票数据仓储 - 并发请求、自动选源、健康检查
  *
@@ -36,8 +38,8 @@ class MultiSourceStockRepository(
     private val cache: SmartStockCache = SmartStockCache()
 ) {
     private val tag = "MultiSourceRepository"
-    private val sourceHealth = mutableMapOf<StockDataSource, Boolean>()
-    private val requestTimeouts = mutableMapOf<StockDataSource, Long>()
+    private val sourceHealth = ConcurrentHashMap<StockDataSource, Boolean>()
+    private val requestTimeouts = ConcurrentHashMap<StockDataSource, Long>()
 
     init {
         for (source in sources) {

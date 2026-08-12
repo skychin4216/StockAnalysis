@@ -8,6 +8,7 @@ import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
@@ -105,7 +106,13 @@ class StrategyDataFeed(private val context: Context) {
                 .filter { !config.onlyMainBoard || isMainBoard(it.code) }
                 .map { snap -> snapshotToStock(snap, codeToName[snap.code] ?: snap.code) }
             // 兜底：DB 行缺基本面（如同步未跑）时用行情批量 API 补 PE/PB/市值
-            val list = if (config.enrichFundamentals) enrichMissingFundamentals(raw) else raw
+            // 加 15s 超时防止网络不稳定时阻塞整个 Pipeline
+            val list = if (config.enrichFundamentals) {
+                withTimeoutOrNull(15_000L) { enrichMissingFundamentals(raw) } ?: run {
+                    Log.w(TAG, "基本面兜底超时(15s)，跳过 enrichment")
+                    raw
+                }
+            } else raw
             Log.i(TAG, "数据准备: ${allSnaps.size}只 → 过滤后${list.size}只 (主板=${config.onlyMainBoard})")
             list
         } catch (e: Exception) {

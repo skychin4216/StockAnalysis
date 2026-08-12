@@ -84,38 +84,59 @@ object Level2DataProvider {
         withContext(Dispatchers.IO) {
             val result = mutableMapOf<String, Level2Data>()
             val client = HttpClientProvider.realtimeClient
+            val batches = codes.chunked(BATCH_SIZE)
 
-            codes.chunked(BATCH_SIZE).forEach { batch ->
-                try {
-                    val secids = batch.joinToString(",") { toSecId(it) }
-                    // f12=代码, f6=成交额, f62=主力净流入, f135=超大单净流入,
-                    // f31=买1价, f41=卖1价
-                    val url = "${DataConfig.eastmoneyPush2}/ulist.np/get" +
-                        "?fltt=2&invt=2&secids=$secids" +
-                        "&fields=f12,f6,f62,f135,f31,f41"
+            for ((batchIdx, batch) in batches.withIndex()) {
+                // 批次间延迟 150ms，避免并发请求打爆 API
+                if (batchIdx > 0) {
+                    kotlinx.coroutines.delay(150L)
+                }
 
-                    val req = Request.Builder().url(url)
-                        .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                        .addHeader("Referer", DataConfig.eastmoneyQuote)
-                        .build()
+                for (attempt in 0..2) {  // 最多重试 2 次
+                    try {
+                        if (attempt > 0) {
+                            val delayMs = 300L * (1L shl (attempt - 1))
+                            kotlinx.coroutines.delay(delayMs)
+                        }
 
-                    val resp = client.newCall(req).execute()
-                    if (!resp.isSuccessful) {
-                        Log.w(TAG, "API 请求失败: HTTP ${resp.code}")
+                        val secids = batch.joinToString(",") { toSecId(it) }
+                        val url = "${DataConfig.eastmoneyPush2}/ulist.np/get" +
+                            "?fltt=2&invt=2&secids=$secids" +
+                            "&fields=f12,f6,f62,f135,f31,f41"
+
+                        val req = Request.Builder().url(url)
+                            .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                            .addHeader("Referer", DataConfig.eastmoneyQuote)
+                            .build()
+
+                        val resp = client.newCall(req).execute()
+                        if (!resp.isSuccessful) {
+                            Log.w(TAG, "API 请求失败: HTTP ${resp.code}, 重试 $attempt/2")
+                            resp.close()
+                            continue
+                        }
+
+                        val body = resp.body?.string()
                         resp.close()
-                        return@forEach
-                    }
+                        if (body.isNullOrBlank()) {
+                            Log.w(TAG, "API 返回空响应, 重试 $attempt/2")
+                            continue
+                        }
 
-                    val body = resp.body?.string()
-                    resp.close()
-                    if (body.isNullOrBlank()) {
-                        Log.w(TAG, "API 返回空响应")
-                        return@forEach
+                        val beforeSize = result.size
+                        parseLevel2Response(body, result)
+                        if (result.size > beforeSize) {
+                            break  // 有数据，成功
+                        } else {
+                            Log.w(TAG, "解析无有效数据, 重试 $attempt/2")
+                            continue
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "批量获取 Level2 异常(batch=$batchIdx, attempt=$attempt): ${e.message}")
+                        if (attempt >= 2) {
+                            Log.w(TAG, "batch=$batchIdx 全部重试失败")
+                        }
                     }
-
-                    parseLevel2Response(body, result)
-                } catch (e: Exception) {
-                    Log.w(TAG, "批量获取 Level2 异常: ${e.message}")
                 }
             }
 

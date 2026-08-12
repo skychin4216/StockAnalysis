@@ -4,6 +4,9 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:allowBackup="true"
@@ -69,6 +72,12 @@
             android:label="Pipeline 拓撲編輯器"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.Stockanalysis" />
+
+        <!-- 量化前台服务 — pipeline 执行期间防止被系统杀死 -->
+        <service
+            android:name=".service.QuantForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
     </application>
 

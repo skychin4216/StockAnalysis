@@ -15,10 +15,10 @@ import android.view.View
 import com.chin.stockanalysis.strategy.topology.core.NodeType
 
 /**
- * ## NodeCanvasView — 2D 拓扑画布自定义 View
+ * ## NodeCanvasView — 全屏 2D 拓扑画布自定义 View
  *
- * 负责渲染节点（圆角矩形卡片）与连线（贝塞尔曲线 + 箭头），
- * 并处理触摸手势：点击选中、长按弹出菜单、从节点拖拽到另一节点建立连线、点击连线。
+ * 渲染节点（圆角矩形卡片）与连线（贝塞尔曲线 + 箭头），支持世界坐标系缩放平移：
+ * 屏幕坐标 = 世界坐标 × [canvasState.scale] + [canvasState.translate]。
  *
  * ### 手势
  * | 手势 | 动作 |
@@ -28,8 +28,10 @@ import com.chin.stockanalysis.strategy.topology.core.NodeType
  * | 从节点 A 拖拽到节点 B | 建立连线 → [NodeCanvasListener.onLinkCreated] |
  * | 点击连线 | 选中连线 → [NodeCanvasListener.onLinkTapped] |
  * | 点击空白 | 取消选中 → [NodeCanvasListener.onNodeSelected](null) |
+ * | 空白处拖拽 | 平移画布 |
+ * | 双指缩放 | 缩放画布（以手势焦点为中心） |
  *
- * 画布尺寸根据节点座标自动计算（[onMeasure]），适配外层 ScrollView 滚动。
+ * 画布自身占满父容器（全屏），不再依赖外层 ScrollView。
  */
 class NodeCanvasView @JvmOverloads constructor(
     context: Context,
@@ -37,7 +39,7 @@ class NodeCanvasView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
-    /** 画布状态（节点、连线、选中态） */
+    /** 画布状态（节点、连线、缩放、平移、选中态） */
     val canvasState = NodeCanvasState()
 
     /** 交互回调 */
@@ -80,9 +82,43 @@ class NodeCanvasView @JvmOverloads constructor(
         invalidate()
     }
 
-    /** 缩放/平移以适配所有节点（当前实现为重新计算尺寸并重绘） */
+    /** 缩放/平移以适配所有节点，并居中显示 */
     fun zoomToFit() {
-        requestLayout()
+        if (width <= 0 || height <= 0) {
+            post { zoomToFit() }
+            return
+        }
+        if (canvasState.nodes.isEmpty()) {
+            canvasState.scale = 1f
+            canvasState.translateX = 0f
+            canvasState.translateY = 0f
+            invalidate()
+            return
+        }
+        val minX = canvasState.nodes.minOf { it.x }
+        val maxX = canvasState.nodes.maxOf { it.x + it.width }
+        val minY = canvasState.nodes.minOf { it.y }
+        val maxY = canvasState.nodes.maxOf { it.y + it.height }
+        val bw = maxX - minX
+        val bh = maxY - minY
+        if (bw <= 0f || bh <= 0f) return
+
+        val pad = dp(120f)
+        val availW = (width - pad * 2f).coerceAtLeast(1f)
+        val availH = (height - pad * 2f).coerceAtLeast(1f)
+        val s = minOf(availW / bw, availH / bh, 1.4f).coerceIn(0.25f, 3f)
+
+        canvasState.scale = s
+        canvasState.translateX = width / 2f - (minX + bw / 2f) * s
+        canvasState.translateY = height / 2f - (minY + bh / 2f) * s
+        invalidate()
+    }
+
+    /** 重置为原始比例并回到原点 */
+    fun resetView() {
+        canvasState.scale = 1f
+        canvasState.translateX = 0f
+        canvasState.translateY = 0f
         invalidate()
     }
 
@@ -96,24 +132,27 @@ class NodeCanvasView @JvmOverloads constructor(
         invalidate()
     }
 
-    // ════════════════════════════════════════════════════
-    // 测量
-    // ════════════════════════════════════════════════════
+    /** 将屏幕坐标转换为世界坐标 */
+    private fun screenToWorldX(sx: Float): Float = (sx - canvasState.translateX) / canvasState.scale
+    private fun screenToWorldY(sy: Float): Float = (sy - canvasState.translateY) / canvasState.scale
 
-    private val padding = 48f
+    private fun dp(value: Float): Float = value * resources.displayMetrics.density
+
+    // ════════════════════════════════════════════════════
+    // 测量 — 全屏填满父容器
+    // ════════════════════════════════════════════════════
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        var contentW = 0
-        var contentH = 0
-        for (n in canvasState.nodes) {
-            contentW = maxOf(contentW, (n.x + n.width + padding).toInt())
-            contentH = maxOf(contentH, (n.y + n.height + padding).toInt())
+        val w = when (MeasureSpec.getMode(widthMeasureSpec)) {
+            MeasureSpec.EXACTLY -> MeasureSpec.getSize(widthMeasureSpec)
+            MeasureSpec.AT_MOST -> MeasureSpec.getSize(widthMeasureSpec).coerceAtMost(2000)
+            else -> 2000
         }
-        if (contentW == 0) contentW = 600
-        if (contentH == 0) contentH = 400
-
-        val w = resolveSize(contentW, widthMeasureSpec)
-        val h = resolveSize(contentH, heightMeasureSpec)
+        val h = when (MeasureSpec.getMode(heightMeasureSpec)) {
+            MeasureSpec.EXACTLY -> MeasureSpec.getSize(heightMeasureSpec)
+            MeasureSpec.AT_MOST -> MeasureSpec.getSize(heightMeasureSpec).coerceAtMost(1400)
+            else -> 1400
+        }
         setMeasuredDimension(w, h)
     }
 
@@ -122,21 +161,39 @@ class NodeCanvasView @JvmOverloads constructor(
     // ════════════════════════════════════════════════════
 
     private val nodePaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val nodeBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 3f }
+    private val nodeBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = dp(1.5f)
+    }
     private val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE; textSize = 30f; isFakeBoldText = true; textAlign = Paint.Align.CENTER
+        color = Color.WHITE; textSize = dp(11f); isFakeBoldText = true; textAlign = Paint.Align.CENTER
     }
     private val linkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#3B82F6"); strokeWidth = 8f; style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
+        color = Color.parseColor("#3B82F6"); strokeWidth = dp(2.5f)
+        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
     }
     private val previewPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#7C3AED"); strokeWidth = 6f; style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
+        color = Color.parseColor("#A78BFA"); strokeWidth = dp(2f)
+        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
     }
     private val arrowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#3B82F6"); strokeWidth = 8f; style = Paint.Style.FILL_AND_STROKE; strokeCap = Paint.Cap.ROUND
+        color = Color.parseColor("#3B82F6"); style = Paint.Style.FILL_AND_STROKE
+        strokeCap = Paint.Cap.ROUND
     }
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#1E40AF"); textSize = 22f; textAlign = Paint.Align.CENTER; isFakeBoldText = true
+        color = Color.parseColor("#1E40AF"); textSize = dp(8f)
+        textAlign = Paint.Align.CENTER; isFakeBoldText = true
+    }
+    private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#16203A"); strokeWidth = dp(0.5f)
+    }
+    private val accentGridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#1E293B"); strokeWidth = dp(0.5f)
+    }
+    private val emptyHintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#64748B"); textSize = dp(13f); textAlign = Paint.Align.CENTER
+    }
+    private val emptyHintSubPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#475569"); textSize = dp(10f); textAlign = Paint.Align.CENTER
     }
 
     private val rectBuffer = RectF()
@@ -144,26 +201,32 @@ class NodeCanvasView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        canvas.drawColor(Color.parseColor("#0B1220"))
+        drawGrid(canvas)
+
         if (canvasState.nodes.isEmpty()) {
-            val hint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.parseColor("#CBD5E1"); textSize = 32f; textAlign = Paint.Align.CENTER
-            }
-            canvas.drawText("画布为空，从左侧侧边栏添加节点", width / 2f, height / 2f, hint)
+            val cy = height / 2f - dp(24f)
+            canvas.drawText("当前 Pipeline 为空", width / 2f, cy, emptyHintPaint)
+            canvas.drawText("点击右上角 📦 打开节点模板面板，拖入节点开始搭建", width / 2f, cy + dp(28f), emptyHintSubPaint)
             return
         }
 
         val nodeMap = canvasState.nodes.associateBy { it.id }
 
-        // 1. 先绘制节点（底层）
-        for (node in canvasState.nodes) {
-            drawNode(canvas, node, node.id == canvasState.selectedNodeId)
-        }
+        canvas.save()
+        canvas.translate(canvasState.translateX, canvasState.translateY)
+        canvas.scale(canvasState.scale, canvasState.scale)
 
-        // 2. 再绘制连线（上层，确保不被节点覆盖）
+        // 1. 先绘制连线（底层），避免节点遮挡
         for (link in canvasState.links) {
             val from = nodeMap[link.fromId] ?: continue
             val to = nodeMap[link.toId] ?: continue
             drawLink(canvas, from, to, link.label)
+        }
+
+        // 2. 再绘制节点
+        for (node in canvasState.nodes) {
+            drawNode(canvas, node, node.id == canvasState.selectedNodeId)
         }
 
         // 3. 绘制拖拽预览连线
@@ -171,13 +234,41 @@ class NodeCanvasView @JvmOverloads constructor(
             val from = dragFromNode!!
             val startX = from.x + from.width
             val startY = from.y + from.height / 2f
-            val endX = currentDragX
-            val endY = currentDragY
+            val endX = currentDragWorldX
+            val endY = currentDragWorldY
             pathBuffer.reset()
             pathBuffer.moveTo(startX, startY)
             val midX = (startX + endX) / 2f
             pathBuffer.cubicTo(midX, startY, midX, endY, endX, endY)
             canvas.drawPath(pathBuffer, previewPaint)
+        }
+
+        canvas.restore()
+    }
+
+    /** 绘制深色网格背景（屏幕空间，固定间距） */
+    private fun drawGrid(canvas: Canvas) {
+        val step = dp(56f)
+        val majorStep = step * 5
+        var x = 0f
+        while (x <= width) {
+            canvas.drawLine(x, 0f, x, height.toFloat(), accentGridPaint)
+            x += step
+        }
+        var y = 0f
+        while (y <= height) {
+            canvas.drawLine(0f, y, width.toFloat(), y, accentGridPaint)
+            y += step
+        }
+        x = 0f
+        while (x <= width) {
+            canvas.drawLine(x, 0f, x, height.toFloat(), gridPaint)
+            x += majorStep
+        }
+        y = 0f
+        while (y <= height) {
+            canvas.drawLine(0f, y, width.toFloat(), y, gridPaint)
+            y += majorStep
         }
     }
 
@@ -189,12 +280,18 @@ class NodeCanvasView @JvmOverloads constructor(
             colorForType(node.nodeType)
         }
         nodePaint.color = bgColor
-        canvas.drawRoundRect(rectBuffer, 16f, 16f, nodePaint)
+        canvas.drawRoundRect(rectBuffer, dp(6f), dp(6f), nodePaint)
 
         // 选中边框
         if (selected) {
-            nodeBorderPaint.color = Color.parseColor("#0F172A")
-            canvas.drawRoundRect(rectBuffer, 16f, 16f, nodeBorderPaint)
+            nodeBorderPaint.color = Color.parseColor("#FFFFFF")
+            nodeBorderPaint.strokeWidth = dp(2f)
+            canvas.drawRoundRect(
+                rectBuffer.left - dp(3f), rectBuffer.top - dp(3f),
+                rectBuffer.right + dp(3f), rectBuffer.bottom + dp(3f),
+                dp(8f), dp(8f), nodeBorderPaint
+            )
+            nodeBorderPaint.strokeWidth = dp(1.5f)
         }
 
         // 只显示中文名称（居中）
@@ -217,35 +314,26 @@ class NodeCanvasView @JvmOverloads constructor(
 
         // 贝塞尔曲线控制点：水平距离的一半，保持曲线圆滑
         val dx = Math.abs(endX - startX)
-        val ctrlOffset = Math.max(dx * 0.5f, 60f)
+        val ctrlOffset = Math.max(dx * 0.5f, dp(24f))
 
         pathBuffer.reset()
         pathBuffer.moveTo(startX, startY)
         pathBuffer.cubicTo(
-            startX + ctrlOffset, startY,   // 控制点1：向右延伸
-            endX - ctrlOffset, endY,       // 控制点2：从左侧进入
+            startX + ctrlOffset, startY,
+            endX - ctrlOffset, endY,
             endX, endY
         )
         canvas.drawPath(pathBuffer, linkPaint)
 
-        // 箭头（三角形填充，更醒目）
-        val angle = Math.atan2((endY - (endY)).toDouble(), (endX - (endX - ctrlOffset)).toDouble())
-        // 简化：直接根据进入方向画箭头
-        val arrowLen = 20f
-        val arrowAngle = 0.5 // 弧度
-        // 箭头方向：从控制点2指向终点
-        val dirX = endX - (endX - ctrlOffset)
-        val dirY = endY - endY
-        val dirLen = Math.hypot(dirX.toDouble(), dirY.toDouble()).toFloat()
-        val nx = if (dirLen > 0) dirX / dirLen else 1f
-        val ny = if (dirLen > 0) dirY / dirLen else 0f
+        // 箭头：从控制点2指向终点（水平向右进入）
+        val arrowLen = dp(8f)
+        val nx = 1f
+        val ny = 0f
 
-        // 箭头三个点
         val tipX = endX
         val tipY = endY
         val baseX = endX - nx * arrowLen
         val baseY = endY - ny * arrowLen
-        // 垂直于方向的偏移
         val perpX = -ny * arrowLen * 0.5f
         val perpY = nx * arrowLen * 0.5f
 
@@ -261,15 +349,14 @@ class NodeCanvasView @JvmOverloads constructor(
         if (label.isNotBlank()) {
             val midX = (startX + endX) / 2f
             val midY = (startY + endY) / 2f
-            // 绘制标签背景
-            val labelW = labelPaint.measureText(label) + 16f
-            val labelH = 32f
+            val labelW = labelPaint.measureText(label) + dp(8f)
+            val labelH = dp(14f)
             val labelRect = RectF(midX - labelW / 2f, midY - labelH, midX + labelW / 2f, midY)
             val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.parseColor("#FFFFFF"); style = Paint.Style.FILL
             }
-            canvas.drawRoundRect(labelRect, 8f, 8f, bgPaint)
-            canvas.drawText(label, midX, midY - 10f, labelPaint)
+            canvas.drawRoundRect(labelRect, dp(4f), dp(4f), bgPaint)
+            canvas.drawText(label, midX, midY - dp(3f), labelPaint)
         }
     }
 
@@ -277,16 +364,21 @@ class NodeCanvasView @JvmOverloads constructor(
     // 触摸处理
     // ════════════════════════════════════════════════════
 
-    private val touchSlop = 16f
+    private val touchSlop = dp(12f)
     private var downX = 0f
     private var downY = 0f
     private var downNode: VisualNode? = null
     private var downLink: VisualLink? = null
     private var linkDragging = false
     private var dragFromNode: VisualNode? = null
-    private var currentDragX = 0f
-    private var currentDragY = 0f
+    private var currentDragWorldX = 0f
+    private var currentDragWorldY = 0f
     private var hasMoved = false
+
+    /** 空白拖拽平移画布 */
+    private var panning = false
+    private var lastPanX = 0f
+    private var lastPanY = 0f
 
     private val handler = Handler(Looper.getMainLooper())
     private var longPressFired = false
@@ -299,13 +391,19 @@ class NodeCanvasView @JvmOverloads constructor(
         }
     }
 
-    /** 双指缩放侦测器 */
+    /** 双指缩放侦测器（以手势焦点为中心） */
     private val scaleDetector = ScaleGestureDetector(context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
-                val newScale = (canvasState.scale * detector.scaleFactor).coerceIn(0.3f, 3.0f)
+                val newScale = (canvasState.scale * detector.scaleFactor).coerceIn(0.25f, 3.0f)
+                val fx = detector.focusX
+                val fy = detector.focusY
+                // 保持焦点下的世界坐标不变
+                val wx = (fx - canvasState.translateX) / canvasState.scale
+                val wy = (fy - canvasState.translateY) / canvasState.scale
                 canvasState.scale = newScale
-                requestLayout()
+                canvasState.translateX = fx - wx * newScale
+                canvasState.translateY = fy - wy * newScale
                 invalidate()
                 return true
             }
@@ -313,7 +411,6 @@ class NodeCanvasView @JvmOverloads constructor(
     )
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        // 双指缩放：禁止父 ScrollView 拦截
         scaleDetector.onTouchEvent(event)
         if (event.pointerCount >= 2) {
             parent?.requestDisallowInterceptTouchEvent(true)
@@ -325,13 +422,19 @@ class NodeCanvasView @JvmOverloads constructor(
                 downY = event.y
                 hasMoved = false
                 longPressFired = false
-                downNode = hitTestNode(event.x, event.y)
-                downLink = if (downNode == null) hitTestLink(event.x, event.y) else null
                 linkDragging = false
                 dragFromNode = null
+                panning = false
+
+                val wx = screenToWorldX(event.x)
+                val wy = screenToWorldY(event.y)
+                downNode = hitTestNode(wx, wy)
+                downLink = if (downNode == null) hitTestLink(wx, wy) else null
                 if (downNode != null) {
                     handler.postDelayed(longPressRunnable, 500)
                 }
+                lastPanX = event.x
+                lastPanY = event.y
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
@@ -342,15 +445,25 @@ class NodeCanvasView @JvmOverloads constructor(
                     hasMoved = true
                     handler.removeCallbacks(longPressRunnable)
                     if (downNode != null) {
+                        // 从节点拖拽 = 建立连线
                         linkDragging = true
                         dragFromNode = downNode
-                        currentDragX = event.x
-                        currentDragY = event.y
+                        currentDragWorldX = screenToWorldX(event.x)
+                        currentDragWorldY = screenToWorldY(event.y)
+                    } else {
+                        // 空白拖拽 = 平移画布
+                        panning = true
                     }
                 }
                 if (linkDragging) {
-                    currentDragX = event.x
-                    currentDragY = event.y
+                    currentDragWorldX = screenToWorldX(event.x)
+                    currentDragWorldY = screenToWorldY(event.y)
+                    invalidate()
+                } else if (panning) {
+                    canvasState.translateX += event.x - lastPanX
+                    canvasState.translateY += event.y - lastPanY
+                    lastPanX = event.x
+                    lastPanY = event.y
                     invalidate()
                 }
                 return true
@@ -362,7 +475,9 @@ class NodeCanvasView @JvmOverloads constructor(
                     return true
                 }
                 if (linkDragging && dragFromNode != null) {
-                    val target = hitTestNode(event.x, event.y)
+                    val wx = screenToWorldX(event.x)
+                    val wy = screenToWorldY(event.y)
+                    val target = hitTestNode(wx, wy)
                     if (target != null && target.id != dragFromNode!!.id) {
                         listener?.onLinkCreated(dragFromNode!!.id, target.id)
                     }
@@ -372,12 +487,14 @@ class NodeCanvasView @JvmOverloads constructor(
                     return true
                 }
                 if (!hasMoved) {
-                    val tapped = hitTestNode(event.x, event.y)
+                    val wx = screenToWorldX(event.x)
+                    val wy = screenToWorldY(event.y)
+                    val tapped = hitTestNode(wx, wy)
                     if (tapped != null) {
                         canvasState.selectedNodeId = tapped.id
                         listener?.onNodeSelected(tapped)
                     } else {
-                        val tappedLink = hitTestLink(event.x, event.y)
+                        val tappedLink = hitTestLink(wx, wy)
                         if (tappedLink != null) {
                             listener?.onLinkTapped(tappedLink)
                         } else {
@@ -387,12 +504,15 @@ class NodeCanvasView @JvmOverloads constructor(
                     }
                     invalidate()
                 }
+                panning = false
+                linkDragging = false
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
                 handler.removeCallbacks(longPressRunnable)
                 linkDragging = false
                 dragFromNode = null
+                panning = false
                 invalidate()
                 return true
             }
@@ -400,9 +520,8 @@ class NodeCanvasView @JvmOverloads constructor(
         return super.onTouchEvent(event)
     }
 
-    /** 命中测试：返回包含触点的节点 */
+    /** 命中测试（世界坐标）：返回包含触点的节点 */
     private fun hitTestNode(x: Float, y: Float): VisualNode? {
-        // 从后往前测（后绘制的在上层）
         for (i in canvasState.nodes.indices.reversed()) {
             val n = canvasState.nodes[i]
             if (x >= n.x && x <= n.x + n.width && y >= n.y && y <= n.y + n.height) {
@@ -412,10 +531,10 @@ class NodeCanvasView @JvmOverloads constructor(
         return null
     }
 
-    /** 命中测试：返回距离触点足够近的连线 */
+    /** 命中测试（世界坐标）：返回距离触点足够近的连线 */
     private fun hitTestLink(x: Float, y: Float): VisualLink? {
         val nodeMap = canvasState.nodes.associateBy { it.id }
-        val threshold = 18f
+        val threshold = dp(7f)
         for (link in canvasState.links) {
             val from = nodeMap[link.fromId] ?: continue
             val to = nodeMap[link.toId] ?: continue

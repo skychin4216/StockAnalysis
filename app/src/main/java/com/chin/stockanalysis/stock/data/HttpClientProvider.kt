@@ -26,10 +26,11 @@ object HttpClientProvider {
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(8, TimeUnit.SECONDS)
             .writeTimeout(8, TimeUnit.SECONDS)
-            .connectionPool(ConnectionPool(10, 60, TimeUnit.SECONDS))
+            .connectionPool(ConnectionPool(20, 60, TimeUnit.SECONDS))
             .retryOnConnectionFailure(true)
             .followRedirects(true)
             .followSslRedirects(true)
+            .addInterceptor(RetryInterceptor(maxRetries = 2, baseDelayMs = 300L, tag = "HttpRetry"))
             .build()
     }
 

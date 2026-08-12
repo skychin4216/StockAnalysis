@@ -55,6 +55,11 @@ object AMarketAnalysisEngine {
         val indexClose: Double = 0.0,
         val indexChangePct: Double = 0.0,
         val advanceDeclineRatio: Double = 0.0,
+        // ── v2 新增：连涨/连跌预警 ──
+        val consecutiveUpDays: Int = 0,
+        val consecutiveDownDays: Int = 0,
+        val streakRiskLevel: String = "LOW",    // LOW / MEDIUM / HIGH / EXTREME
+        val volumePriceDivergence: Boolean = false,  // 量价背离（涨但缩量）
         val summary: String
     )
 
@@ -105,11 +110,23 @@ object AMarketAnalysisEngine {
             val prevClose = if (snapshots.size >= 2) snapshots[snapshots.size - 2].close else latest.open
             val changePct = (latest.close - prevClose) / prevClose * 100
 
-            // 5. 状态机决策
-            val (period, posPct) = decidePeriod(isBottom, isTrend, isTop, volumeStatus, marketTemp)
+            // 5. 连涨/连跌天数 + 量价背离
+            val (consecUp, consecDown) = countConsecutiveDays(snapshots)
+            val vpDivergence = checkVolumePriceDivergence(snapshots)
+            val streakRisk = assessStreakRisk(consecUp, consecDown, vpDivergence, marketTemp)
 
-            // 6. 摘要
-            val summary = buildSummary(isBottom, isTrend, isTop, volumeStatus, marketTemp, period, posPct, ma5, ma10, ma30, dispersion, ratio)
+            // 6. 状态机决策（含连涨预警 + 沸腾极值）
+            val (period, posPct) = decidePeriod(
+                isBottom, isTrend, isTop, volumeStatus, marketTemp,
+                streakRisk, vpDivergence
+            )
+
+            // 7. 摘要
+            val summary = buildSummary(
+                isBottom, isTrend, isTop, volumeStatus, marketTemp, period, posPct,
+                ma5, ma10, ma30, dispersion, ratio,
+                consecUp, consecDown, streakRisk, vpDivergence
+            )
 
             MarketAnalysisResult(
                 isBottomConfirmed = isBottom,
@@ -124,6 +141,10 @@ object AMarketAnalysisEngine {
                 indexClose = latest.close,
                 indexChangePct = changePct,
                 advanceDeclineRatio = ratio,
+                consecutiveUpDays = consecUp,
+                consecutiveDownDays = consecDown,
+                streakRiskLevel = streakRisk,
+                volumePriceDivergence = vpDivergence,
                 summary = summary
             )
         } catch (e: Exception) {
@@ -194,6 +215,81 @@ object AMarketAnalysisEngine {
         }
     }
 
+    /**
+     * 连涨/连跌天数统计
+     * 从最新一天向前回溯，统计连续上涨或下跌的天数。
+     */
+    private fun countConsecutiveDays(history: List<DailySnapshotEntity>): Pair<Int, Int> {
+        if (history.size < 2) return 0 to 0
+        var upDays = 0
+        var downDays = 0
+        for (i in history.size - 1 downTo 1) {
+            val changePct = (history[i].close - history[i - 1].close) / history[i - 1].close * 100
+            // 方向反转检查必须前置：已确定连涨/连跌方向后，若出现反向走势（含平盘）
+            // 立即中断，避免把反向的第一天误计入（原实现会先 ++ 再 break 导致误计数）
+            if (upDays > 0 && changePct <= 0) break
+            if (downDays > 0 && changePct >= 0) break
+            when {
+                changePct > 0 -> upDays++
+                changePct < 0 -> downDays++
+                else -> break  // 首个交易日即平盘则中断
+            }
+        }
+        // 连涨与连跌天然互斥
+        return if (upDays > 0) upDays to 0 else 0 to downDays
+    }
+
+    /**
+     * 量价背离检测
+     *
+     * 检测"指数上涨但量能持续萎缩"的经典见顶信号：
+     * - 近3天指数累计涨幅 > 1%
+     * - 但近3天平均量能 < 前5天平均量能的 80%
+     *
+     * @return true 表示存在量价背离（涨但缩量），回调风险增大
+     */
+    private fun checkVolumePriceDivergence(history: List<DailySnapshotEntity>): Boolean {
+        if (history.size < 9) return false
+        val recent3 = history.takeLast(3)
+        val priceChange = (recent3.last().close - recent3.first().open) / recent3.first().open * 100
+        val recent3Vol = recent3.map { it.volume.toDouble() }.average()
+        val prev5Vol = history.takeLast(8).dropLast(3).map { it.volume.toDouble() }.average()
+        // 上涨但缩量：价格涨了但量能萎缩到前5日的80%以下
+        return priceChange > 1.0 && prev5Vol > 0 && recent3Vol < prev5Vol * 0.8
+    }
+
+    /**
+     * 连涨风险评估
+     *
+     * 根据 A 股历史统计规律：
+     * - 连涨 ≤3天：正常震荡，LOW
+     * - 连涨 4-5天：回调概率~50%，MEDIUM
+     * - 连涨 6-7天：回调概率~65%，HIGH
+     * - 连涨 ≥8天：回调概率>75%，EXTREME
+     * - 如果同时存在量价背离，风险等级上调一档
+     * - 如果市场"沸腾"，风险等级上调一档
+     */
+    private fun assessStreakRisk(
+        consecUp: Int, consecDown: Int,
+        vpDivergence: Boolean, marketTemp: String
+    ): String {
+        var level = when {
+            consecUp >= 8 -> "EXTREME"
+            consecUp >= 6 -> "HIGH"
+            consecUp >= 4 -> "MEDIUM"
+            consecDown >= 5 -> "LOW"  // 连跌5天反而可能是机会
+            else -> "LOW"
+        }
+        // 量价背离 → 上调一档
+        if (vpDivergence && level == "LOW") level = "MEDIUM"
+        if (vpDivergence && level == "MEDIUM") level = "HIGH"
+        // 沸腾 → 上调一档
+        if (marketTemp == "沸腾" && level == "LOW") level = "MEDIUM"
+        if (marketTemp == "沸腾" && level == "MEDIUM") level = "HIGH"
+        if (marketTemp == "沸腾" && level == "HIGH") level = "EXTREME"
+        return level
+    }
+
     /** 涨跌家数统计 */
     private fun countAdvanceDecline(snapshots: List<DailySnapshotEntity>): Pair<Int, Int> {
         var adv = 0; var dec = 0
@@ -216,15 +312,24 @@ object AMarketAnalysisEngine {
     /** 状态机决策：返回 (建议周期, 建议仓位%) */
     private fun decidePeriod(
         isBottom: Boolean, isTrend: Boolean, isTop: Boolean,
-        volumeStatus: String, marketTemp: String
+        volumeStatus: String, marketTemp: String,
+        streakRisk: String = "LOW", vpDivergence: Boolean = false
     ): Pair<HoldingPeriod, Int> {
+        // 优先级0：连涨极值 + 量价背离 → 强制降仓
+        if (streakRisk == "EXTREME") return HoldingPeriod.ULTRA_SHORT to 10
+        if (streakRisk == "HIGH" && vpDivergence) return HoldingPeriod.ULTRA_SHORT to 15
+
         // 优先级1：系统性风险
         if (isTop && volumeStatus == "放量") return HoldingPeriod.ULTRA_SHORT to 10
         if (marketTemp == "冰点") return HoldingPeriod.ULTRA_SHORT to 10
+        // 沸腾极值：即使趋势向好也要控制仓位
+        if (marketTemp == "沸腾" && streakRisk != "LOW") return HoldingPeriod.SHORT to 25
 
-        // 优先级2：趋势向上
-        if (isTrend && volumeStatus in listOf("放量", "平量") && marketTemp in listOf("温和", "温和偏热"))
-            return HoldingPeriod.LONG to 70
+        // 优先级2：趋势向上（但连涨中等风险时降一档）
+        if (isTrend && volumeStatus in listOf("放量", "平量") && marketTemp in listOf("温和", "温和偏热")) {
+            val posPct = if (streakRisk == "MEDIUM") 50 else if (streakRisk == "HIGH") 35 else 70
+            return HoldingPeriod.LONG to posPct
+        }
 
         // 优先级3：触底回升
         if (isBottom && marketTemp in listOf("冰点", "温和偏冷"))
@@ -243,7 +348,9 @@ object AMarketAnalysisEngine {
         volumeStatus: String, marketTemp: String,
         period: HoldingPeriod, posPct: Int,
         ma5: Double, ma10: Double, ma30: Double,
-        dispersion: Double, adRatio: Double
+        dispersion: Double, adRatio: Double,
+        consecUp: Int = 0, consecDown: Int = 0,
+        streakRisk: String = "LOW", vpDivergence: Boolean = false
     ): String = buildString {
         append("上证")
         if (isTrend) append(" | 均线多头粘合向上(离散${"%.2f".format(dispersion * 100)}%)")
@@ -251,6 +358,11 @@ object AMarketAnalysisEngine {
         if (isTop) append(" | ⚠逃顶信号")
         append(" | $marketTemp(涨跌比${"%.1f".format(adRatio)})")
         append(" | $volumeStatus")
+        // 连涨/连跌预警
+        if (consecUp > 0) append(" | 连涨${consecUp}天")
+        if (consecDown > 0) append(" | 连跌${consecDown}天")
+        if (streakRisk != "LOW") append(" | ⚠连涨风险${streakRisk}")
+        if (vpDivergence) append(" | ⚠量价背离")
         append(" | MA5/10/30=${"%.0f".format(ma5)}/${"%.0f".format(ma10)}/${"%.0f".format(ma30)}")
         append(" | 建议: ${period.label}(仓位${posPct}%)")
     }

@@ -100,7 +100,7 @@ const NODE_DESCS = {
   inst_tips: "【机构线索加分】利用机构调研(近30天调研次数)、大宗交易(溢价率)、北向资金(连续净流入天数)等数据，对机构关注的股票给予加分(+5-15分)。输出：instScore。",
   defensive_dividend: "【防守高息筛选】筛选高股息(股息率>3%)、低PB(<1.5)、低负债(<50%)的防御性股票，适合中线和长线配置。输出：defensiveStocks。",
   news_strength: "【新闻力度计算】回溯近N天(默认7天)的相关新闻，计算新闻热度(提及次数)和情感倾向(正面/负面/中性)。输出：newsScore=0-100, sentiment=positive/negative。",
-  rotation_penalty: "【板块轮动惩罚】对已经连续上涨超过N天(默认5天)的板块施加惩罚分(-10分)，避免追高板块轮动末端。输出：rotationPenalty。",
+  rotation_penalty: "【板块轮动惩罚v2】集中度对数衰减惩罚(log2)+板块生命周期(启动/高潮/退潮)+跨日轮动检测(重合度<30%×1.3、>70%×0.7)。输出：RotationPenaltyResult(rotationPenalty总惩罚 + sectorPenalties板块惩罚表)，smart_money_filter对受罚板块个股降分，实现惩罚闭环。",
   smart_money_filter: "【主力资金过滤】计算主力净流入/流出(大单买入-大单卖出)，低于最低分数阈值(默认20分)的股票被过滤掉。确保只买入有资金关注的标的。输出：smartMoneyScore, filtered=true/false。",
   candle_pattern: "【K线形态侦测】识别15种经典K线形态：早晨之星、锤子线、吞没形态、乌云盖顶、黄昏之星、十字星、T字线、吊颈线等。为技术面判断提供辅助。输出：patterns List<String>。",
   news_guard: "【新闻拦截+技术过滤】重大利空新闻直接拦截(如暴雷、监管处罚、业绩大幅下滑)，同时结合技术面过滤异常走势(如高位放量滞涨)。输出：newsGuardPassed=true/false, blockReason。",

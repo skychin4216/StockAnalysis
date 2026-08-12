@@ -74,6 +74,12 @@ interface TTradeRecordDao {
 
     @Query("SELECT COUNT(*) FROM t_trade_records WHERE periodType = :period AND status = 'CLOSED'")
     suspend fun getTotalClosedCount(period: String): Int
+
+    @Query("DELETE FROM t_trade_records")
+    suspend fun deleteAll()
+
+    @Query("DELETE FROM t_trade_records WHERE periodType = :period")
+    suspend fun deleteByPeriod(period: String)
 }
 
 /**
@@ -228,6 +234,12 @@ interface TTradeRecommendationDao {
     /** 获取指定周期今日推荐 */
     @Query("SELECT * FROM t_trade_recommendations WHERE trade_date = :date AND period_type = :periodType ORDER BY created_at DESC")
     suspend fun getByPeriodAndDate(periodType: String, date: String): List<TTradeRecommendationEntity>
+
+    @Query("DELETE FROM t_trade_recommendations")
+    suspend fun deleteAll()
+
+    @Query("DELETE FROM t_trade_recommendations WHERE period_type = :periodType")
+    suspend fun deleteByPeriod(periodType: String)
 }
 
 /** 推荐结果统计（DAO 查询返回行） */
