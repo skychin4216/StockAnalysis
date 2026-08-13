@@ -2,7 +2,9 @@ package com.chin.stockanalysis.ui
 
 import android.content.Context
 import android.os.Bundle
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -21,6 +23,7 @@ import com.chin.stockanalysis.config.FeatureFlagManager
 import com.chin.stockanalysis.config.GlobalMode
 import com.chin.stockanalysis.config.LanguageManager
 import com.chin.stockanalysis.databinding.FragmentSettingsBinding
+import com.chin.stockanalysis.notification.TradeNotifier
 import com.chin.stockanalysis.stock.StockService
 import com.chin.stockanalysis.stock.data.StockDataSourceFactory
 import com.chin.stockanalysis.strategy.HoldingPeriod
@@ -59,6 +62,55 @@ class SettingsFragment : Fragment() {
             tvAbout.text = buildAboutText()
         }
         setupAgentFramework()
+        setupWechatNotification()
+    }
+
+    /** 绑定做T 微信通知 & 自动执行 配置（Phase 11） */
+    private fun setupWechatNotification() {
+        binding.apply {
+            swWechatEnabled.isChecked = TradeNotifier.isWechatEnabled(requireContext())
+            swWechatEnabled.setOnCheckedChangeListener { _, isChecked ->
+                TradeNotifier.setWechatEnabled(requireContext(), isChecked)
+            }
+            etServerChanKey.setText(TradeNotifier.getServerChanKey(requireContext()))
+            etServerChanKey.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    TradeNotifier.setServerChanKey(requireContext(), s?.toString()?.trim().orEmpty())
+                }
+            })
+
+            swPushPlusEnabled.isChecked = TradeNotifier.isPushPlusEnabled(requireContext())
+            swPushPlusEnabled.setOnCheckedChangeListener { _, isChecked ->
+                TradeNotifier.setPushPlusEnabled(requireContext(), isChecked)
+            }
+            etPushPlusToken.setText(TradeNotifier.getPushPlusToken(requireContext()))
+            etPushPlusToken.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    TradeNotifier.setPushPlusToken(requireContext(), s?.toString()?.trim().orEmpty())
+                }
+            })
+
+            swAutoExecute.isChecked = TradeNotifier.isAutoExecuteEnabled(requireContext())
+            swAutoExecute.setOnCheckedChangeListener { _, isChecked ->
+                TradeNotifier.setAutoExecuteEnabled(requireContext(), isChecked)
+            }
+            val threshold = TradeNotifier.getAutoExecuteThreshold(requireContext())
+            etAutoExecThreshold.setText(if (threshold >= 0) "%.2f".format(threshold) else "0.70")
+            etAutoExecThreshold.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    val v = s?.toString()?.trim()?.toDoubleOrNull() ?: return
+                    if (v in 0.0..1.0) {
+                        TradeNotifier.setAutoExecuteThreshold(requireContext(), v)
+                    }
+                }
+            })
+        }
     }
 
     private fun refreshLanguageInfo() {

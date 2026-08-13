@@ -221,6 +221,21 @@ interface DailySnapshotDao {
         roeTTM: Double, grossMarginTTM: Double, debtToAsset: Double,
         operatingCashFlow: Double, turnoverRate: Double
     ): Int
+
+    /**
+     * 批量回填历史基本面：将某只股票在指定日期范围内的基本面字段统一更新。
+     * 仅覆盖 roe_ttm = 0 的行（避免覆盖已有数据）。
+     */
+    @Query("""UPDATE daily_snapshot SET
+        roe_ttm = :roeTTM, gross_margin_ttm = :grossMarginTTM,
+        debt_to_asset = :debtToAsset, operating_cash_flow = :operatingCashFlow
+        WHERE code = :code AND date >= :fromDate AND date <= :toDate
+        AND roe_ttm = 0 AND gross_margin_ttm = 0""")
+    suspend fun updateFundamentalsForDateRange(
+        code: String, fromDate: String, toDate: String,
+        roeTTM: Double, grossMarginTTM: Double,
+        debtToAsset: Double, operatingCashFlow: Double
+    ): Int
 }
 
 @Dao

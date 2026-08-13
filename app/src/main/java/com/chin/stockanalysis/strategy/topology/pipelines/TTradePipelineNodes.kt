@@ -5,6 +5,8 @@ import android.util.Log
 import com.chin.stockanalysis.stock.database.ChinaMarketTradingHours
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.analysis.CandlePatternDetector
+import com.chin.stockanalysis.strategy.data.IntradayAnalyzer
+import com.chin.stockanalysis.strategy.data.IntradayKlineFetcher
 import com.chin.stockanalysis.strategy.market.MarketAnalyzer
 import com.chin.stockanalysis.strategy.topology.core.BaseNode
 import com.chin.stockanalysis.strategy.topology.core.*
@@ -593,6 +595,34 @@ class TSignalSynthesizeNode(
                         }
                         else -> { breakdown.add("技术+0") }
                     }
+                }
+
+                // ─── 日内冰点/沸点（买在冰点，卖在沸点） ───
+                try {
+                    val bars = IntradayKlineFetcher(context.androidContext).fetchIntradayKline(code)
+                    val intraday = IntradayAnalyzer.analyze(bars)
+                    if (intraday != null) {
+                        val pos = intraday.pricePosition
+                        when {
+                            signal.signalType == TTradeType.T_BUY && pos <= 0.2 -> {
+                                score += 15; breakdown.add("🧊冰点+15(日内低吸)")
+                            }
+                            signal.signalType == TTradeType.RT_SELL && pos >= 0.8 -> {
+                                score += 15; breakdown.add("🔥沸点+15(日内高抛)")
+                            }
+                            signal.signalType == TTradeType.T_BUY && pos >= 0.8 -> {
+                                score -= 10; breakdown.add("🔥沸点-10(追高勿接)")
+                            }
+                            signal.signalType == TTradeType.RT_SELL && pos <= 0.2 -> {
+                                score -= 10; breakdown.add("🧊冰点-10(杀跌勿卖)")
+                            }
+                            else -> { breakdown.add("日内+0(位置中性${"%.0f".format(pos * 100)}%)") }
+                        }
+                    } else {
+                        breakdown.add("日内+0(数据不足)")
+                    }
+                } catch (_: Exception) {
+                    breakdown.add("日内+0(获取失败)")
                 }
 
                 // ─── 大盘方向过滤 ───

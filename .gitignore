@@ -25,4 +25,8 @@ app/src/main/assets/api_keys_local.properties
 .DS_Store
 
 # 其他
-*.log.trae-html-share-packages/
+*.log
+.trae-html-share-packages/
+.vscode/
+__pycache__/
+*.pyc

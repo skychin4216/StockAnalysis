@@ -263,3 +263,4 @@
 - [x] UI-P2-12 空态统一（股票列表/搜索/统计页均有"暂无数据"提示）
 - [x] UI-P2-13 买卖评估菜单统一（基类 `getExtraEvalMenuItems` 扩展点，子类不再重复实现）
 - [x] UI-P2-14 MainActivity 遗留清理（`onBackPressed` → `OnBackPressedCallback`；备份引导仅首次弹窗）
+- [x] UI-P1-3 补充：量化页买卖评估菜单新增「🤖 AI 咨询」（`QuantFragmentBase.askAiForTradeAdvice`，自动拼接当前周期持仓+选股指令模板 → `MainActivity.switchToChatAndSend`，减少手动输入股票代码）

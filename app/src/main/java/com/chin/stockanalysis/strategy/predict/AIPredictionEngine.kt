@@ -144,6 +144,34 @@ class AIPredictionEngine(private val context: Context) {
             onProgress?.invoke("正在获取新闻因子...")
             val newsFactors = newsManager.getActiveFactors(50)
 
+            // 计算新闻因子得分
+            onProgress?.invoke("正在计算新闻评分...")
+            val candidatePairs = candidateStocks.map { it.stockCode to it.stockName }
+            val newsScores = NewsScoreCalculator.score(candidatePairs, newsFactors, selectedDate)
+            val newsScoreMap = newsScores.associate { it.stockCode to it }
+
+            // 计算混合评分（策略分 + 新闻分）
+            val marketDir = if (marketContext.contains("BULLISH", ignoreCase = true)) "BULLISH"
+                else if (marketContext.contains("BEARISH", ignoreCase = true)) "BEARISH"
+                else "OSCILLATION"
+            val (strategyW, newsW) = when (marketDir) {
+                "BULLISH" -> 0.5 to 0.5   // 进攻行情，消息面催化更重要
+                "BEARISH" -> 0.7 to 0.3   // 防御行情，技术面优先
+                else -> 0.6 to 0.4        // 震荡均衡
+            }
+
+            // 策略分归一化
+            val maxStrength = candidateStocks.maxOfOrNull { it.totalStrength } ?: 1
+            val minStrength = candidateStocks.minOfOrNull { it.totalStrength } ?: 0
+            val strengthRange = (maxStrength - minStrength).coerceAtLeast(1)
+
+            val hybridScores = candidateStocks.associate { cand ->
+                val normStrategy = ((cand.totalStrength - minStrength) / strengthRange * 100).toInt().coerceIn(0, 100)
+                val normNews = newsScoreMap[cand.stockCode]?.normalizedScore ?: 50
+                val hybrid = (strategyW * normStrategy + newsW * normNews).toInt().coerceIn(0, 100)
+                cand.stockCode to hybrid
+            }
+
             // 自动检测大盘环境（如果外部未传入）
             val effectiveMarketContext = if (marketContext.isNotBlank()) {
                 marketContext
@@ -151,7 +179,7 @@ class AIPredictionEngine(private val context: Context) {
                 detectMarketDirection(selectedDate)
             }
 
-            onProgress?.invoke("正在构建AI提示（含板块权重）...")
+            onProgress?.invoke("正在构建AI提示（含新闻权重）...")
             val prompt = buildPredictionPrompt(
                 strategyResults = strategyResults,
                 candidateStocks = candidateStocks,
@@ -159,7 +187,11 @@ class AIPredictionEngine(private val context: Context) {
                 newsFactors = newsFactors,
                 selectedDate = selectedDate,
                 marketContext = effectiveMarketContext,
-                sectorContext = sectorContext
+                sectorContext = sectorContext,
+                newsScoreMap = newsScoreMap,
+                hybridScores = hybridScores,
+                strategyWeight = strategyW,
+                newsWeight = newsW
             )
 
             // 重试：策略模式用 SimpleAiProvider.switchToNext，增强模式用 AiProviderPool 轮换
@@ -199,8 +231,8 @@ class AIPredictionEngine(private val context: Context) {
             }
 
             val rawPrediction = parsePrediction(response)
-            // 后处理：板块权重加权（回调天数越多加分越多）
-            return rawPrediction?.let { applySectorBoost(it, candidateStocks, sectorContext) }
+            // 后处理：板块权重加权（回调天数越多加分越多）+ 新闻校验
+            return rawPrediction?.let { applySectorBoost(it, candidateStocks, sectorContext, newsScoreMap) }
 
         } catch (e: Exception) {
             Log.e(TAG, "AI 预测失败: ${e.message}", e)
@@ -342,7 +374,11 @@ class AIPredictionEngine(private val context: Context) {
         newsFactors: List<com.chin.stockanalysis.news.NewsFactorEntity>,
         selectedDate: String,
         marketContext: String = "",
-        sectorContext: SectorContext = SectorContext()
+        sectorContext: SectorContext = SectorContext(),
+        newsScoreMap: Map<String, NewsScoreCalculator.StockNewsScore> = emptyMap(),
+        hybridScores: Map<String, Int> = emptyMap(),
+        strategyWeight: Double = 0.6,
+        newsWeight: Double = 0.4
     ): String {
         val sb = StringBuilder()
 
@@ -353,6 +389,14 @@ class AIPredictionEngine(private val context: Context) {
         sb.appendLine("1. **技术面**: 从OHLCV序列中识别趋势、支撑阻力、量价背离")
         sb.appendLine("2. **消息面**: 从新闻因子中识别催化剂（利好）和风险（利空）")
         sb.appendLine("3. **大盘环境**: 根据大盘方向调整选股策略（见下方大盘环境段落）")
+        sb.appendLine()
+        sb.appendLine("### 新闻因子评分规则（重要！必须遵守）")
+        sb.appendLine("候选表中的「新闻分」是量化计算结果（0-100），你**必须**以此为基础：")
+        sb.appendLine("- 新闻分 ≥ 70：强消息催化，composite_score 应在混合分基础上 +5~10")
+        sb.appendLine("- 新闻分 40-70：一般消息面，composite_score 以混合分为基准 ±5")
+        sb.appendLine("- 新闻分 < 30 且有利空新闻：composite_score 应在混合分基础上 -5~10")
+        sb.appendLine("- **不得忽略新闻分**：如果某只股票新闻分 > 70 但你给了低 composite_score，必须在 reason 中解释原因")
+        sb.appendLine("- 当前权重配比：策略技术分占 ${"%.0f".format(strategyWeight * 100)}%，消息面占 ${"%.0f".format(newsWeight * 100)}%")
         sb.appendLine()
 
         // ── 大盘环境分析 ──
@@ -407,12 +451,17 @@ class AIPredictionEngine(private val context: Context) {
 
         // ── 候选股票汇总 ──
         sb.appendLine("## 候选股票综合得分汇总")
-        sb.appendLine("| 代码 | 名称 | 命中策略数 | 总强度 | 涨跌幅 | 各策略得分 |")
-        sb.appendLine("|------|------|-----------|--------|--------|-----------|")
+        sb.appendLine("| 代码 | 名称 | 策略分 | 新闻分 | 混合分 | 命中策略数 | 总强度 | 涨跌 | 新闻匹配 |")
+        sb.appendLine("|------|------|--------|--------|--------|-----------|--------|------|---------|")
         for (c in candidateStocks.take(15)) {
-            val strategyStr = c.strategyScores.joinToString(",") { "${it.strategyName.take(4)}:${it.strength}" }
-            sb.appendLine("| ${c.stockCode.takeLast(6)} | ${c.stockName} | ${c.strategyScores.size} | ${c.totalStrength} | ${"%.2f".format(c.changePercent)}% | $strategyStr |")
+            val newsScore = newsScoreMap[c.stockCode]
+            val newsScoreStr = newsScore?.normalizedScore?.toString() ?: "50"
+            val hybridStr = hybridScores[c.stockCode]?.toString() ?: "-"
+            val newsMatchStr = newsScore?.matchSummary?.take(30) ?: "无"
+            sb.appendLine("| ${c.stockCode.takeLast(6)} | ${c.stockName} | - | $newsScoreStr | $hybridStr | ${c.strategyScores.size} | ${c.totalStrength} | ${"%.2f".format(c.changePercent)}% | $newsMatchStr |")
         }
+        sb.appendLine()
+        sb.appendLine("**重要**: composite_score 请以「混合分」为基准，结合新闻分做 ±10 分调整。")
         sb.appendLine()
 
         // ── 技术面分析数据 ──
@@ -438,13 +487,23 @@ class AIPredictionEngine(private val context: Context) {
             if (bullish.isNotEmpty()) {
                 sb.appendLine("### 利好因子")
                 for (f in bullish) {
-                    sb.appendLine("- [${f.companyName}] ${f.title}  (强度:${f.impactStrength}) [${f.newsDate}] 标签:${f.tags}")
+                    sb.appendLine("- [${f.companyName}] ${f.title}  (强度:${f.impactStrength}) [${f.newsDate}] 标签:${f.tags} 板块:${f.sector}")
                 }
             }
             if (bearish.isNotEmpty()) {
                 sb.appendLine("### 利空因子")
                 for (f in bearish) {
-                    sb.appendLine("- [${f.companyName}] ${f.title}  (强度:${f.impactStrength}) [${f.newsDate}] 标签:${f.tags}")
+                    sb.appendLine("- [${f.companyName}] ${f.title}  (强度:${f.impactStrength}) [${f.newsDate}] 标签:${f.tags} 板块:${f.sector}")
+                }
+            }
+            // 每只候选股的新闻匹配摘要
+            if (newsScoreMap.isNotEmpty()) {
+                sb.appendLine()
+                sb.appendLine("### 候选股新闻匹配摘要")
+                for ((code, ns) in newsScoreMap.entries.sortedByDescending { it.value.normalizedScore }.take(10)) {
+                    if (ns.matchedFactorCount > 0) {
+                        sb.appendLine("- ${ns.stockName}(${code.takeLast(6)}): 新闻分=${ns.normalizedScore} | 利好${ns.bullishCount}条 利空${ns.bearishCount}条 | ${ns.matchSummary}")
+                    }
                 }
             }
             sb.appendLine()
@@ -466,7 +525,7 @@ class AIPredictionEngine(private val context: Context) {
         sb.appendLine("      \"stock_name\": \"贵州茅台\",")
         sb.appendLine("      \"composite_score\": 85,")
         sb.appendLine("      \"up_probability\": 70,")
-        sb.appendLine("      \"reason\": \"综合理由: 技术面均线金叉+放量突破, 消息面新闻利好催化(30字内)\",")
+        sb.appendLine("      \"reason\": \"综合理由: 技术面均线金叉+放量突破, 消息面新闻利好催化(新闻分:XX), 混合分:XX(30字内)\",")
         sb.appendLine("      \"action\": \"建议逢低建仓，止损位-3%\"")
         sb.appendLine("    }")
         sb.appendLine("  ]")
@@ -493,19 +552,22 @@ class AIPredictionEngine(private val context: Context) {
      * - 用户关注板块：+10~15 分
      * - 回弹板块：回调 N 天 + N 分（1天+1, 2天+2...最多+5）
      * - 板块大年顺应：+5 分
+     * - 新闻校验：高分新闻未被AI充分反映 → +5；利空新闻 → -5
      */
     private fun applySectorBoost(
         prediction: AIPrediction,
-        candidateStocks: List<StockStrategyScore>,
-        sectorContext: SectorContext
+        @Suppress("UNUSED_PARAMETER") candidateStocks: List<StockStrategyScore>,
+        sectorContext: SectorContext,
+        newsScoreMap: Map<String, NewsScoreCalculator.StockNewsScore> = emptyMap()
     ): AIPrediction {
-        if (sectorContext.userFocusSectors.isEmpty() && sectorContext.bounceSectors.isEmpty()) {
+        if (sectorContext.userFocusSectors.isEmpty() && sectorContext.bounceSectors.isEmpty() && newsScoreMap.isEmpty()) {
             return prediction
         }
 
         val boostedPicks = prediction.topPicks.map { pick ->
             var bonus = 0
             val stockName = pick.stockName
+            val stockCode = pick.stockCode
 
             // 1. 用户关注板块加成
             if (sectorContext.userFocusSectors.any {
@@ -533,11 +595,25 @@ class AIPredictionEngine(private val context: Context) {
                 bonus += 5
             }
 
-            if (bonus > 0) {
+            // 4. 新闻校验：确保AI没有忽略强新闻信号
+            val newsScore = newsScoreMap[stockCode]
+            if (newsScore != null) {
+                if (newsScore.normalizedScore >= 70 && bonus < 5) {
+                    // 强新闻催化但板块加分不足，额外补充
+                    bonus += 5
+                } else if (newsScore.normalizedScore < 20 && newsScore.bearishCount > 0) {
+                    // 有利空新闻且新闻分很低，惩罚
+                    bonus -= 5
+                }
+            }
+
+            if (bonus != 0) {
+                val newScore = (pick.compositeScore + bonus).coerceIn(0, 100)
+                val bonusDesc = if (bonus > 0) "板块加权+${bonus}分" else "新闻校验${bonus}分"
                 pick.copy(
-                    compositeScore = (pick.compositeScore + bonus).coerceAtMost(100),
-                    upProbability = (pick.upProbability + bonus / 2).coerceAtMost(95),
-                    reason = pick.reason + " [板块加权+${bonus}分]"
+                    compositeScore = newScore,
+                    upProbability = (pick.upProbability + bonus / 2).coerceIn(5, 95),
+                    reason = pick.reason + " [$bonusDesc]"
                 )
             } else pick
         }.sortedByDescending { it.compositeScore }

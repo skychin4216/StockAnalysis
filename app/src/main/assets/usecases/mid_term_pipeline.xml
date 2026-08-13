@@ -82,13 +82,17 @@
         <param name="convergenceThreshold" value="2.5" />
         <param name="useMA60" value="true" />
         <param name="convergenceDurationDays" value="15" />
+        <param name="convergenceDurationRatio" value="0.8" />
         <param name="moderateVolumeLower" value="1.2" />
         <param name="moderateVolumeUpper" value="1.8" />
         <param name="minDrawdownPct" value="30.0" />
         <param name="requireMA60Rising" value="true" />
         <param name="requireAboveAllMAs" value="true" />
+        <param name="requireThreeDayConfirm" value="true" />
+        <param name="swingLeftN" value="5" />
+        <param name="swingRightN" value="2" />
         <param name="lookbackDays" value="120" />
-        <param name="minPassCount" value="7" />
+        <param name="minPassCount" value="6" />
       </config>
     </Node>
     <Node id="n_base_guard" name="打底仓守门" module="base_position_guard">
@@ -132,7 +136,7 @@
     <!-- 中线补齐：订单生成 Layer 8 -->
     <Node id="n_orders" name="买入订单生成" module="generate_orders">
       <config>
-        <param name="maxHoldings" value="6" />
+        <param name="maxHoldings" value="5" />
         <param name="orderType" value="MidTermQuant" />
       </config>
     </Node>
@@ -146,7 +150,7 @@
     <!-- 中线独有：交易动作 Layer 9（并行） -->
     <Node id="n_swap" name="腾龙换鸟" module="swap_weak">
       <config>
-        <param name="maxHoldings" value="6" />
+        <param name="maxHoldings" value="5" />
       </config>
     </Node>
   </NodeList>

@@ -571,14 +571,80 @@ object AppBackgroundRunner {
                             appendLine("[$periodLabel] ${"%.2f".format(rec.suggestedPrice)} → 目标 ${"%.2f".format(rec.targetPrice)}")
                             appendLine("建议 ${rec.quantity}股 | 预期 ${"%.2f%%".format(rec.expectedProfitPct)}")
                             if (rec.reason.isNotBlank()) append(rec.reason)
+                            // 附成功率统计反馈
+                            try {
+                                val sr = tEngine.getSuccessRate(7)
+                                if (sr.total > 0) {
+                                    appendLine()
+                                    append("📊 近7天: ${sr.total}条信号 | 命中率 ${"%.1f%%".format(sr.overallSuccessRate)} | 盈利占比 ${"%.1f%%".format(sr.profitRate)}")
+                                }
+                            } catch (_: Exception) {}
                         }.trim()
                         notifier.send(context, title, body, "TREC_${rec.id}")
+                        // 自动执行（置信度超阈值时自动买卖）
+                        autoExecuteIfEligible(context, rec, tEngine, title)
                     }
                     Log.i(TAG, "做T通知: 发送 ${newRecs.size} 条新推荐通知")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "做T通知发送失败: ${e.message}")
             }
+        }
+    }
+
+    /**
+     * 自动执行做T信号：当推荐置信度 ≥ 用户设定的阈值时，
+     * 自动调用 TTradeEngine.executeTTrade 完成买卖，并标记推荐为已执行。
+     */
+    private suspend fun autoExecuteIfEligible(
+        context: Context,
+        rec: com.chin.stockanalysis.strategy.trade.TTradeRecommendationEntity,
+        tEngine: com.chin.stockanalysis.strategy.trade.TTradeEngine,
+        title: String
+    ) {
+        try {
+            val notifier = com.chin.stockanalysis.notification.TradeNotifier
+            if (!notifier.isAutoExecuteEnabled(context)) return
+
+            // 只自动执行开仓腿（T_BUY / RT_SELL）；配对腿依赖已有持仓，交由用户确认
+            val openType = when (rec.signalType) {
+                "T_BUY" -> com.chin.stockanalysis.strategy.trade.TTradeType.T_BUY
+                "RT_SELL" -> com.chin.stockanalysis.strategy.trade.TTradeType.RT_SELL
+                else -> return
+            }
+
+            // 从 reason 前缀解析置信度：[置信度78%...]
+            val confidencePct = Regex("置信度(\\d+)%")
+                .find(rec.reason)?.groupValues?.get(1)?.toIntOrNull() ?: return
+            val thresholdPct = (notifier.getAutoExecuteThreshold(context) * 100).toInt()
+            if (confidencePct < thresholdPct) return
+
+            val signal = com.chin.stockanalysis.strategy.trade.TTradeSignal(
+                stockCode = rec.stockCode,
+                stockName = rec.stockName,
+                signalType = openType,
+                suggestedPrice = rec.suggestedPrice,
+                targetPrice = rec.targetPrice,
+                quantity = rec.quantity,
+                reason = rec.reason,
+                expectedProfitPct = rec.expectedProfitPct,
+                periodType = rec.periodType,
+                confidence = confidencePct
+            )
+            val recordId = tEngine.executeTTrade(signal, rec.periodType)
+            tEngine.markRecommendationExecuted(rec.id, rec.suggestedPrice)
+            Log.i(TAG, "🤖 自动执行: ${rec.stockName}(${rec.stockCode}) ${rec.signalType} " +
+                "置信度${confidencePct}%≥${thresholdPct}% @ ${rec.suggestedPrice} → 记录#$recordId")
+            notifier.send(
+                context,
+                "🤖 已自动执行 — $title",
+                "置信度${confidencePct}% ≥ 阈值${thresholdPct}%，系统已自动${
+                    if (openType == com.chin.stockanalysis.strategy.trade.TTradeType.T_BUY) "买入" else "卖出"
+                }\n${rec.stockName} ${"%.2f".format(rec.suggestedPrice)} × ${rec.quantity}股",
+                "AUTO_EXEC_${rec.id}"
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "自动执行做T失败: ${e.message}")
         }
     }
 }

@@ -56,7 +56,8 @@ class StrategyFragment : Fragment() {
             setTabTextColors(Color.parseColor("#999999"), Color.parseColor("#E65100"))
             setBackgroundColor(Color.WHITE)
             elevation = 2f
-            tabMode = TabLayout.MODE_SCROLLABLE
+            // 固定模式：按屏幕宽度平均分布所有 tab（每个 tab = 屏幕宽度 / tab 数量）
+            tabMode = TabLayout.MODE_FIXED
         }
         root.addView(tabLayout)
 
@@ -86,6 +87,15 @@ class StrategyFragment : Fragment() {
             }
         }.attach()
 
+        // MODE_FIXED 下每个 tab 平均分配屏幕宽度；清除默认最小宽度与内边距，避免挤压不均
+        for (i in 0 until tabLayout.tabCount) {
+            tabLayout.getTabAt(i)?.view?.let { tabView ->
+                tabView.minimumWidth = 0
+                tabView.setPadding(0, 0, 0, 0)
+                (tabView.layoutParams as? ViewGroup.MarginLayoutParams)?.setMargins(0, 0, 0, 0)
+            }
+        }
+
         // 切换周期 tab 时自动刷新持仓
         viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
@@ -99,10 +109,6 @@ class StrategyFragment : Fragment() {
         })
 
         return root
-    }
-
-    private fun dp(value: Int): Int {
-        return (value * resources.displayMetrics.density).toInt()
     }
 
     private fun observeCommands() {

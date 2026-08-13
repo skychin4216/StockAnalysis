@@ -44,7 +44,7 @@
     <string name="tab_mid">中线</string>
     <string name="tab_long">长线</string>
     <string name="tab_real">实仓</string>
-    <string name="tab_stock_picking">量化选股</string>
+    <string name="tab_stock_picking">量化</string>
 
     <!-- 实仓 -->
     <string name="real_holding_title">📌 真实持仓</string>
@@ -127,7 +127,7 @@
     <string name="period_long">💎 长线</string>
 
     <!-- 量化系统标题 -->
-    <string name="title_ultra_short_system">⚡ 超短线量化系统 (T+1 卖出，止损-2%/止盈+3%)</string>
+    <string name="title_ultra_short_system" formatted="false">⚡ 超短线量化系统 (T+1 卖出，止损-2%/止盈+3%)</string>
     <string name="title_short_system">🤖 短线量化系统 (Zipline Pipeline + AI精选)</string>
     <string name="title_mid_system">🤖 中线量化系统(价值投资，持仓 1-6 个月)</string>
     <string name="title_long_system">💎 长线量化系统 (价值投资，持仓6月-1年+)</string>

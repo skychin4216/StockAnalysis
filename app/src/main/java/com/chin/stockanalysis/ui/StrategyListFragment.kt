@@ -631,67 +631,57 @@ class StrategyListFragment : Fragment() {
         private val onItemClick: (Strategy) -> Unit,
         private val onToggle: (Strategy) -> Unit,
         private val resultsMap: Map<String, ScreeningResult> = emptyMap()
-    ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+    ) : RecyclerView.Adapter<GroupedStrategyAdapter.SectionVH>() {
 
-        private val typeHeader = 0
-        private val typeCard = 1
+        // 每个周期一个大容器 view（section）：组标题 + 该周期所有策略卡片；空周期不渲染
+        private val visibleSections = sections.filter { it.second.isNotEmpty() }
 
-        private val counts: Map<HoldingPeriod, Int> = sections.associate { it.first to it.second.size }
+        override fun getItemCount(): Int = visibleSections.size
 
-        // 扁平化：周期标题(HEADER) + 该周期下的策略(CARD)，空周期不渲染
-        private val flat: List<Any> = ArrayList<Any>().apply {
-            sections.forEach { (period, list) ->
-                if (list.isNotEmpty()) { add(period); addAll(list) }
-            }
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): SectionVH =
+            SectionVH(makeSection(parent))
+
+        override fun onBindViewHolder(holder: SectionVH, position: Int) {
+            val (period, strategies) = visibleSections[position]
+            val section = holder.section
+            section.removeAllViews()
+            val ctx = section.context
+            section.addView(makeSectionHeader(ctx, period, strategies.size))
+            strategies.forEach { strategy -> section.addView(makeStrategyCard(ctx, strategy)) }
         }
 
-        override fun getItemViewType(position: Int): Int =
-            if (flat[position] is HoldingPeriod) typeHeader else typeCard
-
-        override fun getItemCount(): Int = flat.size
-
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder =
-            if (viewType == typeHeader) HeaderVH(makeHeader(parent)) else CardVH(makeCard(parent))
-
-        override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
-            val item = flat[position]
-            when (holder) {
-                is HeaderVH -> holder.bind(item as HoldingPeriod)
-                is CardVH -> holder.bind(item as Strategy)
-            }
-        }
-
-        private fun makeHeader(parent: ViewGroup): TextView = TextView(parent.context).apply {
+        private fun makeSection(parent: ViewGroup): LinearLayout = LinearLayout(parent.context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.WHITE)
+            elevation = 4f
+            setPadding(0, dp(4), 0, dp(8))
             layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                setMargins(dp(12), dp(14), dp(12), dp(4))
+                setMargins(dp(12), dp(6), dp(12), dp(6))
+            }
+        }
+
+        private fun makeSectionHeader(ctx: android.content.Context, period: HoldingPeriod, count: Int): TextView = TextView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(dp(8), dp(4), dp(8), dp(2))
             }
             setPadding(dp(14), dp(8), dp(14), dp(8))
             textSize = 14f
             setTextColor(Color.parseColor("#1A1A2E"))
             setTypeface(null, Typeface.BOLD)
             setBackgroundColor(Color.parseColor("#EDEFF5"))
+            text = "${period.label}  ·  ${count} 个策略"
         }
 
-        private fun makeCard(parent: ViewGroup): LinearLayout = LinearLayout(parent.context).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.WHITE)
-            setPadding(20, 16, 20, 16)
-            elevation = 4f
-            layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                setMargins(12, 6, 12, 6)
+        private fun makeStrategyCard(ctx: android.content.Context, strategy: Strategy): LinearLayout {
+            val card = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.parseColor("#F8F9FC"))
+                setPadding(20, 16, 20, 16)
+                elevation = 2f
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    setMargins(dp(8), dp(4), dp(8), dp(4))
+                }
             }
-        }
-
-        inner class HeaderVH(val tv: TextView) : RecyclerView.ViewHolder(tv) {
-            fun bind(period: HoldingPeriod) {
-                tv.text = "${period.label}  ·  ${counts[period] ?: 0} 个策略"
-            }
-        }
-
-        inner class CardVH(val card: LinearLayout) : RecyclerView.ViewHolder(card) {
-            fun bind(strategy: Strategy) {
-                card.removeAllViews()
-                val ctx = card.context
                 // header row: icon + name + source badge + enable switch
                 val header = LinearLayout(ctx).apply {
                     orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
@@ -790,8 +780,10 @@ class StrategyListFragment : Fragment() {
                 }
 
                 card.setOnClickListener { onItemClick(strategy) }
-            }
+            return card
         }
+
+        inner class SectionVH(val section: LinearLayout) : RecyclerView.ViewHolder(section)
     }
     private fun openResultDialog(result: ScreeningResult) { StrategyResultDialogFragment().apply { this.result = result; onAskQuestion = { q -> val ctx = buildString { appendLine("基于以下策略扫描结果，请回答用户问题："); appendLine("策略: ${result.strategyName} | 扫描: ${result.totalScanned}只 | 命中: ${result.hitCount}只"); for ((i, s) in result.signals.take(10).withIndex()) appendLine("| ${i + 1} | ${s.stockName} | ${s.stockCode.takeLast(6)} | ${s.strength}% | ${"%.2f".format(s.currentPrice)} | ${"%.2f".format(s.changePercent)}% |"); appendLine(); appendLine("用户问题: $q") }; if (activity is MainActivity) (activity as MainActivity).switchToChatAndSend(ctx) else Toast.makeText(requireContext(), "提问已记录: $q", Toast.LENGTH_SHORT).show() } }.show(parentFragmentManager, "result") }
     private fun showAddDialog() { val name = EditText(requireContext()).apply { hint = "策略名称"; setSingleLine() }; val desc = EditText(requireContext()).apply { hint = "策略描述"; setSingleLine() }; AlertDialog.Builder(requireContext()).setTitle("添加自定义策略").setView(LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 16, 32, 8); addView(name, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply { bottomMargin = 12 }); addView(desc, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)) }).setPositiveButton("创建") { _, _ -> val n = name.text.toString().trim(); if (n.isNotBlank()) { val id = "custom_${System.currentTimeMillis()}"; engine?.registerStrategy(object : Strategy { override val id = id; override var name = n; override var description = desc.text.toString().trim().ifEmpty { "自定义策略" }; override val category = StrategyCategory.CUSTOM; override val config = StrategyConfig.fullMarket(20); override var weightFactors = listOf(WeightFactor("default", "综合评分", 100, "默认权重")); override val source = StrategySource.USER_CUSTOM; override suspend fun screen() = Result.success(ScreeningResult(strategyId = id, strategyName = n, category = StrategyCategory.CUSTOM, signals = emptyList(), totalScanned = 0, scanTimeMs = 0)); override suspend fun isAvailable() = false }); refreshList(); strategyCount = engine?.getStrategies()?.size ?: strategyCount } }.setNegativeButton("取消", null).show() }

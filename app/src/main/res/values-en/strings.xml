@@ -44,7 +44,7 @@
     <string name="tab_mid">Mid</string>
     <string name="tab_long">Long</string>
     <string name="tab_real">Real</string>
-    <string name="tab_stock_picking">Stock Pick</string>
+    <string name="tab_stock_picking">Quant</string>
 
     <!-- Real Holdings -->
     <string name="real_holding_title">📌 Real Holdings</string>
@@ -127,7 +127,7 @@
     <string name="period_long">💎 Long Term</string>
 
     <!-- System Titles -->
-    <string name="title_ultra_short_system">⚡ Ultra-Short Quant (T+1, SL-2%/TP+3%)</string>
+    <string name="title_ultra_short_system" formatted="false">⚡ Ultra-Short Quant (T+1, SL-2%/TP+3%)</string>
     <string name="title_short_system">🤖 Short-Term Quant (Zipline + AI)</string>
     <string name="title_mid_system">🤖 Mid-Term Quant (Value, 1-6 months)</string>
     <string name="title_long_system">💎 Long-Term Quant (Value, 6mo-1yr+)</string>

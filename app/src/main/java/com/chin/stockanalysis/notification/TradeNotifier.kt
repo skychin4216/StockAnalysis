@@ -42,6 +42,8 @@ object TradeNotifier {
     private const val KEY_SERVERCHAN_KEY = "serverchan_sendkey"
     private const val KEY_PUSHPLUS_TOKEN = "pushplus_token"
     private const val KEY_PUSHPLUS_ENABLED = "pushplus_enabled"
+    private const val KEY_AUTO_EXECUTE = "auto_execute_enabled"
+    private const val KEY_AUTO_EXEC_THRESHOLD = "auto_execute_threshold"
     private const val NOTIFICATION_ID_BASE = 9000
 
     // ═══════════════════════════════════════
@@ -87,6 +89,22 @@ object TradeNotifier {
     fun setPushPlusEnabled(ctx: Context, enabled: Boolean) =
         ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit().putBoolean(KEY_PUSHPLUS_ENABLED, enabled).apply()
+
+    fun isAutoExecuteEnabled(ctx: Context): Boolean =
+        ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_AUTO_EXECUTE, false)
+
+    fun setAutoExecuteEnabled(ctx: Context, enabled: Boolean) =
+        ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_AUTO_EXECUTE, enabled).apply()
+
+    fun getAutoExecuteThreshold(ctx: Context): Double =
+        ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getFloat(KEY_AUTO_EXEC_THRESHOLD, 0.7f).toDouble()
+
+    fun setAutoExecuteThreshold(ctx: Context, threshold: Double) =
+        ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putFloat(KEY_AUTO_EXEC_THRESHOLD, threshold.toFloat()).apply()
 
     // ═══════════════════════════════════════
     //  通知渠道初始化

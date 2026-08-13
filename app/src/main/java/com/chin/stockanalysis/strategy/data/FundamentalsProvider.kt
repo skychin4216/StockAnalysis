@@ -34,6 +34,15 @@ object FundamentalsProvider {
         val operatingCashFlow: Double = 0.0  // 经营现金流净额(元)
     )
 
+    /** 单股单报告期财务行（用于历史回填） */
+    data class HistoricalFinanceRow(
+        val reportDate: String,              // 报告期 YYYY-MM-DD (如 2026-03-31)
+        val roe: Double = 0.0,
+        val grossMargin: Double = 0.0,
+        val debtToAsset: Double = 0.0,
+        val operatingCashFlow: Double = 0.0
+    )
+
     /**
      * 批量拉取全市场最新财务数据。
      *
@@ -77,6 +86,59 @@ object FundamentalsProvider {
             Log.i(TAG, "财务批量拉取: ${result.size} 只 (pages<=${maxPages})")
         } catch (e: Exception) {
             Log.w(TAG, "财务批量拉取异常: ${e.message}")
+        }
+        result
+    }
+
+    /**
+     * 批量拉取多报告期财务数据（用于历史基本面回填）。
+     *
+     * 与 fetchBulkFinance 不同，本方法保留每只股票的多个报告期数据，
+     * 而非仅取最新一期。
+     *
+     * @param maxPages 最大分页数（一页 500 条，20 页 ≈ 覆盖 ~2 年季报）
+     * @param maxPeriodsPerStock 每只股票最多保留的报告期数（默认 8 ≈ 2 年）
+     * @return Map<stockCode, List<HistoricalFinanceRow>>，按报告期倒序
+     */
+    suspend fun fetchBulkFinanceHistory(
+        maxPages: Int = 20,
+        maxPeriodsPerStock: Int = 8
+    ): Map<String, List<HistoricalFinanceRow>> = withContext(Dispatchers.IO) {
+        val result = mutableMapOf<String, MutableList<HistoricalFinanceRow>>()
+        try {
+            for (page in 1..maxPages) {
+                val url = "${DataConfig.eastmoneyDatacenter}?" +
+                        "reportName=RPT_F10_FINANCE_MAINFINADATA" +
+                        "&columns=SECURITY_CODE,REPORT_DATE,ROEJQ,XSMLL,ZCFZL,NETCASH_OPERATE_PK" +
+                        "&pageNumber=$page&pageSize=500&sortColumns=REPORT_DATE&sortTypes=-1"
+                val body = executeGet(url) ?: break
+                val data = JSONObject(body).optJSONObject("result")?.optJSONArray("data")
+                if (data == null || data.length() == 0) break
+
+                for (i in 0 until data.length()) {
+                    val item = data.optJSONObject(i) ?: continue
+                    val raw = item.optString("SECURITY_CODE")
+                    if (raw.length != 6) continue
+                    val code = normalizeCode(raw)
+                    val reportDate = item.optString("REPORT_DATE", "").take(10)
+                    if (reportDate.isEmpty()) continue
+
+                    val list = result.getOrPut(code) { mutableListOf() }
+                    if (list.size >= maxPeriodsPerStock) continue
+                    list.add(HistoricalFinanceRow(
+                        reportDate = reportDate,
+                        roe = item.optDouble("ROEJQ"),
+                        grossMargin = item.optDouble("XSMLL"),
+                        debtToAsset = item.optDouble("ZCFZL"),
+                        operatingCashFlow = item.optDouble("NETCASH_OPERATE_PK")
+                    ))
+                }
+                // 所有股票都已收集满则提前结束
+                if (result.isNotEmpty() && result.values.all { it.size >= maxPeriodsPerStock }) break
+            }
+            Log.i(TAG, "财务历史拉取: ${result.size} 只, 平均 ${result.values.map { it.size }.average().toInt()} 期/只")
+        } catch (e: Exception) {
+            Log.w(TAG, "财务历史拉取异常: ${e.message}")
         }
         result
     }

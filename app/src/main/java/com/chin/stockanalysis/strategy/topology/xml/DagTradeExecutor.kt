@@ -169,8 +169,37 @@ object DagTradeExecutor {
                     })
                     Log.i(TAG, "[$useCaseId] 订单生成: $ordersCount 笔")
 
-                    // 不再重复写入 user_watchlist（持仓已由 n_merge_pos 写入 strategy_trade_orders）
-                    // selectedStocks 仍会返回给调用方，用于 lastPickStocks 内存缓存
+                    // 写入 user_watchlist 供选股区 UI 渲染完整表格（价格/时间/评分）
+                    try {
+                        val db = StockDatabase.getInstance(context)
+                        val watchlistSource = when (ordersOutput.orders.firstOrNull()?.orderType) {
+                            "UltraShortQuant" -> "ultra_short"
+                            "ShortTermQuant" -> "shortterm"
+                            "MidTermQuant" -> "midterm"
+                            "LongTermQuant" -> "long_term"
+                            else -> useCaseId
+                        }
+                        val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay()
+                            .format(java.time.format.DateTimeFormatter.ISO_LOCAL_DATE)
+                        val watchlistEntities = ordersOutput.orders.map { order ->
+                            com.chin.stockanalysis.stock.database.UserWatchlistEntity(
+                                stockCode = order.stockCode,
+                                stockName = order.stockName,
+                                source = watchlistSource,
+                                addedDate = today,
+                                buyPrice = order.buyPrice,
+                                scoreAtAdd = order.scoreAtBuy,
+                                status = "WATCHING",
+                                notes = order.reason
+                            )
+                        }
+                        if (watchlistEntities.isNotEmpty()) {
+                            db.userWatchlistDao().insertAll(watchlistEntities)
+                            Log.i(TAG, "[$useCaseId] 选股写入 user_watchlist: ${watchlistEntities.size} 只 (source=$watchlistSource)")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "[$useCaseId] 写入 user_watchlist 失败: ${e.message}")
+                    }
                 }
 
                 // 提取持仓合并结果

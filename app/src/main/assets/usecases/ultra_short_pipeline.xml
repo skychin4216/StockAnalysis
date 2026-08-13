@@ -74,12 +74,18 @@
         <param name="convergenceThreshold" value="3.0" />
         <param name="useMA60" value="false" />
         <param name="convergenceDurationDays" value="5" />
+        <param name="convergenceDurationRatio" value="0.8" />
         <param name="volumeBreakoutRatio" value="2.5" />
         <param name="minChangePct" value="4.0" />
         <param name="requireChangePct" value="true" />
         <param name="minDrawdownPct" value="10.0" />
+        <param name="requireCloseAboveConvergenceTop" value="true" />
+        <param name="requireOpenBelowMAs" value="true" />
+        <param name="requireThreeDayConfirm" value="true" />
+        <param name="swingLeftN" value="5" />
+        <param name="swingRightN" value="2" />
         <param name="lookbackDays" value="30" />
-        <param name="minPassCount" value="6" />
+        <param name="minPassCount" value="7" />
       </config>
     </Node>
     <Node id="n_ancestral" name="大A祖训" module="ancestral_rules">
@@ -99,7 +105,7 @@
     <!-- 订单生成 Layer 6 -->
     <Node id="n_orders" name="买入订单生成" module="generate_orders">
       <config>
-        <param name="maxHoldings" value="6" />
+        <param name="maxHoldings" value="3" />
         <param name="orderType" value="UltraShortQuant" />
       </config>
     </Node>
@@ -107,7 +113,7 @@
     <!-- 腾龙换鸟 Layer 7（持仓满时卖弱买强） -->
     <Node id="n_swap" name="腾龙换鸟" module="swap_weak">
       <config>
-        <param name="maxHoldings" value="6" />
+        <param name="maxHoldings" value="3" />
       </config>
     </Node>
 

@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
+import kotlin.math.ceil
 
 /**
  * ## 个股分析 Pipeline — 均线多头粘合选股（四周期版）
@@ -38,6 +39,8 @@ class StockCheckPipeline(
     val useMA60: Boolean = true,
     /** 粘合持续天数要求（在 lookback 窗口内） */
     val convergenceDurationDays: Int = 10,
+    /** 粘合时长通过比例（设计文档 COUNT(粘合<=X+0.5, N) >= N-1，即 80%：超短 4/5、短 8/10、中 12/15、长 16/20） */
+    val convergenceDurationRatio: Double = 0.8,
     /** 放量倍数阈值（当日量 / 5日均量 ≥ 此值） */
     val volumeBreakoutRatio: Double = 1.5,
     /** 最低涨幅要求（%），需配合 requireChangePct=true */
@@ -48,6 +51,16 @@ class StockCheckPipeline(
     val minDrawdownPct: Double = 0.0,
     /** 是否要求 MA60 上升 */
     val requireMA60Rising: Boolean = false,
+    /** MA60/MA250 上翘比较天数（默认 5 天，长线设计为 10 天） */
+    val maRisingDays: Int = 5,
+    /** 是否要求 MA250 上升（长线：MA250>REF(MA250,10)） */
+    val requireMA250Rising: Boolean = false,
+    /** 多头排列是否包含 MA60>MA250（长线） */
+    val useMA250InBullish: Boolean = false,
+    /** 是否要求收盘价远离粘合区上沿 >2%（超短线突破强度） */
+    val requireCloseAboveConvergenceTop: Boolean = false,
+    /** 是否要求开盘价低于三线且收盘站上5日线（超短线开盘条件） */
+    val requireOpenBelowMAs: Boolean = false,
     /** 是否要求地量（10日均量 < 60日均量 × volumeShrinkRatio） */
     val requireVolumeShrink: Boolean = false,
     /** 地量比例阈值 */
@@ -63,16 +76,65 @@ class StockCheckPipeline(
     /** 回溯天数 */
     val lookbackDays: Int = 60,
     /** 通过所需最少项数（应等于 totalChecks） */
-    val minPassCount: Int = 7
+    val minPassCount: Int = 7,
+    // ── v2: 大盘感知 + 摆动高点 + 三日确认 ──
+    /** 大盘趋势（"BULLISH"/"NEUTRAL"/"BEAR"），null=不调整 */
+    val marketTrend: String? = null,
+    /** 摆动高点左回望天数 */
+    val swingLeftN: Int = 5,
+    /** 摆动高点右确认天数 */
+    val swingRightN: Int = 2,
+    /** 是否启用三日不新低确认 */
+    val requireThreeDayConfirm: Boolean = false
 ) {
 
     companion object {
         private const val TAG = "StockCheckPipeline"
 
+        /** 大盘状态枚举 */
+        enum class MarketRegime { BULLISH, NEUTRAL, BEARISH }
+
+        /** 解析大盘状态字符串 */
+        fun parseMarketRegime(trend: String?): MarketRegime = when {
+            trend == null -> MarketRegime.NEUTRAL
+            trend.contains("BULL", ignoreCase = true) -> MarketRegime.BULLISH
+            trend.contains("BEAR", ignoreCase = true) -> MarketRegime.BEARISH
+            else -> MarketRegime.NEUTRAL
+        }
+
+        /** 大盘状态对应的回望期乘数：牛市缩短（近期高点更近），熊市拉长 */
+        fun marketLookbackMultiplier(regime: MarketRegime): Double = when (regime) {
+            MarketRegime.BULLISH -> 0.7
+            MarketRegime.NEUTRAL -> 1.0
+            MarketRegime.BEARISH -> 1.5
+        }
+
+        /** 周期性行业识别（锂矿、有色金属、煤炭等需要更长回望期） */
+        fun isCyclicalIndustry(stockName: String): Boolean {
+            val keywords = listOf("锂", "矿", "有色", "煤炭", "钢铁", "石化", "稀土", "铜", "铝", "钴", "镍", "黄金", "资源", "能源")
+            return keywords.any { stockName.contains(it) }
+        }
+
         /**
-         * 超短线：5/10/20 三线粘合 + 爆量突破 + 涨幅>4%
-         * 不要求历史低位，排除高位股
-         * 适用检查：①②③④⑤⑧ = 6 项
+         * 摆动高点检测（Swing High Detection）
+         * 在回望窗口内找到最近的局部最高点：high[i] >= 左侧 leftN 根 且 >= 右侧 rightN 根
+         * 返回最近一根 K 线的索引（在 snaps 列表中的绝对索引），未找到返回 -1
+         */
+        fun findSwingHighIndex(snaps: List<DailySnapshotEntity>, startIdx: Int, leftN: Int, rightN: Int): Int {
+            for (i in snaps.size - 1 downTo startIdx) {
+                if (i - leftN < startIdx || i + rightN >= snaps.size) continue
+                val h = snaps[i].high
+                val leftMax = (i - leftN until i).maxOf { snaps[it].high }
+                val rightMax = (i + 1..i + rightN).maxOf { snaps[it].high }
+                if (h >= leftMax && h >= rightMax) return i
+            }
+            return -1
+        }
+
+        /**
+         * 超短线：5/10/20 三线粘合 + 爆量突破 + 涨幅>4% + 收盘远离粘合区上沿 + 开盘条件
+         * 不要求历史低位，排除高位股（距年内高点跌幅 >10%）
+         * 适用检查：①②③④⑤⑧⑪⑫ = 8 项（全过，对应设计文档 AND 语义）
          */
         fun ultraShortParams() = StockCheckPipeline(
             convergenceThreshold = 3.0,
@@ -82,30 +144,36 @@ class StockCheckPipeline(
             minChangePct = 4.0,
             requireChangePct = true,
             minDrawdownPct = 10.0,
+            requireCloseAboveConvergenceTop = true,
+            requireOpenBelowMAs = true,
             lookbackDays = 30,
-            minPassCount = 6
+            minPassCount = 7,
+            requireThreeDayConfirm = true
         )
 
         /**
-         * 短线：5/10/20/60 四线粘合 + 放量突破 + 站上所有均线
+         * 短线：5/10/20/60 四线粘合 + 放量突破(1.5x + 涨幅>3%) + 站上所有均线
          * 距高点跌幅 ≥ 20%
-         * 适用检查：①②③④⑤⑨ = 6 项
+         * 适用检查：①②③④⑤⑧⑨ = 7 项（全过，对应设计 AND 语义）
          */
         fun shortTermParams() = StockCheckPipeline(
             convergenceThreshold = 3.0,
             useMA60 = true,
             convergenceDurationDays = 10,
             volumeBreakoutRatio = 1.5,
+            minChangePct = 3.0,
+            requireChangePct = true,
             minDrawdownPct = 20.0,
             requireAboveAllMAs = true,
             lookbackDays = 60,
-            minPassCount = 6
+            minPassCount = 6,
+            requireThreeDayConfirm = true
         )
 
         /**
-         * 中线：四线粘合 + MA60 上翘 + 温和放量 + 站上所有均线
+         * 中线：四线粘合 + MA60 上翘 + 温和放量(MA(V,5)/REF(MA(V,10),1) 1.2~1.8) + 站上所有均线
          * 距高点跌幅 ≥ 30%
-         * 适用检查：①②③④⑤⑥⑨ = 7 项
+         * 适用检查：①②③④⑤⑥⑨ = 7 项（全过，对应设计 AND 语义）
          */
         fun midTermParams() = StockCheckPipeline(
             convergenceThreshold = 2.5,
@@ -117,13 +185,14 @@ class StockCheckPipeline(
             requireMA60Rising = true,
             requireAboveAllMAs = true,
             lookbackDays = 120,
-            minPassCount = 7
+            minPassCount = 6,
+            requireThreeDayConfirm = true
         )
 
         /**
-         * 长线：极致粘合 + MA60/MA250 同步上翘 + 地量 + 站稳年线
-         * 距高点跌幅 ≥ 40%
-         * 适用检查：①②③④⑤⑥⑦ = 7 项
+         * 长线：极致粘合 + MA60/MA250 同步上翘(10日) + 地量 + 站稳年线
+         * 距高点跌幅 ≥ 40%，多头排列含 MA60>MA250
+         * 适用检查：①②③④⑤⑥⑦⑩ = 8 项（全过，对应设计 AND 语义）
          */
         fun longTermParams() = StockCheckPipeline(
             convergenceThreshold = 2.0,
@@ -133,9 +202,13 @@ class StockCheckPipeline(
             volumeShrinkRatio = 0.5,
             minDrawdownPct = 40.0,
             requireMA60Rising = true,
+            maRisingDays = 10,
+            requireMA250Rising = true,
+            useMA250InBullish = true,
             requireAboveYearLine = true,
             lookbackDays = 250,
-            minPassCount = 7
+            minPassCount = 7,
+            requireThreeDayConfirm = true
         )
     }
 
@@ -166,12 +239,27 @@ class StockCheckPipeline(
         val drawdownOk: Boolean = false,
         /** MA60 是否上升（不要求时为 true） */
         val ma60Rising: Boolean = false,
+        /** MA250 是否上升（不要求时为 true，长线） */
+        val ma250Rising: Boolean = true,
+        /** 收盘是否远离粘合区上沿 >2%（不要求时为 true，超短） */
+        val closeAboveConvergenceTop: Boolean = true,
+        /** 开盘是否低于三线且收盘站上5日线（不要求时为 true，超短） */
+        val openBelowMAs: Boolean = true,
         /** 价格是否在年线上方（不要求时为 true） */
         val aboveYearLine: Boolean = false,
         /** 涨幅是否达标（不要求时为 true） */
         val changePctOk: Boolean = true,
         /** 收盘是否站上所有均线 */
         val aboveAllMAs: Boolean = false,
+        // ── v2: 摆动高点 + 三日确认 + 动态参数 ──
+        /** 摆动高点价格（替代全局最高价） */
+        val swingHigh: Double = 0.0,
+        /** 三日不新低是否通过 */
+        val threeDayNoNewLow: Boolean = true,
+        /** 实际使用的回望天数（经大盘/周期行业调整） */
+        val effectiveLookback: Int = 0,
+        /** 实际使用的粘合阈值（经大盘调整） */
+        val effectiveConvergence: Double = 0.0,
         // ── 汇总 ──
         /** 通过项数 */
         val passCount: Int = 0,
@@ -199,6 +287,7 @@ class StockCheckPipeline(
             val snaps = db.dailySnapshotDao().getByCode(stockCode, lookbackDays + 10)
                 .sortedBy { it.date }
             if (snaps.size < 20) {
+                Log.w(TAG, "数据不足: $stockCode 仅 ${snaps.size} 条K线(<20)，跳过严选")
                 return StockCheckResult(stockCode, "数据不足", summary = "K线数据不足(${snaps.size}条)")
             }
             analyzeSnaps(snaps)
@@ -213,7 +302,7 @@ class StockCheckPipeline(
      */
     fun analyzeSnaps(
         snaps: List<DailySnapshotEntity>,
-        marketMaResult: Any? = null  // 保留参数兼容
+        marketMaResult: Any? = null  // 大盘分析结果，用于动态调整参数
     ): StockCheckResult {
         if (snaps.size < 20) {
             return StockCheckResult("", "数据不足", summary = "K线数据不足(${snaps.size}条)")
@@ -223,6 +312,19 @@ class StockCheckPipeline(
         val closes = snaps.map { it.close }
         val stockCode = latest.code
         val name = latest.name
+
+        // ── v2: 大盘感知 + 周期性行业 → 动态调整回望期/粘合阈值 ──
+        val regime = parseMarketRegime(marketTrend)
+        val cyclical = isCyclicalIndustry(name)
+        val cyclicalMultiplier = if (cyclical && lookbackDays >= 60) 1.3 else 1.0
+        val effectiveLookback = (lookbackDays * marketLookbackMultiplier(regime) * cyclicalMultiplier)
+            .toInt().coerceIn(20, snaps.size)
+        // 牛市均线自然发散，阈值按比例放宽 50%；熊市收紧 20%（比例调整比固定值更合理）
+        val effectiveConvergence = when (regime) {
+            MarketRegime.BULLISH -> convergenceThreshold * 1.5
+            MarketRegime.BEARISH -> (convergenceThreshold * 0.8).coerceAtLeast(1.0)
+            else -> convergenceThreshold
+        }
 
         // ── MA 计算 ──
         val ma5 = closes.takeLast(5).average()
@@ -234,26 +336,33 @@ class StockCheckPipeline(
         val mas = mutableListOf(ma5, ma10, ma20)
         if (useMA60 && ma60 != null) mas.add(ma60)
 
-        // ═══ 1. 粘合度 ═══
+        // ═══ 1. 粘合度（使用大盘动态调整后的阈值） ═══
         val maMax = mas.max()
         val maMin = mas.min()
         val convergenceDegree = if (maMin > 0) (maMax - maMin) / maMin * 100 else 999.0
-        val convergenceOk = convergenceDegree <= convergenceThreshold
+        val convergenceOk = convergenceDegree <= effectiveConvergence
 
         // ═══ 2. 多头排列 ═══
-        val bullishAligned = if (useMA60 && ma60 != null) {
-            ma5 > ma10 && ma10 > ma20 && ma20 > ma60
-        } else {
-            ma5 > ma10 && ma10 > ma20
+        // 长线设计：MA5>MA10>MA20>MA60>MA250（MA250 参与多头链）
+        val bullishAligned = when {
+            useMA250InBullish && ma60 != null && ma250 != null ->
+                ma5 > ma10 && ma10 > ma20 && ma20 > ma60 && ma60 > ma250
+            useMA60 && ma60 != null ->
+                ma5 > ma10 && ma10 > ma20 && ma20 > ma60
+            else ->
+                ma5 > ma10 && ma10 > ma20
         }
 
         // ═══ 3. 粘合持续天数 ═══
         // 使用宽松阈值（+0.5%）：允许临界附近微小波动，统计的是"近似粘合"天数
+        // 通过比例按设计文档 COUNT(粘合<=X+0.5, N) >= 0.8N（超短 4/5、短 8/10、中 12/15、长 16/20）
         val durationWindow = convergenceDurationDays.coerceAtLeast(5)
-        val looseThreshold = convergenceThreshold + 0.5
+        val requiredDays = ceil(durationWindow * convergenceDurationRatio).toInt().coerceAtLeast(1)
+        val looseThreshold = effectiveConvergence + 0.5
         var convergenceDays = 0
-        for (i in closes.size - durationWindow until closes.size) {
-            if (i < 19) continue
+        // 窗口起点向后挪到能算 MA20 的位置，保证窗口内统计天数尽可能完整
+        val windowStart = maxOf(closes.size - durationWindow, 19)
+        for (i in windowStart until closes.size) {
             val window = closes.subList(0, i + 1)
             val wMa5 = window.takeLast(5).average()
             val wMa10 = if (window.size >= 10) window.takeLast(10).average() else wMa5
@@ -268,48 +377,60 @@ class StockCheckPipeline(
             val wDeg = if (wMin > 0) (wMax - wMin) / wMin * 100 else 999.0
             if (wDeg <= looseThreshold) convergenceDays++
         }
-        val convergenceDurationOk = convergenceDays >= minOf(convergenceDurationDays, durationWindow)
+        val convergenceDurationOk = convergenceDays >= requiredDays
 
         // ═══ 4. 量能条件（三种模式互斥） ═══
-        // 统一排除当日：基准量 = 前N日均量，与当日量对比
+        // 展示用：当日量 / 前5日均量
         val vol5Avg = if (snaps.size >= 6) {
             snaps.takeLast(6).dropLast(1).map { it.volume.toDouble() }.average()
         } else latest.volume.toDouble()
         val volumeRatio = if (vol5Avg > 0) latest.volume / vol5Avg else 1.0
 
         val volumeConditionOk = when {
-            // 地量模式（长线）：前10日均量 < 前60日均量 × ratio
+            // 地量模式（长线）：MA(V,10) < MA(V,60) × ratio（均含当日，设计文档口径）
             requireVolumeShrink -> {
-                val vol10Avg = if (snaps.size >= 11) {
-                    snaps.takeLast(11).dropLast(1).map { it.volume.toDouble() }.average()
-                } else if (snaps.size >= 10) {
+                val vol10Avg = if (snaps.size >= 10) {
                     snaps.takeLast(10).map { it.volume.toDouble() }.average()
                 } else latest.volume.toDouble()
-                val vol60Avg = if (snaps.size >= 61) {
-                    snaps.takeLast(61).dropLast(1).map { it.volume.toDouble() }.average()
-                } else if (snaps.size >= 60) {
+                val vol60Avg = if (snaps.size >= 60) {
                     snaps.takeLast(60).map { it.volume.toDouble() }.average()
                 } else vol10Avg
                 vol60Avg > 0 && vol10Avg < vol60Avg * volumeShrinkRatio
             }
-            // 温和放量模式（中线）：量比在 [lower, upper] 区间
+            // 温和放量模式（中线）：MA(V,5) / REF(MA(V,10),1) 在 [lower, upper]（设计文档均量比口径）
             moderateVolumeLower > 0 && moderateVolumeUpper > 0 -> {
-                volumeRatio >= moderateVolumeLower && volumeRatio <= moderateVolumeUpper
+                val maVol5Incl = if (snaps.size >= 5) {
+                    snaps.takeLast(5).map { it.volume.toDouble() }.average()
+                } else latest.volume.toDouble()
+                val maVol10Prev = if (snaps.size >= 11) {
+                    snaps.dropLast(1).takeLast(10).map { it.volume.toDouble() }.average()
+                } else latest.volume.toDouble()
+                val moderateRatio = if (maVol10Prev > 0) maVol5Incl / maVol10Prev else 0.0
+                moderateRatio >= moderateVolumeLower && moderateRatio <= moderateVolumeUpper
             }
             // 放量突破模式（超短线/短线）：量比 ≥ ratio
             else -> volumeRatio >= volumeBreakoutRatio
         }
 
-        // ═══ 5. 距高点跌幅 ═══
-        val lookbackHigh = snaps.takeLast(lookbackDays).maxOfOrNull { it.high } ?: latest.high
-        val drawdownPct = if (lookbackHigh > 0) (lookbackHigh - latest.close) / lookbackHigh * 100 else 0.0
+        // ═══ 5. 距高点跌幅（v2: 使用摆动高点检测替代全局最高价） ═══
+        val lookbackStart = maxOf(snaps.size - effectiveLookback, 0)
+        val swingIdx = findSwingHighIndex(snaps, lookbackStart, swingLeftN, swingRightN)
+        val swingHigh = if (swingIdx >= 0) snaps[swingIdx].high
+            else snaps.takeLast(effectiveLookback).maxOfOrNull { it.high } ?: latest.high
+        val drawdownPct = if (swingHigh > 0) (swingHigh - latest.close) / swingHigh * 100 else 0.0
         val drawdownOk = minDrawdownPct <= 0 || drawdownPct >= minDrawdownPct
 
-        // ═══ 6. MA60 上升（仅在要求时计算） ═══
-        val ma60Rising = if (requireMA60Rising && ma60 != null && closes.size >= 65) {
-            val ma60FiveDaysAgo = closes.subList(0, closes.size - 5).takeLast(60).average()
-            ma60 > ma60FiveDaysAgo
+        // ═══ 6. MA60 上升（仅在要求时计算，比较天数 = maRisingDays，长线 10 天） ═══
+        val ma60Rising = if (requireMA60Rising && ma60 != null && closes.size >= 60 + maRisingDays) {
+            val ma60Prev = closes.subList(0, closes.size - maRisingDays).takeLast(60).average()
+            ma60 > ma60Prev
         } else false
+
+        // ═══ 10. MA250 上升（仅在要求时计算，长线：MA250>REF(MA250,10)） ═══
+        val ma250Rising = if (requireMA250Rising && ma250 != null && closes.size >= 250 + maRisingDays) {
+            val ma250Prev = closes.subList(0, closes.size - maRisingDays).takeLast(250).average()
+            ma250 > ma250Prev
+        } else true
 
         // ═══ 7. 年线位置（仅在要求时计算） ═══
         val aboveYearLine = if (requireAboveYearLine && ma250 != null) {
@@ -329,6 +450,24 @@ class StockCheckPipeline(
                 latest.close > ma5 && latest.close > ma10 && latest.close > ma20
             }
         } else true
+
+        // ═══ 11. 收盘远离粘合区上沿 >2%（仅在要求时计算，超短线突破强度） ═══
+        val closeAboveConvergenceTop = if (requireCloseAboveConvergenceTop) {
+            latest.close > maMax * 1.02
+        } else true
+
+        // ═══ 12. 开盘低于三线且收盘站上5日线（仅在要求时计算，超短线开盘条件） ═══
+        val openBelowMAs = if (requireOpenBelowMAs) {
+            latest.open < ma5 && latest.open < ma10 && latest.open < ma20 && latest.close > ma5
+        } else true
+
+        // ═══ 13. 三日不新低确认（v2: 近3个交易日最低价不创新低，底部确认信号） ═══
+        val threeDayNoNewLow = if (snaps.size >= 4) {
+            val last3 = snaps.takeLast(3)
+            val prevLow = snaps[snaps.size - 4].low
+            last3.all { it.low >= prevLow }
+        } else true
+        val threeDayConfirmOk = if (requireThreeDayConfirm) threeDayNoNewLow else true
 
         // ═══ 统计通过项数 — 只计本周期要求的检查 ═══
         var passCount = 0
@@ -352,6 +491,14 @@ class StockCheckPipeline(
         if (requireChangePct) { totalChecks++; if (changePctOk) passCount++ }
         // ⑨ 站上所有均线（仅要求时计入）
         if (requireAboveAllMAs) { totalChecks++; if (aboveAllMAs) passCount++ }
+        // ⑩ MA250 上升（仅要求时计入）
+        if (requireMA250Rising) { totalChecks++; if (ma250Rising) passCount++ }
+        // ⑪ 收盘远离粘合区上沿（仅要求时计入）
+        if (requireCloseAboveConvergenceTop) { totalChecks++; if (closeAboveConvergenceTop) passCount++ }
+        // ⑫ 开盘低于三线且收盘站上5日线（仅要求时计入）
+        if (requireOpenBelowMAs) { totalChecks++; if (openBelowMAs) passCount++ }
+        // ⑬ 三日不新低确认（仅要求时计入，非熊市启用）
+        if (requireThreeDayConfirm) { totalChecks++; if (threeDayConfirmOk) passCount++ }
 
         val passed = passCount >= minPassCount
 
@@ -368,9 +515,16 @@ class StockCheckPipeline(
             drawdownPct = drawdownPct,
             drawdownOk = drawdownOk,
             ma60Rising = ma60Rising,
+            ma250Rising = ma250Rising,
+            closeAboveConvergenceTop = closeAboveConvergenceTop,
+            openBelowMAs = openBelowMAs,
             aboveYearLine = aboveYearLine,
             changePctOk = changePctOk,
             aboveAllMAs = aboveAllMAs,
+            swingHigh = swingHigh,
+            threeDayNoNewLow = threeDayNoNewLow,
+            effectiveLookback = effectiveLookback,
+            effectiveConvergence = effectiveConvergence,
             passCount = passCount,
             totalChecks = totalChecks,
             passed = passed,
@@ -390,9 +544,13 @@ class StockCheckPipeline(
             appendLine("═══ ${result.stockName}(${result.stockCode}) ═══")
             appendLine("价格: ${result.currentPrice}  PE: ${result.pe}  换手率: ${result.turnoverRate}%")
             appendLine("量比: ${"%.2f".format(result.volumeRatio)}")
+            if (result.effectiveLookback > 0 && result.effectiveLookback != lookbackDays) {
+                appendLine("动态回望: ${result.effectiveLookback}天(基准${lookbackDays}天)")
+            }
             appendLine()
             var idx = 0
-            appendLine("${++idx}. 粘合度≤${convergenceThreshold}%: ${if (result.convergenceOk) "✅" else "❌"} (${"%.2f".format(result.convergenceDegree)}%)")
+            val effConv = if (result.effectiveConvergence > 0) result.effectiveConvergence else convergenceThreshold
+            appendLine("${++idx}. 粘合度≤${"%.1f".format(effConv)}%: ${if (result.convergenceOk) "✅" else "❌"} (${"%.2f".format(result.convergenceDegree)}%)")
             appendLine("${++idx}. 多头排列:       ${if (result.bullishAligned) "✅" else "❌"}")
             appendLine("${++idx}. 粘合≥${convergenceDurationDays}天:    ${if (result.convergenceDurationOk) "✅" else "❌"} (${result.convergenceDays}天)")
             val volDesc = when {
@@ -402,7 +560,8 @@ class StockCheckPipeline(
             }
             appendLine("${++idx}. $volDesc: ${if (result.volumeConditionOk) "✅" else "❌"} (量比${"%.1f".format(result.volumeRatio)})")
             if (minDrawdownPct > 0) {
-                appendLine("${++idx}. 跌幅≥${"%.0f".format(minDrawdownPct)}%:  ${if (result.drawdownOk) "✅" else "❌"} (${"%.1f".format(result.drawdownPct)}%)")
+                val highLabel = if (result.swingHigh > 0) "摆动高点${"%.2f".format(result.swingHigh)}" else "高点"
+                appendLine("${++idx}. 跌幅≥${"%.0f".format(minDrawdownPct)}%:  ${if (result.drawdownOk) "✅" else "❌"} (${"%.1f".format(result.drawdownPct)}%, $highLabel)")
             }
             if (requireMA60Rising) {
                 appendLine("${++idx}. MA60上升:       ${if (result.ma60Rising) "✅" else "❌"}")
@@ -415,6 +574,18 @@ class StockCheckPipeline(
             }
             if (requireAboveAllMAs) {
                 appendLine("${++idx}. 站上所有均线:   ${if (result.aboveAllMAs) "✅" else "❌"}")
+            }
+            if (requireMA250Rising) {
+                appendLine("${++idx}. MA250上升:       ${if (result.ma250Rising) "✅" else "❌"}")
+            }
+            if (requireCloseAboveConvergenceTop) {
+                appendLine("${++idx}. 收盘远离粘合区上沿>2%: ${if (result.closeAboveConvergenceTop) "✅" else "❌"}")
+            }
+            if (requireOpenBelowMAs) {
+                appendLine("${++idx}. 开盘低于三线+收盘站上5日线: ${if (result.openBelowMAs) "✅" else "❌"}")
+            }
+            if (requireThreeDayConfirm) {
+                appendLine("${++idx}. 三日不新低:     ${if (result.threeDayNoNewLow) "✅" else "❌"}")
             }
             appendLine()
             appendLine("通过: ${result.passCount}/${result.totalChecks} ${if (result.passed) "→ ✅ 符合买入条件" else "→ ⚠ 未达标准"}")

@@ -113,6 +113,9 @@ abstract class QuantFragmentBase : Fragment() {
     /** 上次刷新时的数据哈希，用于判断是否需要重新渲染 */
     protected var lastRefreshHash: Int = 0
 
+    /** Pipeline 节点详情容器（renderPositions 后需重新插入） */
+    protected var pipelineDetailsWrapper: android.view.View? = null
+
     companion object {
         val DATE_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
         private const val TAG = "QuantFragmentBase"
@@ -735,19 +738,21 @@ abstract class QuantFragmentBase : Fragment() {
     /** 子类可在"基本面检查"后插入额外菜单项（保持菜单结构统一） */
     protected open fun getExtraEvalMenuItems(): List<Pair<String, () -> Unit>> = emptyList()
 
-    /** 买卖评估菜单：统一选项 + 基本面检查（居中 Dialog） */
+    /** 买卖评估菜单：统一选项 + 基本面检查 + AI 咨询（居中 Dialog） */
     protected open fun showTradeEvaluationMenu(anchor: View) {
         val items = mutableListOf(
             "🔄 做T信号",
             "💰 卖出评估",
             "📈 买入评估",
-            "💎 基本面检查"
+            "💎 基本面检查",
+            "🤖 AI 咨询"
         )
         val handlers = mutableListOf<() -> Unit>(
             { showTTradeMenu() },
             { runAutoSellEvaluation() },
             { showBuyEvaluation() },
-            { checkFundamentalHealth() }
+            { checkFundamentalHealth() },
+            { askAiForTradeAdvice() }
         )
         // 子类扩展项（如超短线的 T+1 卖出检查）
         getExtraEvalMenuItems().forEach { (label, action) ->
@@ -764,6 +769,70 @@ abstract class QuantFragmentBase : Fragment() {
             }
             .setNegativeButton("关闭", null)
             .show()
+    }
+
+    /**
+     * 跳转 AI 对话并自动拼接当前周期持仓+选股指令模板（UI-P1-3）：
+     * 异步加载当前周期持仓与最近选股，生成"帮我分析..."指令后经
+     * MainActivity.switchToChatAndSend 发送，减少用户手动输入股票代码。
+     */
+    protected fun askAiForTradeAdvice() {
+        val act = activity
+        if (act !is com.chin.stockanalysis.ui.MainActivity) {
+            Toast.makeText(requireContext(), "请在策略页使用 AI 咨询", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val periodTitle = if (positionTitlePrefix.isNotEmpty()) positionTitlePrefix else getQuantType()
+        progressBar.visibility = View.VISIBLE
+        statusTv.text = "🤖 正在生成 AI 咨询指令..."
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val period = orderTypePeriod(getQuantType())
+                val holdings = db.strategyTradeOrderDao().getRecent(500)
+                    .filter {
+                        orderTypePeriod(it.orderType) == period &&
+                            (it.status == "BUYING" || it.status == "PENDING")
+                    }
+                    .sortedByDescending { it.tradeDate }
+                    .take(10)
+
+                val prompt = buildString {
+                    append("请帮我分析当前$periodTitle 持仓与选股情况：")
+                    appendLine()
+                    if (holdings.isNotEmpty()) {
+                        appendLine("【持仓】")
+                        holdings.forEach {
+                            appendLine("- ${it.stockName}(${it.stockCode}) 成本${it.buyPrice} 数量${it.quantity}")
+                        }
+                    } else {
+                        appendLine("【持仓】当前无持仓")
+                    }
+                    if (lastPickStocks.isNotEmpty()) {
+                        appendLine("【今日选股】")
+                        lastPickStocks.take(10).forEach { (code, name, score) ->
+                            appendLine("- $name($code) 评分$score")
+                        }
+                    }
+                    append("请结合实时行情给出加仓、减仓、做T操作建议。")
+                }
+
+                withContext(Dispatchers.Main) {
+                    if (!isAdded) return@withContext
+                    progressBar.visibility = View.GONE
+                    statusTv.text = "✅ AI 指令已发送"
+                    act.switchToChatAndSend(prompt)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "askAiForTradeAdvice 失败: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    if (!isAdded) return@withContext
+                    progressBar.visibility = View.GONE
+                    statusTv.text = "❌ AI 指令生成失败: ${e.message?.take(30)}"
+                    Toast.makeText(requireContext(), "AI 咨询失败: ${e.message?.take(30)}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
     }
 
     /** 构建标题视图：标题文字 + 🔄 刷新按钮 */
@@ -3637,6 +3706,9 @@ abstract class QuantFragmentBase : Fragment() {
     ) {
         positionContainer.removeAllViews()
 
+        // 重新插入 Pipeline 节点详情（避免被 removeAllViews 清除后消失）
+        pipelineDetailsWrapper?.let { positionContainer.addView(it) }
+
         // ── 持仓区（始终显示标题，即使为空） ──
         renderOrderTable(orders, dates, priceMap, "持仓")
 
@@ -4269,9 +4341,18 @@ abstract class QuantFragmentBase : Fragment() {
             detailContainer.addView(nodeCard)
         }
 
-        // 插入到 positionContainer 顶部
-        positionContainer.addView(headerRow, 0)
-        positionContainer.addView(detailContainer, 1)
+        // 插入到 positionContainer 顶部（用 wrapper 包裹，便于 renderPositions 后重新插入）
+        val wrapper = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            addView(headerRow)
+            addView(detailContainer)
+        }
+        pipelineDetailsWrapper = wrapper
+        positionContainer.addView(wrapper, 0)
     }
 
     /** 显示各周期持有收益历史 */

@@ -300,6 +300,17 @@ class HistoricalDataFetcher(private val context: Context) {
         val step25Elapsed = System.currentTimeMillis() - step25Start
         Log.i(TAG, "  Step 2.5 done: ${step25Elapsed}ms, enriched=$enrichedCount")
 
+        // Step 2.6: 历史基本面回填（将季报数据映射到历史交易日）
+        val step26Start = System.currentTimeMillis()
+        Log.i(TAG, "--- Step 2.6: Historical fundamentals backfill ---")
+        val backfilledCount = try {
+            backfillHistoricalFundamentals(stocks)
+        } catch (e: Exception) {
+            Log.w(TAG, "  Historical backfill failed: ${e.message}"); 0
+        }
+        val step26Elapsed = System.currentTimeMillis() - step26Start
+        Log.i(TAG, "  Step 2.6 done: ${step26Elapsed}ms, backfilled=$backfilledCount")
+
         // Step 3: fill missing names (only for stocks that actually need it)
         val step3Start = System.currentTimeMillis()
         val filledCount = fillMissingNames()
@@ -312,7 +323,7 @@ class HistoricalDataFetcher(private val context: Context) {
         val elapsedMs = System.currentTimeMillis() - startMs
         Log.i(TAG, "========== FETCH COMPLETE ==========")
         Log.i(TAG, "  Records: $totalRecords  Stocks: ${stocks.size}  Time: ${elapsedMs}ms")
-        Log.i(TAG, "  Breakdown: Step1=${step1Elapsed}ms  Step2=${step2Elapsed}ms  Step2.5=${step25Elapsed}ms  Step3=${step3Elapsed}ms")
+        Log.i(TAG, "  Breakdown: Step1=${step1Elapsed}ms  Step2=${step2Elapsed}ms  Step2.5=${step25Elapsed}ms  Step2.6=${step26Elapsed}ms  Step3=${step3Elapsed}ms")
         totalRecords
     }
 
@@ -363,6 +374,94 @@ class HistoricalDataFetcher(private val context: Context) {
             } catch (_: Exception) { /* 单只失败不中断 */ }
         }
         return updated
+    }
+
+    /**
+     * 历史基本面回填：将季报财务数据按报告期映射到历史交易日。
+     *
+     * A 股财报披露截止日规则：
+     * - Q1（报告期 03-31）→ 5/1 起可用
+     * - H1（报告期 06-30）→ 9/1 起可用
+     * - Q3（报告期 09-30）→ 11/1 起可用
+     * - 年报（报告期 12-31）→ 次年 5/1 起可用
+     *
+     * 对每只股票，将其各报告期财务数据回填到对应的历史日期区间，
+     * 仅覆盖 roe_ttm = 0 且 gross_margin_ttm = 0 的行。
+     *
+     * @return 实际更新的行数
+     */
+    private suspend fun backfillHistoricalFundamentals(stocks: List<String>): Int {
+        // 1. 拉取多报告期财务数据
+        val financeHistory = FundamentalsProvider.fetchBulkFinanceHistory(maxPages = 20, maxPeriodsPerStock = 8)
+        if (financeHistory.isEmpty()) {
+            Log.w(TAG, "  历史财务数据为空，跳过回填")
+            return 0
+        }
+
+        // 2. 获取所有可用交易日
+        val allDates = db.dailySnapshotDao().getAvailableDates(500).sorted()
+        if (allDates.isEmpty()) return 0
+
+        // 3. 找出需要回填的日期（基本面为 0 的日期）
+        // 简化：检查最近日期，如果最新日期已有基本面数据则跳过最新日期
+        val latestDate = allDates.last()
+        val datesToBackfill = allDates.filter { it < latestDate }
+        if (datesToBackfill.isEmpty()) return 0
+
+        // 4. 按报告期分组日期
+        val datesByPeriod = datesToBackfill.groupBy { reportPeriodForDate(it) }
+        Log.i(TAG, "  需回填 ${datesToBackfill.size} 个交易日, 分 ${datesByPeriod.size} 个报告期")
+
+        // 5. 逐股票逐报告期回填
+        var totalUpdated = 0
+        val stockSet = stocks.toSet()
+
+        for ((period, dates) in datesByPeriod) {
+            val fromDate = dates.first()
+            val toDate = dates.last()
+
+            for ((code, periods) in financeHistory) {
+                if (code !in stockSet) continue
+                // 找到该报告期对应的财务数据
+                val finData = periods.find { it.reportDate == period } ?: continue
+                // 至少有一个有效值才回填
+                if (finData.roe == 0.0 && finData.grossMargin == 0.0) continue
+
+                try {
+                    totalUpdated += db.dailySnapshotDao().updateFundamentalsForDateRange(
+                        code = code, fromDate = fromDate, toDate = toDate,
+                        roeTTM = finData.roe,
+                        grossMarginTTM = finData.grossMargin,
+                        debtToAsset = finData.debtToAsset,
+                        operatingCashFlow = finData.operatingCashFlow
+                    )
+                } catch (_: Exception) { /* 单只/单期失败不中断 */ }
+            }
+        }
+
+        Log.i(TAG, "  历史基本面回填完成: $totalUpdated 行 (${financeHistory.size} 只股票, ${datesByPeriod.size} 个报告期)")
+        return totalUpdated
+    }
+
+    /**
+     * 根据交易日期推算适用的报告期。
+     *
+     * A 股财报披露截止日：
+     * - 1/1~4/30  → 上年年报 (YYYY-12-31)
+     * - 5/1~8/31  → 当年 Q1 (YYYY-03-31)
+     * - 9/1~10/31 → 当年 H1 (YYYY-06-30)
+     * - 11/1~12/31 → 当年 Q3 (YYYY-09-30)
+     */
+    private fun reportPeriodForDate(dateStr: String): String {
+        val parts = dateStr.split("-")
+        val year = parts[0].toInt()
+        val month = parts[1].toInt()
+        return when {
+            month in 1..4 -> "${year - 1}-12-31"
+            month in 5..8 -> "$year-03-31"
+            month in 9..10 -> "$year-06-30"
+            else -> "$year-09-30"
+        }
     }
 
     private suspend fun fillMissingNames(): Int {

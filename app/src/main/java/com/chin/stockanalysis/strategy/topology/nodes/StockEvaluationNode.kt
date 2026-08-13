@@ -33,6 +33,12 @@ data class StockEvaluationDetail(
     val drawdownOk: Boolean = false,
     /** MA60 上升 */
     val ma60Rising: Boolean = false,
+    /** MA250 上升（长线） */
+    val ma250Rising: Boolean = true,
+    /** 收盘远离粘合区上沿 >2%（超短） */
+    val closeAboveConvergenceTop: Boolean = true,
+    /** 开盘低于三线且收盘站上5日线（超短） */
+    val openBelowMAs: Boolean = true,
     /** 站稳年线 */
     val aboveYearLine: Boolean = false,
     /** 涨幅达标 */
@@ -51,11 +57,17 @@ class StockEvaluationNode(
     val convergenceThreshold: Double = 2.5,
     val useMA60: Boolean = true,
     val convergenceDurationDays: Int = 15,
+    val convergenceDurationRatio: Double = 0.8,
     val volumeBreakoutRatio: Double = 1.5,
     val minChangePct: Double = 0.0,
     val requireChangePct: Boolean = false,
     val minDrawdownPct: Double = 30.0,
     val requireMA60Rising: Boolean = true,
+    val maRisingDays: Int = 5,
+    val requireMA250Rising: Boolean = false,
+    val useMA250InBullish: Boolean = false,
+    val requireCloseAboveConvergenceTop: Boolean = false,
+    val requireOpenBelowMAs: Boolean = false,
     val requireVolumeShrink: Boolean = false,
     val requireAboveYearLine: Boolean = false,
     val requireAboveAllMAs: Boolean = true,
@@ -69,31 +81,65 @@ class StockEvaluationNode(
         private const val TAG = "StockEvaluation"
     }
 
-    private val pipeline = StockCheckPipeline(
+    /** 构建 StockCheckPipeline，注入大盘趋势（运行时从 context 获取） */
+    private fun buildPipeline(marketTrend: String? = null) = StockCheckPipeline(
         convergenceThreshold = convergenceThreshold,
         useMA60 = useMA60,
         convergenceDurationDays = convergenceDurationDays,
+        convergenceDurationRatio = convergenceDurationRatio,
         volumeBreakoutRatio = volumeBreakoutRatio,
         minChangePct = minChangePct,
         requireChangePct = requireChangePct,
         minDrawdownPct = minDrawdownPct,
         requireMA60Rising = requireMA60Rising,
+        maRisingDays = maRisingDays,
+        requireMA250Rising = requireMA250Rising,
+        useMA250InBullish = useMA250InBullish,
+        requireCloseAboveConvergenceTop = requireCloseAboveConvergenceTop,
+        requireOpenBelowMAs = requireOpenBelowMAs,
         requireVolumeShrink = requireVolumeShrink,
         requireAboveYearLine = requireAboveYearLine,
         requireAboveAllMAs = requireAboveAllMAs,
         moderateVolumeLower = moderateVolumeLower,
         moderateVolumeUpper = moderateVolumeUpper,
         lookbackDays = lookbackDays,
-        minPassCount = minPassCount
+        minPassCount = minPassCount,
+        marketTrend = marketTrend,
+        requireThreeDayConfirm = true
     )
 
     override suspend fun execute(context: PipelineContext, input: MergedSignalPool): MergedSignalPool {
+        // 从上下文获取大盘趋势，注入 pipeline 实现动态参数调整
+        val marketTrend = try {
+            val marketCtx = context.getStageOutput<com.chin.stockanalysis.strategy.sector.StrategyMarketContext>("n_ctx")
+                ?: context.getStageOutput<com.chin.stockanalysis.strategy.sector.StrategyMarketContext>("market_context")
+            marketCtx?.indexSnapshot?.tripleVote ?: marketCtx?.indexSnapshot?.shDirection
+        } catch (_: Exception) { null }
+
+        val pipeline = buildPipeline(marketTrend)
+        if (marketTrend != null) {
+            context.log(nodeId, "ℹ️ 大盘趋势: $marketTrend → 动态调整粘合阈值/回望期")
+        }
+
         val passedMap = mutableMapOf<String, StockEvaluationDetail>()
+        var insufficientCount = 0
+        var errorCount = 0
+        val insufficientCodes = mutableListOf<String>()
+        val errorCodes = mutableListOf<String>()
 
         for ((code, _) in input.stockHits) {
             try {
                 val result = pipeline.analyze(context.androidContext, code)
-                if (result.stockName == "数据不足" || result.stockName == "异常") continue
+                if (result.stockName == "数据不足") {
+                    insufficientCount++
+                    insufficientCodes.add(code)
+                    continue
+                }
+                if (result.stockName == "异常") {
+                    errorCount++
+                    errorCodes.add(code)
+                    continue
+                }
 
                 val name = input.stockNames[code] ?: result.stockName
 
@@ -107,6 +153,9 @@ class StockEvaluationNode(
                     volumeConditionOk = result.volumeConditionOk,
                     drawdownOk = result.drawdownOk,
                     ma60Rising = result.ma60Rising,
+                    ma250Rising = result.ma250Rising,
+                    closeAboveConvergenceTop = result.closeAboveConvergenceTop,
+                    openBelowMAs = result.openBelowMAs,
                     aboveYearLine = result.aboveYearLine,
                     changePctOk = result.changePctOk,
                     aboveAllMAs = result.aboveAllMAs,
@@ -118,7 +167,26 @@ class StockEvaluationNode(
                 if (result.passed) {
                     passedMap[code] = detail
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                errorCount++
+                errorCodes.add(code)
+                context.log(nodeId, "⚠ $nodeName 单股分析异常: $code - ${e.message}")
+            }
+        }
+
+        // 诊断：候选全部被过滤时，输出失败原因，避免「输入 10 只、输出 0 只」无从查证
+        val inputCount = input.stockHits.size
+        if (inputCount > 0 && passedMap.isEmpty()) {
+            val reasonParts = buildList {
+                if (insufficientCount > 0) add("数据不足 $insufficientCount 只(${insufficientCodes.joinToString(",")})")
+                if (errorCount > 0) add("异常 $errorCount 只(${errorCodes.joinToString(",")})")
+                val otherCount = inputCount - insufficientCount - errorCount
+                if (otherCount > 0) add("未达标 $otherCount 只")
+                if (isEmpty()) add("无候选")
+            }.joinToString("；")
+            context.log(nodeId,
+                "⛔ $nodeName 输出 0：$inputCount 只候选全部被过滤（$reasonParts）。" +
+                    "建议检查上游候选股 K 线数据完整性（daily_snapshot ≥20 条）或放宽严选阈值")
         }
 
         val evalResult = StockEvaluationResult(
@@ -129,13 +197,44 @@ class StockEvaluationNode(
         context.setStageOutput(nodeId + "_eval", evalResult)
 
         context.log(nodeId, "$nodeName: ${input.stockHits.size} 只候选 → " +
-            "${passedMap.size} 只通过(≥${minPassCount}项)，${evalResult.passedCount} 只全部通过")
+            "${passedMap.size} 只通过(≥${minPassCount}项)，${evalResult.passedCount} 只全部通过" +
+            (if (insufficientCount > 0 || errorCount > 0)
+                "（数据不足 $insufficientCount / 异常 $errorCount）" else ""))
+
+        // 记录股票流动（fail-fast 熔断依赖 outputCount 感知输出 0）
+        context.recordStockFlow(
+            nodeId = nodeId,
+            nodeName = nodeName,
+            inputCount = inputCount,
+            outputCount = passedMap.size,
+            filterCount = inputCount - passedMap.size,
+            filterReason = "数据不足$insufficientCount,异常$errorCount"
+        )
+
         if (passedMap.isNotEmpty()) {
             val top3 = passedMap.values.sortedByDescending { it.passCount }.take(3)
             context.log(nodeId, "$nodeName TOP3: ${top3.joinToString { "${it.name}(${it.passCount}/${it.totalChecks})" }}")
         }
 
         val passedCodes = passedMap.keys
+        // ── 双通道架构：粘合严选输出 0 时，根据大盘趋势决定是否透传 ──
+        if (passedMap.isEmpty() && inputCount > 0) {
+            val isBearish = marketTrend != null &&
+                marketTrend.contains("BEAR", ignoreCase = true)
+            if (isBearish) {
+                // 熊市/下行：不勉强选股，提示用户关注实仓管理
+                context.log(nodeId,
+                    "🛑 $nodeName 大盘$marketTrend，通道A无合格标的，终止选股。" +
+                    "建议重点优化实仓持仓：做T/反T降低成本，或逢高减仓控制风险")
+                return MergedSignalPool(emptyMap(), emptyMap(), emptyList())
+            } else {
+                // 牛市/震荡：通道A无输出，候选原样流入通道B（趋势策略仍可处理）
+                context.log(nodeId,
+                    "ℹ️ $nodeName 大盘${marketTrend ?: "未知"}，通道A无候选通过，" +
+                    "${inputCount} 只候选透传给通道B趋势通道")
+                return input
+            }
+        }
         val filteredSignals = input.boostedSignals.filter { it.stockCode in passedCodes }
         val filteredHits = input.stockHits.filterKeys { it in passedCodes }
         val filteredNames = input.stockNames.filterKeys { it in passedCodes }
@@ -169,6 +268,9 @@ object StockEvaluationChecker {
             volumeConditionOk = result.volumeConditionOk,
             drawdownOk = result.drawdownOk,
             ma60Rising = result.ma60Rising,
+            ma250Rising = result.ma250Rising,
+            closeAboveConvergenceTop = result.closeAboveConvergenceTop,
+            openBelowMAs = result.openBelowMAs,
             aboveYearLine = result.aboveYearLine,
             changePctOk = result.changePctOk,
             aboveAllMAs = result.aboveAllMAs,
@@ -192,6 +294,9 @@ object StockEvaluationChecker {
         append("  ${if (detail.volumeConditionOk) "✓" else "✗"}量能条件")
         append("  ${if (detail.drawdownOk) "✓" else "✗"}跌幅达标")
         append("  ${if (detail.ma60Rising) "✓" else "✗"}MA60上升")
+        append("  ${if (detail.ma250Rising) "✓" else "✗"}MA250上升")
+        append("  ${if (detail.closeAboveConvergenceTop) "✓" else "✗"}远离上沿")
+        append("  ${if (detail.openBelowMAs) "✓" else "✗"}开盘条件")
         append("  ${if (detail.aboveYearLine) "✓" else "✗"}站稳年线")
         append("  ${if (detail.changePctOk) "✓" else "✗"}涨幅达标")
         append("  ${if (detail.aboveAllMAs) "✓" else "✗"}站上均线")

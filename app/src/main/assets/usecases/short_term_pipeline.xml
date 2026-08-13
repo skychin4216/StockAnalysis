@@ -79,9 +79,15 @@
         <param name="convergenceThreshold" value="3.0" />
         <param name="useMA60" value="true" />
         <param name="convergenceDurationDays" value="10" />
+        <param name="convergenceDurationRatio" value="0.8" />
         <param name="volumeBreakoutRatio" value="1.5" />
         <param name="minDrawdownPct" value="20.0" />
+        <param name="minChangePct" value="3.0" />
+        <param name="requireChangePct" value="true" />
         <param name="requireAboveAllMAs" value="true" />
+        <param name="requireThreeDayConfirm" value="true" />
+        <param name="swingLeftN" value="5" />
+        <param name="swingRightN" value="2" />
         <param name="lookbackDays" value="60" />
         <param name="minPassCount" value="6" />
       </config>
@@ -124,7 +130,7 @@
     <!-- 订单生成 Layer 7 -->
     <Node id="n_orders" name="买入订单生成" module="generate_orders">
       <config>
-        <param name="maxHoldings" value="6" />
+        <param name="maxHoldings" value="5" />
         <param name="orderType" value="ShortTermQuant" />
       </config>
     </Node>
@@ -134,7 +140,7 @@
     <Node id="n_crosstab" name="跨Tab发布" module="crosstab_publish" />
     <Node id="n_swap" name="腾龙换鸟" module="swap_weak">
       <config>
-        <param name="maxHoldings" value="6" />
+        <param name="maxHoldings" value="5" />
       </config>
     </Node>
   </NodeList>

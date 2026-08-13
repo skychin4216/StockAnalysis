@@ -131,6 +131,8 @@ class DagPipeline(
          */
         val FLOW_CRITICAL_NODES = setOf(
             "stock_pool", "candidate_pool", "signal_merge",
+            // strict_selection 已移除：粘合严选输出 0 时不应终止 Pipeline，
+            // 候选原样传递给下游趋势策略（双通道架构：通道A均值回归 + 通道B趋势跟踪）
             "smart_money_filter", "news_guard"
             // generate_orders 不在其中：0 订单是正常结果（如非交易时段/无候选通过），不算失败
         )
