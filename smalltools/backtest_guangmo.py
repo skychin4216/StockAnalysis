@@ -129,11 +129,15 @@ def fetch_tencent(secid, beg="20250101", end=END_DATE):
                 if fs and fs > 0:
                     for s in snaps:
                         s["turnover"] = s["volume"] * 100 / fs * 100
-                # 名称解析：qt 是数组 [市场, 名称, 代码, ...]
+                # 名称解析：qt 是 dict {secid: [市场, 名称, 代码, ...]}，
+                # 真实名称在 qt[secid][1]（如 ['51','中际旭创','300308',...]）
+                name = None
                 qt = node.get("qt")
-                if isinstance(qt, list) and len(qt) > 1:
-                    name = qt[1]
-                else:
+                if isinstance(qt, dict):
+                    arr = qt.get(secid)
+                    if isinstance(arr, list) and len(arr) > 1:
+                        name = arr[1]
+                if not name:
                     name = node.get("name") or secid
                 return name, snaps
         except Exception:

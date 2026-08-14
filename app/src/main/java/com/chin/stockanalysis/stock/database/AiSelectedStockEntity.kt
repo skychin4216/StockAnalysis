@@ -18,10 +18,10 @@ data class AiSelectedStockEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     @ColumnInfo(name = "stock_code") val stockCode: String,
     @ColumnInfo(name = "stock_name") val stockName: String,
-    @ColumnInfo(name = "source") val source: String,          // "shortterm" / "midterm" / "agent"
+    @ColumnInfo(name = "source") val source: String,          // "shortterm" / "midterm" / "agent" / "unified" / "preselection"
     @ColumnInfo(name = "selected_date") val selectedDate: String,  // yyyy-MM-dd
     @ColumnInfo(name = "score") val score: Int = 0,
     @ColumnInfo(name = "reason") val reason: String = "",
     @ColumnInfo(name = "buy_price") val buyPrice: Double = 0.0,
-    @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis()
+    @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis()  // 选中时间戳（毫秒），用于排序最新选中显示在最上方
 )

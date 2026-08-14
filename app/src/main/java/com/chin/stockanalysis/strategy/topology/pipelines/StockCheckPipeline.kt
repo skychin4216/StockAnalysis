@@ -85,7 +85,10 @@ class StockCheckPipeline(
     /** 摆动高点右确认天数 */
     val swingRightN: Int = 2,
     /** 是否启用三日不新低确认 */
-    val requireThreeDayConfirm: Boolean = false
+    val requireThreeDayConfirm: Boolean = false,
+    // ── v3: 趋势跟随模式（超短/短线在牛市启用，替代均线粘合） ──
+    /** 分析模式：CONVERGENCE=均线粘合（中/长线及熊市），TREND_FOLLOW=趋势跟随（超短/短牛市） */
+    val mode: AnalysisMode = AnalysisMode.CONVERGENCE
 ) {
 
     companion object {
@@ -93,6 +96,9 @@ class StockCheckPipeline(
 
         /** 大盘状态枚举 */
         enum class MarketRegime { BULLISH, NEUTRAL, BEARISH }
+
+        /** 分析模式：均线粘合 vs 趋势跟随 */
+        enum class AnalysisMode { CONVERGENCE, TREND_FOLLOW }
 
         /** 解析大盘状态字符串 */
         fun parseMarketRegime(trend: String?): MarketRegime = when {
@@ -115,6 +121,10 @@ class StockCheckPipeline(
             return keywords.any { stockName.contains(it) }
         }
 
+        /** ST / *ST 退市风险股：不参与趋势跟随 */
+        fun isDelistingRisk(name: String): Boolean =
+            name.contains("ST", ignoreCase = true) || name.contains("*ST", ignoreCase = true)
+
         /**
          * 摆动高点检测（Swing High Detection）
          * 在回望窗口内找到最近的局部最高点：high[i] >= 左侧 leftN 根 且 >= 右侧 rightN 根
@@ -132,9 +142,9 @@ class StockCheckPipeline(
         }
 
         /**
-         * 超短线：5/10/20 三线粘合 + 爆量突破 + 涨幅>4% + 收盘远离粘合区上沿 + 开盘条件
-         * 不要求历史低位，排除高位股（距年内高点跌幅 >10%）
-         * 适用检查：①②③④⑤⑧⑪⑫ = 8 项（全过，对应设计文档 AND 语义）
+         * 超短线 v3：BULLISH 趋势跟随模式（趋势向上、贴近新高、放量、当日上涨）；
+         * 不再死守"均线粘合+三日不新低"（上升趋势中会错误过滤强势股）。
+         * 有较大利润时配合做T/反T（见 AutoTradePortfolioEngine）。
          */
         fun ultraShortParams() = StockCheckPipeline(
             convergenceThreshold = 3.0,
@@ -148,13 +158,14 @@ class StockCheckPipeline(
             requireOpenBelowMAs = true,
             lookbackDays = 30,
             minPassCount = 7,
-            requireThreeDayConfirm = true
+            requireThreeDayConfirm = true,
+            mode = AnalysisMode.TREND_FOLLOW
         )
 
         /**
-         * 短线：5/10/20/60 四线粘合 + 放量突破(1.5x + 涨幅>3%) + 站上所有均线
-         * 距高点跌幅 ≥ 20%
-         * 适用检查：①②③④⑤⑧⑨ = 7 项（全过，对应设计 AND 语义）
+         * 短线 v3：BULLISH 趋势跟随模式（趋势向上、贴近新高、放量、当日上涨）；
+         * 不再死守"均线粘合+三日不新低"（上升趋势中会错误过滤强势股）。
+         * 有较大利润时配合做T/反T（见 AutoTradePortfolioEngine）。
          */
         fun shortTermParams() = StockCheckPipeline(
             convergenceThreshold = 3.0,
@@ -167,7 +178,8 @@ class StockCheckPipeline(
             requireAboveAllMAs = true,
             lookbackDays = 60,
             minPassCount = 6,
-            requireThreeDayConfirm = true
+            requireThreeDayConfirm = true,
+            mode = AnalysisMode.TREND_FOLLOW
         )
 
         /**
@@ -274,7 +286,12 @@ class StockCheckPipeline(
         /** 换手率 */
         val turnoverRate: Double = 0.0,
         /** 文字摘要 */
-        val summary: String = ""
+        val summary: String = "",
+        // ── v4: 产业主线（中线/长线） ──
+        /** 命中的产业主题（如 AI算力硬件 / 半导体国产替代），null=未命中 */
+        val industryTheme: String? = null,
+        /** 产业主线是否通过（中线/长线要求命中已知产业主线） */
+        val industryOk: Boolean = true
     )
 
     suspend fun analyze(context: Context, stockCode: String): StockCheckResult {
@@ -309,9 +326,15 @@ class StockCheckPipeline(
         }
 
         val latest = snaps.last()
-        val closes = snaps.map { it.close }
         val stockCode = latest.code
         val name = latest.name
+
+        // ── v3: 趋势跟随模式（超短/短线牛市） ──
+        if (mode == AnalysisMode.TREND_FOLLOW) {
+            return analyzeTrendSnaps(snaps, marketMaResult)
+        }
+
+        val closes = snaps.map { it.close }
 
         // ── v2: 大盘感知 + 周期性行业 → 动态调整回望期/粘合阈值 ──
         val regime = parseMarketRegime(marketTrend)
@@ -462,12 +485,16 @@ class StockCheckPipeline(
         } else true
 
         // ═══ 13. 三日不新低确认（v2: 近3个交易日最低价不创新低，底部确认信号） ═══
+        // v3 适配：大盘向上(BULLISH)时趋势跟随，不强制"三日不新低"（上升趋势中天然不满足，
+        // 会错误过滤强势股）；仅在大盘下跌/震荡(BEARISH/NEUTRAL)或未启用时执行。
+        val requireThreeDayNow = requireThreeDayConfirm &&
+            regime != MarketRegime.BULLISH
         val threeDayNoNewLow = if (snaps.size >= 4) {
             val last3 = snaps.takeLast(3)
             val prevLow = snaps[snaps.size - 4].low
             last3.all { it.low >= prevLow }
         } else true
-        val threeDayConfirmOk = if (requireThreeDayConfirm) threeDayNoNewLow else true
+        val threeDayConfirmOk = if (requireThreeDayNow) threeDayNoNewLow else true
 
         // ═══ 统计通过项数 — 只计本周期要求的检查 ═══
         var passCount = 0
@@ -497,8 +524,8 @@ class StockCheckPipeline(
         if (requireCloseAboveConvergenceTop) { totalChecks++; if (closeAboveConvergenceTop) passCount++ }
         // ⑫ 开盘低于三线且收盘站上5日线（仅要求时计入）
         if (requireOpenBelowMAs) { totalChecks++; if (openBelowMAs) passCount++ }
-        // ⑬ 三日不新低确认（仅要求时计入，非熊市启用）
-        if (requireThreeDayConfirm) { totalChecks++; if (threeDayConfirmOk) passCount++ }
+        // ⑬ 三日不新低确认（仅要求时计入，大盘向上时不强制）
+        if (requireThreeDayNow) { totalChecks++; if (threeDayConfirmOk) passCount++ }
 
         val passed = passCount >= minPassCount
 
@@ -532,6 +559,108 @@ class StockCheckPipeline(
             pe = latest.pe,
             turnoverRate = latest.turnoverRate,
             summary = "$name(${stockCode.takeLast(4)}) 粘合${"%.1f".format(convergenceDegree)}% 通过:$passCount/$totalChecks"
+        )
+    }
+
+    /**
+     * ## v3 趋势跟随分析（超短/短线牛市模式）
+     *
+     * 大盘向上(BULLISH)时，超短/短线不再用"均线多头粘合"（上升趋势中均线发散、粘合持续/三日不新低
+     * 天然不满足，会错误过滤强势股）。改为**趋势跟随**：跟随大盘向上趋势，捕捉强势突破股。
+     *
+     * 检查项（6 项，通过 ≥5 且当日上涨）：
+     * 1. 多头排列   MA5>MA10>MA20[>MA60]（趋势向上核心）
+     * 2. 贴近新高   收盘距20日高点回撤 < 8%（强势不追高）
+     * 3. 放量       当日量/5日均量 ≥ threshold（超短1.2x/短1.0x）
+     * 4. 当日上涨   真实涨幅 > 0（突破强度）
+     * 5. MA20上行   MA20 > 前日MA20（趋势持续）
+     * 6. 站上5日线  收盘 > MA5（强势确认）
+     *
+     * 风险过滤：剔除 ST、*ST 退市风险股。
+     */
+    fun analyzeTrendSnaps(
+        snaps: List<DailySnapshotEntity>,
+        marketMaResult: Any? = null
+    ): StockCheckResult {
+        val latest = snaps.last()
+        val stockCode = latest.code
+        val name = latest.name
+
+        // 剔除 ST 退市风险股
+        if (isDelistingRisk(name)) {
+            return StockCheckResult(stockCode, name, passed = false, passCount = 0,
+                summary = "$name 为ST退市风险股，不参与趋势跟随")
+        }
+
+        val closes = snaps.map { it.close }
+        val vols = snaps.map { it.volume.toDouble() }
+
+        val ma5 = closes.takeLast(5).average()
+        val ma10 = if (closes.size >= 10) closes.takeLast(10).average() else ma5
+        val ma20 = if (closes.size >= 20) closes.takeLast(20).average() else ma5
+        val ma60 = if (closes.size >= 60) closes.takeLast(60).average() else null
+
+        val results = mutableMapOf<String, Pair<Boolean, String>>()
+
+        // ① 多头排列（趋势向上核心）
+        val bullishAligned = if (ma60 != null) ma5 > ma10 && ma10 > ma20 && ma20 > ma60
+            else ma5 > ma10 && ma10 > ma20
+        results["多头排列"] = bullishAligned to (if (bullishAligned) "多头" else "未多头")
+
+        // ② 贴近新高（突破动量）
+        val hi20 = snaps.takeLast(20).maxOfOrNull { it.high } ?: latest.high
+        val drawdownPct = if (hi20 > 0) (hi20 - latest.close) / hi20 * 100 else 999.0
+        val nearHigh = drawdownPct < 8.0
+        results["贴近新高"] = nearHigh to "回撤${"%.1f".format(drawdownPct)}%"
+
+        // ③ 放量
+        val vol5 = if (vols.size >= 6) vols.takeLast(6).dropLast(1).average() else vols.last()
+        val volumeRatio = if (vol5 > 0) latest.volume.toDouble() / vol5 else 1.0
+        val volThreshold = 1.2  // 超短/短统一，偏严格
+        val volumeOk = volumeRatio >= volThreshold
+        results["放量"] = volumeOk to "量比${"%.2f".format(volumeRatio)}"
+
+        // ④ 当日上涨（真实涨幅）
+        val changePct = latest.changePct
+        val changeOk = changePct > 0
+        results["上涨"] = changeOk to "涨${"%.2f".format(changePct)}%"
+
+        // ⑤ MA20 上行（趋势持续）
+        val ma20Up = closes.size > 20 && ma20 > closes.dropLast(1).takeLast(20).average()
+        results["MA20上行"] = ma20Up to (if (ma20Up) "上行" else "走平/下")
+
+        // ⑥ 站上5日线
+        val aboveMa5 = latest.close > ma5
+        results["站上5日线"] = aboveMa5 to (if (aboveMa5) "站上" else "跌破")
+
+        val activeOrder = listOf("多头排列", "贴近新高", "放量", "上涨", "MA20上行", "站上5日线")
+        var passCount = activeOrder.count { results[it]?.first == true }
+        val totalChecks = activeOrder.size
+        // 通过标准：≥5/6 且当日须上涨（剔除下跌股）
+        val passed = passCount >= 5 && changeOk
+
+        return StockCheckResult(
+            stockCode = stockCode,
+            stockName = name,
+            convergenceDegree = 0.0,
+            convergenceOk = false,
+            bullishAligned = bullishAligned,
+            convergenceDays = 0,
+            convergenceDurationOk = false,
+            volumeConditionOk = volumeOk,
+            volumeRatio = volumeRatio,
+            drawdownPct = drawdownPct,
+            drawdownOk = nearHigh,
+            aboveAllMAs = aboveMa5,
+            changePctOk = changeOk,
+            passCount = passCount,
+            totalChecks = totalChecks,
+            passed = passed,
+            currentPrice = latest.close,
+            pe = latest.pe,
+            turnoverRate = latest.turnoverRate,
+            summary = "$name(${stockCode.takeLast(4)}) 趋势跟随 $passCount/$totalChecks " +
+                (if (passed) "✅突破" else "观望")
         )
     }
 
@@ -586,6 +715,10 @@ class StockCheckPipeline(
             }
             if (requireThreeDayConfirm) {
                 appendLine("${++idx}. 三日不新低:     ${if (result.threeDayNoNewLow) "✅" else "❌"}")
+            }
+            // 产业主线（中线/长线）
+            if (result.industryTheme != null) {
+                appendLine("${++idx}. 产业主线:       ${if (result.industryOk) "✅ ${result.industryTheme}" else "❌ 非主线产业"}")
             }
             appendLine()
             appendLine("通过: ${result.passCount}/${result.totalChecks} ${if (result.passed) "→ ✅ 符合买入条件" else "→ ⚠ 未达标准"}")

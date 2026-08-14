@@ -93,14 +93,14 @@ interface UserWatchlistDao {
 /** AI 精选股 DAO */
 @Dao
 interface AiSelectedStockDao {
-    @Query("SELECT * FROM ai_selected_stock WHERE selected_date = :date ORDER BY score DESC") suspend fun getByDate(date: String): List<AiSelectedStockEntity>
-    @Query("SELECT * FROM ai_selected_stock ORDER BY selected_date DESC, score DESC") suspend fun getAll(): List<AiSelectedStockEntity>
-    @Query("SELECT * FROM ai_selected_stock WHERE selected_date = :date") fun getByDateFlow(date: String): kotlinx.coroutines.flow.Flow<List<AiSelectedStockEntity>>
+    @Query("SELECT * FROM ai_selected_stock WHERE selected_date = :date ORDER BY created_at DESC") suspend fun getByDate(date: String): List<AiSelectedStockEntity>
+    @Query("SELECT * FROM ai_selected_stock ORDER BY created_at DESC") suspend fun getAll(): List<AiSelectedStockEntity>
+    @Query("SELECT * FROM ai_selected_stock WHERE selected_date = :date ORDER BY created_at DESC") fun getByDateFlow(date: String): kotlinx.coroutines.flow.Flow<List<AiSelectedStockEntity>>
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(entity: AiSelectedStockEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(entities: List<AiSelectedStockEntity>)
     @Query("DELETE FROM ai_selected_stock WHERE selected_date != :today") suspend fun keepOnlyToday(today: String)
     @Query("DELETE FROM ai_selected_stock WHERE selected_date < :minDate") suspend fun deleteBeforeDate(minDate: String)
-    @Query("SELECT * FROM ai_selected_stock WHERE selected_date >= :minDate ORDER BY selected_date DESC, score DESC")
+    @Query("SELECT * FROM ai_selected_stock WHERE selected_date >= :minDate ORDER BY created_at DESC")
     suspend fun getRecentDays(minDate: String): List<AiSelectedStockEntity>
     @Query("DELETE FROM ai_selected_stock") suspend fun clearAll()
     @Query("DELETE FROM ai_selected_stock WHERE selected_date = :date") suspend fun deleteByDate(date: String)
