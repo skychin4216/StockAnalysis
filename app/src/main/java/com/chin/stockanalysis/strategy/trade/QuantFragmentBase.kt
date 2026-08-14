@@ -26,6 +26,7 @@ import com.chin.stockanalysis.strategy.HoldingPeriod
 import com.chin.stockanalysis.strategy.Strategy
 import com.chin.stockanalysis.strategy.StrategyEngine
 import com.chin.stockanalysis.strategy.topology.core.orderTypePeriod
+import com.chin.stockanalysis.strategy.topology.ui.PipelineFlowChart
 import com.chin.stockanalysis.ui.TradingDayPickerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -345,8 +346,19 @@ abstract class QuantFragmentBase : Fragment() {
             .show()
     }
 
-    /** 启动 Pipeline 拓扑编辑器 */
+    /** 打开 Pipeline：竖屏分层流程图（参考新版 UI 显示方式），可进入拓扑编辑器 */
     protected open fun openPipelineEditor() {
+        val ctx = requireContext()
+        val useCaseId = getDefaultUseCaseId()
+        PipelineFlowChart.showFlowChart(
+            context = ctx,
+            useCaseId = useCaseId,
+            onOpenEditor = { launchTopologyEditor() }
+        )
+    }
+
+    /** 启动拓扑编辑器 Activity */
+    private fun launchTopologyEditor() {
         val intent = android.content.Intent(requireContext(), com.chin.stockanalysis.strategy.topology.ui.TopologyEditorActivity::class.java)
         intent.putExtra("usecase_id", getDefaultUseCaseId())
         startActivity(intent)
