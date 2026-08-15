@@ -1,4 +1,18 @@
-# StockAnalysis 流程圖工具集（smalltools）
+# StockAnalysis smalltools 工具集
+
+> 📚 **腳本全量分類索引見 [SCRIPTS.md](SCRIPTS.md)**（回測/擬合、數據拉取、盤面分析、調試工具）
+
+## 0. 工具集總覽
+
+`smalltools` 包含三類工具：
+
+| 類別 | 說明 | 入口 |
+|------|------|------|
+| 🎨 可視化（本 README） | DAG Pipeline / 架構 / 四週期對比流程圖 | `generate_diagrams.py` |
+| 📈 回測/擬合 | 選股邏輯復刻 + 盈利回測 + 參數擬合 | `_profit_backtest.py` / `_year_backtest.py` |
+| 🔌 數據/調試 | K線緩存擴展、名稱修復、網絡診斷 | 見 `SCRIPTS.md` |
+
+---
 
 ## 1. 工具簡介
 

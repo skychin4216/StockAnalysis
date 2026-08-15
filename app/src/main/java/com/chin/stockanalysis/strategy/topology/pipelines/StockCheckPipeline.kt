@@ -146,7 +146,7 @@ class StockCheckPipeline(
          * 不再死守"均线粘合+三日不新低"（上升趋势中会错误过滤强势股）。
          * 有较大利润时配合做T/反T（见 AutoTradePortfolioEngine）。
          */
-        fun ultraShortParams() = StockCheckPipeline(
+        fun ultraShortParams(marketTrend: String? = null) = StockCheckPipeline(
             convergenceThreshold = 3.0,
             useMA60 = false,
             convergenceDurationDays = 5,
@@ -160,7 +160,8 @@ class StockCheckPipeline(
             lookbackDays = 30,
             minPassCount = 7,
             requireThreeDayConfirm = true,
-            mode = AnalysisMode.TREND_FOLLOW
+            mode = AnalysisMode.TREND_FOLLOW,
+            marketTrend = marketTrend
         )
 
         /**
@@ -168,7 +169,7 @@ class StockCheckPipeline(
          * 不再死守"均线粘合+三日不新低"（上升趋势中会错误过滤强势股）。
          * 有较大利润时配合做T/反T（见 AutoTradePortfolioEngine）。
          */
-        fun shortTermParams() = StockCheckPipeline(
+        fun shortTermParams(marketTrend: String? = null) = StockCheckPipeline(
             convergenceThreshold = 3.0,
             useMA60 = true,
             convergenceDurationDays = 10,
@@ -180,7 +181,8 @@ class StockCheckPipeline(
             lookbackDays = 60,
             minPassCount = 6,
             requireThreeDayConfirm = true,
-            mode = AnalysisMode.TREND_FOLLOW
+            mode = AnalysisMode.TREND_FOLLOW,
+            marketTrend = marketTrend
         )
 
         /**
@@ -188,7 +190,7 @@ class StockCheckPipeline(
          * 距高点跌幅 ≥ 30%
          * 适用检查：①②③④⑤⑥⑨ = 7 项（全过，对应设计 AND 语义）
          */
-        fun midTermParams() = StockCheckPipeline(
+        fun midTermParams(marketTrend: String? = null) = StockCheckPipeline(
             convergenceThreshold = 2.5,
             useMA60 = true,
             convergenceDurationDays = 15,
@@ -199,29 +201,36 @@ class StockCheckPipeline(
             requireAboveAllMAs = true,
             lookbackDays = 120,
             minPassCount = 6,
-            requireThreeDayConfirm = true
+            requireThreeDayConfirm = true,
+            marketTrend = marketTrend
         )
 
         /**
-         * 长线：极致粘合 + MA60/MA250 同步上翘(10日) + 地量 + 站稳年线
-         * 距高点跌幅 ≥ 40%，多头排列含 MA60>MA250
-         * 适用检查：①②③④⑤⑥⑦⑩ = 8 项（全过，对应设计 AND 语义）
+         * 长线：MA60/MA250 同步上翘(10日) + 地量 + 站稳年线
+         * 距高点跌幅 ≥ 20%，多头排列含 MA60>MA250
+         * 适用检查：①②③④⑤⑥⑦⑩ = 8 项（通过 minPassCount 项）
+         *
+         * 2026-08-15 一年回溯实证：原参数 minDrawdownPct=40 + minPassCount=7 与
+         * 「站上年线+MA250上升」几乎互斥（深跌40%的股票难站年线上方），一年仅 6 个信号且
+         * 全部亏损；放宽至跌 20% / 粘合 2.5 / 地量 0.7 / 通过 6 项后，信号 222 个、
+         * 平均 +4.20%、胜率 49.5%、盈亏因子 2.41（smalltools/_long_param_exp.py 实证）。
          */
-        fun longTermParams() = StockCheckPipeline(
-            convergenceThreshold = 2.0,
+        fun longTermParams(marketTrend: String? = null) = StockCheckPipeline(
+            convergenceThreshold = 2.5,
             useMA60 = true,
             convergenceDurationDays = 20,
             requireVolumeShrink = true,
-            volumeShrinkRatio = 0.5,
-            minDrawdownPct = 40.0,
+            volumeShrinkRatio = 0.7,
+            minDrawdownPct = 20.0,
             requireMA60Rising = true,
             maRisingDays = 10,
             requireMA250Rising = true,
             useMA250InBullish = true,
             requireAboveYearLine = true,
             lookbackDays = 250,
-            minPassCount = 7,
-            requireThreeDayConfirm = true
+            minPassCount = 6,
+            requireThreeDayConfirm = true,
+            marketTrend = marketTrend
         )
     }
 

@@ -10,6 +10,7 @@ import com.chin.stockanalysis.stock.database.StockDataCenter
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.Strategy
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
+import com.chin.stockanalysis.strategy.backtest.FullCycleBacktestEngine
 import com.chin.stockanalysis.strategy.backtest.StrategyOptimizer
 import com.chin.stockanalysis.strategy.data.SmartMoneyCache
 import com.chin.stockanalysis.strategy.market.MarketAdaptiveStrategy
@@ -2371,14 +2372,54 @@ class HoldingGuardNode(
 
         return try {
             val sellEngine = AutoSellEngine(context.androidContext)
+            // ── 大盘状态参数矩阵（工作台「回溯+拟合」落库） ──
+            // 中线/长线按当前大盘状态读取拟合参数；CRASH（暴跌期）强制 1 天内迅速离场
+            val currentState = FullCycleBacktestEngine.detectCurrentState(context.androidContext)
+            val crashMode = currentState == FullCycleBacktestEngine.MarketState.CRASH
+            val periodKey = when (period) {
+                "mid" -> "中线"
+                "long" -> "长线"
+                else -> period
+            }
+            val fitted = if (!crashMode)
+                FullCycleBacktestEngine.loadFitMatrix(context.androidContext, periodKey)[currentState]
+                else null
+            if (crashMode) {
+                context.log(nodeId, "🚨 $nodeName: 检测到暴跌期(CRASH)，$period 持仓强制 1 天离场")
+            } else if (fitted != null) {
+                context.log(nodeId, "$nodeName: 应用${currentState.label}拟合参数 → 持有${fitted.maxHoldDays}天 / 止盈+${fitted.takeProfitPct}% / 止损${fitted.stopLossPct}%（样本${fitted.sampleCount}，平均${"%.2f".format(fitted.avgRet)}%）")
+            }
             val decisions = sellEngine.evaluateAll(
                 effectiveStrategies,
                 AutoSellEngine.AutoSellConfig(
                     tradeDate = context.tradeDate,
-                    // 自适应止损：空头市场收紧硬止损；长期持仓放宽到 -25%
-                    hardStopLossPct = if (period == "long") -25.0
-                        else context.getAdaptiveParams()?.stopLossRate?.times(100)
+                    hardStopLossPct = when {
+                        // 暴跌期：无论中线长线，止损收紧到 -3% 快速离场
+                        crashMode -> if (period == "long") -5.0 else -3.0
+                        // 状态拟合矩阵优先
+                        fitted != null -> fitted.stopLossPct
+                        // 自适应止损：空头市场收紧硬止损；长期持仓放宽到 -25%
+                        period == "long" -> -25.0
+                        period == "mid" -> context.getAdaptiveParams()?.stopLossRate?.times(100) ?: -10.0
+                        else -> context.getAdaptiveParams()?.stopLossRate?.times(100)
                             ?: AutoSellEngine.HARD_STOP_LOSS_PCT
+                    },
+                    timeForceCloseDays = when {
+                        // 暴跌期：次日即走
+                        crashMode -> 1
+                        // 状态拟合矩阵：持有天数
+                        fitted != null -> fitted.maxHoldDays
+                        // 2026-08-15 一年回溯拟合最优参数（smalltools/out_year.txt）：
+                        // 中线：持有 15 天到期卖 / +20% 单档止盈 / -10% 止损
+                        period == "mid" -> 15
+                        else -> AutoSellEngine.TIME_FORCE_CLOSE_DAYS
+                    },
+                    tpTiers = when {
+                        crashMode -> null
+                        fitted != null -> listOf(AutoSellEngine.TakeProfitTier(fitted.takeProfitPct, 1.0))
+                        period == "mid" -> listOf(AutoSellEngine.TakeProfitTier(20.0, 1.0))
+                        else -> null
+                    }
                 )
             ).filter { orderTypePeriod(it.order.orderType) == period }
 
@@ -2386,7 +2427,8 @@ class HoldingGuardNode(
 
             // ── 长期持仓特殊保护：只卖突发利空，不卖常规止盈止损 ──
             // 长期容忍更大波动，止盈不触发，只有突发利空（单日跌幅>7%或3日累计跌幅>15%）才卖出
-            if (period == "long" && mustSell.isNotEmpty()) {
+            // 暴跌期(CRASH)跳过该保护：即使常规卖出信号也放行，确保快速离场
+            if (period == "long" && mustSell.isNotEmpty() && !crashMode) {
                 val filteredSell = mustSell.filter { decision ->
                     try {
                         val recentSnaps = db.dailySnapshotDao()

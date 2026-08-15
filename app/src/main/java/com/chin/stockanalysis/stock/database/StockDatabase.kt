@@ -136,9 +136,11 @@ interface AiSelectedStockDao {
         com.chin.stockanalysis.strategy.backtest.SectorPeriodSummaryEntity::class,
         com.chin.stockanalysis.strategy.sector.UserFocusSectorEntity::class,
         com.chin.stockanalysis.strategy.backtest.IntradayKlineEntity::class,
-        InstitutionalPickEntity::class
+        InstitutionalPickEntity::class,
+        BacktestMetaEntity::class,
+        BacktestSelectedStockEntity::class
     ],
-    version = 25,
+    version = 26,
     exportSchema = false
 )
 abstract class StockDatabase : RoomDatabase() {
@@ -168,6 +170,8 @@ abstract class StockDatabase : RoomDatabase() {
     abstract fun userFocusSectorDao(): com.chin.stockanalysis.strategy.sector.UserFocusSectorDao
     abstract fun intradayKlineDao(): com.chin.stockanalysis.strategy.backtest.IntradayKlineDao
     abstract fun institutionalPickDao(): InstitutionalPickDao
+    abstract fun backtestMetaDao(): BacktestMetaDao
+    abstract fun backtestSelectedStockDao(): BacktestSelectedStockDao
 
     companion object {
         const val DATABASE_NAME = "stock_analysis.db"
@@ -449,6 +453,43 @@ abstract class StockDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v25 → v26 迁移：新增 backtest_meta（增量回溯状态/拟合矩阵）与
+         * backtest_selected_stock（历史选中记录，中/长线长期保留、短期30天）
+         */
+        private val MIGRATION_25_26 = object : androidx.room.migration.Migration(25, 26) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `backtest_meta` (
+                        `meta_key` TEXT NOT NULL,
+                        `meta_value` TEXT NOT NULL,
+                        PRIMARY KEY(`meta_key`)
+                    )
+                """.trimIndent())
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `backtest_selected_stock` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `period` TEXT NOT NULL,
+                        `code` TEXT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `signal_date` TEXT NOT NULL,
+                        `market_state` TEXT NOT NULL,
+                        `buy_date` TEXT NOT NULL,
+                        `buy_price` REAL NOT NULL,
+                        `sell_date` TEXT,
+                        `sell_price` REAL,
+                        `ret_pct` REAL NOT NULL,
+                        `exit_reason` TEXT NOT NULL,
+                        `t_profit_pct` REAL NOT NULL,
+                        `created_at` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_backtest_selected_stock_period_signal_date_code` ON `backtest_selected_stock` (`period`, `signal_date`, `code`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_backtest_selected_stock_signal_date` ON `backtest_selected_stock` (`signal_date`)")
+                Log.i(TAG, "✅ v25→v26 迁移完成：已创建 backtest_meta / backtest_selected_stock 表（增量回溯与选中记录）")
+            }
+        }
+
         fun getInstance(context: Context): StockDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -456,7 +497,7 @@ abstract class StockDatabase : RoomDatabase() {
                     StockDatabase::class.java,
                     DATABASE_NAME
                 )
-                    .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25)
+                    .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26)
                     .fallbackToDestructiveMigration()
                     .addCallback(destructiveCallback)
                     .build()

@@ -405,7 +405,7 @@ def analyze_snaps(snaps, p, market_trend):
 # ───────────────────────── 四周期参数（与 Kotlin companion 一致） ─────────────────────────
 PARAMS = {
     "超短": dict(convergenceThreshold=3.0, useMA60=False, convergenceDurationDays=5,
-                 volumeBreakoutRatio=2.5, minChangePct=4.0, requireChangePct=True,
+                 volumeBreakoutRatio=2.5, minChangePct=2.0, requireChangePct=True,
                  minDrawdownPct=10.0, requireCloseAboveConvergenceTop=True,
                  requireOpenBelowMAs=True, lookbackDays=30, minPassCount=7,
                  requireThreeDayConfirm=True, convergenceDurationRatio=0.8,
@@ -429,14 +429,18 @@ PARAMS = {
                 useMA250InBullish=False, requireAboveYearLine=False,
                 requireCloseAboveConvergenceTop=False, requireOpenBelowMAs=False,
                 requireVolumeShrink=False, volumeBreakoutRatio=0.0),
-    "长线": dict(convergenceThreshold=2.0, useMA60=True, convergenceDurationDays=20,
-                minDrawdownPct=40.0, requireMA60Rising=True, maRisingDays=10,
+    # 长线参数修复（2026-08-15 一年回溯实证）：
+    # 原参数 minDrawdownPct=40 + requireAboveYearLine + requireMA250Rising + minPassCount=7 几乎互斥
+    # （深跌40%的股票很难还站在年线上方且MA250上升）→ 一年仅 6 个信号且全部亏损。
+    # 敏感性实验（V8 全放宽）信号 222 个、平均 +4.20%、胜率 49.5%、盈亏因子 2.41。
+    "长线": dict(convergenceThreshold=2.5, useMA60=True, convergenceDurationDays=20,
+                minDrawdownPct=20.0, requireMA60Rising=True, maRisingDays=10,
                 requireMA250Rising=True, useMA250InBullish=True, requireAboveYearLine=True,
-                requireVolumeShrink=True, volumeShrinkRatio=0.5, lookbackDays=250,
-                minPassCount=7, requireThreeDayConfirm=True, convergenceDurationRatio=0.8,
+                requireVolumeShrink=True, volumeShrinkRatio=0.7, lookbackDays=250,
+                minPassCount=6, requireThreeDayConfirm=True, convergenceDurationRatio=0.8,
                 requireChangePct=False, requireAboveAllMAs=False,
                 requireCloseAboveConvergenceTop=False, requireOpenBelowMAs=False,
-                moderateVolumeLower=0.0, moderateVolumeUpper=0.0),
+                moderateVolumeLower=0.0, moderateVolumeUpper=0.0, volumeBreakoutRatio=0.0),
 }
 
 # 光模块核心 + 池内相关个股

@@ -141,6 +141,35 @@ class QuantWorkbenchFragment : Fragment() {
         btnRow.addView(makeActionBtn("🤖 AI 分析") { runCrossPeriodAnalysis() })
         rootLayout.addView(btnRow)
 
+        // ── 多周期「回溯+拟合」引擎（超短隔日卖 / 短线连跌卖 / 中长线做T）──
+        rootLayout.addView(TextView(requireContext()).apply {
+            text = "── 多周期回溯 + 状态矩阵拟合（超短隔日/短线连跌/中长线做T） ──"
+            textSize = 11f
+            setTextColor(Color.parseColor("#2E7D32"))
+            setPadding(16, 8, 16, 4)
+            setTypeface(typeface, Typeface.BOLD.toInt())
+        })
+        val cycleRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(12, 8, 12, 8)
+        }
+        cycleRow.addView(makeActionBtn("🔄 多周期回溯") { runFullCycleBacktest() })
+        cycleRow.addView(makeActionBtn("📐 状态矩阵拟合") { runStateFit() })
+        cycleRow.addView(makeActionBtn("📋 选中记录") { showSelectedRecords() })
+        rootLayout.addView(cycleRow)
+        val dataRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(12, 0, 12, 8)
+        }
+        dataRow.addView(makeActionBtn("📥 拉取2年历史") { fetchBacktestHistory() })
+        rootLayout.addView(dataRow)
+        rootLayout.addView(TextView(requireContext()).apply {
+            text = "增量回溯：已回溯区间不重复跑；中/长线选中记录长期保留，超短/短线仅保留30天"
+            textSize = 10f
+            setTextColor(Color.parseColor("#888888"))
+            setPadding(16, 0, 16, 6)
+        })
+
         progressBar = ProgressBar(requireContext(), null, android.R.attr.progressBarStyleHorizontal).apply {
             visibility = View.GONE
             setPadding(16, 8, 16, 4)
@@ -328,6 +357,137 @@ class QuantWorkbenchFragment : Fragment() {
                 withContext(Dispatchers.Main) {
                     setBusy(false, "❌ 自测拟合失败: ${e.message?.take(40)}")
                     Toast.makeText(requireContext(), "自测拟合失败: ${e.message?.take(40)}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════
+    // 多周期「回溯+拟合」引擎
+    // ═══════════════════════════════════════════════════
+
+    /**
+     * 多周期全流程回溯（增量）：
+     * 超短隔日卖 / 短线连跌卖 / 中长线做T+止盈止损，固定本金口径统计。
+     * 已回溯的信号日不重复跑（backtest_meta 记录进度）；中/长线记录持久化，短期只留30天。
+     */
+    private fun runFullCycleBacktest() {
+        setBusy(true, "🔄 多周期回溯中（增量）...")
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val ctx = requireContext()
+                val results = com.chin.stockanalysis.strategy.backtest.FullCycleBacktestEngine.runAll(ctx) { msg ->
+                    withContext(Dispatchers.Main) { statusTv.text = msg.take(60) }
+                }
+                val sb = StringBuilder()
+                for (r in results) sb.appendLine(r.report)
+                sb.appendLine()
+                sb.appendLine("周期   信号  平均       胜率    固定本金累计  盈亏因子")
+                for (r in results) {
+                    val pf = if (r.profitFactor == Double.POSITIVE_INFINITY) "∞" else "%.2f".format(r.profitFactor)
+                    sb.appendLine("${r.period}   ${r.realizedCount}   ${"%.2f".format(r.avgRet).padStart(8)}%  ${"%.1f".format(r.winRate).padStart(5)}%  ${"%.2f".format(r.fixedCum).padStart(9)}%  $pf")
+                }
+                sb.appendLine()
+                sb.appendLine("💾 中/长线选中记录已持久化（backtest_selected_stock），超短/短线仅保留30天")
+                sb.appendLine("下次点击「🔄 多周期回溯」只回溯新增区间")
+                withContext(Dispatchers.Main) {
+                    setBusy(false, "✅ 多周期回溯完成")
+                    showDialog("多周期回溯报告（固定本金口径）", sb.toString())
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "多周期回溯失败: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    setBusy(false, "❌ 回溯失败: ${e.message?.take(40)}")
+                    Toast.makeText(requireContext(), "回溯失败: ${e.message?.take(40)}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    /** 按大盘状态对中/长线网格拟合卖出参数，产出状态参数矩阵并落库（HoldingGuardNode 自动应用） */
+    private fun runStateFit() {
+        setBusy(true, "📐 状态矩阵拟合中...")
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val ctx = requireContext()
+                val sb = StringBuilder()
+                for (period in listOf("中线", "长线")) {
+                    try {
+                        val res = com.chin.stockanalysis.strategy.backtest.FullCycleBacktestEngine.fitByState(ctx, period) { msg ->
+                            withContext(Dispatchers.Main) { statusTv.text = msg.take(60) }
+                        }
+                        sb.appendLine(res.report)
+                    } catch (e: Exception) {
+                        sb.appendLine("[$period] 拟合异常: ${e.message?.take(50)}")
+                    }
+                }
+                sb.appendLine()
+                sb.appendLine("✅ 参数矩阵已落库 backtest_meta；HoldingGuardNode 按当前大盘状态自动应用")
+                sb.appendLine("暴跌期(CRASH)强制 1 天迅速离场，不依赖矩阵参数")
+                withContext(Dispatchers.Main) {
+                    setBusy(false, "✅ 状态矩阵拟合完成")
+                    showDialog("状态参数矩阵", sb.toString())
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "状态矩阵拟合失败: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    setBusy(false, "❌ 拟合失败: ${e.message?.take(40)}")
+                    Toast.makeText(requireContext(), "拟合失败: ${e.message?.take(40)}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    /** 查看历史选中记录（中/长线长期保留） */
+    private fun showSelectedRecords() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val list = db.backtestSelectedStockDao().getByPeriods(listOf("中线", "长线"))
+                val recent = list.take(60)
+                val sb = StringBuilder()
+                if (recent.isEmpty()) {
+                    sb.append("暂无选中记录。\n\n请先点击「🔄 多周期回溯」执行回溯，再回来查看。")
+                } else {
+                    sb.appendLine("中/长线选中记录共 ${list.size} 条（显示最近 60 条）")
+                    sb.appendLine("─".repeat(48))
+                    for (r in recent) {
+                        sb.appendLine("${r.signalDate} ${r.period} ${r.name}(${r.code.takeLast(6)})")
+                        sb.appendLine("  [${r.marketState}] 买${r.buyDate}@${"%.2f".format(r.buyPrice)} → 卖${r.sellDate ?: "持有中"} 收益${"%.2f".format(r.retPct)}% 做T+${"%.2f".format(r.tProfitPct)}% [${r.exitReason}]")
+                    }
+                    sb.appendLine()
+                    sb.appendLine("（超短/短线记录仅保留30天，不在本列表展示）")
+                }
+                withContext(Dispatchers.Main) { showDialog("历史选中记录", sb.toString()) }
+            } catch (e: Exception) {
+                Log.e(TAG, "查看选中记录失败: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(requireContext(), "查看记录失败: ${e.message?.take(40)}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    /** 拉取 2024 年至今的历史K线（回填一年回溯窗口 + MA250 回看） */
+    private fun fetchBacktestHistory() {
+        setBusy(true, "📥 拉取 2024 年至今历史K线...")
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
+                val count = fetcher.fetchAllHistoricalData(days = 550, force = true) { p ->
+                    requireActivity().runOnUiThread {
+                        statusTv.text = "📥 拉取中 ${p.completedStocks}/${p.totalStocks} 只 · ${p.totalRecords} 条 · ${p.currentStock}"
+                    }
+                }
+                withContext(Dispatchers.Main) {
+                    setBusy(false, "✅ 历史数据拉取完成：$count 条")
+                    Toast.makeText(requireContext(), "历史数据已更新：$count 条，可执行回溯", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "拉取历史失败: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    setBusy(false, "❌ 拉取失败: ${e.message?.take(40)}")
+                    Toast.makeText(requireContext(), "拉取失败: ${e.message?.take(40)}", Toast.LENGTH_LONG).show()
                 }
             }
         }

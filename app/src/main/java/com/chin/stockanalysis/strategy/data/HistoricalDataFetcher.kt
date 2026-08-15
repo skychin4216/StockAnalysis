@@ -143,7 +143,8 @@ class HistoricalDataFetcher(private val context: Context) {
         val startMs = System.currentTimeMillis()
         val endDate = LocalDate.now()
         var startDate = startDateOverride
-            ?: (if (force && days < 500) LocalDate.of(2024, 1, 1) else endDate.minusDays((days * 1.5).toLong()))
+            // force=true 一律回填到 2024-01-01：工作台「回溯+拟合」需要一年窗口 + MA250 回看
+            ?: (if (force) LocalDate.of(2024, 1, 1) else endDate.minusDays((days * 1.5).toLong()))
 
         Log.i(TAG, "========== FETCH START ==========")
         Log.i(TAG, "  Date range: ${startDate.format(STORE_FMT)} ~ ${endDate.format(STORE_FMT)}")
@@ -612,9 +613,37 @@ class HistoricalDataFetcher(private val context: Context) {
         return Pair(emptyList(), "")
     }
 
+    /**
+     * 东财日 K 抓取（分段回填）。
+     * 单次 lmt=300 上限约 1.2 年交易日；工作台「回溯+拟合」需 2 年回看，
+     * 因此从 endDate 向前分段抓取直到覆盖 startDate，再按日期去重合并。
+     */
     private suspend fun fetchFromEastMoney(code: String, startDate: LocalDate, endDate: LocalDate): Pair<List<DailySnapshotEntity>, String>? {
         val market = if (code.startsWith("sh")) 1 else if (code.startsWith("bj")) 1 else 0
         val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
+        val all = mutableListOf<DailySnapshotEntity>()
+        var stockName = ""
+        var curEnd = endDate
+        var guard = 0
+        while (guard < 10 && !curEnd.isBefore(startDate)) {
+            val chunk = fetchEastMoneyChunk(code, market, pureCode, startDate, curEnd)
+            if (chunk == null) break
+            if (chunk.first.isEmpty()) break
+            all.addAll(chunk.first)
+            if (stockName.isBlank()) stockName = chunk.second
+            val earliest = chunk.first.minByOrNull { it.date } ?: break
+            val earliestDate = try { LocalDate.parse(earliest.date, STORE_FMT) } catch (_: Exception) { break }
+            if (!earliestDate.isAfter(startDate)) break
+            curEnd = earliestDate.minusDays(1)
+            guard++
+        }
+        if (all.isEmpty()) return null
+        val deduped = all.distinctBy { it.date }.sortedBy { it.date }
+        return Pair(deduped, stockName)
+    }
+
+    /** 单次东财 K 线请求（lmt=300），带指数退避重试 */
+    private suspend fun fetchEastMoneyChunk(code: String, market: Int, pureCode: String, startDate: LocalDate, endDate: LocalDate): Pair<List<DailySnapshotEntity>, String>? {
         val beg = startDate.format(DATE_FMT)
         val end = endDate.format(DATE_FMT)
         val url = "${DataConfig.eastmoneyPush2his}/stock/kline/get?" +
@@ -626,7 +655,7 @@ class HistoricalDataFetcher(private val context: Context) {
             try {
                 if (attempt > 0) {
                     val delayMs = 500L * (1 shl attempt) // 指数退避: 1000ms, 2000ms
-                    Log.d(TAG, "  EastMoney retry $attempt for $code after ${delayMs}ms")
+                    Log.d(TAG, "  EastMoney retry $attempt for $pureCode after ${delayMs}ms")
                     kotlinx.coroutines.delay(delayMs)
                 }
                 val req = Request.Builder().url(url)
@@ -634,7 +663,7 @@ class HistoricalDataFetcher(private val context: Context) {
                     .addHeader("Referer", DataConfig.eastmoneyQuote)
                     .build()
                 val resp = client.newCall(req).execute()
-                if (!resp.isSuccessful) { Log.d(TAG, "  EastMoney #$attempt HTTP ${resp.code} for $code"); continue }
+                if (!resp.isSuccessful) { Log.d(TAG, "  EastMoney #$attempt HTTP ${resp.code} for $pureCode"); continue }
                 val body = resp.body?.string() ?: continue
                 val data = JSONObject(body).optJSONObject("data") ?: continue
                 val klines = data.optJSONArray("klines") ?: continue
@@ -656,14 +685,14 @@ class HistoricalDataFetcher(private val context: Context) {
                         changePct = parts[8].toDoubleOrNull() ?: 0.0, turnoverRate = 0.0, mainNetInflow = 0.0))
                 }
                 if (attempt > 0) {
-                    Log.d(TAG, "  EastMoney retry success for $code after $attempt attempts")
+                    Log.d(TAG, "  EastMoney retry success for $pureCode after $attempt attempts")
                 }
                 return Pair(results, stockName)
             } catch (e: Exception) {
                 val err = e.message?.take(60) ?: "unknown"
-                Log.d(TAG, "  EastMoney #$attempt for $code: $err")
+                Log.d(TAG, "  EastMoney #$attempt for $pureCode: $err")
                 if (attempt == maxRetries) {
-                    Log.w(TAG, "  EastMoney gave up on $code after $maxRetries retries")
+                    Log.w(TAG, "  EastMoney gave up on $pureCode after $maxRetries retries")
                 }
             }
         }

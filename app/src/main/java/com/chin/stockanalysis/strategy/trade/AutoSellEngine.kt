@@ -57,13 +57,15 @@ class AutoSellEngine(private val context: Context) {
         const val MA_SHORT = 5
         const val MA_LONG = 20
 
-        data class TakeProfitTier(val profitPct: Double, val sellRatio: Double)
         val TP_TIERS = listOf(
             TakeProfitTier(10.0, 0.33),
             TakeProfitTier(15.0, 0.33),
             TakeProfitTier(20.0, 1.0)
         )
     }
+
+    /** 止盈档位：profitPct=盈利百分比阈值，sellRatio=达到时卖出的比例 */
+    data class TakeProfitTier(val profitPct: Double, val sellRatio: Double)
 
     data class AutoSellConfig(
         val tradeDate: String = LocalDate.now().format(DATE_FMT),
@@ -81,7 +83,10 @@ class AutoSellEngine(private val context: Context) {
         val enableSectorWeakness: Boolean = true,
         val volumeSurgeMult: Double = VOLUME_SURGE_MULT,
         val volumeClimaxPricePct: Double = VOLUME_CLIMAX_PRICE_PCT,
-        val rsiOverbought: Int = RSI_OVERBOUGHT
+        val rsiOverbought: Int = RSI_OVERBOUGHT,
+        // 自定义止盈档位：null 时用默认 TP_TIERS（10/15/20% 阶梯）
+        // 2026-08-15 一年回溯拟合：中线最优为 单档 +20% 全卖（持有15天/-10%止损）
+        val tpTiers: List<TakeProfitTier>? = null
     )
 
     data class SellDecision(
@@ -93,7 +98,9 @@ class AutoSellEngine(private val context: Context) {
         val strategy: String,
         val sellRatio: Double = 1.0,
         val urgency: Int = 0,
-        val technicalDetails: Map<String, String> = emptyMap()
+        val technicalDetails: Map<String, String> = emptyMap(),
+        // 触发档位索引（用于 executeSells 记录已减仓档位；-1 表示非阶梯止盈）
+        val tierIndex: Int = -1
     )
 
     data class SellPerformanceStats(
@@ -235,17 +242,19 @@ class AutoSellEngine(private val context: Context) {
 
         // ④ 阶梯止盈（已减仓过的档位不再重复触发，避免多次评估重复减仓）
         if (config.enableTieredTP) {
+            val tiers = config.tpTiers ?: TP_TIERS
             val takenTiers = takenTpTiers(snap.order.reason)
-            for (tier in TP_TIERS.reversed()) {
-                val tierIndex = TP_TIERS.indexOf(tier)
+            for (tier in tiers.reversed()) {
+                val tierIndex = tiers.indexOf(tier)
                 if (takenTiers.contains(tierIndex)) continue
                 if (snap.profitPct >= tier.profitPct) {
                     return SellDecision(snap.order,
                         "🎯 阶梯止盈: +${"%.1f".format(snap.profitPct)}% 触发第${tierIndex+1}档",
                         snap.currentPrice, snap.profitPct, true, "TieredTP", tier.sellRatio, 5,
                         mapOf("trigger" to "阶梯止盈",
-                            "tier" to "${tierIndex+1}/${TP_TIERS.size}",
-                            "sellRatio" to "${(tier.sellRatio*100).toInt()}%"))
+                            "tier" to "${tierIndex+1}/${tiers.size}",
+                            "sellRatio" to "${(tier.sellRatio*100).toInt()}%"),
+                        tierIndex = tierIndex)
                 }
             }
         }
@@ -361,12 +370,10 @@ class AutoSellEngine(private val context: Context) {
                     val soldQuantity = (dec.order.quantity * dec.sellRatio).toInt().coerceAtLeast(1)
                     db.strategyTradeOrderDao().updateQuantity(dec.order.id, dec.order.quantity - soldQuantity)
                     // 记录已减仓的档位，防止后续评估对同一档重复减仓
-                    if (dec.strategy == "TieredTP") {
-                        val tierIndex = TP_TIERS.indexOfFirst { kotlin.math.abs(it.sellRatio - dec.sellRatio) < 1e-6 }
-                        if (tierIndex >= 0 && !takenTpTiers(dec.order.reason).contains(tierIndex)) {
-                            db.strategyTradeOrderDao().updateReason(
-                                dec.order.id, dec.order.reason + "[TP_TIER_${tierIndex + 1}]")
-                        }
+                    if (dec.strategy == "TieredTP" && dec.tierIndex >= 0 &&
+                        !takenTpTiers(dec.order.reason).contains(dec.tierIndex)) {
+                        db.strategyTradeOrderDao().updateReason(
+                            dec.order.id, dec.order.reason + "[TP_TIER_${dec.tierIndex + 1}]")
                     }
                     db.strategyTradeOrderDao().insert(StrategyTradeOrderEntity(
                         strategyId = dec.order.strategyId, stockCode = dec.order.stockCode,

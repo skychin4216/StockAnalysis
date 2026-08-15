@@ -65,15 +65,17 @@
     <!-- 增强 Layer 3 -->
     <Node id="n_boost" name="板块加权" module="sector_boost" />
     <Node id="n_bounce" name="跌后反弹加分" module="bounce_reversal" />
+    <!-- 长线参数修复（2026-08-15 一年回溯实证）：原 minDrawdownPct=40 + minPassCount=7 与
+         站上年线+MA250上升几乎互斥 → 一年仅6信号且全亏；放宽后 222 信号、平均+4.20%、因子2.41 -->
     <Node id="n_strict" name="均线粘合严选" module="strict_selection">
       <config>
-        <param name="convergenceThreshold" value="2.0" />
+        <param name="convergenceThreshold" value="2.5" />
         <param name="useMA60" value="true" />
         <param name="convergenceDurationDays" value="20" />
         <param name="convergenceDurationRatio" value="0.8" />
         <param name="requireVolumeShrink" value="true" />
-        <param name="volumeShrinkRatio" value="0.5" />
-        <param name="minDrawdownPct" value="40.0" />
+        <param name="volumeShrinkRatio" value="0.7" />
+        <param name="minDrawdownPct" value="20.0" />
         <param name="requireMA60Rising" value="true" />
         <param name="maRisingDays" value="10" />
         <param name="requireMA250Rising" value="true" />
@@ -83,7 +85,7 @@
         <param name="swingLeftN" value="5" />
         <param name="swingRightN" value="2" />
         <param name="lookbackDays" value="250" />
-        <param name="minPassCount" value="7" />
+        <param name="minPassCount" value="6" />
       </config>
     </Node>
     <Node id="n_base_guard" name="打底仓守门" module="base_position_guard">
