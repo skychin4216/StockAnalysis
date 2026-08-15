@@ -6,7 +6,7 @@
     <string name="nav_chat">Chat</string>
     <string name="nav_agent">Agent</string>
     <string name="nav_stock">Stocks</string>
-    <string name="nav_strategy">Strategy</string>
+    <string name="nav_strategy">Quant Picks</string>
     <string name="nav_mine">Me</string>
 
     <!-- AI Chat -->
@@ -45,6 +45,10 @@
     <string name="tab_long">Long</string>
     <string name="tab_real">Real</string>
     <string name="tab_stock_picking">Quant</string>
+    <string name="tab_strategy">Strategy</string>
+    <string name="tab_data">Data</string>
+    <string name="tab_my_workbench">Workbench</string>
+    <string name="tab_ai_analysis">AI Analysis</string>
 
     <!-- Real Holdings -->
     <string name="real_holding_title">📌 Real Holdings</string>

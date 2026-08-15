@@ -90,6 +90,7 @@
         <param name="swingRightN" value="2" />
         <param name="lookbackDays" value="60" />
         <param name="minPassCount" value="6" />
+        <param name="period" value="short" />
       </config>
     </Node>
     <Node id="n_ancestral" name="大A祖训" module="ancestral_rules">

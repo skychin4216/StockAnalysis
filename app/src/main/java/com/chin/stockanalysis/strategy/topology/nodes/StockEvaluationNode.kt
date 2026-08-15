@@ -3,6 +3,7 @@ package com.chin.stockanalysis.strategy.topology.nodes
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.topology.core.*
 import com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline
+import com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline.Companion.AnalysisMode
 
 /**
  * ## 个股评估检查节点（均线多头粘合选股）
@@ -74,11 +75,20 @@ class StockEvaluationNode(
     val moderateVolumeLower: Double = 1.2,
     val moderateVolumeUpper: Double = 1.8,
     val lookbackDays: Int = 120,
-    val minPassCount: Int = 7
+    val minPassCount: Int = 7,
+    /** 本节点服务的周期（ultra_short / short / mid / long），决定牛市时是否启用趋势跟随模式（B11） */
+    val period: String = ""
 ) : BaseNode<MergedSignalPool, MergedSignalPool>("strict_selection", "均线粘合严选", NodeType.FILTER) {
 
     companion object {
         private const val TAG = "StockEvaluation"
+    }
+
+    /** 超短/短线在牛市启用趋势跟随（对应 StockCheckPipeline.ultraShortParams/shortTermParams），否则恒走均线粘合 */
+    private fun resolveMode(marketTrend: String?): AnalysisMode {
+        val trendFollow = period in setOf("ultra_short", "short") &&
+            marketTrend?.contains("BULL", ignoreCase = true) == true
+        return if (trendFollow) AnalysisMode.TREND_FOLLOW else AnalysisMode.CONVERGENCE
     }
 
     /** 构建 StockCheckPipeline，注入大盘趋势（运行时从 context 获取） */
@@ -105,6 +115,7 @@ class StockEvaluationNode(
         lookbackDays = lookbackDays,
         minPassCount = minPassCount,
         marketTrend = marketTrend,
+        mode = resolveMode(marketTrend),
         requireThreeDayConfirm = true
     )
 
@@ -118,7 +129,8 @@ class StockEvaluationNode(
 
         val pipeline = buildPipeline(marketTrend)
         if (marketTrend != null) {
-            context.log(nodeId, "ℹ️ 大盘趋势: $marketTrend → 动态调整粘合阈值/回望期")
+            context.log(nodeId, "ℹ️ 大盘趋势: $marketTrend → 模式:${pipeline.mode}（周期:$period）" +
+                if (pipeline.mode == AnalysisMode.TREND_FOLLOW) "，超短/短线启用趋势跟随" else "，均线粘合严选")
         }
 
         val passedMap = mutableMapOf<String, StockEvaluationDetail>()
@@ -228,11 +240,18 @@ class StockEvaluationNode(
                     "建议重点优化实仓持仓：做T/反T降低成本，或逢高减仓控制风险")
                 return MergedSignalPool(emptyMap(), emptyMap(), emptyList())
             } else {
-                // 牛市/震荡：通道A无输出，候选原样流入通道B（趋势策略仍可处理）
+                // 牛市/震荡：通道A无输出，候选流入通道B（趋势策略仍可处理）。
+                // B12: 过滤数据不足/异常的候选，避免无效股票一并透传给趋势通道
+                val invalidCodes = insufficientCodes.toSet() + errorCodes.toSet()
+                val passHits = input.stockHits.filterKeys { it !in invalidCodes }
+                val passNames = input.stockNames.filterKeys { it in passHits }
+                val passSignals = input.boostedSignals.filter { it.stockCode in passHits }
                 context.log(nodeId,
                     "ℹ️ $nodeName 大盘${marketTrend ?: "未知"}，通道A无候选通过，" +
-                    "${inputCount} 只候选透传给通道B趋势通道")
-                return input
+                    "${passHits.size} 只有效候选透传给通道B趋势通道" +
+                    (if (invalidCodes.isNotEmpty()) "（已过滤数据不足/异常 ${invalidCodes.size} 只）" else ""))
+                if (passHits.isEmpty()) return MergedSignalPool(emptyMap(), emptyMap(), emptyList())
+                return MergedSignalPool(passHits, passNames, passSignals)
             }
         }
         val filteredSignals = input.boostedSignals.filter { it.stockCode in passedCodes }

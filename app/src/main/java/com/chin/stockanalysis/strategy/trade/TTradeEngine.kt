@@ -110,9 +110,9 @@ class TTradeEngine(private val context: Context) {
         // 趋势方向判断
         val trendDir = analyzeTrendDirection(snaps, ma5, ma10, ma20, rsi, topPattern)
 
-        // 做T数量：底仓的 40%
-        val tQty = if (basePositionQty > 0) {
-            ((basePositionQty * 0.4).toInt().coerceAtLeast(100) / 100) * 100
+        // 做T数量：底仓的 40%（四舍五入到整手；不足一手或底仓不足一手时不触发）
+        val tQty = if (basePositionQty >= 100) {
+            minOf((basePositionQty * 0.4).toInt() / 100 * 100, basePositionQty / 100 * 100)
         } else 0
 
         // ── 做T买入信号 ──
@@ -209,8 +209,11 @@ class TTradeEngine(private val context: Context) {
         }
 
         // ── 配对腿信号 ──
+        val today = java.time.LocalDate.now().toString()
         val openTrades = db.tTradeRecordDao().getOpenTrades(periodType)
             .filter { it.stockCode == stockCode }
+            // B1: A股T+1 — 当日做T买入(T_BUY)不可当日卖出配对，须隔日方可卖出
+            .filter { !(it.tradeType == "T_BUY" && it.tradeDate == today) }
         for (openTrade in openTrades) {
             when (openTrade.tradeType) {
                 "T_BUY" -> {
@@ -219,7 +222,7 @@ class TTradeEngine(private val context: Context) {
                             TTradeSignal(
                                 stockCode = stockCode, stockName = stockName,
                                 signalType = TTradeType.T_SELL,
-                                suggestedPrice = latest.close, targetPrice = latest.close,
+                                suggestedPrice = latest.close, targetPrice = openTrade.price * 1.005,
                                 quantity = openTrade.quantity,
                                 reason = "做T买入(${openTrade.price})已到目标，卖出配对锁定利润；趋势:$trendDir",
                                 expectedProfitPct = (latest.close - openTrade.price) / openTrade.price * 100,
@@ -236,7 +239,7 @@ class TTradeEngine(private val context: Context) {
                             TTradeSignal(
                                 stockCode = stockCode, stockName = stockName,
                                 signalType = TTradeType.RT_BUY,
-                                suggestedPrice = latest.close, targetPrice = latest.close,
+                                suggestedPrice = latest.close, targetPrice = openTrade.price * 0.995,
                                 quantity = openTrade.quantity,
                                 reason = "反T卖出(${openTrade.price})已到目标，买回配对锁定利润；趋势:$trendDir",
                                 expectedProfitPct = (openTrade.price - latest.close) / openTrade.price * 100,
@@ -329,7 +332,11 @@ class TTradeEngine(private val context: Context) {
             val targetType = if (signal.signalType == TTradeType.T_SELL) "T_BUY" else "RT_SELL"
             val openTrade = db.tTradeRecordDao()
                 .getOpenTrades(periodType)
-                .firstOrNull { it.stockCode == signal.stockCode && it.tradeType == targetType }
+                .firstOrNull {
+                    it.stockCode == signal.stockCode && it.tradeType == targetType &&
+                    // B1: A股T+1 — 当日做T买入(T_BUY)不可当日卖出配对，须隔日
+                    !(targetType == "T_BUY" && it.tradeDate == today)
+                }
 
             if (openTrade != null && openTrade.price > 0) {
                 val pairedPrice = signal.suggestedPrice
@@ -346,10 +353,20 @@ class TTradeEngine(private val context: Context) {
                 db.tTradeRecordDao().closeTrade(openTrade.id, pairedPrice, profit, profitPct)
                 return openTrade.id
             }
-            // 找不到对应开仓腿：配对腿不能作为开仓腿落库（generateSignals 只会为
-            // T_BUY/RT_SELL 生成配对，落库成 OPEN 将形成永久未平仓的孤儿记录），直接忽略
+            // 找不到对应开仓腿（或受T+1限制当日不可配对）：配对腿不能作为开仓腿落库
+            // （generateSignals 只会为 T_BUY/RT_SELL 生成配对，落库成 OPEN 将形成永久未平仓的孤儿记录），直接忽略
             android.util.Log.w("TTradeEngine",
-                "⚠️ 配对腿 ${signal.signalType} 未找到开仓腿($targetType)，已忽略: ${signal.stockCode}")
+                "⚠️ 配对腿 ${signal.signalType} 未找到可配对开仓腿($targetType)，已忽略: ${signal.stockCode}")
+            return 0L
+        }
+
+        // B2: 开仓腿去重 — 已有同股票同类型未平仓记录时跳过，避免重复开仓产生孤儿记录
+        val existsOpen = db.tTradeRecordDao()
+            .getOpenTrades(periodType)
+            .any { it.stockCode == signal.stockCode && it.tradeType == tradeType }
+        if (existsOpen) {
+            android.util.Log.w("TTradeEngine",
+                "⚠️ 开仓腿 ${signal.signalType}($tradeType) 已有未平仓记录，去重跳过: ${signal.stockCode}")
             return 0L
         }
 
@@ -375,6 +392,13 @@ class TTradeEngine(private val context: Context) {
     suspend fun closeTTrade(tradeId: Long, pairedPrice: Double) {
         val db = StockDatabase.getInstance(context)
         val trade = db.tTradeRecordDao().getById(tradeId) ?: return
+
+        // B1: A股T+1 — 当日做T买入(T_BUY)不可当日手动配对卖出
+        if (trade.tradeType == "T_BUY" && trade.tradeDate == java.time.LocalDate.now().toString()) {
+            android.util.Log.w("TTradeEngine",
+                "⚠️ T+1 限制：当日买入的做T仓位不可当日配对卖出（${trade.stockCode}），请隔日再配对")
+            return
+        }
 
         val profit = when (trade.tradeType) {
             "T_BUY" -> (pairedPrice - trade.price) * trade.quantity

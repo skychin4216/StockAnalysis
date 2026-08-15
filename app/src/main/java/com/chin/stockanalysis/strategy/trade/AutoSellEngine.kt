@@ -134,8 +134,9 @@ class AutoSellEngine(private val context: Context) {
     ): List<SellDecision> = withContext(Dispatchers.IO) {
         val decisions = mutableListOf<SellDecision>()
         try {
+            // B7: 只评估已成交持仓（BUYING=建仓中 / HELD=持有），PENDING 是未成交挂单，不参与卖出评估
             val holdingOrders = db.strategyTradeOrderDao().getRecent(500)
-                .filter { it.status == "BUYING" || it.status == "PENDING" || it.status == "HELD" }
+                .filter { it.status == "BUYING" || it.status == "HELD" }
             if (holdingOrders.isEmpty()) return@withContext decisions
 
             val todayData = getTradingDayData(config.tradeDate)
@@ -164,7 +165,8 @@ class AutoSellEngine(private val context: Context) {
                     Log.w(TAG, "盘中实时价获取失败: ${e.message}")
                 }
             }
-            val recentDates = db.dailySnapshotDao().getAvailableDates(30).sorted()
+            // B8: 回撤/最高价需覆盖持仓全周期（最长持仓可达一年），取近 250 个交易日
+            val recentDates = db.dailySnapshotDao().getAvailableDates(250).sorted()
             val priceHistory = buildPriceHistory(recentDates)
             val volumeHistory = buildVolumeHistory(recentDates)
             val sectorChanges = getSectorChangePct(config.tradeDate)
@@ -421,7 +423,7 @@ class AutoSellEngine(private val context: Context) {
 
     private suspend fun buildPriceHistory(dates: List<String>): Map<String, List<Double>> {
         val map = mutableMapOf<String, MutableList<Double>>()
-        for (date in dates.takeLast(30)) {
+        for (date in dates) {
             try { db.dailySnapshotDao().getByDate(date).forEach { map.getOrPut(it.code){ mutableListOf() }.add(it.close) } }
             catch (_: Exception) {}
         }
@@ -430,7 +432,7 @@ class AutoSellEngine(private val context: Context) {
 
     private suspend fun buildVolumeHistory(dates: List<String>): Map<String, List<Long>> {
         val map = mutableMapOf<String, MutableList<Long>>()
-        for (date in dates.takeLast(30)) {
+        for (date in dates) {
             try { db.dailySnapshotDao().getByDate(date).forEach { map.getOrPut(it.code){ mutableListOf() }.add(it.volume) } }
             catch (_: Exception) {}
         }
@@ -450,9 +452,9 @@ class AutoSellEngine(private val context: Context) {
             val sectorNameToChange = db.sectorDailyRecordDao().getByDate(date)
                 .associate { it.sectorName to it.changePct }
             if (sectorNameToChange.isEmpty()) return map
-            // 每只持仓股票 → 所属板块跌幅（取最差）
+            // 每只持仓股票 → 所属板块跌幅（取最差）；只统计已成交持仓
             val holdings = db.strategyTradeOrderDao().getRecent(500)
-                .filter { it.status == "BUYING" || it.status == "PENDING" || it.status == "HELD" }
+                .filter { it.status == "BUYING" || it.status == "HELD" }
             for (order in holdings) {
                 val sectorChanges = db.sectorStockDao().getSectorNamesByStockCode(order.stockCode)
                     .mapNotNull { sectorNameToChange[it] }

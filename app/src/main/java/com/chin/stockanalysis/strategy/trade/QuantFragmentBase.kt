@@ -613,12 +613,14 @@ abstract class QuantFragmentBase : Fragment() {
      * @param tradingDays 回测天数
      * @param titlePrefix 标题前缀
      * @param extraInfo 额外信息行（如 "持仓: 1天 | 止损: -2%"）
+     * @param periodKey 落库周期键（null 时按 holdingPeriod 推导：UltraShortQuant/ShortTermQuant/MidTermQuant/LongTermQuant）
      */
     protected fun runHistoricalBacktrack(
         holdingPeriod: HoldingPeriod?,
         tradingDays: Int,
         titlePrefix: String,
-        extraInfo: String = ""
+        extraInfo: String = "",
+        periodKey: String? = null
     ) {
         val eng = engine ?: return
         buildBtn.isEnabled = false; buildBtn.text = "⏳ 回溯中..."
@@ -643,6 +645,38 @@ abstract class QuantFragmentBase : Fragment() {
 
                 val backtestEngine = com.chin.stockanalysis.strategy.backtest.HistoricalBacktestEngine(requireContext())
                 val report = backtestEngine.runHistoricalBacktest(strategies, tradingDays = tradingDays)
+
+                // P0: 回溯结果落库（按周期分别保存，供工作台统一对比 / Agent 跨周期分析）
+                try {
+                    val resolvedPeriodKey = periodKey ?: when (holdingPeriod) {
+                        HoldingPeriod.ULTRA_SHORT -> "UltraShortQuant"
+                        HoldingPeriod.SHORT -> "ShortTermQuant"
+                        HoldingPeriod.MID -> "MidTermQuant"
+                        HoldingPeriod.LONG -> "LongTermQuant"
+                        null -> "ShortTermQuant"
+                    }
+                    val today = java.time.LocalDate.now().toString()
+                    val entities = report.strategyReports.map { r ->
+                        com.chin.stockanalysis.strategy.trade.StrategyTradeBacktestEntity(
+                            periodKey = resolvedPeriodKey,
+                            strategyId = r.strategyId,
+                            strategyName = r.strategyName,
+                            tradeDate = today,
+                            totalDays = r.totalDays,
+                            signalCount = r.totalBuys,
+                            correctCount = r.correctBuys,
+                            accuracy = r.buyAccuracy.toDouble(),
+                            avgReturn = r.avgReturn,
+                            maxGain = r.maxGain,
+                            maxLoss = r.maxLoss
+                        )
+                    }
+                    StockDatabase.getInstance(requireContext()).strategyTradeBacktestDao()
+                        .insertAll(entities)
+                    Log.i("QuantFragmentBase", "✅ ${titlePrefix}回溯结果已落库 ${entities.size} 条 (periodKey=$resolvedPeriodKey, date=$today)")
+                } catch (e: Exception) {
+                    Log.w("QuantFragmentBase", "${titlePrefix}回溯结果落库失败: ${e.message}")
+                }
 
                 val sb = StringBuilder()
                 sb.appendLine("${titlePrefix}回溯测试报告 (${tradingDays}交易日)")
@@ -3673,24 +3707,30 @@ abstract class QuantFragmentBase : Fragment() {
                     }
                 }
 
-                // 实时行情补充：获取今日实时价格，确保盘中也能看到最新价和盈亏
+                // 实时行情补充：仅在交易日使用实时价格。非交易日/休市时价格固定为最近交易日快照，
+                // 避免刚买入的股票被实时接口返回的价格覆盖而出现虚假涨幅（非交易日价格不应变化）
                 val todayStr = browsingDate.format(DATE_FMT)
-                val realtimeMap = try {
-                    com.chin.stockanalysis.stock.data.StockDataSourceFactory
-                        .createDefaultRepository(requireContext().applicationContext)
-                        .getRealtime(orders.map { it.stockCode })
-                } catch (_: Exception) { emptyMap() }
-                if (realtimeMap.isNotEmpty()) {
-                    for ((code, rt) in realtimeMap) {
-                        if (rt.price > 0) {
-                            priceMap.getOrPut(code) { mutableMapOf() }[todayStr] = rt.price
+                val isTradingDate = try {
+                    com.chin.stockanalysis.ui.TradingDayPickerView.isTradingDay(browsingDate)
+                } catch (_: Exception) { false }
+                if (isTradingDate) {
+                    val realtimeMap = try {
+                        com.chin.stockanalysis.stock.data.StockDataSourceFactory
+                            .createDefaultRepository(requireContext().applicationContext)
+                            .getRealtime(orders.map { it.stockCode })
+                    } catch (_: Exception) { emptyMap() }
+                    if (realtimeMap.isNotEmpty()) {
+                        for ((code, rt) in realtimeMap) {
+                            if (rt.price > 0) {
+                                priceMap.getOrPut(code) { mutableMapOf() }[todayStr] = rt.price
+                            }
                         }
-                    }
-                    // 确保今日日期在 dates 列表中（盘中快照可能尚未入库）
-                    if (todayStr !in dates) {
-                        dates.toMutableList().also {
-                            it.add(todayStr); it.sort()
-                        }.let { dates = it }
+                        // 确保今日日期在 dates 列表中（盘中快照可能尚未入库）
+                        if (todayStr !in dates) {
+                            dates.toMutableList().also {
+                                it.add(todayStr); it.sort()
+                            }.let { dates = it }
+                        }
                     }
                 }
 
@@ -3935,8 +3975,10 @@ abstract class QuantFragmentBase : Fragment() {
             orientation = LinearLayout.HORIZONTAL; setPadding(0, 2, 0, 4)
             setBackgroundColor(Color.parseColor("#EEEEEE"))
         }
-        for (header in listOf("股票", "建仓日", "成本"))
-            headerRow.addView(createCell(header, 84, "#666666", 10f, bold = true))
+        // 列头宽度必须与下方数据行单元格宽度一一对应，否则垂直方向错位
+        headerRow.addView(createCell("股票", 84, "#666666", 10f, bold = true))
+        headerRow.addView(createCell("建仓日", 60, "#666666", 10f, bold = true))
+        headerRow.addView(createCell("成本", 60, "#666666", 10f, bold = true))
         headerRow.addView(createCell(sectionTitle, 45, "#666666", 9f, bold = true))
         if (showMultiDayPrices) {
             for (date in dates) {
@@ -3945,7 +3987,7 @@ abstract class QuantFragmentBase : Fragment() {
         } else if (dates.isNotEmpty()) {
             headerRow.addView(createCell("今日", 60, "#666666", 10f, bold = true))
         }
-        headerRow.addView(createCell("卖出", 48, "#666666", 9f, bold = true))
+        headerRow.addView(createCell("卖出", 50, "#666666", 9f, bold = true))
         table.addView(headerRow)
 
         for (order in orders) {

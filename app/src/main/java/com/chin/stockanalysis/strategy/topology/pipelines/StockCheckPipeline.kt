@@ -151,7 +151,8 @@ class StockCheckPipeline(
             useMA60 = false,
             convergenceDurationDays = 5,
             volumeBreakoutRatio = 2.5,
-            minChangePct = 4.0,
+            // B13: 震荡市均线粘合不追高，4% 降至 2%（TREND_FOLLOW 模式走 analyzeTrendSnaps，不读此参数）
+            minChangePct = 2.0,
             requireChangePct = true,
             minDrawdownPct = 10.0,
             requireCloseAboveConvergenceTop = true,

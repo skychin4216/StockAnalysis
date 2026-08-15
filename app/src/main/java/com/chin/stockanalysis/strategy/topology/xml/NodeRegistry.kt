@@ -76,7 +76,8 @@ object NodeRegistry {
                 moderateVolumeLower = config["moderateVolumeLower"]?.toDoubleOrNull() ?: 1.2,
                 moderateVolumeUpper = config["moderateVolumeUpper"]?.toDoubleOrNull() ?: 1.8,
                 lookbackDays = config["lookbackDays"]?.toIntOrNull() ?: 120,
-                minPassCount = config["minPassCount"]?.toIntOrNull() ?: 7
+                minPassCount = config["minPassCount"]?.toIntOrNull() ?: 7,
+                period = config["period"] ?: ""
             )
         }
         register("base_position_guard") { _, config ->

@@ -125,6 +125,7 @@ interface AiSelectedStockDao {
         com.chin.stockanalysis.strategy.trade.StrategyTradeFittingParamEntity::class,
         com.chin.stockanalysis.strategy.trade.DailyNewsHotPickEntity::class,
         com.chin.stockanalysis.strategy.trade.StrategyTradeOrderEntity::class,
+        com.chin.stockanalysis.strategy.trade.StrategyTradeBacktestEntity::class,
         UserWatchlistEntity::class,
         AiSelectedStockEntity::class,
         com.chin.stockanalysis.strategy.topology.nodes.InstitutionalTipEntity::class,
@@ -137,7 +138,7 @@ interface AiSelectedStockDao {
         com.chin.stockanalysis.strategy.backtest.IntradayKlineEntity::class,
         InstitutionalPickEntity::class
     ],
-    version = 24,
+    version = 25,
     exportSchema = false
 )
 abstract class StockDatabase : RoomDatabase() {
@@ -156,6 +157,7 @@ abstract class StockDatabase : RoomDatabase() {
     abstract fun strategyTradeFittingParamDao(): com.chin.stockanalysis.strategy.trade.StrategyTradeFittingParamDao
     abstract fun dailyNewsHotPickDao(): com.chin.stockanalysis.strategy.trade.DailyNewsHotPickDao
     abstract fun strategyTradeOrderDao(): com.chin.stockanalysis.strategy.trade.StrategyTradeOrderDao
+    abstract fun strategyTradeBacktestDao(): com.chin.stockanalysis.strategy.trade.StrategyTradeBacktestDao
     abstract fun userWatchlistDao(): UserWatchlistDao
     abstract fun aiSelectedStockDao(): AiSelectedStockDao
     abstract fun institutionalTipDao(): com.chin.stockanalysis.strategy.topology.nodes.InstitutionalTipDao
@@ -420,6 +422,33 @@ abstract class StockDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v24 → v25 迁移：新增 strategy_trade_backtests 表（历史回溯结果落库，按周期分别保存）
+         */
+        private val MIGRATION_24_25 = object : androidx.room.migration.Migration(24, 25) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `strategy_trade_backtests` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `period_key` TEXT NOT NULL,
+                        `strategy_id` TEXT NOT NULL,
+                        `strategy_name` TEXT NOT NULL,
+                        `trade_date` TEXT NOT NULL,
+                        `total_days` INTEGER NOT NULL,
+                        `signal_count` INTEGER NOT NULL,
+                        `correct_count` INTEGER NOT NULL,
+                        `accuracy` REAL NOT NULL,
+                        `avg_return` REAL NOT NULL,
+                        `max_gain` REAL NOT NULL,
+                        `max_loss` REAL NOT NULL,
+                        `created_at` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_strategy_trade_backtests_period_key_strategy_id_trade_date` ON `strategy_trade_backtests` (`period_key`, `strategy_id`, `trade_date`)")
+                Log.i(TAG, "✅ v24→v25 迁移完成：已创建 strategy_trade_backtests 表（回溯结果落库）")
+            }
+        }
+
         fun getInstance(context: Context): StockDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -427,7 +456,7 @@ abstract class StockDatabase : RoomDatabase() {
                     StockDatabase::class.java,
                     DATABASE_NAME
                 )
-                    .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24)
+                    .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25)
                     .fallbackToDestructiveMigration()
                     .addCallback(destructiveCallback)
                     .build()

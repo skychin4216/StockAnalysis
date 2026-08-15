@@ -76,7 +76,8 @@
         <param name="convergenceDurationDays" value="5" />
         <param name="convergenceDurationRatio" value="0.8" />
         <param name="volumeBreakoutRatio" value="2.5" />
-        <param name="minChangePct" value="4.0" />
+        <!-- B13: 震荡市均线粘合不追高，当日涨幅要求从 4% 降至 2%（牛市趋势跟随模式不受此参数影响） -->
+        <param name="minChangePct" value="2.0" />
         <param name="requireChangePct" value="true" />
         <param name="minDrawdownPct" value="10.0" />
         <param name="requireCloseAboveConvergenceTop" value="true" />
@@ -86,6 +87,7 @@
         <param name="swingRightN" value="2" />
         <param name="lookbackDays" value="30" />
         <param name="minPassCount" value="7" />
+        <param name="period" value="ultra_short" />
       </config>
     </Node>
     <Node id="n_ancestral" name="大A祖训" module="ancestral_rules">

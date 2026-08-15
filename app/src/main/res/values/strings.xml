@@ -6,7 +6,7 @@
     <string name="nav_chat">对话</string>
     <string name="nav_agent">智能体</string>
     <string name="nav_stock">股票</string>
-    <string name="nav_strategy">策略</string>
+    <string name="nav_strategy">量化选股</string>
     <string name="nav_mine">我的</string>
 
     <!-- AI 聊天 -->
@@ -45,6 +45,10 @@
     <string name="tab_long">长线</string>
     <string name="tab_real">实仓</string>
     <string name="tab_stock_picking">量化</string>
+    <string name="tab_strategy">策略</string>
+    <string name="tab_data">数据</string>
+    <string name="tab_my_workbench">我的工作台</string>
+    <string name="tab_ai_analysis">AI 分析</string>
 
     <!-- 实仓 -->
     <string name="real_holding_title">📌 真实持仓</string>

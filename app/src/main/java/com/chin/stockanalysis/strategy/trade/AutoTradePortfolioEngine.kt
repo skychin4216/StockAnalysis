@@ -300,13 +300,17 @@ class AutoTradePortfolioEngine(private val context: Context) {
         if (best.confidence < 55) return null   // 置信度门槛，过滤噪声
 
         // 做T数量：底仓 × 40%，四舍五入到整手
+        // B5: 不足一手不做T，避免小底仓（如100股）被放大为满仓做T
         var tQty = ((pos.quantity * T_QTY_RATIO).toInt() / 100) * 100
-        if (tQty <= 0) tQty = 100
+        if (tQty <= 0) return null
 
-        // 反T卖出不能超过底仓（保证当日能买回）
-        if (best.signalType == TTradeType.RT_SELL) {
-            tQty = minOf(tQty, pos.quantity / 100 * 100)
-        }
+        // 做T买入/卖出数量均不能超过底仓（做T买入在T+1后也须能卖出；反T卖出保证当日能买回）
+        tQty = minOf(tQty, pos.quantity / 100 * 100)
+
+        // 买入类决策（T_BUY 做T买入 / RT_BUY 反T买回）需确保现金充足
+        if ((best.signalType == TTradeType.T_BUY || best.signalType == TTradeType.RT_BUY) &&
+            cash < price * tQty
+        ) return null
 
         return TTradeDecision(
             stockCode = pos.stockCode, stockName = pos.stockName, periodType = period,
@@ -326,7 +330,32 @@ class AutoTradePortfolioEngine(private val context: Context) {
             reason = decision.reason, expectedProfitPct = decision.expectedProfitPct,
             periodType = decision.periodType, confidence = 60
         )
-        tEngine.executeTTrade(signal, decision.periodType)
+        val tradeId = tEngine.executeTTrade(signal, decision.periodType)
+        // B6: 做T/反T资金与持仓同步，做T利润计入现金与总资产
+        if (tradeId > 0) {
+            val cost = decision.price * decision.quantity
+            val pos = holdings.firstOrNull {
+                it.stockCode == decision.stockCode && it.periodType == decision.periodType
+            }
+            when (decision.tradeType) {
+                TTradeType.T_BUY -> cash -= cost                       // 做T买入：占用现金（T+1后由T_SELL收回）
+                TTradeType.T_SELL -> cash += cost                      // 做T卖出：收回现金（含做T利润）
+                TTradeType.RT_SELL -> {                                // 反T卖出：底仓临时减少，现金增加
+                    if (pos != null && pos.quantity >= decision.quantity) {
+                        cash += cost
+                        pos.quantity -= decision.quantity
+                        pos.marketValue = pos.avgCost * pos.quantity
+                    }
+                }
+                TTradeType.RT_BUY -> {                                 // 反T买回：底仓恢复，现金减少（净效果=反T利润）
+                    if (pos != null && cash >= cost) {
+                        cash -= cost
+                        pos.quantity += decision.quantity
+                        pos.marketValue = pos.avgCost * pos.quantity
+                    }
+                }
+            }
+        }
         Log.i(TAG, "🤖 自动${decision.tradeType.label} ${decision.stockName} " +
             "${decision.quantity}股 @${decision.price} (${decision.periodType})")
     }

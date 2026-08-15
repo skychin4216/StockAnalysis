@@ -6,7 +6,7 @@
     <string name="nav_chat">채팅</string>
     <string name="nav_agent">에이전트</string>
     <string name="nav_stock">주식</string>
-    <string name="nav_strategy">전략</string>
+    <string name="nav_strategy">퀀트 선정</string>
     <string name="nav_mine">나의</string>
 
     <!-- AI 채팅 -->
@@ -45,6 +45,10 @@
     <string name="tab_long">장기</string>
     <string name="tab_real">실계좌</string>
     <string name="tab_stock_picking">퀀트</string>
+    <string name="tab_strategy">전략</string>
+    <string name="tab_data">데이터</string>
+    <string name="tab_my_workbench">내 작업대</string>
+    <string name="tab_ai_analysis">AI 분석</string>
 
     <!-- 실계좌 -->
     <string name="real_holding_title">📌 실제 보유</string>

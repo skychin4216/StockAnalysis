@@ -22,7 +22,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * ## 策略栏目 — v11.0 四周期+实仓 改版
+ * ## 策略栏目 — v12.0 量化选股 改版
  *
  * 顶部六 Tab：
  * - Tab 0：超短线 (UltraShortQuantFragment) — 持仓1天，T+1卖出
@@ -30,7 +30,7 @@ import kotlinx.coroutines.withContext
  * - Tab 2：中线量化 (MidTermQuantFragment) — 持仓1~6个月
  * - Tab 3：长线量化 (LongTermQuantFragment) — 持仓6月~1年
  * - Tab 4：实仓 (RealHoldingQuantFragment) — 真实持仓管理
- * - Tab 5：量化选股 (StrategyListFragment) — 策略沙盒
+ * - Tab 5：量化选股 (QuantPickingFragment) — 内部 4 Tab：策略 / 数据 / 我的工作台 / AI 分析
  */
 class StrategyFragment : Fragment() {
 
@@ -76,15 +76,15 @@ class StrategyFragment : Fragment() {
 
         // 绑定
         TabLayoutMediator(tabLayout, viewPager) { tab, position ->
-            tab.text = when (position) {
-                0 -> getString(com.chin.stockanalysis.R.string.tab_ultra_short)
-                1 -> getString(com.chin.stockanalysis.R.string.tab_short)
-                2 -> getString(com.chin.stockanalysis.R.string.tab_mid)
-                3 -> getString(com.chin.stockanalysis.R.string.tab_long)
-                4 -> getString(com.chin.stockanalysis.R.string.tab_real)
-                5 -> getString(com.chin.stockanalysis.R.string.tab_stock_picking)
-                else -> ""
-            }
+        tab.text = when (position) {
+        0 -> getString(com.chin.stockanalysis.R.string.tab_ultra_short)
+        1 -> getString(com.chin.stockanalysis.R.string.tab_short)
+        2 -> getString(com.chin.stockanalysis.R.string.tab_mid)
+        3 -> getString(com.chin.stockanalysis.R.string.tab_long)
+        4 -> getString(com.chin.stockanalysis.R.string.tab_real)
+        5 -> getString(com.chin.stockanalysis.R.string.tab_stock_picking)
+        else -> ""
+        }
         }.attach()
 
         // MODE_FIXED 下每个 tab 平均分配屏幕宽度；清除默认最小宽度与内边距，避免挤压不均
@@ -164,7 +164,7 @@ class StrategyFragment : Fragment() {
                 2 -> com.chin.stockanalysis.strategy.trade.MidTermQuantFragment()
                 3 -> com.chin.stockanalysis.strategy.trade.LongTermQuantFragment()
                 4 -> com.chin.stockanalysis.strategy.trade.RealHoldingQuantFragment()
-                5 -> StrategyListFragment()
+                5 -> QuantPickingFragment()
                 else -> throw IllegalStateException("Unknown position: $position")
             }
         }

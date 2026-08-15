@@ -29,7 +29,7 @@ import kotlinx.coroutines.withContext
 /**
  * 主 Activity — 豆包风格五 Tab 布局
  *
- * 对话(0) | 智能体(1) | 股票(2) | 策略(3) | 我的(4)
+ * 对话(0) | 智能体(1) | 股票(2) | 量化选股(3) | 我的(4)
  */
 class MainActivity : AppCompatActivity() {
 

@@ -115,6 +115,46 @@ interface StrategyTradeFittingParamDao {
     suspend fun getBestAccuracy(sid: String, date: String, period: Int): Double?
 }
 
+// ═══ 历史回溯结果落库（P0：按周期分别保存，供工作台统一对比 / Agent 跨周期分析） ═══
+
+@androidx.room.Entity(
+    tableName = "strategy_trade_backtests",
+    indices = [
+        androidx.room.Index(value = ["period_key", "strategy_id", "trade_date"], unique = true)
+    ]
+)
+data class StrategyTradeBacktestEntity(
+    @androidx.room.PrimaryKey(autoGenerate = true) val id: Long = 0,
+    @androidx.room.ColumnInfo(name = "period_key") val periodKey: String,
+    @androidx.room.ColumnInfo(name = "strategy_id") val strategyId: String,
+    @androidx.room.ColumnInfo(name = "strategy_name") val strategyName: String,
+    @androidx.room.ColumnInfo(name = "trade_date") val tradeDate: String,
+    @androidx.room.ColumnInfo(name = "total_days") val totalDays: Int,
+    @androidx.room.ColumnInfo(name = "signal_count") val signalCount: Int,
+    @androidx.room.ColumnInfo(name = "correct_count") val correctCount: Int,
+    @androidx.room.ColumnInfo(name = "accuracy") val accuracy: Double,
+    @androidx.room.ColumnInfo(name = "avg_return") val avgReturn: Double,
+    @androidx.room.ColumnInfo(name = "max_gain") val maxGain: Double,
+    @androidx.room.ColumnInfo(name = "max_loss") val maxLoss: Double,
+    @androidx.room.ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis()
+)
+
+@androidx.room.Dao
+interface StrategyTradeBacktestDao {
+    @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
+    suspend fun insertAll(entities: List<StrategyTradeBacktestEntity>)
+    @androidx.room.Query("SELECT * FROM strategy_trade_backtests WHERE period_key = :periodKey ORDER BY trade_date DESC, accuracy DESC")
+    suspend fun getByPeriod(periodKey: String): List<StrategyTradeBacktestEntity>
+    @androidx.room.Query("SELECT * FROM strategy_trade_backtests ORDER BY trade_date DESC, period_key, accuracy DESC")
+    suspend fun getAll(): List<StrategyTradeBacktestEntity>
+    @androidx.room.Query("SELECT * FROM strategy_trade_backtests WHERE period_key = :periodKey AND trade_date = :tradeDate ORDER BY accuracy DESC")
+    suspend fun getByPeriodAndDate(periodKey: String, tradeDate: String): List<StrategyTradeBacktestEntity>
+    @androidx.room.Query("SELECT DISTINCT trade_date FROM strategy_trade_backtests ORDER BY trade_date DESC LIMIT :limit")
+    suspend fun getAvailableDates(limit: Int = 30): List<String>
+    @androidx.room.Query("DELETE FROM strategy_trade_backtests WHERE period_key = :periodKey AND trade_date = :tradeDate")
+    suspend fun deleteByPeriodAndDate(periodKey: String, tradeDate: String)
+}
+
 @androidx.room.Dao
 interface DailyNewsHotPickDao {
     @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)

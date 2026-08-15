@@ -1712,9 +1712,11 @@ class GenerateOrdersNode(
                 }
 
                 strictPicks.sortByDescending { it.score }
-                val longTermOrders = strictPicks.take(2).map { sp ->
+                val longTermOrders = strictPicks.take(2).mapNotNull { sp ->
                     val snap = strictSnapMap[sp.pick.stockCode]
                     val buyPrice = snap?.close ?: 0.0
+                    // B9: 非交易日/缺快照时买价无效则跳过，避免 buyPrice=0 入库
+                    if (buyPrice <= 0) return@mapNotNull null
                     context.log(nodeId, "🎯 长线严选: ${sp.pick.stockName}(${sp.pick.stockCode}) " +
                         "PE=${"%.1f".format(snap?.pe ?: 0.0)} 评分=${"%.0f".format(sp.score)} " +
                         "均线粘合✓ 三日不新低✓ 历史低位✓ 低PE✓ 冰点埋伏")
@@ -1828,6 +1830,8 @@ class GenerateOrdersNode(
                         val dividendScore = pbScore + sectorScore + capScore + roeScore
 
                         val buyPrice = bearSnapMap[pick.stockCode]?.close ?: latest.close
+                        // B9: 买价无效则跳过，避免 buyPrice=0 入库
+                        if (buyPrice <= 0) continue
                         baseCandidates.add(BasePickCandidate(pick, buyPrice, stabilizingSignal, isDefensive, dividendScore))
 
                     } catch (_: Exception) {}
@@ -1912,9 +1916,11 @@ class GenerateOrdersNode(
                 com.chin.stockanalysis.stock.database.StockNameResolver.resolveBatch(context.androidContext, blankNameCodes)
             } else emptyMap()
 
-            val orders = finalCandidates.mapIndexed { index, pick ->
+            val orders = finalCandidates.mapIndexedNotNull { index, pick ->
                 val snap = snapMap[pick.stockCode]
                 val buyPrice = snap?.close ?: 0.0
+                // B9: 非交易日/缺快照时买价无效则跳过，避免 buyPrice=0 入库
+                if (buyPrice <= 0) return@mapIndexedNotNull null
                 val resolvedName = if (pick.stockName.isNotBlank()) pick.stockName
                     else resolvedNames[pick.stockCode] ?: pick.stockName
                 val preSignalTag = if (isPreSignal) " [预信号]" else ""
