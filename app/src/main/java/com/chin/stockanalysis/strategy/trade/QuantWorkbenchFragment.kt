@@ -74,6 +74,11 @@ class QuantWorkbenchFragment : Fragment() {
         uri?.let { doImport(it) }
     }
 
+    /** PC 拟合参数文件选择器（backtest_params.json 回传） */
+    private val paramsPicker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { doImportParams(it) }
+    }
+
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
@@ -186,6 +191,7 @@ class QuantWorkbenchFragment : Fragment() {
         }
         cycleRow.addView(makeActionBtn("🔄 多周期回溯") { runFullCycleBacktest() })
         cycleRow.addView(makeActionBtn("📐 状态矩阵拟合") { runStateFit() })
+        cycleRow.addView(makeActionBtn("📤 导出拟合") { exportFitMatrix() })
         cycleRow.addView(makeActionBtn("📋 选中记录") { showSelectedRecords() })
         rootLayout.addView(cycleRow)
         val dataRow = LinearLayout(requireContext()).apply {
@@ -193,6 +199,7 @@ class QuantWorkbenchFragment : Fragment() {
             setPadding(12, 0, 12, 8)
         }
         dataRow.addView(makeActionBtn("📥 拉取2年历史") { fetchBacktestHistory() })
+        dataRow.addView(makeActionBtn("🧬 参数导入") { paramsPicker.launch("application/json") })
         rootLayout.addView(dataRow)
         rootLayout.addView(TextView(requireContext()).apply {
             text = "增量回溯：已回溯区间不重复跑；中/长线选中记录长期保留，超短/短线仅保留30天"
@@ -464,6 +471,98 @@ class QuantWorkbenchFragment : Fragment() {
                 withContext(Dispatchers.Main) {
                     setBusy(false, "❌ 拟合失败: ${e.message?.take(40)}")
                     Toast.makeText(requireContext(), "拟合失败: ${e.message?.take(40)}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    /**
+     * 📤 导出本机拟合矩阵（backtest_meta → sell_rules 结构 JSON），
+     * 供 PC 端 smalltools 纳入下次 walk-forward 拟合（边买卖边完善 PC 拟合）。
+     * 文件写到 app 外部私有目录 pc_fit_export/，Toast 显示完整路径。
+     */
+    private fun exportFitMatrix() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val ctx = requireContext()
+                val db = StockDatabase.getInstance(ctx)
+                val root = org.json.JSONObject()
+                root.put("exported_at", java.time.LocalDate.now().toString())
+                root.put("source", "StockAnalysis APK 本机拟合导出 → PC walk-forward 素材")
+                val sellRules = org.json.JSONObject()
+                for (period in listOf("超短", "短线", "中线", "长线")) {
+                    val json = db.backtestMetaDao().get("fit_matrix_$period") ?: continue
+                    val matrix = org.json.JSONObject(json)
+                    val periodObj = org.json.JSONObject()
+                    val byState = org.json.JSONObject()
+                    var defaultRule: org.json.JSONObject? = null
+                    val keys = matrix.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        val item = matrix.optJSONObject(k) ?: continue
+                        val rule = org.json.JSONObject()
+                        rule.put("style", when (period) {
+                            "超短" -> "nextday"
+                            "短线" -> "streak"
+                            else -> "hold"
+                        })
+                        rule.put("maxHold", item.optInt("hold", 15))
+                        rule.put("tp", item.optDouble("tp", 20.0))
+                        rule.put("sl", item.optDouble("sl", -10.0))
+                        if (item.has("avg")) rule.put("avg", item.optDouble("avg"))
+                        if (item.has("wr")) rule.put("wr", item.optDouble("wr"))
+                        if (item.has("n")) rule.put("n", item.optInt("n"))
+                        byState.put(k, rule)
+                        if (k == "OSCILLATION") defaultRule = rule
+                    }
+                    if (defaultRule != null) periodObj.put("default", defaultRule)
+                    periodObj.put("by_state", byState)
+                    sellRules.put(period, periodObj)
+                }
+                root.put("sell_rules", sellRules)
+                val dir = File(ctx.getExternalFilesDir(null) ?: ctx.filesDir, "pc_fit_export").apply { mkdirs() }
+                val file = File(dir, "fit_matrix_${java.time.LocalDate.now()}.json")
+                file.writeText(root.toString(2))
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(ctx, "已导出拟合矩阵: ${file.absolutePath}", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "导出拟合矩阵失败: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(requireContext(), "导出失败: ${e.message?.take(50)}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    /**
+     * 🧬 参数导入：PC 端更新后的 backtest_params.json（含最新 select_params/rank_factors/sell_rules）
+     * 导入 APK → BacktestParamsLoader 写入 filesDir 并立即生效。这是「边买卖边完善 PC 拟合」闭环的回传入口。
+     */
+    private fun doImportParams(uri: android.net.Uri) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val text = requireContext().contentResolver.openInputStream(uri)
+                    ?.bufferedReader()?.use { it.readText() }
+                if (text.isNullOrBlank()) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(requireContext(), "文件为空", Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+                val err = com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader
+                    .importParams(requireContext().applicationContext, text)
+                withContext(Dispatchers.Main) {
+                    if (err == null) {
+                        Toast.makeText(requireContext(), "✅ 参数已导入，选股/排序/卖出全部立即生效", Toast.LENGTH_LONG).show()
+                    } else {
+                        Toast.makeText(requireContext(), "❌ $err", Toast.LENGTH_LONG).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "参数导入失败: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(requireContext(), "导入失败: ${e.message?.take(50)}", Toast.LENGTH_LONG).show()
                 }
             }
         }

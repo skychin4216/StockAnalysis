@@ -1902,7 +1902,9 @@ class GenerateOrdersNode(
                 maxStockCount
             }
             val buyCap = minOf(effectiveCap, maxOf(availableSlots, if (holdingCount >= 3) 1 else 0))
-            val finalCandidates = candidates
+            // ── 长线 ml_prob 加权（增强点2）：PC 端 KNN 模型未来30日上涨概率并入排序，与 AI 精选链同口径 ──
+            val rankedCandidates = if (orderType.contains("Long")) applyMlProbRanking(context, db, candidates) else candidates
+            val finalCandidates = rankedCandidates
                 .sortedByDescending { it.compositeScore }
                 .take(buyCap)
 
@@ -1977,6 +1979,36 @@ class GenerateOrdersNode(
             )
             OrderGenerationResult(emptyList(), 0, false)
         }
+    }
+
+    /**
+     * 长线建仓候选叠加 PC 端 KNN ml_prob 加权（增强点2）：
+     * 与 AI 精选链（UnifiedStockClassifier.classifyAll）同口径——用 PC 训练的长线模型
+     * 计算未来30日上涨概率，按 (prob-0.5)*40 并入 compositeScore（Int），
+     * 保证「选股排序」与「建仓排序」一致。模型不可用/异常时原样返回。
+     */
+    private suspend fun applyMlProbRanking(
+        context: PipelineContext,
+        db: StockDatabase,
+        candidates: List<AIPredictionEngine.AIPick>
+    ): List<AIPredictionEngine.AIPick> {
+        if (candidates.size <= 1) return candidates
+        return try {
+            val pipeline = StockCheckPipeline.longTermParams(marketTrend = null)
+            val cache = HashMap<String, StockCheckPipeline.StockCheckResult>()
+            candidates.map { pick ->
+                val prob = try {
+                    val r = cache.getOrPut(pick.stockCode) { pipeline.analyze(db, pick.stockCode) }
+                    com.chin.stockanalysis.strategy.trade.MlKnnModel.probability(context.androidContext, r)
+                } catch (_: Exception) { null }
+                if (prob == null) pick
+                else {
+                    val delta = (prob - 0.5) * 40.0
+                    context.log(nodeId, "🧠 ${pick.stockName}(${pick.stockCode}) ml_prob=${"%.3f".format(prob)} 排序加权${if (delta >= 0) "+" else ""}${"%.0f".format(delta)}")
+                    pick.copy(compositeScore = pick.compositeScore + delta.toInt())
+                }
+            }
+        } catch (_: Exception) { candidates }
     }
 }
 

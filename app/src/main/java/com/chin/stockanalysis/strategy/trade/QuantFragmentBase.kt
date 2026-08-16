@@ -988,7 +988,7 @@ abstract class QuantFragmentBase : Fragment() {
                     try {
                         val strategies = eng.getStrategies().filter { eng.isEnabled(it.id) }
                         val sellEngine = AutoSellEngine(appCtx)
-                        sellEngine.evaluateAll(strategies, AutoSellEngine.AutoSellConfig(tradeDate = browsingDate.format(DATE_FMT)))
+                        sellEngine.evaluateAll(strategies, buildFittedSellConfig(appCtx, browsingDate.format(DATE_FMT)))
                             .filter { it.order.orderType == getQuantType() }
                     } catch (e: Exception) {
                         Log.w("QuantBase", "卖出评估载入失败: ${e.message}")
@@ -1210,6 +1210,43 @@ abstract class QuantFragmentBase : Fragment() {
         popup.show()
     }
 
+    /** 当前周期 → sell_rules 中文键（PC 拟合参数键名） */
+    protected open fun getSellRulePeriod(): String? = when (getQuantType()) {
+        "UltraShortQuant" -> "超短"
+        "ShortTermQuant" -> "短线"
+        "MidTermQuant" -> "中线"
+        "LongTermQuant" -> "长线"
+        else -> null
+    }
+
+    /**
+     * 构造套用 PC 拟合卖出参数的 AutoSellConfig：
+     * 中/长线（style=hold）：单档止盈全卖 + 拟合硬止损 + 拟合最长持有天数；
+     * 超短/短线（style=nextday/streak）：仅覆盖最长持有天数，保留默认 4 级阶梯信号。
+     * 无拟合数据或加载失败 → 降级为默认配置（硬编码 4 级信号）。
+     */
+    protected suspend fun buildFittedSellConfig(appCtx: android.content.Context, tradeDate: String): AutoSellEngine.AutoSellConfig {
+        val periodCn = getSellRulePeriod()
+        val base = AutoSellEngine.AutoSellConfig(tradeDate = tradeDate)
+        if (periodCn == null) return base
+        return try {
+            com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader.load(appCtx)
+            val state = com.chin.stockanalysis.strategy.backtest.FullCycleBacktestEngine.detectCurrentState(appCtx)
+            val fitted = com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader.sellRule(periodCn, state)
+            if (fitted == null) base
+            else AutoSellEngine.AutoSellConfig(
+                tradeDate = tradeDate,
+                hardStopLossPct = fitted.stopLossPct,
+                timeForceCloseDays = fitted.maxHoldDays,
+                tpTiers = if (periodCn == "超短" || periodCn == "短线") base.tpTiers
+                          else listOf(AutoSellEngine.TakeProfitTier(fitted.takeProfitPct, 1.0))
+            )
+        } catch (e: Exception) {
+            Log.w("QuantBase", "构建拟合卖出配置失败: ${e.message}")
+            base
+        }
+    }
+
     /** 执行卖出评估（仅评估，不执行） */
     protected fun runAutoSellEvaluation() {
         val eng = engine ?: return
@@ -1222,8 +1259,8 @@ abstract class QuantFragmentBase : Fragment() {
                 val appCtx = requireContext().applicationContext
                 val sellEngine = AutoSellEngine(appCtx)
 
-                // 1. 评估持仓 (strategy_trade_order)
-                val holdingDecisions = sellEngine.evaluateAll(strategies, AutoSellEngine.AutoSellConfig(tradeDate = browsingDate.format(DATE_FMT)))
+                // 1. 评估持仓 (strategy_trade_order) —— 套用 PC 拟合卖出参数（增强点1）
+                val holdingDecisions = sellEngine.evaluateAll(strategies, buildFittedSellConfig(appCtx, browsingDate.format(DATE_FMT)))
                     .filter { it.order.orderType == getQuantType() }
                     .toMutableList()
 
