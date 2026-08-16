@@ -14,6 +14,7 @@ import androidx.viewpager2.adapter.FragmentStateAdapter
 import androidx.viewpager2.widget.ViewPager2
 import com.chin.stockanalysis.ApiConfigManager
 import com.chin.stockanalysis.config.FeatureFlagManager
+import com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader
 import com.chin.stockanalysis.config.LanguageManager
 import com.chin.stockanalysis.R
 import com.chin.stockanalysis.conversation.ConversationRepository
@@ -60,6 +61,8 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         initGlobalServices()
+        // 加载三年 walk-forward 固化参数（assets/backtest_params.json），失败时静默降级到代码默认
+        BacktestParamsLoader.load(applicationContext)
         setupSystemBars()
         setupViewPager()
         setupBottomNavigation()

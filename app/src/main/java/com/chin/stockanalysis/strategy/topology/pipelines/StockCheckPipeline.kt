@@ -3,6 +3,7 @@ package com.chin.stockanalysis.strategy.topology.pipelines
 import android.content.Context
 import android.util.Log
 import com.chin.stockanalysis.stock.database.StockDatabase
+import com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
 import kotlin.math.ceil
 
@@ -146,64 +147,74 @@ class StockCheckPipeline(
          * 不再死守"均线粘合+三日不新低"（上升趋势中会错误过滤强势股）。
          * 有较大利润时配合做T/反T（见 AutoTradePortfolioEngine）。
          */
-        fun ultraShortParams(marketTrend: String? = null) = StockCheckPipeline(
-            convergenceThreshold = 3.0,
-            useMA60 = false,
-            convergenceDurationDays = 5,
-            volumeBreakoutRatio = 2.5,
-            // B13: 震荡市均线粘合不追高，4% 降至 2%（TREND_FOLLOW 模式走 analyzeTrendSnaps，不读此参数）
-            minChangePct = 2.0,
-            requireChangePct = true,
-            minDrawdownPct = 10.0,
-            requireCloseAboveConvergenceTop = true,
-            requireOpenBelowMAs = true,
-            lookbackDays = 30,
-            minPassCount = 7,
-            requireThreeDayConfirm = true,
-            mode = AnalysisMode.TREND_FOLLOW,
-            marketTrend = marketTrend
-        )
+        fun ultraShortParams(marketTrend: String? = null): StockCheckPipeline {
+            val base = StockCheckPipeline(
+                convergenceThreshold = 3.0,
+                useMA60 = false,
+                convergenceDurationDays = 5,
+                volumeBreakoutRatio = 2.5,
+                // B13: 震荡市均线粘合不追高，4% 降至 2%（TREND_FOLLOW 模式走 analyzeTrendSnaps，不读此参数）
+                minChangePct = 2.0,
+                requireChangePct = true,
+                minDrawdownPct = 10.0,
+                requireCloseAboveConvergenceTop = true,
+                requireOpenBelowMAs = true,
+                lookbackDays = 30,
+                minPassCount = 7,
+                requireThreeDayConfirm = true,
+                mode = AnalysisMode.TREND_FOLLOW,
+                marketTrend = marketTrend
+            )
+            // 固化参数覆盖（smalltools 三年 walk-forward 拟合）
+            return BacktestParamsLoader.applySelectOverrides("超短", base, marketTrend)
+        }
 
         /**
          * 短线 v3：BULLISH 趋势跟随模式（趋势向上、贴近新高、放量、当日上涨）；
          * 不再死守"均线粘合+三日不新低"（上升趋势中会错误过滤强势股）。
          * 有较大利润时配合做T/反T（见 AutoTradePortfolioEngine）。
          */
-        fun shortTermParams(marketTrend: String? = null) = StockCheckPipeline(
-            convergenceThreshold = 3.0,
-            useMA60 = true,
-            convergenceDurationDays = 10,
-            volumeBreakoutRatio = 1.5,
-            minChangePct = 3.0,
-            requireChangePct = true,
-            minDrawdownPct = 20.0,
-            requireAboveAllMAs = true,
-            lookbackDays = 60,
-            minPassCount = 6,
-            requireThreeDayConfirm = true,
-            mode = AnalysisMode.TREND_FOLLOW,
-            marketTrend = marketTrend
-        )
+        fun shortTermParams(marketTrend: String? = null): StockCheckPipeline {
+            val base = StockCheckPipeline(
+                convergenceThreshold = 3.0,
+                useMA60 = true,
+                convergenceDurationDays = 10,
+                volumeBreakoutRatio = 1.5,
+                minChangePct = 3.0,
+                requireChangePct = true,
+                minDrawdownPct = 20.0,
+                requireAboveAllMAs = true,
+                lookbackDays = 60,
+                minPassCount = 6,
+                requireThreeDayConfirm = true,
+                mode = AnalysisMode.TREND_FOLLOW,
+                marketTrend = marketTrend
+            )
+            return BacktestParamsLoader.applySelectOverrides("短线", base, marketTrend)
+        }
 
         /**
          * 中线：四线粘合 + MA60 上翘 + 温和放量(MA(V,5)/REF(MA(V,10),1) 1.2~1.8) + 站上所有均线
          * 距高点跌幅 ≥ 30%
          * 适用检查：①②③④⑤⑥⑨ = 7 项（全过，对应设计 AND 语义）
          */
-        fun midTermParams(marketTrend: String? = null) = StockCheckPipeline(
-            convergenceThreshold = 2.5,
-            useMA60 = true,
-            convergenceDurationDays = 15,
-            moderateVolumeLower = 1.2,
-            moderateVolumeUpper = 1.8,
-            minDrawdownPct = 30.0,
-            requireMA60Rising = true,
-            requireAboveAllMAs = true,
-            lookbackDays = 120,
-            minPassCount = 6,
-            requireThreeDayConfirm = true,
-            marketTrend = marketTrend
-        )
+        fun midTermParams(marketTrend: String? = null): StockCheckPipeline {
+            val base = StockCheckPipeline(
+                convergenceThreshold = 2.5,
+                useMA60 = true,
+                convergenceDurationDays = 15,
+                moderateVolumeLower = 1.2,
+                moderateVolumeUpper = 1.8,
+                minDrawdownPct = 30.0,
+                requireMA60Rising = true,
+                requireAboveAllMAs = true,
+                lookbackDays = 120,
+                minPassCount = 6,
+                requireThreeDayConfirm = true,
+                marketTrend = marketTrend
+            )
+            return BacktestParamsLoader.applySelectOverrides("中线", base, marketTrend)
+        }
 
         /**
          * 长线：MA60/MA250 同步上翘(10日) + 地量 + 站稳年线
@@ -215,23 +226,26 @@ class StockCheckPipeline(
          * 全部亏损；放宽至跌 20% / 粘合 2.5 / 地量 0.7 / 通过 6 项后，信号 222 个、
          * 平均 +4.20%、胜率 49.5%、盈亏因子 2.41（smalltools/_long_param_exp.py 实证）。
          */
-        fun longTermParams(marketTrend: String? = null) = StockCheckPipeline(
-            convergenceThreshold = 2.5,
-            useMA60 = true,
-            convergenceDurationDays = 20,
-            requireVolumeShrink = true,
-            volumeShrinkRatio = 0.7,
-            minDrawdownPct = 20.0,
-            requireMA60Rising = true,
-            maRisingDays = 10,
-            requireMA250Rising = true,
-            useMA250InBullish = true,
-            requireAboveYearLine = true,
-            lookbackDays = 250,
-            minPassCount = 6,
-            requireThreeDayConfirm = true,
-            marketTrend = marketTrend
-        )
+        fun longTermParams(marketTrend: String? = null): StockCheckPipeline {
+            val base = StockCheckPipeline(
+                convergenceThreshold = 2.5,
+                useMA60 = true,
+                convergenceDurationDays = 20,
+                requireVolumeShrink = true,
+                volumeShrinkRatio = 0.7,
+                minDrawdownPct = 20.0,
+                requireMA60Rising = true,
+                maRisingDays = 10,
+                requireMA250Rising = true,
+                useMA250InBullish = true,
+                requireAboveYearLine = true,
+                lookbackDays = 250,
+                minPassCount = 6,
+                requireThreeDayConfirm = true,
+                marketTrend = marketTrend
+            )
+            return BacktestParamsLoader.applySelectOverrides("长线", base, marketTrend)
+        }
     }
 
     /**

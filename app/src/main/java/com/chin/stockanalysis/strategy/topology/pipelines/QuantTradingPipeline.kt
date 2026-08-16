@@ -9,6 +9,7 @@ import com.chin.stockanalysis.stock.database.ChinaMarketTradingHours
 import com.chin.stockanalysis.stock.database.StockDataCenter
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.Strategy
+import com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
 import com.chin.stockanalysis.strategy.backtest.FullCycleBacktestEngine
 import com.chin.stockanalysis.strategy.backtest.StrategyOptimizer
@@ -2381,9 +2382,12 @@ class HoldingGuardNode(
                 "long" -> "长线"
                 else -> period
             }
-            val fitted = if (!crashMode)
+            val fitted = if (!crashMode) {
+                // 本机工作台拟合矩阵优先，其次三年 walk-forward 固化参数，最后代码默认
+                BacktestParamsLoader.load(context.androidContext)
                 FullCycleBacktestEngine.loadFitMatrix(context.androidContext, periodKey)[currentState]
-                else null
+                    ?: BacktestParamsLoader.sellRule(periodKey, currentState)
+            } else null
             if (crashMode) {
                 context.log(nodeId, "🚨 $nodeName: 检测到暴跌期(CRASH)，$period 持仓强制 1 天离场")
             } else if (fitted != null) {

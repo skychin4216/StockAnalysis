@@ -27,7 +27,10 @@
 | `_portfolio_sim.py` | **组合模拟**：AutoTradePortfolioEngine 原型验证，100 万资金模拟选股→建仓→做T→止盈止损→腾笼换鸟全流程。 | `python _portfolio_sim.py > out_portfolio.txt` |
 | `_trend_proto.py` | **趋势跟随原型**：复刻 `trend_follow_scan`（超短/短线在牛市大盘下的趋势跟随选股）。 | `python _trend_proto.py` |
 | `_profit_analyze.py` | **回测补充诊断**：信号时间分布、基准对比（超额 alpha）、周期交叉验证。 | `python _profit_analyze.py` |
-| `_extend_cache.py` | **缓存扩展**：把 `_kline_cache.json` 的历史K线扩展到 2023-01-01 起（长线回溯需要 250 日 lookback）。 | `python _extend_cache.py` |
+| `_extend_cache.py` | **缓存扩展**：把 `_kline_cache.json` 的历史K线扩展到 2022-08-01 起（三年 walk-forward 需要 MA250）。腾讯单次 640 根上限，按 2022-08~2024-06 / 2024-06~2026-08 两段拉取拼接；东财接口可用时优先。 | `python _extend_cache.py` |
+| `_walk_forward.py` | **三年期 walk-forward 月度滚动回溯+拟合（2023-08-15~2026-08-15，核心架构）**：36 个月度窗口逐月推进，每月「用上月拟合参数回溯本月（样本外）+ 用本月信号拟合下月（样本内）」，无未来函数；超短线只用最近 1 个月、短线最近 3 个月、中/长线全部至今信号拟合；增量续跑（`_records/selected_YYYY-MM.json` 持久化，已跑窗口自动跳过）。 | `python _walk_forward.py` / `python _walk_forward.py --months 3` |
+| `_hindsight_report.py` | **事后诸葛亮分析**：每季度对中/长线输出「实际(walk-forward) vs 事后最优」收益差距，并对季度末交易日做全池漏选归因（事后牛股被哪些检查项挡掉），输出 `_records/hindsight_Q*.json`。 | `python _hindsight_report.py` |
+| `_export_params.py` | **固化参数导出**：从 36 个月拟合历史提取各周期×各状态规则的**众数**（稳健优先），连同选股参数导出为 `app/src/main/assets/backtest_params.json`，APK 启动即代入，新用户无需导入多年K线。 | `python _export_params.py` |
 
 ---
 

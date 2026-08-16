@@ -1,0 +1,241 @@
+{
+ "version": 2,
+ "generated": "2026-08-16",
+ "source": "smalltools/_walk_forward.py (三年 walk-forward)",
+ "period": "2023-08-15 ~ 2026-08-15",
+ "select_params": {
+  "超短": {
+   "convergenceThreshold": 3.0,
+   "useMA60": false,
+   "convergenceDurationDays": 5,
+   "volumeBreakoutRatio": 2.5,
+   "minChangePct": 2.0,
+   "requireChangePct": true,
+   "minDrawdownPct": 10.0,
+   "requireCloseAboveConvergenceTop": true,
+   "requireOpenBelowMAs": true,
+   "lookbackDays": 30,
+   "minPassCount": 7,
+   "requireThreeDayConfirm": true,
+   "convergenceDurationRatio": 0.8,
+   "maRisingDays": 5,
+   "requireMA60Rising": false,
+   "requireMA250Rising": false,
+   "useMA250InBullish": false,
+   "requireAboveYearLine": false,
+   "requireAboveAllMAs": false,
+   "requireVolumeShrink": false,
+   "moderateVolumeLower": 0.0,
+   "moderateVolumeUpper": 0.0
+  },
+  "短线": {
+   "convergenceThreshold": 3.0,
+   "useMA60": true,
+   "convergenceDurationDays": 10,
+   "volumeBreakoutRatio": 1.5,
+   "minChangePct": 3.0,
+   "requireChangePct": true,
+   "minDrawdownPct": 20.0,
+   "requireAboveAllMAs": true,
+   "lookbackDays": 60,
+   "minPassCount": 6,
+   "requireThreeDayConfirm": true,
+   "convergenceDurationRatio": 0.8,
+   "maRisingDays": 5,
+   "requireMA60Rising": false,
+   "requireMA250Rising": false,
+   "useMA250InBullish": false,
+   "requireAboveYearLine": false,
+   "requireCloseAboveConvergenceTop": false,
+   "requireOpenBelowMAs": false,
+   "requireVolumeShrink": false,
+   "moderateVolumeLower": 0.0,
+   "moderateVolumeUpper": 0.0
+  },
+  "中线": {
+   "convergenceThreshold": 2.5,
+   "useMA60": true,
+   "convergenceDurationDays": 15,
+   "minDrawdownPct": 30.0,
+   "requireMA60Rising": true,
+   "requireAboveAllMAs": true,
+   "moderateVolumeLower": 1.2,
+   "moderateVolumeUpper": 1.8,
+   "lookbackDays": 120,
+   "minPassCount": 6,
+   "requireThreeDayConfirm": true,
+   "convergenceDurationRatio": 0.8,
+   "maRisingDays": 5,
+   "requireChangePct": false,
+   "requireMA250Rising": false,
+   "useMA250InBullish": false,
+   "requireAboveYearLine": false,
+   "requireCloseAboveConvergenceTop": false,
+   "requireOpenBelowMAs": false,
+   "requireVolumeShrink": false,
+   "volumeBreakoutRatio": 0.0
+  },
+  "长线": {
+   "convergenceThreshold": 2.5,
+   "useMA60": true,
+   "convergenceDurationDays": 20,
+   "minDrawdownPct": 20.0,
+   "requireMA60Rising": true,
+   "maRisingDays": 10,
+   "requireMA250Rising": true,
+   "useMA250InBullish": true,
+   "requireAboveYearLine": true,
+   "requireVolumeShrink": true,
+   "volumeShrinkRatio": 0.7,
+   "lookbackDays": 250,
+   "minPassCount": 6,
+   "requireThreeDayConfirm": true,
+   "convergenceDurationRatio": 0.8,
+   "requireChangePct": false,
+   "requireAboveAllMAs": false,
+   "requireCloseAboveConvergenceTop": false,
+   "requireOpenBelowMAs": false,
+   "moderateVolumeLower": 0.0,
+   "moderateVolumeUpper": 0.0,
+   "volumeBreakoutRatio": 0.0
+  }
+ },
+ "sell_rules": {
+  "超短": {
+   "default": {
+    "style": "nextday",
+    "maxHold": 2,
+    "tp": 0.0,
+    "sl": 0.0
+   },
+   "by_state": {
+    "BULLISH": {
+     "maxHold": 1,
+     "sl": 0.0,
+     "style": "nextday",
+     "tp": 0.0
+    },
+    "OSCILLATION": {
+     "maxHold": 1,
+     "sl": 0.0,
+     "style": "nextday",
+     "tp": 0.0
+    },
+    "BEARISH": {
+     "maxHold": 1,
+     "sl": 0.0,
+     "style": "nextday",
+     "tp": 0.0
+    }
+   },
+   "fitted_months": 29
+  },
+  "短线": {
+   "default": {
+    "style": "streak",
+    "streakDays": 3,
+    "maBreak": 5,
+    "maxHold": 10,
+    "tp": 0.0,
+    "sl": 0.0
+   },
+   "by_state": {
+    "BULLISH": {
+     "maBreak": 5,
+     "maxHold": 5,
+     "sl": 0.0,
+     "streakDays": 2,
+     "style": "streak",
+     "tp": 0.0
+    },
+    "OSCILLATION": {
+     "maBreak": 8,
+     "maxHold": 5,
+     "sl": 0.0,
+     "streakDays": 2,
+     "style": "streak",
+     "tp": 0.0
+    },
+    "BEARISH": {
+     "maBreak": 5,
+     "maxHold": 8,
+     "sl": 0.0,
+     "streakDays": 2,
+     "style": "streak",
+     "tp": 0.0
+    }
+   },
+   "fitted_months": 35
+  },
+  "中线": {
+   "default": {
+    "style": "hold",
+    "maxHold": 15,
+    "tp": 20.0,
+    "sl": -10.0,
+    "tRatio": 0.4
+   },
+   "by_state": {
+    "BULLISH": {
+     "maxHold": 20,
+     "sl": -8,
+     "style": "hold",
+     "tRatio": 0.4,
+     "tp": 25
+    },
+    "OSCILLATION": {
+     "maxHold": 20,
+     "sl": -6,
+     "style": "hold",
+     "tRatio": 0.4,
+     "tp": 25
+    },
+    "BEARISH": {
+     "maxHold": 12,
+     "sl": -6,
+     "style": "hold",
+     "tRatio": 0.4,
+     "tp": 15
+    }
+   },
+   "fitted_months": 36
+  },
+  "长线": {
+   "default": {
+    "style": "hold",
+    "maxHold": 30,
+    "tp": 40.0,
+    "sl": -12.0,
+    "tRatio": 0.4
+   },
+   "by_state": {
+    "BULLISH": {
+     "maxHold": 40,
+     "sl": -8,
+     "style": "hold",
+     "tRatio": 0.4,
+     "tp": 50
+    },
+    "OSCILLATION": {
+     "maxHold": 40,
+     "sl": -12,
+     "style": "hold",
+     "tRatio": 0.4,
+     "tp": 40
+    },
+    "BEARISH": {
+     "maxHold": 40,
+     "sl": -12,
+     "style": "hold",
+     "tRatio": 0.4,
+     "tp": 50
+    }
+   },
+   "fitted_months": 36
+  }
+ },
+ "meta": {
+  "fitted_months": 36,
+  "note": "by_state 为各大盘状态的拟合众数规则；无样本状态回退 default"
+ }
+}
