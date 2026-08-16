@@ -128,7 +128,7 @@
      "tp": 0.0
     }
    },
-   "fitted_months": 29
+   "fitted_months": 35
   },
   "短线": {
    "default": {
@@ -142,7 +142,7 @@
    "by_state": {
     "BULLISH": {
      "maBreak": 5,
-     "maxHold": 5,
+     "maxHold": 8,
      "sl": 0.0,
      "streakDays": 2,
      "style": "streak",
@@ -150,14 +150,14 @@
     },
     "OSCILLATION": {
      "maBreak": 8,
-     "maxHold": 5,
+     "maxHold": 10,
      "sl": 0.0,
      "streakDays": 2,
      "style": "streak",
      "tp": 0.0
     },
     "BEARISH": {
-     "maBreak": 5,
+     "maBreak": 8,
      "maxHold": 8,
      "sl": 0.0,
      "streakDays": 2,
@@ -165,7 +165,7 @@
      "tp": 0.0
     }
    },
-   "fitted_months": 35
+   "fitted_months": 36
   },
   "中线": {
    "default": {

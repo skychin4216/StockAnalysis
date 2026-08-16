@@ -91,6 +91,62 @@
             android:textColor="@android:color/darker_gray"
             android:layout_marginBottom="24dp" />
 
+        <!-- 回溯参数管理（walk-forward 固化参数） -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@android:color/darker_gray"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="回溯参数（三年 walk-forward 拟合）"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="导入他人拟合好的参数 JSON 立即生效；也可导出当前参数分享。"
+            android:textSize="12sp"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/tvParamsSource"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="当前参数来源: APK 内置"
+            android:textSize="12sp"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btnImportParams"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="导入参数文件（JSON）"
+            android:textSize="14sp"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btnExportParams"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="导出当前参数"
+            android:textSize="14sp"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btnResetParams"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="恢复内置参数"
+            android:textSize="14sp"
+            android:layout_marginBottom="24dp" />
+
         <!-- Agent Framework -->
         <View
             android:layout_width="match_parent"

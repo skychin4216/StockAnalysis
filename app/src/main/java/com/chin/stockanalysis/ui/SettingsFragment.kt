@@ -14,6 +14,7 @@ import android.widget.LinearLayout
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import com.chin.stockanalysis.ApiConfigManager
@@ -27,6 +28,7 @@ import com.chin.stockanalysis.notification.TradeNotifier
 import com.chin.stockanalysis.stock.StockService
 import com.chin.stockanalysis.stock.data.StockDataSourceFactory
 import com.chin.stockanalysis.strategy.HoldingPeriod
+import com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader
 
 class SettingsFragment : Fragment() {
     private var _binding: FragmentSettingsBinding? = null
@@ -36,6 +38,42 @@ class SettingsFragment : Fragment() {
         val multiSourceRepo = StockDataSourceFactory.createDefaultRepository(requireContext())
         StockService(repository = multiSourceRepo)
     }
+
+    /** 导入参数 JSON：打开系统文件选择器 */
+    private val importParamsLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            try {
+                val text = requireContext().contentResolver
+                    .openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                    ?: throw Exception("无法读取文件")
+                val err = BacktestParamsLoader.importParams(requireContext(), text)
+                if (err == null) {
+                    refreshParamsInfo()
+                    Toast.makeText(requireContext(), "参数导入成功，已立即生效", Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(requireContext(), "导入失败: $err", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(requireContext(), "导入失败: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+
+    /** 导出当前参数 JSON：系统文件保存 */
+    private val exportParamsLauncher =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+            if (uri == null) return@registerForActivityResult
+            try {
+                val text = BacktestParamsLoader.exportParams(requireContext())
+                    ?: throw Exception("无参数可导出")
+                requireContext().contentResolver
+                    .openOutputStream(uri)?.use { it.write(text.toByteArray()) }
+                    ?: throw Exception("无法写入文件")
+                Toast.makeText(requireContext(), "参数已导出", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(requireContext(), "导出失败: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -61,8 +99,33 @@ class SettingsFragment : Fragment() {
             btnLanguage.setOnClickListener { showLanguageDialog() }
             tvAbout.text = buildAboutText()
         }
+        setupParamsManagement()
         setupAgentFramework()
         setupWechatNotification()
+    }
+
+    /** 回溯参数：导入 / 导出 / 恢复内置（用户需求：导入他人拟合参数即用，免回溯） */
+    private fun setupParamsManagement() {
+        refreshParamsInfo()
+        binding.btnImportParams.setOnClickListener {
+            importParamsLauncher.launch(arrayOf("application/json", "text/json", "*/*"))
+        }
+        binding.btnExportParams.setOnClickListener {
+            exportParamsLauncher.launch("backtest_params.json")
+        }
+        binding.btnResetParams.setOnClickListener {
+            if (BacktestParamsLoader.resetToBuiltIn(requireContext())) {
+                refreshParamsInfo()
+                Toast.makeText(requireContext(), "已恢复内置参数", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(requireContext(), "恢复失败", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun refreshParamsInfo() {
+        binding.tvParamsSource.text = "当前参数来源: ${BacktestParamsLoader.sourceLabel(requireContext())}" +
+            "（版本 ${BacktestParamsLoader.version(requireContext())}）"
     }
 
     /** 绑定做T 微信通知 & 自动执行 配置（Phase 11） */

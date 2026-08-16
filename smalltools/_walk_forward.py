@@ -44,6 +44,12 @@ RULES_KEY = {"超短": "超短线", "短线": "短线", "中线": "中线", "长
 INDEXES = ["sh000001", "sz399001", "sz399006"]
 STATES = ["BULLISH", "OSCILLATION", "BEARISH", "CRASH"]
 
+# 拟合窗口（月）：由 _refit_experiment.py 三年对比实验确定 —— 全量历史拟合最优
+# （短线样本外收益 +295% vs 1/3月 +254%、胜率 42.9% vs 39.9%、参数抖动 36.6% vs 38.4%；
+#  超短收益持平但抖动更低），故四周期均用全部至今信号拟合
+# 可用 --fit-lookback 覆盖（如 超短:3,短线:6 / 超短:all,短线:all），None=全部
+FIT_LOOKBACK = {"超短": None, "短线": None, "中线": None, "长线": None}
+
 # 拟合网格（卖出参数）
 HOLD_GRIDS = {
     "中线": dict(holds=[8, 10, 12, 15, 20], tps=[15, 20, 25], sls=[-6, -8, -10]),
@@ -213,7 +219,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--months", type=int, default=0, help="只跑前 N 个月（0=全部）")
     ap.add_argument("--verbose", action="store_true")
+    ap.add_argument("--fit-lookback", default="",
+                    help="拟合窗口覆盖，如 超短:3,短线:6；值 all/none=全部至今")
     args = ap.parse_args()
+
+    global FIT_LOOKBACK
+    if args.fit_lookback:
+        for kv in args.fit_lookback.split(","):
+            k, v = kv.split(":")
+            if k not in FIT_LOOKBACK:
+                print(f"[警告] 未知周期 {k}，忽略")
+                continue
+            FIT_LOOKBACK[k] = None if v.strip().lower() in ("all", "none") else int(v.strip())
+        print(f"拟合窗口(月): {FIT_LOOKBACK}")
 
     cache = load_cache()
     all_dates = sorted({d for e in cache.values() for s in e.get("snaps", []) for d in [s["date"]]})
@@ -263,8 +281,8 @@ def main():
             n, avg, wr, cum, pf, mdd = stats(rets)
             print(f"    已实现 {n} 笔 | 平均 {avg:+.2f}% 胜率 {wr:.1f}% "
                   f"固定本金累计 {cum:+.2f}% 因子 {'∞' if pf == float('inf') else f'{pf:.2f}'}")
-            # 2) 样本内拟合：超短=最近1月、短线=最近3月、中/长线=全部至今
-            lb = 1 if period == "超短" else (3 if period == "短线" else None)
+            # 2) 样本内拟合：窗口由 FIT_LOOKBACK 决定（可配置）
+            lb = FIT_LOOKBACK[period]
             fit_sigs = load_hist_signals(period, lb) + sigs
             fitted = fit_sell(cache, all_dates, fit_sigs, period)
             rec["fitted"][period] = fitted

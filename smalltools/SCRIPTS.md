@@ -28,9 +28,11 @@
 | `_trend_proto.py` | **趋势跟随原型**：复刻 `trend_follow_scan`（超短/短线在牛市大盘下的趋势跟随选股）。 | `python _trend_proto.py` |
 | `_profit_analyze.py` | **回测补充诊断**：信号时间分布、基准对比（超额 alpha）、周期交叉验证。 | `python _profit_analyze.py` |
 | `_extend_cache.py` | **缓存扩展**：把 `_kline_cache.json` 的历史K线扩展到 2022-08-01 起（三年 walk-forward 需要 MA250）。腾讯单次 640 根上限，按 2022-08~2024-06 / 2024-06~2026-08 两段拉取拼接；东财接口可用时优先。 | `python _extend_cache.py` |
-| `_walk_forward.py` | **三年期 walk-forward 月度滚动回溯+拟合（2023-08-15~2026-08-15，核心架构）**：36 个月度窗口逐月推进，每月「用上月拟合参数回溯本月（样本外）+ 用本月信号拟合下月（样本内）」，无未来函数；超短线只用最近 1 个月、短线最近 3 个月、中/长线全部至今信号拟合；增量续跑（`_records/selected_YYYY-MM.json` 持久化，已跑窗口自动跳过）。 | `python _walk_forward.py` / `python _walk_forward.py --months 3` |
+| `_walk_forward.py` | **三年期 walk-forward 月度滚动回溯+拟合（2023-08-15~2026-08-15，核心架构）**：36 个月度窗口逐月推进，每月「用上月拟合参数回溯本月（样本外）+ 用本月信号拟合下月（样本内）」，无未来函数；四周期均用**全部至今信号**拟合（由 `_refit_experiment.py` 对比实验确定全量最优）；增量续跑（`_records/selected_YYYY-MM.json` 持久化，已跑窗口自动跳过）；`--fit-lookback` 可覆盖拟合窗口。 | `python _walk_forward.py` / `python _walk_forward.py --months 3` |
+| `_refit_experiment.py` | **拟合窗口对比实验**：复用 `_records` 已持久化信号，不重跑回溯扫描，对比「当前1/3月 vs 扩展3/6月 vs 全量三年」三种拟合窗口的样本外收益与参数抖动率（结果落盘 `_records/refit_fitted_cache.json`，中断可续跑）。结论：**全量三年拟合最优**（短线 +295% vs +254%、胜率 42.9% vs 39.9%、抖动 36.6% vs 38.4%）。 | `python _refit_experiment.py` / `--months 12` |
+| `_factor_ic.py` | **选中信号因子 IC/ICIR 检验（Spearman）**：对四周期已选中信号提取粘合度/量比/跌幅/换手/近5日动量/MA乖离等因子，按月滚动算与未来收益的秩相关 IC → ICIR/IC>0占比，找最优排序因子（输出 `_records/factor_ic.json`）。结论：中线/长线反转效应（动量负 IC、跌幅正 IC），超短追涨（当日涨幅正 IC）。 | `python _factor_ic.py` / `--periods 中线,长线` |
 | `_hindsight_report.py` | **事后诸葛亮分析**：每季度对中/长线输出「实际(walk-forward) vs 事后最优」收益差距，并对季度末交易日做全池漏选归因（事后牛股被哪些检查项挡掉），输出 `_records/hindsight_Q*.json`。 | `python _hindsight_report.py` |
-| `_export_params.py` | **固化参数导出**：从 36 个月拟合历史提取各周期×各状态规则的**众数**（稳健优先），连同选股参数导出为 `app/src/main/assets/backtest_params.json`，APK 启动即代入，新用户无需导入多年K线。 | `python _export_params.py` |
+| `_export_params.py` | **固化参数导出**：从 36 个月拟合历史提取各周期×各状态规则的**众数**（稳健优先），连同选股参数导出为 `app/src/main/assets/backtest_params.json`，APK 启动即代入，新用户无需导入多年K线；`--fit-cache` 从 `_refit_experiment.py` 全量拟合缓存导出（推荐，免重跑）。 | `python _export_params.py --fit-cache` |
 
 ---
 

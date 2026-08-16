@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline
 import org.json.JSONObject
+import java.io.File
 
 /**
  * 固化参数加载器（smalltools 三年 walk-forward 拟合 → assets/backtest_params.json）
@@ -11,25 +12,41 @@ import org.json.JSONObject
  * 设计目标（用户需求 3）：
  * - 新用户无需导入多年历史 K 线：安装即带拟合好的选股参数 + 卖出参数矩阵，
  *   直接用于选股 / 买卖评估；使用时再逐步积累 K 线。
- * - 支持导入他人导出的参数文件：后续可扩展从文件覆盖 assets 默认值。
+ * - 支持从文件导入他人导出的参数 JSON（filesDir/imported_backtest_params.json 持久化），
+ *   也支持把当前参数导出为 JSON 文件分享。
  *
- * 优先级：用户本机「工作台回溯+拟合」落库的矩阵 > 固化参数 > 代码默认参数。
+ * 加载优先级：
+ *   用户导入的参数文件 > APK 内置固化参数 > 代码默认参数。
+ * 运行时优先级：
+ *   用户本机「工作台回溯+拟合」落库的矩阵 > 上述固化参数 > 代码默认参数。
  */
 object BacktestParamsLoader {
 
     private const val TAG = "BacktestParamsLoader"
     private const val FILE = "backtest_params.json"
+    private const val IMPORT_FILE = "imported_backtest_params.json"
 
     @Volatile
     private var root: JSONObject? = null
 
-    /** 幂等加载；失败时静默降级（后续使用代码默认参数） */
+    /** 当前参数来源：builtin=APK内置 / imported=用户导入 */
+    @Volatile
+    private var sourceName: String = "builtin"
+
+    /** 幂等加载；失败时静默降级（后续使用代码默认参数）。导入文件优先。 */
     fun load(context: Context) {
         if (root != null) return
         synchronized(this) {
             if (root != null) return
+            val imported = File(context.filesDir, IMPORT_FILE)
             root = try {
-                JSONObject(context.assets.open(FILE).bufferedReader().use { it.readText() })
+                if (imported.exists()) {
+                    sourceName = "imported"
+                    JSONObject(imported.readText())
+                } else {
+                    sourceName = "builtin"
+                    JSONObject(context.assets.open(FILE).bufferedReader().use { it.readText() })
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "加载固化参数失败，使用代码默认参数: ${e.message}")
                 null
@@ -37,10 +54,70 @@ object BacktestParamsLoader {
         }
     }
 
+    /**
+     * 从文件导入参数 JSON：校验结构 → 写入 filesDir 持久化 → 立即生效。
+     * 成功返回 null；失败返回错误信息（供 UI Toast 展示）。
+     */
+    fun importParams(context: Context, jsonText: String): String? {
+        val parsed = try {
+            JSONObject(jsonText)
+        } catch (e: Exception) {
+            return "JSON 解析失败: ${e.message}"
+        }
+        if (!parsed.has("sell_rules") && !parsed.has("select_params")) {
+            return "不是有效的参数文件（缺少 sell_rules/select_params 字段）"
+        }
+        synchronized(this) {
+            File(context.filesDir, IMPORT_FILE).writeText(jsonText)
+            root = parsed
+            sourceName = "imported"
+        }
+        Log.i(TAG, "已导入参数文件，立即生效")
+        return null
+    }
+
+    /** 导出当前生效参数为 JSON 文本（用于分享/备份）；无参数时返回 null */
+    fun exportParams(context: Context): String? {
+        load(context)
+        return try {
+            root?.toString(2)
+        } catch (e: Exception) {
+            Log.w(TAG, "导出参数序列化失败: ${e.message}")
+            null
+        }
+    }
+
+    /** 删除导入文件，恢复 APK 内置参数；返回是否成功 */
+    fun resetToBuiltIn(context: Context): Boolean {
+        synchronized(this) {
+            File(context.filesDir, IMPORT_FILE).delete()
+            sourceName = "builtin"
+            root = try {
+                JSONObject(context.assets.open(FILE).bufferedReader().use { it.readText() })
+            } catch (e: Exception) {
+                Log.w(TAG, "恢复内置参数失败: ${e.message}")
+                null
+            }
+            return root != null
+        }
+    }
+
+    /** 当前参数来源描述（UI 展示用） */
+    fun sourceLabel(context: Context): String {
+        load(context)
+        return if (sourceName == "imported") "用户导入文件" else "APK 内置（三年 walk-forward）"
+    }
+
+    /** 内置参数 JSON 的 version 字段（UI 展示用）；无则返回 "-" */
+    fun version(context: Context): String {
+        load(context)
+        return root?.optString("version", "-") ?: "-"
+    }
+
     // ───────────────────────── 选股参数覆盖 ─────────────────────────
 
     /**
-     * 用 assets 固化参数覆盖默认模板（period: 超短/短线/中线/长线）。
+     * 用固化参数覆盖默认模板（period: 超短/短线/中线/长线）。
      * 未加载或 JSON 无该周期时原样返回 base，保证安全降级。
      */
     fun applySelectOverrides(

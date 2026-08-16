@@ -13,6 +13,7 @@ APK 启动时由 BacktestParamsLoader 读取，覆盖默认配置 ——
 
 用法：
   python _export_params.py [--out app/src/main/assets/backtest_params.json]
+  python _export_params.py --fit-cache   # 从 _refit_experiment.py 的全量拟合缓存导出
 """
 import argparse
 import json
@@ -30,16 +31,32 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_OUT = os.path.join(ROOT, "app", "src", "main", "assets", "backtest_params.json")
 
 
-def load_fitted_history():
+def load_fitted_history(use_cache=False):
     if not os.path.isdir(RECORD_DIR):
         return []
     files = sorted(f for f in os.listdir(RECORD_DIR)
                    if f.startswith("selected_") and f.endswith(".json"))
+    if not use_cache:
+        out = []
+        for f in files:
+            with open(os.path.join(RECORD_DIR, f), encoding="utf-8") as fh:
+                rec = json.load(fh)
+            out.append(rec.get("fitted", {}))
+        return out
+    # 从 _refit_experiment.py 的拟合缓存取「全量三年」结果（key: {period}|{i}|all）
+    cache_path = os.path.join(RECORD_DIR, "refit_fitted_cache.json")
+    if not os.path.exists(cache_path):
+        print(f"警告：未找到 {cache_path}，请先运行 python _refit_experiment.py")
+        return []
+    cache = json.load(open(cache_path, encoding="utf-8"))
     out = []
-    for f in files:
-        with open(os.path.join(RECORD_DIR, f), encoding="utf-8") as fh:
-            rec = json.load(fh)
-        out.append(rec.get("fitted", {}))
+    for i in range(len(files)):
+        fitted = {}
+        for period in PERIODS:
+            key = f"{period}|{i}|all"
+            if key in cache:
+                fitted[period] = cache[key]
+        out.append(fitted)
     return out
 
 
@@ -68,9 +85,11 @@ def majority_rules(history):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=DEFAULT_OUT)
+    ap.add_argument("--fit-cache", action="store_true",
+                    help="从 _refit_experiment.py 全量拟合缓存导出（推荐，免重跑）")
     args = ap.parse_args()
 
-    history = load_fitted_history()
+    history = load_fitted_history(use_cache=args.fit_cache)
     if not history:
         print(f"警告：{RECORD_DIR} 没有拟合记录，将导出默认参数。")
     sell_rules = majority_rules(history)
