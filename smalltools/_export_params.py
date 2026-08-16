@@ -43,6 +43,13 @@ FACTOR_FIELD = {
     "粘合持续天数": "convergenceDays",
 }
 IC_THRESHOLD = 0.2  # |ICIR| 筛选阈值：只保留稳定信号，避免噪声因子
+# v6 伪因子（不进 IC 检验，由日历/方向引擎注入，权重人工设定）：direction=方向分, seasonality=季节加成
+RANK_PSEUDO_FACTORS = {
+    "超短": {"direction": 0.4, "seasonality": 0.15},
+    "短线": {"direction": 0.4, "seasonality": 0.15},
+    "中线": {"direction": 0.35, "seasonality": 0.3},
+    "长线": {"direction": 0.35, "seasonality": 0.3},
+}
 
 
 def load_rank_factors():
@@ -61,6 +68,9 @@ def load_rank_factors():
             icir = f.get("icir", 0.0)
             if field and abs(icir) >= IC_THRESHOLD:
                 factors[field] = round(icir, 3)
+        # 合并 v6 伪因子（direction/seasonality）
+        for f, w in RANK_PSEUDO_FACTORS.get(period, {}).items():
+            factors.setdefault(f, w)
         if factors:
             out[period] = factors
     return out

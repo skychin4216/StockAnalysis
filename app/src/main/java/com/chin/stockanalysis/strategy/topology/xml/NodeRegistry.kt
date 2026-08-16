@@ -216,6 +216,26 @@ object NodeRegistry {
         }
         register("t_recommend_save") { _, _ -> TRecommendSaveNode() }
 
+        // ══════════ v6：先判方向再定周期 + 行业季节日历 + 龙头跟踪 ══════════
+        register("direction_label") { _, config ->
+            val exclude = config["exclude"] ?: "DOWNTREND,OSCILLATION"
+            val penalty = config["penalty"]?.toIntOrNull() ?: 25
+            com.chin.stockanalysis.strategy.topology.nodes.DirectionLabelNode(
+                exclude = exclude.split(",").map { it.trim() }.filter { it.isNotEmpty() },
+                penalty = penalty
+            )
+        }
+        register("seasonality_boost") { _, config ->
+            val mult = config["multiplier"]?.toDoubleOrNull() ?: 1.0
+            com.chin.stockanalysis.strategy.topology.nodes.SeasonalityBoostNode(multiplier = mult)
+        }
+        register("leader_track") { _, config ->
+            val bonus = config["bonus"]?.toIntOrNull() ?: 8
+            val onlyMain = config["onlyMainline"]?.toBooleanStrictOrNull() ?: true
+            com.chin.stockanalysis.strategy.topology.nodes.LeaderTrackNode(
+                bonus = bonus, onlyMainline = onlyMain)
+        }
+
         // ══════════ 实仓分析 Pipeline Node ══════════
         register("real_holding_eval") { _, _ -> RealHoldingAnalysisNode() }
         register("a_market_analysis") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.AMarketAnalysisNode() }

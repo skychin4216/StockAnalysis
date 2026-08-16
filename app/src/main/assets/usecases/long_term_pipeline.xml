@@ -96,6 +96,16 @@
     </Node>
     <Node id="n_inst_tips" name="机构线索加分" module="inst_tips" />
 
+    <!-- v6：先判方向再定周期（长线只买 蓄势/上升/突破，剔除 下降/震荡） -->
+    <Node id="n_direction" name="个股方向标签" module="direction_label">
+      <config>
+        <param name="exclude" value="DOWNTREND,OSCILLATION" />
+        <param name="penalty" value="25" />
+      </config>
+    </Node>
+    <Node id="n_season" name="行业季节日历" module="seasonality_boost" />
+    <Node id="n_leader" name="龙头股跟踪" module="leader_track" />
+
     <!-- 防守高息（熊市/震荡时启动，寻找银行/电力/高速公路等高息防御股） -->
     <Node id="n_defensive" name="防守高息" module="defensive_dividend">
       <config>
@@ -288,9 +298,30 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 3.6 → 4: 机构线索加分 → 主力资金过滤（先过滤再AI精选） -->
+    <!-- Layer 3.6 → 3.7: 机构线索加分 → 个股方向标签（先判方向） -->
     <Link>
       <SourceNodeId>n_inst_tips</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_direction</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <!-- Layer 3.7 → 3.8: 个股方向标签 → 行业季节日历（再叠加季节） -->
+    <Link>
+      <SourceNodeId>n_direction</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_season</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <!-- Layer 3.8 → 3.9: 行业季节日历 → 龙头股跟踪（龙头优先） -->
+    <Link>
+      <SourceNodeId>n_season</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_leader</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <!-- Layer 3.9 → 4: 龙头股跟踪 → 主力资金过滤（先过滤再AI精选） -->
+    <Link>
+      <SourceNodeId>n_leader</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_smart</TargetNodeId>
       <TargetPortId>0</TargetPortId>

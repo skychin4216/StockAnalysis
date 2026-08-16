@@ -5,6 +5,9 @@ import android.util.Log
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader
 import com.chin.stockanalysis.strategy.data.CandidatePool
+import com.chin.stockanalysis.strategy.data.DirectionAnalyzer
+import com.chin.stockanalysis.strategy.data.IndividualDirection
+import com.chin.stockanalysis.strategy.data.IndustrySeasonalityCalendar
 import com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline
 import com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline.Companion.AnalysisMode
 import com.chin.stockanalysis.strategy.trade.macro.IndexDeviationMonitor
@@ -65,18 +68,36 @@ class UnifiedStockClassifier(private val context: Context) {
          * 算法：逐因子算百分位秩（平均秩法 0..1）→ score = Σ weight×rank → 降序。
          * 无权重配置 / 候选 ≤1 时回退原 passCount 排序，保证向后兼容。
          */
-        fun icRank(stocks: List<ClassifiedStock>, weights: Map<String, Double>): List<ClassifiedStock> {
+        fun icRank(
+            stocks: List<ClassifiedStock>,
+            weights: Map<String, Double>,
+            extraColumns: Map<String, List<Double>> = emptyMap()
+        ): List<ClassifiedStock> {
             if (stocks.size <= 1 || weights.isEmpty()) {
                 return stocks.sortedByDescending { it.result.passCount }
             }
             val factors = weights.keys.toList()
-            val pctRanks = factors.map { f -> icPctRank(stocks.map { factorValueOf(it.result, f) }) }
+            val pctRanks = factors.map { f ->
+                // direction / seasonality 为伪因子（由调用方注入），其余读 StockCheckResult
+                icPctRank(extraColumns[f] ?: stocks.map { factorValueOf(it.result, f) })
+            }
             return stocks.indices
                 .map { i -> i to factors.indices.sumOf { j -> weights[factors[j]]!! * pctRanks[j][i] } }
                 .sortedWith(compareByDescending<Pair<Int, Double>> { it.second }
                     .thenByDescending { stocks[it.first].result.passCount })
                 .map { stocks[it.first] }
         }
+
+        /** 方向 → 分值（越高越优，用于 IC 排序伪因子 direction） */
+        private fun directionScore(dir: String): Double = try {
+            when (IndividualDirection.valueOf(dir)) {
+                IndividualDirection.BREAKOUT -> 4.0
+                IndividualDirection.UPTREND -> 3.0
+                IndividualDirection.ACCUMULATION -> 2.0
+                IndividualDirection.OSCILLATION -> 0.0
+                IndividualDirection.DOWNTREND -> -2.0
+            }
+        } catch (_: Exception) { 0.0 }
 
         /** 百分位秩（平均秩法）：并列取平均，结果 0..1；NaN 视为缺失给 0.5 中性值（不偏不倚） */
         private fun icPctRank(values: List<Double>): List<Double> {
@@ -315,6 +336,10 @@ class UnifiedStockClassifier(private val context: Context) {
                                 // 例如加息压制成长(存储/PCB估值)、战争升级抽血科技 → 规避这些产业的中/长线埋伏。
                                 val indTheme = ind.theme
                                 if (indTheme != null && (macroBias[indTheme] ?: 0) <= -15) continue
+                                // ── v6 先判方向再定周期：中线/长线只买 蓄势/上升/突破，剔除 下降/震荡 ──
+                                val dir = try { IndividualDirection.valueOf(result.direction) }
+                                    catch (_: Exception) { null }
+                                if (dir != null && !DirectionAnalyzer.allowedForHolding(dir)) continue
                             }
                             hit[period] = ClassifiedStock(
                                 code = c.code, name = result.stockName.ifBlank { c.name },
@@ -343,11 +368,24 @@ class UnifiedStockClassifier(private val context: Context) {
 
         val results = jobs.awaitAll()
         val classified = results.flatMap { it.second }
+        // v6: 行业季节日历 → 每只命中股的季节加成（命中当期主题/商品锚定板块）
+        val month = LocalDate.now().monthValue
+        val seasonEnabled = BacktestParamsLoader.seasonalityEnabled(context)
+        val seasonAnchors = BacktestParamsLoader.seasonalityAnchors(context)
+        val seasonBonus = if (seasonEnabled) classified.associate { s ->
+            s.code to IndustrySeasonalityCalendar.matchStock(s.name, month, seasonAnchors).sumOf { it.weight } * 10
+        } else emptyMap()
         // 未扫描的周期保持空列表，UI 据此区分「未扫描」与「无命中」
-        // v5: 命中股改用 IC 加权排序（rank_factors 来自 backtest_params.json，未配置时回退 passCount）
+        // v5+v6: 命中股用 IC 加权排序（rank_factors 来自 backtest_params.json，未配置时回退 passCount）。
+        // 额外注入 direction/seasonality 两个伪因子（同为百分位秩，权重在 JSON 里可调）
         val byPeriod = ALL_PERIODS.associateWith { p ->
             if (p in scanPeriods) {
-                icRank(classified.filter { it.period == p }, BacktestParamsLoader.rankFactors(context, p))
+                val inPeriod = classified.filter { it.period == p }
+                val extra = mapOf(
+                    "seasonality" to inPeriod.map { seasonBonus[it.code] ?: 0.0 },
+                    "direction" to inPeriod.map { directionScore(it.result.direction) }
+                )
+                icRank(inPeriod, BacktestParamsLoader.rankFactors(context, p), extra)
             } else emptyList()
         }
         val sourceCount = cands.groupingBy { it.source }.eachCount()

@@ -5,6 +5,7 @@ import android.util.Log
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
+import com.chin.stockanalysis.strategy.data.DirectionAnalyzer
 import kotlin.math.ceil
 
 /**
@@ -318,6 +319,8 @@ class StockCheckPipeline(
         val ma60Bias: Double = Double.NaN,
         /** 距 MA250 乖离% = close/MA250-1（IC：中线最优，负相关；K线不足250根为 NaN） */
         val ma250Bias: Double = Double.NaN,
+        /** 个股方向标签（v6 先判方向再定周期）：UP/DOWN/ACCUMULATION/BREAKOUT/OSCILLATION */
+        val direction: String = "OSCILLATION",
         /** 文字摘要 */
         val summary: String = "",
         // ── v4: 产业主线（中线/长线） ──
@@ -568,6 +571,18 @@ class StockCheckPipeline(
         val ma60Bias = if (ma60 != null && ma60 > 0) (latest.close / ma60 - 1) * 100 else Double.NaN
         val ma250Bias = if (ma250 != null && ma250 > 0) (latest.close / ma250 - 1) * 100 else Double.NaN
 
+        // ── v6: 个股方向标签（先判方向再定周期） ──
+        val direction = DirectionAnalyzer.analyze(
+            close = latest.close,
+            ma5 = ma5, ma10 = ma10, ma20 = ma20,
+            ma60Rising = ma60Rising,
+            convergenceDegree = convergenceDegree,
+            convergenceDays = convergenceDays,
+            closeAboveConvergenceTop = closeAboveConvergenceTop,
+            volumeRatio = volumeRatio,
+            aboveAllMAs = aboveAllMAs
+        ).name
+
         return StockCheckResult(
             stockCode = stockCode,
             stockName = name,
@@ -601,6 +616,7 @@ class StockCheckPipeline(
             momentum5 = momentum5,
             ma60Bias = ma60Bias,
             ma250Bias = ma250Bias,
+            direction = direction,
             summary = "$name(${stockCode.takeLast(4)}) 粘合${"%.1f".format(convergenceDegree)}% 通过:$passCount/$totalChecks"
         )
     }
@@ -690,6 +706,19 @@ class StockCheckPipeline(
             if (ma250 > 0) (latest.close / ma250 - 1) * 100 else Double.NaN
         } else Double.NaN
 
+        // ── v6: 个股方向标签（趋势跟随模式） ──
+        val ma60RisingNow = if (closes.size > 60 && ma60 != null) ma60 > closes.dropLast(1).takeLast(60).average() else false
+        val direction = DirectionAnalyzer.analyze(
+            close = latest.close,
+            ma5 = ma5, ma10 = ma10, ma20 = ma20,
+            ma60Rising = ma60RisingNow,
+            convergenceDegree = 0.0,
+            convergenceDays = 0,
+            closeAboveConvergenceTop = false,
+            volumeRatio = volumeRatio,
+            aboveAllMAs = aboveMa5
+        ).name
+
         return StockCheckResult(
             stockCode = stockCode,
             stockName = name,
@@ -714,6 +743,7 @@ class StockCheckPipeline(
             momentum5 = momentum5,
             ma60Bias = ma60Bias,
             ma250Bias = ma250Bias,
+            direction = direction,
             summary = "$name(${stockCode.takeLast(4)}) 趋势跟随 $passCount/$totalChecks " +
                 (if (passed) "✅突破" else "观望")
         )

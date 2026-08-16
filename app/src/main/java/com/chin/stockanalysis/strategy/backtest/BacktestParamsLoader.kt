@@ -2,6 +2,7 @@ package com.chin.stockanalysis.strategy.backtest
 
 import android.content.Context
 import android.util.Log
+import com.chin.stockanalysis.strategy.data.IndustrySeasonalityCalendar
 import com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline
 import org.json.JSONObject
 import java.io.File
@@ -189,6 +190,34 @@ object BacktestParamsLoader {
         "mid" -> "中线"
         "long" -> "长线"
         else -> period
+    }
+
+    // ───────────────────────── 行业季节/周期日历（seasonality） ─────────────────────────
+
+    /**
+     * 商品锚定方向表：品种("油价"/"锂价"/"铜价"/"金价") → "up"/"down"。
+     * 来自 backtest_params.json 的 seasonality.anchors（可被 AI/人工每日更新）。
+     * 未配置返回空表（所有锚定主题不生效，仅日历季节生效）。
+     */
+    fun seasonalityAnchors(context: Context): Map<String, String> {
+        load(context)
+        val obj = root?.optJSONObject("seasonality")?.optJSONObject("anchors") ?: return emptyMap()
+        val out = LinkedHashMap<String, String>()
+        val keys = obj.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            val v = obj.optString(k)
+            if (v == IndustrySeasonalityCalendar.ANCHOR_UP || v == IndustrySeasonalityCalendar.ANCHOR_DOWN) {
+                out[k] = v
+            }
+        }
+        return out
+    }
+
+    /** 季节日历开关（默认开） */
+    fun seasonalityEnabled(context: Context): Boolean {
+        load(context)
+        return root?.optJSONObject("seasonality")?.optBoolean("enabled", true) ?: true
     }
 
     // ───────────────────────── 卖出参数（状态矩阵） ─────────────────────────

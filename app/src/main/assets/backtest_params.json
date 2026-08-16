@@ -100,30 +100,47 @@
    "volumeBreakoutRatio": 0.0
    }
    },
+   "seasonality": {
+    "enabled": true,
+    "anchors": {
+     "锂价": "down",
+     "油价": "up",
+     "铜价": "up",
+     "金价": "up"
+    }
+   },
    "rank_factors": {
-   "超短": {
-   "convergenceDegree": -0.386,
-   "changePct": 0.339
-   },
-   "短线": {
-   "changePct": -0.331,
-   "volumeRatio": 0.291,
-   "turnoverRate": -0.284
-   },
-   "中线": {
-   "ma250Bias": -0.57,
-   "momentum5": -0.396,
-   "turnoverRate": -0.394,
-   "drawdownPct": 0.271,
-   "volumeRatio": -0.217
-   },
-   "长线": {
-   "momentum5": -0.685,
-   "drawdownPct": 0.505,
-   "ma60Bias": -0.272,
-   "convergenceDays": -0.214,
-   "changePct": -0.211
-   }
+    "超短": {
+     "convergenceDegree": -0.386,
+     "changePct": 0.339,
+     "direction": 0.4,
+     "seasonality": 0.15
+    },
+    "短线": {
+     "changePct": -0.331,
+     "volumeRatio": 0.291,
+     "turnoverRate": -0.284,
+     "direction": 0.4,
+     "seasonality": 0.15
+    },
+    "中线": {
+     "ma250Bias": -0.57,
+     "momentum5": -0.396,
+     "turnoverRate": -0.394,
+     "drawdownPct": 0.271,
+     "volumeRatio": -0.217,
+     "direction": 0.35,
+     "seasonality": 0.3
+    },
+    "长线": {
+     "momentum5": -0.685,
+     "drawdownPct": 0.505,
+     "ma60Bias": -0.272,
+     "convergenceDays": -0.214,
+     "changePct": -0.211,
+     "direction": 0.35,
+     "seasonality": 0.3
+    }
    },
    "sell_rules": {
   "超短": {
