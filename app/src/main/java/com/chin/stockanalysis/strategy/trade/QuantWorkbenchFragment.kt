@@ -141,6 +141,20 @@ class QuantWorkbenchFragment : Fragment() {
         btnRow.addView(makeActionBtn("🤖 AI 分析") { runCrossPeriodAnalysis() })
         rootLayout.addView(btnRow)
 
+        // ── AI 四周期选股：UnifiedStockClassifier 全量扫描（长线含 ml_prob KNN 排序）──
+        val aiRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(12, 0, 12, 8)
+        }
+        aiRow.addView(makeActionBtn("🧠 AI 选股") { runAiSelection() })
+        rootLayout.addView(aiRow)
+        rootLayout.addView(TextView(requireContext()).apply {
+            text = "AI 选股：全量扫描四周期（超短/短/中/长），长线叠加 PC 端 KNN 模型 ml_prob 加权排序，结果写入「股票→🤖 AI 精选」"
+            textSize = 10f
+            setTextColor(Color.parseColor("#888888"))
+            setPadding(16, 0, 16, 6)
+        })
+
         // ── 多周期「回溯+拟合」引擎（超短隔日卖 / 短线连跌卖 / 中长线做T）──
         rootLayout.addView(TextView(requireContext()).apply {
             text = "── 多周期回溯 + 状态矩阵拟合（超短隔日/短线连跌/中长线做T） ──"
@@ -463,6 +477,57 @@ class QuantWorkbenchFragment : Fragment() {
                 Log.e(TAG, "查看选中记录失败: ${e.message}", e)
                 withContext(Dispatchers.Main) {
                     Toast.makeText(requireContext(), "查看记录失败: ${e.message?.take(40)}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    /** 🧠 AI 四周期选股：UnifiedStockClassifier 全量扫描（长线含 ml_prob KNN 加权），
+     *  结果写入 ai_selected_stock → 股票 Tab → 🤖 AI 精选 查看 */
+    private fun runAiSelection() {
+        setBusy(true, "🧠 AI 四周期选股中（长线含 ML 排序）...")
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val classifier = UnifiedStockClassifier(requireContext())
+                val scan = classifier.classifyAll()
+                val saved = classifier.saveToAiSelection(scan)
+                val sb = StringBuilder()
+                sb.appendLine("扫描候选 ${scan.candidates.size} 只 | 命中 ${scan.classified.size} 条 | 写入 AI 精选 $saved 只")
+                if (scan.dataDate != null) sb.appendLine("K线截止: ${scan.dataDate}")
+                sb.appendLine("─".repeat(44))
+                val titles = mapOf(
+                    UnifiedStockClassifier.PERIOD_ULTRA_SHORT to "超短",
+                    UnifiedStockClassifier.PERIOD_SHORT to "短线",
+                    UnifiedStockClassifier.PERIOD_MID to "中线",
+                    UnifiedStockClassifier.PERIOD_LONG to "长线"
+                )
+                for (p in UnifiedStockClassifier.ALL_PERIODS) {
+                    val list = scan.byPeriod[p].orEmpty()
+                    if (list.isEmpty()) {
+                        sb.appendLine("【${titles[p]}】无命中")
+                        continue
+                    }
+                    sb.appendLine("【${titles[p]}】${list.size} 只（Top ${minOf(5, list.size)}）:")
+                    for (s in list.take(5)) {
+                        if (p == UnifiedStockClassifier.PERIOD_LONG) {
+                            val pv = MlKnnModel.probability(requireContext(), s.result)
+                            sb.appendLine("  ${s.name}(${s.code.takeLast(6)}) ${"%.2f".format(s.price)}  ML=${if (pv == null) "无" else "%.1f%%".format(pv * 100)}")
+                        } else {
+                            sb.appendLine("  ${s.name}(${s.code.takeLast(6)}) ${"%.2f".format(s.price)}")
+                        }
+                    }
+                }
+                sb.appendLine("─".repeat(44))
+                sb.appendLine("结果已写入 AI 精选 → 股票 Tab → 🤖 AI 精选 查看完整名单")
+                withContext(Dispatchers.Main) {
+                    setBusy(false, "✅ AI 选股完成")
+                    showDialog("🧠 AI 四周期选股结果", sb.toString())
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "AI 选股失败: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    setBusy(false, "❌ AI 选股失败")
+                    Toast.makeText(requireContext(), "AI 选股失败: ${e.message?.take(60)}", Toast.LENGTH_LONG).show()
                 }
             }
         }

@@ -381,10 +381,16 @@ class UnifiedStockClassifier(private val context: Context) {
         val byPeriod = ALL_PERIODS.associateWith { p ->
             if (p in scanPeriods) {
                 val inPeriod = classified.filter { it.period == p }
-                val extra = mapOf(
+                // v7: 长线额外注入 ML 伪因子 ml_prob（PC 端 KNN 模型概率，资产 ml_knn_long.json）。
+                // 与 direction/seasonality 同为百分位秩参与 IC 加权；特征缺失/模型未加载 → 0.5 中性值。
+                val mlProb = if (p == PERIOD_LONG) {
+                    inPeriod.map { MlKnnModel.probability(context, it.result) ?: 0.5 }
+                } else emptyList()
+                val extra = mutableMapOf(
                     "seasonality" to inPeriod.map { seasonBonus[it.code] ?: 0.0 },
                     "direction" to inPeriod.map { directionScore(it.result.direction) }
                 )
+                if (p == PERIOD_LONG) extra["ml_prob"] = mlProb
                 icRank(inPeriod, BacktestParamsLoader.rankFactors(context, p), extra)
             } else emptyList()
         }

@@ -139,7 +139,8 @@
      "convergenceDays": -0.214,
      "changePct": -0.211,
      "direction": 0.35,
-     "seasonality": 0.3
+     "seasonality": 0.3,
+     "ml_prob": 0.2
     }
    },
    "sell_rules": {
