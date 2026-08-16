@@ -98,9 +98,34 @@
    "moderateVolumeLower": 0.0,
    "moderateVolumeUpper": 0.0,
    "volumeBreakoutRatio": 0.0
-  }
- },
- "sell_rules": {
+   }
+   },
+   "rank_factors": {
+   "超短": {
+   "convergenceDegree": -0.386,
+   "changePct": 0.339
+   },
+   "短线": {
+   "changePct": -0.331,
+   "volumeRatio": 0.291,
+   "turnoverRate": -0.284
+   },
+   "中线": {
+   "ma250Bias": -0.57,
+   "momentum5": -0.396,
+   "turnoverRate": -0.394,
+   "drawdownPct": 0.271,
+   "volumeRatio": -0.217
+   },
+   "长线": {
+   "momentum5": -0.685,
+   "drawdownPct": 0.505,
+   "ma60Bias": -0.272,
+   "convergenceDays": -0.214,
+   "changePct": -0.211
+   }
+   },
+   "sell_rules": {
   "超短": {
    "default": {
     "style": "nextday",

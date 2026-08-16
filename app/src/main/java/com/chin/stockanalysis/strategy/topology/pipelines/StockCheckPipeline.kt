@@ -309,6 +309,15 @@ class StockCheckPipeline(
         val pe: Double = 0.0,
         /** 换手率 */
         val turnoverRate: Double = 0.0,
+        // ── v5: IC 排序因子（来自 smalltools/_factor_ic.py 全量 IC 检验，NaN=数据不足不参与排序） ──
+        /** 当日涨幅%（IC：短线最优，负相关，值越低越优先） */
+        val changePct: Double = 0.0,
+        /** 近5日动量% = close/MA5-1（IC：长线最优，负相关，值越低越优先） */
+        val momentum5: Double = Double.NaN,
+        /** 距 MA60 乖离% = close/MA60-1（IC 排序因子；K线不足60根为 NaN） */
+        val ma60Bias: Double = Double.NaN,
+        /** 距 MA250 乖离% = close/MA250-1（IC：中线最优，负相关；K线不足250根为 NaN） */
+        val ma250Bias: Double = Double.NaN,
         /** 文字摘要 */
         val summary: String = "",
         // ── v4: 产业主线（中线/长线） ──
@@ -553,6 +562,12 @@ class StockCheckPipeline(
 
         val passed = passCount >= minPassCount
 
+        // ── v5: IC 排序因子（口径与 smalltools/_factor_ic.py 一致：close/均线-1 再*100） ──
+        val changePct = latest.changePct
+        val momentum5 = if (closes.size >= 5 && ma5 > 0) (latest.close / ma5 - 1) * 100 else Double.NaN
+        val ma60Bias = if (ma60 != null && ma60 > 0) (latest.close / ma60 - 1) * 100 else Double.NaN
+        val ma250Bias = if (ma250 != null && ma250 > 0) (latest.close / ma250 - 1) * 100 else Double.NaN
+
         return StockCheckResult(
             stockCode = stockCode,
             stockName = name,
@@ -582,6 +597,10 @@ class StockCheckPipeline(
             currentPrice = latest.close,
             pe = latest.pe,
             turnoverRate = latest.turnoverRate,
+            changePct = changePct,
+            momentum5 = momentum5,
+            ma60Bias = ma60Bias,
+            ma250Bias = ma250Bias,
             summary = "$name(${stockCode.takeLast(4)}) 粘合${"%.1f".format(convergenceDegree)}% 通过:$passCount/$totalChecks"
         )
     }
@@ -663,6 +682,14 @@ class StockCheckPipeline(
         // 通过标准：≥5/6 且当日须上涨（剔除下跌股）
         val passed = passCount >= 5 && changeOk
 
+        // ── v5: IC 排序因子（口径与 smalltools/_factor_ic.py 一致） ──
+        val momentum5 = if (closes.size >= 5 && ma5 > 0) (latest.close / ma5 - 1) * 100 else Double.NaN
+        val ma60Bias = if (ma60 != null && ma60 > 0) (latest.close / ma60 - 1) * 100 else Double.NaN
+        val ma250Bias = if (closes.size >= 250) {
+            val ma250 = closes.takeLast(250).average()
+            if (ma250 > 0) (latest.close / ma250 - 1) * 100 else Double.NaN
+        } else Double.NaN
+
         return StockCheckResult(
             stockCode = stockCode,
             stockName = name,
@@ -683,6 +710,10 @@ class StockCheckPipeline(
             currentPrice = latest.close,
             pe = latest.pe,
             turnoverRate = latest.turnoverRate,
+            changePct = changePct,
+            momentum5 = momentum5,
+            ma60Bias = ma60Bias,
+            ma250Bias = ma250Bias,
             summary = "$name(${stockCode.takeLast(4)}) 趋势跟随 $passCount/$totalChecks " +
                 (if (passed) "✅突破" else "观望")
         )

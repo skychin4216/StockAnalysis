@@ -3,6 +3,7 @@ package com.chin.stockanalysis.strategy.trade
 import android.content.Context
 import android.util.Log
 import com.chin.stockanalysis.stock.database.StockDatabase
+import com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader
 import com.chin.stockanalysis.strategy.data.CandidatePool
 import com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline
 import com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline.Companion.AnalysisMode
@@ -55,6 +56,60 @@ class UnifiedStockClassifier(private val context: Context) {
             PERIOD_MID -> "中线"
             PERIOD_LONG -> "长线"
             else -> p
+        }
+
+        /**
+         * v5 IC 加权排序：对同周期命中股按 rank_factors 权重打分，得分高者优先买入。
+         * 权重来自 smalltools/_factor_ic.py 全量 IC 检验（ICIR 带符号）：
+         *   负权重 = 因子值越低越优先（如中线距MA250乖离 -0.57、长线近5日动量 -0.69）。
+         * 算法：逐因子算百分位秩（平均秩法 0..1）→ score = Σ weight×rank → 降序。
+         * 无权重配置 / 候选 ≤1 时回退原 passCount 排序，保证向后兼容。
+         */
+        fun icRank(stocks: List<ClassifiedStock>, weights: Map<String, Double>): List<ClassifiedStock> {
+            if (stocks.size <= 1 || weights.isEmpty()) {
+                return stocks.sortedByDescending { it.result.passCount }
+            }
+            val factors = weights.keys.toList()
+            val pctRanks = factors.map { f -> icPctRank(stocks.map { factorValueOf(it.result, f) }) }
+            return stocks.indices
+                .map { i -> i to factors.indices.sumOf { j -> weights[factors[j]]!! * pctRanks[j][i] } }
+                .sortedWith(compareByDescending<Pair<Int, Double>> { it.second }
+                    .thenByDescending { stocks[it.first].result.passCount })
+                .map { stocks[it.first] }
+        }
+
+        /** 百分位秩（平均秩法）：并列取平均，结果 0..1；NaN 视为缺失给 0.5 中性值（不偏不倚） */
+        private fun icPctRank(values: List<Double>): List<Double> {
+            val n = values.size
+            val ranks = MutableList(n) { 0.5 }
+            val present = values.mapIndexedNotNull { i, v -> if (v.isNaN()) null else i to v }
+            val m = present.size
+            if (m < 2) return ranks
+            val idxOf = present.map { it.first }
+            val order = present.indices.sortedBy { present[it].second }
+            var i = 0
+            while (i < m) {
+                var j = i
+                while (j + 1 < m && present[order[j + 1]].second == present[order[i]].second) j++
+                val avgRank = (i + j) / 2.0 / (m - 1)
+                for (k in i..j) ranks[idxOf[order[k]]] = avgRank
+                i = j + 1
+            }
+            return ranks
+        }
+
+        /** 因子取值：命名与 smalltools/_factor_ic.py 的 FACTORS 对齐；未知因子 → NaN（不参与排序） */
+        private fun factorValueOf(r: StockCheckPipeline.StockCheckResult, f: String): Double = when (f) {
+            "convergenceDegree" -> r.convergenceDegree
+            "volumeRatio" -> r.volumeRatio
+            "drawdownPct" -> r.drawdownPct
+            "convergenceDays" -> r.convergenceDays.toDouble()
+            "changePct", "changePctReal" -> r.changePct
+            "turnoverRate", "turnover" -> r.turnoverRate
+            "momentum5" -> r.momentum5
+            "ma60Bias" -> r.ma60Bias
+            "ma250Bias" -> r.ma250Bias
+            else -> Double.NaN
         }
     }
 
@@ -289,9 +344,11 @@ class UnifiedStockClassifier(private val context: Context) {
         val results = jobs.awaitAll()
         val classified = results.flatMap { it.second }
         // 未扫描的周期保持空列表，UI 据此区分「未扫描」与「无命中」
+        // v5: 命中股改用 IC 加权排序（rank_factors 来自 backtest_params.json，未配置时回退 passCount）
         val byPeriod = ALL_PERIODS.associateWith { p ->
-            if (p in scanPeriods) classified.filter { it.period == p }.sortedByDescending { it.result.passCount }
-            else emptyList()
+            if (p in scanPeriods) {
+                icRank(classified.filter { it.period == p }, BacktestParamsLoader.rankFactors(context, p))
+            } else emptyList()
         }
         val sourceCount = cands.groupingBy { it.source }.eachCount()
 

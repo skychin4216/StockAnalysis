@@ -30,6 +30,41 @@ from _walk_forward import PERIODS, RULES_KEY, STATES, RECORD_DIR
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_OUT = os.path.join(ROOT, "app", "src", "main", "assets", "backtest_params.json")
 
+# 中文因子名 → Kotlin StockCheckResult 字段名（UnifiedStockClassifier.factorValueOf 对齐）
+FACTOR_FIELD = {
+    "粘合度(越低越紧)": "convergenceDegree",
+    "量比": "volumeRatio",
+    "距高点跌幅%": "drawdownPct",
+    "换手率%": "turnoverRate",
+    "当日涨幅%": "changePct",
+    "距MA60乖离%": "ma60Bias",
+    "距MA250乖离%": "ma250Bias",
+    "近5日动量%": "momentum5",
+    "粘合持续天数": "convergenceDays",
+}
+IC_THRESHOLD = 0.2  # |ICIR| 筛选阈值：只保留稳定信号，避免噪声因子
+
+
+def load_rank_factors():
+    """从 _records/factor_ic.json 提取各周期 |ICIR|≥0.2 的排序因子（ICIR 带符号）"""
+    ic_path = os.path.join(RECORD_DIR, "factor_ic.json")
+    if not os.path.exists(ic_path):
+        print(f"警告：未找到 {ic_path}，跳过 rank_factors（请先运行 python _factor_ic.py）")
+        return {}
+    ic = json.load(open(ic_path, encoding="utf-8"))
+    out = {}
+    for period in PERIODS:
+        data = ic.get(period, {})
+        factors = {}
+        for f in data.get("factors", []):
+            field = FACTOR_FIELD.get(f["name"])
+            icir = f.get("icir", 0.0)
+            if field and abs(icir) >= IC_THRESHOLD:
+                factors[field] = round(icir, 3)
+        if factors:
+            out[period] = factors
+    return out
+
 
 def load_fitted_history(use_cache=False):
     if not os.path.isdir(RECORD_DIR):
@@ -93,17 +128,20 @@ def main():
     if not history:
         print(f"警告：{RECORD_DIR} 没有拟合记录，将导出默认参数。")
     sell_rules = majority_rules(history)
+    rank_factors = load_rank_factors()
 
     payload = {
-        "version": 2,
+        "version": 3,
         "generated": "2026-08-16",
-        "source": "smalltools/_walk_forward.py (三年 walk-forward)",
+        "source": "smalltools/_walk_forward.py (三年 walk-forward) + _factor_ic.py (IC 排序器)",
         "period": "2023-08-15 ~ 2026-08-15",
         "select_params": {p: PARAMS[p] for p in PERIODS},
+        "rank_factors": rank_factors,
         "sell_rules": sell_rules,
         "meta": {
             "fitted_months": len(history),
-            "note": "by_state 为各大盘状态的拟合众数规则；无样本状态回退 default",
+            "note": "by_state 为各大盘状态的拟合众数规则；无样本状态回退 default；"
+                    "rank_factors 为 IC/ICIR 全量检验的排序权重（负=值越小越优先）",
         },
     }
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
@@ -115,6 +153,8 @@ def main():
                     for st in sell_rules[period]["by_state"]}
         print(f"  {period}: 默认[{fmt_rule(sell_rules[period]['default'])}] "
               f"拟合月数{sell_rules[period]['fitted_months']} 按状态 {by_state}")
+        if period in rank_factors:
+            print(f"    IC排序 {rank_factors[period]}")
 
 
 def fmt_rule(rule):

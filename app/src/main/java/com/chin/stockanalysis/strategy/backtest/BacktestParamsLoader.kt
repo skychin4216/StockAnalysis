@@ -157,6 +157,40 @@ object BacktestParamsLoader {
         )
     }
 
+    // ───────────────────────── IC 排序权重（rank_factors） ─────────────────────────
+
+    /**
+     * IC 排序权重：某周期的 因子名→ICIR 映射（带符号）。
+     * 来自 backtest_params.json 的 rank_factors.<周期> 区块（smalltools/_factor_ic.py 全量 IC 检验）。
+     * 负权重 = 因子值越小越优先（如中线距MA250乖离、长线近5日动量，都是负相关）。
+     * 未配置或加载失败返回空 Map → 调用方回退原 passCount 排序。
+     */
+    fun rankFactors(context: Context, period: String): Map<String, Double> {
+        load(context)
+        val pf = root?.optJSONObject("rank_factors") ?: return emptyMap()
+        // 兼容双键：代码用 ultra_short/short/mid/long，JSON 固化用 超短/短线/中线/长线
+        var obj = pf.optJSONObject(period)
+        if (obj == null) obj = pf.optJSONObject(periodCn(period))
+        if (obj == null) return emptyMap()
+        val out = LinkedHashMap<String, Double>()
+        val keys = obj.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            val v = obj.optDouble(k, 0.0)
+            if (v != 0.0) out[k] = v
+        }
+        return out
+    }
+
+    /** 周期键 → JSON 中文键（与 select_params/sell_rules 保持一致） */
+    private fun periodCn(period: String): String = when (period) {
+        "ultra_short" -> "超短"
+        "short" -> "短线"
+        "mid" -> "中线"
+        "long" -> "长线"
+        else -> period
+    }
+
     // ───────────────────────── 卖出参数（状态矩阵） ─────────────────────────
 
     /**
