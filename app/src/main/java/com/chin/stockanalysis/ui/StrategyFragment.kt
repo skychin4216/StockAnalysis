@@ -149,6 +149,29 @@ class StrategyFragment : Fragment() {
                             (activity as? MainActivity)?.switchToStrategyTab()
                         }
                     }
+                    "SWITCH_PERIOD_TAB" -> {
+                        withContext(Dispatchers.Main) {
+                            val period = cmd.extraParams["period"]?.toIntOrNull()
+                            if (period == null || period !in 0..3) {
+                                Log.w("StrategyFragment", "无效周期指令: ${cmd.extraParams}")
+                                return@withContext
+                            }
+                            viewPager.setCurrentItem(period, true)
+                            // ViewPager2 的 fragment 在下一帧才 commit，延迟到布局完成后查找
+                            viewPager.post {
+                                childFragmentManager.executePendingTransactions()
+                                val frag = childFragmentManager.findFragmentByTag("f$period")
+                                    as? com.chin.stockanalysis.strategy.trade.QuantFragmentBase
+                                if (frag != null) {
+                                    if (cmd.extraParams["op"] == "build") frag.autoRunPipeline()
+                                    else frag.refreshPositions()
+                                } else {
+                                    Log.w("StrategyFragment", "周期 $period 模块未就绪")
+                                    Toast.makeText(requireContext(), "周期模块未就绪，请稍后重试", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

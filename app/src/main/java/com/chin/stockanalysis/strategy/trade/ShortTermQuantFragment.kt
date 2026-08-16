@@ -109,7 +109,7 @@ class ShortTermQuantFragment : QuantFragmentBase() {
     }
 
     /** 供外部调用的自动触发 Pipeline */
-    fun autoRunPipeline() {
+    override fun autoRunPipeline() {
         if (buildBtn.isEnabled) onBuildClick()
     }
 }

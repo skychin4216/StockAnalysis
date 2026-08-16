@@ -427,67 +427,17 @@ class UnifiedStockClassifier(private val context: Context) {
      * 中线/长线始终用均线粘合。
      */
     private fun buildPeriodPipelines(bullish: Boolean): List<Pair<String, StockCheckPipeline>> {
-        val trendMode = if (bullish) AnalysisMode.TREND_FOLLOW
-            else AnalysisMode.CONVERGENCE
+        // 超短/短线在牛市用**趋势跟随**；熊市/震荡用均线粘合。
+        // 中线/长线始终用均线粘合。
+        // 过滤阈值一律取 PC 端三年 walk-forward 拟合参数（StockCheckPipeline.*Params 工厂 → backtest_params.json select_params）
+        val marketTrend = if (bullish) "BULLISH" else null
+        val trendMode = if (bullish) AnalysisMode.TREND_FOLLOW else AnalysisMode.CONVERGENCE
 
         return listOf(
-            PERIOD_ULTRA_SHORT to StockCheckPipeline(
-                mode = trendMode,
-                convergenceThreshold = 3.0,
-                convergenceDurationDays = 5,
-                convergenceDurationRatio = 0.8,
-                volumeBreakoutRatio = 1.2,
-                minDrawdownPct = 0.0,
-                requireChangePct = true,
-                minChangePct = 0.0,
-                requireCloseAboveConvergenceTop = true,
-                requireOpenBelowMAs = true,
-                requireThreeDayConfirm = true,
-                minPassCount = 7,
-                marketTrend = if (bullish) "BULLISH" else null
-            ),
-            PERIOD_SHORT to StockCheckPipeline(
-                mode = trendMode,
-                convergenceThreshold = 3.0,
-                convergenceDurationDays = 10,
-                convergenceDurationRatio = 0.8,
-                volumeBreakoutRatio = 1.5,
-                minDrawdownPct = 20.0,
-                requireChangePct = true,
-                minChangePct = 0.0,
-                requireAboveAllMAs = true,
-                requireThreeDayConfirm = true,
-                minPassCount = 7,
-                marketTrend = if (bullish) "BULLISH" else null
-            ),
-            PERIOD_MID to StockCheckPipeline(
-                mode = AnalysisMode.CONVERGENCE,
-                convergenceThreshold = 2.5,
-                convergenceDurationDays = 15,
-                convergenceDurationRatio = 0.8,
-                moderateVolumeLower = 1.2,
-                moderateVolumeUpper = 1.8,
-                minDrawdownPct = 30.0,
-                requireMA60Rising = true,
-                maRisingDays = 5,
-                minPassCount = 7,
-                marketTrend = if (bullish) "BULLISH" else null
-            ),
-            PERIOD_LONG to StockCheckPipeline(
-                mode = AnalysisMode.CONVERGENCE,
-                convergenceThreshold = 2.0,
-                convergenceDurationDays = 20,
-                convergenceDurationRatio = 0.8,
-                requireVolumeShrink = true,
-                volumeShrinkRatio = 0.5,
-                minDrawdownPct = 40.0,
-                requireMA60Rising = true,
-                maRisingDays = 10,
-                requireMA250Rising = true,
-                requireAboveYearLine = true,
-                minPassCount = 8,
-                marketTrend = if (bullish) "BULLISH" else null
-            )
+            PERIOD_ULTRA_SHORT to StockCheckPipeline.ultraShortParams(marketTrend).also { it.mode = trendMode },
+            PERIOD_SHORT to StockCheckPipeline.shortTermParams(marketTrend).also { it.mode = trendMode },
+            PERIOD_MID to StockCheckPipeline.midTermParams(marketTrend).also { it.mode = AnalysisMode.CONVERGENCE },
+            PERIOD_LONG to StockCheckPipeline.longTermParams(marketTrend).also { it.mode = AnalysisMode.CONVERGENCE }
         )
     }
 

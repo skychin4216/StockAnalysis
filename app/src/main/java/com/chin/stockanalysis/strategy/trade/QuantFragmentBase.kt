@@ -185,6 +185,11 @@ abstract class QuantFragmentBase : Fragment() {
     /** 加载持仓（默认调用 refreshPositions，子类可覆写） */
     open fun loadPositions() = refreshPositions()
 
+    /** 供外部统一调用的自动触发 Pipeline（建仓/选股）：工作台「四周期统一管理」入口 */
+    open fun autoRunPipeline() {
+        if (::buildBtn.isInitialized && buildBtn.isEnabled) onBuildClick()
+    }
+
     // ═══════════════════════════════════════════════════
     // UI 辅助方法
     // ═══════════════════════════════════════════════════

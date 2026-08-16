@@ -89,8 +89,9 @@ class StockCheckPipeline(
     /** 是否启用三日不新低确认 */
     val requireThreeDayConfirm: Boolean = false,
     // ── v3: 趋势跟随模式（超短/短线在牛市启用，替代均线粘合） ──
-    /** 分析模式：CONVERGENCE=均线粘合（中/长线及熊市），TREND_FOLLOW=趋势跟随（超短/短牛市） */
-    val mode: AnalysisMode = AnalysisMode.CONVERGENCE
+    /** 分析模式：CONVERGENCE=均线粘合（中/长线及熊市），TREND_FOLLOW=趋势跟随（超短/短牛市）
+     *  var：允许工厂方法（PC 拟合参数）返回后再按牛熊覆盖模式 */
+    var mode: AnalysisMode = AnalysisMode.CONVERGENCE
 ) {
 
     companion object {

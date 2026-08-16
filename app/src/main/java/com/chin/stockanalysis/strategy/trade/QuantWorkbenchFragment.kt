@@ -155,6 +155,23 @@ class QuantWorkbenchFragment : Fragment() {
             setPadding(16, 0, 16, 6)
         })
 
+        // ── 四周期统一管理：一键切到对应周期页并触发建仓（DAG 管线，买卖评估自动套用 PC 拟合卖出参数）──
+        val mgrRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(12, 8, 12, 8)
+        }
+        mgrRow.addView(makeActionBtn("⚡ 超短建仓") { switchToPeriod(0, "build") })
+        mgrRow.addView(makeActionBtn("⚡ 短线建仓") { switchToPeriod(1, "build") })
+        mgrRow.addView(makeActionBtn("⚡ 中线建仓") { switchToPeriod(2, "build") })
+        mgrRow.addView(makeActionBtn("⚡ 长线建仓") { switchToPeriod(3, "build") })
+        rootLayout.addView(mgrRow)
+        rootLayout.addView(TextView(requireContext()).apply {
+            text = "四周期统一管理：切换到对应周期页并自动建仓；选股过滤/排序/卖出参数均套用 PC 端三年 walk-forward 拟合结果（backtest_params.json）"
+            textSize = 10f
+            setTextColor(Color.parseColor("#888888"))
+            setPadding(16, 0, 16, 6)
+        })
+
         // ── 多周期「回溯+拟合」引擎（超短隔日卖 / 短线连跌卖 / 中长线做T）──
         rootLayout.addView(TextView(requireContext()).apply {
             text = "── 多周期回溯 + 状态矩阵拟合（超短隔日/短线连跌/中长线做T） ──"
@@ -531,6 +548,21 @@ class QuantWorkbenchFragment : Fragment() {
                 }
             }
         }
+    }
+
+    /** ⚡ 四周期统一管理：发跨Tab指令，切到对应周期页并触发建仓/选股（PC 拟合参数自动生效） */
+    private fun switchToPeriod(period: Int, op: String) {
+        com.chin.stockanalysis.ui.CrossTabBus.tryPostCommand(
+            com.chin.stockanalysis.ui.CrossTabCommand(
+                action = "SWITCH_PERIOD_TAB",
+                extraParams = mapOf("period" to period.toString(), "op" to op)
+            )
+        )
+        Toast.makeText(
+            requireContext(),
+            "已切换并触发${if (op == "build") "该周期建仓" else "该周期操作"}",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     /** 拉取 2024 年至今的历史K线（回填一年回溯窗口 + MA250 回看） */
