@@ -52,6 +52,10 @@ object BacktestParamsLoader {
                 Log.w(TAG, "加载固化参数失败，使用代码默认参数: ${e.message}")
                 null
             }
+            if (root != null) {
+                val n = try { root!!.optJSONObject("sell_rules")?.length() ?: 0 } catch (e: Exception) { 0 }
+                Log.i(TAG, "✅ 已加载 PC 拟合参数: 来源=$sourceName 文件=$FILE 周期数=$n")
+            }
         }
     }
 
@@ -256,5 +260,114 @@ object BacktestParamsLoader {
             winRate = 0.0,
             sampleCount = 0
         )
+    }
+
+    // ───────────────────────── 做T信号参数（t_trade） ─────────────────────────
+
+    /**
+     * 做T/反T 信号阈值参数（来自 backtest_params.json 的 t_trade 区块，
+     * 由 smalltools/_ttrade_walk_forward.py 做T walk-forward 拟合；未配置时用代码默认值）。
+     */
+    fun tTradeParams(context: Context): TTradeParams {
+        load(context)
+        val o = root?.optJSONObject("t_trade") ?: return TTradeParams.DEFAULT
+        fun d(name: String, def: Double) = o.optDouble(name, def)
+        fun i(name: String, def: Int) = o.optInt(name, def)
+        return TTradeParams(
+            // 支撑/阻力位系数
+            supportMa5Factor = d("supportMa5Factor", TTradeParams.DEFAULT.supportMa5Factor),
+            supportMa10Factor = d("supportMa10Factor", TTradeParams.DEFAULT.supportMa10Factor),
+            resistanceMa5Factor = d("resistanceMa5Factor", TTradeParams.DEFAULT.resistanceMa5Factor),
+            resistanceMa10Factor = d("resistanceMa10Factor", TTradeParams.DEFAULT.resistanceMa10Factor),
+            // 触发阈值
+            nearSupportThreshold = d("nearSupportThreshold", TTradeParams.DEFAULT.nearSupportThreshold),
+            nearResistanceThreshold = d("nearResistanceThreshold", TTradeParams.DEFAULT.nearResistanceThreshold),
+            minExpectedProfitPct = d("minExpectedProfitPct", TTradeParams.DEFAULT.minExpectedProfitPct),
+            tQtyRatio = d("tQtyRatio", TTradeParams.DEFAULT.tQtyRatio),
+            // 配对目标幅度（%）
+            pairProfitPct = d("pairProfitPct", TTradeParams.DEFAULT.pairProfitPct),
+            // 做T买入置信度
+            baseConfidence = i("baseConfidence", TTradeParams.DEFAULT.baseConfidence),
+            rsiOversold = d("rsiOversold", TTradeParams.DEFAULT.rsiOversold),
+            rsiLow = d("rsiLow", TTradeParams.DEFAULT.rsiLow),
+            rsiOverbought = d("rsiOverbought", TTradeParams.DEFAULT.rsiOverbought),
+            confRsiOversold = i("confRsiOversold", TTradeParams.DEFAULT.confRsiOversold),
+            confRsiLow = i("confRsiLow", TTradeParams.DEFAULT.confRsiLow),
+            confRsiOverbought = i("confRsiOverbought", TTradeParams.DEFAULT.confRsiOverbought),
+            volumeShrink = d("volumeShrink", TTradeParams.DEFAULT.volumeShrink),
+            volumeSurge = d("volumeSurge", TTradeParams.DEFAULT.volumeSurge),
+            confVolumeShrink = i("confVolumeShrink", TTradeParams.DEFAULT.confVolumeShrink),
+            confVolumeSurge = i("confVolumeSurge", TTradeParams.DEFAULT.confVolumeSurge),
+            confPatternBullish = i("confPatternBullish", TTradeParams.DEFAULT.confPatternBullish),
+            confPatternBearish = i("confPatternBearish", TTradeParams.DEFAULT.confPatternBearish),
+            confTrendUp = i("confTrendUp", TTradeParams.DEFAULT.confTrendUp),
+            confTrendDown = i("confTrendDown", TTradeParams.DEFAULT.confTrendDown),
+            // 反T卖出置信度
+            rtRsiOverbought = d("rt_rsiOverbought", TTradeParams.DEFAULT.rtRsiOverbought),
+            rtRsiHigh = d("rt_rsiHigh", TTradeParams.DEFAULT.rtRsiHigh),
+            rtRsiOversold = d("rt_rsiOversold", TTradeParams.DEFAULT.rtRsiOversold),
+            rtConfRsiOverbought = i("rt_confRsiOverbought", TTradeParams.DEFAULT.rtConfRsiOverbought),
+            rtConfRsiHigh = i("rt_confRsiHigh", TTradeParams.DEFAULT.rtConfRsiHigh),
+            rtConfRsiOversold = i("rt_confRsiOversold", TTradeParams.DEFAULT.rtConfRsiOversold),
+            rtVolumeRise = d("rt_volumeRise", TTradeParams.DEFAULT.rtVolumeRise),
+            rtVolumeDry = d("rt_volumeDry", TTradeParams.DEFAULT.rtVolumeDry),
+            rtConfVolumeRise = i("rt_confVolumeRise", TTradeParams.DEFAULT.rtConfVolumeRise),
+            rtConfVolumeDry = i("rt_confVolumeDry", TTradeParams.DEFAULT.rtConfVolumeDry),
+            rtConfPatternBearish = i("rt_confPatternBearish", TTradeParams.DEFAULT.rtConfPatternBearish),
+            rtConfPatternBullish = i("rt_confPatternBullish", TTradeParams.DEFAULT.rtConfPatternBullish),
+            rtConfTrendDown = i("rt_confTrendDown", TTradeParams.DEFAULT.rtConfTrendDown),
+            rtConfTrendUp = i("rt_confTrendUp", TTradeParams.DEFAULT.rtConfTrendUp)
+        )
+    }
+}
+
+/** 做T/反T 信号阈值参数（默认值 = 2026-08 TTradeEngine 固定规则） */
+data class TTradeParams(
+    // 支撑/阻力位系数
+    val supportMa5Factor: Double = 0.98,
+    val supportMa10Factor: Double = 0.97,
+    val resistanceMa5Factor: Double = 1.02,
+    val resistanceMa10Factor: Double = 1.03,
+    // 触发阈值
+    val nearSupportThreshold: Double = 0.02,
+    val nearResistanceThreshold: Double = 0.02,
+    val minExpectedProfitPct: Double = 0.5,
+    val tQtyRatio: Double = 0.4,
+    // 配对目标幅度（%）：做T 1+pairProfitPct/100，反T 1-pairProfitPct/100
+    val pairProfitPct: Double = 0.5,
+    // 做T买入置信度
+    val baseConfidence: Int = 50,
+    val rsiOversold: Double = 30.0,
+    val rsiLow: Double = 40.0,
+    val rsiOverbought: Double = 70.0,
+    val confRsiOversold: Int = 20,
+    val confRsiLow: Int = 10,
+    val confRsiOverbought: Int = -20,
+    val volumeShrink: Double = 0.7,
+    val volumeSurge: Double = 2.0,
+    val confVolumeShrink: Int = 10,
+    val confVolumeSurge: Int = -10,
+    val confPatternBullish: Int = 15,
+    val confPatternBearish: Int = -15,
+    val confTrendUp: Int = 10,
+    val confTrendDown: Int = -15,
+    // 反T卖出置信度
+    val rtRsiOverbought: Double = 70.0,
+    val rtRsiHigh: Double = 60.0,
+    val rtRsiOversold: Double = 30.0,
+    val rtConfRsiOverbought: Int = 20,
+    val rtConfRsiHigh: Int = 10,
+    val rtConfRsiOversold: Int = -20,
+    val rtVolumeRise: Double = 1.5,
+    val rtVolumeDry: Double = 0.5,
+    val rtConfVolumeRise: Int = 10,
+    val rtConfVolumeDry: Int = -10,
+    val rtConfPatternBearish: Int = 15,
+    val rtConfPatternBullish: Int = -15,
+    val rtConfTrendDown: Int = 10,
+    val rtConfTrendUp: Int = -15
+) {
+    companion object {
+        val DEFAULT = TTradeParams()
     }
 }

@@ -236,6 +236,14 @@ interface DailySnapshotDao {
         roeTTM: Double, grossMarginTTM: Double,
         debtToAsset: Double, operatingCashFlow: Double
     ): Int
+
+    /** 增量拉取：每只股票已有数据的最大日期（空表返回空列表） */
+    @Query("SELECT code, MAX(date) AS maxDate FROM daily_snapshot GROUP BY code")
+    suspend fun getMaxDateByCode(): List<CodeMaxDate>
+
+    /** 增量拉取：单只股票已有数据的最大日期 */
+    @Query("SELECT MAX(date) FROM daily_snapshot WHERE code = :code")
+    suspend fun getMaxDate(code: String): String?
 }
 
 @Dao
@@ -295,6 +303,12 @@ interface StrategyWeightSnapshotDao {
 data class DateCount(
     val date: String,
     val cnt: Int
+)
+
+/** 每只股票已同步的最大日期（增量拉取判断缺失区间用） */
+data class CodeMaxDate(
+    val code: String,
+    val maxDate: String
 )
 
 data class StrategyAccuracyStat(

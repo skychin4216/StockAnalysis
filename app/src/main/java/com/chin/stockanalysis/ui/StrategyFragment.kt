@@ -119,29 +119,13 @@ class StrategyFragment : Fragment() {
                     "EXECUTE_SIMULATE_TRADE" -> {
                         withContext(Dispatchers.Main) {
                             viewPager.setCurrentItem(2, true)  // Tab 2 = 中线量化
-                            childFragmentManager.executePendingTransactions()
-                            val frag = childFragmentManager.findFragmentByTag("f2")
-                                as? com.chin.stockanalysis.strategy.trade.MidTermQuantFragment
-                            if (frag != null) {
-                                frag.autoExecuteTrade()
-                            } else {
-                                Log.w("StrategyFragment", "MidTermQuantFragment not found")
-                                Toast.makeText(requireContext(), "中线量化模块未就绪，请稍后重试", Toast.LENGTH_SHORT).show()
-                            }
+                            runOnPeriodTab(2, "simulate")
                         }
                     }
                     "RUN_PIPELINE" -> {
                         withContext(Dispatchers.Main) {
                             viewPager.setCurrentItem(1, true)  // Tab 1 = 短线量化
-                            childFragmentManager.executePendingTransactions()
-                            val frag = childFragmentManager.findFragmentByTag("f1")
-                                as? com.chin.stockanalysis.strategy.trade.ShortTermQuantFragment
-                            if (frag != null) {
-                                frag.autoRunPipeline()
-                            } else {
-                                Log.w("StrategyFragment", "ShortTermQuantFragment not found")
-                                Toast.makeText(requireContext(), "短线量化模块未就绪，请稍后重试", Toast.LENGTH_SHORT).show()
-                            }
+                            runOnPeriodTab(1, "pipeline")
                         }
                     }
                     "SWITCH_TO_STRATEGY_TAB" -> {
@@ -157,24 +141,41 @@ class StrategyFragment : Fragment() {
                                 return@withContext
                             }
                             viewPager.setCurrentItem(period, true)
-                            // ViewPager2 的 fragment 在下一帧才 commit，延迟到布局完成后查找
-                            viewPager.post {
-                                childFragmentManager.executePendingTransactions()
-                                val frag = childFragmentManager.findFragmentByTag("f$period")
-                                    as? com.chin.stockanalysis.strategy.trade.QuantFragmentBase
-                                if (frag != null) {
-                                    if (cmd.extraParams["op"] == "build") frag.autoRunPipeline()
-                                    else frag.refreshPositions()
-                                } else {
-                                    Log.w("StrategyFragment", "周期 $period 模块未就绪")
-                                    Toast.makeText(requireContext(), "周期模块未就绪，请稍后重试", Toast.LENGTH_SHORT).show()
-                                }
-                            }
+                            runOnPeriodTab(period, cmd.extraParams["op"] ?: "refresh")
                         }
                     }
                 }
             }
         }
+    }
+
+    /**
+     * 切换周期页并等待目标 fragment 就绪后执行操作。
+     * ViewPager2 的 setCurrentItem(smoothScroll=true) 是异步的，目标 fragment 在滚动过程中才创建，
+     * 仅靠一次 post/executePendingTransactions 常找不到 fragment（尤其目标页不在当前离屏范围内），
+     * 因此用延迟重试（每 150ms，最长约 1.8s）确保模块就绪后再触发建仓/选股/回溯。
+     */
+    private fun runOnPeriodTab(period: Int, op: String, attempt: Int = 0) {
+        childFragmentManager.executePendingTransactions()
+        val frag = childFragmentManager.findFragmentByTag("f$period")
+            as? com.chin.stockanalysis.strategy.trade.QuantFragmentBase
+        if (frag != null) {
+            when (op) {
+                "simulate" -> (frag as? com.chin.stockanalysis.strategy.trade.MidTermQuantFragment)
+                    ?.autoExecuteTrade()
+                "pipeline" -> (frag as? com.chin.stockanalysis.strategy.trade.ShortTermQuantFragment)
+                    ?.autoRunPipeline()
+                "build" -> frag.autoRunPipeline()
+                else -> frag.refreshPositions()
+            }
+            return
+        }
+        if (attempt >= 12) {
+            Log.w("StrategyFragment", "周期 $period 模块未就绪(op=$op)")
+            Toast.makeText(requireContext(), "周期模块未就绪，请稍后重试", Toast.LENGTH_SHORT).show()
+            return
+        }
+        viewPager.postDelayed({ runOnPeriodTab(period, op, attempt + 1) }, 150L)
     }
 
     private class StrategyTabAdapter(fragment: Fragment) : FragmentStateAdapter(fragment) {

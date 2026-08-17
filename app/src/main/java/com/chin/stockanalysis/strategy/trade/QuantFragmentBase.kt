@@ -1356,7 +1356,7 @@ abstract class QuantFragmentBase : Fragment() {
                     val holdingCount = holdingDecisions.size
                     val watchCount = watchlistDecisions.size
                     val shouldSellCount = allDecisions.count { it.shouldSell }
-                    statusTv.text = "💰 卖出评估: $holdingCount 持仓 + $watchCount 选股, $shouldSellCount 触发卖出"
+                    statusTv.text = "💰 卖出评估: $holdingCount 持仓(${holdingDecisions.count { it.shouldSell }}触发卖出) + $watchCount 选股观察, 共${allDecisions.count { it.shouldSell }}建议卖出"
                     showSellDecisionsDialog(allDecisions)
                 }
             } catch (e: Exception) {
@@ -1415,10 +1415,32 @@ abstract class QuantFragmentBase : Fragment() {
 
                 val sorted = allSignals.sortedByDescending { it.strength }
 
+                // ── 统一口径：每个候选再过一次本周期拟合严选管线（select_params 为 PC 拟合参数）──
+                // 与建仓 DAG ①链的 StockEvaluationNode 同源（同一 StockCheckPipeline + applySelectOverrides）
+                val db = StockDatabase.getInstance(requireContext())
+                val periodPipeline = when (periodType) {
+                    "UltraShortQuant" -> com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline.ultraShortParams()
+                    "ShortTermQuant" -> com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline.shortTermParams()
+                    "MidTermQuant" -> com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline.midTermParams()
+                    "LongTermQuant" -> com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline.longTermParams()
+                    else -> com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline.midTermParams()
+                }
+                val evalMap = mutableMapOf<String, com.chin.stockanalysis.strategy.topology.nodes.StockEvaluationDetail>()
+                for (sig in sorted) {
+                    try {
+                        val detail = com.chin.stockanalysis.strategy.topology.nodes.StockEvaluationChecker
+                            .evaluate(sig.stockCode, db, periodPipeline)
+                        if (detail.name != "数据不足" && detail.name != "异常") {
+                            evalMap[sig.stockCode] = detail
+                        }
+                    } catch (_: Exception) { /* 单股评估失败不阻塞整体报告 */ }
+                }
+                val passCount = evalMap.values.count { it.allPassed }
+
                 withContext(Dispatchers.Main) {
                     progressBar.visibility = View.GONE
-                    statusTv.text = "📈 买入评估: ${sorted.size} 个候选"
-                    showBuyCandidatesDialog(sorted, periodType, strategies.size)
+                    statusTv.text = "📈 买入评估: ${sorted.size} 候选 / 拟合严选通过 $passCount"
+                    showBuyCandidatesDialog(sorted, periodType, strategies.size, evalMap, passCount)
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -1432,12 +1454,17 @@ abstract class QuantFragmentBase : Fragment() {
     private fun showBuyCandidatesDialog(
         signals: List<com.chin.stockanalysis.strategy.models.StrategySignal>,
         periodType: String,
-        strategyCount: Int
+        strategyCount: Int,
+        evalMap: Map<String, com.chin.stockanalysis.strategy.topology.nodes.StockEvaluationDetail> = emptyMap(),
+        evalPassCount: Int = 0
     ) {
         val sb = StringBuilder()
         sb.appendLine("📈 买入候选评估报告")
         sb.appendLine("周期: $periodType | 策略数: $strategyCount")
         sb.appendLine("交易日: ${browsingDate.format(DATE_FMT)}")
+        if (evalMap.isNotEmpty()) {
+            sb.appendLine("拟合严选: ${evalMap.size} 只已评估 / $evalPassCount 只通过")
+        }
         sb.appendLine()
 
         if (signals.isEmpty()) {
@@ -1457,6 +1484,14 @@ abstract class QuantFragmentBase : Fragment() {
                 if (sig.details.isNotEmpty()) {
                     val topDetails = sig.details.entries.take(4).joinToString(" ") { "${it.key}=${it.value}" }
                     sb.appendLine("    指标: $topDetails")
+                }
+                // 拟合严选口径（与建仓 DAG ①链一致）
+                evalMap[sig.stockCode]?.let { d ->
+                    if (d.allPassed) {
+                        sb.appendLine("    ✅ 拟合严选通过 (${d.passCount}/${d.totalChecks})")
+                    } else {
+                        sb.appendLine("    ⚠️ 拟合严选未通过 (${d.passCount}/${d.totalChecks}) — 建议观望或移出建仓候选")
+                    }
                 }
                 sb.appendLine()
             }
@@ -1688,19 +1723,24 @@ abstract class QuantFragmentBase : Fragment() {
         }
     }
 
-    /** 显示卖出决策对话框 */
+    /** 显示卖出决策对话框（真实持仓 与 选股观察 分开统计展示） */
     protected fun showSellDecisionsDialog(decisions: List<AutoSellEngine.SellDecision>) {
         val sb = StringBuilder()
         sb.appendLine("💰 智能卖出评估报告")
         sb.appendLine("交易日: ${browsingDate.format(DATE_FMT)}")
-        sb.appendLine("共 ${decisions.size} 个持仓评估")
         sb.appendLine()
 
-        val sellList = decisions.filter { it.shouldSell }.sortedByDescending { it.urgency }
-        val holdList = decisions.filter { !it.shouldSell }
+        // 区分真实持仓（strategy_trade_order）与选股观察（user_watchlist）
+        val holdings = decisions.filter { it.order.strategyId != "watchlist" }
+        val watchlist = decisions.filter { it.order.strategyId == "watchlist" }
+
+        // ═══ 1. 真实持仓评估 ═══
+        sb.appendLine("📦 真实持仓评估 (${holdings.size}只):")
+        val sellList = holdings.filter { it.shouldSell }.sortedByDescending { it.urgency }
+        val holdList = holdings.filter { !it.shouldSell }
 
         if (sellList.isNotEmpty()) {
-            sb.appendLine("🔴 卖出信号 (${sellList.size}个):")
+            sb.appendLine("  🔴 卖出信号 (${sellList.size}个):")
             for (d in sellList) {
                 val emoji = when {
                     d.urgency >= 9 -> "🚨"
@@ -1718,13 +1758,37 @@ abstract class QuantFragmentBase : Fragment() {
         }
 
         if (holdList.isNotEmpty()) {
-            sb.appendLine("🟢 继续持有 (${holdList.size}个):")
+            sb.appendLine("  🟢 继续持有 (${holdList.size}个):")
             for (d in holdList) {
                 sb.appendLine("  ✅ ${d.order.stockName}(${d.order.stockCode.takeLast(6)}) 盈亏: ${"%.2f".format(d.profitPct)}%")
                 if (d.technicalDetails.isNotEmpty()) {
                     val tech = d.technicalDetails
                     sb.append("    MA5:${tech["ma5"] ?: "N/A"} MA20:${tech["ma20"] ?: "N/A"} RSI:${tech["rsi"] ?: "N/A"} ATR:${tech["atr"] ?: "N/A"}")
                     sb.appendLine()
+                }
+            }
+        }
+
+        if (holdings.isEmpty()) sb.appendLine("  （无持仓）")
+
+        // ═══ 2. 选股观察评估（非持仓，仅提示是否移除观察） ═══
+        if (watchlist.isNotEmpty()) {
+            sb.appendLine()
+            sb.appendLine("🔭 选股观察 (${watchlist.size}只, 非持仓):")
+            val watchSell = watchlist.filter { it.shouldSell }
+            val watchHold = watchlist.filter { !it.shouldSell }
+
+            if (watchSell.isNotEmpty()) {
+                sb.appendLine("  ⚠️ 建议移除 (${watchSell.size}个):")
+                for (d in watchSell) {
+                    sb.appendLine("    🔻 ${d.order.stockName}(${d.order.stockCode.takeLast(6)}) 盈亏: ${"%.2f".format(d.profitPct)}%")
+                    sb.appendLine("      原因: ${d.reason.take(60)}")
+                }
+            }
+            if (watchHold.isNotEmpty()) {
+                sb.appendLine("  ✅ 继续观察 (${watchHold.size}个):")
+                for (d in watchHold) {
+                    sb.appendLine("    👀 ${d.order.stockName}(${d.order.stockCode.takeLast(6)}) 盈亏: ${"%.2f".format(d.profitPct)}%")
                 }
             }
         }

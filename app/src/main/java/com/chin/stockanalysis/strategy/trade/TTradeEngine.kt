@@ -74,6 +74,9 @@ class TTradeEngine(private val context: Context) {
         basePositionQty: Int,
         periodType: String
     ): List<TTradeSignal> {
+        // 做T阈值参数（PC 端 walk-forward 拟合，见 backtest_params.json t_trade 区块）
+        val p = com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader
+            .tTradeParams(context)
         val db = StockDatabase.getInstance(context)
         val snaps = db.dailySnapshotDao().getByCode(stockCode, 30).sortedBy { it.date }
         if (snaps.size < 10) return emptyList()
@@ -91,9 +94,9 @@ class TTradeEngine(private val context: Context) {
         val recentHigh = window20.map { it.high }.maxOrNull() ?: latest.close
         val avgBody = snaps.takeLast(10).map { abs(it.close - it.open) }.average()
 
-        // 支撑位和阻力位
-        val supportPrice = listOf(recentLow, ma5 * 0.98, ma10 * 0.97).maxOrNull() ?: latest.close
-        val resistancePrice = listOf(recentHigh, ma5 * 1.02, ma10 * 1.03).minOrNull() ?: latest.close
+        // 支撑位和阻力位（系数来自 PC 拟合参数）
+        val supportPrice = listOf(recentLow, ma5 * p.supportMa5Factor, ma10 * p.supportMa10Factor).maxOrNull() ?: latest.close
+        val resistancePrice = listOf(recentHigh, ma5 * p.resistanceMa5Factor, ma10 * p.resistanceMa10Factor).minOrNull() ?: latest.close
 
         // ── v2 增强分析 ──
         val closes = snaps.map { it.close }
@@ -110,38 +113,38 @@ class TTradeEngine(private val context: Context) {
         // 趋势方向判断
         val trendDir = analyzeTrendDirection(snaps, ma5, ma10, ma20, rsi, topPattern)
 
-        // 做T数量：底仓的 40%（四舍五入到整手；不足一手或底仓不足一手时不触发）
+        // 做T数量：底仓的 tQtyRatio（默认 40%），四舍五入到整手；不足一手或底仓不足一手时不触发
         val tQty = if (basePositionQty >= 100) {
-            minOf((basePositionQty * 0.4).toInt() / 100 * 100, basePositionQty / 100 * 100)
+            minOf((basePositionQty * p.tQtyRatio).toInt() / 100 * 100, basePositionQty / 100 * 100)
         } else 0
 
         // ── 做T买入信号 ──
         if (supportPrice > 0) {
             val priceToSupport = (latest.close - supportPrice) / supportPrice
-            if (priceToSupport < 0.02 && tQty > 0) {
+            if (priceToSupport < p.nearSupportThreshold && tQty > 0) {
                 val targetPrice = ma5
                 val expectedPct = (targetPrice - latest.close) / latest.close * 100
-                if (expectedPct > 0.5) {
+                if (expectedPct > p.minExpectedProfitPct) {
                     // 置信度评分
-                    var conf = 50
+                    var conf = p.baseConfidence
                     val reasons = mutableListOf<String>()
                     reasons.add("接近支撑位 ${"%.2f".format(supportPrice)}")
 
-                    if (rsi < 30) { conf += 20; reasons.add("RSI超卖${"%.0f".format(rsi)}") }
-                    else if (rsi < 40) { conf += 10; reasons.add("RSI偏低${"%.0f".format(rsi)}") }
-                    else if (rsi > 70) { conf -= 20; reasons.add("⚠️RSI超买${"%.0f".format(rsi)}") }
+                    if (rsi < p.rsiOversold) { conf += p.confRsiOversold; reasons.add("RSI超卖${"%.0f".format(rsi)}") }
+                    else if (rsi < p.rsiLow) { conf += p.confRsiLow; reasons.add("RSI偏低${"%.0f".format(rsi)}") }
+                    else if (rsi > p.rsiOverbought) { conf += p.confRsiOverbought; reasons.add("⚠️RSI超买${"%.0f".format(rsi)}") }
 
-                    if (volumeRatio < 0.7) { conf += 10; reasons.add("缩量回调") }
-                    if (volumeRatio > 2.0) { conf -= 10; reasons.add("⚠️放量异常") }
+                    if (volumeRatio < p.volumeShrink) { conf += p.confVolumeShrink; reasons.add("缩量回调") }
+                    if (volumeRatio > p.volumeSurge) { conf += p.confVolumeSurge; reasons.add("⚠️放量异常") }
 
                     if (topPattern?.direction == com.chin.stockanalysis.strategy.analysis.CandlePatternDetector.Direction.BULLISH) {
-                        conf += 15; reasons.add("K线形态:$patternName(看多)")
+                        conf += p.confPatternBullish; reasons.add("K线形态:$patternName(看多)")
                     } else if (topPattern?.direction == com.chin.stockanalysis.strategy.analysis.CandlePatternDetector.Direction.BEARISH) {
-                        conf -= 15; reasons.add("⚠️K线形态:$patternName(看空)")
+                        conf += p.confPatternBearish; reasons.add("⚠️K线形态:$patternName(看空)")
                     }
 
-                    if (trendDir.contains("上升")) { conf += 10; reasons.add("趋势:$trendDir") }
-                    if (trendDir.contains("下跌")) { conf -= 15; reasons.add("⚠️趋势:$trendDir") }
+                    if (trendDir.contains("上升")) { conf += p.confTrendUp; reasons.add("趋势:$trendDir") }
+                    if (trendDir.contains("下跌")) { conf += p.confTrendDown; reasons.add("⚠️趋势:$trendDir") }
 
                     conf = conf.coerceIn(0, 100)
 
@@ -165,29 +168,29 @@ class TTradeEngine(private val context: Context) {
         // ── 反T卖出信号 ──
         if (resistancePrice > 0) {
             val priceToResistance = (resistancePrice - latest.close) / resistancePrice
-            if (priceToResistance < 0.02 && tQty > 0) {
+            if (priceToResistance < p.nearResistanceThreshold && tQty > 0) {
                 val targetPrice = ma5
                 val expectedPct = (latest.close - targetPrice) / latest.close * 100
-                if (expectedPct > 0.5) {
-                    var conf = 50
+                if (expectedPct > p.minExpectedProfitPct) {
+                    var conf = p.baseConfidence
                     val reasons = mutableListOf<String>()
                     reasons.add("接近阻力位 ${"%.2f".format(resistancePrice)}")
 
-                    if (rsi > 70) { conf += 20; reasons.add("RSI超买${"%.0f".format(rsi)}") }
-                    else if (rsi > 60) { conf += 10; reasons.add("RSI偏高${"%.0f".format(rsi)}") }
-                    else if (rsi < 30) { conf -= 20; reasons.add("⚠️RSI超卖${"%.0f".format(rsi)}") }
+                    if (rsi > p.rtRsiOverbought) { conf += p.rtConfRsiOverbought; reasons.add("RSI超买${"%.0f".format(rsi)}") }
+                    else if (rsi > p.rtRsiHigh) { conf += p.rtConfRsiHigh; reasons.add("RSI偏高${"%.0f".format(rsi)}") }
+                    else if (rsi < p.rtRsiOversold) { conf += p.rtConfRsiOversold; reasons.add("⚠️RSI超卖${"%.0f".format(rsi)}") }
 
-                    if (volumeRatio > 1.5) { conf += 10; reasons.add("放量冲高") }
-                    if (volumeRatio < 0.5) { conf -= 10; reasons.add("⚠️缩量无力") }
+                    if (volumeRatio > p.rtVolumeRise) { conf += p.rtConfVolumeRise; reasons.add("放量冲高") }
+                    if (volumeRatio < p.rtVolumeDry) { conf += p.rtConfVolumeDry; reasons.add("⚠️缩量无力") }
 
                     if (topPattern?.direction == com.chin.stockanalysis.strategy.analysis.CandlePatternDetector.Direction.BEARISH) {
-                        conf += 15; reasons.add("K线形态:$patternName(看空)")
+                        conf += p.rtConfPatternBearish; reasons.add("K线形态:$patternName(看空)")
                     } else if (topPattern?.direction == com.chin.stockanalysis.strategy.analysis.CandlePatternDetector.Direction.BULLISH) {
-                        conf -= 15; reasons.add("⚠️K线形态:$patternName(看多)")
+                        conf += p.rtConfPatternBullish; reasons.add("⚠️K线形态:$patternName(看多)")
                     }
 
-                    if (trendDir.contains("下跌")) { conf += 10; reasons.add("趋势:$trendDir") }
-                    if (trendDir.contains("上升")) { conf -= 15; reasons.add("⚠️趋势:$trendDir") }
+                    if (trendDir.contains("下跌")) { conf += p.rtConfTrendDown; reasons.add("趋势:$trendDir") }
+                    if (trendDir.contains("上升")) { conf += p.rtConfTrendUp; reasons.add("⚠️趋势:$trendDir") }
 
                     conf = conf.coerceIn(0, 100)
 
@@ -215,14 +218,16 @@ class TTradeEngine(private val context: Context) {
             // B1: A股T+1 — 当日做T买入(T_BUY)不可当日卖出配对，须隔日方可卖出
             .filter { !(it.tradeType == "T_BUY" && it.tradeDate == today) }
         for (openTrade in openTrades) {
+            val pairUp = 1 + p.pairProfitPct / 100    // 做T卖出目标（默认 +0.5%）
+            val pairDown = 1 - p.pairProfitPct / 100  // 反T买回目标（默认 -0.5%）
             when (openTrade.tradeType) {
                 "T_BUY" -> {
-                    if (latest.close >= openTrade.price * 1.005) {
+                    if (latest.close >= openTrade.price * pairUp) {
                         signals.add(
                             TTradeSignal(
                                 stockCode = stockCode, stockName = stockName,
                                 signalType = TTradeType.T_SELL,
-                                suggestedPrice = latest.close, targetPrice = openTrade.price * 1.005,
+                                suggestedPrice = latest.close, targetPrice = openTrade.price * pairUp,
                                 quantity = openTrade.quantity,
                                 reason = "做T买入(${openTrade.price})已到目标，卖出配对锁定利润；趋势:$trendDir",
                                 expectedProfitPct = (latest.close - openTrade.price) / openTrade.price * 100,
@@ -234,12 +239,12 @@ class TTradeEngine(private val context: Context) {
                     }
                 }
                 "RT_SELL" -> {
-                    if (latest.close <= openTrade.price * 0.995) {
+                    if (latest.close <= openTrade.price * pairDown) {
                         signals.add(
                             TTradeSignal(
                                 stockCode = stockCode, stockName = stockName,
                                 signalType = TTradeType.RT_BUY,
-                                suggestedPrice = latest.close, targetPrice = openTrade.price * 0.995,
+                                suggestedPrice = latest.close, targetPrice = openTrade.price * pairDown,
                                 quantity = openTrade.quantity,
                                 reason = "反T卖出(${openTrade.price})已到目标，买回配对锁定利润；趋势:$trendDir",
                                 expectedProfitPct = (openTrade.price - latest.close) / openTrade.price * 100,

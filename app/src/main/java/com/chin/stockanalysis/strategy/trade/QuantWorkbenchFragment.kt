@@ -198,7 +198,7 @@ class QuantWorkbenchFragment : Fragment() {
             orientation = LinearLayout.HORIZONTAL
             setPadding(12, 0, 12, 8)
         }
-        dataRow.addView(makeActionBtn("📥 拉取2年历史") { fetchBacktestHistory() })
+        dataRow.addView(makeActionBtn("📥 增量拉取2年历史") { fetchBacktestHistory() })
         dataRow.addView(makeActionBtn("🧬 参数导入") { paramsPicker.launch("application/json") })
         rootLayout.addView(dataRow)
         rootLayout.addView(TextView(requireContext()).apply {
@@ -664,20 +664,20 @@ class QuantWorkbenchFragment : Fragment() {
         ).show()
     }
 
-    /** 拉取 2024 年至今的历史K线（回填一年回溯窗口 + MA250 回看） */
+    /** 增量拉取 2024 年至今的历史K线：只补每只股票缺失区间，已同步到最新交易日的不重复拉取 */
     private fun fetchBacktestHistory() {
-        setBusy(true, "📥 拉取 2024 年至今历史K线...")
+        setBusy(true, "📥 增量拉取（只补缺失区间）...")
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(requireContext())
-                val count = fetcher.fetchAllHistoricalData(days = 550, force = true) { p ->
+                val count = fetcher.fetchAllHistoricalData(days = 550, force = true, incremental = true) { p ->
                     requireActivity().runOnUiThread {
-                        statusTv.text = "📥 拉取中 ${p.completedStocks}/${p.totalStocks} 只 · ${p.totalRecords} 条 · ${p.currentStock}"
+                        statusTv.text = "📥 增量拉取中 ${p.completedStocks}/${p.totalStocks} 只 · ${p.totalRecords} 条 · ${p.currentStock}"
                     }
                 }
                 withContext(Dispatchers.Main) {
-                    setBusy(false, "✅ 历史数据拉取完成：$count 条")
-                    Toast.makeText(requireContext(), "历史数据已更新：$count 条，可执行回溯", Toast.LENGTH_LONG).show()
+                    setBusy(false, "✅ 增量拉取完成：新增 $count 条")
+                    Toast.makeText(requireContext(), "增量拉取完成：新增 $count 条，可执行回溯", Toast.LENGTH_LONG).show()
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "拉取历史失败: ${e.message}", e)

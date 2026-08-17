@@ -137,6 +137,7 @@ class HistoricalDataFetcher(private val context: Context) {
     suspend fun fetchAllHistoricalData(
         days: Int = 60,
         force: Boolean = false,
+        incremental: Boolean = false,
         startDateOverride: LocalDate? = null,
         onProgress: ((FetchProgress) -> Unit)? = null
     ): Int = withContext(Dispatchers.IO) {
@@ -148,7 +149,7 @@ class HistoricalDataFetcher(private val context: Context) {
 
         Log.i(TAG, "========== FETCH START ==========")
         Log.i(TAG, "  Date range: ${startDate.format(STORE_FMT)} ~ ${endDate.format(STORE_FMT)}")
-        Log.i(TAG, "  force=$force  days=$days")
+        Log.i(TAG, "  force=$force  incremental=$incremental  days=$days")
 
         val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay()
         val todayStr = today.format(STORE_FMT)
@@ -158,6 +159,19 @@ class HistoricalDataFetcher(private val context: Context) {
         val prefs = context.getSharedPreferences("data_import", Context.MODE_PRIVATE)
         val leaderFetched = prefs.getBoolean("leader_stocks_fetched", false)
         Log.i(TAG, "  leaderFetched=$leaderFetched")
+
+        // 增量拉取标记：每只股票已同步到的最大日期（daily_snapshot 实表 + prefs 双保险）
+        // 判断规则：已有 maxDate >= 最近交易日 → 跳过；有数据但日期旧 → 只补 maxDate+1 ~ today；
+        // 从未拉过 → 全量 startDate 起。标记写 prefs 的 sync_upto_<code>，供界面展示/快速判断。
+        val maxDates: Map<String, String> = if (incremental) {
+            try {
+                db.dailySnapshotDao().getMaxDateByCode().associate { it.code to it.maxDate }
+            } catch (e: Exception) {
+                Log.w(TAG, "  增量标记查询失败，回退全量拉取: ${e.message}")
+                emptyMap()
+            }
+        } else emptyMap()
+        Log.i(TAG, "  已同步标记: ${maxDates.size} 只股票有历史数据")
 
         if (!leaderFetched) {
             Log.i(TAG, "  First fetch: setting startDate to 2024-01-01")
@@ -260,16 +274,48 @@ class HistoricalDataFetcher(private val context: Context) {
         Log.i(TAG, "--- Step 2: K-line API (${stocks.size} stocks, concurrency=$concurrency) ---")
         var failedStocks = 0
         var successStocks = 0
+        var skippedStocks = 0
         if (stocks.isNotEmpty()) {
             stocks.chunked(concurrency).forEachIndexed { chunkIdx, batch ->
                 val chunkStart = System.currentTimeMillis()
-                val jobs = batch.map { code -> async { fetchOneStock(code, startDate, endDate) } }
+                val jobs = batch.map { code -> async {
+                    if (incremental) {
+                        val have = maxDates[code]
+                        when {
+                            // 已同步到最近交易日 → 跳过（不重复拉取）
+                            have != null && have >= todayStr -> Triple(emptyList(), "", true)
+                            // 从未拉过 → 全量
+                            have == null -> {
+                                val (records, name) = fetchOneStock(code, startDate, endDate)
+                                Triple(records, name, false)
+                            }
+                            // 有旧数据 → 只补 maxDate+1 ~ today（缺口增量）
+                            else -> {
+                                val effStart = runCatching { LocalDate.parse(have, STORE_FMT).plusDays(1) }.getOrNull()
+                                    ?.let { if (it.isAfter(startDate)) it else startDate } ?: startDate
+                                val (records, name) = fetchOneStock(code, effStart, endDate)
+                                Triple(records, name, false)
+                            }
+                        }
+                    } else {
+                        val (records, name) = fetchOneStock(code, startDate, endDate)
+                        Triple(records, name, false)
+                    }
+                } }
                 for (job in jobs) {
-                    val (records, name) = job.await()
+                    val (records, name, skipped) = job.await()
+                    val done = doneCount.addAndGet(1)
+                    if (skipped) {
+                        skippedStocks++
+                        onProgress?.invoke(FetchProgress(totalStocks = stocks.size, completedStocks = done, totalRecords = totalRecords))
+                        continue
+                    }
                     if (records.isNotEmpty()) {
                         db.dailySnapshotDao().insertAll(records)
                         totalRecords += records.size
                         successStocks++
+                        // 同步标记：该股票已拉取到最新交易日（增量判断依据）
+                        prefs.edit().putString("sync_upto_${records.first().code}", todayStr).apply()
                         if (name.isNotBlank()) {
                             try {
                                 db.stockBasicDao().insert(StockBasicEntity(code = records.first().code, name = name, business = ""))
@@ -278,7 +324,6 @@ class HistoricalDataFetcher(private val context: Context) {
                     } else {
                         failedStocks++
                     }
-                    val done = doneCount.addAndGet(1)
                     onProgress?.invoke(FetchProgress(totalStocks = stocks.size, completedStocks = done, totalRecords = totalRecords))
                 }
                 val chunkElapsed = System.currentTimeMillis() - chunkStart
@@ -288,7 +333,7 @@ class HistoricalDataFetcher(private val context: Context) {
             }
         }
         val step2Elapsed = System.currentTimeMillis() - step2Start
-        Log.i(TAG, "  Step 2 done: ${step2Elapsed}ms, success=$successStocks, failed=$failedStocks")
+        Log.i(TAG, "  Step 2 done: ${step2Elapsed}ms, success=$successStocks, failed=$failedStocks, skipped=$skippedStocks")
 
         // Step 2.5: 基本面充实（K线写入会覆盖当日行的 PE/PB/市值，须在其后回写）
         val step25Start = System.currentTimeMillis()
