@@ -13,13 +13,13 @@ import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
 
 /**
- * ## 量化选股 — 内部 4 Tab
+ * ## 量化选股 — 内部 3 Tab
  *
  * 挂载在「量化」外层 Tab 下：
  * - Tab 0：策略 (StrategyListFragment) — 策略沙盒
  * - Tab 1：数据 (StrategyImportFragment) — 数据管理 & 导入
- * - Tab 2：我的工作台 (QuantWorkbenchFragment) — 量化工作台
- * - Tab 3：AI 分析 (AIAnalysisFragment) — 个股 / 板块 Agent 分析
+ * - Tab 2：AI 分析 (AIAnalysisFragment) — 个股 / 板块 Agent 分析
+ * （我的工作台已提升到与「实仓」平级，作为 StrategyFragment 的 Tab 0）
  */
 class QuantPickingFragment : Fragment() {
 
@@ -52,7 +52,7 @@ class QuantPickingFragment : Fragment() {
         // ViewPager2
         viewPager = ViewPager2(ctx).apply {
             adapter = PickingTabAdapter(this@QuantPickingFragment)
-            offscreenPageLimit = 3
+            offscreenPageLimit = 2
         }
         root.addView(viewPager, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
@@ -64,8 +64,7 @@ class QuantPickingFragment : Fragment() {
             tab.text = when (position) {
                 0 -> getString(com.chin.stockanalysis.R.string.tab_strategy)
                 1 -> getString(com.chin.stockanalysis.R.string.tab_data)
-                2 -> getString(com.chin.stockanalysis.R.string.tab_my_workbench)
-                3 -> getString(com.chin.stockanalysis.R.string.tab_ai_analysis)
+                2 -> getString(com.chin.stockanalysis.R.string.tab_ai_analysis)
                 else -> ""
             }
         }.attach()
@@ -74,14 +73,13 @@ class QuantPickingFragment : Fragment() {
     }
 
     private class PickingTabAdapter(fragment: Fragment) : FragmentStateAdapter(fragment) {
-        override fun getItemCount() = 4
+        override fun getItemCount() = 3
 
         override fun createFragment(position: Int): Fragment {
             return when (position) {
                 0 -> StrategyListFragment()
                 1 -> StrategyImportFragment()
-                2 -> com.chin.stockanalysis.strategy.trade.QuantWorkbenchFragment()
-                3 -> AIAnalysisFragment()
+                2 -> AIAnalysisFragment()
                 else -> throw IllegalStateException("Unknown position: $position")
             }
         }

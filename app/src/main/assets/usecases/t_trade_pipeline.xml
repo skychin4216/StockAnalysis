@@ -2,11 +2,11 @@
 <!--
   ## 做T/反T DAG Pipeline v2
 
-  核心: 日K读机构意图 + 外盘情绪 + 板块实时新闻
+  核心: 日K读机构意图 + 外盘情绪 + 板块实时新闻 + 龙头状态
 
-  共 12 个 Node（7 复用 + 5 新建）:
+  共 13 个 Node（7 复用 + 5 新建 + 1 龙头分析）:
     Layer 0 (并行): bg_manager[复用], adaptive_params[复用], t_trade_import[新]
-    Layer 1 (并行): t_holdings_load[新], market_context[复用], zipline_factor[复用]
+    Layer 1 (并行): t_holdings_load[新], market_context[复用], zipline_factor[复用], leader_analysis[新]
     Layer 2 (并行): t_inst_intent[新], candle_pattern[复用], news_strength[复用], news_guard[复用]
     Layer 3:        t_signal_synthesize[新]（聚合）
     Layer 4:        t_recommend_save[新]
@@ -20,10 +20,11 @@
     <Node id="t_adaptive" name="大盘分析+外盘+自适应" module="adaptive_params" />
     <Node id="t_import" name="交易日检查" module="t_trade_import" />
 
-    <!-- Layer 1: 持仓载入 + 技术指标 -->
+    <!-- Layer 1: 持仓载入 + 技术指标 + 龙头状态分析 -->
     <Node id="t_hold" name="持仓载入+日K数据" module="t_holdings_load" />
     <Node id="t_mctx" name="板块上下文" module="market_context" />
     <Node id="t_zf" name="技术因子(RSI/BOLL/ATR)" module="zipline_factor" />
+    <Node id="t_leader" name="龙头状态分析" module="sector_leader_analysis" />
 
     <!-- Layer 2: 三大核心分析（并行） -->
     <Node id="t_inst" name="日K机构意图判断" module="t_inst_intent" />
@@ -43,6 +44,7 @@
     <Link source="t_import" target="t_hold" />
     <Link source="t_adaptive" target="t_mctx" />
     <Link source="t_import" target="t_zf" />
+    <Link source="t_import" target="t_leader" />
 
     <!-- Layer 1 → 2: 三大核心分析 -->
     <Link source="t_hold" target="t_inst" />

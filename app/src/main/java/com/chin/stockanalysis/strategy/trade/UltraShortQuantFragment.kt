@@ -88,12 +88,6 @@ class UltraShortQuantFragment : QuantFragmentBase() {
 
     override fun buildUI() {
         addTitleRow(getString(com.chin.stockanalysis.R.string.title_ultra_short_system))
-
-        val (configRow, _, _) = createDatePickerRow(
-            tipText = "⚡ 持仓1天 | 最多${resolveMaxHoldings()}只 | 止损${resolveStopLossPct()}%/止盈+${resolveTakeProfitPct()}%",
-            mainBoardDefault = true
-        )
-        rootLayout.addView(configRow)
         rootLayout.addView(createProgressRow())
         rootLayout.addView(createButtonRow())
         addSeparator()
@@ -101,6 +95,9 @@ class UltraShortQuantFragment : QuantFragmentBase() {
 
         refreshPositions()
     }
+
+    override fun getPeriodTipText(): String =
+        "⚡ 持仓1天 | 最多${resolveMaxHoldings()}只 | 止损${resolveStopLossPct()}%/止盈+${resolveTakeProfitPct()}%"
 
     // ═══════════════════════════════════════
     // T+1 自动卖出（超短线专有）

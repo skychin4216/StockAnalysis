@@ -142,8 +142,10 @@ class AutoSellEngine(private val context: Context) {
         val decisions = mutableListOf<SellDecision>()
         try {
             // B7: 只评估已成交持仓（BUYING=建仓中 / HELD=持有），PENDING 是未成交挂单，不参与卖出评估
+            // T+1: A股当日买入次日才能卖出，跳过 tradeDate >= config.tradeDate（当天/未来建仓）的持仓
             val holdingOrders = db.strategyTradeOrderDao().getRecent(500)
                 .filter { it.status == "BUYING" || it.status == "HELD" }
+                .filter { it.tradeDate < config.tradeDate }
             if (holdingOrders.isEmpty()) return@withContext decisions
 
             val todayData = getTradingDayData(config.tradeDate)

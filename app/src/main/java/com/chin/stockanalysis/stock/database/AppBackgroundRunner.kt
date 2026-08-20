@@ -111,6 +111,25 @@ object AppBackgroundRunner {
             }
         }
 
+        // 启动板块龙头异动监测（每 5 分钟扫描行业+概念板块龙头，异动推送通知并刷新选股信号）
+        scope.launch(Dispatchers.IO) {
+            // 等待板块池首次刷新，确保扫描有数据
+            kotlinx.coroutines.delay(10_000)
+            com.chin.stockanalysis.strategy.monitor.SectorLeaderMonitor.startMonitor(
+                context.applicationContext,
+                scope
+            )
+        }
+
+        // 启动 AutoQuant 自主决策 Agent（盘中定时决策：实时价+板块信号喂参，60 分钟限流一次）
+        scope.launch(Dispatchers.IO) {
+            kotlinx.coroutines.delay(20_000) // 等持仓/板块数据就绪
+            com.chin.stockanalysis.agent.autoquant.AutoQuantAgentRunner.start(
+                context.applicationContext,
+                scope
+            )
+        }
+
         // 启动时刷新热门板块-股票映射（确保 sector_stocks 表覆盖当前热门板块）
         scope.launch(Dispatchers.IO) {
             try {

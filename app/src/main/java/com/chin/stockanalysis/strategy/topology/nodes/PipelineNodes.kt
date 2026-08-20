@@ -352,6 +352,9 @@ class SectorBoostNode : BaseNode<Any, MergedSignalPool>("sector_boost", "板块�
                     boost += 10
                 }
 
+                // 轮动预测板块加分（动量延续+资金流向预测的明日热门，前3 +12 / 其余 +8）
+                boost += marketContext.getRotationBoostForStock(signal.stockName)
+
                 // 热度评分加分（5 维热度，最高 100 分 → 映射到 0~15 加分）
                 val heat = heatScores[signal.stockCode] ?: 0
                 if (heat > 0) {

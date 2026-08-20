@@ -25,13 +25,12 @@ import java.time.LocalDate
  */
 class MidTermQuantFragment : QuantFragmentBase() {
 
-    private lateinit var mainBoardSwitch: Switch
-
     private var screener: StockScreener? = null
-    private var selectedPeriods: Set<Int> = setOf(1)
 
     companion object {
         private const val TAG = "MidTermQuant"
+        /** 共享状态中中线周期选择的 key */
+        private const val STATE_KEY = "mid"
         private val PERIOD_LABELS = mapOf(1 to "当日", 3 to "近3日", 10 to "近10日",
             30 to "近30日", 50 to "近50日", 100 to "近100日")
     }
@@ -58,7 +57,6 @@ class MidTermQuantFragment : QuantFragmentBase() {
 
     override fun buildUI() {
         addTitleRow(getString(com.chin.stockanalysis.R.string.title_mid_system), textSize = 18f)
-        rootLayout.addView(createConfigSection())
         rootLayout.addView(createProgressRow())
         rootLayout.addView(createButtonRow())
         addSeparator()
@@ -66,47 +64,23 @@ class MidTermQuantFragment : QuantFragmentBase() {
         refreshPositions()
     }
 
-    // ── 配置区 ──
+    override fun getPeriodTipText(): String = "📈 持仓1-6月 | 最多5只 | 基本面+技术面"
 
-    private fun createConfigSection(): View {
-        val container = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.WHITE)
-            setPadding(12, 8, 12, 8)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
+    override fun getPeriodRowLabel(): String = "📊 数据周期:"
 
-        // 日期选择行（复用基类 createDatePickerRow）
-        val (dateRow, _, switch) = createDatePickerRow(
-            tipText = "📈 持仓1-6月 | 最多5只 | 基本面+技术面",
-            tipColor = "#1565C0"
-        )
-        mainBoardSwitch = switch
-        container.addView(dateRow)
+    override fun getPeriodOptions(): List<Pair<Int, String>> = PERIOD_LABELS.toList()
 
-        // 周期选择
-        container.addView(android.widget.TextView(requireContext()).apply {
-            text = "📊 数据周期:"; textSize = 11f
-            setTextColor(Color.parseColor("#333333"))
-            setTypeface(null, Typeface.BOLD); setPadding(0, 4, 0, 2)
-        })
-        val radioGroup = RadioGroup(requireContext()).apply { orientation = RadioGroup.HORIZONTAL }
-        for ((period, label) in PERIOD_LABELS) {
-            val rb = RadioButton(requireContext()).apply {
-                text = label; textSize = 11f; id = period
-                isChecked = period == selectedPeriods.firstOrNull()
-                setOnCheckedChangeListener { _, isChecked -> if (isChecked) selectedPeriods = setOf(period) }
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { marginEnd = -4; marginStart = -4 }
-            }
-            radioGroup.addView(rb)
-        }
-        container.addView(radioGroup)
-        return container
+    override fun getSelectedPeriod(): Int {
+        val p = QuantWorkbenchState.selectedPeriodFor(STATE_KEY, 1)
+        return if (p in PERIOD_LABELS.keys) p else 1
+    }
+
+    override fun applySelectedPeriod(period: Int) {
+        if (period in PERIOD_LABELS.keys) QuantWorkbenchState.setSelectedPeriod(STATE_KEY, period)
+    }
+
+    override fun applyMainBoardOnly(checked: Boolean) {
+        QuantWorkbenchState.mainBoardOnly = checked
     }
 
     /** 供外部调用的自动执行中线量化 */
@@ -148,8 +122,8 @@ class MidTermQuantFragment : QuantFragmentBase() {
                 for (tradeDate in tradeDates) {
                     val config = StrategyFittingEngine.TradeSessionConfig(
                         tradeDate = tradeDate,
-                        periods = selectedPeriods.toList().sorted().ifEmpty { listOf(1) },
-                        onlyMainBoard = mainBoardSwitch.isChecked, maxFitRounds = 100
+                        periods = listOf(getSelectedPeriod().takeIf { it > 0 } ?: 1),
+                        onlyMainBoard = QuantWorkbenchState.mainBoardOnly, maxFitRounds = 100
                     )
                     allReports.add(te.backtrackAndOptimize(strategies, config, emptyList(), boughtStocks))
                 }

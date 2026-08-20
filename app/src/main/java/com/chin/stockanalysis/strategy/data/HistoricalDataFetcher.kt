@@ -374,6 +374,49 @@ class HistoricalDataFetcher(private val context: Context) {
     }
 
     /**
+     * 轻量刷新今日实时行情：仅对指定股票更新当日快照的行情字段（OHLCV/涨跌幅/换手/PE/PB/市值），
+     * 保留基本面字段（ROE/毛利率/负债/现金流）。用于"一键选股/一键建仓"前，确保使用的是
+     * 当前时点的价格，而不是上次同步时（如 13:00）缓存的旧价。
+     *
+     * @return 成功刷新的股票数
+     */
+    suspend fun refreshTodayRealtime(codes: List<String>): Int = withContext(Dispatchers.IO) {
+        if (codes.isEmpty()) return@withContext 0
+        val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay()
+        val todayStr = today.format(STORE_FMT)
+        var updated = 0
+        try {
+            val quotes = com.chin.stockanalysis.stock.data.sources.EastMoneyStockSource().fetchRealtime(codes)
+            for (q in quotes.values) {
+                val affected = db.dailySnapshotDao().updateQuote(
+                    code = q.code, date = todayStr,
+                    open = q.open, close = q.price, high = q.high, low = q.low,
+                    volume = q.volume, amount = q.amount,
+                    changePct = q.changePercent, turnoverRate = q.turnoverRate,
+                    pe = q.pe, pb = q.pb, marketCap = q.marketCap
+                )
+                if (affected == 0) {
+                    // 当日行不存在（如首次盘中刷新），则插入完整行
+                    db.dailySnapshotDao().insertAll(listOf(
+                        DailySnapshotEntity(
+                            code = q.code, name = q.name, date = todayStr,
+                            open = q.open, close = q.price, high = q.high, low = q.low,
+                            volume = q.volume, amount = q.amount,
+                            changePct = q.changePercent, turnoverRate = q.turnoverRate,
+                            mainNetInflow = 0.0, pe = q.pe, pb = q.pb, marketCap = q.marketCap
+                        )
+                    ))
+                }
+                updated++
+            }
+            Log.i(TAG, "refreshTodayRealtime: 更新 $updated 只股票今日行情 ($todayStr)")
+        } catch (e: Exception) {
+            Log.w(TAG, "refreshTodayRealtime failed: ${e.message}")
+        }
+        updated
+    }
+
+    /**
      * 基本面充实：把 PE/PB/市值（push2 行情批量）与 ROE/毛利率/负债率/现金流
      * （datacenter 财务批量）回写到当日快照行。
      *

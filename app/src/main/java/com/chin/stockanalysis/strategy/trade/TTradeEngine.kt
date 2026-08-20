@@ -1,6 +1,7 @@
 package com.chin.stockanalysis.strategy.trade
 
 import android.content.Context
+import android.util.Log
 import com.chin.stockanalysis.stock.database.StockDatabase
 import kotlin.math.abs
 
@@ -81,6 +82,14 @@ class TTradeEngine(private val context: Context) {
         val snaps = db.dailySnapshotDao().getByCode(stockCode, 30).sortedBy { it.date }
         if (snaps.size < 10) return emptyList()
 
+        // ── v3 弹性识别：低波动股票（如银行/中字头）波动太小无做T差价，直接跳过 ──
+        val avgAmplitudePct = avgDailyAmplitudePct(snaps)
+        if (avgAmplitudePct < p.minDailyAmplitudePct) {
+            Log.i("TTradeEngine", "跳过做T ${stockCode}: 20日平均振幅 ${"%.2f".format(avgAmplitudePct)}% < ${p.minDailyAmplitudePct}%（低弹性不适合做T）")
+            return emptyList()
+        }
+        val isHighElasticity = avgAmplitudePct >= p.highElasticityAmplitudePct
+
         val signals = mutableListOf<TTradeSignal>()
         val latest = snaps.last()
         val stockName = latest.name
@@ -129,6 +138,10 @@ class TTradeEngine(private val context: Context) {
                     var conf = p.baseConfidence
                     val reasons = mutableListOf<String>()
                     reasons.add("接近支撑位 ${"%.2f".format(supportPrice)}")
+                    if (isHighElasticity) {
+                        conf += p.elasticityConfBonus
+                        reasons.add("高弹性(振幅${"%.1f".format(avgAmplitudePct)}%)适合做T")
+                    }
 
                     if (rsi < p.rsiOversold) { conf += p.confRsiOversold; reasons.add("RSI超卖${"%.0f".format(rsi)}") }
                     else if (rsi < p.rsiLow) { conf += p.confRsiLow; reasons.add("RSI偏低${"%.0f".format(rsi)}") }
@@ -175,6 +188,10 @@ class TTradeEngine(private val context: Context) {
                     var conf = p.baseConfidence
                     val reasons = mutableListOf<String>()
                     reasons.add("接近阻力位 ${"%.2f".format(resistancePrice)}")
+                    if (isHighElasticity) {
+                        conf += p.elasticityConfBonus
+                        reasons.add("高弹性(振幅${"%.1f".format(avgAmplitudePct)}%)适合做T")
+                    }
 
                     if (rsi > p.rtRsiOverbought) { conf += p.rtConfRsiOverbought; reasons.add("RSI超买${"%.0f".format(rsi)}") }
                     else if (rsi > p.rtRsiHigh) { conf += p.rtConfRsiHigh; reasons.add("RSI偏高${"%.0f".format(rsi)}") }
@@ -311,6 +328,29 @@ class TTradeEngine(private val context: Context) {
             totalScore == -2 -> if (change3 < 0) "准备下跌" else "盘整偏空"
             else -> "下跌中"
         }
+    }
+
+    /**
+     * 计算 20 日平均日振幅（%）= mean((high - low) / preClose * 100)
+     * 用于弹性识别：东山精密/兆易创新这类高弹性股票振幅通常在 4%+，
+     * 低弹性股票（银行/中字头）多在 2% 以下，做T差价不足。
+     */
+    private fun avgDailyAmplitudePct(
+        snaps: List<com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity>
+    ): Double {
+        if (snaps.size < 2) return 0.0
+        val window = snaps.takeLast(20)
+        var sum = 0.0
+        var n = 0
+        for (i in window.indices) {
+            val s = window[i]
+            val preClose = if (i > 0) window[i - 1].close else s.open
+            if (preClose > 0 && s.high >= s.low) {
+                sum += (s.high - s.low) / preClose * 100
+                n++
+            }
+        }
+        return if (n > 0) sum / n else 0.0
     }
 
     /**

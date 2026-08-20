@@ -72,10 +72,17 @@ class CandidatePoolNode : BaseNode<Any, StockPool>("candidate_pool", "候选池�
                 context.log(nodeId, "板块精选池补充: ${sectorCodes.size} 只，合计 ${candidateCodes.size} 只")
             }
 
-            // 4. 过滤全市场股票池，只保留候选池中的股票
+            // 4. 补充 AI 精选（ai_selected_stock 近 5 天）
+            val aiCodes = getAiSelectionCodes(context)
+            if (aiCodes.isNotEmpty()) {
+                candidateCodes.addAll(aiCodes)
+                context.log(nodeId, "AI 精选补充: ${aiCodes.size} 只，合计 ${candidateCodes.size} 只")
+            }
+
+            // 5. 过滤全市场股票池，只保留候选池中的股票
             val filteredStocks = pool.stocks.filter { it.code in candidateCodes }
 
-            // 5. 对于候选池中但不在全市场快照中的股票，从 DB 补充
+            // 6. 对于候选池中但不在全市场快照中的股票，从 DB 补充
             val existingCodes = filteredStocks.map { it.code }.toSet()
             val missingCodes = candidateCodes - existingCodes
             val extraStocks = if (missingCodes.isNotEmpty()) {
@@ -127,6 +134,19 @@ class CandidatePoolNode : BaseNode<Any, StockPool>("candidate_pool", "候选池�
             codes
         } catch (e: Exception) {
             Log.w("CandidatePoolNode", "读取用户股票失败: ${e.message}")
+            emptySet()
+        }
+    }
+
+    /** 读取 AI 精选（ai_selected_stock 近 5 天） */
+    private suspend fun getAiSelectionCodes(context: PipelineContext): Set<String> = withContext(Dispatchers.IO) {
+        try {
+            val db = StockDatabase.getInstance(context.androidContext)
+            val minDate = java.time.LocalDate.now().minusDays(5)
+                .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+            db.aiSelectedStockDao().getRecentDays(minDate).map { it.stockCode }.toSet()
+        } catch (e: Exception) {
+            Log.w("CandidatePoolNode", "读取 AI 精选失败: ${e.message}")
             emptySet()
         }
     }
@@ -223,7 +243,25 @@ class ZiplineFactorNode : BaseNode<Any, StockPool>("zipline_factor", "Zipline �
  * ```
  * 放在 market_context 之后、stock_pool/candidate_pool 之前（并行）。
  */
-class SectorStockPoolNode : BaseNode<Any, StrategyMarketContext>("sector_stock_pool", "板块精选池", NodeType.DATA_SOURCE) {
+/**
+ * ## 板块精选池节点
+ *
+ * 按配置的周期维度聚合板块（今日/周/月/季度/轮动预测），
+ * 使用 HotSectorStockPool.build 获取这些板块的龙头股票。
+ *
+ * XML 用法：
+ * ```xml
+ * <Node id="n_sector_pool" name="板块精选池" module="sector_stock_pool">
+ *   <config>
+ *     <!-- 逗号分隔：today,weekly,monthly,quarterly,rotation -->
+ *     <param name="hotDims" value="today,weekly,rotation" />
+ *   </config>
+ * </Node>
+ * ```
+ */
+class SectorStockPoolNode(
+    private val hotDims: List<String> = listOf("today")
+) : BaseNode<Any, StrategyMarketContext>("sector_stock_pool", "板块精选池", NodeType.DATA_SOURCE) {
 
     override suspend fun execute(context: PipelineContext, input: Any): StrategyMarketContext {
         // 从 input 或 context 中按需读取市场上下文
@@ -234,25 +272,40 @@ class SectorStockPoolNode : BaseNode<Any, StrategyMarketContext>("sector_stock_p
                 ?: context.getStageOutput<StrategyMarketContext>("n_ctx")
                 ?: StrategyMarketContext.build(context.androidContext, context.tradeDate, false)
         }
-        context.log(nodeId, "📥 输入: ${marketCtx.todayHotSectors.size} 个热门板块")
+        context.log(nodeId, "📥 输入: ${marketCtx.todayHotSectors.size} 个热门板块，维度: ${hotDims.joinToString(",")}")
 
         return try {
-            // 获取板块精选股票池（使用 HotSectorStockPool.build，传入今日热门板块）
+            // 按配置维度聚合板块名
+            val sectorNames = buildSectorNames(marketCtx)
+
+            // 获取板块精选股票池（使用 HotSectorStockPool.build）
             val sectorCodes = HotSectorStockPool.build(
                 context.androidContext,
-                marketCtx.todayHotSectors.toSet()
+                sectorNames
             )
 
             // 存入 PipelineContext，供 CandidatePoolNode 读取
             context.setStageOutput("sector_stock_codes", sectorCodes)
 
-            context.log(nodeId, "📤 板块精选池: ${sectorCodes.size} 只股票")
+            context.log(nodeId, "📤 板块精选池: ${sectorCodes.size} 只股票，覆盖板块: ${sectorNames.take(8).joinToString(",")}")
             marketCtx  // 透传市场上下文
         } catch (e: Exception) {
             context.log(nodeId, "板块精选池获取失败，跳过: ${e.message}")
             context.recordError(nodeId, "板块精选池失败: ${e.message}")
             marketCtx
         }
+    }
+
+    /** 按配置维度聚合板块名（去重） */
+    private fun buildSectorNames(marketCtx: StrategyMarketContext): Set<String> {
+        val names = mutableSetOf<String>()
+        if ("today" in hotDims) names += marketCtx.todayHotSectors
+        if ("weekly" in hotDims) names += marketCtx.weeklyHotSectors
+        if ("monthly" in hotDims) names += marketCtx.monthlyHotSectors
+        if ("quarterly" in hotDims) names += marketCtx.quarterlyHotSectors
+        if ("rotation" in hotDims) names += marketCtx.rotationPredictedSectors
+        if (names.isEmpty()) names += marketCtx.todayHotSectors  // 兜底
+        return names
     }
 }
 

@@ -22,15 +22,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * ## 策略栏目 — v12.0 量化选股 改版
+ * ## 策略栏目 — 量化选股（我的工作台 / 实仓 / 量化）
  *
- * 顶部六 Tab：
- * - Tab 0：超短线 (UltraShortQuantFragment) — 持仓1天，T+1卖出
- * - Tab 1：短线量化 (ShortTermQuantFragment) — 持仓1天~2周
- * - Tab 2：中线量化 (MidTermQuantFragment) — 持仓1~6个月
- * - Tab 3：长线量化 (LongTermQuantFragment) — 持仓6月~1年
- * - Tab 4：实仓 (RealHoldingQuantFragment) — 真实持仓管理
- * - Tab 5：量化选股 (QuantPickingFragment) — 内部 4 Tab：策略 / 数据 / 我的工作台 / AI 分析
+ * 顶部三 Tab：
+ * - Tab 0：我的工作台 (QuantWorkbenchFragment) — 内嵌超短/短/中/长 四周期页 + 公共操作
+ * - Tab 1：实仓 (RealHoldingQuantFragment) — 真实持仓管理
+ * - Tab 2：量化 (QuantPickingFragment) — 内部 3 Tab：策略 / 数据 / AI 分析
  */
 class StrategyFragment : Fragment() {
 
@@ -77,12 +74,9 @@ class StrategyFragment : Fragment() {
         // 绑定
         TabLayoutMediator(tabLayout, viewPager) { tab, position ->
         tab.text = when (position) {
-        0 -> getString(com.chin.stockanalysis.R.string.tab_ultra_short)
-        1 -> getString(com.chin.stockanalysis.R.string.tab_short)
-        2 -> getString(com.chin.stockanalysis.R.string.tab_mid)
-        3 -> getString(com.chin.stockanalysis.R.string.tab_long)
-        4 -> getString(com.chin.stockanalysis.R.string.tab_real)
-        5 -> getString(com.chin.stockanalysis.R.string.tab_stock_picking)
+        0 -> getString(com.chin.stockanalysis.R.string.tab_my_workbench)
+        1 -> getString(com.chin.stockanalysis.R.string.tab_real)
+        2 -> getString(com.chin.stockanalysis.R.string.tab_stock_picking)
         else -> ""
         }
         }.attach()
@@ -96,14 +90,15 @@ class StrategyFragment : Fragment() {
             }
         }
 
-        // 切换周期 tab 时自动刷新持仓
+        // 切换 tab 时自动刷新持仓/结果
         viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
                 super.onPageSelected(position)
                 childFragmentManager.executePendingTransactions()
                 val frag = childFragmentManager.findFragmentByTag("f$position")
-                if (frag is com.chin.stockanalysis.strategy.trade.QuantFragmentBase) {
-                    frag.refreshPositions()
+                when {
+                    frag is com.chin.stockanalysis.strategy.trade.QuantFragmentBase -> frag.refreshPositions()
+                    frag is com.chin.stockanalysis.strategy.trade.QuantWorkbenchFragment -> frag.refreshAll()
                 }
             }
         })
@@ -116,16 +111,17 @@ class StrategyFragment : Fragment() {
             com.chin.stockanalysis.ui.CrossTabBus.commandFlow.collect { cmd ->
                 Log.i("StrategyFragment", "📢 收到指令: ${cmd.action}")
                 when (cmd.action) {
+                    // 周期操作已集成到「我的工作台」内部：切到 Tab 0 并转发给工作台
                     "EXECUTE_SIMULATE_TRADE" -> {
                         withContext(Dispatchers.Main) {
-                            viewPager.setCurrentItem(2, true)  // Tab 2 = 中线量化
-                            runOnPeriodTab(2, "simulate")
+                            viewPager.setCurrentItem(0, true)  // Tab 0 = 我的工作台
+                            runOnWorkbench("EXECUTE_SIMULATE_TRADE", null, null)
                         }
                     }
                     "RUN_PIPELINE" -> {
                         withContext(Dispatchers.Main) {
-                            viewPager.setCurrentItem(1, true)  // Tab 1 = 短线量化
-                            runOnPeriodTab(1, "pipeline")
+                            viewPager.setCurrentItem(0, true)  // Tab 0 = 我的工作台
+                            runOnWorkbench("RUN_PIPELINE", null, null)
                         }
                     }
                     "SWITCH_TO_STRATEGY_TAB" -> {
@@ -140,8 +136,8 @@ class StrategyFragment : Fragment() {
                                 Log.w("StrategyFragment", "无效周期指令: ${cmd.extraParams}")
                                 return@withContext
                             }
-                            viewPager.setCurrentItem(period, true)
-                            runOnPeriodTab(period, cmd.extraParams["op"] ?: "refresh")
+                            viewPager.setCurrentItem(0, true)  // Tab 0 = 我的工作台
+                            runOnWorkbench("SWITCH_PERIOD_TAB", period, cmd.extraParams["op"] ?: "refresh")
                         }
                     }
                 }
@@ -150,45 +146,35 @@ class StrategyFragment : Fragment() {
     }
 
     /**
-     * 切换周期页并等待目标 fragment 就绪后执行操作。
+     * 切换到「我的工作台」并等待其就绪后转发指令。
      * ViewPager2 的 setCurrentItem(smoothScroll=true) 是异步的，目标 fragment 在滚动过程中才创建，
-     * 仅靠一次 post/executePendingTransactions 常找不到 fragment（尤其目标页不在当前离屏范围内），
-     * 因此用延迟重试（每 150ms，最长约 1.8s）确保模块就绪后再触发建仓/选股/回溯。
+     * 仅靠一次 post/executePendingTransactions 常找不到 fragment，因此用延迟重试
+     * （每 150ms，最长约 1.8s）确保工作台模块就绪后再转发周期操作。
      */
-    private fun runOnPeriodTab(period: Int, op: String, attempt: Int = 0) {
+    private fun runOnWorkbench(action: String, period: Int?, op: String?, attempt: Int = 0) {
         childFragmentManager.executePendingTransactions()
-        val frag = childFragmentManager.findFragmentByTag("f$period")
-            as? com.chin.stockanalysis.strategy.trade.QuantFragmentBase
+        val frag = childFragmentManager.findFragmentByTag("f0")
+            as? com.chin.stockanalysis.strategy.trade.QuantWorkbenchFragment
         if (frag != null) {
-            when (op) {
-                "simulate" -> (frag as? com.chin.stockanalysis.strategy.trade.MidTermQuantFragment)
-                    ?.autoExecuteTrade()
-                "pipeline" -> (frag as? com.chin.stockanalysis.strategy.trade.ShortTermQuantFragment)
-                    ?.autoRunPipeline()
-                "build" -> frag.autoRunPipeline()
-                else -> frag.refreshPositions()
-            }
+            frag.handleExternalCommand(action, period, op)
             return
         }
         if (attempt >= 12) {
-            Log.w("StrategyFragment", "周期 $period 模块未就绪(op=$op)")
-            Toast.makeText(requireContext(), "周期模块未就绪，请稍后重试", Toast.LENGTH_SHORT).show()
+            Log.w("StrategyFragment", "工作台模块未就绪($action)")
+            Toast.makeText(requireContext(), "工作台模块未就绪，请稍后重试", Toast.LENGTH_SHORT).show()
             return
         }
-        viewPager.postDelayed({ runOnPeriodTab(period, op, attempt + 1) }, 150L)
+        viewPager.postDelayed({ runOnWorkbench(action, period, op, attempt + 1) }, 150L)
     }
 
     private class StrategyTabAdapter(fragment: Fragment) : FragmentStateAdapter(fragment) {
-        override fun getItemCount() = 6
+        override fun getItemCount() = 3
 
         override fun createFragment(position: Int): Fragment {
             return when (position) {
-                0 -> com.chin.stockanalysis.strategy.trade.UltraShortQuantFragment()
-                1 -> com.chin.stockanalysis.strategy.trade.ShortTermQuantFragment()
-                2 -> com.chin.stockanalysis.strategy.trade.MidTermQuantFragment()
-                3 -> com.chin.stockanalysis.strategy.trade.LongTermQuantFragment()
-                4 -> com.chin.stockanalysis.strategy.trade.RealHoldingQuantFragment()
-                5 -> QuantPickingFragment()
+                0 -> com.chin.stockanalysis.strategy.trade.QuantWorkbenchFragment()
+                1 -> com.chin.stockanalysis.strategy.trade.RealHoldingQuantFragment()
+                2 -> QuantPickingFragment()
                 else -> throw IllegalStateException("Unknown position: $position")
             }
         }

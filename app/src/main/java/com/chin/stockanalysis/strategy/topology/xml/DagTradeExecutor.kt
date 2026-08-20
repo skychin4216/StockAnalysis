@@ -197,6 +197,27 @@ object DagTradeExecutor {
                             db.userWatchlistDao().insertAll(watchlistEntities)
                             Log.i(TAG, "[$useCaseId] 选股写入 user_watchlist: ${watchlistEntities.size} 只 (source=$watchlistSource)")
                         }
+
+                        // 同步写入 AI 精选（ai_selected_stock），统一到「AI 精选」查看
+                        try {
+                            val aiEntities = ordersOutput.orders.map { order ->
+                                com.chin.stockanalysis.stock.database.AiSelectedStockEntity(
+                                    stockCode = order.stockCode,
+                                    stockName = order.stockName,
+                                    source = watchlistSource,
+                                    selectedDate = today,
+                                    score = (order.scoreAtBuy).coerceIn(0, 100),
+                                    reason = order.reason,
+                                    buyPrice = order.buyPrice
+                                )
+                            }
+                            if (aiEntities.isNotEmpty()) {
+                                db.aiSelectedStockDao().insertAll(aiEntities)
+                                Log.i(TAG, "[$useCaseId] 选股同步写入 AI 精选: ${aiEntities.size} 只 (source=$watchlistSource)")
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "[$useCaseId] 写入 AI 精选失败: ${e.message}")
+                        }
                     } catch (e: Exception) {
                         Log.w(TAG, "[$useCaseId] 写入 user_watchlist 失败: ${e.message}")
                     }
@@ -810,7 +831,7 @@ object DagTradeExecutor {
                     .sorted()
                     .filter { it <= tradeDate }
 
-                if (availableDates.size < 20) {
+                if (availableDates.size < 5) {
                     Log.w(TAG, "[$useCaseId] 历史数据不足（${availableDates.size} 天），跳过拟合")
                     return@launch
                 }
@@ -818,27 +839,32 @@ object DagTradeExecutor {
                 val optimizer = StrategyOptimizer(context)
                 val fitJobs = strategies.filter { it.id != "ai_prediction" }
                 val fittingResults = mutableListOf<StrategyTradeFittingParamEntity>()
+                // 拟合窗口：周级(最近5日) + 月级(最近20日)
+                val fitWindows = listOf(5 to "周", 20 to "月")
 
                 // 串行拟合（避免多策略并发 CPU 竞争），每策略之间无依赖
                 for (strategy in fitJobs) {
-                    try {
-                        val result = optimizer.gridSearch(strategy, availableDates)
-                        val weightsJson = result.bestWeights.joinToString(",") { w -> "${w.key}=${w.weight}" }
-                        Log.i(TAG, "[$useCaseId]   拟合 ${strategy.id}: accuracy=${"%.1f".format(result.bestAccuracy)}%")
-                        fittingResults.add(
-                            StrategyTradeFittingParamEntity(
-                                strategyId = strategy.id,
-                                tradeDate = tradeDate,
-                                periodDays = 20,
-                                paramJson = weightsJson,
-                                fittingRound = 1,
-                                accuracy = result.bestAccuracy.toDouble(),
-                                avgReturn = result.bestAvgReturn,
-                                createdAt = System.currentTimeMillis()
+                    for ((windowDays, label) in fitWindows) {
+                        if (availableDates.size < windowDays) continue
+                        try {
+                            val result = optimizer.gridSearch(strategy, availableDates, windowDays)
+                            val weightsJson = result.bestWeights.joinToString(",") { w -> "${w.key}=${w.weight}" }
+                            Log.i(TAG, "[$useCaseId]   拟合 ${strategy.id}(${label}级): accuracy=${"%.1f".format(result.bestAccuracy)}%")
+                            fittingResults.add(
+                                StrategyTradeFittingParamEntity(
+                                    strategyId = strategy.id,
+                                    tradeDate = tradeDate,
+                                    periodDays = windowDays,
+                                    paramJson = weightsJson,
+                                    fittingRound = 1,
+                                    accuracy = result.bestAccuracy.toDouble(),
+                                    avgReturn = result.bestAvgReturn,
+                                    createdAt = System.currentTimeMillis()
+                                )
                             )
-                        )
-                    } catch (e: Exception) {
-                        Log.w(TAG, "[$useCaseId]   拟合 ${strategy.id} 失败: ${e.message}")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "[$useCaseId]   拟合 ${strategy.id}(${label}级) 失败: ${e.message}")
+                        }
                     }
                 }
 

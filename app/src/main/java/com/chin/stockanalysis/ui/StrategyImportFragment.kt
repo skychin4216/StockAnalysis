@@ -2,35 +2,49 @@ package com.chin.stockanalysis.ui
 
 import android.graphics.Color
 import android.graphics.Typeface
+import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.view.*
 import android.widget.*
 import android.widget.LinearLayout.LayoutParams
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.chin.stockanalysis.stock.database.DataExportImport
 import com.chin.stockanalysis.stock.database.StockDatabase
+import com.chin.stockanalysis.strategy.HoldingPeriod
+import com.chin.stockanalysis.strategy.Strategy
+import com.chin.stockanalysis.strategy.StrategyEngine
+import com.chin.stockanalysis.strategy.StrategyEngineHolder
+import com.chin.stockanalysis.strategy.backtest.FullCycleBacktestEngine
+import com.chin.stockanalysis.strategy.backtest.StrategySelfTuner
 import com.chin.stockanalysis.strategy.data.HistoricalDataFetcher
 import com.chin.stockanalysis.strategy.sector.StrategyMarketContext
 import com.chin.stockanalysis.strategy.sector.UserMarketMemory
+import com.chin.stockanalysis.strategy.trade.StrategyTradeBacktestEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.io.File
 import java.time.LocalDate
 
 /**
- * ## 导入 Tab — v12.0 数据管理 + 导入过程 + 热门板块
+ * ## 量化 → 数据 Tab — 数据管理 + 导入 + 拟合调优 + 回溯分析（承接工作台全部公共操作）
  *
- * 从量化选股的「数据 / 导入」控件移植：
  * - 🔄 刷新市场上下文（清空 StrategyMarketContext 缓存）
- * - 📊 数据库统计信息
- * - 🧠 市场记忆设置
- * - 📥 拉取股票报告
+ * - 📊 数据库统计信息 / 🧠 市场记忆设置 / 📥 拉取股票报告
  * - 📤 导出热门板块 / 📤 导出K线快照
- * - [导入] 显示导入进度，完成后展示当前热门板块
+ * - 🎯 拟合调优 & 批量数据（自工作台迁移）：四周期自测拟合 / 状态矩阵拟合 / 导出拟合矩阵 / 增量拉取 / JSON 导入
+ * - 📌 PC 拟合参数（自工作台迁移）：导出 / 重置内置 / 参数详情（选股/排序/卖出联动）
+ * - 📌 回溯 & 分析（自工作台迁移）：按周期回溯 / 多周期回溯 / AI 跨周期分析 / 选中记录
+ * - ⬇️ 导入历史行情：显示导入进度，完成后展示当前热门板块
  */
 class StrategyImportFragment : Fragment() {
+
+    private val TAG = "StrategyImportFragment"
 
     private lateinit var layout: LinearLayout
     private lateinit var importBtn: Button
@@ -41,12 +55,64 @@ class StrategyImportFragment : Fragment() {
     private var selectedHotPeriod = 0
     private var browsingDate: LocalDate = TradingDayPickerView.recentTradingDay()
 
+    private data class PeriodInfo(
+        val key: String, // 落库周期键：UltraShortQuant / ShortTermQuant / MidTermQuant / LongTermQuant
+        val holdingPeriod: HoldingPeriod?, // null = 使用所有启用策略
+        val label: String
+    )
+
+    private val FIT_PERIODS = listOf(
+        PeriodInfo("UltraShortQuant", HoldingPeriod.ULTRA_SHORT, "超短线"),
+        PeriodInfo("ShortTermQuant", null, "短线"),
+        PeriodInfo("MidTermQuant", null, "中线"),
+        PeriodInfo("LongTermQuant", HoldingPeriod.LONG, "长线")
+    )
+
+    /** JSON 数据导入选择器（从工作台迁移：DataExportImport 全量导入） */
+    private val importPicker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { doImport(it) }
+    }
+
+    /** PC 拟合参数文件选择器（backtest_params.json 回传） */
+    private val paramsPicker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { doImportParams(it) }
+    }
+
+    /** PC 拟合参数导出（写回 backtest_params.json） */
+    private var pendingExportParams: String? = null
+    private val exportParamsLauncher =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+            val text = pendingExportParams ?: return@registerForActivityResult
+            if (uri == null) return@registerForActivityResult
+            try {
+                requireContext().contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
+                Toast.makeText(requireContext(), "参数已导出（${text.length} 字符）", Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                Log.e(TAG, "导出参数失败: ${e.message}", e)
+                Toast.makeText(requireContext(), "导出失败: ${e.message?.take(40)}", Toast.LENGTH_LONG).show()
+            } finally {
+                pendingExportParams = null
+            }
+        }
+
+    private lateinit var resultTv: TextView
+    private lateinit var paramsStatusTv: TextView
+
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         layout = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.parseColor("#F5F6FA"))
-            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         }
-        buildUI(); return layout
+        val scroll = ScrollView(requireContext()).apply {
+            isFillViewport = true
+            setBackgroundColor(Color.parseColor("#F5F6FA"))
+        }
+        scroll.addView(layout, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        buildUI(); return scroll
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshResults()
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
@@ -93,6 +159,81 @@ class StrategyImportFragment : Fragment() {
         val snapBtn = actionButton("📤 导出K线快照", "#BF360C") { exportSnapshotData() }
         card.addView(buildActionRow(snapBtn))
         layout.addView(card)
+
+        // ── 🎯 拟合调优 & 批量数据（自工作台迁移） ──
+        val fitCard = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(12)); setBackgroundColor(Color.WHITE)
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
+        }
+        fitCard.addView(TextView(requireContext()).apply {
+            text = "🎯 拟合调优 & 批量数据"
+            textSize = 13f; setTextColor(Color.parseColor("#1A1A2E")); setTypeface(null, Typeface.BOLD)
+            setPadding(0, dp(4), 0, dp(6))
+        })
+        // 行1：自测拟合 | 状态矩阵拟合
+        fitCard.addView(buildActionRow(actionButton("🎯 自测拟合(目标90%)", "#6A1B9A") { runFitting() }))
+        fitCard.addView(buildActionRow(actionButton("📐 状态矩阵拟合", "#00838F") { runStateFit() }))
+        // 行2：导出拟合矩阵 | 增量拉取历史
+        fitCard.addView(buildActionRow(actionButton("📤 导出拟合矩阵", "#E65100") { exportFitMatrix() }))
+        fitCard.addView(buildActionRow(actionButton("📥 增量拉取历史", "#1565C0") { fetchBacktestHistory() }))
+        // 行3：JSON 数据导入（全量）
+        fitCard.addView(buildActionRow(actionButton("📦 JSON 数据导入", "#2E7D32") { importPicker.launch("application/json") }))
+        layout.addView(fitCard)
+
+        // ── 📌 PC 拟合参数（选股/排序/卖出联动，自工作台迁移） ──
+        val paramsCard = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(12)); setBackgroundColor(Color.WHITE)
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
+        }
+        paramsCard.addView(TextView(requireContext()).apply {
+            text = "📌 PC 拟合参数（选股/排序/卖出联动）"
+            textSize = 13f; setTextColor(Color.parseColor("#1A1A2E")); setTypeface(null, Typeface.BOLD)
+            setPadding(0, dp(4), 0, dp(6))
+        })
+        paramsCard.addView(buildActionRow(actionButton("📤 导出参数", "#E65100") { exportParamsFile() }))
+        paramsCard.addView(buildActionRow(actionButton("🔄 重置内置", "#546E7A") { resetParamsFile() }))
+        paramsCard.addView(buildActionRow(actionButton("🔍 参数详情", "#1565C0") { showParamsDetail() }))
+        paramsStatusTv = TextView(requireContext()).apply {
+            text = "当前参数: ${com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader.sourceLabel(requireContext())}（版本 ${com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader.version(requireContext())}）"
+            textSize = 10f
+            setTextColor(Color.parseColor("#1976D2"))
+            setPadding(dp(4), 0, dp(4), dp(4))
+            setOnClickListener { showParamsDetail() }
+        }
+        paramsCard.addView(paramsStatusTv)
+        layout.addView(paramsCard)
+
+        // ── 📌 回溯 & 分析（自工作台迁移） ──
+        val backCard = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(12)); setBackgroundColor(Color.WHITE)
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
+        }
+        backCard.addView(TextView(requireContext()).apply {
+            text = "📌 回溯 & 分析"
+            textSize = 13f; setTextColor(Color.parseColor("#1A1A2E")); setTypeface(null, Typeface.BOLD)
+            setPadding(0, dp(4), 0, dp(6))
+        })
+        backCard.addView(buildActionRow(actionButton("📈 回溯", "#E65100") { runBacktest() }))
+        backCard.addView(buildActionRow(actionButton("🔄 多周期回溯", "#00838F") { runFullCycleBacktest() }))
+        backCard.addView(buildActionRow(actionButton("🤖 AI 分析", "#6A1B9A") { runCrossPeriodAnalysis() }))
+        backCard.addView(buildActionRow(actionButton("📋 选中记录", "#1565C0") { showSelectedRecords() }))
+        backCard.addView(TextView(requireContext()).apply {
+            text = "── 最近回溯结果对比 ──"
+            textSize = 12f
+            setTextColor(Color.parseColor("#E65100"))
+            setPadding(0, dp(8), 0, dp(4))
+        })
+        resultTv = TextView(requireContext()).apply {
+            text = "暂无回溯数据\n\n点击「📈 回溯」按周期执行历史回溯测试，结果将自动落库。"
+            textSize = 12f
+            setTextColor(Color.parseColor("#444444"))
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            setLineSpacing(3f, 1.15f)
+            setTypeface(Typeface.MONOSPACE)
+            setBackgroundColor(Color.WHITE)
+        }
+        backCard.addView(resultTv)
+        layout.addView(backCard)
 
         // ── 导入区域 ──
         val importCard = LinearLayout(requireContext()).apply {
@@ -560,5 +701,524 @@ class StrategyImportFragment : Fragment() {
                 }
             }
         }
+    }
+
+    // ═══════════════ ⑧ 🎯 自测拟合（自工作台迁移） ═══════════════
+    /** 按四周期逐周期自测拟合调优（StrategySelfTuner 增量梯度优化，目标准确率 90%） */
+    private fun runFitting() {
+        val eng = getEngine()
+        setBusy(true, "🎯 自测拟合(目标90%)中...")
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val tuner = StrategySelfTuner(requireContext())
+                val sb = StringBuilder()
+                var totalTuned = 0
+                for (p in FIT_PERIODS) {
+                    val strategies = strategiesFor(p, eng)
+                    if (strategies.isEmpty()) {
+                        sb.appendLine("${p.label}: ⚠️ 无启用策略")
+                        continue
+                    }
+                    try {
+                        val report = tuner.selfTune(strategies, backtestDays = 30, targetAccuracy = 0.90f)
+                        totalTuned += report.strategyTuneDetails.size
+                        sb.appendLine("${p.label}: ${strategies.size} 个策略自测调优完成（回测区间 ${report.dateRange}）")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "${p.label}自测拟合失败: ${e.message}")
+                        sb.appendLine("${p.label}: ⚠️ 自测拟合失败: ${e.message?.take(30)}")
+                    }
+                }
+                sb.appendLine()
+                sb.appendLine("✅ 共调优 $totalTuned 个策略（权重已落库 strategy_weight_snapshot，下次执行策略自动加载）")
+                withContext(Dispatchers.Main) {
+                    setBusy(false, "✅ 自测拟合完成")
+                    showDialog("🎯 自测拟合报告(目标90%)", sb.toString())
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "自测拟合失败: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    setBusy(false, "❌ 自测拟合失败: ${e.message?.take(40)}")
+                    Toast.makeText(requireContext(), "自测拟合失败: ${e.message?.take(40)}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    // ═══════════════ ⑨ 📐 状态矩阵拟合（自工作台迁移） ═══════════════
+    /** 按大盘状态对中/长线网格拟合卖出参数，产出状态参数矩阵并落库（HoldingGuardNode 自动应用） */
+    private fun runStateFit() {
+        setBusy(true, "📐 状态矩阵拟合中...")
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val ctx = requireContext()
+                val sb = StringBuilder()
+                for (period in listOf("中线", "长线")) {
+                    try {
+                        val res = FullCycleBacktestEngine.fitByState(ctx, period) { msg ->
+                            withContext(Dispatchers.Main) { statusTv.text = msg.take(60) }
+                        }
+                        sb.appendLine(res.report)
+                    } catch (e: Exception) {
+                        sb.appendLine("[$period] 拟合异常: ${e.message?.take(50)}")
+                    }
+                }
+                sb.appendLine()
+                sb.appendLine("✅ 参数矩阵已落库 backtest_meta；HoldingGuardNode 按当前大盘状态自动应用")
+                sb.appendLine("暴跌期(CRASH)强制 1 天迅速离场，不依赖矩阵参数")
+                withContext(Dispatchers.Main) {
+                    setBusy(false, "✅ 状态矩阵拟合完成")
+                    showDialog("状态参数矩阵", sb.toString())
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "状态矩阵拟合失败: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    setBusy(false, "❌ 拟合失败: ${e.message?.take(40)}")
+                    Toast.makeText(requireContext(), "拟合失败: ${e.message?.take(40)}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    // ═══════════════ ⑩ 📤 导出拟合矩阵（自工作台迁移） ═══════════════
+    /**
+     * 📤 导出本机拟合矩阵（backtest_meta → sell_rules 结构 JSON），
+     * 供 PC 端 smalltools 纳入下次 walk-forward 拟合（边买卖边完善 PC 拟合）。
+     * 文件写到 app 外部私有目录 pc_fit_export/，Toast 显示完整路径。
+     */
+    private fun exportFitMatrix() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val ctx = requireContext()
+                val db = StockDatabase.getInstance(ctx)
+                val root = JSONObject()
+                root.put("exported_at", LocalDate.now().toString())
+                root.put("source", "StockAnalysis APK 本机拟合导出 → PC walk-forward 素材")
+                val sellRules = JSONObject()
+                for (period in listOf("超短", "短线", "中线", "长线")) {
+                    val json = db.backtestMetaDao().get("fit_matrix_$period") ?: continue
+                    val matrix = JSONObject(json)
+                    val periodObj = JSONObject()
+                    val byState = JSONObject()
+                    var defaultRule: JSONObject? = null
+                    val keys = matrix.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        val item = matrix.optJSONObject(k) ?: continue
+                        val rule = JSONObject()
+                        rule.put("style", when (period) {
+                            "超短" -> "nextday"
+                            "短线" -> "streak"
+                            else -> "hold"
+                        })
+                        rule.put("maxHold", item.optInt("hold", 15))
+                        rule.put("tp", item.optDouble("tp", 20.0))
+                        rule.put("sl", item.optDouble("sl", -10.0))
+                        if (item.has("avg")) rule.put("avg", item.optDouble("avg"))
+                        if (item.has("wr")) rule.put("wr", item.optDouble("wr"))
+                        if (item.has("n")) rule.put("n", item.optInt("n"))
+                        byState.put(k, rule)
+                        if (k == "OSCILLATION") defaultRule = rule
+                    }
+                    if (defaultRule != null) periodObj.put("default", defaultRule)
+                    periodObj.put("by_state", byState)
+                    sellRules.put(period, periodObj)
+                }
+                root.put("sell_rules", sellRules)
+                val dir = File(ctx.getExternalFilesDir(null) ?: ctx.filesDir, "pc_fit_export").apply { mkdirs() }
+                val file = File(dir, "fit_matrix_${LocalDate.now()}.json")
+                file.writeText(root.toString(2))
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(ctx, "已导出拟合矩阵: ${file.absolutePath}", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "导出拟合矩阵失败: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(requireContext(), "导出失败: ${e.message?.take(50)}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    // ═══════════════ ⑪ 📥 增量拉取历史（自工作台迁移） ═══════════════
+    /** 增量拉取 2024 年至今的历史K线：只补每只股票缺失区间，已同步到最新交易日的不重复拉取 */
+    private fun fetchBacktestHistory() {
+        setBusy(true, "📥 增量拉取（只补缺失区间）...")
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val fetcher = HistoricalDataFetcher(requireContext())
+                val count = fetcher.fetchAllHistoricalData(days = 550, force = true, incremental = true) { p ->
+                    requireActivity().runOnUiThread {
+                        statusTv.text = "📥 增量拉取中 ${p.completedStocks}/${p.totalStocks} 只 · ${p.totalRecords} 条 · ${p.currentStock}"
+                    }
+                }
+                withContext(Dispatchers.Main) {
+                    setBusy(false, "✅ 增量拉取完成：新增 $count 条")
+                    Toast.makeText(requireContext(), "增量拉取完成：新增 $count 条，可执行回溯", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "拉取历史失败: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    setBusy(false, "❌ 拉取失败: ${e.message?.take(40)}")
+                    Toast.makeText(requireContext(), "拉取失败: ${e.message?.take(40)}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    // ═══════════════ ⑫ 📦 JSON 数据导入（自工作台迁移） ═══════════════
+    /** JSON 数据导入（SAF 选择文件 → 缓存 → DataExportImport 解析入库） */
+    private fun doImport(uri: Uri) {
+        setBusy(true, "📥 导入中...")
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val bytes = requireContext().contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: throw IllegalStateException("无法读取所选文件")
+                val tmp = File(requireContext().cacheDir, "workbench_import_${System.currentTimeMillis()}.json")
+                tmp.writeBytes(bytes)
+                val report = DataExportImport(requireContext()).importFromJson(tmp.absolutePath)
+                tmp.delete()
+                val msg = if (report.success) {
+                    "导入成功:\n${report.message}"
+                } else {
+                    "导入失败: ${report.message}"
+                }
+                withContext(Dispatchers.Main) {
+                    setBusy(false, if (report.success) "✅ 导入完成" else "❌ 导入失败")
+                    showDialog("数据导入", msg)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "导入失败: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    setBusy(false, "❌ 导入失败: ${e.message?.take(40)}")
+                    Toast.makeText(requireContext(), "导入失败: ${e.message?.take(40)}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    // ═══════════════ ⑬ 📌 PC 拟合参数（自工作台迁移） ═══════════════
+
+    /** 📤 导出当前生效的 PC 拟合参数（backtest_params.json），供 PC 端继续拟合/分享 */
+    private fun exportParamsFile() {
+        val text = com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader.exportParams(requireContext())
+        if (text == null) {
+            Toast.makeText(requireContext(), "无参数可导出", Toast.LENGTH_SHORT).show()
+            return
+        }
+        exportParamsLauncher.launch("backtest_params.json")
+        pendingExportParams = text
+    }
+
+    /** 🔄 重置为 APK 内置参数（删除导入文件） */
+    private fun resetParamsFile() {
+        if (com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader.resetToBuiltIn(requireContext())) {
+            paramsStatusTv.text = "当前参数: ${com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader.sourceLabel(requireContext())}（版本 ${com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader.version(requireContext())}）"
+            Toast.makeText(requireContext(), "已恢复内置参数", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(requireContext(), "重置失败", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** 🔍 展示当前生效参数的文本概览（来源/版本/各周期阈值/卖出规则/IC权重/做T阈值） */
+    private fun showParamsDetail() {
+        val summary = com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader.summary(requireContext())
+        showDialog("📦 当前 PC 拟合参数", summary)
+    }
+
+    /**
+     * 🧬 参数导入：PC 端更新后的 backtest_params.json（含最新 select_params/rank_factors/sell_rules）
+     * 导入 APK → BacktestParamsLoader 写入 filesDir 并立即生效。这是「边买卖边完善 PC 拟合」闭环的回传入口。
+     */
+    private fun doImportParams(uri: Uri) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val text = requireContext().contentResolver.openInputStream(uri)
+                    ?.bufferedReader()?.use { it.readText() }
+                if (text.isNullOrBlank()) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(requireContext(), "文件为空", Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+                val err = com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader
+                    .importParams(requireContext().applicationContext, text)
+                withContext(Dispatchers.Main) {
+                    if (err == null) {
+                        paramsStatusTv.text = "当前参数: ${com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader.sourceLabel(requireContext())}（版本 ${com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader.version(requireContext())}）"
+                        Toast.makeText(requireContext(), "✅ 参数已导入，选股/排序/卖出全部立即生效", Toast.LENGTH_LONG).show()
+                    } else {
+                        Toast.makeText(requireContext(), "❌ $err", Toast.LENGTH_LONG).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "参数导入失败: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(requireContext(), "导入失败: ${e.message?.take(50)}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    // ═══════════════ ⑭ 📌 回溯 & 分析（自工作台迁移） ═══════════════
+
+    /** 按四周期逐周期回溯并落库 */
+    private fun runBacktest() {
+        val selected = FIT_PERIODS
+        val eng = getEngine()
+        setBusy(true, "⏳ 回溯中...")
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val sb = StringBuilder()
+                var totalSaved = 0
+                for (p in selected) {
+                    val strategies = strategiesFor(p, eng)
+                    if (strategies.isEmpty()) {
+                        sb.appendLine("${p.label}: ⚠️ 无启用策略")
+                        continue
+                    }
+                    val backtestEngine = com.chin.stockanalysis.strategy.backtest.HistoricalBacktestEngine(requireContext())
+                    val report = backtestEngine.runHistoricalBacktest(strategies, tradingDays = 30)
+
+                    val today = LocalDate.now().toString()
+                    val entities = report.strategyReports.map { r ->
+                        StrategyTradeBacktestEntity(
+                            periodKey = p.key,
+                            strategyId = r.strategyId,
+                            strategyName = r.strategyName,
+                            tradeDate = today,
+                            totalDays = r.totalDays,
+                            signalCount = r.totalBuys,
+                            correctCount = r.correctBuys,
+                            accuracy = r.buyAccuracy.toDouble(),
+                            avgReturn = r.avgReturn,
+                            maxGain = r.maxGain,
+                            maxLoss = r.maxLoss
+                        )
+                    }
+                    StockDatabase.getInstance(requireContext()).strategyTradeBacktestDao()
+                        .insertAll(entities)
+                    totalSaved += entities.size
+                    val best = report.strategyReports.maxByOrNull { it.buyAccuracy }
+                    sb.appendLine("${p.label}: ${strategies.size} 个策略 | 落库 ${entities.size} 条")
+                    if (best != null) {
+                        sb.appendLine("  最佳: ${best.strategyName} 准确率 ${"%.1f".format(best.buyAccuracy * 100)}% 平均收益 ${"%.2f".format(best.avgReturn)}%")
+                    }
+                }
+                sb.appendLine()
+                sb.appendLine("✅ 共落库 $totalSaved 条回溯结果（按周期分别保存）")
+                withContext(Dispatchers.Main) {
+                    setBusy(false, "✅ 回溯完成")
+                    refreshResults()
+                    showDialog("回溯完成", sb.toString())
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "回溯失败: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    setBusy(false, "❌ 回溯失败: ${e.message?.take(40)}")
+                    Toast.makeText(requireContext(), "回溯失败: ${e.message?.take(40)}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    /**
+     * 多周期全流程回溯（增量）：
+     * 超短隔日卖 / 短线连跌卖 / 中长线做T+止盈止损，固定本金口径统计。
+     * 已回溯的信号日不重复跑（backtest_meta 记录进度）；中/长线记录持久化，短期只留30天。
+     */
+    private fun runFullCycleBacktest() {
+        setBusy(true, "🔄 多周期回溯中（增量）...")
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val ctx = requireContext()
+                val results = com.chin.stockanalysis.strategy.backtest.FullCycleBacktestEngine.runAll(ctx) { msg ->
+                    withContext(Dispatchers.Main) { statusTv.text = msg.take(60) }
+                }
+                val sb = StringBuilder()
+                for (r in results) sb.appendLine(r.report)
+                sb.appendLine()
+                sb.appendLine("周期   信号  平均       胜率    固定本金累计  盈亏因子")
+                for (r in results) {
+                    val pf = if (r.profitFactor == Double.POSITIVE_INFINITY) "∞" else "%.2f".format(r.profitFactor)
+                    sb.appendLine("${r.period}   ${r.realizedCount}   ${"%.2f".format(r.avgRet).padStart(8)}%  ${"%.1f".format(r.winRate).padStart(5)}%  ${"%.2f".format(r.fixedCum).padStart(9)}%  $pf")
+                }
+                sb.appendLine()
+                sb.appendLine("💾 中/长线选中记录已持久化（backtest_selected_stock），超短/短线仅保留30天")
+                sb.appendLine("下次点击「🔄 多周期回溯」只回溯新增区间")
+                withContext(Dispatchers.Main) {
+                    setBusy(false, "✅ 多周期回溯完成")
+                    showDialog("多周期回溯报告（固定本金口径）", sb.toString())
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "多周期回溯失败: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    setBusy(false, "❌ 回溯失败: ${e.message?.take(40)}")
+                    Toast.makeText(requireContext(), "回溯失败: ${e.message?.take(40)}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    /** 查看历史选中记录（中/长线长期保留） */
+    private fun showSelectedRecords() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val list = db.backtestSelectedStockDao().getByPeriods(listOf("中线", "长线"))
+                val recent = list.take(60)
+                val sb = StringBuilder()
+                if (recent.isEmpty()) {
+                    sb.append("暂无选中记录。\n\n请先点击「🔄 多周期回溯」执行回溯，再回来查看。")
+                } else {
+                    sb.appendLine("中/长线选中记录共 ${list.size} 条（显示最近 60 条）")
+                    sb.appendLine("─".repeat(48))
+                    for (r in recent) {
+                        sb.appendLine("${r.signalDate} ${r.period} ${r.name}(${r.code.takeLast(6)})")
+                        sb.appendLine("  [${r.marketState}] 买${r.buyDate}@${"%.2f".format(r.buyPrice)} → 卖${r.sellDate ?: "持有中"} 收益${"%.2f".format(r.retPct)}% 做T+${"%.2f".format(r.tProfitPct)}% [${r.exitReason}]")
+                    }
+                    sb.appendLine()
+                    sb.appendLine("（超短/短线记录仅保留30天，不在本列表展示）")
+                }
+                withContext(Dispatchers.Main) { showDialog("历史选中记录", sb.toString()) }
+            } catch (e: Exception) {
+                Log.e(TAG, "查看选中记录失败: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(requireContext(), "查看记录失败: ${e.message?.take(40)}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    /** 汇总各周期回溯 + 拟合数据 → 生成 prompt → 跳转聊天页 */
+    private fun runCrossPeriodAnalysis() {
+        setBusy(true, "🤖 汇总跨周期数据中...")
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val eng = getEngine()
+                val sb = StringBuilder()
+
+                sb.appendLine("请基于以下各周期量化策略的【历史回溯】与【拟合调优】数据，给出综合的交易策略建议：")
+                sb.appendLine()
+                sb.appendLine("## 一、各周期历史回溯结果（最近一次）")
+                for (p in FIT_PERIODS) {
+                    val items = db.strategyTradeBacktestDao().getByPeriod(p.key).take(5)
+                    if (items.isEmpty()) {
+                        sb.appendLine()
+                        sb.appendLine("【${p.label}】暂无回溯数据（可先执行「📈 回溯」后重试）")
+                        continue
+                    }
+                    sb.appendLine()
+                    sb.appendLine("【${p.label}】回溯日期 ${items.first().tradeDate}：")
+                    for (it in items) {
+                        sb.appendLine("- ${it.strategyName}: 准确率 ${"%.1f".format(it.accuracy * 100)}% | 平均收益 ${"%.2f".format(it.avgReturn)}% | 信号 ${it.signalCount} 次 | 最大盈 ${"%.1f".format(it.maxGain)}% / 最大亏 ${"%.1f".format(it.maxLoss)}%")
+                    }
+                }
+
+                sb.appendLine()
+                sb.appendLine("## 二、各策略拟合调优最佳参数")
+                var fittedCount = 0
+                for (strategy in eng.getStrategies()) {
+                    if (!eng.isEnabled(strategy.id)) continue
+                    val params = db.strategyTradeFittingParamDao().getRecentByStrategy(strategy.id, 50)
+                    if (params.isEmpty()) continue
+                    fittedCount++
+                    val best = params.maxByOrNull { it.accuracy }
+                    sb.appendLine()
+                    sb.appendLine("【${strategy.name}】共 ${params.size} 条拟合记录")
+                    if (best != null) {
+                        sb.appendLine("- 最佳: [${best.periodDays}日] 准确率 ${"%.2f".format(best.accuracy * 100)}% | 平均收益 ${"%.2f".format(best.avgReturn)}%")
+                        if (best.paramJson.isNotBlank()) sb.appendLine("- 参数: ${best.paramJson.take(200)}")
+                    }
+                }
+                if (fittedCount == 0) sb.appendLine("（暂无拟合数据）")
+
+                sb.appendLine()
+                sb.appendLine("请结合以上数据，从以下角度给出可执行建议：")
+                sb.appendLine("1. 各周期（超短/短/中/长）策略的有效性对比与取舍")
+                sb.appendLine("2. 当前市场环境下建议的仓位配置与周期侧重")
+                sb.appendLine("3. 需要注意的风险点与止损建议")
+                sb.appendLine("4. 是否需要调整或停用某周期表现较差的策略")
+
+                val prompt = sb.toString()
+                withContext(Dispatchers.Main) {
+                    setBusy(false, "✅ 已生成跨周期分析请求")
+                    (activity as? MainActivity)?.switchToChatAndSend(prompt)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "跨周期分析失败: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    setBusy(false, "❌ 汇总失败: ${e.message?.take(40)}")
+                    Toast.makeText(requireContext(), "跨周期分析失败: ${e.message?.take(40)}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    /** 从库里读取各周期最近回溯结果，统一对比展示 */
+    private fun refreshResults() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(requireContext())
+                val sb = StringBuilder()
+                var anyData = false
+                for (p in FIT_PERIODS) {
+                    val items = db.strategyTradeBacktestDao().getByPeriod(p.key).take(4)
+                    if (items.isEmpty()) continue
+                    anyData = true
+                    sb.appendLine("【${p.label}】${items.first().tradeDate}")
+                    for (it in items) {
+                        sb.appendLine("  ${it.strategyName}: 准确率 ${"%.1f".format(it.accuracy * 100)}% | 收益 ${"%.2f".format(it.avgReturn)}% | 信号 ${it.signalCount}")
+                    }
+                    sb.appendLine()
+                }
+                if (!anyData) {
+                    sb.append("暂无回溯数据\n\n点击「📈 回溯」按周期执行历史回溯测试，结果将自动落库。")
+                }
+                withContext(Dispatchers.Main) {
+                    resultTv.text = sb.toString()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "刷新回溯结果失败: ${e.message}")
+            }
+        }
+    }
+
+    // ═══════════════ 辅助方法 ═══════════════
+    private fun getEngine(): StrategyEngine {
+        val ctx = requireContext().applicationContext
+        StrategyEngineHolder.init(ctx)
+        return StrategyEngineHolder.get()
+    }
+
+    private fun strategiesFor(p: PeriodInfo, eng: StrategyEngine): List<Strategy> =
+        if (p.holdingPeriod != null) eng.getEnabledStrategiesByPeriod(p.holdingPeriod)
+        else eng.getStrategies().filter { eng.isEnabled(it.id) }
+
+    private fun setBusy(busy: Boolean, tip: String) {
+        if (busy) {
+            statusTv.text = tip
+            progressBar.visibility = View.VISIBLE
+        } else {
+            statusTv.text = ""
+            progressBar.visibility = View.GONE
+        }
+    }
+
+    private fun showDialog(title: String, content: String) {
+        val sv = ScrollView(requireContext())
+        sv.addView(TextView(requireContext()).apply {
+            text = content
+            textSize = 11f
+            setTextColor(Color.parseColor("#333333"))
+            setPadding(16, 12, 16, 12)
+            setLineSpacing(2f, 1.1f)
+            setTypeface(Typeface.MONOSPACE)
+        })
+        AlertDialog.Builder(requireContext())
+            .setTitle(title)
+            .setView(sv)
+            .setPositiveButton("确定", null)
+            .show()
     }
 }

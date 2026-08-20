@@ -88,7 +88,15 @@ abstract class QuantFragmentBase : Fragment() {
     // ═══════════════════════════════════════════════════
 
     protected var engine: StrategyEngine? = null
-    protected var browsingDate: LocalDate = TradingDayPickerView.recentTradingDay()
+
+    /**
+     * 浏览交易日（公共参数）：
+     * 直接读取工作台共享状态 QuantWorkbenchState.tradeDate，
+     * 周期页无需等工作台推送，执行时即取到最新值。
+     */
+    protected var browsingDate: LocalDate
+        get() = QuantWorkbenchState.tradeDate
+        set(value) { QuantWorkbenchState.tradeDate = value }
 
     /** 卖出决策缓存 */
     protected var sellDecisionsCache: List<AutoSellEngine.SellDecision> = emptyList()
@@ -189,6 +197,33 @@ abstract class QuantFragmentBase : Fragment() {
     open fun autoRunPipeline() {
         if (::buildBtn.isInitialized && buildBtn.isEnabled) onBuildClick()
     }
+
+    // ═══════════════════════════════════════════════════
+    // 工作台公共配置同步（日期/仅主板/周期 已上移到工作台顶部统一管理）
+    // ═══════════════════════════════════════════════════
+
+    /** 应用公共交易日（写入共享状态；周期页读取 browsingDate 即为最新值） */
+    open fun applyPublicDate(date: LocalDate) {
+        browsingDate = date
+    }
+
+    /** 应用公共「仅主板」开关状态（子类覆写，如中线回溯需要） */
+    open fun applyMainBoardOnly(checked: Boolean) {}
+
+    /** 应用公共周期选择（子类覆写：短线/中线） */
+    open fun applySelectedPeriod(period: Int) {}
+
+    /** 当前选中的周期（供工作台公共周期行恢复选中状态；-1 = 无周期选择） */
+    open fun getSelectedPeriod(): Int = -1
+
+    /** 周期提示文字（工作台公共「交易日」行尾部展示，随当前 Tab 变化） */
+    open fun getPeriodTipText(): String = ""
+
+    /** 周期选项列表（工作台公共「周期」行展示；空 = 该周期无周期选择，隐藏选项行） */
+    open fun getPeriodOptions(): List<Pair<Int, String>> = emptyList()
+
+    /** 周期行标签（工作台公共「周期」行左侧；默认 "📊 周期:"，中线为 "📊 数据周期:"） */
+    open fun getPeriodRowLabel(): String = "📊 周期:"
 
     // ═══════════════════════════════════════════════════
     // UI 辅助方法
@@ -3868,83 +3903,12 @@ abstract class QuantFragmentBase : Fragment() {
         pipelineDetailsWrapper?.let { positionContainer.addView(it) }
 
         // ── 持仓区（始终显示标题，即使为空） ──
-        renderOrderTable(orders, dates, priceMap, "持仓")
-
-        // ── 选股区（始终显示标题，即使为空） ──
-        if (lastPickStocks.isNotEmpty()) {
-            // 先显示占位
-            renderEmptySection("选股", titleColor = "#6A1B9A")
-
-            // 异步查询 user_watchlist 完整数据
-            lifecycleScope.launch(Dispatchers.IO) {
-                try {
-                    val db = StockDatabase.getInstance(requireContext())
-                    val source = getWatchlistSource()
-                    val today = TradingDayPickerView.recentTradingDay(browsingDate).format(DATE_FMT)
-                    val picks = db.userWatchlistDao().getBySourceAndDate(source, today)
-
-                    // 获取实时价格
-                    val realtimeMap = try {
-                        com.chin.stockanalysis.stock.data.StockDataSourceFactory
-                            .createDefaultRepository(requireContext().applicationContext)
-                            .getRealtime(picks.map { it.stockCode })
-                    } catch (_: Exception) { emptyMap() }
-
-                    // 转换为 StrategyTradeOrderEntity
-                    val pickOrders = picks.map { pick ->
-                        val price = if (pick.buyPrice > 0) pick.buyPrice
-                            else realtimeMap[pick.stockCode]?.price ?: 0.0
-                        StrategyTradeOrderEntity(
-                            strategyId = getQuantType(),
-                            stockCode = pick.stockCode,
-                            stockName = pick.stockName,
-                            tradeDate = pick.addedDate,
-                            buyPrice = price,
-                            buyTime = pick.addedDate,
-                            quantity = 100,
-                            orderType = getQuantType(),
-                            status = "WATCHING",
-                            reason = "选股",
-                            scoreAtBuy = pick.scoreAtAdd
-                        )
-                    }
-
-                    withContext(Dispatchers.Main) {
-                        if (!isAdded) return@withContext
-                        // 移除占位，重新渲染完整表格
-                        positionContainer.removeAllViews()
-                        // 重新渲染持仓区
-                        if (orders.isNotEmpty()) {
-                            renderOrderTable(orders, dates, priceMap, "持仓")
-                        } else {
-                            renderEmptySection("持仓")
-                        }
-                        // 渲染选股区完整表格
-                        if (pickOrders.isNotEmpty()) {
-                            renderOrderTable(pickOrders, dates, priceMap, "选股", titleColor = "#6A1B9A")
-                        } else if (lastPickStocks.isNotEmpty()) {
-                            // DB 查无数据（日期不一致），用内存中的 lastPickStocks 渲染
-                            renderPickListSection()
-                        } else {
-                            renderEmptySection("选股", titleColor = "#6A1B9A")
-                        }
-                    }
-                } catch (_: Exception) {
-                    withContext(Dispatchers.Main) {
-                        if (!isAdded) return@withContext
-                        // 查询失败，用 lastPickStocks 简单渲染
-                        positionContainer.removeAllViews()
-                        if (orders.isNotEmpty()) {
-                            renderOrderTable(orders, dates, priceMap, "持仓")
-                        } else {
-                            renderEmptySection("持仓")
-                        }
-                        renderPickListSection()
-                    }
-                }
-            }
+        // 选股区块已移除：Pipeline 选股结果统一保存到「AI 精选」（ai_selected_stock），
+        // 一键建仓仍可用（lastPickStocks 内存态由 Pipeline 完成后维护）
+        if (orders.isNotEmpty()) {
+            renderOrderTable(orders, dates, priceMap, "持仓")
         } else {
-            renderEmptySection("选股", titleColor = "#6A1B9A")
+            renderEmptySection("持仓")
         }
     }
 
@@ -4083,7 +4047,7 @@ abstract class QuantFragmentBase : Fragment() {
         }
         // 列头宽度必须与下方数据行单元格宽度一一对应，否则垂直方向错位
         headerRow.addView(createCell("股票", 84, "#666666", 10f, bold = true))
-        headerRow.addView(createCell("建仓日", 60, "#666666", 10f, bold = true))
+        headerRow.addView(createCell("建仓日", 72, "#666666", 10f, bold = true))
         headerRow.addView(createCell("成本", 60, "#666666", 10f, bold = true))
         headerRow.addView(createCell(sectionTitle, 45, "#666666", 9f, bold = true))
         if (showMultiDayPrices) {
@@ -4107,7 +4071,7 @@ abstract class QuantFragmentBase : Fragment() {
                 gravity = Gravity.CENTER
             }
             nameCell.addView(TextView(requireContext()).apply {
-                text = order.stockName.take(6); textSize = 11f
+                text = order.stockName.ifBlank { "—" }.take(6); textSize = 11f
                 setTextColor(Color.parseColor("#222222")); gravity = Gravity.CENTER
                 setTypeface(null, Typeface.BOLD)
             })
@@ -4124,7 +4088,10 @@ abstract class QuantFragmentBase : Fragment() {
             nameCell.foreground = android.graphics.drawable.GradientDrawable().apply { setColor(0); setCornerRadius(8f) }
             row.addView(nameCell)
 
-            row.addView(createCell(order.tradeDate.takeLast(5), 60, "#333333", 10f))
+            // 建仓日：日期 + 具体时分（buyTime 形如 "HH:mm:ss"，取前 5 位）
+            val buyTimeShort = order.buyTime.takeIf { !it.isNullOrBlank() }
+                ?.let { if (it.length >= 5) it.take(5) else it } ?: ""
+            row.addView(createCell(order.tradeDate.takeLast(5) + "\n" + buyTimeShort, 72, "#333333", 10f))
             row.addView(createCell("¥${"%.2f".format(order.buyPrice)}", 60, "#333333", 10f))
             row.addView(createCell("${order.quantity}", 45, "#1565C0", 9f))
 
@@ -4179,45 +4146,6 @@ abstract class QuantFragmentBase : Fragment() {
         }
         scroll.addView(table)
         positionContainer.addView(scroll)
-    }
-
-    /** 渲染选股简单列表（当选股订单不在当前 orders 列表中时使用） */
-    private fun renderPickListSection() {
-        val pickTitle = if (positionTitlePrefix.isNotEmpty()) positionTitlePrefix else getQuantType()
-        val pickRow = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 12, 0, 2)
-        }
-        pickRow.addView(TextView(requireContext()).apply {
-            text = "📌 ${pickTitle}量化选股（${lastPickStocks.size} 只）"
-            textSize = 12f; setTextColor(Color.parseColor("#6A1B9A"))
-            setTypeface(null, Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        })
-        pickRow.addView(TextView(requireContext()).apply {
-            text = " 🔄"; textSize = 14f
-            setTextColor(Color.parseColor("#1976D2")); setPadding(8, 0, 0, 0)
-            isClickable = true; setOnClickListener { refreshPositions() }
-        })
-        positionContainer.addView(pickRow)
-
-        for ((code, name, score) in lastPickStocks) {
-            val itemRow = LinearLayout(requireContext()).apply {
-                orientation = LinearLayout.HORIZONTAL; setPadding(8, 3, 0, 3)
-            }
-            itemRow.addView(TextView(requireContext()).apply {
-                text = "${name.take(4)}($code)"
-                textSize = 11f; setTextColor(Color.parseColor("#333333"))
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f)
-            })
-            itemRow.addView(TextView(requireContext()).apply {
-                text = "评分 $score"
-                textSize = 10f; setTextColor(Color.parseColor("#1976D2"))
-                gravity = Gravity.END
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            })
-            positionContainer.addView(itemRow)
-        }
     }
 
     /** 一键建仓：将选股区的股票写入 DB 作为正式持仓 */
@@ -4645,12 +4573,17 @@ abstract class QuantFragmentBase : Fragment() {
                         val statusEmoji = when (order.status) {
                             "SOLD" -> "✅"; "BUYING" -> "🟢"; "FAILED" -> "❌"; else -> "⏳"
                         }
-                        sb.appendLine("$statusEmoji ${order.stockName}(${order.stockCode.takeLast(6)})")
-                        sb.appendLine("   买入: ${order.tradeDate} ¥${"%.2f".format(order.buyPrice)} x${order.quantity}")
+                        val name = order.stockName.ifBlank { order.stockCode.takeLast(6) }
+                        sb.appendLine("$statusEmoji $name(${order.stockCode.takeLast(6)})")
+                        // buyTime 兼容 "HH:mm:ss" 与 "yyyy-MM-dd HH:mm:ss" 两种格式，统一取时分
+                        val buyTimeDisplay = order.buyTime.takeIf { !it.isNullOrBlank() }
+                            ?.let { if (it.length >= 16) it.substring(11, 16) else if (it.length >= 5) it.take(5) else it } ?: ""
+                        sb.appendLine("   买入: ${order.tradeDate} $buyTimeDisplay ¥${"%.2f".format(order.buyPrice)} x${order.quantity}")
                         if (order.status == "SOLD") {
                             val profitStr = if (order.profitPct >= 0) "+${"%.2f".format(order.profitPct)}%"
                             else "${"%.2f".format(order.profitPct)}%"
-                            sb.appendLine("   卖出: ¥${"%.2f".format(order.sellPrice)} 收益: $profitStr")
+                            val sellTimeDisplay = order.sellTime.takeIf { !it.isNullOrBlank() } ?: "—"
+                            sb.appendLine("   卖出: $sellTimeDisplay ¥${"%.2f".format(order.sellPrice)} 收益: $profitStr")
                         } else sb.appendLine("   状态: ${order.status}")
                         sb.appendLine()
                     }

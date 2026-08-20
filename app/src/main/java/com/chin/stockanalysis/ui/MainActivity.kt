@@ -22,8 +22,10 @@ import com.chin.stockanalysis.databinding.ActivityMainBinding
 import com.chin.stockanalysis.news.HotSectorNewsUpdater
 import com.chin.stockanalysis.stock.database.StockDataCenter
 import com.chin.stockanalysis.storage.BackupManager
+import com.chin.stockanalysis.update.AppUpdateManager
 import com.google.android.material.bottomnavigation.BottomNavigationView
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -151,6 +153,15 @@ class MainActivity : AppCompatActivity() {
                 android.util.Log.w("MainActivity", "sector_stocks 预热失败: ${e.message}")
             }
         }
+        // 后台检查 App 更新（延迟执行，避免与启动流程竞争）
+        lifecycleScope.launch(Dispatchers.IO) {
+            delay(8000)
+            AppUpdateManager.checkForUpdate(applicationContext) { info ->
+                if (info != null) {
+                    runOnUiThread { AppUpdateManager.showUpdateDialog(this@MainActivity, info) }
+                }
+            }
+        }
     }
 
     private fun initBackupSystem() {
@@ -253,6 +264,8 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         // 进程解冻后强制清理 Provider 锁（Samsung Nandswap）
         com.chin.stockanalysis.ai.AiProviderPool.emergencyReset("onResume")
+        // 用户从"安装未知应用"设置页返回后，继续未完成的 APK 安装
+        AppUpdateManager.retryPendingInstall(this)
     }
 
     override fun onStop() {

@@ -244,6 +244,19 @@ interface DailySnapshotDao {
     /** 增量拉取：单只股票已有数据的最大日期 */
     @Query("SELECT MAX(date) FROM daily_snapshot WHERE code = :code")
     suspend fun getMaxDate(code: String): String?
+
+    /** 盘中/选股前刷新：仅更新行情字段（保留基本面字段），返回受影响行数 */
+    @Query("""UPDATE daily_snapshot SET open = :open, close = :close, high = :high, low = :low,
+        volume = :volume, amount = :amount, change_pct = :changePct,
+        turnover_rate = CASE WHEN :turnoverRate > 0 THEN :turnoverRate ELSE turnover_rate END,
+        pe = :pe, pb = :pb, market_cap = :marketCap
+        WHERE code = :code AND date = :date""")
+    suspend fun updateQuote(
+        code: String, date: String,
+        open: Double, close: Double, high: Double, low: Double,
+        volume: Long, amount: Double, changePct: Double,
+        turnoverRate: Double, pe: Double, pb: Double, marketCap: Double
+    ): Int
 }
 
 @Dao

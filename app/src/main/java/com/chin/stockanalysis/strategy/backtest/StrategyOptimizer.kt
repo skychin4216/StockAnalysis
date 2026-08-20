@@ -119,17 +119,20 @@ class StrategyOptimizer(private val context: Context) {
      */
     suspend fun gridSearch(
         strategy: Strategy,
-        availableDates: List<String>
+        availableDates: List<String>,
+        windowDays: Int = 0
     ): GridSearchResult = withContext(Dispatchers.IO) {
         val factors = strategy.weightFactors
-        if (factors.isEmpty() || availableDates.size < 10) {
+        // 窗口控制：windowDays>0 时仅用最近 N 个交易日（周级=5，月级=20）
+        val dates = if (windowDays > 0) availableDates.takeLast(windowDays) else availableDates
+        if (factors.isEmpty() || dates.size < 5) {
             return@withContext GridSearchResult(strategy.weightFactors, 0f, 0.0, 0)
         }
 
-        // Walk-Forward 分割：训练集 80%，测试集 20%
-        val splitIndex = (availableDates.size * 0.8).toInt().coerceAtLeast(5)
-        val trainDates = availableDates.take(splitIndex)
-        val testDates = availableDates.drop(splitIndex)
+        // Walk-Forward 分割：训练集 80%，测试集 20%（周窗口保证至少 1 天测试）
+        val splitIndex = (dates.size * 0.8).toInt().coerceIn(1, dates.size - 1)
+        val trainDates = dates.take(splitIndex)
+        val testDates = dates.drop(splitIndex)
 
         // 搜索空间：每个因子可能的权重值（步长5%）
         val step = 5

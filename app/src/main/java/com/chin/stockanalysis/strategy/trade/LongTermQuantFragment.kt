@@ -59,12 +59,6 @@ class LongTermQuantFragment : QuantFragmentBase() {
 
     override fun buildUI() {
         addTitleRow(getString(com.chin.stockanalysis.R.string.title_long_system))
-
-        val (configRow, _, _) = createDatePickerRow(
-            tipText = "💎 持仓6月-1年+ | 最多${MAX_HOLDINGS}只 | 深度基本面",
-            tipColor = "#1565C0"
-        )
-        rootLayout.addView(configRow)
         rootLayout.addView(createProgressRow())
         rootLayout.addView(createButtonRow())
         addSeparator()
@@ -72,4 +66,6 @@ class LongTermQuantFragment : QuantFragmentBase() {
 
         refreshPositions()
     }
+
+    override fun getPeriodTipText(): String = "💎 持仓6月-1年+ | 最多${MAX_HOLDINGS}只 | 深度基本面"
 }

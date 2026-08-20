@@ -1,8 +1,23 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
 }
+
+// ── Release 签名（本地 keystore.properties，不入库；缺失时回退 debug 签名以便出包测试）──
+val keystoreProps = Properties()
+val keystorePropsFile = rootProject.file("keystore.properties")
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.inputStream().use { keystoreProps.load(it) }
+}
+val hasReleaseSigning = keystorePropsFile.exists() &&
+    !keystoreProps.getProperty("storeFile").isNullOrBlank() &&
+    !keystoreProps.getProperty("storePassword").isNullOrBlank() &&
+    !keystoreProps.getProperty("keyAlias").isNullOrBlank() &&
+    !keystoreProps.getProperty("keyPassword").isNullOrBlank()
 
 android {
     namespace = "com.chin.stockanalysis"
@@ -13,14 +28,28 @@ android {
         //minSdk = 21
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            // 有正式签名配置则用之，否则回退 debug 签名（便于一键 assembleRelease 出包）
+            signingConfig = if (hasReleaseSigning) signingConfigs.getByName("release")
+            else signingConfigs.getByName("debug")
         }
     }
 

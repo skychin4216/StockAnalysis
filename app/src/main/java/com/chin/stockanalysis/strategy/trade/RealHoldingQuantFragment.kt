@@ -6,6 +6,7 @@ import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
+import com.chin.stockanalysis.ai.StockEntityExtractor
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.stock.data.StockDataSourceFactory
 import com.chin.stockanalysis.strategy.HoldingPeriod
@@ -733,6 +734,14 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
         }
         scroll.addView(form)
 
+        // 必填项标签（红色 * 标记）
+        fun fieldLabel(labelText: String, required: Boolean = true): TextView = TextView(ctx).apply {
+            text = if (required) "$labelText *" else labelText
+            textSize = 12f
+            setPadding(0, 4, 0, 2)
+            if (required) setTextColor(Color.RED) else setTextColor(Color.parseColor("#666666"))
+        }
+
         val codeInput = EditText(ctx).apply {
             hint = "股票代码（如 sh600519）"; inputType = android.text.InputType.TYPE_CLASS_TEXT
             setPadding(8, 8, 8, 8)
@@ -759,24 +768,36 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
                 listOf("未分类", "超短线", "短线", "中线", "长线"))
         }
 
-        form.addView(TextView(ctx).apply { text = "股票代码"; textSize = 12f; setPadding(0, 4, 0, 2) })
+        form.addView(fieldLabel("股票代码"))
         form.addView(codeInput)
-        form.addView(TextView(ctx).apply { text = "股票名称"; textSize = 12f; setPadding(0, 4, 0, 2) })
+        form.addView(fieldLabel("股票名称"))
         form.addView(nameInput)
-        form.addView(TextView(ctx).apply { text = "持有数量"; textSize = 12f; setPadding(0, 4, 0, 2) })
+        form.addView(fieldLabel("持有数量"))
         form.addView(qtyInput)
-        form.addView(TextView(ctx).apply { text = "买入均价"; textSize = 12f; setPadding(0, 4, 0, 2) })
+        form.addView(fieldLabel("买入均价"))
         form.addView(priceInput)
-        form.addView(TextView(ctx).apply { text = "买入日期"; textSize = 12f; setPadding(0, 4, 0, 2) })
+        form.addView(fieldLabel("买入日期", required = false))
         form.addView(dateInput)
-        form.addView(TextView(ctx).apply { text = "持仓周期"; textSize = 12f; setPadding(0, 8, 0, 2) })
+        form.addView(fieldLabel("持仓周期", required = false))
         form.addView(periodSpinner)
+        form.addView(TextView(ctx).apply {
+            text = "带 * 为必填项；仅填名称时自动匹配代码，匹配不到需手动填写代码"
+            textSize = 10f
+            setTextColor(Color.parseColor("#999999"))
+            setPadding(0, 8, 0, 0)
+        })
 
-        android.app.AlertDialog.Builder(ctx)
+        val dialog = android.app.AlertDialog.Builder(ctx)
             .setTitle("✏️ 手动添加持仓")
             .setView(scroll)
-            .setPositiveButton("添加") { _, _ ->
-                val code = codeInput.text.toString().trim()
+            .setPositiveButton("添加", null)
+            .setNegativeButton("取消", null)
+            .create()
+
+        // 使用 setOnShowListener 接管「添加」按钮，校验失败时保持对话框打开
+        dialog.setOnShowListener {
+            dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                var code = codeInput.text.toString().trim()
                 val name = nameInput.text.toString().trim()
                 val qty = qtyInput.text.toString().toIntOrNull() ?: 0
                 val price = priceInput.text.toString().toDoubleOrNull() ?: 0.0
@@ -786,14 +807,29 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
                     1 -> "UltraShortQuant"; 2 -> "ShortTermQuant"
                     3 -> "MidTermQuant"; 4 -> "LongTermQuant"; else -> ""
                 }
-                if (code.isEmpty() || name.isEmpty() || qty <= 0 || price <= 0.0) {
-                    Toast.makeText(ctx, "请填写完整信息", Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
+
+                // 代码为空时尝试按名称自动解析
+                if (code.isEmpty() && name.isNotEmpty()) {
+                    code = StockEntityExtractor.resolveSync(name) ?: ""
                 }
+
+                // 必选项校验：代码/名称/数量/均价（日期、周期有默认值）
+                val missing = mutableListOf<String>()
+                if (code.isEmpty()) missing.add("股票代码")
+                if (name.isEmpty()) missing.add("股票名称")
+                if (qty <= 0) missing.add("持有数量")
+                if (price <= 0.0) missing.add("买入均价")
+
+                if (missing.isNotEmpty()) {
+                    Toast.makeText(ctx, "请填写必选项: ${missing.joinToString("、")}", Toast.LENGTH_LONG).show()
+                    return@setOnClickListener // 不关闭对话框，等待补齐
+                }
+
+                dialog.dismiss()
                 saveRealPosition(code, name, qty, price, date, period)
             }
-            .setNegativeButton("取消", null)
-            .show()
+        }
+        dialog.show()
     }
 
     /** 保存真实持仓到数据库 */

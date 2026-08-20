@@ -21,11 +21,10 @@ import com.chin.stockanalysis.strategy.HoldingPeriod
  */
 class ShortTermQuantFragment : QuantFragmentBase() {
 
-    /** 短线周期选择（持仓 1 天 ~ 2 周） */
-    private var selectedPeriods: Set<Int> = setOf(3)
-
     companion object {
         private const val TAG = "ShortTermQuant"
+        /** 共享状态中短线周期选择的 key */
+        private const val STATE_KEY = "short"
         private val PERIOD_LABELS = mapOf(
             1 to "1日", 3 to "3日", 5 to "5日",
             7 to "7日", 10 to "10日", 14 to "14日"
@@ -49,7 +48,7 @@ class ShortTermQuantFragment : QuantFragmentBase() {
     override fun onFittingClick() {
         showFittingParamsReport(
             titlePrefix = "短线",
-            periodLabel = selectedPeriods.joinToString(",") + "日"
+            periodLabel = "${getSelectedPeriod().takeIf { it > 0 } ?: 3}日"
         )
     }
 
@@ -67,45 +66,23 @@ class ShortTermQuantFragment : QuantFragmentBase() {
 
     override fun buildUI() {
         addTitleRow(getString(com.chin.stockanalysis.R.string.title_short_system), textSize = 16f)
-
-        val (configRow, _, _) = createDatePickerRow(
-            tipText = "📊 持仓1-14天 | 最多5只 | 技术+资金",
-            tipColor = "#1565C0"
-        )
-        rootLayout.addView(configRow)
-
-        // ── 周期选择行（短线持仓 1 日 ~ 2 周） ──
-        val periodRow = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            setPadding(8, 4, 8, 4); setBackgroundColor(Color.WHITE)
-        }
-        periodRow.addView(android.widget.TextView(requireContext()).apply {
-            text = "📊 周期:"; textSize = 11f
-            setTextColor(Color.parseColor("#333333"))
-            setTypeface(null, Typeface.BOLD); setPadding(0, 0, 4, 0)
-        })
-        val periodRadioGroup = RadioGroup(requireContext()).apply {
-            orientation = RadioGroup.HORIZONTAL
-        }
-        for ((period, label) in PERIOD_LABELS) {
-            val rb = RadioButton(requireContext()).apply {
-                text = label; textSize = 11f; id = period
-                isChecked = period == selectedPeriods.firstOrNull()
-                setOnCheckedChangeListener { _, isChecked -> if (isChecked) selectedPeriods = setOf(period) }
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { marginEnd = -4; marginStart = -4 }
-            }
-            periodRadioGroup.addView(rb)
-        }
-        periodRow.addView(periodRadioGroup)
-        rootLayout.addView(periodRow)
-
-        // ── 进度行 + 按钮行 + 分隔线 + 持仓区 ──
         rootLayout.addView(createButtonRow())
         rootLayout.addView(createProgressRow())
         addSeparator()
         rootLayout.addView(createContentScrollArea())
+    }
+
+    override fun getPeriodTipText(): String = "📊 持仓1-14天 | 最多5只 | 技术+资金"
+
+    override fun getPeriodOptions(): List<Pair<Int, String>> = PERIOD_LABELS.toList()
+
+    override fun getSelectedPeriod(): Int {
+        val p = QuantWorkbenchState.selectedPeriodFor(STATE_KEY, 3)
+        return if (p in PERIOD_LABELS.keys) p else 3
+    }
+
+    override fun applySelectedPeriod(period: Int) {
+        if (period in PERIOD_LABELS.keys) QuantWorkbenchState.setSelectedPeriod(STATE_KEY, period)
     }
 
     /** 供外部调用的自动触发 Pipeline */

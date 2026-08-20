@@ -1,6 +1,7 @@
 package com.chin.stockanalysis.ui
 
 import android.content.Context
+import android.graphics.Color
 import android.os.Bundle
 import android.text.Editable
 import android.text.InputType
@@ -17,8 +18,10 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import com.chin.stockanalysis.ApiConfigManager
 import com.chin.stockanalysis.ApiProviderConfig
+import com.chin.stockanalysis.cloud.CloudSyncManager
 import com.chin.stockanalysis.config.AgentRoute
 import com.chin.stockanalysis.config.FeatureFlagManager
 import com.chin.stockanalysis.config.GlobalMode
@@ -29,6 +32,8 @@ import com.chin.stockanalysis.stock.StockService
 import com.chin.stockanalysis.stock.data.StockDataSourceFactory
 import com.chin.stockanalysis.strategy.HoldingPeriod
 import com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader
+import com.chin.stockanalysis.update.AppUpdateManager
+import kotlinx.coroutines.launch
 
 class SettingsFragment : Fragment() {
     private var _binding: FragmentSettingsBinding? = null
@@ -102,6 +107,8 @@ class SettingsFragment : Fragment() {
         setupParamsManagement()
         setupAgentFramework()
         setupWechatNotification()
+        setupAppUpdate()
+        setupCloudSync()
     }
 
     /** 回溯参数：导入 / 导出 / 恢复内置（用户需求：导入他人拟合参数即用，免回溯） */
@@ -174,6 +181,103 @@ class SettingsFragment : Fragment() {
                 }
             })
         }
+    }
+
+    /** 应用更新：显示当前版本、配置自定义更新地址、手动检查更新 */
+    private fun setupAppUpdate() {
+        binding.apply {
+            val ctx = requireContext()
+            tvUpdateVersion.text = "当前版本: v${AppUpdateManager.currentVersionName(ctx)}" +
+                " (${AppUpdateManager.currentVersionCode(ctx)})"
+            val currentUrl = AppUpdateManager.getManifestUrl(ctx)
+            etUpdateUrl.setText(if (currentUrl.contains("example.com")) "" else currentUrl)
+
+            btnSaveUpdateUrl.setOnClickListener {
+                val url = etUpdateUrl.text?.toString()?.trim().orEmpty()
+                AppUpdateManager.setManifestUrl(ctx, url)
+                Toast.makeText(ctx, "更新地址已保存", Toast.LENGTH_SHORT).show()
+            }
+
+            btnCheckUpdate.setOnClickListener {
+                val url = etUpdateUrl.text?.toString()?.trim().orEmpty()
+                if (url.isNotBlank()) AppUpdateManager.setManifestUrl(ctx, url)
+                Toast.makeText(ctx, "正在检查更新…", Toast.LENGTH_SHORT).show()
+                AppUpdateManager.checkForUpdateDetailed(ctx) { result ->
+                    requireActivity().runOnUiThread {
+                        when (result) {
+                            is AppUpdateManager.CheckResult.NotConfigured ->
+                                Toast.makeText(ctx, "未配置更新地址，请先在下方填写 latest.json 地址", Toast.LENGTH_LONG).show()
+                            is AppUpdateManager.CheckResult.NoUpdate ->
+                                Toast.makeText(ctx, "当前已是最新版本", Toast.LENGTH_SHORT).show()
+                            is AppUpdateManager.CheckResult.Failed ->
+                                Toast.makeText(ctx, "检查更新失败: ${result.message}", Toast.LENGTH_LONG).show()
+                            is AppUpdateManager.CheckResult.HasUpdate ->
+                                AppUpdateManager.showUpdateDialog(requireActivity(), result.info)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** 云端数据同步（腾讯云 COS）：显示状态、上传今日数据、下载最新拟合参数 */
+    private fun setupCloudSync() {
+        refreshCloudStatus()
+        binding.btnCloudUpload.setOnClickListener {
+            viewLifecycleOwner.lifecycleScope.launch {
+                binding.btnCloudUpload.isEnabled = false
+                setCloudStatus("正在打包并上传…", Color.parseColor("#FF9800"))
+                val manager = CloudSyncManager(requireContext())
+                val result = manager.uploadData(manager.loadConfig()) { status ->
+                    requireActivity().runOnUiThread { setCloudStatus(status, Color.parseColor("#FF9800")) }
+                }
+                binding.btnCloudUpload.isEnabled = true
+                result.onSuccess { msg ->
+                    setCloudStatus(msg, Color.parseColor("#2E7D32"))
+                    Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
+                }.onFailure { e ->
+                    setCloudStatus(e.message ?: "上传失败", Color.parseColor("#C62828"))
+                    Toast.makeText(requireContext(), "上传失败: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+        binding.btnCloudDownloadParams.setOnClickListener {
+            viewLifecycleOwner.lifecycleScope.launch {
+                binding.btnCloudDownloadParams.isEnabled = false
+                setCloudStatus("正在下载最新参数…", Color.parseColor("#FF9800"))
+                val manager = CloudSyncManager(requireContext())
+                val result = manager.downloadParams(manager.loadConfig()) { status ->
+                    requireActivity().runOnUiThread { setCloudStatus(status, Color.parseColor("#FF9800")) }
+                }
+                binding.btnCloudDownloadParams.isEnabled = true
+                result.onSuccess { msg ->
+                    setCloudStatus(msg, Color.parseColor("#2E7D32"))
+                    refreshParamsInfo()
+                    Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
+                }.onFailure { e ->
+                    setCloudStatus(e.message ?: "下载失败", Color.parseColor("#C62828"))
+                    Toast.makeText(requireContext(), "下载失败: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    private fun refreshCloudStatus() {
+        val cfg = CloudSyncManager(requireContext()).loadConfig()
+        if (!cfg.enabled) {
+            setCloudStatus("云端同步未配置（app_config.json 中 cloud_sync.enabled=false）", Color.parseColor("#757575"))
+            return
+        }
+        val maskedId = cfg.secretId.take(4) + "****"
+        setCloudStatus(
+            "已配置: bucket=${cfg.bucket}  region=${cfg.region}\nSecretId=$maskedId  prefix=${cfg.prefix}",
+            Color.parseColor("#2E7D32")
+        )
+    }
+
+    private fun setCloudStatus(text: String, color: Int) {
+        binding.tvCloudStatus.text = text
+        binding.tvCloudStatus.setTextColor(color)
     }
 
     private fun refreshLanguageInfo() {

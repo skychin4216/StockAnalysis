@@ -286,6 +286,10 @@ object BacktestParamsLoader {
             tQtyRatio = d("tQtyRatio", TTradeParams.DEFAULT.tQtyRatio),
             // 配对目标幅度（%）
             pairProfitPct = d("pairProfitPct", TTradeParams.DEFAULT.pairProfitPct),
+            // 弹性识别（v3）
+            minDailyAmplitudePct = d("minDailyAmplitudePct", TTradeParams.DEFAULT.minDailyAmplitudePct),
+            highElasticityAmplitudePct = d("highElasticityAmplitudePct", TTradeParams.DEFAULT.highElasticityAmplitudePct),
+            elasticityConfBonus = i("elasticityConfBonus", TTradeParams.DEFAULT.elasticityConfBonus),
             // 做T买入置信度
             baseConfidence = i("baseConfidence", TTradeParams.DEFAULT.baseConfidence),
             rsiOversold = d("rsiOversold", TTradeParams.DEFAULT.rsiOversold),
@@ -319,6 +323,92 @@ object BacktestParamsLoader {
             rtConfTrendUp = i("rt_confTrendUp", TTradeParams.DEFAULT.rtConfTrendUp)
         )
     }
+
+    // ───────────────────────── 参数概览（工作台展示） ─────────────────────────
+
+    /** 生成当前生效参数的文本概览（来源/版本/各周期选股阈值/卖出规则/IC权重/做T阈值），供工作台「🔍 参数详情」展示 */
+    fun summary(context: Context): String {
+        load(context)
+        val sb = StringBuilder()
+        sb.appendLine("参数来源: ${sourceLabel(context)}")
+        sb.appendLine("版本: ${version(context)}")
+        val paramsRoot = root ?: return sb.appendLine("（未加载到参数 JSON，全部使用代码默认值）").toString()
+
+        fun fmt(v: Double): String = if (v == v.toLong().toDouble()) "${v.toLong()}" else "%.2f".format(v)
+
+        paramsRoot.optJSONObject("select_params")?.let { select ->
+            sb.appendLine("─ 选股过滤 select_params ─")
+            val keys = select.keys()
+            while (keys.hasNext()) {
+                val period = keys.next()
+                val o = select.optJSONObject(period) ?: continue
+                val k2 = o.keys()
+                val items = mutableListOf<String>()
+                while (k2.hasNext()) {
+                    val name = k2.next()
+                    val v = o.opt(name)
+                    val vs = when (v) {
+                        is Double -> fmt(v)
+                        is Int -> v.toString()
+                        is Boolean -> v.toString()
+                        else -> v?.toString() ?: "-"
+                    }
+                    items.add("$name=$vs")
+                }
+                if (items.isNotEmpty()) sb.appendLine("【$period】${items.joinToString(" ")}")
+            }
+        }
+
+        paramsRoot.optJSONObject("sell_rules")?.let { sr ->
+            sb.appendLine("─ 卖出规则 sell_rules ─")
+            val keys = sr.keys()
+            while (keys.hasNext()) {
+                val period = keys.next()
+                val po = sr.optJSONObject(period) ?: continue
+                sb.appendLine("【$period】")
+                po.optJSONObject("by_state")?.let { byState ->
+                    val sk = byState.keys()
+                    while (sk.hasNext()) {
+                        val st = sk.next()
+                        val ro = byState.optJSONObject(st) ?: continue
+                        sb.appendLine("  $st: style=${ro.optString("style", "hold")} maxHold=${ro.optInt("maxHold", 1)} tp=${fmt(ro.optDouble("tp"))} sl=${fmt(ro.optDouble("sl"))}")
+                    }
+                }
+                po.optJSONObject("default")?.let { d ->
+                    sb.appendLine("  default: style=${d.optString("style", "hold")} maxHold=${d.optInt("maxHold", 1)} tp=${fmt(d.optDouble("tp"))} sl=${fmt(d.optDouble("sl"))}")
+                }
+            }
+        }
+
+        paramsRoot.optJSONObject("rank_factors")?.let { rf ->
+            sb.appendLine("─ IC 排序权重 rank_factors ─")
+            val keys = rf.keys()
+            while (keys.hasNext()) {
+                val period = keys.next()
+                val o = rf.optJSONObject(period) ?: continue
+                val k2 = o.keys()
+                val items = mutableListOf<String>()
+                while (k2.hasNext()) {
+                    val f = k2.next()
+                    val v = o.optDouble(f)
+                    if (v != 0.0) items.add("$f=${"%.2f".format(v)}")
+                }
+                if (items.isNotEmpty()) sb.appendLine("【$period】${items.joinToString(" ")}")
+            }
+        }
+
+        paramsRoot.optJSONObject("t_trade")?.let { tt ->
+            sb.appendLine("─ 做T阈值 t_trade ─")
+            val k = tt.keys()
+            val items = mutableListOf<String>()
+            while (k.hasNext()) {
+                val n = k.next()
+                items.add("$n=${fmt(tt.optDouble(n))}")
+            }
+            if (items.isNotEmpty()) sb.appendLine(items.take(24).joinToString(" | "))
+        }
+        return sb.toString()
+    }
 }
 
 /** 做T/反T 信号阈值参数（默认值 = 2026-08 TTradeEngine 固定规则） */
@@ -335,6 +425,13 @@ data class TTradeParams(
     val tQtyRatio: Double = 0.4,
     // 配对目标幅度（%）：做T 1+pairProfitPct/100，反T 1-pairProfitPct/100
     val pairProfitPct: Double = 0.5,
+    // ── 弹性识别（v3 增强）──
+    // 平均日振幅(20日)低于该阈值视为"低弹性"，不适合做T（波动太小无差价）
+    val minDailyAmplitudePct: Double = 2.5,
+    // 弹性达到"高弹"的振幅阈值（%），高于则给做T信号加分
+    val highElasticityAmplitudePct: Double = 4.0,
+    // 高弹性股票的置信度加分
+    val elasticityConfBonus: Int = 8,
     // 做T买入置信度
     val baseConfidence: Int = 50,
     val rsiOversold: Double = 30.0,

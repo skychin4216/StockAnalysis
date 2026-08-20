@@ -47,8 +47,13 @@
       </NodeList>
     </Pipeline>
 
-    <!-- Layer 1（并行）: 板块精选池（依赖 market_context，输出存入 context 供候选池读取） -->
-    <Node id="n_sector_pool" name="板块精选池" module="sector_stock_pool" />
+    <!-- Layer 1（并行）: 板块精选池（依赖 market_context，输出存入 context 供候选池读取）
+         维度 = 月热门 + 季度热门 + 轮动预测（长线聚焦中期走强板块，不追当日热点） -->
+    <Node id="n_sector_pool" name="板块精选池" module="sector_stock_pool">
+      <config>
+        <param name="hotDims" value="monthly,quarterly,rotation" />
+      </config>
+    </Node>
 
     <!-- Layer 1（并行）: 持仓风控 — 每次必跑，评估止损/止盈/策略退出 -->
     <Node id="n_guard" name="持仓风控" module="holding_guard" />
@@ -106,12 +111,14 @@
     <Node id="n_season" name="行业季节日历" module="seasonality_boost" />
     <Node id="n_leader" name="龙头股跟踪" module="leader_track" />
 
-    <!-- 防守高息（熊市/震荡时启动，寻找银行/电力/高速公路等高息防御股） -->
+    <!-- 防守高息（熊市/震荡时启动，寻找银行/电力/高速公路等高息防御股）
+         maxPerSector=1：每板块最多 1 只，避免长线候选全部集中在银行 -->
     <Node id="n_defensive" name="防守高息" module="defensive_dividend">
       <config>
         <param name="maxPb" value="1.5" />
         <param name="maxDebt" value="70" />
         <param name="maxCandidates" value="5" />
+        <param name="maxPerSector" value="1" />
       </config>
     </Node>
 

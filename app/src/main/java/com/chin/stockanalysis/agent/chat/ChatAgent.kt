@@ -44,6 +44,9 @@ class ChatAgent(context: Context) : AgentBase(
         registerTool(MarketBriefTool(context))
         registerTool(IntentParseTool())
         registerTool(LeaderPoolManageTool(context))
+        registerTool(AiSelectionTool(context))
+        registerTool(SectorRotationTool(context))
+        registerTool(PortfolioHealthTool(context))
     }
 
     override fun buildSystemPrompt(): String = """
@@ -54,6 +57,9 @@ class ChatAgent(context: Context) : AgentBase(
         2. 分析：调用分析 Agent 深度分析单只股票
         3. 闲聊：与用户进行自然对话，回答投资相关问题
         4. 市场概览：提供当日市场简报
+        5. 一键 AI 选股：调用 ai_selection 工具，聚合龙头+备选池+AI精选+自选后四周期分类
+        6. 板块轮动：调用 sector_rotation 工具，输出月度前瞻 Top 板块与轮动方向
+        7. 持仓评估：调用 portfolio_health 工具，输出持仓盈亏/健康度/卖出信号
 
         ## 对话风格
         - 专业但亲切，像一位经验丰富的投资顾问
@@ -760,6 +766,128 @@ class LeaderPoolManageTool(private val ctx: Context) : AgentTool {
             }
 
             else -> "错误: 未知 action [$action]。支持: list, list_detail, add_sector, remove_sector, add_stock, remove_stock, set_concept, reset"
+        }
+    }
+}
+
+/** AI 一键选股工具：聚合全部候选来源（龙头+备选池+AI精选+自选）后四周期分类 */
+class AiSelectionTool(private val ctx: Context) : AgentTool {
+    override val name = "ai_selection"
+    override val description = "一键 AI 选股：聚合龙头股池+备选池+AI精选+用户自选，输出超短/短线/中线/长线各周期入选股票。参数: top_n(可选，每周期返回前N只，默认5)"
+    override val parameters = listOf("top_n")
+
+    override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
+        val topN = params["top_n"]?.toIntOrNull() ?: 5
+        return withContext(Dispatchers.IO) {
+            try {
+                val classifier = com.chin.stockanalysis.strategy.trade.UnifiedStockClassifier(ctx)
+                val scan = classifier.classifyAll()
+                if (scan.byPeriod.isEmpty()) return@withContext "当前无候选股通过筛选"
+                val periodLabels = mapOf(
+                    "ultra_short" to "超短", "short" to "短线",
+                    "mid" to "中线", "long" to "长线")
+                buildString {
+                    appendLine("🎯 AI 一键选股结果（候选 ${scan.candidates.size} 只，命中 ${scan.classified.size} 只）:")
+                    for ((period, stocks) in scan.byPeriod) {
+                        appendLine()
+                        appendLine("【${periodLabels[period] ?: period}】")
+                        stocks.take(topN).forEachIndexed { i, s ->
+                            appendLine("  ${i + 1}. ${s.name}(${s.code.takeLast(6)}) 现价${s.price} " +
+                                "通过${s.result.passCount}/${s.result.totalChecks} 趋势${if (s.isTrend) "跟涨" else "粘合"}")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                "错误: AI 选股失败: ${e.message}"
+            }
+        }
+    }
+}
+
+/** 板块轮动工具：月度前瞻预测 Top 板块 */
+class SectorRotationTool(private val ctx: Context) : AgentTool {
+    override val name = "sector_rotation"
+    override val description = "板块轮动信号：月度前瞻预测 Top 板块与轮动方向，输出综合趋势分数。参数: 无"
+    override val parameters = listOf<String>()
+
+    override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
+        return withContext(Dispatchers.IO) {
+            try {
+                val report = com.chin.stockanalysis.strategy.market.SectorTrendForecaster(ctx).forecast()
+                buildString {
+                    appendLine("🔄 板块轮动月度前瞻（目标月 ${report.targetMonth}，生成于 ${report.generatedDate}）:")
+                    report.sectors.sortedByDescending { it.compositeScore }
+                        .take(8)
+                        .forEachIndexed { i, f ->
+                            appendLine("  ${i + 1}. ${f.sectorName} 分数${f.compositeScore} " +
+                                "方向${f.trend.label} 置信度${f.confidence} " +
+                                "证据:${f.evidence.take(2).joinToString("; ")}")
+                        }
+                    if (report.narrative.isNotBlank()) {
+                        appendLine()
+                        appendLine("📝 综述: ${report.narrative.take(200)}")
+                    }
+                }
+            } catch (e: Exception) {
+                "错误: 板块轮动预测失败: ${e.message}"
+            }
+        }
+    }
+}
+
+/** 持仓健康度工具：盈亏 / 建议 / 组合警告 */
+class PortfolioHealthTool(private val ctx: Context) : AgentTool {
+    override val name = "portfolio_health"
+    override val description = "持仓评估：输出当前持仓盈亏、健康度、操作建议与组合警告。参数: period(可选，限定周期 ultra_short/short/mid/long，默认全部)"
+    override val parameters = listOf("period")
+
+    override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
+        val periodFilter = params["period"] ?: ""
+        return withContext(Dispatchers.IO) {
+            try {
+                val db = StockDatabase.getInstance(ctx)
+                val dao = db.realPositionDao()
+                val positions = if (periodFilter.isBlank()) dao.getAllActive()
+                    else dao.getByPeriod(periodFilter)
+                if (positions.isEmpty()) return@withContext "当前${if (periodFilter.isNotBlank()) "[" + periodFilter + "]" else ""}无持仓"
+                val today = TradingDayPickerView.recentTradingDay().toString()
+                var totalCost = 0.0
+                var totalValue = 0.0
+                val warns = mutableListOf<String>()
+                buildString {
+                    appendLine("💼 持仓评估（${positions.size} 只）:")
+                    for (p in positions) {
+                        val price = if (p.currentPrice > 0) p.currentPrice else
+                            db.dailySnapshotDao().getByDateAndCode(today, p.stockCode)?.close ?: p.avgBuyPrice
+                        val pnl = (price - p.avgBuyPrice) / p.avgBuyPrice * 100
+                        val cost = p.avgBuyPrice * p.quantity
+                        val value = price * p.quantity
+                        totalCost += cost
+                        totalValue += value
+                        val action = when {
+                            pnl <= -8 -> "止损离场"
+                            pnl <= -4 -> "减仓"
+                            pnl >= 15 -> "止盈观察"
+                            else -> "持有"
+                        }
+                        if (pnl <= -8) warns.add("${p.stockName}(${p.stockCode.takeLast(6)}) 亏损${"%.1f".format(pnl)}% 触发止损线")
+                        appendLine("  ${p.stockName}(${p.stockCode.takeLast(6)}) [${p.periodType}] " +
+                            "成本${p.avgBuyPrice} 现价${price} 盈亏${"%.1f".format(pnl)}% → $action")
+                    }
+                    if (totalCost > 0) {
+                        appendLine()
+                        appendLine("📊 组合: 成本 ${"%,.0f".format(totalCost)} / 市值 ${"%,.0f".format(totalValue)} / " +
+                            "总盈亏 ${"%.1f".format((totalValue - totalCost) / totalCost * 100)}%")
+                    }
+                    if (warns.isNotEmpty()) {
+                        appendLine()
+                        appendLine("⚠️ 警告:")
+                        warns.forEach { appendLine("  • $it") }
+                    }
+                }
+            } catch (e: Exception) {
+                "错误: 持仓评估失败: ${e.message}"
+            }
         }
     }
 }

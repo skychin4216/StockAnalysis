@@ -6,11 +6,12 @@
     - 数据导入扩展到120天（支持更长的K线分析）
     - 新增持仓诊断分析：多维度健康评分(技术/风险/资金) + 板块风险 + 组合健康度
     - 新增持仓走势预测：短期趋势预测 + 支撑/阻力位 + 场景分析 + 操作计划
+    - 新增龙头状态分析：对照板块龙头监测信号，识别持仓是否属龙头及板块强弱
     - 保留原有：大盘分析、新闻因子、逐股评估、做T建议
 
   结构：
     Layer 0: data_import(120d), bg_manager
-    Layer 1: a_market_analysis, news_strength（并行）
+    Layer 1: a_market_analysis, news_strength, leader_analysis（并行）
     Layer 2: real_holding_eval, holding_diagnostic（并行）
     Layer 3: holding_prediction（综合诊断+大盘+新闻→走势预测）
     Layer 4: t_trade_eval（做T/反T建议）
@@ -28,13 +29,14 @@
     </Node>
     <Node id="n_bg" name="后台暂停/恢复" module="bg_manager" />
 
-    <!-- Layer 1: A股大盘K线分析 + 新闻力度（并行） -->
+    <!-- Layer 1: A股大盘K线分析 + 新闻力度 + 龙头状态分析（并行） -->
     <Node id="n_a_market" name="大盘K线分析" module="a_market_analysis" />
     <Node id="n_news" name="新闻力度" module="news_strength">
       <config>
         <param name="useRealTime" value="true" />
       </config>
     </Node>
+    <Node id="n_leader_analysis" name="龙头状态分析" module="sector_leader_analysis" />
 
     <!-- Layer 2: 逐股评估 + 持仓诊断（并行） -->
     <Node id="n_rh_eval" name="实仓持仓评估" module="real_holding_eval" />
@@ -64,6 +66,12 @@
       <SourceNodeId>n_import</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_news</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_import</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_leader_analysis</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
 

@@ -33,7 +33,9 @@ class StrategyMarketContext private constructor(
     val quarterlyHotSectors: List<String>,
     val bounceSectors: List<SectorBounceFactor.BounceSector>,
     val aiYearDetection: String,
-    val indexSnapshot: IndexSnapshot
+    val indexSnapshot: IndexSnapshot,
+    /** 轮动引擎预测的明日热门板块（动量延续+资金流），供板块聚焦加分 */
+    val rotationPredictedSectors: List<String> = emptyList()
 ) {
     companion object {
         private const val TAG = "StrategyMarketContext"
@@ -100,7 +102,14 @@ class StrategyMarketContext private constructor(
                 memory.aiYearDetection = yearDetection
             }
 
-            // 5. 大盘指数快照
+            // 5. 轮动预测板块（动量延续 + 资金流向，数据不足时为空列表）
+            val rotationPredicted = try {
+                com.chin.stockanalysis.strategy.backtest.SectorRotationEngine(context)
+                    .predictTomorrow(6)
+                    .map { it.sectorName }
+            } catch (_: Exception) { emptyList() }
+
+            // 6. 大盘指数快照
             val indexSnap = buildIndexSnapshot(db, targetDate)
 
             val ctx = StrategyMarketContext(
@@ -111,7 +120,8 @@ class StrategyMarketContext private constructor(
                 quarterlyHotSectors = quarterlyHot,
                 bounceSectors = bounces,
                 aiYearDetection = yearDetection,
-                indexSnapshot = indexSnap
+                indexSnapshot = indexSnap,
+                rotationPredictedSectors = rotationPredicted
             )
 
             cached = ctx
@@ -236,6 +246,22 @@ class StrategyMarketContext private constructor(
         }
     }
 
+    /** 获取轮动预测板块对某股票的加分（命中前3 +12，其余 +8） */
+    fun getRotationBoostForStock(stockName: String): Int {
+        val idx = rotationPredictedSectors.indexOfFirst {
+            stockName.contains(it) || it.contains(stockName.take(2))
+        }
+        if (idx < 0) return 0
+        return if (idx < 3) 12 else 8
+    }
+
+    /** 是否命中轮动预测板块 */
+    fun isInRotationPredicted(stockName: String): Boolean {
+        return rotationPredictedSectors.any {
+            stockName.contains(it) || it.contains(stockName.take(2))
+        }
+    }
+
     /** 是否属于任意周期热门板块 */
     fun isInAnyHotSector(stockName: String): Boolean {
         val allHot = todayHotSectors + weeklyHotSectors + monthlyHotSectors + quarterlyHotSectors
@@ -265,6 +291,7 @@ class StrategyMarketContext private constructor(
         val parts = mutableListOf<String>()
         if (todayHotSectors.isNotEmpty()) parts.add("今日热门: ${todayHotSectors.joinToString(",")}")
         if (weeklyHotSectors.isNotEmpty()) parts.add("周热门: ${weeklyHotSectors.joinToString(",")}")
+        if (rotationPredictedSectors.isNotEmpty()) parts.add("轮动预测: ${rotationPredictedSectors.take(3).joinToString(",")}")
         if (userFocusSectors.isNotEmpty()) parts.add("用户关注: ${userFocusSectors.joinToString(",")}")
         if (bounceSectors.isNotEmpty()) parts.add("回弹板块: ${bounceSectors.take(3).joinToString(",") { it.sectorName }}")
         parts.add("大盘: ${indexSnapshot.tripleVote}")

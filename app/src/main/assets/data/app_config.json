@@ -99,5 +99,20 @@
       "base_url": "https://api.openai.com/v1/",
       "default_model": "gpt-4o-mini"
     }
+  },
+
+  "update": {
+    "enabled": true,
+    "manifest_url": "https://example.com/update/latest.json"
+  },
+
+  "cloud_sync": {
+    "enabled": false,
+    "bucket": "your-bucket-1250000000",
+    "region": "ap-guangzhou",
+    "secret_id": "",
+    "secret_key": "",
+    "prefix": "stockanalysis/phone",
+    "params_key": "stockanalysis/params/backtest_params.json"
   }
 }

@@ -7,6 +7,7 @@ import com.chin.stockanalysis.stock.StockRealtime
 import com.chin.stockanalysis.stock.database.AppBackgroundRunner
 import com.chin.stockanalysis.stock.database.ChinaMarketTradingHours
 import com.chin.stockanalysis.stock.database.StockDataCenter
+import com.chin.stockanalysis.strategy.monitor.SectorSignalStore
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.Strategy
 import com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader
@@ -20,6 +21,7 @@ import com.chin.stockanalysis.strategy.topology.core.BaseNode
 import com.chin.stockanalysis.strategy.topology.core.*
 import com.chin.stockanalysis.strategy.topology.nodes.MainBoardFilterNode
 import com.chin.stockanalysis.strategy.trade.AutoSellEngine
+import com.chin.stockanalysis.strategy.trade.AutoTradePortfolioEngine
 import com.chin.stockanalysis.strategy.trade.StrategyTradeOrderEntity
 import com.chin.stockanalysis.strategy.trade.StrategyTradeFittingParamEntity
 import com.chin.stockanalysis.strategy.trade.TradeOrder
@@ -1013,19 +1015,20 @@ class SwapWeakNode(
 ) : BaseNode<Any, SwapWeakResult>("swap_weak", "腾龙换鸟", NodeType.TRADE_ACTION) {
 
     override suspend fun execute(context: PipelineContext, input: Any): SwapWeakResult {
-        // 非交易时段不执行腾笼换鸟（无法获取实时价格，卖出无意义）
-        if (!ChinaMarketTradingHours.a股是否交易中()) {
-            context.log(nodeId, "⏸️ 非交易时段，跳过$nodeName")
-            return SwapWeakResult(0, emptyList(), 0, 0, emptyList())
-        }
-
-        // 从 input 或 context 中按需读取 OrderGenerationResult
+        // 先从 input / context 读取上游订单（无论是否交易时段，买入订单都要透传给下游持仓合并）
         val orderResult: OrderGenerationResult = when (input) {
             is OrderGenerationResult -> input
             else -> context.getStageOutput<OrderGenerationResult>("generate_orders")
                 ?: context.getStageOutput<OrderGenerationResult>("n_orders")
                 ?: return SwapWeakResult(0, emptyList(), 0, 0, emptyList())
         }
+
+        // 非交易时段不执行腾笼换鸟（无法获取实时价格，卖出无意义），但买入订单必须透传下游持仓合并
+        if (!ChinaMarketTradingHours.a股是否交易中()) {
+            context.log(nodeId, "⏸️ 非交易时段，跳过$nodeName（透传 ${orderResult.orders.size} 个订单给持仓合并）")
+            return SwapWeakResult(0, emptyList(), 0, 0, orderResult.orders)
+        }
+
         // 从上游 GenerateOrdersNode 输出中动态获取 newBuyCount
         val newBuyCount = orderResult.orders.size
 
@@ -1547,6 +1550,31 @@ class GenerateOrdersNode(
                 .map { it.stockCode }.toSet()
             val availableSlots = maxHoldings - holdingCodes.size
 
+            // ── 仓位预算（永远半仓）：总投资 100 万分四周期，单周期资金池 25 万；
+            //    该周期持仓市值 ≤ 周期资金池×50%（半仓），单只 ≤ 周期资金池×20%（单只不超两成）
+            val periodCapital = AutoTradePortfolioEngine.TOTAL_CAPITAL / 4.0
+            val halfPositionCap = periodCapital * 0.5
+            val singlePositionCap = periodCapital * AutoTradePortfolioEngine.MAX_SINGLE_POSITION_RATIO
+            val periodHoldingValue = holdingOrders.sumOf { it.quantity * it.buyPrice }
+            // 下跌且有预期 → 加仓做多；上涨/持平不追高
+            fun computeBuyQty(buyPrice: Double, stockCode: String? = null): Int {
+                if (buyPrice <= 0) return 0
+                val held = if (stockCode != null) holdingOrders.filter { it.stockCode == stockCode } else emptyList()
+                if (held.isNotEmpty()) {
+                    val totalQty = held.sumOf { it.quantity }
+                    val avgCost = if (totalQty > 0) held.sumOf { it.quantity * it.buyPrice } / totalQty else 0.0
+                    if (buyPrice >= avgCost) return 0   // 已有持仓且现价不低于成本 → 不加仓（避免追高）
+                }
+                val heldValue = held.sumOf { it.quantity * it.buyPrice }
+                val remainingHalf = (halfPositionCap - periodHoldingValue).coerceAtLeast(0.0)
+                val singleRemaining = (singlePositionCap - heldValue).coerceAtLeast(0.0)
+                val budget = minOf(remainingHalf, singleRemaining)
+                if (budget <= 0) return 0
+                val lots = (budget / buyPrice / 100).toInt()
+                if (lots <= 0) return 0
+                return lots * 100
+            }
+
             // 选股数量（独立计数，仅供日志参考，不影响持仓上限）
             val pickCount = try {
                 db.userWatchlistDao().getBySourceAndDate(orderType, context.tradeDate).size
@@ -1609,7 +1637,25 @@ class GenerateOrdersNode(
                     continue
                 }
 
-                candidates.add(pick)
+                // 4.5 板块龙头异动信号融合（SectorLeaderMonitor 后台扫描刷新）
+                // 板块弱势/鱼尾 → 过滤（避免接盘）；板块强势/低吸 → 评分加分（顺势/低吸）
+                val sectorNames = try {
+                    StockDataCenter.getSectorsByStock(pick.stockCode)
+                } catch (_: Exception) { emptyList() }
+                if (sectorNames.isNotEmpty() && SectorSignalStore.isInWeakOrFishTail(sectorNames)) {
+                    filteredCount++
+                    filteredReasons.add("${pick.stockCode}: 板块[${SectorSignalStore.summarize(sectorNames)}]弱势/鱼尾")
+                    continue
+                }
+                val sectorAdjustedPick = if (SectorSignalStore.isInBuyZone(sectorNames)) {
+                    val boost = 8  // 板块强势/低吸加分
+                    context.log(nodeId, "🔥 ${pick.stockName}(${pick.stockCode}) 板块[${SectorSignalStore.summarize(sectorNames)}] 加分+$boost")
+                    pick.copy(compositeScore = pick.compositeScore + boost)
+                } else {
+                    pick
+                }
+
+                candidates.add(sectorAdjustedPick)
             }
 
             // ── 宁缺勿滥：不放松选股条件 ──
@@ -1719,6 +1765,9 @@ class GenerateOrdersNode(
                     val buyPrice = snap?.close ?: 0.0
                     // B9: 非交易日/缺快照时买价无效则跳过，避免 buyPrice=0 入库
                     if (buyPrice <= 0) return@mapNotNull null
+                    val buyQty = computeBuyQty(buyPrice, sp.pick.stockCode)
+                    // 半仓预算不足（或已有持仓不追高）→ 跳过，避免以 0 股入库
+                    if (buyQty <= 0) return@mapNotNull null
                     context.log(nodeId, "🎯 长线严选: ${sp.pick.stockName}(${sp.pick.stockCode}) " +
                         "PE=${"%.1f".format(snap?.pe ?: 0.0)} 评分=${"%.0f".format(sp.score)} " +
                         "均线粘合✓ 三日不新低✓ 历史低位✓ 低PE✓ 冰点埋伏")
@@ -1728,7 +1777,7 @@ class GenerateOrdersNode(
                         strategyId = "long_strict_${context.tradeDate}",
                         tradeDate = context.tradeDate,
                         buyPrice = buyPrice,
-                        quantity = 100,
+                        quantity = buyQty,
                         reason = "长线严选: 均线粘合向上+三日不新低+历史低位+低PE+冰点 " +
                             "score=${"%.0f".format(sp.score)} ${sp.pick.reason}",
                         scoreAtBuy = sp.pick.compositeScore,
@@ -1841,9 +1890,12 @@ class GenerateOrdersNode(
 
                 // 按高股息评分降序排序，高股息优先买入
                 baseCandidates.sortByDescending { it.dividendScore }
-                val basePositionOrders = baseCandidates.take(2).mapIndexed { _, c ->
+                val basePositionOrders = baseCandidates.take(2).mapIndexedNotNull { _, c ->
                     val isHighDiv = c.dividendScore >= 50
                     val dividendTag = if (isHighDiv) "🔶高股息" else ""
+                    val buyQty = computeBuyQty(c.buyPrice, c.pick.stockCode)
+                    // 半仓预算不足（或已有持仓不追高）→ 跳过
+                    if (buyQty <= 0) return@mapIndexedNotNull null
                     context.log(nodeId, "🛡💪 熊市打底仓: ${c.pick.stockName}(${c.pick.stockCode}) " +
                         "价=${"%.2f".format(c.buyPrice)} 历史低位+企稳(${c.stabilizingSignal})" +
                         (if (isHighDiv) " $dividendTag(评分${c.dividendScore})" else ""))
@@ -1854,7 +1906,7 @@ class GenerateOrdersNode(
                         strategyId = "ai_${period}term_${context.tradeDate}",
                         tradeDate = context.tradeDate,
                         buyPrice = c.buyPrice,
-                        quantity = 200, // 打底仓2手
+                        quantity = buyQty,
                         reason = "熊市防守打底仓: 历史低位+企稳(${c.stabilizingSignal})" +
                             (if (isHighDiv) " +高股息(评分${c.dividendScore})" else "") +
                             " score=${c.pick.compositeScore} ${c.pick.reason}",
@@ -1865,7 +1917,7 @@ class GenerateOrdersNode(
 
                 if (basePositionOrders.isNotEmpty()) {
                     context.log(nodeId, "🛡 $nodeName 大盘防守空仓，但发现 ${basePositionOrders.size} 只" +
-                        "历史低位企稳个股 → 打底仓（2手/只）")
+                        "历史低位企稳个股 → 打底仓（半仓预算，至少1手）")
                     context.setStageOutput(nodeId, basePositionOrders)
                     context.recordStockFlow(
                         nodeId = nodeId, nodeName = nodeName,
@@ -1928,13 +1980,16 @@ class GenerateOrdersNode(
                 val resolvedName = if (pick.stockName.isNotBlank()) pick.stockName
                     else resolvedNames[pick.stockCode] ?: pick.stockName
                 val preSignalTag = if (isPreSignal) " [预信号]" else ""
+                // 半仓预算+单只上限动态计算买入股数；预算不足(<=0)则跳过，避免强买
+                val buyQty = computeBuyQty(buyPrice, pick.stockCode)
+                if (buyQty <= 0) return@mapIndexedNotNull null
                 TradeOrder(
                     stockCode = pick.stockCode,
                     stockName = resolvedName,
                     strategyId = "ai_midterm_${context.tradeDate}",
                     tradeDate = context.tradeDate,
                     buyPrice = buyPrice,
-                    quantity = 100, // 默认一手
+                    quantity = buyQty, // 半仓预算（至少1手）
                     reason = "AI精选 rank=${pick.rank} score=${pick.compositeScore} ${pick.reason}$preSignalTag",
                     scoreAtBuy = pick.compositeScore,
                     orderType = orderType
@@ -2260,7 +2315,7 @@ class FittingSaveNode : BaseNode<Any, Unit>("fitting_save", "拟合计算+保存
                 .sorted()
                 .filter { it <= context.tradeDate }
 
-            if (availableDates.size < 20) {
+            if (availableDates.size < 5) {
                 context.log(nodeId, "历史数据不足（${availableDates.size} 天），跳过拟合")
                 // 📤 输出日志
                 context.log(nodeId, "📤 $nodeName 输出: 0 策略拟合（数据不足）")
@@ -2277,40 +2332,48 @@ class FittingSaveNode : BaseNode<Any, Unit>("fitting_save", "拟合计算+保存
             val optimizer = StrategyOptimizer(context.androidContext)
             var successCount = 0
             val fittingResults = mutableListOf<StrategyTradeFittingParamEntity>()
+            // 拟合窗口：周级(最近5日) + 月级(最近20日)
+            val fitWindows = listOf(5 to "周", 20 to "月")
 
-            // 并行拟合所有策略（避免串行超时 120s）
+            // 并行拟合所有策略（避免串行超时 120s），每策略内做双窗口拟合
             val fitJobs = strategies.filter { it.id != "ai_prediction" }
             coroutineScope {
                 val deferreds = fitJobs.map { strategy ->
                     async(Dispatchers.IO) {
                         try {
-                            val result = optimizer.gridSearch(strategy, availableDates)
-                            val weightsJson = result.bestWeights.joinToString(",") { "${it.key}=${it.weight}" }
-                            val entity = StrategyTradeFittingParamEntity(
-                                strategyId = strategy.id,
-                                tradeDate = context.tradeDate,
-                                periodDays = 20,
-                                paramJson = weightsJson,
-                                fittingRound = 1,
-                                accuracy = result.bestAccuracy.toDouble(),
-                                avgReturn = result.bestAvgReturn,
-                                createdAt = System.currentTimeMillis()
-                            )
-                            context.log(nodeId, "  拟合策略 ${strategy.id}: " +
-                                "accuracy=${"%.1f".format(result.bestAccuracy)}%, " +
-                                "avgReturn=${"%.2f".format(result.bestAvgReturn)}%, " +
-                                "combinations=${result.totalCombinations}")
-                            entity
+                            val entities = mutableListOf<StrategyTradeFittingParamEntity>()
+                            for ((windowDays, label) in fitWindows) {
+                                if (availableDates.size < windowDays) continue
+                                val result = optimizer.gridSearch(strategy, availableDates, windowDays)
+                                val weightsJson = result.bestWeights.joinToString(",") { "${it.key}=${it.weight}" }
+                                entities.add(
+                                    StrategyTradeFittingParamEntity(
+                                        strategyId = strategy.id,
+                                        tradeDate = context.tradeDate,
+                                        periodDays = windowDays,
+                                        paramJson = weightsJson,
+                                        fittingRound = 1,
+                                        accuracy = result.bestAccuracy.toDouble(),
+                                        avgReturn = result.bestAvgReturn,
+                                        createdAt = System.currentTimeMillis()
+                                    )
+                                )
+                                context.log(nodeId, "  拟合策略 ${strategy.id}(${label}级): " +
+                                    "accuracy=${"%.1f".format(result.bestAccuracy)}%, " +
+                                    "avgReturn=${"%.2f".format(result.bestAvgReturn)}%, " +
+                                    "combinations=${result.totalCombinations}")
+                            }
+                            entities
                         } catch (e: Exception) {
                             context.log(nodeId, "  拟合策略 ${strategy.id} 失败: ${e.message}")
-                            null
+                            emptyList()
                         }
                     }
                 }
 
                 // 等待所有拟合完成，收集成功结果
                 val results = deferreds.map { it.await() }
-                results.filterNotNull().forEach { fittingResults.add(it) }
+                results.forEach { fittingResults.addAll(it) }
                 successCount = fittingResults.size
             }
 

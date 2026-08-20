@@ -82,7 +82,8 @@ class EastMoneyHotSectorSource {
     data class LeaderStock(
         val code: String, val name: String, val price: Double, val changePercent: Double,
         val turnoverRate: Double, val mainNetInflow: Double, val marketCap: Double = 0.0,
-        val isBoard: Boolean = false, val limitDays: Int = 0, val threeDayInflow: Double = 0.0
+        val isBoard: Boolean = false, val limitDays: Int = 0, val threeDayInflow: Double = 0.0,
+        val board: String = ""
     )
 
     /** 板块名称中常见的编号后缀，需要剥离后去重合并 */
@@ -104,6 +105,14 @@ class EastMoneyHotSectorSource {
     }
     private fun stripSuffix(name: String): String {
         return name.replace(STRIP_SUFFIX_REGEX, "").trim().replace("·$".toRegex(), "").replace("\\.$".toRegex(), "")
+    }
+
+    /** 根据股票代码判断所属板块（主板/创业板/科创板/北交所） */
+    private fun boardOf(code: String): String = when {
+        code.startsWith("300") || code.startsWith("301") -> "创业板"
+        code.startsWith("688") || code.startsWith("689") -> "科创板"
+        code.startsWith("8") || code.startsWith("4") || code.startsWith("920") -> "北交所"
+        else -> "主板"
     }
     private fun filterAndMerge(raw: List<HotSector>): List<HotSector> {
         val filtered = raw
@@ -225,12 +234,18 @@ class EastMoneyHotSectorSource {
         } catch (_: Exception) { emptyList() }
     }
 
-    fun fetchSectorLeaders(blockCode: String, topN: Int = 10): List<LeaderStock> {
+    /**
+     * 拉取板块成分股龙头榜。
+     * @param blockCode 板块代码（BKxxxx）
+     * @param topN 返回前 N 名
+     * @param fid 排序字段：f20=按总市值（默认），f3=按当日涨幅（板块龙头异动监测推荐）
+     */
+    fun fetchSectorLeaders(blockCode: String, topN: Int = 10, fid: String = "f20"): List<LeaderStock> {
         return try {
             val timestamp = System.currentTimeMillis()
             val url = "${DataConfig.eastmoneyPush2}/clist/get?" +
                 "pn=1&pz=$topN&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281" +
-                "&fltt=2&invt=2&fid=f20&fs=b:${blockCode}+f:!50" +
+                "&fltt=2&invt=2&fid=$fid&fs=b:${blockCode}+f:!50" +
                 "&fields=f2,f3,f8,f12,f14,f20,f62,f184,f192&_=$timestamp"
             val req = Request.Builder()
                 .url(url)
@@ -251,7 +266,8 @@ class EastMoneyHotSectorSource {
                     marketCap = item.optDouble("f20", 0.0) / 1_0000_0000,
                     isBoard = (item.optDouble("f3", 0.0) >= 9.8),
                     limitDays = item.optInt("f192", 0),
-                    threeDayInflow = item.optDouble("f184", 0.0) / 1_0000_0000)
+                    threeDayInflow = item.optDouble("f184", 0.0) / 1_0000_0000,
+                    board = boardOf(item.optString("f12", "")))
             }
         } catch (e: Exception) { emptyList() }
     }

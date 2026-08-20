@@ -35,7 +35,8 @@ class DefensiveDividendNode(
     private val maxPb: Double = 1.5,
     private val minMarketCap: Double = 500_0000_0000.0,  // 500 亿（元）
     private val maxDebt: Double = 70.0,                   // 资产负债率上限 %（银行豁免）
-    private val maxCandidates: Int = 5
+    private val maxCandidates: Int = 5,
+    private val maxPerSector: Int = 2                     // 每板块最多保留 N 只，避免板块过度集中
 ) : BaseNode<Any, List<StrategySignal>>("defensive_dividend", "防守高息", NodeType.STRATEGY) {
 
     companion object {
@@ -135,8 +136,15 @@ class DefensiveDividendNode(
                 candidates.add(Candidate(pre, sectorStr, changePct20d, totalScore))
             }
 
-            // 排序取 Top N
-            val topCandidates = candidates.sortedByDescending { it.score }.take(maxCandidates)
+            // 板块分散：每板块最多 maxPerSector 只，再按总分取 Top N
+            fun sectorKeyOf(c: Candidate): String {
+                return DEFENSIVE_SECTORS.firstOrNull { kw -> c.sector.contains(kw) } ?: c.sector
+            }
+            val topCandidates = candidates.sortedByDescending { it.score }
+                .groupBy { sectorKeyOf(it) }            // 按防御板块分组
+                .flatMap { (_, list) -> list.take(maxPerSector) }  // 每板块最多保留 maxPerSector
+                .sortedByDescending { it.score }
+                .take(maxCandidates)
 
             if (topCandidates.isEmpty()) {
                 context.log(nodeId, "📤 $nodeName: 无符合条件的防守股")

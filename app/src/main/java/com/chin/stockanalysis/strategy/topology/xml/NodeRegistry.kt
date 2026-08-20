@@ -163,15 +163,20 @@ object NodeRegistry {
         register("zipline_factor") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.ZiplineFactorNode() }
 
         // 板块精选池（中线专用）
-        register("sector_stock_pool") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.SectorStockPoolNode() }
+        register("sector_stock_pool") { _, config ->
+            val dims = (config["hotDims"] ?: "today")
+                .split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            com.chin.stockanalysis.strategy.topology.nodes.SectorStockPoolNode(hotDims = dims)
+        }
 
         // 防守高息（中线/长线，熊市/震荡时启动）
         register("defensive_dividend") { _, config ->
             val maxPb = config["maxPb"]?.toDoubleOrNull() ?: 1.5
             val maxDebt = config["maxDebt"]?.toDoubleOrNull() ?: 70.0
             val maxCand = config["maxCandidates"]?.toIntOrNull() ?: 5
+            val maxPerSec = config["maxPerSector"]?.toIntOrNull() ?: 2
             com.chin.stockanalysis.strategy.topology.nodes.DefensiveDividendNode(
-                maxPb = maxPb, maxDebt = maxDebt, maxCandidates = maxCand)
+                maxPb = maxPb, maxDebt = maxDebt, maxCandidates = maxCand, maxPerSector = maxPerSec)
         }
 
         // 数据导入检查（所有周期，Layer 0 首节点）
@@ -242,6 +247,7 @@ object NodeRegistry {
         register("t_trade_eval") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.TTradeEvalNode() }
         register("holding_diagnostic") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.HoldingDiagnosticNode() }
         register("holding_prediction") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.HoldingPredictionNode() }
+        register("sector_leader_analysis") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.SectorLeaderAnalysisNode() }
 
         Log.i(TAG, "Node 注册完成: ${factories.keys}")
     }
