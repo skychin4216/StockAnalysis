@@ -59,9 +59,23 @@ STREAK_GRID = dict(streaks=[2, 3, 4], mas=[5, 8], holds=[5, 8, 10])
 NEXTDAY_GRID = dict(holds=[1, 2])
 
 
-def month_windows():
+def month_windows(cache_last=None):
+    """月度窗口（每月 15 日，[15日, 次月15日)）。
+
+    默认到 END；传入 cache_last（缓存最新交易日）且晚于 END 时，
+    自动向后扩展窗口 —— 保证「默认拉取最新数据再选股」时，
+    最新行情也被纳入最近一个滚动窗口。
+    """
+    end = END
+    if cache_last:
+        last15 = date(cache_last.year, cache_last.month, MONTH_DAY)
+        if cache_last.day >= MONTH_DAY:  # 末端在 15 日之后 → 进入下一窗口
+            ny = cache_last.year + (1 if cache_last.month == 12 else 0)
+            nm = 1 if cache_last.month == 12 else cache_last.month + 1
+            last15 = date(ny, nm, MONTH_DAY)
+        end = max(end, last15)
     wins, cur = [], START
-    while cur < END:
+    while cur < end:
         ny = cur.year + (1 if cur.month == 12 else 0)
         nm = 1 if cur.month == 12 else cur.month + 1
         nxt = date(ny, nm, MONTH_DAY)

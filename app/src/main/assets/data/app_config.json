@@ -107,8 +107,8 @@
   },
 
   "cloud_sync": {
-    "enabled": false,
-    "bucket": "your-bucket-1250000000",
+    "enabled": true,
+    "bucket": "stockanalysis-1471852701-1471852701",
     "region": "ap-guangzhou",
     "secret_id": "",
     "secret_key": "",

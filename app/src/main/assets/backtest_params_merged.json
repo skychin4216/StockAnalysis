@@ -1,0 +1,332 @@
+{
+ "version": 3,
+ "generated": "2026-08-16",
+ "source": "smalltools/_walk_forward.py (三年 walk-forward) ＋ APK 导出合并(export_sample.json)",
+ "period": "2023-08-15 ~ 2026-08-15",
+ "select_params": {
+  "超短": {
+   "convergenceThreshold": 3.0,
+   "useMA60": false,
+   "convergenceDurationDays": 5,
+   "volumeBreakoutRatio": 2.5,
+   "minChangePct": 2.0,
+   "requireChangePct": true,
+   "minDrawdownPct": 10.0,
+   "requireCloseAboveConvergenceTop": true,
+   "requireOpenBelowMAs": true,
+   "lookbackDays": 30,
+   "minPassCount": 7,
+   "requireThreeDayConfirm": true,
+   "convergenceDurationRatio": 0.8,
+   "maRisingDays": 5,
+   "requireMA60Rising": false,
+   "requireMA250Rising": false,
+   "useMA250InBullish": false,
+   "requireAboveYearLine": false,
+   "requireAboveAllMAs": false,
+   "requireVolumeShrink": false,
+   "moderateVolumeLower": 0.0,
+   "moderateVolumeUpper": 0.0
+  },
+  "短线": {
+   "convergenceThreshold": 3.0,
+   "useMA60": true,
+   "convergenceDurationDays": 10,
+   "volumeBreakoutRatio": 1.5,
+   "minChangePct": 3.0,
+   "requireChangePct": true,
+   "minDrawdownPct": 20.0,
+   "requireAboveAllMAs": true,
+   "lookbackDays": 60,
+   "minPassCount": 6,
+   "requireThreeDayConfirm": true,
+   "convergenceDurationRatio": 0.8,
+   "maRisingDays": 5,
+   "requireMA60Rising": false,
+   "requireMA250Rising": false,
+   "useMA250InBullish": false,
+   "requireAboveYearLine": false,
+   "requireCloseAboveConvergenceTop": false,
+   "requireOpenBelowMAs": false,
+   "requireVolumeShrink": false,
+   "moderateVolumeLower": 0.0,
+   "moderateVolumeUpper": 0.0
+  },
+  "中线": {
+   "convergenceThreshold": 2.5,
+   "useMA60": true,
+   "convergenceDurationDays": 15,
+   "minDrawdownPct": 30.0,
+   "requireMA60Rising": true,
+   "requireAboveAllMAs": true,
+   "moderateVolumeLower": 1.2,
+   "moderateVolumeUpper": 1.8,
+   "lookbackDays": 120,
+   "minPassCount": 6,
+   "requireThreeDayConfirm": true,
+   "convergenceDurationRatio": 0.8,
+   "maRisingDays": 5,
+   "requireChangePct": false,
+   "requireMA250Rising": false,
+   "useMA250InBullish": false,
+   "requireAboveYearLine": false,
+   "requireCloseAboveConvergenceTop": false,
+   "requireOpenBelowMAs": false,
+   "requireVolumeShrink": false,
+   "volumeBreakoutRatio": 0.0
+  },
+  "长线": {
+   "convergenceThreshold": 2.5,
+   "useMA60": true,
+   "convergenceDurationDays": 20,
+   "minDrawdownPct": 20.0,
+   "requireMA60Rising": true,
+   "maRisingDays": 10,
+   "requireMA250Rising": true,
+   "useMA250InBullish": true,
+   "requireAboveYearLine": true,
+   "requireVolumeShrink": true,
+   "volumeShrinkRatio": 0.7,
+   "lookbackDays": 250,
+   "minPassCount": 6,
+   "requireThreeDayConfirm": true,
+   "convergenceDurationRatio": 0.8,
+   "requireChangePct": false,
+   "requireAboveAllMAs": false,
+   "requireCloseAboveConvergenceTop": false,
+   "requireOpenBelowMAs": false,
+   "moderateVolumeLower": 0.0,
+   "moderateVolumeUpper": 0.0,
+   "volumeBreakoutRatio": 0.0
+  }
+ },
+ "seasonality": {
+  "enabled": true,
+  "anchors": {
+   "锂价": "down",
+   "油价": "up",
+   "铜价": "up",
+   "金价": "up"
+  }
+ },
+ "rank_factors": {
+  "超短": {
+   "convergenceDegree": -0.386,
+   "changePct": 0.339,
+   "direction": 0.4,
+   "seasonality": 0.15
+  },
+  "短线": {
+   "changePct": -0.331,
+   "volumeRatio": 0.291,
+   "turnoverRate": -0.284,
+   "direction": 0.4,
+   "seasonality": 0.15
+  },
+  "中线": {
+   "ma250Bias": -0.57,
+   "momentum5": -0.396,
+   "turnoverRate": -0.394,
+   "drawdownPct": 0.271,
+   "volumeRatio": -0.217,
+   "direction": 0.35,
+   "seasonality": 0.3
+  },
+  "长线": {
+   "momentum5": -0.685,
+   "drawdownPct": 0.505,
+   "ma60Bias": -0.272,
+   "convergenceDays": -0.214,
+   "changePct": -0.211,
+   "direction": 0.35,
+   "seasonality": 0.3,
+   "ml_prob": 0.2
+  }
+ },
+ "sell_rules": {
+  "超短": {
+   "default": {
+    "style": "nextday",
+    "maxHold": 2,
+    "tp": 0.0,
+    "sl": 0.0,
+    "avg": 0.0,
+    "wr": 0.0,
+    "n": 0
+   },
+   "by_state": {
+    "BULLISH": {
+     "style": "nextday",
+     "maxHold": 1,
+     "tp": 0.0,
+     "sl": 0.0,
+     "avg": 3.27,
+     "wr": 44.5,
+     "n": 44
+    },
+    "OSCILLATION": {
+     "style": "nextday",
+     "maxHold": 1,
+     "tp": 0.0,
+     "sl": 0.0,
+     "avg": 1.51,
+     "wr": 56.1,
+     "n": 207
+    },
+    "BEARISH": {
+     "style": "nextday",
+     "maxHold": 1,
+     "tp": 0.0,
+     "sl": 0.0,
+     "avg": 5.08,
+     "wr": 67.3,
+     "n": 129
+    }
+   },
+   "fitted_months": 35
+  },
+  "短线": {
+   "default": {
+    "style": "streak",
+    "streakDays": 3,
+    "maBreak": 5,
+    "maxHold": 10,
+    "tp": 0.0,
+    "sl": 0.0,
+    "avg": 0.0,
+    "wr": 0.0,
+    "n": 0
+   },
+   "by_state": {
+    "BULLISH": {
+     "style": "streak",
+     "streakDays": 2,
+     "maBreak": 5,
+     "maxHold": 8,
+     "tp": 0.0,
+     "sl": 0.0,
+     "avg": 1.26,
+     "wr": 53.0,
+     "n": 55
+    },
+    "OSCILLATION": {
+     "style": "streak",
+     "streakDays": 2,
+     "maBreak": 8,
+     "maxHold": 10,
+     "tp": 0.0,
+     "sl": 0.0,
+     "avg": 2.68,
+     "wr": 56.5,
+     "n": 50
+    },
+    "BEARISH": {
+     "style": "streak",
+     "streakDays": 2,
+     "maBreak": 8,
+     "maxHold": 8,
+     "tp": 0.0,
+     "sl": 0.0,
+     "avg": 6.79,
+     "wr": 43.7,
+     "n": 134
+    }
+   },
+   "fitted_months": 36
+  },
+  "中线": {
+   "default": {
+    "style": "hold",
+    "maxHold": 15,
+    "tp": 20.0,
+    "sl": -10.0,
+    "tRatio": 0.4,
+    "avg": 0.0,
+    "wr": 0.0,
+    "n": 0
+   },
+   "by_state": {
+    "BULLISH": {
+     "style": "hold",
+     "maxHold": 20,
+     "tp": 25,
+     "sl": -8,
+     "tRatio": 0.4,
+     "avg": 5.41,
+     "wr": 57.5,
+     "n": 51
+    },
+    "OSCILLATION": {
+     "style": "hold",
+     "maxHold": 20,
+     "tp": 25,
+     "sl": -6,
+     "tRatio": 0.4,
+     "avg": 5.04,
+     "wr": 51.9,
+     "n": 133
+    },
+    "BEARISH": {
+     "style": "hold",
+     "maxHold": 12,
+     "tp": 15,
+     "sl": -6,
+     "tRatio": 0.4,
+     "avg": 1.33,
+     "wr": 65.8,
+     "n": 168
+    }
+   },
+   "fitted_months": 36
+  },
+  "长线": {
+   "default": {
+    "style": "hold",
+    "maxHold": 30,
+    "tp": 40.0,
+    "sl": -12.0,
+    "tRatio": 0.4,
+    "avg": 0.0,
+    "wr": 0.0,
+    "n": 0
+   },
+   "by_state": {
+    "BULLISH": {
+     "style": "hold",
+     "maxHold": 40,
+     "tp": 50,
+     "sl": -8,
+     "tRatio": 0.4,
+     "avg": 3.93,
+     "wr": 56.2,
+     "n": 177
+    },
+    "OSCILLATION": {
+     "style": "hold",
+     "maxHold": 40,
+     "tp": 40,
+     "sl": -12,
+     "tRatio": 0.4,
+     "avg": 4.92,
+     "wr": 60.5,
+     "n": 72
+    },
+    "BEARISH": {
+     "style": "hold",
+     "maxHold": 40,
+     "tp": 50,
+     "sl": -12,
+     "tRatio": 0.4,
+     "avg": 5.07,
+     "wr": 59.2,
+     "n": 210
+    }
+   },
+   "fitted_months": 36
+  }
+ },
+ "meta": {
+  "fitted_months": 36,
+  "note": "sell_rules 以 APK 本机拟合为准（实盘/实仓最新）；select_params/rank_factors 保留 PC 三年 walk-forward + IC 排序；APK 缺失字段由 PC 同周期同状态规则补全"
+ }
+}

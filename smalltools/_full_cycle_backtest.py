@@ -11,7 +11,7 @@
 - 拟合：按大盘状态分组网格搜索（持有天数 × 止盈 × 止损），输出参数矩阵
 - 统计口径：固定本金（每笔等额投入、收益相加不复利），累计收益不会指数失真
 
-数据：_kline_cache.json（2023-12-07 ~ 2026-08-13，111 只核心龙头 + 3 指数）
+数据：_kline_cache.json（111 只核心龙头 + 3 指数，末端日期随缓存自动更新）
 """
 import json
 import os
@@ -24,7 +24,7 @@ from backtest_guangmo import analyze_snaps, PARAMS, get_index_dir, triple_vote
 
 CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
 INDEXES = ["sh000001", "sz399001", "sz399006"]
-TODAY = "2026-08-13"  # 数据末端（今天 08-15，留出交易日余量）
+TODAY = "2026-08-20"  # 数据末端（随 _kline_cache.json 增量更新自动前进）
 
 # 各周期选股窗口（保证持仓完全走完，不借未来数据）
 WINDOWS = {

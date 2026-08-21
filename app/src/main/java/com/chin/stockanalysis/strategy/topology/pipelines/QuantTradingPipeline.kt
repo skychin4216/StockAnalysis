@@ -1025,7 +1025,8 @@ class SwapWeakNode(
 
         // 非交易时段不执行腾笼换鸟（无法获取实时价格，卖出无意义），但买入订单必须透传下游持仓合并
         if (!ChinaMarketTradingHours.a股是否交易中()) {
-            context.log(nodeId, "⏸️ 非交易时段，跳过$nodeName（透传 ${orderResult.orders.size} 个订单给持仓合并）")
+            val passCodes = orderResult.orders.map { "${it.stockCode}(${it.stockName})" }
+            context.log(nodeId, "⏸️ 非交易时段，跳过$nodeName（透传 ${orderResult.orders.size} 个订单给持仓合并: ${formatTopCodes(passCodes)}）")
             return SwapWeakResult(0, emptyList(), 0, 0, orderResult.orders)
         }
 
@@ -1595,14 +1596,14 @@ class GenerateOrdersNode(
                 // 1. 评分阈值过滤
                 if (pick.compositeScore < scoreThreshold) {
                     filteredCount++
-                    filteredReasons.add("${pick.stockCode}: 评分${pick.compositeScore}<$scoreThreshold")
+                    filteredReasons.add("${pick.stockName}(${pick.stockCode}): 评分${pick.compositeScore}<$scoreThreshold")
                     continue
                 }
 
                 // 2. 同日已持有过滤（仅过滤同日重复，非同日允许加仓）
                 if (pick.stockCode in todayHoldingCodes) {
                     filteredCount++
-                    filteredReasons.add("${pick.stockCode}: 今日已买入")
+                    filteredReasons.add("${pick.stockName}(${pick.stockCode}): 今日已买入")
                     continue
                 }
 
@@ -1611,21 +1612,21 @@ class GenerateOrdersNode(
                 val guardSoldCodes = context.stageOutputs["guard_sold_codes"] as? Set<String> ?: emptySet()
                 if (pick.stockCode in guardSoldCodes) {
                     filteredCount++
-                    filteredReasons.add("${pick.stockCode}: 风控已卖出")
+                    filteredReasons.add("${pick.stockName}(${pick.stockCode}): 风控已卖出")
                     continue
                 }
 
                 // 3. ETF 过滤（排除 ETF）
                 if (pick.stockCode.startsWith("sh51") || pick.stockCode.startsWith("sz15")) {
                     filteredCount++
-                    filteredReasons.add("${pick.stockCode}: ETF排除")
+                    filteredReasons.add("${pick.stockName}(${pick.stockCode}): ETF排除")
                     continue
                 }
 
                 // 3.5 指数过滤（排除大盘指数：sh000xxx / sz399xxx 不可交易）
                 if (pick.stockCode.startsWith("sh000") || pick.stockCode.startsWith("sz399")) {
                     filteredCount++
-                    filteredReasons.add("${pick.stockCode}: 指数排除")
+                    filteredReasons.add("${pick.stockName}(${pick.stockCode}): 指数排除")
                     continue
                 }
 
@@ -1633,7 +1634,7 @@ class GenerateOrdersNode(
                 val moneyScore = SmartMoneyCache.getScore(pick.stockCode).combined
                 if (moneyScore < 30) {
                     filteredCount++
-                    filteredReasons.add("${pick.stockCode}: 主力资金${moneyScore.roundToInt()}<30")
+                    filteredReasons.add("${pick.stockName}(${pick.stockCode}): 主力资金${moneyScore.roundToInt()}<30")
                     continue
                 }
 
@@ -1644,7 +1645,7 @@ class GenerateOrdersNode(
                 } catch (_: Exception) { emptyList() }
                 if (sectorNames.isNotEmpty() && SectorSignalStore.isInWeakOrFishTail(sectorNames)) {
                     filteredCount++
-                    filteredReasons.add("${pick.stockCode}: 板块[${SectorSignalStore.summarize(sectorNames)}]弱势/鱼尾")
+                    filteredReasons.add("${pick.stockName}(${pick.stockCode}): 板块[${SectorSignalStore.summarize(sectorNames)}]弱势/鱼尾")
                     continue
                 }
                 val sectorAdjustedPick = if (SectorSignalStore.isInBuyZone(sectorNames)) {
@@ -2137,7 +2138,7 @@ class PositionMergeNode : BaseNode<Any, PositionMergeResult>("position_merge", "
                     val avgPrice = (existing.buyPrice * existing.quantity + order.buyPrice * order.quantity) /
                         totalQuantity.toDouble()
                     db.strategyTradeOrderDao().updateQuantityAndPrice(existing.id, totalQuantity, avgPrice)
-                    updatedCodes.add("${order.stockCode}(追加${order.quantity}股,均价${"%.2f".format(avgPrice)})")
+                    updatedCodes.add("${order.stockName}(${order.stockCode},追加${order.quantity}股,均价${"%.2f".format(avgPrice)})")
                 } else if (newCount < availableSlots) {
                     // 新持仓：插入 BUYING 订单（与 Hardcode 路径一致）
                     val entity = StrategyTradeOrderEntity(
@@ -2157,7 +2158,7 @@ class PositionMergeNode : BaseNode<Any, PositionMergeResult>("position_merge", "
                     newCount++
                 } else {
                     // 超出可用仓位，跳过（安全网）
-                    context.log(nodeId, "⚠ ${order.stockCode} 跳过：持仓已达上限 $maxHoldings（$period 周期）")
+                    context.log(nodeId, "⚠ ${order.stockName}(${order.stockCode}) 跳过：持仓已达上限 $maxHoldings（$period 周期）")
                 }
             }
 

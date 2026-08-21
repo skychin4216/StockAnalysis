@@ -4148,7 +4148,7 @@ abstract class QuantFragmentBase : Fragment() {
         positionContainer.addView(scroll)
     }
 
-    /** 一键建仓：将选股区的股票写入 DB 作为正式持仓 */
+    /** 一键建仓：将选股区的股票写入 DB 作为正式持仓（含去重/价格校验/持仓上限/腾笼换鸟） */
     protected fun convertPicksToPositions() {
         if (lastPickStocks.isEmpty()) return
         AlertDialog.Builder(requireContext())
@@ -4168,8 +4168,78 @@ abstract class QuantFragmentBase : Fragment() {
                         val today = TradingDayPickerView.recentTradingDay().format(DATE_FMT)
                         val now = java.time.LocalTime.now().toString().take(8)
                         val quantType = getQuantType()
-                        val entities = lastPickStocks.map { (code, name, score) ->
-                            val price = realtime[code]?.price ?: 0.0
+                        val period = orderTypePeriod(quantType)
+
+                        // ── 1) 该周期现有订单：去重依据 ──
+                        val orders = db.strategyTradeOrderDao().getRecent(500)
+                            .filter { orderTypePeriod(it.orderType) == period }
+                        // 已持有（持仓中）：BUYING / HOLD
+                        val heldCodes = orders
+                            .filter { it.status == "BUYING" || it.status == "HOLD" }
+                            .map { it.stockCode }.toSet()
+                        // 今日已买入（无论状态，含当天已卖出的也视为当日已操作过，避免同日重复）
+                        val todayBought = orders
+                            .filter { it.tradeDate == today }
+                            .map { it.stockCode }.toSet()
+
+                        // ── 2) 过滤重复 + 价格校验（实时价<=0 回退昨收，仍无效则跳过）──
+                        val pending = mutableListOf<Triple<String, String, Int>>()
+                        var skipHeld = 0; var skipToday = 0; var skipPrice = 0
+                        for ((code, name, score) in lastPickStocks) {
+                            val q = realtime[code]
+                            val price = q?.takeIf { it.price > 0 }?.price
+                                ?: q?.takeIf { it.yestClose > 0 }?.yestClose
+                                ?: 0.0
+                            when {
+                                code in heldCodes -> skipHeld++
+                                code in todayBought -> skipToday++
+                                price <= 0 -> skipPrice++
+                                else -> pending += Triple(code, name, score)
+                            }
+                        }
+                        pending.sortByDescending { it.third }
+
+                        // ── 3) 每周期最大持仓 5 + 腾笼换鸟（新票显著强于最弱持仓才换）──
+                        val maxHold = AutoTradePortfolioEngine.MAX_HOLDINGS
+                        val activeHeld = orders
+                            .filter { it.status == "BUYING" || it.status == "HOLD" }
+                            .distinctBy { it.stockCode }
+                            .toMutableList()
+                        var slotLeft = (maxHold - activeHeld.size).coerceAtLeast(0)
+                        val toBuy = mutableListOf<Triple<String, String, Int>>()
+                        var swapCount = 0
+                        for (c in pending) {
+                            if (slotLeft > 0) {
+                                toBuy += c; slotLeft--
+                                continue
+                            }
+                            // 仓位已满 → 腾笼换鸟：候选评分需 ≥ 最弱持仓评分 + 15 才替换
+                            val weakest = activeHeld.minByOrNull { it.scoreAtBuy }
+                            if (weakest != null && c.third >= weakest.scoreAtBuy + 15) {
+                                val sellQ = realtime[weakest.stockCode]
+                                val sellPrice = sellQ?.takeIf { it.price > 0 }?.price
+                                    ?: sellQ?.takeIf { it.yestClose > 0 }?.yestClose
+                                    ?: weakest.buyPrice
+                                val profitPct = if (weakest.buyPrice > 0)
+                                    (sellPrice - weakest.buyPrice) / weakest.buyPrice * 100 else 0.0
+                                db.strategyTradeOrderDao().updateSellInfo(
+                                    id = weakest.id, status = "SOLD",
+                                    sellPrice = sellPrice, sellTime = "$today $now",
+                                    profitPct = profitPct
+                                )
+                                db.strategyTradeOrderDao().updateReason(weakest.id, "腾笼换鸟换出")
+                                activeHeld.removeIf { it.id == weakest.id }
+                                toBuy += c
+                                swapCount++
+                            }
+                        }
+
+                        // ── 4) 落库 ──
+                        val entities = toBuy.map { (code, name, score) ->
+                            val q = realtime[code]
+                            val price = q?.takeIf { it.price > 0 }?.price
+                                ?: q?.takeIf { it.yestClose > 0 }?.yestClose
+                                ?: 0.0
                             StrategyTradeOrderEntity(
                                 strategyId = quantType,
                                 stockCode = code, stockName = name,
@@ -4181,11 +4251,19 @@ abstract class QuantFragmentBase : Fragment() {
                         }
                         db.strategyTradeOrderDao().insertAll(entities)
                         withContext(Dispatchers.Main) {
-                            val count = entities.size
+                            val skipped = skipHeld + skipToday + skipPrice
+                            val summary = buildString {
+                                append("✅ 已建仓 ${entities.size} 只")
+                                if (swapCount > 0) append("，腾笼换鸟 $swapCount 只")
+                                if (skipped > 0) append(
+                                    "\n已跳过 $skipped 只：持仓重复 $skipHeld、今日已买 $skipToday、无有效价格 $skipPrice"
+                                )
+                                if (entities.isEmpty() && skipped == 0) append("（无可建仓标的）")
+                            }
                             pickStockCodes = emptySet()
                             lastPickStocks = emptyList()
                             refreshPositions()
-                            statusTv.text = "✅ 已建仓 $count 只"
+                            statusTv.text = summary
                         }
                     } catch (e: Exception) {
                         withContext(Dispatchers.Main) {

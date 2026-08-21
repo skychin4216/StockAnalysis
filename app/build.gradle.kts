@@ -19,6 +19,10 @@ val hasReleaseSigning = keystorePropsFile.exists() &&
     !keystoreProps.getProperty("keyAlias").isNullOrBlank() &&
     !keystoreProps.getProperty("keyPassword").isNullOrBlank()
 
+// 密钥加密主密钥（AES-256-GCM）：仅本地 keystore.properties 持有，注入 BuildConfig，
+// 用于解密 assets/data/secrets.enc 中的云端密钥（该密文可安全提交 git）
+val secretMasterKey = keystoreProps.getProperty("secret.masterKey", "")
+
 android {
     namespace = "com.chin.stockanalysis"
     compileSdk = 34
@@ -31,6 +35,12 @@ android {
         versionCode = 2
         versionName = "1.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // 密钥加密主密钥（本地 keystore.properties，不进 git）
+        buildConfigField("String", "SECRET_MASTER_KEY", "\"$secretMasterKey\"")
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     signingConfigs {

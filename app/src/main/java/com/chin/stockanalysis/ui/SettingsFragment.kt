@@ -131,8 +131,8 @@ class SettingsFragment : Fragment() {
     }
 
     private fun refreshParamsInfo() {
-        binding.tvParamsSource.text = "当前参数来源: ${BacktestParamsLoader.sourceLabel(requireContext())}" +
-            "（版本 ${BacktestParamsLoader.version(requireContext())}）"
+        binding.tvParamsSource.text = "当前参数: ${BacktestParamsLoader.paramName(requireContext())}（" +
+            "${BacktestParamsLoader.sourceLabel(requireContext())} v${BacktestParamsLoader.version(requireContext())}）"
     }
 
     /** 绑定做T 微信通知 & 自动执行 配置（Phase 11） */

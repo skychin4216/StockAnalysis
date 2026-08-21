@@ -1,11 +1,16 @@
 package com.chin.stockanalysis.config
 
 import android.content.Context
+import android.util.Base64
 import android.util.Log
+import com.chin.stockanalysis.BuildConfig
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.URLEncoder
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * ## 统一配置管理器
@@ -41,10 +46,55 @@ object DataConfig {
                 BufferedReader(InputStreamReader(stream, "UTF-8")).use { it.readText() }
             }
             parseJson(JSONObject(json), "")
+            loadSecrets(context)
             loaded = true
             Log.i(TAG, "配置加载完成，共 ${config.size} 项")
         } catch (e: Exception) {
             Log.e(TAG, "配置加载失败: ${e.message}")
+        }
+    }
+
+    /**
+     * 解密 `assets/data/secrets.enc`（AES-256-GCM，与 PC 端 secrets_util.py 格式一致）：
+     * `base64( nonce(12B) || ciphertext-with-tag )`。
+     * 主密钥来自本地 keystore.properties → BuildConfig.SECRET_MASTER_KEY（不入 git）。
+     * 解密出的 `cloud_sync.secret_id/secret_key` 会覆盖 app_config.json 中的空占位。
+     */
+    private fun loadSecrets(context: Context) {
+        val masterKey = BuildConfig.SECRET_MASTER_KEY
+        if (masterKey.isBlank()) {
+            Log.w(TAG, "未配置 SECRET_MASTER_KEY，跳过密钥解密")
+            return
+        }
+        try {
+            val b64 = context.assets.open("data/secrets.enc").use { stream ->
+                BufferedReader(InputStreamReader(stream, "UTF-8")).use { it.readText() }
+            }.trim()
+            if (b64.isEmpty()) {
+                Log.w(TAG, "secrets.enc 为空，跳过密钥解密")
+                return
+            }
+            val raw = Base64.decode(b64, Base64.NO_WRAP)
+            val nonce = raw.copyOfRange(0, 12)
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                SecretKeySpec(masterKeyHexToBytes(masterKey), "AES"),
+                GCMParameterSpec(128, nonce)
+            )
+            val plain = String(cipher.doFinal(raw, 12, raw.size - 12), Charsets.UTF_8)
+            val obj = JSONObject(plain)
+            parseJson(obj, "")
+            Log.i(TAG, "密钥密文解密成功，已注入 ${obj.length()} 项云端密钥")
+        } catch (e: Exception) {
+            Log.w(TAG, "密钥解密失败（密文缺失或主密钥不匹配）: ${e.message}")
+        }
+    }
+
+    private fun masterKeyHexToBytes(hex: String): ByteArray {
+        require(hex.length % 2 == 0) { "主密钥必须为偶数长度的 hex" }
+        return ByteArray(hex.length / 2) { i ->
+            hex.substring(i * 2, i * 2 + 2).toInt(16).toByte()
         }
     }
 

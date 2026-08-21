@@ -194,7 +194,7 @@ class StrategyImportFragment : Fragment() {
         paramsCard.addView(buildActionRow(actionButton("🔄 重置内置", "#546E7A") { resetParamsFile() }))
         paramsCard.addView(buildActionRow(actionButton("🔍 参数详情", "#1565C0") { showParamsDetail() }))
         paramsStatusTv = TextView(requireContext()).apply {
-            text = "当前参数: ${com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader.sourceLabel(requireContext())}（版本 ${com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader.version(requireContext())}）"
+            text = "当前参数: ${com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader.paramName(requireContext())}（${com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader.sourceLabel(requireContext())} v${com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader.version(requireContext())}）"
             textSize = 10f
             setTextColor(Color.parseColor("#1976D2"))
             setPadding(dp(4), 0, dp(4), dp(4))

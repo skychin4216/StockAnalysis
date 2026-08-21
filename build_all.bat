@@ -42,7 +42,21 @@ python -m PyInstaller --onefile --noconfirm --noconsole ^
   --hidden-import autoquant.agent_tools ^
   --hidden-import autoquant.agent_loop ^
   --hidden-import autoquant.gui.agent_tab ^
+  --hidden-import smalltools.cos_utils ^
+  --hidden-import smalltools.cloud_download ^
+  --hidden-import smalltools.cloud_upload_params ^
+  --hidden-import smalltools.build_app_params ^
+  --hidden-import smalltools.auto_cloud_pipeline ^
+  --hidden-import smalltools.secrets_util ^
+  --hidden-import auto_fit_backtest ^
+  --paths "%ROOT%smalltools" ^
+  --hidden-import _full_cycle_backtest ^
+  --hidden-import _walk_forward ^
+  --hidden-import backtest_guangmo ^
+  --add-data "%ROOT%smalltools\_kline_cache.json;." ^
+  --add-data "%ROOT%AutoQuant\cloud_config.json;." ^
   --collect-data akshare ^
+  --add-data "data;data" ^
   --name "AutoQuant-GUI" run_gui.py
 if exist "dist\AutoQuant-GUI.exe" (
     echo   [OK] AutoQuant-GUI.exe 编译成功
@@ -55,7 +69,7 @@ REM ---- 可选：其余 EXE（build_all.bat all 时启用）----
 if /i "%BUILD_ALL%"=="all" (
     echo.
     echo   -- 构建 AutoQuant-Screen.exe ...
-    python -m PyInstaller --onefile --noconfirm --exclude-module PySide6 --collect-data akshare --name "AutoQuant-Screen" run_screen_simple.py
+    python -m PyInstaller --onefile --noconfirm --exclude-module PySide6 --collect-data akshare --add-data "data;data" --name "AutoQuant-Screen" run_screen_simple.py
     if exist "dist\AutoQuant-Screen.exe" (echo   [OK] AutoQuant-Screen.exe 编译成功) else (echo   [FAIL] AutoQuant-Screen.exe 编译失败)
 
     echo.

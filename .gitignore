@@ -22,6 +22,8 @@ api_keys_local.properties
 app/src/main/assets/api_keys_local.properties
 AutoQuant/ai_keys.properties
 AutoQuant/journal/
+SecretKey.csv
+*SecretKey*.csv
 
 # Release 签名（本地密钥，不入库）
 keystore.properties
@@ -44,6 +46,22 @@ release/cos_config.json
 
 # AutoQuant 独立仓库（内含 .git，需删除其 .git 后才可并入主仓库；待批准合并）
 AutoQuant/
+
+# 本地 K 线缓存（约 21MB，可随时由 smalltools 重新抓取，不入库）
+smalltools/_kline_cache.json
+smalltools/_kline_cache.json.bak
+
+# smalltools 运行临时输出（不入库）
+smalltools/out*.txt
+smalltools/err*.txt
+smalltools/*_result.txt
+smalltools/*_verify.txt
+smalltools/o.txt
+smalltools/o_imp.txt
+smalltools/t_out.txt
+smalltools/e_imp.txt
+smalltools/_refit_out.txt
+smalltools/_portfolio_sim.txt
 
 # 系统文件
 .DS_Store

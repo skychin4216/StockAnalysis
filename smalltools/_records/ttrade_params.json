@@ -1,0 +1,206 @@
+{
+  "updated": "2026-08-17",
+  "train": [
+    "2023-08-15",
+    "2025-08-15"
+  ],
+  "valid": [
+    "2025-08-15",
+    "2026-08-15"
+  ],
+  "hold_n": 3,
+  "params": {
+    "supportMa5Factor": 0.98,
+    "supportMa10Factor": 0.94,
+    "resistanceMa5Factor": 1.0,
+    "resistanceMa10Factor": 1.01,
+    "nearSupportThreshold": 0.02,
+    "nearResistanceThreshold": 0.01,
+    "minExpectedProfitPct": 0.3,
+    "pairProfitPct": 0.8
+  },
+  "scan_results": {
+    "supportMa5Factor": {
+      "0.95": {
+        "trades": 39253,
+        "profit": 16999.0,
+        "wins": 33998,
+        "score": 11708.3
+      },
+      "0.98": {
+        "trades": 44364,
+        "profit": 19180.0,
+        "wins": 38360,
+        "score": 13186.2
+      },
+      "1.0": {
+        "trades": 44364,
+        "profit": 19180.0,
+        "wins": 38360,
+        "score": 13186.2
+      }
+    },
+    "supportMa10Factor": {
+      "0.94": {
+        "trades": 44364,
+        "profit": 19180.0,
+        "wins": 38360,
+        "score": 13186.2
+      },
+      "0.97": {
+        "trades": 44364,
+        "profit": 19180.0,
+        "wins": 38360,
+        "score": 13186.2
+      },
+      "0.99": {
+        "trades": 44364,
+        "profit": 19180.0,
+        "wins": 38360,
+        "score": 13186.2
+      }
+    },
+    "resistanceMa5Factor": {
+      "1.0": {
+        "trades": 44364,
+        "profit": 19180.0,
+        "wins": 38360,
+        "score": 13186.2
+      },
+      "1.02": {
+        "trades": 44364,
+        "profit": 19180.0,
+        "wins": 38360,
+        "score": 13186.2
+      },
+      "1.04": {
+        "trades": 40747,
+        "profit": 17598.5,
+        "wins": 35197,
+        "score": 12085.6
+      }
+    },
+    "resistanceMa10Factor": {
+      "1.01": {
+        "trades": 44364,
+        "profit": 19180.0,
+        "wins": 38360,
+        "score": 13186.2
+      },
+      "1.03": {
+        "trades": 44364,
+        "profit": 19180.0,
+        "wins": 38360,
+        "score": 13186.2
+      },
+      "1.05": {
+        "trades": 44364,
+        "profit": 19180.0,
+        "wins": 38360,
+        "score": 13186.2
+      }
+    },
+    "nearSupportThreshold": {
+      "0.01": {
+        "trades": 39719,
+        "profit": 17225.5,
+        "wins": 34451,
+        "score": 11882.8
+      },
+      "0.02": {
+        "trades": 44364,
+        "profit": 19180.0,
+        "wins": 38360,
+        "score": 13186.2
+      },
+      "0.03": {
+        "trades": 44364,
+        "profit": 19180.0,
+        "wins": 38360,
+        "score": 13186.2
+      },
+      "0.04": {
+        "trades": 44364,
+        "profit": 19180.0,
+        "wins": 38360,
+        "score": 13186.2
+      }
+    },
+    "nearResistanceThreshold": {
+      "0.01": {
+        "trades": 44364,
+        "profit": 19180.0,
+        "wins": 38360,
+        "score": 13186.2
+      },
+      "0.02": {
+        "trades": 44364,
+        "profit": 19180.0,
+        "wins": 38360,
+        "score": 13186.2
+      },
+      "0.03": {
+        "trades": 44364,
+        "profit": 19180.0,
+        "wins": 38360,
+        "score": 13186.2
+      },
+      "0.04": {
+        "trades": 44364,
+        "profit": 19180.0,
+        "wins": 38360,
+        "score": 13186.2
+      }
+    },
+    "minExpectedProfitPct": {
+      "0.3": {
+        "trades": 48148,
+        "profit": 20789.0,
+        "wins": 41578,
+        "score": 14272.2
+      },
+      "0.5": {
+        "trades": 44364,
+        "profit": 19180.0,
+        "wins": 38360,
+        "score": 13186.2
+      },
+      "0.8": {
+        "trades": 38800,
+        "profit": 16804.5,
+        "wins": 33609,
+        "score": 11575.5
+      }
+    },
+    "pairProfitPct": {
+      "0.3": {
+        "trades": 48148,
+        "profit": 12967.8,
+        "wins": 43226,
+        "score": 7357.6
+      },
+      "0.5": {
+        "trades": 48148,
+        "profit": 20789.0,
+        "wins": 41578,
+        "score": 14272.2
+      },
+      "0.8": {
+        "trades": 48148,
+        "profit": 30990.4,
+        "wins": 38738,
+        "score": 22541.6
+      }
+    }
+  },
+  "validation": {
+    "trades": 24473,
+    "wins": 20104,
+    "profit": 16083.2
+  },
+  "full_sample": {
+    "trades": 72523,
+    "wins": 58771,
+    "profit": 47016.8
+  }
+}

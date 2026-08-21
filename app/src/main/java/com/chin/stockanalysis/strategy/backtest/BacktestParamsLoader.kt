@@ -119,6 +119,32 @@ object BacktestParamsLoader {
         return root?.optString("version", "-") ?: "-"
     }
 
+    /** 参数名（UI 展示用）：meta.name（如 "backtest_params v7（2026-08-21 01:30 拟合）"）；
+     *  旧参数无 meta.name 时回退 "v<版本>（<生成时间>）"。 */
+    fun paramName(context: Context): String {
+        load(context)
+        val meta = root?.optJSONObject("meta")
+        meta?.optString("name")?.takeIf { it.isNotBlank() }?.let { return it }
+        val gen = generatedAt(context)
+        val parts = listOfNotNull(
+            version(context).takeIf { it.isNotBlank() && it != "-" }?.let { "v$it" },
+            gen.takeIf { it.isNotBlank() }?.let { "（$it 生成）" }
+        )
+        return parts.joinToString(" ").ifBlank { "backtest_params" }
+    }
+
+    /** 参数生成时间（UI 展示用）：顶层 generated 字段（如 "2026-08-21 01:30"） */
+    fun generatedAt(context: Context): String {
+        load(context)
+        return root?.optString("generated", "") ?: ""
+    }
+
+    /** 拟合窗口（UI 展示用）：顶层 period 字段（如 "2026-08-15 ~ 2026-09-15"）；无则返回空串 */
+    fun fitWindow(context: Context): String {
+        load(context)
+        return root?.optString("period", "") ?: ""
+    }
+
     // ───────────────────────── 选股参数覆盖 ─────────────────────────
 
     /**
@@ -330,8 +356,11 @@ object BacktestParamsLoader {
     fun summary(context: Context): String {
         load(context)
         val sb = StringBuilder()
+        sb.appendLine("参数名: ${paramName(context)}")
         sb.appendLine("参数来源: ${sourceLabel(context)}")
         sb.appendLine("版本: ${version(context)}")
+        generatedAt(context).takeIf { it.isNotBlank() }?.let { sb.appendLine("生成时间: $it") }
+        fitWindow(context).takeIf { it.isNotBlank() }?.let { sb.appendLine("拟合窗口: $it") }
         val paramsRoot = root ?: return sb.appendLine("（未加载到参数 JSON，全部使用代码默认值）").toString()
 
         fun fmt(v: Double): String = if (v == v.toLong().toDouble()) "${v.toLong()}" else "%.2f".format(v)
