@@ -98,6 +98,7 @@ object DagTradeExecutor {
      * @param orderType    订单类型（用于自选股来源标记，如 "ultra_short_dag"）
      * @param importDays   数据不足时的历史导入天数（0 表示不导入）
      * @param onNodeProgress 节点执行进度回调（可选），参数为 (pipelineName, nodeName)，供 UI 实时显示
+     * @param saveAsAiOnly 非交易时间一键建仓「仅选股」模式：跳过订单落库/持仓合并/换仓/拟合，仅保存 AI 精选
      * @return 执行结果摘要
      */
     suspend fun execute(
@@ -108,7 +109,8 @@ object DagTradeExecutor {
         strategies: List<Strategy>,
         orderType: String,
         importDays: Int = 60,
-        onNodeProgress: ((pipelineName: String, nodeName: String) -> Unit)? = null
+        onNodeProgress: ((pipelineName: String, nodeName: String) -> Unit)? = null,
+        saveAsAiOnly: Boolean = false
     ): DagExecResult {
         if (strategies.isEmpty()) {
             return DagExecResult(
@@ -141,8 +143,11 @@ object DagTradeExecutor {
             }
         }
 
-        // 3. 执行 DAG Pipeline
-        val result = UseCaseLoader.run(useCaseId, tradeDate, onNodeProgress)
+        // 3. 执行 DAG Pipeline（saveAsAiOnly 通过 configOverrides 注入，节点内跳过订单落库/换仓/拟合）
+        val result = UseCaseLoader.run(
+            useCaseId, tradeDate, onNodeProgress,
+            configOverrides = if (saveAsAiOnly) mapOf("saveAsAiOnly" to "true") else emptyMap()
+        )
         val elapsed = System.currentTimeMillis() - totalStart
 
         // 4. 后处理：从 nodeResults 提取订单/持仓/换股信息
@@ -221,6 +226,8 @@ object DagTradeExecutor {
                     } catch (e: Exception) {
                         Log.w(TAG, "[$useCaseId] 写入 user_watchlist 失败: ${e.message}")
                     }
+                    // 非交易仅选股模式：订单已写入 user_watchlist + AI 精选（savedWatchlist 标记用于弹窗提示）
+                    if (saveAsAiOnly) savedWatchlist = true
                 }
 
                 // 提取持仓合并结果
@@ -329,9 +336,19 @@ object DagTradeExecutor {
 
         val uiText = buildString {
             if (result.success) {
-                appendLine("✅ [DAG] ${result.pipelineResults.keys.firstOrNull() ?: "Pipeline"} 完成 (${elapsed}ms)")
+                appendLine("✅ [DAG] ${result.pipelineResults.keys.lastOrNull() ?: "Pipeline"} 完成 (${elapsed}ms)")
             } else {
                 appendLine("❌ [DAG] 失败: ${result.errors.keys.joinToString(", ")}")
+            }
+            // 公共研判摘要（大盘多周期研判→风格轮动判断→板块强弱监测）
+            for ((_, pr) in result.pipelineResults) {
+                val styleOut = pr.stageResults["n_style_rotation"]?.output
+                if (styleOut is com.chin.stockanalysis.strategy.topology.nodes.StyleRotationResult && styleOut.summary.isNotBlank()) {
+                    appendLine()
+                    appendLine("🧭 公共研判（大盘→风格→板块）")
+                    appendLine(styleOut.summary)
+                    break
+                }
             }
             if (stockFlowLines.isNotEmpty()) {
                 for (line in stockFlowLines.take(6)) appendLine(line)
@@ -429,7 +446,12 @@ object DagTradeExecutor {
         }
 
         // 11. 后台异步拟合计算（不阻塞 Pipeline 结果，完成后自动更新报告）
-        launchBackgroundFitting(context, useCaseId, tradeDate, strategies)
+        //     非交易时间仅选股：跳过拟合（拟合参数仅交易时间自动生效）
+        if (saveAsAiOnly) {
+            Log.i(TAG, "[$useCaseId] 非交易时间（仅选股）：跳过后台拟合，选股结果已保存 AI 精选")
+        } else {
+            launchBackgroundFitting(context, useCaseId, tradeDate, strategies)
+        }
 
         return DagExecResult(
             success = result.success,

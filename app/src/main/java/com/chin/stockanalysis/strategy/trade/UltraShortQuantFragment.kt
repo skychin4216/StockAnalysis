@@ -58,14 +58,15 @@ class UltraShortQuantFragment : QuantFragmentBase() {
     override val showMultiDayPrices = false
     override fun getDefaultUseCaseId() = "ultra_short"
 
-    override fun onBuildClick() {
+    override fun onBuildClick(saveAsAiOnly: Boolean) {
         runDagPipeline(
             holdingPeriod = HoldingPeriod.ULTRA_SHORT,
             useCaseId = "ultra_short",
             orderType = "ultra_short",
             importDays = 30,
             titlePrefix = "超短线",
-            onComplete = { checkT1AutoSell() }
+            onComplete = { checkT1AutoSell() },
+            saveAsAiOnly = saveAsAiOnly
         )
     }
 

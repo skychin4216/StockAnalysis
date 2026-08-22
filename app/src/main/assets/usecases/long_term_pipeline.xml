@@ -5,49 +5,26 @@
   长线特征：持仓 1 年以上，深度基本面，公司成长+价值，重仓持有。
   不追热点、不频繁换股，但需 news_guard 防黑天鹅利空。
 
-  共 19 个 Node：
-    Layer 0 (并行): market_context, bg_manager, data_import
-    Layer 1 (并行): stock_pool, ma_convergence, sector_stock_pool, holding_guard（依赖 market_context）
-    Layer 1.5: candidate_pool（候选池过滤，补齐 Hardcode）
-    Layer 2 (并行): signal_merge（策略动态注入）, heat_score（依赖 stock_pool）, defensive_dividend（防守高息）
-    Layer 3: sector_boost（依赖 signal_merge + heat_score）→ bounce_reversal
+  公共 L0/L1（data_import → market_context → bg_manager → adaptive_params →
+  stock_pool → market_ma_unified → holding_guard）已抽取至 stock_picking_common_pipeline.xml，
+  在 usecase 中先于本 pipeline 执行；本 pipeline 从 stageOutputs 兜底读取股票池/自适应参数。
+
+  共 12 个 Node：
+    Layer 0 (并行): sector_stock_pool（板块精选池，根节点，从 context 兜底读取市场上下文）
+    Layer 1.5: candidate_pool（根节点，从 stageOutputs 兜底读取股票池）
+    Layer 2 (并行): signal_merge（策略动态注入）, heat_score（根节点，从 stageOutputs 兜底读取股票池）, defensive_dividend（防守高息）
+    Layer 3: sector_boost（依赖 signal_merge + heat_score，MA 结果从 stageOutputs 兜底读取）→ bounce_reversal
     Layer 4: smart_money_filter（依赖 bounce_reversal）
     Layer 5: news_guard（依赖 smart_money_filter，防重大利空）
     Layer 6: ai_predict（依赖 news_guard，最终裁切 take 5）
-    Layer 7: generate_orders（依赖 ai_predict）
-    Layer 8 (并行): position_merge, fitting_save（依赖 generate_orders）
+    Layer 7: generate_orders（依赖 ai_predict，自适应参数从 context 兜底读取）
+    Layer 8: position_merge（依赖 generate_orders）
 -->
-<DagPipeline id="long_term_dag" name="长线量化DAG Pipeline" description="市场上下文→股票池+板块精选池→策略筛选+热度→板块加权→主力过滤→新闻拦截→AI精选→订单生成→持仓合并/拟合保存">
+<DagPipeline id="long_term_dag" name="长线量化DAG Pipeline" description="板块精选池→策略筛选+热度+防守高息→板块加权→主力过滤→新闻拦截→AI精选→订单生成→持仓合并（公共 L0/L1 由 stock_picking_common_pipeline.xml 提供）">
 
   <!-- ══════════ NodeList ══════════ -->
   <NodeList>
-    <!-- 数据准备 Layer 0 -->
-    <Node id="n_import" name="数据导入检查" module="data_import">
-      <config>
-        <param name="days" value="60" />
-        <param name="minSnapshots" value="100" />
-      </config>
-    </Node>
-    <Node id="n_ctx" name="市场上下文" module="market_context" />
-    <Node id="n_bg" name="后台暂停/恢复" module="bg_manager" />
-    <Node id="n_adaptive" name="大盘分析+自适应参数" module="adaptive_params" />
-
-    <!-- Layer 1 -->
-    <Node id="n_pool" name="股票池" module="stock_pool" />
-
-    <!-- 大盘均线检查 Pipeline 分组 -->
-    <Pipeline id="market_check" name="大盘均线检查">
-      <NodeList>
-        <Node id="n_ma_unified" name="大盘均线统一检查" module="market_ma_unified">
-          <config>
-            <param name="threshold" value="0.02" />
-            <param name="checkMode" value="full" />
-          </config>
-        </Node>
-      </NodeList>
-    </Pipeline>
-
-    <!-- Layer 1（并行）: 板块精选池（依赖 market_context，输出存入 context 供候选池读取）
+    <!-- Layer 0（根节点）: 板块精选池（市场上下文由公共 L0/L1 的 n_ctx 写入 context 后兜底读取）
          维度 = 月热门 + 季度热门 + 轮动预测（长线聚焦中期走强板块，不追当日热点） -->
     <Node id="n_sector_pool" name="板块精选池" module="sector_stock_pool">
       <config>
@@ -55,10 +32,7 @@
       </config>
     </Node>
 
-    <!-- Layer 1（并行）: 持仓风控 — 每次必跑，评估止损/止盈/策略退出 -->
-    <Node id="n_guard" name="持仓风控" module="holding_guard" />
-
-    <!-- Layer 1.5: 候选池过滤（补齐 Hardcode） -->
+    <!-- Layer 1.5: 候选池过滤（根节点，股票池由公共 L0/L1 的 n_pool 写入 stageOutputs 后兜底读取） -->
     <Node id="n_cand" name="候选池过滤" module="candidate_pool" />
 
     <!-- 聚合 Layer 2 -->

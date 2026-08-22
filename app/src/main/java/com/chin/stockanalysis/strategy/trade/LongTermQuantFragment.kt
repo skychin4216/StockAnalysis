@@ -30,13 +30,14 @@ class LongTermQuantFragment : QuantFragmentBase() {
     override val positionTitlePrefix = "长线"
     override fun getDefaultUseCaseId() = "long_term"
 
-    override fun onBuildClick() {
+    override fun onBuildClick(saveAsAiOnly: Boolean) {
         runDagPipeline(
             holdingPeriod = HoldingPeriod.LONG,
             useCaseId = "long_term",
             orderType = "long_term",
             importDays = 60,
-            titlePrefix = "长线"
+            titlePrefix = "长线",
+            saveAsAiOnly = saveAsAiOnly
         )
     }
 

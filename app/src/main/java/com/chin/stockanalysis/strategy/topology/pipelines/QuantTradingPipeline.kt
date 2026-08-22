@@ -2115,6 +2115,22 @@ class PositionMergeNode : BaseNode<Any, PositionMergeResult>("position_merge", "
 
         val db = StockDatabase.getInstance(context.androidContext)
 
+        // 🔄 非交易时间一键建仓「仅选股」模式：跳过买入订单+持仓合并，候选仅保存到 AI 精选（由 DagTradeExecutor 统一写入）
+        if (context.config.saveAsAiOnly) {
+            val period = orderTypePeriod(context.config.orderType)
+            val currentTotal = db.strategyTradeOrderDao().getRecent(500)
+                .count { (it.status == "BUYING" || it.status == "PENDING") && orderTypePeriod(it.orderType) == period }
+            context.log(nodeId, "📡 非交易时间（仅选股模式）：跳过持仓合并/下单，${orders.size} 个候选仅保存到 AI 精选（未下单）")
+            context.recordStockFlow(
+                nodeId = nodeId, nodeName = nodeName,
+                inputCount = orders.size, outputCount = 0,
+                filterCount = orders.size,
+                filterReason = "非交易时间仅选股（saveAsAiOnly）",
+                inputCodes = orderCodes.take(5), outputCodes = emptyList()
+            )
+            return PositionMergeResult(0, emptyList(), currentTotal)
+        }
+
         return try {
             // 获取当前持仓（按周期统计：只算与本 Pipeline 同周期的持仓，不跨周期累加）
             val period = orderTypePeriod(context.config.orderType)
@@ -2293,6 +2309,19 @@ class FittingSaveNode : BaseNode<Any, Unit>("fitting_save", "拟合计算+保存
         context.log(nodeId, "📥 $nodeName 输入: 总持仓 $totalHoldings, 上游类型=${input::class.simpleName}")
 
         val db = StockDatabase.getInstance(context.androidContext)
+
+        // 🔄 非交易时间一键建仓「仅选股」模式：跳过参数拟合（拟合参数仅交易时间自动生效）
+        if (context.config.saveAsAiOnly) {
+            context.log(nodeId, "📡 非交易时间（仅选股模式）：跳过拟合计算，选股结果已保存 AI 精选")
+            context.recordStockFlow(
+                nodeId = nodeId, nodeName = nodeName,
+                inputCount = totalHoldings, outputCount = 0,
+                filterCount = 0,
+                filterReason = "非交易时间仅选股（saveAsAiOnly）",
+                inputCodes = emptyList(), outputCodes = emptyList()
+            )
+            return
+        }
 
         return try {
             // 获取策略列表

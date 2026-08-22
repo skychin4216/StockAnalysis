@@ -51,10 +51,11 @@ class LegacyStockPickingService : StockPickingService {
             tradeDate = tradeDate,
             today = today,
             strategies = strategies,
-            orderType = "MidTermQuant"
-        ) { _, nodeName ->
-            onProgress?.invoke("🔄 $nodeName 执行中...")
-        }
+            orderType = "MidTermQuant",
+            onNodeProgress = { _, nodeName ->
+                onProgress?.invoke("🔄 $nodeName 执行中...")
+            }
+        )
 
         // 从 DB 读取今日订单转为推荐列表
         val db = StockDatabase.getInstance(context)

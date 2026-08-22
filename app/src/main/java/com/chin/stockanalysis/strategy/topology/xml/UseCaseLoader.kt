@@ -223,6 +223,11 @@ object UseCaseLoader {
                 context.stageOutputs["_strategies"] = allStrategies
             }
 
+            // 4.1 收集各 Pipeline 步骤的 if 条件（pipelineName -> ifCondition）
+            val stepIfMap = useCaseConfig.steps
+                .filterIsInstance<PipelineXmlParser.StepRef.pipeline>()
+                .associate { step -> step.name.ifBlank { step.ref.substringAfterLast("/") } to step.ifCondition }
+
             // 5. 按 parallel 标志分组执行
             val parallelGroups = groupByParallel(useCaseConfig.steps, loadedPipelines)
 
@@ -239,6 +244,11 @@ object UseCaseLoader {
                     if (group.size == 1) {
                         // 串行执行单个 Pipeline
                         val (name, pipeline) = group[0]
+                        // if 条件过滤：条件不满足时跳过该 Pipeline
+                        if (!evalStepIf(stepIfMap[name].orEmpty(), context)) {
+                            Log.i(TAG, "[组 $groupIndex] 跳过 Pipeline（if 条件不满足）: $name  condition=${stepIfMap[name]}")
+                            continue
+                        }
                         Log.i(TAG, "[组 $groupIndex] 串行执行: $name")
                         val result = try {
                             pipeline.execute(context)
@@ -258,17 +268,23 @@ object UseCaseLoader {
                         // 并行执行同一组的多个 Pipeline
                         Log.i(TAG, "[组 $groupIndex] 并行执行: ${group.map { it.first }}")
                         coroutineScope {
-                            val deferred = group.map { (name, pipeline) ->
-                                async {
-                                    name to try {
-                                        pipeline.execute(context)
-                                    } catch (e: Exception) {
-                                        PipelineResult(
-                                            pipelineName = name, success = false,
-                                            stageResults = emptyMap(), timings = emptyMap(),
-                                            totalElapsedMs = 0,
-                                            errors = mapOf(name to "Pipeline 执行异常: ${e.message}")
-                                        )
+                            val deferred = group.mapNotNull { (name, pipeline) ->
+                                // if 条件过滤：条件不满足时跳过该 Pipeline
+                                if (!evalStepIf(stepIfMap[name].orEmpty(), context)) {
+                                    Log.i(TAG, "[组 $groupIndex] 跳过 Pipeline（if 条件不满足）: $name  condition=${stepIfMap[name]}")
+                                    null
+                                } else {
+                                    async {
+                                        name to try {
+                                            pipeline.execute(context)
+                                        } catch (e: Exception) {
+                                            PipelineResult(
+                                                pipelineName = name, success = false,
+                                                stageResults = emptyMap(), timings = emptyMap(),
+                                                totalElapsedMs = 0,
+                                                errors = mapOf(name to "Pipeline 执行异常: ${e.message}")
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -287,6 +303,11 @@ object UseCaseLoader {
 
             // 5. 执行 DAG Pipeline（V2 高通风格）
             for ((name, dagPipeline) in loadedDagPipelines) {
+                // if 条件过滤：条件不满足时跳过该 Pipeline
+                if (!evalStepIf(stepIfMap[name].orEmpty(), context)) {
+                    Log.i(TAG, "跳过 DAG Pipeline（if 条件不满足）: $name  condition=${stepIfMap[name]}")
+                    continue
+                }
                 Log.i(TAG, "▶ 执行 DAG Pipeline: $name")
                 val dagResult = try {
                     kotlinx.coroutines.withTimeout(180_000L) {
@@ -340,6 +361,82 @@ object UseCaseLoader {
                 finalOutput = finalOutput,
                 errors = errors
             )
+        }
+    }
+
+    /**
+     * 求值 if 条件表达式，如 `${n_style_rotation}.suggestedPeriod == 'ultra_short'`。
+     *
+     * 支持格式：`${nodeId}.fieldName == 'value'` 或 `${nodeId}.fieldName != 'value'`。
+     * 值从 `context.stageOutputs[nodeId]` 反射读取字段 fieldName 后与期望值比较。
+     * 表达式为空时返回 true（无条件）。
+     *
+     * @param expr if 条件表达式，空字符串视为无条件
+     * @param context 共享执行上下文（含 stageOutputs）
+     */
+    private suspend fun evalStepIf(expr: String, context: PipelineContext): Boolean {
+        if (expr.isBlank()) return true
+        // 解析 ${nodeId}.fieldName
+        val refMatch = Regex("\\$\\{([^}]+)}").find(expr) ?: run {
+            Log.w(TAG, "if 条件无法解析: $expr")
+            return false
+        }
+        val ref = refMatch.groupValues[1]
+        val dotIdx = ref.indexOf('.')
+        if (dotIdx <= 0) {
+            Log.w(TAG, "if 条件引用格式错误（缺少 .字段名）: $expr")
+            return false
+        }
+        val nodeId = ref.substring(0, dotIdx)
+        val fieldName = ref.substring(dotIdx + 1)
+
+        // 从 stageOutputs 读取输出对象
+        val output = context.stageOutputs[nodeId] ?: run {
+            Log.w(TAG, "if 条件引用不存在: $expr（stageOutputs 中无 $nodeId）")
+            return false
+        }
+
+        // 反射读取字段值
+        val actual = readFieldValue(output, fieldName)?.toString() ?: run {
+            Log.w(TAG, "if 条件读取字段失败: $expr（$nodeId 无字段 $fieldName）")
+            return false
+        }
+
+        // 解析 == 'value' 或 != 'value'
+        val cmpMatch = Regex("(==|!=)\\s*'([^']*)'").find(expr) ?: run {
+            Log.w(TAG, "if 条件缺少比较运算符或期望值: $expr")
+            return false
+        }
+        val op = cmpMatch.groupValues[1]
+        val expected = cmpMatch.groupValues[2]
+
+        val matched = actual == expected
+        return when (op) {
+            "==" -> matched
+            "!=" -> !matched
+            else -> false
+        }
+    }
+
+    /**
+     * 通过反射读取对象字段值（优先 getter，其次直接字段访问）。
+     */
+    private fun readFieldValue(obj: Any, fieldName: String): Any? {
+        val capName = fieldName.replaceFirstChar { it.uppercase() }
+        return try {
+            // 尝试 getFieldName()
+            obj.javaClass.getMethod("get$capName").invoke(obj)
+        } catch (_: Exception) {
+            try {
+                // 尝试 isFieldName()（布尔类型）
+                obj.javaClass.getMethod("is$capName").invoke(obj)
+            } catch (_: Exception) {
+                try {
+                    obj.javaClass.getDeclaredField(fieldName).apply { isAccessible = true }.get(obj)
+                } catch (_: Exception) {
+                    null
+                }
+            }
         }
     }
 
@@ -459,11 +556,13 @@ object UseCaseLoader {
      * 将已注册的策略动态注入到 DAG Pipeline。
      *
      * 在 DAG 图中找到 `n_merge`（信号合并）节点，在其前面插入策略节点：
-     * - n_pool → strategy_1 → n_merge
+     * - n_pool → strategy_1 → n_merge（n_pool 在本 pipeline 内时）
      * - n_pool → strategy_2 → n_merge
      * - ...（每个策略并行）
      *
-     * 这样策略节点会与 n_pool 同层或下一层，拓扑排序会自动推导正确的并行度。
+     * **公共 L0/L1 抽取场景**：n_pool 已上移到公共 pipeline 时，不再添加
+     * `n_pool → strategy_i` 边（否则悬空边会导致拓扑死锁），策略节点以根节点运行，
+     * 通过 `context.getStageOutput("n_pool")` 从公共 pipeline 的 stageOutputs 兜底读取股票池。
      *
      * **周期过滤**：只注入 `holdingPeriods` 包含 [periodStr] 对应周期的策略，
      * 避免中线 Pipeline 执行超短线策略（反之亦然）。periodStr 为 null 时注入全部。
@@ -502,10 +601,17 @@ object UseCaseLoader {
             )
         }
 
-        // 创建边：n_pool → strategy_i，strategy_i → n_merge
+        // 判断 n_pool 是否在当前 DAG 中（公共 L0/L1 抽取后，n_pool 可能已上移到公共 pipeline）
+        val hasPoolNode = dag.nodes.any { it.nodeId == "n_pool" }
+
+        // 创建边：n_pool → strategy_i（仅当 n_pool 在本 pipeline 内），strategy_i → n_merge
+        // 若 n_pool 已不在本 pipeline（公共 L0/L1 抽取场景），策略节点以根节点运行，
+        // 通过 context.getStageOutput("n_pool") 从公共 pipeline 的 stageOutputs 兜底读取股票池。
         val newEdges = dag.edges.toMutableList()
         for (strategyNode in strategyDagNodes) {
-            newEdges.add(DagEdge("n_pool", 0, strategyNode.nodeId, 0))
+            if (hasPoolNode) {
+                newEdges.add(DagEdge("n_pool", 0, strategyNode.nodeId, 0))
+            }
             newEdges.add(DagEdge(strategyNode.nodeId, 0, "n_merge", 0))
         }
 
@@ -542,7 +648,8 @@ object UseCaseLoader {
             holdingPeriod = config["holdingPeriod"] ?: "short",
             orderType = config["orderType"] ?: "Screening",
             maxHoldings = config["maxHoldings"]?.toIntOrNull() ?: 0,
-            maxSignalsPerStrategy = config["maxSignalsPerStrategy"]?.toIntOrNull() ?: 15
+            maxSignalsPerStrategy = config["maxSignalsPerStrategy"]?.toIntOrNull() ?: 15,
+            saveAsAiOnly = config["saveAsAiOnly"]?.toBooleanStrictOrNull() ?: false
         )
     }
 

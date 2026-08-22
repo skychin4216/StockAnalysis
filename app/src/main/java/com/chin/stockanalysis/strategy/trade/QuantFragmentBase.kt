@@ -178,8 +178,9 @@ abstract class QuantFragmentBase : Fragment() {
         else -> getQuantType()
     }
 
-    /** 建仓按钮点击 — 各子类实现自己的选股逻辑 */
-    abstract fun onBuildClick()
+    /** 建仓按钮点击 — 各子类实现自己的选股逻辑
+     *  @param saveAsAiOnly 非交易时间一键建仓「仅选股」：跳过下单/持仓合并/换仓，仅保存 AI 精选 */
+    abstract fun onBuildClick(saveAsAiOnly: Boolean = false)
 
     /** 拟合按钮点击 */
     abstract fun onFittingClick()
@@ -193,9 +194,10 @@ abstract class QuantFragmentBase : Fragment() {
     /** 加载持仓（默认调用 refreshPositions，子类可覆写） */
     open fun loadPositions() = refreshPositions()
 
-    /** 供外部统一调用的自动触发 Pipeline（建仓/选股）：工作台「四周期统一管理」入口 */
-    open fun autoRunPipeline() {
-        if (::buildBtn.isInitialized && buildBtn.isEnabled) onBuildClick()
+    /** 供外部统一调用的自动触发 Pipeline（建仓/选股）：工作台「四周期统一管理」入口
+     *  @param saveAsAiOnly 非交易时间一键建仓「仅选股」：透传给 onBuildClick，跳过下单/持仓合并/换仓 */
+    open fun autoRunPipeline(saveAsAiOnly: Boolean = false) {
+        if (::buildBtn.isInitialized && buildBtn.isEnabled) onBuildClick(saveAsAiOnly)
     }
 
     // ═══════════════════════════════════════════════════
@@ -556,6 +558,7 @@ abstract class QuantFragmentBase : Fragment() {
      * @param importDays 导入天数
      * @param titlePrefix 标题前缀 (如 "超短线", "短线", "长线")
      * @param onComplete 完成后回调（如超短线的 T+1 检查）
+     * @param saveAsAiOnly 非交易时间一键建仓「仅选股」：跳过下单/持仓合并/换仓/拟合，仅保存 AI 精选
      */
     protected fun runDagPipeline(
         holdingPeriod: HoldingPeriod,
@@ -563,7 +566,8 @@ abstract class QuantFragmentBase : Fragment() {
         orderType: String,
         importDays: Int,
         titlePrefix: String,
-        onComplete: (() -> Unit)? = null
+        onComplete: (() -> Unit)? = null,
+        saveAsAiOnly: Boolean = false
     ) {
         val eng = engine ?: return
         buildBtn.isEnabled = false; buildBtn.text = "⏳ 排队中..."
@@ -596,7 +600,8 @@ abstract class QuantFragmentBase : Fragment() {
                         lifecycleScope.launch(Dispatchers.Main) {
                             if (isAdded) statusTv.text = "🔄 [DAG] ${pipelineName} ${nodeName} 执行中..."
                         }
-                    }
+                    },
+                    saveAsAiOnly = saveAsAiOnly
                 )
                 withContext(Dispatchers.Main) {
                     if (!isAdded) return@withContext
@@ -606,9 +611,14 @@ abstract class QuantFragmentBase : Fragment() {
                         r.selectedStocks.map { it.first }.toSet() else emptySet()
                     android.util.Log.i("QuantFragmentBase", "lastPickStocks=${lastPickStocks.size}, pickStockCodes=$pickStockCodes")
 
-                    showPipelineNodeDetails("${titlePrefix} DAG Pipeline", r)
+                    val dialogTitle = if (saveAsAiOnly) {
+                        "[DAG] ${titlePrefix} 非交易时间选股结果（已保存 AI 精选）"
+                    } else {
+                        "[DAG] ${titlePrefix} DAG 流程"
+                    }
+                    showPipelineNodeDetails(dialogTitle, r)
 
-                    statusTv.text = r.uiText
+                    statusTv.text = if (saveAsAiOnly) "🕐 非交易时间：${titlePrefix}选股已保存 AI 精选（未下单/未拟合）" else r.uiText
                     buildBtn.isEnabled = true; updateBuildButtonText()
                     progressBar.visibility = View.GONE
                     refreshPositions()

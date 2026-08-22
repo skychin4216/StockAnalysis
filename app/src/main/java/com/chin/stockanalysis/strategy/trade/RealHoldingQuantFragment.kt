@@ -258,7 +258,7 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
     }
 
     /** 实仓的建仓按钮 → 弹出菜单：分析Pipeline / 手动添加 / 截图导入 */
-    override fun onBuildClick() {
+    override fun onBuildClick(saveAsAiOnly: Boolean) {
         val items = arrayOf(
             getString(com.chin.stockanalysis.R.string.real_holding_pipeline),
             getString(com.chin.stockanalysis.R.string.real_holding_manual_add),

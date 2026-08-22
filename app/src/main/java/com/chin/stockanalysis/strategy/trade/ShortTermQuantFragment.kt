@@ -35,13 +35,14 @@ class ShortTermQuantFragment : QuantFragmentBase() {
     override val positionTitlePrefix = "短线量化"
     override fun getDefaultUseCaseId() = "short_term"
 
-    override fun onBuildClick() {
+    override fun onBuildClick(saveAsAiOnly: Boolean) {
         runDagPipeline(
             holdingPeriod = HoldingPeriod.SHORT,
             useCaseId = "short_term",
             orderType = "shortterm",
             importDays = 60,
-            titlePrefix = "短线"
+            titlePrefix = "短线",
+            saveAsAiOnly = saveAsAiOnly
         )
     }
 
@@ -86,7 +87,7 @@ class ShortTermQuantFragment : QuantFragmentBase() {
     }
 
     /** 供外部调用的自动触发 Pipeline */
-    override fun autoRunPipeline() {
-        if (buildBtn.isEnabled) onBuildClick()
+    override fun autoRunPipeline(saveAsAiOnly: Boolean) {
+        if (buildBtn.isEnabled) onBuildClick(saveAsAiOnly)
     }
 }

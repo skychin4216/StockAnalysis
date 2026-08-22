@@ -244,6 +244,12 @@ object NodeRegistry {
         // ══════════ 实仓分析 Pipeline Node ══════════
         register("real_holding_eval") { _, _ -> RealHoldingAnalysisNode() }
         register("a_market_analysis") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.AMarketAnalysisNode() }
+
+        // ══════════ 市场公共研判 Pipeline（大盘多周期研判→风格轮动→板块强弱） ══════════
+        register("style_rotation") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.StyleRotationNode() }
+        register("sector_strength") { _, _ ->
+            com.chin.stockanalysis.strategy.topology.nodes.SectorStrengthNode()
+        }
         register("t_trade_eval") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.TTradeEvalNode() }
         register("holding_diagnostic") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.HoldingDiagnosticNode() }
         register("holding_prediction") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.HoldingPredictionNode() }

@@ -282,6 +282,8 @@ data class StockFlowRecord(
  * @property enableAIPrediction 是否启用 AI 综合预测
  * @property customScoreThreshold 自定义评分阈值（null 时使用 AdaptiveParams 的阈值）
  * @property maxSignalsPerStrategy 每个策略最大信号数量
+ * @property saveAsAiOnly 非交易时间一键建仓的「仅选股」模式：跳过买入订单/持仓合并/换仓/拟合，
+ *   仅将选股结果写入 user_watchlist + ai_selected_stock（股票Tab → 🤖 AI 精选）
  */
 data class PipelineConfig(
     val onlyMainBoard: Boolean = true,
@@ -293,7 +295,8 @@ data class PipelineConfig(
     val enableSectorBoost: Boolean = true,
     val enableAIPrediction: Boolean = true,
     val customScoreThreshold: Int? = null,
-    val maxSignalsPerStrategy: Int = 20
+    val maxSignalsPerStrategy: Int = 20,
+    val saveAsAiOnly: Boolean = false
 )
 
 /**

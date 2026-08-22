@@ -269,11 +269,17 @@ object PipelineXmlParser {
      * UseCase 中的一个执行步骤。
      */
     sealed class StepRef {
-        /** 引用一个 Pipeline XML 文件 */
+        /**
+         * 引用一个 Pipeline XML 文件。
+         *
+         * @param ifCondition 可选条件表达式，如 `${n_style_rotation}.suggestedPeriod == 'ultra_short'`。
+         * 为空表示无条件；条件不满足时该 Pipeline 将被跳过不执行。
+         */
         data class pipeline(
             val ref: String,
             val parallel: Boolean = false,
-            val name: String = ""
+            val name: String = "",
+            val ifCondition: String = ""
         ) : StepRef()
 
         /** 直接定义一个单独 Node（不需要独立 Pipeline XML） */
@@ -338,7 +344,8 @@ object PipelineXmlParser {
                                             val ref = parser.getAttributeValue(null, "ref") ?: ""
                                             val parallel = parser.getAttributeValue(null, "parallel")?.toBooleanStrictOrNull() ?: false
                                             val pName = parser.getAttributeValue(null, "name") ?: ""
-                                            if (ref.isNotBlank()) steps.add(StepRef.pipeline(ref, parallel, pName))
+                                            val ifCond = parser.getAttributeValue(null, "if") ?: ""
+                                            if (ref.isNotBlank()) steps.add(StepRef.pipeline(ref, parallel, pName, ifCond))
                                         }
                                         "node" -> {
                                             val nodeId = parser.getAttributeValue(null, "id") ?: ""
@@ -359,7 +366,8 @@ object PipelineXmlParser {
                             val ref = parser.getAttributeValue(null, "ref") ?: ""
                             val parallel = parser.getAttributeValue(null, "parallel")?.toBooleanStrictOrNull() ?: false
                             val pName = parser.getAttributeValue(null, "name") ?: ""
-                            if (ref.isNotBlank()) steps.add(StepRef.pipeline(ref, parallel, pName))
+                            val ifCond = parser.getAttributeValue(null, "if") ?: ""
+                            if (ref.isNotBlank()) steps.add(StepRef.pipeline(ref, parallel, pName, ifCond))
                         }
                         "node" -> {
                             val nodeId = parser.getAttributeValue(null, "id") ?: ""
@@ -831,7 +839,8 @@ object PipelineXmlParser {
             if (step is StepRef.pipeline) {
                 val parallelAttr = " parallel=\"${step.parallel}\""
                 val nameAttr = if (step.name.isNotBlank()) " name=\"${escapeXml(step.name)}\"" else ""
-                sb.appendLine("    <pipeline ref=\"${escapeXml(step.ref)}\"$parallelAttr$nameAttr />")
+                val ifAttr = if (step.ifCondition.isNotBlank()) " if=\"${escapeXml(step.ifCondition)}\"" else ""
+                sb.appendLine("    <pipeline ref=\"${escapeXml(step.ref)}\"$parallelAttr$nameAttr$ifAttr />")
             } else if (step is StepRef.node) {
                 val nameAttr = " name=\"${escapeXml(step.id)}\""
                 val moduleAttr = " module=\"${escapeXml(step.module)}\""

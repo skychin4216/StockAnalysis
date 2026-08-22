@@ -18,6 +18,8 @@
 <usecase id="mid_term" name="中线量化">
   <description>自适应参数→多周期热门→策略筛选→合并增强→跨日聚合→AI精选→主力过滤→新闻拦截→腾龙换鸟</description>
   <steps>
+    <pipeline ref="usecases/market_rotation_pipeline.xml" name="市场公共研判（大盘→风格→板块）" />
+    <pipeline ref="usecases/stock_picking_common_pipeline.xml" name="选股公共数据准备（股票池/自适应参数/风控）" />
     <pipeline ref="usecases/mid_term_pipeline.xml" name="中线DAG流程" />
   </steps>
   <config>

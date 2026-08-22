@@ -39,8 +39,8 @@ class MidTermQuantFragment : QuantFragmentBase() {
 
     override fun getQuantType() = "MidTermQuant"
     override val positionTitlePrefix = "中线"
-    override fun onBuildClick() {
-        runDagPipeline(HoldingPeriod.MID, "mid_term", "midterm", 60, "中线")
+    override fun onBuildClick(saveAsAiOnly: Boolean) {
+        runDagPipeline(HoldingPeriod.MID, "mid_term", "midterm", 60, "中线", saveAsAiOnly = saveAsAiOnly)
     }
     override fun onFittingClick() { showFittingParamsReport(titlePrefix = "中线") }
     override fun onBacktrackClick() { runNextDayBacktrack() }

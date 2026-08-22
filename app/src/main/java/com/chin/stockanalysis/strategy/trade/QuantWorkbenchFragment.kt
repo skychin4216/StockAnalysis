@@ -43,7 +43,9 @@ import java.time.DayOfWeek
  * 超短线/短线/中线/长线 四周期页已集成于此（顶部页签内嵌），独占整屏展示选股输出。
  *
  * - 周期页：顶部页签切换，直接复用四周期 Fragment（建仓/Pipeline/持仓/卖出评估/回溯/报告）
- * - 标题行：一键建仓 / AI 选股 / 状态矩阵拟合 / 拟合参数导入
+ * - 标题行：一键建仓 / 状态矩阵拟合 / 拟合参数导入
+ *   （一键建仓：交易时间跑四周期买入订单 DAG pipeline（含腾笼换鸟）；
+ *   非交易时间直接四周期选股保存到 股票Tab→精选股票→AI 精选）
  *   （后两者对选股与买卖评估影响大，自 量化→数据 迁入；其余公共操作如 PC 拟合参数、
  *   回溯 & 分析、自测拟合、增量拉取等仍在 量化→数据 StrategyImportFragment）
  */
@@ -111,7 +113,7 @@ class QuantWorkbenchFragment : Fragment() {
     // ═══════════════════════════════════════════════════
 
     private fun buildUI() {
-        // ── 标题行：一键建仓 / AI 选股 / 状态矩阵拟合 / 拟合参数导入 ──
+        // ── 标题行：一键建仓 / 状态矩阵拟合 / 拟合参数导入 ──
         rootLayout.addView(LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
@@ -124,8 +126,6 @@ class QuantWorkbenchFragment : Fragment() {
                     setOnClickListener { onClick() }
                 }
             addView(actionBtn("🚀 一键建仓", "#E65100") { runQuickBuild() },
-                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 6 })
-            addView(actionBtn("🧠 AI 选股", "#1565C0") { runAiSelection() },
                 LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 6 })
             addView(actionBtn("📐 状态矩阵拟合", "#00838F") { runStateFit() },
                 LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 6 })
@@ -278,7 +278,11 @@ class QuantWorkbenchFragment : Fragment() {
     /** 🧠 AI 四周期选股：UnifiedStockClassifier 全量扫描（长线含 ml_prob KNN 加权），
      *  结果写入 ai_selected_stock → 股票 Tab → 🤖 AI 精选 查看 */
     private fun runAiSelection() {
-        Toast.makeText(requireContext(), "🧠 AI 四周期选股中（长线含 ML 排序），完成后弹窗展示结果...", Toast.LENGTH_LONG).show()
+        Toast.makeText(
+            requireContext(),
+            "🧠 AI 四周期选股中（长线含 ML 排序），完成后弹窗展示结果...",
+            Toast.LENGTH_LONG
+        ).show()
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val classifier = UnifiedStockClassifier(requireContext())
@@ -329,8 +333,13 @@ class QuantWorkbenchFragment : Fragment() {
         }
     }
 
-    /** 🚀 一键建仓：对四周期逐个切到内嵌周期页并触发建仓（PC 拟合参数自动生效），避免手动操作多次 */
+    /** 🚀 一键建仓（交易/非交易同走四周期 DAG pipeline，仅落库行为区分）：
+     *  - 交易时间内：DAG 建仓 pipeline = 买入订单 + 持仓合并 + 腾笼换鸟，拟合参数自动生效
+     *  - 非交易时间：同样走 DAG pipeline（saveAsAiOnly），跳过 买入订单/持仓合并/腾笼换鸟/拟合，
+     *    仅将选股结果写入 股票Tab → 精选股票 → AI 精选，弹窗标题区分
+     */
     private fun runQuickBuild() {
+        val isTrading = com.chin.stockanalysis.stock.database.ChinaMarketTradingHours.a股是否交易中()
         val selected = PERIODS
         lifecycleScope.launch(Dispatchers.IO) {
             // 建仓前先刷新核心池今日实时行情（避免使用上次同步如 13:00 的旧价）
@@ -350,14 +359,20 @@ class QuantWorkbenchFragment : Fragment() {
                     if (periodIdx < 0) return@forEachIndexed
                     handler.postDelayed({
                         periodPager.setCurrentItem(periodIdx, true)
-                        runOnPeriodTab(periodIdx, "build")
+                        runOnPeriodTab(periodIdx, "build", saveAsAiOnly = !isTrading)
                         Toast.makeText(
                             requireContext(),
-                            "第 ${idx + 1}/${selected.size} 个：已触发【${p.label}】建仓",
+                            if (isTrading) "第 ${idx + 1}/${selected.size} 个：已触发【${p.label}】建仓"
+                            else "第 ${idx + 1}/${selected.size} 个：【${p.label}】非交易时间选股（仅保存 AI 精选）",
                             Toast.LENGTH_SHORT
                         ).show()
                         if (idx == selected.size - 1) {
-                            Toast.makeText(requireContext(), "一键建仓已全部触发（${selected.size} 个周期）", Toast.LENGTH_LONG).show()
+                            Toast.makeText(
+                                requireContext(),
+                                if (isTrading) "一键建仓已全部触发（${selected.size} 个周期）"
+                                else "非交易时间选股完成（${selected.size} 个周期，已保存 AI 精选）",
+                                Toast.LENGTH_LONG
+                            ).show()
                         }
                     }, idx * 1000L)
                 }
@@ -404,14 +419,14 @@ class QuantWorkbenchFragment : Fragment() {
      * ViewPager2 的 setCurrentItem(smoothScroll=true) 是异步的，目标 fragment 在滚动过程中才创建，
      * 因此用延迟重试（每 150ms，最长约 1.8s）确保周期模块就绪后再触发建仓/选股/回溯。
      */
-    private fun runOnPeriodTab(period: Int, op: String, attempt: Int = 0) {
+    private fun runOnPeriodTab(period: Int, op: String, attempt: Int = 0, saveAsAiOnly: Boolean = false) {
         childFragmentManager.executePendingTransactions()
         val frag = childFragmentManager.findFragmentByTag("f$period") as? QuantFragmentBase
         if (frag != null) {
             when (op) {
                 "simulate" -> (frag as? MidTermQuantFragment)?.autoExecuteTrade()
                 "pipeline" -> (frag as? ShortTermQuantFragment)?.autoRunPipeline()
-                "build" -> frag.autoRunPipeline()
+                "build" -> frag.autoRunPipeline(saveAsAiOnly)
                 else -> frag.refreshPositions()
             }
             return
@@ -421,7 +436,7 @@ class QuantWorkbenchFragment : Fragment() {
             Toast.makeText(requireContext(), "周期模块未就绪，请稍后重试", Toast.LENGTH_SHORT).show()
             return
         }
-        periodPager.postDelayed({ runOnPeriodTab(period, op, attempt + 1) }, 150L)
+        periodPager.postDelayed({ runOnPeriodTab(period, op, attempt + 1, saveAsAiOnly) }, 150L)
     }
 
     // ═══════════════════════════════════════════════════
