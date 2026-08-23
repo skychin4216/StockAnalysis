@@ -127,47 +127,11 @@
 
   <!-- ══════════ Links ══════════ -->
   <Links>
-    <!-- Layer 0 → 1: 数据导入 → 股票池（确保数据充足） -->
-    <Link>
-      <SourceNodeId>n_import</SourceNodeId>
-      <SourcePortId>0</SourcePortId>
-      <TargetNodeId>n_pool</TargetNodeId>
-      <TargetPortId>0</TargetPortId>
-    </Link>
+    <!-- 公共 L0/L1（data_import → market_context → bg_manager → adaptive_params →
+         stock_pool → market_ma_unified → holding_guard）由 stock_picking_common_pipeline.xml 执行，
+         输出写入 stageOutputs/context；下方各节点内部兜底读取，不再显式引用公共节点。
 
-    <!-- Layer 0 → 1: 数据导入 → 大盘均线统一检查（与股票池并行） -->
-    <Link>
-      <SourceNodeId>n_import</SourceNodeId>
-      <SourcePortId>0</SourcePortId>
-      <TargetNodeId>n_ma_unified</TargetNodeId>
-      <TargetPortId>0</TargetPortId>
-    </Link>
-
-    <!-- Layer 0 → 1: 市场上下文 → 股票池 -->
-    <Link>
-      <SourceNodeId>n_ctx</SourceNodeId>
-      <SourcePortId>0</SourcePortId>
-      <TargetNodeId>n_pool</TargetNodeId>
-      <TargetPortId>0</TargetPortId>
-    </Link>
-
-    <!-- Layer 0 → 1: 市场上下文 → 板块精选池（并行，输出存入 context 供候选池读取） -->
-    <Link>
-      <SourceNodeId>n_ctx</SourceNodeId>
-      <SourcePortId>0</SourcePortId>
-      <TargetNodeId>n_sector_pool</TargetNodeId>
-      <TargetPortId>0</TargetPortId>
-    </Link>
-
-    <!-- Layer 0 → 1: 市场上下文 → 持仓风控（并行，每次必评估持仓） -->
-    <Link>
-      <SourceNodeId>n_ctx</SourceNodeId>
-      <SourcePortId>0</SourcePortId>
-      <TargetNodeId>n_guard</TargetNodeId>
-      <TargetPortId>0</TargetPortId>
-    </Link>
-
-    <!-- Layer 1 → 1.5: 板块精选池 → 候选池过滤（板块股票注入候选池） -->
+    Layer 0 → 1.5: 板块精选池 → 候选池过滤（板块股票注入候选池，市场上下文从 context 兜底读取） -->
     <Link>
       <SourceNodeId>n_sector_pool</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -175,31 +139,8 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 1 → 1.5: 股票池 → 候选池过滤（补齐 Hardcode） -->
-    <Link>
-      <SourceNodeId>n_pool</SourceNodeId>
-      <SourcePortId>0</SourcePortId>
-      <TargetNodeId>n_cand</TargetNodeId>
-      <TargetPortId>0</TargetPortId>
-    </Link>
-
-    <!-- Layer 1 → 2: 股票池 → 防守高息（熊市/震荡时启动） -->
-    <Link>
-      <SourceNodeId>n_pool</SourceNodeId>
-      <SourcePortId>0</SourcePortId>
-      <TargetNodeId>n_defensive</TargetNodeId>
-      <TargetPortId>0</TargetPortId>
-    </Link>
-
-    <!-- Layer 1 → 2: 股票池 → 热度计算（并行，输出存入 context 供板块加权读取） -->
-    <Link>
-      <SourceNodeId>n_pool</SourceNodeId>
-      <SourcePortId>0</SourcePortId>
-      <TargetNodeId>n_heat</TargetNodeId>
-      <TargetPortId>0</TargetPortId>
-    </Link>
-
-    <!-- Layer 2 → 3: 防守高息 → 信号合并（防守候选并入主流程） -->
+    <!-- Layer 0 → 2: 防守高息 → 信号合并（防守候选并入主流程；股票池由公共 L0/L1 的 n_pool
+         写入 stageOutputs，n_defensive 内部兜底读取） -->
     <Link>
       <SourceNodeId>n_defensive</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -223,15 +164,8 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 0 → 3: 大盘均线统一检查 → 板块加权（MA 收敛影响板块加权） -->
-    <Link>
-      <SourceNodeId>n_ma_unified</SourceNodeId>
-      <SourcePortId>0</SourcePortId>
-      <TargetNodeId>n_boost</TargetNodeId>
-      <TargetPortId>0</TargetPortId>
-    </Link>
-
-    <!-- Layer 2 → 3: 热度计算 → 板块加权（热度作为板块加权输入） -->
+    <!-- Layer 2 → 3: 热度计算 → 板块加权（热度作为板块加权输入；MA 收敛结果由公共 L0/L1
+         的 n_ma_unified 写入 stageOutputs，n_boost 内部兜底读取） -->
     <Link>
       <SourceNodeId>n_heat</SourceNodeId>
       <SourcePortId>0</SourcePortId>
@@ -340,15 +274,8 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 0 → 7: 大盘分析 → 买入订单生成（自适应参数注入，空头防守） -->
-    <Link>
-      <SourceNodeId>n_adaptive</SourceNodeId>
-      <SourcePortId>0</SourcePortId>
-      <TargetNodeId>n_orders</TargetNodeId>
-      <TargetPortId>0</TargetPortId>
-    </Link>
-
-    <!-- Layer 7 → 8: 买入订单生成 → 持仓合并 -->
+    <!-- Layer 7 → 8: 买入订单生成 → 持仓合并（自适应参数由公共 L0/L1 的 n_adaptive
+         写入 context，n_orders 内部兜底读取） -->
     <Link>
       <SourceNodeId>n_orders</SourceNodeId>
       <SourcePortId>0</SourcePortId>

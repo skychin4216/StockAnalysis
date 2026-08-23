@@ -377,7 +377,7 @@ object UseCaseLoader {
     private suspend fun evalStepIf(expr: String, context: PipelineContext): Boolean {
         if (expr.isBlank()) return true
         // 解析 ${nodeId}.fieldName
-        val refMatch = Regex("\\$\\{([^}]+)}").find(expr) ?: run {
+        val refMatch = Regex("\\$\\{([^}]+)\\}").find(expr) ?: run {
             Log.w(TAG, "if 条件无法解析: $expr")
             return false
         }
