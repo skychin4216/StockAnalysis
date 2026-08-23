@@ -25,7 +25,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -62,19 +62,29 @@ jobs:
 
       # 3) 云端启动模拟器并跑仪器化测试（离线安全用例）
       #    注：StockAnalysisTest 依赖真实 API key，未注入密钥时跳过，避免 CI 挂红。
+      #    target 用 google_apis：API 34 的 default(AOSP) 镜像在 SDK 仓库经常不可用。
+      #    测试输出写文件并随 artifact 上传，便于失败后诊断。
       - name: Run instrumented tests on emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
           arch: x86_64
+          target: google_apis
           profile: pixel_6
+          ram-size: 2048M
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
-            adb install -r app/build/outputs/apk/debug/app-debug.apk
+            echo "===== adb devices ====="
+            adb devices
+            adb shell getprop ro.build.version.release || true
             ./gradlew connectedDebugAndroidTest \
-              -Pandroid.testInstrumentationRunnerArguments.class=com.chin.stockanalysis.backtest.StrategyBacktestTest,com.chin.stockanalysis.V6FeatureTest,com.chin.stockanalysis.ExampleInstrumentedTest
+              -Pandroid.testInstrumentationRunnerArguments.class=com.chin.stockanalysis.backtest.StrategyBacktestTest,com.chin.stockanalysis.V6FeatureTest,com.chin.stockanalysis.ExampleInstrumentedTest \
+              > app/build/gradle-test-output.log 2>&1 \
+              || { echo "===== gradle FAILED, dump tail ====="; tail -200 app/build/gradle-test-output.log; adb logcat -d -t 300 > app/build/logcat.txt 2>/dev/null || true; exit 1; }
+            echo "===== gradle OK ====="
+            tail -50 app/build/gradle-test-output.log
 
-      # 4) 上传测试报告（无论成败均可查看）
+      # 4) 上传测试报告与诊断日志（无论成败均可查看）
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -83,6 +93,9 @@ jobs:
           path: |
             app/build/reports/androidTests/
             app/build/outputs/androidTest-results/
+            app/build/gradle-test-output.log
+            app/build/logcat.txt
+          if-no-files-found: ignore
 
       - name: List APK sizes
         run: |
