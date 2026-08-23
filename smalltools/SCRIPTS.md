@@ -33,9 +33,10 @@
 | `_factor_ic.py` | **选中信号因子 IC/ICIR 检验（Spearman）**：对四周期已选中信号提取粘合度/量比/跌幅/换手/近5日动量/MA乖离等因子，按月滚动算与未来收益的秩相关 IC → ICIR/IC>0占比，找最优排序因子（输出 `_records/factor_ic.json`）。结论：中线/长线反转效应（动量负 IC、跌幅正 IC），超短追涨（当日涨幅正 IC）。 | `python _factor_ic.py` / `--periods 中线,长线` |
 | `_hindsight_report.py` | **事后诸葛亮分析**：每季度对中/长线输出「实际(walk-forward) vs 事后最优」收益差距，并对季度末交易日做全池漏选归因（事后牛股被哪些检查项挡掉），输出 `_records/hindsight_Q*.json`。 | `python _hindsight_report.py` |
 | `_export_params.py` | **固化参数导出**：从 36 个月拟合历史提取各周期×各状态规则的**众数**（稳健优先），连同选股参数导出为 `app/src/main/assets/backtest_params.json`，APK 启动即代入，新用户无需导入多年K线；`--fit-cache` 从 `_refit_experiment.py` 全量拟合缓存导出（推荐，免重跑）。 | `python _export_params.py --fit-cache` |
-| `cos_utils.py` | **COS 签名库（纯标准库）**：HMAC-SHA1 V5 签名 + 签名 GET/PUT 请求，与 App 端 `CosSigner.kt` 算法一致；读取 `app_config.json` 的 `cloud_sync` 配置。被 cloud_download / cloud_upload_params 复用。 | 不直接运行 |
-| `cloud_download.py` | **COS 数据下载**：列出手机会话上传的 `phone_*.zip`，下载最近 N 个（`--all` 全下），解压 `data.json` 到 `_records/cloud/`，打印各表行数摘要；`--merge` 汇总为 `cloud_export.json`；`--params` 顺带把 COS 上的 `backtest_params.json` 拉回 assets。 | `python cloud_download.py --max 7` |
+| `cos_utils.py` | **COS 签名库（纯标准库）**：HMAC-SHA1 V5 签名 + 签名 GET/PUT 请求（禁用系统代理直连），与 App 端 `CosSigner.kt` 算法一致；配置加载顺序：AutoQuant `cloud_config.json`（支持 `secret_enc` 解密，主密钥来自 `ai_keys.properties`）→ 环境变量 `COS_*` → `app_config.json` 的 `cloud_sync`。被 cloud_download / cloud_upload_params / cloud_upload_market_db 复用。 | 不直接运行 |
+| `cloud_download.py` | **COS 数据下载**：列出手机会话上传的 `phone_*.zip`，下载最近 N 个（`--all` 全下），解压 `data.json` 到 `_records/cloud/`，打印各表行数摘要；`--merge` 汇总为 `cloud_export.json`；`--params` 顺带把 COS 上的 `backtest_params.json` 拉回 assets；`--list-all` 列出桶上全部对象并核对参数/市场库是否已上传。 | `python cloud_download.py --max 7` / `python cloud_download.py --list-all` |
 | `cloud_upload_params.py` | **参数回流上传**：把 PC 拟合好的 `backtest_params.json` 签名 PUT 到 COS `params_key`，手机端「设置→云端数据同步→下载最新拟合参数」导入立即生效；`--public-read` 可选设公有读。 | `python cloud_upload_params.py --file xxx.json` |
+| `cloud_upload_market_db.py` | **市场库上传**：把 PC 端公共市场库 `data/market_data.db`（K线+公告）签名 PUT 到 COS `stockanalysis/db/market_data.db`，供 APK「设置→下载云端行情库」导入 Room（免逐日联网拉取）；默认保留时间戳副本，`--no-timestamp` 关闭。 | `python cloud_upload_market_db.py` |
 | `verify_cos_sign.py` | **COS 签名回归校验**：用腾讯云官方文档完整示例值离线校准 HMAC-SHA1 V5 签名，并自检配置读取 / ZIP 解包 / ListObjectsV2 XML 解析。改动签名相关代码后建议重跑。 | `python verify_cos_sign.py` |
 
 ---
@@ -70,6 +71,8 @@
 | 文件 | 说明 |
 |------|------|
 | `_debug_verify.py` | 打印个股最近 K 线明细与 MA5/10/20/60，验证复刻逻辑与实盘一致。 |
+| `inspect_market_db.py` | **市场库结构检查**（由 `_tmp_dbschema.py` 转正）：打印 `data/market_data.db` 的表结构、行数、索引与 K线/公告概览；`--path` 指定其他库，`--full` 打印样例数据。 | `python inspect_market_db.py` |
+| `verify_market_db.py` | **市场库端到端验证**（由 `_tmp_dbverify.py` 转正）：K线 vs `_kline_cache.json` 一致性抽检、参数 save/get 往返、新闻导入、公告抽样、库统计。云端同步 DB 前后各跑一遍。 | `python verify_market_db.py` |
 
 ---
 

@@ -47,9 +47,17 @@ release/cos_config.json
 # AutoQuant 独立仓库（内含 .git，需删除其 .git 后才可并入主仓库；待批准合并）
 AutoQuant/
 
-# 本地 K 线缓存（约 21MB，可随时由 smalltools 重新抓取，不入库）
+# 公共市场数据库（SQLite 生成物，由 smalltools/_market_db.py 建库/增量维护）
+data/market_data.db
+data/market_data.db.bak
+
+# 本地 K 线/新闻/公告缓存（可随时由 smalltools 重新抓取，不入库）
 smalltools/_kline_cache.json
 smalltools/_kline_cache.json.bak
+smalltools/_news_cache.json
+smalltools/_news_cache.json.bak
+smalltools/_announce_cache.json
+smalltools/_announce_cache.json.bak
 
 # smalltools 运行临时输出（不入库）
 smalltools/out*.txt

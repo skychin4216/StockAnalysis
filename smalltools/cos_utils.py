@@ -28,6 +28,29 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP_CONFIG_PATH = os.path.join(ROOT, "app", "src", "main", "assets", "data", "app_config.json")
 
+# AutoQuant 侧（含 cloud_config.json + secret_enc 解密），存在时优先使用其配置
+AQ_CLOUD_CONFIG_CANDIDATES = (
+    os.path.join(ROOT, "AutoQuant", "cloud_config.json"),
+    os.path.join(ROOT, "AutoQuant", "data", "cloud_config.json"),
+    os.path.join(ROOT, "AutoQuant", "cloudsync", "cloud_config.json"),
+)
+
+
+def _load_master_key():
+    """读取本地 ai_keys.properties 的 secret_master_key（AutoQuant/ 或工程根）。"""
+    for p in (os.path.join(ROOT, "AutoQuant", "ai_keys.properties"),
+              os.path.join(ROOT, "ai_keys.properties")):
+        if os.path.exists(p):
+            try:
+                with open(p, encoding="utf-8-sig") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("secret_master_key="):
+                            return line.split("=", 1)[1].strip()
+            except OSError:
+                pass
+    return ""
+
 
 def _url_encode(s, keep_slash=False):
     """RFC3986 编码：保留 -_.~；keep_slash=True 时保留 `/`（UriPathname 用）"""
@@ -85,18 +108,67 @@ def sign(secret_id, secret_key, method, uri_pathname,
 
 
 def load_cloud_config():
-    """从 app_config.json 的 cloud_sync 区块读取 COS 配置。"""
-    with open(APP_CONFIG_PATH, encoding="utf-8") as f:
-        cfg = json.load(f)
-    sync = cfg.get("cloud_sync") or {}
+    """读取 COS 配置（AutoQuant cloud_config.json 优先，回退 app_config.json）。
+
+    - 支持 cloud_config.json 的 secret_enc 密文解密（主密钥来自 ai_keys.properties）；
+    - 支持环境变量 COS_* 覆盖（bucket/region/secret_id/secret_key/prefix/params_key）。
+    """
+    cfg = {}
+    source = ""
+    for path in AQ_CLOUD_CONFIG_CANDIDATES:
+        if os.path.exists(path):
+            try:
+                with open(path, encoding="utf-8-sig") as f:
+                    raw = json.load(f)
+                cfg = raw.get("cloud_sync") or raw
+                source = path
+                break
+            except (OSError, ValueError):
+                continue
+    if not cfg and os.path.exists(APP_CONFIG_PATH):
+        try:
+            with open(APP_CONFIG_PATH, encoding="utf-8") as f:
+                cfg = (json.load(f).get("cloud_sync") or {})
+            source = APP_CONFIG_PATH
+        except (OSError, ValueError):
+            pass
+
+    # 环境变量覆盖（显式提供 COS_* 即视为启用云端同步）
+    env_map = (("bucket", "COS_BUCKET"), ("region", "COS_REGION"),
+               ("secret_id", "COS_SECRET_ID"), ("secret_key", "COS_SECRET_KEY"),
+               ("prefix", "COS_PREFIX"), ("params_key", "COS_PARAMS_KEY"),
+               ("db_key", "COS_DB_KEY"))
+    env_set = False
+    for k, env in env_map:
+        v = os.environ.get(env)
+        if v:
+            cfg[k] = v
+            env_set = True
+    if env_set and (os.environ.get("COS_SECRET_ID") or os.environ.get("COS_SECRET_KEY")):
+        cfg["enabled"] = True
+
+    # 解密可提交的密文（secret_enc），主密钥来自本地 ai_keys.properties
+    if cfg.get("secret_enc") and not cfg.get("secret_id"):
+        mk = _load_master_key()
+        if mk:
+            try:
+                from secrets_util import decrypt_payload
+                plain = json.loads(decrypt_payload(cfg["secret_enc"], mk))
+                cfg["secret_id"] = cfg["secret_id"] or plain.get("cloud_sync.secret_id", "")
+                cfg["secret_key"] = cfg["secret_key"] or plain.get("cloud_sync.secret_key", "")
+            except Exception:
+                pass
+
     return {
-        "enabled": bool(sync.get("enabled", False)),
-        "bucket": sync.get("bucket", ""),
-        "region": sync.get("region", "ap-guangzhou"),
-        "secret_id": sync.get("secret_id", ""),
-        "secret_key": sync.get("secret_key", ""),
-        "prefix": sync.get("prefix", "stockanalysis/phone"),
-        "params_key": sync.get("params_key", "stockanalysis/params/backtest_params.json"),
+        "enabled": bool(cfg.get("enabled", False)),
+        "bucket": cfg.get("bucket", ""),
+        "region": cfg.get("region", "ap-guangzhou"),
+        "secret_id": cfg.get("secret_id", ""),
+        "secret_key": cfg.get("secret_key", ""),
+        "prefix": cfg.get("prefix", "stockanalysis/phone"),
+        "params_key": cfg.get("params_key", "stockanalysis/params/backtest_params.json"),
+        "db_key": cfg.get("db_key", "stockanalysis/db/market_data.db"),
+        "config_source": source,
     }
 
 
@@ -123,8 +195,9 @@ def request(secret_id, secret_key, bucket, region, method,
     req.add_header("Authorization", auth)
     for k, v in headers.items():
         req.add_header(k, v)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 禁用系统代理，直连
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with opener.open(req, timeout=timeout) as resp:
             return resp.status, dict(resp.headers), resp.read()
     except urllib.error.HTTPError as e:
         return e.code, dict(e.headers), e.read()

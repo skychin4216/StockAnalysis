@@ -260,6 +260,24 @@ class SettingsFragment : Fragment() {
                 }
             }
         }
+        binding.btnCloudDownloadDb.setOnClickListener {
+            viewLifecycleOwner.lifecycleScope.launch {
+                binding.btnCloudDownloadDb.isEnabled = false
+                setCloudStatus("正在下载并导入行情库…", Color.parseColor("#FF9800"))
+                val manager = CloudSyncManager(requireContext())
+                val result = manager.downloadMarketDb(manager.loadConfig()) { status ->
+                    requireActivity().runOnUiThread { setCloudStatus(status, Color.parseColor("#FF9800")) }
+                }
+                binding.btnCloudDownloadDb.isEnabled = true
+                result.onSuccess { msg ->
+                    setCloudStatus(msg, Color.parseColor("#2E7D32"))
+                    Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
+                }.onFailure { e ->
+                    setCloudStatus(e.message ?: "下载失败", Color.parseColor("#C62828"))
+                    Toast.makeText(requireContext(), "下载失败: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
     private fun refreshCloudStatus() {

@@ -38,8 +38,11 @@ TABLE_KEYS = [
 ]
 
 
-def list_objects(cfg, prefix):
-    """ListObjectsV2 列出现有对象，返回 [{Key, Size, LastModified}]。"""
+def list_objects(cfg, prefix, suffix=None):
+    """ListObjectsV2 列出现有对象，返回 [{Key, Size, LastModified}]。
+
+    suffix: 仅保留指定后缀的对象（如 ".zip"）；None 表示全部（含市场库 .db 等）。
+    """
     params = {"list-type": "2", "prefix": prefix, "max-keys": "1000"}
     status, headers, body = request(
         cfg["secret_id"], cfg["secret_key"], cfg["bucket"], cfg["region"],
@@ -49,16 +52,50 @@ def list_objects(cfg, prefix):
         return []
     import xml.etree.ElementTree as ET
     root = ET.fromstring(body)
-    ns = {"s": "http://www.qcloud.com/document/product/436/7751"}
     items = []
-    for c in root.findall(".//s:Contents", ns):
-        key = c.findtext("s:Key", "", ns)
-        size = c.findtext("s:Size", "0", ns)
-        lm = c.findtext("s:LastModified", "", ns)
-        if key and key.endswith(".zip"):
-            items.append({"Key": key, "Size": int(size), "LastModified": lm})
+    for c in root.iter():
+        if c.tag.split("}")[-1] != "Contents":
+            continue
+        key = next((e.text or "" for e in c if e.tag.split("}")[-1] == "Key"), "")
+        size = next((e.text or "0" for e in c if e.tag.split("}")[-1] == "Size"), "0")
+        lm = next((e.text or "" for e in c if e.tag.split("}")[-1] == "LastModified"), "")
+        if not key:
+            continue
+        if suffix and not key.endswith(suffix):
+            continue
+        items.append({"Key": key, "Size": int(size), "LastModified": lm})
     items.sort(key=lambda x: x["Key"], reverse=True)
     return items
+
+
+def list_all(cfg, prefix):
+    """列出桶上全部对象（不限后缀），核对市场库 db 等是否已上传。"""
+    params = {"list-type": "2", "max-keys": "1000"}
+    status, headers, body = request(
+        cfg["secret_id"], cfg["secret_key"], cfg["bucket"], cfg["region"],
+        "get", "/", http_params=params)
+    if status != 200:
+        print("列对象失败 HTTP %s: %s" % (status, body.decode("utf-8", "replace")[:500]))
+        return
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(body)
+    items = []
+    for c in root.iter():
+        if c.tag.split("}")[-1] != "Contents":
+            continue
+        key = next((e.text or "" for e in c if e.tag.split("}")[-1] == "Key"), "")
+        size = next((e.text or "0" for e in c if e.tag.split("}")[-1] == "Size"), "0")
+        lm = next((e.text or "" for e in c if e.tag.split("}")[-1] == "LastModified"), "")
+        if key:
+            items.append({"Key": key, "Size": int(size), "LastModified": lm})
+    print("桶内共 %d 个对象:" % len(items))
+    for it in sorted(items, key=lambda x: x["Key"]):
+        print("  %-64s %8d B  %s" % (it["Key"], it["Size"], it["LastModified"]))
+    # 检查关键对象是否存在
+    for probe in (cfg.get("params_key"), cfg.get("db_key", "stockanalysis/db/market_data.db")):
+        if probe:
+            hit = [i for i in items if i["Key"] == probe]
+            print("%s: %s" % (probe, "已存在" if hit else "缺失"))
 
 
 def download_object(cfg, key):
@@ -140,6 +177,8 @@ def main():
     ap.add_argument("--region")
     ap.add_argument("--secret-id")
     ap.add_argument("--secret-key")
+    ap.add_argument("--list-all", action="store_true",
+                    help="列出桶上全部对象（核对市场库 db / 参数文件是否上传）")
     args = ap.parse_args()
 
     cfg = load_cloud_config()
@@ -148,6 +187,10 @@ def main():
         if val:
             cfg[k] = val
     require_config(cfg)
+
+    if args.list_all:
+        list_all(cfg, cfg.get("prefix", ""))
+        sys.exit(0)
 
     prefix = cfg["prefix"].strip("/") + "/"
     print("COS: %s  前缀 %s" % (cfg["bucket"], prefix))

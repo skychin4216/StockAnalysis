@@ -113,6 +113,7 @@
     "secret_id": "",
     "secret_key": "",
     "prefix": "stockanalysis/phone",
-    "params_key": "stockanalysis/params/backtest_params.json"
+    "params_key": "stockanalysis/params/backtest_params.json",
+    "db_key": "stockanalysis/db/market_data.db"
   }
 }

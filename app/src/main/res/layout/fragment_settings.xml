@@ -517,6 +517,14 @@
             android:layout_height="48dp"
             android:text="下载最新拟合参数"
             android:textSize="14sp"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btnCloudDownloadDb"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="下载云端行情库（PC 市场库）"
+            android:textSize="14sp"
             android:layout_marginBottom="24dp" />
 
         <!-- About -->

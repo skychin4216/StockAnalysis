@@ -34,6 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from backtest_guangmo import analyze_snaps, PARAMS
 from _full_cycle_backtest import load_cache, market_state, simulate_trade, stats, SELL_RULES, sell_rule_for
 from _pool_filters import extra_filter
+import _market_db  # noqa: E402  公共数据库：拟合参数归档
 
 START = date(2023, 8, 15)
 END = date(2026, 8, 15)
@@ -313,6 +314,23 @@ def main():
         fitted_prev = rec["fitted"]
         done += 1
     print(f"\n完成 {done} 个窗口。")
+
+    # 归档全部窗口拟合参数到公共数据库 params 表（幂等，含历史增量窗口）
+    conn = _market_db.get_conn()
+    archived = 0
+    for fn in sorted(os.listdir(RECORD_DIR)):
+        if not fn.startswith("selected_") or not fn.endswith(".json"):
+            continue
+        tag = fn[len("selected_"):-len(".json")]
+        rec = json.load(open(os.path.join(RECORD_DIR, fn), encoding="utf-8"))
+        if rec.get("fitted"):
+            _market_db.save_params(
+                conn, "walk_forward", tag,
+                {"window": rec.get("window"), "fitted": rec["fitted"],
+                 "params_used": rec.get("params_used", {})})
+            archived += 1
+    conn.close()
+    print(f"拟合参数已归档公共数据库 params 表：{archived} 个窗口")
 
     summarize()
 
