@@ -5,6 +5,11 @@ name: Android Automated Test
 #   1. push 到 dev/main
 #   2. 定时（每周一/四 10:00 北京时间 = 02:00 UTC）
 #   3. 手动：GitHub Repo -> Actions -> Android Automated Test -> Run workflow
+#
+# 为什么用 macOS runner：
+#   GitHub 托管 Linux runner 的 KVM 硬件加速仅对公共仓库开放；私有仓库无 /dev/kvm，
+#   x86_64 系统镜像拒绝启动（Failed to open the device 'kvm'）。
+#   macOS runner 使用系统内置 Hypervisor.framework 硬件加速，无需 KVM，私有仓库可直接使用。
 on:
   push:
     branches: [dev, main]
@@ -18,7 +23,7 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -55,117 +60,32 @@ jobs:
             app/build/outputs/apk/release/app-release.apk
           if-no-files-found: ignore
 
-      # 2) 启用 KVM（云端硬件加速，模拟器可正常启动）
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          ls -la /dev/kvm || echo "/dev/kvm NOT available"
-
-      # 3) 安装 API 34 google_apis 系统镜像（手动分步，便于诊断）
-      #    GitHub runner 上 sdkmanager/avdmanager 不在 PATH，需用 $ANDROID_HOME/cmdline-tools/latest/bin/
-      - name: Inspect SDK
-        run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          ls "$ANDROID_HOME" 2>/dev/null
-          echo "--- cmdline-tools ---"
-          ls "$ANDROID_HOME/cmdline-tools/latest/bin" 2>/dev/null || ls "$ANDROID_HOME/cmdline-tools" 2>/dev/null
-          echo "--- preinstalled system-images ---"
-          find "$ANDROID_HOME/system-images" -maxdepth 3 -type d 2>/dev/null | head -30
-          echo "--- which ---"
-          which sdkmanager adb avdmanager emulator 2>/dev/null || true
-
-      - name: Install system image
-        run: |
-          SDKMAN="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          if [ ! -x "$SDKMAN" ]; then SDKMAN=$(which sdkmanager); fi
-          echo "using sdkmanager: $SDKMAN"
-          {
-            echo "=== sdkmanager version ==="
-            "$SDKMAN" --version
-            echo "=== accept licenses ==="
-            yes | "$SDKMAN" --licenses > /dev/null 2>&1 || true
-            echo "=== install system image ==="
-            "$SDKMAN" "system-images;android-34;google_apis;x86_64"
-            echo "INSTALL_EXIT=$?"
-          } 2>&1 | tee /tmp/sdk-install.log
-          ls -la "$ANDROID_HOME/system-images/android-34/google_apis/x86_64/" | head -20 || true
-
-      # 4) 创建 AVD
-      - name: Create AVD
-        run: |
-          AVDMAN="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
-          if [ ! -x "$AVDMAN" ]; then AVDMAN=$(which avdmanager); fi
-          echo "using avdmanager: $AVDMAN"
-          echo "no" | "$AVDMAN" create avd -n ci_test -k "system-images;android-34;google_apis;x86_64" -d pixel_6 --force 2>&1 | tee /tmp/avd-create.log
-          "$AVDMAN" list avd | head -20
-
-      # 5) 启动模拟器（后台）并等待 boot 完成
-      - name: Start emulator
-        run: |
-          EMULATOR="$ANDROID_HOME/emulator/emulator"
-          if [ ! -x "$EMULATOR" ]; then EMULATOR=$(which emulator); fi
-          echo "using emulator: $EMULATOR"
-          "$EMULATOR" -avd ci_test \
-            -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim \
-            -no-metrics -memory 2048 -cores 2 \
-            > /tmp/emulator.log 2>&1 &
-          EMU_PID=$!
-          echo "emulator pid=$EMU_PID"
-          # 等待 adb 识别设备
-          adb wait-for-device || true
-          # 轮询 boot 完成（最多 10 分钟）
-          for i in $(seq 1 60); do
-            sleep 10
-            BOOT=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
-            DEV=$(adb devices | grep emulator || true)
-            echo "[$i] boot=$BOOT device=$DEV"
-            if [ "$BOOT" = "1" ]; then echo "BOOT OK"; break; fi
-            # 模拟器进程是否还活着
-            if ! kill -0 $EMU_PID 2>/dev/null; then
-              echo "EMULATOR PROCESS DIED at iteration $i"
-              tail -100 /tmp/emulator.log
-              break
-            fi
-          done
-          adb devices
-          adb shell getprop ro.build.version.release 2>/dev/null || true
-
-      # 6) 上传模拟器启动诊断（无论成败）
-      - name: Upload emulator diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: emulator-diagnostics
-          path: |
-            /tmp/emulator.log
-            /tmp/sdk-install.log
-            /tmp/avd-create.log
-          if-no-files-found: ignore
-
-      # 7) 跑仪器化测试（离线安全用例）
+      # 2) 云端启动模拟器并跑仪器化测试（离线安全用例）
       #    注：StockAnalysisTest 依赖真实 API key，未注入密钥时跳过，避免 CI 挂红。
-      - name: Run instrumented tests
-        run: |
-          BOOT=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
-          if [ "$BOOT" != "1" ]; then
-            echo "===== EMULATOR NOT BOOTED, cannot run tests ====="
+      #    macOS 上 Hypervisor.framework 提供硬件加速，无需任何 KVM 启用步骤。
+      #    测试输出写文件并随 artifact 上传，便于失败后诊断。
+      - name: Run instrumented tests on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          ram-size: 2048M
+          emulator-boot-timeout: 900
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: |
+            echo "===== adb devices ====="
             adb devices
-            tail -200 /tmp/emulator.log
-            exit 1
-          fi
-          echo "===== adb devices ====="
-          adb devices
-          adb shell getprop ro.build.version.release || true
-          ./gradlew connectedDebugAndroidTest \
-            -Pandroid.testInstrumentationRunnerArguments.class=com.chin.stockanalysis.backtest.StrategyBacktestTest,com.chin.stockanalysis.V6FeatureTest,com.chin.stockanalysis.ExampleInstrumentedTest \
-            > app/build/gradle-test-output.log 2>&1 \
-            || { echo "===== gradle FAILED, dump tail ====="; tail -200 app/build/gradle-test-output.log; adb logcat -d -t 300 > app/build/logcat.txt 2>/dev/null || true; exit 1; }
-          echo "===== gradle OK ====="
-          tail -50 app/build/gradle-test-output.log
+            adb shell getprop ro.build.version.release || true
+            ./gradlew connectedDebugAndroidTest \
+              -Pandroid.testInstrumentationRunnerArguments.class=com.chin.stockanalysis.backtest.StrategyBacktestTest,com.chin.stockanalysis.V6FeatureTest,com.chin.stockanalysis.ExampleInstrumentedTest \
+              > app/build/gradle-test-output.log 2>&1 \
+              || { echo "===== gradle FAILED, dump tail ====="; tail -200 app/build/gradle-test-output.log; adb logcat -d -t 300 > app/build/logcat.txt 2>/dev/null || true; exit 1; }
+            echo "===== gradle OK ====="
+            tail -50 app/build/gradle-test-output.log
 
-      # 8) 上传测试报告与诊断日志（无论成败均可查看）
+      # 3) 上传测试报告与诊断日志（无论成败均可查看）
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -180,5 +100,5 @@ jobs:
 
       - name: List APK sizes
         run: |
-          ls -lh app/build/outputs/apk/debug/app-debug.apk 2>/dev/null || true
-          ls -lh app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk 2>/dev/null || true
+          ls -lh app/build/outputs/apk/debug/app-debug.apk
+          ls -lh app/build/outputs/apk/release/app-release.apk
