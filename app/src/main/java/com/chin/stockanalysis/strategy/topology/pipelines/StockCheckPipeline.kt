@@ -91,7 +91,18 @@ class StockCheckPipeline(
     // ── v3: 趋势跟随模式（超短/短线在牛市启用，替代均线粘合） ──
     /** 分析模式：CONVERGENCE=均线粘合（中/长线及熊市），TREND_FOLLOW=趋势跟随（超短/短牛市）
      *  var：允许工厂方法（PC 拟合参数）返回后再按牛熊覆盖模式 */
-    var mode: AnalysisMode = AnalysisMode.CONVERGENCE
+    var mode: AnalysisMode = AnalysisMode.CONVERGENCE,
+    // ── v6: 趋势跟随参数（smalltools trend_follow 节，单一事实源 backtest_params.json） ──
+    /** 多头排列是否含 MA60（超短 false / 短线 true） */
+    val trendUseMA60: Boolean = false,
+    /** 贴近新高：收盘距20日高点最大回撤（%） */
+    val trendNearHighDrawdownPct: Double = 8.0,
+    /** 放量：当日量 / 5日均量阈值 */
+    val trendVolumeRatio: Double = 1.2,
+    /** 通过所需最少项数（6项中） */
+    val trendMinPassCount: Int = 5,
+    /** 是否要求当日真实上涨 */
+    val trendRequireChangePct: Boolean = true
 ) {
 
     companion object {
@@ -167,8 +178,11 @@ class StockCheckPipeline(
                 mode = AnalysisMode.TREND_FOLLOW,
                 marketTrend = marketTrend
             )
-            // 固化参数覆盖（smalltools 三年 walk-forward 拟合）
-            return BacktestParamsLoader.applySelectOverrides("超短", base, marketTrend)
+            // 固化参数覆盖（smalltools 三年 walk-forward 拟合）+ 趋势跟随阈值（v6）
+            return BacktestParamsLoader.applyTrendFollowOverrides(
+                "超短",
+                BacktestParamsLoader.applySelectOverrides("超短", base, marketTrend)
+            )
         }
 
         /**
@@ -192,7 +206,10 @@ class StockCheckPipeline(
                 mode = AnalysisMode.TREND_FOLLOW,
                 marketTrend = marketTrend
             )
-            return BacktestParamsLoader.applySelectOverrides("短线", base, marketTrend)
+            return BacktestParamsLoader.applyTrendFollowOverrides(
+                "短线",
+                BacktestParamsLoader.applySelectOverrides("短线", base, marketTrend)
+            )
         }
 
         /**
@@ -662,22 +679,25 @@ class StockCheckPipeline(
 
         val results = mutableMapOf<String, Pair<Boolean, String>>()
 
-        // ① 多头排列（趋势向上核心）
-        val bullishAligned = if (ma60 != null) ma5 > ma10 && ma10 > ma20 && ma20 > ma60
+        // ① 多头排列（趋势向上核心）：trendUseMA60=true 时 MA20>MA60 参与（短线），false 仅三均线（超短）
+        val bullishAligned = if (trendUseMA60) {
+            if (ma60 != null) ma5 > ma10 && ma10 > ma20 && ma20 > ma60
             else ma5 > ma10 && ma10 > ma20
+        } else {
+            ma5 > ma10 && ma10 > ma20
+        }
         results["多头排列"] = bullishAligned to (if (bullishAligned) "多头" else "未多头")
 
-        // ② 贴近新高（突破动量）
+        // ② 贴近新高（突破动量）：回撤 < trendNearHighDrawdownPct
         val hi20 = snaps.takeLast(20).maxOfOrNull { it.high } ?: latest.high
         val drawdownPct = if (hi20 > 0) (hi20 - latest.close) / hi20 * 100 else 999.0
-        val nearHigh = drawdownPct < 8.0
+        val nearHigh = drawdownPct < trendNearHighDrawdownPct
         results["贴近新高"] = nearHigh to "回撤${"%.1f".format(drawdownPct)}%"
 
-        // ③ 放量
+        // ③ 放量：当日量/5日均量 ≥ trendVolumeRatio（超短 1.2 / 短线 1.0，smalltools 拟合口径）
         val vol5 = if (vols.size >= 6) vols.takeLast(6).dropLast(1).average() else vols.last()
         val volumeRatio = if (vol5 > 0) latest.volume.toDouble() / vol5 else 1.0
-        val volThreshold = 1.2  // 超短/短统一，偏严格
-        val volumeOk = volumeRatio >= volThreshold
+        val volumeOk = volumeRatio >= trendVolumeRatio
         results["放量"] = volumeOk to "量比${"%.2f".format(volumeRatio)}"
 
         // ④ 当日上涨（真实涨幅）
@@ -696,8 +716,8 @@ class StockCheckPipeline(
         val activeOrder = listOf("多头排列", "贴近新高", "放量", "上涨", "MA20上行", "站上5日线")
         var passCount = activeOrder.count { results[it]?.first == true }
         val totalChecks = activeOrder.size
-        // 通过标准：≥5/6 且当日须上涨（剔除下跌股）
-        val passed = passCount >= 5 && changeOk
+        // 通过标准：≥trendMinPassCount/6 且（如配置）当日须上涨（剔除下跌股）
+        val passed = passCount >= trendMinPassCount && (!trendRequireChangePct || changeOk)
 
         // ── v5: IC 排序因子（口径与 smalltools/_factor_ic.py 一致） ──
         val momentum5 = if (closes.size >= 5 && ma5 > 0) (latest.close / ma5 - 1) * 100 else Double.NaN

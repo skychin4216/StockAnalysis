@@ -182,8 +182,9 @@ object FullCycleBacktestEngine {
         progress: suspend (String) -> Unit = {}
     ): PeriodStats = withContext(Dispatchers.Default) {
         val db = StockDatabase.getInstance(context.applicationContext)
-        val params = PERIOD_SELL_PARAMS[period] ?: return@withContext emptyStats(period)
-        val selParams = params
+        // 代码模板仅作兜底：卖出参数以 backtest_params.json 的 9 格 sell_rules 为准
+        val fallbackParams = PERIOD_SELL_PARAMS[period] ?: return@withContext emptyStats(period)
+        BacktestParamsLoader.load(context)
         progress("[$period] 加载数据…")
         val universe = loadUniverse(context)
         val stockSnaps = loadStockSnaps(db, universe)
@@ -206,11 +207,12 @@ object FullCycleBacktestEngine {
             val idx = allDates.indexOfFirst { it >= windowStart }
             if (idx > 0) startIdx = idx
         }
-        // 留出持仓期，保证卖出模拟完整
-        val endIdx = allDates.size - (params.maxHoldDays + 2)
+        // 留出持仓期，保证卖出模拟完整（按该周期所有状态中最大的 maxHold 计算缓冲）
+        val bufferHold = BacktestParamsLoader.maxHold(period, fallbackParams.maxHoldDays)
+        val endIdx = allDates.size - (bufferHold + 2)
         if (endIdx <= startIdx) {
             return@withContext emptyStats(period).also {
-                progress("[$period] 无新增可回溯区间（需 ${params.maxHoldDays + 2} 天持仓缓冲）")
+                progress("[$period] 无新增可回溯区间（需 $bufferHold 天持仓缓冲）")
             }
         }
 
@@ -225,6 +227,8 @@ object FullCycleBacktestEngine {
             val pipeline = pipelineFor(period, state.selTrend)
             val signals = selectSignals(stockSnaps, pipeline, allDates, di, state)
             if (signals.isEmpty()) continue
+            // 按大盘状态取 9 格卖出参数（smalltools 拟合矩阵），JSON 不可用时回退代码模板
+            val params = BacktestParamsLoader.sellParams(context, period, state) ?: fallbackParams
             for (sig in signals) {
                 val trade = simulateTrade(sig, stockSnaps, allDates, params)
                 if (trade == null) continue
@@ -544,12 +548,12 @@ object FullCycleBacktestEngine {
             lastRet = (day.close / entry - 1) * 100
             if (day.close < prevClose) streak++ else streak = 0
             prevClose = day.close
-            // 跌破5日线：取当日之前（不含）5 日收盘
+            // 跌破 N 日线（maBreakDays，smalltools 9 格参数，短线 BULLISH=5 / OSCI·BEARISH=8）：取当日之前（不含）N 日收盘
             val histIdx = upperBoundDate(snaps, day.date)
-            if (histIdx >= 5) {
-                val ma5 = snaps.subList(histIdx - 5, histIdx).map { it.close }.average()
-                if (day.close < ma5) {
-                    return Outcome(lastRet, day.date, day.close, "跌破5日线", 0.0)
+            if (histIdx >= params.maBreakDays) {
+                val maN = snaps.subList(histIdx - params.maBreakDays, histIdx).map { it.close }.average()
+                if (day.close < maN) {
+                    return Outcome(lastRet, day.date, day.close, "跌破${params.maBreakDays}日线", 0.0)
                 }
             }
             if (streak >= params.streakSellDays) {

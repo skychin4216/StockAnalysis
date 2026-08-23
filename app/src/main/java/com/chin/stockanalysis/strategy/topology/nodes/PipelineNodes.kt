@@ -737,7 +737,7 @@ class AIPredictNode(
 /**
  * ## 主板过滤节点
  *
- * 从股票池中过滤出主板股票，排除 ETF、LOF、转债等非主板品种。
+ * 从股票池中过滤出沪深主板股票，排除 ETF、LOF、转债、科创板、创业板、北交所等非主板品种。
  *
  * 排除规则（股票代码前缀）：
  * - `sh51*` — 上证 ETF
@@ -745,12 +745,14 @@ class AIPredictNode(
  * - `sz15*` — 深证 ETF / LOF
  * - `sz16*` — 深证 ETF / LOF
  * - `bj8*`  — 北交所股票
+ * - `sh688*` / `sh689*` — 科创板股票
+ * - `sz300*` / `sz301*` — 创业板股票
  */
 class MainBoardFilterNode : BaseNode<Any, StockPool>("main_board_filter", "主板股票过滤", NodeType.FILTER) {
 
     companion object {
-        /** 排除的股票代码前缀集合 */
-        private val EXCLUDED_PREFIXES = setOf("sh51", "sh56", "sz15", "sz16", "bj8")
+        /** 排除的股票代码前缀集合（与 StrategyDataFeed.isMainBoard 语义保持一致） */
+        private val EXCLUDED_PREFIXES = setOf("sh51", "sh56", "sz15", "sz16", "bj8", "sh688", "sh689", "sz300", "sz301")
 
         /**
          * 判断股票代码是否为主板股票
@@ -798,6 +800,88 @@ class MainBoardFilterNode : BaseNode<Any, StockPool>("main_board_filter", "主�
             context.log(nodeId, "主板过滤异常: ${e.message}")
             // 出错时尝试返回原始股票池
             (input as? StockPool) ?: StockPool(emptyList(), "empty")
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  9. StockPoolFilterNode (FILTER) — 股票池清洗（ST / 主板开关）
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * ## 股票池过滤节点（ST / 主板开关）
+ *
+ * 在公共选股管线 `stock_picking_common_pipeline` 中紧跟在 `n_pool` 之后执行，
+ * 对股票池做两级硬过滤，从源头减小喂给各周期策略的输入规模：
+ *
+ * 1. **ST 过滤（无条件）**：名称含 `ST`/`*ST` 的退市风险股一律剔除；
+ * 2. **主板开关过滤（条件）**：当 [PipelineConfig.onlyMainBoard] = true（用户开启主板偏好）时，
+ *    剔除科创板（sh688/sh689）、创业板（sz300/sz301）及北交所/ETF 等非主板品种
+ *    （复用 [MainBoardFilterNode.isMainBoardStock] 规则）。
+ *
+ * 过滤结果会**覆盖写回 `n_pool`**，使下游策略节点通过 `getStageOutput("n_pool")`
+ * 兜底读取时拿到的是清洗后的股票池，避免 ST/非主板风险股流入选股链路。
+ */
+class StockPoolFilterNode : BaseNode<Any, StockPool>("pool_filter", "股票池过滤(ST/科创/创业)", NodeType.FILTER) {
+
+    companion object {
+        /** 判断是否为 ST / *ST 退市风险股 */
+        fun isStStock(name: String): Boolean = name.contains("ST", ignoreCase = true)
+    }
+
+    override suspend fun execute(context: PipelineContext, input: Any): StockPool {
+        return try {
+            // 从 input 或 context 中读取股票池（优先本节点写回的 n_pool）
+            val pool: StockPool = when (input) {
+                is StockPool -> input
+                else -> context.getStageOutput<StockPool>("n_pool")
+                    ?: context.getStageOutput<StockPool>("stock_pool")
+                    ?: return StockPool(emptyList(), "empty")
+            }
+
+            val onlyMainBoard = context.config.onlyMainBoard
+            var stExcluded = 0
+            var boardExcluded = 0
+            val kept = pool.stocks.filter { stock ->
+                when {
+                    isStStock(stock.name) -> { stExcluded++; false }
+                    onlyMainBoard && !MainBoardFilterNode.isMainBoardStock(stock.code) -> { boardExcluded++; false }
+                    else -> true
+                }
+            }
+            val excluded = stExcluded + boardExcluded
+
+            val result = StockPool(
+                stocks = kept,
+                source = pool.source,
+                totalCount = pool.totalCount,
+                filterReason = buildString {
+                    append(pool.filterReason)
+                    if (stExcluded > 0) { if (isNotEmpty()) append("; "); append("排除ST $stExcluded 只") }
+                    if (boardExcluded > 0) { if (isNotEmpty()) append("; "); append("排除非主板 $boardExcluded 只") }
+                }
+            )
+
+            // 覆盖写回 n_pool，让下游策略节点拿到清洗后的股票池
+            context.setStageOutput("n_pool", result)
+            context.setStageOutput(nodeId, result)
+            context.recordStockFlow(
+                nodeId = nodeId,
+                nodeName = nodeName,
+                inputCount = pool.stocks.size,
+                outputCount = kept.size,
+                filterCount = excluded,
+                filterReason = "ST $stExcluded / 主板开关 onlyMainBoard=$onlyMainBoard 排除 $boardExcluded"
+            )
+            context.log(
+                nodeId,
+                "股票池过滤: ${pool.stocks.size} → ${kept.size} 只（ST $stExcluded, 非主板 $boardExcluded, onlyMainBoard=$onlyMainBoard）"
+            )
+            result
+        } catch (e: Exception) {
+            context.log(nodeId, "股票池过滤异常: ${e.message}")
+            (input as? StockPool) ?: context.getStageOutput<StockPool>("n_pool")
+                ?: StockPool(emptyList(), "empty")
         }
     }
 }

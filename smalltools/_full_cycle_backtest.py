@@ -35,13 +35,72 @@ WINDOWS = {
     "长线":   ("2025-08-15", "2026-02-15", PARAMS["长线"]),
 }
 
-# 周期默认卖出参数（Kotlin AutoSellConfig 对齐）
+# 周期默认卖出参数（代码模板仅作兜底；优先读 APK 共享的 backtest_params.json）
 SELL_RULES = {
     "超短线": dict(style="nextday", maxHold=2, tp=0.0, sl=0.0),
     "短线":   dict(style="streak", streakDays=3, maBreak=5, maxHold=10, tp=0.0, sl=0.0),
     "中线":   dict(style="hold", maxHold=15, tp=20.0, sl=-10.0, tRatio=0.4),
     "长线":   dict(style="hold", maxHold=30, tp=40.0, sl=-12.0, tRatio=0.4),
 }
+
+# ── 单一事实源：从 APK 共享的 backtest_params.json 读取 9 格卖出参数 ──────────
+# smalltools / exe(AutoQuant) / APK 共用同一份参数文件，拟合一次三端生效。
+APK_PARAMS_JSON = os.path.normpath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..", "app", "src", "main", "assets", "backtest_params.json"))
+
+# backtest_params.json 周期 key → 本文件 SELL_RULES key
+_JSON_PERIOD_ALIAS = {"超短": "超短线", "短线": "短线", "中线": "中线", "长线": "长线"}
+
+
+def _load_sell_rules_from_json():
+    """从 backtest_params.json 加载 9 格卖出参数（default + by_state）。
+    文件缺失/损坏时回退代码模板 SELL_RULES。
+    返回 (default_rules, by_state_rules)，key 均为 SELL_RULES 的周期名。"""
+    default_rules = {k: dict(v) for k, v in SELL_RULES.items()}
+    by_state_rules = {}
+    try:
+        with open(APK_PARAMS_JSON, "r", encoding="utf-8") as f:
+            root = json.load(f)
+    except (OSError, ValueError):
+        return default_rules, by_state_rules
+    sr = root.get("sell_rules") or {}
+    for pkey, pobj in sr.items():
+        alias = _JSON_PERIOD_ALIAS.get(pkey, pkey)
+        if alias not in default_rules:
+            continue
+        merged = dict(default_rules[alias])
+        merged.update(pobj.get("default") or {})
+        default_rules[alias] = merged
+        st_map = {}
+        for st, st_rule in (pobj.get("by_state") or {}).items():
+            r = dict(merged)
+            r.update(st_rule)
+            st_map[st] = r
+        by_state_rules[alias] = st_map
+    return default_rules, by_state_rules
+
+
+SELL_RULES, SELL_RULES_BY_STATE = _load_sell_rules_from_json()
+
+# 周期别名 → SELL_RULES 规范名（矩阵/JSON 用"超短"，SELL_RULES 用"超短线"）
+_PERIOD_ALIAS_TO_CANON = {"超短": "超短线"}
+
+
+def sell_rule_for(period_key, state=None):
+    """按周期×大盘状态取卖出规则（9 格矩阵）。
+    - period_key 支持 SELL_RULES 规范名（超短线/短线/中线/长线）或别名（超短）
+    - state: BULLISH/OSCILLATION/BEARISH/CRASH；CRASH 回退 BEARISH；
+      None/未知/该状态无样本 → 回退 default（JSON default 或代码模板）
+    """
+    key = _PERIOD_ALIAS_TO_CANON.get(period_key, period_key)
+    st = state or "default"
+    if st == "CRASH":
+        st = "BEARISH"
+    st_map = SELL_RULES_BY_STATE.get(key)
+    if st != "default" and st_map and st in st_map:
+        return st_map[st]
+    return SELL_RULES[key]
 
 # 做T参数：涨≥0.5% 高抛 40%，跌≤-0.5% 低吸买回（对齐 Kotlin TTradeEngine 语义）
 T_UP_PCT, T_DOWN_PCT = 0.5, -0.5

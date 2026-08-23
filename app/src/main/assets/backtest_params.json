@@ -100,6 +100,22 @@
    "volumeBreakoutRatio": 0.0
   }
  },
+ "trend_follow": {
+  "超短": {
+   "useMA60": false,
+   "nearHighDrawdownPct": 8.0,
+   "volumeRatio": 1.2,
+   "minPassCount": 5,
+   "requireChangePct": true
+  },
+  "短线": {
+   "useMA60": true,
+   "nearHighDrawdownPct": 8.0,
+   "volumeRatio": 1.0,
+   "minPassCount": 5,
+   "requireChangePct": true
+  }
+ },
  "seasonality": {
   "enabled": true,
   "anchors": {
@@ -158,8 +174,8 @@
     "BULLISH": {
      "style": "nextday",
      "maxHold": 1,
-     "tp": 0.0,
-     "sl": 0.0,
+     "tp": 0.4,
+     "sl": -0.8,
      "avg": 3.27,
      "wr": 44.5,
      "n": 44
@@ -167,8 +183,8 @@
     "OSCILLATION": {
      "style": "nextday",
      "maxHold": 1,
-     "tp": 0.0,
-     "sl": 0.0,
+     "tp": 0.4,
+     "sl": -0.8,
      "avg": 1.51,
      "wr": 56.1,
      "n": 207
@@ -176,8 +192,8 @@
     "BEARISH": {
      "style": "nextday",
      "maxHold": 1,
-     "tp": 0.0,
-     "sl": 0.0,
+     "tp": 0.4,
+     "sl": -0.8,
      "avg": 5.08,
      "wr": 67.3,
      "n": 129
@@ -202,9 +218,9 @@
      "style": "streak",
      "streakDays": 2,
      "maBreak": 5,
-     "maxHold": 8,
-     "tp": 0.0,
-     "sl": 0.0,
+     "maxHold": 3,
+     "tp": 1.5,
+     "sl": -1.5,
      "avg": 1.26,
      "wr": 53.0,
      "n": 55
@@ -213,9 +229,9 @@
      "style": "streak",
      "streakDays": 2,
      "maBreak": 8,
-     "maxHold": 10,
-     "tp": 0.0,
-     "sl": 0.0,
+     "maxHold": 3,
+     "tp": 1.5,
+     "sl": -1.5,
      "avg": 2.68,
      "wr": 56.5,
      "n": 50
@@ -224,9 +240,9 @@
      "style": "streak",
      "streakDays": 2,
      "maBreak": 8,
-     "maxHold": 8,
-     "tp": 0.0,
-     "sl": 0.0,
+     "maxHold": 5,
+     "tp": 1.5,
+     "sl": -5.0,
      "avg": 6.79,
      "wr": 43.7,
      "n": 134
@@ -248,9 +264,9 @@
    "by_state": {
     "BULLISH": {
      "style": "hold",
-     "maxHold": 16,
-     "tp": 25,
-     "sl": -8,
+     "maxHold": 10,
+     "tp": 3.0,
+     "sl": -8.0,
      "tRatio": 0.4,
      "avg": 5.41,
      "wr": 57.5,
@@ -258,9 +274,9 @@
     },
     "OSCILLATION": {
      "style": "hold",
-     "maxHold": 16,
-     "tp": 25,
-     "sl": -6,
+     "maxHold": 10,
+     "tp": 3.0,
+     "sl": -8.0,
      "tRatio": 0.4,
      "avg": 5.04,
      "wr": 51.9,
@@ -269,8 +285,8 @@
     "BEARISH": {
      "style": "hold",
      "maxHold": 10,
-     "tp": 15,
-     "sl": -6,
+     "tp": 3.0,
+     "sl": -8.0,
      "tRatio": 0.4,
      "avg": 1.33,
      "wr": 65.8,

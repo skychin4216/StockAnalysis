@@ -35,6 +35,7 @@ object NodeRegistry {
 
         // 过滤
         register("main_board_filter") { ctx, _ -> MainBoardFilterNode() }
+        register("pool_filter") { ctx, _ -> StockPoolFilterNode() }
 
         // 聚合
         register("signal_merge") { ctx, _ -> SignalMergeNode() }

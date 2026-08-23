@@ -34,6 +34,9 @@
     <!-- Layer 1 -->
     <Node id="n_pool" name="股票池" module="stock_pool" />
 
+    <!-- Layer 1: 股票池清洗（ST 无条件排除 + 主板开关时排除科创/创业），减小输入源规模 -->
+    <Node id="n_pool_filter" name="股票池过滤(ST/科创/创业)" module="pool_filter" />
+
     <!-- 大盘均线检查 Pipeline 分组 -->
     <Pipeline id="market_check" name="大盘均线检查">
       <NodeList>
@@ -73,6 +76,14 @@
       <SourceNodeId>n_ctx</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_pool</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- 股票池 → 股票池过滤（ST/科创/创业），输出覆盖写回 n_pool -->
+    <Link>
+      <SourceNodeId>n_pool</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_pool_filter</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
 

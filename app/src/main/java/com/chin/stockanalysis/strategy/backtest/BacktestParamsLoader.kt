@@ -184,7 +184,57 @@ object BacktestParamsLoader {
             swingLeftN = base.swingLeftN,
             swingRightN = base.swingRightN,
             marketTrend = marketTrend,
-            mode = base.mode
+            mode = base.mode,
+            // v6: 保留趋势跟随参数（由 applyTrendFollowOverrides 单独覆盖）
+            trendUseMA60 = base.trendUseMA60,
+            trendNearHighDrawdownPct = base.trendNearHighDrawdownPct,
+            trendVolumeRatio = base.trendVolumeRatio,
+            trendMinPassCount = base.trendMinPassCount,
+            trendRequireChangePct = base.trendRequireChangePct
+        )
+    }
+
+    /**
+     * 趋势跟随参数覆盖（v6，超短/短线 TREND_FOLLOW 模式）：
+     * 从 backtest_params.json 的 trend_follow.<周期> 读取阈值，
+     * 与 smalltools/_trend_proto.py 的 _tf_cfg() 共用同一 JSON（单一事实源）。
+     * JSON 无该节时原样返回 base（安全降级到代码默认）。
+     */
+    fun applyTrendFollowOverrides(period: String, base: StockCheckPipeline): StockCheckPipeline {
+        val o = root?.optJSONObject("trend_follow")?.optJSONObject(period) ?: return base
+        return StockCheckPipeline(
+            convergenceThreshold = base.convergenceThreshold,
+            useMA60 = base.useMA60,
+            convergenceDurationDays = base.convergenceDurationDays,
+            convergenceDurationRatio = base.convergenceDurationRatio,
+            volumeBreakoutRatio = base.volumeBreakoutRatio,
+            minChangePct = base.minChangePct,
+            requireChangePct = base.requireChangePct,
+            minDrawdownPct = base.minDrawdownPct,
+            requireMA60Rising = base.requireMA60Rising,
+            maRisingDays = base.maRisingDays,
+            requireMA250Rising = base.requireMA250Rising,
+            useMA250InBullish = base.useMA250InBullish,
+            requireCloseAboveConvergenceTop = base.requireCloseAboveConvergenceTop,
+            requireOpenBelowMAs = base.requireOpenBelowMAs,
+            requireVolumeShrink = base.requireVolumeShrink,
+            volumeShrinkRatio = base.volumeShrinkRatio,
+            requireAboveYearLine = base.requireAboveYearLine,
+            requireAboveAllMAs = base.requireAboveAllMAs,
+            moderateVolumeLower = base.moderateVolumeLower,
+            moderateVolumeUpper = base.moderateVolumeUpper,
+            lookbackDays = base.lookbackDays,
+            minPassCount = base.minPassCount,
+            requireThreeDayConfirm = base.requireThreeDayConfirm,
+            swingLeftN = base.swingLeftN,
+            swingRightN = base.swingRightN,
+            marketTrend = base.marketTrend,
+            mode = base.mode,
+            trendUseMA60 = o.optBoolean("useMA60", base.trendUseMA60),
+            trendNearHighDrawdownPct = o.optDouble("nearHighDrawdownPct", base.trendNearHighDrawdownPct),
+            trendVolumeRatio = o.optDouble("volumeRatio", base.trendVolumeRatio),
+            trendMinPassCount = o.optInt("minPassCount", base.trendMinPassCount),
+            trendRequireChangePct = o.optBoolean("requireChangePct", base.trendRequireChangePct)
         )
     }
 
@@ -286,6 +336,58 @@ object BacktestParamsLoader {
             winRate = 0.0,
             sampleCount = 0
         )
+    }
+
+    /**
+     * 固化卖出参数（完整版，smalltools 9 格 usecase 矩阵同步源）：
+     * 返回可直接驱动 [FullCycleBacktestEngine.SellParams] 的规则。
+     * - 按 [state] 从 sell_rules.<period>.by_state 读取；CRASH 回退 BEARISH；
+     * - 该状态缺失时回退 default；JSON 不可用时返回 null（调用方回退代码模板）。
+     */
+    fun sellParams(
+        context: Context,
+        period: String,
+        state: FullCycleBacktestEngine.MarketState
+    ): FullCycleBacktestEngine.SellParams? {
+        load(context)
+        val periodObj = root?.optJSONObject("sell_rules")?.optJSONObject(period) ?: return null
+        val stateKey = if (state == FullCycleBacktestEngine.MarketState.CRASH) {
+            FullCycleBacktestEngine.MarketState.BEARISH.name
+        } else {
+            state.name
+        }
+        val rule = periodObj.optJSONObject("by_state")?.optJSONObject(stateKey)
+            ?: periodObj.optJSONObject("default")
+            ?: return null
+        val style = when (rule.optString("style", "hold").lowercase()) {
+            "nextday" -> FullCycleBacktestEngine.SellStyle.NEXTDAY
+            "streak" -> FullCycleBacktestEngine.SellStyle.STREAK
+            else -> FullCycleBacktestEngine.SellStyle.HOLD
+        }
+        return FullCycleBacktestEngine.SellParams(
+            period = period,
+            style = style,
+            maxHoldDays = rule.optInt("maxHold", 1).coerceAtLeast(1),
+            takeProfitPct = rule.optDouble("tp", 0.0),
+            stopLossPct = rule.optDouble("sl", 0.0),
+            tRatio = rule.optDouble("tRatio", FullCycleBacktestEngine.DEFAULT_T_RATIO),
+            streakSellDays = rule.optInt("streakDays", 3),
+            maBreakDays = rule.optInt("maBreak", 5)
+        )
+    }
+
+    /** 该周期所有卖出规则（default + by_state）中最大的 maxHold，用于持仓缓冲；JSON 不可用时返回 [fallback] */
+    fun maxHold(period: String, fallback: Int): Int {
+        val periodObj = root?.optJSONObject("sell_rules")?.optJSONObject(period) ?: return fallback
+        var max = fallback
+        periodObj.optJSONObject("default")?.optInt("maxHold")?.let { if (it > max) max = it }
+        periodObj.optJSONObject("by_state")?.let { bs ->
+            val keys = bs.keys()
+            while (keys.hasNext()) {
+                bs.optJSONObject(keys.next())?.optInt("maxHold")?.let { if (it > max) max = it }
+            }
+        }
+        return max
     }
 
     // ───────────────────────── 做T信号参数（t_trade） ─────────────────────────

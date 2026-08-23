@@ -33,7 +33,9 @@ object MarketAdaptiveStrategy {
         /** 仓位上限（来自 PositionWaterValve） */
         val positionCapPercent: Int,
         /** 策略描述（用于日志和 UI 显示） */
-        val description: String
+        val description: String,
+        /** 大盘方向：BULLISH / BEARISH / OSCILLATION（usecase XML 环境路由判据） */
+        val direction: String = "OSCILLATION"
     )
 
     /**
@@ -53,7 +55,8 @@ object MarketAdaptiveStrategy {
                 stopLossRate = -0.03,
                 takeProfitRate = 0.05,
                 positionCapPercent = capResult.capPercent,
-                description = "📉 强趋势空头（强度${strength}）：阈值55，最多2只，快进快出"
+                description = "📉 强趋势空头（强度${strength}）：阈值55，最多2只，快进快出",
+                direction = direction
             )
             // 弱趋势下跌
             direction == "BEARISH" -> AdaptiveParams(
@@ -63,7 +66,8 @@ object MarketAdaptiveStrategy {
                 stopLossRate = -0.04,
                 takeProfitRate = 0.07,
                 positionCapPercent = capResult.capPercent,
-                description = "📉 弱趋势空头（强度${strength}）：阈值60，最多2只"
+                description = "📉 弱趋势空头（强度${strength}）：阈值60，最多2只",
+                direction = direction
             )
             // 多头上升
             direction == "BULLISH" -> AdaptiveParams(
@@ -73,7 +77,8 @@ object MarketAdaptiveStrategy {
                 stopLossRate = -0.08,
                 takeProfitRate = 0.15,
                 positionCapPercent = capResult.capPercent,
-                description = "📈 多头上升（强度${strength}）：阈值50，最多4只，让利润奔驰"
+                description = "📈 多头上升（强度${strength}）：阈值50，最多4只，让利润奔驰",
+                direction = direction
             )
             // 震荡
             else -> AdaptiveParams(
@@ -83,7 +88,8 @@ object MarketAdaptiveStrategy {
                 stopLossRate = -0.05,
                 takeProfitRate = 0.07,
                 positionCapPercent = capResult.capPercent,
-                description = "📊 震荡市（强度${strength}）：阈值55，最多3只，配合做T"
+                description = "📊 震荡市（强度${strength}）：阈值55，最多3只，配合做T",
+                direction = direction
             )
         }
     }

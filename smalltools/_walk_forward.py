@@ -32,7 +32,7 @@ from datetime import date
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from backtest_guangmo import analyze_snaps, PARAMS
-from _full_cycle_backtest import load_cache, market_state, simulate_trade, stats, SELL_RULES
+from _full_cycle_backtest import load_cache, market_state, simulate_trade, stats, SELL_RULES, sell_rule_for
 from _pool_filters import extra_filter
 
 START = date(2023, 8, 15)
@@ -134,12 +134,12 @@ def load_prev_fitted():
 
 
 def rule_for(period, fitted_prev, state):
-    """取该周期该状态的应用规则（上月拟合优先），否则用默认"""
+    """取该周期该状态的应用规则：上月拟合优先 → 9 格矩阵（backtest_params.json）→ 代码默认"""
     if fitted_prev:
         st_rule = fitted_prev.get(period, {}).get(state)
         if isinstance(st_rule, dict) and "rule" in st_rule:
             return st_rule["rule"]
-    return SELL_RULES[RULES_KEY[period]]
+    return sell_rule_for(RULES_KEY[period], state)
 
 
 def load_hist_signals(period, lookback_months=None):
