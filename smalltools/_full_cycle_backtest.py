@@ -21,6 +21,7 @@ from collections import Counter
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from backtest_guangmo import analyze_snaps, PARAMS, get_index_dir, triple_vote
+from _pool_filters import extra_filter
 
 CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
 INDEXES = ["sh000001", "sz399001", "sz399006"]
@@ -106,11 +107,16 @@ def collect_signals(cache, all_dates, date_to_idx, period):
             # CRASH（暴跌期）视为 BEARISH 选股，用最保守参数
             sel_trend = st if st in ("BULLISH", "BEARISH") else ("BEARISH" if st == "CRASH" else "OSCILLATION")
             try:
-                ok = bool(analyze_snaps(sub, p, sel_trend).get("passed"))
+                r = analyze_snaps(sub, p, sel_trend)
+                ok = bool(r.get("passed"))
             except Exception:
                 continue
-            if ok:
-                sigs.append((code, name, asof, date_to_idx.get(asof, 0) + 1, st))
+            if not ok:
+                continue
+            # 股票池/信号硬过滤（ST、主板开关、粘合持续、短线关键项、板块代理）
+            if not extra_filter(code, name, r, period, cache, all_dates, date_to_idx, asof):
+                continue
+            sigs.append((code, name, asof, date_to_idx.get(asof, 0) + 1, st))
     return sigs, state_counter
 
 

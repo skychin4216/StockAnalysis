@@ -33,6 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from backtest_guangmo import analyze_snaps, PARAMS
 from _full_cycle_backtest import load_cache, market_state, simulate_trade, stats, SELL_RULES
+from _pool_filters import extra_filter
 
 START = date(2023, 8, 15)
 END = date(2026, 8, 15)
@@ -105,11 +106,16 @@ def collect_signals_window(cache, all_dates, date_to_idx, period, w_start, w_end
             sub[-1]["name"] = name
             sel_trend = st if st in ("BULLISH", "BEARISH") else ("BEARISH" if st == "CRASH" else "OSCILLATION")
             try:
-                ok = bool(analyze_snaps(sub, p, sel_trend).get("passed"))
+                r = analyze_snaps(sub, p, sel_trend)
+                ok = bool(r.get("passed"))
             except Exception:
                 continue
-            if ok:
-                sigs.append([code, name, asof, date_to_idx.get(asof, 0) + 1, st])
+            if not ok:
+                continue
+            # 股票池/信号硬过滤（ST、主板开关、粘合持续、短线关键项、板块代理）
+            if not extra_filter(code, name, r, period, cache, all_dates, date_to_idx, asof):
+                continue
+            sigs.append([code, name, asof, date_to_idx.get(asof, 0) + 1, st])
         if verbose and sigs and len(state_counter) and (asof == scan_dates[-1]):
             print(f"    末交易日 {asof} 大盘 {st} 累计信号 {len(sigs)}")
     return sigs, state_counter

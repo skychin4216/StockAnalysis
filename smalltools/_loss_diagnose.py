@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from backtest_guangmo import analyze_snaps, PARAMS  # noqa: E402
 from _full_cycle_backtest import load_cache, market_state, simulate_trade, stats, SELL_RULES  # noqa: E402
+from _pool_filters import extra_filter  # noqa: E402
 
 PERIODS = ["超短", "短线", "中线", "长线"]
 RULES_KEY = {"超短": "超短线", "短线": "短线", "中线": "中线", "长线": "长线"}
@@ -87,6 +88,9 @@ def collect(cache, all_dates, date_to_idx, w_start, w_end, periods):
                 except Exception:
                     continue
                 if not r.get("passed"):
+                    continue
+                # 与 _walk_forward/_full_cycle_backtest 同步的硬过滤（ST/主板/粘合/短线/板块代理）
+                if not extra_filter(code, name, r, period, cache, all_dates, date_to_idx, asof):
                     continue
                 # 交易模拟
                 sig = [code, name, asof, date_to_idx.get(asof, 0) + 1, st]

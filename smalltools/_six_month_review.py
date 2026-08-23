@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from _full_cycle_backtest import load_cache, simulate_trade, stats, SELL_RULES  # noqa: E402
 from _walk_forward import collect_signals_window  # noqa: E402
+import _pool_filters as pf  # noqa: E402
 
 PERIODS = ["超短", "短线", "中线", "长线"]
 RULES_KEY = {"超短": "超短线", "短线": "短线", "中线": "中线", "长线": "长线"}
@@ -124,13 +125,26 @@ def main():
     ap.add_argument("--no-week", action="store_true", help="跳过周选股")
     ap.add_argument("--top", type=int, default=99, help="每周期成交明细最多打印 N 笔（默认 99）")
     ap.add_argument("--json", default="", help="把各周期交易明细导出到 json 文件")
+    ap.add_argument("--no-main", action="store_true", help="关闭主板开关（保留科创/创业板），默认开启（排除科创/创业）")
+    ap.add_argument("--sector-threshold", type=float, default=None,
+                    help="板块代理过滤阈值（行业近20日平均涨幅%），默认 -3.0")
+    ap.add_argument("--pass-count", default="", help="按周期提高门槛，如 短线:7,中线:7（默认不覆盖）")
     args = ap.parse_args()
+
+    # 主板开关 + 周期门槛覆盖（默认：主板开，超短/短线/中线增强过滤生效，长线豁免）
+    pf.MAIN_BOARD = not args.no_main
+    if args.sector_threshold is not None:
+        pf.SECTOR_THRESHOLD = args.sector_threshold
+    if args.pass_count:
+        pf.PASS_COUNT = dict(kv.split(":") for kv in args.pass_count.split(","))
 
     cache = load_cache()
     all_dates = sorted({d for e in cache.values() for s in e.get("snaps", []) for d in [s["date"]]})
     date_to_idx = {d: i for i, d in enumerate(all_dates)}
     cache_end = date.fromisoformat(all_dates[-1])
     print("股票池 %d 只 | 交易日 %s ~ %s" % (len(cache), all_dates[0], all_dates[-1]))
+    print("过滤口径: 主板开关=%s | 板块阈值=%s | passCount覆盖=%s"
+          % ("开(排除科创/创业)" if pf.MAIN_BOARD else "关(含科创/创业)", pf.SECTOR_THRESHOLD, pf.PASS_COUNT or "无"))
 
     periods = [p for p in PERIODS if p in args.periods.split(",")] if args.periods else PERIODS
     if not periods:

@@ -1,0 +1,329 @@
+{
+  "超短": {
+    "BULLISH": {
+      "strategy": "S4强反转",
+      "confirm": "无",
+      "pool": "主板",
+      "sell": {
+        "tp": 0.4,
+        "sl": -0.8,
+        "hold": 1
+      },
+      "n": 16,
+      "winrate": 93.8,
+      "avg": 0.33,
+      "hit90": true,
+      "env": "BULLISH",
+      "years": [
+        {
+          "year": "2024",
+          "n": 6,
+          "wr": 83.3,
+          "avg": 0.2
+        },
+        {
+          "year": "2025",
+          "n": 6,
+          "wr": 100.0,
+          "avg": 0.4
+        },
+        {
+          "year": "2026",
+          "n": 4,
+          "wr": 100.0,
+          "avg": 0.4
+        }
+      ]
+    },
+    "OSCILLATION": {
+      "strategy": "S4K线反转",
+      "confirm": "基因强+资金流强+板块≥5",
+      "pool": "全市场",
+      "sell": {
+        "tp": 0.4,
+        "sl": -0.8,
+        "hold": 1
+      },
+      "n": 12,
+      "winrate": 91.7,
+      "avg": 0.3,
+      "hit90": true,
+      "env": "OSCILLATION",
+      "years": [
+        {
+          "year": "2024",
+          "n": 6,
+          "wr": 100.0,
+          "avg": 0.4
+        },
+        {
+          "year": "2025",
+          "n": 3,
+          "wr": 100.0,
+          "avg": 0.4
+        },
+        {
+          "year": "2026",
+          "n": 3,
+          "wr": 66.7,
+          "avg": 0.0
+        }
+      ]
+    },
+    "BEARISH": {
+      "strategy": "S1严选",
+      "confirm": "环境持续≥5",
+      "pool": "全市场",
+      "sell": {
+        "tp": 0.4,
+        "sl": -0.8,
+        "hold": 1
+      },
+      "n": 11,
+      "winrate": 90.9,
+      "avg": 0.29,
+      "hit90": true,
+      "env": "BEARISH",
+      "years": [
+        {
+          "year": "2023",
+          "n": 2,
+          "wr": 100.0,
+          "avg": 0.4
+        },
+        {
+          "year": "2024",
+          "n": 9,
+          "wr": 88.9,
+          "avg": 0.27
+        }
+      ]
+    }
+  },
+  "短线": {
+    "BULLISH": {
+      "strategy": "S1严选",
+      "confirm": "涨停基因zt20",
+      "pool": "全市场",
+      "sell": {
+        "tp": 1.5,
+        "sl": -1.5,
+        "hold": 3
+      },
+      "n": 11,
+      "winrate": 90.9,
+      "avg": 1.23,
+      "hit90": true,
+      "env": "BULLISH",
+      "years": [
+        {
+          "year": "2024",
+          "n": 1,
+          "wr": 100.0,
+          "avg": 1.5
+        },
+        {
+          "year": "2025",
+          "n": 8,
+          "wr": 87.5,
+          "avg": 1.12
+        },
+        {
+          "year": "2026",
+          "n": 2,
+          "wr": 100.0,
+          "avg": 1.5
+        }
+      ]
+    },
+    "OSCILLATION": {
+      "strategy": "S4K线反转",
+      "confirm": "基因强+资金流强+板块≥5",
+      "pool": "全市场",
+      "sell": {
+        "tp": 1.5,
+        "sl": -1.5,
+        "hold": 3
+      },
+      "n": 12,
+      "winrate": 91.7,
+      "avg": 1.25,
+      "hit90": true,
+      "env": "OSCILLATION",
+      "years": [
+        {
+          "year": "2024",
+          "n": 6,
+          "wr": 100.0,
+          "avg": 1.5
+        },
+        {
+          "year": "2025",
+          "n": 3,
+          "wr": 100.0,
+          "avg": 1.5
+        },
+        {
+          "year": "2026",
+          "n": 3,
+          "wr": 66.7,
+          "avg": 0.5
+        }
+      ]
+    },
+    "BEARISH": {
+      "strategy": "S3龙头深跌低吸",
+      "confirm": "环境持续≥3+资金流强",
+      "pool": "全市场",
+      "sell": {
+        "tp": 1.5,
+        "sl": -5.0,
+        "hold": 5
+      },
+      "n": 42,
+      "winrate": 97.6,
+      "avg": 1.35,
+      "hit90": true,
+      "env": "BEARISH",
+      "years": [
+        {
+          "year": "2024",
+          "n": 3,
+          "wr": 100.0,
+          "avg": 1.5
+        },
+        {
+          "year": "2025",
+          "n": 4,
+          "wr": 100.0,
+          "avg": 1.5
+        },
+        {
+          "year": "2026",
+          "n": 35,
+          "wr": 97.1,
+          "avg": 1.31
+        }
+      ]
+    }
+  },
+  "中线": {
+    "BULLISH": {
+      "strategy": "S5深回踩严",
+      "confirm": "基因强+资金流强+板块≥5",
+      "pool": "主板",
+      "sell": {
+        "tp": 3.0,
+        "sl": -8.0,
+        "hold": 10
+      },
+      "n": 13,
+      "winrate": 92.3,
+      "avg": 2.15,
+      "hit90": true,
+      "env": "BULLISH",
+      "years": [
+        {
+          "year": "2024",
+          "n": 6,
+          "wr": 100.0,
+          "avg": 3.0
+        },
+        {
+          "year": "2025",
+          "n": 3,
+          "wr": 100.0,
+          "avg": 3.0
+        },
+        {
+          "year": "2026",
+          "n": 4,
+          "wr": 75.0,
+          "avg": 0.25
+        }
+      ]
+    },
+    "OSCILLATION": {
+      "strategy": "S1粘合突破",
+      "confirm": "基因+资金流",
+      "pool": "主板",
+      "sell": {
+        "tp": 3.0,
+        "sl": -8.0,
+        "hold": 10
+      },
+      "n": 21,
+      "winrate": 95.2,
+      "avg": 2.48,
+      "hit90": true,
+      "env": "OSCILLATION",
+      "years": [
+        {
+          "year": "2023",
+          "n": 2,
+          "wr": 100.0,
+          "avg": 3.0
+        },
+        {
+          "year": "2024",
+          "n": 9,
+          "wr": 88.9,
+          "avg": 1.78
+        },
+        {
+          "year": "2025",
+          "n": 6,
+          "wr": 100.0,
+          "avg": 3.0
+        },
+        {
+          "year": "2026",
+          "n": 4,
+          "wr": 100.0,
+          "avg": 3.0
+        }
+      ]
+    },
+    "BEARISH": {
+      "strategy": "S5深回踩+资金流",
+      "confirm": "环境持续≥3+资金流强",
+      "pool": "主板",
+      "sell": {
+        "tp": 3.0,
+        "sl": -8.0,
+        "hold": 10
+      },
+      "n": 54,
+      "winrate": 98.1,
+      "avg": 2.8,
+      "hit90": true,
+      "env": "BEARISH",
+      "years": [
+        {
+          "year": "2023",
+          "n": 1,
+          "wr": 100.0,
+          "avg": 3.0
+        },
+        {
+          "year": "2024",
+          "n": 3,
+          "wr": 100.0,
+          "avg": 3.0
+        },
+        {
+          "year": "2025",
+          "n": 11,
+          "wr": 100.0,
+          "avg": 3.0
+        },
+        {
+          "year": "2026",
+          "n": 39,
+          "wr": 97.4,
+          "avg": 2.72
+        }
+      ]
+    }
+  }
+}
