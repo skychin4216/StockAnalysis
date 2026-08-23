@@ -64,28 +64,50 @@ jobs:
           ls -la /dev/kvm || echo "/dev/kvm NOT available"
 
       # 3) 安装 API 34 google_apis 系统镜像（手动分步，便于诊断）
+      #    GitHub runner 上 sdkmanager/avdmanager 不在 PATH，需用 $ANDROID_HOME/cmdline-tools/latest/bin/
+      - name: Inspect SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME" 2>/dev/null
+          echo "--- cmdline-tools ---"
+          ls "$ANDROID_HOME/cmdline-tools/latest/bin" 2>/dev/null || ls "$ANDROID_HOME/cmdline-tools" 2>/dev/null
+          echo "--- preinstalled system-images ---"
+          find "$ANDROID_HOME/system-images" -maxdepth 3 -type d 2>/dev/null | head -30
+          echo "--- which ---"
+          which sdkmanager adb avdmanager emulator 2>/dev/null || true
+
       - name: Install system image
         run: |
-          set -x
-          echo "sdk root: $ANDROID_HOME"
-          sdkmanager --version || sdkmanager --version
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager "system-images;android-34;google_apis;x86_64" 2>&1 | tee /tmp/sdk-install.log
-          echo "EXIT=$?"
-          ls -la "$ANDROID_HOME/system-images/android-34/google_apis/x86_64/" | head -20
+          SDKMAN="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMAN" ]; then SDKMAN=$(which sdkmanager); fi
+          echo "using sdkmanager: $SDKMAN"
+          {
+            echo "=== sdkmanager version ==="
+            "$SDKMAN" --version
+            echo "=== accept licenses ==="
+            yes | "$SDKMAN" --licenses > /dev/null 2>&1 || true
+            echo "=== install system image ==="
+            "$SDKMAN" "system-images;android-34;google_apis;x86_64"
+            echo "INSTALL_EXIT=$?"
+          } 2>&1 | tee /tmp/sdk-install.log
+          ls -la "$ANDROID_HOME/system-images/android-34/google_apis/x86_64/" | head -20 || true
 
       # 4) 创建 AVD
       - name: Create AVD
         run: |
-          set -x
-          echo "no" | avdmanager create avd -n ci_test -k "system-images;android-34;google_apis;x86_64" -d pixel_6 --force 2>&1 | tee /tmp/avd-create.log
-          avdmanager list avd | head -20
+          AVDMAN="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
+          if [ ! -x "$AVDMAN" ]; then AVDMAN=$(which avdmanager); fi
+          echo "using avdmanager: $AVDMAN"
+          echo "no" | "$AVDMAN" create avd -n ci_test -k "system-images;android-34;google_apis;x86_64" -d pixel_6 --force 2>&1 | tee /tmp/avd-create.log
+          "$AVDMAN" list avd | head -20
 
       # 5) 启动模拟器（后台）并等待 boot 完成
       - name: Start emulator
         run: |
-          set -x
-          $ANDROID_HOME/emulator/emulator -avd ci_test \
+          EMULATOR="$ANDROID_HOME/emulator/emulator"
+          if [ ! -x "$EMULATOR" ]; then EMULATOR=$(which emulator); fi
+          echo "using emulator: $EMULATOR"
+          "$EMULATOR" -avd ci_test \
             -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim \
             -no-metrics -memory 2048 -cores 2 \
             > /tmp/emulator.log 2>&1 &
