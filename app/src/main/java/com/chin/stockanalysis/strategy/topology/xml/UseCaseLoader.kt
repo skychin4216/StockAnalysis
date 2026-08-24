@@ -376,19 +376,26 @@ object UseCaseLoader {
      */
     private suspend fun evalStepIf(expr: String, context: PipelineContext): Boolean {
         if (expr.isBlank()) return true
-        // 解析 ${nodeId}.fieldName
-        val refMatch = Regex("\\$\\{([^}]+)\\}").find(expr) ?: run {
+        // 解析 ${nodeId}.fieldName —— 兼容两种写法：
+        //   1) 点号在花括号外：${n_adaptive}.direction（usecase 现行写法）
+        //   2) 点号在花括号内：${n_adaptive.direction}（兼容旧写法）
+        val refMatch = Regex("\\$\\{([^}]+)\\}(?:\\.([A-Za-z_][A-Za-z0-9_]*))?").find(expr) ?: run {
             Log.w(TAG, "if 条件无法解析: $expr")
             return false
         }
-        val ref = refMatch.groupValues[1]
-        val dotIdx = ref.indexOf('.')
-        if (dotIdx <= 0) {
-            Log.w(TAG, "if 条件引用格式错误（缺少 .字段名）: $expr")
-            return false
+        var ref = refMatch.groupValues[1]
+        var fieldName = refMatch.groupValues[2]
+        if (fieldName.isEmpty()) {
+            // 括号内没有外置字段名，尝试在括号内容中拆分 ${nodeId.fieldName}
+            val dotIdx = ref.indexOf('.')
+            if (dotIdx <= 0) {
+                Log.w(TAG, "if 条件引用格式错误（缺少 .字段名）: $expr")
+                return false
+            }
+            fieldName = ref.substring(dotIdx + 1)
+            ref = ref.substring(0, dotIdx)
         }
-        val nodeId = ref.substring(0, dotIdx)
-        val fieldName = ref.substring(dotIdx + 1)
+        val nodeId = ref
 
         // 从 stageOutputs 读取输出对象
         val output = context.stageOutputs[nodeId] ?: run {

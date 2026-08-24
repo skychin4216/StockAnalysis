@@ -325,5 +325,55 @@
         }
       ]
     }
+  },
+  "长线": {
+    "BULLISH": {
+      "strategy": "S5深回踩严",
+      "confirm": "站上年线+MA250上升+资金流强",
+      "pool": "主板",
+      "sell": {
+        "tp": 50.0,
+        "sl": -8.0,
+        "hold": 40
+      },
+      "n": 177,
+      "winrate": 56.2,
+      "avg": 3.93,
+      "hit90": false,
+      "env": "BULLISH",
+      "note": "2026-08-15 一年回溯实证（backtest_params.json 长线 by_state），尚未线上验证，待 news_guard/smart/ai 三层线上确认后复评 hit90"
+    },
+    "OSCILLATION": {
+      "strategy": "S1粘合突破",
+      "confirm": "站上年线+基因+资金流",
+      "pool": "主板",
+      "sell": {
+        "tp": 40.0,
+        "sl": -12.0,
+        "hold": 40
+      },
+      "n": 72,
+      "winrate": 60.5,
+      "avg": 4.92,
+      "hit90": false,
+      "env": "OSCILLATION",
+      "note": "2026-08-15 一年回溯实证（backtest_params.json 长线 by_state），尚未线上验证，待 news_guard/smart/ai 三层线上确认后复评 hit90"
+    },
+    "BEARISH": {
+      "strategy": "S5深回踩+资金流",
+      "confirm": "站上年线+MA250上升+资金流强+环境持续≥3",
+      "pool": "主板",
+      "sell": {
+        "tp": 50.0,
+        "sl": -12.0,
+        "hold": 40
+      },
+      "n": 210,
+      "winrate": 59.2,
+      "avg": 5.07,
+      "hit90": false,
+      "env": "BEARISH",
+      "note": "2026-08-15 一年回溯实证（backtest_params.json 长线 by_state），尚未线上验证，待 news_guard/smart/ai 三层线上确认后复评 hit90"
+    }
   }
 }

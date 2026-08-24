@@ -34,7 +34,7 @@ def strict_block(config_params: list[tuple[str, str]]) -> str:
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 9 格参数表：strict = n_strict 完整 config；t1sell/smart/direction = 局部替换
+# 12 格参数表（4 周期 × 3 环境）：strict = n_strict 完整 config；t1sell/smart/direction = 局部替换
 # 形态映射参考 smalltool：
 #   S1 粘合严选   → convergenceThreshold 收紧 + 放量/涨幅要求 + requireThreeDayConfirm
 #   S3 深跌低吸   → minDrawdownPct 放大 + requireVolumeShrink + 取消涨幅/均线要求
@@ -246,6 +246,86 @@ PARAMS = {
             ("swingLeftN", "5"),
             ("swingRightN", "2"),
             ("lookbackDays", "120"),
+            ("minPassCount", "4"),
+        ],
+        "smart": {"minScore": "60"},              # 资金流强
+        "direction": {"exclude": "DOWNTREND"},    # 熊市深回踩允许 OSCILLATION 票
+    },
+
+    # ══════════ 长线（牛市 tp=+50/sl=-8/hold=40；震荡 tp=+40/sl=-12/hold=40；熊市 tp=+50/sl=-12/hold=40）══════════
+    # 长线核心约束保留：requireMA250Rising / useMA250InBullish / requireAboveYearLine / lookbackDays=250
+    "long_term_bullish": {
+        "base": "long_term",
+        "comment": "长线·牛市：S5深回踩严（MA60升+跌幅≥15%+缩量≤0.7+资金流>0+站上年线），tp=+50/sl=-8/hold=40",
+        "strict": [
+            ("convergenceThreshold", "2.5"),
+            ("useMA60", "true"),
+            ("convergenceDurationDays", "20"),
+            ("convergenceDurationRatio", "0.8"),
+            ("minDrawdownPct", "15.0"),           # dd20≤-15（牛市深回踩严）
+            ("requireVolumeShrink", "true"),      # 缩量
+            ("volumeShrinkRatio", "0.7"),         # vr≤0.7
+            ("requireMA60Rising", "true"),        # ma60_up
+            ("maRisingDays", "10"),
+            ("requireMA250Rising", "true"),       # 年线上行
+            ("useMA250InBullish", "true"),
+            ("requireAboveYearLine", "true"),     # 站上年线
+            ("requireThreeDayConfirm", "false"),
+            ("swingLeftN", "5"),
+            ("swingRightN", "2"),
+            ("lookbackDays", "250"),
+            ("minPassCount", "4"),
+        ],
+        "smart": {"minScore": "60"},              # 资金流强
+        "direction": {"exclude": "DOWNTREND,OSCILLATION"},
+    },
+    "long_term_oscillation": {
+        "base": "long_term",
+        "comment": "长线·震荡：S1粘合突破（粘合≤4.0+量比≥1.5+涨幅≥1.0+站上年线）+ 基因/资金流确认，tp=+40/sl=-12/hold=40",
+        "strict": [
+            ("convergenceThreshold", "4.0"),      # spread≤4.0
+            ("useMA60", "true"),
+            ("convergenceDurationDays", "20"),
+            ("convergenceDurationRatio", "0.8"),
+            ("volumeBreakoutRatio", "1.5"),       # vr≥1.5
+            ("minDrawdownPct", "30.0"),
+            ("minChangePct", "1.0"),              # chg≥1.0
+            ("requireChangePct", "true"),
+            ("requireMA60Rising", "true"),
+            ("maRisingDays", "10"),
+            ("requireMA250Rising", "true"),
+            ("useMA250InBullish", "true"),
+            ("requireAboveYearLine", "true"),
+            ("requireAboveAllMAs", "true"),
+            ("requireThreeDayConfirm", "true"),
+            ("swingLeftN", "5"),
+            ("swingRightN", "2"),
+            ("lookbackDays", "250"),
+            ("minPassCount", "6"),
+        ],
+        "smart": {"minScore": "55"},
+        "direction": {"exclude": "DOWNTREND,OSCILLATION"},
+    },
+    "long_term_bearish": {
+        "base": "long_term",
+        "comment": "长线·熊市：S5深回踩+资金流（MA60升+跌幅≥12%+缩量≤0.9+资金流>0+站上年线）+ 环境持续≥3，tp=+50/sl=-12/hold=40",
+        "strict": [
+            ("convergenceThreshold", "2.5"),
+            ("useMA60", "true"),
+            ("convergenceDurationDays", "20"),
+            ("convergenceDurationRatio", "0.8"),
+            ("minDrawdownPct", "12.0"),           # dd20≤-12
+            ("requireVolumeShrink", "true"),      # 缩量
+            ("volumeShrinkRatio", "0.9"),         # vr≤0.9
+            ("requireMA60Rising", "true"),        # ma60_up
+            ("maRisingDays", "10"),
+            ("requireMA250Rising", "true"),
+            ("useMA250InBullish", "true"),
+            ("requireAboveYearLine", "true"),
+            ("requireThreeDayConfirm", "false"),
+            ("swingLeftN", "5"),
+            ("swingRightN", "2"),
+            ("lookbackDays", "250"),
             ("minPassCount", "4"),
         ],
         "smart": {"minScore": "60"},              # 资金流强

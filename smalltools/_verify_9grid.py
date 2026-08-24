@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-9 格 usecase 矩阵 ↔ backtest_params.json ↔ sell_rule_for 三端参数一致性验证。
+12 格 usecase 矩阵（4 周期 × 3 环境）↔ backtest_params.json ↔ sell_rule_for 三端参数一致性验证。
 
 单一事实源检查（smalltools / exe(AutoQuant) / APK 共用同一套回测参数）：
-  1. usecase_matrix.json 的 9 格 sell（smalltools 扫描拟合产物）
+  1. usecase_matrix.json 的 12 格 sell（smalltools 扫描拟合产物）
   2. backtest_params.json 的 sell_rules.<周期>.by_state（APK 回测引擎读取源）
   3. sell_rule_for()（smalltools/_full_cycle_backtest.py 提供的状态路由，exe walk-forward 使用）
 
@@ -23,7 +23,7 @@ MATRIX = os.path.join(HERE, "_records", "usecase_matrix.json")
 APK_PARAMS = os.path.normpath(os.path.join(
     HERE, "..", "app", "src", "main", "assets", "backtest_params.json"))
 
-PERIODS = ["超短", "短线", "中线"]
+PERIODS = ["超短", "短线", "中线", "长线"]
 STATES = ["BULLISH", "OSCILLATION", "BEARISH"]
 # usecase_matrix sell 字段 → backtest_params sell_rules 字段
 SELL_FIELD_MAP = {"tp": "tp", "sl": "sl", "hold": "maxHold"}
