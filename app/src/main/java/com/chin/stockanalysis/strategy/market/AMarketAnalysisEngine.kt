@@ -55,6 +55,8 @@ object AMarketAnalysisEngine {
         val indexClose: Double = 0.0,
         val indexChangePct: Double = 0.0,
         val advanceDeclineRatio: Double = 0.0,
+        val advanceCount: Int = 0,     // 全市场上涨家数（沸点/冰点判据）
+        val declineCount: Int = 0,     // 全市场下跌家数
         // ── v2 新增：连涨/连跌预警 ──
         val consecutiveUpDays: Int = 0,
         val consecutiveDownDays: Int = 0,
@@ -99,12 +101,12 @@ object AMarketAnalysisEngine {
             // 2. 量能
             val volumeStatus = checkVolumeStatus(snapshots)
 
-            // 3. 市场情绪（涨跌比）
+            // 3. 市场情绪（涨跌家数 + 涨跌比）
             val todayDate = latest.date
             val allToday = db.dailySnapshotDao().getByDate(todayDate)
             val (advCount, decCount) = countAdvanceDecline(allToday)
             val ratio = if (decCount > 0) advCount.toDouble() / decCount.toDouble() else if (advCount > 0) 99.0 else 1.0
-            val marketTemp = checkMarketTemperature(ratio)
+            val marketTemp = checkMarketTemperature(ratio, advCount, decCount)
 
             // 4. 指数涨跌幅
             val prevClose = if (snapshots.size >= 2) snapshots[snapshots.size - 2].close else latest.open
@@ -125,6 +127,7 @@ object AMarketAnalysisEngine {
             val summary = buildSummary(
                 isBottom, isTrend, isTop, volumeStatus, marketTemp, period, posPct,
                 ma5, ma10, ma30, dispersion, ratio,
+                advCount, decCount,
                 consecUp, consecDown, streakRisk, vpDivergence
             )
 
@@ -141,6 +144,8 @@ object AMarketAnalysisEngine {
                 indexClose = latest.close,
                 indexChangePct = changePct,
                 advanceDeclineRatio = ratio,
+                advanceCount = advCount,
+                declineCount = decCount,
                 consecutiveUpDays = consecUp,
                 consecutiveDownDays = consecDown,
                 streakRiskLevel = streakRisk,
@@ -300,8 +305,17 @@ object AMarketAnalysisEngine {
         return adv to dec
     }
 
-    /** 市场温度 */
-    private fun checkMarketTemperature(ratio: Double): String = when {
+    /**
+     * 市场温度（沸点/冰点判断）
+     *
+     * 以**绝对上涨家数**为主判据（A股全市场约 5400 只）：
+     * - 上涨 >= 4000 家 → 沸点（过热，不追高）
+     * - 上涨 <= 1000 家 → 冰点（恐慌，可低吸）
+     * 其余区间按涨跌比细分；全市场快照缺失（涨跌家数合计=0）时退回涨跌比。
+     */
+    private fun checkMarketTemperature(ratio: Double, advCount: Int = 0, decCount: Int = 0): String = when {
+        advCount + decCount > 0 && advCount >= 4000 -> "沸腾"
+        advCount + decCount > 0 && advCount <= 1000 -> "冰点"
         ratio > 3.0 -> "沸腾"
         ratio > 1.5 -> "温和偏热"
         ratio > 0.7 -> "温和"
@@ -349,6 +363,7 @@ object AMarketAnalysisEngine {
         period: HoldingPeriod, posPct: Int,
         ma5: Double, ma10: Double, ma30: Double,
         dispersion: Double, adRatio: Double,
+        advCount: Int = 0, decCount: Int = 0,
         consecUp: Int = 0, consecDown: Int = 0,
         streakRisk: String = "LOW", vpDivergence: Boolean = false
     ): String = buildString {
@@ -356,7 +371,7 @@ object AMarketAnalysisEngine {
         if (isTrend) append(" | 均线多头粘合向上(离散${"%.2f".format(dispersion * 100)}%)")
         if (isBottom) append(" | 底部确认(3日不新低)")
         if (isTop) append(" | ⚠逃顶信号")
-        append(" | $marketTemp(涨跌比${"%.1f".format(adRatio)})")
+        append(" | $marketTemp(涨${advCount}家/跌${decCount}家, 比${"%.1f".format(adRatio)})")
         append(" | $volumeStatus")
         // 连涨/连跌预警
         if (consecUp > 0) append(" | 连涨${consecUp}天")
