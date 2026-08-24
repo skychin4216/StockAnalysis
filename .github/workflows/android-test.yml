@@ -6,10 +6,12 @@ name: Android Automated Test
 #   2. 定时（每周一/四 10:00 北京时间 = 02:00 UTC）
 #   3. 手动：GitHub Repo -> Actions -> Android Automated Test -> Run workflow
 #
-# 为什么用 macOS runner：
-#   GitHub 托管 Linux runner 的 KVM 硬件加速仅对公共仓库开放；私有仓库无 /dev/kvm，
-#   x86_64 系统镜像拒绝启动（Failed to open the device 'kvm'）。
-#   macOS runner 使用系统内置 Hypervisor.framework 硬件加速，无需 KVM，私有仓库可直接使用。
+# 为什么用 macos-14 (Intel)：
+#   - GitHub 托管 Linux runner 的 KVM 硬件加速仅对公共仓库开放；私有仓库无 /dev/kvm，
+#     x86_64 系统镜像拒绝启动（Failed to open the device 'kvm'）。
+#   - macos-latest 已是 Apple Silicon (arm64)，跑 x86_64 镜像只能软件模拟，boot 超时。
+#   - macos-14 是 Intel x64，使用系统内置 Hypervisor.framework 硬件加速，无需 KVM，
+#     私有仓库可直接运行 x86_64 模拟器。
 on:
   push:
     branches: [dev, main]
@@ -23,7 +25,7 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: macos-latest
+    runs-on: macos-14
     timeout-minutes: 60
     steps:
       - name: Checkout
