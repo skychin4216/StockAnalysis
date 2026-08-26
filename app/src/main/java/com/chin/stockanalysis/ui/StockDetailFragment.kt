@@ -23,6 +23,7 @@ import com.chin.stockanalysis.stock.database.StockDataCenter
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.agent.stock.StockAnalysisAgent
 import com.chin.stockanalysis.strategy.backtest.PeriodDeepAnalysisRunner
+import com.chin.stockanalysis.strategy.topology.xml.UseCaseExecution
 import com.chin.stockanalysis.strategy.analysis.CandlePatternDetector
 import com.chin.stockanalysis.strategy.analysis.MaConvergenceAnalyzer
 import com.chin.stockanalysis.strategy.data.InstitutionalRatingProvider
@@ -1250,7 +1251,7 @@ class StockDetailFragment : Fragment() {
             setPadding(0, 0, 4, 0)
         })
         loadingRow.addView(TextView(requireContext()).apply {
-            text = "四周期深度分析中（约3-5秒）..."
+            text = "豆包体系深度分析中（约5-10秒）..."
             textSize = 9f; setTextColor(Color.parseColor("#999999"))
         })
         aiResultContainer.addView(loadingRow)
@@ -1261,8 +1262,8 @@ class StockDetailFragment : Fragment() {
 
         aiAnalysisJob = lifecycleScope.launch(Dispatchers.IO) {
             val appCtx = requireContext().applicationContext
-            // 四周期打分（超短/短/中/长），只分析不下单
-            val result = PeriodDeepAnalysisRunner().analyze(appCtx, stockCode, stockName)
+            // 豆包体系个股深度分析（市场研判 + 四周期打分），只分析不下单
+            val result = UseCaseExecution.runStockDeepAnalysis(appCtx, stockCode)
 
             // 检查是否被取消或 view 已销毁
             ensureActive()
@@ -1280,7 +1281,7 @@ class StockDetailFragment : Fragment() {
                 })
                 // 模式标签
                 aiResultContainer.addView(TextView(requireContext()).apply {
-                    text = "🧠 ${result.elapsedMs}ms · 四周期深度分析"
+                    text = "🧠 ${result.elapsedMs}ms · 豆包体系四周期深度分析"
                     textSize = 8f; setTextColor(Color.parseColor("#666666"))
                     gravity = Gravity.CENTER
                     setPadding(0, 2, 0, 2)

@@ -49,6 +49,7 @@ import com.chin.stockanalysis.config.FeatureFlagManager
 import com.chin.stockanalysis.config.AgentRoute
 import com.chin.stockanalysis.agent.router.ChatRouter
 import com.chin.stockanalysis.agent.core.AgentOrchestrator
+import com.chin.stockanalysis.strategy.topology.xml.UseCaseExecution
 import com.chin.stockanalysis.agent.core.analyzeStock
 import com.chin.stockanalysis.agent.stock.StockAnalysisAgent
 import com.chin.stockanalysis.ai.StockEntityExtractor
@@ -58,6 +59,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -246,10 +248,8 @@ class ChatTabFragment : Fragment() {
         binding.etInput.hint = modeHint
     }
 
-    /** ⚡ 快速模式入口文案：legacy 走 LLM，agent 框架走多 agent（用户可全局切换） */
-    private fun quickAnalysisLabel(): String =
-        if (FeatureFlagManager.isAgentFramework(FeatureFlagManager.chatRoute)) "⚡ Agent 快速分析"
-        else "⚡ LLM 快速分析"
+    /** ⚡ 快速模式入口文案：纯本地豆包 useCase 分析，不调用 LLM */
+    private fun quickAnalysisLabel(): String = "⚡ 本地快速分析"
 
     /** 📈 深度模式尾段：多Agent分析 → 短线/中线 usecase pipeline → 适合买入则保存到 AI 精选 */
     private fun maybeRunDeepTail(userText: String) {
@@ -674,10 +674,15 @@ class ChatTabFragment : Fragment() {
         binding.etInput.setText(""); hideKeyboard()
         if (!hasAutoTitle) { hasAutoTitle = true; binding.tvChatTitle.text = extractSmartTitle(userText) }
 
-        // 🧭 板块多周期全面深度分析：EXPERT 模式不走通用 Agent/分析，直接解析板块/个股 → 板块龙头分析
-        // （只分析不下单，给出评分评价；若合适买入，给用户提示）
+        // ⚡ 快速模式：纯本地解析 + 本地分析（豆包 useCase / 板块多周期），不调用 LLM
+        if (analysisMode == AnalysisMode.QUICK) {
+            handleQuickModeInput(userText)
+            return
+        }
+
+        // 🧭 专家模式：常规解析优先（不花 token），解析不出再用 LLM 兜底解析用户输入
         if (analysisMode == AnalysisMode.EXPERT) {
-            runSectorDeepAnalysis(userText)
+            handleExpertModeInput(userText, provider)
             return
         }
 
@@ -696,6 +701,150 @@ class ChatTabFragment : Fragment() {
             runGeneralChat(userText, provider, skipStockContext)
         }
     }
+
+    // ════════════════════════════════════════════════════════════
+    //  ⚡ 快速模式（纯本地，无 LLM）
+    // ════════════════════════════════════════════════════════════
+
+    /** ⚡ 快速模式：常规解析用户输入 → 个股走豆包本地深度分析，板块走板块多周期分析；解析不出给出格式提示 */
+    private fun handleQuickModeInput(userText: String) {
+        val stockCode = extractStockCodeFromText(userText)
+        if (stockCode != null) {
+            runQuickStockAnalysis(userText, stockCode)
+            return
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val ctx = requireContext()
+                val (sectors, codes) = withContext(Dispatchers.IO) {
+                    com.chin.stockanalysis.agent.chat.QuickBuildExpertRunner.parseFocus(ctx, userText)
+                }
+                if (isAdded) requireActivity().runOnUiThread {
+                    if (sectors.isNotEmpty() || codes.isNotEmpty()) {
+                        runSectorDeepAnalysis(userText)
+                    } else {
+                        addBotMessage("🔍 未识别到板块或个股，请输入：板块名称（如 半导体）/ 个股代码（如 300308）/ 个股名称（如 兆易创新）")
+                    }
+                }
+            } catch (e: Exception) {
+                if (isAdded) requireActivity().runOnUiThread {
+                    addBotMessage("⚠️ 快速分析异常：${e.message?.take(60)}")
+                }
+            }
+        }
+    }
+
+    /** ⚡ 快速模式个股分析：豆包体系本地四周期深度分析（不调用 LLM，与详情页「深度分析」一致） */
+    private fun runQuickStockAnalysis(userText: String, stockCode: String) {
+        val loadingMsg = Message(content = "", isUser = false, isStreaming = true,
+            loadingStatus = "⚡ 豆包体系本地深度分析中（约5-10秒）..."
+        )
+        addMessage(loadingMsg)
+        val loadingIndex = messages.size - 1
+        currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    UseCaseExecution.runStockDeepAnalysis(requireContext().applicationContext, stockCode)
+                }
+                if (isAdded) requireActivity().runOnUiThread {
+                    completeStreamingMessage(loadingIndex, result.report)
+                    onMessageComplete()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "runQuickStockAnalysis", e)
+                if (isAdded) requireActivity().runOnUiThread {
+                    failStreamingMessage(loadingIndex, "快速分析异常：${e.message?.take(60)}")
+                }
+            }
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════
+    //  🧭 专家模式（常规解析优先，LLM 兜底解析输入）
+    // ════════════════════════════════════════════════════════════
+
+    /** 🧭 专家模式：常规解析（代码/名称/板块）优先，解析不出才用 LLM 解析用户输入（省 token） */
+    private fun handleExpertModeInput(userText: String, provider: ApiProvider) {
+        val loadingMsg = Message(content = "", isUser = false, isStreaming = true,
+            loadingStatus = "🔎 正在识别你的输入..."
+        )
+        addMessage(loadingMsg)
+        val loadingIndex = messages.size - 1
+        currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val ctx = requireContext()
+                // 1. 常规解析（优先，不消耗 token）
+                var sectors = emptyList<String>()
+                var codes = emptyList<String>()
+                val stockCode = extractStockCodeFromText(userText)
+                if (stockCode != null) {
+                    codes = listOf(stockCode)
+                } else {
+                    val parsed = withContext(Dispatchers.IO) {
+                        com.chin.stockanalysis.agent.chat.QuickBuildExpertRunner.parseFocus(ctx, userText)
+                    }
+                    sectors = parsed.first; codes = parsed.second
+                }
+                // 2. 常规解析失败 → LLM 兜底解析（单次调用）
+                if (sectors.isEmpty() && codes.isEmpty()) {
+                    val llm = withContext(Dispatchers.IO) { resolveFocusWithLlm(userText, provider) }
+                    if (llm != null) { sectors = llm.first; codes = llm.second }
+                }
+                if (isAdded) requireActivity().runOnUiThread {
+                    messages.removeAt(loadingIndex)
+                    adapter.notifyItemRemoved(loadingIndex)
+                    if (sectors.isEmpty() && codes.isEmpty()) {
+                        addBotMessage("🔍 未识别到板块或个股，请输入：板块名称（如 半导体）/ 个股代码（如 300308）/ 个股名称（如 兆易创新）")
+                    } else {
+                        runSectorDeepAnalysis(userText, preParsed = sectors to codes)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "handleExpertModeInput", e)
+                if (isAdded) requireActivity().runOnUiThread {
+                    messages.removeAt(loadingIndex)
+                    adapter.notifyItemRemoved(loadingIndex)
+                    addBotMessage("⚠️ 专家分析异常：${e.message?.take(60)}")
+                }
+            }
+        }
+    }
+
+    /**
+     * 用 LLM 单次调用解析用户输入（专家模式兜底）。
+     * 返回 (板块列表, 个股代码列表)；无法识别返回 null。
+     */
+    private suspend fun resolveFocusWithLlm(userText: String, provider: ApiProvider): Pair<List<String>, List<String>>? =
+        kotlin.coroutines.suspendCoroutine { cont ->
+            provider.sendMessageStream(
+                messages = listOf(Message(content = userText, isUser = true)),
+                systemPrompt = "你是A股输入识别助手。用户输入可能是个股名称、个股代码、板块名称、指数名称或无关内容。识别用户想分析的对象，只输出一个 JSON 对象，不要任何多余文字或 Markdown 代码块：" +
+                    "个股：{\"type\":\"stock\",\"code\":\"603986\",\"name\":\"兆易创新\"}（code 必须是 6 位数字）；" +
+                    "板块：{\"type\":\"sector\",\"name\":\"半导体\"}；无法识别：{\"type\":\"unknown\"}。" +
+                    "注意：即使输入包含“分析”“看看”等动词也要识别出目标实体；如果既不是个股也不是板块，输出 unknown。",
+                onSuccess = {},
+                onComplete = { full ->
+                    try {
+                        val start = full.indexOf('{'); val end = full.lastIndexOf('}')
+                        if (start < 0 || end <= start) { cont.resume(null); return@sendMessageStream }
+                        val json = full.substring(start, end + 1)
+                        val type = Regex("\"type\"\\s*:\\s*\"(\\w+)\"").find(json)?.groupValues?.get(1)
+                        when (type) {
+                            "stock" -> {
+                                val code = Regex("\"code\"\\s*:\\s*\"(\\d{6})\"").find(json)?.groupValues?.get(1)
+                                cont.resume(Pair(emptyList(), code?.let { listOf(it) } ?: emptyList()))
+                            }
+                            "sector" -> {
+                                val name = Regex("\"name\"\\s*:\\s*\"([^\"]+)\"").find(json)?.groupValues?.get(1)
+                                cont.resume(Pair(name?.let { listOf(it) } ?: emptyList(), emptyList()))
+                            }
+                            else -> cont.resume(null)
+                        }
+                    } catch (e: Exception) { cont.resume(null) }
+                },
+                onError = { cont.resume(null) }
+            )
+        }
 
     /** 🤖 Agent 模式：ChatRouter → ChatAgent 智能对话 */
     private fun runAgentAnalysis(userText: String, provider: ApiProvider, skipStockContext: Boolean = false) {
@@ -802,8 +951,8 @@ class ChatTabFragment : Fragment() {
         } catch (_: Exception) { null }
     }
 
-    /** 🧭 板块多周期全面深度分析：EXPERT 模式把用户输入中的板块/个股 → 板块龙头分析（只分析不下单，给评分评价，合适则提示买入） */
-    private fun runSectorDeepAnalysis(userText: String) {
+    /** 🧭 板块多周期全面深度分析：EXPERT/QUICK 模式把用户输入中的板块/个股 → 板块龙头分析（只分析不下单，给评分评价，合适则提示买入） */
+    private fun runSectorDeepAnalysis(userText: String, preParsed: Pair<List<String>, List<String>>? = null) {
         val loadingMsg = Message(content = "", isUser = false, isStreaming = true,
             loadingStatus = "🧭 板块多周期全面深度分析 启动中..."
         )
@@ -813,7 +962,7 @@ class ChatTabFragment : Fragment() {
         currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val ctx = requireContext()
-                val (sectors, codes) = withContext(Dispatchers.IO) {
+                val (sectors, codes) = preParsed ?: withContext(Dispatchers.IO) {
                     com.chin.stockanalysis.agent.chat.QuickBuildExpertRunner.parseFocus(ctx, userText)
                 }
                 val result = com.chin.stockanalysis.agent.chat.QuickBuildExpertRunner.analyzeSectorFocus(

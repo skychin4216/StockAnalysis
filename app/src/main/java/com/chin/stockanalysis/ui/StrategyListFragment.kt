@@ -65,6 +65,7 @@ class StrategyListFragment : Fragment() {
     // 平台策略执行进度/结果弹窗
     private lateinit var useCaseProgressDialog: AlertDialog
     private lateinit var useCaseProgressText: TextView
+    private var useCaseJob: kotlinx.coroutines.Job? = null
 
     private var currentHotSectors: List<String> = emptyList()
     private var selectedSectors: Set<String> = emptySet()
@@ -628,8 +629,9 @@ class StrategyListFragment : Fragment() {
      */
     private fun onRunUseCase(info: UseCaseLoader.UseCaseInfo) {
         val ctx = requireContext()
+        useCaseJob?.cancel()
         showUseCaseProgress(ctx, "正在初始化 ${info.name}...")
-        lifecycleScope.launch(Dispatchers.IO) {
+        useCaseJob = lifecycleScope.launch(Dispatchers.IO) {
             val report = UseCaseExecution.runAndSummarize(ctx, info.id) { pipelineName, nodeName ->
                 showUseCaseProgressMsg("执行中：$pipelineName → $nodeName")
             }
@@ -651,6 +653,10 @@ class StrategyListFragment : Fragment() {
                 .setTitle("🛡 平台策略")
                 .setView(useCaseProgressText)
                 .setCancelable(false)
+                .setNegativeButton("关闭") { d, _ ->
+                    d.dismiss()
+                    useCaseJob?.cancel()   // 终止正在执行的 usecase
+                }
                 .create()
             useCaseProgressDialog.show()
         }

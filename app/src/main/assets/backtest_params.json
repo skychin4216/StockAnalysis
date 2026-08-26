@@ -373,5 +373,148 @@
   "nearResistanceThreshold": 0.01,
   "minExpectedProfitPct": 0.3,
   "pairProfitPct": 0.8
+ },
+ "dag_nodes": {
+  "version": 1,
+  "generated": "2026-08-27 01:19",
+  "source": "AutoQuant _dag_node_params.py (Kotlin 节点硬编码 + pipeline XML config 镜像)",
+  "common": {
+   "data_import": {
+    "days": 60,
+    "minSnapshots": 100
+   },
+   "market_ma_unified": {
+    "threshold": 0.02
+   },
+   "pool_filter": {
+    "excludeST": true,
+    "excludeStart300": true,
+    "excludeStart688": true,
+    "excludeStart8": true,
+    "excludeStart9": true
+   },
+   "candidate_pool": {
+    "useStockPoolFallback": true
+   }
+  },
+  "strict_selection_ref": "select_params",
+  "node_params": {
+   "financial_health": {
+    "minScore": 60,
+    "maxDebtRatio": 70
+   },
+   "smart_money_filter": {
+    "超短": {
+     "minScore": 30
+    },
+    "短线": {
+     "minScore": 55
+    },
+    "中线": {
+     "minScore": 55
+    },
+    "长线": {
+     "minScore": 55
+    }
+   },
+   "generate_orders": {
+    "超短": {
+     "maxHoldings": 3
+    },
+    "短线": {
+     "maxHoldings": 5
+    },
+    "中线": {
+     "maxHoldings": 5
+    },
+    "长线": {
+     "maxHoldings": 5
+    }
+   },
+   "swap_weak": {
+    "超短": {
+     "maxHoldings": 3
+    },
+    "短线": {
+     "maxHoldings": 5
+    },
+    "中线": {
+     "maxHoldings": 5
+    }
+   },
+   "defensive_dividend": {
+    "maxPb": 1.5,
+    "maxDebtRatio": 70,
+    "maxCandidates": 5,
+    "minMarketCapYi": 500,
+    "中线": {
+     "maxPerSector": 2
+    },
+    "长线": {
+     "maxPerSector": 1
+    }
+   },
+   "bounce_reversal": {
+    "noNewLowDays": 3,
+    "boostPoints": 12,
+    "indexCode": "sh000001"
+   },
+   "direction_label": {
+    "exclude": [
+     "DOWNTREND",
+     "OSCILLATION"
+    ],
+    "penalty": 25
+   },
+   "news_guard": {
+    "impactThreshold": 75,
+    "sentimentThreshold": -30
+   },
+   "news_strength": {
+    "lookbackDays": 3
+   },
+   "rotation_penalty": {
+    "thresholdDays": 3,
+    "penaltyPerExcess": 10
+   },
+   "cross_day_aggregation": {
+    "windowDays": 5,
+    "topN": 20
+   }
+  },
+  "data_gated_nodes": {
+   "financial_health": {
+    "data": "财务快照(pe/pb/roe/debt/marketCap)",
+    "fallback": "数据缺失时跳过"
+   },
+   "smart_money_filter": {
+    "data": "智能资金流分 SmartMoneyCache",
+    "fallback": "数据缺失时跳过"
+   },
+   "inst_tips": {
+    "data": "机构增减持/调研",
+    "fallback": "数据缺失时跳过"
+   },
+   "news_strength": {
+    "data": "新闻热度",
+    "fallback": "数据缺失时跳过"
+   },
+   "news_guard": {
+    "data": "新闻冲击/情绪分",
+    "fallback": "数据缺失时跳过"
+   },
+   "ai_predict": {
+    "data": "AI 涨跌预测模型",
+    "fallback": "数据缺失时跳过"
+   },
+   "sector_boost": {
+    "data": "板块强度(StockDataCenter)",
+    "fallback": "数据缺失时跳过"
+   },
+   "seasonality_boost": {
+    "data": "商品/季节因子",
+    "fallback": "数据缺失时跳过"
+   }
+  }
  }
 }

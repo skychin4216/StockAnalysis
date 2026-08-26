@@ -8,9 +8,9 @@
 <usecase id="screening" name="量化选股">
   <description>全市场扫描→多策略并行筛选→信号合并→板块加权</description>
   <steps>
-    <pipeline ref="topologies/data_prep_pipeline.xml" name="数据准备" />
-    <pipeline ref="topologies/strategy_screening_pipeline.xml" parallel="true" name="策略筛选" />
-    <pipeline ref="topologies/merge_boost_pipeline.xml" name="合并加权" />
+    <pipeline ref="usecases/data_prep_pipeline.xml" name="数据准备" />
+    <pipeline ref="usecases/strategy_screening_pipeline.xml" parallel="true" name="策略筛选" />
+    <pipeline ref="usecases/merge_boost_pipeline.xml" name="合并加权" />
   </steps>
   <config>
     <param name="orderType" value="Screening" />

@@ -35,7 +35,7 @@ import java.time.DayOfWeek
  * ## 我的工作台
  *
  * 顶级「量化选股」Tab 0，与「策略」「数据」「AI 分析」平级。
- * 超短/短/中/长 四周期 + 实仓 + 选股系统 已集成于此（顶部页签内嵌），独占整屏展示。
+ * 超短/短/中/长 四周期 + 实仓 已集成于此（顶部页签内嵌），独占整屏展示。
  *
  * - 周期页：顶部页签切换，直接复用四周期 Fragment 与实仓页（建仓/Pipeline/持仓/卖出评估/回溯/报告）
  * - 标题行：一键建仓（交易时间跑四周期买入订单 DAG pipeline（含腾笼换鸟）；
@@ -208,7 +208,6 @@ class QuantWorkbenchFragment : Fragment() {
                 2 -> getString(com.chin.stockanalysis.R.string.tab_mid)
                 3 -> getString(com.chin.stockanalysis.R.string.tab_long)
                 4 -> "💰 实仓"
-                5 -> "🧭 选股系统"
                 else -> ""
             }
         }.attach()
@@ -491,9 +490,9 @@ class QuantWorkbenchFragment : Fragment() {
             .show()
     }
 
-    /** 内嵌周期页适配器：超短 / 短 / 中 / 长 / 实仓 / 选股系统 */
+    /** 内嵌周期页适配器：超短 / 短 / 中 / 长 / 实仓 */
     private class PeriodTabAdapter(fragment: Fragment) : FragmentStateAdapter(fragment) {
-        override fun getItemCount() = 6
+        override fun getItemCount() = 5
 
         override fun createFragment(position: Int): Fragment {
             return when (position) {
@@ -502,7 +501,6 @@ class QuantWorkbenchFragment : Fragment() {
                 2 -> MidTermQuantFragment()
                 3 -> LongTermQuantFragment()
                 4 -> RealHoldingQuantFragment()
-                5 -> StockSelectionSystemFragment()
                 else -> throw IllegalStateException("Unknown position: $position")
             }
         }

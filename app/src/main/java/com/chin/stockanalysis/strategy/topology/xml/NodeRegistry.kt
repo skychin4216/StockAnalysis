@@ -260,6 +260,12 @@ object NodeRegistry {
         register("sector_strength") { _, _ ->
             com.chin.stockanalysis.strategy.topology.nodes.SectorStrengthNode()
         }
+        register("market_direction") { _, _ ->
+            com.chin.stockanalysis.strategy.topology.nodes.MarketDirectionNode()
+        }
+        register("stock_deep_analysis") { _, _ ->
+            com.chin.stockanalysis.strategy.topology.nodes.StockDeepAnalysisNode()
+        }
         register("t_trade_eval") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.TTradeEvalNode() }
         register("holding_diagnostic") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.HoldingDiagnosticNode() }
         register("holding_prediction") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.HoldingPredictionNode() }

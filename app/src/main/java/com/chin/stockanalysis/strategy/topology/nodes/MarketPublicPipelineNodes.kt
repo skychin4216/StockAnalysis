@@ -236,3 +236,72 @@ class StyleRotationNode : BaseNode<Any, StyleRotationResult>("n_style_rotation",
         )
     }
 }
+
+// ═══════════════════════════════════════════════════════════════
+//  大盘方向研判（market_direction / n_adaptive）
+// ═══════════════════════════════════════════════════════════════
+
+/** 大盘方向研判结果 */
+data class MarketDirectionResult(
+    val direction: String,   // BULLISH / OSCILLATION / BEARISH
+    val summary: String
+)
+
+/**
+ * ## 大盘方向研判节点
+ *
+ * 将大盘多周期研判（n_a_market 的 MarketAnalysisResult）映射为三态方向：
+ *   BULLISH（多头） / OSCILLATION（震荡） / BEARISH（空头）。
+ *
+ * 供 complete_closed_loop 第四层「周期×环境矩阵路由」的 if 条件使用：
+ *   `<pipeline ... if="${n_adaptive}.direction == 'BULLISH'" />`
+ * 此前该条件读取不存在的 n_adaptive 节点，导致 12 条周期流水线全部被跳过。
+ *
+ * XML 用法：`<node module="market_direction" />`
+ * 依赖：n_a_market（a_market_analysis）。
+ * 输出 [MarketDirectionResult]，存入 context.stageOutputs["n_adaptive"]。
+ */
+class MarketDirectionNode : BaseNode<Any, MarketDirectionResult>("n_adaptive", "大盘方向研判", NodeType.FACTOR_COMPUTE) {
+
+    override suspend fun execute(context: PipelineContext, input: Any): MarketDirectionResult {
+        val market = context.getStageOutput<AMarketAnalysisEngine.MarketAnalysisResult>("n_a_market")
+        if (market == null) {
+            val msg = "⚠ 大盘方向研判：缺少大盘研判输出（n_a_market 为空），默认 OSCILLATION"
+            context.log(nodeId, msg)
+            return MarketDirectionResult("OSCILLATION", msg)
+        }
+
+        val hotTemps = setOf("沸腾", "温和偏热")
+        val coldTemps = setOf("冰点", "温和偏冷", "冷")
+
+        val direction = when {
+            // 顶部危险 / 底部确认 → 防御（空头或探底）
+            market.isTopDanger || market.isBottomConfirmed -> "BEARISH"
+            // 趋势向上 + 市场偏热 → 多头
+            market.isTrendUp && market.marketTemp in hotTemps -> "BULLISH"
+            // 市场冰冷 + 趋势向下 → 空头
+            !market.isTrendUp && market.marketTemp in coldTemps -> "BEARISH"
+            // 其余 → 震荡
+            else -> "OSCILLATION"
+        }
+
+        val summary = "📡 大盘方向研判：${directionText(direction)}（趋势${if (market.isTrendUp) "上行" else "不明/下行"} · 温度 ${market.marketTemp} · " +
+            "建议周期 ${market.suggestedPeriod.name} · 建议仓位 ${market.suggestedPositionPct}%）"
+        context.log(nodeId, summary)
+
+        context.recordStockFlow(
+            nodeId = nodeId, nodeName = nodeName,
+            inputCount = 1, outputCount = 1,
+            filterCount = 0,
+            filterReason = "大盘方向映射",
+            inputCodes = emptyList(), outputCodes = emptyList()
+        )
+        return MarketDirectionResult(direction, summary)
+    }
+
+    private fun directionText(d: String) = when (d) {
+        "BULLISH" -> "牛市（进攻）"
+        "BEARISH" -> "熊市（防御）"
+        else -> "震荡（均衡）"
+    }
+}

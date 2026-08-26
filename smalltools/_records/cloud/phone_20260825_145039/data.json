@@ -1,0 +1,441 @@
+{
+ "meta": {
+  "export_time": "2026-08-25 14:50:39",
+  "app_version": "1.1.0",
+  "device": "SM-S9280",
+  "data_scope": "today:2026-08-25"
+ },
+ "strategy_trade_orders": [
+  {
+   "strategy_id": "ai_midterm_2026-08-25",
+   "stock_code": "sh600745",
+   "stock_name": "*ST闻泰",
+   "trade_date": "2026-08-25",
+   "buy_price": 18.61,
+   "buy_time": "14:15:21",
+   "quantity": 2600,
+   "order_type": "ShortTermQuant",
+   "sell_price": 0,
+   "sell_time": "",
+   "profit_pct": 0,
+   "status": "BUYING",
+   "reason": "AI精选 rank=1 score=100 量比5.1 涨8.2% 突破7.0%",
+   "score_at_buy": 100
+  },
+  {
+   "strategy_id": "ai_midterm_2026-08-25",
+   "stock_code": "sh600487",
+   "stock_name": "亨通光电",
+   "trade_date": "2026-08-25",
+   "buy_price": 64.74,
+   "buy_time": "14:15:21",
+   "quantity": 700,
+   "order_type": "ShortTermQuant",
+   "sell_price": 0,
+   "sell_time": "",
+   "profit_pct": 0,
+   "status": "BUYING",
+   "reason": "AI精选 rank=2 score=100 量比4.1 涨7.1% 突破11.2%",
+   "score_at_buy": 100
+  },
+  {
+   "strategy_id": "ai_midterm_2026-08-25",
+   "stock_code": "sh600101",
+   "stock_name": "明星电力",
+   "trade_date": "2026-08-25",
+   "buy_price": 7.92,
+   "buy_time": "14:15:20",
+   "quantity": 6300,
+   "order_type": "UltraShortQuant",
+   "sell_price": 0,
+   "sell_time": "",
+   "profit_pct": 0,
+   "status": "BUYING",
+   "reason": "AI精选 rank=1 score=100 同板块补涨: 涨幅温和0.9% 成交4140.1亿",
+   "score_at_buy": 100
+  },
+  {
+   "strategy_id": "ai_midterm_2026-08-25",
+   "stock_code": "sz000629",
+   "stock_name": "钒钛股份",
+   "trade_date": "2026-08-25",
+   "buy_price": 3.04,
+   "buy_time": "14:15:20",
+   "quantity": 16400,
+   "order_type": "UltraShortQuant",
+   "sell_price": 0,
+   "sell_time": "",
+   "profit_pct": 0,
+   "status": "BUYING",
+   "reason": "AI精选 rank=2 score=100 同板块补涨: 涨幅温和0.7% 成交19734.0亿",
+   "score_at_buy": 100
+  },
+  {
+   "strategy_id": "ai_midterm_2026-08-25",
+   "stock_code": "sh600801",
+   "stock_name": "华新建材",
+   "trade_date": "2026-08-25",
+   "buy_price": 23.31,
+   "buy_time": "14:15:21",
+   "quantity": 2100,
+   "order_type": "ShortTermQuant",
+   "sell_price": 0,
+   "sell_time": "",
+   "profit_pct": 0,
+   "status": "BUYING",
+   "reason": "AI精选 rank=3 score=97 ↑上升趋势(91) 多头排列 加减分: 均线+20.0 ADX+10.0 动量+3.0 量价+8.0",
+   "score_at_buy": 97
+  },
+  {
+   "strategy_id": "ai_midterm_2026-08-25",
+   "stock_code": "sh601939",
+   "stock_name": "建设银行",
+   "trade_date": "2026-08-25",
+   "buy_price": 10.75,
+   "buy_time": "11:49:40",
+   "quantity": 4600,
+   "order_type": "ShortTermQuant",
+   "sell_price": 0,
+   "sell_time": "",
+   "profit_pct": 0,
+   "status": "BUYING",
+   "reason": "AI精选 rank=1 score=89 ↑上升趋势(83) 多头排列 加减分: 均线+20.0 动量+5.0 量价+8.0 [预信号]",
+   "score_at_buy": 89
+  },
+  {
+   "strategy_id": "ai_midterm_2026-08-25",
+   "stock_code": "sz000545",
+   "stock_name": "金浦钛业",
+   "trade_date": "2026-08-25",
+   "buy_price": 2.59,
+   "buy_time": "14:41:45",
+   "quantity": 9700,
+   "order_type": "UltraShortQuant",
+   "sell_price": 0,
+   "sell_time": "",
+   "profit_pct": 0,
+   "status": "BUYING",
+   "reason": "AI精选 rank=1 score=72 尾盘低吸72分: 主线5|景气10|舆情2|技术20|资金15|股性10|量能10",
+   "score_at_buy": 72
+  },
+  {
+   "strategy_id": "ai_midterm_2026-08-25",
+   "stock_code": "sz000545",
+   "stock_name": "金浦钛业",
+   "trade_date": "2026-08-25",
+   "buy_price": 2.56,
+   "buy_time": "11:50:01",
+   "quantity": 19500,
+   "order_type": "UltraShortQuant",
+   "sell_price": 2.58,
+   "sell_time": "2026-08-25 13:29:31",
+   "profit_pct": 0.7812500000000007,
+   "status": "SOLD",
+   "reason": "AI精选 rank=1 score=70 尾盘低吸70分: 主线5|景气10|舆情2|技术20|资金15|股性8|量能10 [预信号]",
+   "score_at_buy": 70
+  },
+  {
+   "strategy_id": "ai_midterm_2026-08-25",
+   "stock_code": "sh600973",
+   "stock_name": "宝胜股份",
+   "trade_date": "2026-08-25",
+   "buy_price": 6.16,
+   "buy_time": "11:50:01",
+   "quantity": 8100,
+   "order_type": "UltraShortQuant",
+   "sell_price": 6.19,
+   "sell_time": "2026-08-25 13:29:31",
+   "profit_pct": 0.48701298701299106,
+   "status": "SOLD",
+   "reason": "AI精选 rank=2 score=70 尾盘低吸70分: 主线5|景气10|舆情2|技术20|资金15|股性8|量能10 [预信号]",
+   "score_at_buy": 70
+  },
+  {
+   "strategy_id": "ai_midterm_2026-08-25",
+   "stock_code": "sz000545",
+   "stock_name": "金浦钛业",
+   "trade_date": "2026-08-25",
+   "buy_price": 2.56,
+   "buy_time": "13:33:00",
+   "quantity": 19500,
+   "order_type": "UltraShortQuant",
+   "sell_price": 2.59,
+   "sell_time": "2026-08-25 14:15:35",
+   "profit_pct": 1.1718749999999925,
+   "status": "SOLD",
+   "reason": "AI精选 rank=1 score=70 尾盘低吸70分: 主线5|景气10|舆情2|技术20|资金15|股性8|量能10",
+   "score_at_buy": 70
+  }
+ ],
+ "t_trade_records": [],
+ "strategy_trade_backtests": [],
+ "daily_period_result": [
+  {
+   "strategy_id": "DAG_ULTRA_SHORT",
+   "trade_date": "2026-08-25",
+   "period_days": 1,
+   "stock_codes": "[\"sz000545\"]",
+   "final_top3": "[{\"strategyId\":\"early_morning_chase\",\"strategyName\":\"早盘追涨选股\",\"picks\":[{\"rank\":1,\"code\":\"sz510500\",\"name\":\"中证500ETF南方\",\"strength\":100,\"reason\":\"同板块补涨: 涨幅温和1.0% 成交264496.9亿\"},{\"rank\":2,\"code\":\"sz512100\",\"name\":\"中证1000ETF南方\",\"strength\":100,\"reason\":\"同板块补涨: 涨幅温和0.6% 成交347830.9亿\"},{\"rank\":3,\"code\":\"sh600101\",\"name\":\"明星电力\",\"strength\":100,\"reason\":\"同板块补涨: 涨幅温和1.3% 成交4730.6亿\"}]},{\"strategyId\":\"tail_low_pick\",\"strategyName\":\"超短线筛选逻辑\",\"picks\":[{\"rank\":1,\"code\":\"sz000545\",\"name\":\"金浦钛业\",\"strength\":72,\"reason\":\"尾盘低吸72分: 主线5|景气10|舆情2|技术20|资金15|股性10|量能10\"},{\"rank\":2,\"code\":\"sh600703\",\"name\":\"三安光电\",\"strength\":72,\"reason\":\"尾盘低吸72分: 主线5|景气10|舆情2|技术20|资金15|股性10|量能10\"},{\"rank\":3,\"code\":\"sz002475\",\"name\":\"立讯精密\",\"strength\":72,\"reason\":\"尾盘低吸72分: 主线5|景气10|舆情2|技术20|资金15|股性10|量能10\"}]}]",
+   "filtered_reason": "📊 市场公共研判（大盘→风格→板块）:\n  板块强弱监测: 428→15\n  风格轮动判断: 5→1\n📊 选股公共数据准备（股票池/自适应参数/风控）:\n  后台暂停/恢复: 0→0\n  持仓风控: 2→0\n  股票池过滤(ST/科创/创业): 196→191 (过滤5: ST 3 / 主板开关 onlyMainBoard=true 排除 2)\n📊 超短·震荡DAG（S4K线反转 tp+0.4/sl-0.8）:\n  候选池过滤: 196→146 (过滤72: 候选池过滤)\n  均线粘合严选: 19→1 (过滤18: 数据不足2,异常0)\n  买入订单生成: 1→1\n  腾龙换鸟: 1→0 (过滤1: 持仓未满无需换股)\n  持仓合并: 1→1"
+  },
+  {
+   "strategy_id": "STRATEGY_SCAN",
+   "trade_date": "2026-08-25",
+   "period_days": 1,
+   "stock_codes": "[\"sz002821\",\"sh603259\",\"sz002821\",\"sh603259\",\"sz002821\",\"sz002821\",\"sh603259\",\"sh603259\",\"sz002821\"]",
+   "final_top3": "[{\"name\":\"凯莱英\",\"code\":\"sz002821\",\"score\":90},{\"name\":\"药明康德\",\"code\":\"sh603259\",\"score\":70},{\"name\":\"凯莱英\",\"code\":\"sz002821\",\"score\":85},{\"name\":\"药明康德\",\"code\":\"sh603259\",\"score\":60},{\"name\":\"凯莱英\",\"code\":\"sz002821\",\"score\":60},{\"name\":\"凯莱英\",\"code\":\"sz002821\",\"score\":78},{\"name\":\"药明康德\",\"code\":\"sh603259\",\"score\":72},{\"name\":\"药明康德\",\"code\":\"sh603259\",\"score\":68},{\"name\":\"凯莱英\",\"code\":\"sz002821\",\"score\":67}]",
+   "filtered_reason": "[]"
+  },
+  {
+   "strategy_id": "DAG_SHORT_TERM",
+   "trade_date": "2026-08-25",
+   "period_days": 5,
+   "stock_codes": "[]",
+   "final_top3": "[{\"strategyId\":\"volume_break\",\"strategyName\":\"放量突破策略\",\"picks\":[{\"rank\":1,\"code\":\"sh600745\",\"name\":\"*ST闻泰\",\"strength\":100,\"reason\":\"量比5.5 涨10.0% 突破8.8%\"},{\"rank\":2,\"code\":\"sh600487\",\"name\":\"亨通光电\",\"strength\":95,\"reason\":\"量比4.2 涨7.3% 突破11.4%\"},{\"rank\":3,\"code\":\"sz002339\",\"name\":\"积成电子\",\"strength\":95,\"reason\":\"量比5.6 涨5.4% 突破5.5%\"}]},{\"strategyId\":\"trend_score\",\"strategyName\":\"趋势加减分\",\"picks\":[{\"rank\":1,\"code\":\"sh600801\",\"name\":\"华新建材\",\"strength\":91,\"reason\":\"↑上升趋势(91) 多头排列 加减分: 均线+20.0 ADX+10.0 动量+3.0 量价+8.0\"},{\"rank\":2,\"code\":\"sh601700\",\"name\":\"风范股份\",\"strength\":88,\"reason\":\"↑上升趋势(88) 多头排列 加减分: 均线+20.0 ADX+7.0 动量+3.0 量价+8.0\"},{\"rank\":3,\"code\":\"sh601088\",\"name\":\"中国神华\",\"strength\":88,\"reason\":\"↑上升趋势(88) 多头排列 加减分: 均线+20.0 ADX+5.0 动量+5.0 量价+8.0\"}]},{\"strategyId\":\"turnover_active\",\"strategyName\":\"换手率活跃策略\",\"picks\":[{\"rank\":1,\"code\":\"sz000545\",\"name\":\"金浦钛业\",\"strength\":77,\"reason\":\"换手4.1% 涨2.8% 连续放量\"},{\"rank\":2,\"code\":\"sz510500\",\"name\":\"中证500ETF南方\",\"strength\":58,\"reason\":\"换手7.0% 涨1.0%\"},{\"rank\":3,\"code\":\"sh600105\",\"name\":\"永鼎股份\",\"strength\":58,\"reason\":\"换手7.3% 涨1.5%\"}]},{\"strategyId\":\"hotspot_driven\",\"strategyName\":\"热点驱动短线\",\"picks\":[{\"rank\":1,\"code\":\"sh603019\",\"name\":\"中科曙光\",\"strength\":9,\"reason\":\"热点驱动:板块热门+5;涨1.41%\"},{\"rank\":2,\"code\":\"sz002475\",\"name\":\"立讯精密\",\"strength\":9,\"reason\":\"热点驱动:板块热门+5;涨2.38%\"},{\"rank\":3,\"code\":\"sz000063\",\"name\":\"中兴通讯\",\"strength\":6,\"reason\":\"热点驱动:板块热门+5;涨0.91%\"}]}]",
+   "filtered_reason": "📊 市场公共研判（大盘→风格→板块）:\n  板块强弱监测: 428→15\n  风格轮动判断: 5→1\n📊 选股公共数据准备（股票池/自适应参数/风控）:\n  后台暂停/恢复: 0→0\n  持仓风控: 5→0\n  股票池过滤(ST/科创/创业): 196→191 (过滤5: ST 3 / 主板开关 onlyMainBoard=true 排除 2)\n📊 短线·震荡DAG（S4K线反转 tp+1.5/sl-1.5）:\n  多周期热门股聚合: 209→8\n  候选池过滤: 196→146 (过滤72: 候选池过滤)\n  热度计算: 196→196 (过滤8: 低热度(<40分))\n  新闻力度计算: 37→37\n  板块轮动惩罚: 37→37\n  均线粘合严选: 37→0 (过滤37: 数据不足1,异常0)\n  新闻拦截+技术过滤: 36→36\n  买入订单生成: 5→0 (过滤5: 同日重复/价格异常3只)\n  持仓合并: 0→0"
+  },
+  {
+   "strategy_id": "DAG_MID_TERM",
+   "trade_date": "2026-08-25",
+   "period_days": 20,
+   "stock_codes": "[]",
+   "final_top3": "[{\"strategyId\":\"volume_break\",\"strategyName\":\"放量突破策略\",\"picks\":[{\"rank\":1,\"code\":\"sh600745\",\"name\":\"*ST闻泰\",\"strength\":100,\"reason\":\"量比5.5 涨10.0% 突破8.8%\"},{\"rank\":2,\"code\":\"sh600487\",\"name\":\"亨通光电\",\"strength\":95,\"reason\":\"量比4.2 涨7.3% 突破11.4%\"},{\"rank\":3,\"code\":\"sz002339\",\"name\":\"积成电子\",\"strength\":95,\"reason\":\"量比5.6 涨5.4% 突破5.5%\"}]},{\"strategyId\":\"rsi_divergence\",\"strategyName\":\"RSI背离策略\",\"picks\":[{\"rank\":1,\"code\":\"sz002557\",\"name\":\"洽洽食品\",\"strength\":92,\"reason\":\"RSI=24 底背离 反转确认 量比3.1\"},{\"rank\":2,\"code\":\"sh600160\",\"name\":\"巨化股份\",\"strength\":80,\"reason\":\"RSI=23 反转确认 量比2.6\"},{\"rank\":3,\"code\":\"sz000027\",\"name\":\"深圳能源\",\"strength\":80,\"reason\":\"RSI=22 反转确认 量比3.0\"}]},{\"strategyId\":\"trend_score\",\"strategyName\":\"趋势加减分\",\"picks\":[{\"rank\":1,\"code\":\"sh600801\",\"name\":\"华新建材\",\"strength\":91,\"reason\":\"↑上升趋势(91) 多头排列 加减分: 均线+20.0 ADX+10.0 动量+3.0 量价+8.0\"},{\"rank\":2,\"code\":\"sh601700\",\"name\":\"风范股份\",\"strength\":88,\"reason\":\"↑上升趋势(88) 多头排列 加减分: 均线+20.0 ADX+7.0 动量+3.0 量价+8.0\"},{\"rank\":3,\"code\":\"sh601088\",\"name\":\"中国神华\",\"strength\":88,\"reason\":\"↑上升趋势(88) 多头排列 加减分: 均线+20.0 ADX+5.0 动量+5.0 量价+8.0\"}]},{\"strategyId\":\"defensive_dividend\",\"strategyName\":\"defensive_dividend\",\"picks\":[{\"rank\":1,\"code\":\"sh600000\",\"name\":\"浦发银行\",\"strength\":69,\"reason\":\"防守高息: PB=0.36 ROE=0.0% 市值3024亿 银行\\/跨境支付\"},{\"rank\":2,\"code\":\"sh600016\",\"name\":\"民生银行\",\"strength\":67,\"reason\":\"防守高息: PB=0.27 ROE=0.0% 市值1532亿 银行\\/红利破净股\\/红利股\"},{\"rank\":3,\"code\":\"sh601318\",\"name\":\"中国平安\",\"strength\":58,\"reason\":\"防守高息: PB=0.97 ROE=0.0% 市值9961亿 保险\\/红利破净股\\/红利股\"}]},{\"strategyId\":\"bollinger_band\",\"strategyName\":\"布林带突破策略\",\"picks\":[{\"rank\":1,\"code\":\"sz002055\",\"name\":\"ST得润\",\"strength\":65,\"reason\":\"BB上轨6.14 突破+0.3% 量比3.8\"}]},{\"strategyId\":\"institutional_intent\",\"strategyName\":\"主力意图追踪\",\"picks\":[{\"rank\":1,\"code\":\"sz159915\",\"name\":\"创业板ETF易方达\",\"strength\":60,\"reason\":\"主力震仓洗盘: 放量下跌\"},{\"rank\":2,\"code\":\"sz159949\",\"name\":\"创业板50ETF华安\",\"strength\":60,\"reason\":\"主力震仓洗盘: 放量下跌\"},{\"rank\":3,\"code\":\"sh600549\",\"name\":\"厦门钨业\",\"strength\":60,\"reason\":\"主力震仓洗盘: 放量下跌\"}]}]",
+   "filtered_reason": "📊 市场公共研判（大盘→风格→板块）:\n  板块强弱监测: 428→15\n  风格轮动判断: 5→1\n📊 选股公共数据准备（股票池/自适应参数/风控）:\n  后台暂停/恢复: 0→0\n  持仓风控: 0→0\n  股票池过滤(ST/科创/创业): 196→191 (过滤5: ST 3 / 主板开关 onlyMainBoard=true 排除 2)\n📊 中线·震荡DAG（S1粘合突破 tp+3.0/sl-8.0）:\n  多周期热门股聚合: 209→8\n  热度计算: 196→196 (过滤8: 低热度(<40分))\n  防守高息: 238→4 (过滤234: 非防守板块/估值超标)\n  候选池过滤: 196→146 (过滤72: 候选池过滤)\n  跨日聚合: 8→8\n  新闻力度计算: 60→60\n  板块轮动惩罚: 60→60\n  均线粘合严选: 60→1 (过滤59: 数据不足0,异常0)\n  新闻拦截+技术过滤: 1→1\n  买入订单生成: 1→0 (过滤1: 无候选通过严格条件)\n  持仓合并: 0→0"
+  },
+  {
+   "strategy_id": "DAG_LONG_TERM",
+   "trade_date": "2026-08-25",
+   "period_days": 60,
+   "stock_codes": "[]",
+   "final_top3": "[{\"strategyId\":\"low_valuation\",\"strategyName\":\"低估值策略\",\"picks\":[{\"rank\":1,\"code\":\"sz000001\",\"name\":\"平安银行\",\"strength\":72,\"reason\":\"PE=4.4 PB=0.48 市值2243亿\"},{\"rank\":2,\"code\":\"sh600036\",\"name\":\"招商银行\",\"strength\":72,\"reason\":\"PE=6.6 PB=0.90 市值9962亿\"},{\"rank\":3,\"code\":\"sh601668\",\"name\":\"中国建筑\",\"strength\":72,\"reason\":\"PE=3.3 PB=0.38 市值1843亿\"}]}]",
+   "filtered_reason": "📊 市场公共研判（大盘→风格→板块）:\n  板块强弱监测: 428→15\n  风格轮动判断: 5→1\n📊 选股公共数据准备（股票池/自适应参数/风控）:\n  后台暂停/恢复: 0→0\n  持仓风控: 0→0\n  股票池过滤(ST/科创/创业): 196→191 (过滤5: ST 3 / 主板开关 onlyMainBoard=true 排除 2)\n📊 长线·震荡DAG（S1粘合突破 tp=+40/sl=-12/hold=40）:\n  热度计算: 196→196 (过滤8: 低热度(<40分))\n  防守高息: 238→2 (过滤236: 非防守板块/估值超标)\n  候选池过滤: 196→146 (过滤72: 候选池过滤)\n  均线粘合严选: 15→1 (过滤14: 数据不足0,异常0)\n  新闻拦截+技术过滤: 1→1\n  买入订单生成: 1→0 (过滤1: 无候选通过严格条件)\n  持仓合并: 0→0"
+  }
+ ],
+ "strategy_trade_fitting_params": [
+  {
+   "strategy_id": "cyclical_low_position",
+   "trade_date": "2026-08-25",
+   "period_days": 20,
+   "param_json": "lowPosition=10,safety=10,valuation=30,cap=50",
+   "fitting_round": 1,
+   "accuracy": 0,
+   "avg_return": 0
+  },
+  {
+   "strategy_id": "cyclical_low_position",
+   "trade_date": "2026-08-25",
+   "period_days": 20,
+   "param_json": "lowPosition=35,safety=30,valuation=20,cap=15",
+   "fitting_round": 1,
+   "accuracy": 0,
+   "avg_return": 0
+  },
+  {
+   "strategy_id": "cyclical_low_position",
+   "trade_date": "2026-08-25",
+   "period_days": 5,
+   "param_json": "lowPosition=10,safety=10,valuation=30,cap=50",
+   "fitting_round": 1,
+   "accuracy": 0,
+   "avg_return": 0
+  },
+  {
+   "strategy_id": "low_valuation",
+   "trade_date": "2026-08-25",
+   "period_days": 20,
+   "param_json": "valuation=40,quality=30,safety=30",
+   "fitting_round": 1,
+   "accuracy": 0,
+   "avg_return": 0
+  },
+  {
+   "strategy_id": "cyclical_low_position",
+   "trade_date": "2026-08-25",
+   "period_days": 5,
+   "param_json": "lowPosition=35,safety=30,valuation=20,cap=15",
+   "fitting_round": 1,
+   "accuracy": 0,
+   "avg_return": 0
+  },
+  {
+   "strategy_id": "low_valuation",
+   "trade_date": "2026-08-25",
+   "period_days": 5,
+   "param_json": "valuation=40,quality=30,safety=30",
+   "fitting_round": 1,
+   "accuracy": 0,
+   "avg_return": 0
+  },
+  {
+   "strategy_id": "moat_leader",
+   "trade_date": "2026-08-25",
+   "period_days": 20,
+   "param_json": "moat=10,leader=10,margin=45,roe=30,cashflow=5",
+   "fitting_round": 1,
+   "accuracy": 0,
+   "avg_return": 0
+  },
+  {
+   "strategy_id": "low_valuation",
+   "trade_date": "2026-08-25",
+   "period_days": 20,
+   "param_json": "valuation=40,quality=30,safety=30",
+   "fitting_round": 1,
+   "accuracy": 0,
+   "avg_return": 0
+  },
+  {
+   "strategy_id": "low_valuation",
+   "trade_date": "2026-08-25",
+   "period_days": 5,
+   "param_json": "valuation=40,quality=30,safety=30",
+   "fitting_round": 1,
+   "accuracy": 0,
+   "avg_return": 0
+  },
+  {
+   "strategy_id": "moat_leader",
+   "trade_date": "2026-08-25",
+   "period_days": 20,
+   "param_json": "moat=30,leader=25,margin=20,roe=15,cashflow=10",
+   "fitting_round": 1,
+   "accuracy": 0,
+   "avg_return": 0
+  },
+  {
+   "strategy_id": "moat_leader",
+   "trade_date": "2026-08-25",
+   "period_days": 5,
+   "param_json": "moat=10,leader=10,margin=45,roe=30,cashflow=5",
+   "fitting_round": 1,
+   "accuracy": 0,
+   "avg_return": 0
+  },
+  {
+   "strategy_id": "moat_leader",
+   "trade_date": "2026-08-25",
+   "period_days": 5,
+   "param_json": "moat=30,leader=25,margin=20,roe=15,cashflow=10",
+   "fitting_round": 1,
+   "accuracy": 0,
+   "avg_return": 0
+  },
+  {
+   "strategy_id": "fundamental_filter",
+   "trade_date": "2026-08-25",
+   "period_days": 20,
+   "param_json": "valuation=5,profitability=5,liquidity=10,quality=35,smartMoney=45",
+   "fitting_round": 1,
+   "accuracy": 0.9722222089767456,
+   "avg_return": 0
+  },
+  {
+   "strategy_id": "fundamental_filter",
+   "trade_date": "2026-08-25",
+   "period_days": 5,
+   "param_json": "valuation=5,profitability=5,liquidity=5,quality=40,smartMoney=45",
+   "fitting_round": 1,
+   "accuracy": 0,
+   "avg_return": 0
+  },
+  {
+   "strategy_id": "fundamental_filter",
+   "trade_date": "2026-08-25",
+   "period_days": 20,
+   "param_json": "valuation=5,profitability=5,liquidity=10,quality=35,smartMoney=45",
+   "fitting_round": 1,
+   "accuracy": 0.9722222089767456,
+   "avg_return": 0
+  },
+  {
+   "strategy_id": "institutional_accumulation",
+   "trade_date": "2026-08-25",
+   "period_days": 20,
+   "param_json": "roe=6,debt=5,cashflow=30,mcap=9,turnover=37,valuation=13",
+   "fitting_round": 1,
+   "accuracy": 0,
+   "avg_return": 0
+  },
+  {
+   "strategy_id": "fundamental_filter",
+   "trade_date": "2026-08-25",
+   "period_days": 5,
+   "param_json": "valuation=5,profitability=5,liquidity=5,quality=40,smartMoney=45",
+   "fitting_round": 1,
+   "accuracy": 0,
+   "avg_return": 0
+  },
+  {
+   "strategy_id": "institutional_accumulation",
+   "trade_date": "2026-08-25",
+   "period_days": 20,
+   "param_json": "roe=25,debt=20,cashflow=15,mcap=20,turnover=10,valuation=10",
+   "fitting_round": 1,
+   "accuracy": 0,
+   "avg_return": 0
+  },
+  {
+   "strategy_id": "institutional_accumulation",
+   "trade_date": "2026-08-25",
+   "period_days": 5,
+   "param_json": "roe=6,debt=5,cashflow=30,mcap=9,turnover=37,valuation=13",
+   "fitting_round": 1,
+   "accuracy": 0,
+   "avg_return": 0
+  },
+  {
+   "strategy_id": "institutional_accumulation",
+   "trade_date": "2026-08-25",
+   "period_days": 5,
+   "param_json": "roe=25,debt=20,cashflow=15,mcap=20,turnover=10,valuation=10",
+   "fitting_round": 1,
+   "accuracy": 0,
+   "avg_return": 0
+  }
+ ],
+ "t_trade_recommendations": [],
+ "real_positions": [
+  {
+   "stock_code": "605376",
+   "stock_name": "博迁新材",
+   "period_type": "",
+   "quantity": 400,
+   "avg_buy_price": 158,
+   "buy_date": "2026-08-25",
+   "current_price": 0,
+   "sector": ""
+  },
+  {
+   "stock_code": "002384",
+   "stock_name": "东山精密",
+   "period_type": "",
+   "quantity": 400,
+   "avg_buy_price": 204,
+   "buy_date": "2026-08-25",
+   "current_price": 0,
+   "sector": ""
+  }
+ ],
+ "period_holding_profit": [
+  {
+   "period_type": "ShortTermQuant",
+   "trade_date": "2026-08-25",
+   "holding_count": 5,
+   "total_cost": 193729,
+   "total_value": 194245,
+   "total_pnl": 516,
+   "total_pnl_pct": 0.2663514497055165,
+   "stock_codes": "sh600745,sh600487,sh600801,sh601939,sh601919"
+  },
+  {
+   "period_type": "UltraShortQuant",
+   "trade_date": "2026-08-25",
+   "holding_count": 3,
+   "total_cost": 124875,
+   "total_value": 124900,
+   "total_pnl": 25,
+   "total_pnl_pct": 0.02002002002002002,
+   "stock_codes": "sz000545,sh600101,sz000629"
+  }
+ ]
+}
