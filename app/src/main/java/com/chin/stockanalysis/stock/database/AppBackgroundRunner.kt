@@ -78,6 +78,11 @@ object AppBackgroundRunner {
             syncMissingTradingDays(context.applicationContext)
         }
 
+        // 启动时收集全球 Top10 机构研报新闻因子（每日一次，多调用方共享同一 job）
+        scope.launch(Dispatchers.IO) {
+            com.chin.stockanalysis.news.TopInstitutionNewsCollector.ensureFreshGlobal(scope, context.applicationContext).await()
+        }
+
         // 启动时修复 strategy_trade_orders 中缺失的股票名称
         // （选股时可能因数据未导入导致名称为空，此处自动补全）
         scope.launch(Dispatchers.IO) {

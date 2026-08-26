@@ -100,6 +100,15 @@ object NodeRegistry {
         // AI
         register("ai_predict") { _, _ -> AIPredictNode() }
 
+        // ══════════ 财务健康筛选（豆包第五部分：排雷 + 优选） ══════════
+        register("financial_health") { _, config ->
+            val minScore = config["minScore"]?.toIntOrNull() ?: 60
+            val maxDebt = config["maxDebtRatio"]?.toDoubleOrNull() ?: 70.0
+            com.chin.stockanalysis.strategy.topology.nodes.FinancialHealthNode(
+                minScore = minScore, maxDebtRatio = maxDebt
+            )
+        }
+
         // ══════════ 中线量化独有 Node ══════════
 
         // 中线数据源

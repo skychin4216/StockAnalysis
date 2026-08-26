@@ -857,9 +857,15 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
                         return@withContext
                     }
                     Toast.makeText(ctx, "✅ 已添加 $name($code)", Toast.LENGTH_SHORT).show()
+                    if (qty < 100) {
+                        Toast.makeText(ctx, "⚠️ 底仓不足 100 股，做T引擎可能无信号", Toast.LENGTH_SHORT).show()
+                    }
                     android.util.Log.i(TAG, "✅ saveRealPosition: calling refreshPositions()")
                     refreshPositions()
                 }
+                // 补齐该股日K快照（做T引擎要求 daily_snapshot ≥10 天，手工添加的股票往往无历史数据），
+                // 完成后再次刷新触发做T检测
+                ensureRealPositionDailyData(code, name)
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     Toast.makeText(ctx, "添加失败: ${e.message}", Toast.LENGTH_SHORT).show()

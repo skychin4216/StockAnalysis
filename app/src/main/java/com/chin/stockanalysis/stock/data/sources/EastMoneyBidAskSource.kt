@@ -80,7 +80,7 @@ class EastMoneyBidAskSource {
      */
     fun fetchSingle(code: String): BidAskData? {
         val secid = toSecId(code)
-        val url = "https://push2.eastmoney.com/api/qt/stock/get" +
+        val url = DataConfig.eastmoneyPush2Api("/stock/get") +
                 "?secid=$secid&fields=$BID_ASK_FIELDS&fltt=2"
         return try {
             val body = executeRequest(url) ?: return null

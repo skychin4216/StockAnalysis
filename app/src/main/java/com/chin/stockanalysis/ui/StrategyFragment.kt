@@ -22,12 +22,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * ## 策略栏目 — 量化选股（我的工作台 / 实仓 / 量化）
+ * ## 策略栏目 — 量化选股（我的工作台 / 策略 / 数据 / AI 分析）
  *
- * 顶部三 Tab：
- * - Tab 0：我的工作台 (QuantWorkbenchFragment) — 内嵌超短/短/中/长 四周期页 + 公共操作
- * - Tab 1：实仓 (RealHoldingQuantFragment) — 真实持仓管理
- * - Tab 2：量化 (QuantPickingFragment) — 内部 3 Tab：策略 / 数据 / AI 分析
+ * 顶部四个平级 Tab（实仓已并入工作台周期页签，原 量化→策略/数据/AI分析 上提与此平级）：
+ * - Tab 0：我的工作台 (QuantWorkbenchFragment) — 超短/短/中/长/实仓/选股系统 + 一键建仓
+ * - Tab 1：策略 (StrategyListFragment) — 策略沙盒：策略启停/参数调优/回测对比
+ * - Tab 2：数据 (StrategyImportFragment) — 数据管理&导入 / 拟合调优 / PC 拟合参数 / 回溯 & 分析 / PC 候选
+ * - Tab 3：AI 分析 (AIAnalysisFragment) — 个股/板块 Agent 深度分析
  */
 class StrategyFragment : Fragment() {
 
@@ -73,12 +74,13 @@ class StrategyFragment : Fragment() {
 
         // 绑定
         TabLayoutMediator(tabLayout, viewPager) { tab, position ->
-        tab.text = when (position) {
-        0 -> getString(com.chin.stockanalysis.R.string.tab_my_workbench)
-        1 -> getString(com.chin.stockanalysis.R.string.tab_real)
-        2 -> getString(com.chin.stockanalysis.R.string.tab_stock_picking)
-        else -> ""
-        }
+            tab.text = when (position) {
+                0 -> getString(com.chin.stockanalysis.R.string.tab_my_workbench)
+                1 -> getString(com.chin.stockanalysis.R.string.tab_strategy)
+                2 -> getString(com.chin.stockanalysis.R.string.tab_data)
+                3 -> getString(com.chin.stockanalysis.R.string.tab_ai_analysis)
+                else -> ""
+            }
         }.attach()
 
         // MODE_FIXED 下每个 tab 平均分配屏幕宽度；清除默认最小宽度与内边距，避免挤压不均
@@ -168,13 +170,14 @@ class StrategyFragment : Fragment() {
     }
 
     private class StrategyTabAdapter(fragment: Fragment) : FragmentStateAdapter(fragment) {
-        override fun getItemCount() = 3
+        override fun getItemCount() = 4
 
         override fun createFragment(position: Int): Fragment {
             return when (position) {
                 0 -> com.chin.stockanalysis.strategy.trade.QuantWorkbenchFragment()
-                1 -> com.chin.stockanalysis.strategy.trade.RealHoldingQuantFragment()
-                2 -> QuantPickingFragment()
+                1 -> StrategyListFragment()
+                2 -> StrategyImportFragment()
+                3 -> AIAnalysisFragment()
                 else -> throw IllegalStateException("Unknown position: $position")
             }
         }

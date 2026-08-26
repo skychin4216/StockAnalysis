@@ -95,6 +95,9 @@ class StockCheckPipeline(
     // ── v6: 趋势跟随参数（smalltools trend_follow 节，单一事实源 backtest_params.json） ──
     /** 多头排列是否含 MA60（超短 false / 短线 true） */
     val trendUseMA60: Boolean = false,
+    // ── v7: 周期标识（增强过滤用，对齐 smalltools/_pool_filters.py 周期差异化） ──
+    /** 周期名（"超短线"/"短线"/"中线"/"长线"），null=不启用增强过滤 */
+    var period: String? = null,
     /** 贴近新高：收盘距20日高点最大回撤（%） */
     val trendNearHighDrawdownPct: Double = 8.0,
     /** 放量：当日量 / 5日均量阈值 */
@@ -182,7 +185,7 @@ class StockCheckPipeline(
             return BacktestParamsLoader.applyTrendFollowOverrides(
                 "超短",
                 BacktestParamsLoader.applySelectOverrides("超短", base, marketTrend)
-            )
+            ).also { it.period = "超短线" }
         }
 
         /**
@@ -233,6 +236,7 @@ class StockCheckPipeline(
                 marketTrend = marketTrend
             )
             return BacktestParamsLoader.applySelectOverrides("中线", base, marketTrend)
+                .also { it.period = "中线" }
         }
 
         /**
@@ -264,6 +268,7 @@ class StockCheckPipeline(
                 marketTrend = marketTrend
             )
             return BacktestParamsLoader.applySelectOverrides("长线", base, marketTrend)
+                .also { it.period = "长线" }
         }
     }
 
@@ -581,7 +586,18 @@ class StockCheckPipeline(
         // ⑬ 三日不新低确认（仅要求时计入，大盘向上时不强制）
         if (requireThreeDayNow) { totalChecks++; if (threeDayConfirmOk) passCount++ }
 
-        val passed = passCount >= minPassCount
+        var passed = passCount >= minPassCount
+        // ── v7: 增强过滤（smalltools/_pool_filters.py extra_filter 搬回，周期差异化，长线豁免） ──
+        val p = period
+        if (p != null && EnhancedPoolFilter.enabled) {
+            // ③ 粘合持续硬性：中线（STICKY_HARD，消灭"瞬间收敛"假粘合）
+            if (p in EnhancedPoolFilter.stickyHardPeriods() && !convergenceDurationOk) passed = false
+            // ② 多头排列 + ⑬ 三日不新低 硬性：超短/短线（SHORT_HARD；牛市趋势跟随时不强制三日不新低）
+            if (p in EnhancedPoolFilter.shortHardPeriods() &&
+                (!bullishAligned || !threeDayConfirmOk)) passed = false
+            // minPassCount 周期门槛覆盖（PASS_COUNT，如 短线 7 / 中线 7）
+            EnhancedPoolFilter.passCountOverride(p)?.let { if (passCount < it) passed = false }
+        }
 
         // ── v5: IC 排序因子（口径与 smalltools/_factor_ic.py 一致：close/均线-1 再*100） ──
         val changePct = latest.changePct

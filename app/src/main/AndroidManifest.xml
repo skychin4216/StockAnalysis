@@ -81,6 +81,15 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- adb 广播命令接收器：触发「检查数据新鲜度→下载→同步COS」闭环 -->
+        <receiver
+            android:name=".cloud.CommandReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.chin.stockanalysis.CMD" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
 </manifest>

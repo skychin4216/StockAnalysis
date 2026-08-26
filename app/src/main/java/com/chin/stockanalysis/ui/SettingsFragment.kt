@@ -15,7 +15,6 @@ import android.widget.LinearLayout
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
@@ -31,7 +30,6 @@ import com.chin.stockanalysis.notification.TradeNotifier
 import com.chin.stockanalysis.stock.StockService
 import com.chin.stockanalysis.stock.data.StockDataSourceFactory
 import com.chin.stockanalysis.strategy.HoldingPeriod
-import com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader
 import com.chin.stockanalysis.update.AppUpdateManager
 import kotlinx.coroutines.launch
 
@@ -43,42 +41,6 @@ class SettingsFragment : Fragment() {
         val multiSourceRepo = StockDataSourceFactory.createDefaultRepository(requireContext())
         StockService(repository = multiSourceRepo)
     }
-
-    /** 导入参数 JSON：打开系统文件选择器 */
-    private val importParamsLauncher =
-        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri == null) return@registerForActivityResult
-            try {
-                val text = requireContext().contentResolver
-                    .openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                    ?: throw Exception("无法读取文件")
-                val err = BacktestParamsLoader.importParams(requireContext(), text)
-                if (err == null) {
-                    refreshParamsInfo()
-                    Toast.makeText(requireContext(), "参数导入成功，已立即生效", Toast.LENGTH_LONG).show()
-                } else {
-                    Toast.makeText(requireContext(), "导入失败: $err", Toast.LENGTH_LONG).show()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(requireContext(), "导入失败: ${e.message}", Toast.LENGTH_LONG).show()
-            }
-        }
-
-    /** 导出当前参数 JSON：系统文件保存 */
-    private val exportParamsLauncher =
-        registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-            if (uri == null) return@registerForActivityResult
-            try {
-                val text = BacktestParamsLoader.exportParams(requireContext())
-                    ?: throw Exception("无参数可导出")
-                requireContext().contentResolver
-                    .openOutputStream(uri)?.use { it.write(text.toByteArray()) }
-                    ?: throw Exception("无法写入文件")
-                Toast.makeText(requireContext(), "参数已导出", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(requireContext(), "导出失败: ${e.message}", Toast.LENGTH_LONG).show()
-            }
-        }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -104,39 +66,15 @@ class SettingsFragment : Fragment() {
             btnLanguage.setOnClickListener { showLanguageDialog() }
             tvAbout.text = buildAboutText()
         }
-        setupParamsManagement()
         setupAgentFramework()
         setupWechatNotification()
         setupAppUpdate()
         setupCloudSync()
     }
 
-    /** 回溯参数：导入 / 导出 / 恢复内置（用户需求：导入他人拟合参数即用，免回溯） */
-    private fun setupParamsManagement() {
-        refreshParamsInfo()
-        binding.btnImportParams.setOnClickListener {
-            importParamsLauncher.launch(arrayOf("application/json", "text/json", "*/*"))
-        }
-        binding.btnExportParams.setOnClickListener {
-            exportParamsLauncher.launch("backtest_params.json")
-        }
-        binding.btnResetParams.setOnClickListener {
-            if (BacktestParamsLoader.resetToBuiltIn(requireContext())) {
-                refreshParamsInfo()
-                Toast.makeText(requireContext(), "已恢复内置参数", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(requireContext(), "恢复失败", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    private fun refreshParamsInfo() {
-        binding.tvParamsSource.text = "当前参数: ${BacktestParamsLoader.paramName(requireContext())}（" +
-            "${BacktestParamsLoader.sourceLabel(requireContext())} v${BacktestParamsLoader.version(requireContext())}）"
-    }
-
-    /** 绑定做T 微信通知 & 自动执行 配置（Phase 11） */
+    /** 绑定做T 微信通知 & 自动执行 配置（Phase 11，可折叠） */
     private fun setupWechatNotification() {
+        setupCollapsible(binding.tvWechatSectionHeader, binding.layoutWechatContent)
         binding.apply {
             swWechatEnabled.isChecked = TradeNotifier.isWechatEnabled(requireContext())
             swWechatEnabled.setOnCheckedChangeListener { _, isChecked ->
@@ -183,30 +121,20 @@ class SettingsFragment : Fragment() {
         }
     }
 
-    /** 应用更新：显示当前版本、配置自定义更新地址、手动检查更新 */
+    /** 应用更新：显示当前版本、自动从云端配置（COS）读取更新清单、手动检查更新 */
     private fun setupAppUpdate() {
         binding.apply {
             val ctx = requireContext()
             tvUpdateVersion.text = "当前版本: v${AppUpdateManager.currentVersionName(ctx)}" +
                 " (${AppUpdateManager.currentVersionCode(ctx)})"
-            val currentUrl = AppUpdateManager.getManifestUrl(ctx)
-            etUpdateUrl.setText(if (currentUrl.contains("example.com")) "" else currentUrl)
-
-            btnSaveUpdateUrl.setOnClickListener {
-                val url = etUpdateUrl.text?.toString()?.trim().orEmpty()
-                AppUpdateManager.setManifestUrl(ctx, url)
-                Toast.makeText(ctx, "更新地址已保存", Toast.LENGTH_SHORT).show()
-            }
 
             btnCheckUpdate.setOnClickListener {
-                val url = etUpdateUrl.text?.toString()?.trim().orEmpty()
-                if (url.isNotBlank()) AppUpdateManager.setManifestUrl(ctx, url)
                 Toast.makeText(ctx, "正在检查更新…", Toast.LENGTH_SHORT).show()
                 AppUpdateManager.checkForUpdateDetailed(ctx) { result ->
                     requireActivity().runOnUiThread {
                         when (result) {
                             is AppUpdateManager.CheckResult.NotConfigured ->
-                                Toast.makeText(ctx, "未配置更新地址，请先在下方填写 latest.json 地址", Toast.LENGTH_LONG).show()
+                                Toast.makeText(ctx, "未配置更新地址（app_config.json 中 update.manifest_url 或 cloud_sync 均未配置）", Toast.LENGTH_LONG).show()
                             is AppUpdateManager.CheckResult.NoUpdate ->
                                 Toast.makeText(ctx, "当前已是最新版本", Toast.LENGTH_SHORT).show()
                             is AppUpdateManager.CheckResult.Failed ->
@@ -220,8 +148,9 @@ class SettingsFragment : Fragment() {
         }
     }
 
-    /** 云端数据同步（腾讯云 COS）：显示状态、上传今日数据、下载最新拟合参数 */
+    /** 云端数据同步（腾讯云 COS，可折叠）：显示状态、上传今日数据、下载最新拟合参数 */
     private fun setupCloudSync() {
+        setupCollapsible(binding.tvCloudSectionHeader, binding.layoutCloudContent)
         refreshCloudStatus()
         binding.btnCloudUpload.setOnClickListener {
             viewLifecycleOwner.lifecycleScope.launch {
@@ -252,7 +181,6 @@ class SettingsFragment : Fragment() {
                 binding.btnCloudDownloadParams.isEnabled = true
                 result.onSuccess { msg ->
                     setCloudStatus(msg, Color.parseColor("#2E7D32"))
-                    refreshParamsInfo()
                     Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
                 }.onFailure { e ->
                     setCloudStatus(e.message ?: "下载失败", Color.parseColor("#C62828"))
@@ -280,6 +208,17 @@ class SettingsFragment : Fragment() {
         }
     }
 
+    /** 通用折叠效果：点击 header 展开/收起 content（▶/▼ 图标切换） */
+    private fun setupCollapsible(header: TextView, content: View) {
+        header.setOnClickListener {
+            val isExpanded = content.visibility == View.VISIBLE
+            content.visibility = if (isExpanded) View.GONE else View.VISIBLE
+            val arrow = if (isExpanded) "▶" else "▼"
+            val text = header.text.toString()
+            header.text = (if (text.startsWith("▶") || text.startsWith("▼")) text.drop(1) else text).let { arrow + it }
+        }
+    }
+
     private fun refreshCloudStatus() {
         val cfg = CloudSyncManager(requireContext()).loadConfig()
         if (!cfg.enabled) {
@@ -287,8 +226,10 @@ class SettingsFragment : Fragment() {
             return
         }
         val maskedId = cfg.secretId.take(4) + "****"
+        val lastUpload = CloudSyncManager(requireContext()).lastUploadDate()
+        val lastUploadText = if (lastUpload != null) "\n上次上传: $lastUpload（同日不重复上传）" else ""
         setCloudStatus(
-            "已配置: bucket=${cfg.bucket}  region=${cfg.region}\nSecretId=$maskedId  prefix=${cfg.prefix}",
+            "已配置: bucket=${cfg.bucket}  region=${cfg.region}\nSecretId=$maskedId  prefix=${cfg.prefix}$lastUploadText",
             Color.parseColor("#2E7D32")
         )
     }
@@ -662,22 +603,21 @@ class SettingsFragment : Fragment() {
     }
 
     private fun updateModuleSwitchesEnabled(mode: GlobalMode) {
-        val enabled = (mode == GlobalMode.HYBRID)
-        val alpha = if (enabled) 1.0f else 0.4f
+        // 模块级别配置 + 周期级别路线：仅在 Hybrid 模式下显示，否则隐藏，避免占用 UI
+        val visibility = if (mode == GlobalMode.HYBRID) View.VISIBLE else View.GONE
         binding.apply {
-            tvModuleConfigTitle.alpha = alpha
-            swStockPicking.isEnabled = enabled; swStockPicking.alpha = alpha
-            swStockAnalysis.isEnabled = enabled; swStockAnalysis.alpha = alpha
-            swTradeExecution.isEnabled = enabled; swTradeExecution.alpha = alpha
-            swChat.isEnabled = enabled; swChat.alpha = alpha
-            swNewsMonitor.isEnabled = enabled; swNewsMonitor.alpha = alpha
-            swRiskManagement.isEnabled = enabled; swRiskManagement.alpha = alpha
-            // 周期路线开关（同样只在 HYBRID 模式下可操作）
-            tvPeriodRouteTitle.alpha = alpha
-            swRouteUltraShort.isEnabled = enabled; swRouteUltraShort.alpha = alpha
-            swRouteShort.isEnabled = enabled; swRouteShort.alpha = alpha
-            swRouteMid.isEnabled = enabled; swRouteMid.alpha = alpha
-            swRouteLong.isEnabled = enabled; swRouteLong.alpha = alpha
+            tvModuleConfigTitle.visibility = visibility
+            swStockPicking.visibility = visibility
+            swStockAnalysis.visibility = visibility
+            swTradeExecution.visibility = visibility
+            swChat.visibility = visibility
+            swNewsMonitor.visibility = visibility
+            swRiskManagement.visibility = visibility
+            tvPeriodRouteTitle.visibility = visibility
+            swRouteUltraShort.visibility = visibility
+            swRouteShort.visibility = visibility
+            swRouteMid.visibility = visibility
+            swRouteLong.visibility = visibility
         }
     }
 

@@ -8,6 +8,7 @@ import com.chin.stockanalysis.strategy.data.CandidatePool
 import com.chin.stockanalysis.strategy.data.DirectionAnalyzer
 import com.chin.stockanalysis.strategy.data.IndividualDirection
 import com.chin.stockanalysis.strategy.data.IndustrySeasonalityCalendar
+import com.chin.stockanalysis.strategy.topology.pipelines.EnhancedPoolFilter
 import com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline
 import com.chin.stockanalysis.strategy.topology.pipelines.StockCheckPipeline.Companion.AnalysisMode
 import com.chin.stockanalysis.strategy.trade.macro.IndexDeviationMonitor
@@ -307,6 +308,23 @@ class UnifiedStockClassifier(private val context: Context) {
             Log.w(TAG, "指数偏离监测失败: ${e.message}")
         }
 
+        // ── v7: 板块代理过滤（smalltools/_pool_filters.py SECTOR_FILTER 搬回，长线豁免） ──
+        // 用池内同板块股票近20日平均涨幅近似行业强弱：弱板块(均值 < sectorThreshold)剔除
+        // 超短/短线/中线信号，只放行长线（长线看基本面拐点，不卡板块动量）。
+        val sectorRet20 = try {
+            val latestDate = db.dailySnapshotDao().getAvailableDates(1).firstOrNull()
+            if (latestDate != null)
+                EnhancedPoolFilter.buildSectorRet20(db, cands.map { it.code }, latestDate)
+            else emptyMap()
+        } catch (e: Exception) {
+            Log.w(TAG, "板块涨幅表构建失败: ${e.message}")
+            emptyMap()
+        }
+        if (sectorRet20.isNotEmpty()) {
+            Log.i(TAG, "板块代理过滤(${EnhancedPoolFilter.sectorThreshold()}%): " +
+                sectorRet20.entries.sortedByDescending { it.value }.joinToString { "${it.key}=${it.value.toInt()}%" })
+        }
+
         // 并发分类所有候选股 × 所有周期
         val jobs = cands.map { c ->
             async(Dispatchers.IO) {
@@ -321,6 +339,11 @@ class UnifiedStockClassifier(private val context: Context) {
                         riskControlTrend[stockIdx] == true) continue
                     try {
                         var result = pipe.analyze(db, c.code)
+                        // ── v7: 板块代理过滤：弱板块信号剔除（超短/短线/中线，长线豁免） ──
+                        if (result.passed && pipe.period?.let { it in EnhancedPoolFilter.sectorPeriods() } == true) {
+                            val ret = sectorRet20[EnhancedPoolFilter.sectorOf(c.code, c.name)]
+                            if (ret != null && ret < EnhancedPoolFilter.sectorThreshold()) continue
+                        }
                         if (result.passed) {
                             // ── 产业主线过滤（中线/长线）：只选属于受关注产业主线的股票 ──
                             // 中线/长线看产业逻辑（AI算力/存储/PCB/稀有金属/稀有气体/石油黄金/半导体国产替代），

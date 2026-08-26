@@ -117,7 +117,9 @@ object UseCaseLoader {
         useCaseId: String,
         tradeDate: String,
         onNodeProgress: ((pipelineName: String, nodeName: String) -> Unit)? = null,
-        configOverrides: Map<String, String> = emptyMap()
+        onNodeDone: ((pipelineName: String, nodeName: String, output: Any?) -> Unit)? = null,
+        configOverrides: Map<String, String> = emptyMap(),
+        seedStageOutputs: Map<String, Any?> = emptyMap()
     ): MultiPipelineResult {
         if (!initialized) {
             return MultiPipelineResult(
@@ -208,6 +210,13 @@ object UseCaseLoader {
             )
             // 挂上 UI 进度回调（DAG 执行时每个节点开始会回传 pipelineName + nodeName）
             context.onNodeProgress = onNodeProgress
+            context.onNodeDone = onNodeDone
+
+            // 3.1 播种外部公共研判结果（一键建仓：市场公共研判 + 选股公共数据准备先统一执行一次，
+            //     四周期专属 pipeline 直接读取 n_pool / n_adaptive / n_params 等 stageOutput）
+            if (seedStageOutputs.isNotEmpty()) {
+                seedStageOutputs.forEach { (k, v) -> context.stageOutputs[k] = v }
+            }
 
             // 4. 将策略列表存入 context，供 DAG Node 使用
             val allStrategies = NodeRegistry.listModules()
@@ -359,7 +368,8 @@ object UseCaseLoader {
                 pipelineResults = pipelineResults,
                 totalElapsedMs = totalElapsed,
                 finalOutput = finalOutput,
-                errors = errors
+                errors = errors,
+                stageOutputs = context.stageOutputs.toMap()
             )
         }
     }
@@ -673,6 +683,7 @@ object UseCaseLoader {
      * @property totalElapsedMs 总耗时（毫秒）
      * @property finalOutput 最后一个非空输出
      * @property errors 错误信息（pipelineName/errorKey → message）
+     * @property stageOutputs 执行完成后共享上下文的全部 stageOutput（一键建仓公共研判结果播种用）
      */
     data class MultiPipelineResult(
         val useCaseId: String,
@@ -680,7 +691,8 @@ object UseCaseLoader {
         val pipelineResults: Map<String, PipelineResult>,
         val totalElapsedMs: Long,
         val finalOutput: Any? = null,
-        val errors: Map<String, String> = emptyMap()
+        val errors: Map<String, String> = emptyMap(),
+        val stageOutputs: Map<String, Any?> = emptyMap()
     )
 
     data class UseCaseInfo(

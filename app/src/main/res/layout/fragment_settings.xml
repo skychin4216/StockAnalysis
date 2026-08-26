@@ -91,62 +91,6 @@
             android:textColor="@android:color/darker_gray"
             android:layout_marginBottom="24dp" />
 
-        <!-- 回溯参数管理（walk-forward 固化参数） -->
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:background="@android:color/darker_gray"
-            android:layout_marginBottom="16dp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="回溯参数（三年 walk-forward 拟合）"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:layout_marginBottom="4dp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="导入他人拟合好的参数 JSON 立即生效；也可导出当前参数分享。"
-            android:textSize="12sp"
-            android:textColor="@android:color/darker_gray"
-            android:layout_marginBottom="12dp" />
-
-        <TextView
-            android:id="@+id/tvParamsSource"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="当前参数来源: APK 内置"
-            android:textSize="12sp"
-            android:textColor="@android:color/darker_gray"
-            android:layout_marginBottom="8dp" />
-
-        <Button
-            android:id="@+id/btnImportParams"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:text="导入参数文件（JSON）"
-            android:textSize="14sp"
-            android:layout_marginBottom="8dp" />
-
-        <Button
-            android:id="@+id/btnExportParams"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:text="导出当前参数"
-            android:textSize="14sp"
-            android:layout_marginBottom="8dp" />
-
-        <Button
-            android:id="@+id/btnResetParams"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:text="恢复内置参数"
-            android:textSize="14sp"
-            android:layout_marginBottom="24dp" />
-
         <!-- Agent Framework -->
         <View
             android:layout_width="match_parent"
@@ -301,7 +245,7 @@
             android:textSize="13sp"
             android:layout_marginBottom="24dp" />
 
-        <!-- 做T 微信通知（Phase 11） -->
+        <!-- 做T 微信通知 & 自动执行（可折叠） -->
         <View
             android:layout_width="match_parent"
             android:layout_height="1dp"
@@ -309,74 +253,84 @@
             android:layout_marginBottom="16dp" />
 
         <TextView
+            android:id="@+id/tvWechatSectionHeader"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="做T 微信通知 &amp; 自动执行"
+            android:text="▶ 做T 微信通知 &amp; 自动执行"
             android:textSize="16sp"
             android:textStyle="bold"
+            android:padding="8dp"
+            android:background="#F5F5F5"
             android:layout_marginBottom="4dp" />
 
-        <TextView
+        <LinearLayout
+            android:id="@+id/layoutWechatContent"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="做T信号出现时推送微信，置信度超阈值可自动执行买卖"
-            android:textSize="12sp"
-            android:textColor="@android:color/darker_gray"
-            android:layout_marginBottom="12dp" />
+            android:orientation="vertical">
 
-        <Switch
-            android:id="@+id/swWechatEnabled"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:text="ServerChan 微信通知"
-            android:textSize="14sp"
-            android:layout_marginBottom="4dp" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="做T信号出现时推送微信，置信度超阈值可自动执行买卖"
+                android:textSize="12sp"
+                android:textColor="@android:color/darker_gray"
+                android:layout_marginBottom="12dp" />
 
-        <EditText
-            android:id="@+id/etServerChanKey"
-            android:layout_width="match_parent"
-            android:layout_height="44dp"
-            android:hint="ServerChan SendKey（https://sct.ftqq.com 获取）"
-            android:textSize="12sp"
-            android:inputType="text"
-            android:padding="8dp"
-            android:layout_marginBottom="8dp" />
+            <Switch
+                android:id="@+id/swWechatEnabled"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="ServerChan 微信通知"
+                android:textSize="14sp"
+                android:layout_marginBottom="4dp" />
 
-        <Switch
-            android:id="@+id/swPushPlusEnabled"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:text="PushPlus 微信通知"
-            android:textSize="14sp"
-            android:layout_marginBottom="4dp" />
+            <EditText
+                android:id="@+id/etServerChanKey"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:hint="ServerChan SendKey（https://sct.ftqq.com 获取）"
+                android:textSize="12sp"
+                android:inputType="text"
+                android:padding="8dp"
+                android:layout_marginBottom="8dp" />
 
-        <EditText
-            android:id="@+id/etPushPlusToken"
-            android:layout_width="match_parent"
-            android:layout_height="44dp"
-            android:hint="PushPlus Token（https://www.pushplus.plus 获取）"
-            android:textSize="12sp"
-            android:inputType="text"
-            android:padding="8dp"
-            android:layout_marginBottom="8dp" />
+            <Switch
+                android:id="@+id/swPushPlusEnabled"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="PushPlus 微信通知"
+                android:textSize="14sp"
+                android:layout_marginBottom="4dp" />
 
-        <Switch
-            android:id="@+id/swAutoExecute"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:text="自动执行（置信度超阈值自动买卖）"
-            android:textSize="14sp"
-            android:layout_marginBottom="4dp" />
+            <EditText
+                android:id="@+id/etPushPlusToken"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:hint="PushPlus Token（https://www.pushplus.plus 获取）"
+                android:textSize="12sp"
+                android:inputType="text"
+                android:padding="8dp"
+                android:layout_marginBottom="8dp" />
 
-        <EditText
-            android:id="@+id/etAutoExecThreshold"
-            android:layout_width="match_parent"
-            android:layout_height="44dp"
-            android:hint="自动执行置信度阈值（默认 0.7，范围 0~1）"
-            android:textSize="12sp"
-            android:inputType="numberDecimal"
-            android:padding="8dp"
-            android:layout_marginBottom="24dp" />
+            <Switch
+                android:id="@+id/swAutoExecute"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="自动执行（置信度超阈值自动买卖）"
+                android:textSize="14sp"
+                android:layout_marginBottom="4dp" />
+
+            <EditText
+                android:id="@+id/etAutoExecThreshold"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:hint="自动执行置信度阈值（默认 0.7，范围 0~1）"
+                android:textSize="12sp"
+                android:inputType="numberDecimal"
+                android:padding="8dp"
+                android:layout_marginBottom="24dp" />
+        </LinearLayout>
 
         <!-- 语言设置 -->
         <View
@@ -430,7 +384,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="配置更新清单地址后，可手动检查或启动时自动检查新版本并下载安装"
+            android:text="更新清单自动从云端配置（COS）读取，可手动检查或启动时自动检查新版本并下载安装"
             android:textSize="12sp"
             android:textColor="@android:color/darker_gray"
             android:layout_marginBottom="12dp" />
@@ -444,24 +398,6 @@
             android:textColor="@android:color/darker_gray"
             android:layout_marginBottom="8dp" />
 
-        <EditText
-            android:id="@+id/etUpdateUrl"
-            android:layout_width="match_parent"
-            android:layout_height="44dp"
-            android:hint="更新清单地址（latest.json 完整 URL）"
-            android:textSize="12sp"
-            android:inputType="textUri"
-            android:padding="8dp"
-            android:layout_marginBottom="8dp" />
-
-        <Button
-            android:id="@+id/btnSaveUpdateUrl"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:text="保存更新地址"
-            android:textSize="14sp"
-            android:layout_marginBottom="8dp" />
-
         <Button
             android:id="@+id/btnCheckUpdate"
             android:layout_width="match_parent"
@@ -470,7 +406,7 @@
             android:textSize="14sp"
             android:layout_marginBottom="24dp" />
 
-        <!-- 云端数据同步（腾讯云 COS） -->
+        <!-- 云端数据同步（腾讯云 COS，可折叠） -->
         <View
             android:layout_width="match_parent"
             android:layout_height="1dp"
@@ -479,53 +415,63 @@
             android:layout_marginTop="16dp" />
 
         <TextView
+            android:id="@+id/tvCloudSectionHeader"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="云端数据同步（腾讯云 COS）"
+            android:text="▶ 云端数据同步（腾讯云 COS）"
             android:textSize="16sp"
             android:textStyle="bold"
+            android:padding="8dp"
+            android:background="#F5F5F5"
             android:layout_marginBottom="4dp" />
 
-        <TextView
+        <LinearLayout
+            android:id="@+id/layoutCloudContent"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="将每日策略结果打包上传 COS，供 PC 回溯拟合；也可下载 PC 拟合好的最新参数并立即生效。"
-            android:textSize="12sp"
-            android:textColor="@android:color/darker_gray"
-            android:layout_marginBottom="12dp" />
+            android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/tvCloudStatus"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="云端同步未配置"
-            android:textSize="13sp"
-            android:textColor="@android:color/darker_gray"
-            android:layout_marginBottom="8dp" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="将每日策略结果打包上传 COS，供 PC 回溯拟合；也可下载 PC 拟合好的最新参数并立即生效。"
+                android:textSize="12sp"
+                android:textColor="@android:color/darker_gray"
+                android:layout_marginBottom="12dp" />
 
-        <Button
-            android:id="@+id/btnCloudUpload"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:text="上传今日数据到 COS"
-            android:textSize="14sp"
-            android:layout_marginBottom="8dp" />
+            <TextView
+                android:id="@+id/tvCloudStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="云端同步未配置"
+                android:textSize="13sp"
+                android:textColor="@android:color/darker_gray"
+                android:layout_marginBottom="8dp" />
 
-        <Button
-            android:id="@+id/btnCloudDownloadParams"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:text="下载最新拟合参数"
-            android:textSize="14sp"
-            android:layout_marginBottom="8dp" />
+            <Button
+                android:id="@+id/btnCloudUpload"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="上传今日数据到 COS"
+                android:textSize="14sp"
+                android:layout_marginBottom="8dp" />
 
-        <Button
-            android:id="@+id/btnCloudDownloadDb"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:text="下载云端行情库（PC 市场库）"
-            android:textSize="14sp"
-            android:layout_marginBottom="24dp" />
+            <Button
+                android:id="@+id/btnCloudDownloadParams"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="下载最新拟合参数"
+                android:textSize="14sp"
+                android:layout_marginBottom="8dp" />
+
+            <Button
+                android:id="@+id/btnCloudDownloadDb"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="下载云端行情库（PC 市场库）"
+                android:textSize="14sp"
+                android:layout_marginBottom="24dp" />
+        </LinearLayout>
 
         <!-- About -->
         <TextView

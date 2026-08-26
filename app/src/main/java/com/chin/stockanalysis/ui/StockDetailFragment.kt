@@ -21,12 +21,8 @@ import com.chin.stockanalysis.stock.data.sources.SectorSubDivision
 import com.chin.stockanalysis.stock.database.ChinaMarketTradingHours as A股TradingHours
 import com.chin.stockanalysis.stock.database.StockDataCenter
 import com.chin.stockanalysis.stock.database.StockDatabase
-import com.chin.stockanalysis.agent.core.AgentOrchestrator
-import com.chin.stockanalysis.agent.core.AnalysisMode
-import com.chin.stockanalysis.agent.core.AnalysisResult
-import com.chin.stockanalysis.agent.core.analyzeStock
 import com.chin.stockanalysis.agent.stock.StockAnalysisAgent
-import com.chin.stockanalysis.config.FeatureFlagManager
+import com.chin.stockanalysis.strategy.backtest.PeriodDeepAnalysisRunner
 import com.chin.stockanalysis.strategy.analysis.CandlePatternDetector
 import com.chin.stockanalysis.strategy.analysis.MaConvergenceAnalyzer
 import com.chin.stockanalysis.strategy.data.InstitutionalRatingProvider
@@ -190,11 +186,7 @@ class StockDetailFragment : Fragment() {
                     // 恢复分析按钮状态
                     root.findViewWithTag<Button>("btnRunAi")?.let {
                         it.isEnabled = true
-                        it.text = "🤖 V1.0深度分析"
-                    }
-                    root.findViewWithTag<Button>("btnRunV2")?.let {
-                        it.isEnabled = true
-                        it.text = "📊 V2.0全周期"
+                        it.text = "🤖 深度分析"
                     }
                 } else {
                     // 都已收起 → 正常退出
@@ -468,7 +460,8 @@ class StockDetailFragment : Fragment() {
         aiResultScrollView.addView(aiResultContainer)
         root.addView(aiResultScrollView)
 
-        // 底部按钮行：V1.0 / V2.0 / 向AI追问（立即显示，不等待 K 线加载）
+        // 底部按钮行：深度分析 / 向AI追问（立即显示，不等待 K 线加载）
+        // 深度分析 = 原 V1.0 深度 + V2.0 全周期合并入口：同一引擎，根据打分推荐短线/中线/长线
         val btnRow = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -477,28 +470,15 @@ class StockDetailFragment : Fragment() {
         }
         btnRow.addView(Button(requireContext()).apply {
             tag = "btnRunAi"
-            text = "🤖 V1.0深度分析"
+            text = "🤖 深度分析"
             textSize = 9f; setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#2E7D32"))
             setPadding(12, 4, 12, 4)
             minimumHeight = 0; minHeight = 0
             setOnClickListener {
                 it.isEnabled = false
-                (it as Button).text = "V1.0分析中..."
-                runAiAgents(AnalysisMode.DEEP)
-            }
-        })
-        btnRow.addView(Button(requireContext()).apply {
-            tag = "btnRunV2"
-            text = "📊 V2.0全周期"
-            textSize = 9f; setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#E65100"))
-            setPadding(12, 4, 12, 4)
-            minimumHeight = 0; minHeight = 0
-            setOnClickListener {
-                it.isEnabled = false
-                (it as Button).text = "V2.0分析中..."
-                runAiAgents(AnalysisMode.EXPERT)
+                (it as Button).text = "四周期分析中..."
+                runPeriodDeepAnalysis()
             }
         })
         btnRow.addView(Button(requireContext()).apply {
@@ -1254,25 +1234,8 @@ class StockDetailFragment : Fragment() {
     /** 当前正在进行的 AI 分析 Job（返回键可取消） */
     private var aiAnalysisJob: Job? = null
 
-    /**
-     * 统一分析入口（AgentOrchestrator.analyzeStock）。
-     *
-     * flag 控制编排深度：
-     * - stockAnalysisRoute = AGENT_FRAMEWORK → 完整角色编排（Scout+Analyst+Guardian 并行）
-     * - 否则 → 轻量直连（DeepAnalystEngine + 决策矩阵）
-     */
-    private suspend fun runAnalysis(appCtx: Context, mode: AnalysisMode): AnalysisResult {
-        val useAgent = FeatureFlagManager.isAgentFramework(FeatureFlagManager.stockAnalysisRoute)
-        return AgentOrchestrator(appCtx).analyzeStock(
-            stockCode = stockCode,
-            stockName = stockName,
-            mode = mode,
-            useAgentFramework = useAgent
-        )
-    }
-
-    /** 运行 AI Agent 分析，切换到 aiResultContainer */
-    private fun runAiAgents(mode: AnalysisMode = AnalysisMode.DEEP) {
+    /** 🧭 四周期深度分析：参考一键建仓的四周期框架，输入个股 → 四周期打分 → 推荐周期 + 建议（只分析不下单） */
+    private fun runPeriodDeepAnalysis() {
         // 取消之前正在进行的分析
         aiAnalysisJob?.cancel()
 
@@ -1287,11 +1250,7 @@ class StockDetailFragment : Fragment() {
             setPadding(0, 0, 4, 0)
         })
         loadingRow.addView(TextView(requireContext()).apply {
-            text = when (mode) {
-                AnalysisMode.DEEP -> "V1.0深度分析中（需要30-60秒）..."
-                AnalysisMode.EXPERT -> "V2.0全周期分析中（市场环境+利润质量+决策矩阵）..."
-                else -> "AI 分析中..."
-            }
+            text = "四周期深度分析中（约3-5秒）..."
             textSize = 9f; setTextColor(Color.parseColor("#999999"))
         })
         aiResultContainer.addView(loadingRow)
@@ -1302,8 +1261,8 @@ class StockDetailFragment : Fragment() {
 
         aiAnalysisJob = lifecycleScope.launch(Dispatchers.IO) {
             val appCtx = requireContext().applicationContext
-            // 统一入口：AgentOrchestrator.analyzeStock（flag 控制完整编排 / 轻量直连）
-            val result = runAnalysis(appCtx, mode)
+            // 四周期打分（超短/短/中/长），只分析不下单
+            val result = PeriodDeepAnalysisRunner().analyze(appCtx, stockCode, stockName)
 
             // 检查是否被取消或 view 已销毁
             ensureActive()
@@ -1311,24 +1270,21 @@ class StockDetailFragment : Fragment() {
 
             withContext(Dispatchers.Main) {
                 aiResultContainer.removeAllViews()
-                // 清理 summaryText 中可能残留的 JSON 碎片
-                val cleanedSummary = cleanJsonArtifacts(result.summaryText)
+                // 四周期打分报告（每周期适配度 + 周期推荐 + 建议；低分不推荐买入）
                 aiResultContainer.addView(TextView(requireContext()).apply {
-                    text = cleanedSummary
-                    textSize = if (result.mode == AnalysisMode.DEEP) 9f else 10f
+                    text = result.report
+                    textSize = 9f
                     setTextColor(Color.parseColor("#1B5E20"))
                     setLineSpacing(2f, 1f)
                     setPadding(0, 0, 0, 2)
                 })
                 // 模式标签
-                if (result.mode != AnalysisMode.QUICK) {
-                    aiResultContainer.addView(TextView(requireContext()).apply {
-                        text = "🧠 ${result.elapsedMs}ms · ${if (result.mode == AnalysisMode.EXPERT) "全周期" else "深度"}分析"
-                        textSize = 8f; setTextColor(Color.parseColor("#666666"))
-                        gravity = Gravity.CENTER
-                        setPadding(0, 2, 0, 2)
-                    })
-                }
+                aiResultContainer.addView(TextView(requireContext()).apply {
+                    text = "🧠 ${result.elapsedMs}ms · 四周期深度分析"
+                    textSize = 8f; setTextColor(Color.parseColor("#666666"))
+                    gravity = Gravity.CENTER
+                    setPadding(0, 2, 0, 2)
+                })
                 // 底部按钮行：返回 + 加仓/减仓/清仓 同一行
                 val bottomRow = LinearLayout(requireContext()).apply {
                     orientation = LinearLayout.HORIZONTAL
@@ -1349,11 +1305,7 @@ class StockDetailFragment : Fragment() {
                         // 恢复分析按钮
                         root.findViewWithTag<Button>("btnRunAi")?.let {
                             it.isEnabled = true
-                            it.text = "🤖 V1.0深度分析"
-                        }
-                        root.findViewWithTag<Button>("btnRunV2")?.let {
-                            it.isEnabled = true
-                            it.text = "📊 V2.0全周期"
+                            it.text = "🤖 深度分析"
                         }
                     }
                 })
@@ -1393,7 +1345,7 @@ class StockDetailFragment : Fragment() {
                 // 同步更新 AI 综合分析区块
                 root.findViewWithTag<TextView>("aiQuickResult")?.let { tv ->
                     tv.visibility = View.VISIBLE
-                    tv.text = cleanedSummary
+                    tv.text = result.report
                 }
                 root.findViewWithTag<TextView>("aiQuickLoading")?.visibility = View.GONE
             }

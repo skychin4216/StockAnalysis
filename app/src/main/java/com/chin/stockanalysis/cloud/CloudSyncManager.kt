@@ -64,7 +64,8 @@ class CloudSyncManager(private val context: Context) {
         val secretKey: String,
         val prefix: String,
         val paramsKey: String,
-        val dbKey: String
+        val dbKey: String,
+        val candidatesKey: String
     )
 
     /** 读取 cloud_sync 配置 */
@@ -76,7 +77,8 @@ class CloudSyncManager(private val context: Context) {
         secretKey = DataConfig.get("cloud_sync.secret_key"),
         prefix = DataConfig.get("cloud_sync.prefix", "stockanalysis/phone"),
         paramsKey = DataConfig.get("cloud_sync.params_key", "stockanalysis/params/backtest_params.json"),
-        dbKey = DataConfig.get("cloud_sync.db_key", "stockanalysis/db/market_data.db")
+        dbKey = DataConfig.get("cloud_sync.db_key", "stockanalysis/db/market_data.db"),
+        candidatesKey = DataConfig.get("cloud_sync.candidates_key", "stockanalysis/quant/candidates.json")
     )
 
     fun isConfigured(cfg: CloudConfig): Boolean =
@@ -86,23 +88,25 @@ class CloudSyncManager(private val context: Context) {
     // 1. 上传：打包数据 → ZIP → COS PUT
     // ═══════════════════════════════════════════════════════════
 
-    /** 打包数据库关键表为 ZIP 字节（内部为 data.json）。 */
-    suspend fun buildDataPackage(): ByteArray = withContext(Dispatchers.IO) {
+    /** 打包当日数据库关键表为 ZIP 字节（内部为 data.json，附当日日志 log_yyyyMMdd.txt）。 */
+    suspend fun buildDataPackage(today: String = todayDate()): ByteArray = withContext(Dispatchers.IO) {
         val root = JSONObject()
         root.put("meta", JSONObject().apply {
             put("export_time", nowTimestamp())
             put("app_version", appVersionName())
             put("device", android.os.Build.MODEL)
+            put("data_scope", "today:$today")
         })
 
-        root.put("strategy_trade_orders", queryOrders())
-        root.put("t_trade_records", queryTTrades())
-        root.put("strategy_trade_backtests", queryBacktests())
-        root.put("daily_period_result", queryDailyPeriods())
-        root.put("strategy_trade_fitting_params", queryFittingParams())
-        root.put("t_trade_recommendations", queryTTradeRecommendations())
+        root.put("strategy_trade_orders", queryOrders(today))
+        root.put("t_trade_records", queryTTrades(today))
+        root.put("strategy_trade_backtests", queryBacktests(today))
+        root.put("daily_period_result", queryDailyPeriods(today))
+        root.put("strategy_trade_fitting_params", queryFittingParams(today))
+        root.put("t_trade_recommendations", queryTTradeRecommendations(today))
         root.put("real_positions", queryRealPositions())
-        root.put("period_holding_profit", queryHoldingProfit())
+        root.put("period_holding_profit", queryHoldingProfit(today))
+        root.put("sector_daily_records", querySectorDailyRecords(today))
 
         // ZIP 压缩
         val baos = ByteArrayOutputStream()
@@ -110,17 +114,37 @@ class CloudSyncManager(private val context: Context) {
             zip.putNextEntry(ZipEntry("data.json"))
             zip.write(root.toString(2).toByteArray(Charsets.UTF_8))
             zip.closeEntry()
+            // 附加当日 logcat 日志（存在才打包）
+            val todayLog = com.chin.stockanalysis.util.FileLogger.readTodayLog()
+            if (todayLog.isNotBlank()) {
+                zip.putNextEntry(ZipEntry("log_${today.replace("-", "")}.txt"))
+                zip.write(todayLog.toByteArray(Charsets.UTF_8))
+                zip.closeEntry()
+            }
         }
         baos.toByteArray()
     }
 
-    /** 上传数据包到 COS，返回 COS 对象路径。 */
-    suspend fun uploadData(cfg: CloudConfig, onStatus: (String) -> Unit = {}): Result<String> =
+    /** 上次成功上传的日期（yyyy-MM-dd），未上传过返回 null。 */
+    fun lastUploadDate(): String? =
+        context.getSharedPreferences("cloud_sync", Context.MODE_PRIVATE)
+            .getString("last_upload_date", null)
+
+    /** 上传当日数据包到 COS，返回 COS 对象路径。同日已上传时跳过（force=true 强制重传）。 */
+    suspend fun uploadData(cfg: CloudConfig, force: Boolean = false, onStatus: (String) -> Unit = {}): Result<String> =
         withContext(Dispatchers.IO) {
             if (!isConfigured(cfg)) return@withContext Result.failure(IllegalStateException("云同步未配置（bucket/密钥缺失）"))
 
-            onStatus("正在打包数据…")
-            val zipBytes = buildDataPackage()
+            val today = todayDate()
+            val prefs = context.getSharedPreferences("cloud_sync", Context.MODE_PRIVATE)
+            val lastUpload = prefs.getString("last_upload_date", null)
+            if (!force && lastUpload == today) {
+                onStatus("今日数据已上传过（$today），已跳过")
+                return@withContext Result.success("今日数据已上传过，已跳过重复上传（$today）")
+            }
+
+            onStatus("正在打包今日数据…")
+            val zipBytes = buildDataPackage(today)
             val filename = "phone_${timestampCompact()}.zip"
             val key = "${cfg.prefix.trim('/')}/$filename"
 
@@ -156,6 +180,7 @@ class CloudSyncManager(private val context: Context) {
 
                 client.newCall(request).execute().use { resp ->
                     if (resp.isSuccessful) {
+                        prefs.edit().putString("last_upload_date", today).apply()
                         onStatus("上传成功 ✓ $filename")
                         Result.success(key)
                     } else {
@@ -290,6 +315,66 @@ class CloudSyncManager(private val context: Context) {
             }
         }
 
+    // ═══════════════════════════════════════════════════════════
+    // 4. PC 候选清单：下载 smalltools 发布的 candidates.json
+    // ═══════════════════════════════════════════════════════════
+
+    /** 上次成功下载 PC 候选的时间戳（毫秒），无记录返回 0。 */
+    fun lastCandidatesFetchedAt(): Long =
+        context.getSharedPreferences("cloud_sync", Context.MODE_PRIVATE)
+            .getLong("last_candidates_fetched_at", 0L)
+
+    /** 从 COS 下载 PC 候选清单（candidates_key），落盘并返回 JSON 文本。 */
+    suspend fun downloadCandidates(cfg: CloudConfig, onStatus: (String) -> Unit = {}): Result<String> =
+        withContext(Dispatchers.IO) {
+            if (cfg.bucket.isBlank() || cfg.candidatesKey.isBlank()) {
+                return@withContext Result.failure(IllegalStateException("PC 候选未配置（bucket/candidates_key 缺失）"))
+            }
+            onStatus("正在下载 PC 候选清单…")
+            try {
+                val url = "https://${cfg.bucket}.cos.${cfg.region}.myqcloud.com/${cfg.candidatesKey}"
+                val host = "${cfg.bucket}.cos.${cfg.region}.myqcloud.com"
+                val now = System.currentTimeMillis() / 1000
+                val end = now + 600
+                val auth = CosSigner.sign(
+                    secretId = cfg.secretId,
+                    secretKey = cfg.secretKey,
+                    method = "get",
+                    uriPathname = "/${cfg.candidatesKey}",
+                    httpParameters = emptyMap(),
+                    httpHeaders = mapOf("host" to host),
+                    startTime = now,
+                    endTime = end
+                )
+                val request = Request.Builder()
+                    .url(url)
+                    .get()
+                    .header("Authorization", auth)
+                    .header("Host", host)
+                    .build()
+                client.newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) {
+                        onStatus("候选下载失败: HTTP ${resp.code}")
+                        return@withContext Result.failure(RuntimeException("下载 PC 候选失败 HTTP ${resp.code}"))
+                    }
+                    val jsonText = resp.body?.string() ?: ""
+                    if (jsonText.isBlank()) {
+                        onStatus("候选文件为空")
+                        return@withContext Result.failure(RuntimeException("PC 候选文件为空"))
+                    }
+                    val file = java.io.File(context.filesDir, "pc_candidates.json")
+                    file.writeText(jsonText)
+                    context.getSharedPreferences("cloud_sync", Context.MODE_PRIVATE)
+                        .edit().putLong("last_candidates_fetched_at", System.currentTimeMillis()).apply()
+                    onStatus("PC 候选下载成功 ✓")
+                    Result.success(jsonText)
+                }
+            } catch (e: Exception) {
+                onStatus("候选下载失败: ${e.message}")
+                Result.failure(e)
+            }
+        }
+
     /**
      * 把下载的市场库（表 kline: secid/date/open/high/low/close/volume/change_pct/turnover/name）
      * 导入 Room daily_snapshot 表（code/name/date/open/close/high/low/volume/amount/change_pct/turnover_rate...）。
@@ -380,10 +465,10 @@ class CloudSyncManager(private val context: Context) {
     // 数据查询（与 DataExportImport 输出键保持一致）
     // ═══════════════════════════════════════════════════════════
 
-    private suspend fun queryOrders(): JSONArray {
+    private suspend fun queryOrders(today: String): JSONArray {
         val arr = JSONArray()
         try {
-            for (o in db.strategyTradeOrderDao().getRecent(5000)) {
+            for (o in db.strategyTradeOrderDao().getByDate(today)) {
                 arr.put(JSONObject().apply {
                     put("strategy_id", o.strategyId)
                     put("stock_code", o.stockCode)
@@ -405,11 +490,11 @@ class CloudSyncManager(private val context: Context) {
         return arr
     }
 
-    private suspend fun queryTTrades(): JSONArray {
+    private suspend fun queryTTrades(today: String): JSONArray {
         val arr = JSONArray()
         try {
             for (period in PERIODS) {
-                for (t in db.tTradeRecordDao().getRecentByPeriod(period, "2000-01-01")) {
+                for (t in db.tTradeRecordDao().getByPeriodAndDate(period, today)) {
                     arr.put(JSONObject().apply {
                         put("stock_code", t.stockCode)
                         put("stock_name", t.stockName)
@@ -429,10 +514,10 @@ class CloudSyncManager(private val context: Context) {
         return arr
     }
 
-    private suspend fun queryBacktests(): JSONArray {
+    private suspend fun queryBacktests(today: String): JSONArray {
         val arr = JSONArray()
         try {
-            for (b in db.strategyTradeBacktestDao().getAll()) {
+            for (b in db.strategyTradeBacktestDao().getByDate(today)) {
                 arr.put(JSONObject().apply {
                     put("period_key", b.periodKey)
                     put("strategy_id", b.strategyId)
@@ -452,10 +537,10 @@ class CloudSyncManager(private val context: Context) {
         return arr
     }
 
-    private suspend fun queryDailyPeriods(): JSONArray {
+    private suspend fun queryDailyPeriods(today: String): JSONArray {
         val arr = JSONArray()
         try {
-            for (p in db.dailyPeriodResultDao().getRecent(3000)) {
+            for (p in db.dailyPeriodResultDao().getByDate(today)) {
                 arr.put(JSONObject().apply {
                     put("strategy_id", p.strategyId)
                     put("trade_date", p.tradeDate)
@@ -469,10 +554,31 @@ class CloudSyncManager(private val context: Context) {
         return arr
     }
 
-    private suspend fun queryFittingParams(): JSONArray {
+    private suspend fun querySectorDailyRecords(today: String): JSONArray {
         val arr = JSONArray()
         try {
-            for (p in db.strategyTradeFittingParamDao().getRecentByStrategy("all", 5000)) {
+            for (s in db.sectorDailyRecordDao().getByDate(today)) {
+                arr.put(JSONObject().apply {
+                    put("date", s.date)
+                    put("sector_code", s.sectorCode)
+                    put("sector_name", s.sectorName)
+                    put("change_pct", s.changePct)
+                    put("main_net_inflow", s.mainNetInflow)
+                    put("hot_score", s.hotScore)
+                    put("composite_score", s.compositeScore)
+                    put("rank", s.rank)
+                    put("is_hot", s.isHot)
+                    put("consecutive_hot_days", s.consecutiveHotDays)
+                })
+            }
+        } catch (e: Exception) { Log.w(TAG, "querySectorDailyRecords: ${e.message}") }
+        return arr
+    }
+
+    private suspend fun queryFittingParams(today: String): JSONArray {
+        val arr = JSONArray()
+        try {
+            for (p in db.strategyTradeFittingParamDao().getByDate(today)) {
                 arr.put(JSONObject().apply {
                     put("strategy_id", p.strategyId)
                     put("trade_date", p.tradeDate)
@@ -487,10 +593,10 @@ class CloudSyncManager(private val context: Context) {
         return arr
     }
 
-    private suspend fun queryTTradeRecommendations(): JSONArray {
+    private suspend fun queryTTradeRecommendations(today: String): JSONArray {
         val arr = JSONArray()
         try {
-            for (r in db.tTradeRecommendationDao().getRecent("2000-01-01", 2000)) {
+            for (r in db.tTradeRecommendationDao().getByDate(today)) {
                 arr.put(JSONObject().apply {
                     put("stock_code", r.stockCode)
                     put("stock_name", r.stockName)
@@ -528,10 +634,10 @@ class CloudSyncManager(private val context: Context) {
         return arr
     }
 
-    private suspend fun queryHoldingProfit(): JSONArray {
+    private suspend fun queryHoldingProfit(today: String): JSONArray {
         val arr = JSONArray()
         try {
-            for (h in db.periodHoldingProfitDao().getLatestAllPeriods()) {
+            for (h in db.periodHoldingProfitDao().getByDate(today)) {
                 arr.put(JSONObject().apply {
                     put("period_type", h.periodType)
                     put("trade_date", h.tradeDate)
@@ -566,5 +672,9 @@ class CloudSyncManager(private val context: Context) {
 
         private fun timestampCompact(): String =
             SimpleDateFormat("yyyyMMdd_HHmmss", Locale.CHINA).format(Date())
+
+        /** 当日日期（yyyy-MM-dd），用于按日增量查询与上传去重。 */
+        private fun todayDate(): String =
+            SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date())
     }
 }

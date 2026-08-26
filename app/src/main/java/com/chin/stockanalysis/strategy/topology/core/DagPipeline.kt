@@ -334,12 +334,18 @@ class DagPipeline(
             }
             node.nodeType == NodeType.AGGREGATION -> {
                 // 聚合节点：收集所有上游输出为 List
-                depEdges.mapNotNull { context.stageOutputs[it.sourceNodeId] }
+                // 若某上游失败/无输出（null），记录告警，不静默丢弃——保证 D 的"综合分析"不被残缺数据欺骗
+                val outputs = depEdges.map { it.sourceNodeId to context.stageOutputs[it.sourceNodeId] }
+                val nullSources = outputs.filter { it.second == null }.map { it.first }
+                if (nullSources.isNotEmpty()) {
+                    context.log(nodeId, "⚠ ${dagNode.nodeName} 上游输出为空（${nullSources.joinToString()}），聚合输入不完整")
+                }
+                outputs.map { it.second }.filterNotNull()
             }
             else -> {
-                // 非聚合多依赖：用首个上游输出作为主输入，其余通过 context.stageOutputs 读取
-                val sourceId = depEdges[0].sourceNodeId
-                context.stageOutputs[sourceId]
+                // 非聚合多依赖：取第一个"有效"上游输出作为主输入，其余通过 context.stageOutputs 兜底读取。
+                // 避免"首个依赖失败输出 null 时整节点被跳过、其余上游白算"的浪费
+                depEdges.mapNotNull { context.stageOutputs[it.sourceNodeId] }.firstOrNull()
             }
         }
 
@@ -403,8 +409,10 @@ class DagPipeline(
 
         if (success) {
             context.log(nodeId, "✓ 完成: ${dagNode.nodeName} (${elapsed}ms)")
+            context.onNodeDone?.invoke(name, dagNode.nodeName, output)
         } else {
             context.log(nodeId, "✗ 失败: ${dagNode.nodeName} (${elapsed}ms) — $error")
+            context.onNodeDone?.invoke(name, dagNode.nodeName, null)
         }
 
         // 存入上下文

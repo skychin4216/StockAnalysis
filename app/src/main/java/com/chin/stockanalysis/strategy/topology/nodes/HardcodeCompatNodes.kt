@@ -105,8 +105,8 @@ class CandidatePoolNode : BaseNode<Any, StockPool>("candidate_pool", "候选池�
                 inputCount = pool.size, outputCount = finalStocks.size,
                 filterCount = pool.size - filteredStocks.size,
                 filterReason = "候选池过滤",
-                inputCodes = inputCodes.take(5),
-                outputCodes = finalStocks.map { it.code }.take(5)
+                inputCodes = inputCodes.take(6),
+                outputCodes = finalStocks.map { it.code }.take(6)
             )
             context.log(nodeId, "📤 输出: ${finalStocks.size} 只 (过滤 ${pool.size - filteredStocks.size}, 补充 ${extraStocks.size})")
             result

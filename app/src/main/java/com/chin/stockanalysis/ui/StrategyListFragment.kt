@@ -24,6 +24,8 @@ import com.chin.stockanalysis.strategy.models.StrategySignal
 import com.chin.stockanalysis.strategy.models.WeightFactor
 import com.chin.stockanalysis.strategy.predict.AIPredictionEngine
 import com.chin.stockanalysis.strategy.strategies.*
+import com.chin.stockanalysis.strategy.topology.xml.UseCaseExecution
+import com.chin.stockanalysis.strategy.topology.xml.UseCaseLoader
 import com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource
 import com.chin.stockanalysis.stock.database.StockDataCenter
 import com.chin.stockanalysis.stock.database.ChinaMarketTradingHours as A股TradingHours
@@ -55,6 +57,14 @@ class StrategyListFragment : Fragment() {
     private var selectedHotPeriod = 0
     private var browsingDate: LocalDate = TradingDayPickerView.recentTradingDay()
     private var isBrowsing = false
+
+    // 分组折叠状态：key = "platform"（平台策略，默认展开）或 HoldingPeriod.name（周期，默认折叠）
+    private val collapsedKeys = mutableSetOf<String>().apply {
+        addAll(HoldingPeriod.values().map { it.name })
+    }
+    // 平台策略执行进度/结果弹窗
+    private lateinit var useCaseProgressDialog: AlertDialog
+    private lateinit var useCaseProgressText: TextView
 
     private var currentHotSectors: List<String> = emptyList()
     private var selectedSectors: Set<String> = emptySet()
@@ -578,33 +588,124 @@ class StrategyListFragment : Fragment() {
 
     private fun refreshList() {
         engine?.let { eng ->
-            // 按持仓周期分组渲染：超短线 / 短线 / 中线 / 长线
-            val sections = HoldingPeriod.values().map { period ->
-                period to eng.getStrategiesByPeriod(period)
+            // 分组：平台策略（默认展开）+ 超短/短/中/长（默认折叠）
+            val items = mutableListOf<SectionItem>()
+            val platformCases = UseCaseExecution.listPlatformUseCases()
+            if (platformCases.isNotEmpty()) {
+                items.add(SectionItem(
+                    key = "platform",
+                    title = "🛡 平台策略",
+                    isPlatform = true,
+                    useCases = platformCases
+                ))
+            }
+            HoldingPeriod.values().forEach { period ->
+                val list = eng.getStrategiesByPeriod(period)
+                if (list.isNotEmpty()) {
+                    items.add(SectionItem(
+                        key = period.name,
+                        title = period.label,
+                        isPlatform = false,
+                        strategies = list
+                    ))
+                }
             }
             val resultsMap = cachedResults?.associateBy { it.strategyId } ?: emptyMap()
-            adapter = GroupedStrategyAdapter(sections, ::onStrategyClick, ::onStrategyToggle, resultsMap)
+            adapter = GroupedStrategyAdapter(items, collapsedKeys, ::onStrategyClick, ::onStrategyToggle, ::onToggleSection, ::onRunUseCase, resultsMap)
             recyclerView.adapter = adapter
         }
     }
     private fun onStrategyClick(s: Strategy) { StrategyDetailFragment().apply { this.strategy = s; onSave = { u -> engine?.apply { removeStrategy(u.id); registerStrategy(u); refreshList(); strategyCount = engine?.getStrategies()?.size ?: strategyCount } } }.show(parentFragmentManager, "detail") }
     private fun onStrategyToggle(s: Strategy) { engine?.setEnabled(s.id, !engine!!.isEnabled(s.id)) }
+    private fun onToggleSection(item: SectionItem) {
+        if (collapsedKeys.contains(item.key)) collapsedKeys.remove(item.key) else collapsedKeys.add(item.key)
+        adapter?.notifyDataSetChanged()
+    }
 
     /**
-     * 按持仓周期分组的策略列表适配器。
+     * 平台策略：点击运行按钮 → 统一 UseCaseExecution 入口执行 pipeline(DAG)。
+     * 与 一键建仓 / 实仓 / AI 对话框 共用同一套 usecase 执行机制。
+     */
+    private fun onRunUseCase(info: UseCaseLoader.UseCaseInfo) {
+        val ctx = requireContext()
+        showUseCaseProgress(ctx, "正在初始化 ${info.name}...")
+        lifecycleScope.launch(Dispatchers.IO) {
+            val report = UseCaseExecution.runAndSummarize(ctx, info.id) { pipelineName, nodeName ->
+                showUseCaseProgressMsg("执行中：$pipelineName → $nodeName")
+            }
+            withContext(Dispatchers.Main) {
+                dismissUseCaseProgress()
+                showUseCaseResult(ctx, info.name, report)
+            }
+        }
+    }
+
+    private fun showUseCaseProgress(ctx: android.content.Context, msg: String) {
+        requireActivity().runOnUiThread {
+            try { useCaseProgressDialog.dismiss() } catch (e: Exception) {}
+            useCaseProgressText = TextView(ctx).apply {
+                text = msg; textSize = 14f; setTextColor(Color.parseColor("#333333"))
+                setPadding(dp(24), dp(20), dp(24), dp(20))
+            }
+            useCaseProgressDialog = AlertDialog.Builder(ctx)
+                .setTitle("🛡 平台策略")
+                .setView(useCaseProgressText)
+                .setCancelable(false)
+                .create()
+            useCaseProgressDialog.show()
+        }
+    }
+
+    private fun showUseCaseProgressMsg(msg: String) {
+        requireActivity().runOnUiThread {
+            try { useCaseProgressText.text = msg } catch (e: Exception) {}
+        }
+    }
+
+    private fun dismissUseCaseProgress() {
+        requireActivity().runOnUiThread {
+            try { useCaseProgressDialog.dismiss() } catch (e: Exception) {}
+        }
+    }
+
+    private fun showUseCaseResult(ctx: android.content.Context, title: String, message: String) {
+        requireActivity().runOnUiThread {
+            val sv = ScrollView(ctx).apply {
+                addView(TextView(ctx).apply {
+                    text = message; textSize = 13f; setTextColor(Color.parseColor("#333333"))
+                    setPadding(dp(20), dp(16), dp(20), dp(16))
+                })
+            }
+            AlertDialog.Builder(ctx).setTitle(title).setView(sv).setPositiveButton("知道了", null).show()
+        }
+    }
+
+    /** 一个分组：平台策略 或 超短/短/中/长 周期分组 */
+    private data class SectionItem(
+        val key: String,               // "platform" 或 period.name（折叠状态标识）
+        val title: String,             // 分组标题
+        val isPlatform: Boolean,
+        val strategies: List<Strategy> = emptyList(),
+        val useCases: List<UseCaseLoader.UseCaseInfo> = emptyList()
+    )
+
+    /**
+     * 策略列表适配器：平台策略（默认展开）+ 超短/短/中/长（默认折叠）。
      * 沙盒只读模式：保留点击策略执行与启用开关（参与执行过滤），不提供任何买入按钮。
-     * 每个周期一组，组标题使用文字标签（超短线 / 短线 / 中线 / 长线），不使用 emoji。
-     * 每张策略卡片底部展示该策略当前选出的 Top 3 股票（若有信号）。
+     * 周期分组标题使用文字标签（超短线 / 短线 / 中线 / 长线）；平台策略卡片提供「运行此方案」按钮。
      */
     private inner class GroupedStrategyAdapter(
-        private val sections: List<Pair<HoldingPeriod, List<Strategy>>>,
+        private val items: List<SectionItem>,
+        private val collapsedKeys: MutableSet<String>,
         private val onItemClick: (Strategy) -> Unit,
         private val onToggle: (Strategy) -> Unit,
+        private val onToggleSection: (SectionItem) -> Unit,
+        private val onRunUseCase: (UseCaseLoader.UseCaseInfo) -> Unit,
         private val resultsMap: Map<String, ScreeningResult> = emptyMap()
     ) : RecyclerView.Adapter<GroupedStrategyAdapter.SectionVH>() {
 
-        // 每个周期一个大容器 view（section）：组标题 + 该周期所有策略卡片；空周期不渲染
-        private val visibleSections = sections.filter { it.second.isNotEmpty() }
+        // 每个分组一个大容器 view（section）：组标题 + 内容卡片
+        private val visibleSections = items
 
         override fun getItemCount(): Int = visibleSections.size
 
@@ -612,12 +713,20 @@ class StrategyListFragment : Fragment() {
             SectionVH(makeSection(parent))
 
         override fun onBindViewHolder(holder: SectionVH, position: Int) {
-            val (period, strategies) = visibleSections[position]
+            val item = visibleSections[position]
             val section = holder.section
             section.removeAllViews()
             val ctx = section.context
-            section.addView(makeSectionHeader(ctx, period, strategies.size))
-            strategies.forEach { strategy -> section.addView(makeStrategyCard(ctx, strategy)) }
+            val collapsed = collapsedKeys.contains(item.key)
+            val count = if (item.isPlatform) item.useCases.size else item.strategies.size
+            section.addView(makeSectionHeader(ctx, item, count, collapsed))
+            if (!collapsed) {
+                if (item.isPlatform) {
+                    item.useCases.forEach { info -> section.addView(makePlatformCard(ctx, info)) }
+                } else {
+                    item.strategies.forEach { strategy -> section.addView(makeStrategyCard(ctx, strategy)) }
+                }
+            }
         }
 
         private fun makeSection(parent: ViewGroup): LinearLayout = LinearLayout(parent.context).apply {
@@ -630,16 +739,58 @@ class StrategyListFragment : Fragment() {
             }
         }
 
-        private fun makeSectionHeader(ctx: android.content.Context, period: HoldingPeriod, count: Int): TextView = TextView(ctx).apply {
+        private fun makeSectionHeader(
+            ctx: android.content.Context,
+            item: SectionItem,
+            count: Int,
+            collapsed: Boolean
+        ): TextView = TextView(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 setMargins(dp(8), dp(4), dp(8), dp(2))
             }
             setPadding(dp(14), dp(8), dp(14), dp(8))
             textSize = 14f
-            setTextColor(Color.parseColor("#1A1A2E"))
+            setTextColor(if (item.isPlatform) Color.parseColor("#8D6E63") else Color.parseColor("#1A1A2E"))
             setTypeface(null, Typeface.BOLD)
-            setBackgroundColor(Color.parseColor("#EDEFF5"))
-            text = "${period.label}  ·  ${count} 个策略"
+            setBackgroundColor(if (item.isPlatform) Color.parseColor("#FBE9E7") else Color.parseColor("#EDEFF5"))
+            text = (if (collapsed) "▶ " else "▼ ") + item.title + "  ·  ${count} 个" +
+                if (item.isPlatform) "方案" else "策略"
+            setOnClickListener { onToggleSection(item) }
+        }
+
+        private fun makePlatformCard(ctx: android.content.Context, info: UseCaseLoader.UseCaseInfo): LinearLayout {
+            val highlight = info.id == "complete_closed_loop"
+            val card = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(if (highlight) Color.parseColor("#FFF8E1") else Color.parseColor("#F8F9FC"))
+                setPadding(20, 16, 20, 16)
+                elevation = 2f
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    setMargins(dp(8), dp(4), dp(8), dp(4))
+                }
+            }
+            card.addView(TextView(ctx).apply {
+                text = (if (highlight) "🌟 " else "📊 ") + info.name + (if (highlight) "（豆包体系）" else "")
+                textSize = 15f; setTextColor(Color.parseColor("#222222")); setTypeface(null, Typeface.BOLD)
+            })
+            card.addView(TextView(ctx).apply {
+                text = info.description
+                textSize = 12f; setTextColor(Color.parseColor("#888888"))
+                setPadding(28, 6, 0, 4); maxLines = 2
+            })
+            card.addView(TextView(ctx).apply {
+                text = "📚 ${info.stepCount} 步流程 · pipeline(DAG) 构造"
+                textSize = 11f; setTextColor(Color.parseColor("#AAAAAA"))
+                setPadding(28, 0, 0, 8)
+            })
+            card.addView(Button(ctx).apply {
+                text = "🚀 运行此方案"
+                textSize = 12f; isAllCaps = false; setTextColor(Color.WHITE)
+                setBackgroundColor(Color.parseColor(if (highlight) "#E65100" else "#1E88E5"))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)).apply { topMargin = dp(2) }
+                setOnClickListener { onRunUseCase(info) }
+            })
+            return card
         }
 
         private fun makeStrategyCard(ctx: android.content.Context, strategy: Strategy): LinearLayout {

@@ -106,7 +106,7 @@ object QuarterlyComparisonProvider {
                 val req = Request.Builder()
                     .url(url)
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                    .header("Referer", "https://data.eastmoney.com")
+                    .header("Referer", DataConfig.eastmoneyData)
                     .build()
 
                 val resp = client.newCall(req).execute()

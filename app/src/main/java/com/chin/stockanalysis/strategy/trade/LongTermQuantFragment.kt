@@ -33,11 +33,13 @@ class LongTermQuantFragment : QuantFragmentBase() {
     override fun onBuildClick(saveAsAiOnly: Boolean) {
         runDagPipeline(
             holdingPeriod = HoldingPeriod.LONG,
-            useCaseId = "long_term",
+            useCaseId = pendingUseCaseId ?: "long_term",
             orderType = "long_term",
             importDays = 60,
             titlePrefix = "长线",
-            saveAsAiOnly = saveAsAiOnly
+            saveAsAiOnly = saveAsAiOnly,
+            seedStageOutputs = pendingSeedStageOutputs,
+            parallelMode = pendingParallelMode
         )
     }
 
@@ -60,7 +62,7 @@ class LongTermQuantFragment : QuantFragmentBase() {
 
     override fun buildUI() {
         addTitleRow(getString(com.chin.stockanalysis.R.string.title_long_system))
-        rootLayout.addView(createProgressRow())
+        rootLayout.addView(createExecLogPanel())
         rootLayout.addView(createButtonRow())
         addSeparator()
         rootLayout.addView(createContentScrollArea())

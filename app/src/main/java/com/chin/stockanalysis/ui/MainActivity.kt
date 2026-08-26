@@ -129,6 +129,8 @@ class MainActivity : AppCompatActivity() {
         initBackupSystem()
         // 统一后台调度器
         com.chin.stockanalysis.stock.database.AppBackgroundRunner.start(applicationContext, lifecycleScope)
+        // logcat 自动落盘（供「上传今日数据」同步日志到 COS）
+        com.chin.stockanalysis.util.FileLogger.start(applicationContext)
         migrateLegacyConversations()
         // 后台拉取热点板块新闻
         lifecycleScope.launch(Dispatchers.IO) {

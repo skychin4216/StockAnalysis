@@ -28,9 +28,17 @@ object QuantTaskScheduler {
     private const val TAG = "QuantScheduler"
     private const val GLOBAL_TIMEOUT_MS = 180_000L  // 3 分钟超时
 
+    /** 一键建仓四周期并行时的最大并发数 */
+    private const val PARALLEL_LIMIT = 4
+
     /** 单线程调度器 — 保证 pipeline 串行执行 */
     private val schedulerScope = CoroutineScope(
         SupervisorJob() + Dispatchers.IO.limitedParallelism(1)
+    )
+
+    /** 并行调度器 — 一键建仓「公共研判一次 + 四周期并行」专用（不排队，立即并发执行） */
+    private val parallelScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO.limitedParallelism(PARALLEL_LIMIT)
     )
 
     /** 运行计数 — 用于管理前台服务生命周期 */
@@ -111,11 +119,61 @@ object QuantTaskScheduler {
         return tasks.map { (name, block) -> submit(context, name, block) }
     }
 
-    /** 取消所有排队中和正在执行的任务 */
+    /**
+     * 并行提交（不排队，立即并发执行，上限 [PARALLEL_LIMIT]）— 一键建仓四周期并行专用。
+     *
+     * 与 [submit] 的区别：不进入单线程队列，任务立即并发执行。
+     * 与 [submit] 相同：受 180s 全局超时保护，并统一管理前台服务生命周期。
+     *
+     * 注意：pipeline 数据节点内部对行情 API 无全局限流，四周期并行时网络请求并发约为
+     * 4 倍，依赖数据源多源降级兜底；历史"东财断流"教训通过内部请求间隔 + 降级机制缓解。
+     */
+    fun submitParallel(
+        context: Context,
+        taskName: String,
+        block: suspend CoroutineScope.() -> Unit
+    ): Job {
+        val ctx = context.applicationContext
+        Log.i(TAG, "并行提交任务: $taskName")
+        val job = parallelScope.launch {
+            countMutex.withLock {
+                runningCount++
+                if (runningCount == 1) {
+                    QuantForegroundService.start(ctx, taskName)
+                }
+            }
+            try {
+                currentTask = taskName
+                withTimeout(GLOBAL_TIMEOUT_MS) {
+                    block()
+                }
+            } catch (e: TimeoutCancellationException) {
+                Log.e(TAG, "任务超时(并行): $taskName (${GLOBAL_TIMEOUT_MS / 1000}s)")
+            } catch (e: CancellationException) {
+                Log.i(TAG, "任务取消(并行): $taskName")
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "任务异常(并行): $taskName — ${e.message}", e)
+            } finally {
+                countMutex.withLock {
+                    runningCount--
+                    if (runningCount <= 0) {
+                        runningCount = 0
+                        currentTask = ""
+                        QuantForegroundService.stop(ctx)
+                    }
+                }
+            }
+        }
+        return job
+    }
+
+    /** 取消所有排队中和正在执行的任务（含并行任务） */
     fun cancelAll() {
         Log.i(TAG, "取消所有任务")
         pendingTasks.clear()
         schedulerScope.coroutineContext.cancelChildren()
+        parallelScope.coroutineContext.cancelChildren()
     }
 
     /** 是否正在执行 */

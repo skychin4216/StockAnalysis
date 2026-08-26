@@ -259,7 +259,8 @@ def main():
     date_to_idx = {d: i for i, d in enumerate(all_dates)}
     print(f"缓存 {len(cache)} 只 | 交易日 {all_dates[0]} ~ {all_dates[-1]} 共 {len(all_dates)} 根")
 
-    wins = month_windows()
+    cache_last = date.fromisoformat(all_dates[-1])
+    wins = month_windows(cache_last)
     if args.months > 0:
         wins = wins[:args.months]
     os.makedirs(RECORD_DIR, exist_ok=True)

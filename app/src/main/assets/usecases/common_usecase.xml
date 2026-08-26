@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 一键建仓·公共研判 UseCase
+
+  由 QuantWorkbenchFragment.runQuickBuild 在触发四周期并行前统一执行一次：
+    1. 市场公共研判（大盘→风格→板块）：market_rotation_pipeline（n_adaptive 大盘状态/自适应参数）
+    2. 选股公共数据准备（股票池/自适应参数/风控）：stock_picking_common_pipeline（n_pool 股票池等）
+  执行结果 stageOutputs 播种给四周期专属 pipeline（ultra_short_period 等），
+  避免每个周期重复执行公共研判（旧版一键建仓会重复 4 次）。
+-->
+<usecase id="common" name="一键建仓公共研判">
+  <description>市场公共研判（大盘→风格→板块）→ 选股公共数据准备（股票池/自适应参数/风控）</description>
+  <steps>
+    <pipeline ref="usecases/market_rotation_pipeline.xml" name="市场公共研判（大盘→风格→板块）" />
+    <pipeline ref="usecases/stock_picking_common_pipeline.xml" name="选股公共数据准备（股票池/自适应参数/风控）" />
+  </steps>
+  <config>
+    <param name="orderType" value="common" />
+    <param name="holdingPeriod" value="common" />
+  </config>
+</usecase>

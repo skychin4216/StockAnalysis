@@ -151,6 +151,18 @@ object DataConfig {
     val eastmoneyQuote get() = get("data_sources.eastmoney.quote")
     val eastmoneyData get() = get("data_sources.eastmoney.data")
     val eastmoneyGuba get() = get("data_sources.eastmoney.guba")
+    val eastmoneyReport get() = get("data_sources.eastmoney.report")
+    val eastmoneyReportData get() = get("data_sources.eastmoney.report_data")
+    val eastmoneyReportStock get() = get("data_sources.eastmoney.report_stock")
+    val eastmoneySearchApi get() = get("data_sources.eastmoney.search_api")
+    val eastmoneyF10Shareholder get() = get("data_sources.eastmoney.f10_shareholder")
+    val eastmoneyF10Host get() = get("data_sources.eastmoney.f10_host")
+
+    // ═══════════════════════════════════════════════
+    // 消息推送 (notify)
+    // ═══════════════════════════════════════════════
+    val notifyServerchanUrl get() = get("notify.serverchan_url")
+    val notifyPushplusUrl get() = get("notify.pushplus_url")
 
     // ═══════════════════════════════════════════════
     // 搜索引擎 (search)

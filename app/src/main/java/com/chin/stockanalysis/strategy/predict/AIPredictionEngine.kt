@@ -109,6 +109,9 @@ class AIPredictionEngine(private val context: Context) {
      * @param strategyResults 各策略扫描结果
      * @param selectedDate 选定的交易日
      * @param onProgress 进度回调
+     * @param includeExtendedSources 是否启用扩展候选来源（AI量化选股模式）：
+     *        在策略结果基础上补充 龙头/AI精选/自选/热门板块前10 候选，
+     *        并按「主板 5 只 + 科创/创业合计 5 只」配额推荐。
      */
     suspend fun predict(
         strategyResults: List<ScreeningResult>,
@@ -116,7 +119,8 @@ class AIPredictionEngine(private val context: Context) {
         onProgress: ((String) -> Unit)? = null,
         useEnhancedAi: Boolean = true,
         marketContext: String = "",
-        sectorContext: SectorContext = SectorContext()
+        sectorContext: SectorContext = SectorContext(),
+        includeExtendedSources: Boolean = false
     ): AIPrediction? {
         val slot = if (useEnhancedAi) {
             AiProviderPool.acquire(context, callerTag = "AIPredictionEngine", timeoutMs = 120_000L)
@@ -136,7 +140,7 @@ class AIPredictionEngine(private val context: Context) {
 
         try {
             onProgress?.invoke("正在收集历史数据...")
-            val candidateStocks = collectCandidateStocks(strategyResults)
+            val candidateStocks = collectCandidateStocks(strategyResults, selectedDate, includeExtendedSources)
 
             onProgress?.invoke("正在获取多日特征...")
             val multiDayFeatures = buildMultiDayFeatures(candidateStocks, selectedDate)
@@ -191,7 +195,8 @@ class AIPredictionEngine(private val context: Context) {
                 newsScoreMap = newsScoreMap,
                 hybridScores = hybridScores,
                 strategyWeight = strategyW,
-                newsWeight = newsW
+                newsWeight = newsW,
+                requireBoardBalance = includeExtendedSources
             )
 
             // 重试：策略模式用 SimpleAiProvider.switchToNext，增强模式用 AiProviderPool 轮换
@@ -232,7 +237,9 @@ class AIPredictionEngine(private val context: Context) {
 
             val rawPrediction = parsePrediction(response)
             // 后处理：板块权重加权（回调天数越多加分越多）+ 新闻校验
-            return rawPrediction?.let { applySectorBoost(it, candidateStocks, sectorContext, newsScoreMap) }
+            val boosted = rawPrediction?.let { applySectorBoost(it, candidateStocks, sectorContext, newsScoreMap) }
+            // AI量化选股模式：主板/双创配额控制（主板≤5、科创/创业合计≤5）
+            return if (includeExtendedSources) boosted?.let { enforceBoardQuota(it) } else boosted
 
         } catch (e: Exception) {
             Log.e(TAG, "AI 预测失败: ${e.message}", e)
@@ -250,8 +257,17 @@ class AIPredictionEngine(private val context: Context) {
     // 数据收集
     // ════════════════════════════════════════
 
-    /** 从各策略结果中收集所有候选股票（去重） */
-    private fun collectCandidateStocks(results: List<ScreeningResult>): List<StockStrategyScore> {
+    /**
+     * 从各策略结果中收集所有候选股票（去重）。
+     *
+     * 扩展模式（AI量化选股，includeExtendedSources=true）下，额外补充候选来源：
+     * 龙头（产业主线+每日龙头）、AI精选、自选、热门板块/周期板块/龙头板块动量前10。
+     */
+    private suspend fun collectCandidateStocks(
+        results: List<ScreeningResult>,
+        selectedDate: String,
+        includeExtendedSources: Boolean = false
+    ): List<StockStrategyScore> {
         val map = linkedMapOf<String, StockStrategyScore>()
         for (result in results) {
             for (signal in result.signals) {
@@ -263,8 +279,93 @@ class AIPredictionEngine(private val context: Context) {
                 entry.changePercent = signal.changePercent
             }
         }
-        // 按总强度排序取 Top 20
-        return map.values.sortedByDescending { it.totalStrength }.take(20)
+
+        // AI量化选股：补充 龙头/AI精选/自选/热门板块前10 候选
+        if (includeExtendedSources) {
+            val date = selectedDate.ifBlank { java.time.LocalDate.now().toString() }
+            for ((code, name) in collectExtendedCandidateSources(date)) {
+                if (code.isBlank()) continue
+                map.getOrPut(code) {
+                    StockStrategyScore(code, name, mutableListOf(), 0, 0.0)
+                }
+            }
+        }
+
+        // 扩展模式放宽候选数量（覆盖板块/龙头来源），普通模式保持 Top 20
+        return map.values
+            .sortedByDescending { it.totalStrength }
+            .take(if (includeExtendedSources) 80 else 20)
+    }
+
+    /**
+     * 收集扩展候选来源的股票（code → name）：
+     * 1. 龙头：产业主线龙头 + 每日龙头（子板块 Top3）
+     * 2. AI精选：ai_selected_stock 最近入库记录
+     * 3. 自选：user_watchlist
+     * 4. 热门板块/周期板块/龙头板块 动量 Top10 的成分股
+     */
+    private suspend fun collectExtendedCandidateSources(date: String): Map<String, String> {
+        val result = linkedMapOf<String, String>()
+
+        // 1. 龙头：产业主线龙头
+        try {
+            for (code in com.chin.stockanalysis.strategy.data.LeaderStockPool.getMainlineCodes(context)) {
+                if (code.isNotBlank()) result.putIfAbsent(code, "")
+            }
+        } catch (_: Exception) {}
+        // 1.1 每日龙头（子板块 Top3）
+        try {
+            val pool = com.chin.stockanalysis.strategy.data.LeaderStockPool(context)
+            val leaders = pool.getDailyLeaders(date)
+            for (l in leaders) result.putIfAbsent(l.code, l.name)
+        } catch (_: Exception) {}
+
+        // 2. AI精选（最近入库）
+        try {
+            for (p in db.aiSelectedStockDao().getAll().take(80)) {
+                result.putIfAbsent(p.stockCode, p.stockName)
+            }
+        } catch (_: Exception) {}
+
+        // 3. 自选
+        try {
+            for (w in db.userWatchlistDao().getAll().take(120)) {
+                result.putIfAbsent(w.stockCode, w.stockName)
+            }
+        } catch (_: Exception) {}
+
+        // 4. 热门板块/周期板块/龙头板块 动量 Top10 的成分股
+        try {
+            val pool = com.chin.stockanalysis.strategy.data.LeaderStockPool(context)
+            val topSectors = pool.getTopSectorsByMomentum(date, rankDays = 5, topN = 10)
+            val hotNames = topSectors.map { it.first }.toSet()
+            if (hotNames.isNotEmpty()) {
+                for (cfg in com.chin.stockanalysis.strategy.data.LeaderStockPool.loadConfigs(context)) {
+                    if (cfg.name in hotNames) {
+                        for (sub in cfg.subSectors) {
+                            for (code in sub.stocks) {
+                                if (code.isNotBlank()) result.putIfAbsent(code, "")
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        // 名称兜底：从当日快照补全缺失名称
+        if (result.values.any { it.isBlank() }) {
+            try {
+                val snapMap = db.dailySnapshotDao().getByDate(date).associate { it.code to it.name }
+                for ((code, name) in result) {
+                    if (name.isBlank()) {
+                        val n = snapMap[code]
+                        if (!n.isNullOrBlank()) result[code] = n
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        return result
     }
 
     data class StockStrategyScore(
@@ -378,12 +479,24 @@ class AIPredictionEngine(private val context: Context) {
         newsScoreMap: Map<String, NewsScoreCalculator.StockNewsScore> = emptyMap(),
         hybridScores: Map<String, Int> = emptyMap(),
         strategyWeight: Double = 0.6,
-        newsWeight: Double = 0.4
+        newsWeight: Double = 0.4,
+        requireBoardBalance: Boolean = false
     ): String {
         val sb = StringBuilder()
 
-        sb.appendLine("你是一个A股量化选股AI助手（V2.0全周期融合版本）。请综合技术面+消息面+大盘环境，预测下一个交易日最可能上涨的3-5只股票。")
+        sb.appendLine("你是一个A股量化选股AI助手（V2.0全周期融合版本）。请综合技术面+消息面+大盘环境，预测下一个交易日最可能上涨的股票。")
         sb.appendLine()
+        if (requireBoardBalance) {
+            sb.appendLine("## 推荐数量要求（重要！必须遵守）")
+            sb.appendLine("- 主板（60/00开头）推荐 **5 只**（rank 1-5）")
+            sb.appendLine("- 科创（688）/创业（300/301）合计推荐 **5 只**（rank 6-10）")
+            sb.appendLine("- 共推荐 **10 只**，两板均衡配置，不要全部集中在同一板块")
+            sb.appendLine("- 若某类候选不足，则按实际数量推荐，但必须在 top_picks 中优先覆盖强逻辑股票")
+            sb.appendLine()
+        } else {
+            sb.appendLine("请预测下一个交易日最可能上涨的3-5只股票。")
+            sb.appendLine()
+        }
         sb.appendLine("## 分析框架（综合方案，非二选一）")
         sb.appendLine("你必须同时考虑以下三个维度，综合打分：")
         sb.appendLine("1. **技术面**: 从OHLCV序列中识别趋势、支撑阻力、量价背离")
@@ -528,6 +641,12 @@ class AIPredictionEngine(private val context: Context) {
         sb.appendLine("      \"reason\": \"综合理由: 技术面均线金叉+放量突破, 消息面新闻利好催化(新闻分:XX), 混合分:XX(30字内)\",")
         sb.appendLine("      \"action\": \"建议逢低建仓，止损位-3%\"")
         sb.appendLine("    }")
+        if (requireBoardBalance) {
+            sb.appendLine("    ,{ \"rank\": 2, \"stock_code\": \"sz000001\", \"stock_name\": \"平安银行\", \"composite_score\": 82, \"up_probability\": 66, \"reason\": \"...\", \"action\": \"建议逢低建仓\" }")
+            sb.appendLine("    // ... 主板共 5 只（rank 1-5），科创/创业共 5 只（rank 6-10），共 10 只")
+        } else {
+            sb.appendLine("    // ... 共 3-5 只")
+        }
         sb.appendLine("  ]")
         sb.appendLine("}")
         sb.appendLine("```")
@@ -621,6 +740,26 @@ class AIPredictionEngine(private val context: Context) {
             .mapIndexed { index, pick -> pick.copy(rank = index + 1) }
 
         return prediction.copy(topPicks = boostedPicks)
+    }
+
+    /**
+     * AI量化选股模式下的板块配额控制：
+     * 主板（60/00 开头）最多保留 5 只；科创（688）/创业（300/301）合计最多保留 5 只。
+     * 在 AI 排序基础上按配额截断，保持推荐逻辑优先，再按原 rank 重排。
+     */
+    private fun enforceBoardQuota(prediction: AIPrediction): AIPrediction {
+        if (prediction.topPicks.isEmpty()) return prediction
+        val mainBoard = mutableListOf<AIPick>()
+        val growthBoard = mutableListOf<AIPick>()
+        for (pick in prediction.topPicks) {
+            val code = pick.stockCode.takeLast(6)
+            val isMain = code.startsWith("60") || code.startsWith("00")
+            if (isMain) mainBoard.add(pick) else growthBoard.add(pick)
+        }
+        val picks = (mainBoard.take(5) + growthBoard.take(5))
+            .sortedBy { it.rank }
+            .mapIndexed { index, pick -> pick.copy(rank = index + 1) }
+        return prediction.copy(topPicks = picks)
     }
 
     // ════════════════════════════════════════

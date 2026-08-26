@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 超短线·周期专属 UseCase（一键建仓并行版）
+
+  不含公共研判（市场公共研判 + 选股公共数据准备由工作台统一执行一次，stageOutputs 播种）。
+  直接按 n_adaptive 输出的大盘方向路由周期×环境专属 pipeline。
+  依赖 seedStageOutputs 中的 n_adaptive / n_pool / n_params 等（缺失时回退完整 usecase）。
+-->
+<usecase id="ultra_short_period" name="超短线周期专属（并行）">
+  <description>周期专属：牛市/震荡/熊市 DAG（公共研判由工作台统一执行）</description>
+  <steps>
+    <!-- 周期×环境矩阵路由：根据 n_adaptive（公共研判播种）输出的大盘方向选择环境专属 pipeline -->
+    <pipeline ref="usecases/ultra_short_bullish_pipeline.xml" name="超短·牛市DAG（S4强反转 tp+0.4/sl-0.8）" if="${n_adaptive}.direction == 'BULLISH'" />
+    <pipeline ref="usecases/ultra_short_oscillation_pipeline.xml" name="超短·震荡DAG（S4K线反转 tp+0.4/sl-0.8）" if="${n_adaptive}.direction == 'OSCILLATION'" />
+    <pipeline ref="usecases/ultra_short_bearish_pipeline.xml" name="超短·熊市DAG（S1严选+环境持续 tp+0.4/sl-0.8）" if="${n_adaptive}.direction == 'BEARISH'" />
+  </steps>
+  <config>
+    <param name="orderType" value="UltraShortQuant" />
+    <param name="maxHoldings" value="3" />
+    <param name="maxStocksPerStrategy" value="15" />
+    <param name="holdingPeriod" value="ultra_short" />
+  </config>
+</usecase>

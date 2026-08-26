@@ -12,6 +12,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.chin.stockanalysis.R
+import com.chin.stockanalysis.config.DataConfig
 import com.chin.stockanalysis.ui.MainActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -251,7 +252,7 @@ object TradeNotifier {
      */
     private suspend fun sendServerChan(sendKey: String, title: String, body: String) = withContext(Dispatchers.IO) {
         try {
-            val url = URL("https://sctapi.ftqq.com/$sendKey.send")
+            val url = URL("${DataConfig.notifyServerchanUrl}/$sendKey.send")
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.doOutput = true
@@ -290,7 +291,7 @@ object TradeNotifier {
      */
     private suspend fun sendPushPlus(token: String, title: String, body: String) = withContext(Dispatchers.IO) {
         try {
-            val url = URL("https://www.pushplus.plus/send")
+            val url = URL(DataConfig.notifyPushplusUrl)
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.doOutput = true

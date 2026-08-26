@@ -155,17 +155,30 @@ object AppUpdateManager {
 
     /**
      * 获取更新清单地址。优先级：
-     *   1. 设置页自定义地址（SharedPreferences，[setManifestUrl] 写入）
-     *   2. `assets/data/app_config.json → update.manifest_url`
+     *   1. 旧版设置页自定义地址（SharedPreferences 兼容，正常不再使用）
+     *   2. `assets/data/app_config.json → update.manifest_url`（若已显式配置）
+     *   3. 自动从 `cloud_sync` 配置推导：
+     *      `https://{bucket}.cos.{region}.myqcloud.com/{prefix}/update/latest.json`
+     * 这样用户无需在设置页手工填写 URL，只要把 latest.json 与 apk 上传到 COS 对应目录即可。
      */
     fun getManifestUrl(context: Context): String {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         val override = prefs.getString(KEY_MANIFEST_URL, "")?.trim().orEmpty()
         if (override.isNotBlank()) return override
-        return DataConfig.get("update.manifest_url", "").trim()
+        // ① app_config.json 显式配置的更新清单
+        val configured = DataConfig.get("update.manifest_url", "").trim()
+        if (configured.isNotBlank() && !configured.contains("example.com")) return configured
+        // ② 自动从 COS 配置推导
+        val bucket = DataConfig.get("cloud_sync.bucket", "").trim()
+        val region = DataConfig.get("cloud_sync.region", "ap-guangzhou").trim()
+        if (bucket.isNotBlank()) {
+            val prefix = DataConfig.get("cloud_sync.prefix", "stockanalysis/phone").trim().trim('/')
+            return "https://$bucket.cos.$region.myqcloud.com/$prefix/update/latest.json"
+        }
+        return ""
     }
 
-    /** 保存设置页自定义的更新清单地址（写入空串可清除自定义值、回退到内置默认）。 */
+    /** 保存自定义更新清单地址（兼容旧逻辑；写入空串可清除自定义值、回退到自动推导）。 */
     fun setManifestUrl(context: Context, url: String) {
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
             .edit().putString(KEY_MANIFEST_URL, url.trim()).apply()

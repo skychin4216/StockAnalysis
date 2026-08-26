@@ -239,11 +239,37 @@ class ChatTabFragment : Fragment() {
         }
 
         val modeHint = when (mode) {
-            AnalysisMode.QUICK -> "⚡ V1.0 Quick：Agent 并行快速分析"
-            AnalysisMode.DEEP -> "🔍 V1.0 Pipeline：多 Agent 流水线深度分析"
-            AnalysisMode.EXPERT -> "📊 V2.0 全周期：市场环境+利润质量+决策矩阵"
+            AnalysisMode.QUICK -> quickAnalysisLabel()
+            AnalysisMode.DEEP -> "🔍 多 agent 流水线深度分析"
+            AnalysisMode.EXPERT -> "🧭 板块多周期全面深度分析"
         }
         binding.etInput.hint = modeHint
+    }
+
+    /** ⚡ 快速模式入口文案：legacy 走 LLM，agent 框架走多 agent（用户可全局切换） */
+    private fun quickAnalysisLabel(): String =
+        if (FeatureFlagManager.isAgentFramework(FeatureFlagManager.chatRoute)) "⚡ Agent 快速分析"
+        else "⚡ LLM 快速分析"
+
+    /** 📈 深度模式尾段：多Agent分析 → 短线/中线 usecase pipeline → 适合买入则保存到 AI 精选 */
+    private fun maybeRunDeepTail(userText: String) {
+        if (analysisMode != AnalysisMode.DEEP) return
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val ctx = requireContext()
+                val tail = withContext(Dispatchers.IO) {
+                    com.chin.stockanalysis.agent.chat.DeepPipelineTail.run(ctx, userText)
+                }
+                if (tail.isNotBlank() && isAdded) {
+                    requireActivity().runOnUiThread {
+                        addBotMessage(tail)
+                        onMessageComplete()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "深度尾段失败: ${e.message}")
+            }
+        }
     }
 
     // ════════════════════════════════════════
@@ -648,6 +674,13 @@ class ChatTabFragment : Fragment() {
         binding.etInput.setText(""); hideKeyboard()
         if (!hasAutoTitle) { hasAutoTitle = true; binding.tvChatTitle.text = extractSmartTitle(userText) }
 
+        // 🧭 板块多周期全面深度分析：EXPERT 模式不走通用 Agent/分析，直接解析板块/个股 → 板块龙头分析
+        // （只分析不下单，给出评分评价；若合适买入，给用户提示）
+        if (analysisMode == AnalysisMode.EXPERT) {
+            runSectorDeepAnalysis(userText)
+            return
+        }
+
         // 🎯 Agent 模式：如果全局开启了 Agent，走 ChatRouter → ChatAgent
         if (FeatureFlagManager.isAgentFramework(FeatureFlagManager.chatRoute)) {
             runAgentAnalysis(userText, provider, skipStockContext)
@@ -715,6 +748,8 @@ class ChatTabFragment : Fragment() {
                         val cleanedResponse = cleanAgentResponse(result.response)
                         completeStreamingMessage(loadingIndex, cleanedResponse)
                         onMessageComplete()
+                        // 📈 深度模式尾段：短线/中线 usecase → 保存 AI 精选
+                        maybeRunDeepTail(userText)
                     } else {
                         failStreamingMessage(loadingIndex, "Agent 分析失败: ${result.response}")
                     }
@@ -767,12 +802,46 @@ class ChatTabFragment : Fragment() {
         } catch (_: Exception) { null }
     }
 
+    /** 🧭 板块多周期全面深度分析：EXPERT 模式把用户输入中的板块/个股 → 板块龙头分析（只分析不下单，给评分评价，合适则提示买入） */
+    private fun runSectorDeepAnalysis(userText: String) {
+        val loadingMsg = Message(content = "", isUser = false, isStreaming = true,
+            loadingStatus = "🧭 板块多周期全面深度分析 启动中..."
+        )
+        addMessage(loadingMsg)
+        val loadingIndex = messages.size - 1
+
+        currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val ctx = requireContext()
+                val (sectors, codes) = withContext(Dispatchers.IO) {
+                    com.chin.stockanalysis.agent.chat.QuickBuildExpertRunner.parseFocus(ctx, userText)
+                }
+                val result = com.chin.stockanalysis.agent.chat.QuickBuildExpertRunner.analyzeSectorFocus(
+                    ctx = ctx,
+                    focusSectors = sectors,
+                    focusStocks = codes,
+                    onProgress = { status -> updateLoadingStatus(loadingIndex, "🧭 $status") }
+                )
+                if (isAdded) requireActivity().runOnUiThread {
+                    if (result.ok) completeStreamingMessage(loadingIndex, result.message)
+                    else failStreamingMessage(loadingIndex, result.message)
+                    onMessageComplete()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "runSectorDeepAnalysis", e)
+                if (isAdded) requireActivity().runOnUiThread {
+                    failStreamingMessage(loadingIndex, "板块多周期全面深度分析异常：${e.message?.take(80)}")
+                }
+            }
+        }
+    }
+
     /** 🚀 统一引擎分析：Chat 和详情页共用 UnifiedAgentRunner */
     private fun runUnifiedAnalysis(userText: String, stockCode: String) {
         val modeLabel = when (analysisMode) {
-            AnalysisMode.QUICK -> "⚡ V1.0 Quick 快速分析"
-            AnalysisMode.DEEP -> "🔍 V1.0 Pipeline 深度分析"
-            AnalysisMode.EXPERT -> "📊 V2.0 全周期分析"
+            AnalysisMode.QUICK -> quickAnalysisLabel()
+            AnalysisMode.DEEP -> "🔍 多 agent 流水线深度分析"
+            AnalysisMode.EXPERT -> "🧭 板块多周期全面深度分析"
         }
         val coreMode = when (analysisMode) {
             AnalysisMode.QUICK -> com.chin.stockanalysis.agent.core.AnalysisMode.QUICK
@@ -822,6 +891,8 @@ class ChatTabFragment : Fragment() {
                         failStreamingMessage(loadingIndex, "$modeLabel 失败: ${result.errorMessage}")
                     }
                     onMessageComplete()
+                    // 📈 深度模式尾段：短线/中线 usecase → 保存 AI 精选
+                    maybeRunDeepTail(userText)
                 }
             } catch (e: Exception) {
                 if (isAdded) requireActivity().runOnUiThread {

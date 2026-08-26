@@ -1,6 +1,7 @@
 package com.chin.stockanalysis.strategy.data
 
 import android.util.Log
+import com.chin.stockanalysis.config.DataConfig
 import com.chin.stockanalysis.stock.data.HttpClientProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -37,8 +38,8 @@ class InstitutionalRatingProvider {
 
     private val client = HttpClientProvider.realtimeClient
 
-    /** 研报 API 基础 URL */
-    private val baseUrl = "https://reportapi.eastmoney.com/report/list"
+    /** 研报 API 基础 URL（配置：data_sources.eastmoney.report） */
+    private val baseUrl = DataConfig.eastmoneyReport
 
     /**
      * 机构评级结果
@@ -126,7 +127,7 @@ class InstitutionalRatingProvider {
             val req = Request.Builder()
                 .url(url)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                .header("Referer", "https://data.eastmoney.com/report/stock.jshtml")
+                .header("Referer", DataConfig.eastmoneyReportStock)
                 .build()
 
             val resp = client.newCall(req).execute()
@@ -295,14 +296,14 @@ class InstitutionalRatingProvider {
     suspend fun getFundHoldings(code: String, pageSize: Int = 20): List<FundHolding> = withContext(Dispatchers.IO) {
         try {
             val secuCode = normalizeToSecuCode(code)
-            val url = "https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax?code=$secuCode"
+            val url = "${DataConfig.eastmoneyF10Shareholder}?code=$secuCode"
 
             Log.i(TAG, "获取基金持仓: $code → $secuCode, URL=$url")
 
             val req = Request.Builder()
                 .url(url)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                .header("Referer", "https://emweb.securities.eastmoney.com/")
+                .header("Referer", DataConfig.eastmoneyF10Host)
                 .build()
 
             val resp = client.newCall(req).execute()

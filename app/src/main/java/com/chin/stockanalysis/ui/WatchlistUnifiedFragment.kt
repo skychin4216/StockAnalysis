@@ -22,7 +22,11 @@ import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.stock.database.UserWatchlistEntity
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
 import com.chin.stockanalysis.strategy.data.CandidatePool
+import com.chin.stockanalysis.strategy.data.HistoricalDataFetcher
+import com.chin.stockanalysis.strategy.data.LeaderStockPool
+import com.chin.stockanalysis.strategy.data.TrendScanMemoryPool
 import com.chin.stockanalysis.strategy.market.MarketAnalyzer
+import com.chin.stockanalysis.strategy.trade.AutoTradePortfolioEngine
 import com.chin.stockanalysis.common.StockDataService
 import com.chin.stockanalysis.common.StockTableHelper
 import com.google.mlkit.vision.common.InputImage
@@ -799,6 +803,20 @@ class WatchlistUnifiedFragment : Fragment() {
             setOnClickListener { trendOcrPicker.launch("image/*") }
         }
         ocrRow.addView(ocrBtn)
+        // ── 自动扫描股票池按钮 ──
+        val scanBtn = Button(ctx).apply {
+            text = "📡 扫描股票池"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#E65100"))
+            setPadding(dp(16), dp(6), dp(16), dp(6))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { leftMargin = dp(8) }
+            setOnClickListener { scanPoolsAndUpdateTrends() }
+        }
+        ocrRow.addView(scanBtn)
         listContainer.addView(ocrRow)
 
         // ── OCR 状态提示 ──
@@ -980,6 +998,122 @@ class WatchlistUnifiedFragment : Fragment() {
                     android.util.Log.i("TrendOCR", "注入结果: $result")
                 }
             )
+        }
+    }
+
+    // ═══════════ 自动扫描股票池 → 更新K线 → 形态识别 → 注入趋势图 ═══════════
+
+    /**
+     * 自动扫描：自选池 + AI精选 + 备选池 + 龙头股票池 + 实仓 + 持仓 → 去重
+     * → 增量更新最新 K 线（公共内存池 [TrendScanMemoryPool] 去重，其他地方已更新则跳过）
+     * → 本地形态识别 → 注入趋势图 WebView。
+     */
+    private fun scanPoolsAndUpdateTrends() {
+        val ctx = requireContext()
+        val status = listContainer.findViewWithTag<TextView>("ocrStatus")
+        fun statusText(s: String) {
+            requireActivity().runOnUiThread { status?.apply { text = s; visibility = View.VISIBLE } }
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            val db = StockDatabase.getInstance(ctx)
+            // ① 收集股票池 → 去重（有序）
+            val codes = linkedSetOf<String>()
+            try { db.userWatchlistDao().getAll().forEach { codes.add(it.stockCode) } } catch (e: Exception) {}
+            try { db.aiSelectedStockDao().getAll().forEach { codes.add(it.stockCode) } } catch (e: Exception) {}
+            try { CandidatePool.getPoolCodes(ctx).forEach { codes.add(it) } } catch (e: Exception) {}
+            try { LeaderStockPool.getAllCodes(ctx).forEach { codes.add(it) } } catch (e: Exception) {}
+            try { db.realPositionDao().getAll().forEach { codes.add(it.stockCode) } } catch (e: Exception) {}
+            try { AutoTradePortfolioEngine(ctx).getHoldings().forEach { codes.add(it.stockCode) } } catch (e: Exception) {}
+            if (codes.isEmpty()) {
+                statusText("⚠️ 各股票池均为空，无法扫描")
+                return@launch
+            }
+            // ② 增量更新 K 线（公共内存池去重）
+            val fetcher = HistoricalDataFetcher(ctx)
+            val recentDay = com.chin.stockanalysis.ui.TradingDayPickerView
+                .recentTradingDay().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+            var updated = 0; var skipped = 0; var failed = 0
+            val nameMap = try {
+                db.stockBasicDao().getByCodes(codes.toList()).associate { it.code to it.name }
+            } catch (e: Exception) { emptyMap<String, String>() }
+            codes.toList().forEachIndexed { i, code ->
+                statusText("📡 扫描 ${i + 1}/${codes.size}：${nameMap[code] ?: code} ($code)")
+                if (TrendScanMemoryPool.isUpdated(code)) { skipped++; return@forEachIndexed }
+                // 本地已有最近交易日数据 → 无需网络更新，仅标记
+                val have = try {
+                    db.dailySnapshotDao().getMaxDateByCode().associate { it.code to it.maxDate }[code]
+                } catch (e: Exception) { null }
+                if (have != null && have >= recentDay) {
+                    TrendScanMemoryPool.markUpdated(code); skipped++; return@forEachIndexed
+                }
+                if (fetcher.fetchStockLatest(code)) { updated++; TrendScanMemoryPool.markUpdated(code) }
+                else failed++
+            }
+            // ③ 本地形态识别 + 注入趋势图
+            var injected = 0
+            codes.forEach { code ->
+                val candles = try { db.dailySnapshotDao().getByCode(code, 30) } catch (e: Exception) { emptyList() }
+                if (candles.size < 20) return@forEach
+                val pat = detectTrendPattern(candles) ?: return@forEach
+                injectPatternToWebView(buildTrendPatternJson(code, nameMap[code] ?: code, candles, pat))
+                injected++
+            }
+            statusText("✅ 扫描完成：共 ${codes.size} 只 → 更新 $updated 只，复用 $skipped 只，失败 $failed 只，识别形态 $injected 个")
+        }
+    }
+
+    /** 本地 K 线形态识别（与趋势图分类对齐：three/trend/two/single） */
+    private fun detectTrendPattern(candles: List<DailySnapshotEntity>): Pair<String, String>? {
+        val k = candles.take(20).reversed() // 时间正序
+        if (k.size < 20) return null
+        val last = k.last()
+        // 三白兵：最近3根均阳线且收盘依次抬高
+        val last3 = k.takeLast(3)
+        if (last3.size == 3 && last3.all { it.close > it.open } &&
+            last3[0].close < last3[1].close && last3[1].close < last3[2].close) {
+            return "three" to "三白兵"
+        }
+        // 看涨吞没：前阴后阳，阳线实体吞没前阴实体
+        if (k.size >= 2) {
+            val prev = k[k.size - 2]
+            if (prev.close < prev.open && last.close > last.open &&
+                last.close >= prev.open && last.open <= prev.close) {
+                return "two" to "看涨吞没"
+            }
+        }
+        // 锤子线：下影线 >= 2 倍实体，收盘偏强
+        val body = Math.abs(last.close - last.open)
+        val lower = Math.min(last.close, last.open) - last.low
+        if (body > 0 && lower >= 2 * body && last.close >= last.open) return "single" to "锤子线(反转)"
+        // 上升趋势：MA5 > MA20 且收盘站上 MA5
+        fun ma(n: Int): Double = k.takeLast(n).map { it.close }.average()
+        if (ma(5) > ma(20) && last.close > ma(5)) return "trend" to "上升趋势"
+        return null
+    }
+
+    /** 构建 addPatternFromApp 兼容 JSON（含最近 40 根 K 线） */
+    private fun buildTrendPatternJson(
+        code: String,
+        name: String,
+        candles: List<DailySnapshotEntity>,
+        pat: Pair<String, String>
+    ): JSONObject {
+        val k = candles.take(40).reversed()
+        val data = JSONArray()
+        k.forEach { c ->
+            data.put(JSONObject().apply {
+                put("o", c.open); put("h", c.high); put("l", c.low); put("c", c.close)
+                put("label", c.date)
+            })
+        }
+        return JSONObject().apply {
+            put("cat", pat.first)
+            put("type", "bullish")
+            put("name", "$name($code) ${pat.second}")
+            put("en", "${pat.first}_$code")
+            put("data", data)
+            put("desc", "自动扫描识别：${pat.second}（股票池扫描）")
+            put("rules", "${pat.second}形态，来源：股票池自动扫描")
         }
     }
 

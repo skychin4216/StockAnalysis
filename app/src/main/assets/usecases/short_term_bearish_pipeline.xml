@@ -89,6 +89,7 @@
     </Node>
 
     <!-- AI+过滤 Layer 4-5 -->
+    <Node id="n_finance" name="财务健康筛选" module="financial_health" />
     <Node id="n_ai" name="AI精选" module="ai_predict" />
     <Node id="n_smart" name="主力资金过滤" module="smart_money_filter">
       <config>
@@ -266,6 +267,12 @@
     <!-- Layer 5 → 6: 新闻拦截 → AI精选（最终裁切 take 5） -->
     <Link>
       <SourceNodeId>n_newsguard</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_finance</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_finance</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_ai</TargetNodeId>
       <TargetPortId>0</TargetPortId>

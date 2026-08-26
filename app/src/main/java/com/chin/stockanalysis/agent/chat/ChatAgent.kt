@@ -135,9 +135,9 @@ class ChatAgent(context: Context) : AgentBase(
                         com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.EXPERT -> com.chin.stockanalysis.agent.core.AnalysisMode.EXPERT
                     }
                     val modeLabel = when (analysisMode) {
-                        com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.QUICK -> "⚡ V1.0 Quick"
-                        com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.DEEP -> "🔍 V1.0 Pipeline"
-                        com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.EXPERT -> "📊 V2.0 全周期"
+                        com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.QUICK -> "⚡ 快速分析"
+                        com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.DEEP -> "🔍 多 agent 流水线深度分析"
+                        com.chin.stockanalysis.ui.ChatTabFragment.AnalysisMode.EXPERT -> "📊 个股全周期深度分析"
                     }
 
                     if (entities.size == 1) {

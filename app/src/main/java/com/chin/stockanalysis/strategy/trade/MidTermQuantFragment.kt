@@ -40,7 +40,12 @@ class MidTermQuantFragment : QuantFragmentBase() {
     override fun getQuantType() = "MidTermQuant"
     override val positionTitlePrefix = "中线"
     override fun onBuildClick(saveAsAiOnly: Boolean) {
-        runDagPipeline(HoldingPeriod.MID, "mid_term", "midterm", 60, "中线", saveAsAiOnly = saveAsAiOnly)
+        runDagPipeline(
+            HoldingPeriod.MID, pendingUseCaseId ?: "mid_term", "midterm", 60, "中线",
+            saveAsAiOnly = saveAsAiOnly,
+            seedStageOutputs = pendingSeedStageOutputs,
+            parallelMode = pendingParallelMode
+        )
     }
     override fun onFittingClick() { showFittingParamsReport(titlePrefix = "中线") }
     override fun onBacktrackClick() { runNextDayBacktrack() }
@@ -57,7 +62,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
 
     override fun buildUI() {
         addTitleRow(getString(com.chin.stockanalysis.R.string.title_mid_system), textSize = 18f)
-        rootLayout.addView(createProgressRow())
+        rootLayout.addView(createExecLogPanel())
         rootLayout.addView(createButtonRow())
         addSeparator()
         rootLayout.addView(createContentScrollArea())

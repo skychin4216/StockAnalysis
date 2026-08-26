@@ -331,6 +331,9 @@ class MultiPeriodHotNode(
         // 📥 输入日志（独立数据源，无直接输入）
         context.log(nodeId, "📥 $nodeName 输入: 独立数据源, 从DB加载 ${periods.size} 个周期数据")
 
+        // 统计实际扫描到的股票数（去重），供节点详情显示"输入 N 只股票"
+        // 声明在 try 外，catch 分支的 recordStockFlow 也需要引用
+        val scannedCodes = mutableSetOf<String>()
         return try {
             val allDates = db.dailySnapshotDao().getAvailableDates(120).sorted()
             val hotSet = mutableSetOf<String>()
@@ -348,6 +351,7 @@ class MultiPeriodHotNode(
                         val snaps = db.dailySnapshotDao().getByDate(date)
                         for (snap in snaps) {
                             if (onlyMainBoard && !MainBoardFilterNode.isMainBoardStock(snap.code)) continue
+                            scannedCodes.add(snap.code)
                             sliceMap[snap.code] = (sliceMap[snap.code] ?: 0.0) + snap.changePct
                         }
                     } catch (_: Exception) { continue }
@@ -371,8 +375,8 @@ class MultiPeriodHotNode(
             }
             context.recordStockFlow(
                 nodeId = nodeId, nodeName = nodeName,
-                inputCount = periods.size, outputCount = hotSet.size,
-                filterCount = if (hotSet.isEmpty()) periods.size else 0,
+                inputCount = scannedCodes.size, outputCount = hotSet.size,
+                filterCount = if (hotSet.isEmpty()) scannedCodes.size else 0,
                 filterReason = if (hotSet.isEmpty()) "无热门股票" else "",
                 inputCodes = emptyList(), outputCodes = hotSet.toList().take(5)
             )
@@ -386,8 +390,8 @@ class MultiPeriodHotNode(
             context.recordError(nodeId, "多周期热门股失败: ${e.message}")
             context.recordStockFlow(
                 nodeId = nodeId, nodeName = nodeName,
-                inputCount = periods.size, outputCount = 0,
-                filterCount = periods.size,
+                inputCount = scannedCodes.size, outputCount = 0,
+                filterCount = scannedCodes.size,
                 filterReason = "执行失败: ${e.message}",
                 inputCodes = emptyList(), outputCodes = emptyList()
             )
@@ -2001,7 +2005,13 @@ class GenerateOrdersNode(
 
             // 📤 输出日志
             val orderCodes = orders.map { "${it.stockCode}(${it.stockName})" }
-            context.log(nodeId, "📤 $nodeName 输出: ${orders.size} 个订单 ${formatTopCodes(orderCodes)}")
+            context.log(nodeId, "📤 $nodeName 输出: ${orders.size} 个订单")
+            if (orders.isNotEmpty()) {
+                val orderDetail = orders.joinToString("; ") {
+                    "${it.stockName}(${it.stockCode},买价${"%.2f".format(it.buyPrice)}×${it.quantity}股)"
+                }
+                context.log(nodeId, "  🎯 符合买入: $orderDetail")
+            }
 
             // 🚫 过滤日志
             if (filteredCount > 0) {
@@ -2191,9 +2201,17 @@ class PositionMergeNode : BaseNode<Any, PositionMergeResult>("position_merge", "
             // 📤 输出日志
             context.log(nodeId, "📤 $nodeName 输出: 新增 $newCount 只，更新 ${updatedCodes.size} 只，总持仓 $totalHoldings")
 
+            // 新增持仓明细（每只代码/名称/买价×数量）
+            if (entitiesToInsert.isNotEmpty()) {
+                val insertDetail = entitiesToInsert.joinToString("; ") {
+                    "${it.stockName}(${it.stockCode}, ${"%.2f".format(it.buyPrice)}×${it.quantity}股)"
+                }
+                context.log(nodeId, "  🆕 新增持仓: $insertDetail")
+            }
+
             // 🚫 过滤日志
             if (updatedCodes.isNotEmpty()) {
-                context.log(nodeId, "  追加更新: ${updatedCodes.joinToString(", ")}")
+                context.log(nodeId, "  追加合并: ${updatedCodes.joinToString(", ")}")
             }
             context.recordStockFlow(
                 nodeId = nodeId, nodeName = nodeName,

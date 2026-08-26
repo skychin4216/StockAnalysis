@@ -27,6 +27,7 @@ import com.chin.stockanalysis.strategy.Strategy
 import com.chin.stockanalysis.strategy.StrategyEngine
 import com.chin.stockanalysis.strategy.topology.core.orderTypePeriod
 import com.chin.stockanalysis.strategy.topology.ui.PipelineFlowChart
+import android.text.TextUtils
 import com.chin.stockanalysis.ui.TradingDayPickerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -67,6 +68,38 @@ abstract class QuantFragmentBase : Fragment() {
 
     /** 状态文字 */
     protected lateinit var statusTv: TextView
+
+    /** 滚动执行日志视图（四周期 UI 实时展示 pipeline 执行步骤，含公共 pipeline） */
+    protected lateinit var pipelineLogView: TextView
+
+    /** 执行日志缓冲（最多保留 300 条） */
+    private val logBuffer = ArrayDeque<String>()
+
+    // ── 可折叠执行日志面板（进度条 + 状态文字 + 日志合并，可收起/展开） ──
+    protected lateinit var execLogPanel: LinearLayout
+    protected lateinit var execLogHeader: LinearLayout
+    protected lateinit var execLogToggle: TextView
+    protected lateinit var execLogContent: LinearLayout
+    protected var logExpanded: Boolean = false
+
+    /** 阶段标题序号（公共研判→公共选股→周期专属 递增） */
+    private var stageCounter = 0
+    private var lastPipelineName = ""
+    /** 最近一次节点日志在缓冲中的索引（onNodeDone 时原位替换为"节点名 + 结果"） */
+    private var lastNodeLogIndex = -1
+
+    // ── 一键建仓并行模式：由工作台设置、onBuildClick 读取的待用参数（均在主线程读写） ──
+    @Volatile protected var pendingSeedStageOutputs: Map<String, Any?> = emptyMap()
+    @Volatile protected var pendingUseCaseId: String? = null
+    @Volatile protected var pendingParallelMode: Boolean = false
+
+    /** 日志颜色分级前缀（refreshLogView 按行前缀着色） */
+    private val COLOR_STAGE = 0xFFFFD54F.toInt()   // 阶段标题:黄
+    private val COLOR_NODE = 0xFF9FB8C9.toInt()    // 节点:灰蓝
+    private val COLOR_DONE = 0xFF7AE582.toInt()    // 完成:绿
+    private val COLOR_ERR = 0xFFFF7A7A.toInt()     // 错误:红
+    private val COLOR_CMD = 0xFF64B5F6.toInt()     // 指令:蓝
+    private val COLOR_NORMAL = 0xFFD0D6E0.toInt()  // 普通:浅灰
 
     /** 进度条 */
     protected lateinit var progressBar: ProgressBar
@@ -116,6 +149,8 @@ abstract class QuantFragmentBase : Fragment() {
 
     /** 最近一次 Pipeline 选股结果（用于非交易时间显示「选股」区块） */
     protected var lastPickStocks: List<Triple<String, String, Int>> = emptyList()
+    /** 执行日志面板顶部的「选股结果」摘要卡（标题 + 仅买入订单生成的股票），null 表示未生成 */
+    private var pickResultCard: LinearLayout? = null
     /** 选股中的股票代码集合（从持仓区排除，避免重叠） */
     protected var pickStockCodes: Set<String> = emptySet()
 
@@ -197,7 +232,154 @@ abstract class QuantFragmentBase : Fragment() {
     /** 供外部统一调用的自动触发 Pipeline（建仓/选股）：工作台「四周期统一管理」入口
      *  @param saveAsAiOnly 非交易时间一键建仓「仅选股」：透传给 onBuildClick，跳过下单/持仓合并/换仓 */
     open fun autoRunPipeline(saveAsAiOnly: Boolean = false) {
-        if (::buildBtn.isInitialized && buildBtn.isEnabled) onBuildClick(saveAsAiOnly)
+        if (::buildBtn.isInitialized && buildBtn.isEnabled) {
+            // 清空一键建仓残留参数，走完整 usecase（含公共研判）
+            pendingSeedStageOutputs = emptyMap()
+            pendingUseCaseId = null
+            pendingParallelMode = false
+            onBuildClick(saveAsAiOnly)
+        }
+    }
+
+    /**
+     * 一键建仓并行触发：以公共研判 stageOutputs 播种，执行周期专属 pipeline（不含 common）。
+     * 由 QuantWorkbenchFragment 在主线程对四个周期 Tab 依次调用，各自提交并行调度器立即并发执行。
+     */
+    open fun runParallelBuild(useCaseId: String, saveAsAiOnly: Boolean, seedStageOutputs: Map<String, Any?>) {
+        if (!::buildBtn.isInitialized || !buildBtn.isEnabled) {
+            Log.w("QuantFragmentBase", "runParallelBuild 忽略: buildBtn 未就绪或不可用")
+            return
+        }
+        pendingSeedStageOutputs = seedStageOutputs
+        pendingUseCaseId = useCaseId
+        pendingParallelMode = true
+        onBuildClick(saveAsAiOnly)
+    }
+
+    /**
+     * 实仓新增股票后补齐日K快照：做T引擎要求 daily_snapshot ≥10 天，
+     * 而手工添加的股票往往不在系统扫描池内、没有历史快照，导致 generateSignals 直接无信号。
+     * 补拉成功后回到主线程再次刷新持仓，触发做T自动检测。
+     */
+    protected fun ensureRealPositionDailyData(code: String, name: String) {
+        val ctx = requireContext().applicationContext
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(ctx)
+                val end = java.time.LocalDate.now()
+                val start = end.minusDays(60)
+                val (records, source) = fetcher.fetchOneStock(code, start, end)
+                if (records.isNotEmpty()) {
+                    StockDatabase.getInstance(ctx).dailySnapshotDao().insertAll(records)
+                    Log.i(TAG, "实仓 $name($code) 已补齐日K ${records.size} 条 (source=$source)")
+                } else {
+                    Log.w(TAG, "实仓 $name($code) 补拉日K无数据")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "实仓 $name($code) 补拉日K失败: ${e.message}")
+            } finally {
+                withContext(Dispatchers.Main) {
+                    if (isAdded) refreshPositions()
+                }
+            }
+        }
+    }
+
+    /**
+     * 一键建仓公共研判阶段：在超短周期 Tab 上统一执行 market_rotation + stock_picking_common，
+     * 完成后通过回调把 stageOutputs 交给工作台，播种给四周期并行 pipeline（IO 线程回调）。
+     */
+    open fun runCommonPipeline(onStageOutputs: (Map<String, Any?>) -> Unit) {
+        val eng = engine
+        if (eng == null) {
+            // 引擎未就绪：立即回传空结果，避免工作台 CountDownLatch 长时间阻塞
+            Log.w(TAG, "runCommonPipeline: engine 未就绪，跳过公共研判")
+            onStageOutputs(emptyMap())
+            return
+        }
+        // 一键建仓由工作台在 IO 线程触发（runQuickBuild），开头 UI 段必须先切回主线程，
+        // 否则 buildBtn.isEnabled 触发 StateListAnimator 报 Animators may only be run on Looper threads。
+        lifecycleScope.launch(Dispatchers.Main) {
+            if (isAdded && ::buildBtn.isInitialized) {
+                buildBtn.isEnabled = false; buildBtn.text = "⏳ 公共研判..."
+            }
+            if (isAdded) {
+                progressBar.visibility = View.VISIBLE
+                statusTv.text = "🔄 [DAG] 市场公共研判执行中..."
+                clearPipelineLog()
+            }
+            stageCounter = 0
+            lastPipelineName = ""
+            appendLog("🚀 一键建仓：先执行市场公共研判 → 选股公共数据准备")
+            appendLog("📅 交易日=${TradingDayPickerView.recentTradingDay().format(DATE_FMT)}")
+            appendLog("  流程: 市场公共研判（大盘→风格→板块）→ 选股公共数据准备")
+        }
+
+        val ctx = requireContext()
+        com.chin.stockanalysis.service.QuantTaskScheduler.submitParallel(ctx, "市场公共研判") {
+            try {
+                val effectiveTradeDate = TradingDayPickerView.recentTradingDay(browsingDate).format(DATE_FMT)
+                val strategies = eng.getEnabledStrategiesByPeriod(HoldingPeriod.ULTRA_SHORT)
+                com.chin.stockanalysis.strategy.topology.xml.UseCaseLoader.init(ctx, strategies)
+                val r = com.chin.stockanalysis.strategy.topology.xml.UseCaseLoader.run(
+                    "common", effectiveTradeDate,
+                    onNodeProgress = { pipelineName, nodeName ->
+                        lifecycleScope.launch(Dispatchers.Main) {
+                            if (isAdded) {
+                                statusTv.text = "🔄 [DAG] ${pipelineName} ${nodeName} 执行中..."
+                                if (pipelineName != lastPipelineName) {
+                                    lastPipelineName = pipelineName
+                                    appendLog(stageTitleFor(pipelineName))
+                                }
+                                appendNodeLog("   ├─ $nodeName")
+                            }
+                        }
+                    },
+                    onNodeDone = { pipelineName, nodeName, output ->
+                        lifecycleScope.launch(Dispatchers.Main) {
+                            if (isAdded) {
+                                val summary = summarizeOutput(output)
+                                replaceLastNodeLog(
+                                    if (summary.isNotEmpty()) "   ├─ $nodeName  ✅ $summary"
+                                    else "   ├─ $nodeName  ✅"
+                                )
+                            }
+                        }
+                    }
+                )
+                withContext(Dispatchers.Main) {
+                    if (isAdded) {
+                        statusTv.text = if (r.success)
+                            "✅ 市场公共研判完成，正在并行触发四周期建仓..."
+                        else
+                            "❌ 公共研判失败，各周期回退完整流程"
+                        appendLog(if (r.success)
+                            "✅ 市场公共研判 + 选股公共数据准备完成，进入四周期并行建仓"
+                        else
+                            "⚠️ 公共研判执行失败，各周期将回退完整流程（含公共阶段）")
+                        progressBar.visibility = View.GONE
+                    }
+                }
+                onStageOutputs(if (r.success) r.stageOutputs else emptyMap())
+            } catch (e: Exception) {
+                Log.e("QuantFragmentBase", "[DAG] 市场公共研判异常", e)
+                withContext(Dispatchers.Main) {
+                    if (isAdded) {
+                        appendLog("❌ 市场公共研判异常：${e.message?.take(80)}")
+                        statusTv.text = "❌ [DAG] 市场公共研判异常"
+                        progressBar.visibility = View.GONE
+                    }
+                }
+                onStageOutputs(emptyMap())
+            } finally {
+                withContext(Dispatchers.Main) {
+                    if (isAdded && ::buildBtn.isInitialized) {
+                        buildBtn.isEnabled = true
+                        updateBuildButtonText()
+                    }
+                }
+            }
+        }
     }
 
     // ═══════════════════════════════════════════════════
@@ -439,6 +621,289 @@ abstract class QuantFragmentBase : Fragment() {
     }
 
     /**
+     * 创建「可折叠执行日志面板」：进度条 + 状态文字 + 执行日志合并为一个可收起的 view。
+     *
+     * 设计目标（对应一键建仓体验重构）：
+     * - 进度条/状态文字与日志不再各占一行，统一收纳到面板头部；
+     * - 默认收起（不占空间），执行时首次写日志自动展开，点击头部可随时收起/展开；
+     * - 日志区支持「上下滚动 + 左右滚动」（长行不会被截断）；
+     * - 日志按行前缀着色：▶=阶段标题(黄)、✅=完成(绿)、❌=错误(红)、🚀=指令(蓝)、├└=节点(灰蓝)。
+     *
+     * 四个周期 Tab 与持仓页布局中，用本方法替代原来的 createProgressRow() + createPipelineLogView()。
+     */
+    protected fun createExecLogPanel(): LinearLayout {
+        val panel = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0x0F2A6BBF.toInt())
+                cornerRadius = dpToPx(10).toFloat()
+            }
+            setPadding(dpToPx(2), dpToPx(2), dpToPx(2), dpToPx(2))
+        }
+
+        // ── 头部：进度条 + 状态文字 + 折叠箭头（整行可点击收起/展开） ──
+        execLogHeader = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dpToPx(10), dpToPx(6), dpToPx(10), dpToPx(6))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                if (::execLogContent.isInitialized) {
+                    logExpanded = !logExpanded
+                    refreshLogPanelVisibility()
+                }
+            }
+        }
+        progressBar = ProgressBar(requireContext(), null, android.R.attr.progressBarStyleSmall).apply {
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(dpToPx(20), dpToPx(20)).apply {
+                marginEnd = dpToPx(8)
+            }
+        }
+        execLogHeader.addView(progressBar)
+        statusTv = TextView(requireContext()).apply {
+            text = "📋 执行日志（点击展开/收起）"
+            textSize = 13f
+            setTextColor(Color.parseColor("#8A94A6"))
+            setSingleLine(true)
+            ellipsize = TextUtils.TruncateAt.END
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        execLogHeader.addView(statusTv)
+        execLogToggle = TextView(requireContext()).apply {
+            text = "▾"
+            textSize = 14f
+            setTextColor(Color.parseColor("#8A94A6"))
+            setPadding(dpToPx(8), 0, dpToPx(4), 0)
+        }
+        execLogHeader.addView(execLogToggle)
+        panel.addView(execLogHeader)
+
+        // ── 内容区：垂直滚动(ScrollView) + 水平滚动(HorizontalScrollView) ──
+        execLogContent = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        val logScroll = ScrollView(requireContext()).apply {
+            isVerticalScrollBarEnabled = true
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dpToPx(210)
+            )
+        }
+        val logHScroll = HorizontalScrollView(requireContext()).apply {
+            isHorizontalScrollBarEnabled = true
+            isFillViewport = true
+        }
+        pipelineLogView = TextView(requireContext()).apply {
+            text = "📋 执行日志（此处实时显示 pipeline 步骤）"
+            textSize = 12f
+            setTextColor(Color.parseColor("#D0D6E0"))
+            setLineSpacing(3f, 1.0f)
+            setTypeface(Typeface.MONOSPACE)
+            setPadding(dpToPx(8), dpToPx(6), dpToPx(8), dpToPx(6))
+            setBackgroundColor(Color.parseColor("#101820"))
+        }
+        logHScroll.addView(
+            pipelineLogView,
+            ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        )
+        logScroll.addView(
+            logHScroll,
+            ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        )
+        execLogContent.addView(logScroll)
+        panel.addView(execLogContent)
+
+        execLogPanel = panel
+        refreshLogPanelVisibility()
+        return panel
+    }
+
+    /** 刷新面板可见性（内容区展开/收起 + 箭头图标切换） */
+    protected fun refreshLogPanelVisibility() {
+        if (!::execLogContent.isInitialized) return
+        execLogContent.visibility = if (logExpanded) View.VISIBLE else View.GONE
+        if (::execLogToggle.isInitialized) execLogToggle.text = if (logExpanded) "▾" else "▶"
+    }
+
+    /** 确保日志面板展开（写日志时自动展开） */
+    protected fun ensureLogExpanded() {
+        if (!logExpanded) {
+            logExpanded = true
+            refreshLogPanelVisibility()
+        }
+    }
+
+    /** 手动收起/展开日志面板 */
+    protected fun toggleLogPanel() {
+        logExpanded = !logExpanded
+        refreshLogPanelVisibility()
+    }
+
+    /**
+     * 追加一行执行日志（主线程安全，自动滚动到底部，首次追加自动展开面板）。
+     * 用于一键建仓/回溯/拟合过程中实时反馈四周期执行步骤。
+     */
+    protected fun appendLog(text: String) {
+        if (!::pipelineLogView.isInitialized) return
+        val ts = java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
+        logBuffer.addLast("[$ts] $text")
+        while (logBuffer.size > 300) logBuffer.removeFirst()
+        lastNodeLogIndex = -1
+        lifecycleScope.launch(Dispatchers.Main) {
+            if (!isAdded || !::pipelineLogView.isInitialized) return@launch
+            ensureLogExpanded()
+            refreshLogView()
+        }
+    }
+
+    /**
+     * 🚨 趋势形态匹配：对选中股票做 K 线经典/复杂形态检测（CandlePatternDetector，30+ 根），
+     * 命中强度≥3 的形态用红色字体在日志区高亮（refreshLogView 中 🚨/形态匹配 前缀着红色）。
+     */
+    private fun logTrendPatternMatches(stocks: List<Pair<String, String>>) {
+        if (stocks.isEmpty()) return
+        val ctx = requireContext()
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val dao = StockDatabase.getInstance(ctx).dailySnapshotDao()
+                var hitCount = 0
+                for ((code, name) in stocks) {
+                    val candles = dao.getByCode(code, 60)
+                    if (candles.size < 30) continue
+                    val pats = com.chin.stockanalysis.strategy.analysis.CandlePatternDetector.detect(candles)
+                    pats.filter { it.strength >= 3 }.forEach { p ->
+                        hitCount++
+                        appendLog("🚨 形态匹配 [${p.patternName}·${p.direction.label}] $name($code): ${p.description}")
+                    }
+                }
+                if (hitCount > 0) appendLog("🚨 本次共命中 ${hitCount} 个趋势形态（红色为形态匹配）")
+            } catch (e: Exception) {
+                Log.w(TAG, "趋势形态匹配失败: ${e.message}")
+            }
+        }
+    }
+
+    /** 追加一行节点日志（记录缓冲索引，供 onNodeDone 原位替换为"节点名 + 结果"） */
+    private fun appendNodeLog(text: String) {
+        if (!::pipelineLogView.isInitialized) return
+        logBuffer.addLast(text)
+        while (logBuffer.size > 300) logBuffer.removeFirst()
+        lastNodeLogIndex = logBuffer.size - 1
+        lifecycleScope.launch(Dispatchers.Main) {
+            if (!isAdded || !::pipelineLogView.isInitialized) return@launch
+            ensureLogExpanded()
+            refreshLogView()
+        }
+    }
+
+    /** 节点完成后原位替换对应节点行（显示结果摘要） */
+    private fun replaceLastNodeLog(text: String) {
+        if (!::pipelineLogView.isInitialized || logBuffer.isEmpty()) return
+        val idx = if (lastNodeLogIndex in 0 until logBuffer.size) lastNodeLogIndex else logBuffer.size - 1
+        logBuffer[idx] = text
+        lifecycleScope.launch(Dispatchers.Main) {
+            if (!isAdded || !::pipelineLogView.isInitialized) return@launch
+            refreshLogView()
+        }
+    }
+
+    /** 重绘日志区（合并缓冲为 Spannable，按行内容着色） */
+    private fun refreshLogView() {
+        if (!::pipelineLogView.isInitialized) return
+        val sb = android.text.SpannableStringBuilder()
+        for (l in logBuffer) {
+            val s = android.text.SpannableString(l)
+            val color = when {
+                l.contains("❌") || l.contains("✖") || l.contains("🚨") || l.contains("形态匹配") -> COLOR_ERR
+                l.contains("✅") || l.contains("✔") -> COLOR_DONE
+                l.contains("🚀") -> COLOR_CMD
+                l.contains("▶ ") -> COLOR_STAGE
+                l.contains("├─") || l.contains("└─") -> COLOR_NODE
+                else -> COLOR_NORMAL
+            }
+            s.setSpan(android.text.style.ForegroundColorSpan(color), 0, s.length,
+                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            sb.append(s).append('\n')
+        }
+        pipelineLogView.text = sb
+        pipelineLogView.post {
+            val scroll = (pipelineLogView.parent as? HorizontalScrollView)?.parent as? ScrollView
+            scroll?.fullScroll(View.FOCUS_DOWN)
+        }
+    }
+
+    /** 清空执行日志 */
+    protected fun clearPipelineLog() {
+        logBuffer.clear()
+        lastNodeLogIndex = -1
+        if (::pipelineLogView.isInitialized) {
+            lifecycleScope.launch(Dispatchers.Main) {
+                if (isAdded) pipelineLogView.text = ""
+            }
+        }
+    }
+
+    /** 生成阶段标题（公共研判/公共选股/周期专属 自动编号，对应进度条阶段信息） */
+    private fun stageTitleFor(pipelineName: String): String {
+        stageCounter++
+        val num = when (stageCounter) {
+            1 -> "①"; 2 -> "②"; 3 -> "③"; 4 -> "④"; 5 -> "⑤"; 6 -> "⑥"
+            else -> "(${stageCounter})"
+        }
+        return "▶ $num $pipelineName"
+    }
+
+    /** 节点输出摘要（避免在日志里输出超长股票列表/对象） */
+    private fun summarizeOutput(output: Any?): String {
+        return when (output) {
+            null -> ""
+            is String -> if (output.length > 48) output.take(48) + "..." else output
+            is Number, is Boolean -> output.toString()
+            is Map<*, *> -> {
+                val msg = listOf("message", "summary", "direction", "text", "mode", "styleLabel")
+                    .firstNotNullOfOrNull { k -> output[k] }
+                if (msg is String && msg.isNotBlank() && msg.length <= 60) msg
+                else "已完成 (${output.size} 项)"
+            }
+            is Collection<*> -> "已生成 ${output.size} 条"
+            else -> {
+                // data class 等自定义对象:提取 styleLabel=均衡震荡 这类短属性
+                val s = output.toString()
+                if (s.length <= 60) s
+                else {
+                    val pairs = Regex("(\\w+)=([^,)]{1,20})").findAll(s)
+                        .map { "${it.groupValues[1]}=${it.groupValues[2]}" }
+                        .filter { !it.contains("[") && !it.contains("(") }
+                        .take(3).joinToString(", ")
+                    if (pairs.isNotEmpty()) pairs else "已完成"
+                }
+            }
+        }
+    }
+
+    /**
+     * 一键建仓指令已接收（工作台点击后立即回调，不等行情刷新先给出反馈）。
+     * 由 QuantWorkbenchFragment.runQuickBuild 在点击瞬间对四个周期 Tab 同步调用。
+     */
+    open fun onQuickBuildReceived() {
+        if (!::execLogPanel.isInitialized) return
+        lifecycleScope.launch(Dispatchers.Main) {
+            if (!isAdded) return@launch
+            clearPipelineLog()
+            stageCounter = 0
+            lastPipelineName = ""
+            appendLog("🚀 建仓指令已接收，正在准备行情数据...")
+            appendLog("📅 交易日=${TradingDayPickerView.recentTradingDay().format(DATE_FMT)}")
+            statusTv.text = "🔄 行情刷新中，任务排队中..."
+            progressBar.visibility = View.VISIBLE
+            ensureLogExpanded()
+        }
+    }
+
+    /**
      * 创建标准单元格
      */
     protected fun createCell(
@@ -567,15 +1032,28 @@ abstract class QuantFragmentBase : Fragment() {
         importDays: Int,
         titlePrefix: String,
         onComplete: (() -> Unit)? = null,
-        saveAsAiOnly: Boolean = false
+        saveAsAiOnly: Boolean = false,
+        seedStageOutputs: Map<String, Any?> = emptyMap(),
+        parallelMode: Boolean = false
     ) {
         val eng = engine ?: return
         buildBtn.isEnabled = false; buildBtn.text = "⏳ 排队中..."
         progressBar.visibility = View.VISIBLE
         statusTv.text = "🔄 [DAG] ${titlePrefix} 等待执行..."
 
+        // 一键建仓触发：清空旧日志，立即显示本次执行步骤
+        clearPipelineLog()
+        appendLog("🚀 ${titlePrefix} 建仓指令已接收，开始执行 DAG Pipeline...")
+        // 交易日独立一行,随后打印各阶段 pipeline（公共研判 → 公共选股 → 周期专属 / 周期专属）
+        appendLog("📅 交易日=${com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().format(DATE_FMT)}")
+        appendLog(
+            if (parallelMode) "  流程: 周期专属（市场公共研判已由工作台统一执行完成）"
+            else "  流程: 公共研判 → 公共选股 → 周期专属"
+        )
+
         val ctx = requireContext()
-        com.chin.stockanalysis.service.QuantTaskScheduler.submit(ctx, titlePrefix) {
+        val body: suspend kotlinx.coroutines.CoroutineScope.() -> Unit = {
+            val t0 = System.currentTimeMillis()
             try {
                 val today = TradingDayPickerView.recentTradingDay().format(DATE_FMT)
                 val effectiveTradeDate = TradingDayPickerView.recentTradingDay(browsingDate).format(DATE_FMT)
@@ -598,11 +1076,37 @@ abstract class QuantFragmentBase : Fragment() {
                     importDays = importDays,
                     onNodeProgress = { pipelineName, nodeName ->
                         lifecycleScope.launch(Dispatchers.Main) {
-                            if (isAdded) statusTv.text = "🔄 [DAG] ${pipelineName} ${nodeName} 执行中..."
+                            if (isAdded) {
+                                statusTv.text = "🔄 [DAG] ${pipelineName} ${nodeName} 执行中..."
+                                // 阶段标题：pipeline 切换时输出（公共研判 → 公共选股 → 周期专属），衔接流程
+                                if (pipelineName != lastPipelineName) {
+                                    lastPipelineName = pipelineName
+                                    appendLog(stageTitleFor(pipelineName))
+                                }
+                                appendNodeLog("   ├─ $nodeName")
+                            }
                         }
                     },
-                    saveAsAiOnly = saveAsAiOnly
+                    onNodeDone = { pipelineName, nodeName, output ->
+                        lifecycleScope.launch(Dispatchers.Main) {
+                            if (isAdded) {
+                                val summary = summarizeOutput(output)
+                                replaceLastNodeLog(
+                                    if (summary.isNotEmpty()) "   ├─ $nodeName  ✅ $summary"
+                                    else "   ├─ $nodeName  ✅"
+                                )
+                            }
+                        }
+                    },
+                    saveAsAiOnly = saveAsAiOnly,
+                    seedStageOutputs = seedStageOutputs
                 )
+                // 批量解析节点股票的本地名称（stock_basics），供节点详情展示 "名称(代码)"
+                val allNodeCodes = r.nodeFlowDetails
+                    .flatMap { it.inputCodes + it.outputCodes }
+                    .distinct()
+                val stockNameMap = if (allNodeCodes.isEmpty()) emptyMap()
+                    else com.chin.stockanalysis.stock.database.StockDataCenter.getStockNames(allNodeCodes)
                 withContext(Dispatchers.Main) {
                     if (!isAdded) return@withContext
                     android.util.Log.i("QuantFragmentBase", "Pipeline 完成: selectedStocks=${r.selectedStocks.size} 只")
@@ -616,9 +1120,18 @@ abstract class QuantFragmentBase : Fragment() {
                     } else {
                         "[DAG] ${titlePrefix} DAG 流程"
                     }
-                    showPipelineNodeDetails(dialogTitle, r)
+                    showPipelineNodeDetails(dialogTitle, r, stockNameMap)
+                    showPickResultSummary(dialogTitle, r, stockNameMap)
 
-                    statusTv.text = if (saveAsAiOnly) "🕐 非交易时间：${titlePrefix}选股已保存 AI 精选（未下单/未拟合）" else r.uiText
+                    appendLog(
+                        if (parallelMode)
+                            "✅ ${titlePrefix} 周期专属 Pipeline 完成：选中 ${r.selectedStocks.size} 只"
+                        else
+                            "✅ ${titlePrefix} Pipeline 完成：选中 ${r.selectedStocks.size} 只 | 公共+周期 pipeline 执行结束"
+                    )
+                    // 🚨 趋势形态匹配：对选中股票做经典/复杂 K 线形态检测，命中红色高亮
+                    logTrendPatternMatches(r.selectedStocks.map { it.first to it.second })
+                    appendLog("⏱ ${titlePrefix} 总耗时: ${(System.currentTimeMillis() - t0) / 1000.0} 秒")
                     buildBtn.isEnabled = true; updateBuildButtonText()
                     progressBar.visibility = View.GONE
                     refreshPositions()
@@ -647,10 +1160,17 @@ abstract class QuantFragmentBase : Fragment() {
                     }
                     showDialog("${titlePrefix} Pipeline 异常", errorDetail)
                     statusTv.text = "❌ [DAG] ${e.message?.take(40)}"
+                    appendLog("❌ ${titlePrefix} Pipeline 异常：${e.message?.take(80)}")
+                    appendLog("⏱ ${titlePrefix} 失败总耗时: ${(System.currentTimeMillis() - t0) / 1000.0} 秒")
                     buildBtn.isEnabled = true; updateBuildButtonText()
                     progressBar.visibility = View.GONE
                 }
             }
+        }
+        if (parallelMode) {
+            com.chin.stockanalysis.service.QuantTaskScheduler.submitParallel(ctx, titlePrefix, body)
+        } else {
+            com.chin.stockanalysis.service.QuantTaskScheduler.submit(ctx, titlePrefix, body)
         }
     }
 
@@ -676,8 +1196,10 @@ abstract class QuantFragmentBase : Fragment() {
         buildBtn.isEnabled = false; buildBtn.text = "⏳ 回溯中..."
         progressBar.visibility = View.VISIBLE
         statusTv.text = "${titlePrefix}回溯测试中..."
+        appendLog("🔍 ${titlePrefix} 回溯测试开始（${tradingDays} 交易日）...")
 
         lifecycleScope.launch(Dispatchers.IO) {
+            val t0 = System.currentTimeMillis()
             try {
                 val strategies = if (holdingPeriod != null) {
                     eng.getEnabledStrategiesByPeriod(holdingPeriod)
@@ -745,12 +1267,16 @@ abstract class QuantFragmentBase : Fragment() {
                 withContext(Dispatchers.Main) {
                     showDialog("${titlePrefix}回溯报告", sb.toString())
                     statusTv.text = "✅ ${titlePrefix}回测完成"
+                    appendLog("✅ ${titlePrefix} 回溯完成：${report.strategyReports.size} 个策略，结果已落库")
+                    appendLog("⏱ ${titlePrefix} 回溯总耗时: ${(System.currentTimeMillis() - t0) / 1000.0} 秒")
                     buildBtn.isEnabled = true; updateBuildButtonText()
                     progressBar.visibility = View.GONE
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     statusTv.text = "❌ 回测失败: ${e.message?.take(40)}"
+                    appendLog("❌ ${titlePrefix} 回溯失败：${e.message?.take(80)}")
+                    appendLog("⏱ ${titlePrefix} 失败总耗时: ${(System.currentTimeMillis() - t0) / 1000.0} 秒")
                     buildBtn.isEnabled = true; updateBuildButtonText()
                     progressBar.visibility = View.GONE
                 }
@@ -2082,8 +2608,13 @@ abstract class QuantFragmentBase : Fragment() {
                         withContext(Dispatchers.Main) {
                             val label = if (name.isNotEmpty()) name else code
                             android.widget.Toast.makeText(ctx, "✅ 已添加 $label", android.widget.Toast.LENGTH_SHORT).show()
+                            if (qty < 100) {
+                                android.widget.Toast.makeText(ctx, "⚠️ 底仓不足 100 股，做T引擎可能无信号", android.widget.Toast.LENGTH_SHORT).show()
+                            }
                             refreshPositions()
                         }
+                        // 补齐该股日K快照（做T引擎要求 ≥10 天），完成后再次刷新触发做T检测
+                        ensureRealPositionDailyData(code, if (name.isNotEmpty()) name else code)
                     } catch (e: Exception) {
                         withContext(Dispatchers.Main) {
                             android.widget.Toast.makeText(ctx, "❌ 添加失败: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
@@ -4372,12 +4903,109 @@ abstract class QuantFragmentBase : Fragment() {
     }
 
     /**
+     * 执行完成后更新日志面板顶部的「选股结果」摘要：
+     * - 头部状态文字 = 标题（保留格式：xxx (N个节点, M ms)）
+     * - 面板顶部插入一张可折叠摘要卡，内容仅保留「买入订单生成」选到的股票
+     */
+    protected fun showPickResultSummary(
+        title: String,
+        result: com.chin.stockanalysis.strategy.topology.xml.DagTradeExecutor.DagExecResult,
+        stockNameMap: Map<String, String>
+    ) {
+        if (!::execLogPanel.isInitialized) return
+        val ctx = requireContext()
+        val density = resources.displayMetrics.density
+        val details = result.nodeFlowDetails
+
+        // 头部状态文字 = 摘要标题（保留 "xxx (N个节点, M ms)" 格式）
+        statusTv.text = "$title  (${details.size} 个节点, ${result.totalElapsedMs}ms)"
+
+        // 重建顶部摘要卡（重复执行时先移除旧卡）
+        pickResultCard?.let { execLogPanel.removeView(it) }
+        val detailContainer = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((20 * density).toInt(), (4 * density).toInt(), 0, 0)
+            visibility = View.GONE
+        }
+        val arrowTv = TextView(ctx).apply {
+            text = "▶"
+            textSize = 12f
+            setTextColor(Color.parseColor("#3F51B5"))
+            setPadding(0, 0, (8 * density).toInt(), 0)
+        }
+        val cardTitle = TextView(ctx).apply {
+            text = title.replace("[DAG] ", "")
+            textSize = 14f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#1A237E"))
+        }
+        val headerRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setOnClickListener {
+                val expanded = detailContainer.visibility == View.VISIBLE
+                arrowTv.text = if (expanded) "▶" else "▼"
+                detailContainer.visibility = if (expanded) View.GONE else View.VISIBLE
+            }
+            addView(arrowTv)
+            addView(cardTitle)
+        }
+        // 内容：仅「买入订单生成」选到的股票
+        val buyNodeDetail = details.firstOrNull { it.nodeName.contains("买入订单生成") }
+        val picked = when {
+            buyNodeDetail != null && buyNodeDetail.outputCodes.isNotEmpty() ->
+                buyNodeDetail.outputCodes
+            lastPickStocks.isNotEmpty() -> lastPickStocks.map { it.first }
+            else -> emptyList()
+        }
+        if (picked.isNotEmpty()) {
+            detailContainer.addView(TextView(ctx).apply {
+                text = "🎯 买入订单生成（选到 ${picked.size} 只）："
+                textSize = 13f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.parseColor("#2E7D32"))
+                setPadding(0, 0, 0, (4 * density).toInt())
+            })
+            picked.forEach { code ->
+                val name = stockNameMap[code] ?: ""
+                detailContainer.addView(TextView(ctx).apply {
+                    text = if (name.isNotEmpty()) "$name($code)" else code
+                    textSize = 13f
+                    setTextColor(Color.parseColor("#333333"))
+                })
+            }
+        } else {
+            detailContainer.addView(TextView(ctx).apply {
+                text = "本轮未生成买入订单"
+                textSize = 13f
+                setTextColor(Color.parseColor("#999999"))
+            })
+        }
+        val card = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#E8EAF6"))
+            setPadding((8 * density).toInt(), (4 * density).toInt(), (8 * density).toInt(), (4 * density).toInt())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = (4 * density).toInt() }
+            addView(headerRow)
+            addView(detailContainer)
+        }
+        execLogPanel.addView(card, execLogPanel.indexOfChild(execLogHeader) + 1)
+        pickResultCard = card
+    }
+
+    /**
      * 在内容区顶部插入 Pipeline 节点执行详情（可折叠）。
      * 每个 Node 显示：名称、状态、输入/输出数量、过滤原因、实际股票代码。
+     *
+     * @param stockNameMap 代码 → 名称 映射（本地 stock_basics 批量查询），用于展示 "名称(代码)"
      */
     protected fun showPipelineNodeDetails(
         title: String,
-        result: com.chin.stockanalysis.strategy.topology.xml.DagTradeExecutor.DagExecResult
+        result: com.chin.stockanalysis.strategy.topology.xml.DagTradeExecutor.DagExecResult,
+        stockNameMap: Map<String, String> = emptyMap()
     ) {
         val ctx = requireContext()
         val density = resources.displayMetrics.density
@@ -4481,10 +5109,14 @@ abstract class QuantFragmentBase : Fragment() {
             }
             nodeCard.addView(flowTv)
 
-            // 第三行：输入股票代码
-            if (node.inputCodes.isNotEmpty()) {
+            // 第三/四行：输入/输出股票列表
+            // 规则：仅当 输出 < 10 且 输入 > 输出（确实发生了有效过滤）时才展示具体列表，避免长列表刷屏
+            val showList = node.outputCount < 10 && node.inputCount > node.outputCount
+
+            // 第三行：输入股票列表（显示 名称(代码)）
+            if (showList && node.inputCodes.isNotEmpty()) {
                 val inTv = TextView(ctx).apply {
-                    text = "⬅ 入: ${node.inputCodes.joinToString(", ")}"
+                    text = "⬅ 入: ${node.inputCodes.joinToString(", ") { formatStockName(it, stockNameMap) }}"
                     textSize = 10f
                     setTextColor(Color.parseColor("#1565C0"))
                     setPadding(0, 1, 0, 1)
@@ -4492,10 +5124,10 @@ abstract class QuantFragmentBase : Fragment() {
                 nodeCard.addView(inTv)
             }
 
-            // 第四行：输出股票代码
-            if (node.outputCodes.isNotEmpty()) {
+            // 第四行：输出股票列表（显示 名称(代码)）
+            if (showList && node.outputCodes.isNotEmpty()) {
                 val outTv = TextView(ctx).apply {
-                    text = "➡ 出: ${node.outputCodes.joinToString(", ")}"
+                    text = "➡ 出: ${node.outputCodes.joinToString(", ") { formatStockName(it, stockNameMap) }}"
                     textSize = 10f
                     setTextColor(Color.parseColor("#2E7D32"))
                     setPadding(0, 1, 0, 1)
@@ -4529,6 +5161,16 @@ abstract class QuantFragmentBase : Fragment() {
         }
         pipelineDetailsWrapper = wrapper
         positionContainer.addView(wrapper, 0)
+    }
+
+    /**
+     * 格式化股票展示：有本地名称时显示 "名称(代码)"，否则仅显示代码。
+     * 兼容 6 位代码 / 带市场后缀（如 600519.SH）的入参。
+     */
+    private fun formatStockName(code: String, stockNameMap: Map<String, String>): String {
+        val key = code.substringBefore('.')
+        val name = stockNameMap[key]?.takeIf { it.isNotBlank() && it != key }
+        return if (name != null) "$name($code)" else code
     }
 
     /** 显示各周期持有收益历史 */

@@ -61,12 +61,14 @@ class UltraShortQuantFragment : QuantFragmentBase() {
     override fun onBuildClick(saveAsAiOnly: Boolean) {
         runDagPipeline(
             holdingPeriod = HoldingPeriod.ULTRA_SHORT,
-            useCaseId = "ultra_short",
+            useCaseId = pendingUseCaseId ?: "ultra_short",
             orderType = "ultra_short",
             importDays = 30,
             titlePrefix = "超短线",
             onComplete = { checkT1AutoSell() },
-            saveAsAiOnly = saveAsAiOnly
+            saveAsAiOnly = saveAsAiOnly,
+            seedStageOutputs = pendingSeedStageOutputs,
+            parallelMode = pendingParallelMode
         )
     }
 
@@ -89,7 +91,7 @@ class UltraShortQuantFragment : QuantFragmentBase() {
 
     override fun buildUI() {
         addTitleRow(getString(com.chin.stockanalysis.R.string.title_ultra_short_system))
-        rootLayout.addView(createProgressRow())
+        rootLayout.addView(createExecLogPanel())
         rootLayout.addView(createButtonRow())
         addSeparator()
         rootLayout.addView(createContentScrollArea())

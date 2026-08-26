@@ -236,6 +236,14 @@ class PipelineContext(
     var onNodeProgress: ((pipelineName: String, nodeName: String) -> Unit)? = null
 
     /**
+     * 节点完成回调（pipelineName, nodeName, 输出摘要）。
+     * 在节点执行成功/失败后回传，供 UI 展示节点结果（如"风格轮动判断 → 均衡震荡"）。
+     * 注意：同层节点并行执行时可能被并发调用，实现方需自行保证线程安全。
+     */
+    @Volatile
+    var onNodeDone: ((pipelineName: String, nodeName: String, output: Any?) -> Unit)? = null
+
+    /**
      * 记录日志
      */
     fun log(tag: String, message: String) {

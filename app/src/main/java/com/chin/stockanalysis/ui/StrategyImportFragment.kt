@@ -38,7 +38,7 @@ import java.time.LocalDate
  * - 📊 数据库统计信息 / 🧠 市场记忆设置 / 📥 拉取股票报告
  * - 📤 导出热门板块 / 📤 导出K线快照
  * - 🎯 拟合调优 & 批量数据（自工作台迁移）：四周期自测拟合 / 状态矩阵拟合 / 导出拟合矩阵 / 增量拉取 / JSON 导入
- * - 📌 PC 拟合参数（自工作台迁移）：导出 / 重置内置 / 参数详情（选股/排序/卖出联动）
+ * - 📌 PC 拟合参数（自工作台迁移）：导出 / 重置内置 / 参数详情 / PC 候选（选股/排序/卖出联动）
  * - 📌 回溯 & 分析（自工作台迁移）：按周期回溯 / 多周期回溯 / AI 跨周期分析 / 选中记录
  * - ⬇️ 导入历史行情：显示导入进度，完成后展示当前热门板块
  */
@@ -47,6 +47,12 @@ class StrategyImportFragment : Fragment() {
     private val TAG = "StrategyImportFragment"
 
     private lateinit var layout: LinearLayout
+    private lateinit var tabBar: LinearLayout
+    private lateinit var pageData: LinearLayout
+    private lateinit var pageFit: LinearLayout
+    private lateinit var pageParams: LinearLayout
+    private lateinit var pageBacktest: LinearLayout
+    private val pages: List<LinearLayout> get() = listOf(pageData, pageFit, pageParams, pageBacktest)
     private lateinit var importBtn: Button
     private lateinit var progressBar: ProgressBar
     private lateinit var statusTv: TextView
@@ -99,6 +105,15 @@ class StrategyImportFragment : Fragment() {
     private lateinit var paramsStatusTv: TextView
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+        // 外层：顶部 tab 栏（固定）+ 内容滚动区
+        val outer = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.parseColor("#F5F6FA"))
+        }
+        tabBar = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(Color.WHITE)
+        }
+        outer.addView(tabBar, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         layout = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.parseColor("#F5F6FA"))
         }
@@ -107,7 +122,8 @@ class StrategyImportFragment : Fragment() {
             setBackgroundColor(Color.parseColor("#F5F6FA"))
         }
         scroll.addView(layout, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
-        buildUI(); return scroll
+        outer.addView(scroll, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
+        buildUI(); return outer
     }
 
     override fun onResume() {
@@ -118,8 +134,18 @@ class StrategyImportFragment : Fragment() {
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     private fun buildUI() {
+        // 4 个 tab 页面容器：数据 / 拟合 / PC参数 / 回溯
+        pageData = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL }
+        pageFit = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL }
+        pageParams = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL }
+        pageBacktest = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL }
+        listOf(pageData, pageFit, pageParams, pageBacktest).forEach { p ->
+            layout.addView(p, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        }
+        buildTabBar()
+
         // ── 标题 ──
-        layout.addView(TextView(requireContext()).apply {
+        pageData.addView(TextView(requireContext()).apply {
             text = "📥 数据管理 & 导入"
             textSize = 16f; setTextColor(Color.parseColor("#1A1A2E")); setTypeface(null, Typeface.BOLD)
             setPadding(dp(16), dp(16), dp(16), dp(4)); setBackgroundColor(Color.WHITE)
@@ -158,7 +184,7 @@ class StrategyImportFragment : Fragment() {
         card.addView(buildActionRow(hotBtn))
         val snapBtn = actionButton("📤 导出K线快照", "#BF360C") { exportSnapshotData() }
         card.addView(buildActionRow(snapBtn))
-        layout.addView(card)
+        pageData.addView(card)
 
         // ── 🎯 拟合调优 & 批量数据（自工作台迁移） ──
         val fitCard = LinearLayout(requireContext()).apply {
@@ -178,7 +204,7 @@ class StrategyImportFragment : Fragment() {
         fitCard.addView(buildActionRow(actionButton("📥 增量拉取历史", "#1565C0") { fetchBacktestHistory() }))
         // 行3：JSON 数据导入（全量）
         fitCard.addView(buildActionRow(actionButton("📦 JSON 数据导入", "#2E7D32") { importPicker.launch("application/json") }))
-        layout.addView(fitCard)
+        pageFit.addView(fitCard)
 
         // ── 📌 PC 拟合参数（选股/排序/卖出联动，自工作台迁移） ──
         val paramsCard = LinearLayout(requireContext()).apply {
@@ -193,6 +219,9 @@ class StrategyImportFragment : Fragment() {
         paramsCard.addView(buildActionRow(actionButton("📤 导出参数", "#E65100") { exportParamsFile() }))
         paramsCard.addView(buildActionRow(actionButton("🔄 重置内置", "#546E7A") { resetParamsFile() }))
         paramsCard.addView(buildActionRow(actionButton("🔍 参数详情", "#1565C0") { showParamsDetail() }))
+        paramsCard.addView(buildActionRow(actionButton("📋 PC 候选", "#00838F") {
+            com.chin.stockanalysis.strategy.trade.PcCandidatesDialog(requireContext()).show()
+        }))
         paramsStatusTv = TextView(requireContext()).apply {
             text = "当前参数: ${com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader.paramName(requireContext())}（${com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader.sourceLabel(requireContext())} v${com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader.version(requireContext())}）"
             textSize = 10f
@@ -201,7 +230,7 @@ class StrategyImportFragment : Fragment() {
             setOnClickListener { showParamsDetail() }
         }
         paramsCard.addView(paramsStatusTv)
-        layout.addView(paramsCard)
+        pageParams.addView(paramsCard)
 
         // ── 📌 回溯 & 分析（自工作台迁移） ──
         val backCard = LinearLayout(requireContext()).apply {
@@ -233,7 +262,7 @@ class StrategyImportFragment : Fragment() {
             setBackgroundColor(Color.WHITE)
         }
         backCard.addView(resultTv)
-        layout.addView(backCard)
+        pageBacktest.addView(backCard)
 
         // ── 导入区域 ──
         val importCard = LinearLayout(requireContext()).apply {
@@ -295,13 +324,49 @@ class StrategyImportFragment : Fragment() {
             setOnClickListener { importHistoricalData() }
         }
         importCard.addView(importBtn)
-        layout.addView(importCard)
+        pageData.addView(importCard)
 
         // 说明
-        layout.addView(TextView(requireContext()).apply {
+        pageData.addView(TextView(requireContext()).apply {
             text = "💡 导入完成后自动展示当前热门板块；市场上下文缓存用于策略执行时聚合最新板块/指数数据，刷新后下次执行策略强制重新拉取。"
             textSize = 10f; setTextColor(Color.parseColor("#AAAAAA")); setPadding(dp(16), dp(8), dp(16), dp(4))
         })
+    }
+
+    /** 构建顶部 tab 栏并默认选中第一个页面 */
+    private fun buildTabBar() {
+        val tabs = listOf(
+            "📥 数据" to 0,
+            "🎯 拟合" to 1,
+            "📌 PC参数" to 2,
+            "📈 回溯" to 3
+        )
+        tabs.forEach { (title, idx) ->
+            val tab = TextView(requireContext()).apply {
+                text = title
+                gravity = Gravity.CENTER
+                textSize = 12f
+                setTypeface(null, Typeface.BOLD)
+                setPadding(0, dp(12), 0, dp(12))
+                layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
+                setOnClickListener { switchTab(idx) }
+            }
+            tabBar.addView(tab)
+        }
+        switchTab(0)
+    }
+
+    /** 切换 tab：显示对应页面，高亮选中项 */
+    private fun switchTab(idx: Int) {
+        pages.forEachIndexed { i, page ->
+            page.visibility = if (i == idx) View.VISIBLE else View.GONE
+        }
+        for (i in 0 until tabBar.childCount) {
+            val tab = tabBar.getChildAt(i) as TextView
+            val selected = i == idx
+            tab.setBackgroundColor(if (selected) Color.parseColor("#1E88E5") else Color.WHITE)
+            tab.setTextColor(if (selected) Color.WHITE else Color.parseColor("#444444"))
+        }
     }
 
     // ═══════════════ ① 🔄 刷新市场上下文 ═══════════════

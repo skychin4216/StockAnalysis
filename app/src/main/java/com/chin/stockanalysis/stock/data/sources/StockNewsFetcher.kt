@@ -71,7 +71,7 @@ class StockNewsFetcher {
 
             val request = Request.Builder()
                 .url(url)
-                .addHeader("Referer", "https://www.cninfo.com.cn/")
+                .addHeader("Referer", DataConfig.newsCninfo)
                 .build()
 
             val response = client.newCall(request).execute()
@@ -98,7 +98,7 @@ class StockNewsFetcher {
 
             val request = Request.Builder()
                 .url(url)
-                .addHeader("Referer", "https://www.cls.cn/")
+                .addHeader("Referer", DataConfig.newsCls)
                 .build()
 
             val response = client.newCall(request).execute()
@@ -119,12 +119,12 @@ class StockNewsFetcher {
     private suspend fun fetchEastMoneyNews(stockName: String): List<NewsItem> {
         return try {
             val encoded = URLEncoder.encode(stockName, "UTF-8")
-            val url = "https://search-api.eastmoney.com/search?" +
+            val url = "${DataConfig.eastmoneySearchApi}?" +
                 "input=$encoded&type=8192&pageSize=5&pageIndex=1"
 
             val request = Request.Builder()
                 .url(url)
-                .addHeader("Referer", "https://guba.eastmoney.com/")
+                .addHeader("Referer", DataConfig.eastmoneyGuba)
                 .build()
 
             val response = client.newCall(request).execute()
@@ -153,7 +153,7 @@ class StockNewsFetcher {
             // 雪球需要 Cookie（先用空请求获取，再带 Cookie）
             val request = Request.Builder()
                 .url(url)
-                .addHeader("Referer", "https://xueqiu.com/S/$symbol")
+                .addHeader("Referer", "${DataConfig.newsXueqiuDetail}/S/$symbol")
                 .addHeader("Accept", "application/json")
                 .build()
 
@@ -180,7 +180,7 @@ class StockNewsFetcher {
 
             val request = Request.Builder()
                 .url(url)
-                .addHeader("Referer", "https://data.eastmoney.com/")
+                .addHeader("Referer", DataConfig.eastmoneyData)
                 .build()
 
             val response = client.newCall(request).execute()

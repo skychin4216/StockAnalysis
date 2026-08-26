@@ -66,7 +66,7 @@ class EastMoneyStockSource : StockDataSource {
                 val request = Request.Builder()
                     .url(url)
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                    .header("Referer", "https://quote.eastmoney.com/")
+                    .header("Referer", DataConfig.eastmoneyQuote)
                     .build()
 
                 val response = client.newCall(request).execute()

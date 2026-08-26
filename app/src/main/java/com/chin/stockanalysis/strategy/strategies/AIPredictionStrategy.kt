@@ -80,7 +80,8 @@ class AIPredictionStrategy(private val context: Context) : Strategy {
             val prediction = ai.predict(
                 effectiveResults, date,
                 marketContext = marketContext,
-                sectorContext = sectorContext ?: com.chin.stockanalysis.strategy.predict.AIPredictionEngine.SectorContext()
+                sectorContext = sectorContext ?: com.chin.stockanalysis.strategy.predict.AIPredictionEngine.SectorContext(),
+                includeExtendedSources = true
             )
 
             if (prediction == null || prediction.topPicks.isEmpty()) {

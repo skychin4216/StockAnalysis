@@ -38,11 +38,13 @@ class ShortTermQuantFragment : QuantFragmentBase() {
     override fun onBuildClick(saveAsAiOnly: Boolean) {
         runDagPipeline(
             holdingPeriod = HoldingPeriod.SHORT,
-            useCaseId = "short_term",
+            useCaseId = pendingUseCaseId ?: "short_term",
             orderType = "shortterm",
             importDays = 60,
             titlePrefix = "短线",
-            saveAsAiOnly = saveAsAiOnly
+            saveAsAiOnly = saveAsAiOnly,
+            seedStageOutputs = pendingSeedStageOutputs,
+            parallelMode = pendingParallelMode
         )
     }
 
@@ -68,7 +70,7 @@ class ShortTermQuantFragment : QuantFragmentBase() {
     override fun buildUI() {
         addTitleRow(getString(com.chin.stockanalysis.R.string.title_short_system), textSize = 16f)
         rootLayout.addView(createButtonRow())
-        rootLayout.addView(createProgressRow())
+        rootLayout.addView(createExecLogPanel())
         addSeparator()
         rootLayout.addView(createContentScrollArea())
     }

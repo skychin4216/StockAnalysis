@@ -210,7 +210,9 @@ class StyleRotationNode : BaseNode<Any, StyleRotationResult>("n_style_rotation",
         }
 
         val sb = StringBuilder()
-        sb.appendLine("🎨 风格轮动判断：$styleLabel $styleHint")
+        sb.appendLine("🎨 风格轮动判断（5→1）：$styleLabel $styleHint")
+        sb.appendLine("   风格候选池: ①题材轮动 ②成长进攻 ③价值防守 ④周期共振 ⑤均衡震荡")
+        sb.appendLine("   综合大盘环境+板块强弱 → 命中: $styleLabel")
         sb.appendLine("   当前强势板块: ${if (leadingSectors.isEmpty()) "暂无" else leadingSectors.joinToString("、")}")
         sb.appendLine("   建议持仓周期: $suggestedPeriod")
         sb.appendLine("   风险等级: $riskLevel")

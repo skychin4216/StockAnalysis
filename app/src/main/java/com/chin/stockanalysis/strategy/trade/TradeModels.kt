@@ -111,6 +111,8 @@ interface StrategyTradeFittingParamDao {
     suspend fun insertAll(entities: List<StrategyTradeFittingParamEntity>)
     @androidx.room.Query("SELECT * FROM strategy_trade_fitting_params WHERE strategy_id = :sid ORDER BY created_at DESC LIMIT :limit")
     suspend fun getRecentByStrategy(sid: String, limit: Int = 100): List<StrategyTradeFittingParamEntity>
+    @androidx.room.Query("SELECT * FROM strategy_trade_fitting_params WHERE trade_date = :date ORDER BY created_at DESC")
+    suspend fun getByDate(date: String): List<StrategyTradeFittingParamEntity>
     @androidx.room.Query("SELECT MAX(accuracy) FROM strategy_trade_fitting_params WHERE strategy_id = :sid AND trade_date = :date AND period_days = :period")
     suspend fun getBestAccuracy(sid: String, date: String, period: Int): Double?
 }
@@ -147,6 +149,8 @@ interface StrategyTradeBacktestDao {
     suspend fun getByPeriod(periodKey: String): List<StrategyTradeBacktestEntity>
     @androidx.room.Query("SELECT * FROM strategy_trade_backtests ORDER BY trade_date DESC, period_key, accuracy DESC")
     suspend fun getAll(): List<StrategyTradeBacktestEntity>
+    @androidx.room.Query("SELECT * FROM strategy_trade_backtests WHERE trade_date = :tradeDate ORDER BY period_key, accuracy DESC")
+    suspend fun getByDate(tradeDate: String): List<StrategyTradeBacktestEntity>
     @androidx.room.Query("SELECT * FROM strategy_trade_backtests WHERE period_key = :periodKey AND trade_date = :tradeDate ORDER BY accuracy DESC")
     suspend fun getByPeriodAndDate(periodKey: String, tradeDate: String): List<StrategyTradeBacktestEntity>
     @androidx.room.Query("SELECT DISTINCT trade_date FROM strategy_trade_backtests ORDER BY trade_date DESC LIMIT :limit")

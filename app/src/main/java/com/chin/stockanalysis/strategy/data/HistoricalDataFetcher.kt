@@ -7,6 +7,7 @@ import com.chin.stockanalysis.config.DataConfig
 import com.chin.stockanalysis.stock.data.HttpClientProvider
 import com.chin.stockanalysis.stock.database.StockBasicEntity
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
+import com.chin.stockanalysis.ui.TradingDayPickerView
 import com.chin.stockanalysis.stock.database.StockDatabase
 import kotlinx.coroutines.*
 import okhttp3.ConnectionPool
@@ -685,6 +686,35 @@ class HistoricalDataFetcher(private val context: Context) {
         } catch (e: Exception) {
             Log.w(TAG, "  Sina fetch $code: ${e.message}")
             return emptyList()
+        }
+    }
+
+    /**
+     * 公开单股增量更新：拉取最近 [days] 根 K 线并落库。
+     * 供趋势图扫描、AI 对话框等"按需更新单只股票"场景使用；
+     * 调用方应通过公共内存池（TrendScanMemoryPool）自行去重，避免重复拉取。
+     */
+    suspend fun fetchStockLatest(code: String, days: Int = 120): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val end = LocalDate.now()
+            val start = end.minusDays((days * 1.5).toLong())
+            val (records, name) = fetchOneStock(code, start, end)
+            if (records.isEmpty()) return@withContext false
+            db.dailySnapshotDao().insertAll(records)
+            val prefs = context.getSharedPreferences("data_import", Context.MODE_PRIVATE)
+            prefs.edit().putString(
+                "sync_upto_${records.first().code}",
+                TradingDayPickerView.recentTradingDay().format(STORE_FMT)
+            ).apply()
+            if (name.isNotBlank()) {
+                try {
+                    db.stockBasicDao().insert(StockBasicEntity(code = records.first().code, name = name, business = ""))
+                } catch (_: Exception) { }
+            }
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchStockLatest 失败 $code: ${e.message}")
+            false
         }
     }
 

@@ -99,6 +99,7 @@ object DagTradeExecutor {
      * @param importDays   数据不足时的历史导入天数（0 表示不导入）
      * @param onNodeProgress 节点执行进度回调（可选），参数为 (pipelineName, nodeName)，供 UI 实时显示
      * @param saveAsAiOnly 非交易时间一键建仓「仅选股」模式：跳过订单落库/持仓合并/换仓/拟合，仅保存 AI 精选
+     * @param seedStageOutputs 预置的 stageOutput（一键建仓：公共研判结果 n_pool/n_adaptive 等播种给周期专属 pipeline）
      * @return 执行结果摘要
      */
     suspend fun execute(
@@ -110,7 +111,9 @@ object DagTradeExecutor {
         orderType: String,
         importDays: Int = 60,
         onNodeProgress: ((pipelineName: String, nodeName: String) -> Unit)? = null,
-        saveAsAiOnly: Boolean = false
+        onNodeDone: ((pipelineName: String, nodeName: String, output: Any?) -> Unit)? = null,
+        saveAsAiOnly: Boolean = false,
+        seedStageOutputs: Map<String, Any?> = emptyMap()
     ): DagExecResult {
         if (strategies.isEmpty()) {
             return DagExecResult(
@@ -145,8 +148,9 @@ object DagTradeExecutor {
 
         // 3. 执行 DAG Pipeline（saveAsAiOnly 通过 configOverrides 注入，节点内跳过订单落库/换仓/拟合）
         val result = UseCaseLoader.run(
-            useCaseId, tradeDate, onNodeProgress,
-            configOverrides = if (saveAsAiOnly) mapOf("saveAsAiOnly" to "true") else emptyMap()
+            useCaseId, tradeDate, onNodeProgress, onNodeDone,
+            configOverrides = if (saveAsAiOnly) mapOf("saveAsAiOnly" to "true") else emptyMap(),
+            seedStageOutputs = seedStageOutputs
         )
         val elapsed = System.currentTimeMillis() - totalStart
 

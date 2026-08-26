@@ -1,67 +1,92 @@
 # -*- coding: utf-8 -*-
-"""临时脚本：拉取全市场 A 股行业+总市值，生成 code->(行业, 总市值) 映射与行业内部排名。用完即删。"""
-import json
+"""行业映射公共模块：从 AutoQuant CSV 文件名 + 静态补齐表构建 代码→东财行业 映射。
+
+从 _august_selection.py 提取，供发布链路(_publish_candidates.py)、选股增强过滤等复用。
+统一使用东财行业板块名，与 APK 端 EastMoneySectorSource 口径一致。
+"""
 import os
-import sys
-import time
+import re
 
-import requests
-
-H = {"User-Agent": "Mozilla/5.0"}
-P = {"http": None, "https": None}
-FS = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+# 静态补齐（池内股票，按东财行业板块命名）
+STATIC_INDUSTRY = {
+    "600011": "电力", "600025": "电力", "600028": "石油石化", "600089": "电力设备",
+    "600101": "电力", "600105": "通信设备", "600111": "小金属", "600117": "钢铁",
+    "600131": "电网设备", "600160": "化学制品", "600176": "玻璃玻纤", "600183": "元件",
+    "600219": "工业金属", "600312": "电网设备", "600338": "工业金属", "600362": "工业金属",
+    "600378": "化学制品", "600392": "小金属", "600406": "电网设备", "600416": "电机",
+    "600438": "光伏设备", "600456": "小金属", "600487": "通信设备", "600497": "工业金属",
+    "600498": "通信设备", "600517": "电网设备", "600522": "通信设备", "600536": "软件开发",
+    "600549": "小金属", "600584": "半导体", "600703": "半导体", "600745": "半导体",
+    "600746": "化学制品", "600801": "水泥建材", "600875": "电力设备", "600900": "电力",
+    "600973": "电网设备", "601012": "光伏设备", "601138": "消费电子", "601600": "工业金属",
+    "601615": "风电设备", "601700": "电网设备", "601869": "通信设备", "601899": "贵金属",
+    "603019": "计算机设备", "603160": "半导体", "603228": "元件", "603290": "半导体",
+    "603399": "能源金属", "603501": "半导体", "603618": "电网设备", "603650": "化学制品",
+    "603690": "半导体", "603799": "能源金属", "603920": "元件", "603989": "元件",
+    "603993": "工业金属", "688008": "半导体", "688012": "半导体", "688036": "消费电子",
+    "688041": "半导体", "688111": "软件开发", "688256": "半导体", "688313": "通信设备",
+    "688396": "半导体", "688521": "半导体", "688981": "半导体", "000063": "通信设备",
+    "000545": "化学制品", "000629": "钢铁", "000630": "工业金属", "000657": "小金属",
+    "000758": "工业金属", "000807": "工业金属", "000960": "工业金属", "002036": "光学光电子",
+    "002049": "半导体", "002055": "消费电子", "002149": "小金属", "002156": "半导体",
+    "002168": "电网设备", "002202": "风电设备", "002230": "软件开发", "002281": "通信设备",
+    "002339": "电网设备", "002340": "电池", "002371": "半导体", "002372": "装修建材",
+    "002384": "元件", "002430": "专用设备", "002459": "光伏设备", "002460": "能源金属",
+    "002463": "元件", "002466": "能源金属", "002475": "消费电子", "002579": "元件",
+    "002815": "元件", "002902": "元件", "002916": "元件", "300118": "光伏设备",
+    "300236": "半导体", "300274": "光伏设备", "300308": "通信设备", "300394": "通信设备",
+    "300476": "元件", "300502": "通信设备", "300576": "电子化学品", "300661": "半导体",
+    "300750": "电池", "300763": "光伏设备", "300782": "半导体",
+    # 2026-08-21 扩池新增：黄金 + 医药
+    "600547": "贵金属", "600489": "贵金属", "600988": "贵金属", "002155": "贵金属",
+    "000975": "贵金属", "600276": "化学制药", "603259": "医疗服务", "600436": "中药",
+    "000538": "中药", "600196": "化学制药", "000661": "生物制品", "300760": "医疗器械",
+    "300122": "生物制品", "300142": "生物制品", "688235": "生物制品",
+    # 2026-08-26 池子维护新增：AI 液冷温控 + 光通信
+    "002837": "通用设备", "301018": "通用设备", "300499": "通用设备",
+    "603912": "通用设备", "300990": "通用设备", "300249": "通用设备",
+    "300548": "通信设备",
+}
 
-def fetch_all():
-    rows = {}
-    pn, pz = 1, 100
-    while pn * pz <= 6000:
-        u = ("https://push2.eastmoney.com/api/qt/clist/get?pn=%d&pz=%d&po=1&np=1"
-             "&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f20&fs=%s"
-             "&fields=f2,f3,f12,f14,f20,f100") % (pn, pz, FS)
-        got = False
-        for attempt in range(4):
-            try:
-                j = requests.get(u, timeout=20, headers=H, proxies=P).json()
-                diff = j["data"]["diff"]
-                for row in diff:
-                    rows[str(row["f12"])] = {
-                        "name": row.get("f14", ""),
-                        "industry": row.get("f100", ""),
-                        "mktcap": row.get("f20") or 0,
-                        "pct": row.get("f3"),
-                    }
-                total = j["data"]["total"]
-                print("page %d/%d: +%d (共 %d)" % (pn, (total + pz - 1) // pz,
-                                                   len(diff), len(rows)), flush=True)
-                got = True
-                break
-            except Exception as e:
-                print("page %d attempt %d fail: %s" % (pn, attempt, type(e).__name__), flush=True)
-                time.sleep(2)
-        if not got:
-            print("page %d 跳过" % pn, flush=True)
-        pn += 1
-        time.sleep(0.5)
-    return rows
+# 删除的 ST/退市股（保留记录，避免误重新加入）
+ST_REMOVED = {
+    "600745": "半导体",  # *ST闻泰
+    "002055": "消费电子",  # ST得润
+    "002168": "电网设备",  # ST惠程
+    "601258": "汽车服务",  # *ST庞大
+    "002501": "建筑材料",  # *ST利源
+    "002288": "元件",      # *ST超华
+}
 
 
-rows = fetch_all()
-# 行业内部按总市值排名
-industry_rank = {}
-for code, r in rows.items():
-    ind = r["industry"]
-    if not ind:
-        continue
-    industry_rank.setdefault(ind, []).append((r["mktcap"], code))
-for ind in industry_rank:
-    industry_rank[ind].sort(reverse=True)
+def build_industry():
+    """构建 {6位代码: 东财行业} 映射（CSV 文件名优先，静态表兜底）。"""
+    industry = {}
+    data_dir = os.path.join(HERE, "..", "AutoQuant", "data")
+    if os.path.isdir(data_dir):
+        for fn in os.listdir(data_dir):
+            if not fn.endswith(".csv"):
+                continue
+            m = re.match(r"(\d{6})\.(SH|SZ)_(.+)\.csv", fn)
+            if not m:
+                continue
+            code, _ex, rest = m.groups()
+            parts = [p for p in rest.split("-") if p]
+            if len(parts) >= 2:
+                industry[code] = parts[1]  # 格式：名称-板块[-子板块]
+    industry.update(STATIC_INDUSTRY)
+    return industry
 
-out = {"stocks": rows, "industry_rank": {
-    ind: [(rank, c, rows[c]["name"]) for rank, (_, c) in enumerate(
-        [(mc, c) for mc, c in industry_rank[ind]], start=1)]
-    for ind in industry_rank}}
-json.dump(out, open(os.path.join(HERE, "_industry_map.json"), "w", encoding="utf-8"),
-          ensure_ascii=False)
-print("已保存 _industry_map.json: %d 只股票, %d 个行业" % (len(rows), len(industry_rank)))
+
+def industry_of(code, fallback="未知"):
+    m = build_industry()
+    return m.get(code, fallback)
+
+
+if __name__ == "__main__":
+    m = build_industry()
+    print("行业映射 %d 只" % len(m))
+    for c in ("002837", "301018", "300499", "603912", "300990", "300249", "300548"):
+        print(" ", c, m.get(c))

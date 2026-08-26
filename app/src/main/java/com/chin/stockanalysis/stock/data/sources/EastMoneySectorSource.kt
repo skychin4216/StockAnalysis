@@ -119,7 +119,7 @@ class EastMoneySectorSource {
         minMarketCapBillion: Long = 0L
     ): List<SectorStock> {
         // 每页取 100 只，按市值从大到小排序（fid=f20, po=1=降序）
-        val url = "https://push2.eastmoney.com/api/qt/clist/get" +
+        val url = DataConfig.eastmoneyPush2Api("/clist/get") +
                 "?pn=1&pz=100&po=1&np=1&fltt=2&invt=2" +
                 "&fid=f20" +   // 按市值排序
                 "&fs=b:$sectorCode+f:!50" +  // 板块成分，排除ST

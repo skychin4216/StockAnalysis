@@ -20,6 +20,12 @@
       "push2his": "https://push2his.eastmoney.com/api/qt",
       "searchapi": "https://searchapi.eastmoney.com/api/suggest/get",
       "search_token": "D43BF722C8E33BDC906FB84D85E326",
+      "report": "https://reportapi.eastmoney.com/report/list",
+      "report_data": "https://data.eastmoney.com/report/",
+      "report_stock": "https://data.eastmoney.com/report/stock.jshtml",
+      "search_api": "https://search-api.eastmoney.com/search",
+      "f10_shareholder": "https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax",
+      "f10_host": "https://emweb.securities.eastmoney.com/",
       "datacenter": "https://datacenter.eastmoney.com/api/data/v1/get",
       "anotice": "https://np-anotice-stock.eastmoney.com/api/security/ann",
       "quote": "https://quote.eastmoney.com",
@@ -101,6 +107,25 @@
     }
   },
 
+  "notify": {
+    "name": "消息推送服务",
+    "serverchan_url": "https://sctapi.ftqq.com",
+    "pushplus_url": "https://www.pushplus.plus/send",
+    "pushplus_token": "",
+    "serverchan_key": ""
+  },
+  "poolFilter": {
+    "name": "增强过滤（smalltools/_pool_filters.py 搬回，长线豁免）",
+    "enable": "true",
+    "stickyHardPeriods": "中线",
+    "shortHardPeriods": "超短线,短线",
+    "sectorPeriods": "超短线,短线,中线",
+    "sectorThreshold": "-3.0",
+    "sectorLookback": "20",
+    "passCountOverride.短线": "7",
+    "passCountOverride.中线": "7"
+  },
+
   "update": {
     "enabled": true,
     "manifest_url": "https://example.com/update/latest.json"
@@ -114,6 +139,7 @@
     "secret_key": "",
     "prefix": "stockanalysis/phone",
     "params_key": "stockanalysis/params/backtest_params.json",
-    "db_key": "stockanalysis/db/market_data.db"
+    "db_key": "stockanalysis/db/market_data.db",
+    "candidates_key": "stockanalysis/quant/candidates.json"
   }
 }
