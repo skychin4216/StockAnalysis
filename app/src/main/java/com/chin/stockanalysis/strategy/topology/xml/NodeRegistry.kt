@@ -78,6 +78,11 @@ object NodeRegistry {
                 moderateVolumeUpper = config["moderateVolumeUpper"]?.toDoubleOrNull() ?: 1.8,
                 lookbackDays = config["lookbackDays"]?.toIntOrNull() ?: 120,
                 minPassCount = config["minPassCount"]?.toIntOrNull() ?: 7,
+                allowLowAmbush = config["allowLowAmbush"]?.toBooleanStrictOrNull() ?: false,
+                allowQuietRise = config["allowQuietRise"]?.toBooleanStrictOrNull() ?: false,
+                quietVolumeRatio = config["quietVolumeRatio"]?.toDoubleOrNull() ?: 1.0,
+                macroSectorKeywords = config["macroSectorKeywords"]
+                    ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList(),
                 period = config["period"] ?: ""
             )
         }
@@ -158,7 +163,15 @@ object NodeRegistry {
         register("generate_orders") { ctx, config ->
             val maxH = config["maxHoldings"]?.toIntOrNull() ?: 5
             val orderType = config["orderType"] ?: "MidTermQuant"
-            GenerateOrdersNode(maxHoldings = maxH, orderType = orderType)
+            // 豆包体系四周期差异化仓位（账户%）：超短15/3、短波25/6、中线40/10、长线50/15
+            val totalRatio = config["totalCapRatio"]?.toDoubleOrNull() ?: 12.5
+            val singleRatio = config["singlePositionRatio"]?.toDoubleOrNull() ?: 5.0
+            GenerateOrdersNode(
+                maxHoldings = maxH,
+                orderType = orderType,
+                totalCapRatio = totalRatio,
+                singlePositionRatio = singleRatio
+            )
         }
         register("position_merge") { ctx, _ -> PositionMergeNode() }
         register("bg_manager") { ctx, _ -> BackgroundManagerNode() }
@@ -270,6 +283,7 @@ object NodeRegistry {
         register("holding_diagnostic") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.HoldingDiagnosticNode() }
         register("holding_prediction") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.HoldingPredictionNode() }
         register("sector_leader_analysis") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.SectorLeaderAnalysisNode() }
+        register("market_sector_leaders") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.MarketSectorLeadersNode() }
 
         Log.i(TAG, "Node 注册完成: ${factories.keys}")
     }

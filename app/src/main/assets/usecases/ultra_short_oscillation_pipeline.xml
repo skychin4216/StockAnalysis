@@ -60,6 +60,8 @@
         <param name="swingRightN" value="2" />
         <param name="lookbackDays" value="30" />
         <param name="minPassCount" value="6" />
+        <param name="allowQuietRise" value="true" />
+        <param name="quietVolumeRatio" value="1.0" />
         <param name="period" value="ultra_short" />
       </config>
     </Node>
@@ -83,6 +85,8 @@
       <config>
         <param name="maxHoldings" value="3" />
         <param name="orderType" value="UltraShortQuant" />
+        <param name="totalCapRatio" value="15" />
+        <param name="singlePositionRatio" value="3" />
       </config>
     </Node>
 
@@ -97,8 +101,8 @@
     <Node id="n_merge_pos" name="持仓合并" module="position_merge" />
     <Node id="n_t1sell" name="T+1自动卖出" module="t1_auto_sell">
       <config>
-        <param name="stopLossPct" value="-0.8" />
-        <param name="takeProfitPct" value="0.4" />
+        <param name="stopLossPct" value="-5.0" />
+        <param name="takeProfitPct" value="3.0" />
       </config>
     </Node>
   </NodeList>

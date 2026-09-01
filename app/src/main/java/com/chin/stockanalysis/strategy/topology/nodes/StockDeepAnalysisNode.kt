@@ -34,7 +34,7 @@ class StockDeepAnalysisNode : BaseNode<Any, PeriodDeepAnalysisRunner.Result>(
         val result = PeriodDeepAnalysisRunner().analyze(context.androidContext, code, name)
 
         // 拼接豆包体系公共研判层产出（大盘方向 / 风格环境）
-        val direction = context.getStageOutput<MarketDirectionResult>("n_adaptive")?.direction
+        val direction = context.getStageOutput<MarketDirectionResult>("n_market_direction")?.direction
         val style = context.getStageOutput<StyleRotationResult>("n_style_rotation")?.styleLabel
         val report = buildString {
             if (direction != null || style != null) {

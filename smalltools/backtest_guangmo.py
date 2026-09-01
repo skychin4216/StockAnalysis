@@ -223,8 +223,10 @@ def avg(xs):
     return sum(xs) / len(xs)
 
 
-def analyze_snaps(snaps, p, market_trend):
-    """复刻 analyzeSnaps，p 为参数 dict，market_trend 为 tripleVote 字符串"""
+def analyze_snaps(snaps, p, market_trend, market_vol_ratio=None):
+    """复刻 analyzeSnaps，p 为参数 dict，market_trend 为 tripleVote 字符串。
+    market_vol_ratio: 大盘当日量/前5日均量（<1 表示大盘缩量）。大盘缩量时个股缩量是市场
+    整体行为，量能阈值应动态下调（个股相对大盘仍放量即可），避免误杀液冷/煤炭等缩量缓涨股。"""
     if len(snaps) < 20:
         return {"error": "数据不足"}
     latest = snaps[-1]
@@ -298,7 +300,12 @@ def analyze_snaps(snaps, p, market_trend):
         mod_ratio = ma_vol5 / ma_vol10_prev if ma_vol10_prev > 0 else 0.0
         volume_ok = p["moderateVolumeLower"] <= mod_ratio <= p["moderateVolumeUpper"]
     else:  # 放量突破（超短/短线）
-        volume_ok = volume_ratio >= p["volumeBreakoutRatio"]
+        # v10: 大盘量能调节——大盘缩量(market_vol_ratio<1)时阈值动态下调，
+        # 个股相对大盘仍放量即可（避免大盘缩量误杀个股缩量缓涨股）
+        market_scale = market_vol_ratio if (market_vol_ratio and market_vol_ratio > 0) else 1.0
+        # 有效阈值 = 基准阈值 × max(大盘量比, 0.5)：大盘缩量到0.5 → 阈值减半
+        effective_ratio = p["volumeBreakoutRatio"] * max(market_scale, 0.5)
+        volume_ok = volume_ratio >= effective_ratio
 
     # ⑤ 距摆动高点跌幅
     lookback_start = max(len(snaps) - effective_lookback, 0)
@@ -352,6 +359,28 @@ def analyze_snaps(snaps, p, market_trend):
         three_day_no_new_low = all(s["low"] >= prev_low for s in snaps[-3:])
     three_day_ok = three_day_no_new_low if p["requireThreeDayConfirm"] else True
 
+    # ── v9: 量能放宽（超短/短线缩量缓涨——悄咪咪拉高） ──
+    # 放量突破模式：量比达标 或（允许缩量缓涨 且 粘合+多头+三日不新低 且 量比≥quietVolumeRatio）
+    if not p.get("requireVolumeShrink") and not (p.get("moderateVolumeLower", 0) > 0 and p.get("moderateVolumeUpper", 0) > 0):
+        quiet_ratio = p.get("quietVolumeRatio", 1.0)
+        # v10: 大盘缩量时"悄咪咪拉高"通道同样放宽——个股缩量缓涨在大盘缩量下更常见
+        mscale = market_vol_ratio if (market_vol_ratio and market_vol_ratio > 0) else 1.0
+        quiet_ok = p.get("allowQuietRise", False) and convergence_ok and bullish_aligned and \
+            three_day_no_new_low and volume_ratio >= quiet_ratio * max(mscale, 0.5)
+        volume_ok = volume_ok or quiet_ok
+
+    # ── v9: 低位埋伏通道（中长线）——上证指数均线粘合+三天不新低即可选中长线 ──
+    # 个股满足 均线粘合+多头+三日不新低+站上MA5 即通过（不强制放量/深跌/年线），
+    # 可捕捉液冷/煤炭等"悄咪咪拉高"的缩量缓涨股。
+    low_ambush = p.get("allowLowAmbush", False)
+    macro_hit = False
+    if p.get("macroSectorKeywords"):
+        macro_hit = any(kw in latest.get("name", "") for kw in p["macroSectorKeywords"])
+    ambush_ok = False
+    if low_ambush:
+        base_ambush = convergence_ok and bullish_aligned and three_day_no_new_low and latest["close"] > ma5
+        ambush_ok = base_ambush or (macro_hit and convergence_ok and three_day_no_new_low and latest["close"] > ma5)
+
     # ── 统计 ──
     checks = {
         "①粘合度": (convergence_ok, f"{convergence_degree:.2f}%≤{effective_convergence:.1f}%"),
@@ -367,6 +396,7 @@ def analyze_snaps(snaps, p, market_trend):
         "⑪远离上沿": (close_above_top, ""),
         "⑫开盘条件": (open_below, ""),
         "⑬三日不新低": (three_day_ok, ""),
+        "⑭低位埋伏": (ambush_ok, "均线粘合+三日不新低"),
     }
     active_order = ["①粘合度", "②多头排列", "③粘合持续", "④量能", "⑤跌幅"]
     if p["requireMA60Rising"]:
@@ -389,6 +419,9 @@ def analyze_snaps(snaps, p, market_trend):
     pass_count = sum(1 for k in active_order if checks[k][0])
     total_checks = len(active_order)
     passed = pass_count >= p["minPassCount"]
+    # v9: 低位埋伏通道——均线粘合+多头+三日不新低+站上MA5 直接通过（中长线低位埋伏）
+    if p.get("allowLowAmbush", False) and ambush_ok:
+        passed = True
 
     return {
         "convergenceDegree": convergence_degree,
@@ -412,7 +445,8 @@ PARAMS = {
                  maRisingDays=5, requireMA60Rising=False, requireMA250Rising=False,
                  useMA250InBullish=False, requireAboveYearLine=False,
                  requireAboveAllMAs=False, requireVolumeShrink=False,
-                 moderateVolumeLower=0.0, moderateVolumeUpper=0.0),
+                 moderateVolumeLower=0.0, moderateVolumeUpper=0.0,
+                 allowQuietRise=True, quietVolumeRatio=1.0, allowLowAmbush=False),
     "短线": dict(convergenceThreshold=3.0, useMA60=True, convergenceDurationDays=10,
                 volumeBreakoutRatio=1.5, minChangePct=3.0, requireChangePct=True,
                 minDrawdownPct=20.0, requireAboveAllMAs=True, lookbackDays=60,
@@ -420,9 +454,11 @@ PARAMS = {
                 maRisingDays=5, requireMA60Rising=False, requireMA250Rising=False,
                 useMA250InBullish=False, requireAboveYearLine=False,
                 requireCloseAboveConvergenceTop=False, requireOpenBelowMAs=False,
-                requireVolumeShrink=False, moderateVolumeLower=0.0, moderateVolumeUpper=0.0),
+                requireVolumeShrink=False, moderateVolumeLower=0.0, moderateVolumeUpper=0.0,
+                allowQuietRise=True, quietVolumeRatio=1.0, allowLowAmbush=False),
     "中线": dict(convergenceThreshold=2.5, useMA60=True, convergenceDurationDays=15,
-                minDrawdownPct=30.0, requireMA60Rising=True, requireAboveAllMAs=True,
+                minDrawdownPct=15.0, requireMA60Rising=True, requireAboveAllMAs=True,
+                allowLowAmbush=True, allowQuietRise=False,
                 moderateVolumeLower=1.2, moderateVolumeUpper=1.8, lookbackDays=120,
                 minPassCount=6, requireThreeDayConfirm=True, convergenceDurationRatio=0.8,
                 maRisingDays=5, requireChangePct=False, requireMA250Rising=False,
@@ -434,13 +470,14 @@ PARAMS = {
     # （深跌40%的股票很难还站在年线上方且MA250上升）→ 一年仅 6 个信号且全部亏损。
     # 敏感性实验（V8 全放宽）信号 222 个、平均 +4.20%、胜率 49.5%、盈亏因子 2.41。
     "长线": dict(convergenceThreshold=2.5, useMA60=True, convergenceDurationDays=20,
-                minDrawdownPct=20.0, requireMA60Rising=True, maRisingDays=10,
+                minDrawdownPct=10.0, requireMA60Rising=True, maRisingDays=10,
                 requireMA250Rising=True, useMA250InBullish=True, requireAboveYearLine=True,
                 requireVolumeShrink=True, volumeShrinkRatio=0.7, lookbackDays=250,
                 minPassCount=6, requireThreeDayConfirm=True, convergenceDurationRatio=0.8,
                 requireChangePct=False, requireAboveAllMAs=False,
                 requireCloseAboveConvergenceTop=False, requireOpenBelowMAs=False,
-                moderateVolumeLower=0.0, moderateVolumeUpper=0.0, volumeBreakoutRatio=0.0),
+                moderateVolumeLower=0.0, moderateVolumeUpper=0.0, volumeBreakoutRatio=0.0,
+                allowLowAmbush=True, allowQuietRise=False),
 }
 
 # 光模块核心 + 池内相关个股

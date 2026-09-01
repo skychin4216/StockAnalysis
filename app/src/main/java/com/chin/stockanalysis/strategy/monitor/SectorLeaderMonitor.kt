@@ -143,6 +143,8 @@ object SectorLeaderMonitor {
 
         val source = EastMoneyHotSectorSource()
         val signals = mutableListOf<SectorSignal>()
+        // 本次扫描收集到的待推送异动（同一次扫描的多个板块异动合并成一条通知，避免刷屏）
+        val notifyItems = mutableListOf<String>()
         for (sector in all) {
             // ── 拉取板块成分股涨幅前 N 龙头（含 300 创业板 / 688 科创板）──
             val leaders = try {
@@ -186,21 +188,17 @@ object SectorLeaderMonitor {
             // ── 趋势判断：结合 5/10/20 日涨幅与当日涨跌 ──
             val trend = judgeTrend(sector.changePercent, leaderChange, sector.change5d, sector.change10d, sector.change20d)
 
-            // 通知（带去重；仅交易时段 notify=true 才推送）
+            // 通知（带去重；仅交易时段 notify=true 才推送）——只收集，循环结束后合并成一条发送
             if (notify && alert != null && shouldNotify(sector.name, alert.type)) {
-                TradeNotifier.send(
-                    context,
-                    "🔔 板块异动 — ${sector.name}",
+                notifyItems.add(
                     buildString {
-                        appendLine(alert.message + secondaryNote)
-                        appendLine("板块5日: ${"%.2f".format(sector.change5d)}% | 10日: ${"%.2f".format(sector.change10d)}% | 20日: ${"%.2f".format(sector.change20d)}%")
-                        appendLine("资金: ${"%.0f".format(sector.mainNetInflow)}万")
+                        appendLine("【${sector.name}】${alert.message}$secondaryNote")
+                        appendLine("  5日: ${"%.2f".format(sector.change5d)}% | 10日: ${"%.2f".format(sector.change10d)}% | 20日: ${"%.2f".format(sector.change20d)}% | 资金: ${"%.0f".format(sector.mainNetInflow)}万")
                         if (leaders.isNotEmpty()) {
-                            appendLine("龙头榜: ${leaders.joinToString(" ") { "${it.name}(${it.board})${"%.1f".format(it.changePercent)}%" }}")
+                            appendLine("  龙头榜: ${leaders.joinToString(" ") { "${it.name}(${it.board})${"%.1f".format(it.changePercent)}%" }}")
                         }
-                        appendLine("→ 操作建议: ${trend.suggestion}")
-                    },
-                    tag = "sector_${sector.name}_${alert.type.name}"
+                        appendLine("  建议: ${trend.suggestion}")
+                    }
                 )
                 lastNotifyMap["${sector.name}_${alert.type.name}"] = System.currentTimeMillis()
             }
@@ -228,6 +226,17 @@ object SectorLeaderMonitor {
                     updatedAt = System.currentTimeMillis()
                 )
             )
+        }
+
+        // ── 同一次扫描的多个板块异动整合成一条通知推送（避免多次刷屏）──
+        if (notifyItems.isNotEmpty()) {
+            TradeNotifier.send(
+                context,
+                "🔔 板块异动监测 — ${notifyItems.size} 个板块异动",
+                notifyItems.joinToString("\n").trim(),
+                tag = "sector_leader_batch"
+            )
+            Log.i(TAG, "板块异动通知已合并发送: ${notifyItems.size} 个板块")
         }
 
         SectorSignalStore.updateAll(signals)

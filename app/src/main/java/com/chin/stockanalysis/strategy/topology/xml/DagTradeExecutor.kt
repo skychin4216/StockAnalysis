@@ -9,6 +9,7 @@ import com.chin.stockanalysis.strategy.topology.pipelines.PositionMergeResult
 import com.chin.stockanalysis.strategy.topology.pipelines.RotationPenaltyResult
 import com.chin.stockanalysis.strategy.topology.pipelines.SwapWeakResult
 import com.chin.stockanalysis.strategy.topology.pipelines.HoldingGuardResult
+import com.chin.stockanalysis.strategy.topology.core.StockFlowRecord
 import com.chin.stockanalysis.strategy.backtest.StrategyOptimizer
 import com.chin.stockanalysis.strategy.trade.StrategyTradeFittingParamEntity
 import kotlinx.coroutines.CoroutineScope
@@ -111,7 +112,7 @@ object DagTradeExecutor {
         orderType: String,
         importDays: Int = 60,
         onNodeProgress: ((pipelineName: String, nodeName: String) -> Unit)? = null,
-        onNodeDone: ((pipelineName: String, nodeName: String, output: Any?) -> Unit)? = null,
+        onNodeDone: ((pipelineName: String, nodeName: String, output: Any?, flow: StockFlowRecord?) -> Unit)? = null,
         saveAsAiOnly: Boolean = false,
         seedStageOutputs: Map<String, Any?> = emptyMap()
     ): DagExecResult {

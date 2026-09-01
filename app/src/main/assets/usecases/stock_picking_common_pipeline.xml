@@ -34,6 +34,9 @@
     <!-- Layer 1 -->
     <Node id="n_pool" name="股票池" module="stock_pool" />
 
+    <!-- Layer 1（并行）: 市场板块龙头全景 — 集成龙头前三名监测，输出各板块龙头强弱全景供市场环境研判 -->
+    <Node id="n_sector_leaders" name="市场板块龙头全景" module="market_sector_leaders" />
+
     <!-- Layer 1: 股票池清洗（ST 无条件排除 + 主板开关时排除科创/创业），减小输入源规模 -->
     <Node id="n_pool_filter" name="股票池过滤(ST/科创/创业)" module="pool_filter" />
 
@@ -76,6 +79,14 @@
       <SourceNodeId>n_ctx</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_pool</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 0 → 1: 市场上下文 → 市场板块龙头全景（与股票池并行） -->
+    <Link>
+      <SourceNodeId>n_ctx</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_sector_leaders</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
 

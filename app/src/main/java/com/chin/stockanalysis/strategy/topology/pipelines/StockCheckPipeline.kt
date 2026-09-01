@@ -105,7 +105,19 @@ class StockCheckPipeline(
     /** 通过所需最少项数（6项中） */
     val trendMinPassCount: Int = 5,
     /** 是否要求当日真实上涨 */
-    val trendRequireChangePct: Boolean = true
+    val trendRequireChangePct: Boolean = true,
+    // ── v9: 低位埋伏 + 量能放宽 + 宏观因子 ──
+    /** 低位埋伏模式（中长线）：均线粘合+三日不新低即可通过（不强制放量/深跌/年线） */
+    val allowLowAmbush: Boolean = false,
+    /** 缩量缓涨允许（超短/短线）：均线粘合+多头+三日不新低时，量能放宽到 quietVolumeRatio */
+    val allowQuietRise: Boolean = false,
+    /** 缩量缓涨最低量比（默认 1.0：不缩量即可） */
+    val quietVolumeRatio: Double = 1.0,
+    /** 宏观偏好板块关键词（如 油价≥80 化工/国债低 高股息），命中时低位埋伏优先 */
+    var macroSectorKeywords: List<String> = emptyList(),
+    // ── v10: 大盘量能调节（大盘缩量→个股缩量是市场整体行为，量能阈值动态下调） ──
+    /** 大盘当日量/前5日均量（<1 大盘缩量），null=不调节 */
+    var marketVolumeRatio: Double? = null
 ) {
 
     companion object {
@@ -169,6 +181,9 @@ class StockCheckPipeline(
                 useMA60 = false,
                 convergenceDurationDays = 5,
                 volumeBreakoutRatio = 2.5,
+                // v9: 允许缩量缓涨（悄咪咪拉高），震荡期量比不足时靠粘合+多头+三日不新低放行
+                allowQuietRise = true,
+                quietVolumeRatio = 1.0,
                 // B13: 震荡市均线粘合不追高，4% 降至 2%（TREND_FOLLOW 模式走 analyzeTrendSnaps，不读此参数）
                 minChangePct = 2.0,
                 requireChangePct = true,
@@ -199,6 +214,9 @@ class StockCheckPipeline(
                 useMA60 = true,
                 convergenceDurationDays = 10,
                 volumeBreakoutRatio = 1.5,
+                // v9: 允许缩量缓涨（悄咪咪拉高）
+                allowQuietRise = true,
+                quietVolumeRatio = 1.0,
                 minChangePct = 3.0,
                 requireChangePct = true,
                 minDrawdownPct = 20.0,
@@ -227,7 +245,9 @@ class StockCheckPipeline(
                 convergenceDurationDays = 15,
                 moderateVolumeLower = 1.2,
                 moderateVolumeUpper = 1.8,
-                minDrawdownPct = 30.0,
+                // v9: 低位埋伏——上证指数均线粘合+三天不新低即可选中长线，跌幅要求 30%→15%
+                allowLowAmbush = true,
+                minDrawdownPct = 15.0,
                 requireMA60Rising = true,
                 requireAboveAllMAs = true,
                 lookbackDays = 120,
@@ -256,7 +276,9 @@ class StockCheckPipeline(
                 convergenceDurationDays = 20,
                 requireVolumeShrink = true,
                 volumeShrinkRatio = 0.7,
-                minDrawdownPct = 20.0,
+                // v9: 低位埋伏——均线粘合+三天不新低即可选中长线，跌幅要求 20%→10%
+                allowLowAmbush = true,
+                minDrawdownPct = 10.0,
                 requireMA60Rising = true,
                 maRisingDays = 10,
                 requireMA250Rising = true,
@@ -461,6 +483,17 @@ class StockCheckPipeline(
         }
         val convergenceDurationOk = convergenceDays >= requiredDays
 
+        // ═══ 13-pre. 三日不新低确认（提前计算，v9 量能放宽/低位埋伏依赖此信号） ═══
+        // 近3个交易日最低价不创新低（以4日前的低点为基准），底部确认信号
+        val requireThreeDayNow = requireThreeDayConfirm &&
+            regime != MarketRegime.BULLISH
+        val threeDayNoNewLow = if (snaps.size >= 4) {
+            val last3 = snaps.takeLast(3)
+            val prevLow = snaps[snaps.size - 4].low
+            last3.all { it.low >= prevLow }
+        } else true
+        val threeDayConfirmOk = if (requireThreeDayNow) threeDayNoNewLow else true
+
         // ═══ 4. 量能条件（三种模式互斥） ═══
         // 展示用：当日量 / 前5日均量
         val vol5Avg = if (snaps.size >= 6) {
@@ -491,7 +524,18 @@ class StockCheckPipeline(
                 moderateRatio >= moderateVolumeLower && moderateRatio <= moderateVolumeUpper
             }
             // 放量突破模式（超短线/短线）：量比 ≥ ratio
-            else -> volumeRatio >= volumeBreakoutRatio
+            else -> {
+                // v10: 大盘量能调节——大盘缩量(marketVolumeRatio<1)时阈值动态下调，
+                // 个股相对大盘仍放量即可（避免大盘缩量误杀个股缩量缓涨股）
+                val marketScale = marketVolumeRatio?.takeIf { it > 0 } ?: 1.0
+                val effectiveRatio = volumeBreakoutRatio * maxOf(marketScale, 0.5)
+                val breakout = volumeRatio >= effectiveRatio
+                // v9: 缩量缓涨（悄咪咪拉高）——均线粘合+多头+三日不新低时，量比放宽到 quietVolumeRatio
+                // v10: 大盘缩量时该通道阈值同样下调（缩量缓涨在大盘缩量下更常见）
+                val quiet = allowQuietRise && convergenceOk && bullishAligned &&
+                    threeDayNoNewLow && volumeRatio >= quietVolumeRatio * maxOf(marketScale, 0.5)
+                breakout || quiet
+            }
         }
 
         // ═══ 5. 距高点跌幅（v2: 使用摆动高点检测替代全局最高价） ═══
@@ -546,15 +590,6 @@ class StockCheckPipeline(
         // ═══ 13. 三日不新低确认（v2: 近3个交易日最低价不创新低，底部确认信号） ═══
         // v3 适配：大盘向上(BULLISH)时趋势跟随，不强制"三日不新低"（上升趋势中天然不满足，
         // 会错误过滤强势股）；仅在大盘下跌/震荡(BEARISH/NEUTRAL)或未启用时执行。
-        val requireThreeDayNow = requireThreeDayConfirm &&
-            regime != MarketRegime.BULLISH
-        val threeDayNoNewLow = if (snaps.size >= 4) {
-            val last3 = snaps.takeLast(3)
-            val prevLow = snaps[snaps.size - 4].low
-            last3.all { it.low >= prevLow }
-        } else true
-        val threeDayConfirmOk = if (requireThreeDayNow) threeDayNoNewLow else true
-
         // ═══ 统计通过项数 — 只计本周期要求的检查 ═══
         var passCount = 0
         var totalChecks = 0
@@ -587,6 +622,18 @@ class StockCheckPipeline(
         if (requireThreeDayNow) { totalChecks++; if (threeDayConfirmOk) passCount++ }
 
         var passed = passCount >= minPassCount
+        // ── v9: 低位埋伏通道（中长线）——
+        //     上证指数均线粘合+三天不新低 → 开启中长线低位埋伏；
+        //     个股满足 均线粘合+多头+三日不新低 即通过（不强制放量/深跌/年线/地量），
+        //     可捕捉液冷/煤炭等"悄咪咪拉高"的缩量缓涨股。
+        if (allowLowAmbush) {
+            val baseAmbush = convergenceOk && bullishAligned && threeDayNoNewLow && latest.close > ma5
+            // 宏观偏好板块（油价≥80化工 / 国债低高股息）命中时略放宽：无需强多头，站上MA5+粘合+三日不新低即可
+            val macroHit = macroSectorKeywords.isNotEmpty() &&
+                macroSectorKeywords.any { name.contains(it) }
+            val ambushOk = baseAmbush || (macroHit && convergenceOk && threeDayNoNewLow && latest.close > ma5)
+            if (ambushOk) passed = true
+        }
         // ── v7: 增强过滤（smalltools/_pool_filters.py extra_filter 搬回，周期差异化，长线豁免） ──
         val p = period
         if (p != null && EnhancedPoolFilter.enabled) {

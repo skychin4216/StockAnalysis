@@ -388,6 +388,21 @@ class HistoricalDataFetcher(private val context: Context) {
         var updated = 0
         try {
             val quotes = com.chin.stockanalysis.stock.data.sources.EastMoneyStockSource().fetchRealtime(codes)
+            // 同步真实持仓最新价：实仓表只存买入时快照，每个交易日盘中刷新时用最新行情回写
+            try {
+                val positions = db.realPositionDao().getAllActive()
+                for (p in positions) {
+                    val q = quotes[p.stockCode] ?: continue
+                    db.realPositionDao().updateMarketData(
+                        id = p.id,
+                        currentPrice = q.price,
+                        pe = q.pe,
+                        turnoverRate = q.turnoverRate
+                    )
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "refreshTodayRealtime: 实仓同步失败 ${e.message}")
+            }
             for (q in quotes.values) {
                 val affected = db.dailySnapshotDao().updateQuote(
                     code = q.code, date = todayStr,

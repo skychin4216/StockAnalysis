@@ -145,15 +145,20 @@ object AutoQuantAgentRunner {
                     val addQty = computeAddQty(qty, price, cost)
                     actionLines += "• ${pos.stockName}: 下跌加仓（现价${"%.2f".format(price)}<成本${"%.2f".format(cost)}，$leaderNote）→ 可加 $addQty 股"
                 }
-                // T：做T机会（复用 TTradeEngine）
+                // T：做T机会（优先盘中增强信号：震荡市/关键时段/拉升/急跌；再回退日K快照信号）
                 else -> {
                     val tLine = try {
                         val tEngine = com.chin.stockanalysis.strategy.trade.TTradeEngine(context)
-                        val signals = tEngine.generateSignals(
-                            pos.stockCode, qty, pos.periodType.ifBlank { "ShortTermQuant" }
+                        val period = pos.periodType.ifBlank { "ShortTermQuant" }
+                        // v4：盘中增强信号（实时价 + 大盘状态 + 指数近30日快照）
+                        val intraday = tEngine.generateIntradaySignals(
+                            pos.stockCode, qty, period, q, indexChg, indexSnapsOf(context)
                         )
+                        val signals = if (intraday.isNotEmpty()) intraday else {
+                            tEngine.generateSignals(pos.stockCode, qty, period)
+                        }
                         signals.firstOrNull()?.let {
-                            "做T[${it.signalType}] ${"%.2f".format(it.suggestedPrice)}→目标${"%.2f".format(it.targetPrice)} ${"%.0f".format(it.expectedProfitPct)}%"
+                            "做T[${it.signalType}] ${"%.2f".format(it.suggestedPrice)}→目标${"%.2f".format(it.targetPrice)} ${"%.0f".format(it.expectedProfitPct)}%（${it.reason}）"
                         }
                     } catch (_: Exception) { null }
                     if (tLine != null) {
@@ -199,6 +204,13 @@ object AutoQuantAgentRunner {
 
         return report
     }
+
+    /** 获取上证指数近30日日K快照（用于大盘震荡市判断） */
+    private suspend fun indexSnapsOf(context: Context): List<com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity> = try {
+        withContext(Dispatchers.IO) {
+            StockDatabase.getInstance(context).dailySnapshotDao().getByCode("sh000001", 30)
+        }
+    } catch (_: Exception) { emptyList() }
 
     /** 大盘状态判定（对齐 MarketGuard 简化版） */
     private fun marketStateOf(indexChgPct: Double): String = when {

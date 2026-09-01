@@ -1461,10 +1461,14 @@ class HeatScoreNode : BaseNode<Any, Map<String, Int>>("heat_score", "热度计�
  *
  * @property maxHoldings 最大持仓数（默认 6）
  * @property orderType 订单类型（默认 "MidTermQuant"）
+ * @property totalCapRatio 该周期总仓市值上限（账户资金 %，豆包体系：超短15/短波25/中线40/长线50；默认 12.5=原 25万资金池×半仓50%）
+ * @property singlePositionRatio 单票市值上限（账户资金 %，豆包体系：超短3/短波6/中线10/长线15；默认 5.0=原 25万资金池×20%）
  */
 class GenerateOrdersNode(
     private val maxHoldings: Int = 6,
-    private val orderType: String = "MidTermQuant"
+    private val orderType: String = "MidTermQuant",
+    private val totalCapRatio: Double = 12.5,
+    private val singlePositionRatio: Double = 5.0
 ) : BaseNode<Any, OrderGenerationResult>("generate_orders", "买入订单生成", NodeType.TRADE_ACTION) {
 
     override suspend fun execute(context: PipelineContext, input: Any): OrderGenerationResult {
@@ -1555,11 +1559,11 @@ class GenerateOrdersNode(
                 .map { it.stockCode }.toSet()
             val availableSlots = maxHoldings - holdingCodes.size
 
-            // ── 仓位预算（永远半仓）：总投资 100 万分四周期，单周期资金池 25 万；
-            //    该周期持仓市值 ≤ 周期资金池×50%（半仓），单只 ≤ 周期资金池×20%（单只不超两成）
-            val periodCapital = AutoTradePortfolioEngine.TOTAL_CAPITAL / 4.0
-            val halfPositionCap = periodCapital * 0.5
-            val singlePositionCap = periodCapital * AutoTradePortfolioEngine.MAX_SINGLE_POSITION_RATIO
+            // ── 仓位预算（豆包体系四周期差异化风控）：
+            //    总投资 100 万；该周期总仓市值 ≤ 账户×totalCapRatio%，单只 ≤ 账户×singlePositionRatio%
+            //    豆包硬性参数：超短 15%/3%，短波 25%/6%，中线 40%/10%，长线 50%/15%
+            val totalPositionCap = AutoTradePortfolioEngine.TOTAL_CAPITAL * totalCapRatio / 100.0
+            val singlePositionCap = AutoTradePortfolioEngine.TOTAL_CAPITAL * singlePositionRatio / 100.0
             val periodHoldingValue = holdingOrders.sumOf { it.quantity * it.buyPrice }
             // 下跌且有预期 → 加仓做多；上涨/持平不追高
             fun computeBuyQty(buyPrice: Double, stockCode: String? = null): Int {
@@ -1571,9 +1575,9 @@ class GenerateOrdersNode(
                     if (buyPrice >= avgCost) return 0   // 已有持仓且现价不低于成本 → 不加仓（避免追高）
                 }
                 val heldValue = held.sumOf { it.quantity * it.buyPrice }
-                val remainingHalf = (halfPositionCap - periodHoldingValue).coerceAtLeast(0.0)
+                val remainingTotal = (totalPositionCap - periodHoldingValue).coerceAtLeast(0.0)
                 val singleRemaining = (singlePositionCap - heldValue).coerceAtLeast(0.0)
-                val budget = minOf(remainingHalf, singleRemaining)
+                val budget = minOf(remainingTotal, singleRemaining)
                 if (budget <= 0) return 0
                 val lots = (budget / buyPrice / 100).toInt()
                 if (lots <= 0) return 0
@@ -1635,11 +1639,23 @@ class GenerateOrdersNode(
                 }
 
                 // 4. 主力资金评分过滤（低于 30 分的过滤）
-                val moneyScore = SmartMoneyCache.getScore(pick.stockCode).combined
-                if (moneyScore < 30) {
+                // v10: 低位埋伏反向修正——不是放宽，而是验证"主力是否真的布局"。
+                //   拉升必须有主力/游资（社保/国家队/宽基提前1-3月吸筹），散户只喝汤。
+                //   中长线低位埋伏股（缩量缓涨）MFI/CMF 天然偏低，但若出现主力吸筹证据
+                //   （A-D底背离：价格跌资金吸 / 近10日主力净流入持续为正）则放行。
+                val money = SmartMoneyCache.getScore(pick.stockCode)
+                val moneyScore = money.combined
+                val ambushAbsorb = (period == "mid" || period == "long") &&
+                    (money.adScore >= 60 || money.flowScore >= 60)
+                if (moneyScore < 30 && !ambushAbsorb) {
                     filteredCount++
-                    filteredReasons.add("${pick.stockName}(${pick.stockCode}): 主力资金${moneyScore.roundToInt()}<30")
+                    filteredReasons.add("${pick.stockName}(${pick.stockCode}): 主力资金${moneyScore.roundToInt()}<30" +
+                        (if (period == "mid" || period == "long") " 且无吸筹证据(ad${money.adScore.roundToInt()}/flow${money.flowScore.roundToInt()})" else ""))
                     continue
+                }
+                if (ambushAbsorb && moneyScore < 30) {
+                    context.log(nodeId, "🐟 ${pick.stockName}(${pick.stockCode}) 主力吸筹证据通过: " +
+                        "A-D底背离${money.adScore.roundToInt()}分 近10日资金流${money.flowScore.roundToInt()}分（低位埋伏）")
                 }
 
                 // 4.5 板块龙头异动信号融合（SectorLeaderMonitor 后台扫描刷新）
@@ -2545,25 +2561,36 @@ class HoldingGuardNode(
                         crashMode -> if (period == "long") -5.0 else -3.0
                         // 状态拟合矩阵优先
                         fitted != null -> fitted.stopLossPct
-                        // 自适应止损：空头市场收紧硬止损；长期持仓放宽到 -25%
+                        // 豆包体系四周期差异化硬性止损（2026-08 豆包全套系统化交易体系）：
+                        //   超短 5% / 短波 6-7% / 中线 60周均线清仓(暂以 -10% 兜底) / 长线逻辑离场(兜底 -25%)
                         period == "long" -> -25.0
                         period == "mid" -> context.getAdaptiveParams()?.stopLossRate?.times(100) ?: -10.0
-                        else -> context.getAdaptiveParams()?.stopLossRate?.times(100)
-                            ?: AutoSellEngine.HARD_STOP_LOSS_PCT
+                        period == "short" -> context.getAdaptiveParams()?.stopLossRate?.times(100) ?: -6.5
+                        else -> context.getAdaptiveParams()?.stopLossRate?.times(100) ?: -5.0
                     },
                     timeForceCloseDays = when {
                         // 暴跌期：次日即走
                         crashMode -> 1
                         // 状态拟合矩阵：持有天数
                         fitted != null -> fitted.maxHoldDays
-                        // 2026-08-15 一年回溯拟合最优参数（smalltools/out_year.txt）：
-                        // 中线：持有 15 天到期卖 / +20% 单档止盈 / -10% 止损
-                        period == "mid" -> 15
+                        // 豆包体系四周期持股周期：
+                        //   超短 ≤3 交易日 / 短波 ≤15 交易日 / 中线 1-6月(取45) / 长线 6月-3年(兜底180，有突发利空保护)
+                        period == "ultra_short" -> 3
+                        period == "short" -> 15
+                        period == "mid" -> 45
+                        period == "long" -> 180
                         else -> AutoSellEngine.TIME_FORCE_CLOSE_DAYS
                     },
                     tpTiers = when {
                         crashMode -> null
                         fitted != null -> listOf(AutoSellEngine.TakeProfitTier(fitted.takeProfitPct, 1.0))
+                        // 豆包体系分周期止盈：短波 8-15% 分批 / 超短 3-7% 分批 / 中线 +20% 单档
+                        period == "short" -> listOf(
+                            AutoSellEngine.TakeProfitTier(8.0, 0.5),
+                            AutoSellEngine.TakeProfitTier(15.0, 1.0))
+                        period == "ultra_short" -> listOf(
+                            AutoSellEngine.TakeProfitTier(3.0, 0.5),
+                            AutoSellEngine.TakeProfitTier(7.0, 1.0))
                         period == "mid" -> listOf(AutoSellEngine.TakeProfitTier(20.0, 1.0))
                         else -> null
                     }

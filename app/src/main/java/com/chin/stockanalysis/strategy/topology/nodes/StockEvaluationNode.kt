@@ -76,6 +76,14 @@ class StockEvaluationNode(
     val moderateVolumeUpper: Double = 1.8,
     val lookbackDays: Int = 120,
     val minPassCount: Int = 7,
+    /** v9: 低位埋伏模式（中长线）：均线粘合+三日不新低即可通过 */
+    val allowLowAmbush: Boolean = false,
+    /** v9: 缩量缓涨允许（超短/短线）：量能放宽 */
+    val allowQuietRise: Boolean = false,
+    /** v9: 缩量缓涨最低量比 */
+    val quietVolumeRatio: Double = 1.0,
+    /** v9: 宏观偏好板块关键词（油价≥80化工 / 国债低高股息） */
+    val macroSectorKeywords: List<String> = emptyList(),
     /** 本节点服务的周期（ultra_short / short / mid / long），决定牛市时是否启用趋势跟随模式（B11） */
     val period: String = ""
 ) : BaseNode<MergedSignalPool, MergedSignalPool>("strict_selection", "均线粘合严选", NodeType.FILTER) {
@@ -116,7 +124,11 @@ class StockEvaluationNode(
         minPassCount = minPassCount,
         marketTrend = marketTrend,
         mode = resolveMode(marketTrend),
-        requireThreeDayConfirm = true
+        requireThreeDayConfirm = true,
+        allowLowAmbush = allowLowAmbush,
+        allowQuietRise = allowQuietRise,
+        quietVolumeRatio = quietVolumeRatio,
+        macroSectorKeywords = macroSectorKeywords
     )
 
     override suspend fun execute(context: PipelineContext, input: MergedSignalPool): MergedSignalPool {
@@ -132,6 +144,41 @@ class StockEvaluationNode(
             context.log(nodeId, "ℹ️ 大盘趋势: $marketTrend → 模式:${pipeline.mode}（周期:$period）" +
                 if (pipeline.mode == AnalysisMode.TREND_FOLLOW) "，超短/短线启用趋势跟随" else "，均线粘合严选")
         }
+        // v9/v10: 宏观因子自动注入（app_config.json → macro_environment）
+        //   油价>85且上涨趋势 → 化工板块低位埋伏优先（80仅为中高位，不足为强信号）
+        //   国债利率低 → 高股息(银行/煤炭/化工)优先
+        try {
+            val cfg = com.chin.stockanalysis.config.DataConfig
+            val oilPrice = cfg.get("macro_environment.oil_price", "0").toDoubleOrNull() ?: 0.0
+            val oilHighThreshold = cfg.get("macro_environment.oil_price_high", "85").toDoubleOrNull() ?: 85.0
+            val oilTrendRising = cfg.get("macro_environment.oil_trend_rising", "true").toBooleanStrictOrNull() ?: true
+            val oilHigh = oilPrice > oilHighThreshold && oilTrendRising
+            val cnYieldLow = (cfg
+                .get("macro_environment.cn_10y_yield_low", "2.2").toDoubleOrNull() ?: 2.2) >=
+                (cfg.get("macro_environment.cn_10y_yield_pct", "0").toDoubleOrNull() ?: 0.0)
+            val macroSectors = pipeline.macroSectorKeywords.toMutableList()
+            if (oilHigh) macroSectors += listOf("化工", "石油", "煤炭")
+            if (cnYieldLow) macroSectors += listOf("银行", "电力", "保险", "煤炭", "化工")
+            if (macroSectors.isNotEmpty() && macroSectors != pipeline.macroSectorKeywords) {
+                pipeline.macroSectorKeywords = macroSectors.distinct()
+                context.log(nodeId, "🧭 宏观因子注入: 油价${oilPrice}${if (oilHigh) ">$oilHighThreshold↑" else "≤$oilHighThreshold"} 国债${if (cnYieldLow) "低" else "高"} → 偏好板块:${pipeline.macroSectorKeywords.joinToString("、")}")
+            }
+        } catch (_: Exception) {}
+        // v10: 大盘量能注入——上证指数当日量/前5日均量（<1 大盘缩量，个股量能阈值动态下调，
+        // 避免大盘缩量导致个股缩量而被误杀。大盘优于个股。）
+        try {
+            val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(context.androidContext)
+            val idxSnaps = db.dailySnapshotDao().getByCode("sh000001", 60).sortedBy { it.date }
+            if (idxSnaps.size >= 6) {
+                val vol5Avg = idxSnaps.takeLast(6).dropLast(1)
+                    .map { it.volume.toDouble() }.average()
+                if (vol5Avg > 0) {
+                    pipeline.marketVolumeRatio = idxSnaps.last().volume / vol5Avg
+                    context.log(nodeId, "📊 大盘量比: ${"%.2f".format(pipeline.marketVolumeRatio!!)}" +
+                        if ((pipeline.marketVolumeRatio ?: 1.0) < 1.0) "（大盘缩量→个股量能阈值下调）" else "")
+                }
+            }
+        } catch (_: Exception) {}
 
         val passedMap = mutableMapOf<String, StockEvaluationDetail>()
         var insufficientCount = 0

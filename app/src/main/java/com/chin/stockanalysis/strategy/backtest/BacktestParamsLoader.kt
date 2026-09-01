@@ -448,7 +448,15 @@ object BacktestParamsLoader {
             rtConfPatternBearish = i("rt_confPatternBearish", TTradeParams.DEFAULT.rtConfPatternBearish),
             rtConfPatternBullish = i("rt_confPatternBullish", TTradeParams.DEFAULT.rtConfPatternBullish),
             rtConfTrendDown = i("rt_confTrendDown", TTradeParams.DEFAULT.rtConfTrendDown),
-            rtConfTrendUp = i("rt_confTrendUp", TTradeParams.DEFAULT.rtConfTrendUp)
+            rtConfTrendUp = i("rt_confTrendUp", TTradeParams.DEFAULT.rtConfTrendUp),
+            // 盘中做T增强（v4）
+            indexOscillationTrendPct = d("indexOscillationTrendPct", TTradeParams.DEFAULT.indexOscillationTrendPct),
+            indexOscillationAmpBandPct = d("indexOscillationAmpBandPct", TTradeParams.DEFAULT.indexOscillationAmpBandPct),
+            intradayWindowMinutes = i("intradayWindowMinutes", TTradeParams.DEFAULT.intradayWindowMinutes),
+            intradayRallySellPct = d("intradayRallySellPct", TTradeParams.DEFAULT.intradayRallySellPct),
+            intradayPlungeBuyPct = d("intradayPlungeBuyPct", TTradeParams.DEFAULT.intradayPlungeBuyPct),
+            intradayWindowConfBonus = i("intradayWindowConfBonus", TTradeParams.DEFAULT.intradayWindowConfBonus),
+            intradayOscillationConfBonus = i("intradayOscillationConfBonus", TTradeParams.DEFAULT.intradayOscillationConfBonus)
         )
     }
 
@@ -593,7 +601,20 @@ data class TTradeParams(
     val rtConfPatternBearish: Int = 15,
     val rtConfPatternBullish: Int = -15,
     val rtConfTrendDown: Int = 10,
-    val rtConfTrendUp: Int = -15
+    val rtConfTrendUp: Int = -15,
+    // ── 盘中做T增强（v4）：震荡市判断 + 关键时段 + 拉升/急跌 ──
+    // 大盘震荡市判定：近20日上证指数累计涨跌幅 |chg|<= 该值(%) 且平均振幅 <= ampBand，视为震荡市（适合高抛低吸）
+    val indexOscillationTrendPct: Double = 3.0,
+    val indexOscillationAmpBandPct: Double = 1.2,
+    // 盘中关键时段（分钟）：9:40 与 13:10 前后 windowMinutes 分钟内视为关键做T窗口
+    val intradayWindowMinutes: Int = 20,
+    // 盘中拉升卖出阈值（%）：实时涨幅 >= 该值 → 反T卖出
+    val intradayRallySellPct: Double = 3.0,
+    // 盘中急跌买入阈值（%）：实时跌幅 <= -该值 → 做T买入
+    val intradayPlungeBuyPct: Double = 3.0,
+    // 盘中信号置信度加成
+    val intradayWindowConfBonus: Int = 10,
+    val intradayOscillationConfBonus: Int = 10
 ) {
     companion object {
         val DEFAULT = TTradeParams()

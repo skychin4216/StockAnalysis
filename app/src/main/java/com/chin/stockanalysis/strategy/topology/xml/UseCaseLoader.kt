@@ -117,7 +117,7 @@ object UseCaseLoader {
         useCaseId: String,
         tradeDate: String,
         onNodeProgress: ((pipelineName: String, nodeName: String) -> Unit)? = null,
-        onNodeDone: ((pipelineName: String, nodeName: String, output: Any?) -> Unit)? = null,
+        onNodeDone: ((pipelineName: String, nodeName: String, output: Any?, flow: StockFlowRecord?) -> Unit)? = null,
         configOverrides: Map<String, String> = emptyMap(),
         seedStageOutputs: Map<String, Any?> = emptyMap()
     ): MultiPipelineResult {

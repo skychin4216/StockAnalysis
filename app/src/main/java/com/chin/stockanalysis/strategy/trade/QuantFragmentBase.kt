@@ -25,6 +25,7 @@ import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.HoldingPeriod
 import com.chin.stockanalysis.strategy.Strategy
 import com.chin.stockanalysis.strategy.StrategyEngine
+import com.chin.stockanalysis.strategy.topology.core.StockFlowRecord
 import com.chin.stockanalysis.strategy.topology.core.orderTypePeriod
 import com.chin.stockanalysis.strategy.topology.ui.PipelineFlowChart
 import android.text.TextUtils
@@ -85,8 +86,8 @@ abstract class QuantFragmentBase : Fragment() {
     /** 阶段标题序号（公共研判→公共选股→周期专属 递增） */
     private var stageCounter = 0
     private var lastPipelineName = ""
-    /** 最近一次节点日志在缓冲中的索引（onNodeDone 时原位替换为"节点名 + 结果"） */
-    private var lastNodeLogIndex = -1
+    /** 节点日志在缓冲中的索引（key = pipelineName::nodeName，onNodeDone 时原位替换；多 Map 避免并行节点交错覆盖） */
+    private val nodeLogIndexes = mutableMapOf<String, Int>()
 
     // ── 一键建仓并行模式：由工作台设置、onBuildClick 读取的待用参数（均在主线程读写） ──
     @Volatile protected var pendingSeedStageOutputs: Map<String, Any?> = emptyMap()
@@ -331,17 +332,17 @@ abstract class QuantFragmentBase : Fragment() {
                                     lastPipelineName = pipelineName
                                     appendLog(stageTitleFor(pipelineName))
                                 }
-                                appendNodeLog("   ├─ $nodeName")
+                                appendNodeLog("   ├─ $nodeName", "$pipelineName::$nodeName")
                             }
                         }
                     },
-                    onNodeDone = { pipelineName, nodeName, output ->
+                    onNodeDone = { pipelineName, nodeName, output, flow ->
                         lifecycleScope.launch(Dispatchers.Main) {
                             if (isAdded) {
                                 val summary = summarizeOutput(output)
                                 replaceLastNodeLog(
-                                    if (summary.isNotEmpty()) "   ├─ $nodeName  ✅ $summary"
-                                    else "   ├─ $nodeName  ✅"
+                                    "   ├─ $nodeName  ✅ ${formatFlowText(flow)}$summary",
+                                    "$pipelineName::$nodeName"
                                 )
                             }
                         }
@@ -751,7 +752,6 @@ abstract class QuantFragmentBase : Fragment() {
         val ts = java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
         logBuffer.addLast("[$ts] $text")
         while (logBuffer.size > 300) logBuffer.removeFirst()
-        lastNodeLogIndex = -1
         lifecycleScope.launch(Dispatchers.Main) {
             if (!isAdded || !::pipelineLogView.isInitialized) return@launch
             ensureLogExpanded()
@@ -786,12 +786,12 @@ abstract class QuantFragmentBase : Fragment() {
         }
     }
 
-    /** 追加一行节点日志（记录缓冲索引，供 onNodeDone 原位替换为"节点名 + 结果"） */
-    private fun appendNodeLog(text: String) {
+    /** 追加一行节点日志（记录缓冲索引 key，供 onNodeDone 原位替换为"节点名 + 结果"） */
+    private fun appendNodeLog(text: String, logKey: String = lastPipelineName) {
         if (!::pipelineLogView.isInitialized) return
         logBuffer.addLast(text)
         while (logBuffer.size > 300) logBuffer.removeFirst()
-        lastNodeLogIndex = logBuffer.size - 1
+        nodeLogIndexes[logKey] = logBuffer.size - 1
         lifecycleScope.launch(Dispatchers.Main) {
             if (!isAdded || !::pipelineLogView.isInitialized) return@launch
             ensureLogExpanded()
@@ -800,9 +800,10 @@ abstract class QuantFragmentBase : Fragment() {
     }
 
     /** 节点完成后原位替换对应节点行（显示结果摘要） */
-    private fun replaceLastNodeLog(text: String) {
+    private fun replaceLastNodeLog(text: String, logKey: String = lastPipelineName) {
         if (!::pipelineLogView.isInitialized || logBuffer.isEmpty()) return
-        val idx = if (lastNodeLogIndex in 0 until logBuffer.size) lastNodeLogIndex else logBuffer.size - 1
+        val lastIdx = nodeLogIndexes[logKey] ?: logBuffer.size - 1
+        val idx = if (lastIdx in 0 until logBuffer.size) lastIdx else logBuffer.size - 1
         logBuffer[idx] = text
         lifecycleScope.launch(Dispatchers.Main) {
             if (!isAdded || !::pipelineLogView.isInitialized) return@launch
@@ -838,7 +839,7 @@ abstract class QuantFragmentBase : Fragment() {
     /** 清空执行日志 */
     protected fun clearPipelineLog() {
         logBuffer.clear()
-        lastNodeLogIndex = -1
+        nodeLogIndexes.clear()
         if (::pipelineLogView.isInitialized) {
             lifecycleScope.launch(Dispatchers.Main) {
                 if (isAdded) pipelineLogView.text = ""
@@ -856,19 +857,30 @@ abstract class QuantFragmentBase : Fragment() {
         return "▶ $num $pipelineName"
     }
 
-    /** 节点输出摘要（避免在日志里输出超长股票列表/对象） */
+    /** 节点输出摘要（股票类输出打印具体股票代码+名称；非股票类输出保持简短） */
     private fun summarizeOutput(output: Any?): String {
         return when (output) {
             null -> ""
             is String -> if (output.length > 48) output.take(48) + "..." else output
             is Number, is Boolean -> output.toString()
+            is com.chin.stockanalysis.strategy.topology.core.StockPool ->
+                summarizeStocks(output.stocks)
             is Map<*, *> -> {
-                val msg = listOf("message", "summary", "direction", "text", "mode", "styleLabel")
-                    .firstNotNullOfOrNull { k -> output[k] }
-                if (msg is String && msg.isNotBlank() && msg.length <= 60) msg
-                else "已完成 (${output.size} 项)"
+                // 若 map 中含股票列表（pool/candidates/orders/leaders 等），打印具体股票
+                val listKey = output.keys.filterIsInstance<String>()
+                    .firstOrNull { it.contains("pool") || it.contains("stock") || it.contains("candidate") || it.contains("order") || it.contains("leader") }
+                if (listKey != null) {
+                    val lst = output[listKey]
+                    if (lst is Collection<*>) summarizeStocks(lst.toList())
+                    else listKey
+                } else {
+                    val msg = listOf("message", "summary", "direction", "text", "mode", "styleLabel")
+                        .firstNotNullOfOrNull { k -> output[k] }
+                    if (msg is String && msg.isNotBlank() && msg.length <= 60) msg
+                    else "已完成 (${output.size} 项)"
+                }
             }
-            is Collection<*> -> "已生成 ${output.size} 条"
+            is Collection<*> -> summarizeStocks(output.toList())
             else -> {
                 // data class 等自定义对象:提取 styleLabel=均衡震荡 这类短属性
                 val s = output.toString()
@@ -881,6 +893,50 @@ abstract class QuantFragmentBase : Fragment() {
                     if (pairs.isNotEmpty()) pairs else "已完成"
                 }
             }
+        }
+    }
+
+    /**
+     * 把节点的股票流动明细 [StockFlowRecord] 格式化为「输入→过滤→输出」摘要。
+     * 例：`输入12只→过滤4只(未入围Top10)→输出8只 [600123 大同煤业, ...] `
+     */
+    private fun formatFlowText(flow: StockFlowRecord?): String {
+        if (flow == null) return ""
+        val inN = flow.inputCount
+        val outN = flow.outputCount
+        var filtered = flow.filterCount
+        if (filtered <= 0 && inN > outN && outN >= 0) filtered = inN - outN
+        val reason = flow.filterReason
+        val sb = StringBuilder()
+        if (inN > 0) sb.append("输入${inN}只")
+        if (filtered > 0) sb.append("→过滤${filtered}只${if (reason.isNotBlank()) "($reason)" else ""}")
+        if (outN > 0) sb.append("→输出${outN}只")
+        val outCodes = flow.outputCodes.take(5).joinToString(",")
+        if (outCodes.isNotBlank()) sb.append(" [$outCodes]")
+        return if (sb.isNotEmpty()) "$sb " else ""
+    }
+
+    /** 把股票列表转成 "code name" 文本（全部打印；超过 30 只时省略中间，末尾标注总数） */
+    private fun summarizeStocks(items: List<*>): String {
+        if (items.isEmpty()) return "空"
+        val lines = items.mapNotNull { item ->
+            when (item) {
+                is com.chin.stockanalysis.stock.StockRealtime ->
+                    "${item.code} ${item.name}"
+                is Map<*, *> -> {
+                    val code = item["code"] ?: item["stockCode"] ?: item["symbol"]
+                    val name = item["name"] ?: item["stockName"]
+                    if (code != null) "$code ${name ?: ""}".trim()
+                    else null
+                }
+                is String -> item
+                else -> Regex("(\\d{6})").find(item.toString())?.value ?: item.toString().take(20)
+            }
+        }
+        return if (lines.size > 30) {
+            lines.take(15).joinToString(", ") + " ... 共 ${items.size} 条"
+        } else {
+            lines.joinToString(", ")
         }
     }
 
@@ -1083,17 +1139,17 @@ abstract class QuantFragmentBase : Fragment() {
                                     lastPipelineName = pipelineName
                                     appendLog(stageTitleFor(pipelineName))
                                 }
-                                appendNodeLog("   ├─ $nodeName")
+                                appendNodeLog("   ├─ $nodeName", "$pipelineName::$nodeName")
                             }
                         }
                     },
-                    onNodeDone = { pipelineName, nodeName, output ->
+                    onNodeDone = { pipelineName, nodeName, output, flow ->
                         lifecycleScope.launch(Dispatchers.Main) {
                             if (isAdded) {
                                 val summary = summarizeOutput(output)
                                 replaceLastNodeLog(
-                                    if (summary.isNotEmpty()) "   ├─ $nodeName  ✅ $summary"
-                                    else "   ├─ $nodeName  ✅"
+                                    "   ├─ $nodeName  ✅ ${formatFlowText(flow)}$summary",
+                                    "$pipelineName::$nodeName"
                                 )
                             }
                         }
@@ -5110,8 +5166,8 @@ abstract class QuantFragmentBase : Fragment() {
             nodeCard.addView(flowTv)
 
             // 第三/四行：输入/输出股票列表
-            // 规则：仅当 输出 < 10 且 输入 > 输出（确实发生了有效过滤）时才展示具体列表，避免长列表刷屏
-            val showList = node.outputCount < 10 && node.inputCount > node.outputCount
+            // 规则：用户要求打印 pipeline 中所有节点的输入/输出具体股票（输入来源 + 输出结果），不再按数量截断
+            val showList = true
 
             // 第三行：输入股票列表（显示 名称(代码)）
             if (showList && node.inputCodes.isNotEmpty()) {

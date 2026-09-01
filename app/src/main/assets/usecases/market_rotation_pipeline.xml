@@ -25,8 +25,9 @@
     <Node id="n_a_market" name="大盘多周期研判" module="a_market_analysis" />
     <!-- 2. 板块强弱监测（近 N 日板块涨幅/热度/主力资金排序） -->
     <Node id="n_sector_strength" name="板块强弱监测" module="sector_strength" />
-    <!-- 3. 大盘方向研判（趋势+温度 → BULLISH/OSCILLATION/BEARISH，供周期矩阵路由 if 条件使用） -->
-    <Node id="n_adaptive" name="大盘方向研判" module="market_direction" />
+    <!-- 3. 大盘方向研判（趋势+温度 → BULLISH/OSCILLATION/BEARISH，供周期矩阵路由 if 条件使用）
+         注意：节点 id 必须独立于 n_adaptive（adaptive_params），否则会被选股公共管线覆盖 -->
+    <Node id="n_market_direction" name="大盘方向研判" module="market_direction" />
     <!-- 4. 风格轮动判断（大盘环境 + 板块强弱 → 风格标签/建议周期/风险） -->
     <Node id="n_style_rotation" name="风格轮动判断" module="style_rotation" />
   </NodeList>
@@ -47,7 +48,7 @@
     <Link>
       <SourceNodeId>n_a_market</SourceNodeId>
       <SourcePortId>0</SourcePortId>
-      <TargetNodeId>n_adaptive</TargetNodeId>
+      <TargetNodeId>n_market_direction</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
     <Link>

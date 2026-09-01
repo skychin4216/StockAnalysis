@@ -13,6 +13,7 @@
   → PUT 到 COS(candidates_key)，APK 工作台「PC 候选」Tab 下载展示
 """
 import argparse
+import datetime
 import json
 import os
 import sys
@@ -25,6 +26,8 @@ import cos_utils  # noqa: E402
 from _full_cycle_backtest import INDEXES, load_cache, market_state  # noqa: E402
 from backtest_guangmo import PARAMS, analyze_snaps  # noqa: E402
 from _industry_map import build_industry  # noqa: E402
+from _rotation_engine import rotate as rotation_rotate, load_cache as rotation_load_cache  # noqa: E402
+from _rotation_engine import macro_div_pref, HIGH_DIVIDEND_SECTORS, oil_high, OIL_HIGH_SECTORS  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -62,6 +65,16 @@ def board_of(code):
 
 def score_pool(cache, asof, trend):
     """每只池内股四周期命中率，返回 {secid: {period, ratio, pass, total}}。"""
+    # v10: 大盘量能——上证指数当日量/前5日均量（<1 大盘缩量，个股量能阈值动态下调）
+    market_vol_ratio = None
+    try:
+        idx_snaps = (cache.get("sh000001", {}) or {}).get("snaps") or []
+        if len(idx_snaps) >= 6:
+            vol5 = sum(s["volume"] for s in idx_snaps[-6:-1]) / 5.0
+            if vol5 > 0:
+                market_vol_ratio = idx_snaps[-1]["volume"] / vol5
+    except Exception:
+        market_vol_ratio = None
     score = {}
     for code, ent in cache.items():
         if code.startswith("sh000") or code.startswith("sz399"):
@@ -72,17 +85,22 @@ def score_pool(cache, asof, trend):
         sub = [dict(s) for s in snaps]
         sub[-1]["name"] = ent.get("name") or code
         best = None
+        ambush = False
         for period, p in PARAMS.items():
             try:
-                r = analyze_snaps(sub, p, trend)
+                r = analyze_snaps(sub, p, trend, market_vol_ratio=market_vol_ratio)
             except Exception:
                 continue
             ratio = r["passCount"] / max(r["totalChecks"], 1)
+            # v9: 低位埋伏通过直接记录（中长线：均线粘合+三日不新低）
+            if r.get("passed") and p.get("allowLowAmbush", False):
+                ambush = True
             if best is None or ratio > best[1]:
                 best = (period, ratio, r["passCount"], r["totalChecks"])
         if best:
             score[code] = {"period": best[0], "ratio": round(best[1], 2),
-                           "pass": best[2], "total": best[3]}
+                           "pass": best[2], "total": best[3],
+                           "ambush": ambush}
     return score
 
 
@@ -120,7 +138,8 @@ def build_candidates(cache, industry):
     score = score_pool(cache, asof, trend)
     groups = {p: [] for p in PARAMS}
     for code, s in score.items():
-        if s["ratio"] >= RATIO_THRESHOLD.get(s["period"], 0.5):
+        # v9: 低位埋伏（中长线：均线粘合+三日不新低）直接放行，不再依赖 ratio 阈值
+        if s["ratio"] >= RATIO_THRESHOLD.get(s["period"], 0.5) or s.get("ambush"):
             ent = cache.get(code, {})
             groups[s["period"]].append({
                 "secid": code,
@@ -128,10 +147,43 @@ def build_candidates(cache, industry):
                 "industry": industry.get(code[2:], "其他"),
                 "board": board_of(code[2:]),
                 "pass": s["pass"], "total": s["total"], "ratio": s["ratio"],
+                "ambush": s.get("ambush", False),
             })
     for p in groups:
         groups[p].sort(key=lambda r: (r["ratio"], r["pass"]), reverse=True)
         groups[p] = groups[p][:GROUP_SIZE]
+
+    # 宏观因子补位（中长线）：震荡期四周期常选不出票，以板块动量 + 宏观属性补位中线/长线
+    # ① 美债利率高+美元信用下调+中国国债收益率低 → 高股息（银行/煤炭/化工/电力/保险）
+    # ② 油价≥80美元 → 化工产业链景气，低位埋伏优先
+    macro_pool = []
+    if macro_div_pref() or oil_high():
+        for code, s in score.items():
+            ent = cache.get(code, {})
+            ind = industry.get(code[2:], "其他")
+            if macro_div_pref() and ind in HIGH_DIVIDEND_SECTORS:
+                macro_pool.append((s["ratio"], s["pass"], s["total"], code, ent.get("name") or code, ind, "宏观:高股息类债占优"))
+            elif oil_high() and ind in OIL_HIGH_SECTORS:
+                macro_pool.append((s["ratio"], s["pass"], s["total"], code, ent.get("name") or code, ind, "宏观:油价≥80化工景气"))
+        macro_pool.sort(key=lambda r: (r[0], r[1]), reverse=True)
+        for p in ("中线", "长线"):
+            need = max(0, GROUP_SIZE - len(groups[p]))
+            if need <= 0:
+                continue
+            for ratio, pass_n, total, code, nm, ind, mreason in macro_pool[:need]:
+                if ratio <= 0:
+                    continue
+                # 同一股票已出现在其他周期则跳过（避免重复推荐）
+                if any(g["secid"] == code for g in groups[p]):
+                    continue
+                groups[p].append({
+                    "secid": code, "name": nm, "industry": ind,
+                    "board": board_of(code[2:]),
+                    "pass": pass_n, "total": total, "ratio": ratio,
+                    "macro_div": True, "macro_reason": mreason,
+                })
+            groups[p].sort(key=lambda r: (r["ratio"], r["pass"]), reverse=True)
+            groups[p] = groups[p][:GROUP_SIZE]
     prepared = []
     for code, s in score.items():
         ent = cache.get(code, {})
@@ -139,7 +191,8 @@ def build_candidates(cache, industry):
             "secid": code, "name": ent.get("name") or code,
             "industry": industry.get(code[2:], "其他"),
             "board": board_of(code[2:]), "period": s["period"],
-            "pass": s["pass"], "total": s["total"], "ratio": s["ratio"]})
+            "pass": s["pass"], "total": s["total"], "ratio": s["ratio"],
+            "ambush": s.get("ambush", False)})
     prepared.sort(key=lambda r: (r["ratio"], r["pass"]), reverse=True)
     prepared = prepared[:PREPARED_SIZE]
     advice = {
@@ -148,8 +201,30 @@ def build_candidates(cache, industry):
         "OSCILLATION": "震荡市，结构性行情，聚焦板块轮动，快进快出",
         "NO_DATA": "数据不足，等待行情库更新",
     }[trend]
+    rotation = rotation_rotate(rotation_load_cache(), asof, industry, top=10)
+    # 轮动龙头并入「板块轮动」组：强势板块的龙头（策略可能选不出，但板块动量已确认）
+    rot_group = []
+    for r in rotation:
+        for l in r.get("leaders", []):
+            rot_group.append({
+                "secid": l["secid"], "name": l["name"],
+                "industry": r["industry"],
+                "board": l["board"],
+                "sector_mom": r["sec_mom"], "mom20": l["mom20"],
+                "catalyst": r.get("catalyst_reason", ""),
+            })
+    # 去重 + 排序(板块动量×个股动量)
+    seen = set()
+    rot_unique = []
+    for it in rot_group:
+        if it["secid"] in seen:
+            continue
+        seen.add(it["secid"])
+        rot_unique.append(it)
+    rot_unique.sort(key=lambda r: (r["sector_mom"], r["mom20"]), reverse=True)
+    groups["板块轮动"] = rot_unique[:GROUP_SIZE * 2]
     return {
-        "schema": 1,
+        "schema": 2,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "asof": asof,
         "market_state": trend,
@@ -157,6 +232,7 @@ def build_candidates(cache, industry):
         "groups": groups,
         "prepared": prepared,
         "hot_sectors": hot_sectors(cache, industry, asof),
+        "rotation": rotation,
         "pool_total": len(cache),
     }
 
@@ -203,6 +279,20 @@ def send_wechat(new_data, old_data, cfg):
     title = "📈 新买入点 %s 共%d只" % (new_data["asof"], sum(len(v) for v in added.values()))
     content = ("大盘:%s | 池:%d只\n" % (new_data["market_state"], new_data["pool_total"])
                + "\n".join(lines))
+    rotation = new_data.get("rotation") or []
+    if rotation:
+        rot_lines = ["\n🎡 板块轮动 TOP%d:" % min(len(rotation), 5)]
+        for r in rotation[:5]:
+            tag = "[催化剂]" if r.get("catalyst_reason") else ""
+            names = " ".join(l["name"] for l in r["leaders"][:3])
+            rot_lines.append("  %s %s %+.1f%% %s\n    %s" % (
+                r["industry"], tag, r["sec_mom"], r["catalyst_reason"] or "", names))
+        content += "\n".join(rot_lines)
+    return _push_wechat(title, content, cfg)
+
+
+def _push_wechat(title, content, cfg):
+    """通过 pushplus(优先)/serverchan 推送微信。返回是否已发送。"""
     sent = False
     token = cfg.get("pushplus_token", "").strip()
     if token:
@@ -256,8 +346,59 @@ def upload_candidates(data, candidates_key=None):
     return ok
 
 
+# ── 4.5 交易时间与定时推送 ─────────────────────────────────────────────
+def in_trading_time(now=None):
+    """是否处于 A 股交易时段(工作日 9:30-11:30, 13:00-15:00)。"""
+    now = now or datetime.datetime.now()
+    if now.weekday() >= 5:
+        return False
+    hm = now.hour * 60 + now.minute
+    return (9 * 60 + 30) <= hm <= (11 * 60 + 30) or (13 * 60) <= hm <= (15 * 60)
+
+
+def next_trading_start(now=None):
+    """下一个交易时段开始时间(当天下午 13:00 或次一工作日 9:30)。"""
+    now = now or datetime.datetime.now()
+    if now.weekday() < 5 and now.hour < 13:
+        return now.replace(hour=13, minute=0, second=0, microsecond=0)
+    d = now.date()
+    while True:
+        d += datetime.timedelta(days=1)
+        if d.weekday() < 5:
+            return datetime.datetime.combine(d, datetime.time(9, 30))
+
+
+def send_wechat_timed(data, cfg):
+    """定时(每30分钟)概览推送：大盘 + 各周期候选 + 板块轮动，无论有无新信号都发。"""
+    lines = []
+    for period in ("超短", "短线", "中线", "长线", "板块轮动"):
+        items = (data.get("groups") or {}).get(period, [])
+        if not items:
+            continue
+        head = "🟢 %s (%d只)" % (period, len(items))
+        body = ["  %s %s(%s) %s" % (it["name"], it.get("board", ""),
+                                    it["secid"][2:], it.get("industry", ""))
+                for it in items[:5]]
+        lines.append(head + "\n" + "\n".join(body))
+    rotation = data.get("rotation") or []
+    if rotation:
+        rot_lines = ["\n🎡 板块轮动 TOP%d:" % min(len(rotation), 5)]
+        for r in rotation[:5]:
+            tag = "[催化剂]" if r.get("catalyst_reason") else ""
+            names = " ".join(l["name"] for l in r["leaders"][:3])
+            rot_lines.append("  %s %s %+.1f%%\n    %s" % (
+                r["industry"], tag, r["sec_mom"], names))
+        lines.append("\n".join(rot_lines))
+    title = "⏰ 定时选股 %s %s" % (
+        data.get("asof", ""),
+        datetime.datetime.now().strftime("%H:%M"))
+    content = ("大盘:%s | 池:%d只\n" % (data["market_state"], data["pool_total"])
+               + "\n".join(lines))
+    return _push_wechat(title, content, cfg)
+
+
 # ── 5. 主流程 ──────────────────────────────────────────────────────────
-def run_once(dry=False, candidates_key=None):
+def run_once(dry=False, candidates_key=None, timed_push=False):
     cache = load_cache()
     industry = build_industry()
     data = build_candidates(cache, industry)
@@ -271,6 +412,11 @@ def run_once(dry=False, candidates_key=None):
     print("大盘 %s | asof %s | 池 %d" % (data["market_state"], data["asof"], data["pool_total"]))
     for p, items in data["groups"].items():
         print("  [%s] %s" % (p, ", ".join("%s%s" % (it["name"], it["secid"][2:]) for it in items)))
+    for r in data.get("rotation", [])[:5]:
+        cat = " [催化剂]" if r.get("catalyst_reason") else ""
+        print("  🎡 %s%s 板块动量%+.1f%% 龙头:%s" % (
+            r["industry"], cat, r["sec_mom"],
+            " ".join(l["name"] for l in r["leaders"][:3])))
     old = {}
     if os.path.exists(LAST_FILE):
         try:
@@ -281,7 +427,13 @@ def run_once(dry=False, candidates_key=None):
     if dry:
         print("[dry] 跳过通知与上传")
         return 0
-    send_wechat(data, candidate_secids(old) if old else set(), load_notify_cfg())
+    cfg = load_notify_cfg()
+    if timed_push:
+        # 30 分钟定时：无论有无新信号都推送当前候选概览
+        send_wechat_timed(data, cfg)
+    else:
+        # 盘中新信号：仅在新买点出现时推送
+        send_wechat(data, candidate_secids(old) if old else set(), cfg)
     upload_candidates(data, candidates_key)
     with open(LAST_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
@@ -291,23 +443,33 @@ def run_once(dry=False, candidates_key=None):
 def main():
     ap = argparse.ArgumentParser(description="PC 候选清单发布（选股→通知→COS）")
     ap.add_argument("--once", action="store_true", help="执行一次")
-    ap.add_argument("--daemon", action="store_true", help="守护轮询（默认 300 秒）")
-    ap.add_argument("--interval", type=int, default=300, help="轮询间隔秒")
+    ap.add_argument("--daemon", action="store_true", help="守护轮询（默认交易时段每 30 分钟）")
+    ap.add_argument("--interval", type=int, default=1800, help="轮询间隔秒（默认 1800=30 分钟）")
     ap.add_argument("--dry", action="store_true", help="不通知不上传（调试）")
     ap.add_argument("--key", default=None, help="COS candidates_key，默认 stockanalysis/quant/candidates.json")
+    ap.add_argument("--timed", action="store_true", help="定时模式：每轮都推送概览到微信（默认守护模式开启）")
     args = ap.parse_args()
     if args.daemon:
-        print("守护轮询启动，每 %d 秒一次（Ctrl+C 退出）" % args.interval)
+        print("守护轮询启动：交易时段(工作日 9:30-11:30/13:00-15:00)每 %d 秒选股并推送微信" % args.interval)
         while True:
-            try:
-                run_once(dry=args.dry, candidates_key=args.key)
-            except KeyboardInterrupt:
-                break
-            except Exception as e:
-                print("轮询异常:", type(e).__name__, e)
-            time.sleep(args.interval)
+            if in_trading_time():
+                try:
+                    run_once(dry=args.dry, candidates_key=args.key,
+                             timed_push=not args.dry)
+                except KeyboardInterrupt:
+                    break
+                except Exception as e:
+                    print("轮询异常:", type(e).__name__, e)
+                time.sleep(args.interval)
+            else:
+                nxt = next_trading_start()
+                wait = max((nxt - datetime.datetime.now()).total_seconds(), 1)
+                print("[%s] 非交易时段，等待 %.1f 分钟 → %s" % (
+                    datetime.datetime.now().strftime("%H:%M"), wait / 60,
+                    nxt.strftime("%m-%d %H:%M")))
+                time.sleep(min(wait, 600))
         return 0
-    return run_once(dry=args.dry, candidates_key=args.key)
+    return run_once(dry=args.dry, candidates_key=args.key, timed_push=args.timed)
 
 
 if __name__ == "__main__":

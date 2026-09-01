@@ -10,9 +10,9 @@
   <description>周期专属：牛市/震荡/熊市 DAG（公共研判由工作台统一执行）</description>
   <steps>
     <!-- 周期×环境矩阵路由：根据 n_adaptive（公共研判播种）输出的大盘方向选择环境专属 pipeline -->
-    <pipeline ref="usecases/mid_term_bullish_pipeline.xml" name="中线·牛市DAG（S5深回踩严 tp+3.0/sl-8.0）" if="${n_adaptive}.direction == 'BULLISH'" />
-    <pipeline ref="usecases/mid_term_oscillation_pipeline.xml" name="中线·震荡DAG（S1粘合突破 tp+3.0/sl-8.0）" if="${n_adaptive}.direction == 'OSCILLATION'" />
-    <pipeline ref="usecases/mid_term_bearish_pipeline.xml" name="中线·熊市DAG（S5深回踩+资金流 tp+3.0/sl-8.0）" if="${n_adaptive}.direction == 'BEARISH'" />
+    <pipeline ref="usecases/mid_term_bullish_pipeline.xml" name="中线·牛市DAG（S5深回踩严 tp+3.0/sl-8.0）" if="${n_market_direction}.direction == 'BULLISH'" />
+    <pipeline ref="usecases/mid_term_oscillation_pipeline.xml" name="中线·震荡DAG（S1粘合突破 tp+3.0/sl-8.0）" if="${n_market_direction}.direction == 'OSCILLATION'" />
+    <pipeline ref="usecases/mid_term_bearish_pipeline.xml" name="中线·熊市DAG（S5深回踩+资金流 tp+3.0/sl-8.0）" if="${n_market_direction}.direction == 'BEARISH'" />
   </steps>
   <config>
     <param name="orderType" value="MidTermQuant" />

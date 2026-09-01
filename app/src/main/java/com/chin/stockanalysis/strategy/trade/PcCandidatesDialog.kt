@@ -10,15 +10,18 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.Window
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.chin.stockanalysis.cloud.CloudSyncManager
+import com.chin.stockanalysis.stock.data.PcBridgeClient
 import com.chin.stockanalysis.stock.database.AiSelectedStockEntity
 import com.chin.stockanalysis.stock.database.AppBackgroundRunner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -46,6 +49,10 @@ class PcCandidatesDialog(context: Context) : Dialog(context) {
     private lateinit var listBox: LinearLayout
     private lateinit var emptyView: TextView
     private lateinit var addBtn: TextView
+    private lateinit var hostInput: EditText
+    private lateinit var connectBtn: TextView
+    private var watchJob: Job? = null
+    private var usingPc = false
 
     private fun Int.dp() = (this * density + 0.5f).toInt()
 
@@ -60,6 +67,7 @@ class PcCandidatesDialog(context: Context) : Dialog(context) {
     }
 
     override fun dismiss() {
+        watchJob?.cancel()
         scope.cancel()
         super.dismiss()
     }
@@ -82,9 +90,36 @@ class PcCandidatesDialog(context: Context) : Dialog(context) {
             setTextColor(Color.WHITE)
             setTypeface(null, Typeface.BOLD)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        titleBar.addView(TextBtn("🎛 远程") { openRemoteControl() })
         titleBar.addView(TextBtn("🔄") { refresh() })
         titleBar.addView(TextBtn("✕") { dismiss() })
         root.addView(titleBar)
+
+        // ── PC 直连行 ──
+        val pcBar = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(12.dp(), 8.dp(), 12.dp(), 8.dp())
+            setBackgroundColor(0xFFE3F2FD.toInt())
+        }
+        hostInput = EditText(context).apply {
+            hint = "PC 地址: 192.168.x.x:8888"
+            textSize = 13f
+            setText(PcBridgeClient.loadHost(context))
+            setSingleLine(true)
+        }
+        pcBar.addView(hostInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        connectBtn = TextView(context).apply {
+            text = "🔗 直连"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(14.dp(), 8.dp(), 14.dp(), 8.dp())
+            background = rnd(0xFF00838F.toInt(), 6.dp())
+            setOnClickListener { connectToPc() }
+        }
+        pcBar.addView(connectBtn)
+        root.addView(pcBar)
 
         // ── 状态行 ──
         statusView = TextView(context).apply {
@@ -135,6 +170,10 @@ class PcCandidatesDialog(context: Context) : Dialog(context) {
         return root
     }
 
+    private fun openRemoteControl() {
+        RemoteControlDialog(context).show()
+    }
+
     private fun TextBtn(label: String, onClick: () -> Unit) = TextView(context).apply {
         text = label
         textSize = 15f
@@ -154,6 +193,17 @@ class PcCandidatesDialog(context: Context) : Dialog(context) {
     // ═══════════════════════════════════════════
 
     private fun refresh() {
+        val host = PcBridgeClient.loadHost(context)
+        if (host.isNotBlank()) {
+            connectToPc()
+            return
+        }
+        refreshFromCloud()
+    }
+
+    private fun refreshFromCloud() {
+        usingPc = false
+        watchJob?.cancel()
         val cfg = cloud.loadConfig()
         if (!cloud.isConfigured(cfg)) {
             showEmpty("云同步未配置（app_config cloud_sync）\n配置 bucket/密钥后即可下载 PC 候选")
@@ -177,6 +227,43 @@ class PcCandidatesDialog(context: Context) : Dialog(context) {
                     }
                 }
             )
+        }
+    }
+
+    /** 直连 PC 服务器(exe): 拉取候选 + 启动长轮询实时推送。 */
+    private fun connectToPc() {
+        val host = hostInput.text.toString().trim()
+        if (host.isEmpty()) {
+            Toast.makeText(context, "请输入 PC 地址（如 192.168.1.100:8888）", Toast.LENGTH_SHORT).show()
+            return
+        }
+        PcBridgeClient.saveHost(context, host)
+        usingPc = true
+        watchJob?.cancel()
+        statusView.text = "正在连接 PC 服务器 $host …"
+        addBtn.isEnabled = false
+        scope.launch {
+            try {
+                val json = PcBridgeClient.fetchCandidates(host)
+                latestJson = json
+                statusView.text = "🔗 PC 直连 $host 成功（实时推送中）"
+                render(json)
+                startWatch(host)
+            } catch (e: Exception) {
+                usingPc = false
+                statusView.text = "PC 直连失败：${e.message}"
+                Toast.makeText(context, "无法连接 PC：${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    /** 长轮询: PC 候选更新时自动刷新。 */
+    private fun startWatch(host: String) {
+        watchJob?.cancel()
+        watchJob = PcBridgeClient.watch(host, scope) { json ->
+            latestJson = json
+            statusView.text = "🔗 PC 直连 $host 已更新 ${System.currentTimeMillis() % 100000}"
+            render(json)
         }
     }
 
@@ -231,6 +318,15 @@ class PcCandidatesDialog(context: Context) : Dialog(context) {
                 for (i in 0 until hot.length()) {
                     val h = hot.getJSONObject(i)
                     listBox.addView(hotRow(h.optString("industry"), h.optDouble("avg_pct_20d"), h.optString("names")))
+                }
+            }
+            // 板块轮动（新 schema 2: 板块动量 + 催化剂 + 龙头）
+            val rot = j.optJSONArray("rotation") ?: org.json.JSONArray()
+            if (rot.length() > 0) {
+                listBox.addView(sectionTitle("🎡 板块轮动（动量+催化剂）"))
+                for (i in 0 until rot.length()) {
+                    val r = rot.getJSONObject(i)
+                    listBox.addView(rotationRow(r))
                 }
             }
             addBtn.isEnabled = total > 0
@@ -322,6 +418,63 @@ class PcCandidatesDialog(context: Context) : Dialog(context) {
             gravity = Gravity.END
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         return row
+    }
+
+    /** 板块轮动行: 板块名 + 动量 + 催化剂理由 + 龙头股 */
+    private fun rotationRow(r: JSONObject): View {
+        val industry = r.optString("industry", "-")
+        val secMom = r.optDouble("sec_mom", 0.0)
+        val cat = r.optString("catalyst_reason", "")
+        val leaders = r.optJSONArray("leaders") ?: org.json.JSONArray()
+        val leaderNames = buildString {
+            for (i in 0 until leaders.length()) {
+                if (i > 0) append(" ")
+                append(leaders.getJSONObject(i).optString("name", "-"))
+            }
+        }
+        val card = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(10.dp(), 8.dp(), 10.dp(), 8.dp())
+            background = rnd(0xFFF3E5F5.toInt(), 8.dp())
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            lp.bottomMargin = 6.dp()
+            layoutParams = lp
+        }
+        val top = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        top.addView(TextView(context).apply {
+            text = industry
+            textSize = 13f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(0xFF4A148C.toInt())
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        top.addView(TextView(context).apply {
+            text = String.format(Locale.CHINA, "%+.1f%%", secMom)
+            textSize = 13f
+            setTextColor(0xFFD32F2F.toInt())
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.END
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        card.addView(top)
+        if (cat.isNotBlank()) {
+            card.addView(TextView(context).apply {
+                text = "💡 $cat"
+                textSize = 11f
+                setTextColor(0xFF6A1B9A.toInt())
+                setPadding(0, 4.dp(), 0, 0)
+            })
+        }
+        if (leaderNames.isNotBlank()) {
+            card.addView(TextView(context).apply {
+                text = "龙头: $leaderNames"
+                textSize = 11f
+                setTextColor(0xFF455A64.toInt())
+                setPadding(0, 2.dp(), 0, 0)
+            })
+        }
+        return card
     }
 
     // ═══════════════════════════════════════════

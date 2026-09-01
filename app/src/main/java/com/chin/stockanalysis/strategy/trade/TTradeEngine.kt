@@ -2,7 +2,10 @@ package com.chin.stockanalysis.strategy.trade
 
 import android.content.Context
 import android.util.Log
+import com.chin.stockanalysis.stock.StockRealtime
 import com.chin.stockanalysis.stock.database.StockDatabase
+import com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader
+import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
 import kotlin.math.abs
 
 /**
@@ -24,7 +27,15 @@ data class TTradeSignal(
     val volumeRatio: Double = 1.0,   // 量比（今日/5日均量）
     val patternName: String = "",     // 匹配到的K线形态名称
     val patternDirection: String = "", // "BULLISH" / "BEARISH"
-    val confidence: Int = 50          // 信号置信度 0-100
+    val confidence: Int = 50,         // 信号置信度 0-100
+    // ── v5 增强：5-7日高低点区间（指导高弹性股票做T的低吸/高抛区间）──
+    val lowZoneLow: Double = 0.0,     // 近5-7日低吸区间下沿（近N日最低价）
+    val lowZoneHigh: Double = 0.0,    // 近5-7日低吸区间上沿（近N日低点均值）
+    val highZoneLow: Double = 0.0,    // 近5-7日高抛区间下沿（近N日高点均值）
+    val highZoneHigh: Double = 0.0,   // 近5-7日高抛区间上沿（近N日最高价）
+    val inLowZone: Boolean = false,   // 当前价是否位于低吸区间（可大胆买入）
+    val inHighZone: Boolean = false,  // 当前价是否位于高抛区间（可大胆卖出）
+    val zoneDays: Int = 0             // 统计区间天数（5-7）
 )
 
 /**
@@ -103,6 +114,22 @@ class TTradeEngine(private val context: Context) {
         val recentHigh = window20.map { it.high }.maxOrNull() ?: latest.close
         val avgBody = snaps.takeLast(10).map { abs(it.close - it.open) }.average()
 
+        // ── v5: 5-7 日高低点区间（低吸/高抛参考）──
+        // 取最近 5-7 个交易日：低位区间 = [近N日最低价, 近N日低点均值]，高位区间 = [近N日高点均值, 近N日最高价]
+        val zoneDays = minOf(7, maxOf(5, snaps.size - 1)).coerceIn(5, 7)
+        val windowZone = snaps.takeLast(zoneDays)
+        val zoneLowMin = windowZone.map { it.low }.minOrNull() ?: recentLow
+        val zoneLowAvg = windowZone.map { it.low }.average()
+        val zoneHighAvg = windowZone.map { it.high }.average()
+        val zoneHighMax = windowZone.map { it.high }.maxOrNull() ?: recentHigh
+        val lowZoneLow = zoneLowMin
+        val lowZoneHigh = zoneLowAvg
+        val highZoneLow = zoneHighAvg
+        val highZoneHigh = zoneHighMax
+        // 当前价是否落入区间（含约 0.5% 缓冲）
+        val inLowZone = latest.close in lowZoneLow..(lowZoneHigh * 1.01)
+        val inHighZone = latest.close in (highZoneLow * 0.99)..highZoneHigh
+
         // 支撑位和阻力位（系数来自 PC 拟合参数）
         val supportPrice = listOf(recentLow, ma5 * p.supportMa5Factor, ma10 * p.supportMa10Factor).maxOrNull() ?: latest.close
         val resistancePrice = listOf(recentHigh, ma5 * p.resistanceMa5Factor, ma10 * p.resistanceMa10Factor).minOrNull() ?: latest.close
@@ -161,6 +188,16 @@ class TTradeEngine(private val context: Context) {
 
                     conf = conf.coerceIn(0, 100)
 
+                    // v5: 低吸区间提示 — 当前价位于近N日低位区时大胆买入
+                    if (inLowZone) {
+                        conf = (conf + p.elasticityConfBonus).coerceIn(0, 100)
+                        reasons.add("✔近${zoneDays}日低吸区(${"%.2f".format(lowZoneLow)}~${"%.2f".format(lowZoneHigh)})可大胆买")
+                    } else if (inHighZone) {
+                        reasons.add("⚠️近${zoneDays}日高抛区(${"%.2f".format(highZoneLow)}~${"%.2f".format(highZoneHigh)})不宜追高")
+                    }
+
+                    conf = conf.coerceIn(0, 100)
+
                     signals.add(
                         TTradeSignal(
                             stockCode = stockCode, stockName = stockName,
@@ -171,7 +208,10 @@ class TTradeEngine(private val context: Context) {
                             expectedProfitPct = expectedPct, periodType = periodType,
                             trendDirection = trendDir, rsi = rsi,
                             volumeRatio = volumeRatio, patternName = patternName,
-                            patternDirection = patternDir, confidence = conf
+                            patternDirection = patternDir, confidence = conf,
+                            lowZoneLow = lowZoneLow, lowZoneHigh = lowZoneHigh,
+                            highZoneLow = highZoneLow, highZoneHigh = highZoneHigh,
+                            inLowZone = inLowZone, inHighZone = inHighZone, zoneDays = zoneDays
                         )
                     )
                 }
@@ -209,6 +249,14 @@ class TTradeEngine(private val context: Context) {
                     if (trendDir.contains("下跌")) { conf += p.rtConfTrendDown; reasons.add("趋势:$trendDir") }
                     if (trendDir.contains("上升")) { conf += p.rtConfTrendUp; reasons.add("⚠️趋势:$trendDir") }
 
+                    // v5: 高抛区间提示 — 当前价位于近N日高位区时大胆卖出
+                    if (inHighZone) {
+                        conf = (conf + p.elasticityConfBonus).coerceIn(0, 100)
+                        reasons.add("✔近${zoneDays}日高抛区(${"%.2f".format(highZoneLow)}~${"%.2f".format(highZoneHigh)})可大胆卖")
+                    } else if (inLowZone) {
+                        reasons.add("⚠️近${zoneDays}日低吸区(${"%.2f".format(lowZoneLow)}~${"%.2f".format(lowZoneHigh)})不宜杀跌")
+                    }
+
                     conf = conf.coerceIn(0, 100)
 
                     signals.add(
@@ -221,7 +269,10 @@ class TTradeEngine(private val context: Context) {
                             expectedProfitPct = expectedPct, periodType = periodType,
                             trendDirection = trendDir, rsi = rsi,
                             volumeRatio = volumeRatio, patternName = patternName,
-                            patternDirection = patternDir, confidence = conf
+                            patternDirection = patternDir, confidence = conf,
+                            lowZoneLow = lowZoneLow, lowZoneHigh = lowZoneHigh,
+                            highZoneLow = highZoneLow, highZoneHigh = highZoneHigh,
+                            inLowZone = inLowZone, inHighZone = inHighZone, zoneDays = zoneDays
                         )
                     )
                 }
@@ -273,6 +324,131 @@ class TTradeEngine(private val context: Context) {
                     }
                 }
             }
+        }
+
+        return signals
+    }
+
+    /**
+     * 盘中做T增强信号（v4）
+     *
+     * 基于实时行情 + 大盘环境预判，在盘中生成做T信号：
+     * - 震荡市判断：近20日上证指数 |累计涨跌幅| <= indexOscillationTrendPct 且
+     *   平均日振幅 <= indexOscillationAmpBandPct → 震荡市，适合高抛低吸
+     * - 关键时段：9:40 与 13:10 前后 intradayWindowMinutes 分钟内为日内高抛低吸窗口
+     * - 拉升卖出：实时涨幅 >= intradayRallySellPct → 反T卖出（高抛）
+     * - 急跌买入：实时跌幅 <= -intradayPlungeBuyPct → 做T买入（低吸）
+     *
+     * @param stockCode 股票代码
+     * @param basePositionQty 底仓数量（须 ≥100 才可做T）
+     * @param periodType 周期类型
+     * @param realtime 个股实时行情（可为空，为空则无法生成盘中信号）
+     * @param indexChgPct 上证指数实时涨跌幅（%），用于大盘环境预判
+     * @param indexSnaps 上证指数近30日日K（用于震荡市判断），可为空
+     * @return 做T信号列表（仅包含开仓腿 T_BUY / RT_SELL）
+     */
+    suspend fun generateIntradaySignals(
+        stockCode: String,
+        basePositionQty: Int,
+        periodType: String,
+        realtime: StockRealtime?,
+        indexChgPct: Double = 0.0,
+        indexSnaps: List<DailySnapshotEntity> = emptyList()
+    ): List<TTradeSignal> {
+        if (basePositionQty < 100) return emptyList()
+        if (realtime == null || realtime.price <= 0) return emptyList()
+        val p = BacktestParamsLoader.tTradeParams(context)
+        val db = StockDatabase.getInstance(context)
+        val snaps = db.dailySnapshotDao().getByCode(stockCode, 30).sortedBy { it.date }
+        if (snaps.size < 10) return emptyList()
+
+        // 弹性识别：低波动股票无做T差价
+        val avgAmplitudePct = avgDailyAmplitudePct(snaps)
+        if (avgAmplitudePct < p.minDailyAmplitudePct) return emptyList()
+        val isHighElasticity = avgAmplitudePct >= p.highElasticityAmplitudePct
+
+        val latest = snaps.last()
+        val stockName = latest.name
+
+        // 做T数量：底仓的 tQtyRatio（默认40%），不足一手不触发
+        val tQty = if (basePositionQty >= 100) {
+            minOf((basePositionQty * p.tQtyRatio).toInt() / 100 * 100, basePositionQty / 100 * 100)
+        } else 0
+        if (tQty <= 0) return emptyList()
+
+        // ── 大盘震荡市判断 ──
+        var isOscillation = abs(indexChgPct) <= p.indexOscillationTrendPct
+        if (indexSnaps.size >= 5) {
+            val idx = indexSnaps.sortedBy { it.date }
+            val first = idx.first(); val last = idx.last()
+            val trend = if (first.close > 0) abs((last.close - first.close) / first.close * 100) else 999.0
+            val amp = avgDailyAmplitudePct(idx)
+            isOscillation = trend <= p.indexOscillationTrendPct && amp <= p.indexOscillationAmpBandPct
+        }
+
+        // ── 盘中关键时段判断（9:40 / 13:10）──
+        val now = java.time.LocalTime.now()
+        fun inWindow(hour: Int, minute: Int): Boolean {
+            val target = java.time.LocalTime.of(hour, minute)
+            val diffMin = abs(now.toSecondOfDay() - target.toSecondOfDay()) / 60.0
+            return diffMin <= p.intradayWindowMinutes
+        }
+        val inKeyWindow = inWindow(9, 40) || inWindow(13, 10)
+
+        // 实时涨跌幅
+        val chgPct = if (realtime.yestClose > 0)
+            (realtime.price - realtime.yestClose) / realtime.yestClose * 100 else realtime.changePercent
+
+        val signals = mutableListOf<TTradeSignal>()
+
+        // ── 拉升 ≥3% → 反T卖出（高抛）──
+        if (chgPct >= p.intradayRallySellPct) {
+            var conf = p.baseConfidence
+            val reasons = mutableListOf<String>()
+            reasons.add("盘中拉升${"%.1f".format(chgPct)}%≥${p.intradayRallySellPct}%，高抛反T卖出")
+            if (inKeyWindow) { conf += p.intradayWindowConfBonus; reasons.add("关键时段(9:40/13:10)") }
+            if (isOscillation) { conf += p.intradayOscillationConfBonus; reasons.add("大盘震荡市适合高抛") }
+            if (isHighElasticity) { conf += p.elasticityConfBonus; reasons.add("高弹性(振幅${"%.1f".format(avgAmplitudePct)}%)") }
+            conf = conf.coerceIn(0, 100)
+            // 反T卖出目标：回落 pairProfitPct 后买回
+            val targetPrice = realtime.price * (1 - p.pairProfitPct / 100)
+            signals.add(
+                TTradeSignal(
+                    stockCode = stockCode, stockName = stockName,
+                    signalType = TTradeType.RT_SELL,
+                    suggestedPrice = realtime.price, targetPrice = targetPrice,
+                    quantity = tQty,
+                    reason = reasons.joinToString("；"),
+                    expectedProfitPct = p.pairProfitPct, periodType = periodType,
+                    trendDirection = "盘中拉升", rsi = 50.0, volumeRatio = 1.0,
+                    confidence = conf
+                )
+            )
+        }
+
+        // ── 急跌 ≤-3% → 做T买入（低吸）──
+        if (chgPct <= -p.intradayPlungeBuyPct) {
+            var conf = p.baseConfidence
+            val reasons = mutableListOf<String>()
+            reasons.add("盘中急跌${"%.1f".format(chgPct)}%≤-${p.intradayPlungeBuyPct}%，低吸做T买入")
+            if (inKeyWindow) { conf += p.intradayWindowConfBonus; reasons.add("关键时段(9:40/13:10)") }
+            if (isOscillation) { conf += p.intradayOscillationConfBonus; reasons.add("大盘震荡市适合低吸") }
+            if (isHighElasticity) { conf += p.elasticityConfBonus; reasons.add("高弹性(振幅${"%.1f".format(avgAmplitudePct)}%)") }
+            conf = conf.coerceIn(0, 100)
+            // 做T买入目标：反弹 pairProfitPct 后卖出
+            val targetPrice = realtime.price * (1 + p.pairProfitPct / 100)
+            signals.add(
+                TTradeSignal(
+                    stockCode = stockCode, stockName = stockName,
+                    signalType = TTradeType.T_BUY,
+                    suggestedPrice = realtime.price, targetPrice = targetPrice,
+                    quantity = tQty,
+                    reason = reasons.joinToString("；"),
+                    expectedProfitPct = p.pairProfitPct, periodType = periodType,
+                    trendDirection = "盘中急跌", rsi = 50.0, volumeRatio = 1.0,
+                    confidence = conf
+                )
+            )
         }
 
         return signals

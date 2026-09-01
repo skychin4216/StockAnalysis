@@ -264,23 +264,23 @@
    "by_state": {
     "BULLISH": {
      "style": "hold",
-     "maxHold": 10,
-     "tp": 3.0,
-     "sl": -8.0,
+     "maxHold": 20,
+     "tp": 25,
+     "sl": -8,
      "tRatio": 0.4,
-     "avg": 5.41,
-     "wr": 57.5,
-     "n": 51
+     "avg": 8.5,
+     "wr": 79.1,
+     "n": 206
     },
     "OSCILLATION": {
      "style": "hold",
      "maxHold": 10,
-     "tp": 3.0,
-     "sl": -8.0,
+     "tp": 25,
+     "sl": -6,
      "tRatio": 0.4,
-     "avg": 5.04,
-     "wr": 51.9,
-     "n": 133
+     "avg": 2.89,
+     "wr": 63.6,
+     "n": 33
     },
     "BEARISH": {
      "style": "hold",
@@ -311,21 +311,21 @@
      "style": "hold",
      "maxHold": 40,
      "tp": 50,
-     "sl": -8,
+     "sl": -12,
      "tRatio": 0.4,
-     "avg": 3.93,
-     "wr": 56.2,
-     "n": 177
+     "avg": 10.73,
+     "wr": 80.1,
+     "n": 337
     },
     "OSCILLATION": {
      "style": "hold",
      "maxHold": 40,
-     "tp": 40,
+     "tp": 50,
      "sl": -12,
      "tRatio": 0.4,
-     "avg": 4.92,
-     "wr": 60.5,
-     "n": 72
+     "avg": 14.54,
+     "wr": 80.0,
+     "n": 90
     },
     "BEARISH": {
      "style": "hold",
@@ -333,9 +333,9 @@
      "tp": 50,
      "sl": -12,
      "tRatio": 0.4,
-     "avg": 5.07,
-     "wr": 59.2,
-     "n": 210
+     "avg": 18.32,
+     "wr": 81.5,
+     "n": 27
     }
    },
    "fitted_months": 36
@@ -350,10 +350,10 @@
    "2026-08-15"
   ],
   "pc_hold": {
-   "ultra_short": 1,
-   "short": 10,
-   "mid": 12,
-   "long": 30
+   "ultra_short": 3,
+   "short": 15,
+   "mid": 45,
+   "long": 180
   },
   "pc_step": {
    "ultra_short": 2,
@@ -372,7 +372,14 @@
   "nearSupportThreshold": 0.02,
   "nearResistanceThreshold": 0.01,
   "minExpectedProfitPct": 0.3,
-  "pairProfitPct": 0.8
+  "pairProfitPct": 0.8,
+  "indexOscillationTrendPct": 3.0,
+  "indexOscillationAmpBandPct": 1.2,
+  "intradayWindowMinutes": 20,
+  "intradayRallySellPct": 3.0,
+  "intradayPlungeBuyPct": 3.0,
+  "intradayWindowConfBonus": 10,
+  "intradayOscillationConfBonus": 10
  },
  "dag_nodes": {
   "version": 1,

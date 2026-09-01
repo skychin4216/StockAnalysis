@@ -52,7 +52,7 @@
         <param name="useMA60" value="true" />
         <param name="convergenceDurationDays" value="20" />
         <param name="convergenceDurationRatio" value="0.8" />
-        <param name="minDrawdownPct" value="12.0" />
+        <param name="minDrawdownPct" value="10" />
         <param name="requireVolumeShrink" value="true" />
         <param name="volumeShrinkRatio" value="0.9" />
         <param name="requireMA60Rising" value="true" />
@@ -65,6 +65,7 @@
         <param name="swingRightN" value="2" />
         <param name="lookbackDays" value="250" />
         <param name="minPassCount" value="4" />
+        <param name="allowLowAmbush" value="true" />
       </config>
     </Node>
     <Node id="n_base_guard" name="打底仓守门" module="base_position_guard">
@@ -119,6 +120,8 @@
       <config>
         <param name="maxHoldings" value="5" />
         <param name="orderType" value="LongTermQuant" />
+        <param name="totalCapRatio" value="50" />
+        <param name="singlePositionRatio" value="15" />
       </config>
     </Node>
 

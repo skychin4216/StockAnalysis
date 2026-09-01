@@ -182,6 +182,14 @@ object TradeNotifier {
                 appendLine("周期: $periodLabel")
                 appendLine("价格: ${"%.2f".format(signal.suggestedPrice)} → 目标 ${"%.2f".format(signal.targetPrice)}")
                 appendLine("数量: ${signal.quantity}股 | 预期: ${"%.2f%%".format(signal.expectedProfitPct)}")
+                // v5: 低吸/高抛区间（指导高弹性股票做T的执行区间）
+                if (signal.inLowZone && signal.lowZoneHigh > 0) {
+                    appendLine("🎯 低吸区: ${"%.2f".format(signal.lowZoneLow)}~${"%.2f".format(signal.lowZoneHigh)} 可大胆买")
+                } else if (signal.inHighZone && signal.highZoneLow > 0) {
+                    appendLine("🎯 高抛区: ${"%.2f".format(signal.highZoneLow)}~${"%.2f".format(signal.highZoneHigh)} 可大胆卖")
+                } else if (signal.lowZoneHigh > 0 || signal.highZoneLow > 0) {
+                    appendLine("区间: 低${"%.2f".format(signal.lowZoneLow)}~${"%.2f".format(signal.lowZoneHigh)} / 高${"%.2f".format(signal.highZoneLow)}~${"%.2f".format(signal.highZoneHigh)}")
+                }
                 append("原因: ${signal.reason}")
             }
             val tag = "T_${signal.signalType.name}_${signal.stockCode}_${System.currentTimeMillis()}"

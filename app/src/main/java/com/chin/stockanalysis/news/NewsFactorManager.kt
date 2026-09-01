@@ -7,6 +7,7 @@ import com.chin.stockanalysis.ApiProvider
 import com.chin.stockanalysis.stock.database.StockDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.LocalDate
@@ -131,23 +132,28 @@ AI回复: ${aiResponse.take(500)}"""
     // ════════════════════════════════════════
 
     /**
-     * 每日搜索一次重要行业巨头的新闻动态
-     * 关注的巨头列表可在内部配置
+     * 每日搜索一次重要行业巨头的新闻动态。
+     *
+     * 关注名单(2026-08 扩充)：
+     *  - 美国前10头部科技公司：英伟达/苹果/微软/谷歌/亚马逊/Meta/特斯拉/博通/AMD/甲骨文
+     *  - 全球医药巨头：礼来/辉瑞/强生/默沙东/诺和诺德/阿斯利康/恒瑞/百济神州/药明康德
+     *  - 国内关键链：华为/台积电/比亚迪/宁德时代
+     *
+     * 新闻获取方式：优先【真实新闻搜索】(东方财富搜索 API)，AI 仅做情感分析，
+     * 不再让 AI 凭训练数据编造新闻（否则看不到最新财报，如英伟达财报）。
      */
     suspend fun dailySearchIndustryGiants(): List<NewsFactorEntity> {
+        // 美国前10头部科技公司 + 医药巨头 + 国内关键链
         val giants = listOf(
-            "英伟达 黄仁勋 近期动态",
-            "特斯拉 马斯克 最新动向",
-            "苹果 库克 供应链消息",
-            "华为 任正非 芯片进展",
-            "台积电 先进制程 最新消息",
-            "微软 谷歌 AI布局",
-            "比亚迪 新能源汽车 最新动态",
-            "宁德时代 电池技术 进展"
+            "英伟达 财报", "苹果 财报", "微软 财报", "谷歌 财报", "亚马逊 财报",
+            "Meta 财报", "特斯拉 财报", "博通 财报", "AMD 财报", "甲骨文 财报",
+            "礼来 财报", "辉瑞 财报", "强生 财报", "默沙东 财报", "诺和诺德 财报",
+            "阿斯利康 财报", "恒瑞医药", "百济神州", "药明康德",
+            "华为 芯片", "台积电 制程", "比亚迪 新能源", "宁德时代 电池"
         )
 
         val collected = mutableListOf<NewsFactorEntity>()
-        val provider = ApiConfigManager.getInstance(context).createCurrentProvider() ?: return collected
+        val provider = ApiConfigManager.getInstance(context).createCurrentProvider()
 
         for (keyword in giants) {
             try {
@@ -155,28 +161,45 @@ AI回复: ${aiResponse.take(500)}"""
                 if (result.isNotEmpty()) {
                     collected.addAll(result)
                     // 避免过快请求
-                    kotlinx.coroutines.delay(2000L)
+                    kotlinx.coroutines.delay(1500L)
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "搜索 '$keyword' 失败: ${e.message}")
             }
         }
 
-        // 批量保存
+        // 批量保存（按日期去重：同标题同日期不重复插入）
         if (collected.isNotEmpty()) {
+            val today = LocalDate.now().format(DATE_FMT)
             withContext(Dispatchers.IO) {
-                for (factor in collected) {
-                    dao.insert(factor)
-                }
+                val existing = dao.getAllActive(1000)
+                    .filter { it.newsDate == today }
+                    .map { it.title }
+                    .toSet()
+                val dedup = collected.filter { it.title !in existing }
+                for (factor in dedup) dao.insert(factor)
+                Log.i(TAG, "每日搜索完成，新增 ${dedup.size} 条新闻因子(去重后)")
             }
-            Log.i(TAG, "每日搜索完成，新增 ${collected.size} 条新闻因子")
         }
         return collected
     }
 
-    private suspend fun extractNewsForKeyword(provider: ApiProvider, keyword: String): List<NewsFactorEntity> {
+    private suspend fun extractNewsForKeyword(provider: ApiProvider?, keyword: String): List<NewsFactorEntity> {
         val today = LocalDate.now().format(DATE_FMT)
-        val prompt = """你是一个金融新闻搜索助手。请根据以下关键词搜索并整理近期的相关新闻动态。
+
+        // ── 1) 真实新闻搜索(东方财富搜索 API)：拿到真实标题/链接/公司 ──
+        val realNews = fetchRealNewsFromEastMoney(keyword, today)
+        if (realNews.isNotEmpty()) {
+            // ── 2) AI 仅基于真实新闻标题做情感/板块分析（不编造内容）──
+            val analyzed = analyzeSentiment(provider, keyword, realNews)
+            if (analyzed.isNotEmpty()) return analyzed
+            // AI 失败时保留真实新闻(中性)
+            return realNews
+        }
+
+        // ── 3) 兜底：AI 生成(仅当真实搜索失败时，标注 ai_search) ──
+        if (provider == null) return emptyList()
+        val prompt = """你是一个金融新闻助手。请根据以下关键词整理近期相关动态，注意只使用你训练数据中可确认的事实，不要编造具体数字。
 
 关键词：$keyword
 
@@ -184,7 +207,7 @@ AI回复: ${aiResponse.take(500)}"""
 [{
   "company_name": "涉及的公司名称",
   "title": "新闻标题(15字以内)",
-  "content": "新闻摘要(50-100字，基于你的训练数据)",
+  "content": "新闻摘要(50-100字)",
   "sentiment": 1或-1或0 (利好/利空/中性),
   "impact_strength": 1-100 (对A股相关板块的影响强度),
   "tags": "相关标签(逗号分隔)",
@@ -192,7 +215,6 @@ AI回复: ${aiResponse.take(500)}"""
 }]
 
 最多返回3条最重要的新闻。没有重要新闻则输出[]。"""
-
         val result = sendSyncRequest(provider, prompt)
         val factors = parseFactorList(result)
         return factors.map { it.copy(
@@ -200,6 +222,110 @@ AI回复: ${aiResponse.take(500)}"""
             source = "ai_search",
             createdAt = System.currentTimeMillis()
         ) }
+    }
+
+    /** 东方财富真实新闻搜索（复用 HotSectorNewsUpdater 已验证接口） */
+    private suspend fun fetchRealNewsFromEastMoney(keyword: String, today: String): List<NewsFactorEntity> {
+        return try {
+            val url = com.chin.stockanalysis.config.DataConfig.eastmoneySearchUrl(keyword, "14", 5)
+            val request = okhttp3.Request.Builder()
+                .url(url)
+                .addHeader("User-Agent", "Mozilla/5.0")
+                .build()
+            val response = withTimeoutOrNull(3000) {
+                withContext(Dispatchers.IO) {
+                    com.chin.stockanalysis.stock.data.HttpClientProvider.realtimeClient.newCall(request).execute()
+                }
+            }
+            if (response == null || !response.isSuccessful) return emptyList()
+            val body = response.body?.string() ?: return emptyList()
+
+            val arr = try {
+                val root = JSONObject(body)
+                if (root.has("QuotationCodeTable")) {
+                    root.getJSONObject("QuotationCodeTable").getJSONArray("Data")
+                } else if (root.has("Data")) {
+                    root.getJSONArray("Data")
+                } else null
+            } catch (_: Exception) {
+                try { JSONArray(body) } catch (_: Exception) { null }
+            }
+            if (arr == null) return emptyList()
+
+            val news = mutableListOf<NewsFactorEntity>()
+            for (i in 0 until arr.length()) {
+                val item = arr.getJSONObject(i)
+                val name = item.optString("Name", "").trim()
+                if (name.isEmpty()) continue
+                news.add(NewsFactorEntity(
+                    stockCode = item.optString("Code", "").trim(),
+                    companyName = item.optString("CodeName", "").ifEmpty { name },
+                    title = name,
+                    content = "",
+                    newsDate = today,
+                    sentiment = 0,
+                    impactStrength = 50,
+                    source = "eastmoney",
+                    sourceUrl = item.optString("Url", ""),
+                    tags = keyword,
+                    sector = "",
+                    createdAt = System.currentTimeMillis(),
+                    isActive = true
+                ))
+            }
+            news
+        } catch (e: Exception) {
+            Log.w(TAG, "东财真实搜索失败 [$keyword]: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /** 让 AI 基于真实新闻标题做情感/板块/强度分析（不编造新闻内容） */
+    private suspend fun analyzeSentiment(
+        provider: ApiProvider?,
+        keyword: String,
+        realNews: List<NewsFactorEntity>
+    ): List<NewsFactorEntity> {
+        if (provider == null) return realNews
+        val headlines = realNews.joinToString("\n") { "- ${it.title}" }
+        val prompt = """以下是从财经新闻源真实抓取的新闻标题（关键词：$keyword）。请分析每条对 A 股相关板块的利好/利空/中性影响。
+
+真实新闻标题：
+$headlines
+
+请输出与标题一一对应的 JSON 数组：
+[{
+  "company_name": "公司名(英文名可用中文映射，如 NVIDIA→英伟达)",
+  "title": "原标题(保持不变)",
+  "sentiment": 1或-1或0 (利好/利空/中性),
+  "impact_strength": 1-100,
+  "tags": "标签(逗号分隔)",
+  "sector": "相关A股板块(如：算力/芯片/创新药/新能源)"
+}]
+
+严格按输入顺序逐条输出，数量一致。无法判断则 sentiment=0。"""
+        return try {
+            val result = withContext(Dispatchers.IO) { sendSyncRequest(provider, prompt) }
+            val analyzed = parseFactorList(result)
+            if (analyzed.size != realNews.size) {
+                // 数量不一致则丢弃 AI 结果，保留真实新闻(中性)
+                return realNews
+            }
+            analyzed.mapIndexed { i, a ->
+                a.copy(
+                    stockCode = realNews[i].stockCode,
+                    newsDate = realNews[i].newsDate,
+                    source = "eastmoney",
+                    sourceUrl = realNews[i].sourceUrl,
+                    tags = if (a.tags.isBlank()) keyword else a.tags,
+                    createdAt = System.currentTimeMillis(),
+                    isActive = true
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "AI 情感分析失败 [$keyword]: ${e.message}")
+            realNews
+        }
     }
 
     // ════════════════════════════════════════

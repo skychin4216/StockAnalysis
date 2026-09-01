@@ -22,6 +22,9 @@ object AppBackgroundRunner {
     private var monitorJob: Job? = null
     private var _appScope: CoroutineScope? = null
 
+    /** 盘中实时行情轻量刷新间隔(毫秒) = 30 分钟 */
+    private const val INTRADAY_REFRESH_INTERVAL = 30 * 60 * 1000L
+
     /** 量化选股运行时设为 true，后台 AI 相关任务应暂停 */
     @Volatile
     var isQuantRunning = false
@@ -58,6 +61,56 @@ object AppBackgroundRunner {
         try { monitorWatchlist(context) } catch (e: Exception) { Log.w(TAG, "额外监控失败: ${e.message}") }
     }
 
+    /**
+     * 盘中定时轻量刷新优先池当日实时行情（替代全量 K 线拉取，大幅降低耗时）。
+     *
+     * 每 30 分钟执行一次：交易时段(9:30-11:30 / 13:00-15:00)内，仅对
+     * 「基本股票池 + 板块龙头 + AI精选 + 自选 + 真实持仓」调用 refreshTodayRealtime，
+     * 只更新当日快照的行情字段，不重拉历史 K 线。收盘后不再刷新。
+     */
+    private fun startIntradayPriorityRefresh(context: Context, scope: CoroutineScope) {
+        scope.launch(Dispatchers.IO) {
+            while (isActive) {
+                try {
+                    val now = java.time.LocalTime.now()
+                    val inAm = now.isAfter(java.time.LocalTime.of(9, 30)) &&
+                        now.isBefore(java.time.LocalTime.of(11, 30))
+                    val inPm = now.isAfter(java.time.LocalTime.of(13, 0)) &&
+                        now.isBefore(java.time.LocalTime.of(15, 0))
+                    if (inAm || inPm) {
+                        refreshPriorityPool(context.applicationContext)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "盘中优先池刷新失败: ${e.message}")
+                }
+                delay(INTRADAY_REFRESH_INTERVAL)
+            }
+        }
+    }
+
+    /**
+     * 组装优先池并轻量刷新当日行情。
+     * 优先池 = 基本股票池 + 板块龙头 + 近5天AI精选 + 自选股 + 真实持仓（去重）
+     */
+    private suspend fun refreshPriorityPool(context: Context) {
+        val codes = mutableSetOf<String>()
+        try { codes.addAll(com.chin.stockanalysis.strategy.data.HistoricalDataFetcher.getCoreStockPool(context)) } catch (_: Exception) {}
+        try { codes.addAll(com.chin.stockanalysis.strategy.data.LeaderStockPool.getMainlineCodes(context)) } catch (_: Exception) {}
+        try {
+            val db = StockDatabase.getInstance(context)
+            db.aiSelectedStockDao()
+                .getRecentDays(LocalDate.now().minusDays(5).format(DATE_FMT))
+                .forEach { codes.add(it.stockCode) }
+            db.userWatchlistDao().getAll().forEach { codes.add(it.stockCode) }
+            db.realPositionDao().getAllActive().forEach { codes.add(it.stockCode) }
+        } catch (_: Exception) {}
+        if (codes.isEmpty()) return
+        val start = System.currentTimeMillis()
+        val updated = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(context)
+            .refreshTodayRealtime(codes.toList())
+        Log.i(TAG, "⏱️ 盘中优先池刷新: ${codes.size}只 更新$updated 耗时${System.currentTimeMillis() - start}ms")
+    }
+
     fun start(context: Context, scope: CoroutineScope) {
         Log.i(TAG, "🚀 启动后台任务")
         EastMoneyHotSectorSource.startPoolScheduler(scope)
@@ -77,6 +130,9 @@ object AppBackgroundRunner {
         scope.launch(Dispatchers.IO) {
             syncMissingTradingDays(context.applicationContext)
         }
+
+        // 盘中(9:30-11:30/13:00-15:00)每 30 分钟轻量刷新优先池当日行情
+        startIntradayPriorityRefresh(context.applicationContext, scope)
 
         // 启动时收集全球 Top10 机构研报新闻因子（每日一次，多调用方共享同一 job）
         scope.launch(Dispatchers.IO) {
@@ -510,6 +566,26 @@ object AppBackgroundRunner {
 
         // 1. 过期旧推荐
         try { tEngine.expireOldRecommendations() } catch (_: Exception) {}
+
+        // 1.5 每个交易日同步实仓股价：盘中优先池刷新已回写实时价，
+        //     收盘后/非盘中用当日 dailySnapshot 收盘价兜底回写（保证每个交易日实仓数据新鲜）
+        try {
+            val positions = db.realPositionDao().getAllActive()
+            if (positions.isNotEmpty()) {
+                val todaySnaps = db.dailySnapshotDao().getByDate(today)
+                val snapByCode = todaySnaps.associateBy { it.code }
+                for (p in positions) {
+                    val snap = snapByCode[p.stockCode] ?: continue
+                    if (snap.close <= 0) continue
+                    db.realPositionDao().updateMarketData(
+                        id = p.id,
+                        currentPrice = snap.close,
+                        pe = snap.pe,
+                        turnoverRate = snap.turnoverRate
+                    )
+                }
+            }
+        } catch (_: Exception) {}
 
         // 2. 收盘结算（15:00后只执行一次）
         val now = java.time.LocalDateTime.now()

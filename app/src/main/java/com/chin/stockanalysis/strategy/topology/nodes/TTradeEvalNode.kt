@@ -67,11 +67,21 @@ class TTradeEvalNode : BaseNode<Any, TTradeEvalResult>(
                         sig.trendDirection.contains("下跌") -> "📉"
                         else -> "➡️"
                     }
+                    // v5: 高低点区间——低吸/高抛区给用户明确的可执行区间
+                    val zoneStr = when {
+                        sig.inLowZone && sig.lowZoneHigh > 0 ->
+                            " | 🎯低吸区(${"%.2f".format(sig.lowZoneLow)}~${"%.2f".format(sig.lowZoneHigh)})可大胆买"
+                        sig.inHighZone && sig.highZoneLow > 0 ->
+                            " | 🎯高抛区(${"%.2f".format(sig.highZoneLow)}~${"%.2f".format(sig.highZoneHigh)})可大胆卖"
+                        sig.lowZoneHigh > 0 || sig.highZoneLow > 0 ->
+                            " | 区间(低${"%.2f".format(sig.lowZoneLow)}~${"%.2f".format(sig.lowZoneHigh)}/高${"%.2f".format(sig.highZoneLow)}~${"%.2f".format(sig.highZoneHigh)})"
+                        else -> ""
+                    }
                     context.log("n_t_trade",
                         "  $trendIcon ${pos.stockName}(${pos.stockCode}): " +
                         "${sig.signalType.label} | 趋势:${sig.trendDirection} | " +
                         "RSI:${"%.0f".format(sig.rsi)} | 量比:${"%.1f".format(sig.volumeRatio)} | " +
-                        "置信度:${sig.confidence}%" +
+                        "置信度:${sig.confidence}%" + zoneStr +
                         if (sig.patternName.isNotEmpty()) " | 形态:${sig.patternName}" else ""
                     )
                 }
@@ -92,13 +102,19 @@ class TTradeEvalNode : BaseNode<Any, TTradeEvalResult>(
             if (buySignals.isNotEmpty()) {
                 appendLine("  🟢 做T买入: ${buySignals.size} 个")
                 for (s in buySignals) {
-                    appendLine("    ${s.stockName} ${s.trendDirection} 置信度${s.confidence}%")
+                    val zone = if (s.inLowZone && s.lowZoneHigh > 0)
+                        " 低吸区(${"%.2f".format(s.lowZoneLow)}~${"%.2f".format(s.lowZoneHigh)})"
+                    else ""
+                    appendLine("    ${s.stockName} ${s.trendDirection} 置信度${s.confidence}%$zone")
                 }
             }
             if (sellSignals.isNotEmpty()) {
                 appendLine("  🔴 反T卖出: ${sellSignals.size} 个")
                 for (s in sellSignals) {
-                    appendLine("    ${s.stockName} ${s.trendDirection} 置信度${s.confidence}%")
+                    val zone = if (s.inHighZone && s.highZoneLow > 0)
+                        " 高抛区(${"%.2f".format(s.highZoneLow)}~${"%.2f".format(s.highZoneHigh)})"
+                    else ""
+                    appendLine("    ${s.stockName} ${s.trendDirection} 置信度${s.confidence}%$zone")
                 }
             }
             if (pairSignals.isNotEmpty()) {

@@ -10,9 +10,9 @@
   <description>周期专属：牛市/震荡/熊市 DAG（公共研判由工作台统一执行）</description>
   <steps>
     <!-- 周期×环境矩阵路由：根据 n_adaptive（公共研判播种）输出的大盘方向选择环境专属 pipeline -->
-    <pipeline ref="usecases/short_term_bullish_pipeline.xml" name="短线·牛市DAG（S1严选+涨停基因 tp+1.5/sl-1.5）" if="${n_adaptive}.direction == 'BULLISH'" />
-    <pipeline ref="usecases/short_term_oscillation_pipeline.xml" name="短线·震荡DAG（S4K线反转 tp+1.5/sl-1.5）" if="${n_adaptive}.direction == 'OSCILLATION'" />
-    <pipeline ref="usecases/short_term_bearish_pipeline.xml" name="短线·熊市DAG（S3深跌低吸 tp+1.5/sl-5.0）" if="${n_adaptive}.direction == 'BEARISH'" />
+    <pipeline ref="usecases/short_term_bullish_pipeline.xml" name="短线·牛市DAG（S1严选+涨停基因 tp+1.5/sl-1.5）" if="${n_market_direction}.direction == 'BULLISH'" />
+    <pipeline ref="usecases/short_term_oscillation_pipeline.xml" name="短线·震荡DAG（S4K线反转 tp+1.5/sl-1.5）" if="${n_market_direction}.direction == 'OSCILLATION'" />
+    <pipeline ref="usecases/short_term_bearish_pipeline.xml" name="短线·熊市DAG（S3深跌低吸 tp+1.5/sl-5.0）" if="${n_market_direction}.direction == 'BEARISH'" />
   </steps>
   <config>
     <param name="orderType" value="ShortTermQuant" />

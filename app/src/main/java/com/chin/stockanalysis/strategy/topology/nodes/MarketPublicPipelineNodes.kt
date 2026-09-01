@@ -1,6 +1,7 @@
 package com.chin.stockanalysis.strategy.topology.nodes
 
 import android.util.Log
+import com.chin.stockanalysis.config.DataConfig
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.backtest.SectorDailyRecordEntity
 import com.chin.stockanalysis.strategy.market.AMarketAnalysisEngine
@@ -149,6 +150,18 @@ class StyleRotationNode : BaseNode<Any, StyleRotationResult>("n_style_rotation",
         val suggestedPeriod: String
         val leadingSectors = sector?.topSectors?.take(5)?.map { it.sectorName } ?: emptyList()
 
+        // 宏观环境因子（app_config.json → macro_environment）：
+        //  美债利率高 + 美元信用下调 → 全球资金避险，人民币资产/高股息受青睐；
+        //  中国国债收益率低 → 类债资产（银行/煤炭/化工高股息）性价比凸显，中长线应埋伏高股息。
+        val usYieldHigh = DataConfig.get("macro_environment.us_10y_yield_high", "4.0").toDoubleOrNull() ?: 4.0
+        val usYield = DataConfig.get("macro_environment.us_10y_yield_pct", "0").toDoubleOrNull() ?: 0.0
+        val usdCreditWeaken = DataConfig.get("macro_environment.usd_credit_weaken", "true").toBoolean()
+        val cnYieldLow = DataConfig.get("macro_environment.cn_10y_yield_low", "2.2").toDoubleOrNull() ?: 2.2
+        val cnYield = DataConfig.get("macro_environment.cn_10y_yield_pct", "0").toDoubleOrNull() ?: 0.0
+        val highDividendPrefer = DataConfig.get("macro_environment.high_dividend_prefer", "true").toBoolean()
+        val macroDivPref = highDividendPrefer && usdCreditWeaken &&
+            (usYield >= usYieldHigh) && (cnYield <= cnYieldLow)
+
         if (market != null) {
             when {
                 market.isTopDanger -> {
@@ -181,6 +194,15 @@ class StyleRotationNode : BaseNode<Any, StyleRotationResult>("n_style_rotation",
             styleLabel = "均衡震荡（结构性行情）"
             riskLevel = "中"
             suggestedPeriod = "超短/短线快进快出"
+        }
+
+        // 宏观因子叠加：震荡期短线为主，同时中长线埋伏高股息（银行/煤炭/化工）
+        val macroHint: String
+        if (macroDivPref) {
+            macroHint = "💡 宏观面：美债利率${"%.1f".format(usYield)}%(高) + 美元信用下调 + 中国10Y国债${"%.1f".format(cnYield)}%(低) → " +
+                "中长线应埋伏高股息(银行/煤炭/化工/电力/保险)；震荡期短线超短仍可快进快出"
+        } else {
+            macroHint = ""
         }
 
         // 3. 叠加板块风格特征修正（强势板块命名特征 → 风格倾向）
@@ -216,6 +238,7 @@ class StyleRotationNode : BaseNode<Any, StyleRotationResult>("n_style_rotation",
         sb.appendLine("   当前强势板块: ${if (leadingSectors.isEmpty()) "暂无" else leadingSectors.joinToString("、")}")
         sb.appendLine("   建议持仓周期: $suggestedPeriod")
         sb.appendLine("   风险等级: $riskLevel")
+        if (macroHint.isNotEmpty()) sb.appendLine("   $macroHint")
         if (seasonHint.isNotEmpty()) sb.appendLine("   $seasonHint")
 
         context.log(nodeId, sb.toString().trimEnd())
@@ -254,14 +277,16 @@ data class MarketDirectionResult(
  *   BULLISH（多头） / OSCILLATION（震荡） / BEARISH（空头）。
  *
  * 供 complete_closed_loop 第四层「周期×环境矩阵路由」的 if 条件使用：
- *   `<pipeline ... if="${n_adaptive}.direction == 'BULLISH'" />`
- * 此前该条件读取不存在的 n_adaptive 节点，导致 12 条周期流水线全部被跳过。
+ *   `<pipeline ... if="${n_market_direction}.direction == 'BULLISH'" />`
+ * 注意：节点 id 必须为 n_market_direction，独立于 n_adaptive（自适应参数）。
+ * 此前与 n_adaptive 同名，被选股公共管线的 adaptive_params 覆盖，
+ * 导致所有周期×环境矩阵路由的 12 条流水线全部被跳过（无输出）。
  *
- * XML 用法：`<node module="market_direction" />`
+ * XML 用法：`<node id="n_market_direction" module="market_direction" />`
  * 依赖：n_a_market（a_market_analysis）。
- * 输出 [MarketDirectionResult]，存入 context.stageOutputs["n_adaptive"]。
+ * 输出 [MarketDirectionResult]，存入 context.stageOutputs["n_market_direction"]。
  */
-class MarketDirectionNode : BaseNode<Any, MarketDirectionResult>("n_adaptive", "大盘方向研判", NodeType.FACTOR_COMPUTE) {
+class MarketDirectionNode : BaseNode<Any, MarketDirectionResult>("n_market_direction", "大盘方向研判", NodeType.FACTOR_COMPUTE) {
 
     override suspend fun execute(context: PipelineContext, input: Any): MarketDirectionResult {
         val market = context.getStageOutput<AMarketAnalysisEngine.MarketAnalysisResult>("n_a_market")

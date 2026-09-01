@@ -66,6 +66,7 @@ object PipelineFailureAnalyzer {
         "n_sector_pool" to "板块精选池",
         "n_zipline" to "Zipline因子",
         "n_adaptive" to "自适应参数",
+        "n_market_direction" to "大盘方向研判",
         "n_bg" to "后台管理"
     )
 

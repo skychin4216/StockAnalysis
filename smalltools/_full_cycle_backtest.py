@@ -36,11 +36,12 @@ WINDOWS = {
 }
 
 # 周期默认卖出参数（代码模板仅作兜底；优先读 APK 共享的 backtest_params.json）
+# 豆包体系(2026-08): 超短3日/短线15日/中线45日/长线180日；止损止盈按豆包风控
 SELL_RULES = {
-    "超短线": dict(style="nextday", maxHold=2, tp=0.0, sl=0.0),
-    "短线":   dict(style="streak", streakDays=3, maBreak=5, maxHold=10, tp=0.0, sl=0.0),
-    "中线":   dict(style="hold", maxHold=15, tp=20.0, sl=-10.0, tRatio=0.4),
-    "长线":   dict(style="hold", maxHold=30, tp=40.0, sl=-12.0, tRatio=0.4),
+    "超短线": dict(style="nextday", maxHold=3, tp=0.0, sl=0.0),
+    "短线":   dict(style="streak", streakDays=3, maBreak=5, maxHold=15, tp=0.0, sl=0.0),
+    "中线":   dict(style="hold", maxHold=45, tp=20.0, sl=-10.0, tRatio=0.4),
+    "长线":   dict(style="hold", maxHold=180, tp=40.0, sl=-25.0, tRatio=0.4),
 }
 
 # ── 单一事实源：从 APK 共享的 backtest_params.json 读取 9 格卖出参数 ──────────

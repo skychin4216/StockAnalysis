@@ -409,15 +409,6 @@ class DagPipeline(
 
         if (success) {
             context.log(nodeId, "✓ 完成: ${dagNode.nodeName} (${elapsed}ms)")
-            context.onNodeDone?.invoke(name, dagNode.nodeName, output)
-        } else {
-            context.log(nodeId, "✗ 失败: ${dagNode.nodeName} (${elapsed}ms) — $error")
-            context.onNodeDone?.invoke(name, dagNode.nodeName, null)
-        }
-
-        // 存入上下文
-        contextMutex.withLock {
-            context.stageOutputs[nodeId] = output
         }
 
         // 提取该节点的股票流动记录（节点执行过程中调用 recordStockFlow 写入）
@@ -426,6 +417,18 @@ class DagPipeline(
         val internalNodeId = node.nodeId
         val nodeStockFlow = synchronized(context.stockFlowLogs) {
             context.stockFlowLogs.lastOrNull { it.nodeId == nodeId || it.nodeId == internalNodeId }
+        }
+
+        if (success) {
+            context.onNodeDone?.invoke(name, dagNode.nodeName, output, nodeStockFlow)
+        } else {
+            context.log(nodeId, "✗ 失败: ${dagNode.nodeName} (${elapsed}ms) — $error")
+            context.onNodeDone?.invoke(name, dagNode.nodeName, null, nodeStockFlow)
+        }
+
+        // 存入上下文
+        contextMutex.withLock {
+            context.stageOutputs[nodeId] = output
         }
 
         return DagNodeResult(

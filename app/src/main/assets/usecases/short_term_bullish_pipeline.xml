@@ -66,6 +66,8 @@
         <param name="swingRightN" value="2" />
         <param name="lookbackDays" value="60" />
         <param name="minPassCount" value="6" />
+        <param name="allowQuietRise" value="true" />
+        <param name="quietVolumeRatio" value="1.0" />
         <param name="period" value="short" />
       </config>
     </Node>
@@ -110,6 +112,8 @@
       <config>
         <param name="maxHoldings" value="5" />
         <param name="orderType" value="ShortTermQuant" />
+        <param name="totalCapRatio" value="25" />
+        <param name="singlePositionRatio" value="6" />
       </config>
     </Node>
 
