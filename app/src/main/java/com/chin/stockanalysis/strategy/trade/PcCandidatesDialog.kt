@@ -90,7 +90,6 @@ class PcCandidatesDialog(context: Context) : Dialog(context) {
             setTextColor(Color.WHITE)
             setTypeface(null, Typeface.BOLD)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        titleBar.addView(TextBtn("🎛 远程") { openRemoteControl() })
         titleBar.addView(TextBtn("🔄") { refresh() })
         titleBar.addView(TextBtn("✕") { dismiss() })
         root.addView(titleBar)
@@ -168,10 +167,6 @@ class PcCandidatesDialog(context: Context) : Dialog(context) {
         bottom.addView(addBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(bottom)
         return root
-    }
-
-    private fun openRemoteControl() {
-        RemoteControlDialog(context).show()
     }
 
     private fun TextBtn(label: String, onClick: () -> Unit) = TextView(context).apply {

@@ -112,7 +112,11 @@ def load_cache():
     cache = json.load(open(CACHE, encoding="utf-8"))
     if os.path.exists(EXTRA):
         for code, ent in json.load(open(EXTRA, encoding="utf-8")).items():
-            cache[code] = ent
+            cur = cache.get(code, {}).get("snaps") or []
+            new = ent.get("snaps") or []
+            # 仅当 extra 数据末端更新于主池时才覆盖（extra 可能是历史回测快照，避免旧数据盖掉新 K 线）
+            if not cur or (new and new[-1].get("date", "") > cur[-1].get("date", "")):
+                cache[code] = ent
     return cache
 
 

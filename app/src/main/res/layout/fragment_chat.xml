@@ -209,6 +209,18 @@
                 android:text="🧠 专家"
                 android:textSize="11sp"
                 android:textColor="#666666"
+                android:background="@drawable/bg_mode_inactive"
+                android:layout_marginEnd="6dp" />
+
+            <TextView
+                android:id="@+id/btnModeRemote"
+                android:layout_width="wrap_content"
+                android:layout_height="26dp"
+                android:gravity="center"
+                android:paddingHorizontal="10dp"
+                android:text="📡 远程"
+                android:textSize="11sp"
+                android:textColor="#666666"
                 android:background="@drawable/bg_mode_inactive" />
         </LinearLayout>
 

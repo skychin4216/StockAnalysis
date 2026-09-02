@@ -51,8 +51,15 @@ object PcBridgeClient {
     }
 
     private fun baseUrl(hostPort: String): String {
-        val (h, p) = normalize(hostPort)
-        return "http://$h:$p"
+        val raw = hostPort.trim()
+        // 保留用户指定的协议（https 公网场景）；默认 http
+        val scheme = when {
+            raw.startsWith("https://") -> "https"
+            raw.startsWith("http://") -> "http"
+            else -> "http"
+        }
+        val (h, p) = normalize(raw)
+        return "$scheme://$h:$p"
     }
 
     // ───────────────────────── 远程控制（C/S）API ─────────────────────────

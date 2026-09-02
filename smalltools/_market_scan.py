@@ -210,14 +210,38 @@ def collect_news(top=10):
 
 
 def collect_all():
-    return {
+    out = {
         "ts": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "us": collect_us(),
         "kr": collect_kr(),
         "rotation": collect_rotation(),
         "reports": collect_reports(),
         "news": collect_news(),
+        "session": collect_session_factor(),
     }
+    # 每晚/每次采集顺带刷新外围历史缓存（纳指/韩股代理日K，供隔夜外围因子）
+    try:
+        import _overseas_fetch
+        _overseas_fetch.fetch_all()
+    except Exception as e:
+        print("外围缓存刷新失败: %s" % type(e).__name__)
+    return out
+
+
+def collect_session_factor():
+    """大盘时段因子（早盘下杀企稳 / 尾盘勿追），用上证指数当日分时判定。"""
+    try:
+        import _session_factor
+        f = _session_factor.session_factor_for("sh000001")
+        out = {
+            "morning_verdict": f.morning_verdict,
+            "reason": f.reason,
+            "late_zone_active": f.late_zone_active,
+        }
+        return out
+    except Exception as e:
+        print("时段因子采集失败: %s" % type(e).__name__)
+        return {}
 
 
 # ── 2. 变动检测 ─────────────────────────────────────────────────────────
@@ -401,6 +425,13 @@ def run_once(force=False, dry=False):
         return 0
     title = "📡 盘中情报 %s" % datetime.datetime.now().strftime("%m-%d %H:%M")
     content = format_content(cur, changes)
+    # 追加大盘时段因子提示（早盘下杀企稳 / 尾盘勿追）
+    sess = cur.get("session") or {}
+    if sess.get("reason"):
+        tag = "🕐 时段因子"
+        if sess.get("late_zone_active"):
+            tag = "⚠️ 尾盘警示"
+        content = f"{tag} 上证指数: {sess['reason']}\n" + content
     _push_wechat(title, content, load_notify_cfg())
     return 0
 

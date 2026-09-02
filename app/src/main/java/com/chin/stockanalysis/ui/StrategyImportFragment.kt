@@ -232,6 +232,23 @@ class StrategyImportFragment : Fragment() {
         paramsCard.addView(paramsStatusTv)
         pageParams.addView(paramsCard)
 
+        // ── 🎛 远程（与 PC 拟合参数同级；C/S 连接信息 + 快捷任务 + CodeBuddy 消息） ──
+        val remoteCard = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(8), dp(12), dp(12))
+            setBackgroundColor(Color.WHITE)
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
+        }
+        remoteCard.addView(TextView(requireContext()).apply {
+            text = "🎛 远程（PC · CodeBuddy）"
+            textSize = 13f
+            setTextColor(Color.parseColor("#1A1A2E"))
+            setTypeface(null, Typeface.BOLD)
+            setPadding(0, dp(4), 0, dp(6))
+        })
+        remoteCard.addView(com.chin.stockanalysis.strategy.trade.RemoteControlPanel(requireContext(), compact = true))
+        pageParams.addView(remoteCard)
+
         // ── 📌 回溯 & 分析（自工作台迁移） ──
         val backCard = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(12)); setBackgroundColor(Color.WHITE)

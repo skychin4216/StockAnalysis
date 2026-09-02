@@ -35,6 +35,11 @@ APP_CONFIG = os.path.join(ROOT, "app", "src", "main", "assets", "data", "app_con
 LAST_FILE = os.path.join(HERE, "_last_publish.json")
 OUT_DEFAULT = os.path.join(ROOT, "AutoQuant", "data", "candidates_quant.json")
 
+# APK 扫描结果（外部板块信号源）+ APK 上传的全量 K 线库（动态补池数据源）
+APK_SCAN_FILE = os.path.join(HERE, "_last_scan.json")
+MARKET_DB = os.path.join(ROOT, "data", "market_data.db")
+APK_MIN_SEC_MOM = 10.0  # APK 外部板块动量阈值，低于此不并入候选
+
 DEFAULT_CANDIDATES_KEY = "stockanalysis/quant/candidates.json"
 RATIO_THRESHOLD = {"超短": 0.55, "短线": 0.55, "中线": 0.55, "长线": 0.55}
 GROUP_SIZE = 8
@@ -130,11 +135,101 @@ def hot_sectors(cache, industry, asof, top=8, window=20):
     return rows[:top]
 
 
+# ── 1.5 APK 外部板块信号：动态补池 + 轮动合并 ───────────────────────────
+def load_apk_rotation():
+    """读取 APK 扫描结果(_last_scan.json)的 rotation，作为外部板块信号源。
+
+    APK 扫描覆盖全市场板块（PC 池只有 218 只核心股，可能漏掉池外强势板块，
+    如农业种植）。返回 [{industry, sec_mom, catalyst, leaders:[{name,secid}], asof}]。
+    """
+    try:
+        with open(APK_SCAN_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return [r for r in (data.get("rotation") or [])
+                if isinstance(r, dict) and r.get("industry")]
+    except (OSError, ValueError):
+        return []
+
+
+def enrich_cache_from_db(cache, apk_rotation):
+    """动态补池：APK 外部板块龙头若不在 PC 池，从 market_data.db 读 K 线补入。
+
+    这样股票池无需扩大，强势板块龙头也能参与评分与轮动聚合。
+    """
+    if not apk_rotation:
+        return cache
+    need = {}
+    for r in apk_rotation:
+        for l in (r.get("leaders") or []):
+            sid = l.get("secid")
+            if sid and sid not in cache:
+                need[sid] = l.get("name") or sid
+    if not need or not os.path.exists(MARKET_DB):
+        return cache
+    import sqlite3
+    added = 0
+    try:
+        con = sqlite3.connect(MARKET_DB)
+        cur = con.cursor()
+        for sid, nm in need.items():
+            rows = cur.execute(
+                "SELECT date,open,high,low,close,volume,change_pct,turnover "
+                "FROM kline WHERE secid=? ORDER BY date", (sid,)).fetchall()
+            if len(rows) < 20:
+                continue
+            snaps = [{"date": d, "open": o, "high": h, "low": lo, "close": c,
+                      "volume": v, "changePct": ch, "turnover": t}
+                     for d, o, h, lo, c, v, ch, t in rows]
+            cache[sid] = {"name": nm, "snaps": snaps}
+            added += 1
+        con.close()
+    except Exception as e:
+        print("APK 动态补池失败:", e)
+    if added:
+        print("APK 外部信号动态补池 +%d 只: %s" % (added, ", ".join(need)))
+    return cache
+
+
+def merge_apk_rotation(pc_rotation, apk_rotation, cache, min_mom=APK_MIN_SEC_MOM):
+    """PC 轮动 + APK 外部板块信号合并（板块去重，PC 优先；池外板块补龙头数据）。"""
+    out = list(pc_rotation or [])
+    seen = {r.get("industry") for r in out if r.get("industry")}
+    for r in apk_rotation or []:
+        ind = r.get("industry")
+        if not ind or ind in seen:
+            continue
+        sec_mom = r.get("sec_mom") or 0
+        if sec_mom < min_mom:
+            continue
+        leaders = []
+        for l in (r.get("leaders") or [])[:3]:
+            sid = l.get("secid")
+            nm = l.get("name") or sid
+            board = board_of(sid[2:]) if sid else "主板"
+            # 补池内个股动量（供排序/展示）
+            mom20 = None
+            ent = cache.get(sid, {}) if sid else {}
+            snaps = ent.get("snaps") or []
+            if len(snaps) >= 21 and snaps[-21]["close"] > 0:
+                mom20 = round((snaps[-1]["close"] / snaps[-21]["close"] - 1) * 100, 1)
+            leaders.append({"secid": sid, "name": nm, "board": board, "mom20": mom20})
+        out.append({"industry": ind, "sec_mom": round(sec_mom, 1),
+                    "catalyst": r.get("catalyst") or r.get("catalyst_reason") or "",
+                    "catalyst_reason": r.get("catalyst") or r.get("catalyst_reason") or "",
+                    "leaders": leaders, "asof": r.get("asof"),
+                    "source": "apk_scan"})
+        seen.add(ind)
+    return out
+
+
 # ── 2. 候选清单生成 ────────────────────────────────────────────────────
 def build_candidates(cache, industry):
     asof, trend, _ = market_state_trend(cache)
     if not asof:
         return None
+    # ① 外部板块信号：动态补池（池外龙头 K 线并入）
+    apk_rotation = load_apk_rotation()
+    cache = enrich_cache_from_db(cache, apk_rotation)
     score = score_pool(cache, asof, trend)
     groups = {p: [] for p in PARAMS}
     for code, s in score.items():
@@ -202,6 +297,8 @@ def build_candidates(cache, industry):
         "NO_DATA": "数据不足，等待行情库更新",
     }[trend]
     rotation = rotation_rotate(rotation_load_cache(), asof, industry, top=10)
+    # ② 外部板块信号合并：APK 扫描的池外强势板块（如农业种植）并入轮动
+    rotation = merge_apk_rotation(rotation, apk_rotation, cache)
     # 轮动龙头并入「板块轮动」组：强势板块的龙头（策略可能选不出，但板块动量已确认）
     rot_group = []
     for r in rotation:
@@ -209,9 +306,9 @@ def build_candidates(cache, industry):
             rot_group.append({
                 "secid": l["secid"], "name": l["name"],
                 "industry": r["industry"],
-                "board": l["board"],
-                "sector_mom": r["sec_mom"], "mom20": l["mom20"],
-                "catalyst": r.get("catalyst_reason", ""),
+                "board": l.get("board") or board_of((l.get("secid") or "")[2:]),
+                "sector_mom": r["sec_mom"], "mom20": l.get("mom20"),
+                "catalyst": r.get("catalyst_reason") or r.get("catalyst") or "",
             })
     # 去重 + 排序(板块动量×个股动量)
     seen = set()
@@ -221,7 +318,7 @@ def build_candidates(cache, industry):
             continue
         seen.add(it["secid"])
         rot_unique.append(it)
-    rot_unique.sort(key=lambda r: (r["sector_mom"], r["mom20"]), reverse=True)
+    rot_unique.sort(key=lambda r: (r["sector_mom"], r["mom20"] if r["mom20"] is not None else -999), reverse=True)
     groups["板块轮动"] = rot_unique[:GROUP_SIZE * 2]
     return {
         "schema": 2,

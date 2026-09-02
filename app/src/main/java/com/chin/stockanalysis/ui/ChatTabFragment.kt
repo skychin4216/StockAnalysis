@@ -353,6 +353,10 @@ class ChatTabFragment : Fragment() {
         binding.btnModeExpert.setOnClickListener {
             setAnalysisMode(if (analysisMode == AnalysisMode.EXPERT) AnalysisMode.QUICK else AnalysisMode.EXPERT)
         }
+        // 📡 远程：与 PC(exe) / CodeBuddy 互动
+        binding.btnModeRemote.setOnClickListener {
+            com.chin.stockanalysis.strategy.trade.RemoteControlDialog(requireContext()).show()
+        }
 
         // ⚡ AI增强按钮
         binding.btnAiBoost.setOnClickListener {
