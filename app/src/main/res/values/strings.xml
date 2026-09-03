@@ -137,8 +137,9 @@
     <string name="title_long_system">💎 长线量化系统 (价值投资，持仓6月-1年+)</string>
 
     <!-- 股票 Tab 标签 -->
-    <string name="stock_tab_hot">🔥 热门行情</string>
     <string name="stock_tab_picks">📊 精选股票</string>
+    <string name="stock_tab_trend">📈 K线趋势</string>
+    <string name="stock_tab_hot">🔥 热门行情</string>
     <string name="stock_tab_news">📰 热点新闻</string>
 
     <!-- 策略按钮 -->

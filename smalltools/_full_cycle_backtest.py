@@ -9,7 +9,9 @@
 - 大盘状态：BULLISH(结构性牛) / OSCILLATION(震荡) / BEARISH(下跌) / CRASH(暴跌)
   —— 三指数 MA 排列 tripleVote + 近期跌幅检测（7月暴跌可被识别为 CRASH）
 - 拟合：按大盘状态分组网格搜索（持有天数 × 止盈 × 止损），输出参数矩阵
-- 统计口径：固定本金（每笔等额投入、收益相加不复利），累计收益不会指数失真
+- 统计口径 A：单笔口径（每笔 ret、胜率、平均、盈亏因子）——拟合验证用
+- 统计口径 B：真实账户净值法（固定初始本金、按信号日期顺序买入/卖出、资金复用、
+  含手续费与印花税）——累计收益 = (期末总资产/初始本金 - 1)，失败交易天然计入
 
 数据：_kline_cache.json（111 只核心龙头 + 3 指数，末端日期随缓存自动更新）
 """
@@ -328,7 +330,87 @@ def stats(rets):
     return len(rets), avg, wr, cum, pf, max_dd * 100
 
 
-def run_period(cache, all_dates, date_to_idx, period, rule=None):
+# ── 真实账户净值仿真参数（A股默认费率）───────────────────────────────
+COMMISSION_RATE = 0.00025     # 佣金 万2.5（双边，最低 5 元）
+COMMISSION_MIN = 5.0          # 佣金最低 5 元
+STAMP_TAX = 0.001             # 印花税（仅卖出，千1）
+LOT_SIZE = 100                # A股一手 100 股
+
+
+def _buy_fee(amount):
+    return max(COMMISSION_MIN, amount * COMMISSION_RATE)
+
+
+def _sell_fee(amount):
+    return max(COMMISSION_MIN, amount * COMMISSION_RATE) + amount * STAMP_TAX
+
+
+def nav_backtest(trades, capital=100_000.0):
+    """真实账户净值法（用户要求的“((卖出-买入)-手续费)/本金”口径）：
+
+    - 初始本金 [capital] 元；把交易按买入日期升序逐笔执行
+    - 单账户**满仓单仓滚动**：同一时刻只持 1 只（资金占满），上一笔卖出回笼后才允许开下一仓；
+      信号到来时前仓未平 → 资金被占用，该信号跳过（真实约束，与实盘一致）
+    - 每笔：买入扣 佣金(万2.5 最低5)，卖出扣 佣金+印花税(千1)；数量按整手(100股)
+    - 最终累计收益率 = (期末总资产 / 初始本金 - 1) × 100 —— 亏损单、手续费天然计入
+
+    返回 dict: total_ret%, n_exec(实际成交), n_skip(资金不足/前仓未平), total_fee,
+               max_dd%(按每笔平仓后净值), capital
+    """
+    if not trades:
+        return dict(total_ret=0.0, n_exec=0, n_skip=0, total_fee=0.0, max_dd=0.0, capital=capital)
+    order = sorted(trades, key=lambda t: t["buy"])          # 按买入日期推进
+    cash = float(capital)
+    n_exec = n_skip = 0
+    total_fee = 0.0
+    net_vals = [1.0]                                        # 每笔平仓后的净值(相对本金)
+    position = None                                         # dict(qty, code, sell_date, exit)
+    for t in order:
+        # 若上一仓在本次买入日之后才平 → 资金仍被占用，跳过本信号
+        if position is not None and position["sell_date"] > t["buy"]:
+            n_skip += 1
+            continue
+        # 上一仓已平（或无仓）：按卖价回笼资金
+        if position is not None:
+            fee = _sell_fee(position["exit"] * position["qty"])
+            cash += position["exit"] * position["qty"] - fee
+            total_fee += fee
+            net_vals.append(cash / float(capital))
+            position = None
+        # 买入：整手、满仓
+        entry = t["entry"]
+        qty = int(cash / entry / LOT_SIZE) * LOT_SIZE
+        if qty < LOT_SIZE:                                  # 一手都买不起 → 跳过
+            n_skip += 1
+            continue
+        fee = _buy_fee(entry * qty)
+        if cash < entry * qty + fee:                        # 含费后现金不足 → 缩到能买的一手
+            qty = LOT_SIZE
+            fee = _buy_fee(entry * qty)
+            if cash < entry * qty + fee:
+                n_skip += 1
+                continue
+        cash -= entry * qty + fee
+        total_fee += fee
+        n_exec += 1
+        position = dict(qty=qty, sell_date=t["sell"], exit=t["exit"])
+    # 期末若仍有持仓（理论上所有交易都含卖出日；兜底按 exit 价平仓）
+    if position is not None:
+        fee = _sell_fee(position["exit"] * position["qty"])
+        cash += position["exit"] * position["qty"] - fee
+        total_fee += fee
+        net_vals.append(cash / float(capital))
+    total_ret = (cash / float(capital) - 1) * 100
+    peak = 1.0
+    max_dd = 0.0
+    for v in net_vals:
+        peak = max(peak, v)
+        max_dd = min(max_dd, v - peak)
+    return dict(total_ret=total_ret, n_exec=n_exec, n_skip=n_skip,
+                total_fee=total_fee, max_dd=max_dd * 100, capital=float(capital))
+
+
+def run_period(cache, all_dates, date_to_idx, period, rule=None, capital=100_000.0):
     rule = rule or SELL_RULES[period]
     start, end, _ = WINDOWS[period]
     print(f"\n{'=' * 82}")
@@ -353,6 +435,12 @@ def run_period(cache, all_dates, date_to_idx, period, rule=None):
           f"盈亏因子: {'∞' if pf==float('inf') else f'{pf:.2f}'}   最大回撤(固定本金): {mdd:.2f}%")
     if rets:
         print(f"  最大单笔: +{max(rets):.2f}% / {min(rets):+.2f}%")
+    # ── 真实账户净值法（含手续费与失败单；满仓单仓滚动）──
+    nav = nav_backtest(trades, capital=capital)
+    print(f"  ── 净值法(账户{nav['capital']:.0f}元·满仓单仓滚动·含手续费) ──")
+    print(f"  成交 {nav['n_exec']} 笔(资金占用跳过 {nav['n_skip']}) 手续费合计 {nav['total_fee']:.0f} 元")
+    print(f"  真实累计收益(期末资产/本金-1): {nav['total_ret']:+.2f}%   "
+          f"期间最大回撤: {nav['max_dd']:.2f}%")
     # 按大盘状态分组
     print("  按大盘状态分组:")
     by_state = {}
@@ -370,7 +458,7 @@ def run_period(cache, all_dates, date_to_idx, period, rule=None):
         tp_extra = f" (做T利润{t['tProfit']:.0f})" if t.get("tProfit") else ""
         print(f"    {t['name']} 选{t['sig']} 买{t['buy']}@{t['entry']:.2f} 卖{t['sell']}@{t['exit']:.2f} "
               f"{t['ret']:+.1f}% [{t['reason']}]{tp_extra}")
-    return dict(period=period, trades=trades, state_counter=state_counter)
+    return dict(period=period, trades=trades, state_counter=state_counter, nav=nav)
 
 
 def fit_by_state(cache, all_dates, date_to_idx, period):
@@ -419,7 +507,16 @@ def fit_by_state(cache, all_dates, date_to_idx, period):
     print(f"\n  → 矩阵结论: 震荡/牛市放宽持有与止盈；下跌/暴跌收紧止损并缩短持有（暴跌期应 <3 天离场）")
 
 
-def main():
+def main(argv=None):
+    import argparse
+    ap = argparse.ArgumentParser(description="多周期完整回溯（单笔口径 + 真实账户净值法）")
+    ap.add_argument("--periods", default="超短线,短线,中线,长线",
+                    help="要跑的周期，逗号分隔，如 超短线,短线（默认全部）")
+    ap.add_argument("--capital", type=float, default=100_000.0,
+                    help="净值法初始本金（默认 100000）")
+    ap.add_argument("--no-fit", action="store_true", help="跳过中/长线按大盘状态拟合")
+    args = ap.parse_args(argv)
+
     cache = load_cache()
     dates = set()
     for code, ent in cache.items():
@@ -429,26 +526,38 @@ def main():
     date_to_idx = {d: i for i, d in enumerate(all_dates)}
     print(f"股票池: {len(cache) - 3} 只核心龙头 | K线: {all_dates[0]} ~ {all_dates[-1]} ({len(all_dates)} 交易日)")
     print("说明: 超短隔日卖 / 短线连跌卖 / 中长线做T降成本 + 大盘状态(牛/震荡/跌/暴跌)参数矩阵")
+    print(f"净值法参数: 初始本金 {args.capital:.0f} 元 · 满仓单仓滚动 · 佣金万2.5(最低5) + 卖出印花税千1")
 
+    wanted = [p for p in args.periods.replace("，", ",").split(",") if p]
     summary = {}
     for period in ["超短线", "短线", "中线", "长线"]:
-        r = run_period(cache, all_dates, date_to_idx, period)
+        if period not in wanted:
+            continue
+        r = run_period(cache, all_dates, date_to_idx, period, capital=args.capital)
         if r:
             summary[period] = r
 
-    print("\n" + "=" * 82)
-    print("四周期营收率汇总（固定本金口径：每笔等额投入、收益相加不复利，无未来函数）")
-    print("=" * 82)
-    print(f"{'周期':<6}{'信号':<6}{'已实现':<8}{'平均':<9}{'胜率':<7}{'固定本金累计':<12}{'盈亏因子':<8}{'回撤'}")
+    print("\n" + "=" * 110)
+    print("汇总对比（单笔口径: 胜率/平均/固定本金累计；净值口径: 真实账户累计 = (期末资产/本金-1)）")
+    print("=" * 110)
+    print(f"{'周期':<6}{'信号':<6}{'成交':<6}{'平均':<9}{'胜率':<7}{'固定本金累计':<12}"
+          f"{'净值法累计':<12}{'资金跳过':<8}{'净值回撤':<8}{'手续费'}")
     for period, r in summary.items():
         rets = [t["ret"] for t in r["trades"]]
         n, avg, wr, cum, pf, mdd = stats(rets)
-        print(f"{period:<6}{len(r['trades']):<6}{n:<8}{avg:+.2f}%  {wr:<6.1f}{cum:+.2f}%   "
-              f"{'∞' if pf==float('inf') else f'{pf:.2f}':<8}{mdd:.2f}%")
+        nav = r.get("nav") or {}
+        print(f"{period:<6}{len(r['trades']):<6}{nav.get('n_exec', '-'):<8}"
+              f"{avg:+.2f}%  {wr:<6.1f}{cum:+.2f}%   "
+              f"{nav.get('total_ret', 0):+.2f}%    "
+              f"{nav.get('n_skip', 0):<8}{nav.get('max_dd', 0):+.2f}%   "
+              f"{nav.get('total_fee', 0):.0f}元")
 
     # 中/长线按大盘状态拟合（任务4核心：震荡/牛/跌/暴跌 → 参数矩阵）
-    fit_by_state(cache, all_dates, date_to_idx, "中线")
-    fit_by_state(cache, all_dates, date_to_idx, "长线")
+    if not args.no_fit:
+        if "中线" in summary:
+            fit_by_state(cache, all_dates, date_to_idx, "中线")
+        if "长线" in summary:
+            fit_by_state(cache, all_dates, date_to_idx, "长线")
 
 
 if __name__ == "__main__":

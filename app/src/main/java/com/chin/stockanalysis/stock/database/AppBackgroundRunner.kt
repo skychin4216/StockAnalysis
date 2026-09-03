@@ -288,6 +288,82 @@ object AppBackgroundRunner {
     }
 
     /**
+     * 实仓每日真实数据补齐：手工录入/OCR 的实仓股票通常不在系统扫描池内，
+     * 全市场按日同步不会覆盖它们，导致 daily_snapshot 只有新增当天补拉的少量日K，
+     * 之后每个交易日不再更新 → 持仓表价格列缺失、做T引擎因历史不足（≥10天）无信号。
+     *
+     * 逐只实仓按「本地最后快照日 → 最近交易日」增量补拉日K并回写现价/PE/换手，
+     * 与四大周期持仓保持同等的数据新鲜度。数据已最新时单条 SQL 快速跳过，开销极低。
+     */
+    private suspend fun syncRealPositionDailyData(context: Context) {
+        try {
+            val db = StockDatabase.getInstance(context)
+            val positions = db.realPositionDao().getAllActive()
+            if (positions.isEmpty()) return
+
+            val targetDate = try {
+                java.time.LocalDate.parse(
+                    com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().format(DATE_FMT)
+                )
+            } catch (_: Exception) {
+                LocalDate.now()
+            }
+            val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(context)
+            var updatedCodes = 0
+            var totalRecords = 0
+            for (p in positions) {
+                try {
+                    // 该股本地最新一条快照日期（daily_snapshot DESC 取最新）
+                    val lastBar = db.dailySnapshotDao().getByCode(p.stockCode, 1).firstOrNull()
+                    val lastDate = try {
+                        lastBar?.let { LocalDate.parse(it.date, DATE_FMT) }
+                    } catch (_: Exception) { null }
+                    val buyDate = try {
+                        if (p.buyDate.isNotBlank()) LocalDate.parse(p.buyDate, DATE_FMT) else null
+                    } catch (_: Exception) { null }
+                    // 无任何历史时：从买入日（缺省近 60 天）开始补齐，保证做T引擎有足够样本
+                    val start = (lastDate ?: (buyDate ?: LocalDate.now().minusDays(60))).plusDays(1)
+                    if (!start.isAfter(targetDate)) {
+                        val (records, _) = fetcher.fetchOneStock(p.stockCode, start, targetDate)
+                        if (records.isNotEmpty()) {
+                            db.dailySnapshotDao().insertAll(records)
+                            totalRecords += records.size
+                            val latest = records.maxByOrNull { it.date }
+                            if (latest != null && latest.close > 0) {
+                                db.realPositionDao().updateMarketData(
+                                    id = p.id,
+                                    currentPrice = latest.close,
+                                    pe = latest.pe,
+                                    turnoverRate = latest.turnoverRate
+                                )
+                            }
+                            updatedCodes++
+                            Log.i(TAG, "📈 实仓 ${p.stockName}(${p.stockCode}) 日K补齐 ${records.size} 条 (${start}→${targetDate})")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "实仓日K补齐失败 ${p.stockName}(${p.stockCode}): ${e.message}")
+                }
+            }
+            if (updatedCodes > 0) {
+                Log.i(TAG, "📈 实仓每日数据同步完成: $updatedCodes/${positions.size} 只, 新增 $totalRecords 条")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "syncRealPositionDailyData 失败: ${e.message}")
+        }
+    }
+
+    /**
+     * OS 级兜底入口（RealPositionDailySyncWorker 每日 11:35/15:05 调用）：
+     * 仅补齐实仓每日日K，不触碰现有循环/做T逻辑。与每 5 分钟循环里的
+     * syncRealPositionDailyData 同实现，幂等、轻量；App 被回收后由
+     * WorkManager 到点拉起执行。
+     */
+    suspend fun syncRealPositionsForWorker(context: Context) {
+        syncRealPositionDailyData(context)
+    }
+
+    /**
      * 修复所有数据表中缺失的股票名称
      *
      * 选股管道可能选出尚未导入 daily_snapshot 的股票，导致各表中 stockName 为空。
@@ -563,6 +639,13 @@ object AppBackgroundRunner {
         val db = StockDatabase.getInstance(context)
         val tEngine = com.chin.stockanalysis.strategy.trade.TTradeEngine(context)
         val today = java.time.LocalDate.now().toString()
+
+        // 0. 实仓每日真实数据补齐（增量、轻量）：实仓股票多不在扫描池内，
+        //    需在开盘/收盘/任意打开时刻与四大周期持仓一样每天更新日K与现价，
+        //    做T/盈亏分析才使用到当日真实数据
+        try { syncRealPositionDailyData(context) } catch (e: Exception) {
+            Log.w(TAG, "实仓每日数据补齐失败: ${e.message}")
+        }
 
         // 1. 过期旧推荐
         try { tEngine.expireOldRecommendations() } catch (_: Exception) {}

@@ -241,6 +241,18 @@ interface DailySnapshotDao {
     @Query("SELECT code, MAX(date) AS maxDate FROM daily_snapshot GROUP BY code")
     suspend fun getMaxDateByCode(): List<CodeMaxDate>
 
+    /**
+     * 名称回填：批量取指定股票「最新一根日K」的名称（stock_basics 缺名时兜底，
+     * 覆盖有日K数据但没有基础资料行的股票，如刚上市/换代码/个别遗漏）。
+     */
+    @Query("""SELECT t.code AS code, t.name AS name FROM daily_snapshot t
+        INNER JOIN (
+            SELECT code, MAX(date) AS md FROM daily_snapshot
+            WHERE code IN (:codes) GROUP BY code
+        ) m ON t.code = m.code AND t.date = m.md
+        WHERE t.name IS NOT NULL AND trim(t.name) != ''""")
+    suspend fun getLastNames(codes: List<String>): List<CodeName>
+
     /** 增量拉取：单只股票已有数据的最大日期 */
     @Query("SELECT MAX(date) FROM daily_snapshot WHERE code = :code")
     suspend fun getMaxDate(code: String): String?
@@ -322,6 +334,12 @@ data class DateCount(
 data class CodeMaxDate(
     val code: String,
     val maxDate: String
+)
+
+/** 股票代码 + 最新名称（stock_basics 缺名时由日K快照回填用） */
+data class CodeName(
+    val code: String,
+    val name: String
 )
 
 data class StrategyAccuracyStat(

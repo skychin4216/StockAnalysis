@@ -27,12 +27,18 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP_CONFIG_PATH = os.path.join(ROOT, "app", "src", "main", "assets", "data", "app_config.json")
+if getattr(sys, "frozen", False):
+    # PyInstaller onefile：本模块被收集进 exe（顶层模块），__file__ 指向临时解压根。
+    # cloud_config.json / ai_keys.properties 通过 --add-data 打包在解压根(.)，
+    # 直接以 _MEIPASS 作为资源根，保证配置与密钥路径解析正确。
+    ROOT = getattr(sys, "_MEIPASS", ROOT)
 
 # AutoQuant 侧（含 cloud_config.json + secret_enc 解密），存在时优先使用其配置
 AQ_CLOUD_CONFIG_CANDIDATES = (
     os.path.join(ROOT, "AutoQuant", "cloud_config.json"),
     os.path.join(ROOT, "AutoQuant", "data", "cloud_config.json"),
     os.path.join(ROOT, "AutoQuant", "cloudsync", "cloud_config.json"),
+    os.path.join(ROOT, "cloud_config.json"),  # frozen：打包在解压根；源码：工程根（通常无此文件，无害）
 )
 
 

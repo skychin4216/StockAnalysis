@@ -23,6 +23,7 @@ import argparse
 import datetime
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.parse
@@ -40,7 +41,26 @@ from _market_context import (  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-APP_CONFIG = os.path.join(ROOT, "app", "src", "main", "assets", "data", "app_config.json")
+
+
+def _resolve_app_config():
+    """notify 推送配置（app_config.json）：源码=StockAnalysis 工程内；frozen exe 回退探测工程绝对路径。"""
+    p = os.path.join(ROOT, "app", "src", "main", "assets", "data", "app_config.json")
+    if os.path.exists(p) or not getattr(sys, "frozen", False):
+        return p
+    # exe 位于 AutoQuant/dist 下，工程根在其上三级；再按本机绝对路径兜底
+    for cand in (
+        os.path.join(os.path.dirname(sys.executable), "..", "..", "..",
+                     "app", "src", "main", "assets", "data", "app_config.json"),
+        r"E:\Android\work\dev\StockAnalysis\app\src\main\assets\data\app_config.json",
+    ):
+        cand = os.path.abspath(cand)
+        if os.path.exists(cand):
+            return cand
+    return p
+
+
+APP_CONFIG = _resolve_app_config()
 LAST_FILE = os.path.join(HERE, "_last_publish.json")
 # 守护模式每日推送去重档案: 记录当日已推送的候选 secid 与板块动量, 相同信息不重复发送
 DIGEST_FILE = os.path.join(HERE, "_push_digest.json")
@@ -561,8 +581,13 @@ def send_wechat(new_data, old_data, cfg):
 
 
 def _push_wechat(title, content, cfg):
-    """通过 pushplus(优先)/serverchan 推送微信。返回是否已发送。"""
+    """通过 pushplus(优先)/serverchan 推送微信。返回是否已发送。
+
+    注意：显式禁用系统代理（urllib 默认读取 IE 代理 127.0.0.1:12450，
+    代理软件未运行时会导致 WinError 10061），与 _market_scan.py 行为一致。
+    """
     sent = False
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     token = cfg.get("pushplus_token", "").strip()
     if token:
         try:
@@ -571,7 +596,7 @@ def _push_wechat(title, content, cfg):
                 data=json.dumps({"token": token, "title": title, "content": content,
                                  "template": "txt"}).encode("utf-8"),
                 headers=PUSH_HEADERS, method="POST")
-            with urllib.request.urlopen(req, timeout=10) as r:
+            with opener.open(req, timeout=10) as r:
                 ok = json.loads(r.read().decode("utf-8")).get("code") in (200, "200")
             print("pushplus 通知 %s" % ("成功" if ok else "返回失败"))
             sent = sent or ok
@@ -583,7 +608,7 @@ def _push_wechat(title, content, cfg):
             url = ("%s/%s.send?title=%s&desp=%s" % (
                 cfg.get("serverchan_url", "https://sctapi.ftqq.com"), key,
                 urllib.parse.quote(title), urllib.parse.quote(content)))
-            with urllib.request.urlopen(url, timeout=10) as r:
+            with opener.open(url, timeout=10) as r:
                 ok = json.loads(r.read().decode("utf-8")).get("code") == 0
             print("serverchan 通知 %s" % ("成功" if ok else "返回失败"))
             sent = sent or ok
@@ -958,6 +983,175 @@ def run_once(dry=False, candidates_key=None, timed_push=False, use_ctx=True):
     return 0
 
 
+# ── 6. 盘段节奏守护：开盘后先「下载+回溯+拟合」，之后每 interval 秒选股推送 ──
+# 交易时段分两个盘段：
+#   上午段 09:30-11:30：段首跑一次 prep（下载 _kline_cache 增量 → 全周期回溯+拟合）
+#   下午段 13:00-15:00：段首再跑一次 prep（数据更新到当日最新后再回溯拟合）
+# prep 完成后本段立即选股一次，之后每 interval 秒一轮；非交易时段挂起。
+# 状态（当天哪段已 prep / 各段上次选股时间）持久化 _daemon_rhythm.json，
+# 守护重启或换日期不会重复 prep。
+#
+# 实测耗时（2026-09-04 本机）：
+#   下载 _update_cache_inc：有缺口约 6.2 分钟(218 只并发10)，无缺口秒回
+#   回溯+拟合 _full_cycle_backtest：全周期+中/长线网格约 6.6 分钟
+#   单轮选股+推送 run_once：约 1 分钟
+RHYTHM_FILE = os.path.join(HERE, "_daemon_rhythm.json")
+PREP_DOWNLOAD = os.path.join(HERE, "_update_cache_inc.py")
+PREP_FIT = os.path.join(HERE, "_full_cycle_backtest.py")
+_SESSIONS = (("am", 9 * 60 + 30, 11 * 60 + 30), ("pm", 13 * 60, 15 * 60))
+
+
+def current_session(now=None):
+    """当前所处盘段：'am' / 'pm' / None（非交易时段或周末）。"""
+    now = now or datetime.datetime.now()
+    if now.weekday() >= 5:
+        return None
+    hm = now.hour * 60 + now.minute
+    for sid, start, end in _SESSIONS:
+        if start <= hm <= end:
+            return sid
+    return None
+
+
+def _load_rhythm():
+    try:
+        with open(RHYTHM_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        d = {}
+    today = datetime.date.today().isoformat()
+    if d.get("date") != today:  # 跨日自动重置
+        d = {"date": today}
+    d.setdefault("prep", {})      # {"am": bool, "pm": bool}
+    d.setdefault("round_at", {})  # {"am": "HH:MM:SS", "pm": ...}
+    return d
+
+
+def _save_rhythm(d):
+    try:
+        with open(RHYTHM_FILE, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
+    except OSError as e:  # noqa: BLE001
+        print("节奏状态写入失败:", e)
+
+
+def rhythm_need_prep(session):
+    """本盘段今天是否尚未做过首刷（下载+回溯+拟合）。"""
+    return not bool(_load_rhythm()["prep"].get(session))
+
+
+def rhythm_round_due(session, interval, now=None):
+    """本盘段 prep 已完成且（尚无本轮 或 距上轮≥interval）时应跑一轮选股。"""
+    now = now or datetime.datetime.now()
+    if current_session(now) != session or rhythm_need_prep(session):
+        return False
+    last = _load_rhythm()["round_at"].get(session)
+    if not last:
+        return True  # 段内首轮：prep 完成后立即选股
+    try:
+        t = datetime.datetime.strptime(last, "%H:%M:%S").time()
+        last_dt = datetime.datetime.combine(now.date(), t)
+        return (now - last_dt).total_seconds() >= interval
+    except ValueError:
+        return True
+
+
+def rhythm_mark_round(session, now=None):
+    now = now or datetime.datetime.now()
+    d = _load_rhythm()
+    d["round_at"][session] = now.strftime("%H:%M:%S")
+    _save_rhythm(d)
+
+
+def run_prep(session, interval=900, log=print, stop_check=None):
+    """盘段首刷：下载当日K线缓存 → 全周期回溯+拟合。失败不标记，下个检查点重试。"""
+    label = "上午" if session == "am" else "下午"
+    log("[盘段%s] 首刷开始：下载K线 → 回溯+拟合（期间不选股，约 6~13 分钟）" % label)
+    ok = True
+    for title, script in (("下载K线缓存", PREP_DOWNLOAD), ("回溯+拟合", PREP_FIT)):
+        if stop_check is not None and stop_check():
+            return False
+        log("  ▶ %s：%s" % (title, os.path.basename(script)))
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, script], cwd=os.path.dirname(script),
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace", bufsize=1,
+                env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+            for line in proc.stdout:
+                line = line.rstrip()
+                if line:
+                    log("    | " + line)
+            proc.wait()
+            if proc.returncode != 0:
+                ok = False
+                log("  ✗ %s 失败 (exit=%d)" % (title, proc.returncode))
+            else:
+                log("  ✓ %s 完成" % title)
+        except Exception as e:  # noqa: BLE001
+            ok = False
+            log("  ✗ %s 异常：%s" % (title, e))
+        if not ok:
+            break
+    if ok:
+        rhythm_mark_prep(session)
+        log("[盘段%s] 首刷完成，开始每 %d 秒选股推送（每段首次立即选股）" % (label, interval))
+    else:
+        log("[盘段%s] 首刷失败，稍后自动重试" % label)
+    return ok
+
+
+def _interruptible_sleep(seconds, stop_check=None):
+    """分段 sleep，便于守护线程快速响应停止。"""
+    step = 0.5
+    while seconds > 0:
+        if stop_check is not None and stop_check():
+            return
+        time.sleep(min(step, seconds))
+        seconds -= step
+
+
+def daemon_serve(prep=True, interval=900, dry=False, use_ctx=True,
+                 log=print, stop_check=None):
+    """统一守护主循环（CLI --daemon 与 exe 选股推送面板共用）：
+
+    每盘段（上午 9:30 / 下午 13:00）开始先做 prep（下载+回溯+拟合），
+    完成后立即选股一次，此后每 interval 秒一轮；非交易时段挂起。
+    """
+    log("盘段守护启动：每盘段首刷（下载+回溯+拟合）→ 每 %d 秒选股推送" % interval)
+    last_session = None
+    while stop_check is None or not stop_check():
+        now = datetime.datetime.now()
+        sess = current_session(now)
+        if sess is None:
+            nxt = next_trading_start(now)
+            wait = max((nxt - now).total_seconds(), 1)
+            log("[%s] 非交易时段挂起 → 下一盘段 %s（约 %.0f 分钟）" % (
+                now.strftime("%H:%M"), nxt.strftime("%m-%d %H:%M"), wait / 60))
+            _interruptible_sleep(min(wait, 600), stop_check)
+            last_session = None
+            continue
+        if sess != last_session:
+            log("[盘段%s] %s 开盘段开始" % (
+                "上午" if sess == "am" else "下午", now.strftime("%H:%M:%S")))
+            last_session = sess
+        if prep and rhythm_need_prep(sess):
+            run_prep(sess, interval=interval, log=log, stop_check=stop_check)
+        if rhythm_round_due(sess, interval, now):
+            t0 = time.time()
+            log("[%s] 开始整轮选股…" % now.strftime("%H:%M:%S"))
+            try:
+                rc = run_once(dry=dry, candidates_key=None,
+                              timed_push=not dry, use_ctx=use_ctx)
+                log("[%s] 整轮选股+推送完成 rc=%d（耗时 %.0fs）" % (
+                    datetime.datetime.now().strftime("%H:%M:%S"), rc, time.time() - t0))
+                rhythm_mark_round(sess)
+            except Exception as e:  # noqa: BLE001
+                log("选股轮异常：%s" % e)
+        _interruptible_sleep(15, stop_check)
+    log("🛑 守护已停止")
+
+
 def main():
     ap = argparse.ArgumentParser(description="PC 候选清单发布（选股→通知→COS）")
     ap.add_argument("--once", action="store_true", help="执行一次")
@@ -967,27 +1161,14 @@ def main():
     ap.add_argument("--key", default=None, help="COS candidates_key，默认 stockanalysis/quant/candidates.json")
     ap.add_argument("--timed", action="store_true", help="定时推送模式（单次执行也推送整轮概览）")
     ap.add_argument("--no-ctx", action="store_true", help="跳过市场上下文/共振/实仓（纯形态快速选股）")
+    ap.add_argument("--no-prep", action="store_true",
+                    help="关闭盘段首刷(下载+回溯+拟合)，纯每 interval 秒选股轮询（旧节奏）")
     args = ap.parse_args()
     if args.daemon:
-        print("守护轮询启动：交易时段(工作日 9:30-11:30/13:00-15:00)每 %d 秒"
-              "选股(四大周期+共振)并推送双端命中" % args.interval)
-        while True:
-            if in_trading_time():
-                try:
-                    run_once(dry=args.dry, candidates_key=args.key,
-                             timed_push=not args.dry, use_ctx=not args.no_ctx)
-                except KeyboardInterrupt:
-                    break
-                except Exception as e:
-                    print("轮询异常:", type(e).__name__, e)
-                time.sleep(args.interval)
-            else:
-                nxt = next_trading_start()
-                wait = max((nxt - datetime.datetime.now()).total_seconds(), 1)
-                print("[%s] 非交易时段，等待 %.1f 分钟 → %s" % (
-                    datetime.datetime.now().strftime("%H:%M"), wait / 60,
-                    nxt.strftime("%m-%d %H:%M")))
-                time.sleep(min(wait, 600))
+        print("盘段守护启动：每盘段(上午9:30 / 下午13:00)首刷一次 "
+              "「下载K线+回溯+拟合」，完成后每 %d 秒整轮选股+推送双端命中" % args.interval)
+        daemon_serve(prep=not args.no_prep, interval=args.interval,
+                     dry=args.dry, use_ctx=not args.no_ctx)
         return 0
     return run_once(dry=args.dry, candidates_key=args.key, timed_push=args.timed,
                     use_ctx=not args.no_ctx)

@@ -26,6 +26,7 @@ import com.chin.stockanalysis.strategy.backtest.PeriodDeepAnalysisRunner
 import com.chin.stockanalysis.strategy.topology.xml.UseCaseExecution
 import com.chin.stockanalysis.strategy.analysis.CandlePatternDetector
 import com.chin.stockanalysis.strategy.analysis.MaConvergenceAnalyzer
+import com.chin.stockanalysis.strategy.analysis.TrendPatternEngine
 import com.chin.stockanalysis.strategy.data.InstitutionalRatingProvider
 import com.github.mikephil.charting.charts.CombinedChart
 import com.github.mikephil.charting.components.XAxis
@@ -854,9 +855,180 @@ class StockDetailFragment : Fragment() {
             setPadding(0, 4, 0, 8)
         })
 
+        // ── 匹配趋势区：任何入口进详情都检测，有匹配形态则在 K 线下方展示 ──
+        if (klineTabIndex == 0) appendTrendMatchPanel()
+
         // 确保容器重新布局
         klineContentContainer.requestLayout()
         klineContentContainer.invalidate()
+    }
+
+    /**
+     * K 线下方「匹配图谱」区：自动检测看多形态 + RSA 状态，命中即在 K 线下方
+     * **直接展示匹配到的图谱**（该股最近 20 根 K 线 + MA5 迷你图），无需再点击跳转。
+     */
+    private fun appendTrendMatchPanel() {
+        if (allKlineSnaps.size < 20) return
+        val match = TrendPatternEngine.match(allKlineSnaps) ?: return
+        val ctx = requireContext()
+        val win = allKlineSnaps.takeLast(20)   // 与识别窗口一致（正序）
+        val wrap = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dpToPx(8), dpToPx(6), dpToPx(8), dpToPx(6))
+            val bg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dpToPx(10).toFloat()
+            }
+            bg.setColor(Color.parseColor("#FFF8E1"))
+            bg.setStroke(dpToPx(1), Color.parseColor("#E65100"))
+            background = bg
+        }
+
+        // 标题行：匹配形态 + RSA 状态 + 识别窗口说明
+        val titleRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dpToPx(2), 0, dpToPx(2), dpToPx(4))
+        }
+        titleRow.addView(TextView(ctx).apply {
+            text = "📈 匹配图谱·${win.size}日K "
+            textSize = 11f
+            setTextColor(Color.parseColor("#333333"))
+            setTypeface(typeface, Typeface.BOLD)
+        })
+        titleRow.addView(TextView(ctx).apply {
+            text = match.tag
+            textSize = 11f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#E65100"))
+            setPadding(dpToPx(6), dpToPx(1), dpToPx(6), dpToPx(1))
+        })
+        if (!match.stateLabel.isNullOrBlank()) {
+            titleRow.addView(TextView(ctx).apply {
+                text = " RSA·${match.stateLabel}"
+                textSize = 11f
+                setTextColor(if (match.stateBull) Color.parseColor("#E53935") else Color.parseColor("#43A047"))
+                setTypeface(null, Typeface.BOLD)
+            })
+        }
+        wrap.addView(titleRow)
+
+        // 匹配到的图谱：最近 20 根 K 线迷你图（直接展示，不用跳转）
+        wrap.addView(buildPatternMiniChart(win, match.tag))
+
+        // 图库入口仅作补充提示（主展示已内嵌，点此处可看完整形态图库）
+        wrap.addView(TextView(ctx).apply {
+            text = "↑ 该股最近 20 根K线的匹配形态；点上方「📐图谱」可查看完整形态图库"
+            textSize = 9f
+            setTextColor(Color.parseColor("#8E5B00"))
+            setPadding(dpToPx(2), dpToPx(2), dpToPx(2), 0)
+        })
+        klineContentContainer.addView(wrap)
+    }
+
+    /** 迷你图谱：渲染识别窗口（最近 20 根）K 线 + MA5，固定展示不可缩放拖动，避免与主K线重复交互 */
+    private fun buildPatternMiniChart(
+        snaps: List<DailySnapshotEntity>, tag: String
+    ): CombinedChart {
+        val chart = CombinedChart(requireContext())
+        chart.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dpToPx(150))
+        chart.setBackgroundColor(Color.parseColor("#FFFDF7"))
+        chart.description.isEnabled = false
+        chart.legend.isEnabled = false
+        chart.setScaleEnabled(false)
+        chart.setDragEnabled(false)
+        chart.setDoubleTapToZoomEnabled(false)
+        chart.setHighlightPerTapEnabled(false)
+        chart.setHighlightPerDragEnabled(false)
+        chart.setVisibleXRangeMaximum(snaps.size.toFloat() + 2f)
+        chart.drawOrder = arrayOf(
+            CombinedChart.DrawOrder.CANDLE,
+            CombinedChart.DrawOrder.LINE
+        )
+        chart.moveViewToX(0f)
+
+        // K 线数据
+        val entries = ArrayList<CandleEntry>()
+        for (i in snaps.indices) {
+            val s = snaps[i]
+            entries.add(CandleEntry(
+                i.toFloat(),
+                s.high.toFloat(), s.low.toFloat(), s.open.toFloat(), s.close.toFloat()
+            ))
+        }
+        val candleDataSet = CandleDataSet(entries, tag).apply {
+            color = Color.parseColor("#333333")
+            shadowColor = Color.parseColor("#999999")
+            shadowWidth = 1f
+            increasingPaintStyle = android.graphics.Paint.Style.FILL
+            decreasingPaintStyle = android.graphics.Paint.Style.FILL
+            increasingColor = Color.parseColor("#E53935")
+            decreasingColor = Color.parseColor("#43A047")
+            isHighlightEnabled = false
+            setDrawValues(false)
+        }
+
+        // MA5 均线（迷你图只画一条，保持清爽）
+        val lineData = LineData()
+        val ma5Entries = calcMA(snaps.map { it.close }, 5, snaps)
+        if (ma5Entries.isNotEmpty()) {
+            lineData.addDataSet(LineDataSet(ma5Entries, "MA5").apply {
+                color = Color.parseColor("#FF9800")
+                lineWidth = 1.2f
+                setDrawCircles(false)
+                setDrawValues(false)
+                isHighlightEnabled = false
+            })
+        }
+
+        val combinedData = com.github.mikephil.charting.data.CombinedData()
+        combinedData.setData(CandleData(candleDataSet))
+        combinedData.setData(lineData)
+        chart.data = combinedData
+
+        chart.xAxis.apply {
+            position = XAxis.XAxisPosition.BOTTOM
+            granularity = 1f
+            textSize = 8f
+            textColor = Color.parseColor("#999999")
+            labelCount = 4
+            setDrawGridLines(false)
+            valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
+                override fun getFormattedValue(value: Float): String {
+                    val idx = value.toInt()
+                    return if (idx in snaps.indices) snaps[idx].date.takeLast(5) else ""
+                }
+            }
+        }
+        chart.axisLeft.apply {
+            textSize = 8f
+            textColor = Color.parseColor("#999999")
+            setDrawGridLines(true)
+            gridColor = Color.parseColor("#F0E7D5")
+            valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
+                override fun getFormattedValue(value: Float): String =
+                    "%.2f".format(value)
+            }
+        }
+        chart.axisRight.isEnabled = false
+        chart.invalidate()
+        return chart
+    }
+
+    /** 点击匹配趋势区 → 返回主框架并跳转「股票→K线趋势」页聚焦本股 */
+    private fun jumpToTrendGraph(tag: String) {
+        val act = requireActivity()
+        if (act !is MainActivity) {
+            android.widget.Toast.makeText(act, "仅主页面支持跳转趋势图谱", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        Log.i(TAG, "详情页匹配「$tag」，跳转 K线趋势页聚焦 $stockName($stockCode)")
+        try {
+            // 详情页是通过 replace 覆盖在 content 上的，先出栈返回主框架再切页
+            act.supportFragmentManager.popBackStack()
+        } catch (_: Exception) {}
+        act.findViewById<View>(android.R.id.content)?.postDelayed({
+            if (isAdded) act.navigateToTrendPattern(stockCode, stockName)
+        }, 350)
     }
 
     /** 切换回个股 K 线 */

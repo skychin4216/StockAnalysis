@@ -319,6 +319,8 @@ abstract class QuantFragmentBase : Fragment() {
         val ctx = requireContext()
         com.chin.stockanalysis.service.QuantTaskScheduler.submitParallel(ctx, "市场公共研判") {
             try {
+                // 预热板块/名称缓存，公共研判节点日志同样按“板块 → 股票”分组展示
+                try { DagDetailLogger.ensureCached(ctx) } catch (e: Exception) {}
                 val effectiveTradeDate = TradingDayPickerView.recentTradingDay(browsingDate).format(DATE_FMT)
                 val strategies = eng.getEnabledStrategiesByPeriod(HoldingPeriod.ULTRA_SHORT)
                 com.chin.stockanalysis.strategy.topology.xml.UseCaseLoader.init(ctx, strategies)
@@ -339,11 +341,17 @@ abstract class QuantFragmentBase : Fragment() {
                     onNodeDone = { pipelineName, nodeName, output, flow ->
                         lifecycleScope.launch(Dispatchers.Main) {
                             if (isAdded) {
-                                val summary = summarizeOutput(output)
-                                replaceLastNodeLog(
-                                    "   ├─ $nodeName  ✅ ${formatFlowText(flow)}$summary",
-                                    "$pipelineName::$nodeName"
-                                )
+                                // 先显示板块、再显示具体股票：输出为股票集合时按板块分行
+                                val codes = try { DagDetailLogger.extractStockCodes(output) } catch (e: Exception) { emptyList() }
+                                val secLines = if (codes.isNotEmpty())
+                                    try { DagDetailLogger.formatStockBySector(codes) } catch (e: Exception) { emptyList() }
+                                else emptyList()
+                                val base = "   ├─ $nodeName  ✅ ${formatFlowText(flow)}"
+                                val nodeLine = if (secLines.isNotEmpty())
+                                    base + "\n" + secLines.joinToString("\n")
+                                else
+                                    base + summarizeOutput(output)
+                                replaceLastNodeLog(nodeLine, "$pipelineName::$nodeName")
                             }
                         }
                     }
@@ -1108,8 +1116,12 @@ abstract class QuantFragmentBase : Fragment() {
         )
 
         val ctx = requireContext()
+        // 挂接 DAG 节点详细日志：进入/退出每个 Node 时按板块打印输入/输出/被过滤股票（logcat）
+        DagDetailLogger.ensureAttached(ctx)
         val body: suspend kotlinx.coroutines.CoroutineScope.() -> Unit = {
             val t0 = System.currentTimeMillis()
+            // 预热板块/名称缓存，保证节点日志能按“板块 → 股票”分组展示
+            try { DagDetailLogger.ensureCached(ctx) } catch (e: Exception) {}
             try {
                 val today = TradingDayPickerView.recentTradingDay().format(DATE_FMT)
                 val effectiveTradeDate = TradingDayPickerView.recentTradingDay(browsingDate).format(DATE_FMT)
@@ -1146,11 +1158,17 @@ abstract class QuantFragmentBase : Fragment() {
                     onNodeDone = { pipelineName, nodeName, output, flow ->
                         lifecycleScope.launch(Dispatchers.Main) {
                             if (isAdded) {
-                                val summary = summarizeOutput(output)
-                                replaceLastNodeLog(
-                                    "   ├─ $nodeName  ✅ ${formatFlowText(flow)}$summary",
-                                    "$pipelineName::$nodeName"
-                                )
+                                // 先显示板块、再显示具体股票：输出为股票集合时按板块分行
+                                val codes = try { DagDetailLogger.extractStockCodes(output) } catch (e: Exception) { emptyList() }
+                                val secLines = if (codes.isNotEmpty())
+                                    try { DagDetailLogger.formatStockBySector(codes) } catch (e: Exception) { emptyList() }
+                                else emptyList()
+                                val base = "   ├─ $nodeName  ✅ ${formatFlowText(flow)}"
+                                val nodeLine = if (secLines.isNotEmpty())
+                                    base + "\n" + secLines.joinToString("\n")
+                                else
+                                    base + summarizeOutput(output)
+                                replaceLastNodeLog(nodeLine, "$pipelineName::$nodeName")
                             }
                         }
                     },

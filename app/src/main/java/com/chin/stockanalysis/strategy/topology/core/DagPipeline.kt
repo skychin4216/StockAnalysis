@@ -383,6 +383,10 @@ class DagPipeline(
 
         val elapsed = measureTimeMillis {
             try {
+                // ── 详细调试日志：进入 Node 前（DagDetailLogger 按板块打印输入股票）
+                DagDetailBridge.hook?.invoke(
+                    name, dagNode.nodeName, DagDetailBridge.Phase.ENTER, input, null
+                )
                 // 通知 UI 层当前正在执行的节点（pipeline 名 + node 名）
                 context.onNodeProgress?.invoke(name, dagNode.nodeName)
                 context.log(nodeId, "▶ 开始: ${dagNode.nodeName}")
@@ -425,6 +429,12 @@ class DagPipeline(
             context.log(nodeId, "✗ 失败: ${dagNode.nodeName} (${elapsed}ms) — $error")
             context.onNodeDone?.invoke(name, dagNode.nodeName, null, nodeStockFlow)
         }
+
+        // ── 详细调试日志：退出 Node 后（输出 + 被过滤股票，DagDetailLogger 按板块打印）
+        DagDetailBridge.hook?.invoke(
+            name, dagNode.nodeName, DagDetailBridge.Phase.EXIT,
+            input, if (success) output else null
+        )
 
         // 存入上下文
         contextMutex.withLock {

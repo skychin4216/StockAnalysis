@@ -129,6 +129,8 @@ class MainActivity : AppCompatActivity() {
         initBackupSystem()
         // 统一后台调度器
         com.chin.stockanalysis.stock.database.AppBackgroundRunner.start(applicationContext, lifecycleScope)
+        // OS 级兜底：每交易日 11:35/15:05 自动补齐实仓日K（WorkManager，App 后台/被杀也会到点执行）
+        com.chin.stockanalysis.sync.RealPositionDailySyncScheduler.schedule(applicationContext)
         // logcat 自动落盘（供「上传今日数据」同步日志到 COS）
         com.chin.stockanalysis.util.FileLogger.start(applicationContext)
         migrateLegacyConversations()
@@ -366,6 +368,16 @@ class MainActivity : AppCompatActivity() {
                 .firstOrNull { it is StockTabFragment } as? StockTabFragment
             stockTab?.switchToInstitutional()
         }, 300)
+    }
+
+    /** 导航到「股票 → K线趋势」页并聚焦某只股票的形态图谱（个股详情页等联动入口） */
+    fun navigateToTrendPattern(stockCode: String, stockName: String) {
+        switchToStockTab()
+        viewPager.postDelayed({
+            val stockTab = supportFragmentManager.fragments
+                .firstOrNull { it is StockTabFragment } as? StockTabFragment
+            stockTab?.openTrendPattern(stockCode, stockName)
+        }, 350)
     }
 
     fun switchToChatAndSend(message: String) {

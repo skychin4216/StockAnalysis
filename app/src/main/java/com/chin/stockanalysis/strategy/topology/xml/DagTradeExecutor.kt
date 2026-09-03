@@ -165,6 +165,9 @@ object DagTradeExecutor {
         var typedGuardResult: HoldingGuardResult? = null
         var typedSwapResult: SwapWeakResult? = null
         val selectedStocks = mutableListOf<Triple<String, String, Int>>()
+        // AI 精选质量闸门：非交易一键建仓（saveAsAiOnly）时按周期登记 code->score，
+        // 四周期全部登记后由 AiSelectionQualityGate 统一过滤（多周期共振≥3 或 分≥85 才保留）
+        val aiOnlySelected = mutableMapOf<String, Int>()
 
         try {
             for ((_, pipelineResult) in result.pipelineResults) {
@@ -224,6 +227,12 @@ object DagTradeExecutor {
                             if (aiEntities.isNotEmpty()) {
                                 db.aiSelectedStockDao().insertAll(aiEntities)
                                 Log.i(TAG, "[$useCaseId] 选股同步写入 AI 精选: ${aiEntities.size} 只 (source=$watchlistSource)")
+                                // 记录到质量闸门登记（仅 saveAsAiOnly 模式会被消费）
+                                if (saveAsAiOnly) {
+                                    for (order in ordersOutput.orders) {
+                                        aiOnlySelected.merge(order.stockCode, order.scoreAtBuy) { a, b -> maxOf(a, b) }
+                                    }
+                                }
                             }
                         } catch (e: Exception) {
                             Log.w(TAG, "[$useCaseId] 写入 AI 精选失败: ${e.message}")
@@ -291,6 +300,18 @@ object DagTradeExecutor {
             }
         } catch (e: Exception) {
             Log.w(TAG, "[$useCaseId] 后处理异常: ${e.message}")
+        }
+
+        // 4b. AI 精选质量闸门：saveAsAiOnly（非交易一键建仓）→ 登记本周期选股结果，
+        // 四周期全部到齐后由 AiSelectionQualityGate 统一过滤弱票（共振≥3 或 分≥85）
+        if (saveAsAiOnly) {
+            try {
+                com.chin.stockanalysis.strategy.trade.AiSelectionQualityGate
+                    .registerPeriod(context, today, useCaseId, aiOnlySelected)
+                Log.i(TAG, "[$useCaseId] AI 精选质量闸门登记完成: ${aiOnlySelected.size} 只")
+            } catch (e: Exception) {
+                Log.w(TAG, "[$useCaseId] AI 精选质量闸门登记失败: ${e.message}")
+            }
         }
 
         // 5. 收集各 Pipeline 节点股票流动摘要

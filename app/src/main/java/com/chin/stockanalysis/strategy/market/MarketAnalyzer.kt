@@ -104,7 +104,9 @@ object MarketAnalyzer {
         /** 文字摘要（可直接展示在 UI）*/
         val summary: String,
         /** 分析时间戳 */
-        val timestamp: Long
+        val timestamp: Long,
+        /** 大盘量能状态（动态缩量冰点检测）*/
+        val volumeState: VolumeState = VolumeState()
     )
 
     /**
@@ -143,6 +145,21 @@ object MarketAnalyzer {
         val volumeRatio: Double,
         /** 卖出类型描述 */
         val description: String
+    )
+
+    /**
+     * ## 大盘量能状态（动态缩量冰点检测）
+     *
+     * 阈值不写死绝对值，全部相对上证指数自身近 20 个交易日动态计算：
+     * - volumeRatio20：今日成交量 / 前 20 日均量
+     * - quantile20：今日成交量处于近 20 日的分位（0~1，越小越接近地量）
+     * - isIcePoint：下跌途中缩量到近 20 日底部区域 → 多为"地量见地价"冰点，暂缓割肉
+     */
+    data class VolumeState(
+        val volumeRatio20: Double = 0.0,
+        val quantile20: Double = 0.0,
+        val isIcePoint: Boolean = false,
+        val hint: String = ""
     )
 
     /**
@@ -343,8 +360,12 @@ object MarketAnalyzer {
                 Log.i(TAG, "外围市场: ${overseas.direction}(强度${overseas.strength}) 加权${"%.2f".format(overseas.weightedChange)}% ${overseas.impactHint}")
             }
 
+            // 大盘量能状态（动态缩量冰点检测，阈值相对近20日自身计算）
+            val volumeState = analyzeVolumeState(context)
+            val volumeHint = volumeState.hint.takeIf { it.isNotBlank() }?.let { "\n$it" } ?: ""
+
             // 生成文字摘要
-            val summary = buildSummary(trend, sellType, sectorAdvice, holdings, overseas)
+            val summary = buildSummary(trend, sellType, sectorAdvice, holdings, overseas) + volumeHint
 
             val elapsed = System.currentTimeMillis() - startTime
             Log.i(TAG, "========== 大盘综合分析完成，耗时 ${elapsed}ms ==========")
@@ -357,7 +378,8 @@ object MarketAnalyzer {
                 holdings = holdings,
                 overseas = overseas,
                 summary = summary,
-                timestamp = System.currentTimeMillis()
+                timestamp = System.currentTimeMillis(),
+                volumeState = volumeState
             )
         }
 
@@ -564,6 +586,51 @@ object MarketAnalyzer {
     // ════════════════════════════════════════════════════
     //  模组 2：主力撤资 vs 量化砸盘识别
     // ════════════════════════════════════════════════════
+
+    /**
+     * 动态量能状态分析：下跌缩量冰点检测。
+     *
+     * 规则（全部相对自身近 20 日动态计算，不写死绝对值）：
+     * - 今日量 / 前20日均量 ratio；ratio <= 0.9 → 明显缩量
+     * - 今日量在近20日分位 quantile；quantile <= 0.35 → 接近地量区
+     * - 近 5 日收盘下跌 且 缩量到地量区 → 判定"下跌缩量冰点"，提示暂缓割肉
+     */
+    private suspend fun analyzeVolumeState(context: Context): VolumeState {
+        val empty = VolumeState()
+        return try {
+            val db = StockDatabase.getInstance(context)
+            val snaps = db.dailySnapshotDao().getByCode(INDEX_CODE, 40)
+                .sortedBy { it.date }
+            if (snaps.size < 21) return empty
+            val vols = snaps.map { it.volume.toDouble() }
+            val closes = snaps.map { it.close }
+            val today = vols.last()
+            val prev20 = vols.takeLast(21).dropLast(1)
+            val ma20 = prev20.average()
+            val ratio = if (ma20 > 0) today / ma20 else 1.0
+            val window = vols.takeLast(20)
+            val below = window.count { it <= today }
+            val quantile = below.toDouble() / window.size
+            val chg5 = if (closes.size >= 6)
+                (closes.last() - closes[closes.size - 6]) / closes[closes.size - 6] * 100.0
+            else 0.0
+
+            val shrinking = ratio <= 0.9
+            val nearLow = quantile <= 0.35
+            val isIce = shrinking && nearLow && chg5 < 0.0
+
+            val hint = when {
+                isIce -> "量能冰点提示：上证成交量为近20日分位${"%.0f".format(quantile * 100)}%（仅${"%.2f".format(ratio)}倍MA20量），近5日跌${"%.2f".format(chg5)}%且持续缩量到地量区（多数资金已躺平）。建议：此位置先不割肉，等反弹放量或出现反转信号再决策。"
+                shrinking && nearLow -> "缩量提示：上证成交量为近20日分位${"%.0f".format(quantile * 100)}%（${"%.2f".format(ratio)}倍MA20量），接近地量冰点但尚未确认，防最后一跌；暂缓割肉并留意放量企稳信号。"
+                ratio >= 1.5 -> "放量提示：今日上证成交量达20日均量的${"%.2f".format(ratio)}倍。若下跌放量需防恐慌宣泄/主力出货；若上涨放量则为有效放量，可提高仓位关注。"
+                else -> ""
+            }
+            VolumeState(ratio, quantile, isIce, hint)
+        } catch (e: Exception) {
+            Log.w(TAG, "[量能] 冰点分析失败: ${e.message}")
+            empty
+        }
+    }
 
     /**
      * 从东方财富 API 实时拉取上证指数 K 线数据作为 fallback

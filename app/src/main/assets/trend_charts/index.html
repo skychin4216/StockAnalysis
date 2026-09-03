@@ -348,6 +348,27 @@ function addPatternFromApp(jsonStr){
   }catch(e){alert('解析形態數據失敗: '+e.message);}
 }
 
+// 由 App 调用：按唯一标识定位某个已注入的形态卡片（自动滚动到视野中央并高亮）。
+// 返回卡片在该形态库中的序号（从 0 开始），用于「点击扫描结果 → 自动匹配趋势图 index」。
+function focusPatternByEn(enStr){
+  try{
+    const p=patterns.find(function(p){return String(p.en).trim()===String(enStr).trim();});
+    if(!p){return 'NOT_FOUND:'+enStr;}
+    renderGrid('all');
+    const cards=document.querySelectorAll('.card');
+    for(let i=0;i<cards.length;i++){
+      const el=cards[i].querySelector('.en');
+      if(el&&String(el.textContent).trim()===String(p.en).trim()){
+        cards[i].scrollIntoView({behavior:'smooth',block:'center'});
+        cards[i].classList.add('newly-added');
+        setTimeout(function(){cards[i].classList.remove('newly-added');},4000);
+        return String(i);
+      }
+    }
+    return 'INDEX_NOT_FOUND';
+  }catch(e){return 'ERR:'+e.message;}
+}
+
 renderGrid('all');
 </script>
 </body>
