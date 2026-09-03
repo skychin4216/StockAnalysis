@@ -14,6 +14,7 @@
   announce(secid, date, title)
   news(secid, date, title, summary)
   params(scope, version, generated_at, payload_json)      -- 拟合参数归档
+  market_state(date, state, detail_json)                  -- 大盘状态历史（BULLISH/OSCILLATION/BEARISH/CRASH）
   meta(key, value)                                         -- 元信息（库版本/末端日期）
 
 secid 格式（与 smalltools/_kline_cache.json 一致）：
@@ -68,11 +69,57 @@ CREATE TABLE IF NOT EXISTS params (
     PRIMARY KEY (scope, version)
 );
 
+CREATE TABLE IF NOT EXISTS market_state (
+    date        TEXT PRIMARY KEY,       -- 交易日 YYYY-MM-DD
+    state       TEXT NOT NULL,          -- BULLISH / OSCILLATION / BEARISH / CRASH / UNKNOWN
+    detail_json TEXT DEFAULT '',        -- 可选：指数方向明细等
+    updated_at  TEXT DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
 """
+
+# 供 _self_fit_pipeline 等回溯脚本复用，避免重复判定
+def sync_market_states(date_state):
+    """写入大盘状态历史 {date: state}（幂等 upsert）。date_state: {str: str} 或 {str: (state, detail)}。"""
+    conn = get_conn()
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    rows = []
+    for d, v in date_state.items():
+        if isinstance(v, (tuple, list)):
+            st, detail = v[0], (v[1] if len(v) > 1 else "")
+        else:
+            st, detail = v, ""
+        rows.append((d, st, json.dumps(detail, ensure_ascii=False) if detail else "", ts))
+    conn.executemany(
+        """INSERT INTO market_state(date,state,detail_json,updated_at) VALUES(?,?,?,?)
+           ON CONFLICT(date) DO UPDATE SET
+             state=excluded.state, detail_json=excluded.detail_json, updated_at=excluded.updated_at""",
+        rows)
+    conn.commit()
+    conn.close()
+
+
+def load_market_states(start=None, end=None):
+    """读取大盘状态历史 → {date: state}。"""
+    conn = get_conn()
+    sql = "SELECT date, state FROM market_state"
+    args = []
+    if start:
+        sql += " WHERE date>=?"
+        args.append(start)
+    if end:
+        sql += " AND date<=?" if not args else " AND date<=?"
+        args.append(end)
+    sql += " ORDER BY date"
+    out = {}
+    for r in conn.execute(sql, args).fetchall():
+        out[r["date"]] = r["state"]
+    conn.close()
+    return out
 
 
 # ---------------------------------------------------------------- 基础 API

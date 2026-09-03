@@ -58,6 +58,10 @@
 | `_overseas_fetch.py` | **外围历史日K采集**（A股跨境 ETF 代理：纳指100/中韩半导体/标普500，腾讯 fqkline 稳定返回 800 根；东财/雅虎/stooq 均被断或反爬故走代理路线），产出 `_overseas_cache.json`，供隔夜外围因子回测/选股。`--check` 仅查状态。 |
 | `_overseas_factor.py` | **隔夜外围因子**（韩股/纳指前一日大跌 → A股开盘降权/禁开仓）：双代理加权（纳指0.6+韩股0.4），soft/hard 双阈值，默认只影响超短/短线。回测结论：全局禁开仓误杀长线（-1898pp），仅禁短周期胜率+5.2pp。 |
 | `_session_factor.py` | **时段因子**（盘中实时，需当日分时）：早盘 9:30~10:00 下杀≥-1.5% 且 10:00~10:30 企稳回升≥+0.5% → 可介入；14:30 后 14:00 起拉升≥+1.0% → 尾盘勿追高。腾讯当日分时接口，历史分钟线受限故仅实时过滤。 |
+| `_daily_active_pool.py` | **每日活跃池发现（开盘前轻量流程，替代每天全市场 56 页快照）**：用 6 个 1 页榜单请求（成交额/换手/涨幅 Top100 + 近20日板块榜）捕获当日市场焦点；产出 `data/_daily_hot.json` + `data/_daily_hot_history.json`（多日上榜累计=市场焦点股）；与核心池对比输出"池外新晋活跃候选"，并标注小市值炒作焦点（≤150亿且高换手，震荡期炒的永远是榜前排）；`--fetch-candidates` 可把候选 K 线补入 market_data.db（每日只几只，轻量）。 | `python _daily_active_pool.py` |
+| `_market_snapshot.py` | **全市场市值快照 + 板块分层清单（低频：每周校准/换池时运行）**：抓全市场 4600+ 只（56 页）→ 分层清单按行业板块输出龙头/大票/小票；`--export-small` 导出 20~120亿+低价小市值分析池（轮动规律统计的候选层）。市值几天不变，勿每日运行。 | `python _market_snapshot.py --skip-snapshot --export-small ..\data\_small_pool.json` |
+| `_sector_fundflow.py` | **板块资金流实时数据源（东财 push2delay 当日实时）**：全行业板块主力净流入 Top/净流出排行；设计为轮动引擎的"当日候选验证层"——板块动量候选出来后用资金流二次过滤/排序（资金流无法历史回放）。 | `python _sector_fundflow.py --names 半导体,通信设备` |
+| `_market_context.py` | **盘中市场上下文聚合（`_publish_candidates.py` 的共振数据层，15 分钟守护用）**：东财实时板块资金流 + ETF 资金走向 + 日/周/月热门榜单 + Android 实仓镜像 + exe screen_report；`resonance_for()` 给候选算多因子共振分(资金/轮动/热度/ETF/连续上榜)，全部 TTL 缓存+容错降级。 | `python _market_context.py` / `python _market_context.py --flow 半导体` |
 
 ---
 

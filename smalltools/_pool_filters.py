@@ -161,13 +161,14 @@ def extra_filter(code, name, r, period, cache, all_dates, date_to_idx, asof):
         return False
     # 5) 粘合持续硬性（仅中线）：消灭「瞬间收敛」假粘合
     if STICKY_HARD and period == "中线":
-        ck = r["checks"].get("③粘合持续")
+        ck = (r.get("checks") or {}).get("③粘合持续")
         if ck is not None and not ck[0]:
             return False
     # 6) 短线关键项硬性（超短/短线）：追涨信号必须有多头排列 + 三日不新低确认
     if SHORT_HARD and period in ("超短线", "短线"):
+        checks = r.get("checks") or {}
         for k in ("②多头排列", "⑬三日不新低"):
-            ck = r["checks"].get(k)
+            ck = checks.get(k)
             if ck is not None and not ck[0]:
                 return False
     # 7) 板块代理过滤（超短/短线/中线）：弱板块（行业近 20 日平均涨幅 < 阈值）拒绝

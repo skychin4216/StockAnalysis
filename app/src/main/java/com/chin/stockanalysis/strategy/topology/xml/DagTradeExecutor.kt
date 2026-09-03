@@ -329,6 +329,13 @@ object DagTradeExecutor {
             }
         }
 
+        // 5c. 持久化节点使用率统计（累计拦截/空转计数，供评估低使用率 node）
+        try {
+            com.chin.stockanalysis.strategy.topology.core.NodeUsageStats.record(context, useCaseId, nodeFlowDetails)
+        } catch (e: Exception) {
+            Log.w(TAG, "[$useCaseId] 节点使用率统计失败: ${e.message}")
+        }
+
         // 6. 构建 UI 显示文本
         val detailLines = mutableListOf<String>()
         if (ordersCount > 0) detailLines.add("订单${ordersCount}笔")

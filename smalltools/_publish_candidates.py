@@ -1,15 +1,22 @@
 # -*- coding: utf-8 -*-
-"""PC 候选清单发布：选股 → 对比上次 → 微信通知 → 上传 COS → 可选守护轮询。
+"""PC 候选清单发布：四周期选股(异动共振) → 双端命中对比 → 微信通知 → 上传 COS → 守护轮询。
+
+v11 盘中共振版：每 15 分钟(交易时段)一轮，选股不再只看形态——先收集盘中市场上下文
+(_market_context.py：实时板块资金流 / 日榜 / 连续上榜焦点 / Android 实仓 / exe 命中)，
+对每只候选做「技术买点 + 资金/轮动/热度共振」综合排序；推送同时并列 CodeBuddy 命中
+与 exe(AutoQuant screen_report) 命中，并附实仓持仓的持/加/减/止损建议。
 
 用法：
   python _publish_candidates.py --once            # 跑一次（选股+对比+通知+上传）
   python _publish_candidates.py --once --dry      # 只选股+本地输出，不上传不通知
-  python _publish_candidates.py --daemon          # 每 300 秒轮询（盘中盯新买点）
-  python _publish_candidates.py --daemon --interval 300
+  python _publish_candidates.py --daemon          # 每 900 秒(15分钟)轮询整轮推送
+  python _publish_candidates.py --daemon --interval 900 --no-ctx
+                                                  # 关闭市场上下文，纯形态快速模式
 
 数据流：
-  _kline_cache.json(池) + _industry_map(行业) → 候选清单 JSON
-  → 与 _last_publish.json 对比出新信号 → 微信(pushplus/serverchan)通知
+  _kline_cache.json(池) + _industry_map(行业) + _market_context(盘中异动/资金/热度/实仓/exe)
+  → 候选清单 JSON(schema2, groups 含共振字段 reso/total)
+  → 每轮推送微信(pushplus/serverchan)：CodeBuddy + exe 命中并列 + 实仓建议 + 板块资金流
   → PUT 到 COS(candidates_key)，APK 工作台「PC 候选」Tab 下载展示
 """
 import argparse
@@ -28,11 +35,15 @@ from backtest_guangmo import PARAMS, analyze_snaps  # noqa: E402
 from _industry_map import build_industry  # noqa: E402
 from _rotation_engine import rotate as rotation_rotate, load_cache as rotation_load_cache  # noqa: E402
 from _rotation_engine import macro_div_pref, HIGH_DIVIDEND_SECTORS, oil_high, OIL_HIGH_SECTORS  # noqa: E402
+from _market_context import (  # noqa: E402
+    build_context, resonance_for, secid_of, flow_match, fetch_intraday_prices)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 APP_CONFIG = os.path.join(ROOT, "app", "src", "main", "assets", "data", "app_config.json")
 LAST_FILE = os.path.join(HERE, "_last_publish.json")
+# 守护模式每日推送去重档案: 记录当日已推送的候选 secid 与板块动量, 相同信息不重复发送
+DIGEST_FILE = os.path.join(HERE, "_push_digest.json")
 OUT_DEFAULT = os.path.join(ROOT, "AutoQuant", "data", "candidates_quant.json")
 
 # APK 扫描结果（外部板块信号源）+ APK 上传的全量 K 线库（动态补池数据源）
@@ -222,8 +233,159 @@ def merge_apk_rotation(pc_rotation, apk_rotation, cache, min_mom=APK_MIN_SEC_MOM
     return out
 
 
+# ── 1.8 共振评分：市场上下文融合到候选 ─────────────────────────────────
+RESO_WEIGHT = 0.06  # 共振分最多折算成 ratio 加成 0.06（技术买点仍为主排序）
+
+
+def decorate_with_ctx(data, ctx):
+    """给候选清单叠加市场上下文共振分，并按综合分重排。
+
+    参考网上主流「技术买点 + 资金/题材/轮动共振」思路：不推翻形态准入门槛
+    (ratio/ambush)，只做小幅度提权排序，让同档次买点里共振更强的排前面。
+    """
+    if not ctx:
+        return data
+    groups = data.get("groups") or {}
+    for pname, items in groups.items():
+        if pname == "板块轮动":
+            continue  # 板块轮动组保持板块动量排序，不重排
+        for it in items:
+            reso = resonance_for(it["secid"], it.get("industry") or "", ctx)
+            it["reso"] = reso
+            it["total"] = round(it["ratio"] + min(reso["score"] / 8.0, 1.0) * RESO_WEIGHT, 3)
+        items.sort(key=lambda r: (r["total"], r["ratio"], r["pass"]), reverse=True)
+        items[:] = items[:GROUP_SIZE]
+    prep = data.get("prepared") or []
+    for it in prep:
+        reso = resonance_for(it["secid"], it.get("industry") or "", ctx)
+        it["reso"] = reso
+        it["total"] = round(it["ratio"] + min(reso["score"] / 8.0, 1.0) * RESO_WEIGHT, 3)
+    prep.sort(key=lambda r: (r["total"], r["ratio"], r["pass"]), reverse=True)
+    data["prepared"] = prep[:PREPARED_SIZE]
+    return data
+
+
+def summarize_context(ctx):
+    """把 ctx 压成候选 JSON 的 market_context 展示字段。"""
+    if not ctx:
+        return {}
+    flow_rank = ctx.get("flow_rank") or []
+    hot_stale = bool(ctx.get("hot_stale"))
+    hot_date = ((ctx.get("daily_hot") or {}).get("date")) or ""
+    return {
+        "ts": ctx.get("ts"),
+        "trading": ctx.get("trading"),
+        "hot_date": hot_date,
+        "hot_stale": hot_stale,
+        "flow_top": [{k: r.get(k) for k in ("name", "main_yi", "main_pct", "zdf_pct")}
+                     for r in flow_rank[:5]],
+        "flow_bottom": [{k: r.get(k) for k in ("name", "main_yi", "main_pct", "zdf_pct")}
+                        for r in flow_rank[-5:]] if len(flow_rank) >= 10 else [],
+        "week_focus_count": sum(1 for v in (ctx.get("week_focus") or {}).values() if v >= 2),
+        "positions": len(ctx.get("positions") or []),
+        "positions_asof": ctx.get("positions_asof"),
+        "etf_top": [{"name": r.get("name"), "in_yi": r.get("in_yi"), "chg_pct": r.get("chg_pct")}
+                    for r in (ctx.get("etf_flow") or [])[:5]],
+    }
+
+
+def _ma(snaps, n, idx):
+    """snaps 前 idx(含) 近 n 日均线。"""
+    if idx + 1 < n:
+        return None
+    seg = snaps[idx + 1 - n:idx + 1]
+    vals = [s["close"] for s in seg if s.get("close")]
+    return sum(vals) / len(vals) if vals else None
+
+
+def assess_positions(ctx, cache, data):
+    """评估 Android 实仓：每只持仓给持有/加仓/减仓/止损建议。
+
+    规则（实仓风控为主，不依赖形态回测）：
+      - 盈亏 ≤ -8% 或跌破 MA20 且现价低于成本 → 止损/减仓警戒
+      - 本轮候选命中(超短/短/中/长/轮动/prepared) → 加仓候选/持有
+      - 行业资金净流入>0 且盈亏>0 → 持有增强
+      - 其他 → 持有观察
+    返回 [{secid,name,code,qty,avg_buy_price,current_price,pnl_pct,period_type,
+           sector,in_candidates,hit_periods,ma20,ma60,verdict,note}]
+    """
+    pos = ctx.get("positions") or []
+    if not pos:
+        return []
+    asof = data.get("asof", "")
+    hit = {}  # secid -> [period,...]
+    for pname, items in (data.get("groups") or {}).items():
+        for it in items:
+            hit.setdefault(it["secid"], []).append(pname)
+    for it in data.get("prepared") or []:
+        hit.setdefault(it["secid"], []).append("预备队")
+    out = []
+    for p in pos:
+        raw_code = str(p.get("stock_code") or "").strip()
+        if not raw_code:
+            continue
+        code6 = secid_of(raw_code)[2:]
+        sid = secid_of(raw_code)
+        name = p.get("stock_name") or code6
+        qty = float(p.get("quantity") or 0)
+        cost = float(p.get("avg_buy_price") or 0)
+        cur = float(p.get("current_price") or 0)
+        pnl = round((cur / cost - 1) * 100, 1) if cost > 0 and cur > 0 else None
+        # 尽量用池内最新收盘（比镜像 current_price 更新鲜）
+        snaps = (cache.get(sid) or {}).get("snaps") or []
+        if snaps and snaps[-1].get("date") == asof:
+            cur = float(snaps[-1]["close"] or cur)
+            pnl = round((cur / cost - 1) * 100, 1) if cost > 0 else None
+        idx = len(snaps) - 1
+        ma20 = _ma(snaps, 20, idx) if snaps else None
+        ma60 = _ma(snaps, 60, idx) if snaps else None
+        hit_periods = hit.get(sid) or []
+        # 池外/镜像无价的持仓：盘中用实时行情补一次（每轮一次，TTL 缓存）
+        if cur <= 0:
+            try:
+                rt = fetch_intraday_prices([sid]).get(sid) or {}
+                if rt.get("price"):
+                    cur = float(rt["price"])
+                    pnl = round((cur / cost - 1) * 100, 1) if cost > 0 else None
+                    if not snaps:
+                        snaps = [{"date": asof, "close": cur}]
+                        idx = 0
+            except Exception:
+                pass
+        verdict, note = "持有观察", ""
+        if cur <= 0 or cost <= 0:
+            verdict, note = "数据不足", "无有效成本/现价"
+        else:
+            sector = p.get("sector") or ""
+            f = flow_match(sector, ctx.get("flow") or {}) if sector else None
+            fund_in = bool(f and float(f.get("main_yi") or 0) > 0)
+            if pnl <= -8.0:
+                verdict = "止损警戒"
+                note = "亏损%.1f%% 已达止损位" % pnl
+            elif ma20 is not None and cur < ma20 and pnl is not None and pnl < 0:
+                verdict = "减仓警戒"
+                note = "跌破MA20(%.2f) 浮亏%.1f%%" % (ma20, pnl)
+            elif hit_periods:
+                verdict = "加仓候选"
+                note = "本轮命中:%s" % "/".join(hit_periods[:3])
+            elif fund_in and pnl is not None and pnl > 0:
+                verdict = "持有"
+                note = "行业资金流入 浮盈%.1f%%" % pnl
+        out.append({
+            "secid": sid, "name": name, "code": code6, "qty": qty,
+            "avg_buy_price": round(cost, 3), "current_price": round(cur, 3),
+            "pnl_pct": pnl, "period_type": p.get("period_type") or "",
+            "sector": p.get("sector") or "",
+            "in_candidates": bool(hit_periods), "hit_periods": hit_periods,
+            "ma20": round(ma20, 3) if ma20 else None,
+            "ma60": round(ma60, 3) if ma60 else None,
+            "verdict": verdict, "note": note,
+        })
+    return out
+
+
 # ── 2. 候选清单生成 ────────────────────────────────────────────────────
-def build_candidates(cache, industry):
+def build_candidates(cache, industry, ctx=None):
     asof, trend, _ = market_state_trend(cache)
     if not asof:
         return None
@@ -320,7 +482,7 @@ def build_candidates(cache, industry):
         rot_unique.append(it)
     rot_unique.sort(key=lambda r: (r["sector_mom"], r["mom20"] if r["mom20"] is not None else -999), reverse=True)
     groups["板块轮动"] = rot_unique[:GROUP_SIZE * 2]
-    return {
+    data = {
         "schema": 2,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "asof": asof,
@@ -332,6 +494,16 @@ def build_candidates(cache, industry):
         "rotation": rotation,
         "pool_total": len(cache),
     }
+    # ③ 市场上下文融合：轮动索引注入 ctx → 候选叠加共振分 → 重排
+    if ctx is not None:
+        ctx["rot_sectors"] = {r.get("industry"): float(r.get("sec_mom") or 0)
+                              for r in rotation if r.get("industry")}
+        ctx["rot_catalyst"] = {r.get("industry"): (r.get("catalyst_reason") or r.get("catalyst") or "")
+                               for r in rotation if r.get("industry")}
+        data = decorate_with_ctx(data, ctx)
+    data["market_context"] = summarize_context(ctx)
+    data["positions"] = assess_positions(ctx, cache, data)
+    return data
 
 
 def candidate_secids(data):
@@ -494,26 +666,274 @@ def send_wechat_timed(data, cfg):
     return _push_wechat(title, content, cfg)
 
 
+def _load_digest():
+    try:
+        with open(DIGEST_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) and d.get("date") else {"date": "", "secids": [], "sectors": {}}
+    except (OSError, ValueError):
+        return {"date": "", "secids": [], "sectors": {}}
+
+
+def _save_digest(d):
+    try:
+        with open(DIGEST_FILE, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
+    except OSError:
+        pass
+
+
+def send_wechat_daily(data, cfg, old_secids=None):
+    """每日守护推送：同一交易日相同信息只推送一次，候选 + 板块异动合并一条发送。
+
+    增量规则：
+      - 候选：仅上次(last_publish)没有、且当日尚未推送过的 secid
+      - 板块异动：板块动量较当日上次推送变化显著(+2pct)或新进轮动 TOP 的板块
+    若当日无新信息则不重复推送（返回 False）。
+    """
+    asof = data.get("asof", "")
+    digest = _load_digest()
+    if digest.get("date") != asof:   # 新交易日重置
+        digest = {"date": asof, "secids": [], "sectors": {}, "sent": False}
+    old_secids = old_secids or set()
+    sent_secids = set(digest.get("secids") or [])
+    # ① 新买入点（候选组 + 预备队，排除已推送）
+    new_cands = {}
+    for period, items in (data.get("groups") or {}).items():
+        for it in items:
+            sid = it["secid"]
+            if sid in old_secids or sid in sent_secids:
+                continue
+            new_cands.setdefault(period, []).append(it)
+    for it in (data.get("prepared") or []):
+        sid = it["secid"]
+        if sid in old_secids or sid in sent_secids:
+            continue
+        if all(sid not in v for v in (data.get("groups") or {}).values()):
+            new_cands.setdefault("预备队", []).append(it)
+    # ② 板块异动：新进轮动 TOP 或动量较上次 +2pct
+    new_sec = []
+    prev_sec = digest.get("sectors") or {}
+    for r in (data.get("rotation") or [])[:8]:
+        ind = r.get("industry")
+        if not ind:
+            continue
+        mom = r.get("sec_mom") or 0
+        if ind not in prev_sec or mom - (prev_sec.get(ind) or 0) >= 2.0:
+            new_sec.append(r)
+    # 大盘状态骤变(如 BULLISH→BEARISH)也算一次异动
+    state_now = data.get("market_state", "")
+    state_chg = digest.get("state", "") and digest["state"] != state_now
+    if not new_cands and not new_sec and not state_chg:
+        return False
+    lines = []
+    for period, items in new_cands.items():
+        head = "🟢 %s" % period
+        body = []
+        for it in items[:8]:
+            body.append("%s %s(%s) %s" % (it["name"], it.get("board", ""),
+                                          it["secid"][2:], it.get("industry", "")))
+        lines.append(head + "\n" + "\n".join("  " + b for b in body))
+    if state_chg:
+        lines.append("⚠️ 大盘状态: %s → %s" % (digest.get("state", ""), state_now))
+    if new_sec:
+        rot_lines = ["\n🎡 板块异动:"]
+        for r in new_sec[:5]:
+            tag = "[催化剂]" if r.get("catalyst_reason") else ""
+            names = " ".join(l["name"] for l in (r.get("leaders") or [])[:2])
+            rot_lines.append("  %s %s %+.1f%% %s\n    %s" % (
+                r["industry"], tag, r["sec_mom"], r.get("catalyst_reason") or "", names))
+        lines.append("\n".join(rot_lines))
+    title = "📈 板块异动+新买点 %s" % asof
+    content = ("大盘:%s | 池:%d只\n" % (state_now, data.get("pool_total", 0))
+               + "\n".join(lines))
+    ok = _push_wechat(title, content, cfg)
+    if ok:
+        digest["state"] = state_now
+        digest["secids"] = sorted(set(digest.get("secids") or []) | {
+            it["secid"] for v in new_cands.values() for it in v})
+        for r in new_sec:
+            digest["sectors"][r["industry"]] = r.get("sec_mom") or 0
+        _save_digest(digest)
+    return ok
+
+
+def _reso_tag(it):
+    """候选条目的共振一行摘要（资金/轮动/热度），无则空串。"""
+    reso = it.get("reso") or {}
+    tags = reso.get("tags") or []
+    return " · ".join(tags[:2]) if tags else ""
+
+
+def _fmt_cand(it):
+    ratio = it.get("ratio")
+    r = ("%.0f%%" % (ratio * 100)) if ratio is not None else ""
+    tag = _reso_tag(it)
+    body = "%s %s(%s) %s" % (it.get("name", ""), it.get("board", ""),
+                             it["secid"][2:], r)
+    return body + ("  [%s]" % tag if tag else "")
+
+
+def send_wechat_round(data, ctx, cfg, old_secids=None):
+    """盘中(15分钟)整轮概览推送：CodeBuddy 命中 + exe 命中对比 + 实仓建议 + 板块资金流。
+
+    每轮必发（不再要求有新信息才推），便于用户跟随节奏看到双端选了什么。
+    """
+    old_secids = old_secids or set()
+    lines = []
+    # ① CodeBuddy 本轮四大周期 + 预备队 + 轮动
+    groups = data.get("groups") or {}
+    for period in ("超短", "短线", "中线", "长线", "板块轮动"):
+        items = groups.get(period) or []
+        if not items:
+            continue
+        show = items[:6] if period != "板块轮动" else items[:5]
+        head = "🟢 %s" % period
+        if period == "板块轮动":
+            body = []
+            for it in show:
+                extra = " [催化]" if it.get("catalyst") else ""
+                body.append("  %s %s(%s) %s动%+.1f%%%s" % (
+                    it.get("name", ""), it.get("board", ""), it["secid"][2:],
+                    it.get("industry", ""), it.get("sector_mom") or 0, extra))
+            head = "🎡 %s" % period
+        else:
+            body = []
+            for it in show:
+                mark = "🆕" if it["secid"] not in old_secids else ""
+                body.append("  %s %s" % (mark, _fmt_cand(it)))
+            if len(items) > len(show):
+                body.append("  …另 %d 只" % (len(items) - len(show)))
+        lines.append(head + ("(%d)" % len(items)) + "\n" + "\n".join(body))
+    # ② exe 命中（screen_report_latest.json）与双端对比
+    exe = ctx.get("exe") if ctx else None
+    if exe and (exe.get("result") or {}):
+        exe_lines = []
+        exe_all = set()
+        for period, items in (exe.get("result") or {}).items():
+            names = [it.get("name", "") for it in items if it.get("name")]
+            if not names:
+                continue
+            exe_lines.append("  %s: %s" % (period, ", ".join(names)))
+            for it in items:
+                code = (it.get("code") or "").strip()
+                if code:
+                    exe_all.add(secid_of(code))
+        both = sorted(exe_all & candidate_secids(data))
+        exe_asof = exe.get("asof") or ""
+        data_asof = data.get("asof", "")
+        if exe_asof == data_asof:
+            stale = ""
+        elif exe_asof > data_asof:
+            stale = " (exe 比本池新 asof %s)" % exe_asof
+        else:
+            stale = " (exe 未同步当前 asof=%s，请在 exe 端运行选股)" % exe_asof
+        lines.append("🔷 exe 命中%s:" % stale + "\n" + "\n".join(exe_lines or ["  (空)"]))
+        if both:
+            names = ", ".join(_find_name(data, sid) for sid in both[:5])
+            lines.append("⭐ 双端共同命中: %s" % names)
+        elif exe_all:
+            lines.append("ℹ️ exe 本轮无与 CodeBuddy 重合的命中")
+    # ③ 实仓建议
+    pos_advice = data.get("positions") or []
+    verdicts = {"止损警戒": "🔴", "减仓警戒": "🟠", "加仓候选": "🟢", "持有": "🟡", "持有观察": "⚪", "数据不足": "⚪"}
+    if pos_advice:
+        pl = []
+        for p in pos_advice[:6]:
+            pnl = ("%+.1f%%" % p["pnl_pct"]) if p["pnl_pct"] is not None else "-"
+            pl.append("  %s %s %s(%s) 盈亏%s" % (
+                verdicts.get(p["verdict"], "⚪"), p["verdict"], p["name"],
+                p["code"], pnl))
+        lines.append("💼 实仓建议(%d笔):" % len(pos_advice) + "\n" + "\n".join(pl))
+    # ④ 板块资金流 + ETF 资金走向异动（流入/流出 TOP）
+    flow_top = (ctx or {}).get("flow_rank") or []
+    pos_flow = [r for r in flow_top if r.get("main_yi", 0) > 0][:3]
+    neg_flow = [r for r in reversed(flow_top) if r.get("main_yi", 0) < 0][:3]
+    if pos_flow or neg_flow:
+        parts = []
+        if pos_flow:
+            parts.append("流入 " + " ".join("%s%+.1f亿" % (r["name"], r["main_yi"])
+                                            for r in pos_flow))
+        if neg_flow:
+            parts.append("流出 " + " ".join("%s%.1f亿" % (r["name"], r["main_yi"])
+                                            for r in neg_flow))
+        lines.append("💸 板块资金流: " + " | ".join(parts))
+    etf_top = sorted((ctx or {}).get("etf_flow") or [],
+                     key=lambda e: float(e.get("in_yi") or 0), reverse=True)
+    etf_total = sum(float(e.get("in_yi") or 0) for e in etf_top)
+    etf_in = [e for e in etf_top if float(e.get("in_yi") or 0) > 0][:4]
+    etf_out = [e for e in reversed(etf_top) if float(e.get("in_yi") or 0) < 0][:2]
+    etf_parts = []
+    if etf_in:
+        etf_parts.append("入 " + " ".join(
+            "%s%+.1f亿" % (e.get("name"), e.get("in_yi")) for e in etf_in))
+    if etf_out:
+        etf_parts.append("出 " + " ".join(
+            "%s%.1f亿" % (e.get("name"), e.get("in_yi")) for e in etf_out))
+    if etf_parts and etf_total < -1.0:
+        lines.append("⚠️ ETF资金净流出%.1f亿: " % etf_total + " | ".join(etf_parts))
+    elif etf_parts:
+        lines.append("📈 ETF资金流向: " + " | ".join(etf_parts))
+    # 大盘 + 滚动热度提示
+    hot_note = ""
+    mc = data.get("market_context") or {}
+    if mc.get("hot_stale") and mc.get("trading"):
+        hot_note = " | 日榜date=%s(盘中陈旧)" % (mc.get("hot_date") or "?")
+    title = "⏰ 盘中选股 %s %s" % (
+        datetime.datetime.now().strftime("%H:%M"), data.get("asof", ""))
+    content = ("大盘:%s | 池:%d只%s\n" % (
+        data.get("market_state", ""), data.get("pool_total", 0), hot_note)
+        + "\n".join(lines))
+    return _push_wechat(title, content, cfg)
+
+
+def _find_name(data, secid):
+    for items in (data.get("groups") or {}).values():
+        for it in items:
+            if it["secid"] == secid:
+                return "%s%s" % (it.get("name", ""), secid[2:])
+    for it in data.get("prepared") or []:
+        if it["secid"] == secid:
+            return "%s%s" % (it.get("name", ""), secid[2:])
+    return secid
+
+
 # ── 5. 主流程 ──────────────────────────────────────────────────────────
-def run_once(dry=False, candidates_key=None, timed_push=False):
+def run_once(dry=False, candidates_key=None, timed_push=False, use_ctx=True):
     cache = load_cache()
     industry = build_industry()
-    data = build_candidates(cache, industry)
+    ctx = build_context() if use_ctx else None
+    data = build_candidates(cache, industry, ctx=ctx)
     if not data:
         print("无有效数据（缓存为空？）")
         return 1
     os.makedirs(os.path.dirname(OUT_DEFAULT), exist_ok=True)
     with open(OUT_DEFAULT, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
-    print("候选清单 %d 只 → %s" % (sum(len(v) for v in data["groups"].values()), OUT_DEFAULT))
+    n_cand = sum(len(v) for v in data["groups"].values())
+    print("候选清单 %d 只 → %s" % (n_cand, OUT_DEFAULT))
     print("大盘 %s | asof %s | 池 %d" % (data["market_state"], data["asof"], data["pool_total"]))
     for p, items in data["groups"].items():
-        print("  [%s] %s" % (p, ", ".join("%s%s" % (it["name"], it["secid"][2:]) for it in items)))
-    for r in data.get("rotation", [])[:5]:
-        cat = " [催化剂]" if r.get("catalyst_reason") else ""
-        print("  🎡 %s%s 板块动量%+.1f%% 龙头:%s" % (
-            r["industry"], cat, r["sec_mom"],
-            " ".join(l["name"] for l in r["leaders"][:3])))
+        for it in items:
+            reso = it.get("reso") or {}
+            lv = "[%s共振]" % reso["level"] if reso.get("level") else ""
+            print("  [%s] %s%s(%s) ratio%.2f%s" % (
+                p, it["name"], it["secid"][2:], it.get("industry", ""),
+                it.get("ratio", 0), lv))
+    pos_advice = data.get("positions") or []
+    if pos_advice:
+        print("实仓建议 %d 笔:" % len(pos_advice))
+        for p in pos_advice[:8]:
+            pnl = ("%+.1f%%" % p["pnl_pct"]) if p["pnl_pct"] is not None else "-"
+            print("  [%s] %s %s(%s) 盈亏%s  %s" % (
+                p["verdict"], p["name"], p["code"], p["sector"] or "-", pnl, p["note"]))
+    mc = data.get("market_context") or {}
+    if mc:
+        print("市场上下文: 资金流板块%d | 周级焦点%d | 实仓%d(%s) | exe%s" % (
+            len(mc.get("flow_top", [])) + len(mc.get("flow_bottom", [])),
+            mc.get("week_focus_count", 0), mc.get("positions", 0),
+            mc.get("positions_asof") or "-",
+            (ctx.get("exe") or {}).get("asof", "-") if ctx else "-"))
     old = {}
     if os.path.exists(LAST_FILE):
         try:
@@ -525,12 +945,13 @@ def run_once(dry=False, candidates_key=None, timed_push=False):
         print("[dry] 跳过通知与上传")
         return 0
     cfg = load_notify_cfg()
+    old_secids = candidate_secids(old) if old else set()
     if timed_push:
-        # 30 分钟定时：无论有无新信号都推送当前候选概览
-        send_wechat_timed(data, cfg)
+        # 守护(15分钟)模式：整轮概览推送(CodeBuddy+exe+实仓+资金流)，每轮都发
+        send_wechat_round(data, ctx, cfg, old_secids=old_secids)
     else:
         # 盘中新信号：仅在新买点出现时推送
-        send_wechat(data, candidate_secids(old) if old else set(), cfg)
+        send_wechat(data, old_secids, cfg)
     upload_candidates(data, candidates_key)
     with open(LAST_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
@@ -540,19 +961,21 @@ def run_once(dry=False, candidates_key=None, timed_push=False):
 def main():
     ap = argparse.ArgumentParser(description="PC 候选清单发布（选股→通知→COS）")
     ap.add_argument("--once", action="store_true", help="执行一次")
-    ap.add_argument("--daemon", action="store_true", help="守护轮询（默认交易时段每 30 分钟）")
-    ap.add_argument("--interval", type=int, default=1800, help="轮询间隔秒（默认 1800=30 分钟）")
+    ap.add_argument("--daemon", action="store_true", help="守护轮询（默认交易时段每 15 分钟）")
+    ap.add_argument("--interval", type=int, default=900, help="轮询间隔秒（默认 900=15 分钟）")
     ap.add_argument("--dry", action="store_true", help="不通知不上传（调试）")
     ap.add_argument("--key", default=None, help="COS candidates_key，默认 stockanalysis/quant/candidates.json")
-    ap.add_argument("--timed", action="store_true", help="定时模式：每轮都推送概览到微信（默认守护模式开启）")
+    ap.add_argument("--timed", action="store_true", help="定时推送模式（单次执行也推送整轮概览）")
+    ap.add_argument("--no-ctx", action="store_true", help="跳过市场上下文/共振/实仓（纯形态快速选股）")
     args = ap.parse_args()
     if args.daemon:
-        print("守护轮询启动：交易时段(工作日 9:30-11:30/13:00-15:00)每 %d 秒选股并推送微信" % args.interval)
+        print("守护轮询启动：交易时段(工作日 9:30-11:30/13:00-15:00)每 %d 秒"
+              "选股(四大周期+共振)并推送双端命中" % args.interval)
         while True:
             if in_trading_time():
                 try:
                     run_once(dry=args.dry, candidates_key=args.key,
-                             timed_push=not args.dry)
+                             timed_push=not args.dry, use_ctx=not args.no_ctx)
                 except KeyboardInterrupt:
                     break
                 except Exception as e:
@@ -566,7 +989,8 @@ def main():
                     nxt.strftime("%m-%d %H:%M")))
                 time.sleep(min(wait, 600))
         return 0
-    return run_once(dry=args.dry, candidates_key=args.key, timed_push=args.timed)
+    return run_once(dry=args.dry, candidates_key=args.key, timed_push=args.timed,
+                    use_ctx=not args.no_ctx)
 
 
 if __name__ == "__main__":
