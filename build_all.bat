@@ -53,6 +53,7 @@ python -m PyInstaller --onefile --noconfirm --noconsole ^
   --hidden-import _full_cycle_backtest ^
   --hidden-import _walk_forward ^
   --hidden-import backtest_guangmo ^
+  --hidden-import _technicals ^
   --add-data "%ROOT%smalltools\_kline_cache.json;." ^
   --add-data "%ROOT%AutoQuant\cloud_config.json;." ^
   --collect-data akshare ^
