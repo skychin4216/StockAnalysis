@@ -73,9 +73,11 @@ function renderCandles(data, w, h) {
     svg+=`<line x1="${padL}" y1="${gy}" x2="${w-padR}" y2="${gy}" stroke="#eee" stroke-width="1"/>`;
     svg+=`<text x="${padL-4}" y="${gy+3}" text-anchor="end" font-size="9" fill="#999">${val.toFixed(1)}</text>`;
   }
-  // labels
+  // labels（自适应抽稀：约每45px放一个日期刻度，避免 K 线一多就挤成一团）
+  const maxLbl=Math.max(3,Math.floor(cw/45));
+  const step=Math.max(1,Math.ceil(n/maxLbl));
   data.forEach((d,i)=>{
-    if(i%2===0||i===n-1){
+    if(i%step===0||i===n-1){
       const lx=x(i);
       svg+=`<text x="${lx}" y="${h-6}" text-anchor="middle" font-size="9" fill="#999">${d.label||''}</text>`;
     }

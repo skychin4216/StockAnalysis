@@ -80,6 +80,10 @@
     </Node>
     <Node id="n_candle" name="K线形态侦测" module="candle_pattern" />
 
+    <!-- 2026-09-04 新增：超短也纳入新闻消息因子（新闻力度评分 + 新闻拦截；快进快出不等于不关心消息面） -->
+    <Node id="n_news_str" name="新闻力度计算" module="news_strength" />
+    <Node id="n_newsguard" name="新闻拦截+技术过滤" module="news_guard" />
+
     <!-- 订单生成 Layer 6 -->
     <Node id="n_orders" name="买入订单生成" module="generate_orders">
       <config>
@@ -141,6 +145,21 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
+    <!-- Layer 3 → 3.4: 板块加权 → 新闻力度（2026-09-04 新增：并行计算新闻强度，供主力过滤/报告读取） -->
+    <Link>
+      <SourceNodeId>n_boost</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_news_str</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <!-- Layer 3.4 → 4: 新闻力度 → 主力资金过滤 -->
+    <Link>
+      <SourceNodeId>n_news_str</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_smart</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
     <!-- Layer 3.5 → 严选: 跌后反弹加分 → 六项严选检查 -->
     <Link>
       <SourceNodeId>n_bounce</SourceNodeId>
@@ -173,9 +192,16 @@
       <TargetPortId>0</TargetPortId>
     </Link>
 
-    <!-- Layer 4 → 5: 主力资金过滤 → AI精选（最终裁切 take 5） -->
+    <!-- Layer 4 → 5: 主力资金过滤 → 新闻拦截+技术过滤（2026-09-04 新增） -->
     <Link>
       <SourceNodeId>n_smart</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_newsguard</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <!-- Layer 5 → 5.5: 新闻拦截 → 财务健康筛选 -->
+    <Link>
+      <SourceNodeId>n_newsguard</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_finance</TargetNodeId>
       <TargetPortId>0</TargetPortId>

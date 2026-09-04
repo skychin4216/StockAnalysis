@@ -108,7 +108,9 @@
   },
 
   "notify": {
-    "name": "消息推送服务",
+    "name": "消息推送服务（渠道顺序：企微机器人 wecom > pushplus > serverchan）",
+    "wecom_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send",
+    "wecom_key": "4d686a81-d797-4dc4-81ae-aafd6d590604",
     "serverchan_url": "https://sctapi.ftqq.com",
     "pushplus_url": "https://www.pushplus.plus/send",
     "pushplus_token": "b128e00514be49949c1401f454bf0e78",

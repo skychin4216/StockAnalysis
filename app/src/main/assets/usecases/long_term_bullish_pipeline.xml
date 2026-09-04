@@ -86,6 +86,9 @@
     <Node id="n_season" name="行业季节日历" module="seasonality_boost" />
     <Node id="n_leader" name="龙头股跟踪" module="leader_track" />
 
+    <!-- 2026-09-04 新增：行业相对估值（科技同侪/行业PE中位比较，只加权不剔除） -->
+    <Node id="n_pe_peer" name="行业相对估值" module="sector_relative_pe" />
+
     <!-- 防守高息（熊市/震荡时启动，寻找银行/电力/高速公路等高息防御股）
          maxPerSector=1：每板块最多 1 只，避免长线候选全部集中在银行 -->
     <Node id="n_defensive" name="防守高息" module="defensive_dividend">
@@ -239,8 +242,16 @@
       <TargetPortId>0</TargetPortId>
     </Link>
     <!-- Layer 3.9 → 4: 龙头股跟踪 → 主力资金过滤（先过滤再AI精选） -->
+    <!-- Layer 3.9 → 3.10: 龙头跟踪 → 行业相对估值（2026-09-04 新增） -->
     <Link>
       <SourceNodeId>n_leader</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_pe_peer</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <!-- Layer 3.10 → 5: 行业相对估值 → 主力资金过滤 -->
+    <Link>
+      <SourceNodeId>n_pe_peer</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_smart</TargetNodeId>
       <TargetPortId>0</TargetPortId>

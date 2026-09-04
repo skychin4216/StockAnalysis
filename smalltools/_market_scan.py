@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import requests  # noqa: E402
 from _industry_map import build_industry  # noqa: E402
 from _rotation_engine import load_cache as rotation_load_cache, rotate as rotation_rotate  # noqa: E402
+import push_channel  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -34,7 +35,6 @@ LAST_SNAP = os.path.join(HERE, "_last_scan.json")
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 PROXIES = {"http": None, "https": None}
-PUSH_HEADERS = {"User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}
 
 # 美股权重股池（腾讯代码）
 US_POOL = ("usAAPL,usMSFT,usNVDA,usGOOGL,usAMZN,usMETA,usTSLA,usAVGO,"
@@ -321,35 +321,12 @@ def load_notify_cfg():
 
 
 def _push_wechat(title, content, cfg):
-    sent = False
-    token = cfg.get("pushplus_token", "").strip()
-    if token:
-        try:
-            req = requests.post(
-                cfg.get("pushplus_url", "https://www.pushplus.plus/send"),
-                json={"token": token, "title": title, "content": content,
-                      "template": "txt"},
-                headers=PUSH_HEADERS, proxies=PROXIES, timeout=10)
-            ok = req.json().get("code") in (200, "200")
-            print("pushplus 通知 %s" % ("成功" if ok else "返回失败"))
-            sent = sent or ok
-        except Exception as e:
-            print("pushplus 通知失败:", type(e).__name__, e)
-    key = cfg.get("serverchan_key", "").strip()
-    if key and not sent:
-        try:
-            import urllib.parse
-            url = ("%s/%s.send?title=%s&desp=%s" % (
-                cfg.get("serverchan_url", "https://sctapi.ftqq.com"), key,
-                urllib.parse.quote(title), urllib.parse.quote(content)))
-            ok = requests.get(url, timeout=10, proxies=PROXIES).json().get("code") == 0
-            print("serverchan 通知 %s" % ("成功" if ok else "返回失败"))
-            sent = sent or ok
-        except Exception as e:
-            print("serverchan 通知失败:", type(e).__name__, e)
-    if not sent:
-        print("未配置推送 token，以下消息未发送：\n%s\n%s" % (title, content))
-    return sent
+    """推送微信。渠道顺序：企业微信机器人(wecom_key) > pushplus > serverchan。
+
+    统一实现见 push_channel.py：企微机器人为本机 POST 直推（零审核，
+    不依赖第三方公众号）；pushplus/serverchan 仅作未配 wecom 时的兜底。
+    """
+    return push_channel.push(title, content, cfg)
 
 
 def format_content(cur, changes):
@@ -375,9 +352,14 @@ def in_trading_time(now=None):
 
 
 def next_trading_start(now=None):
+    """下一个交易时段开始时间：当天 09:30（开盘前）/ 13:00（午休）或次一工作日 9:30。"""
     now = now or datetime.datetime.now()
-    if now.weekday() < 5 and now.hour < 13:
-        return now.replace(hour=13, minute=0, second=0, microsecond=0)
+    if now.weekday() < 5:
+        hm = now.hour * 60 + now.minute
+        if hm < 9 * 60 + 30:
+            return now.replace(hour=9, minute=30, second=0, microsecond=0)
+        if hm < 13 * 60:
+            return now.replace(hour=13, minute=0, second=0, microsecond=0)
     d = now.date()
     while True:
         d += datetime.timedelta(days=1)

@@ -47,6 +47,8 @@
       </config>
     </Node>
     <Node id="n_candle" name="K线形态侦测" module="candle_pattern" />
+    <Node id="n_news_str" name="新闻力度计算" module="news_strength" />
+    <Node id="n_newsguard" name="新闻拦截+技术过滤" module="news_guard" />
 
     
     <Node id="n_orders" name="买入订单生成" module="generate_orders">
@@ -144,6 +146,12 @@
     
     <Link>
       <SourceNodeId>n_smart</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_newsguard</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_newsguard</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_finance</TargetNodeId>
       <TargetPortId>0</TargetPortId>

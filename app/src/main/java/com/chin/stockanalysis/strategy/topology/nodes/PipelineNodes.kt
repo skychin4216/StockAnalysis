@@ -465,9 +465,9 @@ class SmartMoneyFilterNode(
                         score += sectorPenalty
                     }
                 }
-                // 防守高息股（银行/电力等）主力资金分天然低，降阈到 20
-                val effectiveMin = if (signal.strategyId == "defensive_dividend") 20 else minScore
-                if (score >= effectiveMin) {
+                // 2026-09-04 用户决策：不再对防守高息股(银行/电力等)故意降阈放行——
+                // 资金面差的票同样影响防御表现，防守候选也按正常 minScore 过滤
+                if (score >= minScore) {
                     passed.add(signal)
                 } else {
                     rejectCount++
@@ -669,20 +669,7 @@ class AIPredictNode(
         if (!requiresAIRefine) {
             context.log(nodeId, "没有策略需要 AI 精选（requiresAIRefine=false），按强度取 top 5")
 
-            val topPicks = screeningResults.flatMap { it.signals }
-                .sortedByDescending { it.strength }
-                .take(5)
-                .mapIndexed { index, signal ->
-                    AIPredictionEngine.AIPick(
-                        stockCode = signal.stockCode,
-                        stockName = signal.stockName,
-                        rank = index + 1,
-                        compositeScore = signal.strength,
-                        upProbability = signal.strength,
-                        reason = signal.reason,
-                        actionSuggestion = signal.action.label
-                    )
-                }
+            val topPicks = rankedPicks(screeningResults.flatMap { it.signals })
 
             return AIPredictionEngine.AIPrediction(
                 mode = "NO_AI",
@@ -706,28 +693,50 @@ class AIPredictNode(
             )
 
             prediction ?: run {
-                context.log(nodeId, "AI 预测返回 null，使用默认结果")
+                context.log(nodeId, "AI 预测返回 null，回退为规则排序候选（保留候选供最终挑选）")
                 AIPredictionEngine.AIPrediction(
                     mode = "FALLBACK",
-                    modeReason = "AI 预测引擎返回空结果",
-                    topPicks = emptyList(),
-                    marketOutlook = "数据不足，无法生成预测",
-                    riskWarning = "AI 预测不可用，请依赖其他筛选结果",
+                    modeReason = "AI 预测引擎返回空结果，候选按强度排序保留（未做 AI 精选）",
+                    topPicks = rankedPicks(screeningResults.flatMap { it.signals }),
+                    marketOutlook = "AI 不可用：以下候选已按信号强度排序，供你最终挑选",
+                    riskWarning = "AI 预测不可用，候选保留但未经 AI 精选",
                     marketDirection = marketDirection
                 )
             }
         } catch (e: Exception) {
-            context.log(nodeId, "AI 预测异常: ${e.message}")
+            context.log(nodeId, "AI 预测异常: ${e.message}，回退为规则排序候选")
             AIPredictionEngine.AIPrediction(
                 mode = "ERROR",
-                modeReason = "AI 预测引擎异常: ${e.message}",
-                topPicks = emptyList(),
-                marketOutlook = "预测失败",
-                riskWarning = "AI 预测不可用，请依赖其他筛选结果",
+                modeReason = "AI 预测引擎异常: ${e.message}，候选按强度排序保留",
+                topPicks = rankedPicks(screeningResults.flatMap { it.signals }),
+                marketOutlook = "AI 不可用：以下候选已按信号强度排序，供你最终挑选",
+                riskWarning = "AI 预测不可用，候选保留但未经 AI 精选",
                 marketDirection = marketDirection
             )
         }
     }
+
+    /**
+     * AI 不可用时的兜底裁切：按信号强度排序保留 top 候选，
+     * 保证「最终面对多只候选不知如何下手」时仍有清晰排序清单可人工挑选。
+     */
+    private fun rankedPicks(
+        signals: List<StrategySignal>,
+        takeN: Int = 5
+    ): List<AIPredictionEngine.AIPick> =
+        signals.sortedByDescending { it.strength }
+            .take(takeN)
+            .mapIndexed { index, signal ->
+                AIPredictionEngine.AIPick(
+                    stockCode = signal.stockCode,
+                    stockName = signal.stockName,
+                    rank = index + 1,
+                    compositeScore = signal.strength,
+                    upProbability = signal.strength,
+                    reason = signal.reason,
+                    actionSuggestion = signal.action.label
+                )
+            }
 }
 
 // ════════════════════════════════════════════════════════════════════════════

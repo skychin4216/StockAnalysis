@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
@@ -39,6 +40,8 @@ import com.github.mikephil.charting.data.LineData
 import com.github.mikephil.charting.data.LineDataSet
 import com.github.mikephil.charting.data.Entry
 import com.github.mikephil.charting.highlight.Highlight
+import com.github.mikephil.charting.listener.ChartTouchListener.ChartGesture
+import com.github.mikephil.charting.listener.OnChartGestureListener
 import com.github.mikephil.charting.utils.MPPointF
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
@@ -633,10 +636,13 @@ class StockDetailFragment : Fragment() {
         // X 轴：日期
         chart.xAxis.apply {
             position = XAxis.XAxisPosition.BOTTOM
-            granularity = 1f
+            // X轴=K线下标，日期经由 formatter 翻译。刻度密度不在这里写死，
+            // 由 refreshXAxisDensity() 按"可视根数"动态重算：90~250(乃至500)根时
+            // 约"一个月(22根)一个日期刻度"，缩放/平移结束再按当前窗口重算，避免挤成一团。
             textSize = 9f
             textColor = Color.parseColor("#999999")
             setDrawGridLines(false)
+            setAvoidFirstLastClipping(true)
             valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
                 override fun getFormattedValue(value: Float): String {
                     val idx = value.toInt()
@@ -709,8 +715,47 @@ class StockDetailFragment : Fragment() {
         }
         chart.marker = marker
 
+        // 缩放/拖动结束，按当前可视K线根数重算 X 轴日期刻度密度
+        chart.setOnChartGestureListener(object : OnChartGestureListener {
+            override fun onChartGestureStart(e: MotionEvent?, lastPerformedGesture: ChartGesture?) {}
+            override fun onChartGestureEnd(e: MotionEvent?, lastPerformedGesture: ChartGesture?) {
+                refreshXAxisDensity(chart, snaps)
+            }
+            override fun onChartLongPressed(e: MotionEvent?) {}
+            override fun onChartDoubleTapped(e: MotionEvent?) {}
+            override fun onChartSingleTapped(e: MotionEvent?) {}
+            override fun onChartFling(e1: MotionEvent?, e2: MotionEvent?, vx: Float, vy: Float) {}
+            override fun onChartScale(e: MotionEvent?, scaleX: Float, scaleY: Float) {}
+            override fun onChartTranslate(e: MotionEvent?, dx: Float, dy: Float) {}
+        })
+        // 首次布局完成后按默认可视范围（最右 60 根）设置一次刻度
+        chart.post { refreshXAxisDensity(chart, snaps) }
+
         chart.invalidate()
         return chart
+    }
+
+    /**
+     * X 轴日期刻度抽稀：按当前可视K线根数选"每 N 根一个日期"。
+     * 可视 ≥90 根时约一个月(22个交易日)一标；可视根数越少步长越小，
+     * 保证任意缩放下刻度不重叠、不糊成一团。
+     */
+    private fun refreshXAxisDensity(chart: CombinedChart, snaps: List<DailySnapshotEntity>) {
+        val low = chart.lowestVisibleX
+        val high = chart.highestVisibleX
+        val visible = ((high - low + 1f).coerceIn(1f, snaps.size.toFloat())).toInt()
+        val step = when {
+            visible >= 90 -> 22   // 3月/6月/1年/全部：约一月一根（90根≈4个、250根≈11个刻度）
+            visible >= 45 -> 10
+            visible >= 24 -> 5
+            visible >= 12 -> 2
+            else -> 1
+        }
+        chart.xAxis.apply {
+            granularity = step.toFloat()
+            setLabelCount((visible / step).coerceIn(2, 12), false)
+        }
+        chart.invalidate()
     }
 
     /**
@@ -987,7 +1032,8 @@ class StockDetailFragment : Fragment() {
 
         chart.xAxis.apply {
             position = XAxis.XAxisPosition.BOTTOM
-            granularity = 1f
+            // 迷你图固定 20 根，只标约 4~5 个日期（每5根一个），避免底部日期挤成一团
+            granularity = (snaps.size / 4).coerceAtLeast(1).toFloat()
             textSize = 8f
             textColor = Color.parseColor("#999999")
             labelCount = 4

@@ -104,6 +104,7 @@ interface AiSelectedStockDao {
     suspend fun getRecentDays(minDate: String): List<AiSelectedStockEntity>
     @Query("DELETE FROM ai_selected_stock") suspend fun clearAll()
     @Query("DELETE FROM ai_selected_stock WHERE selected_date = :date") suspend fun deleteByDate(date: String)
+    @Query("DELETE FROM ai_selected_stock WHERE selected_date = :date AND source LIKE :prefix") suspend fun deleteByDateAndSourcePrefix(date: String, prefix: String)
     @Query("DELETE FROM ai_selected_stock WHERE stock_code = :code")
     suspend fun deleteByCode(code: String)
 }

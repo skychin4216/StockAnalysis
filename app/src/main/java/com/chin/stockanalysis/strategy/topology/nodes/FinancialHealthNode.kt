@@ -36,8 +36,8 @@ class FinancialHealthNode(
     companion object {
         private const val TAG = "FinancialHealth"
 
-        /** 高负债豁免板块（银行/保险天然高负债经营） */
-        private val HIGH_DEBT_EXEMPT = listOf("银行", "保险")
+        /** 高负债豁免板块（银行/保险/证券/多元金融等天然高负债经营） */
+        private val HIGH_DEBT_EXEMPT = listOf("银行", "保险", "证券", "券商", "多元金融")
     }
 
     override suspend fun execute(context: PipelineContext, input: Any): MergedSignalPool {
@@ -53,13 +53,15 @@ class FinancialHealthNode(
             val db = StockDatabase.getInstance(context.androidContext)
             val snaps = db.dailySnapshotDao().getByDate(context.tradeDate).associateBy { it.code }
 
-            // 高负债豁免板块判定（银行/保险）
+            // 高负债豁免板块判定（银行/保险/证券/多元金融）。板块映射（sector_stocks）只覆盖热门板块，
+            // 缺失时用股票名称兜底（"银行/证券/保险"天然高负债经营），避免优质金融股被负债率一刀切误杀。
             val exemptCodes = mutableSetOf<String>()
             for (code in pool.boostedSignals.map { it.stockCode }) {
-                val sectors = db.sectorStockDao().getSectorNamesByStockCode(code)
-                if (HIGH_DEBT_EXEMPT.any { kw -> sectors.any { it.contains(kw) } }) {
-                    exemptCodes.add(code)
-                }
+                val sectors = try { db.sectorStockDao().getSectorNamesByStockCode(code) } catch (_: Exception) { emptyList() }
+                val bySector = HIGH_DEBT_EXEMPT.any { kw -> sectors.any { it.contains(kw) } }
+                val nameHint = pool.stockNames[code] ?: pool.boostedSignals.firstOrNull { it.stockCode == code }?.stockName.orEmpty()
+                val byName = HIGH_DEBT_EXEMPT.any { kw -> nameHint.contains(kw) }
+                if (bySector || byName) exemptCodes.add(code)
             }
 
             val kept = mutableListOf<StrategySignal>()
@@ -69,8 +71,9 @@ class FinancialHealthNode(
                 if (snap == null ||
                     (snap.pe <= 0 && snap.roeTTM <= 0 && snap.debtToAsset <= 0)
                 ) {
-                    // 数据缺失 → 无法判断，不剔除（保持原信号）
-                    kept.add(sig)
+                    // 数据缺失 → 无法判断盈亏，不剔除（保持原信号），但打标提醒，
+                    // 便于在精选结果/日志中识别"未过财务排雷"的漏网候选（如未同步财务的亏损股）
+                    kept.add(sig.copy(reason = "${sig.reason} · ⚠财务数据缺失未排雷"))
                     continue
                 }
                 val score = scoreOf(

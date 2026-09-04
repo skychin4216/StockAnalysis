@@ -20,20 +20,18 @@ import java.util.concurrent.ConcurrentHashMap
  * ## 板块龙头异动监测器
  *
  * 后台进程定时扫描各板块（行业 + 概念）及其龙头股，
- * 捕捉两类信号并推送通知：
- *
- * 1. **龙头异动** — 龙头大涨/大跌（阈值可配），往往先于板块整体反应
- * 2. **板块趋势** — 板块整体强弱 + 龙头涨跌背离 → 低吸/抛售/鱼尾判断
- *
- * 同时将最新板块信号写入 [SectorSignalStore]，供选股 Pipeline
+ * 识别板块趋势信号并写入 [SectorSignalStore]，供选股 Pipeline
  * （QuantTradingPipeline）在选股时融合：
  * - 板块强势 + 龙头领涨 → 候选加分（顺势）
  * - 板块弱势 / 鱼尾行情 → 候选降权或剔除（避免接盘）
  * - 板块大跌但龙头企稳 → 低吸信号（跌出机会）
  *
+ * 注：2026-09-04 起不再向通知栏独立推送异动（龙头/板块异动一律
+ * 作为选股 Pipeline 的输入信号，由选股结果统一呈现）。
+ *
  * ### 使用方式
  * ```kotlin
- * SectorLeaderMonitor.startMonitor(appContext, scope)   // 启动周期扫描
+ * SectorLeaderMonitor.startMonitor(appContext, scope)   // 启动周期扫描（只喂信号，不推送）
  * SectorLeaderMonitor.scanOnce(appContext)              // 手动触发一次
  * SectorSignalStore.getSignal("存储芯片")               // 选股时查询
  * ```
@@ -75,10 +73,11 @@ object SectorLeaderMonitor {
         isRunning = true
         scope.launch {
             while (isRunning) {
-                // 仅 A股交易时间内扫描并推送通知；非交易时段不刷新，直接睡到下一开盘
+                // 仅 A股交易时间内扫描并刷新信号；非交易时段不刷新，直接睡到下一开盘
                 if (ChinaMarketTradingHours.a股是否交易中()) {
                     try {
-                        scanOnce(context, notify = true)
+                        // 只写 SectorSignalStore 供选股 Pipeline 融合，不向通知栏独立推送异动
+                        scanOnce(context)
                     } catch (e: Exception) {
                         Log.w(TAG, "板块龙头扫描异常: ${e.message}")
                     }
@@ -125,9 +124,9 @@ object SectorLeaderMonitor {
      * 每个板块拉取其成分股涨幅前 [LEADER_TOP_N] 名作为龙头榜
      * （自动覆盖创业板 300/301、科创板 688/689），并按热度取前 [LEADER_SCAN_SECTOR_LIMIT] 个板块。
      *
-     * @param notify 是否推送通知（仅 A股交易时间内传 true）
+     * @param notify 是否推送通知（默认 false：仅刷新信号缓存，供选股 Pipeline 融合）
      */
-    suspend fun scanOnce(context: Context, notify: Boolean = true) = withContext(Dispatchers.IO) {
+    suspend fun scanOnce(context: Context, notify: Boolean = false) = withContext(Dispatchers.IO) {
         val industry = EastMoneyHotSectorSource.industrySectors
         val concept = EastMoneyHotSectorSource.conceptSectors
 

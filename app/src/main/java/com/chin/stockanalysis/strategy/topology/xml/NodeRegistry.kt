@@ -130,6 +130,15 @@ object NodeRegistry {
             CrossDayAggregationNode(windowDays = window, topN = topN)
         }
 
+        // 行业相对估值（2026-09-04 新增：科技成长按科技同侪/行业 PE 中位比较，传统行业按行业中位；
+        // 只做加权不剔除，供中/长线增强层使用）
+        register("sector_relative_pe") { ctx, config ->
+            val topRatio = config["topRatio"]?.toDoubleOrNull() ?: 0.75
+            val highRatio = config["highRatio"]?.toDoubleOrNull() ?: 2.0
+            com.chin.stockanalysis.strategy.topology.nodes.SectorRelativePeNode(
+                topRatio = topRatio, highRatio = highRatio)
+        }
+
         // 中线增强
         register("news_strength") { ctx, config ->
             val days = config["lookbackDays"]?.toIntOrNull() ?: 3

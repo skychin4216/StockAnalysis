@@ -114,6 +114,7 @@ object DagTradeExecutor {
         onNodeProgress: ((pipelineName: String, nodeName: String) -> Unit)? = null,
         onNodeDone: ((pipelineName: String, nodeName: String, output: Any?, flow: StockFlowRecord?) -> Unit)? = null,
         saveAsAiOnly: Boolean = false,
+        autoPick: Boolean = false,
         seedStageOutputs: Map<String, Any?> = emptyMap()
     ): DagExecResult {
         if (strategies.isEmpty()) {
@@ -185,30 +186,35 @@ object DagTradeExecutor {
                     // 写入 user_watchlist 供选股区 UI 渲染完整表格（价格/时间/评分）
                     try {
                         val db = StockDatabase.getInstance(context)
-                        val watchlistSource = when (ordersOutput.orders.firstOrNull()?.orderType) {
+                        val rawWatchlistSource = when (ordersOutput.orders.firstOrNull()?.orderType) {
                             "UltraShortQuant" -> "ultra_short"
                             "ShortTermQuant" -> "shortterm"
                             "MidTermQuant" -> "midterm"
                             "LongTermQuant" -> "long_term"
                             else -> useCaseId
                         }
+                        // 自动盘中选股（autoPick）：AI 精选统一加 auto_ 前缀（供后台调度清理、监控/迁移跳过），
+                        // 且不写 user_watchlist（避免覆盖用户自选盯盘状态或撑爆周期页表格）。
+                        val storeSource = if (autoPick) "auto_$rawWatchlistSource" else rawWatchlistSource
                         val today = com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay()
                             .format(java.time.format.DateTimeFormatter.ISO_LOCAL_DATE)
-                        val watchlistEntities = ordersOutput.orders.map { order ->
-                            com.chin.stockanalysis.stock.database.UserWatchlistEntity(
-                                stockCode = order.stockCode,
-                                stockName = order.stockName,
-                                source = watchlistSource,
-                                addedDate = today,
-                                buyPrice = order.buyPrice,
-                                scoreAtAdd = order.scoreAtBuy,
-                                status = "WATCHING",
-                                notes = order.reason
-                            )
-                        }
-                        if (watchlistEntities.isNotEmpty()) {
-                            db.userWatchlistDao().insertAll(watchlistEntities)
-                            Log.i(TAG, "[$useCaseId] 选股写入 user_watchlist: ${watchlistEntities.size} 只 (source=$watchlistSource)")
+                        if (!autoPick) {
+                            val watchlistEntities = ordersOutput.orders.map { order ->
+                                com.chin.stockanalysis.stock.database.UserWatchlistEntity(
+                                    stockCode = order.stockCode,
+                                    stockName = order.stockName,
+                                    source = rawWatchlistSource,
+                                    addedDate = today,
+                                    buyPrice = order.buyPrice,
+                                    scoreAtAdd = order.scoreAtBuy,
+                                    status = "WATCHING",
+                                    notes = order.reason
+                                )
+                            }
+                            if (watchlistEntities.isNotEmpty()) {
+                                db.userWatchlistDao().insertAll(watchlistEntities)
+                                Log.i(TAG, "[$useCaseId] 选股写入 user_watchlist: ${watchlistEntities.size} 只 (source=$rawWatchlistSource)")
+                            }
                         }
 
                         // 同步写入 AI 精选（ai_selected_stock），统一到「AI 精选」查看
@@ -217,7 +223,7 @@ object DagTradeExecutor {
                                 com.chin.stockanalysis.stock.database.AiSelectedStockEntity(
                                     stockCode = order.stockCode,
                                     stockName = order.stockName,
-                                    source = watchlistSource,
+                                    source = storeSource,
                                     selectedDate = today,
                                     score = (order.scoreAtBuy).coerceIn(0, 100),
                                     reason = order.reason,
@@ -226,7 +232,7 @@ object DagTradeExecutor {
                             }
                             if (aiEntities.isNotEmpty()) {
                                 db.aiSelectedStockDao().insertAll(aiEntities)
-                                Log.i(TAG, "[$useCaseId] 选股同步写入 AI 精选: ${aiEntities.size} 只 (source=$watchlistSource)")
+                                Log.i(TAG, "[$useCaseId] 选股同步写入 AI 精选: ${aiEntities.size} 只 (source=$storeSource)")
                                 // 记录到质量闸门登记（仅 saveAsAiOnly 模式会被消费）
                                 if (saveAsAiOnly) {
                                     for (order in ordersOutput.orders) {

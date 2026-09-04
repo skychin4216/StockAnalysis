@@ -157,6 +157,17 @@ object TradeNotifier {
     }
 
     /**
+     * 仅发送 Android 系统通知（不触发微信/pushplus 渠道）。
+     * 供盘中自动选股等纯通知栏场景使用，避免骚扰微信推送。
+     */
+    suspend fun sendSystemOnly(ctx: Context, title: String, body: String, tag: String = "") {
+        val appCtx = ctx.applicationContext
+        if (isSystemEnabled(appCtx)) {
+            sendSystemNotification(appCtx, title, body, tag)
+        }
+    }
+
+    /**
      * 批量发送做T信号通知
      */
     suspend fun sendTTradeSignals(

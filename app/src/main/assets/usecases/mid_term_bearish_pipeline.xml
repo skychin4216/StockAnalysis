@@ -93,6 +93,9 @@
     <Node id="n_season" name="行业季节日历" module="seasonality_boost" />
     <Node id="n_leader" name="龙头股跟踪" module="leader_track" />
 
+    <!-- 2026-09-04 新增：行业相对估值（科技同侪/行业PE中位比较，只加权不剔除） -->
+    <Node id="n_pe_peer" name="行业相对估值" module="sector_relative_pe" />
+
     <!-- 中线独有：增强 Layer 4 -->
     <Node id="n_news_str" name="新闻力度计算" module="news_strength" />
     <Node id="n_rot_pen" name="板块轮动惩罚" module="rotation_penalty" />
@@ -276,8 +279,16 @@
       <TargetPortId>0</TargetPortId>
     </Link>
     <!-- Layer 3.9 → 5: 龙头股跟踪 → 主力资金过滤（先过滤再AI精选） -->
+    <!-- Layer 3.9 → 3.10: 龙头跟踪 → 行业相对估值（2026-09-04 新增） -->
     <Link>
       <SourceNodeId>n_leader</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_pe_peer</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <!-- Layer 3.10 → 5: 行业相对估值 → 主力资金过滤 -->
+    <Link>
+      <SourceNodeId>n_pe_peer</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_smart</TargetNodeId>
       <TargetPortId>0</TargetPortId>

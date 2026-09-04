@@ -117,6 +117,13 @@ object AppBackgroundRunner {
         StockDataCenter.init(context.applicationContext, scope)
         _appScope = scope
 
+        // 启动盘中自动四周期选股（交易时段每 15 分钟一轮，结果仅系统通知栏）
+        try {
+            AutoPickScheduler.start(context.applicationContext, scope)
+        } catch (e: Exception) {
+            Log.w(TAG, "自动选股调度启动失败: ${e.message}")
+        }
+
         // 启动时执行一次：迁移超过 5 天的 AI 精选到自选股
         scope.launch(Dispatchers.IO) {
             try {
@@ -172,7 +179,7 @@ object AppBackgroundRunner {
             }
         }
 
-        // 启动板块龙头异动监测（每 5 分钟扫描行业+概念板块龙头，异动推送通知并刷新选股信号）
+        // 启动板块龙头异动监测（盘中周期扫描行业+概念板块龙头，仅刷新选股信号供 Pipeline 融合，不独立推送）
         scope.launch(Dispatchers.IO) {
             // 等待板块池首次刷新，确保扫描有数据
             kotlinx.coroutines.delay(10_000)
@@ -554,7 +561,8 @@ object AppBackgroundRunner {
      */
     private suspend fun monitorAiSelectedStocks(context: Context, db: StockDatabase, today: String) {
         val aiDao = db.aiSelectedStockDao()
-        val aiStocks = aiDao.getByDate(today)
+        // 自动盘中选股(auto_*)候选不参与自动买入监控，避免盘中候选每 15 分钟把自选列表刷爆
+        val aiStocks = aiDao.getByDate(today).filter { !it.source.startsWith("auto_") }
         if (aiStocks.isEmpty()) return
 
         val snapshots = try { db.dailySnapshotDao().getByDate(today) } catch (_: Exception) { emptyList() }

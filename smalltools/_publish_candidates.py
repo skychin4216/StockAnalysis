@@ -26,8 +26,6 @@ import os
 import subprocess
 import sys
 import time
-import urllib.parse
-import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cos_utils  # noqa: E402
@@ -38,6 +36,7 @@ from _rotation_engine import rotate as rotation_rotate, load_cache as rotation_l
 from _rotation_engine import macro_div_pref, HIGH_DIVIDEND_SECTORS, oil_high, OIL_HIGH_SECTORS  # noqa: E402
 from _market_context import (  # noqa: E402
     build_context, resonance_for, secid_of, flow_match, fetch_intraday_prices)
+import push_channel  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -75,7 +74,6 @@ DEFAULT_CANDIDATES_KEY = "stockanalysis/quant/candidates.json"
 RATIO_THRESHOLD = {"超短": 0.55, "短线": 0.55, "中线": 0.55, "长线": 0.55}
 GROUP_SIZE = 8
 PREPARED_SIZE = 15
-PUSH_HEADERS = {"User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}
 
 
 # ── 1. 大盘状态与评分 ───────────────────────────────────────────────────
@@ -581,42 +579,12 @@ def send_wechat(new_data, old_data, cfg):
 
 
 def _push_wechat(title, content, cfg):
-    """通过 pushplus(优先)/serverchan 推送微信。返回是否已发送。
+    """推送微信。渠道顺序：企业微信机器人(wecom_key) > pushplus > serverchan。
 
-    注意：显式禁用系统代理（urllib 默认读取 IE 代理 127.0.0.1:12450，
-    代理软件未运行时会导致 WinError 10061），与 _market_scan.py 行为一致。
+    统一实现见 push_channel.py：企微机器人为本机 POST 直推（零审核，
+    不依赖第三方公众号）；pushplus/serverchan 仅作未配 wecom 时的兜底。
     """
-    sent = False
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    token = cfg.get("pushplus_token", "").strip()
-    if token:
-        try:
-            req = urllib.request.Request(
-                cfg.get("pushplus_url", "https://www.pushplus.plus/send"),
-                data=json.dumps({"token": token, "title": title, "content": content,
-                                 "template": "txt"}).encode("utf-8"),
-                headers=PUSH_HEADERS, method="POST")
-            with opener.open(req, timeout=10) as r:
-                ok = json.loads(r.read().decode("utf-8")).get("code") in (200, "200")
-            print("pushplus 通知 %s" % ("成功" if ok else "返回失败"))
-            sent = sent or ok
-        except Exception as e:
-            print("pushplus 通知失败:", type(e).__name__, e)
-    key = cfg.get("serverchan_key", "").strip()
-    if key and not sent:
-        try:
-            url = ("%s/%s.send?title=%s&desp=%s" % (
-                cfg.get("serverchan_url", "https://sctapi.ftqq.com"), key,
-                urllib.parse.quote(title), urllib.parse.quote(content)))
-            with opener.open(url, timeout=10) as r:
-                ok = json.loads(r.read().decode("utf-8")).get("code") == 0
-            print("serverchan 通知 %s" % ("成功" if ok else "返回失败"))
-            sent = sent or ok
-        except Exception as e:
-            print("serverchan 通知失败:", type(e).__name__, e)
-    if not sent:
-        print("未配置推送 token(notify.pushplus_token / notify.serverchan_key)，以下消息未发送：\n%s\n%s" % (title, content))
-    return sent
+    return push_channel.push(title, content, cfg)
 
 
 # ── 4. COS 上传 ────────────────────────────────────────────────────────
@@ -651,10 +619,14 @@ def in_trading_time(now=None):
 
 
 def next_trading_start(now=None):
-    """下一个交易时段开始时间(当天下午 13:00 或次一工作日 9:30)。"""
+    """下一个交易时段开始时间：当天 09:30（开盘前）/ 13:00（午休）或次一工作日 9:30。"""
     now = now or datetime.datetime.now()
-    if now.weekday() < 5 and now.hour < 13:
-        return now.replace(hour=13, minute=0, second=0, microsecond=0)
+    if now.weekday() < 5:
+        hm = now.hour * 60 + now.minute
+        if hm < 9 * 60 + 30:
+            return now.replace(hour=9, minute=30, second=0, microsecond=0)
+        if hm < 13 * 60:
+            return now.replace(hour=13, minute=0, second=0, microsecond=0)
     d = now.date()
     while True:
         d += datetime.timedelta(days=1)
@@ -808,10 +780,25 @@ def send_wechat_round(data, ctx, cfg, old_secids=None):
     lines = []
     # ① CodeBuddy 本轮四大周期 + 预备队 + 轮动
     groups = data.get("groups") or {}
+    # 资金流出候选单独归组（2026-09-04 用户决策：不硬排除，但不再混在正常候选里）
+    flow_out = {}
     for period in ("超短", "短线", "中线", "长线", "板块轮动"):
         items = groups.get(period) or []
         if not items:
             continue
+        if period != "板块轮动":
+            keep, drop = [], []
+            for it in items:
+                tags = (it.get("reso") or {}).get("tags") or []
+                if any(str(t).startswith("资金流出") for t in tags):
+                    drop.append(it)
+                else:
+                    keep.append(it)
+            if drop:
+                flow_out.setdefault(period, drop)
+            items = keep
+            if not items:
+                continue
         show = items[:6] if period != "板块轮动" else items[:5]
         head = "🟢 %s" % period
         if period == "板块轮动":
@@ -830,6 +817,48 @@ def send_wechat_round(data, ctx, cfg, old_secids=None):
             if len(items) > len(show):
                 body.append("  …另 %d 只" % (len(items) - len(show)))
         lines.append(head + ("(%d)" % len(items)) + "\n" + "\n".join(body))
+    if flow_out:
+        fo_total = sum(len(v) for v in flow_out.values())
+        fo_lines = []
+        for period, items in flow_out.items():
+            for it in items:
+                # _fmt_cand 已带前 2 个共振标签(通常含"资金流出")；若被其他标签挤出则补注
+                shown = _reso_tag(it)
+                tag_note = next(
+                    (str(t) for t in (it.get("reso") or {}).get("tags") or []
+                     if str(t).startswith("资金流出")), "")
+                extra = "" if ("资金流出" in shown) else (
+                    "  [%s]" % tag_note if tag_note else "")
+                fo_lines.append("  %s %s%s" % (period, _fmt_cand(it), extra))
+        lines.append("💸 板块资金流出(%d只): 技术/基本面在池但当日资金净流出，非推荐、谨慎不追\n%s" % (
+            fo_total, "\n".join(fo_lines)))
+    # ①b XML DAG 当日选股（AutoQuant dag_screen_latest.json = exe/APK 共用 XML 引擎）
+    dag = None
+    try:
+        with open(DAG_SCREEN_FILE, encoding="utf-8") as f:
+            dag = json.load(f)
+    except (OSError, ValueError):
+        dag = None
+    if dag and (dag.get("result") or {}):
+        dag_lines = []
+        dag_all = set()
+        for period, items in (dag.get("result") or {}).items():
+            names = [it.get("name", "") for it in items if it.get("name")]
+            if not names:
+                continue
+            dag_lines.append("  %s(%d): %s" % (period, len(names), ", ".join(names)))
+            for it in items:
+                code = (it.get("code") or "").strip()
+                if code:
+                    dag_all.add(secid_of(code))
+        both = sorted(dag_all & candidate_secids(data))
+        dag_asof = dag.get("asof") or ""
+        stale = " (asof %s)" % dag_asof if dag_asof != data.get("asof", "") else ""
+        lines.append("🤖 XML DAG 当日选股%s:" % (" " + stale if stale else "")
+                     + "\n" + "\n".join(dag_lines or ["  (空)"]))
+        if both:
+            names = ", ".join(_find_name(data, sid) for sid in both[:5])
+            lines.append("⭐ DAG×CodeBuddy 共同命中: %s" % names)
     # ② exe 命中（screen_report_latest.json）与双端对比
     exe = ctx.get("exe") if ctx else None
     if exe and (exe.get("result") or {}):
@@ -983,21 +1012,25 @@ def run_once(dry=False, candidates_key=None, timed_push=False, use_ctx=True):
     return 0
 
 
-# ── 6. 盘段节奏守护：开盘后先「下载+回溯+拟合」，之后每 interval 秒选股推送 ──
+# ── 6. 盘段节奏守护：开盘后先「下载 + XML DAG 当日选股」，之后每 interval 秒推送 ──
 # 交易时段分两个盘段：
-#   上午段 09:30-11:30：段首跑一次 prep（下载 _kline_cache 增量 → 全周期回溯+拟合）
-#   下午段 13:00-15:00：段首再跑一次 prep（数据更新到当日最新后再回溯拟合）
+#   上午段 09:30-11:30：段首跑一次 prep（下载 _kline_cache 增量 → XML DAG 当日选股）
+#   下午段 13:00-15:00：段首再跑一次 prep（数据更新到当日最新后再跑 XML DAG）
 # prep 完成后本段立即选股一次，之后每 interval 秒一轮；非交易时段挂起。
 # 状态（当天哪段已 prep / 各段上次选股时间）持久化 _daemon_rhythm.json，
 # 守护重启或换日期不会重复 prep。
 #
+# 2026-09-04 用户决策：codebuddy 不再调用 smalltools 的回溯+拟合
+# （_full_cycle_backtest.py 仅保留代码不执行），选股改由 exe/APK 共用的
+# XML DAG 引擎 AutoQuant/usecase_screen.py 提供（同一份 assets/usecases XML）。
 # 实测耗时（2026-09-04 本机）：
 #   下载 _update_cache_inc：有缺口约 6.2 分钟(218 只并发10)，无缺口秒回
-#   回溯+拟合 _full_cycle_backtest：全周期+中/长线网格约 6.6 分钟
+#   XML DAG 当日选股 usecase_screen：约 1 分钟内
 #   单轮选股+推送 run_once：约 1 分钟
 RHYTHM_FILE = os.path.join(HERE, "_daemon_rhythm.json")
 PREP_DOWNLOAD = os.path.join(HERE, "_update_cache_inc.py")
-PREP_FIT = os.path.join(HERE, "_full_cycle_backtest.py")
+PREP_DAG = os.path.normpath(os.path.join(ROOT, "AutoQuant", "usecase_screen.py"))
+DAG_SCREEN_FILE = os.path.normpath(os.path.join(ROOT, "AutoQuant", "data", "dag_screen_latest.json"))
 _SESSIONS = (("am", 9 * 60 + 30, 11 * 60 + 30), ("pm", 13 * 60, 15 * 60))
 
 
@@ -1040,6 +1073,13 @@ def rhythm_need_prep(session):
     return not bool(_load_rhythm()["prep"].get(session))
 
 
+def rhythm_mark_prep(session):
+    """标记本盘段首刷（下载+回溯+拟合）已完成，防止重启/跨日重复跑。"""
+    d = _load_rhythm()
+    d["prep"][session] = True
+    _save_rhythm(d)
+
+
 def rhythm_round_due(session, interval, now=None):
     """本盘段 prep 已完成且（尚无本轮 或 距上轮≥interval）时应跑一轮选股。"""
     now = now or datetime.datetime.now()
@@ -1064,11 +1104,11 @@ def rhythm_mark_round(session, now=None):
 
 
 def run_prep(session, interval=900, log=print, stop_check=None):
-    """盘段首刷：下载当日K线缓存 → 全周期回溯+拟合。失败不标记，下个检查点重试。"""
+    """盘段首刷：下载当日K线缓存 → XML DAG 当日选股（不再跑 smalltools 回溯+拟合）。失败不标记，下个检查点重试。"""
     label = "上午" if session == "am" else "下午"
-    log("[盘段%s] 首刷开始：下载K线 → 回溯+拟合（期间不选股，约 6~13 分钟）" % label)
+    log("[盘段%s] 首刷开始：下载K线 → XML DAG 当日选股（期间不选股，约 1~7 分钟）" % label)
     ok = True
-    for title, script in (("下载K线缓存", PREP_DOWNLOAD), ("回溯+拟合", PREP_FIT)):
+    for title, script in (("下载K线缓存", PREP_DOWNLOAD), ("XML DAG 当日选股", PREP_DAG)):
         if stop_check is not None and stop_check():
             return False
         log("  ▶ %s：%s" % (title, os.path.basename(script)))
@@ -1118,7 +1158,7 @@ def daemon_serve(prep=True, interval=900, dry=False, use_ctx=True,
     每盘段（上午 9:30 / 下午 13:00）开始先做 prep（下载+回溯+拟合），
     完成后立即选股一次，此后每 interval 秒一轮；非交易时段挂起。
     """
-    log("盘段守护启动：每盘段首刷（下载+回溯+拟合）→ 每 %d 秒选股推送" % interval)
+    log("盘段守护启动：每盘段首刷（下载+XML DAG 选股）→ 每 %d 秒选股推送" % interval)
     last_session = None
     while stop_check is None or not stop_check():
         now = datetime.datetime.now()
@@ -1162,11 +1202,11 @@ def main():
     ap.add_argument("--timed", action="store_true", help="定时推送模式（单次执行也推送整轮概览）")
     ap.add_argument("--no-ctx", action="store_true", help="跳过市场上下文/共振/实仓（纯形态快速选股）")
     ap.add_argument("--no-prep", action="store_true",
-                    help="关闭盘段首刷(下载+回溯+拟合)，纯每 interval 秒选股轮询（旧节奏）")
+                    help="关闭盘段首刷(下载+XML DAG 选股)，纯每 interval 秒选股轮询（旧节奏）")
     args = ap.parse_args()
     if args.daemon:
         print("盘段守护启动：每盘段(上午9:30 / 下午13:00)首刷一次 "
-              "「下载K线+回溯+拟合」，完成后每 %d 秒整轮选股+推送双端命中" % args.interval)
+              "「下载K线+XML DAG 当日选股」，完成后每 %d 秒整轮选股+推送双端命中" % args.interval)
         daemon_serve(prep=not args.no_prep, interval=args.interval,
                      dry=args.dry, use_ctx=not args.no_ctx)
         return 0
