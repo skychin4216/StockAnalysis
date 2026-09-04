@@ -27,6 +27,7 @@ import requests  # noqa: E402
 from _industry_map import build_industry  # noqa: E402
 from _rotation_engine import load_cache as rotation_load_cache, rotate as rotation_rotate  # noqa: E402
 import push_channel  # noqa: E402
+import _news_watch  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -308,6 +309,13 @@ def diff_snap(prev, cur):
     if n_new:
         lines = [t[:50] for t in n_new[:5]]
         changes.append(("📰 财经快讯", lines))
+    # 外媒·宏观 / 名人·大行 / 券商宏观策略（_news_watch 附加组）
+    pe, ce = (prev or {}).get("ext") or {}, cur.get("ext") or {}
+    for head, key in (("🌐 外媒·宏观", "world"), ("🗣️ 名人·大行动态", "names"),
+                      ("📑 券商宏观·策略", "macro_reports")):
+        fresh = [t for t in ce.get(key, []) if t not in set(pe.get(key, []))]
+        if fresh:
+            changes.append((head, [t[:55] for t in fresh[:3]]))
     return changes
 
 
@@ -370,6 +378,7 @@ def next_trading_start(now=None):
 def run_once(force=False, dry=False):
     t0 = time.time()
     cur = collect_all()
+    cur["ext"] = _news_watch.collect_ext()  # 外媒/宏观/名人/券商宏观策略
     print("[%s] 采集完成 %.1fs" % (cur["ts"], time.time() - t0))
     print("  🇺🇸 美股TOP: %s" % ", ".join(
         "%s%+.1f%%" % (r["name"], r["pct"]) for r in cur["us"][:5]))

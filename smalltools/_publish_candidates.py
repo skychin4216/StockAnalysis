@@ -71,7 +71,9 @@ MARKET_DB = os.path.join(ROOT, "data", "market_data.db")
 APK_MIN_SEC_MOM = 10.0  # APK 外部板块动量阈值，低于此不并入候选
 
 DEFAULT_CANDIDATES_KEY = "stockanalysis/quant/candidates.json"
-RATIO_THRESHOLD = {"超短": 0.55, "短线": 0.55, "中线": 0.55, "长线": 0.55}
+# 2026-09-04：用户要求"先把条件放开看推送效果"。通过比例从 0.55 降到 0.45，
+# 让更多达到基础的候选进组观察；后续效果好再逐步收紧。
+RATIO_THRESHOLD = {"超短": 0.45, "短线": 0.45, "中线": 0.45, "长线": 0.45}
 GROUP_SIZE = 8
 PREPARED_SIZE = 15
 

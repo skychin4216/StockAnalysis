@@ -661,19 +661,31 @@ class AIPredictNode(
             )
         )
 
-        // ── AI 精选动态接入：读取策略 requiresAIRefine 做条件执行 ──
+        // ── AI 精选 = 买入订单前的「收敛」：仅当过滤后候选 >3 只才调用 AI 精选取 top5；
+        //    ≤3 只直接按强度排序输出（不调 AI）。AI 调用点只此一处（n_orders 之前），
+        //    XML DAG 里 ai_predict 上游已是全部过滤(strict/smart/news_guard/finance)节点。 ──
         val allStrategies = context.getStageOutput<List<Strategy>>("_strategies") ?: emptyList()
         val requiresAIRefine = allStrategies.any { it.requiresAIRefine }
+        val candidateSignals = screeningResults.flatMap { it.signals }
 
-        // AI 精选是最终裁切步骤：从已过滤的候选中按强度取 top 5
-        if (!requiresAIRefine) {
-            context.log(nodeId, "没有策略需要 AI 精选（requiresAIRefine=false），按强度取 top 5")
-
-            val topPicks = rankedPicks(screeningResults.flatMap { it.signals })
-
+        if (candidateSignals.isEmpty()) {
+            context.log(nodeId, "过滤后无候选，不调用 AI，返回空订单候选")
             return AIPredictionEngine.AIPrediction(
                 mode = "NO_AI",
-                modeReason = "没有策略需要 AI 精选，使用原始信号排序",
+                modeReason = "过滤后无候选",
+                topPicks = emptyList(),
+                marketOutlook = "本周期无过滤后候选",
+                riskWarning = "",
+                marketDirection = marketDirection
+            )
+        }
+
+        if (candidateSignals.size <= 3) {
+            context.log(nodeId, "过滤后候选 ${candidateSignals.size} 只（≤3），无需 AI 精选，按强度直接输出订单候选")
+            val topPicks = rankedPicks(candidateSignals)
+            return AIPredictionEngine.AIPrediction(
+                mode = "NO_AI",
+                modeReason = "过滤后候选 ≤3，无需 AI 精选，使用原始信号排序",
                 topPicks = topPicks,
                 marketOutlook = "未使用 AI 精选，信号已按强度排序",
                 riskWarning = "",
@@ -681,7 +693,9 @@ class AIPredictNode(
             )
         }
 
-        context.log(nodeId, "${allStrategies.count { it.requiresAIRefine }} 个策略需要 AI 精选，启动 AI 预测")
+        // 候选 >3：进入订单收敛，AI 精选取 top5（策略 requiresAIRefine 仅作盘后拟合附加信号，
+        // 不再作为“是否调用 AI”的开关，避免盘中候选>3 时错失精选）
+        context.log(nodeId, "过滤后候选 ${candidateSignals.size} 只（>3），调用 AI 精选收敛 top5 订单候选")
 
         return try {
             val prediction = engine.predict(
