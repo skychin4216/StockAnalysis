@@ -21,6 +21,7 @@
 | `app/src/main/java/com/chin/stockanalysis/strategy/sector/` | 板块策略逻辑 |
 | `app/src/main/java/com/chin/stockanalysis/strategy/market/` | 市场策略逻辑 |
 | `app/src/main/java/com/chin/stockanalysis/stock/data/sources/EastMoneySectorSource.kt` | 板块数据源 |
+| `AutoQuant/autoquant/gui/market_hot_tab.py` | **exe 侧板块热度页签**（2026-09）：东财 clist 板块实时榜（行业/概念，push2delay/push2 多域名回退）+ 点击板块看成分龙头 Top + 双击开本地 K 线 |
 
 ## 常见任务指引
 ### 1. 修改板块轮动图
@@ -28,6 +29,10 @@
 
 ### 2. 修改新闻列表
 - 改 `HotNewsFragment.kt` / `StockNewsFetcher.kt`
+
+### 3. exe 板块热度页
+- 数据入口：`autoquant.gui.market_hot_tab` 的 `fetch_board_list(concept)` / `fetch_board_stocks(code)`
+- 双端同源：exe 走东财 push2（直连不走系统代理）；APK 走 `EastMoneySectorSource`
 
 ## 文件清单
 - `skills/market-hot/README.md` — 本文件（skill 定义）

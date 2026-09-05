@@ -1,21 +1,33 @@
 # StockAnalysis 总架构文档（入口）
 
-> 最后更新：2026-08-13 | 对应 DB version: 21 | Kotlin + Android
-> 本文档是**唯一入口**，各模块细节请点击下方子文档进入。
+> 最后更新：2026-09-06 | 对应 DB version: 26 | Kotlin + Android + AutoQuant(Python)
+> 本文档是**入口**。双端总览（含 mermaid 图）见 [architecture/dual-end-overview.md](architecture/dual-end-overview.md)；
+> APK 单端 5 层 SVG 架构图见 [architecture/index.html](architecture/index.html)。
 
 ---
+
+## 〇、双端总览（先看这里）
+
+本项目为双端闭环：**AutoQuant（`AutoQuant/`，Python/PyQt5，Windows exe）** 负责 PC 回测/拟合/选股/Agent，
+**StockAnalysis APK（`app/`，Kotlin）** 负责手机行情/工作台/对话/监控。二者经 `backtest_params.json`
+（唯一参数源）、`data_service.py HTTP :8888`（PC 桥）、COS/远程控制互相打通。详见
+[architecture/dual-end-overview.md](architecture/dual-end-overview.md)。
 
 ## 一、文档导航（点击进入子文档）
 
 | 领域 | 子文档 | 说明 |
 |------|--------|------|
+| 双端总览 | [architecture/dual-end-overview.md](architecture/dual-end-overview.md) | 双端拓扑 mermaid 图 + 职责/链路对照 |
+| AutoQuant exe 地图 | `skills/autoquant/README.md` | PC 端逐模块地图（Python） |
+| 多 Agent 对话 | [ai-multi-agent-chat-architecture.md](ai-multi-agent-chat-architecture.md) | 对话多 Agent 重构设计（专家注册表+编排器） |
 | 智能体体系 | [agent/agent-architecture.md](agent/agent-architecture.md) | 项目 Agent 架构：Orchestrator / Scout / Analyst / Guardian / Executor |
 | LLM 接入 | [agent/llm-architecture.md](agent/llm-architecture.md) | LLM 架构（legacy）：Provider / 场景模型选择 / 路由 |
 | AI 对话框架 | [agent/ai-conversation-framework.md](agent/ai-conversation-framework.md) | 对话历史持久化、意图解析、分享路由 |
 | 智能体 TAB | [ui/agent-tab-architecture.md](ui/agent-tab-architecture.md) | 智能体 Tab：Agent 列表 / 创建 / 对话页 |
 | 股票 TAB | [ui/stock-tab-architecture.md](ui/stock-tab-architecture.md) | 股票 Tab：行情 / 自选 / 板块轮动 / 机构推荐 |
-| 策略 TAB | [ui/strategy-tab-architecture.md](ui/strategy-tab-architecture.md) | 策略 Tab：四周期 + 实仓 五页签 |
+| 策略 TAB | [ui/strategy-tab-architecture.md](ui/strategy-tab-architecture.md) | 策略 Tab：工作台(四周期+实仓+ETF低位) / 策略 / 数据 / AI分析 |
 | 我的 TAB | [ui/mine-tab-architecture.md](ui/mine-tab-architecture.md) | 我的 Tab：设置 / 备份 / 通知配置 |
+| ETF 低位 | `skills/engine-sync` + [SCRIPTS.md](../smalltools/SCRIPTS.md) | ETF 低吸引擎 v0.3 + exe/apk 双端 tab |
 | 策略 · 超短线 | [strategy/strategy-ultra-short.md](strategy/strategy-ultra-short.md) | 1 天持有，盘口K线 + 祖训严选 |
 | 策略 · 短线 | [strategy/strategy-short-term.md](strategy/strategy-short-term.md) | 1-14 天，主力意图 + 趋势跟随 |
 | 策略 · 中线 | [strategy/strategy-mid-term.md](strategy/strategy-mid-term.md) | 30-180 天，打底仓守门 + 腾龙换鸟 |
@@ -37,21 +49,23 @@ A股智能分析 Android App，核心能力：**四周期量化选股 + 日内�
 
 Kotlin / MVVM / ViewBinding / Room DB / OkHttp / MPAndroidChart / Gradle (KSP)
 
-### 入口结构（五 Tab）
+### 入口结构（底部 5 Tab，豆包风格）
 
 ```
 MainActivity
-├── ChatTabFragment    (对话 · AI 助手)
-├── AgentTabFragment   (智能体 · 多角色 Agent)
-├── StockTabFragment   (股票 · 行情/自选/板块)
-├── StrategyFragment   (量化选股 · 5 Tabs)
-│   ├── Tab 0: UltraShortQuantFragment  (超短线 · 1天)
-│   ├── Tab 1: ShortTermQuantFragment   (短线 · 1-14天)
-│   ├── Tab 2: MidTermQuantFragment     (中线 · 30-180天)
-│   ├── Tab 3: LongTermQuantFragment    (长线 · 180-365天)
-│   └── Tab 4: RealHoldingQuantFragment (实仓 · 持仓管理)
-└── SettingsFragment   (我的 · 设置/备份)
+├── ChatTabFragment    (对话 · AI 助手，QUICK/DEEP/EXPERT + 多Agent编排)
+├── AgentTabFragment   (智能体 · 自建 Agent 列表)
+├── StockTabFragment   (股票 · 精选/K线趋势/热门行情/热点新闻 4 子页)
+├── StrategyFragment   (量化选股 · 4 子页)
+│   ├── Tab 0: QuantWorkbenchFragment (工作台 · 短/中/长/实仓/🧲ETF低位 5 内页)
+│   ├── Tab 1: StrategyListFragment   (策略沙盒)
+│   ├── Tab 2: StrategyImportFragment (数据管理/拟合/PC参数/远程)
+│   └── Tab 3: AIAnalysisFragment     (AI 深度分析)
+└── SettingsFragment   (我的 · API配置/云同步/远程控制)
 ```
+
+> 2026-09 迁移：量化选股主入口已从「四周期直开」改为「工作台 5 页签
+> （短/中/长周期 + 💰实仓 + 🧲ETF低位）」，超短引擎并入短线。
 
 ---
 
@@ -181,9 +195,10 @@ Layer 4: t_recommend_save
 
 ## 八、数据层
 
-### Room Database (version 21)
+### Room Database (version 26)
 
-主要表：daily_snapshot / strategy_trade_order / real_position / t_trade_records / t_trade_recommendations / intraday_kline / daily_period_result
+主要表：daily_snapshot / strategy_trade_order / real_position / t_trade_records / t_trade_recommendations / intraday_kline / daily_period_result / institutional_pick / backtest_meta / backtest_selected_stock / user_focus_sector
+（v14→v26 新增：intraday_kline、institutional_pick、backtest_*、user_focus_sector 等）
 
 ### 数据源
 

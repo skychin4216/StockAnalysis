@@ -1,19 +1,22 @@
-# Quant Workbench Skill — 量化工作台 / 一键建仓
+# Quant Workbench Skill — 量化工作台 / 一键建仓 / ETF低位
 
 ## 模块职责
 量化工作台（一键建仓、四大周期自动建仓、公共研判）的 UI 与执行逻辑。
 用户点"一键建仓"后，先跑**公共研判流程**（市场环境分析），再按超短/短/中/长四周期生成股票池与订单。
+工作台为 5 内页签：短/中/长 + 💰实仓 + 🧲ETF低位（2026-09-06 实仓旁新增第 5 页）。
 
 ## 触发条件
 用户提到以下关键词时，优先查阅本 Skill：
 - 一键建仓 / 自动建仓 / 公共研判 / 市场环境分析
 - 一键建仓选出的股票 / 为什么选到 XX / 打印所有股票
-- 工作台 / QuantWorkbench / 四大周期
+- 工作台 / QuantWorkbench / 四大周期 / ETF低位 / EtfDip
 
 ## 关键文件
 | 文件 | 职责 |
 |------|------|
-| `app/src/main/java/com/chin/stockanalysis/strategy/trade/QuantWorkbenchFragment.kt` | 工作台 UI + `runQuickBuild()` 一键建仓入口 |
+| `app/src/main/java/com/chin/stockanalysis/strategy/trade/QuantWorkbenchFragment.kt` | 工作台容器（5 页签：短/中/长/实仓/ETF低位）+ `runQuickBuild()` 一键建仓入口 |
+| `app/src/main/java/com/chin/stockanalysis/strategy/trade/EtfDipFragment.kt` | ETF低位页：经 `PcBridgeClient.fetchEtfLive()` 拉 exe `data_service /etf_live`，离线读 SharedPreferences 缓存 |
+| `AutoQuant/autoquant/gui/etf_tab.py` | exe 侧同源页签（读 `smalltools/data/_etf_live_picks.json`） |
 | `app/src/main/java/com/chin/stockanalysis/strategy/trade/QuantWorkbenchState.kt` | 工作台状态管理 |
 | `app/src/main/java/com/chin/stockanalysis/agent/chat/QuickBuildExpertRunner.kt` | 一键建仓执行器（runCommonPipeline 公共研判 + 四周期建仓） |
 | `app/src/main/java/com/chin/stockanalysis/strategy/topology/pipelines/QuantTradingPipeline.kt` | 量化交易 pipeline（含龙头信号融合等选股逻辑） |
