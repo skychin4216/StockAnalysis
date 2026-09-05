@@ -35,11 +35,12 @@ import java.time.DayOfWeek
  * ## 我的工作台
  *
  * 顶级「量化选股」Tab 0，与「策略」「数据」「AI 分析」平级。
- * 超短/短/中/长 四周期 + 实仓 已集成于此（顶部页签内嵌），独占整屏展示。
+ * 短/中/长 三周期 + 实仓 已集成于此（顶部页签内嵌），独占整屏展示。
+ * 2026-09-05 机构化收敛：超短引擎保留但结果并入短线（⚡极速档），不再独立设页。
  *
- * - 周期页：顶部页签切换，直接复用四周期 Fragment 与实仓页（建仓/Pipeline/持仓/卖出评估/回溯/报告）
- * - 标题行：一键建仓（交易时间跑四周期买入订单 DAG pipeline（含腾笼换鸟）；
- *   非交易时间直接四周期选股保存到 股票Tab→精选股票→AI 精选）
+ * - 周期页：顶部页签切换，直接复用三周期 Fragment 与实仓页（建仓/Pipeline/持仓/卖出评估/回溯/报告）
+ * - 标题行：一键建仓（交易时间跑三周期买入订单 DAG pipeline（含腾笼换鸟）；
+ *   非交易时间直接三周期选股保存到 股票Tab→精选股票→AI 精选）
  * - 状态矩阵拟合 / 拟合参数导入 / PC 候选 / PC 拟合参数 / 回溯 & 分析 / 自测拟合 等
  *   公共操作已整合到「量化选股 → 数据」Tab（StrategyImportFragment）
  */
@@ -53,8 +54,8 @@ class QuantWorkbenchFragment : Fragment() {
 
     companion object {
         private const val TAG = "QuantWorkbench"
+        // 2026-09-05 收敛为三档：超短引擎保留，命中并入短线（推送侧 flash 标注）
         private val PERIODS = listOf(
-            PeriodInfo("UltraShortQuant", HoldingPeriod.ULTRA_SHORT, "超短线"),
             PeriodInfo("ShortTermQuant", null, "短线"),
             PeriodInfo("MidTermQuant", null, "中线"),
             PeriodInfo("LongTermQuant", HoldingPeriod.LONG, "长线")
@@ -174,7 +175,7 @@ class QuantWorkbenchFragment : Fragment() {
             ))
         }.also { periodRow = it })
 
-        // ── 周期集成区：内嵌超短/短/中/长 四周期页（复用周期 Fragment）──
+        // ── 周期集成区：内嵌 短/中/长 三周期页 + 实仓（复用周期 Fragment）──
         // 公共参数走共享状态，周期页创建后自行读取，无需推送；
         // 生命周期回调仅负责在首个周期 Fragment 创建时初始化公共「周期」行 UI。
         childFragmentManager.registerFragmentLifecycleCallbacks(object : FragmentManager.FragmentLifecycleCallbacks() {
@@ -203,12 +204,12 @@ class QuantWorkbenchFragment : Fragment() {
         ))
         TabLayoutMediator(periodTabLayout, periodPager) { tab, position ->
             tab.text = when (position) {
-                0 -> getString(com.chin.stockanalysis.R.string.tab_ultra_short)
-                1 -> getString(com.chin.stockanalysis.R.string.tab_short)
-                2 -> getString(com.chin.stockanalysis.R.string.tab_mid)
-                3 -> getString(com.chin.stockanalysis.R.string.tab_long)
-                4 -> "💰 实仓"
-                else -> ""
+                0 -> getString(com.chin.stockanalysis.R.string.tab_short)
+                1 -> getString(com.chin.stockanalysis.R.string.tab_mid)
+                2 -> getString(com.chin.stockanalysis.R.string.tab_long)
+                3 -> "💰 实仓"
+                4 -> "🧲 ETF低位"
+                else -> throw IllegalStateException("period tab count mismatch: $position")
             }
         }.attach()
         periodPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
@@ -316,22 +317,33 @@ class QuantWorkbenchFragment : Fragment() {
         }
     }
 
-    /** 🚀 一键建仓（交易/非交易同走四周期 DAG pipeline，仅落库行为区分）：
+    /** 🚀 一键建仓（交易/非交易同走三周期 DAG pipeline，仅落库行为区分）：
      *  - 交易时间内：DAG 建仓 pipeline = 买入订单 + 持仓合并 + 腾笼换鸟，拟合参数自动生效
      *  - 非交易时间：同样走 DAG pipeline（saveAsAiOnly），跳过 买入订单/持仓合并/腾笼换鸟/拟合，
      *    仅将选股结果写入 股票Tab → 精选股票 → AI 精选，弹窗标题区分
+     *  2026-09-05：超短并入短线（极速档引擎保留，不再独立建仓入口）
      */
     private fun runQuickBuild() {
+        // 2026-09-06：一键建仓不再弹 Toast；各周期执行完成后统一弹「聚合结果窗」。
+        if (QuantWorkbenchState.quickBuildActive) {
+            Log.w(TAG, "一键建仓仍在执行中，忽略重复点击")
+            return
+        }
         val isTrading = com.chin.stockanalysis.stock.database.ChinaMarketTradingHours.a股是否交易中()
         val selected = PERIODS
-        // 立即反馈，避免点击后无响应（前置刷新行情可能耗时数秒）
-        Toast.makeText(
-            requireContext(),
-            if (isTrading) "🚀 一键建仓启动：刷新行情 + 四周期并行建仓中，请稍候..."
-            else "🚀 一键建仓启动：刷新行情 + 四周期选股（仅保存 AI 精选）中，请稍候...",
-            Toast.LENGTH_SHORT
-        ).show()
-        // 立即给已创建的周期页反馈"指令已接收"（不等行情刷新）：
+        // 批量会话：三周期（短线/中线/长线）Pipeline 全部完成后回调聚合窗口
+        QuantWorkbenchState.startQuickBuild(3)
+        QuantWorkbenchState.quickBuildAllDone = { showQuickBuildAggregateWindow() }
+        // 超时兜底：个别周期异常未上报时，8 分钟后按已完成周期提前汇总
+        lifecycleScope.launch {
+            kotlinx.coroutines.delay(8 * 60 * 1000L)
+            if (QuantWorkbenchState.quickBuildActive) {
+                Log.w(TAG, "一键建仓超时（${QuantWorkbenchState.quickBuildDone}/${QuantWorkbenchState.quickBuildTotal}），提前汇总")
+                QuantWorkbenchState.finishQuickBuild()
+                showQuickBuildAggregateWindow()
+            }
+        }
+        // 立即给已创建的周期页反馈"指令已接收"（不等行情刷新，写日志不弹 Toast）：
         // ViewPager2 懒加载,远处页此刻可能尚未创建,创建后由 runDagPipeline 自带日志接力,衔接无缝。
         childFragmentManager.executePendingTransactions()
         childFragmentManager.fragments.filterIsInstance<QuantFragmentBase>().forEach { it.onQuickBuildReceived() }
@@ -346,7 +358,7 @@ class QuantWorkbenchFragment : Fragment() {
                 Log.w(TAG, "一键建仓前刷新行情失败: ${e.message}")
             }
 
-            // ① 市场公共研判只执行一次（市场研判 + 选股公共数据准备），结果播种给四周期并行 pipeline
+            // ① 市场公共研判只执行一次（市场研判 + 选股公共数据准备），结果播种给三周期并行 pipeline
             var commonOutputs: Map<String, Any?> = emptyMap()
             val commonLatch = java.util.concurrent.CountDownLatch(1)
             val firstFrag = childFragmentManager.findFragmentByTag("f0") as? QuantFragmentBase
@@ -357,18 +369,18 @@ class QuantWorkbenchFragment : Fragment() {
                 }
                 commonLatch.await(3, java.util.concurrent.TimeUnit.MINUTES)
             } else {
-                Log.w(TAG, "一键建仓: 超短周期页未就绪，跳过公共研判，各周期回退完整流程")
+                Log.w(TAG, "一键建仓: 短线页未就绪，跳过公共研判，各周期回退完整流程")
             }
             val useCommon = commonOutputs.isNotEmpty()
 
-            // ② 激活中间页（页1），offscreenPageLimit=2 保证四页全部创建并存活
+            // ② 激活中间页（页1=中线），offscreenPageLimit=2 保证三页全部创建并存活
             withContext(Dispatchers.Main) {
                 periodPager.setCurrentItem(1, false)
                 childFragmentManager.executePendingTransactions()
             }
 
-            // ③ 四周期并行触发（周期专属 pipeline + 公共研判播种；公共失败则回退完整 usecase 串行）
-            val periodUseCaseIds = arrayOf("ultra_short_period", "short_term_period", "mid_term_period", "long_term_period")
+            // ③ 三周期并行触发（周期专属 pipeline + 公共研判播种；公共失败则回退完整 usecase 串行）
+            val periodUseCaseIds = arrayOf("short_term_period", "mid_term_period", "long_term_period")
             withContext(Dispatchers.Main) {
                 var triggered = 0
                 selected.forEach { p ->
@@ -385,14 +397,8 @@ class QuantWorkbenchFragment : Fragment() {
                     }
                     triggered++
                 }
-                Toast.makeText(
-                    requireContext(),
-                    if (isTrading)
-                        "一键建仓已全部触发（$triggered 个周期${if (useCommon) "，公共研判已完成" else "，公共研判失败已回退完整流程"}）"
-                    else
-                        "非交易时间选股已触发（$triggered 个周期${if (useCommon) "，已保存 AI 精选" else "，公共研判失败已回退完整流程"}）",
-                    Toast.LENGTH_LONG
-                ).show()
+                // 结果统一由「三周期聚合结果窗」展示，不再弹 Toast
+                Log.i(TAG, "一键建仓已触发 $triggered 个周期（${if (useCommon) "公共研判已完成" else "公共研判失败已回退完整流程"}），等待全部完成...")
             }
         }
     }
@@ -402,20 +408,21 @@ class QuantWorkbenchFragment : Fragment() {
      * - EXECUTE_SIMULATE_TRADE：切中线并执行买卖评估（T+1 卖出模拟）
      * - RUN_PIPELINE：切短线并执行 DAG 建仓管线
      * - SWITCH_PERIOD_TAB：切到指定周期页并触发 op（build / simulate / pipeline / refresh）
+     *   index 语义（三档收敛后）：0=短线 1=中线 2=长线
      */
     fun handleExternalCommand(action: String, period: Int?, op: String?) {
         when (action) {
             "EXECUTE_SIMULATE_TRADE" -> {
-                periodPager.setCurrentItem(2, true)  // 中线
-                runOnPeriodTab(2, "simulate")
+                periodPager.setCurrentItem(1, true)  // 中线
+                runOnPeriodTab(1, "simulate")
             }
             "RUN_PIPELINE" -> {
-                periodPager.setCurrentItem(1, true)  // 短线
-                runOnPeriodTab(1, "pipeline")
+                periodPager.setCurrentItem(0, true)  // 短线
+                runOnPeriodTab(0, "pipeline")
             }
             "SWITCH_PERIOD_TAB" -> {
                 val p = period ?: 0
-                if (p !in 0..3) return
+                if (p !in 0..2) return
                 periodPager.setCurrentItem(p, true)
                 runOnPeriodTab(p, op ?: "refresh")
             }
@@ -423,11 +430,15 @@ class QuantWorkbenchFragment : Fragment() {
         }
     }
 
-    /** 刷新内嵌四周期持仓（供外层 Tab 切换 / onResume 时调用） */
+    /** 刷新内嵌周期持仓：短/中/长 + 实仓 + ETF低位（供外层 Tab 切换 / onResume 时调用） */
     fun refreshAll() {
         childFragmentManager.executePendingTransactions()
-        for (i in 0 until 4) {
-            (childFragmentManager.findFragmentByTag("f$i") as? QuantFragmentBase)?.refreshPositions()
+        for (i in 0 until 5) {
+            when (val f = childFragmentManager.findFragmentByTag("f$i")) {
+                is QuantFragmentBase -> f.refreshPositions()
+                is EtfDipFragment -> f.refresh()
+                else -> Unit
+            }
         }
     }
 
@@ -490,17 +501,168 @@ class QuantWorkbenchFragment : Fragment() {
             .show()
     }
 
-    /** 内嵌周期页适配器：超短 / 短 / 中 / 长 / 实仓 */
+    // ═══════════════════════════════════════════════════
+    // 🚀 一键建仓 · 三周期聚合结果窗（2026-09-06）
+    // ═══════════════════════════════════════════════════
+
+    private data class QuickBuildRow(
+        val code: String,        // 6 位数字代码
+        val name: String,
+        val score: Int,          // 综合评分（买入订单 scoreAtBuy）
+        val price: Double,
+        val changePct: Double,
+        val detail: String       // MACD/RSI/KDJ/MA/量比 摘要
+    )
+
+    /** 三周期全部执行完后聚合并展示可关闭结果窗 */
+    private fun showQuickBuildAggregateWindow() {
+        if (!isAdded) return
+        val ctx = requireContext()
+        val snapshot = LinkedHashMap<String, List<Triple<String, String, Int>>>()
+        QuantWorkbenchState.quickBuildPicks.forEach { (k, v) -> snapshot[k] = v }
+        lifecycleScope.launch(Dispatchers.IO) {
+            val sections = buildQuickBuildSections(ctx, snapshot)
+            withContext(Dispatchers.Main) {
+                if (!isAdded) return@withContext
+                showQuickBuildResultDialog(sections)
+            }
+        }
+    }
+
+    /** IO 线程计算各周期股票的指标摘要 */
+    private fun buildQuickBuildSections(
+        ctx: android.content.Context,
+        picks: Map<String, List<Triple<String, String, Int>>>
+    ): List<Pair<String, List<QuickBuildRow>>> {
+        val order = listOf("短线", "中线", "长线")
+        val db = try { com.chin.stockanalysis.stock.database.StockDatabase.getInstance(ctx) } catch (_: Exception) { null }
+        val dao = db?.dailySnapshotDao()
+        return order.mapNotNull { label ->
+            val list = picks[label].orEmpty()
+            val rows = list.map { (rawCode, name, score) ->
+                val secid = if (rawCode.length == 6) {
+                    when (rawCode.first()) {
+                        '6', '9' -> "sh$rawCode"
+                        '8', '4' -> "bj$rawCode"
+                        else -> "sz$rawCode"
+                    }
+                } else rawCode
+                val code6 = if (secid.length > 6) secid.takeLast(6) else secid
+                val snaps = try { dao?.getByCode(secid).orEmpty().sortedBy { it.date } } catch (_: Exception) { emptyList() }
+                if (snaps.size < 5) {
+                    QuickBuildRow(code6, name, score, 0.0, 0.0, "暂无K线数据")
+                } else {
+                    val closes = snaps.map { it.close }
+                    val highs = snaps.map { it.high }
+                    val lows = snaps.map { it.low }
+                    val vols = snaps.map { it.volume }
+                    val last = snaps.last()
+                    val prev = snaps.getOrNull(snaps.size - 2)
+                    val chg = if (last.changePct != 0.0) last.changePct
+                    else if (prev != null && prev.close > 0) (last.close - prev.close) / prev.close * 100
+                    else 0.0
+                    val (dif, dea, bar) = com.chin.stockanalysis.strategy.backtest.MathIndicators.macd(closes)
+                    val rsi = com.chin.stockanalysis.strategy.backtest.MathIndicators.rsi(closes)
+                    val (k, d, j) = com.chin.stockanalysis.strategy.backtest.MathIndicators.kdj(highs, lows, closes)
+                    val trend = com.chin.stockanalysis.strategy.backtest.MathIndicators.maTrend(closes).trend
+                    val vr = com.chin.stockanalysis.strategy.backtest.MathIndicators.volumeRatio(vols)
+                    val barSign = if (bar > 0) "+" else ""
+                    val detail = "MACD ${"%.2f".format(dif)}/${"%.2f".format(dea)}/${barSign}${"%.2f".format(bar)}  " +
+                        "RSI ${"%.1f".format(rsi)}  KDJ ${"%.0f".format(k)}/${"%.0f".format(d)}/${"%.0f".format(j)}  " +
+                        trend + "  量比 ${"%.1f".format(vr)}"
+                    QuickBuildRow(code6, name, score, last.close, chg, detail)
+                }
+            }
+            label to rows
+        }
+    }
+
+    /** 弹出可关闭的三周期聚合结果窗（全屏可滚动） */
+    private fun showQuickBuildResultDialog(sections: List<Pair<String, List<QuickBuildRow>>>) {
+        val ctx = requireContext()
+        val density = resources.displayMetrics.density
+        val total = sections.sumOf { it.second.size }
+        val isTrading = com.chin.stockanalysis.stock.database.ChinaMarketTradingHours.a股是否交易中()
+        val content = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((12 * density).toInt(), (8 * density).toInt(), (12 * density).toInt(), (8 * density).toInt())
+        }
+        content.addView(TextView(ctx).apply {
+            text = "已完成 短/中/长 三周期一键建仓，共选中 $total 只" +
+                (if (isTrading) "（已生成订单并入账）" else "（已保存 AI 精选）")
+            textSize = 14f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#E65100"))
+            setPadding(0, 0, 0, (8 * density).toInt())
+        })
+        sections.forEach { (label, rows) ->
+            content.addView(TextView(ctx).apply {
+                text = "【$label】${rows.size} 只"
+                textSize = 13f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.parseColor("#1A237E"))
+                setPadding(0, (10 * density).toInt(), 0, (4 * density).toInt())
+            })
+            if (rows.isEmpty()) {
+                content.addView(TextView(ctx).apply {
+                    text = "   本轮未选中"
+                    textSize = 12f
+                    setTextColor(Color.parseColor("#999999"))
+                })
+                return@forEach
+            }
+            rows.forEachIndexed { i, r ->
+                val priceColor = when {
+                    r.changePct > 0 -> "#E53935"
+                    r.changePct < 0 -> "#43A047"
+                    else -> "#666666"
+                }
+                content.addView(TextView(ctx).apply {
+                    text = "  ${i + 1}. ${r.name}(${r.code})  评分 ${r.score}"
+                    textSize = 13f
+                    setTypeface(null, Typeface.BOLD)
+                    setTextColor(Color.parseColor("#333333"))
+                    setPadding(0, (3 * density).toInt(), 0, 0)
+                })
+                val priceText = if (r.price > 0) {
+                    "  现价 ${"%.2f".format(r.price)}  " +
+                        "${if (r.changePct > 0) "+" else ""}${"%.2f".format(r.changePct)}%"
+                } else ""
+                content.addView(TextView(ctx).apply {
+                    text = (priceText + "  ${r.detail}").trim()
+                    textSize = 11f
+                    setTextColor(Color.parseColor(priceColor))
+                    setPadding((14 * density).toInt(), 0, 0, (2 * density).toInt())
+                    setLineSpacing(2f, 1.1f)
+                })
+            }
+        }
+        val sv = ScrollView(ctx).apply {
+            isFillViewport = true
+            addView(content)
+        }
+        AlertDialog.Builder(ctx)
+            .setTitle("🚀 一键建仓 · 三周期选股结果")
+            .setView(sv)
+            .setPositiveButton("关闭", null)
+            .create()
+            .apply {
+                show()
+                window?.setLayout(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT)
+            }
+    }
+
+    /** 内嵌周期页适配器：短 / 中 / 长 / 实仓 / ETF低位（超短引擎并入短线，2026-09-05） */
     private class PeriodTabAdapter(fragment: Fragment) : FragmentStateAdapter(fragment) {
         override fun getItemCount() = 5
 
         override fun createFragment(position: Int): Fragment {
             return when (position) {
-                0 -> UltraShortQuantFragment()
-                1 -> ShortTermQuantFragment()
-                2 -> MidTermQuantFragment()
-                3 -> LongTermQuantFragment()
-                4 -> RealHoldingQuantFragment()
+                0 -> ShortTermQuantFragment()
+                1 -> MidTermQuantFragment()
+                2 -> LongTermQuantFragment()
+                3 -> RealHoldingQuantFragment()
+                4 -> EtfDipFragment()
                 else -> throw IllegalStateException("Unknown position: $position")
             }
         }

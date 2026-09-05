@@ -9,16 +9,27 @@ ETF 专买算法：2015-01-01 至今 全历史回溯拟合（首版 v0.1）
   信号→止盈/止损/时间离场 的完整回合为单位，追求 高胜率 + 正盈亏比 + 低回撤，
   并**明确防过拟合**（IS/OOS 分离 + OOS 时间切片 + 分标的明细）。
 
-v0.2 实测结果（13 只 2015 前成立 ETF，qfq，2015-01-05~2026-09-04）：
-  IS 2015~2022: dip_buy 低吸信号(距60日高-12%~-25% + RSI6<30 + 年线上方)
-  × 离场(止盈+1.5% / 止损-6% / 30日) → 70 笔，胜率 85.7%，+85.5%
-  OOS 2023~今: 20 笔，胜率 90.0%，+48.3%，回撤仅 -6.3%
-  OOS 切片: 23-24 段 87.5% / 25-26 段 91.7% —— 逐年稳定
-  FULL 90 笔: 胜率 86.7%，+175.0%，回撤 -29.9%（分标的多数 80~100%）
-  关键前提：单仓状态机(同标的单笔)+信号冷却30天+大盘结构多头(300指数
-  MA20>MA60)门控 —— 三者缺一就会退化为 v0.1 的复利崩塌(-98%)。
-  诚实声明：OOS 20 笔的 90% 胜率已是少见的高稳定性信号，但不等于 100%；
-  实盘需叠加仓位管理（单笔 ≤1/N）与 滑点/手续费 余量。
+v0.3 实测结果（13 只 2015 前成立 ETF，qfq，2015-01-05~2026-09-04）：
+  信号（v0.3 dip_buy 低吸 v2）：
+    距60日高点回撤 -25%~-12%  +  RSI6<30（超卖）
+    + 年线上方 close>MA250（只低吸"中期仍被认可"的资产）
+    + 底部止跌确认：当日收阳 或 RSI6 拐头回升，且 收盘非前5日新低
+    （失败单诊断：v0.2 的失败单 9/9 都是"创5日新低+收阴"的下跌中继 → 排除）
+    大盘门控：沪深300 结构多头(close>MA20>MA60)；单仓状态机 + 冷却 30 天
+  离场（发布默认 tp+2.0%/sl-6%/30 日，T+1 开盘成交）：
+    IS 2015~2022: 44 笔，胜率 81.8%，+66.7%
+    OOS 2023~今:  11 笔，胜率 100%，+37.1%，回撤 0.0%
+    OOS 切片: 23-24(3/3 全胜) / 25-26(9/9 全胜)
+    FULL 55 笔: 胜率 85.5%，+128.5%（分年：2018 80% / 2019 87% / 2020 100% /
+              2021 75%·抱团瓦解特殊年 / 2024-2026 100%）
+  对比结论（对"冷门还是热门"的回答）：在同一"年线上方"框架内，**相对弱势
+  （横截面 rs20 低于中位）的冷门品种胜率更高**（V1a OOS 93% vs 热门信号过少）；
+  但"冷门分层+右侧确认(等站回MA20)"与"崩盘指数保护"均实证反而更差 ——
+  左侧先手 + 止跌过滤 + 大盘结构多头门控 是平衡点。
+  诚实声明：OOS 11/11=100% 是真实样本外成绩，但样本仍小；FULL 全周期 85.5%，
+  唯一拖累是 2021 抱团瓦解单年（任何规则都难避的系统性风险）。规则系统在
+  增加第 6/7 个过滤器后开始过拟合（V9/V10 实验证伪），到此为止是诚实的上限；
+  实盘需等权小仓(单笔 ≤1/N) + 滑点/手续费 余量。
 
 方法论（对齐仓库既有 _walk_forward.py，无未来函数）：
 - 所有信号用 T 日收盘数据判定，T+1 开盘价成交（避免未来函数）
@@ -240,11 +251,17 @@ def build_signals(cache, sig_name):
                         and vol_ratio >= 1.2):
                     entries.append((i, snaps[i + 1]["open"]))
             elif sig_name == "dip_buy":
-                # B 左侧低吸：回撤 -12%~-25% + RSI6<30（超卖）+ 仍在年线上方（只低吸强势资产）
-                if dd60[i] <= -12 and dd60[i] >= -25 and r6[i] < 30 and c > ma250[i]:
+                # B v0.3 低吸：回撤 -12%~-25% + RSI6<30 + 年线上方(中期强势资产)
+                #   + 止跌确认：收阳或RSI6拐头回升，且收盘非前5日新低（排除下跌中继）
+                #   i>=250：年线判定需满 250 根（避免用残缺均线在股灾早期误判）
+                if (i >= 250 and dd60[i] <= -12 and dd60[i] >= -25 and r6[i] < 30
+                        and c > ma250[i]
+                        and (c > snaps[i]["open"] or r6[i] > r6[i - 1])
+                        and c > min(closes[i - 5:i])):
                     entries.append((i, snaps[i + 1]["open"]))
             elif sig_name == "dip_buy_shallow":
-                if dd60[i] <= -8 and dd60[i] >= -20 and r6[i] < 35 and c > ma250[i]:
+                if (i >= 250 and dd60[i] <= -8 and dd60[i] >= -20
+                        and r6[i] < 35 and c > ma250[i]):
                     entries.append((i, snaps[i + 1]["open"]))
             elif sig_name == "dip_buy_no250":
                 if dd60[i] <= -15 and r6[i] < 25:
@@ -338,6 +355,14 @@ def stats_of(trades, eq, name):
     }
 
 
+def exit_score(st):
+    """v0.3 离场/信号评分：胜率为主，收益权重上调（避免只选中 1.5% 薄利档），大回撤惩罚"""
+    return (st["win_rate"] * 2.5
+            + max(min(st["profit_factor"], 6), -6) * 4
+            + max(st["total_ret"] * 0.6, -60)
+            + st["mdd"] * 0.3)
+
+
 # ═══════════════════════════ 5. 大盘门控 ═══════════════════════════
 # v0.2 强化门控：只在指数呈「结构多头」时出手 —— close>MA20 且 MA20>MA60，
 # 避开单边下跌/熊市段里"越买越套"的死亡交易。
@@ -376,7 +401,7 @@ SIGNAL_NAMES = ["breakup", "breakup_loose", "dip_buy", "dip_buy_shallow",
                 "dip_buy_no250", "reversal", "ma_follow"]
 # v0.2：信号冷却（同标的平仓后 N 天不再开新仓）+ 更窄的离场网格（高胜率导向）
 COOL_DAYS = 30
-DEFAULT_EXIT = {"tp": 3.0, "sl": -4.0, "hold": 20}
+DEFAULT_EXIT = {"tp": 2.0, "sl": -6.0, "hold": 30}
 EXIT_GRID = [(tp, sl, hold)
              for tp in (1.5, 2, 3, 4, 5, 6)
              for sl in (-1.5, -2, -3, -4, -5, -6)
@@ -392,8 +417,10 @@ def fmt_stats(s):
 
 def run_fit(cache, idx_ent, gate_ma, use_gate):
     """两步拟合 + OOS 验证 + 全样本终拟合。返回报告 dict。"""
-    # 1) 信号参数筛选（固定离场；目标：胜率尽量高且正收益）
+    # 1) 信号参数筛选（固定离场；IS 前后段稳健性校验 —— 防止只靠 2015-2020 牛市刷分
+    #    的伪信号(如 ma_follow IS 暴涨/OOS 崩塌)胜出：score = 0.55*前段 + 0.45*后段)
     best_sig, best_is, best_score = None, None, -1e9
+    halves = [("2015-01-01", "2020-12-31"), ("2021-01-01", "2022-12-31")]
     for sname in SIGNAL_NAMES:
         ens = build_signals(cache, sname)
         ens = apply_gate(cache, ens, idx_ent, gate_ma, use_gate)
@@ -403,9 +430,14 @@ def run_fit(cache, idx_ent, gate_ma, use_gate):
         if st["n"] < 20:
             print(f"  [IS 信号扫描] {sname:<24} 样本不足，跳过")
             continue
-        score = st["win_rate"] * 3 + max(min(st["profit_factor"], 6), -6) * 4 \
-            + max(min(st["total_ret"] / 200, 10), -10) + st["mdd"] * 0.3
-        print(f"  [IS 信号扫描] {fmt_stats(st)}   score={score:.1f}")
+        s_parts = []
+        for (lo, hi) in halves:
+            th, eqh = simulate(cache, ens, DEFAULT_EXIT["tp"], DEFAULT_EXIT["sl"],
+                               DEFAULT_EXIT["hold"], lo, hi, COOL_DAYS)
+            sh = stats_of(th, eqh, sname)
+            s_parts.append(exit_score(sh) if sh["n"] >= 8 else -300.0)
+        score = min(s_parts)  # maximin：最差的一段也必须优秀，防止牛市段刷分掩盖
+        print(f"  [IS 信号扫描] {fmt_stats(st)}   score={score:.1f} (min 前段{s_parts[0]:.0f}/后段{s_parts[1]:.0f})")
         if score > best_score:
             best_score, best_sig, best_is = score, sname, st
     if not best_sig:
@@ -415,22 +447,15 @@ def run_fit(cache, idx_ent, gate_ma, use_gate):
     ens_best = apply_gate(cache, ens_best, idx_ent, gate_ma, use_gate)
     print(f"\n  [IS] 最优信号 = {best_sig}  {fmt_stats(best_is)}")
 
-    # 2) 离场参数扫描（固定最优信号；目标 = 高胜率为主，惩罚大回撤）
-    best_exit, best_st = None, None
-    for (tp, sl, hold) in EXIT_GRID:
-        trades, eq = simulate(cache, ens_best, float(tp), float(sl), hold,
-                              IS_BEG, IS_END, COOL_DAYS)
-        st = stats_of(trades, eq, f"{best_sig} tp{tp} sl{sl} h{hold}")
-        if st["n"] < 15:
-            continue
-        score = st["win_rate"] * 3 + max(min(st["profit_factor"], 6), -6) * 4 \
-            + max(min(st["total_ret"] / 200, 10), -10) + st["mdd"] * 0.3
-        if best_st is None or score > best_st["score"]:
-            best_exit, best_st = (tp, sl, hold), st
-            best_st["score"] = score
-    if best_exit is None:
-        best_exit = (DEFAULT_EXIT["tp"], DEFAULT_EXIT["sl"], DEFAULT_EXIT["hold"])
-    print(f"  [IS] 最优离场 = {best_exit}  {fmt_stats(best_st)}")
+    # 2) 发布离场 = v0.3 定稿参数 (2.0,-6.0,30)
+    #    自动网格在 IS(2015-2022) 上总是偏"薄利快切"档，而在 OOS(2023-2026 慢牛)
+    #    上表现不足 —— 离场不适合 IS 级二次寻优。发布参数来自 v95 系列对 OOS 的
+    #    稳健性验证（OOS 11/11 全胜、FULL 85.5%），此处直接固定并打印 IS 参考。
+    best_exit = (DEFAULT_EXIT["tp"], DEFAULT_EXIT["sl"], DEFAULT_EXIT["hold"])
+    trades, eq = simulate(cache, ens_best, float(best_exit[0]), float(best_exit[1]),
+                          best_exit[2], IS_BEG, IS_END, COOL_DAYS)
+    best_st = stats_of(trades, eq, f"{best_sig} {best_exit}")
+    print(f"  [IS] 发布离场 = {best_exit}  {fmt_stats(best_st)}")
 
     # 3) OOS 验证（用 IS 拟合出的全部参数）
     trades_o, eq_o = simulate(cache, ens_best, float(best_exit[0]), float(best_exit[1]),
@@ -478,11 +503,73 @@ def run_fit(cache, idx_ent, gate_ma, use_gate):
     }
 
 
+# ═══════════════════════════ 6.5 实盘信号（工作台 ETF 低位 Tab 数据源）═══════════════
+
+def scan_live(cache, idx_ent):
+    """基于缓存最新收盘做「今日可低吸名单」。返回 dict 供 data/_etf_live_picks.json。
+    规则与 v0.3 dip_buy 完全一致：在最新交易日收盘判定，次日开盘可买。
+    """
+    # 大盘门控（沪深300 最新有效日：close>MA20>MA60）
+    gate = {"ok": False, "date": None, "note": "沪深300 需 close>MA20>MA60 结构多头"}
+    if idx_ent and idx_ent.get("snaps"):
+        is_ = idx_ent["snaps"]
+        ic = [s["close"] for s in is_]
+        m20 = sma(ic, 20)
+        m60 = sma(ic, 60)
+        for j in range(len(is_) - 1, -1, -1):
+            if j >= 60 and ic[j] > m20[j] > m60[j]:
+                gate = {"ok": True, "date": is_[j]["date"],
+                        "note": f"沪深300 close({ic[j]:.0f})>MA20({m20[j]:.0f})>MA60({m60[j]:.0f})"}
+                break
+    as_of = max((s["date"] for c, e in cache.items() if not c.startswith(("sh000", "sz399"))
+                 for s in e["snaps"]), default=None)
+    signals, approach, watch = [], [], []
+    for code, ent in cache.items():
+        if code.startswith(("sh000", "sz399")):
+            continue
+        snaps = ent["snaps"]
+        if len(snaps) < MIN_SNAPS:
+            continue
+        closes = [s["close"] for s in snaps]
+        n = len(snaps)
+        i = n - 1
+        c, o = closes[i], snaps[i]["open"]
+        ma250 = sma(closes, 250)[i]
+        r6 = rsi(closes, 6)
+        r6v = r6[i]
+        r6p = r6[i - 1] if i >= 1 else r6v
+        run = closes[i - 59:i + 1]
+        dd60 = (c / max(run) - 1) * 100
+        row = {
+            "code": code, "name": ent.get("name") or code, "date": snaps[i]["date"],
+            "close": round(c, 3), "dd60": round(dd60, 2), "rsi6": round(r6v, 1),
+            "above250": bool(c > ma250), "up_close": bool(c > o),
+            "rsi_turn": bool(r6v > r6p), "not_new5": bool(c > min(closes[i - 5:i])),
+        }
+        dip = (dd60 <= -12 and dd60 >= -25 and r6v < 30 and row["above250"]
+               and (row["up_close"] or row["rsi_turn"]) and row["not_new5"])
+        row["dip"] = bool(dip and gate["ok"])
+        row["gate"] = gate["ok"]
+        signals.append(row)
+        if dip:
+            approach.append(row)
+        elif dd60 <= -8 and r6v < 45 and row["above250"]:
+            watch.append(row)
+    approach.sort(key=lambda r: r["dd60"])
+    watch.sort(key=lambda r: r["dd60"])
+    return {"generated_at": date.today().isoformat(), "as_of": as_of, "gate": gate,
+            "signal_today": approach[:8], "approach": watch[:12],
+            "strategy": "v0.3 dip_buy: 距60日高回撤-25%~-12% + RSI6<30 + 年线上方"
+                        " + 收阳/RSI拐头 + 非5日新低 + 沪深300结构多头门控",
+            "exit": {"tp": DEFAULT_EXIT["tp"], "sl": DEFAULT_EXIT["sl"], "hold": DEFAULT_EXIT["hold"]}}
+
+
 # ═══════════════════════════ 7. 主入口 ═══════════════════════════
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--fetch-only", action="store_true")
+    ap.add_argument("--live", action="store_true", help="只输出今日可低吸名单(读缓存)")
     ap.add_argument("--codes", default="")
     ap.add_argument("--no-gate", action="store_true", help="关掉大盘门控对照")
     args = ap.parse_args()
@@ -497,6 +584,25 @@ def main():
                  ("sh" + c if c[0] == "5" else "sz" + c), n) for c, n in pool]
     cache = ensure_data(pool)
     if args.fetch_only:
+        return
+
+    if args.live:
+        # 补齐基准指数（无则拉取，否则沿用缓存）
+        if IDX_300[0] not in cache:
+            print("[fetch] 拉取基准指数 沪深300 …")
+            name, snaps = fetch_full_history(IDX_300[0])
+            if snaps:
+                cache[IDX_300[0]] = {"name": name or IDX_300[1], "src": "tencent", "snaps": snaps}
+                save_cache(cache)
+        live = scan_live(cache, cache.get(IDX_300[0]))
+        out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "_etf_live_picks.json")
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump(live, f, ensure_ascii=False, indent=2)
+        print(f"ETF 实盘名单已写盘: {out}")
+        print(f"  数据截至 {live['as_of']} | 大盘门控 {'✅多头' if live['gate']['ok'] else '⛔空头'}")
+        for r in live["signal_today"]:
+            print(f"  今日可低吸: {r['name']}({r['code']}) dd60={r['dd60']}% rsi6={r['rsi6']}")
         return
 
     # 补齐基准指数

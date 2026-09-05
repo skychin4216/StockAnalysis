@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import com.chin.stockanalysis.agent.framework.*
 import com.chin.stockanalysis.agent.core.analyzeStock
+import com.chin.stockanalysis.agent.hub.AgentHub
+import com.chin.stockanalysis.agent.hub.ChatExpertSpec
 import com.chin.stockanalysis.agent.stock.StockAnalysisAgent
 import com.chin.stockanalysis.agent.stock.StockPickingAgent
 import com.chin.stockanalysis.ai.AiProviderPool
@@ -74,6 +76,55 @@ class ChatAgent(context: Context) : AgentBase(
         - "市场怎么样" / "今天大盘" → 提供市场简报
         - 其他 → 直接回答
     """.trimIndent()
+
+    /**
+     * ## 复合需求 → 多 Agent 编排（对齐 CodeBuddy「父规划 + 子 Agent 委派」）
+     *
+     * 当一条消息命中 ≥2 个领域专家（如"持仓 + 板块"）时，系统不写死路由，
+     * 而是把命中的每个领域当作一个独立子 Agent：子 Agent 拥有自己的角色描述
+     * （AgentHub spec），并沿用工具循环（react 内部每次重建 messageHistory，
+     * 天然隔离上下文）收集数据、给出独立结论；最后父级（再次 react）汇总。
+     */
+    private suspend fun orchestrateWithExperts(
+        userMessage: String,
+        ctx: AgentContext,
+        experts: List<ChatExpertSpec>,
+        onStream: ((String) -> Unit)?
+    ): ChatAgentResult {
+        val used = experts.take(3)
+        val parts = StringBuilder()
+        var totalSteps = 0
+        used.forEachIndexed { idx, e ->
+            onStream?.invoke("🧩 子Agent ${idx + 1}/${used.size}：${e.icon} ${e.name}\n")
+            val task = "你正在扮演独立子Agent「${e.name}」——${e.description}。" +
+                "只从你的领域视角分析用户需求：\n$userMessage\n" +
+                "需要数据就调用工具；最后用 2~5 句给出独立结论（含风险提示）。"
+            val r = react(task, ctx, maxSteps = 3)
+            totalSteps += r.steps
+            if (r.success && r.output.isNotBlank()) {
+                parts.append("【${e.icon} ${e.name}】\n${r.output.trim()}\n\n")
+                onStream?.invoke("✓ ${e.name} 完成\n")
+            } else {
+                parts.append("【${e.icon} ${e.name}】分析中断：${r.output}\n\n")
+            }
+        }
+        val finalAnswer: String = if (used.size > 1) {
+            onStream?.invoke("\n🧩 父Agent 汇总…\n")
+            val summaryTask = "以下是多位子Agent 对同一需求的独立结论。" +
+                "请交叉校验、合并重复，输出一份最终答复：" +
+                "先直接回答用户需求，再给 1~3 条可执行建议与风险（600 字内）：\n\n" +
+                "用户需求：$userMessage\n\n$parts"
+            val s = react(summaryTask, ctx, maxSteps = 1)
+            totalSteps += s.steps
+            if (s.success && s.output.isNotBlank()) s.output else parts.toString()
+        } else parts.toString()
+        return ChatAgentResult(
+            success = true,
+            response = finalAnswer.trim(),
+            intent = "MULTI_AGENT",
+            steps = totalSteps
+        )
+    }
 
     /**
      * 处理用户消息
@@ -218,7 +269,12 @@ class ChatAgent(context: Context) : AgentBase(
                 )
             }
             else -> {
-                // 一般对话：使用 ReAct
+                // 一般对话：若命中 ≥2 个领域专家 → 自动拆成多 Agent 依次执行再汇总；
+                // 否则退回单 Agent ReAct。
+                val experts = AgentHub.match(userMessage)
+                if (experts.size >= 2 && userMessage.length >= 10) {
+                    return orchestrateWithExperts(userMessage, ctx, experts, onStream)
+                }
                 val result = react(userMessage, ctx, maxSteps = 4)
                 ChatAgentResult(
                     success = result.success,
@@ -296,7 +352,7 @@ class ChatAgent(context: Context) : AgentBase(
             when (env) {
                 "BULLISH" -> {
                     sb.appendLine("  • 大盘偏多，机构推荐板块可积极跟进")
-                    sb.appendLine("  • 建议在【超短线】或【短线】周期建仓")
+                    sb.appendLine("  • 建议在【短线】或【中线】周期建仓（极速档并入短线）")
                     sb.appendLine("  • 优先关注：${extraction.detectedSectors.take(3).joinToString("、")}")
                 }
                 "OSCILLATION" -> {
@@ -307,7 +363,7 @@ class ChatAgent(context: Context) : AgentBase(
                 "BEARISH" -> {
                     sb.appendLine("  • ⚠️ 熊市环境，机构推荐需谨慎对待")
                     sb.appendLine("  • 建议仅观察，不急于跟进")
-                    sb.appendLine("  • 若必须操作，仅限【超短线】日内做T，严控仓位<30%")
+                    sb.appendLine("  • 若必须操作，仅限短线极速档（日内/隔日）轻仓做T，严控仓位<30%")
                 }
                 else -> {
                     sb.appendLine("  • 大盘方向不明，建议在【短线】周期观察")
@@ -773,7 +829,7 @@ class LeaderPoolManageTool(private val ctx: Context) : AgentTool {
 /** AI 一键选股工具：聚合全部候选来源（龙头+备选池+AI精选+自选）后四周期分类 */
 class AiSelectionTool(private val ctx: Context) : AgentTool {
     override val name = "ai_selection"
-    override val description = "一键 AI 选股：聚合龙头股池+备选池+AI精选+用户自选，输出超短/短线/中线/长线各周期入选股票。参数: top_n(可选，每周期返回前N只，默认5)"
+    override val description = "一键 AI 选股：聚合龙头股池+备选池+AI精选+用户自选，输出短线(含极速档)/中线/长线各周期入选股票。参数: top_n(可选，每周期返回前N只，默认5)"
     override val parameters = listOf("top_n")
 
     override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
@@ -784,7 +840,7 @@ class AiSelectionTool(private val ctx: Context) : AgentTool {
                 val scan = classifier.classifyAll()
                 if (scan.byPeriod.isEmpty()) return@withContext "当前无候选股通过筛选"
                 val periodLabels = mapOf(
-                    "ultra_short" to "超短", "short" to "短线",
+                    "ultra_short" to "短线⚡(极速档)", "short" to "短线",
                     "mid" to "中线", "long" to "长线")
                 buildString {
                     appendLine("🎯 AI 一键选股结果（候选 ${scan.candidates.size} 只，命中 ${scan.classified.size} 只）:")
