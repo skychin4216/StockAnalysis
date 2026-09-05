@@ -45,7 +45,8 @@ release/cos_config.json
 .workbuddy/
 
 # AutoQuant 独立仓库（内含 .git，需删除其 .git 后才可并入主仓库；待批准合并）
-AutoQuant/
+# 注意：必须锚定根目录，否则会误伤 skills/autoquant 架构 skill（Windows core.ignorecase=true）
+/AutoQuant/
 
 # 公共市场数据库（SQLite 生成物，由 smalltools/_market_db.py 建库/增量维护）
 data/market_data.db
