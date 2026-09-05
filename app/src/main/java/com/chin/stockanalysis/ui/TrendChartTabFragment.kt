@@ -20,6 +20,14 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
+import com.github.mikephil.charting.charts.CombinedChart
+import com.github.mikephil.charting.listener.OnChartGestureListener
+import com.github.mikephil.charting.data.CandleData
+import com.github.mikephil.charting.data.CandleDataSet
+import com.github.mikephil.charting.data.CombinedData
+import com.github.mikephil.charting.data.Entry
+import com.github.mikephil.charting.data.LineData
+import com.github.mikephil.charting.data.LineDataSet
 import com.chin.stockanalysis.ai.AiProviderPool
 import com.chin.stockanalysis.stock.database.StockDatabase
 import com.chin.stockanalysis.strategy.analysis.TrendPatternEngine
@@ -48,7 +56,9 @@ import android.graphics.BitmapFactory
  * - 子页 1「📈 趋势图」：WebView 加载 trend_charts/index.html 形态图谱。
  *
  * 交互约定：
- * - 点击扫描结果中的某行「个股 K 线」→ 自动向右滑到「趋势图」子页，
+ * - 点击扫描结果「左侧（股票名称区域）」→ 直接在该行下方展开：该股 K 线图 + 匹配的图谱迷你图
+ *   （再点一次收起），无需离开扫描结果。
+ * - 点击扫描结果「右侧 RSA / 📈形态 标签」→ 自动滑到「趋势图」子页，
  *   并 focusPatternByEn 自动匹配定位到该股对应的图谱 index（高亮 + 滚动到视野中央）。
  * - 输入股票名称或代码 → 自动补数据并注入/定位该股形态。
  * - 「📷 选择截图」→ OCR 识别截图 K 线形态，AI 解析后注入图谱并定位。
@@ -65,6 +75,7 @@ class TrendChartTabFragment : Fragment() {
     private var webReady = false
     private var lastFocusEn: String? = null
     private var scanListBox: LinearLayout? = null
+    private var scanScroll: ScrollView? = null
     private var scanSerial = 0
 
     private val trendScanMemory = ConcurrentHashMap<String, Long>()
@@ -157,6 +168,25 @@ class TrendChartTabFragment : Fragment() {
             setOnClickListener { onSearchAction() }
         }
         toolRow.addView(searchBtn)
+
+        val etfBtn = Button(ctx).apply {
+            text = "🧲 ETF池"
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#1976D2"))
+            setPadding(dp(8), 0, dp(8), 0)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, toolH
+            )
+            setOnClickListener {
+                try {
+                    EtfHoldingsDialog(requireContext()).show()
+                } catch (_: Exception) {
+                    Toast.makeText(ctx, "ETF 重仓打开失败", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+        toolRow.addView(etfBtn)
         root.addView(toolRow)
 
         // ── 状态栏（单行小字，兼作操作引导） ──
@@ -165,7 +195,7 @@ class TrendChartTabFragment : Fragment() {
             setTextColor(Color.parseColor("#888888"))
             setPadding(12, 1, 12, 2)
             visibility = View.VISIBLE
-            text = "▶ 扫描股票池；点结果行=个股详情；点右侧形态=趋势图谱"
+            text = "🖱 点左侧名称=行内展开K线/匹配图谱；扫描结果仅本地展示，不再写入趋势图库"
         }
         root.addView(statusTv)
 
@@ -206,6 +236,7 @@ class TrendChartTabFragment : Fragment() {
         }
         box.addView(listBox)
         scanListBox = listBox
+        scanScroll = scroll
         return scroll
     }
 
@@ -318,14 +349,17 @@ class TrendChartTabFragment : Fragment() {
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
-    /** 在扫描结果列表中加入一行（每个已注入形态对应一行） */
+    /** 在扫描结果列表中加入一行；左侧点击 → 行内展开K线+匹配图谱。
+     *  @param jumpable 该行的图谱是否已注入 WebView 趋势图库（手动搜索/截图注入为 true，
+     *                  扫描自动命中为 false —— 扫描结果不再写入趋势图库）。 */
     private fun addScanRow(
         code: String,
         name: String,
         en: String,
         tag: String,
         stateLabel: String? = null,
-        stateBull: Boolean = false
+        stateBull: Boolean = false,
+        jumpable: Boolean = true
     ) {
         val ctx = requireContext()
         requireActivity().runOnUiThread {
@@ -335,24 +369,38 @@ class TrendChartTabFragment : Fragment() {
             val idx = scanSerial
             val displayName = name.ifBlank { code }
 
-            // 整行：点击 → 大盘股票详情页（展示最新K线）
-            val row = LinearLayout(ctx).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(8), dp(6), dp(8), dp(6))
-                isClickable = true
-                isFocusable = true
+            // cell = 卡片行 + 行内展开区（默认隐藏）
+            val cell = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 ).apply { bottomMargin = dp(5) }
-                setOnClickListener { openStockDetail(code, displayName) }
+            }
+
+            val row = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(8), dp(6), dp(8), dp(6))
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
                 val bg = GradientDrawable().apply { cornerRadius = dp(10).toFloat() }
                 bg.setColor(Color.parseColor("#FAFAFA"))
                 bg.setStroke(dp(1), Color.parseColor("#EEEEEE"))
                 background = bg
             }
-            row.addView(TextView(ctx).apply {
+
+            // ── 左侧可点击区：序号 + 名称 + 展开箭头（weight=1 占满剩余，右侧标签不被遮挡） ──
+            val left = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                isClickable = true
+                isFocusable = true
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            left.addView(TextView(ctx).apply {
                 text = "$idx"
                 textSize = 11f
                 gravity = Gravity.CENTER
@@ -360,35 +408,383 @@ class TrendChartTabFragment : Fragment() {
                 setBackgroundColor(Color.parseColor("#E65100"))
                 setPadding(dp(6), dp(2), dp(6), dp(2))
             })
-            row.addView(TextView(ctx).apply {
+            left.addView(TextView(ctx).apply {
                 text = "  $displayName($code)  "
                 textSize = 13f
                 setTextColor(Color.parseColor("#333333"))
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             })
+            val chev = TextView(ctx).apply {
+                text = "▾"
+                textSize = 12f
+                setTextColor(Color.parseColor("#AAAAAA"))
+                setPadding(dp(2), 0, dp(4), 0)
+            }
+            left.addView(chev)
+            val info = ExpandInfo(code, displayName, en, tag, stateLabel, stateBull, jumpable)
+            left.setOnClickListener {
+                toggleRowExpand(cell, chev, info)
+            }
+            row.addView(left)
 
-            // RSA 趋势状态标签（加权标记；点击同样进入趋势图）
+            // RSA 趋势状态标签（仅展示；已注入 WebView 的行保留跳转定位）
             if (!stateLabel.isNullOrBlank()) {
                 row.addView(TextView(ctx).apply {
                     text = "RSA·$stateLabel"
                     textSize = 10f
                     setTextColor(if (stateBull) Color.parseColor("#E53935") else Color.parseColor("#43A047"))
                     setPadding(dp(4), dp(2), dp(4), dp(2))
-                    setOnClickListener { jumpToTrendAndFocus(displayName, code, en, tag) }
+                    if (jumpable) setOnClickListener { jumpToTrendAndFocus(displayName, code, en, tag) }
                 })
             }
 
-            // 右侧形态标签（点击 → 跳到趋势图子页并定位该股图谱）
+            // 右侧形态标签（展示形态；手动注入的行可点跳趋势图定位，扫描命中行为纯标注）
             row.addView(TextView(ctx).apply {
                 text = "📈 $tag"
                 textSize = 11f
                 setTextColor(Color.parseColor("#E65100"))
                 setPadding(dp(6), dp(2), dp(6), dp(2))
-                setOnClickListener { jumpToTrendAndFocus(displayName, code, en, tag) }
+                if (jumpable) setOnClickListener { jumpToTrendAndFocus(displayName, code, en, tag) }
             })
-            listBox.addView(row)
+            cell.addView(row)
+
+            // 行内展开区：该股K线图 + 匹配的图谱（懒加载）
+            val expand = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                visibility = View.GONE
+                setPadding(dp(8), dp(6), dp(8), dp(6))
+                val bg = GradientDrawable().apply { cornerRadius = dp(8).toFloat() }
+                bg.setColor(Color.parseColor("#FFFDF7"))
+                bg.setStroke(dp(1), Color.parseColor("#FFE0B2"))
+                background = bg
+            }
+            cell.addView(expand)
+            listBox.addView(cell)
         }
+    }
+
+    private class ExpandInfo(
+        val code: String,
+        val name: String,
+        val en: String,
+        val tag: String,
+        val stateLabel: String?,
+        val stateBull: Boolean,
+        val jumpable: Boolean
+    )
+
+    /** 扫描命中记录（用于扫描结束后按上涨概率重排结果行） */
+    private data class ScanHit(
+        val code: String,
+        val name: String,
+        val candles: List<DailySnapshotEntity>,
+        val weight: Int,
+        val bull: Boolean
+    )
+
+    /** 扫描结束后按上涨概率重排结果行（若某行正展开则不打扰，直接跳过重排） */
+    private fun resortScanRows(hits: List<ScanHit>) {
+        if (hits.size < 2) return
+        val box = scanListBox ?: return
+        requireActivity().runOnUiThread {
+            if (!isAdded) return@runOnUiThread
+            if (box.childCount != hits.size) return@runOnUiThread
+            for (i in 0 until box.childCount) {
+                val cell = box.getChildAt(i) as? LinearLayout ?: continue
+                if (cell.childCount > 1 && cell.getChildAt(1).visibility == View.VISIBLE) return@runOnUiThread
+            }
+            val cells = (0 until box.childCount).map { box.getChildAt(it) }
+            val sorted = hits.withIndex()
+                .sortedWith(
+                    compareByDescending<IndexedValue<ScanHit>> { it.value.weight }
+                        .thenByDescending { if (it.value.bull) 1 else 0 }
+                        .thenBy { it.value.code }
+                )
+            box.removeAllViews()
+            for (si in sorted) box.addView(cells[si.index])
+        }
+    }
+
+    private fun toggleRowExpand(cell: LinearLayout, chev: TextView, info: ExpandInfo) {
+        val expand = cell.getChildAt(1) as? LinearLayout ?: return
+        if (expand.visibility == View.VISIBLE) {
+            expand.visibility = View.GONE
+            chev.rotation = 0f
+            return
+        }
+        // 收起其它已展开的行，保持同时只展开一个
+        scanListBox?.let { box ->
+            for (i in 0 until box.childCount) {
+                val c = box.getChildAt(i) as? LinearLayout ?: continue
+                if (c === cell) continue
+                (c.getChildAt(1) as? View)?.visibility = View.GONE
+                val r = c.getChildAt(0) as? LinearLayout
+                val l = r?.getChildAt(0) as? LinearLayout
+                (l?.getChildAt(2) as? TextView)?.rotation = 0f
+            }
+        }
+        if (expand.tag == null) {
+            expand.tag = true
+            loadExpandContent(expand, info)
+        }
+        chev.rotation = 180f
+        expand.visibility = View.VISIBLE
+        // 展开后尽量滚动到该行可见
+        scanScroll?.post {
+            val loc = IntArray(2)
+            cell.getLocationInWindow(loc)
+            val sloc = IntArray(2)
+            scanScroll?.getLocationInWindow(sloc)
+            scanScroll?.smoothScrollBy(0, loc[1] - sloc[1] - dp(20))
+        }
+    }
+
+    /** 行内展开：显示 标题 → 40日K线(MA5/10/20) → 20日匹配图谱(MA5) → 操作按钮 */
+    private fun loadExpandContent(expand: LinearLayout, info: ExpandInfo) {
+        val ctx = requireContext()
+        expand.removeAllViews()
+        expand.addView(TextView(ctx).apply {
+            text = "⏳ 加载 ${info.name}(${info.code}) K线…"
+            textSize = 11f
+            setTextColor(Color.parseColor("#999999"))
+            setPadding(0, 0, 0, dp(2))
+        })
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val snaps = try {
+                StockDatabase.getInstance(ctx).dailySnapshotDao()
+                    .getByCode(info.code, 60).sortedBy { it.date }
+            } catch (e: Exception) { emptyList() }
+            withContext(Dispatchers.Main) {
+                if (!isAdded) return@withContext
+                if (expand.visibility != View.VISIBLE) return@withContext
+                expand.removeAllViews()
+                if (snaps.size < 20) {
+                    expand.addView(TextView(ctx).apply {
+                        text = "⚠️ ${info.name}(${info.code}) 本地K线不足 20 根，无法展示"
+                        textSize = 11f
+                        setTextColor(Color.parseColor("#E65100"))
+                    })
+                    return@withContext
+                }
+                expand.addView(TextView(ctx).apply {
+                    text = "${info.name}(${info.code}) · 识别形态：${info.tag}"
+                    textSize = 11f
+                    setTextColor(Color.parseColor("#333333"))
+                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                    setPadding(0, 0, 0, dp(4))
+                })
+                // K线图（最近40根）
+                expand.addView(TextView(ctx).apply {
+                    text = "K线图（最近 ${snaps.takeLast(40).size} 根 · MA5/10/20 · 可拖动/双指缩放）"
+                    textSize = 10f
+                    setTextColor(Color.parseColor("#666666"))
+                    setPadding(0, dp(2), 0, dp(2))
+                })
+                expand.addView(buildStaticKline(snaps.takeLast(40), 190, listOf(5, 10, 20)))
+                // 匹配图谱（最近20根）
+                expand.addView(TextView(ctx).apply {
+                    text = "匹配图谱：${info.tag}" +
+                        (if (!info.stateLabel.isNullOrBlank()) " · RSA·${info.stateLabel}" else "") +
+                        " · 可拖动/双指缩放"
+                    textSize = 10f
+                    setTextColor(Color.parseColor("#E65100"))
+                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                    setPadding(0, dp(6), 0, dp(2))
+                })
+                expand.addView(buildStaticKline(snaps.takeLast(20), 150, listOf(5)))
+                // 操作行
+                val act = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(0, dp(6), 0, 0)
+                }
+                act.addView(smallBtn("📄 个股详情") {
+                    openStockDetail(info.code, info.name)
+                })
+                act.addView(smallBtn("🧭 趋势图定位") {
+                    jumpToTrendAndFocus(info.name, info.code, info.en, info.tag)
+                })
+                act.addView(TextView(ctx).apply {
+                    text = "再次点名称收起 ▲"
+                    textSize = 9f
+                    setTextColor(Color.parseColor("#AAAAAA"))
+                    gravity = Gravity.END
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                })
+                expand.addView(act)
+            }
+        }
+    }
+
+    private fun smallBtn(text: String, onClick: () -> Unit): TextView {
+        val ctx = requireContext()
+        return TextView(ctx).apply {
+            this.text = text
+            textSize = 10f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#1976D2"))
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { marginEnd = dp(6) }
+            isClickable = true
+            setOnClickListener { onClick() }
+        }
+    }
+
+    /** 静态迷你K线图（蜡烛 + MA 线），纯展示不缩放 */
+    private fun buildStaticKline(
+        snaps: List<DailySnapshotEntity>, heightDp: Int, lines: List<Int>
+    ): CombinedChart {
+        val ctx = requireContext()
+        val chart = CombinedChart(ctx)
+        chart.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(heightDp)
+        )
+        chart.setBackgroundColor(Color.WHITE)
+        chart.description.isEnabled = false
+        chart.legend.isEnabled = lines.isNotEmpty()
+        chart.legend.textSize = 8f
+        chart.legend.textColor = Color.parseColor("#999999")
+        // 可交互：上下左右拖动 + 双指缩放；手势结束后 Y 轴自动贴合当前可见区间
+        chart.setScaleEnabled(true)
+        chart.setPinchZoom(true)
+        chart.isScaleXEnabled = true
+        chart.isScaleYEnabled = true
+        chart.setDragEnabled(true)
+        chart.setDoubleTapToZoomEnabled(true)
+        chart.setHighlightPerTapEnabled(false)
+        chart.setHighlightPerDragEnabled(false)
+        chart.setVisibleXRangeMaximum((snaps.size + 2).toFloat())
+        chart.setVisibleXRangeMinimum((snaps.size / 6).coerceAtLeast(6).toFloat())
+        chart.moveViewToX(0f)
+        chart.drawOrder = arrayOf(CombinedChart.DrawOrder.CANDLE, CombinedChart.DrawOrder.LINE)
+
+        val entries = ArrayList<com.github.mikephil.charting.data.CandleEntry>(snaps.size)
+        for (i in snaps.indices) {
+            val s = snaps[i]
+            entries.add(
+                com.github.mikephil.charting.data.CandleEntry(
+                    i.toFloat(), s.high.toFloat(), s.low.toFloat(), s.open.toFloat(), s.close.toFloat()
+                )
+            )
+        }
+        val cds = CandleDataSet(entries, "").apply {
+            color = Color.parseColor("#333333")
+            shadowColor = Color.parseColor("#999999")
+            shadowWidth = 1f
+            increasingPaintStyle = android.graphics.Paint.Style.FILL
+            decreasingPaintStyle = android.graphics.Paint.Style.FILL
+            increasingColor = Color.parseColor("#E53935")
+            decreasingColor = Color.parseColor("#43A047")
+            isHighlightEnabled = false
+            setDrawValues(false)
+        }
+        val closes = snaps.map { it.close }
+        val lineData = LineData()
+        val lineColors = mapOf(
+            5 to Color.parseColor("#FF9800"),
+            10 to Color.parseColor("#2196F3"),
+            20 to Color.parseColor("#9C27B0")
+        )
+        for (p in lines) {
+            val en = maEntries(closes, p)
+            if (en.isEmpty()) continue
+            lineData.addDataSet(LineDataSet(en, "MA$p").apply {
+                color = lineColors[p] ?: Color.parseColor("#FF9800")
+                lineWidth = 1f
+                setDrawCircles(false)
+                setDrawValues(false)
+                isHighlightEnabled = false
+            })
+        }
+        val combined = CombinedData()
+        combined.setData(CandleData(cds))
+        combined.setData(lineData)
+        chart.data = combined
+        chart.xAxis.apply {
+            position = com.github.mikephil.charting.components.XAxis.XAxisPosition.BOTTOM
+            granularity = (snaps.size / 4).coerceAtLeast(1).toFloat()
+            textSize = 8f
+            textColor = Color.parseColor("#999999")
+            labelCount = 4
+            setDrawGridLines(false)
+            setAvoidFirstLastClipping(true)
+            valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
+                override fun getFormattedValue(value: Float): String {
+                    val ix = value.toInt()
+                    return if (ix in snaps.indices) snaps[ix].date.takeLast(5) else ""
+                }
+            }
+        }
+        chart.axisLeft.apply {
+            textSize = 8f
+            textColor = Color.parseColor("#999999")
+            setDrawGridLines(true)
+            gridColor = Color.parseColor("#EEEEEE")
+            valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
+                override fun getFormattedValue(value: Float): String = "%.2f".format(value)
+            }
+        }
+        chart.axisRight.isEnabled = false
+        // 手势结束 → Y 轴贴合当前可见区间（放大横向看区间，纵向涨跌始终清晰可辨）
+        val fitY = Runnable { fitVisibleY(chart, snaps) }
+        chart.setOnChartGestureListener(object : OnChartGestureListener {
+            override fun onChartGestureStart(
+                e: android.view.MotionEvent?,
+                lastPerformedGesture: com.github.mikephil.charting.listener.ChartTouchListener.ChartGesture?
+            ) {}
+            override fun onChartGestureEnd(
+                e: android.view.MotionEvent?,
+                lastPerformedGesture: com.github.mikephil.charting.listener.ChartTouchListener.ChartGesture?
+            ) { fitY.run() }
+            override fun onChartLongPressed(e: android.view.MotionEvent?) {}
+            override fun onChartDoubleTapped(e: android.view.MotionEvent?) {}
+            override fun onChartSingleTapped(e: android.view.MotionEvent?) {}
+            override fun onChartFling(
+                e1: android.view.MotionEvent?, e2: android.view.MotionEvent?, vx: Float, vy: Float
+            ) {}
+            override fun onChartScale(e: android.view.MotionEvent?, scaleX: Float, scaleY: Float) {}
+            override fun onChartTranslate(e: android.view.MotionEvent?, dx: Float, dy: Float) {}
+        })
+        chart.post { fitY.run() }
+        chart.invalidate()
+        return chart
+    }
+
+    /** Y 轴随可见区自适应：按当前窗口内K线最低-最高重新定轴（避免涨跌被压成一条线） */
+    private fun fitVisibleY(chart: CombinedChart, snaps: List<DailySnapshotEntity>) {
+        if (snaps.size < 4) return
+        val low = chart.lowestVisibleX.toInt().coerceIn(0, snaps.size - 1)
+        val high = chart.highestVisibleX.toInt().coerceIn(0, snaps.size - 1)
+        if (high - low + 1 < 3) return
+        var mn = Double.MAX_VALUE
+        var mx = -Double.MAX_VALUE
+        for (i in low..high) {
+            val s = snaps[i]
+            if (s.low < mn) mn = s.low
+            if (s.high > mx) mx = s.high
+        }
+        if (mn >= mx) return
+        val pad = (mx - mn) * 0.06
+        chart.axisLeft.axisMinimum = (mn - pad).toFloat()
+        chart.axisLeft.axisMaximum = (mx + pad).toFloat()
+        chart.invalidate()
+    }
+
+    /** 简单移动平均序列（x 对齐 K 线下标） */
+    private fun maEntries(closes: List<Double>, period: Int): List<Entry> {
+        val out = ArrayList<Entry>()
+        if (closes.size < period) return out
+        var sum = 0.0
+        for (i in closes.indices) {
+            sum += closes[i]
+            if (i >= period) sum -= closes[i - period]
+            if (i >= period - 1) out.add(Entry(i.toFloat(), (sum / period).toFloat()))
+        }
+        return out
     }
 
     /** 点击结果行 → 打开大盘股票详情页（展示最新K线 + 下方匹配趋势区） */
@@ -535,64 +931,55 @@ class TrendChartTabFragment : Fragment() {
             val stCount = codes.count { isRiskName(nameMap[it] ?: "") }
             val targets = codes.filterNot { isRiskName(nameMap[it] ?: "") }
 
-            // ②c 增量更新 K 线（内存去重）
+            // ②c/③ 逐只处理：先增量补K线 → 命中形态立即注入并追加结果行（一边扫描一边显示）
             val fetcher = HistoricalDataFetcher(ctx)
             val recentDay = com.chin.stockanalysis.ui.TradingDayPickerView
                 .recentTradingDay().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
-            var updated = 0; var skipped = 0; var failed = 0
-            targets.forEachIndexed { i, code ->
-                status("📡 扫描 ${i + 1}/${targets.size}：${nameMap[code] ?: code} ($code)")
-                if (trendScanMemory.containsKey(code)) { skipped++; return@forEachIndexed }
-                val have = try {
-                    db.dailySnapshotDao().getMaxDateByCode().associate { it.code to it.maxDate }[code]
-                } catch (e: Exception) { null }
-                if (have != null && have >= recentDay) {
-                    trendScanMemory[code] = System.currentTimeMillis(); skipped++; return@forEachIndexed
+            var updated = 0; var skipped = 0; var failed = 0; var injected = 0
+            val hits = ArrayList<ScanHit>()
+            // 新一轮扫描：先清空上次结果列表，随后逐行实时追加
+            val box0 = scanListBox
+            if (box0 != null) requireActivity().runOnUiThread { if (isAdded) box0.removeAllViews() }
+            for ((i, code) in targets.withIndex()) {
+                val nm = nameMap[code] ?: code
+                status("📡 扫描 ${i + 1}/${targets.size}：$nm ($code)")
+                if (trendScanMemory.containsKey(code)) {
+                    skipped++
+                } else {
+                    val have = try {
+                        db.dailySnapshotDao().getMaxDateByCode().associate { it.code to it.maxDate }[code]
+                    } catch (e: Exception) { null }
+                    if (have != null && have >= recentDay) {
+                        trendScanMemory[code] = System.currentTimeMillis(); skipped++
+                    } else if (fetcher.fetchStockLatest(code)) {
+                        updated++; trendScanMemory[code] = System.currentTimeMillis()
+                    } else failed++
                 }
-                if (fetcher.fetchStockLatest(code)) {
-                    updated++; trendScanMemory[code] = System.currentTimeMillis()
-                } else failed++
-            }
-
-            // ③ 形态识别 → 按"上涨概率"（形态权重 + RSA 偏多）从高到低排序 → 注入 + 生成结果行
-            data class Hit(
-                val code: String,
-                val name: String,
-                val candles: List<DailySnapshotEntity>,
-                val match: TrendPatternEngine.Match
-            )
-            val hits = mutableListOf<Hit>()
-            for (code in targets) {
+                // 形态识别（数据齐全的股票命中后立即出结果行，无需等全量扫完）
+                // 2026-09-05：命中只进本页列表（行内展开本地K线），不再注入趋势图 WebView 库
+                // —— 趋势图库只保留模板/手动搜索注入的图谱，避免扫描结果刷屏污染模板区
                 val candles = try { db.dailySnapshotDao().getByCode(code, 40) } catch (e: Exception) { emptyList() }
                 if (candles.size < 20) continue
                 val match = TrendPatternEngine.match(candles.take(40).reversed()) ?: continue
-                hits.add(Hit(code, nameMap[code] ?: code, candles, match))
-            }
-            // 上涨概率排序：形态权重(三白兵/上升趋势=3 > 看涨吞没=2 > 锤子线=1)最高在前；
-            // 同权重 RSA 状态偏多优先；再按代码排序保证多次扫描顺序稳定
-            hits.sortWith(
-                compareByDescending<Hit> { it.match.weight }
-                    .thenByDescending { if (it.match.stateBull) 1 else 0 }
-                    .thenBy { it.code }
-            )
-            var injected = 0
-            for (h in hits) {
-                val en = buildAndInject(h.code, h.name, h.candles, h.match.cat to h.match.tag)
+                hits.add(ScanHit(code, nm, candles, match.weight, match.stateBull))
                 addScanRow(
-                    code = h.code,
-                    name = h.name,
-                    en = en,
-                    tag = h.match.tag,
-                    stateLabel = h.match.stateLabel,
-                    stateBull = h.match.stateBull
+                    code = code,
+                    name = nm,
+                    en = "",
+                    tag = match.tag,
+                    stateLabel = match.stateLabel,
+                    stateBull = match.stateBull,
+                    jumpable = false
                 )
                 injected++
             }
+            // 全部扫完 → 按上涨概率重排结果行（形态权重 + RSA 偏多优先；展开中的行不打扰）
+            resortScanRows(hits)
             val indexLine = indexTrendText(db)
             val stNote = if (stCount > 0) " 剔除ST/退市$stCount 只" else ""
             val marketNote = if (indexLine.isNotBlank())
                 "\n$indexLine（形态识别仅针对个股，反映个股相对强弱）" else ""
-            status("✅ 扫描完成：共 ${codes.size} 只（$countText）→ 更新 $updated/复用 $skipped/失败 $failed$stNote，识别看多形态 $injected 个$marketNote")
+            status("✅ 扫描完成：共 ${codes.size} 只（$countText）→ 更新 $updated/复用 $skipped/失败 $failed$stNote，识别看多形态 $injected 个（仅本地列表，未写入趋势图库）$marketNote")
         }
     }
 

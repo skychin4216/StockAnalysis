@@ -11,8 +11,9 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
-import com.chin.stockanalysis.stock.database.StockDatabase
-import com.chin.stockanalysis.strategy.backtest.SectorDailyRecordEntity
+import com.chin.stockanalysis.config.DataConfig
+import com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource
+import com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.HotSector
 import com.github.mikephil.charting.charts.LineChart
 import com.github.mikephil.charting.components.XAxis
 import com.github.mikephil.charting.data.Entry
@@ -22,16 +23,21 @@ import com.github.mikephil.charting.interfaces.datasets.ILineDataSet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 /**
- * 板块走势对比 — 多板块累计涨跌叠加显示
+ * 板块走势对比 — 热门板块历史累计涨跌叠加（v2）
  *
- * 设计概念：
- * - 多条折线叠加，每条代表一个板块的累计指数（基准=100）
- * - 板块通过 chip 切换/多选，最多同时显示 5 条
- * - 时间范围可选：1月/3月/6月/1年/全部
+ * 2026-09-06 改造（v2）：
+ * - 旧版数据依赖本地 sector_daily_record 逐日积累，新装/断更即空白 →「不好用」。
+ * - v2 直接实时拉东财板块日K（push2his stock/kline/get, secid=90.BKxxxx），
+ *   与 App 个股日K同接口，无需本地积累，打开即有数据。
+ * - 打开默认自动对比「当前最热 TOP6」（行业+概念按综合分），一键可用；
+ *   保留 chip 点选增删 + 1月/3月/6月/1年/全部 时间范围。
  */
 class SectorTrendChartFragment : Fragment() {
 
@@ -54,16 +60,18 @@ class SectorTrendChartFragment : Fragment() {
     private lateinit var infoTv: TextView
     private lateinit var rangeRow: LinearLayout
     private lateinit var chipContainer: LinearLayout
+    private val http = OkHttpClient()
 
-    // 所有可用板块
-    private var allTopSectors: List<Pair<String, String>> = emptyList()
-    // 所有板块的完整记录（code -> records）
-    private var sectorRecordMap: Map<String, List<SectorDailyRecordEntity>> = emptyMap()
-    // 当前选中的板块 codes
+    // 可用板块池（实时 API：行业+概念 top40，按综合分排序）
+    private var pool: List<HotSector> = emptyList()
+    // 板块名映射 code -> name（用于 K 线接口异常时仍能显示名）
+    private val nameMap = LinkedHashMap<String, String>()
+    // 当前选中的板块 codes（默认 = 池内 TOP6）
     private val selectedSectors = mutableSetOf<String>()
-    // 热门板块 codes（近30天有 S/A 评级）
-    private var hotSectorCodes: Set<String> = emptySet()
+    // 已拉取的板块日K缓存 code -> (date, close) 升序
+    private val klineMap = mutableMapOf<String, List<Pair<String, Double>>>()
     private var rangeDays = 90
+    private var loading = false
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
@@ -151,72 +159,91 @@ class SectorTrendChartFragment : Fragment() {
         }
         root.addView(chart)
 
-        loadAllData()
+        loadSectorsAndKlines()
         return root
     }
 
     // ══════════════════════════════════════
-    // 数据载入
+    // 数据载入（v2：实时板块 + 实时板块日K）
     // ══════════════════════════════════════
 
-    private fun loadAllData() {
+    private fun loadSectorsAndKlines() {
+        if (loading) return
+        loading = true
+        infoTv.text = "🔄 正在获取热门板块实时走势..."
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val db = StockDatabase.getInstance(requireContext())
-                var recentDays = db.sectorDailyRecordDao().getRecentDays(30)
-
-                if (recentDays.isEmpty()) {
-                    try {
-                        val engine = com.chin.stockanalysis.strategy.backtest.SectorRotationEngine(requireContext())
-                        engine.saveDailySectorData()
-                        recentDays = db.sectorDailyRecordDao().getRecentDays(30)
-                    } catch (_: Exception) {}
-                }
-
-                // 找所有板块，统计热门天数，限制显示数量（热门优先）
-                val sectorMap = mutableMapOf<String, String>()
-                val sectorHotDays = mutableMapOf<String, Int>()
-                for (r in recentDays) {
-                    sectorMap[r.sectorCode] = r.sectorName
-                    if (r.isHot in listOf("S", "A")) {
-                        sectorHotDays[r.sectorCode] = (sectorHotDays[r.sectorCode] ?: 0) + 1
+                val source = EastMoneyHotSectorSource()
+                val industry = source.fetchSectorsByTypeDirect(2, 20)
+                val concept = source.fetchSectorsByTypeDirect(3, 20)
+                val all = (industry + concept).distinctBy { it.code }
+                if (all.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        infoTv.text = "暂无板块数据（网络受限？），请稍后重试"
+                        loading = false
                     }
+                    return@launch
                 }
-                // 排序：热门优先（按热门天数降序），同级按名称，最多显示 30 个
-                allTopSectors = sectorMap.entries
-                    .map { it.key to it.value }
-                    .sortedWith(
-                        compareByDescending<Pair<String, String>> { sectorHotDays[it.first] ?: 0 }
-                            .thenBy { it.second }
-                    )
-                    .take(30)
-                hotSectorCodes = sectorHotDays.keys
+                // 按综合分排序 → 默认 TOP6
+                pool = all.sortedByDescending { it.compositeScore }
+                nameMap.clear()
+                pool.forEach { nameMap[it.code] = it.name }
+                selectedSectors.clear()
+                pool.take(6).forEach { selectedSectors.add(it.code) }
 
-                // 预载每个板块的完整记录
-                val recordMap = mutableMapOf<String, List<SectorDailyRecordEntity>>()
-                for ((code, _) in allTopSectors) {
-                    recordMap[code] = db.sectorDailyRecordDao()
-                        .getBySectorCode(code, 250).sortedBy { it.date }
-                }
-                sectorRecordMap = recordMap
+                ensureKlines(selectedSectors.toList())
 
                 withContext(Dispatchers.Main) {
-                    if (allTopSectors.isEmpty()) {
-                        infoTv.text = "暂无板块数据，请等待更新"
-                        return@withContext
-                    }
-                    // 预设选中前 3 个板块
-                    selectedSectors.clear()
-                    allTopSectors.take(3).forEach { selectedSectors.add(it.first) }
+                    if (!isAdded) return@withContext
+                    loading = false
                     buildChips()
                     renderChart()
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     infoTv.text = "载入失败: ${e.message?.take(50)}"
+                    loading = false
                 }
             }
         }
+    }
+
+    /** 补拉缺失板块的日K（code 列表） */
+    private fun ensureKlines(codes: List<String>) {
+        val miss = codes.filter { it !in klineMap }
+        if (miss.isEmpty()) return
+        // 最多并发 4
+        miss.forEachIndexed { idx, code ->
+            if (idx % 4 == 0) Thread.sleep(80)
+            try {
+                val kl = fetchBoardKline(code)
+                if (kl.isNotEmpty()) klineMap[code] = kl
+            } catch (_: Exception) { /* 单板块失败跳过 */ }
+        }
+    }
+
+    /** 拉某板块（90.BKxxxx）最近 250 根日K，返回升序 (date, close) */
+    private fun fetchBoardKline(code: String): List<Pair<String, Double>> {
+        val url = "${DataConfig.eastmoneyPush2his}/stock/kline/get?" +
+                "secid=90.$code&klt=101&fqt=1" +
+                "&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f61" +
+                "&lmt=250"
+        val req = Request.Builder().url(url)
+            .header("User-Agent", "Mozilla/5.0")
+            .build()
+        val resp = http.newCall(req).execute()
+        if (!resp.isSuccessful) return emptyList()
+        val body = resp.body?.string() ?: return emptyList()
+        val data = JSONObject(body).optJSONObject("data") ?: return emptyList()
+        val klines = data.optJSONArray("klines") ?: return emptyList()
+        val list = mutableListOf<Pair<String, Double>>()
+        for (i in 0 until klines.length()) {
+            val line = klines.getString(i).split(",")
+            if (line.size < 3) continue
+            val close = line[2].toDoubleOrNull() ?: continue
+            list.add(line[0] to close)
+        }
+        return list
     }
 
     // ══════════════════════════════════════
@@ -226,20 +253,16 @@ class SectorTrendChartFragment : Fragment() {
     private fun buildChips() {
         chipContainer.removeAllViews()
         val ctx = requireContext()
-        for ((code, name) in allTopSectors) {
-            val isSelected = code in selectedSectors
+        for (s in pool.take(40)) {
+            val isSelected = s.code in selectedSectors
             val chip = TextView(ctx).apply {
-                text = name
+                text = s.name
                 textSize = 10f
                 setPadding(10, 4, 10, 4)
-                tag = code
+                tag = s.code
                 if (isSelected) {
                     setTextColor(Color.WHITE)
                     setBackgroundColor(Color.parseColor("#1976D2"))
-                } else if (code in hotSectorCodes) {
-                    // 热门板块：红色底
-                    setTextColor(Color.parseColor("#C62828"))
-                    setBackgroundColor(Color.parseColor("#FFEBEE"))
                 } else {
                     setTextColor(Color.parseColor("#666666"))
                     setBackgroundColor(Color.parseColor("#EEEEEE"))
@@ -249,17 +272,23 @@ class SectorTrendChartFragment : Fragment() {
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 ).apply { marginEnd = 4 }
                 setOnClickListener {
-                    if (code in selectedSectors) {
-                        if (selectedSectors.size > 1) selectedSectors.remove(code)
+                    if (loading) return@setOnClickListener
+                    if (s.code in selectedSectors) {
+                        if (selectedSectors.size > 1) selectedSectors.remove(s.code)
                     } else {
-                        if (selectedSectors.size >= 5) {
-                            // 最多 5 条，移除最早的
+                        if (selectedSectors.size >= 8) {
                             selectedSectors.remove(selectedSectors.first())
                         }
-                        selectedSectors.add(code)
+                        selectedSectors.add(s.code)
                     }
                     buildChips()
-                    renderChart()
+                    infoTv.text = "🔄 拉取 ${s.name} 走势中..."
+                    viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                        ensureKlines(selectedSectors.toList())
+                        withContext(Dispatchers.Main) {
+                            if (isAdded) renderChart()
+                        }
+                    }
                 }
             }
             chipContainer.addView(chip)
@@ -271,73 +300,64 @@ class SectorTrendChartFragment : Fragment() {
     // ══════════════════════════════════════
 
     private fun renderChart() {
-        if (selectedSectors.isEmpty() || sectorRecordMap.isEmpty()) return
+        if (selectedSectors.isEmpty() || klineMap.isEmpty()) return
 
-        // 找到所有选中板块的日期并集（用于 X 轴）
+        // 日期并集（X 轴）
         val allDates = sortedSetOf<String>()
-        val sectorLineData = mutableListOf<Pair<String, List<SectorDailyRecordEntity>>>()
-
+        val series = mutableListOf<Pair<String, List<Pair<String, Double>>>>()
         for (code in selectedSectors) {
-            val records = sectorRecordMap[code] ?: continue
+            val records = klineMap[code] ?: continue
             val filtered = if (rangeDays <= 0) records else records.takeLast(rangeDays)
             if (filtered.isEmpty()) continue
-            filtered.forEach { allDates.add(it.date) }
-            sectorLineData.add(code to filtered)
+            filtered.forEach { allDates.add(it.first) }
+            series.add(code to filtered)
         }
-
-        if (allDates.isEmpty() || sectorLineData.isEmpty()) {
-            infoTv.text = "所选范围无数据"
+        if (allDates.isEmpty() || series.isEmpty()) {
+            infoTv.text = "所选板块无K线数据"
             return
         }
-
         val dateList = allDates.toList()
         val dateIndexMap = dateList.withIndex().associate { (i, d) -> d to i }
 
-        // 为每个板块构建累计指数折线
         val lineDataSets = mutableListOf<LineDataSet>()
         val infoParts = mutableListOf<String>()
 
-        for ((idx, code) in selectedSectors.withIndex()) {
-            val records = sectorRecordMap[code] ?: continue
-            val filtered = if (rangeDays <= 0) records else records.takeLast(rangeDays)
-            if (filtered.isEmpty()) continue
-
-            val name = records.first().sectorName
+        for ((idx, pair) in series.withIndex()) {
+            val code = pair.first
+            val filtered = pair.second
+            val name = nameMap[code] ?: code
             val color = SECTOR_COLORS[idx % SECTOR_COLORS.size]
 
-            // 构建累计指数
+            // 归一化累计走势（基准 100 = 起点收盘）
             val entries = mutableListOf<Entry>()
-            var cumIndex = 100.0
-            for (r in filtered) {
-                cumIndex *= (1 + r.changePct / 100)
-                val xIdx = dateIndexMap[r.date] ?: continue
-                entries.add(Entry(xIdx.toFloat(), cumIndex.toFloat()))
+            val baseClose = filtered.first().second
+            if (baseClose <= 0.0) continue
+            for ((date, close) in filtered) {
+                val xIdx = dateIndexMap[date] ?: continue
+                entries.add(Entry(xIdx.toFloat(), (close / baseClose * 100).toFloat()))
             }
-
-            if (entries.isNotEmpty()) {
-                lineDataSets.add(LineDataSet(entries, name).apply {
-                    this.color = color
-                    lineWidth = 1.8f
-                    setDrawCircles(false)
-                    setDrawValues(false)
-                    isHighlightEnabled = true
-                    setHighlightLineWidth(1f)
-                    mode = LineDataSet.Mode.LINEAR
-                })
-
-                // 信息栏
-                val latestIndex = cumIndex
-                val totalChange = (cumIndex - 100.0) / 100.0 * 100
-                val latest5 = filtered.takeLast(5)
-                val avg5 = latest5.map { it.changePct }.average()
-                infoParts.add("$name: ${"%.1f".format(latestIndex)}(${if (totalChange >= 0) "+" else ""}${"%.1f".format(totalChange)}%)")
-            }
+            if (entries.isEmpty()) continue
+            lineDataSets.add(LineDataSet(entries, name).apply {
+                this.color = color
+                lineWidth = 1.8f
+                setDrawCircles(false)
+                setDrawValues(false)
+                isHighlightEnabled = true
+                setHighlightLineWidth(1f)
+                mode = LineDataSet.Mode.LINEAR
+            })
+            val latestIdx = filtered.last().second
+            val totalChange = (latestIdx / baseClose - 1) * 100
+            infoParts.add("$name: ${if (totalChange >= 0) "+" else ""}${"%.1f".format(totalChange)}%")
         }
 
-        // 更新图表
+        if (lineDataSets.isEmpty()) {
+            infoTv.text = "所选板块K线获取失败"
+            return
+        }
+
         chart.data = LineData(lineDataSets as List<ILineDataSet>)
 
-        // 计算 Y 轴范围（加 padding 避免畸形）
         var yMin = Float.MAX_VALUE
         var yMax = Float.MIN_VALUE
         for (ds in lineDataSets) {
@@ -347,7 +367,6 @@ class SectorTrendChartFragment : Fragment() {
             }
         }
 
-        // X 轴
         chart.xAxis.apply {
             position = XAxis.XAxisPosition.BOTTOM
             setDrawGridLines(false)
@@ -363,7 +382,6 @@ class SectorTrendChartFragment : Fragment() {
             }
         }
 
-        // Y 轴（加 padding）
         chart.axisLeft.apply {
             setDrawGridLines(true)
             gridColor = Color.parseColor("#EEEEEE")
@@ -376,11 +394,8 @@ class SectorTrendChartFragment : Fragment() {
         }
         chart.axisRight.setDrawGridLines(false)
 
-        // 可见 X 范围
         chart.setVisibleXRangeMaximum(60f)
         chart.setVisibleXRangeMinimum(5f)
-
-        // 定位到最新
         if (dateList.size > 60) {
             chart.moveViewToX((dateList.size - 60).toFloat())
         } else {
@@ -388,8 +403,11 @@ class SectorTrendChartFragment : Fragment() {
         }
         chart.invalidate()
 
-        // 信息栏
-        infoTv.text = infoParts.joinToString("  |  ")
+        val periodName = when (rangeDays) {
+            30 -> "近1月"; 90 -> "近3月"; 120 -> "近6月"; 250 -> "近1年"; else -> "全部"
+        }
+        infoTv.text = "默认对比当日最热 TOP6 | 可点板块chip增删（≤8条） | $periodName 归一化走势\n" +
+                infoParts.joinToString("   ")
         updateRangeButtons()
     }
 
@@ -405,9 +423,5 @@ class SectorTrendChartFragment : Fragment() {
             btn.setTextColor(if (isActive) Color.WHITE else Color.parseColor("#666666"))
             btn.setBackgroundColor(if (isActive) Color.parseColor("#1976D2") else Color.parseColor("#EEEEEE"))
         }
-    }
-
-    override fun onDestroyView() {
-        super.onDestroyView()
     }
 }

@@ -23,6 +23,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -46,6 +47,13 @@ try:  # noqa: E402
     _TECHS_OK = True
 except Exception:  # pragma: no cover - frozen exe 旧包缺失时降级
     _TECHS_OK = False
+
+try:  # noqa: E402 - 换手/量比档位标注（旧包缺失时静默降级，不影响 tech 主摘要）
+    from _technicals import annotate_quote as _tech_quote  # noqa: E402
+    from _technicals import volume_ratio_of as _tech_vr  # noqa: E402
+    _QUOTE_OK = True
+except Exception:  # pragma: no cover
+    _QUOTE_OK = False
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -78,6 +86,27 @@ OUT_DEFAULT = os.path.join(ROOT, "AutoQuant", "data", "candidates_quant.json")
 APK_SCAN_FILE = os.path.join(HERE, "_last_scan.json")
 MARKET_DB = os.path.join(ROOT, "data", "market_data.db")
 APK_MIN_SEC_MOM = 10.0  # APK 外部板块动量阈值，低于此不并入候选
+
+# 2026-09-06 个股基本面画像（逻辑票分档柔性建议）：_holding_thesis.json
+#   soft=true  → 有中期逻辑/预期：破 -8% 不机械喊清仓，按 risk_pct(逻辑止损) 分档：
+#                 -8%~risk_pct 区间给「减仓应对/留底仓做T」，破 risk_pct 才「止损警戒」。
+THESIS_FILE = os.path.join(HERE, "_holding_thesis.json")
+
+def _load_thesis():
+    """读取个股基本面画像（失败返回 {}，守护不因此中断）。"""
+    try:
+        with open(THESIS_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _thesis_of(code):
+    """按 6 位代码取画像；无则 None。"""
+    code = str(code or "").strip()[-6:]
+    return (_load_thesis() or {}).get(code)
+
 
 DEFAULT_CANDIDATES_KEY = "stockanalysis/quant/candidates.json"
 # 2026-09-04：用户要求"先把条件放开看推送效果"。通过比例从 0.55 降到 0.45，
@@ -138,10 +167,20 @@ def score_pool(cache, asof, trend):
             continue
         sub = [dict(s) for s in snaps]
         sub[-1]["name"] = ent.get("name") or code
+        # 事件库注入：活跃宏观事件的强受益词 → analyze 放宽通道（macroSectorKeywords）
+        try:
+            from _event_kb import boost_keywords  # noqa: PLC0415
+            _ekws = boost_keywords(asof)
+        except Exception:
+            _ekws = None
         best = None
         ambush = False
         for period, p in PARAMS.items():
             try:
+                if _ekws:
+                    p["macroSectorKeywords"] = _ekws or []
+                else:
+                    p.pop("macroSectorKeywords", None)
                 r = analyze_snaps(sub, p, trend, market_vol_ratio=market_vol_ratio)
             except Exception:
                 continue
@@ -340,12 +379,14 @@ def assess_positions(ctx, cache, data):
     """评估 Android 实仓：每只持仓给持有/加仓/减仓/止损建议。
 
     规则（实仓风控为主，不依赖形态回测）：
-      - 盈亏 ≤ -8% 或跌破 MA20 且现价低于成本 → 止损/减仓警戒
+      - 非逻辑票：盈亏 ≤ -8% 或跌破 MA20 且现价低于成本 → 止损/减仓警戒
+      - 逻辑票(个股画像 _holding_thesis.json soft=true)：-8%~逻辑止损(risk_pct)
+        区间 → 「减仓应对」柔性建议(留底仓/做T/企稳加回)，破 risk_pct 才真止损
       - 本轮候选命中(超短/短/中/长/轮动/prepared) → 加仓候选/持有
       - 行业资金净流入>0 且盈亏>0 → 持有增强
       - 其他 → 持有观察
     返回 [{secid,name,code,qty,avg_buy_price,current_price,pnl_pct,period_type,
-           sector,in_candidates,hit_periods,ma20,ma60,verdict,note}]
+           sector,in_candidates,hit_periods,ma20,ma60,soft,verdict,note}]
     """
     pos = ctx.get("positions") or []
     if not pos:
@@ -391,24 +432,47 @@ def assess_positions(ctx, cache, data):
             except Exception:
                 pass
         verdict, note = "持有观察", ""
+        soft = _thesis_of(code6)
         if cur <= 0 or cost <= 0:
             verdict, note = "数据不足", "无有效成本/现价"
         else:
             sector = p.get("sector") or ""
             f = flow_match(sector, ctx.get("flow") or {}) if sector else None
             fund_in = bool(f and float(f.get("main_yi") or 0) > 0)
-            if pnl <= -8.0:
-                verdict = "止损警戒"
-                note = "亏损%.1f%% 已达止损位" % pnl
-            elif ma20 is not None and cur < ma20 and pnl is not None and pnl < 0:
-                verdict = "减仓警戒"
-                note = "跌破MA20(%.2f) 浮亏%.1f%%" % (ma20, pnl)
-            elif hit_periods:
-                verdict = "加仓候选"
-                note = "本轮命中:%s" % "/".join(hit_periods[:3])
-            elif fund_in and pnl is not None and pnl > 0:
-                verdict = "持有"
-                note = "行业资金流入 浮盈%.1f%%" % pnl
+            if soft:
+                # 逻辑票（个股画像 soft）：-8% 不机械清仓，破逻辑止损(risk_pct)才警戒
+                hard_stop = -abs(float(soft.get("risk_pct") or -20.0))
+                if pnl is not None and pnl <= hard_stop:
+                    verdict, note = "止损警戒", "亏损%.1f%% 跌破逻辑止损位(%.0f%%)" % (
+                        pnl, -hard_stop)
+                elif pnl is not None and pnl <= -8.0:
+                    verdict = "减仓应对"
+                    note = "逻辑票回调%.1f%% %s" % (pnl, soft.get("tone") or "")
+                elif ma20 is not None and cur < ma20:
+                    verdict = "减仓应对"
+                    note = "跌破MA20(%.2f) %s" % (ma20, soft.get("tone") or "")
+                elif hit_periods:
+                    verdict = "加仓候选"
+                    note = "本轮命中:%s" % "/".join(hit_periods[:3])
+                elif pnl is not None and pnl > 0:
+                    verdict = "持有"
+                    note = "行业资金流入 逻辑票浮盈%.1f%%" % pnl
+                else:
+                    verdict = "持有观察"
+                    note = "逻辑票浮亏%.1f%% 等企稳" % (pnl if pnl is not None else 0)
+            else:
+                if pnl <= -8.0:
+                    verdict = "止损警戒"
+                    note = "亏损%.1f%% 已达止损位" % pnl
+                elif ma20 is not None and cur < ma20 and pnl is not None and pnl < 0:
+                    verdict = "减仓警戒"
+                    note = "跌破MA20(%.2f) 浮亏%.1f%%" % (ma20, pnl)
+                elif hit_periods:
+                    verdict = "加仓候选"
+                    note = "本轮命中:%s" % "/".join(hit_periods[:3])
+                elif fund_in and pnl is not None and pnl > 0:
+                    verdict = "持有"
+                    note = "行业资金流入 浮盈%.1f%%" % pnl
         out.append({
             "secid": sid, "name": name, "code": code6, "qty": qty,
             "avg_buy_price": round(cost, 3), "current_price": round(cur, 3),
@@ -417,7 +481,7 @@ def assess_positions(ctx, cache, data):
             "in_candidates": bool(hit_periods), "hit_periods": hit_periods,
             "ma20": round(ma20, 3) if ma20 else None,
             "ma60": round(ma60, 3) if ma60 else None,
-            "verdict": verdict, "note": note,
+            "soft": bool(soft), "verdict": verdict, "note": note,
         })
     return out
 
@@ -610,7 +674,13 @@ def _attach_tech(data, cache):
         if len(snaps) < 30:
             return ""
         try:
-            return _tech_tag(_tech_analyze(snaps))
+            tag = " ".join(_tech_tag(_tech_analyze(snaps)).split()[:3])
+            if not _QUOTE_OK:
+                return tag
+            s0 = snaps[-1]
+            tn = s0.get("turnover") if s0 and isinstance(s0, dict) else None
+            q = _tech_quote(turnover=tn, volume_ratio=_tech_vr(snaps))
+            return (tag + " ｜" + "｜".join(q[:2])) if q else tag
         except Exception:
             return ""
 
@@ -1025,7 +1095,8 @@ def _round_legacy(data, ctx, cfg, old_secids=None):
             pf["n"], pf["pnl_pct"]) + "\n" + "\n".join("  " + a for a in pf["alerts"]))
     # ③b 实仓建议
     pos_advice = data.get("positions") or []
-    verdicts = {"止损警戒": "🔴", "减仓警戒": "🟠", "加仓候选": "🟢", "持有": "🟡", "持有观察": "⚪", "数据不足": "⚪"}
+    verdicts = {"止损警戒": "🔴", "减仓警戒": "🟠", "减仓应对": "🟠", "加仓候选": "🟢",
+                "持有": "🟡", "持有观察": "⚪", "数据不足": "⚪"}
     if pos_advice:
         pl = []
         for p in pos_advice[:6]:
@@ -1096,20 +1167,44 @@ def _find_item_by_secid(data, secid):
     return None
 
 
-def _push_pos_advice(data, scene, cfg):
-    """实仓建议独立消息：组合纪律 + 逐笔建议（SAR 刚翻绿持仓附预警）。无实仓不发送。"""
-    pos_advice = data.get("positions") or []
-    if not pos_advice:
-        return
+def _norm_pos_txt(s):
+    """归一化实仓文本：数字/价格/百分比→占位符、压缩空白，用于「变化指纹」。"""
+    if not s:
+        return ""
+    s = re.sub(r"[-+]?\d+(?:\.\d+)?%?", "#", str(s))
+    s = re.sub(r"\d{4}-\d{2}-\d{2}", "DATE", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _pos_advice_sig(data):
+    """实仓建议变化指纹：每笔(code, verdict, note模板) + 组合纪律条目。
+
+    数字/价格波动不视为「变化」，只有 verdict/建议内容/纪律类型变化才触发展开。"""
+    pos = data.get("positions") or []
+    pf = data.get("portfolio") or {}
+    parts = []
+    for p in pos[:8]:
+        parts.append("|".join((p.get("code", ""), p.get("verdict", ""),
+                               _norm_pos_txt(p.get("note", "")))))
+    for a in (pf.get("alerts") or []):
+        parts.append("A|" + _norm_pos_txt(a))
+    return "\n".join(parts)
+
+
+def _pos_advice_lines(data):
+    """构造实仓建议完整段落（组合纪律 + 逐笔，含个股画像柔性结论）。无实仓返回 []。"""
+    pos = data.get("positions") or []
+    if not pos:
+        return []
     pf = data.get("portfolio") or {}
     lines = []
     if pf and pf.get("alerts"):
         lines.append("⚠️ 组合纪律(持仓%d只 整体%+.1f%%):" % (pf["n"], pf["pnl_pct"]))
         lines.extend("  " + a for a in pf["alerts"])
-    verdicts = {"止损警戒": "🔴", "减仓警戒": "🟠", "加仓候选": "🟢",
+    verdicts = {"止损警戒": "🔴", "减仓警戒": "🟠", "减仓应对": "🟠", "加仓候选": "🟢",
                 "持有": "🟡", "持有观察": "⚪", "数据不足": "⚪"}
     body = []
-    for p in pos_advice[:8]:
+    for p in pos[:8]:
         pnl = ("%+.1f%%" % p["pnl_pct"]) if p["pnl_pct"] is not None else "-"
         warn = " [SAR刚翻绿%d天]" % p["sar_warn"] if p.get("sar_warn") else ""
         note = p.get("note") or ""
@@ -1120,19 +1215,44 @@ def _push_pos_advice(data, scene, cfg):
             row += " " + note
         body.append(row)
     lines.extend(body)
-    if lines:
-        _push_wechat("💼 实仓建议 %s | %s" % (scene, data.get("asof", "")),
-                     "\n".join(lines), cfg)
+    return lines
 
 
-def send_wechat_round(data, ctx, cfg, old_secids=None):
+def _append_pos_block(lines, data):
+    """实仓段内嵌选股消息：与上轮指纹相同 → 仅一行概要；不同 → 展开完整建议。
+
+    2026-09-06 用户决策：盘中轮不再单独推实仓独立消息，改为随每轮选股消息
+    「有变化才推」——评估每轮都在跑，结论无变化不刷屏，有变化才展开详情。"""
+    pos = data.get("positions") or []
+    if not pos:
+        return
+    pf = data.get("portfolio") or {}
+    pnl_all = pf.get("pnl_pct") if pf else None
+    sig = _pos_advice_sig(data)
+    rhythm = _load_rhythm()
+    changed = sig and sig != (rhythm.get("pos_sig") or "")
+    lines.append("")
+    if changed:
+        lines.append("💼 实仓·建议变化 ↓")
+        lines.extend(_pos_advice_lines(data))
+        rhythm["pos_sig"] = sig
+        _save_rhythm(rhythm)
+    else:
+        lines.append("💼 实仓 %d只 整体%s · 建议与上轮一致，无新操作" % (
+            len(pos), ("%+.1f%%" % pnl_all) if pnl_all is not None else "-"))
+
+
+def send_wechat_round(data, ctx, cfg, old_secids=None, pos_advice=True):
     """整轮概览（2026-09-05 新版消息结构）。
 
     - 主线 = ⭐ XML DAG 当日选股（与 exe 共用同一套 XML，等同 exe 选股，不再单列 exe 段）
     - 📋 对照参考（非主线）：CodeBuddy 引擎候选完整列示，不截断
     - 每票标色：🔴 = 引擎过筛/推荐候选；🟡 = 盘面在池但资金流出
     - 候选行附主流指标摘要(SAR/MACD/KDJ/RSI/CCI/OBV/ATR/MA)
-    - 实仓建议拆为独立消息单独发送
+    - 实仓段内嵌本轮消息（2026-09-06）：与上轮建议指纹相同仅一行概要「无新操作」，
+      有变化(verdict/建议内容变化)才展开逐笔详情——每轮评估但不刷屏。
+    - 个股画像(东山精密/博迁新材等 soft 逻辑票)：-8%~逻辑止损区间给
+      「减仓应对/留底仓做T」，不机械按 -8% 清仓。
     """
     old_secids = old_secids or set()
     now = datetime.datetime.now()
@@ -1246,13 +1366,26 @@ def send_wechat_round(data, ctx, cfg, old_secids=None):
     if eparts:
         lines.append("")
         lines.append("📈 ETF资金流向: " + " | ".join(eparts))
-    # 实仓建议 → 独立消息
-    _push_pos_advice(data, scene, cfg)
+    # ⑥ 热门板块 ETF 前5重仓 · 低吸观察（2026-09-06：行业ETF重仓跟踪→低位埋伏）
+    try:
+        import _etf_holdings as _eh
+        low_lines = _eh.low_buy_lines(
+            [r["name"] for r in pos_f], (ctx or {}).get("etf_flow") or [])
+        if low_lines:
+            lines.append("")
+            lines.append("🎯 热门板块ETF·重仓低吸观察")
+            lines.extend(low_lines)
+    except Exception as _e:
+        pass
+    # 实仓建议段 → 内嵌整轮消息（指纹无变化仅一行概要；有变化才展开详情，
+    # 2026-09-06 用户决策：每轮选股同时带实仓，但结论无变化不刷屏）
+    if pos_advice:
+        _append_pos_block(lines, data)
     title = "%s | %s" % (scene, asof)
     return _push_wechat(title, "\n".join(lines), cfg)
 
 
-def run_once(dry=False, candidates_key=None, timed_push=False, use_ctx=True):
+def run_once(dry=False, candidates_key=None, timed_push=False, use_ctx=True, pos_advice=True):
     cache = load_cache()
     industry = build_industry()
     ctx = build_context() if use_ctx else None
@@ -1260,6 +1393,12 @@ def run_once(dry=False, candidates_key=None, timed_push=False, use_ctx=True):
     if not data:
         print("无有效数据（缓存为空？）")
         return 1
+    # ETF 重仓低吸摘要（供 App 端渲染；无缓存数据时为 None 不影响主流程）
+    try:
+        import _etf_holdings as _eh
+        data["etf_holdings"] = _eh.summary_json()
+    except Exception:
+        data["etf_holdings"] = None
     os.makedirs(os.path.dirname(OUT_DEFAULT), exist_ok=True)
     with open(OUT_DEFAULT, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
@@ -1300,8 +1439,8 @@ def run_once(dry=False, candidates_key=None, timed_push=False, use_ctx=True):
     cfg = load_notify_cfg()
     old_secids = candidate_secids(old) if old else set()
     if timed_push:
-        # 守护(15分钟)模式：整轮概览推送(CodeBuddy+exe+实仓+资金流)，每轮都发
-        send_wechat_round(data, ctx, cfg, old_secids=old_secids)
+        # 守护(15分钟)轮：整轮概览推送；实仓段内嵌消息（有变化才展开，见 _append_pos_block）
+        send_wechat_round(data, ctx, cfg, old_secids=old_secids, pos_advice=pos_advice)
     else:
         # 盘中新信号：仅在新买点出现时推送
         send_wechat(data, old_secids, cfg)
@@ -1356,6 +1495,11 @@ def _load_rhythm():
         d = {"date": today}
     d.setdefault("prep", {})      # {"am": bool, "pm": bool}
     d.setdefault("round_at", {})  # {"am": "HH:MM:SS", "pm": ...}
+    d.setdefault("rounds", {})    # 当日各盘段已选股轮数 {"am": n, "pm": n}
+    d.setdefault("pre", False)    # 09:00 预热(下载+情报暖缓存)是否完成
+    d.setdefault("tail", False)   # 15:00 尾盘K线拉取是否完成
+    d.setdefault("sum", False)    # 15:10 收盘总结是否已推送
+    d.setdefault("hit", {})       # 当日逐轮命中累计 period -> {secid: 次数}
     return d
 
 
@@ -1400,6 +1544,303 @@ def rhythm_mark_round(session, now=None):
     d = _load_rhythm()
     d["round_at"][session] = now.strftime("%H:%M:%S")
     _save_rhythm(d)
+
+
+# ── v2 时刻表辅助（2026-09-06 方案A，用户确认）───────────────────────────
+# 交易日时刻表：
+#   09:00        预热：K线增量下载 + 情报扫描(dry)暖缓存（美股隔夜/韩股开盘/快讯研报）
+#   09:30~11:30  上午 9 轮（09:30 首次，之后每 15 分钟：09:45…11:30）
+#   13:00~14:30  下午 7 轮（每 15 分钟）；14:30 后不再盘中选股，避免尾盘诱导
+#   15:00        尾盘最后一次 K 线拉取（仅下载，不再选股）
+#   15:10        收盘总结：当日选股汇总 + 持仓回顾 + 纪律 + 鼓励（无做T/买卖点指令）
+# 守护/选股过程错误写入 _daemon_ops.jsonl，供后续矫正（用户需求）。
+OPS_LOG = os.path.join(HERE, "_daemon_ops.jsonl")
+
+
+def ops_note(kind, msg):
+    """守护/选股过程错误留痕（追加 JSONL，供后续矫正）。"""
+    try:
+        with open(OPS_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "ts": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "kind": kind, "msg": msg}, ensure_ascii=False) + "\n")
+    except OSError as e:
+        print("ops_note 写入失败:", e)
+
+
+def rhythm_need_flag(key):
+    return not bool(_load_rhythm().get(key))
+
+
+def rhythm_mark_flag(key):
+    d = _load_rhythm()
+    d[key] = True
+    _save_rhythm(d)
+
+
+def _slot_of(now=None):
+    """守护档位：pre(09:00-09:29) / am(09:30-11:30) / pm(13:00-14:30) / None。
+    14:31 之后由 daemon 空档分支处理「尾盘拉取 + 收盘总结」。"""
+    now = now or datetime.datetime.now()
+    if now.weekday() >= 5:
+        return None
+    hm = now.hour * 60 + now.minute
+    if hm < 9 * 60:
+        return None
+    if hm < 9 * 60 + 30:
+        return "pre"
+    if hm <= 11 * 60 + 30:
+        return "am"
+    if hm < 13 * 60:
+        return None
+    if hm <= 14 * 60 + 30:
+        return "pm"
+    return None
+
+
+def _is_quarter(now=None):
+    now = now or datetime.datetime.now()
+    return now.minute % 15 == 0
+
+
+def _today_at(hour, minute=0):
+    now = datetime.datetime.now()
+    return now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+
+def next_weekday_0900(now=None):
+    now = now or datetime.datetime.now()
+    d = now.date()
+    while True:
+        d += datetime.timedelta(days=1)
+        if d.weekday() < 5:
+            return datetime.datetime.combine(d, datetime.time(9, 0))
+
+
+def _next_slot_at(now=None):
+    """空档期下一个动作点。"""
+    now = now or datetime.datetime.now()
+    hm = now.hour * 60 + now.minute
+    if hm < 9 * 60:
+        return _today_at(9, 0)
+    if hm < 9 * 60 + 30:
+        return _today_at(9, 30)
+    if hm < 13 * 60:
+        return _today_at(13, 0)
+    if hm < 15 * 60:
+        return _today_at(15, 0)   # 尾盘K线
+    if hm < 15 * 60 + 10:
+        return _today_at(15, 10)  # 收盘总结
+    return next_weekday_0900(now)
+
+
+def _sleep_until(dt, stop_check=None):
+    now = datetime.datetime.now()
+    delta = max((dt - now).total_seconds(), 1)
+    _interruptible_sleep(delta, stop_check)
+
+
+def _run_script(script, log=print, stop_check=None, extra=None):
+    """子进程执行脚本并回显输出；返回是否成功。"""
+    cmd = [sys.executable, script] + (extra or [])
+    try:
+        proc = subprocess.Popen(
+            cmd, cwd=os.path.dirname(script),
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace", bufsize=1,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+        for line in proc.stdout:
+            line = line.rstrip()
+            if line:
+                log("    | " + line)
+        proc.wait()
+        if proc.returncode != 0:
+            log("  ✗ %s 失败 (exit=%d)" % (os.path.basename(script), proc.returncode))
+            return False
+        log("  ✓ %s 完成" % os.path.basename(script))
+        return True
+    except Exception as e:  # noqa: BLE001
+        log("  ✗ %s 异常：%s" % (os.path.basename(script), e))
+        ops_note("script_error", "%s: %s" % (script, e))
+        return False
+
+
+def run_pre_preheat(log=print, stop_check=None):
+    """09:00 预热：K线增量下载 → 情报扫描(dry 暖缓存：美股隔夜/韩股开盘/快讯)。"""
+    log("[09:00 预热] 下载K线增量 + 情报扫描暖缓存（美股/韩股开盘前）…")
+    steps = ((PREP_DOWNLOAD, None),
+             (os.path.join(HERE, "_market_scan.py"), ["--once", "--dry"]))
+    for script, extra in steps:
+        if stop_check is not None and stop_check():
+            return False
+        log("  ▶ %s" % os.path.basename(script))
+        if not _run_script(script, log=log, stop_check=stop_check, extra=extra):
+            return False
+    rhythm_mark_flag("pre")
+    log("[09:00 预热] 完成，等待 09:30 首轮选股")
+    return True
+
+
+def run_tail_kline(log=print, stop_check=None):
+    """15:00 后最后一次K线拉取（仅下载收盘数据，不再选股）。"""
+    log("[15:00 尾盘] 最后拉取一次当日K线（收盘定格）…")
+    if _run_script(PREP_DOWNLOAD, log=log, stop_check=stop_check):
+        rhythm_mark_flag("tail")
+        log("[15:00 尾盘] K线拉取完成")
+        return True
+    ops_note("tail_fail", "尾盘K线拉取失败")
+    return False
+
+
+def _acc_round_picks(log=print):
+    """把本轮候选并入当日累计命中（供收盘总结展示高频入选）。"""
+    try:
+        with open(OUT_DEFAULT, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        ops_note("acc_picks_fail", "读取本轮候选失败: %s" % e)
+        return
+    d = _load_rhythm()
+    hit = d.setdefault("hit", {})
+    for period, items in (data.get("groups") or {}).items():
+        for it in items:
+            sid = it.get("secid")
+            if sid:
+                m = hit.setdefault(period, {})
+                m[sid] = m.get(sid, 0) + 1
+    for it in data.get("prepared") or []:
+        sid = it.get("secid")
+        if sid:
+            m = hit.setdefault("预备队", {})
+            m[sid] = m.get(sid, 0) + 1
+    _save_rhythm(d)
+
+
+def _mark_round_count(slot):
+    d = _load_rhythm()
+    d.setdefault("rounds", {})
+    d["rounds"][slot] = d["rounds"].get(slot, 0) + 1
+    _save_rhythm(d)
+
+
+def _do_round(slot, dry, use_ctx, log):
+    """守护整轮：选股+推送。实仓段内嵌消息，有变化才展开（pos_advice=True）。"""
+    now = datetime.datetime.now()
+    label = "上午" if slot == "am" else "下午"
+    n_next = _load_rhythm()["rounds"].get(slot, 0) + 1
+    log("[%s] 整轮选股（%s 第%d轮）…" % (now.strftime("%H:%M:%S"), label, n_next))
+    t0 = time.time()
+    try:
+        rc = run_once(dry=dry, candidates_key=None,
+                      timed_push=not dry, use_ctx=use_ctx, pos_advice=True)
+        log("[%s] 整轮完成 rc=%d（耗时 %.0fs）" % (
+            datetime.datetime.now().strftime("%H:%M:%S"), rc, time.time() - t0))
+        if rc == 0:
+            rhythm_mark_round(slot)
+            _mark_round_count(slot)
+            _acc_round_picks(log)
+        else:
+            ops_note("round_fail", "%s rc=%d" % (slot, rc))
+    except Exception as e:  # noqa: BLE001
+        log("选股轮异常：%s" % e)
+        ops_note("round_error", "%s: %s" % (slot, e))
+
+
+def _push_eod_summary(dry, use_ctx, log):
+    """15:10 收盘总结：当日选股汇总 + 持仓回顾 + 纪律 + 鼓励（无做T/买卖点指令）。"""
+    try:
+        cache = load_cache()
+        industry = build_industry()
+        ctx = build_context() if use_ctx else None
+        data = build_candidates(cache, industry, ctx=ctx)
+    except Exception as e:  # noqa: BLE001
+        log("收盘总结 构建异常：%s" % e)
+        ops_note("eod_build_error", repr(e))
+        return False
+    if not data:
+        log("收盘总结：无有效数据（缓存为空？）")
+        return False
+    r = _load_rhythm()
+    rounds = r.get("rounds", {})
+    n_am, n_pm = rounds.get("am", 0), rounds.get("pm", 0)
+    hits = r.get("hit", {})
+    asof = data.get("asof", "")
+    lines = ["交易日 asof=%s" % asof,
+             "今日共 %d 轮选股（上午 %d / 下午 %d）" % (n_am + n_pm, n_am, n_pm)]
+    # ① 当日主线候选（XML DAG，exe/APK 同源）
+    try:
+        with open(DAG_SCREEN_FILE, encoding="utf-8") as f:
+            dag = json.load(f)
+    except (OSError, ValueError):
+        dag = None
+    if dag and (dag.get("result") or {}):
+        rows = []
+        for period in ("超短", "短线", "中线", "长线"):
+            its = (dag.get("result") or {}).get(period) or []
+            if not its:
+                continue
+            names = ", ".join(
+                (it.get("name") or (it.get("code") or "?")).strip()
+                for it in its[:8])
+            rows.append("%s(%d): %s" % (period, len(its), names))
+        if rows:
+            lines.append("⭐ 当日主线·XML DAG 选股\n  " + " | ".join(rows))
+    # ② 当日多轮入选
+    if hits:
+        segs = []
+        for period, sidmap in sorted(hits.items(), key=lambda kv: -sum(kv[1].values())):
+            top = sorted(sidmap.items(), key=lambda kv: -kv[1])[:5]
+            items_txt = ", ".join("%s×%d" % (_find_name(data, sid), c)
+                                  for sid, c in top if c > 1)
+            if items_txt:
+                segs.append("%s: %s" % (period, items_txt))
+        if segs:
+            lines.append("📊 当日多轮入选（共振参考）")
+            lines.extend("  · " + s for s in segs)
+    # ③ 持仓回顾 + 纪律 + 鼓励
+    pos = data.get("positions") or []
+    pf = data.get("portfolio") or {}
+    pnl_all = pf.get("pnl_pct") if pf else None
+    if pos:
+        state_cn = {"止损警戒": "破位风险", "减仓警戒": "仓位偏高", "减仓应对": "回调应对",
+                    "加仓候选": "强度尚可", "持有": "持有观察", "持有观察": "观察",
+                    "数据不足": "数据不足"}
+        lines.append("💼 持仓回顾（%d 笔，整体%s）：" % (
+            len(pos), ("%+.1f%%" % pnl_all) if pnl_all is not None else "数据不足"))
+        for p in pos[:8]:
+            pnl = ("%+.1f%%" % p["pnl_pct"]) if p.get("pnl_pct") is not None else "-"
+            note = p.get("note") or ""
+            note0 = note.splitlines()[0][:30] if note else ""
+            lines.append("  %s %s(%s) 盈亏%s %s" % (
+                state_cn.get(p["verdict"], p["verdict"]), p.get("name", ""),
+                p.get("code", ""), pnl, note0))
+        if pf and pf.get("alerts"):
+            lines.append("⚠️ 组合纪律：")
+            lines.extend("  " + a for a in pf["alerts"])
+    else:
+        lines.append("💼 今日无实仓持仓记录（未做持仓评估）")
+    if pnl_all is not None:
+        if pnl_all >= 0:
+            cheer = "今天账户飘红，节奏很棒，继续守住纪律 👏"
+        elif pnl_all > -2:
+            cheer = "今天小幅波动，别着急——坚持既定纪律，修复往往就在两三个交易日内 💪"
+        else:
+            cheer = "今天回撤了些，辛苦了。按纪律控住仓位、稳住心态，市场会还你公道 🧘"
+    else:
+        cheer = "今天也完整跑完了选股流程，辛苦了，好好休息 🌙"
+    lines.append("")
+    lines.append("💬 " + cheer)
+    content = "\n".join(lines)
+    if dry:
+        log("[dry] 收盘总结预览（不推送）:\n" + content)
+        return True
+    try:
+        cfg = load_notify_cfg()
+        return _push_wechat("📅 收盘总结 %s" % asof, content, cfg)
+    except Exception as e:  # noqa: BLE001
+        log("收盘总结 推送失败：%s" % e)
+        ops_note("eod_push_error", repr(e))
+        return False
 
 
 def run_prep(session, interval=900, log=print, stop_check=None):
@@ -1452,65 +1893,115 @@ def _interruptible_sleep(seconds, stop_check=None):
 
 def daemon_serve(prep=True, interval=900, dry=False, use_ctx=True,
                  log=print, stop_check=None):
-    """统一守护主循环（CLI --daemon 与 exe 选股推送面板共用）：
+    """盘段守护 v2（2026-09-06 方案A，用户确认）：
 
-    每盘段（上午 9:30 / 下午 13:00）开始先做 prep（下载+回溯+拟合），
-    完成后立即选股一次，此后每 interval 秒一轮；非交易时段挂起。
+    09:00 预热（K线下载+情报扫描暖缓存，无需等到 09:30 才拉数据）
+        → 09:30-11:30 每 15 分钟 9 轮（09:30 首次）
+        → 午休不选股
+        → 13:00-14:30 每 15 分钟 7 轮（之后不再盘中选股）
+        → 15:00 尾盘最后一次 K 线拉取（仅下载）
+        → 15:10 收盘总结：当日选股+持仓回顾+纪律+鼓励（无做T/买卖点指令）
+    盘中轮推送不再含「实仓买卖/做T」建议；守护/选股错误写入 _daemon_ops.jsonl。
+    interval 参数仅兼容旧调用，v2 固定 15 分钟整点轮。
     """
-    log("盘段守护启动：每盘段首刷（下载+XML DAG 选股）→ 每 %d 秒选股推送" % interval)
-    last_session = None
+    log("盘段守护 v2：09:00 预热 → 09:30-11:30 每15分 → 13:00-14:30 每15分 "
+        "→ 15:00 尾盘K线 → 15:10 收盘总结")
     while stop_check is None or not stop_check():
         now = datetime.datetime.now()
-        sess = current_session(now)
-        if sess is None:
-            nxt = next_trading_start(now)
-            wait = max((nxt - now).total_seconds(), 1)
-            log("[%s] 非交易时段挂起 → 下一盘段 %s（约 %.0f 分钟）" % (
-                now.strftime("%H:%M"), nxt.strftime("%m-%d %H:%M"), wait / 60))
-            _interruptible_sleep(min(wait, 600), stop_check)
-            last_session = None
+        # ── 周末：睡到下一交易日 09:00 ──
+        if now.weekday() >= 5:
+            nxt = next_weekday_0900(now)
+            log("[%s] 周末 → 下一交易日 %s 09:00 预热" % (
+                now.strftime("%m-%d %H:%M"), nxt.strftime("%m-%d")))
+            _sleep_until(nxt, stop_check)
             continue
-        if sess != last_session:
-            log("[盘段%s] %s 开盘段开始" % (
-                "上午" if sess == "am" else "下午", now.strftime("%H:%M:%S")))
-            last_session = sess
-        if prep and rhythm_need_prep(sess):
-            run_prep(sess, interval=interval, log=log, stop_check=stop_check)
-        if rhythm_round_due(sess, interval, now):
-            t0 = time.time()
-            log("[%s] 开始整轮选股…" % now.strftime("%H:%M:%S"))
-            try:
-                rc = run_once(dry=dry, candidates_key=None,
-                              timed_push=not dry, use_ctx=use_ctx)
-                log("[%s] 整轮选股+推送完成 rc=%d（耗时 %.0fs）" % (
-                    datetime.datetime.now().strftime("%H:%M:%S"), rc, time.time() - t0))
-                rhythm_mark_round(sess)
-            except Exception as e:  # noqa: BLE001
-                log("选股轮异常：%s" % e)
-        _interruptible_sleep(15, stop_check)
+        slot = _slot_of(now)
+        # ── 09:00-09:29 预热 ──
+        if slot == "pre":
+            if prep and rhythm_need_flag("pre"):
+                if not run_pre_preheat(log=log, stop_check=stop_check):
+                    log("[09:00 预热] 失败，2 分钟后重试")
+                    _interruptible_sleep(120, stop_check)
+                    continue
+            _sleep_until(_today_at(9, 30), stop_check)
+            continue
+        # ── 交易盘段：首刷 → 固定 15 分钟轮 ──
+        if slot in ("am", "pm"):
+            if prep and rhythm_need_prep(slot):
+                run_prep(slot, interval=interval, log=log, stop_check=stop_check)
+                continue
+            r = _load_rhythm()
+            n_r = r.get("rounds", {}).get(slot, 0)
+            last_at = r.get("round_at", {}).get(slot)
+            do_round = (n_r == 0)   # 本段首轮：首刷完成后立即选股
+            if not do_round and _is_quarter(now):
+                do_round = True
+                if last_at:
+                    try:
+                        lt = datetime.datetime.combine(
+                            now.date(),
+                            datetime.datetime.strptime(last_at, "%H:%M:%S").time())
+                        if (now - lt).total_seconds() < 60:
+                            do_round = False   # 同一分钟已轮过，防重复
+                    except ValueError:
+                        pass
+            if do_round:
+                _do_round(slot, dry, use_ctx, log)
+                continue
+            _interruptible_sleep(5, stop_check)
+            continue
+        # ── 空档（开盘前/午休/14:30 后）──
+        hm = now.hour * 60 + now.minute
+        if hm >= 15 * 60:
+            if rhythm_need_flag("tail"):
+                run_tail_kline(log=log, stop_check=stop_check)
+                continue
+            if rhythm_need_flag("sum"):
+                if hm < 15 * 60 + 10:
+                    _sleep_until(_today_at(15, 10), stop_check)
+                    continue
+                if _push_eod_summary(dry, use_ctx, log):
+                    rhythm_mark_flag("sum")
+                    log("✓ 收盘总结完成")
+                else:
+                    log("收盘总结失败，1 分钟后重试")
+                    _interruptible_sleep(60, stop_check)
+                continue
+            # 当日流程完毕 → 次日 09:00
+            _sleep_until(next_weekday_0900(now), stop_check)
+            continue
+        nxt = _next_slot_at(now)
+        if nxt:
+            log("[%s] 空档 → 下一动作 %s" % (
+                now.strftime("%H:%M:%S"), nxt.strftime("%m-%d %H:%M")))
+            _sleep_until(nxt, stop_check)
+        else:
+            _interruptible_sleep(60, stop_check)
     log("🛑 守护已停止")
 
 
 def main():
     ap = argparse.ArgumentParser(description="PC 候选清单发布（选股→通知→COS）")
     ap.add_argument("--once", action="store_true", help="执行一次")
-    ap.add_argument("--daemon", action="store_true", help="守护轮询（默认交易时段每 15 分钟）")
-    ap.add_argument("--interval", type=int, default=900, help="轮询间隔秒（默认 900=15 分钟）")
+    ap.add_argument("--daemon", action="store_true", help="盘段守护 v2（固定时刻表，见 daemon_serve 注释）")
+    ap.add_argument("--interval", type=int, default=900, help="兼容参数（v2 固定 15 分钟整点轮，忽略此值）")
     ap.add_argument("--dry", action="store_true", help="不通知不上传（调试）")
     ap.add_argument("--key", default=None, help="COS candidates_key，默认 stockanalysis/quant/candidates.json")
     ap.add_argument("--timed", action="store_true", help="定时推送模式（单次执行也推送整轮概览）")
+    ap.add_argument("--no-pos", action="store_true",
+                    help="推送不含实仓段（默认随整轮消息内嵌，有变化才展开详情）")
     ap.add_argument("--no-ctx", action="store_true", help="跳过市场上下文/共振/实仓（纯形态快速选股）")
     ap.add_argument("--no-prep", action="store_true",
-                    help="关闭盘段首刷(下载+XML DAG 选股)，纯每 interval 秒选股轮询（旧节奏）")
+                    help="关闭盘段首刷/预热/尾盘(下载+XML DAG 选股)，只做固定轮次选股")
     args = ap.parse_args()
     if args.daemon:
-        print("盘段守护启动：每盘段(上午9:30 / 下午13:00)首刷一次 "
-              "「下载K线+XML DAG 当日选股」，完成后每 %d 秒整轮选股+推送双端命中" % args.interval)
+        print("盘段守护 v2：09:00 预热 → 09:30-11:30 每15分 → 13:00-14:30 每15分 "
+              "→ 15:00 尾盘K线 → 15:10 收盘总结")
         daemon_serve(prep=not args.no_prep, interval=args.interval,
                      dry=args.dry, use_ctx=not args.no_ctx)
         return 0
     return run_once(dry=args.dry, candidates_key=args.key, timed_push=args.timed,
-                    use_ctx=not args.no_ctx)
+                    use_ctx=not args.no_ctx, pos_advice=not args.no_pos)
 
 
 if __name__ == "__main__":

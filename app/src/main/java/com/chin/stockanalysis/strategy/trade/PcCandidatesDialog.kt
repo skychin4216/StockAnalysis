@@ -19,6 +19,7 @@ import com.chin.stockanalysis.cloud.CloudSyncManager
 import com.chin.stockanalysis.stock.data.PcBridgeClient
 import com.chin.stockanalysis.stock.database.AiSelectedStockEntity
 import com.chin.stockanalysis.stock.database.AppBackgroundRunner
+import com.chin.stockanalysis.ui.StockDetailNavigator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,7 +35,7 @@ import java.util.Locale
  * PC 候选清单 Dialog（工作台「📋 PC 候选」入口）。
  *
  * 从 COS 下载 smalltools `_publish_candidates.py` 发布的候选清单并展示：
- * 大盘状态 / 周期分组(超短·短线·中线·长线) / 预备队 / 热点板块。
+ * 大盘状态 / 周期分组(短线·中线·长线，超短并入短线⚡) / 预备队 / 热点板块。
  * 支持：🔄 重新下载、➕ 一键把全部候选加入 AI 精选（ai_selected_stock，source=pc_candidates）。
  */
 class PcCandidatesDialog(context: Context) : Dialog(context) {
@@ -324,6 +325,17 @@ class PcCandidatesDialog(context: Context) : Dialog(context) {
                     listBox.addView(rotationRow(r))
                 }
             }
+            // ETF 重仓·低吸观察（2026-09-06：核心ETF前十大重仓覆盖 + 距60日高回撤，来源 _etf_holdings.py）
+            val eh = j.optJSONObject("etf_holdings")
+            if (eh != null && eh.length() > 0) {
+                val topArr = eh.optJSONArray("top") ?: org.json.JSONArray()
+                if (topArr.length() > 0) {
+                    listBox.addView(sectionTitle("🧲 ETF 重仓·低吸观察（${eh.optString("updated", "").take(10)}）"))
+                    for (i in 0 until minOf(topArr.length(), 10)) {
+                        listBox.addView(etfRow(topArr.getJSONObject(i)))
+                    }
+                }
+            }
             addBtn.isEnabled = total > 0
         } catch (e: Exception) {
             showEmpty("候选数据解析失败：${e.message}")
@@ -385,6 +397,60 @@ class PcCandidatesDialog(context: Context) : Dialog(context) {
             textSize = 11f
             setTextColor(0xFF1565C0.toInt())
             setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.END
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        return row
+    }
+
+    private fun etfRow(s: JSONObject): View {
+        val code = s.optString("code", "")
+        val name = s.optString("name", "-")
+        val n = s.optInt("n", 1)
+        val pos = s.optDouble("pos60", 0.0)
+        val posText = if (s.has("pos60")) String.format(Locale.CHINA, "距60日高%+.1f%%", pos)
+        else "位置-"
+        // 回撤越深越低吸价值，绿→深、橙→浅；高位红
+        val posColor = when {
+            pos <= -20 -> 0xFF2E7D32.toInt()
+            pos <= -8 -> 0xFF43A047.toInt()
+            pos < 0 -> 0xFFFB8C00.toInt()
+            else -> 0xFFE53935.toInt()
+        }
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(10.dp(), 8.dp(), 10.dp(), 8.dp())
+            background = rnd(0xFFECEFF1.toInt(), 8.dp())
+            val lp = LinearLayout.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            lp.bottomMargin = 4.dp()
+            layoutParams = lp
+            if (code.isNotBlank()) {
+                setOnClickListener {
+                    try {
+                        StockDetailNavigator.navigateFromActivity(
+                            context as androidx.fragment.app.FragmentActivity, code, name
+                        )
+                    } catch (_: Exception) { /* 非 Activity 环境忽略 */ }
+                }
+            }
+        }
+        row.addView(TextView(context).apply {
+            text = name
+            textSize = 13f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(0xFF212121.toInt())
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(TextView(context).apply {
+            text = "${n}只ETF覆盖"
+            textSize = 11f
+            setTextColor(0xFF78909C.toInt())
+            gravity = Gravity.END
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.7f))
+        row.addView(TextView(context).apply {
+            text = posText
+            textSize = 11f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(posColor)
             gravity = Gravity.END
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         return row

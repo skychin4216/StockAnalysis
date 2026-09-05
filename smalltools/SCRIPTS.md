@@ -62,6 +62,8 @@
 | `_market_snapshot.py` | **全市场市值快照 + 板块分层清单（低频：每周校准/换池时运行）**：抓全市场 4600+ 只（56 页）→ 分层清单按行业板块输出龙头/大票/小票；`--export-small` 导出 20~120亿+低价小市值分析池（轮动规律统计的候选层）。市值几天不变，勿每日运行。 | `python _market_snapshot.py --skip-snapshot --export-small ..\data\_small_pool.json` |
 | `_sector_fundflow.py` | **板块资金流实时数据源（东财 push2delay 当日实时）**：全行业板块主力净流入 Top/净流出排行；设计为轮动引擎的"当日候选验证层"——板块动量候选出来后用资金流二次过滤/排序（资金流无法历史回放）。 | `python _sector_fundflow.py --names 半导体,通信设备` |
 | `_market_context.py` | **盘中市场上下文聚合（`_publish_candidates.py` 的共振数据层，15 分钟守护用）**：东财实时板块资金流 + ETF 资金走向 + 日/周/月热门榜单 + Android 实仓镜像 + exe screen_report；`resonance_for()` 给候选算多因子共振分(资金/轮动/热度/ETF/连续上榜)，全部 TTL 缓存+容错降级。 | `python _market_context.py` / `python _market_context.py --flow 半导体` |
+| `_industry_leader_map.py` | **行业龙头图谱生成器（活跃赛道→核心龙头, 可每日跑）**：精选 45 个赛道目录(半导体产业链/PCB/MLCC/光通信/新能源/有色贵金属/创新药等, 脚本内 TRACK_GROUPS 可增删) → 东财行业板块全量榜(496个)匹配当日行情 → blend 活跃度(近20日动量50%+当日30%+主力资金20%)动态圈定 Top20 → 每赛道成分按总市值取龙头 Top3 + 人气领涨(代码+名称+市值+涨幅)。产出 `data/_industry_leader_map.json` + `.md` 表格。`--mode day/flow/momentum` 换口径, `--all` 全赛道取龙头。 | `python _industry_leader_map.py` |
+| `_etf_holdings.py` | **核心 ETF 重仓股跟踪 →「低位埋伏」候选池（2026-09-06 新增, 重仓季报级低频/行情实时）**：27 只核心指数 ETF 白名单(6宽基+21行业, 脚本 THEME_RULES 板块关键词↔ETF 可增删) → 东财基金移动端 F10 前十大重仓(实测可用, fundf10 HTML 版 404 弃用) → 落盘 `data/_etf_holdings.json`(funds 明细 + stocks 覆盖矩阵: 每只股票被哪些 ETF 持有/n/合计暴露 sum_ratio/距60日高点回撤 pos60)。行情源腾讯(东财 push2 被断)。`--low-buy 半导体,券商` 读缓存+实时行情出低吸观察；被 `_publish_candidates` 每轮推送 ⑥ 段与 candidates.json 顶层 `etf_holdings` 摘要调用。 | `python _etf_holdings.py` / `python _etf_holdings.py --no-kline` / `python _etf_holdings.py --low-buy 半导体,券商` |
 
 ---
 
@@ -80,6 +82,10 @@
 | `_debug_verify.py` | 打印个股最近 K 线明细与 MA5/10/20/60，验证复刻逻辑与实盘一致。 |
 | `inspect_market_db.py` | **市场库结构检查**（由 `_tmp_dbschema.py` 转正）：打印 `data/market_data.db` 的表结构、行数、索引与 K线/公告概览；`--path` 指定其他库，`--full` 打印样例数据。 | `python inspect_market_db.py` |
 | `verify_market_db.py` | **市场库端到端验证**（由 `_tmp_dbverify.py` 转正）：K线 vs `_kline_cache.json` 一致性抽检、参数 save/get 往返、新闻导入、公告抽样、库统计。云端同步 DB 前后各跑一遍。 | `python verify_market_db.py` |
+| `_verify_9grid.py` | **12 格 usecase 矩阵三端一致性校验（engine-sync 链路正式工具）**：`usecase_matrix.json` 12 格 sell（PC 扫描拟合产物）↔ `backtest_params.json` sell_rules（APK 读取源）↔ `sell_rule_for()`（exe walk-forward 状态路由）必须一致，防矩阵/参数改版漂移。 | `python _verify_9grid.py` |
+| `_verify_regex.py` | **模板表达式解析正则镜像校验**：Pipeline XML `if` 条件 `${nodeId}.fieldName` 解析复刻 APK `UseCaseLoader.evalStepIf` 正则（兼容花括号内/外两种写法），改条件解析后重跑。 | `python _verify_regex.py` |
+| `_verify_parity.py` | **app(Kotlin) vs PC(python) 推理一致性验证**（KNN `ml_knn_long.json`、icRank 排序、特征口径）——已迁移转正 → `AutoQuant/verify_parity.py`（数据源改 AutoQuant `data/cache` CSV），本文件保留留档。 |（迁移至 AutoQuant/verify_parity.py） |
+| `_verify_layers.py` | **一次性验证归档**（2026-09-03 用户确认留档，勿当正式流程运行）：缓存池 vs 全市场快照 vs 分层清单一致性；分层清单正式产出在 `_market_snapshot.py`。 |（归档，勿运行） |
 
 ---
 

@@ -41,6 +41,8 @@ class MarketHotFragment : Fragment() {
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         }
         tabLayout = TabLayout(requireContext()).apply {
+            // 6 个子 Tab（含行业龙头图谱）后改为可横向滚动，避免文本被挤压
+            tabMode = TabLayout.MODE_SCROLLABLE
             setSelectedTabIndicatorColor(Color.parseColor("#E65100"))
             setTabTextColors(Color.parseColor("#999999"), Color.parseColor("#E65100"))
             setBackgroundColor(Color.WHITE)
@@ -77,7 +79,7 @@ class MarketHotFragment : Fragment() {
         }
         root.addView(viewPager, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
         TabLayoutMediator(tabLayout, viewPager) { tab, pos ->
-            tab.text = when(pos) { 0 -> "🏭 行业" 1 -> "💡 概念" 2 -> "📈 指数" 3 -> "📊 走势" 4 -> "🔄 轮动" else -> "" }
+            tab.text = when(pos) { 0 -> "🏭 行业" 1 -> "💡 概念" 2 -> "📈 指数" 3 -> "📊 走势" 4 -> "🔄 轮动" 5 -> "🏆 龙头图谱" else -> "" }
         }.attach()
 
         startPoolScheduler(lifecycleScope)
@@ -86,13 +88,14 @@ class MarketHotFragment : Fragment() {
     }
 
     private class SectorTabAdapter(f: Fragment) : FragmentStateAdapter(f) {
-        override fun getItemCount() = 5
+        override fun getItemCount() = 6
         override fun createFragment(pos: Int) = when(pos) {
             0 -> SectorTabFragment.newInstance(2)
             1 -> SectorTabFragment.newInstance(3)
             2 -> SectorTabFragment.newInstance(1)
             3 -> SectorTrendChartFragment()
             4 -> SectorRotationChartFragment()
+            5 -> SectorLeaderMapFragment()
             else -> SectorTabFragment.newInstance(2)
         }
     }
