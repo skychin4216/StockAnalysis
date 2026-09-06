@@ -1280,8 +1280,8 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
                 "NO_DATA": "数据不足"}.get(state, state)
     state_mark = {"BULLISH": "🔴", "BEARISH": "🟢", "OSCILLATION": "🟡",
                   "NO_DATA": "⚪"}.get(state, "⚪")
-    p1 = ["%s | %s" % (scene, asof),
-          "%s 大盘: %s %s | 池 %d" % (state_mark, state, state_cn,
+    # 内容不再重复场景头行（该行与推送标题相同，2026-09-06 修复：标题=「%s | %s」）
+    p1 = ["%s 大盘: %s %s | 池 %d" % (state_mark, state, state_cn,
                                      data.get("pool_total", 0))]
     # ① 主线：XML DAG 当日选股（与 exe 同源；超短并入短线、按代码去重、每档≤3只）
     if dag is None:
@@ -1377,7 +1377,7 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
         p1.append("")
         p1.append("⭐ 双端共同命中(%d): %s" % (len(both), names))
     # ── 页面2：资金 / ETF / 低吸（独立消息）──
-    p2 = ["%s | %s" % (scene, asof)]
+    p2 = []
     p2_extra = False
     if ctx:
         flow_top = ctx.get("flow_rank") or []
@@ -1408,27 +1408,35 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
             p2.append("")
             p2.append("📈 ETF资金流向: " + " | ".join(eparts))
             p2_extra = True
-        # ⑥ 热门板块 ETF 前5重仓 · 低吸（行业ETF重仓跟踪→低位埋伏，每票附
-        #    紧凑指标串 + 放量企稳确认标注）
+        # ⑥ 热门+重点关注板块 ETF 前5重仓 · 低吸精选（2026-09-06 方案B：
+        #    SAR红才列(绿=下跌趋势排除, 绿转红标SAR刚翻红) → 企稳/量能/MACD/OBV共振打分
+        #    → 全局限额≤5只；当日主线DAG命中的附『主线DAG✓』；无符合则明示空因）
         try:
             import _etf_holdings as _eh
-            hot_low = _eh.low_buy_lines(
-                [r["name"] for r in pos_f], ctx.get("etf_flow") or [])
-            if hot_low:
-                p2.append("")
-                p2.append("🎯 ETF持仓前五低吸(热门板块)")
-                p2.extend(hot_low)
-                p2_extra = True
+            dag_codes = set()
+            if dag and (dag.get("result") or {}):
+                res = dag.get("result") or {}
+                for period in ("超短", "短线", "中线", "长线"):
+                    for it in res.get(period) or []:
+                        raw = (it.get("code") or "").strip()
+                        c6 = raw[2:] if raw[:2].lower() in ("sh", "sz", "bj") else raw
+                        if c6:
+                            dag_codes.add(c6)
+            themes = [r["name"] for r in pos_f]
             try:
                 focus = _eh.load_focus_sectors()
             except Exception:
                 focus = []
-            if focus:
-                f_low = _eh.low_buy_lines(focus, ctx.get("etf_flow") or [])
-                if f_low:
+            for x in focus or []:
+                if x not in themes:
+                    themes.append(x)
+            if themes:
+                low = _eh.low_buy_lines(themes, ctx.get("etf_flow") or [],
+                                        dag_codes=dag_codes)
+                if low:
                     p2.append("")
-                    p2.append("📌 用户重点关注板块·ETF低吸")
-                    p2.extend(f_low)
+                    p2.append("🎯 ETF持仓前五·低吸精选(≤5只)")
+                    p2.extend(low)
                     p2_extra = True
         except Exception:
             pass
@@ -1440,17 +1448,17 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
             p2_extra = True
         if lowbuy_offline:
             p2.append("")
-            p2.append("🎯 ETF持仓前五低吸")
+            p2.append("🎯 ETF持仓前五·低吸精选(≤5只)")
             p2.extend(lowbuy_offline)
             p2_extra = True
     # ── 页面3：实仓与做T（独立消息；指纹无变化仅一行概要，有变化展开逐笔+指标标注）──
-    pages = [("%s | %s" % (scene, asof), "\n".join(p1))]
+    pages = [("%s | %s" % (scene, asof), "\n".join(p1).strip("\n"))]
     if p2_extra:
-        pages.append(("📊 资金流向与低吸 | %s" % asof, "\n".join(p2)))
+        pages.append(("📊 资金流向与低吸 | %s" % asof, "\n".join(p2).strip("\n")))
     if pos_advice and (data.get("positions") or []):
-        p3 = ["%s | %s" % (scene, asof)]
+        p3 = []
         _append_pos_block(p3, data)
-        pages.append(("💼 实仓建议与做T | %s" % asof, "\n".join(p3)))
+        pages.append(("💼 实仓建议与做T | %s" % asof, "\n".join(p3).strip("\n")))
     return pages
 
 

@@ -127,8 +127,18 @@ def replay_one(day, cache, hist, args):
     if not data:
         print("  ✗ %s 引擎无有效数据" % day)
         return None
-    # 页2 离线低吸（全行业ETF前五，收盘口径）
-    low_lines = EH.low_buy_lines_offline(asof, hist=hist) if hist else []
+    # 页2 离线低吸（全行业ETF前五，收盘口径；SAR红+企稳/共振精选≤5只，
+    # 当日主线DAG命中票附『主线DAG✓』）
+    dag_codes = set()
+    if dag.get("result"):
+        for period in ("超短", "短线", "中线", "长线"):
+            for it in (dag.get("result") or {}).get(period) or []:
+                raw = (it.get("code") or "").strip()
+                c6 = raw[2:] if raw[:2].lower() in ("sh", "sz", "bj") else raw
+                if c6:
+                    dag_codes.add(c6)
+    low_lines = (EH.low_buy_lines_offline(asof, hist=hist, dag_codes=dag_codes)
+                 if hist else [])
     note = ("💡 回放说明：板块/ETF资金流为盘中实时采集、无历史存档；"
             "本页以 %s 收盘K线口径展示全行业ETF前五低吸。" % asof)
     pages = PC.round_pages(data, None, None, scene="盘外选股", dag=dag,
@@ -254,12 +264,45 @@ def _cfg_name(t, h, tp, sl):
         (" SL-%d%%" % abs(sl)) if sl else "")
 
 
+def _variant_ok(pk, variant):
+    """豆包/DeepSeek 思路可回溯因子的叠加过滤（在 base 低吸候选之上）。
+    ds  = DeepSeek: 52周位置分位≤0.35 且 RSI14≤40（低位+不接飞刀）
+    db  = 豆包共振: MACD红柱/金叉 + OBV升 + 收阳温和放量(1.05~2.5) + RSI≤62 + 52周≤0.5
+    all = ds∩db（共振精选：只留两者都满足的极少数）
+    注：pos52 需要≥250根历史，2008 早期新上市样本不足会自动排除。"""
+    if variant == "base":
+        return True
+    p52 = pk.get("pos52")
+    rsi = pk.get("rsi")
+    ok_ds = bool(p52 is not None and p52 <= 0.35 and isinstance(rsi, (int, float))
+                 and rsi <= 40)
+    if variant == "ds":
+        return ok_ds
+    if variant == "db":
+        macd = bool(pk.get("macd_bull") or pk.get("macd_golden"))
+        return bool(macd and pk.get("obv_up") is True and pk.get("vr_ok")
+                    and pk.get("up_day")
+                    and isinstance(rsi, (int, float)) and rsi <= 62
+                    and p52 is not None and p52 <= 0.5)
+    # all
+    macd = bool(pk.get("macd_bull") or pk.get("macd_golden"))
+    return bool(ok_ds and macd and pk.get("obv_up") is True and pk.get("vr_ok")
+                and pk.get("up_day"))
+
+
 def run_fit(args):
+    variant = getattr(args, "variant", "base") or "base"
     days = trading_days(args.start, args.end)
     if not days:
         print("窗口内无交易日")
         return 2
-    print("拟合窗口 %s ~ %s，共 %d 个交易日" % (days[0], days[-1], len(days)))
+    step = max(1, int(getattr(args, "step", 1) or 1))
+    sel = days[::step]
+    vname = {"base": "基线", "ds": "DeepSeek低位(52周≤35%+RSI14≤40)",
+             "db": "豆包共振(MACD红+OBV升+温和放量+RSI≤62)",
+             "all": "ds∩db 共振精选"}.get(variant, variant)
+    print("拟合窗口 %s ~ %s，共 %d 个交易日（采样步长%d → %d 天）| 变体: %s"
+          % (days[0], days[-1], len(days), step, len(sel), vname))
     hist = EH.load_top5_hist().get("codes") or {}
     if len(hist) < 30:
         hist = EH.build_top5_hist()
@@ -284,11 +327,11 @@ def run_fit(args):
         return (c1 / c0 - 1) * 100 if c0 else None
 
     idx_ret = None
-    if days and days[-1] in closes_at and days[0] in closes_at:
-        idx_ret = (closes_at[days[-1]] / closes_at[days[0]] - 1) * 100
+    if sel and sel[-1] in closes_at and sel[0] in closes_at:
+        idx_ret = (closes_at[sel[-1]] / closes_at[sel[0]] - 1) * 100
 
     regime = {}
-    for day in days:
+    for day in sel:
         m = idx_n(day)
         regime[day] = "多" if (m or 0) > 1.5 else ("空" if (m or 0) < -1.5 else "震荡")
     # 逐日唯一信号：同一股票多只ETF重复 → 每日每票只记一次（防重复膨胀）
@@ -296,7 +339,7 @@ def run_fit(args):
     trades = {k: [] for k in keys}
     cf_sigs = {}
     n_sig = 0
-    for day in days:
+    for day in sel:
         st = EH.screen_picks_asof(day, hist=hist)
         seen = set()
         uniq = []
@@ -305,6 +348,8 @@ def run_fit(args):
                 if pk["code"] in seen:
                     continue
                 seen.add(pk["code"])
+                if not _variant_ok(pk, variant):
+                    continue
                 uniq.append(pk)
         if not uniq:
             continue
@@ -330,7 +375,7 @@ def run_fit(args):
                     continue
                 cf_trades[h].append({"date": day, "code": pk["code"],
                                      "name": pk["name"], "ret": r, "exit": day})
-    print("累计信号(去重) %d 条（日均 %.0f）" % (n_sig, n_sig / len(days)))
+    print("累计信号(去重) %d 条（采样日均 %.1f）" % (n_sig, n_sig / len(sel)))
     if idx_ret is not None:
         print("同期上证指数窗口涨幅: %+.1f%%（等权逐票累加收益会放大幅度，注意相对指数看方向）\n"
               % idx_ret)
@@ -397,8 +442,9 @@ def run_fit(args):
     print(cf_line)
     for h in FIT_H:
         report["buckets"]["cf-H%d" % h] = _stats(cf_trades[h])
-    # 推荐与状态分解：n>=30 中 PF 最高
-    cand = [(k, s) for k, s in stats_all.items() if s.get("n", 0) >= 30]
+    # 推荐与状态分解：n>=min_n 中 PF 最高（严格变体样本少，门槛放宽）
+    min_n = 30 if variant == "base" else 15
+    cand = [(k, s) for k, s in stats_all.items() if s.get("n", 0) >= min_n]
     if cand:
         bt_key, best = max(cand, key=lambda ks: (
             ks[1]["pf"] if ks[1]["pf"] is not None else 0, ks[1]["sum"]))
@@ -421,7 +467,9 @@ def run_fit(args):
         report["recommended"] = best
         report["recommended_cfg"] = "%d-%d-%d-%d" % bt_key
     os.makedirs(os.path.dirname(REC_DIR), exist_ok=True)
-    out = os.path.normpath(os.path.join(HERE, "..", "data", "_etf_top5_fit_report.json"))
+    fname = ("_etf_top5_fit_report.json" if variant == "base"
+             else "_etf_top5_fit_report_%s.json" % variant)
+    out = os.path.normpath(os.path.join(HERE, "..", "data", fname))
     with open(out, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=1)
     print("\n报告 → %s" % out)
@@ -445,6 +493,12 @@ def main():
     ap.add_argument("--fit", action="store_true")
     ap.add_argument("--start", default="2026-08-03")
     ap.add_argument("--end", default="2026-09-04")
+    ap.add_argument("--step", type=int, default=1,
+                    help="拟合采样步长：每N个交易日取1天（长窗口用，如 --step 10）")
+    ap.add_argument("--variant", default="base",
+                    choices=["base", "ds", "db", "all"],
+                    help="豆包/DeepSeek 思路变体: base基线 / ds=52周分位≤35%+RSI14≤40 / "
+                         "db=MACD红+OBV升+温和放量+RSI≤62+52周≤50% / all=ds∩db共振精选")
     args = ap.parse_args()
     if args.fit:
         return run_fit(args)

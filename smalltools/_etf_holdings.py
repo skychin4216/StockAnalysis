@@ -24,7 +24,13 @@
   python _etf_holdings.py --low-buy 半导体,券商   # 读缓存 + 实时行情 → 低吸观察清单
 
 模块内调用（供 _publish_candidates 每轮推送使用）：
-  low_buy_lines(hot_themes, etf_flow) -> [str]
+  low_buy_lines(hot_themes, etf_flow=None, dag_codes=None, max_rows=5) -> [str]
+    # 低吸精选：热门+重点关注板块 ETF 前五 → SAR红(绿排除/绿转红✓) →
+    #           企稳/量能/MACD/OBV共振打分 → 分组渲染 ≤max_rows 只
+  low_buy_lines_offline(asof, hist=None, dag_codes=None, max_rows=5) -> [str]
+    # 离线(收盘K线/回放)全行业同口径
+  screen_picks_asof(asof, hist=None, industry_only=True, dag_codes=None)
+    # 低吸候选明细(含 _screen_meta 的 SAR/企稳/MACD/OBV/均线字段)，供回溯拟合复用
 """
 import argparse
 import datetime as _dt
@@ -408,17 +414,180 @@ def _ind_tag(snaps):
 
 def _offline_confirm(snaps):
     """对已截断到 asof 的 snaps：末根是否放量企稳。样本不足返回 ''。"""
+    return _confirm_note_from_snaps(snaps)
+
+
+def _confirm_note_from_snaps(snaps):
+    """snaps(收盘口径,≥260根启用企稳判定) → 『当日放量企稳✓ / 待企稳(预计N日) / 未企稳·勿接飞刀』。"""
+    if len(snaps) < 260:
+        return ""
     try:
         import _volume_confirm as vc
-        if len(snaps) >= 260:
-            i = len(snaps) - 1
-            ind = vc.indicators(snaps)
-            if vc.is_confirm(snaps, i, ind=ind):
-                return "当日放量企稳✓"
-            return "未企稳·勿接飞刀"
+        i = len(snaps) - 1
+        ind = vc.indicators(snaps)
+        if vc.is_confirm(snaps, i, ind=ind):
+            return "当日放量企稳✓"
+        j = vc.first_confirm(snaps, i, look=5, ind=ind)
+        if j >= 0:
+            return "待企稳(预计%d日)" % (j - i)
+        return "未企稳·勿接飞刀"
+    except Exception:
+        return ""
+
+
+def _screen_meta(snaps):
+    """snaps → 低吸精选判定明细（SAR方向/绿转红、企稳note、MACD/OBV、站上均线、三日不新低、
+    量比等）。离线切片与实时日K共用同一口径。任意异常静默降级为缺字段。"""
+    out = {}
+    n = len(snaps)
+    if n < 2:
+        return out
+    try:
+        closes = [float(x.get("close") or 0) for x in snaps]
+        c = closes[-1]
+        def _ma(k):
+            return (sum(closes[-k:]) / k) if n >= k else None
+        ma5, ma10 = _ma(5), _ma(10)
+        out["above5"] = bool(ma5 is not None and c > ma5)
+        out["above10"] = bool(ma10 is not None and c > ma10)
+        last = snaps[-1]
+        o = float(last.get("open") or c)
+        out["up_day"] = c > o
+        if n >= 4:
+            prev_low = float(snaps[-4].get("low") or 0)
+            out["three_no_low"] = all(float(x.get("low") or 0) >= prev_low
+                                      for x in snaps[-3:])
+        vols = [float(x.get("volume") or 0) for x in snaps]
+        v5 = sum(vols[-6:-1]) / max(len(vols[-6:-1]), 1)
+        out["vol_ratio"] = round(vols[-1] / v5, 2) if v5 > 0 else 1.0
     except Exception:
         pass
-    return ""
+    try:
+        import _technicals as T
+        s = T.analyze(snaps) or {}
+        sar = s.get("sar") or {}
+        out["sar_dir"] = sar.get("dir")
+        out["sar_bars"] = sar.get("bars") or 0
+        # 绿转红=当前红(dir UP)且前一段为绿(flip_dir DOWN)、翻转≤3日
+        out["fresh_up"] = bool(sar.get("dir") == "UP"
+                               and sar.get("flip_dir") == "DOWN"
+                               and (sar.get("flip_ago") or 99) <= 3)
+        mc = s.get("macd") or {}
+        out["macd_golden"] = mc.get("cross") == "gold"
+        out["macd_hist"] = mc.get("hist")
+        out["obv_up"] = s.get("obv_up")
+        out["rsi"] = s.get("rsi")
+    except Exception:
+        pass
+    # 豆包×DeepSeek 低位因子（可回溯口径）：52周位置分位、MACD红柱/DIF上行、温和放量
+    try:
+        if n >= 250:
+            w = snaps[-252:]
+            wh = max(float(x.get("high") or 0) for x in w)
+            wl = min(float(x.get("low") or 0) for x in w)
+            if wh > wl > 0:
+                out["pos52"] = round((c - wl) / (wh - wl), 3)
+        dif = _ema(closes, 12)
+        dea = _ema(dif, 9)
+        if len(dif) >= 2 and len(dea) >= 2:
+            out["macd_bull"] = bool(dif[-1] >= dea[-1])
+            out["dif_up"] = bool(dif[-1] >= dif[-2])
+        vr = out.get("vol_ratio")
+        out["vr_ok"] = bool(vr is not None and 1.05 <= vr <= 2.5)
+    except Exception:
+        pass
+    out["note"] = _confirm_note_from_snaps(snaps)
+    out["tag"] = _ind_tag(snaps) if n >= 30 else ""
+    return out
+
+
+# 低吸精选门槛（2026-09-06 方案B：前五→SAR红→企稳/量能/MACD/OBV共振→最多5只）
+_DECIDE_MIN_SCORE = 5.0
+
+
+def _decide_pick(pk):
+    """对单个候选做『符合低吸精选』判定。
+    pk 需含 _screen_meta 各字段 + pos60/pct/dag_hit。
+    返回 (ok, score)。SAR绿(下跌趋势)直接排除。"""
+    if pk.get("sar_dir") != "UP":
+        return False, 0.0
+    note = pk.get("note") or ""
+    stable = note.startswith("当日放量企稳")
+    wait_stable = note.startswith("待企稳")
+    fresh = bool(pk.get("fresh_up"))
+    gold = bool(pk.get("macd_golden"))
+    hist = pk.get("macd_hist")
+    obv = pk.get("obv_up")
+    rsi = pk.get("rsi")
+    dag = bool(pk.get("dag_hit"))
+    score = 0.0
+    if stable:
+        score += 3.0
+    elif wait_stable:
+        score += 0.5
+    if fresh:
+        score += 2.0
+    if gold:
+        score += 2.2
+    elif isinstance(hist, (int, float)) and hist > 0:
+        score += 1.0
+    if obv is True:
+        score += 1.5
+    if isinstance(rsi, (int, float)) and 20 <= rsi <= 55:
+        score += 0.8
+    pos60 = pk.get("pos60")
+    if isinstance(pos60, (int, float)):
+        if pos60 <= -20:
+            score += 2.0
+        elif pos60 <= -12:
+            score += 1.5
+        elif pos60 <= -6:
+            score += 1.0
+        else:
+            score += 0.3
+    if pk.get("above5"):
+        score += 0.8
+    if pk.get("above10"):
+        score += 0.4
+    if pk.get("three_no_low"):
+        score += 1.2
+    if pk.get("up_day"):
+        score += 0.6
+    vr = pk.get("vol_ratio")
+    if pk.get("up_day") and isinstance(vr, (int, float)) and 1.0 <= vr <= 3.5:
+        score += 1.0
+    if dag:
+        score += 3.0
+    # 核心：须有企稳/刚翻红/金叉/待企稳/主线DAG 之一的转折确认。
+    # （仅"站上5日线+三日不新低"不作数——那是反弹可回落的形态，避免重演
+    #  "未企稳·勿接飞刀"仍被列进精选的自相矛盾）
+    core = stable or fresh or wait_stable or gold or dag
+    return (score >= _DECIDE_MIN_SCORE and core), score
+
+
+def _qualify_line(pk):
+    """精选合格票的单行（🔴 候选推荐；含指标/确认/主线DAG标记）。
+    精选行不再输出『未企稳·勿接飞刀』等负面标注，改为转折催化剂结论。"""
+    line = "    🔴 %s(%s) 距60日高%+.1f%% 今%+.1f%%" % (
+        pk["name"], pk["code"], pk.get("pos60") or 0, pk.get("pct") or 0)
+    extras = []
+    if pk.get("tag"):
+        extras.append(pk["tag"])
+    note = pk.get("note") or ""
+    if note.startswith("当日放量企稳"):
+        extras.append("当日放量企稳✓")
+    elif note.startswith("待企稳"):
+        extras.append(note)
+    if pk.get("fresh_up"):
+        extras.append("绿转红✓")
+    joined = " ".join(extras)
+    if pk.get("macd_golden") and "金叉" not in joined:
+        extras.append("MACD金叉✓")
+    if pk.get("dag_hit") and "主线DAG" not in " ".join(extras):
+        extras.append("主线DAG✓")
+    if extras:
+        line += " | " + " | ".join(extras)
+    return line
 
 
 def _pick_line(pk):
@@ -541,11 +710,14 @@ def build_top5_hist(refresh_missing=True, print_log=None):
     return codes
 
 
-def screen_picks_asof(asof, hist=None, industry_only=True):
+def screen_picks_asof(asof, hist=None, industry_only=True, dag_codes=None):
     """以截至 asof(含当日收盘K线) 的数据，对行业ETF前五重仓做低吸选股。
     返回 {fcode: {"name","theme","picks":[dict]}}；picks 按距60日高优先深伏排序。
+    每个 pick 含 _screen_meta 明细字段(SAR方向/绿转红/企稳note/MACD/OBV/均线等)，
+    dag_codes 传当日主线DAG命中代码集合时附加 dag_hit。
     hist: {code:{"name","snaps"}}（全史）；缺省用 data/_etf_top5_hist.json。"""
     hist = hist or (load_top5_hist().get("codes") or {})
+    dag_codes = dag_codes or set()
     hold = load_holdings()
     if not hold:
         return {}
@@ -571,11 +743,15 @@ def screen_picks_asof(asof, hist=None, industry_only=True):
             pos60 = _pos60(snaps)
             if pos60 is None or pos60 > -1.0:
                 continue
-            picks.append({
+            meta = _screen_meta(snaps)
+            pk = {
                 "code": s["code"],
                 "name": (ent.get("name") or s.get("name") or s["code"]),
                 "pos60": pos60, "pct": pct,
-                "note": _offline_confirm(snaps), "tag": _ind_tag(snaps)})
+                "dag_hit": s["code"] in dag_codes,
+            }
+            pk.update(meta)
+            picks.append(pk)
         if not picks:
             continue
         picks.sort(key=lambda x: x["pos60"])
@@ -583,25 +759,72 @@ def screen_picks_asof(asof, hist=None, industry_only=True):
     return out
 
 
-def low_buy_lines_offline(asof, hist=None):
-    """离线『🎯 ETF持仓前五低吸』文本行（全行业板块；历史回放推送页面2用）。"""
-    st = screen_picks_asof(asof, hist=hist)
-    lines = []
-    for fcode, info in st.items():
-        lines.append("  %s(%s):" % (info["name"], fcode))
-        for pk in info["picks"][:3]:
-            lines.append(_pick_line(pk))
+def _assemble_lowbuy(seq, groups, stats, max_rows):
+    """seq=[(score, gidx, pk)…] 打分组渲染低吸精选文本行。
+    同股跨ETF只保留一次；按分数降序取前 max_rows 只；无符合则给出空因摘要。"""
+    seq.sort(key=lambda r: -r[0])
+    seen, keep = set(), []
+    for score, gidx, pk in seq:
+        if pk["code"] in seen:
+            continue
+        seen.add(pk["code"])
+        keep.append((gidx, pk))
+        if len(keep) >= max_rows:
+            break
+    if not keep:
+        sar_ok = max(stats.get("cand", 0) - stats.get("sar_dn", 0), 0)
+        tail = ""
+        if stats.get("fresh"):
+            tail = "；其中绿转红%d只(可留意)" % stats["fresh"]
+        return ["  (今日无符合低吸：观察%d只→SAR绿%d排除、SAR红%d只未过企稳/共振精选%s)"
+                % (stats.get("cand", 0), stats.get("sar_dn", 0), sar_ok, tail)]
+    lines, prev = [], None
+    for gidx, pk in keep:
+        if gidx != prev:
+            g = groups[gidx]
+            lines.append("  %s(%s)%s:" % (g["name"], g["code"],
+                                          (" 资金入%+.1f亿" % g["fz"]) if g.get("fz") else ""))
+            prev = gidx
+        lines.append(_qualify_line(pk))
+    lines.append("  ── 口径: 前五重仓→SAR红(绿排除)→企稳/量能/MACD/OBV共振打分，取前≤%d只 ──" % max_rows)
     return lines
 
 
-# 当日已取数缓存（code → {note, tag}），避免 15 分钟轮询重复拉日K
+def low_buy_lines_offline(asof, hist=None, dag_codes=None, max_rows=5):
+    """离线『🎯 ETF持仓前五·低吸精选』文本行（全行业板块；历史回放页面2用）。
+    只输出通过 _decide_pick 的合格票（SAR绿直接不展示）；无符合时明示空因。"""
+    st = screen_picks_asof(asof, hist=hist, dag_codes=dag_codes)
+    groups, seq = [], []
+    stats = {"cand": 0, "sar_dn": 0, "fresh": 0}
+    seen_code = set()
+    for fcode, info in st.items():
+        gidx = len(groups)
+        groups.append({"code": fcode, "name": info["name"]})
+        for pk in info["picks"]:
+            c = pk["code"]
+            if c in seen_code:
+                continue
+            seen_code.add(c)
+            stats["cand"] += 1
+            if pk.get("fresh_up"):
+                stats["fresh"] += 1
+            if pk.get("sar_dir") != "UP":
+                stats["sar_dn"] += 1
+                continue
+            ok, score = _decide_pick(pk)
+            if ok:
+                seq.append((score, gidx, pk))
+    return _assemble_lowbuy(seq, groups, stats, max_rows)
+
+
+# 当日已取数缓存（code → _screen_meta dict），避免 15 分钟轮询重复拉日K
 _KLINE_TODAY = {}
 _KLINE_DATE = ""
 
 
-def _confirm_and_tag(code):
-    """低位候选的『放量企稳二次确认』人读标注 + 紧凑指标串（复用 _volume_confirm /
-    _technicals，规则同回溯口径）。单日按 code 缓存。返回 (note, tag)。"""
+def _meta_live(code):
+    """code → 最新日K的 _screen_meta 明细（SAR/企稳/共振/均线等）。单日按 code 缓存；
+    拉取失败返回 {}。"""
     global _KLINE_DATE
     today = _dt.date.today().isoformat()
     if _KLINE_DATE != today:
@@ -609,29 +832,22 @@ def _confirm_and_tag(code):
         _KLINE_DATE = today
     if code in _KLINE_TODAY:
         return _KLINE_TODAY[code]
-    note, tag = "", ""
+    meta = {}
     try:
         import _overseas_fetch
-        import _volume_confirm as vc
         rows = _overseas_fetch.fetch_kline(_prefixed(code), count=300)
         if rows:
-            if len(rows) >= 260:
-                i = len(rows) - 1
-                ind = vc.indicators(rows)
-                if vc.is_confirm(rows, i, ind=ind):
-                    note = "当日放量企稳✓"
-                else:
-                    j = vc.first_confirm(rows, i, look=5, ind=ind)
-                    if j >= 0:
-                        note = "待企稳(预计%d日)" % (j - i)
-                    else:
-                        note = "未企稳·勿接飞刀"
-            if len(rows) >= 30:
-                tag = _ind_tag(rows)
+            meta = _screen_meta(rows)
     except Exception:
-        note, tag = "", ""
-    _KLINE_TODAY[code] = (note, tag)
-    return note, tag
+        meta = {}
+    _KLINE_TODAY[code] = meta
+    return meta
+
+
+def _confirm_and_tag(code):
+    """兼容壳：返回 (note, tag)，规则同 _screen_meta（企稳/待企稳/未企稳 + 指标串）。"""
+    m = _meta_live(code)
+    return (m.get("note") or ""), (m.get("tag") or "")
 
 
 def _confirm_note(code):
@@ -639,12 +855,13 @@ def _confirm_note(code):
     return _confirm_and_tag(code)[0]
 
 
-def low_buy_lines(hot_themes, etf_flow=None):
-    """生成「热门板块 → ETF 前5重仓 → 低吸观察」文本行（供每轮推送 ⑥ 段）。
+def low_buy_lines(hot_themes, etf_flow=None, dag_codes=None, max_rows=5):
+    """实时『热门+重点关注板块 → ETF 前5重仓 → 低吸精选』文本行（供每轮推送页面2）。
 
-    hot_themes: 当日资金流入榜前N的东财行业名列表 / 或用户重点关注板块名列表
-    etf_flow: ctx["etf_flow"]（东财ETF净流入榜 [{name,in_yi,chg_pct}]，用于标注资金）
-    每只候选附紧凑指标串 + 放量企稳二次确认标注。任何数据缺失时安静返回 []。
+    hot_themes: 板块名列表（资金流入热门在前、用户重点关注殿后，已按优先级排好）
+    etf_flow: ctx["etf_flow"]（东财ETF净流入榜 [{name,in_yi,chg_pct}]，用于标注板块资金）
+    dag_codes: 当日主线DAG命中代码集合(6位)；命中票附『主线DAG✓』并加分
+    只输出通过 _decide_pick 的合格票（SAR绿直接不展示）；无符合时明示空因。
     """
     hold = load_holdings()
     if not hold:
@@ -654,16 +871,16 @@ def low_buy_lines(hot_themes, etf_flow=None):
         return []
     top_by_fund = {f["code"]: f["top"] for f in hold.get("funds") or []}
     name_by_fund = {f["code"]: f["name"] for f in hold.get("funds") or []}
+    theme_of_fund = {fcode: theme for fcode, _, theme in theme_funds}
     stocks = hold.get("stocks") or {}
+    dag_codes = dag_codes or set()
 
-    # 候选股票：命中主题 ETF 的前5重仓
-    cand_codes = []
+    # 候选去重保序 + 归属首个板块ETF（同股跨ETF只显示一次，如兆易创新同时属半导体/芯片）
+    own = {}
     for fcode, _, _ in theme_funds:
-        top = (top_by_fund.get(fcode) or [])[:5]
-        for s in top:
-            if s["code"] not in cand_codes:
-                cand_codes.append(s["code"])
-    quotes = tencent_quotes(cand_codes)
+        for s in (top_by_fund.get(fcode) or [])[:5]:
+            own.setdefault(s["code"], (fcode, s))
+    quotes = tencent_quotes(list(own.keys()))
     if not quotes:
         return []
 
@@ -675,42 +892,47 @@ def low_buy_lines(hot_themes, etf_flow=None):
         if yi > 0:
             flow_in[nm] = yi
 
-    lines = []
-    done_funds = set()
-    for fcode, fname, theme in theme_funds:
-        if fcode in done_funds:
+    groups, fidx = [], {}
+    seq, stats = [], {"cand": 0, "sar_dn": 0, "fresh": 0}
+    for code, (fcode, s) in own.items():
+        q = quotes.get(code)
+        if not q:
             continue
-        done_funds.add(fcode)
-        top = (top_by_fund.get(fcode) or [])[:5]
-        picks = []
-        for s in top:
-            q = quotes.get(s["code"])
-            ent = stocks.get(s["code"])
-            if not q:
-                continue
-            pct = q["pct"]
-            # 低吸过滤：当日温吞（不追高、不接暴跌中段），且已低于 60 日高点
-            if not (-4.0 <= pct <= 4.0):
-                continue
-            pos60 = (ent or {}).get("pos60")
-            if pos60 is None or pos60 > -1.0:
-                continue
-            note, tag = _confirm_and_tag(s["code"])
-            picks.append({"name": s["name"], "code": s["code"],
-                          "pos60": pos60, "pct": pct, "note": note, "tag": tag})
-        if not picks:
+        pct = q["pct"]
+        # 低吸过滤：当日温吞（不追高、不接暴跌中段），且已低于 60 日高点
+        if not (-4.0 <= pct <= 4.0):
             continue
-        # 资金标注：ETF 当日净流入（东财 ETF 榜简称含主题词/基金名）
-        fz = ""
-        short = fname.replace("ETF", "")
-        for fn, yi in flow_in.items():
-            if (theme and theme in fn) or short in fn or fname in fn:
-                fz = " 资金入%+.1f亿" % yi
-                break
-        lines.append("  %s(%s)%s:" % (fname, fcode, fz))
-        for pk in picks[:3]:
-            lines.append(_pick_line(pk))
-    return lines
+        pos60 = (stocks.get(code) or {}).get("pos60")
+        if pos60 is None or pos60 > -1.0:
+            continue
+        meta = _meta_live(code)
+        if not meta.get("sar_dir"):
+            continue
+        stats["cand"] += 1
+        pk = {"code": code, "name": s.get("name") or s["code"],
+              "pos60": pos60, "pct": pct, "dag_hit": code in dag_codes}
+        pk.update(meta)
+        if pk.get("fresh_up"):
+            stats["fresh"] += 1
+        if pk.get("sar_dir") != "UP":
+            stats["sar_dn"] += 1
+            continue
+        ok, score = _decide_pick(pk)
+        if not ok:
+            continue
+        if fcode not in fidx:
+            fidx[fcode] = len(groups)
+            fname = name_by_fund.get(fcode, fcode)
+            theme = theme_of_fund.get(fcode) or ""
+            fz = 0.0
+            short = fname.replace("ETF", "")
+            for fn, yi in flow_in.items():
+                if (theme and theme in fn) or short in fn or fname in fn:
+                    fz = yi
+                    break
+            groups.append({"code": fcode, "name": fname, "fz": fz})
+        seq.append((score, fidx[fcode], pk))
+    return _assemble_lowbuy(seq, groups, stats, max_rows)
 
 
 def summary_json(limit=15):
