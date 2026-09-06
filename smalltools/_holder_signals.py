@@ -17,6 +17,8 @@
 
 用法：
   python _holder_signals.py            # 全量更新 data/_holder_signals.json + 摘要
+  python _holder_signals.py --build-hist   # 全史披露日历 data/_holder_hist.json（2008→今，
+                                           # 社保/北向逐季记录含 NOTICE_DATE，共振层拟合用）
   HOLDER_NORTH_ONLY=1 python _holder_signals.py   # 仅刷新摘要显示（复用已存数据）
 """
 import json
@@ -147,6 +149,48 @@ def north_trend(recs, name=NORTH_NAME, win=3):
     return {"trend": trend, "latest": latest, "series": last3}
 
 
+HIST_FILE = os.path.join(os.path.dirname(HERE), "data", "_holder_hist.json")
+FUND_POS = ("新进", "加仓", "增持")
+
+
+def build_history(codes=None):
+    """全史披露日历：{code: {"ss":[社保记录], "nb":[北向记录]}}。
+    只保留回溯所需字段，按 NOTICE_DATE≤信号日过滤后即可无未来函数使用。
+    社保记录: {end, notice, name, ratio, state}；北向记录: {end, notice, ratio}。"""
+    hist = eh.load_top5_hist().get("codes") or {}
+    if not hist:
+        hist = eh.build_top5_hist()
+    codes = sorted(codes or hist.keys())
+    res = {"asof": max((s["date"] for e in hist.values()
+                        for s in e.get("snaps", [])), default=""),
+           "codes": len(codes), "ss": {}, "nb": {}}
+    for i, c in enumerate(codes):
+        recs = fetch_f10_history(c)
+        ss = []
+        for x in pick(recs, SS_HINT):
+            if x["notice"]:
+                ss.append({k: x[k] for k in ("end", "notice", "name", "ratio", "state")})
+        if ss:
+            res["ss"][c] = ss
+        nb = []
+        for x in pick(recs, exact=NORTH_NAME):
+            if x["notice"]:
+                nb.append({"end": x["end"], "notice": x["notice"],
+                           "ratio": x["ratio"]})
+        if nb:
+            res["nb"][c] = nb
+        if (i + 1) % 10 == 0:
+            print("  %d/%d ss:%d nb:%d" % (i + 1, len(codes),
+                  len(res["ss"]), len(res["nb"])), flush=True)
+            with open(HIST_FILE, "w", encoding="utf-8") as f:
+                json.dump(res, f, ensure_ascii=False)
+    with open(HIST_FILE, "w", encoding="utf-8") as f:
+        json.dump(res, f, ensure_ascii=False)
+    print("股东披露日历 → %s (社保%d只/北向%d只, 最早披露见各code内)"
+          % (HIST_FILE, len(res["ss"]), len(res["nb"])))
+    return res
+
+
 def _theme_map(hold):
     m = {}
     for f in (hold.get("funds") or []):
@@ -159,6 +203,9 @@ def _theme_map(hold):
 
 
 def main():
+    if "--build-hist" in sys.argv:
+        build_history()
+        return 0
     hold = eh.load_holdings() or {}
     hist = eh.load_top5_hist().get("codes") or {}
     theme_of = _theme_map(hold)

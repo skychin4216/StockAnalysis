@@ -49,6 +49,7 @@ smalltools/_probe_tencent_rank.py _probe_tmp.py _probe_boards_tmp.json
 smalltools/_probe_holders.py _probe_nb.py _probe_ss_fields.py
 smalltools/_probe_t5span.py _probe_fitcost.py _holder_progress.json
 smalltools/_tmp_dsmsg.py          # 09-06 ds精选名单/微信消息(一次性, 已推送完成)
+smalltools/_tmp_fitmulti.py       # 2008→今 多变体单扫拟合(一次性, 结果已落 _etf_top5_fit_resonance.json)
 ```
 
 批量删除命令（在仓库根目录执行）：

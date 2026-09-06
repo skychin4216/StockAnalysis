@@ -264,11 +264,54 @@ def _cfg_name(t, h, tp, sl):
         (" SL-%d%%" % abs(sl)) if sl else "")
 
 
-def _variant_ok(pk, variant):
-    """豆包/DeepSeek 思路可回溯因子的叠加过滤（在 base 低吸候选之上）。
-    ds  = DeepSeek: 52周位置分位≤0.35 且 RSI14≤40（低位+不接飞刀）
-    db  = 豆包共振: MACD红柱/金叉 + OBV升 + 收阳温和放量(1.05~2.5) + RSI≤62 + 52周≤0.5
-    all = ds∩db（共振精选：只留两者都满足的极少数）
+FUND_POS_TAGS = ("新进", "加仓", "增持")
+HOLDER_HIST_FILE = os.path.normpath(
+    os.path.join(HERE, "..", "data", "_holder_hist.json"))
+_fund_holder = {"hh": None}
+
+
+def _load_holder_hist():
+    """股东披露日历（_holder_signals.build_history 产出）：社保/北向每季记录带 NOTICE_DATE。"""
+    if _fund_holder["hh"] is None:
+        try:
+            with open(HOLDER_HIST_FILE, encoding="utf-8") as f:
+                _fund_holder["hh"] = json.load(f) or {}
+        except Exception:  # noqa: BLE001
+            _fund_holder["hh"] = {}
+    return _fund_holder["hh"]
+
+
+def fund_state_at(hh, code, day):
+    """截至信号收盘日 day 的最新已披露股东状态（披露日≤day，无未来函数）。
+    ss: 社保最新披露季存在 新进/加仓/增持 动作 → True；有记录但无加码 → False；从未进前十大 → None。
+    nb: 香港中央结算最新披露季占比较上披露季升 ≥0.35pp → True；无升/仅一季 → False；从未进前十大 → None。"""
+    ss = (hh.get("ss") or {}).get(code) or []
+    ssr = [r for r in ss if r.get("notice") and r["notice"] <= day]
+    ssv = None
+    if ssr:
+        q = max(r["end"] for r in ssr)
+        rs = [r for r in ssr if r["end"] == q]
+        ssv = any(r.get("state") in FUND_POS_TAGS for r in rs)
+    nb = (hh.get("nb") or {}).get(code) or []
+    nbr = sorted([r for r in nb if r.get("notice") and r["notice"] <= day],
+                 key=lambda r: r["end"])
+    nbv = None
+    if nbr:
+        if len(nbr) >= 2 and nbr[-1]["end"] > nbr[-2]["end"]:
+            nbv = nbr[-1]["ratio"] - nbr[-2]["ratio"] >= 0.35
+        else:
+            nbv = False
+    return {"ss": ssv, "nb": nbv}
+
+
+def _variant_ok(pk, variant, fs=None):
+    """豆包/DeepSeek/股东共振 可回溯因子的叠加过滤（在 base 低吸候选之上）。
+    ds     = DeepSeek: 52周位置分位≤0.35 且 RSI14≤40（低位+不接飞刀）
+    ds_ss  = ds ∩ 社保最新披露季加码（新进/加仓/增持）
+    ds_nb  = ds ∩ 北向(中央结算)季度增持 ≥0.35pp
+    ds_fund= ds ∩ (社保加码 或 北向增持)；无数据=未确认，不构成信号
+    db     = 豆包共振: MACD红柱/金叉 + OBV升 + 收阳温和放量(1.05~2.5) + RSI≤62 + 52周≤0.5
+    all    = ds∩db（共振精选：只留两者都满足的极少数）
     注：pos52 需要≥250根历史，2008 早期新上市样本不足会自动排除。"""
     if variant == "base":
         return True
@@ -278,6 +321,14 @@ def _variant_ok(pk, variant):
                  and rsi <= 40)
     if variant == "ds":
         return ok_ds
+    if variant in ("ds_ss", "ds_nb", "ds_fund"):
+        if not ok_ds or not isinstance(fs, dict):
+            return False
+        if variant == "ds_ss":
+            return fs.get("ss") is True
+        if variant == "ds_nb":
+            return fs.get("nb") is True
+        return fs.get("ss") is True or fs.get("nb") is True
     if variant == "db":
         macd = bool(pk.get("macd_bull") or pk.get("macd_golden"))
         return bool(macd and pk.get("obv_up") is True and pk.get("vr_ok")
@@ -299,6 +350,9 @@ def run_fit(args):
     step = max(1, int(getattr(args, "step", 1) or 1))
     sel = days[::step]
     vname = {"base": "基线", "ds": "DeepSeek低位(52周≤35%+RSI14≤40)",
+             "ds_ss": "ds∩社保新披露季加码",
+             "ds_nb": "ds∩北向季度增持",
+             "ds_fund": "ds∩(社保加码或北向增持)",
              "db": "豆包共振(MACD红+OBV升+温和放量+RSI≤62)",
              "all": "ds∩db 共振精选"}.get(variant, variant)
     print("拟合窗口 %s ~ %s，共 %d 个交易日（采样步长%d → %d 天）| 变体: %s"
@@ -307,6 +361,11 @@ def run_fit(args):
     if len(hist) < 30:
         hist = EH.build_top5_hist()
     print("top5 历史覆盖 %d 只股票" % len(hist))
+    fund_variant = variant in ("ds_ss", "ds_nb", "ds_fund")
+    hh = _load_holder_hist() if fund_variant else {}
+    if fund_variant:
+        print("股东披露日历: 社保%d只/北向%d只（按 NOTICE_DATE≤信号日 判定，无未来函数）"
+              % (len(hh.get("ss") or {}), len(hh.get("nb") or {})))
     # 大盘动量分组（上证 20 日涨跌）＋窗口期指数基准（指数 secid 需直读 db）
     con = sqlite3.connect(MARKET_DB)
     try:
@@ -339,16 +398,38 @@ def run_fit(args):
     trades = {k: [] for k in keys}
     cf_sigs = {}
     n_sig = 0
+    fstat = ({"ds_total": 0, "confirmed": 0, "ss_ok": 0, "nb_ok": 0, "no_data": 0}
+             if fund_variant else None)
     for day in sel:
         st = EH.screen_picks_asof(day, hist=hist)
         seen = set()
         uniq = []
+        fday = {}
         for info in st.values():
             for pk in info["picks"]:
                 if pk["code"] in seen:
                     continue
                 seen.add(pk["code"])
-                if not _variant_ok(pk, variant):
+                if fund_variant:
+                    fs = fday.get(pk["code"])
+                    if fs is None:
+                        fs = fund_state_at(hh, pk["code"], day)
+                        fday[pk["code"]] = fs
+                    p52 = pk.get("pos52")
+                    rsi = pk.get("rsi")
+                    if (p52 is not None and p52 <= 0.35
+                            and isinstance(rsi, (int, float)) and rsi <= 40):
+                        fstat["ds_total"] += 1
+                        if fs.get("ss") is None and fs.get("nb") is None:
+                            fstat["no_data"] += 1
+                        if fs.get("ss") is True:
+                            fstat["ss_ok"] += 1
+                        if fs.get("nb") is True:
+                            fstat["nb_ok"] += 1
+                    if not _variant_ok(pk, variant, fs):
+                        continue
+                    fstat["confirmed"] += 1
+                elif not _variant_ok(pk, variant):
                     continue
                 uniq.append(pk)
         if not uniq:
@@ -376,6 +457,10 @@ def run_fit(args):
                 cf_trades[h].append({"date": day, "code": pk["code"],
                                      "name": pk["name"], "ret": r, "exit": day})
     print("累计信号(去重) %d 条（采样日均 %.1f）" % (n_sig, n_sig / len(sel)))
+    if fstat:
+        print("共振覆盖: ds候选 %d → 社保加码%d / 北向增持%d / 双通道无数据%d / 最终信号%d"
+              % (fstat["ds_total"], fstat["ss_ok"], fstat["nb_ok"],
+                 fstat["no_data"], fstat["confirmed"]))
     if idx_ret is not None:
         print("同期上证指数窗口涨幅: %+.1f%%（等权逐票累加收益会放大幅度，注意相对指数看方向）\n"
               % idx_ret)
@@ -496,9 +581,10 @@ def main():
     ap.add_argument("--step", type=int, default=1,
                     help="拟合采样步长：每N个交易日取1天（长窗口用，如 --step 10）")
     ap.add_argument("--variant", default="base",
-                    choices=["base", "ds", "db", "all"],
-                    help="豆包/DeepSeek 思路变体: base基线 / ds=52周分位≤35%+RSI14≤40 / "
-                         "db=MACD红+OBV升+温和放量+RSI≤62+52周≤50% / all=ds∩db共振精选")
+                    choices=["base", "ds", "ds_ss", "ds_nb", "ds_fund", "db", "all"],
+                    help="变体: base基线 / ds=52周分位≤35%+RSI14≤40 / "
+                         "ds_ss=ds∩社保披露季加码 / ds_nb=ds∩北向季度增持 / "
+                         "ds_fund=ds∩(社保或北向) / db=豆包共振 / all=ds∩db")
     args = ap.parse_args()
     if args.fit:
         return run_fit(args)
