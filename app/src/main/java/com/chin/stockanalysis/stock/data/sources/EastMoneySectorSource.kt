@@ -13,27 +13,20 @@ import org.json.JSONObject
  * 用于处理"有色金属前20的股票"这类动态板块查询。
  *
  * ### API 接口
- * 板块列表：
- *   https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=50&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f3&fs=m:90+t:2+f:!50&fields=f2,f3,f4,f8,f12,f14,f15,f16,f17,f18,f20,f21,f23,f24,f25,f22,f11,f62,f128,f136,f115,f152
+ * 板块清单（行业 + 概念，运行时解析名称→代码用）：
+ *   行业：https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=6000&fs=m:90+t:2+f:!50&fields=f12,f14
+ *   概念：https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=6000&fs=m:90+t:3+f:!50&fields=f12,f14
+ * 板块成分股（如按解析出的代码获取成分股）：
+ *   https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=100&fs=b:BK0478+f:!50&fields=...
  *
- * 板块成分股（以板块代码如 BK0478 获取有色金属成分股）：
- *   https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=50&po=1&np=1&fid=f3&fs=b:BK0478+f:!50&fields=f2,f3,f4,f5,f6,f12,f14,f15,f16,f17,f18&fltt=2
- *
- * ### 已知板块代码
- * | 板块名 | 东方财富代码 |
- * |--------|------------|
- * | 有色金属 | BK0478 |
- * | 钢铁 | BK0470 |
- * | 煤炭 | BK0421 |
- * | 银行 | BK0475 |
- * | 白酒 | BK1078 |
- * | 半导体 | BK0447 |
- * | 医药生物 | BK0465 |
- * | 新能源汽车 | BK0811 |
- * | 军工 | BK0460 |
- * | 房地产 | BK0451 |
- * | 化工 | BK0419 |
- * | 电力 | BK0427 |
+ * ### ⚠️ 为什么不再硬编码板块代码（2026-09 事故记录）
+ * 旧版维护一张"板块名 → BK 代码"静态表，但东财板块代码会随板块调整漂移，
+ * 导致整批成分错写进 sector_stocks：
+ *   - "稀土"/"碳中和" 都指向 BK1045 → 实为【房地产服务】，sz000560 我爱我家 被错标成"稀土"
+ *   - "钢铁" BK0470 → 实为【造纸印刷】；"煤炭" BK0421 → 实为【铁路公路】
+ *   - "半导体" BK0447 → 实为【互联网服务】；"AI/算力/大模型" BK1064 → 实为【东数西算】
+ *   - "光伏" BK1026 → 实为【调味品】；"白酒" BK1078 → 实为【肝炎概念】…
+ * 故代码一律在运行时从东财板块清单解析（[resolveSector]），静态表仅保留查询别名。
  */
 class EastMoneySectorSource {
 
@@ -41,68 +34,113 @@ class EastMoneySectorSource {
     private val tag = "SectorSource"
 
     companion object {
-        // 板块名称 → 东方财富板块代码
-        val SECTOR_CODE_MAP: Map<String, String> = mapOf(
-            "有色金属" to "BK0478",
-            "有色" to "BK0478",
-            "钢铁" to "BK0470",
-            "煤炭" to "BK0421",
-            "银行" to "BK0475",
-            "白酒" to "BK1078",
-            "食品饮料" to "BK0432",
-            "半导体" to "BK0447",
-            "芯片" to "BK0447",
-            "集成电路" to "BK0447",
-            "医药生物" to "BK0465",
-            "医药" to "BK0465",
-            "生物医药" to "BK0465",
-            "新能源汽车" to "BK0811",
-            "新能源" to "BK0811",
-            "军工" to "BK0460",
-            "国防军工" to "BK0460",
-            "房地产" to "BK0451",
-            "化工" to "BK0419",
-            "电力" to "BK0427",
-            "证券" to "BK0473",
-            "保险" to "BK0474",
-            "汽车" to "BK0481",
-            "家电" to "BK0436",
-            "电子" to "BK0448",
-            "通信" to "BK0480",
-            "计算机" to "BK0446",
-            "传媒" to "BK0420",
-            "互联网" to "BK0803",
-            "农业" to "BK0403",
-            "建筑" to "BK0414",
-            "交通运输" to "BK0437",
-            "商业零售" to "BK0467",
-            "纺织服装" to "BK0431",
-            "旅游" to "BK0463",
-            "造纸" to "BK0485",
-            "机械" to "BK0441",
-            "光伏" to "BK1026",
-            "储能" to "BK0816",
-            "人工智能" to "BK1064",
-            "AI" to "BK1064",
-            "算力" to "BK1064",
-            "大模型" to "BK1064",
-            "稀土" to "BK1045",
-            "氢能" to "BK1041",
-            "碳中和" to "BK1045",
+        /**
+         * 常见板块中文名/别名（用户/AI 高频查询词）。
+         * 仅用于：① ThemeStockService 从用户输入中截取板块词；
+         * ② MainActivity 预热 sector_stocks 的遍历集合。
+         * 不再保存 BK 代码 —— 板块代码全部运行时从东财板块清单解析。
+         */
+        val SECTOR_KEYWORDS: List<String> = listOf(
+            "有色金属", "有色", "钢铁", "煤炭", "银行", "白酒", "食品饮料",
+            "半导体", "芯片", "集成电路",
+            "医药生物", "医药", "生物医药", "新能源汽车", "新能源",
+            "军工", "国防军工", "房地产", "化工", "电力", "证券", "保险",
+            "汽车", "家电", "电子", "通信", "计算机", "传媒", "互联网",
+            "农业", "建筑", "交通运输", "商业零售", "纺织服装", "旅游", "造纸",
+            "机械", "光伏", "储能", "人工智能", "AI", "算力", "大模型",
+            "稀土", "氢能", "碳中和"
         )
+
+        private data class BoardRef(val code: String, val name: String)
+
+        private val codeBookMutex = Any()
+        private var boardListCache: List<BoardRef>? = null
+        private var boardListTime = 0L
+
+        /** 板块清单进程内缓存时长（6 小时） */
+        private const val CODE_BOOK_TTL = 6 * 3600 * 1000L
+
+        /**
+         * 在板块清单中按"精确 → 官方名包含查询词 → 查询词包含官方名"查找，
+         * 返回 (板块代码, 官方板块名)；清单拉取失败/未命中返回 null。
+         */
+        fun resolveSectorFromCodeBook(sectorName: String): Pair<String, String>? {
+            val trimmed = sectorName.trim()
+            if (trimmed.isEmpty()) return null
+            val boards = boardListOrFetch()
+            val exact = trimmed.replace("板块", "").replace("概念", "").trim()
+            boards.firstOrNull { it.name == trimmed || it.name == exact }?.let {
+                return it.code to it.name
+            }
+            boards.firstOrNull { it.name.contains(trimmed) }?.let { return it.code to it.name }
+            boards.firstOrNull { trimmed.contains(it.name) }?.let { return it.code to it.name }
+            Log.w("SectorSource", "板块清单中未找到: $sectorName（当前共 ${boards.size} 个板块）")
+            return null
+        }
+
+        /** 拉取行业 + 概念板块清单（进程内缓存 TTL 6h） */
+        private fun boardListOrFetch(): List<BoardRef> {
+            synchronized(codeBookMutex) {
+                val now = System.currentTimeMillis()
+                if (boardListCache != null && now - boardListTime < CODE_BOOK_TTL) {
+                    return boardListCache!!
+                }
+                val fresh = mutableListOf<BoardRef>()
+                for (fs in listOf("m:90+t:2+f:!50", "m:90+t:3+f:!50")) {
+                    val url = DataConfig.eastmoneyPush2Api("/clist/get") +
+                            "?pn=1&pz=6000&po=1&np=1&fltt=2&invt=2&fid=f12" +
+                            "&fs=" + fs +
+                            "&fields=f12,f14"
+                    val body = fetchBoardListBody(url) ?: continue
+                    runCatching {
+                        val diff = JSONObject(body).optJSONObject("data")
+                            ?.optJSONArray("diff") ?: return@runCatching
+                        for (i in 0 until diff.length()) {
+                            val o = diff.optJSONObject(i) ?: continue
+                            fresh.add(BoardRef(o.optString("f12"), o.optString("f14")))
+                        }
+                    }
+                }
+                if (fresh.isNotEmpty()) {
+                    boardListCache = fresh
+                    boardListTime = now
+                    Log.i("SectorSource", "板块清单已加载: ${fresh.size} 个（行业+概念）")
+                }
+                return fresh
+            }
+        }
+
+        private fun fetchBoardListBody(url: String): String? {
+            return try {
+                val request = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .header("Referer", DataConfig.eastmoneyQuote)
+                    .build()
+                val response = HttpClientProvider.realtimeClient.newCall(request).execute()
+                if (!response.isSuccessful) { Log.w("SectorSource", "HTTP ${response.code}"); return null }
+                response.body?.string()
+            } catch (e: Exception) {
+                Log.w("SectorSource", "板块清单请求失败: ${e.message}")
+                null
+            }
+        }
     }
 
     /**
-     * 根据板块名称查找对应的东方财富板块代码
+     * 解析板块名称 → (板块代码, 官方板块名)。代码来自运行时板块清单，
+     * 避免静态 BK 代码漂移导致的整批错配。
      */
-    fun findSectorCode(sectorName: String): String? {
-        return SECTOR_CODE_MAP.entries.firstOrNull { (key, _) ->
-            sectorName.contains(key, ignoreCase = true)
-        }?.value
-    }
+    fun resolveSector(sectorName: String): Pair<String, String>? =
+        resolveSectorFromCodeBook(sectorName)
 
     /**
-     * 获取板块成分股列表（按涨跌幅/市值排序），返回股票代码
+     * 根据板块名称查找对应的东方财富板块代码（运行时解析）。
+     */
+    fun findSectorCode(sectorName: String): String? = resolveSector(sectorName)?.first
+
+    /**
+     * 获取板块成分股列表（按市值排序），返回股票代码
      *
      * @param sectorCode 东方财富板块代码（如 BK0478）
      * @param topN 取前 N 只（默认 20）
@@ -138,7 +176,7 @@ class EastMoneySectorSource {
      * 便捷方法：根据板块名称直接获取成分股代码列表
      *
      * @param sectorName 板块名称（如"有色金属"）
-     * @return Pair<板块中文名, 股票代码列表>，找不到板块时返回 null
+     * @return Pair<官方板块名, 股票代码列表>；板块无法解析时返回 null
      */
     fun fetchByName(
         sectorName: String,
@@ -147,14 +185,14 @@ class EastMoneySectorSource {
         excludeCyb: Boolean = false,
         minMarketCapBillion: Long = 0L
     ): Pair<String, List<SectorStock>>? {
-        val code = findSectorCode(sectorName) ?: run {
+        val resolved = resolveSector(sectorName) ?: run {
             Log.w(tag, "Unknown sector: $sectorName")
             return null
         }
-        val sectorFullName = SECTOR_CODE_MAP.entries.firstOrNull { it.value == code }?.key ?: sectorName
+        val (code, officialName) = resolved
         val stocks = fetchSectorComponents(code, topN, excludeKcb, excludeCyb, minMarketCapBillion)
-        Log.d(tag, "fetchByName: $sectorName → $code → ${stocks.size} stocks")
-        return Pair(sectorFullName, stocks)
+        Log.d(tag, "fetchByName: $sectorName → $code($officialName) → ${stocks.size} stocks")
+        return Pair(officialName, stocks)
     }
 
     // ════════════════════════════════════════

@@ -13,11 +13,16 @@
 参数回流：`--params` 可同时把 COS 上的 backtest_params.json 下载到
 app/src/main/assets/backtest_params.json（PC 拟合结果回流手机的同一份）。
 
+关注板块：`--focus` 可把 APK 上传的 user_focus_sectors.json 下载到
+data/user_focus_sectors.json（三段推送「📌 用户重点关注板块·ETF低吸」数据源）。
+
 用法：
   python smalltools/cloud_download.py                  # 下载最新 1 个包
   python smalltools/cloud_download.py --max 7          # 最近 7 天
   python smalltools/cloud_download.py --all --merge    # 全部并汇总
   python smalltools/cloud_download.py --params         # 顺带下载最新参数文件
+  python smalltools/cloud_download.py --focus          # 顺带下载用户关注板块
+  python smalltools/cloud_download.py --focus-key stockanalysis/focus/user_focus_sectors.json   # 只下载关注板块
   python smalltools/cloud_download.py --prefix 自定义前缀
 """
 import argparse
@@ -30,7 +35,14 @@ import zipfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cos_utils import load_cloud_config, require_config, request  # noqa: E402
 
-RECORD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_records", "cloud")
+HERE = os.path.dirname(os.path.abspath(__file__))
+RECORD_DIR = os.path.join(HERE, "_records", "cloud")
+REPO_ROOT = os.path.dirname(HERE)
+APP_CONFIG_PATH = os.path.join(REPO_ROOT, "app", "src", "main", "assets", "data", "app_config.json")
+# 用户关注板块下载落点（_publish_candidates.py 三段推送「📌 用户重点关注板块·ETF重仓低吸观察」读取）
+DATA_DIR = os.path.join(REPO_ROOT, "data")
+FOCUS_OUT = os.path.join(DATA_DIR, "user_focus_sectors.json")
+DEFAULT_FOCUS_KEY = "stockanalysis/focus/user_focus_sectors.json"
 TABLE_KEYS = [
     "strategy_trade_orders", "t_trade_records", "strategy_trade_backtests",
     "daily_period_result", "strategy_trade_fitting_params",
@@ -164,6 +176,51 @@ def download_params(cfg, out_path):
     return True
 
 
+def focus_key_of(cfg):
+    """focus_key 解析：cloud_config.json → app_config.json → 默认值。"""
+    key = (cfg.get("focus_key") or "").strip()
+    if key:
+        return key
+    try:
+        if os.path.exists(APP_CONFIG_PATH):
+            with open(APP_CONFIG_PATH, encoding="utf-8") as f:
+                key = ((json.load(f).get("cloud_sync") or {}).get("focus_key") or "").strip()
+    except (OSError, ValueError):
+        pass
+    return key or DEFAULT_FOCUS_KEY
+
+
+def download_focus(cfg, out_path, key_override=None):
+    """下载 APK 上传的用户关注板块 JSON → data/user_focus_sectors.json。
+
+    文件 schema：{"asof": "...", "sectors": [...], "stocks": [{"code","name","sector"}]}，
+    由 smalltools/_etf_holdings.load_focus_sectors() 消费。
+    """
+    key = (key_override or focus_key_of(cfg)).strip("/")
+    if not key:
+        print("focus_key 未配置（--focus-key 可指定）")
+        return False
+    print("下载用户关注板块: COS %s" % key)
+    status, _, body = request(cfg["secret_id"], cfg["secret_key"],
+                              cfg["bucket"], cfg["region"], "get", "/" + key)
+    if status != 200:
+        print("关注板块下载失败 HTTP %s: %s" % (status, body.decode("utf-8", "replace")[:300]))
+        return False
+    try:
+        d = json.loads(body.decode("utf-8"))
+    except ValueError as e:
+        print("关注板块文件不是合法 JSON：%s" % e)
+        return False
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False, indent=1)
+    secs = len(d.get("sectors") or [])
+    stocks = len(d.get("stocks") or [])
+    print("关注板块已下载 → %s（sectors=%d, stocks=%d, asof=%s）"
+          % (out_path, secs, stocks, d.get("asof", "")))
+    return True
+
+
 def main():
     ap = argparse.ArgumentParser(description="下载手机上传的 COS 数据包")
     ap.add_argument("--max", type=int, default=1, help="下载最近 N 个包（默认 1）")
@@ -172,6 +229,10 @@ def main():
                     help="汇总所有包到一个 cloud_export.json")
     ap.add_argument("--params", action="store_true",
                     help="顺带把 COS 上 backtest_params.json 下载回 assets")
+    ap.add_argument("--focus", action="store_true",
+                    help="下载用户关注板块 JSON 到 data/user_focus_sectors.json")
+    ap.add_argument("--focus-key",
+                    help="覆盖 focus_key（常与 --focus 组合；单独指定则只下载关注板块）")
     ap.add_argument("--prefix")
     ap.add_argument("--bucket")
     ap.add_argument("--region")
@@ -190,6 +251,12 @@ def main():
 
     if args.list_all:
         list_all(cfg, cfg.get("prefix", ""))
+        sys.exit(0)
+
+    # 仅下载关注板块（--focus-key 且未带 --focus）：不下载数据包
+    focus_only = bool(args.focus_key) and not args.focus
+    if focus_only:
+        download_focus(cfg, FOCUS_OUT, key_override=args.focus_key)
         sys.exit(0)
 
     prefix = cfg["prefix"].strip("/") + "/"
@@ -215,6 +282,9 @@ def main():
         assets_dir = os.path.join(os.path.dirname(os.path.dirname(
             os.path.abspath(__file__))), "app", "src", "main", "assets")
         download_params(cfg, os.path.join(assets_dir, "backtest_params.json"))
+
+    if args.focus:
+        download_focus(cfg, FOCUS_OUT, key_override=args.focus_key)
 
 
 if __name__ == "__main__":

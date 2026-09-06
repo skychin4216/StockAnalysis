@@ -131,12 +131,17 @@ object CandidatePool {
                     Log.d(TAG, "  板块 [$sectorName] → 从 SectorSubDivision 获取 ${allStocks.size} 只")
                     allStocks
                 } else {
-                    // Fallback: 展开子板块 → 从 DB 查询
+                    // Fallback: 展开子板块 → 优先 DB 查询;DB 为空(如恢复出厂)则回退内置硬编码股票
                     val subSectors = SectorSubDivision.getSubSectors(sectorName)
                     Log.d(TAG, "  板块 [$sectorName] → ${subSectors.size} 个子板块 (DB fallback)")
-                    subSectors.flatMap { sub ->
-                        db.sectorStockDao().getStockCodesBySector(sub.name)
-                    }.distinct()
+                    val dbCodes = try {
+                        subSectors.flatMap { sub -> db.sectorStockDao().getStockCodesBySector(sub.name) }.distinct()
+                    } catch (_: Exception) { emptyList() }
+                    if (dbCodes.isEmpty()) {
+                        subSectors.flatMap { it.stocks.map { s -> s.code } }.distinct()
+                    } else {
+                        dbCodes
+                    }
                 }
 
                 if (codes.isEmpty()) {

@@ -12,7 +12,8 @@
     },
     "tencent": {
       "name": "腾讯行情",
-      "gtimg": "https://qt.gtimg.cn"
+      "gtimg": "https://qt.gtimg.cn",
+      "minute": "https://web.ifzq.gtimg.cn/appstock/app/minute/query"
     },
     "eastmoney": {
       "name": "东方财富",
@@ -158,7 +159,8 @@
     "prefix": "stockanalysis/phone",
     "params_key": "stockanalysis/params/backtest_params.json",
     "db_key": "stockanalysis/db/market_data.db",
-    "candidates_key": "stockanalysis/quant/candidates.json"
+    "candidates_key": "stockanalysis/quant/candidates.json",
+    "focus_key": "stockanalysis/focus/user_focus_sectors.json"
   },
 
   "remote_control": {

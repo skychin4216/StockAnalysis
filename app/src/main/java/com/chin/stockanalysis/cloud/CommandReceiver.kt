@@ -31,6 +31,9 @@ import java.util.Locale
  * # 只上传 COS（--ez force true 可忽略当日已上传缓存强制上传）
  * adb shell am broadcast -a com.chin.stockanalysis.CMD --es command sync --ez force true
  *
+ * # 只同步用户「重点关注板块」到 COS（sync/refresh/backtest 均会顺带执行）
+ * adb shell am broadcast -a com.chin.stockanalysis.CMD --es command focus
+ *
  * # 只增量下载缺失数据
  * adb shell am broadcast -a com.chin.stockanalysis.CMD --es command download
  *
@@ -45,7 +48,7 @@ import java.util.Locale
  * ```
  *
  * extra 参数：
- * - `command`：refresh（默认）/ sync / download / status / news / backtest
+ * - `command`：refresh（默认）/ sync / focus / download / status / news / backtest
  * - `force`：布尔，是否忽略当日缓存强制刷新（用于 sync / refresh / backtest）
  *
  * 执行结果通过 Logcat（TAG=`CommandReceiver`）输出，供 adb logcat 抓取。
@@ -74,6 +77,7 @@ class CommandReceiver : BroadcastReceiver() {
                 when (command) {
                     "status" -> runStatus(appContext)
                     "sync", "upload" -> runUpload(appContext, force)
+                    "focus" -> runFocusUpload(appContext)
                     "download" -> runDownload(appContext)
                     "news" -> runNewsUpdate(appContext)
                     "backtest", "fit" -> runBacktest(appContext, force)
@@ -153,7 +157,7 @@ class CommandReceiver : BroadcastReceiver() {
         Log.i(TAG, "📥 增量下载完成，写入 $count 条记录")
     }
 
-    /** 上传数据包到 COS */
+    /** 上传数据包到 COS（顺带同步用户关注板块 user_focus_sectors.json） */
     private suspend fun runUpload(context: Context, force: Boolean) {
         Log.i(TAG, "☁️ 开始同步 COS…")
         val manager = CloudSyncManager(context)
@@ -165,16 +169,39 @@ class CommandReceiver : BroadcastReceiver() {
 
         val lastUpload = manager.lastUploadDate()
         if (!force && lastUpload == LocalDate.now().format(DATE_FMT)) {
-            Log.i(TAG, "☁️ 今日已上传过（$lastUpload），使用 --ez force true 可强制重传")
-            return
+            Log.i(TAG, "☁️ 今日数据包已上传过（$lastUpload），使用 --ez force true 可强制重传")
+        } else {
+            manager.uploadData(cfg, force = force) { status ->
+                Log.i(TAG, "☁️ $status")
+            }.onSuccess { url ->
+                Log.i(TAG, "☁️ 上传成功: $url")
+            }.onFailure { e ->
+                Log.e(TAG, "☁️ 上传失败: ${e.message}")
+            }
         }
 
-        manager.uploadData(cfg, force = force) { status ->
-            Log.i(TAG, "☁️ $status")
-        }.onSuccess { url ->
-            Log.i(TAG, "☁️ 上传成功: $url")
+        // 用户关注板块不受「每日一次」去重限制：随时增删，每次同步均上传最新状态
+        uploadFocus(context, manager, cfg)
+    }
+
+    /** 只上传用户关注板块（不打包数据包） */
+    private suspend fun runFocusUpload(context: Context) {
+        val manager = CloudSyncManager(context)
+        val cfg = manager.loadConfig()
+        if (!manager.isConfigured(cfg)) {
+            Log.w(TAG, "🧭 COS 未配置，跳过上传（请先在设置中配置 COS 参数）")
+            return
+        }
+        uploadFocus(context, manager, cfg)
+    }
+
+    private suspend fun uploadFocus(context: Context, manager: CloudSyncManager, cfg: CloudSyncManager.CloudConfig) {
+        manager.uploadFocusSectors(cfg) { status ->
+            Log.i(TAG, "🧭 $status")
+        }.onSuccess { key ->
+            Log.i(TAG, "🧭 用户关注板块已同步: $key")
         }.onFailure { e ->
-            Log.e(TAG, "☁️ 上传失败: ${e.message}")
+            Log.e(TAG, "🧭 关注板块同步失败: ${e.message}")
         }
     }
 

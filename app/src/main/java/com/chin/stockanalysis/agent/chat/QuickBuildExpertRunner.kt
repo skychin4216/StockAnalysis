@@ -135,7 +135,7 @@ object QuickBuildExpertRunner {
 
             // ④ 四周期专属 usecase 并行（seed 播种，互不干扰）
             val periodIds = arrayOf("ultra_short_period", "short_term_period", "mid_term_period", "long_term_period")
-            val periodNames = arrayOf("超短", "短线", "中线", "长线")
+            val periodNames = arrayOf("短线·极速", "短线", "中线", "长线")
             val results = coroutineScope {
                 periodIds.indices.map { i ->
                     async {

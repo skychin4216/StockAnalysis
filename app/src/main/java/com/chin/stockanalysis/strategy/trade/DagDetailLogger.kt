@@ -9,6 +9,7 @@ import com.chin.stockanalysis.strategy.topology.core.FilterResult
 import com.chin.stockanalysis.strategy.topology.core.MergedSignalPool
 import com.chin.stockanalysis.strategy.topology.core.SignalPack
 import com.chin.stockanalysis.strategy.topology.core.StockPool
+import com.chin.stockanalysis.strategy.topology.pipelines.NewsGuardResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -174,6 +175,7 @@ object DagDetailLogger {
         is SignalPack -> v.signals.map { it.stockCode }
         is MergedSignalPool -> v.stockHits.keys.toList()
         is FilterResult -> v.passed.map { it.stockCode } + v.rejected.map { it.code }
+        is NewsGuardResult -> v.passedCodes.toList()
         is StockRealtime -> listOf(v.code)
         is List<*> -> v.flatMap { extractCodes(it) }
         is Map<*, *> -> v.keys.mapNotNull { it as? String }

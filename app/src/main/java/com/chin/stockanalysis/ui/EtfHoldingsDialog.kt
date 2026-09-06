@@ -185,6 +185,8 @@ class EtfHoldingsDialog(context: Context) : Dialog(context) {
             layoutParams = lp
             if (code.isNotBlank()) {
                 setOnClickListener {
+                    // 必须先关闭全屏 Dialog，否则会盖住详情页导致「点击后没反应」
+                    dismiss()
                     try {
                         StockDetailNavigator.navigateFromActivity(
                             context as androidx.fragment.app.FragmentActivity, code, name

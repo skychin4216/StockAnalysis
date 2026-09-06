@@ -65,7 +65,8 @@ class CloudSyncManager(private val context: Context) {
         val prefix: String,
         val paramsKey: String,
         val dbKey: String,
-        val candidatesKey: String
+        val candidatesKey: String,
+        val focusKey: String
     )
 
     /** 读取 cloud_sync 配置 */
@@ -78,7 +79,8 @@ class CloudSyncManager(private val context: Context) {
         prefix = DataConfig.get("cloud_sync.prefix", "stockanalysis/phone"),
         paramsKey = DataConfig.get("cloud_sync.params_key", "stockanalysis/params/backtest_params.json"),
         dbKey = DataConfig.get("cloud_sync.db_key", "stockanalysis/db/market_data.db"),
-        candidatesKey = DataConfig.get("cloud_sync.candidates_key", "stockanalysis/quant/candidates.json")
+        candidatesKey = DataConfig.get("cloud_sync.candidates_key", "stockanalysis/quant/candidates.json"),
+        focusKey = DataConfig.get("cloud_sync.focus_key", "stockanalysis/focus/user_focus_sectors.json")
     )
 
     fun isConfigured(cfg: CloudConfig): Boolean =
@@ -196,6 +198,78 @@ class CloudSyncManager(private val context: Context) {
         }
 
     // ═══════════════════════════════════════════════════════════
+    // 1b. 用户关注板块同步：采集 → user_focus_sectors.json → COS PUT
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * 采集用户「重点关注板块」并上传到 COS（focus_key），供 PC 侧三段推送
+     * 「📌 用户重点关注板块·ETF重仓低吸观察」使用。
+     * 不做按日去重：用户随时可能增删关注，每次上传均同步最新状态。
+     *
+     * @return COS 对象路径（失败返回 failure）
+     */
+    suspend fun uploadFocusSectors(cfg: CloudConfig, onStatus: (String) -> Unit = {}): Result<String> =
+        withContext(Dispatchers.IO) {
+            if (!isConfigured(cfg)) return@withContext Result.failure(IllegalStateException("云同步未配置（bucket/密钥缺失）"))
+            if (cfg.focusKey.isBlank()) {
+                return@withContext Result.failure(IllegalStateException("focus_key 未配置"))
+            }
+
+            onStatus("正在采集用户关注板块…")
+            val root = try {
+                FocusSectorsExporter(context).buildJson()
+            } catch (e: Exception) {
+                Log.e(TAG, "采集关注板块失败: ${e.message}", e)
+                return@withContext Result.failure(e)
+            }
+            val sectors = root.optJSONArray("sectors")?.length() ?: 0
+            val stocks = root.optJSONArray("stocks")?.length() ?: 0
+            val bodyBytes = root.toString(2).toByteArray(Charsets.UTF_8)
+
+            onStatus("正在上传关注板块（sectors=$sectors, stocks=$stocks）…")
+            try {
+                val url = "https://${cfg.bucket}.cos.${cfg.region}.myqcloud.com/${cfg.focusKey}"
+                val host = "${cfg.bucket}.cos.${cfg.region}.myqcloud.com"
+                val now = System.currentTimeMillis() / 1000
+                val end = now + 600
+                val headers = mapOf(
+                    "host" to host,
+                    "content-type" to "application/json"
+                )
+                val auth = CosSigner.sign(
+                    secretId = cfg.secretId,
+                    secretKey = cfg.secretKey,
+                    method = "put",
+                    uriPathname = "/${cfg.focusKey}",
+                    httpParameters = emptyMap(),
+                    httpHeaders = headers,
+                    startTime = now,
+                    endTime = end
+                )
+                val body: RequestBody = bodyBytes.toRequestBody("application/json".toMediaType())
+                val request = Request.Builder()
+                    .url(url)
+                    .put(body)
+                    .header("Authorization", auth)
+                    .header("Content-Type", "application/json")
+                    .build()
+                client.newCall(request).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        onStatus("关注板块上传成功 ✓ ${cfg.focusKey}")
+                        Result.success(cfg.focusKey)
+                    } else {
+                        val err = resp.body?.string() ?: resp.code.toString()
+                        onStatus("关注板块上传失败: HTTP ${resp.code}")
+                        Result.failure(RuntimeException("COS 上传失败 HTTP ${resp.code}: ${err.take(300)}"))
+                    }
+                }
+            } catch (e: Exception) {
+                onStatus("关注板块上传失败: ${e.message}")
+                Result.failure(e)
+            }
+        }
+
+    // ═══════════════════════════════════════════════════════════
     // 2. 参数回流：下载 backtest_params.json 并导入
     // ═══════════════════════════════════════════════════════════
 
@@ -245,7 +319,9 @@ class CloudSyncManager(private val context: Context) {
                     val result = com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader.importParams(context, jsonText)
                     if (result == null) {
                         onStatus("参数导入成功 ✓")
-                        Result.success("参数导入成功，来源: ${cfg.paramsKey}")
+                        // 只展示参数名/生成时间(如 v7(2026-09-04 22:10 拟合))或文件名，不显示完整 COS 路径
+                        val dispName = parseParamsDisplayName(jsonText, cfg.paramsKey)
+                        Result.success("参数导入成功: $dispName")
                     } else {
                         onStatus("参数导入失败: $result")
                         Result.failure(RuntimeException("参数导入失败: $result"))
@@ -256,6 +332,26 @@ class CloudSyncManager(private val context: Context) {
                 Result.failure(e)
             }
         }
+
+    /** 从参数 JSON 提取展示名（meta.name 优先，其次 v<version>(<generated> 生成)，兜底文件名），
+     *  避免在提示中显示完整 COS 路径而看不清参数文件名/生成时间。 */
+    private fun parseParamsDisplayName(jsonText: String, fallbackKey: String): String {
+        val fallback = fallbackKey.substringAfterLast('/')
+        return try {
+            val j = JSONObject(jsonText)
+            j.optJSONObject("meta")?.optString("name")?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
+            val v = j.optString("version").trim()
+            val g = j.optString("generated").trim()
+            when {
+                v.isNotBlank() && v != "-" && g.isNotBlank() -> "v$v（$g 生成）"
+                v.isNotBlank() && v != "-" -> "v$v"
+                g.isNotBlank() -> "（$g 生成）"
+                else -> fallback
+            }
+        } catch (e: Exception) {
+            fallback
+        }
+    }
 
     // ═══════════════════════════════════════════════════════════
     // 3. 行情库同步：下载 PC 端上传的市场库，导入 Room daily_snapshot

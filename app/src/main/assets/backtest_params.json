@@ -342,7 +342,17 @@
           "n": 27
         }
       },
-      "fitted_months": 36
+      "fitted_months": 36,
+      "lowVol": {
+        "vol20_max": 3.4,
+        "default": {
+          "style": "hold",
+          "maxHold": 300,
+          "tp": 0.0,
+          "sl": -20.0,
+          "tRatio": 0.4
+        }
+      }
     }
   },
   "meta": {

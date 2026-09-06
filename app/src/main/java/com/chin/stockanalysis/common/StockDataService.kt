@@ -63,10 +63,15 @@ object StockDataService {
             }
         }
 
-        // ── 4. 从 sector_stocks 批量查板块 ──
+        // ── 4. 从 sector_stocks 批量查板块（单只失败降级为"其他"，不拖垮整批） ──
         val sectorCache = mutableMapOf<String, Pair<String, String>>()
         for (code in codes) {
-            val pair = findSector(context, db, code)
+            val pair = try {
+                findSector(context, db, code)
+            } catch (e: Exception) {
+                Log.w("StockDataService", "板块查询失败 ${code}: ${e.message}")
+                "其他" to ""
+            }
             sectorCache[code] = pair
         }
 

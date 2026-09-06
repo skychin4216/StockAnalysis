@@ -57,16 +57,20 @@ _JSON_PERIOD_ALIAS = {"超短": "超短线", "短线": "短线", "中线": "中�
 
 
 def _load_sell_rules_from_json():
-    """从 backtest_params.json 加载 9 格卖出参数（default + by_state）。
+    """从 backtest_params.json 加载卖出参数（default + by_state + 可选 lowVol 档）。
     文件缺失/损坏时回退代码模板 SELL_RULES。
-    返回 (default_rules, by_state_rules)，key 均为 SELL_RULES 的周期名。"""
+
+    返回 (default_rules, by_state_rules, lowvol_cfg)，key 均为 SELL_RULES 的周期名。
+    lowvol_cfg[period] = {"vol20_max": 买入日20日波动率阈值, "default": rule,
+                          "by_state": {state: rule}}（结构与 9 格同款）"""
     default_rules = {k: dict(v) for k, v in SELL_RULES.items()}
     by_state_rules = {}
+    lowvol_cfg = {}
     try:
         with open(APK_PARAMS_JSON, "r", encoding="utf-8") as f:
             root = json.load(f)
     except (OSError, ValueError):
-        return default_rules, by_state_rules
+        return default_rules, by_state_rules, lowvol_cfg
     sr = root.get("sell_rules") or {}
     for pkey, pobj in sr.items():
         alias = _JSON_PERIOD_ALIAS.get(pkey, pkey)
@@ -81,29 +85,88 @@ def _load_sell_rules_from_json():
             r.update(st_rule)
             st_map[st] = r
         by_state_rules[alias] = st_map
-    return default_rules, by_state_rules
+        # 低波动分档（资产双轨）：仅对配置了 lowVol 档的周期生效
+        lv = pobj.get("lowVol")
+        if isinstance(lv, dict) and (lv.get("default") or lv.get("by_state")):
+            try:
+                vol_max = float(lv.get("vol20_max") or 0.0)
+            except (TypeError, ValueError):
+                vol_max = 0.0
+            lv_default = dict(merged)
+            lv_default.update(lv.get("default") or {})
+            lv_st = {}
+            for st, st_rule in (lv.get("by_state") or {}).items():
+                r = dict(lv_default)
+                r.update(st_rule)
+                lv_st[st] = r
+            lowvol_cfg[alias] = dict(vol20_max=vol_max, default=lv_default, by_state=lv_st)
+    return default_rules, by_state_rules, lowvol_cfg
 
 
-SELL_RULES, SELL_RULES_BY_STATE = _load_sell_rules_from_json()
+SELL_RULES, SELL_RULES_BY_STATE, LOWVOL_CFG = _load_sell_rules_from_json()
 
 # 周期别名 → SELL_RULES 规范名（矩阵/JSON 用"超短"，SELL_RULES 用"超短线"）
 _PERIOD_ALIAS_TO_CANON = {"超短": "超短线"}
 
 
-def sell_rule_for(period_key, state=None):
-    """按周期×大盘状态取卖出规则（9 格矩阵）。
+def sell_rule_for(period_key, state=None, tier="standard"):
+    """按周期×大盘状态×资产档取卖出规则。
+
     - period_key 支持 SELL_RULES 规范名（超短线/短线/中线/长线）或别名（超短）
     - state: BULLISH/OSCILLATION/BEARISH/CRASH；CRASH 回退 BEARISH；
       None/未知/该状态无样本 → 回退 default（JSON default 或代码模板）
+    - tier: "standard"（默认，9 格矩阵）/ "lowVol"（低波动资产分档，慢牛持有型：
+      放宽持有期/去止盈/放宽止损）。lowVol 档未配置该周期时回退 standard。
     """
     key = _PERIOD_ALIAS_TO_CANON.get(period_key, period_key)
     st = state or "default"
     if st == "CRASH":
         st = "BEARISH"
+    if tier == "lowVol":
+        lv = LOWVOL_CFG.get(key)
+        if lv:
+            st_map = lv["by_state"]
+            if st != "default" and st_map and st in st_map:
+                return st_map[st]
+            return lv["default"]
+        return SELL_RULES[key]   # 该周期未配置 lowVol 档 → 回退标准
     st_map = SELL_RULES_BY_STATE.get(key)
     if st != "default" and st_map and st in st_map:
         return st_map[st]
     return SELL_RULES[key]
+
+
+def vol20_at(snaps, asof):
+    """asof（含）前 20 个日收益的波动率（%·日，样本标准差）——低波动分档判定。
+    数据不足 21 根或含无效价时返回 None。"""
+    rows = [s for s in snaps if s["date"] <= asof]
+    if len(rows) < 21:
+        return None
+    closes = [s["close"] for s in rows[-21:]]
+    if any(c is None or c <= 0 for c in closes):
+        return None
+    rets = [(b / a - 1) * 100 for a, b in zip(closes[:-1], closes[1:])]
+    if len(rets) < 4:
+        return None
+    from statistics import pstdev
+    return pstdev(rets)
+
+
+def sell_rule_auto(period_key, state, snaps, asof):
+    """按买入标的波动率自动分档取卖出规则（资产双轨入口）。
+
+    - 该周期配置了 lowVol 档，且标的 asof 前 20 日波动率 < vol20_max
+      → 低波动档（慢牛持有型：放长持有/去止盈/宽止损）
+    - 否则 → 标准 9 格矩阵
+    数据不足以判波动率（次新股等）一律走 standard，不做激进延长。
+    """
+    key = _PERIOD_ALIAS_TO_CANON.get(period_key, period_key)
+    lv = LOWVOL_CFG.get(key)
+    if lv and lv.get("vol20_max"):
+        v = vol20_at(snaps, asof)
+        if v is not None and v < lv["vol20_max"]:
+            return sell_rule_for(period_key, state, tier="lowVol")
+    return sell_rule_for(period_key, state)
 
 # 做T参数：涨≥0.5% 高抛 40%，跌≤-0.5% 低吸买回（对齐 Kotlin TTradeEngine 语义）
 T_UP_PCT, T_DOWN_PCT = 0.5, -0.5
@@ -262,6 +325,7 @@ def simulate_trade(cache, all_dates, sig, rule):
         hold_qty = qty
         cash = 0.0                        # 做T现金账户（卖出+，买入-，初始0）
         exit_price = exit_date = reason = None
+        last_day = None                   # 数据末端最后一根实际交易日（回放兜底）
         for k in range(1, rule["maxHold"] + 1):
             di = buy_idx + k
             if di >= len(all_dates):
@@ -270,6 +334,7 @@ def simulate_trade(cache, all_dates, sig, rule):
             day = get_day(snaps, d)
             if not day:
                 continue
+            last_day = (d, day)
             # 止盈/止损（按持仓市值+现金 相对初始成本）
             cost = qty * entry
             value = hold_qty * day["close"] + cash
@@ -291,16 +356,20 @@ def simulate_trade(cache, all_dates, sig, rule):
                 cash -= day["low"] * buy_back
                 hold_qty += buy_back
         if exit_price is None:
-            # 到期：按剩余持仓市值 + 做T现金账户结算
+            # 到期：按剩余持仓市值 + 做T现金账户结算。
+            # 持有期超出数据末端（长持/低波动档常见）→ 用最后一根实际交易日
+            # 收盘了结（reason 标注"数据末端"），避免窗口尾部信号被整笔丢弃。
             k = rule["maxHold"]
             di = buy_idx + k
-            if di >= len(all_dates):
+            if di < len(all_dates):
+                d = all_dates[di]
+                day = get_day(snaps, d)
+                if day:
+                    exit_price, exit_date, reason = day["close"], d, "持有到期"
+            if exit_price is None and last_day is not None:
+                exit_price, exit_date, reason = last_day[1]["close"], last_day[0], "持有到期(数据末端)"
+            if exit_price is None:
                 return None
-            d = all_dates[di]
-            day = get_day(snaps, d)
-            if not day:
-                return None
-            exit_price, exit_date, reason = day["close"], d, "持有到期"
         value = hold_qty * exit_price + cash
         cost = qty * entry
         ret = (value / cost - 1) * 100
@@ -410,11 +479,14 @@ def nav_backtest(trades, capital=100_000.0):
                 total_fee=total_fee, max_dd=max_dd * 100, capital=float(capital))
 
 
-def run_period(cache, all_dates, date_to_idx, period, rule=None, capital=100_000.0):
+def run_period(cache, all_dates, date_to_idx, period, rule=None, capital=100_000.0, tier_auto=False):
+    """period 全窗口回放。rule 为 None 时：tier_auto=True → 每笔信号按买入标的
+    波动率自动分档（sell_rule_auto，资产双轨）；否则用该周期标准 9 格。"""
     rule = rule or SELL_RULES[period]
     start, end, _ = WINDOWS[period]
+    tag = "（低波动自动分档）" if tier_auto else ""
     print(f"\n{'=' * 82}")
-    print(f"【{period}】选股 {start} ~ {end} | 规则: {rule['style']} "
+    print(f"【{period}】选股 {start} ~ {end} {tag}| 规则: {rule['style']} "
           f"{'' if rule.get('style')!='nextday' else '(隔日卖)'}"
           f"{'' if rule.get('style')!='streak' else f'(连跌{rule['streakDays']}日/破{rule['maBreak']}日线)'}"
           f"{'' if rule.get('style')!='hold' else f'(做T{int(rule['tRatio']*100)}% + 止盈{rule['tp']}% 止损{rule['sl']}% 持有{rule['maxHold']}天)'}")
@@ -425,7 +497,17 @@ def run_period(cache, all_dates, date_to_idx, period, rule=None, capital=100_000
         return None
     trades = []
     for sig in sigs:
-        t = simulate_trade(cache, all_dates, sig, rule)
+        if tier_auto:
+            code, _, _, buy_idx, st = sig
+            if buy_idx < len(all_dates):
+                bd = all_dates[buy_idx]
+                snaps = (cache.get(code) or {}).get("snaps") or []
+                r = sell_rule_auto(period, st, snaps, bd)
+            else:
+                r = rule
+        else:
+            r = rule
+        t = simulate_trade(cache, all_dates, sig, r)
         if t:
             trades.append(t)
     rets = [t["ret"] for t in trades]
@@ -515,6 +597,8 @@ def main(argv=None):
     ap.add_argument("--capital", type=float, default=100_000.0,
                     help="净值法初始本金（默认 100000）")
     ap.add_argument("--no-fit", action="store_true", help="跳过中/长线按大盘状态拟合")
+    ap.add_argument("--tier", action="store_true",
+                    help="低波动资产自动分档（对配置了 lowVol 档的周期生效）")
     args = ap.parse_args(argv)
 
     cache = load_cache()
@@ -533,7 +617,7 @@ def main(argv=None):
     for period in ["超短线", "短线", "中线", "长线"]:
         if period not in wanted:
             continue
-        r = run_period(cache, all_dates, date_to_idx, period, capital=args.capital)
+        r = run_period(cache, all_dates, date_to_idx, period, capital=args.capital, tier_auto=args.tier)
         if r:
             summary[period] = r
 

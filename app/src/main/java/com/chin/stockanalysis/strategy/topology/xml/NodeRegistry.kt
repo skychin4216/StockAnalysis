@@ -42,6 +42,11 @@ object NodeRegistry {
 
         // 增强
         register("sector_boost") { ctx, _ -> SectorBoostNode() }
+        // 2026-09-05 宏观事件驱动（事件库节点，读 assets/macro_events/event_library.json）
+        register("macro_event_bias") { ctx, config ->
+            val scale = config["boostScale"]?.toDoubleOrNull() ?: 1.0
+            MacroEventBiasNode(boostScale = scale)
+        }
         register("bounce_reversal") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.BounceReversalNode() }
         register("ancestral_rules") { _, config ->
             val period = config["holdingPeriod"] ?: "SHORT"

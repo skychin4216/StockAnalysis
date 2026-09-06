@@ -62,6 +62,12 @@ interface SectorStockDao {
     @Query("SELECT stock_code FROM sector_stocks") suspend fun getAllStockCodes(): List<String>
     @Query("SELECT DISTINCT sector_name FROM sector_stocks WHERE stock_code = :stockCode LIMIT 3") suspend fun getSectorNamesByStockCode(stockCode: String): List<String>
     @Query("SELECT stock_code, sector_name FROM sector_stocks GROUP BY stock_code") suspend fun getAllStockSectorPairs(): List<StockSectorPair>
+    /** 差集清理：删除该板块下已不在指定成分列表中的旧行（含历史错配脏数据） */
+    @Query("DELETE FROM sector_stocks WHERE sector_key = :sectorKey AND stock_code NOT IN (:keepCodes)")
+    suspend fun pruneSectorKeyNotIn(sectorKey: String, keepCodes: List<String>)
+    /** 按板块键批量删除（升级清理历史"别名键"脏数据用） */
+    @Query("DELETE FROM sector_stocks WHERE sector_key IN (:keys)")
+    suspend fun deleteSectorKeys(keys: List<String>)
 }
 
 data class StockSectorPair(val stock_code: String, val sector_name: String)

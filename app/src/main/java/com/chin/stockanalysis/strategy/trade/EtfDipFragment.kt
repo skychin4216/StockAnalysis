@@ -14,7 +14,6 @@ import android.widget.ScrollView
 import android.widget.TableLayout
 import android.widget.TableRow
 import android.widget.TextView
-import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.chin.stockanalysis.R
@@ -62,7 +61,7 @@ class EtfDipFragment : Fragment() {
             gravity = Gravity.CENTER_VERTICAL
         }
         val title = TextView(ctx).apply {
-            text = "🧲 ETF 低位选股"
+            text = "🧲 ETF"
             textSize = 16f
             setTextColor(Color.parseColor("#E65100"))
             setTypeface(typeface, Typeface.BOLD)
@@ -86,7 +85,7 @@ class EtfDipFragment : Fragment() {
 
         statusLabel = TextView(ctx).apply {
             textSize = 12f
-            setTextColor(ContextCompat.getColor(ctx, R.color.text_secondary))
+            setTextColor(Color.parseColor("#9E9E9E"))
             setPadding(dp(4), dp(2), dp(4), dp(6))
         }
         root.addView(statusLabel)
@@ -109,7 +108,7 @@ class EtfDipFragment : Fragment() {
 
         footLabel = TextView(ctx).apply {
             textSize = 11f
-            setTextColor(ContextCompat.getColor(ctx, R.color.text_secondary))
+            setTextColor(Color.parseColor("#9E9E9E"))
             setPadding(dp(4), dp(8), dp(4), dp(4))
         }
         body.addView(footLabel)
@@ -120,7 +119,7 @@ class EtfDipFragment : Fragment() {
     private fun sectionTitle(ctx: Context, text: String): TextView = TextView(ctx).apply {
         this.text = text
         textSize = 13f
-        setTextColor(ContextCompat.getColor(ctx, R.color.text_primary))
+        setTextColor(Color.parseColor("#E0E0E0"))
         setTypeface(typeface, Typeface.BOLD)
         setPadding(0, dp(6), 0, 0)
     }
@@ -204,7 +203,7 @@ class EtfDipFragment : Fragment() {
             val empty = TextView(requireContext()).apply {
                 text = "  （暂无。低位策略多数时间空仓 = 正确行为）"
                 textSize = 12f
-                setTextColor(ContextCompat.getColor(requireContext(), R.color.text_secondary))
+                setTextColor(Color.parseColor("#9E9E9E"))
                 setPadding(dp(8), dp(4), dp(8), dp(4))
             }
             t.addView(empty)
@@ -231,7 +230,7 @@ class EtfDipFragment : Fragment() {
                         3 -> { setTextColor(if ((v.toDoubleOrNull() ?: 0.0) < -20) Color.parseColor("#FF7043")
                         else Color.parseColor("#FFCC00")) }
                         5 -> { setTextColor(if (v.contains("🟢")) Color.parseColor("#69F0AE")
-                        else ContextCompat.getColor(requireContext(), R.color.text_secondary)) }
+                        else Color.parseColor("#9E9E9E")) }
                         else -> setTextColor(Color.parseColor("#E0E0E0"))
                     }
                 }

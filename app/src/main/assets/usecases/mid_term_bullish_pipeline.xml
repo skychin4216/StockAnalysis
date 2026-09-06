@@ -67,11 +67,11 @@
         <param name="volumeShrinkRatio" value="0.7" />
         <param name="requireMA60Rising" value="true" />
         <param name="requireAboveAllMAs" value="false" />
-        <param name="requireThreeDayConfirm" value="false" />
+        <param name="requireThreeDayConfirm" value="true" />
         <param name="swingLeftN" value="5" />
         <param name="swingRightN" value="2" />
         <param name="lookbackDays" value="120" />
-        <param name="minPassCount" value="4" />
+        <param name="minPassCount" value="6" />
         <param name="allowLowAmbush" value="true" />
       </config>
     </Node>

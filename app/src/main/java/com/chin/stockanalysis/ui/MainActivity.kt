@@ -214,31 +214,45 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch(Dispatchers.IO) {
             android.util.Log.i("MainActivity", "sector_stocks 预热开始...")
-            // 从 SECTOR_CODE_MAP 取所有唯一 BK 代码对应的板块（去重）
-            val sectors = com.chin.stockanalysis.stock.data.sources.EastMoneySectorSource.SECTOR_CODE_MAP
-                .entries.distinctBy { it.value }  // 按 BK code 去重
-                .map { it.key to it.value }
+            // 别名逐个遍历；板块代码与官方板块名均从东财板块清单运行时解析。
+            // （2026-09 事故：旧静态 BK 表把 BK1045(房地产服务)整批写成"稀土/碳中和"，
+            //   详见 EastMoneySectorSource 注释；故不再按别名硬编码落库。）
+            val keywords = com.chin.stockanalysis.stock.data.sources.EastMoneySectorSource.SECTOR_KEYWORDS
+            val writtenKeys = LinkedHashSet<String>()
             var successCount = 0
-            for ((sectorName, sectorCode) in sectors) {
+            for (kw in keywords) {
                 try {
-                    val result = sectorSource.fetchByName(sectorName, topN = 30, excludeKcb = false, excludeCyb = false)
-                    if (result != null && result.second.isNotEmpty()) {
-                        val entities = result.second.map { stock ->
-                            com.chin.stockanalysis.stock.database.SectorStockEntity(
-                                sectorKey = sectorName,
-                                sectorName = sectorName,
-                                stockCode = stock.code
-                            )
-                        }
-                        db.sectorStockDao().insertAll(entities)
-                        successCount++
-                    }
+                    val result = sectorSource.fetchByName(kw, topN = 30, excludeKcb = false, excludeCyb = false)
+                    if (result == null || result.second.isEmpty()) continue
+                    val (officialName, stocks) = result
+                    if (!writtenKeys.add(officialName)) continue   // 同一官方板块多别名只拉一次
+                    val codes = stocks.map { it.code }
+                    // 差集清理：移除该官方板块下已不在成分列表中的旧行（含历史脏数据）
+                    db.sectorStockDao().pruneSectorKeyNotIn(officialName, codes)
+                    db.sectorStockDao().insertAll(stocks.map {
+                        com.chin.stockanalysis.stock.database.SectorStockEntity(
+                            sectorKey = officialName,
+                            sectorName = officialName,
+                            stockCode = it.code
+                        )
+                    })
+                    successCount++
                 } catch (e: Exception) {
-                    android.util.Log.w("MainActivity", "预热板块[$sectorName]失败: ${e.message}")
+                    android.util.Log.w("MainActivity", "预热板块[$kw]失败: ${e.message}")
                 }
             }
+            // 一次性清理历史"别名键"脏数据（旧版把板块别名当 key 落库，
+            // BK 代码漂移时污染了 稀土/钢铁/AI 等键；官方名入库后别名键已无意义）
+            if (successCount > 0 && !prefs.getBoolean("alias_keys_v2_cleaned", false)) {
+                val legacyKeys = (keywords - writtenKeys).toList()
+                if (legacyKeys.isNotEmpty()) {
+                    db.sectorStockDao().deleteSectorKeys(legacyKeys)
+                    android.util.Log.i("MainActivity", "已清除 ${legacyKeys.size} 个历史别名板块键")
+                }
+                prefs.edit().putBoolean("alias_keys_v2_cleaned", true).apply()
+            }
             prefs.edit().putLong("last_prefetch_time", System.currentTimeMillis()).apply()
-            android.util.Log.i("MainActivity", "sector_stocks 预热完成: $successCount/${sectors.size} 个板块")
+            android.util.Log.i("MainActivity", "sector_stocks 预热完成: $successCount/${writtenKeys.size} 个官方板块")
         }
     }
 

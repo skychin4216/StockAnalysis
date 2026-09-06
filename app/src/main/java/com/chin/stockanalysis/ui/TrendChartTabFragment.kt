@@ -21,6 +21,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
 import com.github.mikephil.charting.charts.CombinedChart
+import com.github.mikephil.charting.charts.LineChart
 import com.github.mikephil.charting.listener.OnChartGestureListener
 import com.github.mikephil.charting.data.CandleData
 import com.github.mikephil.charting.data.CandleDataSet
@@ -79,6 +80,12 @@ class TrendChartTabFragment : Fragment() {
     private var scanSerial = 0
 
     private val trendScanMemory = ConcurrentHashMap<String, Long>()
+
+    /** 大盘4指数叠加折叠卡（子页1“趋势图”顶部），2026-09-06 */
+    private var indexCardHeader: TextView? = null
+    private var indexCardBody: LinearLayout? = null
+    private var indexChartArea: LinearLayout? = null
+    private var indexCardLoaded = false
 
     /** 截图 OCR 选择器 */
     private val ocrPicker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -240,9 +247,47 @@ class TrendChartTabFragment : Fragment() {
         return scroll
     }
 
-    /** 子页 1：趋势图谱 WebView */
+    /** 子页 1：大盘4指数叠加折叠卡 + 趋势图谱 WebView（2026-09-06） */
     private fun buildTrendPage(): View {
         val ctx = requireContext()
+        val page = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.WHITE)
+        }
+        // ── 大盘强弱折叠卡（上证/深证/科创/创业板 归一化K线叠加 + 历史经验分析） ──
+        indexCardHeader = TextView(ctx).apply {
+            text = "📊 大盘K线：上证/深证/科创/创业板 叠加 ▾"
+            textSize = 12f
+            setTextColor(Color.parseColor("#E65100"))
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setBackgroundColor(Color.parseColor("#FFF8E1"))
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            setOnClickListener {
+                val body = indexCardBody ?: return@setOnClickListener
+                if (body.visibility == View.VISIBLE) {
+                    body.visibility = View.GONE
+                    indexCardHeader?.text = "📊 大盘K线：上证/深证/科创/创业板 叠加 ▸"
+                } else {
+                    body.visibility = View.VISIBLE
+                    indexCardHeader?.text = "📊 大盘K线：上证/深证/科创/创业板 叠加 ▾"
+                    if (!indexCardLoaded) {
+                        indexCardLoaded = true
+                        loadIndexOverview()
+                    }
+                }
+            }
+        }
+        page.addView(indexCardHeader)
+        indexCardBody = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding(dp(6), dp(2), dp(6), dp(2))
+            setBackgroundColor(Color.WHITE)
+        }
+        indexChartArea = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        indexCardBody?.addView(indexChartArea)
+        page.addView(indexCardBody)
+
         val wv = WebView(ctx).apply {
             settings.javaScriptEnabled = true
             settings.loadWithOverviewMode = true
@@ -264,7 +309,10 @@ class TrendChartTabFragment : Fragment() {
             status("⚠️ 趋势图谱加载失败: ${e.message}")
         }
         webView = wv
-        return wv
+        page.addView(wv, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+        return page
     }
 
     /** 极简 ViewPager2 适配器（两个预构建 View 页面） */
@@ -581,18 +629,9 @@ class TrendChartTabFragment : Fragment() {
                     setTextColor(Color.parseColor("#666666"))
                     setPadding(0, dp(2), 0, dp(2))
                 })
-                expand.addView(buildStaticKline(snaps.takeLast(40), 190, listOf(5, 10, 20)))
-                // 匹配图谱（最近20根）
-                expand.addView(TextView(ctx).apply {
-                    text = "匹配图谱：${info.tag}" +
-                        (if (!info.stateLabel.isNullOrBlank()) " · RSA·${info.stateLabel}" else "") +
-                        " · 可拖动/双指缩放"
-                    textSize = 10f
-                    setTextColor(Color.parseColor("#E65100"))
-                    setTypeface(typeface, android.graphics.Typeface.BOLD)
-                    setPadding(0, dp(6), 0, dp(2))
-                })
-                expand.addView(buildStaticKline(snaps.takeLast(20), 150, listOf(5)))
+                expand.addView(buildStaticKline(snaps.takeLast(40), 180, listOf(5, 10, 20)))
+                // 匹配趋势图：K线 + 未来5日情景预测（2026-09-06 替换原“20根裁剪K线”）
+                expand.addView(buildTrendMatchBox(snaps.takeLast(40), info))
                 // 操作行
                 val act = LinearLayout(ctx).apply {
                     orientation = LinearLayout.HORIZONTAL
@@ -787,6 +826,188 @@ class TrendChartTabFragment : Fragment() {
         return out
     }
 
+    /** 行内「匹配趋势图」：真实40根K线 + 形态识别说明 + 未来5日情景虚线（2026-09-06） */
+    private fun buildTrendMatchBox(real: List<DailySnapshotEntity>, info: ExpandInfo): LinearLayout {
+        val ctx = requireContext()
+        val box = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        var tag = info.tag
+        var state = info.stateLabel
+        var bullish = !(info.stateLabel == "红翻绿")
+        try {
+            val m = com.chin.stockanalysis.strategy.analysis.TrendPatternEngine.match(real)
+            if (m != null) {
+                tag = m.tag
+                state = m.stateLabel ?: state
+                if (m.stateBull) bullish = true
+            }
+        } catch (_: Exception) {}
+        box.addView(TextView(ctx).apply {
+            text = "匹配趋势：$tag" + (if (!state.isNullOrBlank()) " · RSA·$state" else "") +
+                (if (bullish) " · 方向:偏多" else " · 方向:震荡/谨慎")
+            textSize = 10f
+            setTextColor(Color.parseColor("#E65100"))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(6), 0, dp(2))
+        })
+        val (up, mid, dn) = forecastScenarioPaths(real.map { it.close }, bullish)
+        box.addView(buildForecastChart(real, 170, listOf(5, 10, 20), up, mid, dn))
+        box.addView(TextView(ctx).apply {
+            text = "虚线=未来5日情景(乐观/中性/谨慎) · 基于形态统计外推，仅供参考，不构成投资建议"
+            textSize = 9f
+            setTextColor(Color.parseColor("#AAAAAA"))
+            setPadding(0, dp(2), 0, 0)
+        })
+        return box
+    }
+
+    /** 未来5日情景路径：以最近真实日波动为带宽，按形态方向温和外推 */
+    private fun forecastScenarioPaths(
+        closes: List<Double>, bullish: Boolean
+    ): Triple<List<Double>, List<Double>, List<Double>> {
+        if (closes.isEmpty()) return Triple(emptyList(), emptyList(), emptyList())
+        val base = closes.last()
+        val w = closes.takeLast(6)
+        val avgAmp = (if (w.size >= 2) {
+            w.zipWithNext().map { (a, b) -> if (a > 0) kotlin.math.abs(b - a) / a else 0.0 }.average()
+        } else 0.01).coerceIn(0.004, 0.045)
+        // 偏多形态温和上行漂移；偏空形态小幅阴跌（历史统计：形态成立后5日倾向延续方向）
+        val drift = if (bullish) avgAmp * 0.45 else -avgAmp * 0.15
+        val up = ArrayList<Double>()
+        val mid = ArrayList<Double>()
+        val dn = ArrayList<Double>()
+        for (i in 1..5) {
+            val f = i.toDouble()
+            val m = base * (1 + drift * f * 0.5)
+            mid.add(m)
+            val half = avgAmp * 0.55 * kotlin.math.sqrt(f)
+            up.add(m * (1 + half))
+            dn.add(m * (1 - half))
+        }
+        return Triple(up, mid, dn)
+    }
+
+    /** K线 + 未来5日情景虚线（真实蜡烛右侧追加 T+1~T+5 虚拟交易日） */
+    private fun buildForecastChart(
+        snaps: List<DailySnapshotEntity>, heightDp: Int, lines: List<Int>,
+        up: List<Double>, mid: List<Double>, dn: List<Double>
+    ): CombinedChart {
+        val ctx = requireContext()
+        val future = 5
+        val chart = CombinedChart(ctx)
+        chart.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(heightDp)
+        )
+        chart.setBackgroundColor(Color.WHITE)
+        chart.description.isEnabled = false
+        chart.legend.textSize = 8f
+        chart.legend.textColor = Color.parseColor("#999999")
+        chart.setScaleEnabled(true)
+        chart.setPinchZoom(true)
+        chart.isScaleXEnabled = true
+        chart.isScaleYEnabled = true
+        chart.setDragEnabled(true)
+        chart.setDoubleTapToZoomEnabled(true)
+        chart.setHighlightPerTapEnabled(false)
+        chart.setHighlightPerDragEnabled(false)
+        chart.setVisibleXRangeMaximum((snaps.size + future + 1).toFloat())
+        chart.setVisibleXRangeMinimum((snaps.size / 6).coerceAtLeast(6).toFloat())
+        chart.moveViewToX(0f)
+        chart.drawOrder = arrayOf(CombinedChart.DrawOrder.CANDLE, CombinedChart.DrawOrder.LINE)
+
+        val entries = ArrayList<com.github.mikephil.charting.data.CandleEntry>(snaps.size)
+        for (i in snaps.indices) {
+            val s = snaps[i]
+            entries.add(
+                com.github.mikephil.charting.data.CandleEntry(
+                    i.toFloat(), s.high.toFloat(), s.low.toFloat(), s.open.toFloat(), s.close.toFloat()
+                )
+            )
+        }
+        val cds = CandleDataSet(entries, "").apply {
+            color = Color.parseColor("#333333")
+            shadowColor = Color.parseColor("#999999")
+            shadowWidth = 1f
+            increasingPaintStyle = android.graphics.Paint.Style.FILL
+            decreasingPaintStyle = android.graphics.Paint.Style.FILL
+            increasingColor = Color.parseColor("#E53935")
+            decreasingColor = Color.parseColor("#43A047")
+            isHighlightEnabled = false
+            setDrawValues(false)
+        }
+        val closes = snaps.map { it.close }
+        val lineData = LineData()
+        val lineColors = mapOf(
+            5 to Color.parseColor("#FF9800"),
+            10 to Color.parseColor("#2196F3"),
+            20 to Color.parseColor("#9C27B0")
+        )
+        for (p in lines) {
+            val en = maEntries(closes, p)
+            if (en.isEmpty()) continue
+            lineData.addDataSet(LineDataSet(en, "MA$p").apply {
+                color = lineColors[p] ?: Color.parseColor("#FF9800")
+                lineWidth = 1f
+                setDrawCircles(false)
+                setDrawValues(false)
+                isHighlightEnabled = false
+            })
+        }
+        // 未来情景线：起点锚定最后一根真实收盘
+        val lastIx = (snaps.size - 1).toFloat()
+        val lastClose = snaps.last().close.toFloat()
+        fun path(values: List<Double>, color: Int, label: String, dashed: Boolean): LineDataSet {
+            val es = ArrayList<Entry>(values.size + 1)
+            es.add(Entry(lastIx, lastClose))
+            values.forEachIndexed { k, v -> es.add(Entry(lastIx + 1 + k, v.toFloat())) }
+            return LineDataSet(es, label).apply {
+                this.color = color
+                lineWidth = if (dashed) 1f else 1.6f
+                setDrawCircles(false)
+                setDrawValues(false)
+                isHighlightEnabled = false
+                if (dashed) enableDashedLine(6f, 4f, 0f)
+            }
+        }
+        if (up.isNotEmpty() && mid.isNotEmpty() && dn.isNotEmpty()) {
+            lineData.addDataSet(path(up, Color.parseColor("#FB8C00"), "乐观", true))
+            lineData.addDataSet(path(mid, Color.parseColor("#1976D2"), "中性", false))
+            lineData.addDataSet(path(dn, Color.parseColor("#90A4AE"), "谨慎", true))
+        }
+        val combined = CombinedData()
+        combined.setData(CandleData(cds))
+        combined.setData(lineData)
+        chart.data = combined
+        chart.xAxis.apply {
+            position = com.github.mikephil.charting.components.XAxis.XAxisPosition.BOTTOM
+            granularity = (snaps.size / 4).coerceAtLeast(1).toFloat()
+            textSize = 8f
+            textColor = Color.parseColor("#999999")
+            labelCount = 4
+            setDrawGridLines(false)
+            setAvoidFirstLastClipping(true)
+            valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
+                override fun getFormattedValue(value: Float): String {
+                    val ix = value.toInt()
+                    if (ix in snaps.indices) return snaps[ix].date.takeLast(5)
+                    val d = ix - (snaps.size - 1)
+                    return if (d in 1..future) "T+$d" else ""
+                }
+            }
+        }
+        chart.axisLeft.apply {
+            textSize = 8f
+            textColor = Color.parseColor("#999999")
+            setDrawGridLines(true)
+            gridColor = Color.parseColor("#EEEEEE")
+            valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
+                override fun getFormattedValue(value: Float): String = "%.2f".format(value)
+            }
+        }
+        chart.axisRight.isEnabled = false
+        chart.invalidate()
+        return chart
+    }
+
     /** 点击结果行 → 打开大盘股票详情页（展示最新K线 + 下方匹配趋势区） */
     private fun openStockDetail(code: String, name: String) {
         status("📄 打开 $name($code) 详情页…")
@@ -933,6 +1154,20 @@ class TrendChartTabFragment : Fragment() {
 
             // ②c/③ 逐只处理：先增量补K线 → 命中形态立即注入并追加结果行（一边扫描一边显示）
             val fetcher = HistoricalDataFetcher(ctx)
+            // 名称首次导入（2026-09-06）：若 basics 与日K都无名称（如恢复出厂/新装），
+            // 自动联网批量补齐一次，避免扫描池里大量只有代码没有名称
+            try {
+                val stillMissing = targets.filter { nameMap[it].isNullOrBlank() }
+                if (stillMissing.isNotEmpty()) {
+                    val fixedN = fetcher.fillNamesForCodes(stillMissing)
+                    if (fixedN > 0) {
+                        db.stockBasicDao().getByCodes(stillMissing).forEach {
+                            if (nameMap[it.code].isNullOrBlank() && it.name.isNotBlank()) nameMap[it.code] = it.name
+                        }
+                        android.util.Log.i("TrendChart", "📛 首次导入补齐 $fixedN 只股票名称")
+                    }
+                }
+            } catch (e: Exception) {}
             val recentDay = com.chin.stockanalysis.ui.TradingDayPickerView
                 .recentTradingDay().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
             var updated = 0; var skipped = 0; var failed = 0; var injected = 0
@@ -1199,6 +1434,234 @@ class TrendChartTabFragment : Fragment() {
             } catch (e: Exception) {}
         }
         return if (parts.isEmpty()) "" else "📊 大盘 " + parts.joinToString("  ")
+    }
+
+    // ═══════════════════════════ 大盘4指数叠加 ═══════════════════════════
+
+    /** 加载上证/深证/科创50/创业板指K线：本地优先，不足30根自动联网补充 */
+    private fun loadIndexOverview() {
+        val ctx = requireContext()
+        indexChartArea?.removeAllViews()
+        indexChartArea?.addView(TextView(ctx).apply {
+            text = "⏳ 加载 上证/深证/科创50/创业板 K线（本地优先，不足自动联网补充）…"
+            textSize = 11f
+            setTextColor(Color.parseColor("#999999"))
+            setPadding(0, dp(4), 0, dp(4))
+        })
+        lifecycleScope.launch(Dispatchers.IO) {
+            val db = StockDatabase.getInstance(ctx)
+            val fetcher = HistoricalDataFetcher(ctx)
+            val defs = listOf(
+                "sh000001" to "上证指数",
+                "sz399001" to "深证成指",
+                "sh000688" to "科创50",
+                "sz399006" to "创业板指"
+            )
+            val series = mutableListOf<Pair<String, List<DailySnapshotEntity>>>()
+            for ((code, label) in defs) {
+                try {
+                    // getByCode 返回日期倒序 → 翻转成升序绘制
+                    var snaps = db.dailySnapshotDao().getByCode(code, 80).sortedBy { it.date }
+                    if (snaps.size < 30) {
+                        val end = java.time.LocalDate.now()
+                        val start = end.minusDays(420)
+                        val (fetched, _) = fetcher.fetchOneStock(code, start, end)
+                        if (fetched.size > snaps.size) {
+                            db.dailySnapshotDao().insertAll(fetched)
+                            snaps = db.dailySnapshotDao().getByCode(code, 80).sortedBy { it.date }
+                        }
+                    }
+                    series.add(label to snaps)
+                } catch (e: Exception) {
+                    android.util.Log.w("TrendChart", "指数K线获取失败 $code: ${e.message}")
+                }
+            }
+            withContext(Dispatchers.Main) {
+                if (!isAdded) return@withContext
+                renderIndexOverview(series)
+            }
+        }
+    }
+
+    /** 绘制归一化4指数叠加折线 + 强弱分析文案 */
+    private fun renderIndexOverview(series: List<Pair<String, List<DailySnapshotEntity>>>) {
+        val ctx = requireContext()
+        indexChartArea?.removeAllViews()
+        val usable = series.filter { it.second.isNotEmpty() }
+        if (usable.isEmpty()) {
+            indexChartArea?.addView(TextView(ctx).apply {
+                text = "⚠️ 本地无指数K线，且联网补充失败。\n请在 PC 端运行选股推送（小工具/云同步）后再刷新，或稍后重试。"
+                textSize = 11f
+                setTextColor(Color.parseColor("#E65100"))
+                setPadding(0, dp(4), 0, dp(4))
+            })
+            return
+        }
+        // 对齐到公共交易日长度（各指数交易日基本一致，取最短）
+        val len = usable.minOf { it.second.size }
+        if (len < 8) {
+            indexChartArea?.addView(TextView(ctx).apply {
+                text = "⚠️ 指数K线不足 8 根（$len），暂无法绘制叠加走势，请先同步数据。"
+                textSize = 11f
+                setTextColor(Color.parseColor("#E65100"))
+                setPadding(0, dp(4), 0, dp(4))
+            })
+            return
+        }
+        val colors = mapOf(
+            "上证指数" to Color.parseColor("#E53935"),
+            "深证成指" to Color.parseColor("#FB8C00"),
+            "科创50" to Color.parseColor("#7E57C2"),
+            "创业板指" to Color.parseColor("#43A047")
+        )
+        val chart = LineChart(ctx)
+        chart.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(170)
+        )
+        chart.setBackgroundColor(Color.WHITE)
+        chart.description.isEnabled = false
+        chart.legend.textSize = 8f
+        chart.legend.textColor = Color.parseColor("#999999")
+        chart.setScaleEnabled(true)
+        chart.setPinchZoom(true)
+        chart.setDragEnabled(true)
+        chart.setHighlightPerTapEnabled(false)
+        chart.setVisibleXRangeMaximum(len.toFloat())
+        chart.moveViewToX(0f)
+        val ld = LineData()
+        for ((label, snapsAll) in usable) {
+            val arr = snapsAll.takeLast(len)
+            val base = arr.first().close
+            if (base <= 0) continue
+            val entries = arr.mapIndexed { i, s ->
+                Entry(i.toFloat(), (s.close / base * 100).toFloat())
+            }
+            ld.addDataSet(LineDataSet(entries, label).apply {
+                color = colors[label] ?: Color.parseColor("#1976D2")
+                lineWidth = 1.4f
+                setDrawCircles(false)
+                setDrawValues(false)
+                isHighlightEnabled = false
+            })
+        }
+        if (ld.dataSetCount == 0) {
+            indexChartArea?.addView(TextView(ctx).apply {
+                text = "⚠️ 指数价格数据异常，无法绘制。"
+                textSize = 11f
+                setTextColor(Color.parseColor("#E65100"))
+                setPadding(0, dp(4), 0, dp(4))
+            })
+            return
+        }
+        chart.data = ld
+        val dates = usable.first().second.takeLast(len).map { it.date }
+        chart.xAxis.apply {
+            position = com.github.mikephil.charting.components.XAxis.XAxisPosition.BOTTOM
+            granularity = (len / 4).coerceAtLeast(1).toFloat()
+            textSize = 8f
+            textColor = Color.parseColor("#999999")
+            labelCount = 4
+            setDrawGridLines(false)
+            setAvoidFirstLastClipping(true)
+            valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
+                override fun getFormattedValue(value: Float): String {
+                    val ix = value.toInt()
+                    return if (ix in dates.indices) dates[ix].takeLast(5) else ""
+                }
+            }
+        }
+        chart.axisLeft.apply {
+            textSize = 8f
+            textColor = Color.parseColor("#999999")
+            setDrawGridLines(true)
+            gridColor = Color.parseColor("#EEEEEE")
+            valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
+                override fun getFormattedValue(value: Float): String = "%.0f".format(value)
+            }
+        }
+        chart.axisRight.isEnabled = false
+        chart.invalidate()
+        indexChartArea?.addView(chart)
+        indexChartArea?.addView(TextView(ctx).apply {
+            text = indexAnalysisText(usable)
+            textSize = 11f
+            setTextColor(Color.parseColor("#333333"))
+            setPadding(0, dp(6), 0, 0)
+        })
+    }
+
+    /**
+     * 大盘强弱分析（基于近5/10日累计涨跌 + MA5/MA20 排列）。
+     * 强弱优先级（结合历史经验）：
+     *   上证↑+科创↑ 最强共振 → 上证↑+科创震荡 权重搭台 → 科创↑+上证↓/震荡 题材结构性 → 双弱防御
+     * 深成/创业板作为辅助印证。
+     */
+    private fun indexAnalysisText(series: List<Pair<String, List<DailySnapshotEntity>>>): String {
+        fun pctN(snaps: List<DailySnapshotEntity>, n: Int): Double? {
+            if (snaps.size <= n) return null
+            val a = snaps[snaps.size - 1 - n].close
+            val b = snaps.last().close
+            if (a <= 0) return null
+            return (b / a - 1) * 100
+        }
+        fun maP(snaps: List<DailySnapshotEntity>, p: Int): Double? {
+            if (snaps.size < p) return null
+            return snaps.takeLast(p).map { it.close }.average()
+        }
+        fun stateOf(snaps: List<DailySnapshotEntity>): String {
+            val p5 = pctN(snaps, 5) ?: return "数据不足"
+            val m5 = maP(snaps, 5)
+            val m20 = maP(snaps, 20)
+            val maUp = m5 != null && m20 != null && m5 > m20
+            return when {
+                p5 > 0.8 && maUp -> "强势"
+                p5 < -0.8 && !maUp -> "弱势"
+                p5 > 1.5 -> "强势"
+                p5 < -1.5 -> "弱势"
+                else -> "震荡"
+            }
+        }
+        fun line(label: String, snaps: List<DailySnapshotEntity>): String {
+            val p5 = pctN(snaps, 5)
+            val p10 = pctN(snaps, 10)
+            val s5 = if (p5 != null && p5 >= 0) "+" else ""
+            val s10 = if (p10 != null && p10 >= 0) "+" else ""
+            return "$label ${stateOf(snaps)} · 5日${s5}${"%.2f".format(p5 ?: 0.0)}% · 10日${s10}${"%.2f".format(p10 ?: 0.0)}%"
+        }
+        fun byLabel(label: String): List<DailySnapshotEntity>? = series.firstOrNull { it.first == label }?.second
+
+        val sb = StringBuilder()
+        for ((label, snaps) in series) {
+            sb.appendLine(line(label, snaps))
+        }
+        // 主判据：上证 × 科创50
+        val sh = byLabel("上证指数")
+        val kc = byLabel("科创50")
+        val sz = byLabel("深证成指")
+        val cy = byLabel("创业板指")
+        val shUp = sh?.let { pctN(it, 5) ?: 0.0 } ?: 0.0
+        val kcUp = kc?.let { pctN(it, 5) ?: 0.0 } ?: 0.0
+        val szUp = sz?.let { pctN(it, 5) ?: 0.0 } ?: 0.0
+        val cyUp = cy?.let { pctN(it, 5) ?: 0.0 } ?: 0.0
+        val shS = stateOf(sh ?: emptyList())
+        val kcS = stateOf(kc ?: emptyList())
+        val verdict: String = when {
+            shUp > 0.8 && kcUp > 0.8 ->
+                "共振强势（上证+科创同涨）：历史经验最利于做多，量能配合时普涨概率大。可提高仓位至 6-8 成，围绕强势板块低吸龙头，避免盘中追高。"
+            shUp > 0.8 && kcS == "震荡" ->
+                "权重搭台、科创休整：指数稳但缺赚钱效应，适合精选低吸而非追涨，仓位 5-6 成。若深成/创业板同步走强可视为共振确认。"
+            kcUp > 0.8 && shUp <= 0.8 ->
+                "题材结构行情（科创强、上证弱/震荡）：科技成长活跃但指数不稳，以快进快出为主，仓位 3-5 成，严守止损。"
+            shUp <= 0.8 && kcUp <= 0.8 && shS != "弱势" ->
+                "弱势整理/存量博弈：控制仓位（3 成内），只做确定性高的强势股，等待上证重新站上 MA20。"
+            else ->
+                "防御状态（指数偏弱）：历史经验宜降低仓位（0-2 成）或空仓等待企稳信号；反弹需站稳 MA5 后再参与。"
+        }
+        sb.append("结论：").append(verdict)
+        val _sz = szUp
+        val _cy = cyUp
+        sb.append("（深成5日${if (_sz >= 0) "+" else ""}${"%.2f".format(_sz)}%，创业板5日${if (_cy >= 0) "+" else ""}${"%.2f".format(_cy)}% 佐证）")
+        return sb.toString()
     }
 
     override fun onDestroyView() {

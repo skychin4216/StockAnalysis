@@ -19,12 +19,16 @@ notify 配置（app_config.json）：
   import push_channel
   sent = push_channel.push(title, content, cfg)    # cfg = app_config.json 的 notify 段
 """
+import base64
+import hashlib
 import json
+import os
 import time
 import urllib.parse
 import urllib.request
 
 WECOM_BASE = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send"
+WECOM_IMAGE_LIMIT = 2 * 1024 * 1024  # 企业微信 image 消息单张 ≤ 2MB
 WECOM_TEXT_LIMIT = 2000  # 企业微信 text 单条上限 2048 字节，留余量按 UTF-8 字节切块
 PUSH_HEADERS = {"User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}
 
@@ -35,19 +39,43 @@ def _opener():
 
 
 def _split_utf8(text, limit=WECOM_TEXT_LIMIT):
-    """按 UTF-8 字节数切块（优先在字符边界），保证单条不超企业微信长度限制。"""
+    """按 UTF-8 字节数切块（尽量在整行边界断开，超长单行才按字符切），
+    保证单条不超企业微信长度限制，且每片可从独立行开始读。"""
     if len(text.encode("utf-8")) <= limit:
         return [text]
-    chunks, cur, cur_bytes = [], "", 0
-    for ch in text:
-        b = len(ch.encode("utf-8"))
-        if cur_bytes + b > limit and cur:
+    chunks, cur = [], ""
+    lines = text.split("\n")
+
+    def flush():
+        nonlocal cur
+        if cur:
             chunks.append(cur)
-            cur, cur_bytes = "", 0
-        cur += ch
-        cur_bytes += b
-    if cur:
-        chunks.append(cur)
+            cur = ""
+
+    def split_long_line(line):
+        # 单行超限：退化为字符级切块（行内无换行）
+        seg, nb = "", 0
+        for ch in line:
+            b = len(ch.encode("utf-8"))
+            if nb + b > limit and seg:
+                chunks.append(seg)
+                seg, nb = "", 0
+            seg += ch
+            nb += b
+        if seg:
+            chunks.append(seg)
+
+    for line in lines:
+        cand = (cur + "\n" + line) if cur else line
+        if len(cand.encode("utf-8")) <= limit:
+            cur = cand
+            continue
+        flush()
+        if len(line.encode("utf-8")) > limit:
+            split_long_line(line)
+        else:
+            cur = line
+    flush()
     return chunks or [text]
 
 
@@ -65,19 +93,30 @@ def push_wecom(title, content, cfg, opener=None):
     for i, chunk in enumerate(chunks):
         body = json.dumps({"msgtype": "text", "text": {"content": chunk}},
                           ensure_ascii=False).encode("utf-8")
-        try:
-            req = urllib.request.Request(url, data=body, headers=PUSH_HEADERS,
-                                         method="POST")
-            with opener.open(req, timeout=10) as r:
-                resp = json.loads(r.read().decode("utf-8"))
-                ok = resp.get("errcode") in (0, "0")
-            print("企微机器人 通知%s(%d/%d)" % (
-                "成功" if ok else "失败:%s" % resp.get("errmsg"), i + 1, len(chunks)))
-            sent = sent or ok
-        except Exception as e:  # noqa: BLE001
-            print("企微机器人 通知失败:", type(e).__name__, e)
+        ok = False
+        for attempt in range(3):
+            try:
+                req = urllib.request.Request(url, data=body, headers=PUSH_HEADERS,
+                                             method="POST")
+                with opener.open(req, timeout=10) as r:
+                    resp = json.loads(r.read().decode("utf-8"))
+                errcode = resp.get("errcode")
+                ok = errcode in (0, "0")
+                errmsg = resp.get("errmsg", "")
+            except Exception as e:  # noqa: BLE001
+                ok, errmsg = False, "%s: %s" % (type(e).__name__, e)
+            if ok:
+                break
+            print("企微机器人 通知失败:%s(%d/%d) 第%d次" % (
+                errmsg, i + 1, len(chunks), attempt + 1))
+            if attempt < 2:
+                # 45009=群机器人限频(20条/分钟)，睡足一个窗口再重试
+                time.sleep(65 if "45009" in str(errmsg) or "Too many requests" in str(errmsg) else 3)
+        print("企微机器人 通知%s(%d/%d)" % (
+            "成功" if ok else "失败", i + 1, len(chunks)))
+        sent = sent or ok
         if len(chunks) > 1:
-            time.sleep(0.5)  # 多分片时略微降速，避免触发群机器人限频
+            time.sleep(1.0)  # 多分片时降速，避免触发群机器人限频(20条/分钟)
     return sent
 
 
@@ -118,6 +157,43 @@ def _push_serverchan(title, content, cfg, opener=None):
         return ok
     except Exception as e:  # noqa: BLE001
         print("serverchan 通知失败:", type(e).__name__, e)
+        return False
+
+
+def send_image(png_path, cfg):
+    """发送图片（仅企业微信群机器人 image 消息，pushplus/serverchan 不支持）。
+
+    返回是否成功。图片必须 ≤2MB、jpg/png。
+    """
+    key = (cfg.get("wecom_key") or "").strip()
+    if not key:
+        print("未配置 wecom_key，跳过图片推送（图片仅企微机器人支持）")
+        return False
+    if not os.path.isfile(png_path):
+        print("图片文件不存在：%s" % png_path)
+        return False
+    raw = open(png_path, "rb").read()
+    if len(raw) > WECOM_IMAGE_LIMIT:
+        print("图片 %.1f MB 超过 2MB，企微 image 消息限制" % (len(raw) / 1024 / 1024))
+        return False
+    base = os.path.basename(png_path)
+    b64 = base64.b64encode(raw).decode()
+    md5 = hashlib.md5(raw).hexdigest()
+    opener = _opener()
+    base = (cfg.get("wecom_url") or WECOM_BASE).rstrip("/")
+    url = "%s?key=%s" % (base, urllib.parse.quote(key, safe=""))
+    body = json.dumps({"msgtype": "image", "image": {"base64": b64, "md5": md5}},
+                      ensure_ascii=False).encode("utf-8")
+    try:
+        req = urllib.request.Request(url, data=body, headers=PUSH_HEADERS, method="POST")
+        with opener.open(req, timeout=20) as r:
+            resp = json.loads(r.read().decode("utf-8"))
+            ok = resp.get("errcode") in (0, "0")
+        print("企微机器人 图片(%s) %s" % (
+            base, "成功" if ok else "失败:%s" % resp.get("errmsg")))
+        return ok
+    except Exception as e:  # noqa: BLE001
+        print("企微机器人 图片发送失败:", type(e).__name__, e)
         return False
 
 

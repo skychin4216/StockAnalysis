@@ -388,6 +388,8 @@ def assess_positions(ctx, cache, data):
     返回 [{secid,name,code,qty,avg_buy_price,current_price,pnl_pct,period_type,
            sector,in_candidates,hit_periods,ma20,ma60,soft,verdict,note}]
     """
+    if not ctx:
+        return []   # use_ctx=False（--no-ctx/预演）时不做实仓评估
     pos = ctx.get("positions") or []
     if not pos:
         return []
@@ -703,6 +705,13 @@ def _attach_tech(data, cache):
         al = _tech_sar_alert(snaps)
         if al:
             p["sar_warn"] = al["days"]
+        if not p.get("tech"):
+            try:
+                tag = " ".join(_tech_tag(_tech_analyze(snaps)).split()[:4])
+                if tag:
+                    p["tech"] = tag
+            except Exception:
+                pass
     # XML DAG 主线命中票也补技术标签（DAG json code 带 sh/sz 前缀）
     dag_tech = {}
     try:
@@ -1208,9 +1217,12 @@ def _pos_advice_lines(data):
         pnl = ("%+.1f%%" % p["pnl_pct"]) if p["pnl_pct"] is not None else "-"
         warn = " [SAR刚翻绿%d天]" % p["sar_warn"] if p.get("sar_warn") else ""
         note = p.get("note") or ""
+        tech = p.get("tech") or ""
         row = "  %s %s%s %s %s 盈亏%s" % (
             verdicts.get(p["verdict"], "⚪"), p["verdict"], warn,
             p.get("name", ""), p.get("code", ""), pnl)
+        if tech:
+            row += "  | " + tech
         if note:
             row += " " + note
         body.append(row)
@@ -1242,147 +1254,222 @@ def _append_pos_block(lines, data):
             len(pos), ("%+.1f%%" % pnl_all) if pnl_all is not None else "-"))
 
 
-def send_wechat_round(data, ctx, cfg, old_secids=None, pos_advice=True):
-    """整轮概览（2026-09-05 新版消息结构）。
+def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
+                scene=None, dag=None, cache=None, lowbuy_offline=None,
+                note_offline=None):
+    """整轮三段消息的纯拼装（不改文件、不推送），实时推送与历史回放共用同一排版。
 
-    - 主线 = ⭐ XML DAG 当日选股（与 exe 共用同一套 XML，等同 exe 选股，不再单列 exe 段）
-    - 📋 对照参考（非主线）：CodeBuddy 引擎候选完整列示，不截断
-    - 每票标色：🔴 = 引擎过筛/推荐候选；🟡 = 盘面在池但资金流出
-    - 候选行附主流指标摘要(SAR/MACD/KDJ/RSI/CCI/OBV/ATR/MA)
-    - 实仓段内嵌本轮消息（2026-09-06）：与上轮建议指纹相同仅一行概要「无新操作」，
-      有变化(verdict/建议内容变化)才展开逐笔详情——每轮评估但不刷屏。
-    - 个股画像(东山精密/博迁新材等 soft 逻辑票)：-8%~逻辑止损区间给
-      「减仓应对/留底仓做T」，不机械按 -8% 清仓。
+    - 页1 选股摘要：⭐ 主线·XML DAG 当日选股（超短+短线合并去重，每档最多3只，
+      每只附 RSI/SAR/MACD/OBV 等技术指标）+ 📋 对照参考(非主线·引擎精选前3)
+      + ⭐ 双端共同命中
+    - 页2 资金与低吸：💸 板块资金流入/流出 + 📈 ETF资金流向 + 🎯 ETF持仓前五低吸
+    - 页3 实仓做T（无实仓不生成）
+
+    scene=None 时按当前时间推导(盘中/盘外)；dag 缺省读 DAG_SCREEN_FILE；
+    cache={secid:{"snaps":[]}} 供 DAG 独有票补算技术指标；lowbuy_offline 传
+    离线低吸行(历史回放；此时页2 不展示无存档的实时资金流)。
+    返回 [(title, content), ...]。
     """
     old_secids = old_secids or set()
-    now = datetime.datetime.now()
-    scene = ("盘中选股 " if in_trading_time(now) else "盘外选股 ") + now.strftime("%H:%M")
+    if scene is None:
+        now = datetime.datetime.now()
+        scene = ("盘中选股 " if in_trading_time(now) else "盘外选股 ") + now.strftime("%H:%M")
     asof = data.get("asof", "")
     state = data.get("market_state", "")
     state_cn = {"BULLISH": "上涨", "BEARISH": "下跌", "OSCILLATION": "震荡",
                 "NO_DATA": "数据不足"}.get(state, state)
     state_mark = {"BULLISH": "🔴", "BEARISH": "🟢", "OSCILLATION": "🟡",
                   "NO_DATA": "⚪"}.get(state, "⚪")
-    lines = ["%s | %s" % (scene, asof),
-             "%s 大盘: %s %s | 池 %d" % (state_mark, state, state_cn,
-                                        data.get("pool_total", 0))]
-    # ① 主线：XML DAG 当日选股（与 exe 同源）
+    p1 = ["%s | %s" % (scene, asof),
+          "%s 大盘: %s %s | 池 %d" % (state_mark, state, state_cn,
+                                     data.get("pool_total", 0))]
+    # ① 主线：XML DAG 当日选股（与 exe 同源；超短并入短线、按代码去重、每档≤3只）
+    if dag is None:
+        try:
+            with open(DAG_SCREEN_FILE, encoding="utf-8") as f:
+                dag = json.load(f)
+        except (OSError, ValueError):
+            dag = None
     dag_all = set()
-    dag = None
-    try:
-        with open(DAG_SCREEN_FILE, encoding="utf-8") as f:
-            dag = json.load(f)
-    except (OSError, ValueError):
-        dag = None
     if dag and (dag.get("result") or {}):
         res = dag.get("result") or {}
-        dag_rows = []
+        bucket = {"短线": [], "中线": [], "长线": []}
         for period in ("超短", "短线", "中线", "长线"):
-            items = res.get(period) or []
-            if not items:
-                continue
-            flash = period == "超短"
-            dag_rows.append("  %s%s(%d):" % ("⚡" if flash else "", period, len(items)))
-            for it in items:
+            disp, _ = fold_period(period)  # 超短 → 短线
+            for it in res.get(period) or []:
                 raw = (it.get("code") or "").strip()
                 code = raw[2:] if raw[:2].lower() in ("sh", "sz", "bj") else raw
                 nm = it.get("name") or code
-                if raw:
-                    dag_all.add(raw)
                 extra = ""
+                hit = None
                 if raw:
                     hit = (_find_item_by_secid(data, raw)
                            or _find_item_by_secid(data, code))
-                    extra = (hit or {}).get("tech") or ""
-                    if not extra:
-                        extra = (data.get("dag_tech") or {}).get(raw, "")
-                if extra:
-                    extra = " | " + extra
-                dag_rows.append("    🔴 %s(%s)%s" % (nm, code, extra))
-        dag_asof = dag.get("asof") or ""
-        stale = (" (asof %s)" % dag_asof) if (dag_asof and dag_asof != asof) else ""
-        lines.append("")
-        lines.append("⭐ 主线·XML DAG 当日选股%s" % stale)
-        lines.append("\n".join(dag_rows) if dag_rows else "  (暂无 DAG 命中)")
-    # ② 对照参考：CodeBuddy 引擎候选（非主线，完整列示）
+                if hit:
+                    extra = hit.get("tech") or ""
+                if not extra and raw:
+                    extra = (data.get("dag_tech") or {}).get(raw, "")
+                if not extra and raw and cache is not None and raw in cache:
+                    try:
+                        extra = _tech_tag(_tech_analyze(cache[raw].get("snaps") or []))
+                    except Exception:
+                        extra = ""
+                bucket[disp].append((raw, code, nm, extra))
+        rows = []
+        for disp in ("短线", "中线", "长线"):
+            seen = set()
+            seq = []
+            for raw, code, nm, extra in bucket[disp]:
+                key = code or raw
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                seq.append((raw, code, nm, extra))
+                if len(seq) >= 3:
+                    break
+            if not seq:
+                continue
+            for raw, _, _, _ in seq:
+                if raw:
+                    dag_all.add(raw)
+            rows.append("  %s(%d):" % (disp, len(seq)))
+            for _, code, nm, extra in seq:
+                rows.append("    🔴 %s(%s)%s" % (nm, code,
+                                                 (" | " + extra) if extra else ""))
+        stale = ""
+        if dag.get("asof") and dag.get("asof") != asof:
+            stale = " (asof %s)" % dag.get("asof")
+        p1.append("")
+        p1.append("⭐ 主线·XML DAG 当日选股(%d只)%s" % (len(dag_all), stale))
+        p1.append("\n".join(rows) if rows else "  (暂无 DAG 命中)")
+    # ② 对照参考：CodeBuddy 引擎候选（非主线，剔除主线 DAG 已展示代码）→ 精选最多3只
     ref_rows = []
     for period in DISPLAY_PERIODS:
         for it in (data.get("groups") or {}).get(period) or []:
+            sid = it.get("secid") or ""
+            if sid in dag_all or sid[2:] in dag_all:
+                continue
             tags = (it.get("reso") or {}).get("tags") or []
             flowout = any(str(t).startswith("资金流出") for t in tags)
             ref_rows.append((period, it, flowout))
     if ref_rows:
-        lines.append("")
-        lines.append("📋 对照参考（非主线·完整列示）")
-        cur = None
-        for period, it, flowout in ref_rows:
-            if period != cur:
-                cur = period
-                lines.append("  %s:" % period)
+        ref_rows.sort(key=lambda r: -(r[1].get("ratio") or 0))
+        keep = ref_rows[:3]
+        p1.append("")
+        p1.append("📋 对照参考·非主线(%d只)" % len(keep))
+        for period, it, flowout in keep:
             mark = "🟡" if flowout else "🔴"
             r = it.get("ratio")
             ratio_s = ("%.0f%%" % (r * 100)) if r is not None else ""
-            side = "资金流出" if flowout else ""
+            side = " 资金流出" if flowout else ""
             newdot = "🆕" if it["secid"] not in old_secids else ""
             tech = it.get("tech") or ""
-            base = "%s%s %s%s(%s) %s" % (
-                newdot, mark, it.get("name", ""), it.get("board", ""),
-                it["secid"][2:], ratio_s)
-            if side:
-                base += " " + side
+            base = "%s%s [%s] %s%s(%s) %s%s" % (
+                newdot, mark, period, it.get("name", ""), it.get("board", ""),
+                it["secid"][2:], ratio_s, side)
             if tech:
                 base += "  | " + tech
-            lines.append("    " + base)
+            p1.append("    " + base)
     # ③ 双端共同命中
     both = sorted(dag_all & candidate_secids(data))
     if both:
         names = " ".join(_find_name(data, sid) for sid in both[:8])
-        lines.append("")
-        lines.append("⭐ 双端共同命中(%d): %s" % (len(both), names))
-    # ④ 板块资金流入 / 流出（板块级主力净额）
-    flow_top = (ctx or {}).get("flow_rank") or []
-    pos_f = [r for r in flow_top if r.get("main_yi", 0) > 0][:4]
-    neg_f = [r for r in reversed(flow_top) if r.get("main_yi", 0) < 0][:4]
-    if pos_f:
-        lines.append("")
-        lines.append("💸 板块资金流入: " + " ".join(
-            "%s%+.1f亿" % (r["name"], r["main_yi"]) for r in pos_f))
-    if neg_f:
-        lines.append("")
-        lines.append("💸 板块资金流出: " + " ".join(
-            "%s%.1f亿" % (r["name"], r["main_yi"]) for r in neg_f))
-    # ⑤ ETF 资金流向
-    etf_top = sorted((ctx or {}).get("etf_flow") or [],
-                     key=lambda e: float(e.get("in_yi") or 0), reverse=True)
-    etf_in = [e for e in etf_top if float(e.get("in_yi") or 0) > 0][:4]
-    etf_out = [e for e in reversed(etf_top) if float(e.get("in_yi") or 0) < 0][:2]
-    eparts = []
-    if etf_in:
-        eparts.append("入 " + " ".join(
-            "%s%+.1f亿" % (e.get("name"), e.get("in_yi")) for e in etf_in))
-    if etf_out:
-        eparts.append("出 " + " ".join(
-            "%s%.1f亿" % (e.get("name"), e.get("in_yi")) for e in etf_out))
-    if eparts:
-        lines.append("")
-        lines.append("📈 ETF资金流向: " + " | ".join(eparts))
-    # ⑥ 热门板块 ETF 前5重仓 · 低吸观察（2026-09-06：行业ETF重仓跟踪→低位埋伏）
-    try:
-        import _etf_holdings as _eh
-        low_lines = _eh.low_buy_lines(
-            [r["name"] for r in pos_f], (ctx or {}).get("etf_flow") or [])
-        if low_lines:
-            lines.append("")
-            lines.append("🎯 热门板块ETF·重仓低吸观察")
-            lines.extend(low_lines)
-    except Exception as _e:
-        pass
-    # 实仓建议段 → 内嵌整轮消息（指纹无变化仅一行概要；有变化才展开详情，
-    # 2026-09-06 用户决策：每轮选股同时带实仓，但结论无变化不刷屏）
-    if pos_advice:
-        _append_pos_block(lines, data)
-    title = "%s | %s" % (scene, asof)
-    return _push_wechat(title, "\n".join(lines), cfg)
+        p1.append("")
+        p1.append("⭐ 双端共同命中(%d): %s" % (len(both), names))
+    # ── 页面2：资金 / ETF / 低吸（独立消息）──
+    p2 = ["%s | %s" % (scene, asof)]
+    p2_extra = False
+    if ctx:
+        flow_top = ctx.get("flow_rank") or []
+        pos_f = [r for r in flow_top if r.get("main_yi", 0) > 0][:4]
+        neg_f = [r for r in reversed(flow_top) if r.get("main_yi", 0) < 0][:4]
+        if pos_f:
+            p2.append("")
+            p2.append("💸 板块资金流入: " + " ".join(
+                "%s%+.1f亿" % (r["name"], r["main_yi"]) for r in pos_f))
+            p2_extra = True
+        if neg_f:
+            p2.append("")
+            p2.append("💸 板块资金流出: " + " ".join(
+                "%s%.1f亿" % (r["name"], r["main_yi"]) for r in neg_f))
+            p2_extra = True
+        etf_top = sorted(ctx.get("etf_flow") or [],
+                         key=lambda e: float(e.get("in_yi") or 0), reverse=True)
+        etf_in = [e for e in etf_top if float(e.get("in_yi") or 0) > 0][:4]
+        etf_out = [e for e in reversed(etf_top) if float(e.get("in_yi") or 0) < 0][:2]
+        eparts = []
+        if etf_in:
+            eparts.append("入 " + " ".join(
+                "%s%+.1f亿" % (e.get("name"), e.get("in_yi")) for e in etf_in))
+        if etf_out:
+            eparts.append("出 " + " ".join(
+                "%s%.1f亿" % (e.get("name"), e.get("in_yi")) for e in etf_out))
+        if eparts:
+            p2.append("")
+            p2.append("📈 ETF资金流向: " + " | ".join(eparts))
+            p2_extra = True
+        # ⑥ 热门板块 ETF 前5重仓 · 低吸（行业ETF重仓跟踪→低位埋伏，每票附
+        #    紧凑指标串 + 放量企稳确认标注）
+        try:
+            import _etf_holdings as _eh
+            hot_low = _eh.low_buy_lines(
+                [r["name"] for r in pos_f], ctx.get("etf_flow") or [])
+            if hot_low:
+                p2.append("")
+                p2.append("🎯 ETF持仓前五低吸(热门板块)")
+                p2.extend(hot_low)
+                p2_extra = True
+            try:
+                focus = _eh.load_focus_sectors()
+            except Exception:
+                focus = []
+            if focus:
+                f_low = _eh.low_buy_lines(focus, ctx.get("etf_flow") or [])
+                if f_low:
+                    p2.append("")
+                    p2.append("📌 用户重点关注板块·ETF低吸")
+                    p2.extend(f_low)
+                    p2_extra = True
+        except Exception:
+            pass
+    else:
+        # 离线/历史回放：板块/ETF资金流为盘中实时采集、无存档 → 说明 + 全板块前五低吸
+        if note_offline:
+            p2.append("")
+            p2.append(note_offline)
+            p2_extra = True
+        if lowbuy_offline:
+            p2.append("")
+            p2.append("🎯 ETF持仓前五低吸")
+            p2.extend(lowbuy_offline)
+            p2_extra = True
+    # ── 页面3：实仓与做T（独立消息；指纹无变化仅一行概要，有变化展开逐笔+指标标注）──
+    pages = [("%s | %s" % (scene, asof), "\n".join(p1))]
+    if p2_extra:
+        pages.append(("📊 资金流向与低吸 | %s" % asof, "\n".join(p2)))
+    if pos_advice and (data.get("positions") or []):
+        p3 = ["%s | %s" % (scene, asof)]
+        _append_pos_block(p3, data)
+        pages.append(("💼 实仓建议与做T | %s" % asof, "\n".join(p3)))
+    return pages
+
+
+def send_wechat_round(data, ctx, cfg, old_secids=None, pos_advice=True, **kw):
+    """整轮三段独立消息推送（排版见 round_pages，2026-09-05 新版消息结构）。
+
+    - 主线 = ⭐ XML DAG 当日选股（与 exe 共用同一套 XML，等同 exe 选股，不再单列 exe 段）
+    - 📋 对照参考（非主线）：CodeBuddy 引擎候选按命中率排序，精选前 3
+    - 每票标色：🔴 = 引擎过筛/推荐候选；🟡 = 盘面在池但资金流出
+    - 候选行附主流指标摘要(SAR/MACD/RSI/OBV 等)
+    - 实仓段内嵌本轮消息（2026-09-06）：与上轮建议指纹相同仅一行概要「无新操作」，
+      有变化(verdict/建议内容变化)才展开逐笔详情——每轮评估但不刷屏。
+    """
+    pages = round_pages(data, ctx, cfg, old_secids=old_secids, pos_advice=pos_advice,
+                        **kw)
+    ok = False
+    for title, content in pages:
+        ok = _push_wechat(title, content, cfg) or ok
+    return ok
 
 
 def run_once(dry=False, candidates_key=None, timed_push=False, use_ctx=True, pos_advice=True):
@@ -1469,6 +1556,8 @@ RHYTHM_FILE = os.path.join(HERE, "_daemon_rhythm.json")
 PREP_DOWNLOAD = os.path.join(HERE, "_update_cache_inc.py")
 PREP_DAG = os.path.normpath(os.path.join(ROOT, "AutoQuant", "usecase_screen.py"))
 DAG_SCREEN_FILE = os.path.normpath(os.path.join(ROOT, "AutoQuant", "data", "dag_screen_latest.json"))
+# 每日选股自检闭环（记忆账本 + 到期结算 + 基线漂移反馈），见 _self_review.py
+SELF_REVIEW = os.path.join(HERE, "_self_review.py")
 _SESSIONS = (("am", 9 * 60 + 30, 11 * 60 + 30), ("pm", 13 * 60, 15 * 60))
 
 
@@ -1498,6 +1587,7 @@ def _load_rhythm():
     d.setdefault("rounds", {})    # 当日各盘段已选股轮数 {"am": n, "pm": n}
     d.setdefault("pre", False)    # 09:00 预热(下载+情报暖缓存)是否完成
     d.setdefault("tail", False)   # 15:00 尾盘K线拉取是否完成
+    d.setdefault("learn", False)  # 15:00 尾盘后的选股自检(记忆+结算)是否完成
     d.setdefault("sum", False)    # 15:10 收盘总结是否已推送
     d.setdefault("hit", {})       # 当日逐轮命中累计 period -> {secid: 次数}
     return d
@@ -1665,6 +1755,47 @@ def _run_script(script, log=print, stop_check=None, extra=None):
         return False
 
 
+def _push_market_image(log=print, days=55):
+    """生成并推送「大盘4指数归一化叠加图」（企微 image；失败仅留痕，不影响文本推送）。"""
+    try:
+        import _index_market_chart as imc
+        ok, png = imc.render_png(days=days)
+        if not ok:
+            log("大盘图生成失败，跳过图片推送")
+            return False
+        sent = push_channel.send_image(png, load_notify_cfg())
+        if sent:
+            log("✓ 大盘4指数图已推送: %s" % os.path.basename(png))
+        else:
+            log("大盘图未推送（渠道不支持 / 未配置企微机器人）")
+        return sent
+    except Exception as e:  # noqa: BLE001
+        log("大盘图推送异常：%s" % e)
+        ops_note("index_img_error", repr(e))
+        return False
+
+
+def _push_pre_market(dry, log=print):
+    """09:00 开盘前：大盘4指数归一化叠加图 + 强弱结论（每日一次，幂等由守护标记控制）。
+
+    正文规则与 APK「大盘K线」一致：上证×科创50 优先级 + 深成/创业板佐证。
+    """
+    try:
+        import _index_market_chart as imc
+        text = imc.verdict_text()
+        title = "🌅 开盘前大盘速览 %s" % datetime.date.today().strftime("%m-%d")
+        if dry:
+            log("[dry] 开盘前大盘速览（不推送）：\n" + text)
+            return True
+        sent_txt = _push_wechat(title, text, load_notify_cfg())
+        sent_img = _push_market_image(log=log)
+        return sent_txt or sent_img
+    except Exception as e:  # noqa: BLE001
+        log("开盘前大盘速览失败：%s" % e)
+        ops_note("pre_msg_error", repr(e))
+        return False
+
+
 def run_pre_preheat(log=print, stop_check=None):
     """09:00 预热：K线增量下载 → 情报扫描(dry 暖缓存：美股隔夜/韩股开盘/快讯)。"""
     log("[09:00 预热] 下载K线增量 + 情报扫描暖缓存（美股/韩股开盘前）…")
@@ -1689,6 +1820,35 @@ def run_tail_kline(log=print, stop_check=None):
         log("[15:00 尾盘] K线拉取完成")
         return True
     ops_note("tail_fail", "尾盘K线拉取失败")
+    return False
+
+
+def run_self_review(log=print, stop_check=None):
+    """15:00 尾盘K线定格后：记录当日选股入记忆账本 + 结算到期信号 + 刷新复盘摘要。
+
+    失败不阻塞收盘总结（总结里若已有自检报告则展示，否则跳过该段）。
+    """
+    log("[15:00 自检] 记录当日选股 → 结算到期信号 → 刷新复盘摘要…")
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, SELF_REVIEW], cwd=HERE,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace", bufsize=1,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+        for line in proc.stdout:
+            line = line.rstrip()
+            if line:
+                log("    | " + line)
+        proc.wait()
+        if proc.returncode == 0:
+            rhythm_mark_flag("learn")
+            log("[15:00 自检] 完成（记忆+结算已落盘）")
+            return True
+        ops_note("learn_fail", "选股自检退出码=%d" % proc.returncode)
+    except Exception as e:  # noqa: BLE001
+        log("选股自检异常：%s" % e)
+        ops_note("learn_error", repr(e))
+    log("[15:00 自检] 失败，30 秒后重试")
     return False
 
 
@@ -1797,6 +1957,15 @@ def _push_eod_summary(dry, use_ctx, log):
         if segs:
             lines.append("📊 当日多轮入选（共振参考）")
             lines.extend("  · " + s for s in segs)
+    # ②.5 自检复盘摘要（尾盘已入账本/结算，asof 一致才追加；失败不影响总结）
+    try:
+        with open(os.path.join(HERE, "_records", "_selfreview_report.json"),
+                  encoding="utf-8") as f:
+            sr = json.load(f)
+        if sr and sr.get("asof") == asof and sr.get("text"):
+            lines.append(sr["text"].strip())
+    except (OSError, ValueError):
+        pass
     # ③ 持仓回顾 + 纪律 + 鼓励
     pos = data.get("positions") or []
     pf = data.get("portfolio") or {}
@@ -1836,7 +2005,12 @@ def _push_eod_summary(dry, use_ctx, log):
         return True
     try:
         cfg = load_notify_cfg()
-        return _push_wechat("📅 收盘总结 %s" % asof, content, cfg)
+        ok_txt = _push_wechat("📅 收盘总结 %s" % asof, content, cfg)
+        if ok_txt:
+            # 收盘后附带「大盘4指数归一化叠加图」（图片单独一条，企微机器人支持；
+            # 失败仅留痕，不影响总结本体）
+            _push_market_image(log=log)
+        return ok_txt
     except Exception as e:  # noqa: BLE001
         log("收盘总结 推送失败：%s" % e)
         ops_note("eod_push_error", repr(e))
@@ -1923,6 +2097,10 @@ def daemon_serve(prep=True, interval=900, dry=False, use_ctx=True,
                     log("[09:00 预热] 失败，2 分钟后重试")
                     _interruptible_sleep(120, stop_check)
                     continue
+            # 开盘前大盘速览：4指数归一化叠加图 + 强弱结论（每日一次）
+            if rhythm_need_flag("pre_msg"):
+                _push_pre_market(dry, log)
+                rhythm_mark_flag("pre_msg")
             _sleep_until(_today_at(9, 30), stop_check)
             continue
         # ── 交易盘段：首刷 → 固定 15 分钟轮 ──
@@ -1955,6 +2133,12 @@ def daemon_serve(prep=True, interval=900, dry=False, use_ctx=True,
         if hm >= 15 * 60:
             if rhythm_need_flag("tail"):
                 run_tail_kline(log=log, stop_check=stop_check)
+                continue
+            # 尾盘定格后 15:00-15:09 窗口：当日选股入账本 + 到期信号结算。
+            # 自检失败仅降级（总结里无该段），绝不让 15:10 收盘总结被拖住。
+            if hm < 15 * 60 + 10 and rhythm_need_flag("learn"):
+                if not run_self_review(log=log, stop_check=stop_check):
+                    _interruptible_sleep(30, stop_check)
                 continue
             if rhythm_need_flag("sum"):
                 if hm < 15 * 60 + 10:

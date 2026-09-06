@@ -157,17 +157,25 @@ class SettingsFragment : Fragment() {
                 binding.btnCloudUpload.isEnabled = false
                 setCloudStatus("正在打包并上传…", Color.parseColor("#FF9800"))
                 val manager = CloudSyncManager(requireContext())
-                val result = manager.uploadData(manager.loadConfig()) { status ->
+                val cfg = manager.loadConfig()
+                manager.uploadData(cfg) { status ->
                     requireActivity().runOnUiThread { setCloudStatus(status, Color.parseColor("#FF9800")) }
-                }
-                binding.btnCloudUpload.isEnabled = true
-                result.onSuccess { msg ->
-                    setCloudStatus(msg, Color.parseColor("#2E7D32"))
-                    Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
+                }.onSuccess { msg ->
+                    // 顺带同步用户关注板块（focus_sectors.json，供 PC 三段推送使用）
+                    manager.uploadFocusSectors(cfg) { status ->
+                        requireActivity().runOnUiThread { setCloudStatus(status, Color.parseColor("#FF9800")) }
+                    }.onSuccess { _ ->
+                        setCloudStatus(msg, Color.parseColor("#2E7D32"))
+                        Toast.makeText(requireContext(), "$msg；关注板块已同步", Toast.LENGTH_LONG).show()
+                    }.onFailure { e ->
+                        setCloudStatus("数据包上传成功，但关注板块同步失败: ${e.message}", Color.parseColor("#C62828"))
+                        Toast.makeText(requireContext(), "$msg；关注板块同步失败: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
                 }.onFailure { e ->
                     setCloudStatus(e.message ?: "上传失败", Color.parseColor("#C62828"))
                     Toast.makeText(requireContext(), "上传失败: ${e.message}", Toast.LENGTH_LONG).show()
                 }
+                binding.btnCloudUpload.isEnabled = true
             }
         }
         binding.btnCloudDownloadParams.setOnClickListener {

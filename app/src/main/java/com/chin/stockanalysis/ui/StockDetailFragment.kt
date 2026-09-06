@@ -29,16 +29,27 @@ import com.chin.stockanalysis.strategy.analysis.CandlePatternDetector
 import com.chin.stockanalysis.strategy.analysis.MaConvergenceAnalyzer
 import com.chin.stockanalysis.strategy.analysis.TrendPatternEngine
 import com.chin.stockanalysis.strategy.data.InstitutionalRatingProvider
+import com.chin.stockanalysis.strategy.data.MinuteTrendFetcher
 import com.github.mikephil.charting.charts.CombinedChart
 import com.github.mikephil.charting.components.XAxis
 import com.github.mikephil.charting.components.YAxis
 import com.github.mikephil.charting.components.MarkerView
+import com.github.mikephil.charting.components.LimitLine
+import com.github.mikephil.charting.charts.BarChart
+import com.github.mikephil.charting.charts.BarLineChartBase
+import com.github.mikephil.charting.charts.LineChart
+import com.github.mikephil.charting.data.BarData
+import com.github.mikephil.charting.data.BarDataSet
+import com.github.mikephil.charting.data.BarEntry
 import com.github.mikephil.charting.data.CandleData
 import com.github.mikephil.charting.data.CandleDataSet
 import com.github.mikephil.charting.data.CandleEntry
 import com.github.mikephil.charting.data.LineData
 import com.github.mikephil.charting.data.LineDataSet
 import com.github.mikephil.charting.data.Entry
+import com.github.mikephil.charting.data.CombinedData
+import com.github.mikephil.charting.data.ScatterData
+import com.github.mikephil.charting.data.ScatterDataSet
 import com.github.mikephil.charting.highlight.Highlight
 import com.github.mikephil.charting.listener.ChartTouchListener.ChartGesture
 import com.github.mikephil.charting.listener.OnChartGestureListener
@@ -110,6 +121,13 @@ class StockDetailFragment : Fragment() {
     // K 线图时间范围状态
     private var allKlineSnaps: List<DailySnapshotEntity> = emptyList()
     private var klineRangeDays = 90  // 默认显示近3月
+    private val klineSubTabs = listOf("量", "MACD", "RSI", "OBV", "SAR主图")
+    private var klineSubMode = 0  // 0=量 1=MACD 2=RSI 3=OBV 4=SAR主图
+    private var lastSubChart: BarLineChartBase<*>? = null
+    private var klineIsIntraday = false  // true=当日分时模式（腾讯→东财双源）
+    private var minuteLoading = false
+    private var minuteCacheKey = ""
+    private var minuteCache: MinuteTrendFetcher.MinuteResult? = null
     private lateinit var klineContentContainer: LinearLayout  // K线专用容器，按钮切换时只清空此容器
     private var klineTabIndex = 0  // 0=个股, 1=上证指数, 2=科创50, 3=创业板指
     private val klineTabLabels = arrayOf("个股", "上证", "科创", "创业")
@@ -530,7 +548,11 @@ class StockDetailFragment : Fragment() {
     }
 
     /** 构建真正的 K 线图表（CombinedChart = K线 + 均线 + 坐标轴） */
-    private fun buildCandleStickChart(snaps: List<DailySnapshotEntity>): CombinedChart {
+    private fun buildCandleStickChart(
+        snaps: List<DailySnapshotEntity>,
+        sarOverlay: Boolean = false,
+        onViewport: ((low: Float, high: Float) -> Unit)? = null
+    ): CombinedChart {
         val chart = CombinedChart(requireContext())
         chart.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dpToPx(280))
         chart.setBackgroundColor(Color.WHITE)
@@ -546,10 +568,12 @@ class StockDetailFragment : Fragment() {
         chart.setHighlightPerDragEnabled(true) // 拖动时持续显示十字光标
         chart.setVisibleXRangeMaximum(250f)  // 最多可见 250 根（1年）
         chart.setVisibleXRangeMinimum(15f)   // 最少可见 15 根，防止过度放大
-        chart.drawOrder = arrayOf(
+        val drawOrder = arrayListOf(
             CombinedChart.DrawOrder.CANDLE,
             CombinedChart.DrawOrder.LINE
         )
+        if (sarOverlay) drawOrder.add(CombinedChart.DrawOrder.SCATTER)
+        chart.drawOrder = drawOrder.toTypedArray()
         // 定位到最新数据（右侧）
         if (snaps.size > 60) {
             chart.moveViewToX((snaps.size - 60).toFloat())
@@ -627,10 +651,32 @@ class StockDetailFragment : Fragment() {
             })
         }
 
-        // 组合数据：K线 + 均线
+        // 组合数据：K线 + 均线 + （可选）SAR
         val combinedData = com.github.mikephil.charting.data.CombinedData()
         combinedData.setData(CandleData(candleDataSet))
         combinedData.setData(lineData)
+
+        // SAR 主图叠加：青点=上升SAR（看多），橙点=下降SAR（看空）
+        if (sarOverlay) {
+            val sar = computeSar(snaps)
+            val pts = ArrayList<Entry>()
+            val cols = ArrayList<Int>()
+            for (i in snaps.indices) {
+                val v = sar[i].second
+                if (v.isNaN()) continue
+                pts.add(Entry(i.toFloat(), v.toFloat()))
+                cols.add(if (sar[i].first) Color.parseColor("#00BFA5") else Color.parseColor("#FF7043"))
+            }
+            if (pts.isNotEmpty()) {
+                val scatter = ScatterDataSet(pts, "SAR").apply {
+                    setColors(cols)
+                    setDrawValues(false)
+                    isHighlightEnabled = false
+                    scatterShapeSize = 11f
+                }
+                combinedData.setData(ScatterData(scatter))
+            }
+        }
         chart.data = combinedData
 
         // X 轴：日期
@@ -720,6 +766,8 @@ class StockDetailFragment : Fragment() {
             override fun onChartGestureStart(e: MotionEvent?, lastPerformedGesture: ChartGesture?) {}
             override fun onChartGestureEnd(e: MotionEvent?, lastPerformedGesture: ChartGesture?) {
                 refreshXAxisDensity(chart, snaps)
+                onViewport?.invoke(chart.lowestVisibleX, chart.highestVisibleX)
+                refitKlineY(chart, snaps)
             }
             override fun onChartLongPressed(e: MotionEvent?) {}
             override fun onChartDoubleTapped(e: MotionEvent?) {}
@@ -728,8 +776,11 @@ class StockDetailFragment : Fragment() {
             override fun onChartScale(e: MotionEvent?, scaleX: Float, scaleY: Float) {}
             override fun onChartTranslate(e: MotionEvent?, dx: Float, dy: Float) {}
         })
-        // 首次布局完成后按默认可视范围（最右 60 根）设置一次刻度
-        chart.post { refreshXAxisDensity(chart, snaps) }
+        // 首次布局完成后按默认可视范围（最右 60 根）设置一次刻度，并让 Y 轴贴合该窗口
+        chart.post {
+            refreshXAxisDensity(chart, snaps)
+            refitKlineY(chart, snaps)
+        }
 
         chart.invalidate()
         return chart
@@ -759,10 +810,759 @@ class StockDetailFragment : Fragment() {
     }
 
     /**
+     * Y 轴随可见区间自适应：缩放/拖动结束后按"当前可见K线的最高/最低"重新定轴，
+     * 解决长跨度（近1年/全部）下近期波动被压成一条线的问题。
+     * 2026-09-05：可见窗口放宽到 >=10 根即自动贴紧（原先 <45 根不贴，
+     * 导致用户放大到几十根时 Y 仍取全量 min/max，细节被压成平线）。
+     */
+    private fun refitKlineY(chart: CombinedChart, snaps: List<DailySnapshotEntity>) {
+        if (snaps.size < 4) return
+        val low = chart.lowestVisibleX.toInt().coerceIn(0, snaps.size - 1)
+        val high = chart.highestVisibleX.toInt().coerceIn(0, snaps.size - 1)
+        if (high - low + 1 < 10) return
+        var mn = Double.MAX_VALUE
+        var mx = -Double.MAX_VALUE
+        for (i in low..high) {
+            val s = snaps[i]
+            if (s.low < mn) mn = s.low
+            if (s.high > mx) mx = s.high
+        }
+        if (mn >= mx) return
+        val pad = (mx - mn) * 0.05
+        chart.axisLeft.axisMinimum = (mn - pad).toFloat()
+        chart.axisLeft.axisMaximum = (mx + pad).toFloat()
+        chart.invalidate()
+    }
+
+    // ═══════════════ K线指标副图（量/MACD/RSI/OBV + SAR主图叠加） ═══════════════
+
+    /** 主图十字光标/缩放平移结束 → 把视口同步给副图，保证两图时间轴一致 */
+    private fun syncSubChart(low: Float, high: Float) {
+        val sub = lastSubChart ?: return
+        val span = (high - low + 1f).coerceIn(2f, 250f)
+        sub.setVisibleXRangeMaximum(span)
+        sub.setVisibleXRangeMinimum(1f)
+        sub.moveViewToX(low)
+        sub.invalidate()
+    }
+
+    private fun buildSubToolRow(): LinearLayout {
+        val row = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 2, 0, 4)
+        }
+        row.addView(TextView(requireContext()).apply {
+            text = "副图 "
+            textSize = 9f
+            setTextColor(Color.parseColor("#999999"))
+        })
+        for (i in klineSubTabs.indices) {
+            val name = klineSubTabs[i]
+            val isActive = klineSubMode == i
+            row.addView(TextView(requireContext()).apply {
+                text = name
+                textSize = 9f
+                setTextColor(if (isActive) Color.WHITE else Color.parseColor("#666666"))
+                setBackgroundColor(if (isActive) Color.parseColor("#1976D2") else Color.parseColor("#EEEEEE"))
+                setPadding(8, 3, 8, 3)
+                layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                    marginEnd = 3
+                }
+                setOnClickListener {
+                    if (klineSubMode == i) return@setOnClickListener
+                    klineSubMode = i
+                    renderKlineChart()
+                }
+            })
+        }
+        row.addView(TextView(requireContext()).apply {
+            text = " 副图与主图同步缩放/拖动"
+            textSize = 8f
+            setTextColor(Color.parseColor("#AAAAAA"))
+            gravity = Gravity.CENTER_VERTICAL
+        })
+        return row
+    }
+
+    private fun buildIndicatorPane(snaps: List<DailySnapshotEntity>): View {
+        return when (klineSubTabs[klineSubMode]) {
+            "MACD" -> paneWrap("MACD(12,26,9)", buildMacdPane(snaps))
+            "RSI" -> paneWrap("RSI(14)", buildRsiPane(snaps))
+            "OBV" -> paneWrap("OBV 能量潮", buildObvPane(snaps))
+            "SAR主图" -> {
+                lastSubChart = null
+                LinearLayout(requireContext()).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(0, 2, 0, 6)
+                    addView(TextView(requireContext()).apply {
+                        text = "SAR 已叠加在主图上：青点=上升SAR(看多)，橙点=下降SAR(看空)"
+                        textSize = 9f
+                        setTextColor(Color.parseColor("#666666"))
+                    })
+                }
+            }
+            else -> paneWrap("成交量（红涨绿跌）", buildVolumePane(snaps))
+        }
+    }
+
+    private fun paneWrap(title: String, chart: View): View {
+        val wrap = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 2, 0, 6)
+        }
+        wrap.addView(TextView(requireContext()).apply {
+            text = "副图·$title"
+            textSize = 9f
+            setTextColor(Color.parseColor("#888888"))
+            setPadding(0, 0, 0, 2)
+        })
+        wrap.addView(chart)
+        return wrap
+    }
+
+    /** 副图统一坐标轴样式（时间轴与主图一致；数据量少时一步一标） */
+    private fun stylePane(
+        chart: BarLineChartBase<*>,
+        snaps: List<DailySnapshotEntity>,
+        decimal: String = "%.2f"
+    ) {
+        chart.setBackgroundColor(Color.WHITE)
+        chart.description.isEnabled = false
+        chart.legend.isEnabled = false
+        chart.setScaleEnabled(false)
+        chart.setDragEnabled(false)
+        chart.setDoubleTapToZoomEnabled(false)
+        chart.setHighlightPerTapEnabled(false)
+        chart.setHighlightPerDragEnabled(false)
+        chart.setVisibleXRangeMaximum(250f)
+        chart.setVisibleXRangeMinimum(15f)
+        chart.xAxis.apply {
+            position = XAxis.XAxisPosition.BOTTOM
+            granularity = (snaps.size / 4).coerceAtLeast(1).toFloat()
+            labelCount = 4
+            textSize = 8f
+            textColor = Color.parseColor("#999999")
+            setDrawGridLines(false)
+            setAvoidFirstLastClipping(true)
+            valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
+                override fun getFormattedValue(value: Float): String {
+                    val ix = value.toInt()
+                    return if (ix in snaps.indices) snaps[ix].date.takeLast(5) else ""
+                }
+            }
+        }
+        chart.axisLeft.apply {
+            textSize = 8f
+            textColor = Color.parseColor("#999999")
+            setDrawGridLines(true)
+            gridColor = Color.parseColor("#EEEEEE")
+            valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
+                override fun getFormattedValue(value: Float): String = decimal.format(value)
+            }
+        }
+        chart.axisRight.isEnabled = false
+        chart.invalidate()
+    }
+
+    /** 成交量副图：红涨绿跌柱 */
+    private fun buildVolumePane(snaps: List<DailySnapshotEntity>): View {
+        val entries = ArrayList<BarEntry>(snaps.size)
+        val colors = ArrayList<Int>(snaps.size)
+        for (i in snaps.indices) {
+            val s = snaps[i]
+            entries.add(BarEntry(i.toFloat(), (s.volume.toDouble() / 100.0).toFloat()))
+            colors.add(if (s.close >= s.open) Color.parseColor("#E53935") else Color.parseColor("#43A047"))
+        }
+        val bc = BarChart(requireContext())
+        bc.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dpToPx(100))
+        val ds = BarDataSet(entries, "量").apply {
+            setColors(colors)
+            barBorderWidth = 0f
+            setDrawValues(false)
+            isHighlightEnabled = false
+        }
+        bc.data = BarData(ds).apply { barWidth = 0.6f }
+        stylePane(bc, snaps, "%.0f")
+        lastSubChart = bc
+        return bc
+    }
+
+    /** MACD 副图：红绿动能柱 + DIF/DEA 线 */
+    private fun buildMacdPane(snaps: List<DailySnapshotEntity>): View {
+        val n = snaps.size
+        val closes = snaps.map { it.close }
+        val dif = DoubleArray(n)
+        val dea = DoubleArray(n)
+        val hist = DoubleArray(n)
+        var e12 = closes[0]
+        var e26 = closes[0]
+        var d9 = 0.0
+        for (i in 0 until n) {
+            e12 += (closes[i] - e12) * 2.0 / 13.0
+            e26 += (closes[i] - e26) * 2.0 / 27.0
+            dif[i] = e12 - e26
+            if (i == 0) d9 = dif[0] else d9 += (dif[i] - d9) * 0.2  // EMA9
+            dea[i] = d9
+            hist[i] = 2.0 * (dif[i] - dea[i])
+        }
+        val barEntries = ArrayList<BarEntry>(n)
+        val barColors = ArrayList<Int>(n)
+        val difEntries = ArrayList<Entry>(n)
+        val deaEntries = ArrayList<Entry>(n)
+        for (i in 0 until n) {
+            barEntries.add(BarEntry(i.toFloat(), hist[i].toFloat()))
+            barColors.add(if (hist[i] >= 0) Color.parseColor("#EF5350") else Color.parseColor("#43A047"))
+            difEntries.add(Entry(i.toFloat(), dif[i].toFloat()))
+            deaEntries.add(Entry(i.toFloat(), dea[i].toFloat()))
+        }
+        val cc = CombinedChart(requireContext())
+        cc.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dpToPx(100))
+        cc.setScaleEnabled(false)
+        cc.setDragEnabled(false)
+        cc.setDoubleTapToZoomEnabled(false)
+        cc.setHighlightPerTapEnabled(false)
+        cc.drawOrder = arrayOf(CombinedChart.DrawOrder.BAR, CombinedChart.DrawOrder.LINE)
+        val barDs = BarDataSet(barEntries, "MACD柱").apply {
+            setColors(barColors)
+            barBorderWidth = 0f
+            setDrawValues(false)
+            isHighlightEnabled = false
+        }
+        val difDs = LineDataSet(difEntries, "DIF").apply {
+            color = Color.parseColor("#FDD835")
+            lineWidth = 1f
+            setDrawCircles(false)
+            setDrawValues(false)
+            isHighlightEnabled = false
+        }
+        val deaDs = LineDataSet(deaEntries, "DEA").apply {
+            color = Color.parseColor("#29B6F6")
+            lineWidth = 1f
+            setDrawCircles(false)
+            setDrawValues(false)
+            isHighlightEnabled = false
+        }
+        val cd = CombinedData()
+        cd.setData(BarData(barDs).apply { barWidth = 0.6f })
+        val ld = LineData()
+        ld.addDataSet(difDs)
+        ld.addDataSet(deaDs)
+        cd.setData(ld)
+        cc.data = cd
+        stylePane(cc, snaps, "%.3f")
+        lastSubChart = cc
+        return cc
+    }
+
+    /** RSI 副图：Wilder RSI(14) + 30/70 参考线 */
+    private fun buildRsiPane(snaps: List<DailySnapshotEntity>): View {
+        val n = snaps.size
+        val closes = snaps.map { it.close }
+        val period = 14
+        val rsi = FloatArray(n) { Float.NaN }
+        if (n > period) {
+            var avgGain = 0.0
+            var avgLoss = 0.0
+            for (i in 1..period) {
+                val d = closes[i] - closes[i - 1]
+                avgGain += if (d > 0) d else 0.0
+                avgLoss += if (d < 0) -d else 0.0
+            }
+            avgGain /= period
+            avgLoss /= period
+            rsi[period] = rsiValue(avgGain, avgLoss)
+            for (i in (period + 1) until n) {
+                val d = closes[i] - closes[i - 1]
+                val g = if (d > 0) d else 0.0
+                val l = if (d < 0) -d else 0.0
+                avgGain = (avgGain * (period - 1) + g) / period
+                avgLoss = (avgLoss * (period - 1) + l) / period
+                rsi[i] = rsiValue(avgGain, avgLoss)
+            }
+        }
+        val entries = ArrayList<Entry>()
+        for (i in period until n) {
+            if (!rsi[i].isNaN()) entries.add(Entry(i.toFloat(), rsi[i]))
+        }
+        if (entries.isEmpty()) {
+            return TextView(requireContext()).apply {
+                text = "RSI 数据不足（需 ${period + 1} 根K线）"
+                textSize = 9f
+                setTextColor(Color.parseColor("#999999"))
+                gravity = Gravity.CENTER
+                layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dpToPx(100))
+            }
+        }
+        val lc = LineChart(requireContext())
+        lc.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dpToPx(100))
+        lc.setScaleEnabled(false)
+        lc.setDragEnabled(false)
+        lc.setHighlightPerTapEnabled(false)
+        val ds = LineDataSet(entries, "RSI").apply {
+            color = Color.parseColor("#8E24AA")
+            lineWidth = 1.2f
+            setDrawCircles(false)
+            setDrawValues(false)
+            isHighlightEnabled = false
+        }
+        lc.data = LineData(ds)
+        stylePane(lc, snaps, "%.1f")
+        lc.axisLeft.apply {
+            setAxisMinimum(0f)
+            setAxisMaximum(100f)
+            addLimitLine(LimitLine(70f, "超买").apply {
+                lineColor = Color.parseColor("#EF5350")
+                lineWidth = 0.6f
+                enableDashedLine(6f, 4f, 0f)
+                textSize = 8f
+                textColor = Color.parseColor("#EF5350")
+            })
+            addLimitLine(LimitLine(30f, "超卖").apply {
+                lineColor = Color.parseColor("#26A69A")
+                lineWidth = 0.6f
+                enableDashedLine(6f, 4f, 0f)
+                textSize = 8f
+                textColor = Color.parseColor("#26A69A")
+            })
+        }
+        lc.invalidate()
+        lastSubChart = lc
+        return lc
+    }
+
+    private fun rsiValue(avgGain: Double, avgLoss: Double): Float {
+        if (avgLoss <= 0.0) return if (avgGain > 0.0) 100f else 50f
+        return (100.0 - 100.0 / (1.0 + avgGain / avgLoss)).toFloat()
+    }
+
+    /** OBV 副图：能量潮（量价累计） */
+    private fun buildObvPane(snaps: List<DailySnapshotEntity>): View {
+        val n = snaps.size
+        val obv = DoubleArray(n)
+        for (i in 1 until n) {
+            val s = snaps[i]
+            val prev = snaps[i - 1]
+            obv[i] = obv[i - 1] + when {
+                s.close > prev.close -> s.volume.toDouble()
+                s.close < prev.close -> -s.volume.toDouble()
+                else -> 0.0
+            }
+        }
+        val entries = ArrayList<Entry>(n)
+        for (i in 0 until n) entries.add(Entry(i.toFloat(), obv[i].toFloat()))
+        val lc = LineChart(requireContext())
+        lc.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dpToPx(100))
+        lc.setScaleEnabled(false)
+        lc.setDragEnabled(false)
+        lc.setHighlightPerTapEnabled(false)
+        val ds = LineDataSet(entries, "OBV").apply {
+            color = Color.parseColor("#FB8C00")
+            lineWidth = 1.2f
+            setDrawCircles(false)
+            setDrawValues(false)
+            isHighlightEnabled = false
+        }
+        lc.data = LineData(ds)
+        stylePane(lc, snaps, "%.0f")
+        lastSubChart = lc
+        return lc
+    }
+
+    /**
+     * SAR（抛物线指标）序列。
+     * 返回 List<Pair<isUp, sarValue>>，未收敛的前段置 NaN（不绘制）。
+     */
+    private fun computeSar(snaps: List<DailySnapshotEntity>): Array<Pair<Boolean, Double>> {
+        val n = snaps.size
+        val out = Array(n) { false to Double.NaN }
+        if (n < 3) return out
+        var bull = snaps[1].close >= snaps[0].close
+        var ep = if (bull) snaps[0].high else snaps[0].low
+        var af = 0.02
+        var prevSar = ep
+        for (i in 1 until n) {
+            val h = snaps[i].high
+            val l = snaps[i].low
+            var sar = prevSar + af * (ep - prevSar)
+            if (bull) {
+                if (l < sar) {
+                    bull = false
+                    sar = ep
+                    ep = l
+                    af = 0.02
+                } else {
+                    if (h > ep) {
+                        ep = h
+                        af = (af + 0.02).coerceAtMost(0.2)
+                    }
+                    if (i >= 2) sar = minOf(sar, snaps[i - 1].low)
+                }
+            } else {
+                if (h > sar) {
+                    bull = true
+                    sar = ep
+                    ep = h
+                    af = 0.02
+                } else {
+                    if (l < ep) {
+                        ep = l
+                        af = (af + 0.02).coerceAtMost(0.2)
+                    }
+                    if (i >= 2) sar = maxOf(sar, snaps[i - 1].high)
+                }
+            }
+            out[i] = bull to sar
+            prevSar = sar
+        }
+        return out
+    }
+
+    // ═══════════════ K线页签行 / 范围按钮行 / 分时模式（腾讯→东财双源） ═══════════════
+
+    /** 页签行（个股/上证/科创/创业）；切换时回到日K默认近3月 */
+    private fun addKlineTabRowTo(container: LinearLayout) {
+        val tabRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, 4)
+        }
+        for (i in klineTabLabels.indices) {
+            val isActive = klineTabIndex == i
+            tabRow.addView(TextView(requireContext()).apply {
+                text = klineTabLabels[i]
+                textSize = 10f
+                setTextColor(if (isActive) Color.WHITE else Color.parseColor("#666666"))
+                setBackgroundColor(if (isActive) Color.parseColor("#6200EA") else Color.parseColor("#EEEEEE"))
+                setPadding(16, 4, 16, 4)
+                layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { marginEnd = 4 }
+                setOnClickListener {
+                    if (klineTabIndex == i) return@setOnClickListener
+                    klineTabIndex = i
+                    klineRangeDays = 90  // 切换 Tab 时重置为默认范围
+                    klineIsIntraday = false
+                    minuteCache = null
+                    minuteCacheKey = ""
+                    if (i == 0) switchToStockKline() else switchToIndexKline(i)
+                }
+            })
+        }
+        container.addView(tabRow)
+    }
+
+    /** 范围行：分时 + 1月/3月/6月/1年/全部 + 操作提示 + 图谱 */
+    private fun addRangeRowTo(container: LinearLayout, intradayActive: Boolean) {
+        val rangeRow = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 2, 0, 4)
+        }
+        fun chip(label: String, active: Boolean, activeColor: String, onClick: () -> Unit) {
+            rangeRow.addView(TextView(requireContext()).apply {
+                text = label
+                textSize = 10f
+                setTextColor(if (active) Color.WHITE else Color.parseColor("#666666"))
+                setBackgroundColor(if (active) Color.parseColor(activeColor) else Color.parseColor("#EEEEEE"))
+                setPadding(12, 4, 12, 4)
+                layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { marginEnd = 4 }
+                setOnClickListener { onClick() }
+            })
+        }
+        data class RangeBtn(val label: String, val days: Int)
+        val rangeBtns = listOf(
+            RangeBtn("1月", 30),
+            RangeBtn("3月", 90),
+            RangeBtn("6月", 120),
+            RangeBtn("1年", 250),
+            RangeBtn("全部", 0)
+        )
+        chip("分时", intradayActive, "#E65100") {
+            if (!klineIsIntraday) {
+                klineIsIntraday = true
+                renderKlineChart()
+            }
+        }
+        for (rb in rangeBtns) {
+            chip(rb.label, !intradayActive && klineRangeDays == rb.days, "#1976D2") {
+                klineIsIntraday = false
+                klineRangeDays = rb.days
+                val count = if (klineRangeDays <= 0) allKlineSnaps.size else allKlineSnaps.takeLast(klineRangeDays).size
+                android.widget.Toast.makeText(requireContext(), "${rb.label}: $count 根K线 / 总计 ${allKlineSnaps.size} 根", android.widget.Toast.LENGTH_SHORT).show()
+                renderKlineChart()
+            }
+        }
+        rangeRow.addView(TextView(requireContext()).apply {
+            text = "  ← 双指缩放/拖动"
+            textSize = 8f; setTextColor(Color.parseColor("#AAAAAA"))
+            layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
+        })
+        rangeRow.addView(TextView(requireContext()).apply {
+            text = " 📐图谱"
+            textSize = 10f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#7B1FA2"))
+            setPadding(12, 4, 12, 4)
+            layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { marginStart = 8 }
+            setOnClickListener { showTrendChartReference() }
+        })
+        container.addView(rangeRow)
+    }
+
+    /** 分时模式渲染：页签行 + 范围行 + 异步取数（腾讯 minute → 东财 trends2 备选） */
+    private fun renderKlineIntraday() {
+        klineContentContainer.removeAllViews()
+        addKlineTabRowTo(klineContentContainer)
+        addRangeRowTo(klineContentContainer, intradayActive = true)
+
+        val code = if (klineTabIndex == 0) stockCode else klineIndexCodes.getOrNull(klineTabIndex) ?: ""
+        val name = if (klineTabIndex == 0) stockName else klineTabLabels[klineTabIndex]
+        if (code.isBlank()) {
+            klineContentContainer.addView(errorTip("暂无可取分时数据的代码", onRetry = null))
+            return
+        }
+        val cacheKey = "$klineTabIndex:$code"
+        val cached = minuteCache?.takeIf { minuteCacheKey == cacheKey }
+        if (cached != null) {
+            appendMinuteCharts(name, cached)
+            return
+        }
+        if (minuteLoading) return  // 已有请求在途，回填后会自动重建界面
+
+        minuteLoading = true
+        klineContentContainer.addView(TextView(requireContext()).apply {
+            text = "⏳ $name 当日分时获取中（腾讯 minute → 东财 trends2 备选）…"
+            textSize = 11f; setTextColor(Color.parseColor("#999999"))
+            setPadding(0, 4, 0, 8)
+        })
+        val fetcher = MinuteTrendFetcher()
+        lifecycleScope.launch(Dispatchers.IO) {
+            val result = try {
+                fetcher.fetchMinuteTrend(code)
+            } catch (t: Throwable) {
+                Log.w(TAG, "分时取数异常: ${t.message}")
+                null
+            }
+            withContext(Dispatchers.Main) {
+                minuteLoading = false
+                if (!isAdded) return@withContext
+                if (!klineIsIntraday) return@withContext  // 用户已切回日K，丢弃
+                klineContentContainer.removeAllViews()
+                addKlineTabRowTo(klineContentContainer)
+                addRangeRowTo(klineContentContainer, intradayActive = true)
+                if (result == null || result.points.size < 2) {
+                    klineContentContainer.addView(
+                        errorTip("❌ $name 分时获取失败：腾讯与东财均不可用。\n请检查网络后点击重试。") {
+                            renderKlineChart()
+                        }
+                    )
+                    return@withContext
+                }
+                minuteCacheKey = cacheKey
+                minuteCache = result
+                appendMinuteCharts(name, result)
+            }
+        }
+    }
+
+    private fun errorTip(message: String, onRetry: (() -> Unit)?): View {
+        val wrap = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 6, 0, 8)
+        }
+        wrap.addView(TextView(requireContext()).apply {
+            text = message
+            textSize = 11f
+            setTextColor(Color.parseColor("#B71C1C"))
+            setPadding(0, 0, 0, 6)
+        })
+        if (onRetry != null) {
+            wrap.addView(TextView(requireContext()).apply {
+                text = "🔄 重试"
+                textSize = 10f
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.parseColor("#1976D2"))
+                setPadding(16, 6, 16, 6)
+                setOnClickListener { onRetry() }
+            })
+        }
+        return wrap
+    }
+
+    /** 分时内容：统计行 + 价格/均价图 + 分时量柱图 */
+    private fun appendMinuteCharts(name: String, res: MinuteTrendFetcher.MinuteResult) {
+        val ctx = requireContext()
+        val pts = res.points
+        val last = pts.last()
+        val prev = res.prevClose
+        val first = pts.first()
+        val up = if (prev > 0) last.price >= prev else last.price >= first.price
+        val upColor = Color.parseColor(if (up) "#E53935" else "#43A047")
+        val pct = if (prev > 0) (last.price / prev - 1.0) * 100.0 else 0.0
+        val hi = pts.maxOf { it.price }
+        val lo = pts.minOf { it.price }
+
+        // 标题 + 统计行
+        klineContentContainer.addView(TextView(requireContext()).apply {
+            text = "## $name 当日分时 · ${res.date}（${res.source}）"
+            textSize = 12f; setTextColor(Color.parseColor("#333333"))
+            setTypeface(null, Typeface.BOLD)
+            setPadding(0, 0, 0, 2)
+        })
+        klineContentContainer.addView(TextView(requireContext()).apply {
+            val pctTxt = if (prev > 0) "  ${pct.toString().take(6)}%" else ""
+            text = "最新 %.2f%s   均价 %.2f   昨收 %.2f   高 %.2f  低 %.2f   量 %.2f万手".format(
+                last.price, pctTxt, last.avg, prev, hi, lo, last.volumeCum / 10000.0
+            )
+            textSize = 10f
+            setTextColor(if (prev > 0 && !up) Color.parseColor("#43A047") else if (prev <= 0) Color.parseColor("#333333") else Color.parseColor("#E53935"))
+            setPadding(0, 0, 0, 4)
+        })
+
+        // ── 价格 + 均价 LineChart ──
+        val lc = LineChart(ctx)
+        lc.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dpToPx(230))
+        lc.description.isEnabled = false
+        lc.legend.isEnabled = false
+        lc.setDrawGridBackground(false)
+        lc.isDragEnabled = true
+        lc.isScaleXEnabled = true
+        lc.isScaleYEnabled = true
+        lc.setPinchZoom(true)
+        lc.setDoubleTapToZoomEnabled(true)
+        lc.setHighlightPerTapEnabled(true)
+
+        val priceEntries = ArrayList<Entry>(pts.size)
+        val avgEntries = ArrayList<Entry>(pts.size)
+        var minAll = Double.MAX_VALUE
+        var maxAll = -Double.MAX_VALUE
+        for (i in pts.indices) {
+            val p = pts[i]
+            priceEntries.add(Entry(i.toFloat(), p.price.toFloat()))
+            avgEntries.add(Entry(i.toFloat(), p.avg.toFloat()))
+            minAll = minOf(minAll, p.price, p.avg)
+            maxAll = maxOf(maxAll, p.price, p.avg)
+        }
+        if (prev > 0) { minAll = minOf(minAll, prev); maxAll = maxOf(maxAll, prev) }
+        val padY = ((maxAll - minAll).coerceAtLeast(0.05) * 0.08)
+        lc.axisLeft.apply {
+            textSize = 8f; textColor = Color.parseColor("#999999")
+            axisMinimum = (minAll - padY).toFloat()
+            axisMaximum = (maxAll + padY).toFloat()
+            valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
+                override fun getFormattedValue(value: Float): String = "%.2f".format(value.toDouble())
+            }
+        }
+        lc.axisRight.isEnabled = false
+        lc.xAxis.apply {
+            position = XAxis.XAxisPosition.BOTTOM
+            textSize = 8f; textColor = Color.parseColor("#999999")
+            granularity = (pts.size / 5).coerceAtLeast(1).toFloat()
+            setLabelCount(6, false)
+            setDrawGridLines(false)
+            valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
+                override fun getFormattedValue(value: Float): String {
+                    val ix = value.toInt()
+                    return if (ix in pts.indices) pts[ix].time.takeLast(5) else ""
+                }
+            }
+        }
+        if (prev > 0) {
+            lc.axisLeft.addLimitLine(LimitLine(prev.toFloat(), "昨收").apply {
+                lineColor = Color.parseColor("#F9A825")
+                lineWidth = 0.7f
+                enableDashedLine(8f, 5f, 0f)
+                textSize = 8f
+                textColor = Color.parseColor("#F9A825")
+            })
+        }
+        val priceDs = LineDataSet(priceEntries, "价格").apply {
+            color = upColor
+            lineWidth = 1.5f
+            setDrawCircles(false)
+            setDrawValues(false)
+            mode = LineDataSet.Mode.LINEAR
+        }
+        val avgDs = LineDataSet(avgEntries, "均价").apply {
+            color = Color.parseColor("#BDBDBD")
+            lineWidth = 0.8f
+            setDrawCircles(false)
+            setDrawValues(false)
+            enableDashedLine(8f, 6f, 0f)
+        }
+        lc.data = LineData(priceDs).apply { addDataSet(avgDs) }
+        klineContentContainer.addView(lc)
+
+        // ── 分时量柱（每分钟增量，红涨绿跌） ──
+        val volEntries = ArrayList<BarEntry>(pts.size)
+        val volColors = ArrayList<Int>(pts.size)
+        for (i in pts.indices) {
+            volEntries.add(BarEntry(i.toFloat(), pts[i].volumeMin.toFloat()))
+            volColors.add(
+                if (i == 0) Color.parseColor("#9E9E9E")
+                else if (pts[i].price >= pts[i - 1].price) Color.parseColor("#E53935")
+                else Color.parseColor("#43A047")
+            )
+        }
+        val vc = BarChart(ctx)
+        vc.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dpToPx(80))
+        vc.description.isEnabled = false
+        vc.legend.isEnabled = false
+        vc.setScaleEnabled(false)
+        vc.isDragEnabled = false
+        vc.setDoubleTapToZoomEnabled(false)
+        vc.setHighlightPerTapEnabled(false)
+        val vDs = BarDataSet(volEntries, "量").apply {
+            setColors(volColors)
+            barBorderWidth = 0f
+            setDrawValues(false)
+            isHighlightEnabled = false
+        }
+        vc.data = BarData(vDs).apply { barWidth = 0.55f }
+        vc.xAxis.apply {
+            position = XAxis.XAxisPosition.BOTTOM
+            textSize = 8f; textColor = Color.parseColor("#999999")
+            granularity = (pts.size / 5).coerceAtLeast(1).toFloat()
+            setLabelCount(6, false)
+            setDrawGridLines(false)
+            valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
+                override fun getFormattedValue(value: Float): String {
+                    val ix = value.toInt()
+                    return if (ix in pts.indices) pts[ix].time.takeLast(5) else ""
+                }
+            }
+        }
+        vc.axisLeft.apply {
+            textSize = 8f; textColor = Color.parseColor("#999999")
+            setDrawGridLines(true)
+            gridColor = Color.parseColor("#EEEEEE")
+            valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
+                override fun getFormattedValue(value: Float): String = "%.0f".format(value.toDouble())
+            }
+        }
+        vc.axisRight.isEnabled = false
+        vc.invalidate()
+        klineContentContainer.addView(vc)
+
+        // 操作提示
+        klineContentContainer.addView(TextView(requireContext()).apply {
+            text = "↔ 左右拖动可回看历史时段；双指缩放（横向看区间，纵向放大波幅）"
+            textSize = 8f; setTextColor(Color.parseColor("#AAAAAA"))
+            setPadding(0, 0, 0, 8)
+        })
+        klineContentContainer.requestLayout()
+        klineContentContainer.invalidate()
+    }
+
+    /**
      * 渲染 K 线图区块（标题 + 时间范围按钮 + 图表 + MA 简评）
      * 根据 allKlineSnaps 和 klineRangeDays 动态裁剪数据并重建图表
      */
     private fun renderKlineChart() {
+        // 分时模式：走独立的联网分时渲染（不依赖日 K 数据）
+        if (klineIsIntraday) {
+            renderKlineIntraday()
+            return
+        }
         if (allKlineSnaps.isEmpty()) return
         // 清空 K 线专用容器（不影响后续评级内容）
         klineContentContainer.removeAllViews()
@@ -784,38 +1584,7 @@ class StockDetailFragment : Fragment() {
         }
 
         // ── Tab 切换行（个股/上证/科创/创业） ──
-        val tabRow = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, 4)
-        }
-        for (i in klineTabLabels.indices) {
-            val isActive = klineTabIndex == i
-            val tabBtn = TextView(requireContext()).apply {
-                text = klineTabLabels[i]
-                textSize = 10f
-                setTextColor(if (isActive) Color.WHITE else Color.parseColor("#666666"))
-                setBackgroundColor(if (isActive) Color.parseColor("#6200EA") else Color.parseColor("#EEEEEE"))
-                setPadding(16, 4, 16, 4)
-                layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                    marginEnd = 4
-                }
-                setOnClickListener {
-                    if (klineTabIndex == i) return@setOnClickListener
-                    klineTabIndex = i
-                    klineRangeDays = 90  // 切换 Tab 时重置为默认范围
-                    if (i == 0) {
-                        // 个股：重新从数据库加载
-                        switchToStockKline()
-                    } else {
-                        // 指数：异步加载
-                        switchToIndexKline(i)
-                    }
-                }
-            }
-            tabRow.addView(tabBtn)
-        }
-        klineContentContainer.addView(tabRow)
+        addKlineTabRowTo(klineContentContainer)
 
         // ── 标题行 ──
         val rangeLabel = when (klineRangeDays) {
@@ -834,62 +1603,19 @@ class StockDetailFragment : Fragment() {
             setPadding(0, 0, 0, 4)
         })
 
-        // ── 时间范围选择按钮行 ──
-        val rangeRow = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 2, 0, 4)
-        }
-        data class RangeBtn(val label: String, val days: Int)
-        val rangeBtns = listOf(
-            RangeBtn("1月", 30),
-            RangeBtn("3月", 90),
-            RangeBtn("6月", 120),
-            RangeBtn("1年", 250),
-            RangeBtn("全部", 0)
-        )
-        for (rb in rangeBtns) {
-            val isActive = klineRangeDays == rb.days
-            val btn = TextView(requireContext()).apply {
-                text = rb.label
-                textSize = 10f
-                setTextColor(if (isActive) Color.WHITE else Color.parseColor("#666666"))
-                setBackgroundColor(if (isActive) Color.parseColor("#1976D2") else Color.parseColor("#EEEEEE"))
-                setPadding(12, 4, 12, 4)
-                layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                    marginEnd = 4
-                }
-                setOnClickListener {
-                    klineRangeDays = rb.days
-                    val count = if (klineRangeDays <= 0) allKlineSnaps.size else allKlineSnaps.takeLast(klineRangeDays).size
-                    android.widget.Toast.makeText(requireContext(), "${rb.label}: $count 根K线 / 总计 ${allKlineSnaps.size} 根", android.widget.Toast.LENGTH_SHORT).show()
-                    renderKlineChart()
-                }
-            }
-            rangeRow.addView(btn)
-        }
-        rangeRow.addView(TextView(requireContext()).apply {
-            text = "  ← 双指缩放/拖动"
-            textSize = 8f; setTextColor(Color.parseColor("#AAAAAA"))
-            layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
-        })
-        // 趋势图谱按钮
-        rangeRow.addView(TextView(requireContext()).apply {
-            text = " 📐图谱"
-            textSize = 10f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#7B1FA2"))
-            setPadding(12, 4, 12, 4)
-            layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                marginStart = 8
-            }
-            setOnClickListener { showTrendChartReference() }
-        })
-        klineContentContainer.addView(rangeRow)
+        // ── 时间范围 / 分时选择按钮行 ──
+        addRangeRowTo(klineContentContainer, intradayActive = false)
 
-        // ── K 线图表 ──
-        val chart = buildCandleStickChart(displaySnaps)
+        // ── K 线图表（SAR 叠加 + 副图视口同步） ──
+        val sarOn = klineSubTabs[klineSubMode] == "SAR主图"
+        val chart = buildCandleStickChart(displaySnaps, sarOn) { low, high ->
+            syncSubChart(low, high)
+        }
         klineContentContainer.addView(chart)
+
+        // ── 指标副图切换行 + 副图（量/MACD/RSI/OBV；SAR 为叠加主图） ──
+        klineContentContainer.addView(buildSubToolRow())
+        klineContentContainer.addView(buildIndicatorPane(displaySnaps))
 
         // ── 综合趋势分析（自动识别，用户无需自行判断） ──
         val trendText = buildTrendAnalysis(displaySnaps)

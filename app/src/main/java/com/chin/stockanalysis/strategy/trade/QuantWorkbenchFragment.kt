@@ -208,7 +208,7 @@ class QuantWorkbenchFragment : Fragment() {
                 1 -> getString(com.chin.stockanalysis.R.string.tab_mid)
                 2 -> getString(com.chin.stockanalysis.R.string.tab_long)
                 3 -> "💰 实仓"
-                4 -> "🧲 ETF低位"
+                4 -> "🧲 ETF"
                 else -> throw IllegalStateException("period tab count mismatch: $position")
             }
         }.attach()
@@ -530,7 +530,7 @@ class QuantWorkbenchFragment : Fragment() {
     }
 
     /** IO 线程计算各周期股票的指标摘要 */
-    private fun buildQuickBuildSections(
+    private suspend fun buildQuickBuildSections(
         ctx: android.content.Context,
         picks: Map<String, List<Triple<String, String, Int>>>
     ): List<Pair<String, List<QuickBuildRow>>> {
@@ -539,7 +539,8 @@ class QuantWorkbenchFragment : Fragment() {
         val dao = db?.dailySnapshotDao()
         return order.mapNotNull { label ->
             val list = picks[label].orEmpty()
-            val rows = list.map { (rawCode, name, score) ->
+            val rows = mutableListOf<QuickBuildRow>()
+            for ((rawCode, name, score) in list) {
                 val secid = if (rawCode.length == 6) {
                     when (rawCode.first()) {
                         '6', '9' -> "sh$rawCode"
@@ -550,7 +551,7 @@ class QuantWorkbenchFragment : Fragment() {
                 val code6 = if (secid.length > 6) secid.takeLast(6) else secid
                 val snaps = try { dao?.getByCode(secid).orEmpty().sortedBy { it.date } } catch (_: Exception) { emptyList() }
                 if (snaps.size < 5) {
-                    QuickBuildRow(code6, name, score, 0.0, 0.0, "暂无K线数据")
+                    rows.add(QuickBuildRow(code6, name, score, 0.0, 0.0, "暂无K线数据"))
                 } else {
                     val closes = snaps.map { it.close }
                     val highs = snaps.map { it.high }
@@ -570,7 +571,7 @@ class QuantWorkbenchFragment : Fragment() {
                     val detail = "MACD ${"%.2f".format(dif)}/${"%.2f".format(dea)}/${barSign}${"%.2f".format(bar)}  " +
                         "RSI ${"%.1f".format(rsi)}  KDJ ${"%.0f".format(k)}/${"%.0f".format(d)}/${"%.0f".format(j)}  " +
                         trend + "  量比 ${"%.1f".format(vr)}"
-                    QuickBuildRow(code6, name, score, last.close, chg, detail)
+                    rows.add(QuickBuildRow(code6, name, score, last.close, chg, detail))
                 }
             }
             label to rows

@@ -292,3 +292,51 @@ def sar_alert(snaps):
     except Exception:
         pass
     return None
+
+
+# ── 量比 / 人气估值档位标注（与 AutoQuant/autoquant/technicals.py 同源）────
+def volume_ratio_of(snaps, k=5):
+    """量比 = 当日成交量 / 前 k 日均量（样本不足返回 None）。"""
+    if not snaps:
+        return None
+    vols = [float(s.get("volume") or 0) for s in snaps]
+    if len(vols) < k + 1:
+        return None
+    base = sum(vols[-(k + 1):-1]) / k
+    return vols[-1] / base if base > 0 else None
+
+
+def annotate_quote(turnover=None, pe=None, volume_ratio=None):
+    """换手率 / 市盈率 / 量比 → 中文档位标注（缺字段自动跳过；pe≤0 视为亏损）。
+    turnover: 换手率%；pe: 动态市盈率；volume_ratio: 量比。"""
+    tags = []
+    if turnover is not None and turnover > 0:
+        if turnover > 25:
+            tags.append("换手%.1f%%·疯狂高换手，准备离场" % turnover)
+        elif turnover >= 15:
+            tags.append("换手%.1f%%·人气票，短期青睐" % turnover)
+        elif turnover >= 5:
+            tags.append("换手%.1f%%·活跃人气票" % turnover)
+        elif turnover >= 2:
+            tags.append("换手%.1f%%·有一定人气" % turnover)
+        else:
+            tags.append("换手%.1f%%·低迷" % turnover)
+    if pe is not None:
+        if pe <= 0:
+            tags.append("PE亏损(%.0f)" % pe)
+        elif pe < 20:
+            tags.append("PE%.1f·估值较低" % pe)
+        elif pe <= 50:
+            tags.append("PE%.1f·估值合理" % pe)
+        else:
+            tags.append("PE%.1f·估值过高(科技/成长需另算)" % pe)
+    if volume_ratio is not None and volume_ratio > 0:
+        if volume_ratio >= 2.5:
+            tags.append("量比%.1f·显著放量，注意变盘" % volume_ratio)
+        elif volume_ratio >= 1.2:
+            tags.append("量比%.1f·温和放量" % volume_ratio)
+        elif volume_ratio >= 0.8:
+            tags.append("量比%.1f·正常水平" % volume_ratio)
+        else:
+            tags.append("量比%.1f·缩量" % volume_ratio)
+    return tags

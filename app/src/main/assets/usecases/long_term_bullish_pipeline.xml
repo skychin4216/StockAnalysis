@@ -103,6 +103,14 @@
     <!-- AI+过滤 Layer 4-5 -->
     <Node id="n_finance" name="财务健康筛选" module="financial_health" />
     <Node id="n_ai" name="AI精选" module="ai_predict" />
+
+    <!-- 2026-09-05 新增：宏观事件驱动（事件库节点，读 assets/macro_events/event_library.json；
+         当前窗口内活跃事件按 seed_map 关键词给候选加权；只调序不加删） -->
+    <Node id="n_event" name="宏观事件驱动" module="macro_event_bias">
+      <config>
+        <param name="boostScale" value="1.0" />
+      </config>
+    </Node>
     <Node id="n_smart" name="主力资金过滤" module="smart_money_filter">
       <config>
         <param name="minScore" value="60" />
@@ -249,9 +257,16 @@
       <TargetNodeId>n_pe_peer</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
-    <!-- Layer 3.10 → 5: 行业相对估值 → 主力资金过滤 -->
+    <!-- Layer 3.10 → 3.11: 行业相对估值 → 宏观事件驱动 -->
     <Link>
       <SourceNodeId>n_pe_peer</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_event</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <!-- Layer 3.11 → 5: 宏观事件驱动 → 主力资金过滤 -->
+    <Link>
+      <SourceNodeId>n_event</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_smart</TargetNodeId>
       <TargetPortId>0</TargetPortId>

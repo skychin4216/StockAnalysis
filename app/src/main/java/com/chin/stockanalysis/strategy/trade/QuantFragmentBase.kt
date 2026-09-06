@@ -1210,6 +1210,8 @@ abstract class QuantFragmentBase : Fragment() {
                     progressBar.visibility = View.GONE
                     refreshPositions()
                 }
+                // 一键建仓批量会话：上报本周期选中结果（非批量期间 no-op）
+                QuantWorkbenchState.onPeriodDone(titlePrefix, r.selectedStocks)
                 onComplete?.invoke()
             } catch (e: Exception) {
                 Log.e("QuantFragmentBase", "[DAG] ${titlePrefix} 执行异常", e)
@@ -1238,6 +1240,8 @@ abstract class QuantFragmentBase : Fragment() {
                     appendLog("⏱ ${titlePrefix} 失败总耗时: ${(System.currentTimeMillis() - t0) / 1000.0} 秒")
                     buildBtn.isEnabled = true; updateBuildButtonText()
                     progressBar.visibility = View.GONE
+                    // 一键建仓批量会话：失败也算该周期完成（避免聚合窗永远等不到）
+                    QuantWorkbenchState.onPeriodDone(titlePrefix, emptyList())
                 }
             }
         }

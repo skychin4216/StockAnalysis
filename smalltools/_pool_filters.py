@@ -21,6 +21,7 @@
   pf.ST_FILTER = pf.MAIN_BOARD = pf.SECTOR_FILTER = pf.STICKY_HARD = pf.SHORT_HARD = False
 """
 import os
+import threading
 
 ST_FILTER = True
 MAIN_BOARD = True
@@ -81,7 +82,8 @@ def is_tradeable_code(code, name):
 
 
 # ── sector_ret20 加速：预计算「板块 × 日期 → 20日平均涨幅」查找表 ──
-_SECTOR_TABLE = None  # {"cache_id": {sec: {date: pct}}}，build_sector_ret_table 构建后 O(1) 查
+_SECTOR_TABLE = None  # {"cache": {sec: {date: pct}}}，build_sector_ret_table 构建后 O(1) 查
+_SECTOR_BUILD_LOCK = threading.Lock()  # 防止多线程重复构建
 
 
 def build_sector_ret_table(cache, lb=SECTOR_LOOKBACK):
@@ -111,29 +113,32 @@ def build_sector_ret_table(cache, lb=SECTOR_LOOKBACK):
     return table
 
 
+def _ensure_sector_table(cache, lb):
+    """表未构建 / cache 对象或窗口不匹配时惰性重建一次。
+    仅在线程首次需要时 O(N) 构建（受锁保护，绝不重复全扫）。"""
+    global _SECTOR_TABLE
+    if _SECTOR_TABLE is not None and _SECTOR_TABLE["cache"] is cache and _SECTOR_TABLE["lb"] == lb:
+        return
+    with _SECTOR_BUILD_LOCK:
+        # 双检：等锁期间其它线程可能已构建
+        if _SECTOR_TABLE is not None and _SECTOR_TABLE["cache"] is cache and _SECTOR_TABLE["lb"] == lb:
+            return
+        build_sector_ret_table(cache, lb)
+
+
 def sector_ret20(cache, all_dates, date_to_idx, code, name, asof, lookback=None):
     """信号日所在行业（关键词近似）近 lookback 日的平均涨跌幅（%，不含指数）。
-    数据不足返回 None。优先查预计算表（O(1)），无表时退化为全量扫描（慢，仅兜底）。"""
-    global _SECTOR_TABLE
+    数据不足返回 None。**只查预计算表（O(1)）；无表时惰性构建一次索引，绝无逐调用全量扫描。**"""
     lb = lookback or SECTOR_LOOKBACK
     idx = date_to_idx.get(asof)
     if idx is None or idx < lb:
         return None
     sec = sector_of(name)
-    if _SECTOR_TABLE is not None and _SECTOR_TABLE["cache"] is cache and _SECTOR_TABLE["lb"] == lb:
-        return _SECTOR_TABLE["data"].get(sec, {}).get(asof)
-    # 兜底：无预计算表时按板块实时聚合（慢）
-    vals = []
-    for other, ent in cache.items():
-        if other.startswith(("sh000", "sz399")):
-            continue
-        if sector_of(ent.get("name") or other) != sec:
-            continue
-        closes = {s["date"]: s["close"] for s in (ent.get("snaps") or [])}
-        base = all_dates[idx - lb] if idx >= lb else None
-        if base and base in closes and asof in closes and closes[base] > 0:
-            vals.append((closes[asof] / closes[base] - 1) * 100)
-    return sum(vals) / len(vals) if vals else None
+    _ensure_sector_table(cache, lb)
+    tbl = _SECTOR_TABLE
+    if tbl is not None and tbl["cache"] is cache and tbl["lb"] == lb:
+        return tbl["data"].get(sec, {}).get(asof)
+    return None
 
 
 def extra_filter(code, name, r, period, cache, all_dates, date_to_idx, asof):

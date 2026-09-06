@@ -3,6 +3,12 @@
 > 目標：刪除所有 Fragment 中的 hardcode 路徑，統一使用 DAG Pipeline。
 > 前提：DAG 必須完整覆蓋 hardcode 的每個步驟，零功能損失。DAG 代表 Directed Acyclic Graph（有向无环图）
 
+> **2026-09-05 主线收口（后续改动须遵循）**：
+> 1. **選股主线 = exe/apk 的 DAG Pipeline**。smalltools 的迴溯+擬合從此僅作為**參考/調參實驗室**——驗證有效的參數再落到 XML usecase / DAG pipeline；不再作為任何生產選股的執行源。
+> 2. **超短收敛三檔**：超短引擎保留（walk-forward 樣本外 wr51.3%、pf1.70），結果**併入短線（⚡極速檔）**；推送/PC 候選/工作台頁籤/exe GUI 勾選只露 短/中/長，引擎鍵與 DB period_type 不變（歷史兼容）。
+> 3. **組合風控一期**（推送「組合紀律」+ App 實倉卡片同閾值）：單票>30%持倉市值 / 前2大>55% / 組合整體浮虧≤-8% 任一觸發即提示。
+> 4. 要提升選股：先改 pipeline（主線），後用 smalltools 迴溯擬合驗證（參考）。
+
 ---
 
 ## 一、Log 分析結論（2026-07-30）

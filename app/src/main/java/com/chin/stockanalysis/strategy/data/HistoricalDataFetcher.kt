@@ -656,6 +656,26 @@ class HistoricalDataFetcher(private val context: Context) {
         return fixed
     }
 
+    /**
+     * 批量补全指定股票的显示名称（供首次导入 / 扫描前调用）。
+     * 先查本地 stock_basics，其余走新浪批量行情（每批最多 60 只）；补到的名称同步写入 basics 与日K。
+     * @return 本次新增/修正的数量
+     */
+    suspend fun fillNamesForCodes(codes: List<String>): Int {
+        if (codes.isEmpty()) return 0
+        try {
+            val existing = try {
+                db.stockBasicDao().getByCodes(codes).associate { it.code to it.name }
+            } catch (_: Exception) { emptyMap() }
+            val remaining = codes.filter { existing[it].isNullOrBlank() }
+            if (remaining.isEmpty()) return 0
+            return fetchNamesFromSinaBatch(remaining)
+        } catch (e: Exception) {
+            Log.w(TAG, "fillNamesForCodes failed: ${e.message}")
+            return 0
+        }
+    }
+
     private suspend fun retryHttp(url: String, maxRetries: Int, delayMs: Long): String? {
         for (i in 0..maxRetries) {
             try {

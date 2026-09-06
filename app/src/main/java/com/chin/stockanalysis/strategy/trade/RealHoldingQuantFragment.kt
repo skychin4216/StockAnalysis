@@ -522,6 +522,10 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
             }
         }
 
+        // ── 组合纪律卡片（机构化一期：单票上限/集中度/整体止损）──
+        if (orders.isNotEmpty()) {
+            addPortfolioDisciplineCard(container, ctx, orders, priceMap, dates)
+        }
         // ── 真实持仓区（表格格式，参考其他周期） ──
         if (orders.isNotEmpty()) {
             android.util.Log.i(TAG, "📋 buildRealHoldingReport: rendering ${orders.size} real positions as table")
@@ -718,6 +722,71 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
         }
     }
 
+    /**
+     * 组合级风控纪律卡片（机构化一期）：与微信推送同一套阈值
+     * 单票≤30%(占总持仓市值) / 前2大≤55% / 整体止损-8%。
+     * 现价口径与表格一致：dates.lastDate 价（实时行情已并入 priceMap）。
+     */
+    private fun addPortfolioDisciplineCard(
+        container: LinearLayout,
+        ctx: android.content.Context,
+        orders: List<StrategyTradeOrderEntity>,
+        priceMap: Map<String, Map<String, Double>>,
+        dates: List<String>
+    ) {
+        val maxSingle = 0.30
+        val top2Max = 0.55
+        val stopPct = -8.0
+        val lastDate = dates.lastOrNull() ?: return
+        val valid = orders.filter { it.quantity > 0 && it.buyPrice > 0 }
+        if (valid.isEmpty()) return
+        val curOf: (StrategyTradeOrderEntity) -> Double = { o ->
+            priceMap[o.stockCode]?.get(lastDate) ?: o.buyPrice
+        }
+        val costMv = valid.sumOf { it.buyPrice * it.quantity }
+        val curMv = valid.sumOf { curOf(it) * it.quantity }
+        if (curMv <= 0 || costMv <= 0) return
+        val pnlPct = (curMv / costMv - 1) * 100
+        val ranked = valid.sortedByDescending { curOf(it) * it.quantity }
+        val alerts = mutableListOf<String>()
+        ranked.filter { curOf(it) * it.quantity / curMv > maxSingle }.take(3)
+            .forEach {
+                val ratio = curOf(it) * it.quantity / curMv * 100
+                alerts.add("  🔴 %s(%s) 占持仓%.0f%% 超上限%d%% → 建议减至≤%d%%".format(
+                    it.stockName, it.stockCode, ratio,
+                    (maxSingle * 100).toInt(), (maxSingle * 100).toInt()))
+            }
+        if (valid.size >= 3) {
+            val top2 = ranked.take(2).sumOf { curOf(it) * it.quantity }
+            if (top2 / curMv > top2Max) {
+                alerts.add("  🟠 前2大持仓占%.0f%% 超集中度上限%d%% → 建议分散至≥3只".format(
+                    top2 / curMv * 100, (top2Max * 100).toInt()))
+            }
+        }
+        if (pnlPct <= stopPct) {
+            alerts.add("  🔻 组合整体浮亏%.1f%% 达整体止损%d%% → 建议降仓防守".format(
+                pnlPct, (-stopPct).toInt()))
+        }
+        if (alerts.isEmpty()) {
+            alerts.add("  ✅ 持仓%d只 整体%+.1f%% 无超限（单票≤%d%%/前2≤%d%%）".format(
+                valid.size, pnlPct, (maxSingle * 100).toInt(), (top2Max * 100).toInt()))
+        }
+        val pnlColor = if (pnlPct >= 0) "#D32F2F" else "#2E7D32"
+        container.addView(TextView(ctx).apply {
+            text = "⚠️ 组合纪律  整体 %s%.1f%%".format(if (pnlPct >= 0) "+" else "", pnlPct)
+            textSize = 12f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setTextColor(Color.parseColor(pnlColor))
+            setPadding(0, 8, 0, 2)
+        })
+        container.addView(TextView(ctx).apply {
+            text = alerts.joinToString("\n")
+            textSize = 10.5f
+            setTextColor(Color.parseColor("#455A64"))
+            setPadding(8, 0, 0, 2)
+        })
+    }
+
     override fun getDefaultUseCaseId(): String = "real_holding"
 
     // ═══════════════════════════════════════
@@ -765,7 +834,7 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
         }
         val periodSpinner = Spinner(ctx).apply {
             adapter = ArrayAdapter(ctx, android.R.layout.simple_spinner_dropdown_item,
-                listOf("未分类", "超短线", "短线", "中线", "长线"))
+                listOf("未分类", "短线", "中线", "长线"))
         }
 
         form.addView(fieldLabel("股票代码"))
@@ -804,8 +873,8 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
                 val date = dateInput.text.toString().trim()
                 val periodIdx = periodSpinner.selectedItemPosition
                 val period = when (periodIdx) {
-                    1 -> "UltraShortQuant"; 2 -> "ShortTermQuant"
-                    3 -> "MidTermQuant"; 4 -> "LongTermQuant"; else -> ""
+                    1 -> "ShortTermQuant"; 2 -> "MidTermQuant"
+                    3 -> "LongTermQuant"; else -> ""
                 }
 
                 // 代码为空时尝试按名称自动解析

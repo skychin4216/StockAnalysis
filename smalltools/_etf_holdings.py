@@ -27,6 +27,7 @@
   low_buy_lines(hot_themes, etf_flow) -> [str]
 """
 import argparse
+import datetime as _dt
 import json
 import os
 import sys
@@ -37,6 +38,9 @@ import requests
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(os.path.dirname(HERE), "data")
 OUT_FILE = os.path.join(DATA_DIR, "_etf_holdings.json")
+MARKET_DB_PATH = os.path.join(DATA_DIR, "market_data.db")
+# 行业ETF前五重仓的全史日K（供逐日回放/回溯拟合离线评估；db 优先、腾讯补缺）
+TOP5_HIST_FILE = os.path.join(DATA_DIR, "_etf_top5_hist.json")
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 MOBILE_UA = {"User-Agent": "Mozilla/5.0 (Linux; Android 12; Pixel) AppleWebKit/537.36"}
@@ -264,6 +268,35 @@ def load_holdings():
         return None
 
 
+# ── 用户重点关注板块（来自 APK「量化选股 → AI 分析」输入，经云同步落地）──
+FOCUS_FILE = os.path.join(DATA_DIR, "user_focus_sectors.json")
+
+
+def load_focus_sectors(path=None):
+    """读取用户重点关注板块名列表（板块已归一化，可与 THEME_RULES/热门板块关键词匹配）。
+
+    文件 schema（APK 端 CloudSync 上传）：{"asof": "...", "sectors": ["半导体", ...],
+    "stocks": [{"code","name","sector"}, ...]}。个股未落到板块名时按 sector 去重兜底。
+    文件缺失/为空 → []。
+    """
+    p = path or FOCUS_FILE
+    if not os.path.exists(p):
+        return []
+    try:
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return []
+    names = [str(x).strip() for x in (d.get("sectors") or []) if str(x).strip()]
+    # 兜底：只有个股时按其所属板块名聚合（名称去重、保序）
+    if not names:
+        for s in d.get("stocks") or []:
+            sec = str(s.get("sector") or "").strip()
+            if sec and sec not in names:
+                names.append(sec)
+    return names
+
+
 def match_funds_by_theme(hot_themes):
     """热门板块名(东财行业名) → [(fcode,fname,theme)]（主题关键词命中）"""
     hit = []
@@ -284,12 +317,334 @@ def match_funds_by_theme(hot_themes):
     return out
 
 
+# ══════════════════════════════════════════
+# 离线评估基元（回放 / 回溯拟合共用；口径与 _kline_cache.json 一致）
+# ══════════════════════════════════════════
+
+def _slice_by_date(snaps, asof):
+    return [s for s in snaps if s["date"] <= asof]
+
+
+def _pos60(snaps):
+    """距60日收盘高点的回撤%（负=低于高点）；样本不足返回 None。与线上 pos60 同口径。"""
+    if len(snaps) < 21:
+        return None
+    closes = [float(s.get("close") or 0) for s in snaps[-60:]]
+    hi = max(closes)
+    if hi <= 0:
+        return None
+    return round((closes[-1] / hi - 1) * 100, 1)
+
+
+def _day_pct(snaps):
+    """末根 vs 前一根 的涨跌幅%（收盘口径）。"""
+    if len(snaps) < 2:
+        return None
+    c0 = float(snaps[-2].get("close") or 0)
+    c1 = float(snaps[-1].get("close") or 0)
+    if c0 <= 0:
+        return None
+    return round((c1 / c0 - 1) * 100, 1)
+
+
+def _ema(vals, n):
+    """EMA(n) 序列（首值=首个样本，与行情软件近似口径）。"""
+    k = 2.0 / (n + 1)
+    out, e = [], None
+    for v in vals:
+        e = v if e is None else v * k + e * (1 - k)
+        out.append(e)
+    return out
+
+
+def _ind_tag(snaps):
+    """snaps → 紧凑指标串（RSI / SAR / MACD柱趋势 / OBV），样本不足返回 ''。
+    与 _technicals 同源；MACD 用连续两日柱体刻画『收窄/扩大』。"""
+    try:
+        import _technicals as T
+        s = T.analyze(snaps)
+        if not s:
+            return ""
+        p = []
+        rsi = s.get("rsi")
+        if rsi is not None:
+            p.append("RSI%d" % int(rsi))
+        sar = s.get("sar") or {}
+        d, bars = sar.get("dir"), sar.get("bars") or 0
+        fd, fa = sar.get("flip_dir"), sar.get("flip_ago")
+        if d == "UP":
+            p.append("SAR刚翻红" if (fd == "UP" and fa and fa <= 3) else "SAR红↑%d" % bars)
+        elif d == "DOWN":
+            p.append("SAR刚翻绿%d天" % (fa or 0)
+                     if (fd == "DOWN" and fa and fa <= 3) else "SAR绿↓%d" % bars)
+        mc = s.get("macd") or {}
+        if mc.get("cross") == "gold":
+            p.append("MACD金叉")
+        elif mc.get("cross") == "dead":
+            p.append("MACD死叉")
+        else:
+            hist = mc.get("hist")
+            if hist is not None and len(p) < 4:
+                try:
+                    closes = [float(x.get("close") or 0) for x in snaps]
+                    if len(closes) >= 2:
+                        dif = _ema(closes, 12)
+                        dea = _ema(dif, 9)
+                        prev = dif[-2] - dea[-2]
+                        color = "红" if hist > 0 else "绿"
+                        trend = "收窄" if abs(hist) < abs(prev) else "扩大"
+                        p.append("MACD%s柱%s" % (color, trend))
+                except Exception:
+                    p.append("MACD%s柱" % ("红" if hist > 0 else "绿"))
+        obv = s.get("obv_up")
+        if obv is True and len(p) < 5:
+            p.append("OBV上行")
+        elif obv is False and len(p) < 5:
+            p.append("OBV下行")
+        return " ".join(p[:5])
+    except Exception:
+        return ""
+
+
+def _offline_confirm(snaps):
+    """对已截断到 asof 的 snaps：末根是否放量企稳。样本不足返回 ''。"""
+    try:
+        import _volume_confirm as vc
+        if len(snaps) >= 260:
+            i = len(snaps) - 1
+            ind = vc.indicators(snaps)
+            if vc.is_confirm(snaps, i, ind=ind):
+                return "当日放量企稳✓"
+            return "未企稳·勿接飞刀"
+    except Exception:
+        pass
+    return ""
+
+
+def _pick_line(pk):
+    """低吸候选单行（🔴 名称(代码) 距60日高x% 今y% | 指标 | 确认）。"""
+    base = "    🔴 %s(%s) 距60日高%+.1f%% 今%+.1f%%" % (
+        pk["name"], pk["code"], pk["pos60"], pk["pct"])
+    if pk.get("tag"):
+        base += " | " + pk["tag"]
+    if pk.get("note"):
+        base += " | " + pk["note"]
+    return base
+
+
+# ── 行业ETF前五重仓 全史日K（db 优先 + 腾讯补缺；回放/拟合唯一数据源）──
+def load_top5_hist():
+    try:
+        with open(TOP5_HIST_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_top5_hist(codes):
+    payload = {"updated": _dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
+               "note": "行业ETF前五重仓全史日K(db优先/腾讯补缺)",
+               "codes": codes}
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = TOP5_HIST_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        os.replace(tmp, TOP5_HIST_FILE)
+    except OSError as e:
+        print("top5 hist 落盘失败:", e)
+
+
+def industry_funds():
+    """THEME_RULES 全部行业主题 ETF（去重保序）→ [(fcode, fname, theme)]"""
+    out, seen = [], set()
+    for kws, lst in THEME_RULES:
+        theme = kws[0]
+        for fcode, fname in lst:
+            if fcode not in seen:
+                seen.add(fcode)
+                out.append((fcode, fname, theme))
+    return out
+
+
+def _db_snaps(code6):
+    """market_data.db 全史日K → snaps dict 列表；无则 []。"""
+    pref = _prefixed(code6)
+    try:
+        import sqlite3
+        con = sqlite3.connect(MARKET_DB_PATH)
+        try:
+            rows = con.execute(
+                "SELECT date,open,high,low,close,volume FROM kline "
+                "WHERE secid=? ORDER BY date", (pref,)).fetchall()
+        finally:
+            con.close()
+        return [{"date": d, "open": float(o or 0), "high": float(h or 0),
+                 "low": float(l or 0), "close": float(c or 0),
+                 "volume": float(v or 0)} for d, o, h, l, c, v in rows]
+    except Exception:
+        return []
+
+
+def build_top5_hist(refresh_missing=True, print_log=None):
+    """构建/补齐『行业ETF前五重仓』全史日K 映射 {code: {"name","snaps"}}。
+    来源：market_data.db 全史优先；腾讯日K 520 根补缺。
+    返回 codes dict（已自动落盘增量）。"""
+    log = print_log or print
+    hold = load_holdings()
+    if not hold:
+        log("[top5hist] 无 _etf_holdings.json，先运行 python _etf_holdings.py")
+        return {}
+    need = {}
+    for f in hold.get("funds") or []:
+        if f.get("theme") in ("宽基",):
+            continue
+        for s in (f.get("top") or [])[:5]:
+            need.setdefault(s["code"], s.get("name") or "")
+    old = (load_top5_hist().get("codes") or {})
+    codes = {}
+    for c, nm in need.items():
+        ent = old.get(c) or {}
+        if ent.get("snaps") and len(ent["snaps"]) >= 40:
+            codes[c] = {"name": ent.get("name") or nm, "snaps": ent["snaps"]}
+    if not refresh_missing:
+        return codes
+    todo = [c for c in need if c not in codes]
+    if not todo:
+        return codes
+    # db 补齐
+    db_ok, fetched = 0, 0
+    for c in todo:
+        snaps = _db_snaps(c)
+        if snaps and len(snaps) >= 40:
+            codes[c] = {"name": need[c], "snaps": snaps}
+            db_ok += 1
+    todo2 = [c for c in need if c not in codes]
+    if todo2:
+        try:
+            import _overseas_fetch
+            for i, c in enumerate(todo2):
+                try:
+                    rows = _overseas_fetch.fetch_kline(_prefixed(c), count=520)
+                    if rows and len(rows) >= 40:
+                        codes[c] = {"name": need[c], "snaps": rows}
+                        fetched += 1
+                except Exception:
+                    pass
+                if i % 20 == 19:
+                    log("[top5hist] 腾讯补缺 %d/%d" % (i + 1, len(todo2)))
+        except Exception as e:
+            log("[top5hist] 腾讯补缺失败:", e)
+    save_top5_hist(codes)
+    log("[top5hist] 覆盖 %d/%d (db补齐%d 腾讯%d)" % (len(codes), len(need), db_ok, fetched))
+    return codes
+
+
+def screen_picks_asof(asof, hist=None, industry_only=True):
+    """以截至 asof(含当日收盘K线) 的数据，对行业ETF前五重仓做低吸选股。
+    返回 {fcode: {"name","theme","picks":[dict]}}；picks 按距60日高优先深伏排序。
+    hist: {code:{"name","snaps"}}（全史）；缺省用 data/_etf_top5_hist.json。"""
+    hist = hist or (load_top5_hist().get("codes") or {})
+    hold = load_holdings()
+    if not hold:
+        return {}
+    by_fund = {f["code"]: f for f in hold.get("funds") or []}
+    out = {}
+    for fcode, fname, theme in industry_funds():
+        if industry_only and theme in ("宽基",):
+            continue
+        top = ((by_fund.get(fcode) or {}).get("top") or [])[:5]
+        if not top:
+            continue
+        picks = []
+        for s in top:
+            ent = hist.get(s["code"])
+            if not ent:
+                continue
+            snaps = _slice_by_date(ent.get("snaps") or [], asof)
+            if len(snaps) < 2:
+                continue
+            pct = _day_pct(snaps)
+            if pct is None or not (-4.0 <= pct <= 4.0):
+                continue
+            pos60 = _pos60(snaps)
+            if pos60 is None or pos60 > -1.0:
+                continue
+            picks.append({
+                "code": s["code"],
+                "name": (ent.get("name") or s.get("name") or s["code"]),
+                "pos60": pos60, "pct": pct,
+                "note": _offline_confirm(snaps), "tag": _ind_tag(snaps)})
+        if not picks:
+            continue
+        picks.sort(key=lambda x: x["pos60"])
+        out[fcode] = {"name": fname, "theme": theme, "picks": picks}
+    return out
+
+
+def low_buy_lines_offline(asof, hist=None):
+    """离线『🎯 ETF持仓前五低吸』文本行（全行业板块；历史回放推送页面2用）。"""
+    st = screen_picks_asof(asof, hist=hist)
+    lines = []
+    for fcode, info in st.items():
+        lines.append("  %s(%s):" % (info["name"], fcode))
+        for pk in info["picks"][:3]:
+            lines.append(_pick_line(pk))
+    return lines
+
+
+# 当日已取数缓存（code → {note, tag}），避免 15 分钟轮询重复拉日K
+_KLINE_TODAY = {}
+_KLINE_DATE = ""
+
+
+def _confirm_and_tag(code):
+    """低位候选的『放量企稳二次确认』人读标注 + 紧凑指标串（复用 _volume_confirm /
+    _technicals，规则同回溯口径）。单日按 code 缓存。返回 (note, tag)。"""
+    global _KLINE_DATE
+    today = _dt.date.today().isoformat()
+    if _KLINE_DATE != today:
+        _KLINE_TODAY.clear()
+        _KLINE_DATE = today
+    if code in _KLINE_TODAY:
+        return _KLINE_TODAY[code]
+    note, tag = "", ""
+    try:
+        import _overseas_fetch
+        import _volume_confirm as vc
+        rows = _overseas_fetch.fetch_kline(_prefixed(code), count=300)
+        if rows:
+            if len(rows) >= 260:
+                i = len(rows) - 1
+                ind = vc.indicators(rows)
+                if vc.is_confirm(rows, i, ind=ind):
+                    note = "当日放量企稳✓"
+                else:
+                    j = vc.first_confirm(rows, i, look=5, ind=ind)
+                    if j >= 0:
+                        note = "待企稳(预计%d日)" % (j - i)
+                    else:
+                        note = "未企稳·勿接飞刀"
+            if len(rows) >= 30:
+                tag = _ind_tag(rows)
+    except Exception:
+        note, tag = "", ""
+    _KLINE_TODAY[code] = (note, tag)
+    return note, tag
+
+
+def _confirm_note(code):
+    """兼容壳：只返回确认标注。"""
+    return _confirm_and_tag(code)[0]
+
+
 def low_buy_lines(hot_themes, etf_flow=None):
     """生成「热门板块 → ETF 前5重仓 → 低吸观察」文本行（供每轮推送 ⑥ 段）。
 
-    hot_themes: 当日资金流入榜前N的东财行业名列表
+    hot_themes: 当日资金流入榜前N的东财行业名列表 / 或用户重点关注板块名列表
     etf_flow: ctx["etf_flow"]（东财ETF净流入榜 [{name,in_yi,chg_pct}]，用于标注资金）
-    返回 markdown 行列表；任何数据缺失时安静返回 []。
+    每只候选附紧凑指标串 + 放量企稳二次确认标注。任何数据缺失时安静返回 []。
     """
     hold = load_holdings()
     if not hold:
@@ -340,7 +695,9 @@ def low_buy_lines(hot_themes, etf_flow=None):
             pos60 = (ent or {}).get("pos60")
             if pos60 is None or pos60 > -1.0:
                 continue
-            picks.append("%s(距60日高%+.1f%% %+.1f%%)" % (s["name"], pos60, pct))
+            note, tag = _confirm_and_tag(s["code"])
+            picks.append({"name": s["name"], "code": s["code"],
+                          "pos60": pos60, "pct": pct, "note": note, "tag": tag})
         if not picks:
             continue
         # 资金标注：ETF 当日净流入（东财 ETF 榜简称含主题词/基金名）
@@ -351,7 +708,8 @@ def low_buy_lines(hot_themes, etf_flow=None):
                 fz = " 资金入%+.1f亿" % yi
                 break
         lines.append("  %s(%s)%s:" % (fname, fcode, fz))
-        lines.append("    " + " | ".join(picks[:3]))
+        for pk in picks[:3]:
+            lines.append(_pick_line(pk))
     return lines
 
 

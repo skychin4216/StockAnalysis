@@ -8,6 +8,9 @@ Part 2  icRank 排序复刻：用 Kotlin icPctRank/icRank/directionScore 算法 
 Part 3  特征口径明细：最近长线信号的 10 维 Kotlin 口径特征（供 app StockCheckResult 对照）
 
 注意：Part 2/3 不含 seasonality 伪因子（app 端可临时 seasonality.enabled=false 对照）。
+
+已迁移转正（2026-09）：正式维护版为 AutoQuant/verify_parity.py，
+数据源改为 AutoQuant data/cache/*.csv；本文件保留留档参考。
 """
 import json
 import math

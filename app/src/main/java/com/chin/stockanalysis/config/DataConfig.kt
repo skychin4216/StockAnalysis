@@ -138,6 +138,7 @@ object DataConfig {
     // 腾讯 (tencent)
     // ═══════════════════════════════════════════════
     val tencentGtimg get() = get("data_sources.tencent.gtimg")
+    val tencentMinute get() = get("data_sources.tencent.minute")
 
     // ═══════════════════════════════════════════════
     // 东方财富 (eastmoney)
