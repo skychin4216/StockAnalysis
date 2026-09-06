@@ -129,3 +129,24 @@ cd <repo root> && gradlew.bat :app:compileDebugKotlin --console=plain
 > **两套 smalltools 命名区分**（避免混淆）：
 > - 根 `smalltools/` = **选股引擎**（无 `__init__.py`，顶层模块，经 `sys.path` 桥接）——同步对象。
 > - `AutoQuant/cloudsync/` = **exe 云同步包**（腾讯云 COS：下载手机数据→自动拟合→App 参数回流），原 `AutoQuant/smalltools`，已重命名。仅 exe 打包使用（`AutoQuant-GUI.spec` hiddenimports 的 `cloudsync.*`），不参与选股。删除会致 exe 启动时云同步后台崩溃。
+
+---
+
+## ETF 低位低吸（etf_dip）—— XML DAG 单一源（2026-09-07）
+
+与三周期同构：规则/参数**只写一份 XML**，APK 与 Python 引擎读同一文件执行。
+
+| 文件 | 作用 |
+|------|------|
+| `app/src/main/assets/usecases/etf_dip_usecase.xml` | ★ 入口 usecase（与三周期同格式） |
+| `app/src/main/assets/usecases/etf_dip_pipeline.xml` | ★ 三阶段 DAG：门控 `etf_gate` → 信号 `etf_dip_signal` → 离场 `etf_exit_policy`（参数全在此） |
+| `app/.../topology/nodes/EtfDipNodes.kt` | APK 执行端（与 Python `_etf_*` 模块同构） |
+| `AutoQuant/usecase_pipeline.py` | Python 引擎端（`etf_gate/etf_dip_signal/etf_exit_policy` 注册 + `run(with_stages=True)`） |
+| `smalltools/_etf_publish.py` | PC 发布/推送入口：XML 执行 → `data/_etf_live_picks.json` → adb 推 `_etf_cache.json` 到手机 |
+| `smalltools/_etf_buy.py` | 规则出处与行情抓取（`ensure_data`），v0.3 口径未变 |
+
+**改动纪律**：以后调 ETF 低吸参数/池，只改 `etf_dip_pipeline.xml`（双端零代码同步）。`_etf_buy.py` 内的 `--live` 不再作为发布口径（保留数据抓取），发布走 `_etf_publish.py`（盘段守护 15:12 自动跑）。
+
+**APK 本地化**：`EtfDipFragment.refresh()` 优先 `UseCaseLoader.run("etf_dip")`（读手机 `etf_cache.json`：外部 files 优先、内部 files 兜底）；本地无缓存才回退 PC 桥 `/etf_live`。
+
+**验证**：`python smalltools/_etf_publish.py`（无设备时仅发布名单，已与旧 `--live` 输出逐字段一致验证）；Kotlin `compileDebugKotlin` 通过。

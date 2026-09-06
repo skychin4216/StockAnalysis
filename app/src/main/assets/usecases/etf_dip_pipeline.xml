@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## ETF 低位低吸 Pipeline（V2 DAG · 门控→信号→离场 三阶段）
+
+  与 AutoQuant/usecase_pipeline.py（Python 引擎）共用同一文件 ——
+  修改任何参数/标的池，双端行为自动一致（单一事实源）。
+
+  stageOutputs：
+    - "n_etf_gate"    JSONObject {ok, date, note}        沪深300 close>MA20>MA60
+    - "n_etf_signal"  JSONObject {as_of, rows[]}         每只 ETF 的扫描行（含 dip 判定）
+    - "n_etf_exit"    JSONObject 发布口径                 gate+signal_today+approach+strategy+exit
+-->
+<DagPipeline id="etf_dip_dag" name="ETF低位低吸Pipeline"
+    description="沪深300结构多头门控 → dip_buy v0.3信号 → 离场参数打包">
+
+  <NodeList>
+    <!-- ── 阶段0/1：数据 + 门控：沪深300 结构多头（close>MA20>MA60），数据来自本地 etf_cache.json ── -->
+    <Node id="n_etf_gate" name="沪深300结构多头门控" module="etf_gate">
+      <config>
+        <param name="indexCode" value="sh000300" />
+        <param name="maFast" value="20" />
+        <param name="maSlow" value="60" />
+        <param name="minSnapshots" value="60" />
+      </config>
+    </Node>
+
+    <!-- ── 阶段2：信号：dip_buy v0.3 低吸扫描（规则参数全部下沉至此，供双端引擎读取） ── -->
+    <Node id="n_etf_signal" name="ETF低位低吸信号扫描" module="etf_dip_signal">
+      <config>
+        <param name="ddLo" value="-25" />
+        <param name="ddHi" value="-12" />
+        <param name="rsiMax" value="30" />
+        <param name="above250" value="true" />
+        <param name="upCloseOrRsiTurn" value="true" />
+        <param name="notNew5" value="true" />
+        <param name="ddWin" value="60" />
+        <param name="maYear" value="250" />
+        <param name="minSnapshots" value="900" />
+        <param name="watchDdMax" value="-8" />
+        <param name="watchRsiMax" value="45" />
+      </config>
+    </Node>
+
+    <!-- ── 阶段3：离场 + 发布打包：tp/sl/hold 为发布离场参数（v0.3 定稿 2.0/-6.0/30） ── -->
+    <Node id="n_etf_exit" name="ETF低吸离场策略与发布打包" module="etf_exit_policy">
+      <config>
+        <param name="tp" value="2.0" />
+        <param name="sl" value="-6.0" />
+        <param name="hold" value="30" />
+        <param name="topApproach" value="8" />
+        <param name="topWatch" value="12" />
+        <param name="strategyText" value="v0.3 dip_buy: 距60日高回撤-25%~-12% + RSI6小于30 + 年线上方 + 收阳/RSI拐头 + 非5日新低 + 沪深300结构多头门控(参数见 etf_dip_pipeline.xml)" />
+      </config>
+    </Node>
+  </NodeList>
+
+  <Links>
+    <Link>
+      <SourceNodeId>n_etf_gate</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_etf_signal</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_etf_signal</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_etf_exit</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+  </Links>
+</DagPipeline>

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## ETF 低位低吸 UseCase（与三周期同构的 XML DAG 单一事实源）
+
+  参考三周期（短/中/长）架构：usecase XML（入口，多 pipeline 编排）
+  → 引用的 pipeline XML（DAG NodeList+Links，本 usecase 用单条三阶段链）：
+    [0] 数据准备：读本地 etf_cache.json（PC 盘后推送 / 手机数据同步拉取的
+        13 只 ETF + 沪深300 前复权日K，与 smalltools/_etf_cache.json 同一份结构）
+    [1] 门控阶段（n_etf_gate）：沪深300 结构多头 close>MA20>MA60 —— 大盘不弱才出手
+    [2] 信号阶段（n_etf_signal）：dip_buy v0.3 低吸（距60日高回撤 + RSI6 + 年线 + 止跌）
+    [3] 离场阶段（n_etf_exit）：发布口径打包（tp/sl/hold 参数 + strategy 文案）
+
+  双端共用：APK UseCaseLoader 直接加载执行；AutoQuant/usecase_pipeline.py（smalltool/exe
+  的 Python 引擎）解析同一份 XML —— 任何一端只改 XML，双端行为自动同源。
+  规则出处：smalltools/_etf_buy.py v0.3（OOS 11/11 全胜，FULL 55 笔 85.5%）。
+-->
+<usecase id="etf_dip" name="ETF低位低吸">
+  <description>本地ETF缓存 → 沪深300结构多头门控 → dip_buy v0.3信号扫描 → 离场参数打包（13只池，与PC同XML同源）</description>
+  <steps>
+    <pipeline ref="usecases/etf_dip_pipeline.xml" name="etf_dip_dag" />
+  </steps>
+  <config>
+    <param name="orderType" value="EtfDip" />
+    <param name="maxHoldings" value="0" />
+    <param name="holdingPeriod" value="etf" />
+  </config>
+</usecase>

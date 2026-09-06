@@ -299,6 +299,42 @@ object NodeRegistry {
         register("sector_leader_analysis") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.SectorLeaderAnalysisNode() }
         register("market_sector_leaders") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.MarketSectorLeadersNode() }
 
+        // ══════════ ETF 低位低吸（etf_dip usecase · 与三周期同构的 XML 单一源） ══════════
+        // 规则/参数在 assets/usecases/etf_dip_pipeline.xml，APK 与 AutoQuant Python 引擎共用同一 XML
+        register("etf_gate") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.EtfGateNode(
+                indexCode = config["indexCode"] ?: "sh000300",
+                maFast = config["maFast"]?.toIntOrNull() ?: 20,
+                maSlow = config["maSlow"]?.toIntOrNull() ?: 60,
+                minSnapshots = config["minSnapshots"]?.toIntOrNull() ?: 60
+            )
+        }
+        register("etf_dip_signal") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.EtfDipSignalNode(
+                ddLo = config["ddLo"]?.toDoubleOrNull() ?: -25.0,
+                ddHi = config["ddHi"]?.toDoubleOrNull() ?: -12.0,
+                rsiMax = config["rsiMax"]?.toDoubleOrNull() ?: 30.0,
+                requireAbove250 = config["above250"]?.toBooleanStrictOrNull() ?: true,
+                upCloseOrRsiTurn = config["upCloseOrRsiTurn"]?.toBooleanStrictOrNull() ?: true,
+                notNew5 = config["notNew5"]?.toBooleanStrictOrNull() ?: true,
+                ddWin = config["ddWin"]?.toIntOrNull() ?: 60,
+                maYear = config["maYear"]?.toIntOrNull() ?: 250,
+                minSnapshots = config["minSnapshots"]?.toIntOrNull() ?: 900,
+                watchDdMax = config["watchDdMax"]?.toDoubleOrNull() ?: -8.0,
+                watchRsiMax = config["watchRsiMax"]?.toDoubleOrNull() ?: 45.0
+            )
+        }
+        register("etf_exit_policy") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.EtfExitPolicyNode(
+                tp = config["tp"]?.toDoubleOrNull() ?: 2.0,
+                sl = config["sl"]?.toDoubleOrNull() ?: -6.0,
+                hold = config["hold"]?.toIntOrNull() ?: 30,
+                topApproach = config["topApproach"]?.toIntOrNull() ?: 8,
+                topWatch = config["topWatch"]?.toIntOrNull() ?: 12,
+                strategyText = config["strategyText"] ?: ""
+            )
+        }
+
         Log.i(TAG, "Node 注册完成: ${factories.keys}")
     }
 

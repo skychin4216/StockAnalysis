@@ -43,6 +43,7 @@ import push_channel  # noqa: E402
 try:  # noqa: E402
     from _technicals import analyze as _tech_analyze  # noqa: E402
     from _technicals import make_tag as _tech_tag  # noqa: E402
+    from _technicals import rich_tag as _tech_rich  # noqa: E402
     from _technicals import sar_alert as _tech_sar_alert  # noqa: E402
     _TECHS_OK = True
 except Exception:  # pragma: no cover - frozen exe 旧包缺失时降级
@@ -676,13 +677,22 @@ def _attach_tech(data, cache):
         if len(snaps) < 30:
             return ""
         try:
-            tag = " ".join(_tech_tag(_tech_analyze(snaps)).split()[:3])
-            if not _QUOTE_OK:
-                return tag
-            s0 = snaps[-1]
-            tn = s0.get("turnover") if s0 and isinstance(s0, dict) else None
-            q = _tech_quote(turnover=tn, volume_ratio=_tech_vr(snaps))
-            return (tag + " ｜" + "｜".join(q[:2])) if q else tag
+            parts = _tech_rich(snaps)
+            if not parts:
+                return ""
+            q = []
+            if _QUOTE_OK:
+                s0 = snaps[-1]
+                tn = s0.get("turnover") if s0 and isinstance(s0, dict) else None
+                for t in _tech_quote(turnover=tn, volume_ratio=_tech_vr(snaps)):
+                    # 只留紧凑档位（"换手2.1%"），去冗长点评尾巴
+                    q.append(t.split("·")[0])
+            if q:
+                parts = parts.split()
+                if len(parts) > 5:
+                    parts = parts[:5]
+                return " ".join(parts + q)
+            return parts
         except Exception:
             return ""
 
@@ -1311,7 +1321,7 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
                     extra = (data.get("dag_tech") or {}).get(raw, "")
                 if not extra and raw and cache is not None and raw in cache:
                     try:
-                        extra = _tech_tag(_tech_analyze(cache[raw].get("snaps") or []))
+                        extra = _tech_rich(cache[raw].get("snaps") or [])
                     except Exception:
                         extra = ""
                 bucket[disp].append((raw, code, nm, extra))
@@ -1410,7 +1420,7 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
             p2_extra = True
         # ⑥ 热门+重点关注板块 ETF 前5重仓 · 低吸精选（2026-09-06 方案B：
         #    SAR红才列(绿=下跌趋势排除, 绿转红标SAR刚翻红) → 企稳/量能/MACD/OBV共振打分
-        #    → 全局限额≤5只；当日主线DAG命中的附『主线DAG✓』；无符合则明示空因）
+        #    → 取前≤5只，SAR绿转红不占限额可输出>5；当日主线DAG命中附『主线DAG✓』；无符合则明示空因）
         try:
             import _etf_holdings as _eh
             dag_codes = set()
@@ -1435,7 +1445,7 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
                                         dag_codes=dag_codes)
                 if low:
                     p2.append("")
-                    p2.append("🎯 ETF持仓前五·低吸精选(≤5只)")
+                    p2.append("🎯 ETF持仓前五·低吸精选")
                     p2.extend(low)
                     p2_extra = True
         except Exception:
@@ -1448,7 +1458,7 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
             p2_extra = True
         if lowbuy_offline:
             p2.append("")
-            p2.append("🎯 ETF持仓前五·低吸精选(≤5只)")
+            p2.append("🎯 ETF持仓前五·低吸精选")
             p2.extend(lowbuy_offline)
             p2_extra = True
     # ── 页面3：实仓与做T（独立消息；指纹无变化仅一行概要，有变化展开逐笔+指标标注）──
@@ -1597,6 +1607,7 @@ def _load_rhythm():
     d.setdefault("tail", False)   # 15:00 尾盘K线拉取是否完成
     d.setdefault("learn", False)  # 15:00 尾盘后的选股自检(记忆+结算)是否完成
     d.setdefault("sum", False)    # 15:10 收盘总结是否已推送
+    d.setdefault("etf", False)    # 15:12 ETF低位useCase当日发布 + 推送行情到手机 是否完成
     d.setdefault("hit", {})       # 当日逐轮命中累计 period -> {secid: 次数}
     return d
 
@@ -1651,6 +1662,7 @@ def rhythm_mark_round(session, now=None):
 #   13:00~14:30  下午 7 轮（每 15 分钟）；14:30 后不再盘中选股，避免尾盘诱导
 #   15:00        尾盘最后一次 K 线拉取（仅下载，不再选股）
 #   15:10        收盘总结：当日选股汇总 + 持仓回顾 + 纪律 + 鼓励（无做T/买卖点指令）
+#   15:12        ETF低位 usecase 当日发布（XML 单一源）+ 推送行情到手机（每日一次）
 # 守护/选股过程错误写入 _daemon_ops.jsonl，供后续矫正（用户需求）。
 OPS_LOG = os.path.join(HERE, "_daemon_ops.jsonl")
 
@@ -1857,6 +1869,38 @@ def run_self_review(log=print, stop_check=None):
         log("选股自检异常：%s" % e)
         ops_note("learn_error", repr(e))
     log("[15:00 自检] 失败，30 秒后重试")
+    return False
+
+
+def run_etf_publish(log=print):
+    """15:12 ETF 低位 usecase 当日发布（XML 单一源选股）+ 推送行情到手机（每日一次）。
+
+    与三周期同源：smalltools/_etf_publish.py 读 assets/usecases/etf_dip_usecase.xml
+    （APK 与 Python 引擎共用），刷新 ETF 行情(腾讯 qfq) → 发布 data/_etf_live_picks.json
+    → 尝试 adb 推送 etf_cache.json 到手机（无设备在线则跳过，不阻塞）。
+    失败仅留痕，不影响守护流程。
+    """
+    log("[15:12 ETF] 刷新行情 + etf_dip usecase 发布 + 推送手机…")
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, os.path.join(HERE, "_etf_publish.py"), "--push"],
+            cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace", bufsize=1)
+        lines = []
+        while True:
+            ln = proc.stdout.readline()
+            if not ln:
+                break
+            lines.append(ln.rstrip())
+            log("  " + ln.rstrip())
+        proc.wait()
+        if proc.returncode == 0:
+            log("…ETF usecase 发布完成（工作台 ETF 页可看当日名单）")
+            return True
+        ops_note("etf_publish_fail", "退出码=%d %s" % (proc.returncode, " | ".join(lines[-3:])))
+    except Exception as e:  # noqa: BLE001
+        log("ETF usecase 发布异常：%s" % e)
+        ops_note("etf_publish_error", repr(e))
     return False
 
 
@@ -2083,6 +2127,7 @@ def daemon_serve(prep=True, interval=900, dry=False, use_ctx=True,
         → 13:00-14:30 每 15 分钟 7 轮（之后不再盘中选股）
         → 15:00 尾盘最后一次 K 线拉取（仅下载）
         → 15:10 收盘总结：当日选股+持仓回顾+纪律+鼓励（无做T/买卖点指令）
+        → 15:12 ETF低位 usecase 当日发布（XML 单一源）+ 推送行情到手机
     盘中轮推送不再含「实仓买卖/做T」建议；守护/选股错误写入 _daemon_ops.jsonl。
     interval 参数仅兼容旧调用，v2 固定 15 分钟整点轮。
     """
@@ -2158,6 +2203,18 @@ def daemon_serve(prep=True, interval=900, dry=False, use_ctx=True,
                 else:
                     log("收盘总结失败，1 分钟后重试")
                     _interruptible_sleep(60, stop_check)
+                continue
+            # 15:12：ETF 低位 usecase 当日发布 + 推送行情到手机（每日一次）
+            if rhythm_need_flag("etf"):
+                if hm < 15 * 60 + 12:
+                    _sleep_until(_today_at(15, 12), stop_check)
+                    continue
+                if run_etf_publish(log=log):
+                    rhythm_mark_flag("etf")
+                    log("✓ ETF usecase 当日发布 + 手机行情推送完成")
+                else:
+                    log("ETF usecase 发布失败，2 分钟后重试")
+                    _interruptible_sleep(120, stop_check)
                 continue
             # 当日流程完毕 → 次日 09:00
             _sleep_until(next_weekday_0900(now), stop_check)

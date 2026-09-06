@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -16,22 +17,28 @@ import android.widget.TableRow
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
-import com.chin.stockanalysis.R
 import com.chin.stockanalysis.stock.data.PcBridgeClient
+import com.chin.stockanalysis.strategy.topology.xml.UseCaseLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
- * ## 工作台 · ETF 低位选股页（实仓旁新增 Tab4，2026-09-06）
+ * ## 工作台 · ETF 选股页（实仓旁 Tab，2026-09-06 起本地化改造）
  *
- * 数据源 = PC 端 smalltools/_etf_buy.py v0.3 引擎（data/_etf_live_picks.json），
- * 经 exe data_service.py 的 GET /etf_live 提供给 APK（PcBridgeClient 拉取）。
- * 规则(PC 已回测验证, OOS 11/11 全胜)：
- *   距60日高回撤-25%~-12% + RSI6<30 + 年线上方 + 收阳/RSI拐头 + 非5日新低
- *   + 沪深300结构多头门控(close>MA20>MA60)；离场 止盈+2%/止损-6%/30日。
- * 网络不可用/未连接 PC 时展示最近一次成功拉取名单（本地缓存）。
+ * 架构与三周期同构 —— usecase/pipeline 为 **XML 单一事实源**
+ * （app/src/main/assets/usecases/etf_dip_usecase.xml + etf_dip_pipeline.xml），
+ * 双端（APK UseCaseLoader + AutoQuant Python 引擎）读同一 XML 执行：
+ *   门控: 沪深300 结构多头(close>MA20>MA60)
+ *   信号: 距60日高回撤-25%~-12% + RSI6<30 + 年线上方 + 收阳/RSI拐头 + 非5日新低
+ *   离场: tp+2% / sl-6% / 30 日（参数全在 XML，改 XML 双端自动同步）
+ * 行情: 本地 etf_cache.json（PC 盘后 smalltools/_etf_publish.py --push 推送到手机；
+ * 13只ETF+sh000300 前复权日K，与 PC _etf_cache.json 同构）。
+ * 无本地缓存时回退 PC 桥(/etf_live)；均不可用时提示先同步。
  */
 @SuppressLint("SetTextI18n")
 class EtfDipFragment : Fragment() {
@@ -46,7 +53,10 @@ class EtfDipFragment : Fragment() {
     companion object {
         private const val PREFS = "etf_live"
         private const val KEY_JSON = "last_json"
+        private const val TAG = "EtfDipFragment"
     }
+
+    private data class LocalOutcome(val payloadJson: String?, val error: String?)
 
     override fun onCreateView(inflater: android.view.LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         val ctx = requireContext()
@@ -133,26 +143,67 @@ class EtfDipFragment : Fragment() {
         refresh()
     }
 
-    /** 由工作台 refreshAll / onResume 调用 */
+    /**
+     * 由工作台 refreshAll / onResume 调用。
+     * 本地优先：UseCaseLoader 跑 assets/usecases/etf_dip_usecase.xml（与 PC 同 XML 同源，
+     * 读本地 etf_cache.json）→ 渲染；本地无缓存时回退 PC 桥 /etf_live。
+     */
     fun refresh() {
-        val host = PcBridgeClient.loadHost(requireContext())
-        if (host.isBlank()) {
-            gateLabel.text = "⚠ 未连接 PC（exe 端 data_service）"
-            statusLabel.text = "请先在工作台 PC 候选弹窗填写 exe 所在机器的 IP（局域网 HTTP:8888），\n或确认 PC 已运行 AutoQuant-GUI 的数据服务。"
-            footLabel.text = "引擎: smalltools/_etf_buy.py --live（需 PC 侧先生成名单）"
-            return
-        }
         lifecycleScope.launch {
+            // ── 1) 本地引擎（彻底不依赖 PC） ──
+            var outcome: LocalOutcome? = null
             try {
-                statusLabel.text = "正在从 PC 拉取名单… ($host)"
+                statusLabel.text = "本地引擎执行 etf_dip usecase…"
+                outcome = withContext(Dispatchers.IO) { runLocalUseCase() }
+            } catch (e: Exception) {
+                Log.w(TAG, "本地 etf_dip 执行异常: ${e.message}")
+            }
+            val payloadJson = outcome?.payloadJson
+            if (payloadJson != null) {
+                requireContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .edit().putString(KEY_JSON, payloadJson).apply()
+                render(payloadJson)
+                statusLabel.text = "✔ 本地引擎 · XML 单一源（与 PC 双端同源），数据来自手机 etf_cache.json"
+                return@launch
+            }
+            val errMsg = outcome?.error
+            if (errMsg != null) Log.w(TAG, "本地 etf_dip 未产出: $errMsg")
+
+            // ── 2) 回退：PC 桥拉取 ──
+            val host = PcBridgeClient.loadHost(requireContext())
+            if (host.isBlank()) {
+                gateLabel.text = "⚠ 本地无 ETF 行情缓存"
+                statusLabel.text = (if (errMsg != null) "本地执行失败：$errMsg\n\n" else "") +
+                    "首次使用请先同步行情：在 PC 盘后运行\n" +
+                    "  python smalltools/_etf_publish.py --push\n" +
+                    "（把 13只ETF+沪深300 前复权日K推送到手机）后点刷新；或连接 PC 由桥自动拉取。"
+                footLabel.text = "引擎: XML etf_dip（门控→信号→离场）· 数据: etf_cache.json（PC 每日盘后推送）"
+                return@launch
+            }
+            try {
+                statusLabel.text = "本地无缓存，正在从 PC 拉取名单… ($host)"
                 val json = withContext(Dispatchers.IO) { PcBridgeClient.fetchEtfLive(host) }
                 requireContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .edit().putString(KEY_JSON, json).apply()
                 render(json)
             } catch (e: Exception) {
-                statusLabel.text = "拉取失败: ${e.message ?: "网络不可达"}\n(展示上次缓存; 若从未成功请核对 PC 服务与 IP)"
+                statusLabel.text = "拉取失败: ${e.message ?: "网络不可达"}\n(展示上次缓存; 或先运行 PC 推送脚本同步行情)"
             }
         }
+    }
+
+    /** 本地跑 etf_dip usecase：n_etf_exit 阶段输出即发布口径 JSON（与 PC _etf_live_picks.json 同构） */
+    private suspend fun runLocalUseCase(): LocalOutcome {
+        val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        val res = UseCaseLoader.run("etf_dip", date)
+        if (!res.success) {
+            val msg = res.errors.entries.joinToString("; ") { "${it.key}:${it.value}" }
+                .ifBlank { "etf_dip 执行失败" }
+            return LocalOutcome(null, msg)
+        }
+        val payload = res.stageOutputs["n_etf_exit"] as? JSONObject
+            ?: return LocalOutcome(null, "引擎未产出 n_etf_exit 发布结果（可能行情缓存缺失）")
+        return LocalOutcome(payload.toString(), null)
     }
 
     private fun render(jsonText: String) {
@@ -169,7 +220,7 @@ class EtfDipFragment : Fragment() {
             gateLabel.text = (if (gateOk) "✅ 大盘结构多头（可低吸）" else "⛔ 大盘空头（暂停低吸）") +
                     "  ·  " + (gate.optString("date", ""))
             gateLabel.setBackgroundColor(Color.parseColor(if (gateOk) "#1D3A2A" else "#3A1D1D"))
-            statusLabel.text = "数据截至 ${j.optString("as_of", "-")}（PC ${j.optString("generated_at", "")} 生成）"
+            statusLabel.text = "数据截至 ${j.optString("as_of", "-")} · 引擎 ${j.optString("generated_at", "-")} 生成"
             sigTable.removeAllViews()
             watchTable.removeAllViews()
             addHeader(sigTable, listOf("名称", "代码", "收盘", "回撤60日%", "RSI6", "状态"))
