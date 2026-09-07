@@ -1323,6 +1323,104 @@ def _intel_lines(max_age_min=150):
     return ["", "📡 最新情报 %s" % ts[11:16], "  " + " | ".join(parts)]
 
 
+_BIG_IDX = (("sh000001", "上证"), ("sh000688", "科创50"), ("sh000300", "沪深300"))
+
+
+def _etf_index_cache():
+    """ETF/指数缓存（沪深300 在 _etf_cache.json，PC 全量池 cache 无）懒加载。"""
+    if not hasattr(_etf_index_cache, "_d"):
+        try:
+            with open(os.path.join(HERE, "_etf_cache.json"), encoding="utf-8") as f:
+                _etf_index_cache._d = json.load(f)
+        except (OSError, ValueError):
+            _etf_index_cache._d = {}
+    return _etf_index_cache._d
+
+
+def _big_board_lines(cache, asof):
+    """三指数（上证/科创50/沪深300）大盘速览 + 大方向建议。
+
+    守护早盘/盘中推送页1 使用：给选股提供"大盘大方向"指导——
+    - 指数日涨跌、5/20 日强弱、连续涨跌天数
+    - 依据 _dip_rebound_stat 统计给出操作方向提示（超跌抄底/顺势/震荡防守）
+    """
+    etf = _etf_index_cache()
+    snaps_map = {}
+    for code, _ in _BIG_IDX:
+        e = ((cache or {}).get(code) or {}).get("snaps") or []
+        if not e:
+            e = (etf.get(code) or {}).get("snaps") or []
+        snaps_map[code] = e
+    meta = []
+    row_parts = []
+    for code, disp in _BIG_IDX:
+        snaps = snaps_map.get(code) or []
+        if not snaps:
+            continue
+        dts = [s["date"] for s in snaps]
+        stale = False
+        if asof not in dts:
+            past = [d for d in dts if d <= asof]  # 数据滞后时取最近可用交易日
+            if not past:
+                continue
+            i = dts.index(past[-1])
+            stale = True
+        else:
+            i = dts.index(asof)
+        if i < 1:
+            continue
+        s = snaps[i]
+        chg = s.get("changePct")
+
+        def pct_n(n):
+            return (s["close"] / snaps[i - n]["close"] - 1) * 100 if i >= n and snaps[i - n].get("close") else None
+
+        p5, p20 = pct_n(5), pct_n(20)
+        streak = 0
+        if (chg or 0) >= 0:
+            for j in range(i, max(i - 10, -1), -1):
+                if (snaps[j].get("changePct") or 0) >= 0:
+                    streak += 1
+                else:
+                    break
+        else:
+            for j in range(i, max(i - 10, -1), -1):
+                if (snaps[j].get("changePct") or 0) < 0:
+                    streak -= 1
+                else:
+                    break
+        meta.append({"disp": disp, "chg": chg, "p5": p5, "p20": p20, "streak": streak})
+        disp_tail = "~%s" % s["date"][5:].replace("-", "/") if stale else ""
+        row_parts.append("%s%.0f(%+.1f%%)%s" % (disp, s["close"], chg or 0, disp_tail))
+        if streak >= 3 or streak <= -3:
+            row_parts[-1] += ("连涨%d" % streak) if streak > 0 else ("连跌%d" % -streak)
+    if not row_parts:
+        return []
+    lines = ["📊 大盘(%s): %s" % (asof, " ".join(row_parts))]
+    strong = " ".join("%s 5日%+.1f/20日%+.1f" % (m["disp"], m["p5"] or 0, m["p20"] or 0) for m in meta)
+    lines.append("   强弱(5日/20日) %s" % strong)
+    # 大方向建议（依据回溯统计）
+    deep = [m for m in meta if (m["p5"] or 0) <= -6]
+    down3 = [m for m in meta if (m["streak"] or 0) <= -3]
+    up4 = [m for m in meta if (m["streak"] or 0) >= 4]
+    bull20 = [m for m in meta if (m["p20"] or 0) >= 6]
+    bear20 = [m for m in meta if (m["p20"] or 0) <= -6]
+    if deep:
+        tip = "⚠️ 大盘5日跌幅≥6% 处超跌区：跌透热门龙头(前60日强+自身连跌)左侧抄底窗口，持2-3日胜率约6成(2015-26统计)"
+    elif down3:
+        tip = "🟡 指数连跌%d日：跌得越深反弹概率越高(连跌≥4后5日胜率约7成)，可低吸前期热门+已连跌的龙头，暂避追高" % (-down3[0]["streak"])
+    elif up4:
+        tip = "🔴 指数连涨%d日 顺势强势：主攻热门主线(量价配合)，勿追已大涨高位股" % up4[0]["streak"]
+    elif bull20:
+        tip = "🔴 中期多头(20日≥6%)：顺势选强势主线，回调缩量低吸为主"
+    elif bear20:
+        tip = "🟢 中期空头(20日≤-6%)：轻仓防守，仅做超跌反弹(热门跌透龙头快进快出)"
+    else:
+        tip = "🟡 震荡：精选个股——非牛市只惩罚不追强；优先均线粘合+缩量企稳/超跌热门龙头"
+    lines.append("   大方向: %s" % tip)
+    return lines
+
+
 def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
                 scene=None, dag=None, cache=None, lowbuy_offline=None,
                 note_offline=None):
@@ -1352,6 +1450,7 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
     # 内容不再重复场景头行（该行与推送标题相同，2026-09-06 修复：标题=「%s | %s」）
     p1 = ["%s 大盘: %s %s | 池 %d" % (state_mark, state, state_cn,
                                      data.get("pool_total", 0))]
+    p1 += _big_board_lines(cache, asof)  # 📊 上证/科创50/沪深300 大方向
     p1 += _intel_lines()  # 📡 最新情报（scan 15 分钟快照，过旧自动省略）
     # ① 主线：XML DAG 当日选股（与 exe 同源；超短并入短线、按代码去重、每档≤3只）
     if dag is None:
@@ -1617,7 +1716,8 @@ def run_once(dry=False, candidates_key=None, timed_push=False, use_ctx=True, pos
     old_secids = candidate_secids(old) if old else set()
     if timed_push:
         # 守护(15分钟)轮：整轮概览推送；实仓段内嵌消息（有变化才展开，见 _append_pos_block）
-        send_wechat_round(data, ctx, cfg, old_secids=old_secids, pos_advice=pos_advice)
+        send_wechat_round(data, ctx, cfg, old_secids=old_secids, pos_advice=pos_advice,
+                          cache=cache)
     else:
         # 盘中新信号：仅在新买点出现时推送
         send_wechat(data, old_secids, cfg)
