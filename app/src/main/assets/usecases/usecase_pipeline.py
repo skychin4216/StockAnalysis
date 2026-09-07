@@ -914,6 +914,164 @@ def _etf_exit_policy(ctx, node, inputs):
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# 恐慌日抄底 dip_buy（超短线周期专用，规则参数取自 dip_buy_pipeline.xml，双端同源）
+# 统计支撑: AutoQuant/backtest_logs/_dip_rebound_report.md（2015~2026-09-07）
+# ──────────────────────────────────────────────────────────────────────────
+def _dip_row_at(ctx, snaps):
+    """定位 asof（回放）或数据最后一天（实盘）的下标。"""
+    if not snaps:
+        return -1
+    if ctx.asof:
+        dts = [s["date"] for s in snaps]
+        if ctx.asof in dts:
+            return dts.index(ctx.asof)
+    return len(snaps) - 1
+
+
+@register("dip_market_gate")
+def _dip_market_gate(ctx, node, inputs):
+    """大盘恐慌门控：上证/科创50 连跌≥streakDown 且5日跌≥4% / 5日跌幅≤p5Drop / 当日大跌(dayDrop)且已连跌≥streakDown-1。"""
+    cfg = node.config
+    idx_codes = [c for c in cfg.get("indexCodes", "sh000001,sh000688").split(",") if c]
+    streak_req = int(cfg.get("streakDown", 3))
+    p5_drop = float(cfg.get("p5Drop", -6.0))
+    day_drop = float(cfg.get("dayDrop", -1.5))
+    cache = ctx.cache or {}
+    note, asof, streak_max = [], None, 0
+    fired = []
+    for code in idx_codes:
+        snaps = (cache.get(code) or {}).get("snaps") or []
+        i = _dip_row_at(ctx, snaps)
+        if i < 20:
+            continue
+        s = snaps[i]
+        asof = s.get("date", asof)
+        chgs = [x.get("changePct") for x in snaps[i - 9:i + 1]]
+        chgs = [c for c in chgs if c is not None]
+        streak = 0
+        for c in reversed(chgs):
+            if c < 0:
+                streak += 1
+            else:
+                break
+        streak_max = max(streak_max, streak)
+        day = s.get("changePct") or 0.0
+        c5 = snaps[i - 5]["close"] if snaps[i - 5].get("close") else 0
+        p5 = (s["close"] / c5 - 1) * 100 if c5 else 0.0
+        tag = "上证" if code == "sh000001" else "科创50"
+        hit = (streak >= streak_req and p5 <= -4.0) or p5 <= p5_drop \
+            or (day <= day_drop and streak >= max(1, streak_req - 1))
+        note.append("%s连跌%d天/5日%+.1f%%/当日%+.1f%%→%s" % (tag, streak, p5, day, "触发" if hit else "未触发"))
+        if hit:
+            fired.append(tag)
+    ok = len(fired) > 0
+    ctx.notes.append("[%s] 大盘恐慌门控: %s" % (node.id, " | ".join(note)))
+    return {"ok": ok, "date": asof, "streak": streak_max, "fired": fired, "note": " | ".join(note)}
+
+
+@register("dip_stock_signal")
+def _dip_stock_signal(ctx, node, inputs):
+    """热门跌透龙头扫描（恐慌日才执行）：
+    前期热门(近60日涨幅前 hotRatio)∩自身连跌≥streakDown∩连跌段跌幅≥-deepDrop∩缩量 → 低吸候选。
+    只做热门跌透龙头、不碰冷门（回溯统计：冷门连跌股 H1-H3 胜率仅 43-52%）。"""
+    cfg = node.config
+    gate = ctx.stage_outputs.get("n_dip_gate") or {}
+    if not gate.get("ok"):
+        ctx.notes.append("[%s] 大盘无恐慌/深度回调信号(门控关闭)，跳过抄底扫描" % node.id)
+        return {"as_of": gate.get("date", ""), "gate": gate, "rows": [], "scanned": 0}
+    hot_days = int(cfg.get("ret60Days", 60))
+    hot_ratio = float(cfg.get("hotRatio", 0.35))
+    streak_req = int(cfg.get("streakDown", 3))
+    deep = float(cfg.get("deepDrop", -6.0))          # deepDrop 为负
+    vol_shrink = float(cfg.get("volShrink", 0.9))
+    min_snaps = int(cfg.get("minSnapshots", 120))
+    top_n = int(cfg.get("topN", 6))
+    cache = ctx.cache or {}
+    asof = None
+    scan = []
+    for code, ent in cache.items():
+        if code.startswith(("sh000", "sz399")):
+            continue  # 指数不入池
+        snaps = ent.get("snaps") or []
+        if len(snaps) < min_snaps:
+            continue
+        i = _dip_row_at(ctx, snaps)
+        if i < hot_days or not snaps[i].get("close"):
+            continue
+        c0 = snaps[i - hot_days]["close"]
+        if not c0:
+            continue
+        ret60 = (snaps[i]["close"] / c0 - 1) * 100
+        scan.append((code, ent, snaps, i, ret60))
+        if asof is None or snaps[i]["date"] > asof:
+            asof = snaps[i]["date"]
+    if not scan:
+        ctx.notes.append("[%s] 股票池为空(数据不足)" % node.id)
+        return {"as_of": asof, "gate": gate, "rows": [], "scanned": 0}
+    scan.sort(key=lambda x: x[4], reverse=True)      # 热门优先
+    n_hot = max(1, int(len(scan) * hot_ratio))
+    rows = []
+    for code, ent, snaps, i, ret60 in scan[:n_hot]:
+        chgs = [x.get("changePct") for x in snaps[max(0, i - 14):i + 1]]
+        chgs = [c for c in chgs if c is not None]
+        streak = 0
+        for c in reversed(chgs):
+            if c < 0:
+                streak += 1
+            else:
+                break
+        if streak < streak_req:
+            continue
+        ck = snaps[i]["close"]
+        ck0 = snaps[i - streak]["close"]
+        if not ck or not ck0:
+            continue
+        drop_pct = (ck0 / ck - 1.0) * 100.0          # 连跌段累计跌幅(正=跌了多少)
+        if drop_pct < -deep:                         # 跌得不够深，继续观察
+            continue
+        # 缩量检查：连跌期均量 vs 更早基线均量（无量能字段时放行）
+        def _avg_vol(lo, hi):
+            vs = [snaps[j].get("volume") or 0 for j in range(max(0, lo), min(hi, len(snaps)))]
+            vs = [v for v in vs if v]
+            return (sum(vs) / len(vs)) if vs else None
+        vr = None
+        base_lo, base_hi = i - streak - 10, i - streak + 1
+        v_rec = _avg_vol(i - streak + 1, i + 1)
+        v_base = _avg_vol(base_lo, base_hi)
+        if v_rec and v_base:
+            vr = v_rec / v_base
+            if vr > vol_shrink:
+                continue
+        row = {"code": code, "name": ent.get("name", code),
+               "date": snaps[i]["date"], "close": round(ck, 2),
+               "ret60": round(ret60, 2), "streak": streak,
+               "drop_pct": round(drop_pct, 2), "vr": round(vr, 2) if vr else None}
+        rows.append(row)
+    rows.sort(key=lambda r: (-r["ret60"], -r["drop_pct"]))
+    top = rows[:top_n]
+    ctx.notes.append("[%s] 热门池%d只(前%.0f%%%d只) 筛出%d只跌透龙头 → top%d" %
+                     (node.id, len(scan), hot_ratio * 100, n_hot, len(rows), len(top)))
+    return {"as_of": asof, "gate": gate, "rows": top, "scanned": n_hot}
+
+
+@register("dip_exit_policy")
+def _dip_exit_policy(ctx, node, inputs):
+    """抄底离场参数 + 发布口径打包（tp/sl/hold 取自 XML config）。"""
+    import datetime as _dt
+    cfg = node.config
+    sig = ctx.stage_outputs.get("n_dip_signal") or {}
+    rows = sig.get("rows") or []
+    default_text = ("恐慌日抄底 dip_buy: 上证/科创50 连跌>=3且5日跌>=4%(或5日<=-6%、或当日恐慌大跌) 收盘后"
+                    " → 买前期热门(前60日涨幅前35%)∩自身连跌>=3∩缩量的跌透龙头；持<=3日 tp+4%/sl-2.5%")
+    return {"generated_at": _dt.date.today().isoformat(),
+            "as_of": sig.get("as_of", ""), "gate": sig.get("gate") or {},
+            "signal_today": rows, "scanned": sig.get("scanned", 0),
+            "strategy": cfg.get("strategyText") or default_text,
+            "exit": {"tp": float(cfg.get("tp", 4.0)), "sl": float(cfg.get("sl", -2.5)),
+                     "hold": int(cfg.get("hold", 3))}}
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # UseCase 执行器
 # ──────────────────────────────────────────────────────────────────────────
 def _eval_if(cond, ctx):

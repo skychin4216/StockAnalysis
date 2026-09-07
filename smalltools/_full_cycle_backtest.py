@@ -513,7 +513,96 @@ def nav_backtest(trades, capital=100_000.0):
                 total_fee=total_fee, max_dd=max_dd * 100, capital=float(capital))
 
 
-def run_period(cache, all_dates, date_to_idx, period, rule=None, capital=100_000.0, tier_auto=False):
+def nav_batch(trades, capital=300_000.0, batch_cap=20_000.0):
+    """底仓分批净值法（多仓并行）：初始资金 [capital]，每只候选单笔底仓上限 [batch_cap]（如 1-3 万）。
+
+    与 nav_backtest(满仓单仓滚动) 的区别——贴近实盘"分批建仓"：
+    - 同一时刻可持有多只（互不排斥），每只投入 min(batch_cap, 可用现金) 取整手
+    - 事件按交易日推进：每交易日先按各笔 exit 价平仓回笼，再按可用现金逐笔开新仓
+    - 可用现金不足/一手都买不起 → 该信号跳过(n_skip，真实资金约束)
+    - 手续费：买佣金万2.5(最低5)，卖佣金+印花税千1
+
+    返回 dict: total_ret%, n_exec, n_skip, total_fee, max_dd%, capital, batch_cap
+    """
+    if not trades:
+        return dict(total_ret=0.0, n_exec=0, n_skip=0, total_fee=0.0, max_dd=0.0,
+                    capital=capital, batch_cap=batch_cap)
+    # 交易日历：所有 buy/sell 日期
+    days = sorted({t["buy"] for t in trades} | {t["sell"] for t in trades})
+    by_day = {d: {"buy": [], "sell": []} for d in days}
+    for t in trades:
+        if t["sell"] in by_day:
+            by_day[t["sell"]]["sell"].append(t)
+        if t["buy"] in by_day:
+            by_day[t["buy"]]["buy"].append(t)
+
+    cash = float(capital)
+    n_exec = n_skip = 0
+    total_fee = 0.0
+    pos = {}            # code -> {"qty": int, "buy": date, "entry": float, "exit": float}
+    net_vals = [1.0]    # 每交易日结束后净值(相对本金)
+    last_net = 1.0
+
+    def _mark():
+        nonlocal last_net
+        # 估值：持仓按开仓成本计(无逐日收盘数据，避免引入失真价格)
+        held_cost = sum(e["qty"] * e["entry"] for e in pos.values())
+        last_net = (cash + held_cost) / float(capital)
+        net_vals.append(last_net)
+
+    for d in days:
+        # ① 先平当日到期仓
+        for t in by_day[d]["sell"]:
+            code = t.get("code", "")
+            e = pos.pop(code, None)
+            if e is None:
+                # 该笔未曾买入(资金不足跳过) → 无仓可平
+                continue
+            qty = e["qty"]
+            fee = _sell_fee(t["exit"] * qty)
+            cash += t["exit"] * qty - fee
+            total_fee += fee
+        # ② 用可用现金开新仓
+        for t in by_day[d]["buy"]:
+            code = t.get("code", "")
+            if code in pos:                     # 同标的已有持仓 → 不重复开
+                n_skip += 1
+                continue
+            entry = t["entry"]
+            if entry <= 0:
+                n_skip += 1
+                continue
+            avail = min(batch_cap, cash)
+            qty = int(avail / entry / LOT_SIZE) * LOT_SIZE
+            fee = _buy_fee(entry * qty)
+            if qty < LOT_SIZE or cash < entry * qty + fee:
+                n_skip += 1                     # 底仓都不够一手
+                continue
+            cash -= entry * qty + fee
+            total_fee += fee
+            n_exec += 1
+            pos[code] = {"qty": qty, "buy": d, "entry": entry, "exit": t["exit"]}
+        _mark()
+    # 期末仍有持仓：按各自 exit 价兜底平仓
+    for e in list(pos.values()):
+        fee = _sell_fee(e["exit"] * e["qty"])
+        cash += e["exit"] * e["qty"] - fee
+        total_fee += fee
+    pos.clear()
+    _mark()
+    total_ret = (cash / float(capital) - 1) * 100
+    peak = 1.0
+    max_dd = 0.0
+    for v in net_vals:
+        peak = max(peak, v)
+        max_dd = min(max_dd, v - peak)
+    return dict(total_ret=total_ret, n_exec=n_exec, n_skip=n_skip,
+                total_fee=total_fee, max_dd=max_dd * 100,
+                capital=float(capital), batch_cap=batch_cap)
+
+
+def run_period(cache, all_dates, date_to_idx, period, rule=None, capital=100_000.0, tier_auto=False,
+               nav_mode="single", batch_cap=20_000.0):
     """period 全窗口回放。rule 为 None 时：tier_auto=True → 每笔信号按买入标的
     波动率自动分档（sell_rule_auto，资产双轨）；否则用该周期标准 9 格。"""
     rule = rule or SELL_RULES[period]
@@ -551,9 +640,13 @@ def run_period(cache, all_dates, date_to_idx, period, rule=None, capital=100_000
           f"盈亏因子: {'∞' if pf==float('inf') else f'{pf:.2f}'}   最大回撤(固定本金): {mdd:.2f}%")
     if rets:
         print(f"  最大单笔: +{max(rets):.2f}% / {min(rets):+.2f}%")
-    # ── 真实账户净值法（含手续费与失败单；满仓单仓滚动）──
-    nav = nav_backtest(trades, capital=capital)
-    print(f"  ── 净值法(账户{nav['capital']:.0f}元·满仓单仓滚动·含手续费) ──")
+    # ── 真实账户净值法（含手续费与失败单）──
+    if nav_mode == "batch":
+        nav = nav_batch(trades, capital=capital, batch_cap=batch_cap)
+        print(f"  ── 分批净值法(账户{nav['capital']:.0f}元·单仓上限{nav['batch_cap']:.0f}元·多仓并行·含手续费) ──")
+    else:
+        nav = nav_backtest(trades, capital=capital)
+        print(f"  ── 净值法(账户{nav['capital']:.0f}元·满仓单仓滚动·含手续费) ──")
     print(f"  成交 {nav['n_exec']} 笔(资金占用跳过 {nav['n_skip']}) 手续费合计 {nav['total_fee']:.0f} 元")
     print(f"  真实累计收益(期末资产/本金-1): {nav['total_ret']:+.2f}%   "
           f"期间最大回撤: {nav['max_dd']:.2f}%")
@@ -633,6 +726,10 @@ def main(argv=None):
     ap.add_argument("--no-fit", action="store_true", help="跳过中/长线按大盘状态拟合")
     ap.add_argument("--tier", action="store_true",
                     help="低波动资产自动分档（对配置了 lowVol 档的周期生效）")
+    ap.add_argument("--nav-batch", action="store_true",
+                    help="净值法改为「底仓分批」(多仓并行，每只限 batch-cap) 而非满仓单仓滚动")
+    ap.add_argument("--batch-cap", type=float, default=20_000.0,
+                    help="分批模式下每只单仓资金上限(默认 20000，建议底仓 1-3 万)")
     args = ap.parse_args(argv)
 
     cache = load_cache()
@@ -644,14 +741,18 @@ def main(argv=None):
     date_to_idx = {d: i for i, d in enumerate(all_dates)}
     print(f"股票池: {len(cache) - 3} 只核心龙头 | K线: {all_dates[0]} ~ {all_dates[-1]} ({len(all_dates)} 交易日)")
     print("说明: 超短隔日卖 / 短线连跌卖 / 中长线做T降成本 + 大盘状态(牛/震荡/跌/暴跌)参数矩阵")
-    print(f"净值法参数: 初始本金 {args.capital:.0f} 元 · 满仓单仓滚动 · 佣金万2.5(最低5) + 卖出印花税千1")
+    if args.nav_batch:
+        print(f"净值法参数: 账户 {args.capital:.0f} 元 · 底仓分批(单仓上限 {args.batch_cap:.0f} 元·多仓并行) · 佣金万2.5(最低5) + 卖出印花税千1")
+    else:
+        print(f"净值法参数: 初始本金 {args.capital:.0f} 元 · 满仓单仓滚动 · 佣金万2.5(最低5) + 卖出印花税千1")
 
     wanted = [p for p in args.periods.replace("，", ",").split(",") if p]
     summary = {}
     for period in ["超短线", "短线", "中线", "长线"]:
         if period not in wanted:
             continue
-        r = run_period(cache, all_dates, date_to_idx, period, capital=args.capital, tier_auto=args.tier)
+        r = run_period(cache, all_dates, date_to_idx, period, capital=args.capital, tier_auto=args.tier,
+                       nav_mode="batch" if args.nav_batch else "single", batch_cap=args.batch_cap)
         if r:
             summary[period] = r
 

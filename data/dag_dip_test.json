@@ -1,0 +1,142 @@
+{
+ "asof": "2026-09-04",
+ "engine": "xml_dag",
+ "source": "assets/usecases/*.xml via usecase_pipeline.py",
+ "result": {
+  "超短": [
+   {
+    "code": "sz000768",
+    "name": "中航西飞",
+    "score": 0.0,
+    "reason": "pipeline",
+    "extra": {},
+    "limit_up": false
+   },
+   {
+    "code": "sh600354",
+    "name": "敦煌种业",
+    "score": 0.0,
+    "reason": "pipeline",
+    "extra": {},
+    "limit_up": true
+   }
+  ],
+  "短线": [],
+  "中线": [],
+  "长线": [
+   {
+    "code": "sh600371",
+    "name": "万向德农",
+    "score": 0.0,
+    "reason": "pipeline",
+    "extra": {},
+    "limit_up": false
+   }
+  ],
+  "抄底": [
+   {
+    "code": "sh601700",
+    "name": "风范股份",
+    "score": 71.4,
+    "reason": "恐慌日抄底: 热门+连跌3(跌9.4%) 缩量vr=0.73",
+    "extra": {
+     "code": "sh601700",
+     "name": "风范股份",
+     "date": "2026-09-04",
+     "close": 7.68,
+     "ret60": 62.03,
+     "streak": 3,
+     "drop_pct": 9.38,
+     "vr": 0.73
+    },
+    "limit_up": false
+   },
+   {
+    "code": "sh600497",
+    "name": "驰宏锌锗",
+    "score": 24.0,
+    "reason": "恐慌日抄底: 热门+连跌5(跌7.4%) 缩量vr=0.84",
+    "extra": {
+     "code": "sh600497",
+     "name": "驰宏锌锗",
+     "date": "2026-09-04",
+     "close": 9.84,
+     "ret60": 16.59,
+     "streak": 5,
+     "drop_pct": 7.42,
+     "vr": 0.84
+    },
+    "limit_up": false
+   },
+   {
+    "code": "sh688012",
+    "name": "中微公司",
+    "score": 20.1,
+    "reason": "恐慌日抄底: 热门+连跌5(跌9.4%) 缩量vr=0.75",
+    "extra": {
+     "code": "sh688012",
+     "name": "中微公司",
+     "date": "2026-09-04",
+     "close": 335.42,
+     "ret60": 10.66,
+     "streak": 5,
+     "drop_pct": 9.42,
+     "vr": 0.75
+    },
+    "limit_up": false
+   },
+   {
+    "code": "sz000831",
+    "name": "中国稀土",
+    "score": 15.0,
+    "reason": "恐慌日抄底: 热门+连跌4(跌10.4%) 缩量vr=0.55",
+    "extra": {
+     "code": "sz000831",
+     "name": "中国稀土",
+     "date": "2026-09-04",
+     "close": 56.21,
+     "ret60": 4.56,
+     "streak": 4,
+     "drop_pct": 10.41,
+     "vr": 0.55
+    },
+    "limit_up": false
+   },
+   {
+    "code": "sz300661",
+    "name": "圣邦股份",
+    "score": 8.7,
+    "reason": "恐慌日抄底: 热门+连跌5(跌7.1%) 缩量vr=0.71",
+    "extra": {
+     "code": "sz300661",
+     "name": "圣邦股份",
+     "date": "2026-09-04",
+     "close": 106.92,
+     "ret60": 1.62,
+     "streak": 5,
+     "drop_pct": 7.09,
+     "vr": 0.71
+    },
+    "limit_up": false
+   },
+   {
+    "code": "sh603019",
+    "name": "中科曙光",
+    "score": 8.4,
+    "reason": "恐慌日抄底: 热门+连跌4(跌6.8%) 缩量vr=0.79",
+    "extra": {
+     "code": "sh603019",
+     "name": "中科曙光",
+     "date": "2026-09-04",
+     "close": 82.69,
+     "ret60": 1.62,
+     "streak": 4,
+     "drop_pct": 6.75,
+     "vr": 0.79
+    },
+    "limit_up": false
+   }
+  ]
+ },
+ "notes_count": 64
+}

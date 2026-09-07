@@ -344,6 +344,31 @@ object NodeRegistry {
                 watchRsiMax = config["watchRsiMax"]?.toDoubleOrNull() ?: 45.0
             )
         }
+        // 恐慌日抄底 dip_buy（规则/参数在 assets/usecases/dip_buy_pipeline.xml，双端同源）
+        register("dip_market_gate") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.DipMarketGateNode(
+                streakReq = config["streakDown"]?.toIntOrNull() ?: 3,
+                p5Drop = config["p5Drop"]?.toDoubleOrNull() ?: -6.0,
+                dayDrop = config["dayDrop"]?.toDoubleOrNull() ?: -1.5
+            )
+        }
+        register("dip_stock_signal") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.DipStockSignalNode(
+                hotDays = config["ret60Days"]?.toIntOrNull() ?: 60,
+                hotRatio = config["hotRatio"]?.toDoubleOrNull() ?: 0.35,
+                streakReq = config["streakDown"]?.toIntOrNull() ?: 3,
+                deepDrop = config["deepDrop"]?.toDoubleOrNull() ?: -6.0,
+                volShrink = config["volShrink"]?.toDoubleOrNull() ?: 0.9,
+                topN = config["topN"]?.toIntOrNull() ?: 6
+            )
+        }
+        register("dip_exit_policy") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.DipExitPolicyNode(
+                tp = config["tp"]?.toDoubleOrNull() ?: 4.0,
+                sl = config["sl"]?.toDoubleOrNull() ?: -2.5,
+                hold = config["hold"]?.toIntOrNull() ?: 3
+            )
+        }
         register("etf_exit_policy") { _, config ->
             com.chin.stockanalysis.strategy.topology.nodes.EtfExitPolicyNode(
                 tp = config["tp"]?.toDoubleOrNull() ?: 2.0,

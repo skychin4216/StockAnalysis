@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 恐慌日抄底 dip_buy Pipeline（个股短线周期专用）
+
+  统计支撑：AutoQuant/backtest_logs/_dip_rebound_report.md（2015~2026-09-07 回溯）
+  - 上证/科创50 连跌>=3 后反弹概率逐步抬升（连跌4-5天后 H3~H5 胜率 65-80%）
+  - 「恐慌日收盘买 前期热门(前60日涨幅前30%)∩自身连跌>=3 龙头」：H2/H3 胜率 58-61%，龙头子集 60-68%
+  - 冷门/弱势连跌股显著更差 → 只做热门跌透龙头，不碰冷门
+
+  双端共用：APK UseCaseLoader / AutoQuant usecase_pipeline.py 解析同一份 XML；
+  由 daemon 在大盘恐慌日自动并入当日选股（usecase_screen.py），APK 亦可手动执行。
+-->
+<DagPipeline id="dip_buy_dag" name="dip_buy_pipeline" description="恐慌日抄底(超短线): 指数恐慌门控 → 热门跌透龙头扫描 → 离场参数打包">
+
+  <NodeList>
+    <Node id="n_dip_gate" name="大盘恐慌门控" module="dip_market_gate">
+      <config>
+        <param name="indexCodes" value="sh000001,sh000688" />
+        <param name="streakDown" value="3" />
+        <param name="p5Drop" value="-6.0" />
+        <param name="dayDrop" value="-1.5" />
+      </config>
+    </Node>
+
+    <Node id="n_dip_signal" name="热门跌透龙头扫描" module="dip_stock_signal">
+      <config>
+        <param name="ret60Days" value="60" />
+        <param name="hotRatio" value="0.35" />
+        <param name="streakDown" value="3" />
+        <param name="deepDrop" value="-6.0" />
+        <param name="volShrink" value="0.9" />
+        <param name="minSnapshots" value="120" />
+        <param name="topN" value="6" />
+      </config>
+    </Node>
+
+    <Node id="n_dip_exit" name="抄底离场打包" module="dip_exit_policy">
+      <config>
+        <param name="tp" value="4.0" />
+        <param name="sl" value="-2.5" />
+        <param name="hold" value="3" />
+        <param name="strategyText" value="恐慌日抄底 dip_buy: 上证/科创50 连跌≥3且5日跌≥4%或5日≤-6%或当日大跌(恐慌) 收盘后 → 买前期热门(前60日涨幅前35%)∩自身连跌≥3∩缩量的跌透龙头(只做热门不碰冷门)；持≤3日 tp+4%/sl-2.5%(2015-26回溯 H2/H3胜率58-61%·龙头60-68%)" />
+      </config>
+    </Node>
+  </NodeList>
+</DagPipeline>

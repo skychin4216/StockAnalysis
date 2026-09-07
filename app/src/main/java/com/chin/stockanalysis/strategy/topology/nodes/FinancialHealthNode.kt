@@ -76,13 +76,14 @@ class FinancialHealthNode(
                     kept.add(sig.copy(reason = "${sig.reason} · ⚠财务数据缺失未排雷"))
                     continue
                 }
+                val roeMissing = snap.roeTTM <= 0  // ROE 字段未同步(=0)≠真实亏损
                 val score = scoreOf(
                     pe = snap.pe, pb = snap.pb, roe = snap.roeTTM,
                     debt = snap.debtToAsset, cap = snap.marketCap,
                     debtExempt = sig.stockCode in exemptCodes
                 )
                 if (score >= minScore) {
-                    kept.add(sig.copy(reason = "${sig.reason} · 财务${score}分"))
+                    kept.add(sig.copy(reason = "${sig.reason} · 财务${score}分${if (roeMissing) "(ROE数据缺失)" else ""}"))
                 } else {
                     dropped.add("${sig.stockName}财务${score}分(<$minScore)")
                 }
@@ -126,11 +127,17 @@ class FinancialHealthNode(
         debt: Double, cap: Double, debtExempt: Boolean
     ): Int {
         // ── 排雷（硬性排除） ──
-        if (pe <= 0) return 0                                   // 亏损
+        if (pe <= 0) return 0                                   // 亏损（PE 有效且为负/0）
         if (!debtExempt && debt > maxDebtRatio) return 0        // 高负债（非豁免）
-        if (roe < 1.0) return 0                                 // 盈利质量极差
+        // ROE 排雷仅对"真实微利"(0<ROE<1)生效；ROE<=0 视为财务字段未同步（如银行股），不硬剔，
+        // 只给中性分（20），避免把数据缺失的优质金融/权重股误杀成 0 分。
+        if (roe > 0.0 && roe < 1.0) return 0                    // 盈利质量极差（真实数据）
 
-        val roeScore = (roe.coerceAtMost(20.0) / 20.0 * 30).toInt()                         // 30 分
+        val roeScore = if (roe >= 1.0) {
+            (roe.coerceAtMost(20.0) / 20.0 * 30).toInt()        // 30 分
+        } else {
+            20                                                  // ROE 缺失：中性分
+        }
         val debtScore = if (debtExempt || debt <= 40) {
             25
         } else {
