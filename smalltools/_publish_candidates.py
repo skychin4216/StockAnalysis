@@ -30,7 +30,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cos_utils  # noqa: E402
-from _full_cycle_backtest import INDEXES, load_cache, market_state  # noqa: E402
+from _full_cycle_backtest import INDEXES, load_cache, limit_up_flag, market_state  # noqa: E402
 from backtest_guangmo import PARAMS, analyze_snaps  # noqa: E402
 from _industry_map import build_industry  # noqa: E402
 from _rotation_engine import rotate as rotation_rotate, load_cache as rotation_load_cache  # noqa: E402
@@ -628,6 +628,16 @@ def build_candidates(cache, industry, ctx=None):
         rot_unique.append(it)
     rot_unique.sort(key=lambda r: (r["sector_mom"], r["mom20"] if r["mom20"] is not None else -999), reverse=True)
     groups["板块轮动"] = rot_unique[:GROUP_SIZE * 2]
+    # 涨停标注：候选当日收盘涨停（无法买入）→ limit_up=True，供推送标注并置后展示
+    try:
+        for _grp in list(groups.values()) + [prepared]:
+            for _x in _grp:
+                _sid = _x.get("secid") or ""
+                _ent = cache.get(_sid) or {}
+                _x["limit_up"] = limit_up_flag(
+                    _ent.get("snaps"), _sid, _ent.get("name") or "", asof)
+    except Exception:
+        pass
     data = {
         "schema": 2,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -1374,28 +1384,37 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
                         extra = _tech_rich(cache[raw].get("snaps") or [])
                     except Exception:
                         extra = ""
-                bucket[disp].append((raw, code, nm, extra))
+                lu = bool(it.get("limit_up"))
+                if not lu and hit:
+                    lu = bool(hit.get("limit_up"))
+                bucket[disp].append((raw, code, nm, extra, lu))
         rows = []
         for disp in ("短线", "中线", "长线"):
             seen = set()
-            seq = []
-            for raw, code, nm, extra in bucket[disp]:
+            seq_all = []
+            for raw, code, nm, extra, lu in bucket[disp]:
                 key = code or raw
                 if not key or key in seen:
                     continue
                 seen.add(key)
-                seq.append((raw, code, nm, extra))
-                if len(seq) >= 3:
-                    break
-            if not seq:
+                seq_all.append((raw, code, nm, extra, lu))
+            if not seq_all:
                 continue
-            for raw, _, _, _ in seq:
+            # 涨停(当日不可买入)不占可买名额：非涨停优先≤3，涨停标🔒置后，总条数可>3
+            normal = [x for x in seq_all if not x[4]]
+            ups = [x for x in seq_all if x[4]]
+            seq = normal[:3] + ups[:3]
+            for raw, _, _, _, _ in seq:
                 if raw:
                     dag_all.add(raw)
             rows.append("  %s(%d):" % (disp, len(seq)))
-            for _, code, nm, extra in seq:
-                rows.append("    🔴 %s(%s)%s" % (nm, code,
-                                                 (" | " + extra) if extra else ""))
+            for _, code, nm, extra, lu in seq:
+                if lu:
+                    rows.append("    🔒 %s(%s) 已涨停·不可买%s" % (
+                        nm, code, (" | " + extra) if extra else ""))
+                else:
+                    rows.append("    🔴 %s(%s)%s" % (nm, code,
+                                                     (" | " + extra) if extra else ""))
         stale = ""
         if dag.get("asof") and dag.get("asof") != asof:
             stale = " (asof %s)" % dag.get("asof")
@@ -1414,14 +1433,17 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
             ref_rows.append((period, it, flowout))
     if ref_rows:
         ref_rows.sort(key=lambda r: -(r[1].get("ratio") or 0))
-        keep = ref_rows[:3]
+        # 涨停不占名额：非涨停(按 ratio 排序)≤3，涨停标🔒置后
+        keep = [x for x in ref_rows if not x[1].get("limit_up")][:3] + \
+               [x for x in ref_rows if x[1].get("limit_up")][:3]
         p1.append("")
         p1.append("📋 对照参考·非主线(%d只)" % len(keep))
         for period, it, flowout in keep:
-            mark = "🟡" if flowout else "🔴"
+            lu = bool(it.get("limit_up"))
+            mark = "🔒" if lu else ("🟡" if flowout else "🔴")
             r = it.get("ratio")
             ratio_s = ("%.0f%%" % (r * 100)) if r is not None else ""
-            side = " 资金流出" if flowout else ""
+            side = " 已涨停" if lu else (" 资金流出" if flowout else "")
             newdot = "🆕" if it["secid"] not in old_secids else ""
             tech = it.get("tech") or ""
             base = "%s%s [%s] %s%s(%s) %s%s" % (
@@ -2173,6 +2195,27 @@ def _interruptible_sleep(seconds, stop_check=None):
         seconds -= step
 
 
+EXPECT_ROUNDS = {"am": 9, "pm": 7}  # 09:30-11:30 9轮 / 13:00-14:30 7轮，每15分
+
+
+def _check_rounds(log=print):
+    """15:00 尾盘核对当日轮次：少于时刻表期望则留痕告警（多为交易时段休眠/掉轮）。"""
+    r = _load_rhythm()
+    got = r.get("rounds", {})
+    bad = {}
+    for k, want in EXPECT_ROUNDS.items():
+        if got.get(k, 0) < want:
+            bad[k] = got.get(k, 0)
+    if bad:
+        msg = "  [warn] 轮次核对：%s（可能电脑在交易时段休眠/进程冻结掉轮）" % "、".join(
+            "%s %d/%d 轮" % ("上午" if k == "am" else "下午", v, EXPECT_ROUNDS[k])
+            for k, v in sorted(bad.items()))
+        log(msg)
+        ops_note("miss_rounds", msg)
+    else:
+        log("  ✓ 轮次核对：上午%d/9 下午%d/7 达标" % (got.get("am", 0), got.get("pm", 0)))
+
+
 def daemon_serve(prep=True, interval=900, dry=False, use_ctx=True,
                  log=print, stop_check=None):
     """盘段守护 v2（2026-09-06 方案A，用户确认）：
@@ -2221,17 +2264,17 @@ def daemon_serve(prep=True, interval=900, dry=False, use_ctx=True,
             n_r = r.get("rounds", {}).get(slot, 0)
             last_at = r.get("round_at", {}).get(slot)
             do_round = (n_r == 0)   # 本段首轮：首刷完成后立即选股
-            if not do_round and _is_quarter(now):
-                do_round = True
-                if last_at:
-                    try:
-                        lt = datetime.datetime.combine(
-                            now.date(),
-                            datetime.datetime.strptime(last_at, "%H:%M:%S").time())
-                        if (now - lt).total_seconds() < 60:
-                            do_round = False   # 同一分钟已轮过，防重复
-                    except ValueError:
-                        pass
+            if not do_round and last_at:
+                # 距上轮 ≥ interval 即轮（不限于整刻）：守护短轮询若被系统休眠
+                # 冻结，唤醒后只要仍在本段内即可补跑错过的轮，避免整段缺轮。
+                try:
+                    lt = datetime.datetime.combine(
+                        now.date(),
+                        datetime.datetime.strptime(last_at, "%H:%M:%S").time())
+                    if (now - lt).total_seconds() >= interval - 30:
+                        do_round = True
+                except ValueError:
+                    do_round = True
             if do_round:
                 _do_round(slot, dry, use_ctx, log)
                 continue
@@ -2242,6 +2285,7 @@ def daemon_serve(prep=True, interval=900, dry=False, use_ctx=True,
         if hm >= 15 * 60:
             if rhythm_need_flag("tail"):
                 run_tail_kline(log=log, stop_check=stop_check)
+                _check_rounds(log)
                 continue
             # 尾盘定格后 15:00-15:09 窗口：当日选股入账本 + 到期信号结算。
             # 自检失败仅降级（总结里无该段），绝不让 15:10 收盘总结被拖住。

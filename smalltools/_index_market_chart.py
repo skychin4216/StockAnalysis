@@ -13,10 +13,12 @@
   python _index_market_chart.py --days 55         # 生成高分辨率 PNG + 同名交互 HTML
   python _index_market_chart.py --text            # 只输出强弱结论文本
 
-2026-09-06 升级：PNG 提至 ≈3240×1360（约旧版 3 倍像素，企微内可放大看清）；
-同时输出同口径交互 HTML（plotly 滚轮缩放/拖拽平移/悬停数值）。
-2026-09-06 二次修订：Y 轴由『归一化=100』改为『累计涨跌幅% 起点=0』并带 % 刻度，
-曲线高低只表示涨幅强弱；图例追加最新实际点位，杜绝"科创50比上证点位高"的误读。
+2026-09-07 三次修订（用户要求按真实点位呈现）：图像从『归一化叠加一条线』改为
+「2×2 四面板 日K柱状图」——每个指数独立面板，Y 轴刻度为实际点位（深证≈13700、
+上证≈3900、创业板≈3400 各自按真实值绘制，不再归一化），直观反映各指数数值量级；
+K线柱红涨绿跌 + MA5 均线，面板标题标注最新实际点位与 5 日涨跌幅。
+PNG 高分辨率推企微；HTML(plotly) 支持滚轮缩放/框选放大/拖拽平移/悬停数值。
+（注：09-06 的『归一化%=100 起点叠加线』版本因用户要求按实际值绘图而作废。）
 """
 import argparse
 import datetime as _dt
@@ -133,6 +135,7 @@ def _build_series(out, days=55):
             "label": name,
             "color": COLORS.get(name, "#1976D2"),
             "values": [(s["close"] / base - 1) * 100.0 for s in snaps],
+            "snaps": snaps,   # 窗口内 OHLC 全量，供日K柱状图按真实点位绘制
             "latest": snaps[-1]["close"],
             "last_close": snaps[-1]["close"],
             "p5": (snaps[-1]["close"] / snaps[-6]["close"] - 1) * 100 if len(snaps) > 5 else 0.0,
@@ -150,10 +153,11 @@ def _fmt_pt(v):
 
 
 def _draw_png(window, series, out, hi_res=True):
-    """把已算好的 (window, series) 绘制成 PNG。成功返回 True。
+    """把已算好的 (window, series) 绘制成「2×2 四面板 日K柱状图」PNG。
 
-    hi_res=True（默认）：figsize 16.2×6.8 @ dpi 200 → ≈3240×1360，约为旧版的 3 倍像素，
-    便于企微内双指放大看细节（企微 image 单张 ≤2MB，实测该尺寸约 500~900KB，可安全推送）。
+    每面板一个指数：红涨绿跌的日K蜡烛柱(按真实点位 OHLC) + MA5 均线，
+    Y 轴为实际点位刻度（深证≈13700 / 上证≈3900 各自独立量级，不归一化）。
+    hi_res=True：figsize 16×9.2 @ dpi 180 → ≈2880×1656，高像素便于企微放大。
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -161,70 +165,98 @@ def _draw_png(window, series, out, hi_res=True):
     plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei"]
     plt.rcParams["axes.unicode_minus"] = False
 
-    figsize = (16.2, 6.8) if hi_res else (10.2, 4.4)
-    dpi = 200 if hi_res else 150
     n = len(window)
-    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
-    x = list(range(n))
-    for s in series:
-        ax.plot(x, s["values"], color=s["color"], lw=2.4,
-                label="%s %s(%+.2f%%)"
-                      % (s["label"], _fmt_pt(s["last_close"]), s["p5"]))
-    # 末端累计涨跌幅标注（配合图例实际点位，涨幅与点位分开表达）
-    for s in series:
-        ax.annotate("%+.1f%%" % s["values"][-1],
-                    xy=(n - 1, s["values"][-1]),
-                    xytext=(8, 0), textcoords="offset points",
-                    fontsize=11, color=s["color"], fontweight="bold")
-    ax.axhline(0.0, color="#999999", lw=1.2, ls="--")
-    ax.yaxis.set_major_formatter(
-        plt.FuncFormatter(lambda v, _: "%+.1f%%" % v))
-    tick_step = max(1, n // 10)
-    ax.set_xticks(range(0, n, tick_step))
-    ax.set_xticklabels([window[i][5:] for i in range(0, n, tick_step)],
-                       fontsize=11)
-    ax.set_ylim(auto=True)
-    ax.grid(alpha=0.22, lw=0.7)
-    ax.legend(loc="upper left", fontsize=11.5, framealpha=0.6)
-    ax.set_title("大盘4指数涨跌幅叠加(起点0=窗口首日收盘, 图例为最新实际点位) 截至 %s"
-                 % window[-1], fontsize=15, pad=10)
-    ax.set_ylabel("较窗口首日累计涨跌幅", fontsize=12)
-    fig.tight_layout()
-    fig.savefig(out, dpi=dpi)
+    fig, axes = plt.subplots(2, 2, figsize=(16, 9.2), dpi=180)
+    UP, DN = "#E53935", "#2E9E44"   # A股习惯：红涨绿跌
+    for ax, s in zip([a for row in axes for a in row], series):
+        snaps = s["snaps"]
+        xs = list(range(n))
+        up = [i for i, k in enumerate(snaps) if k["close"] >= k["open"]]
+        dn = [i for i in range(n) if i not in up]
+        for grp, col in ((up, UP), (dn, DN)):
+            if not grp:
+                continue
+            gx = [xs[i] for i in grp]
+            ax.vlines(gx, [snaps[i]["low"] for i in grp],
+                      [snaps[i]["high"] for i in grp],
+                      color=col, lw=0.9, alpha=0.95)
+            ax.bar(gx, [snaps[i]["close"] - snaps[i]["open"] for i in grp],
+                   bottom=[snaps[i]["open"] for i in grp],
+                   width=0.72, color=col, alpha=0.95)
+        ma5 = []
+        for i in range(n):
+            w = snaps[max(0, i - 4):i + 1]
+            ma5.append(sum(k["close"] for k in w) / len(w))
+        ax.plot(xs, ma5, color="#1976D2", lw=1.4, label="MA5")
+        tick_step = max(1, n // 8)
+        tix = list(range(0, n, tick_step))
+        ax.set_xticks(tix)
+        ax.set_xticklabels([window[i][5:] for i in tix], fontsize=10)
+        ax.set_title("%s %s · 5日%+.2f%%" % (s["label"], _fmt_pt(s["last_close"]), s["p5"]),
+                     fontsize=13, loc="left")
+        ax.yaxis.set_major_formatter(
+            plt.FuncFormatter(lambda v, _: "{:,.0f}".format(v)))
+        ax.grid(alpha=0.25, lw=0.7, ls=":")
+        ax.legend(loc="upper left", fontsize=9, framealpha=0.6)
+    fig.suptitle("大盘4指数 日K柱状图(实际点位, 红涨绿跌, 含MA5) 截至 %s" % window[-1],
+                 fontsize=16, y=0.995)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.savefig(out, dpi=fig.dpi)
+    wpx, hpx = fig.get_size_inches()[0] * fig.dpi, fig.get_size_inches()[1] * fig.dpi
     plt.close(fig)
-    print("大盘图已生成: %s (%d 根, %s, %dx%d)" % (
-        out, n, window[-1], figsize[0] * dpi, figsize[1] * dpi))
+    print("大盘图已生成: %s (%d 根, %s, %dx%d)" % (out, n, window[-1], wpx, hpx))
     return True
 
 
 def _export_html(window, series, out_html):
-    """导出同口径交互 HTML（plotly 离线）：滚轮/框选缩放、拖拽平移、悬停数值。
+    """导出「2×2 四面板 日K蜡烛」交互 HTML（plotly 离线）。
 
-    供本地放大缩小移动细看；企微推送仍走上面的高分辨率 PNG。
+    每个面板按真实点位画蜡烛图(红涨绿跌) + MA5 虚线；支持滚轮/框选缩放、
+    拖拽平移、悬停数值。企微推送仍走上面的高分辨率 PNG。
     """
     try:
         import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
     except Exception:  # noqa: BLE001 - plotly 缺失仅跳过 HTML
         return False
-    fig = go.Figure()
-    fig.add_hline(y=0.0, line_color="#999999", line_dash="dash", line_width=1)
-    for s in series:
+    n = len(window)
+    positions = [(1, 1), (1, 2), (2, 1), (2, 2)]
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=["%s %s · 5日%+.2f%%"
+                        % (s["label"], _fmt_pt(s["last_close"]), s["p5"])
+                        for s in series],
+        vertical_spacing=0.13, horizontal_spacing=0.07)
+    for s, (r, c) in zip(series, positions):
+        snaps = s["snaps"]
+        fig.add_trace(go.Candlestick(
+            x=[k["date"] for k in snaps],
+            open=[k["open"] for k in snaps],
+            high=[k["high"] for k in snaps],
+            low=[k["low"] for k in snaps],
+            close=[k["close"] for k in snaps],
+            name=s["label"],
+            increasing_line_color="#E53935", increasing_fillcolor="#E53935",
+            decreasing_line_color="#2E9E44", decreasing_fillcolor="#2E9E44",
+            showlegend=False), row=r, col=c)
+        ma = []
+        for i in range(n):
+            w = snaps[max(0, i - 4):i + 1]
+            ma.append(sum(k["close"] for k in w) / len(w))
         fig.add_trace(go.Scatter(
-            x=window, y=s["values"], mode="lines",
-            name="%s %s(%+.2f%%)"
-                 % (s["label"], _fmt_pt(s["last_close"]), s["p5"]),
-            line=dict(color=s["color"], width=2.4),
-            hovertemplate="%s %%{x}<br>累计%%{y:+.2f}%%<extra></extra>"
-                          % s["label"]))
+            x=[k["date"] for k in snaps], y=ma, mode="lines",
+            line=dict(color="#1976D2", width=1.4, dash="dot"),
+            name="MA5", showlegend=False), row=r, col=c)
+        fig.update_xaxes(type="category", nticks=8, tickformat="%m-%d",
+                         rangeslider_visible=False, row=r, col=c)
     fig.update_layout(
-        title=dict(text="大盘4指数涨跌幅叠加(起点0=窗口首日收盘, 图例为最新实际点位) 截至 %s"
+        title=dict(text="大盘4指数 日K柱状图(实际点位, 红涨绿跌, 含MA5) 截至 %s"
                        % window[-1], font=dict(size=18)),
         template="plotly_white",
-        legend=dict(orientation="h", y=1.02, x=0, font=dict(size=13)),
+        height=920,
         hovermode="x unified",
-        margin=dict(l=50, r=24, t=70, b=40),
-        xaxis=dict(title="日期", tickformat="%m-%d"),
-        yaxis=dict(title="较窗口首日累计涨跌幅", tickformat="%+.2f%%"))
+        dragmode="zoom",
+        margin=dict(l=40, r=20, t=80, b=40))
     fig.write_html(out_html, include_plotlyjs="inline")
     print("大盘交互HTML已导出: %s" % out_html)
     return True

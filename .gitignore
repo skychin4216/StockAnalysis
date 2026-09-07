@@ -92,3 +92,5 @@ smalltools/_ref/
 .vscode/
 __pycache__/
 *.pyc
+smalltools/data/_index_market.html
+smalltools/_records/cloud/

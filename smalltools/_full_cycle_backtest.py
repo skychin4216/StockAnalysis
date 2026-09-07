@@ -172,6 +172,40 @@ def sell_rule_auto(period_key, state, snaps, asof):
 T_UP_PCT, T_DOWN_PCT = 0.5, -0.5
 
 
+def limit_pct(code="", name=""):
+    """个股当日涨停幅度(%)：ST5 / 创业·科创20 / 北交所30 / 主板10。"""
+    c6 = (code or "")[-6:]
+    if "ST" in (name or "").upper():
+        return 5.0
+    if c6[:3] in ("300", "301", "688"):
+        return 20.0
+    if c6[:2] in ("43", "83", "87") or c6[:3] == "920":
+        return 30.0
+    return 10.0
+
+
+def limit_up_flag(snaps, code="", name="", asof=None):
+    """该股在 asof 当日是否收盘涨停（基于日K changePct；无字段时用收盘价估算）。
+
+    用途：候选/订单标注「涨停」(无法买入，展示置后、不占可买名额)。
+    """
+    if not snaps or len(snaps) < 2:
+        return False
+    last = snaps[-1]
+    if asof and str(last.get("date")) != str(asof):
+        return False
+    pct = last.get("changePct")
+    if pct is None:
+        prev = snaps[-2]
+        if not prev.get("close"):
+            return False
+        pct = (float(last.get("close", 0)) - float(prev["close"])) / float(prev["close"]) * 100
+    try:
+        return float(pct) >= limit_pct(code, name) - 0.6
+    except (TypeError, ValueError):
+        return False
+
+
 def load_cache():
     with open(CACHE, "r", encoding="utf-8") as f:
         return json.load(f)
