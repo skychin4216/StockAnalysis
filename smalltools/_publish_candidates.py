@@ -1264,6 +1264,55 @@ def _append_pos_block(lines, data):
             len(pos), ("%+.1f%%" % pnl_all) if pnl_all is not None else "-"))
 
 
+def _intel_lines(max_age_min=150):
+    """盘中轮正文·最新情报前导：读 _last_scan.json（情报扫描每 15 分钟刷新）。
+
+    快照缺失/过旧(>max_age_min)/时钟超前时返回空（盘外或未启动不误报）。
+    只做「展示参考」，不改动选股结果。返回页面行列表(含空行分隔)。
+    """
+    try:
+        with open(APK_SCAN_FILE, encoding="utf-8") as f:
+            snap = json.load(f)
+    except (OSError, ValueError):
+        return []
+    ts = (snap.get("ts") or "").strip()
+    try:
+        t = datetime.datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return []
+    age = (datetime.datetime.now() - t).total_seconds()
+    if not (0 <= age <= max_age_min * 60):
+        return []
+    parts = []
+    rot = snap.get("rotation") or []
+    if rot:
+        toks = []
+        for r in rot[:3]:
+            s = "%s%+.1f%%" % (r.get("industry", ""), float(r.get("sec_mom") or 0))
+            if r.get("catalyst"):
+                s += "[催化]"
+            toks.append(s)
+        if toks:
+            parts.append("轮动:" + " ".join(toks))
+    news = snap.get("news") or []
+    for n in news[:1]:
+        ttl = (n.get("title") or "").strip()
+        if ttl:
+            parts.append("快讯:" + (ttl[:44] + ("…" if len(ttl) > 44 else "")))
+    reps = snap.get("reports") or []
+    if reps:
+        toks = []
+        for o in reps[:3]:
+            nm = o.get("org") or "?"
+            cnt = o.get("count")
+            toks.append(nm + ("%d篇" % cnt if cnt else ""))
+        if toks:
+            parts.append("研报:" + "、".join(toks))
+    if not parts:
+        return []
+    return ["", "📡 最新情报 %s" % ts[11:16], "  " + " | ".join(parts)]
+
+
 def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
                 scene=None, dag=None, cache=None, lowbuy_offline=None,
                 note_offline=None):
@@ -1293,6 +1342,7 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
     # 内容不再重复场景头行（该行与推送标题相同，2026-09-06 修复：标题=「%s | %s」）
     p1 = ["%s 大盘: %s %s | 池 %d" % (state_mark, state, state_cn,
                                      data.get("pool_total", 0))]
+    p1 += _intel_lines()  # 📡 最新情报（scan 15 分钟快照，过旧自动省略）
     # ① 主线：XML DAG 当日选股（与 exe 同源；超短并入短线、按代码去重、每档≤3只）
     if dag is None:
         try:
