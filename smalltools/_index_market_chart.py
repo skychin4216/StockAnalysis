@@ -30,16 +30,19 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from backtest_guangmo import fetch_east, fetch_tencent  # noqa: E402
 
+# 2026-09-07 用户指定组合：上证 + 科创50 + 沪深300 + 创业板
+# （原「深证成指」点位过高≈1.3万，与上证/科创/创业约 0.3~0.9万 放在同尺寸面板里观感失衡，
+#   换成点位量级相近的沪深300。）
 INDEXES = [
     ("sh000001", "上证指数"),
-    ("sz399001", "深证成指"),
     ("sh000688", "科创50"),
+    ("sh000300", "沪深300"),
     ("sz399006", "创业板指"),
 ]
 COLORS = {
     "上证指数": "#E53935",
-    "深证成指": "#FB8C00",
     "科创50": "#7E57C2",
+    "沪深300": "#FB8C00",
     "创业板指": "#43A047",
 }
 PNG_PATH = os.path.join(HERE, "data", "_index_market.png")
@@ -360,7 +363,7 @@ def verdict_text(force_online=True):
     sh_s = st("sh000001")
     kc_s = st("sh000688")
     if kc_s == "数据不足":
-        verdict = "科创50 数据不足，暂以上证/深成/创业板判断：%s。" % (
+        verdict = "科创50 数据不足，暂以上证/沪深300/创业板判断：%s。" % (
             "偏强，可适度积极" if sh5 > 0.8 else ("偏弱，控制仓位" if sh5 < -0.8 else "震荡，精选个股"))
     elif sh5 > 0.8 and kc5 > 0.8:
         verdict = "共振强势（上证+科创同涨）：历史经验最利于做多，量能配合时普涨概率大，可提高仓位至 6-8 成，围绕强势板块低吸龙头、避免盘中追高。"
@@ -372,9 +375,9 @@ def verdict_text(force_online=True):
         verdict = "弱势整理/存量博弈：控制仓位（3 成内），只做确定性高的强势股，等待上证重新站上 MA20。"
     else:
         verdict = "防御状态（指数偏弱）：宜降低仓位（0-2 成）或空仓等待企稳；反弹站稳 MA5 后再参与。"
-    sz5 = p5("sz399001")
+    hs5 = p5("sh000300")
     cy5 = p5("sz399006")
-    verdict += "（深成5日%+.2f%% · 创业板5日%+.2f%% 佐证）" % (sz5, cy5)
+    verdict += "（沪深300 5日%+.2f%% · 创业板5日%+.2f%% 佐证）" % (hs5, cy5)
     lines.append("结论：%s" % verdict)
     return "\n".join(lines)
 

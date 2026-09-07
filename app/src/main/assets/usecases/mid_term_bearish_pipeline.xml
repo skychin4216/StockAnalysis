@@ -54,6 +54,26 @@
 
     <!-- 共用：聚合+增强 Layer 2-4 -->
     <Node id="n_merge" name="信号合并" module="signal_merge" />
+
+        <Node id="n_vp" name="量价因子加权" module="volume_price_factor">
+      <config>
+        <param name="mode" value="penalty" />
+        <param name="benchmark" value="sh000300" />
+        <param name="relWinDays" value="10" />
+        <param name="rsHi" value="3.0" />
+        <param name="rsBonus" value="4.0" />
+        <param name="rsLo" value="-2.0" />
+        <param name="rsPenalty" value="-3.0" />
+        <param name="thinVr" value="0.5" />
+        <param name="thinPenalty" value="-4.0" />
+        <param name="shrinkVr" value="0.8" />
+        <param name="shrinkPenalty" value="-2.0" />
+        <param name="lowPriceMax" value="10.0" />
+        <param name="leaderTopK" value="5" />
+        <param name="leaderBonus" value="3.0" />
+      </config>
+    </Node>
+
     <Node id="n_boost" name="板块加权" module="sector_boost" />
     <Node id="n_bounce" name="跌后反弹加分" module="bounce_reversal" />
         <Node id="n_strict" name="均线粘合严选" module="strict_selection">
@@ -191,9 +211,17 @@
     <Link>
       <SourceNodeId>n_merge</SourceNodeId>
       <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_vp</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+        <Link>
+      <SourceNodeId>n_vp</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_boost</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
+
 
     <!-- Layer 0 → 3: 热度计算 → 板块加权（热度作为板块加权输入；MA 收敛结果由公共 L0/L1 的 n_ma_unified 写入 stageOutputs，n_boost 内部兜底读取） -->
     <Link>

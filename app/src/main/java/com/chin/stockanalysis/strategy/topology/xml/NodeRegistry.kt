@@ -48,6 +48,26 @@ object NodeRegistry {
             MacroEventBiasNode(boostScale = scale)
         }
         register("bounce_reversal") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.BounceReversalNode() }
+        // 2026-09-07 量价因子（相对沪深300强度 + 缩量档位/无量扣分 + 低价龙头加分）
+        // 参数与 pipeline XML config 严格一致（Python 端 usecase_pipeline 同构）
+        register("volume_price_factor") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.VolumePriceFactorNode(
+                mode = config["mode"] ?: "auto",
+                benchmark = config["benchmark"] ?: "sh000300",
+                relWinDays = config["relWinDays"]?.toIntOrNull() ?: 10,
+                rsHi = config["rsHi"]?.toDoubleOrNull() ?: 3.0,
+                rsBonus = config["rsBonus"]?.toDoubleOrNull() ?: 4.0,
+                rsLo = config["rsLo"]?.toDoubleOrNull() ?: -2.0,
+                rsPenalty = config["rsPenalty"]?.toDoubleOrNull() ?: -3.0,
+                thinVr = config["thinVr"]?.toDoubleOrNull() ?: 0.5,
+                thinPenalty = config["thinPenalty"]?.toDoubleOrNull() ?: -4.0,
+                shrinkVr = config["shrinkVr"]?.toDoubleOrNull() ?: 0.8,
+                shrinkPenalty = config["shrinkPenalty"]?.toDoubleOrNull() ?: -2.0,
+                lowPriceMax = config["lowPriceMax"]?.toDoubleOrNull() ?: 10.0,
+                leaderTopK = config["leaderTopK"]?.toIntOrNull() ?: 5,
+                leaderBonus = config["leaderBonus"]?.toDoubleOrNull() ?: 3.0
+            )
+        }
         register("ancestral_rules") { _, config ->
             val period = config["holdingPeriod"] ?: "SHORT"
             com.chin.stockanalysis.strategy.topology.nodes.AncestralRulesNode(holdingPeriod = period)

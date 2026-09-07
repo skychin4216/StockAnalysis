@@ -17,7 +17,7 @@ import android.widget.TableRow
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
-import com.chin.stockanalysis.stock.data.PcBridgeClient
+import com.chin.stockanalysis.strategy.data.EtfCacheSync
 import com.chin.stockanalysis.strategy.topology.xml.UseCaseLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -36,9 +36,10 @@ import java.util.Locale
  *   门控: 沪深300 结构多头(close>MA20>MA60)
  *   信号: 距60日高回撤-25%~-12% + RSI6<30 + 年线上方 + 收阳/RSI拐头 + 非5日新低
  *   离场: tp+2% / sl-6% / 30 日（参数全在 XML，改 XML 双端自动同步）
- * 行情: 本地 etf_cache.json（PC 盘后 smalltools/_etf_publish.py --push 推送到手机；
- * 13只ETF+sh000300 前复权日K，与 PC _etf_cache.json 同构）。
- * 无本地缓存时回退 PC 桥(/etf_live)；均不可用时提示先同步。
+ * 行情: 本地 etf_cache.json —— APK 自己拉取（EtfCacheSync：腾讯 fqkline qfq，
+ * 13只ETF+sh000300 前复权日K，与 PC _etf_cache.json 同构同源，写 external files）；
+ * 缓存缺失/过期时点击"刷新"即自动同步，无需 PC。
+ * 已移除 PC 桥回退（2026-09-07）：本地无法执行时仅提示联网自拉。
  */
 @SuppressLint("SetTextI18n")
 class EtfDipFragment : Fragment() {
@@ -144,12 +145,22 @@ class EtfDipFragment : Fragment() {
     }
 
     /**
-     * 由工作台 refreshAll / onResume 调用。
-     * 本地优先：UseCaseLoader 跑 assets/usecases/etf_dip_usecase.xml（与 PC 同 XML 同源，
-     * 读本地 etf_cache.json）→ 渲染；本地无缓存时回退 PC 桥 /etf_live。
+     * 由工作台 refreshAll / onResume / 刷新按钮 调用。
+     * 0) 先自拉/校验本地行情 etf_cache.json（EtfCacheSync，腾讯 qfq，与 PC 同构，缺失或过期才拉）；
+     * 1) 本地引擎：UseCaseLoader 跑 assets/usecases/etf_dip_usecase.xml（与 PC 同 XML 同源）→ 渲染；
+     * 2) 引擎未产出（无缓存/无网络）→ 引导提示。APK 完全自给，无 PC 桥。
      */
     fun refresh() {
         lifecycleScope.launch {
+            // ── 0) 本地行情自拉：APK 自给（腾讯 fqkline qfq → 手机 etf_cache.json）──
+            try {
+                statusLabel.text = "检查/同步本地 ETF 行情…"
+                val sync = withContext(Dispatchers.IO) { EtfCacheSync(requireContext()).syncIfStale() }
+                Log.i(TAG, "ETF 行情同步: ${sync.message}")
+            } catch (e: Exception) {
+                Log.w(TAG, "本地 ETF 行情同步异常: ${e.message}")
+            }
+
             // ── 1) 本地引擎（彻底不依赖 PC） ──
             var outcome: LocalOutcome? = null
             try {
@@ -163,32 +174,18 @@ class EtfDipFragment : Fragment() {
                 requireContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .edit().putString(KEY_JSON, payloadJson).apply()
                 render(payloadJson)
-                statusLabel.text = "✔ 本地引擎 · XML 单一源（与 PC 双端同源），数据来自手机 etf_cache.json"
+                statusLabel.text = "✔ 本地引擎 · XML 单一源 · 行情 APK 腾讯自拉（与 PC 同构）"
                 return@launch
             }
             val errMsg = outcome?.error
             if (errMsg != null) Log.w(TAG, "本地 etf_dip 未产出: $errMsg")
 
-            // ── 2) 回退：PC 桥拉取 ──
-            val host = PcBridgeClient.loadHost(requireContext())
-            if (host.isBlank()) {
-                gateLabel.text = "⚠ 本地无 ETF 行情缓存"
-                statusLabel.text = (if (errMsg != null) "本地执行失败：$errMsg\n\n" else "") +
-                    "首次使用请先同步行情：在 PC 盘后运行\n" +
-                    "  python smalltools/_etf_publish.py --push\n" +
-                    "（把 13只ETF+沪深300 前复权日K推送到手机）后点刷新；或连接 PC 由桥自动拉取。"
-                footLabel.text = "引擎: XML etf_dip（门控→信号→离场）· 数据: etf_cache.json（PC 每日盘后推送）"
-                return@launch
-            }
-            try {
-                statusLabel.text = "本地无缓存，正在从 PC 拉取名单… ($host)"
-                val json = withContext(Dispatchers.IO) { PcBridgeClient.fetchEtfLive(host) }
-                requireContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .edit().putString(KEY_JSON, json).apply()
-                render(json)
-            } catch (e: Exception) {
-                statusLabel.text = "拉取失败: ${e.message ?: "网络不可达"}\n(展示上次缓存; 或先运行 PC 推送脚本同步行情)"
-            }
+            // ── 2) 引擎未产出：本地自拉引导提示（PC 桥已移除，APK 完全自给）──
+            gateLabel.text = "⚠ 本地无 ETF 行情缓存"
+            statusLabel.text = (if (errMsg != null) "本地执行失败：$errMsg\n\n" else "") +
+                "请确保手机网络可用后点「刷新」——APK 会自动拉取 13只ETF+沪深300\n" +
+                "前复权日K到本地 etf_cache.json 并本地执行选股（无需 PC）。"
+            footLabel.text = "引擎: XML etf_dip（门控→信号→离场）· 数据: etf_cache.json（APK 本地腾讯自拉）"
         }
     }
 
@@ -212,7 +209,7 @@ class EtfDipFragment : Fragment() {
             val err = j.optString("error")
             if (err.isNotEmpty()) {
                 gateLabel.text = "⚠ $err"
-                statusLabel.text = j.optString("hint", "请先在 PC 端运行 python smalltools/_etf_buy.py --live")
+                statusLabel.text = j.optString("hint", "本地行情缓存缺失，请联网后点「刷新」自动同步并本地选股")
                 return
             }
             val gate = j.optJSONObject("gate") ?: JSONObject()

@@ -388,6 +388,34 @@ def _xml_params(node, base_params):
 # 导致中线/长线 DAG 回测参数错配。2026-09-04 修复按周期取对应 PARAMS。）
 _PERIOD_PARAM_KEY = {"ultra_short": "超短", "short": "短线", "mid": "中线", "long": "长线"}
 
+_TF_GUARD_MEMO = {}
+
+
+def _tf_guard_cfg(period):
+    """牛市出单二次过滤 guard（对齐 _self_fit_pipeline.scan_day 的部署口径）：
+    读 backtest_params.json trend_follow[中文周期].guard_chg/guard_vr。
+    未配置/缺失 → (0.0, 0.0) 表示不过滤。按文件 mtime 缓存。"""
+    path = os.path.normpath(os.path.join(_REPO_ROOT, "app", "src", "main",
+                                         "assets", "backtest_params.json"))
+    try:
+        mt = os.path.getmtime(path)
+    except OSError:
+        return 0.0, 0.0
+    hit = _TF_GUARD_MEMO.get(period)
+    if hit and hit[0] == mt:
+        return hit[1]
+    gchg = gvr = 0.0
+    try:
+        with open(path, encoding="utf-8") as f:
+            tf = (json.load(f).get("trend_follow") or {}).get(
+                _PERIOD_PARAM_KEY.get(period, "短线")) or {}
+        gchg = float(tf.get("guard_chg", 0.0) or 0.0)
+        gvr = float(tf.get("guard_vr", 0.0) or 0.0)
+    except (OSError, ValueError, TypeError):
+        pass
+    _TF_GUARD_MEMO[period] = (mt, (gchg, gvr))
+    return gchg, gvr
+
 
 @register("signal_merge")
 def _signal_merge(ctx, node, inputs):
@@ -408,6 +436,7 @@ def _signal_merge(ctx, node, inputs):
     _kws = _ensure_event_state(ctx)["boost_kws"]
     if _kws:
         base["macroSectorKeywords"] = _kws
+    tf_guard = _tf_guard_cfg(period)   # (guard_chg, guard_vr)，0=不过滤
     pool = ctx.candidates or ctx.stock_pool or []
     scored = []
     for cid in pool:
@@ -420,6 +449,11 @@ def _signal_merge(ctx, node, inputs):
             if ctx.direction == "BULLISH" and period in ("ultra_short", "short"):
                 res = trend_follow_scan(snaps, ctx.direction, mode)
                 passed = bool(res[0]) if isinstance(res, tuple) else bool(res)
+                if passed and (tf_guard[0] > 0 or tf_guard[1] > 0):
+                    extra = res[4] if isinstance(res, tuple) and len(res) > 4 else {}
+                    if (float(extra.get("chg", -99.0)) < tf_guard[0]
+                            or float(extra.get("vr", 0.0)) < tf_guard[1]):
+                        passed = False
                 if passed:
                     scored.append((cid, 100.0))
             else:
@@ -439,6 +473,129 @@ def _sector_boost(ctx, node, inputs):
     scored = ctx.get("n_merge") or []
     ctx.stage("n_boost", scored)
     return scored
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# volume_price_factor：量价因子加权（2026-09-07 新增）
+#   APK/Kotlin VolumePriceFactorNode 同构（双端读取同一 pipeline XML 参数）。
+#   作用对象：signal_merge 输出的 scored[(cid, score)]，对每只叠加可正可负的
+#   delta 后重排；结果覆写回 n_merge（并输出 n_vp），保证下游
+#   sector_boost/bounce_reversal(strict_selection) 与 generate_orders 拿到的
+#   即已含量价修正后的列表。
+#   三项量价判定（默认参数全在 XML config，缺失用此兜底）：
+#     ① 相对强度：个股近 relWinDays 日涨幅 − 基准指数(默认 sh000300 沪深300)
+#        同窗口涨幅。跑赢 rsHi → +rsBonus；跑输 ≤ rsLo → rsPenalty。
+#        基准缺失时该项跳过（不误伤）。
+#     ② 缩量档位：量比 vr=当日量/前5日均量。vr< thinVr(0.5) 无量 → thinPenalty；
+#        vr<thinVr~shrinkVr(0.8) 缩量 → shrinkPenalty。
+#     ③ 低价龙头加分：收盘价≤ lowPriceMax 且 scored 名次≤ leaderTopK
+#        → +leaderBonus（低价中的前排强势近似低价龙头）。
+# ──────────────────────────────────────────────────────────────────────────
+@register("volume_price_factor")
+def _volume_price_factor(ctx, node, inputs):
+    cfg = node.config or {}
+    # 对拍开关：XML 无 enabled 时默认启用；拟合实验用 overrides 注入
+    # {volume_price_factor: {enabled: "false"}} 即"未加量价因子"对照组（纯透传）。
+    ov = ctx.node_configs.get("volume_price_factor") or {}
+    enabled = str(ov.get("enabled", cfg.get("enabled", "true"))).lower() == "true"
+    # mode（A/B 拟合实验收敛，2026-09 定稿）：
+    #   auto   = 默认。牛市(BULLISH/趋势语境)全量加权，非牛市(analyze 低吸语境)只惩罚——
+    #            对拍显示"追强加分(rsHi/低价龙头)"在震荡/熊市低吸链上为负贡献。
+    #   full/boost = 全量加权（含追强加分+惩罚）。
+    #   penalty = 仅惩罚项（无量/缩量/rs弱），去掉所有加分。
+    mode = str(ov.get("mode", cfg.get("mode", "auto"))).lower()
+    full_boost = mode in ("full", "boost") or (mode == "auto" and ctx.direction == "BULLISH")
+    # overrides 注入优先于 XML param（拟合实验用），未注入时退回 XML 默认。
+    g = lambda k, d=None: ov.get(k, cfg.get(k, d))
+    scored = ctx.get("n_merge") or []
+    if not scored:
+        ctx.stage("n_vp", [])
+        return []
+    if not enabled:
+        ctx.stage("n_vp", scored)
+        return scored
+    n_days = max(3, int(g("relWinDays", 10)))
+    bench_code = g("benchmark", "sh000300")
+    rs_hi = float(g("rsHi", 3.0)); rs_bonus = float(g("rsBonus", 4.0))
+    rs_lo = float(g("rsLo", -2.0)); rs_pen = float(g("rsPenalty", -3.0))
+    thin_vr = float(g("thinVr", 0.5)); thin_pen = float(g("thinPenalty", -4.0))
+    shrink_vr = float(g("shrinkVr", 0.8)); shrink_pen = float(g("shrinkPenalty", -2.0))
+    low_max = float(g("lowPriceMax", 10.0))
+    leader_topk = max(1, int(g("leaderTopK", 5)))
+    leader_bonus = float(g("leaderBonus", 3.0))
+    bench = _bench_snaps(ctx, bench_code)
+    bench_ret = _last_ret(bench, n_days) if bench else None
+    need = max(n_days + 6, 30)
+    out, det = [], {}
+    for idx, (cid, sc) in enumerate(scored):
+        snaps = [s for s in ctx.cache.get(cid, {}).get("snaps", [])
+                 if s["date"] <= ctx.asof]
+        delta = 0.0
+        tags = []
+        if len(snaps) >= need and snaps[-1].get("close", 0) > 0:
+            closes = [float(s["close"]) for s in snaps]
+            vols = [float(s.get("volume") or 0) for s in snaps]
+            cur = closes[-1]
+            base = closes[-1 - n_days]
+            if bench_ret is not None and base > 0:
+                rel = (cur / base - 1.0) * 100.0 - bench_ret
+                if rel >= rs_hi:
+                    if full_boost:
+                        delta += rs_bonus
+                        tags.append("rs强%.1f%%+%.1f" % (rel, rs_bonus))
+                elif rel <= rs_lo:
+                    delta += rs_pen
+                    tags.append("rs弱%.1f%%%.1f" % (rel, rs_pen))
+            prev5 = sum(vols[-6:-1])
+            if prev5 > 0:
+                vr = vols[-1] / (prev5 / 5.0)
+                if vr < thin_vr:
+                    delta += thin_pen
+                    tags.append("无量vr=%.2f%.1f" % (vr, thin_pen))
+                elif vr < shrink_vr:
+                    delta += shrink_pen
+                    tags.append("缩量vr=%.2f%.1f" % (vr, shrink_pen))
+            if full_boost and cur <= low_max and idx < leader_topk:
+                delta += leader_bonus
+                tags.append("低价龙头+%.1f" % leader_bonus)
+        if delta != 0.0:
+            det[cid] = tags
+        out.append((cid, min(100.0, sc + delta)))
+    out.sort(key=lambda x: -x[1])
+    ctx.stage("n_vp", out)
+    ctx.stage("n_merge", out)          # 覆写，下游（boost/strict/orders）直接可见
+    if det:
+        ctx.stage("vp_detail", det)
+    return out
+
+
+def _bench_snaps(ctx, code):
+    """基准指数日K：优先 ctx.cache（已含则免桥接），否则桥接 smalltools/_etf_cache.json。"""
+    ent = ctx.cache.get(code) or {}
+    snaps = [s for s in ent.get("snaps", []) if s["date"] <= ctx.asof]
+    if snaps:
+        return snaps
+    try:
+        path = os.path.join(_SMALLTOOLS_DIR, "_etf_cache.json")
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as f:
+                j = json.load(f)
+            snaps = [s for s in (j.get(code) or {}).get("snaps", [])
+                     if s["date"] <= ctx.asof]
+    except Exception as _e:
+        ctx.notes.append("volume_price_factor: 基准 %s 不可用(%s)，相对强度项跳过" % (code, _e))
+        return []
+    return snaps
+
+
+def _last_ret(snaps, n):
+    """snaps 最后一日相对 n 日前收盘的涨跌幅(%)，数据不足返回 None。"""
+    if not snaps:
+        return None
+    closes = [float(s["close"]) for s in snaps]
+    if len(closes) <= n or closes[-1 - n] <= 0:
+        return None
+    return (closes[-1] / closes[-1 - n] - 1.0) * 100.0
 
 
 # ──────────────────────────────────────────────────────────────────────────

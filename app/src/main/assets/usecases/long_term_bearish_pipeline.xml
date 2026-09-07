@@ -38,6 +38,26 @@
     <!-- 聚合 Layer 2 -->
     <Node id="n_merge" name="信号合并" module="signal_merge" />
 
+        <Node id="n_vp" name="量价因子加权" module="volume_price_factor">
+      <config>
+        <param name="mode" value="penalty" />
+        <param name="benchmark" value="sh000300" />
+        <param name="relWinDays" value="10" />
+        <param name="rsHi" value="3.0" />
+        <param name="rsBonus" value="4.0" />
+        <param name="rsLo" value="-2.0" />
+        <param name="rsPenalty" value="-3.0" />
+        <param name="thinVr" value="0.5" />
+        <param name="thinPenalty" value="-4.0" />
+        <param name="shrinkVr" value="0.8" />
+        <param name="shrinkPenalty" value="-2.0" />
+        <param name="lowPriceMax" value="10.0" />
+        <param name="leaderTopK" value="5" />
+        <param name="leaderBonus" value="3.0" />
+      </config>
+    </Node>
+
+
     <!-- 热度计算 Layer 2（并行，依赖 stock_pool，输出存入 context 供板块加权读取） -->
     <Node id="n_heat" name="热度计算" module="heat_score" />
 
@@ -175,9 +195,17 @@
     <Link>
       <SourceNodeId>n_merge</SourceNodeId>
       <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_vp</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+        <Link>
+      <SourceNodeId>n_vp</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_boost</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
+
 
     <!-- Layer 2 → 3: 热度计算 → 板块加权（热度作为板块加权输入；MA 收敛结果由公共 L0/L1
          的 n_ma_unified 写入 stageOutputs，n_boost 内部兜底读取） -->
