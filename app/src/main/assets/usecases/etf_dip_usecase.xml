@@ -10,8 +10,8 @@
     [2] 信号阶段（n_etf_signal）：dip_buy v0.3 低吸（距60日高回撤 + RSI6 + 年线 + 止跌）
     [3] 离场阶段（n_etf_exit）：发布口径打包（tp/sl/hold 参数 + strategy 文案）
 
-  双端共用：APK UseCaseLoader 直接加载执行；AutoQuant/usecase_pipeline.py（smalltool/exe
-  的 Python 引擎）解析同一份 XML —— 任何一端只改 XML，双端行为自动同源。
+  双端共用：APK UseCaseLoader 直接加载执行；usecase_pipeline.py（与本 XML 同居
+  assets/usecases 的 Python 引擎）解析同一份 XML —— 任何一端只改 XML，双端行为自动同源。
   规则出处：smalltools/_etf_buy.py v0.3（OOS 11/11 全胜，FULL 55 笔 85.5%）。
 -->
 <usecase id="etf_dip" name="ETF低位低吸">

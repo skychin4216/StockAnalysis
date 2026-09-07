@@ -71,7 +71,7 @@ class MidTermQuantFragment : QuantFragmentBase() {
 
     override fun getPeriodTipText(): String = "📈 持仓1-6月 | 最多5只 | 基本面+技术面"
 
-    override fun getPeriodRowLabel(): String = "📊 数据周期:"
+    override fun getPeriodRowLabel(): String = "📊 周期:"
 
     override fun getPeriodOptions(): List<Pair<Int, String>> = PERIOD_LABELS.toList()
 

@@ -185,7 +185,7 @@ object PcBridgeClient {
         }
     }
 
-    /** 拉取 ETF 低位选股名单(smalltools _etf_buy.py --live), 返回 JSON 文本; 失败抛异常。 */
+    /** 拉取 ETF 选股名单(smalltools _etf_buy.py --live), 返回 JSON 文本; 失败抛异常。 */
     suspend fun fetchEtfLive(hostPort: String): String {
         val client = HttpClientProvider.healthCheckClient
         val req = Request.Builder().url("${baseUrl(hostPort)}/etf_live").build()

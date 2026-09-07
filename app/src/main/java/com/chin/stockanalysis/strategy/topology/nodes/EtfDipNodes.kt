@@ -17,7 +17,9 @@ import java.util.Locale
  *
  * 与三周期同构的「XML DAG 单一事实源」双端方案：
  * 规则/参数放在 app/src/main/assets/usecases/etf_dip_pipeline.xml，
- * APK（本文件）与 AutoQuant/usecase_pipeline.py（Python 引擎）各按 XML 执行，
+ * APK（本文件）与 app/src/main/assets/usecases/usecase_pipeline.py
+ * （Python 引擎，XML DAG 主线：与 XML 同居 assets/usecases 单一事实源）
+ * 各按 XML 执行，
  * 任何参数改动只改 XML，双端行为自动一致。
  *
  * 数据源 = 本地 etf_cache.json（13 只 ETF + sh000300 前复权日K，

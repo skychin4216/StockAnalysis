@@ -2,7 +2,7 @@
 <!--
   ## ETF 低位低吸 Pipeline（V2 DAG · 门控→信号→离场 三阶段）
 
-  与 AutoQuant/usecase_pipeline.py（Python 引擎）共用同一文件 ——
+  与同目录 usecase_pipeline.py（Python 引擎，XML DAG 主线）共用同一文件 ——
   修改任何参数/标的池，双端行为自动一致（单一事实源）。
 
   stageOutputs：

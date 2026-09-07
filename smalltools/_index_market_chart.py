@@ -1,15 +1,22 @@
 # -*- coding: utf-8 -*-
-"""大盘4指数归一化K线叠加图（2026-09-06，开盘前/收盘后推送配图）。
+"""大盘4指数涨跌幅叠加图（2026-09-06，开盘前/收盘后推送配图）。
 
 把 上证指数 / 深证成指 / 科创50 / 创业板指 放到同一张图：
-各指数以窗口首日收盘=100 归一化后绘制收盘曲线（保留完整走势，与
-APK「K线趋势 → 大盘K线」同一口径），并输出强弱结论文本。
+各指数以窗口首日收盘为基准转为「累计涨跌幅%」(起点=0)，画在同一百分比
+坐标上——这样曲线的相对高低只表达『谁涨得更多』，不会与真实点位混淆
+（科创50 点位虽低、若涨得多线就会在上证上方）；图例同时标注各指数最新
+实际点位，避免把涨跌幅轴误读为点位。走势口径与 APK「K线趋势→大盘K线」一致。
 
 数据源：东财日K优先、腾讯回退；失败自动回退本地缓存 data/_index_market.json。
 
 用法：
-  python _index_market_chart.py --days 55         # 生成 data/_index_market.png
+  python _index_market_chart.py --days 55         # 生成高分辨率 PNG + 同名交互 HTML
   python _index_market_chart.py --text            # 只输出强弱结论文本
+
+2026-09-06 升级：PNG 提至 ≈3240×1360（约旧版 3 倍像素，企微内可放大看清）；
+同时输出同口径交互 HTML（plotly 滚轮缩放/拖拽平移/悬停数值）。
+2026-09-06 二次修订：Y 轴由『归一化=100』改为『累计涨跌幅% 起点=0』并带 % 刻度，
+曲线高低只表示涨幅强弱；图例追加最新实际点位，杜绝"科创50比上证点位高"的误读。
 """
 import argparse
 import datetime as _dt
@@ -98,11 +105,13 @@ def refresh(force_online=True):
 
 
 def _build_series(out, days=55):
-    """取4指数公共交易日窗口，归一化收盘序列。
+    """取4指数公共交易日窗口，转『累计涨跌幅%』收盘序列。
 
     返回 (common_dates, series)：
       common_dates: [str] 升序日期
-      series: [{label, color, values, latest, p5, p10}] values 为归一化收盘(=100 起点)
+      series: [{label, color, values, latest, last_close, p5, p10}]
+              values 为 (收盘/窗口首日收盘-1)*100（起点=0，表达区间涨幅强弱）；
+              last_close 为最新实际点位（供图例标注，避免涨幅轴被误读成点位）。
     公共日期不足 5 根时返回 (None, [])。
     """
     by_code = {c: d["snaps"] for c, d in out.items()}
@@ -123,48 +132,116 @@ def _build_series(out, days=55):
         series.append({
             "label": name,
             "color": COLORS.get(name, "#1976D2"),
-            "values": [s["close"] / base * 100.0 for s in snaps],
+            "values": [(s["close"] / base - 1) * 100.0 for s in snaps],
             "latest": snaps[-1]["close"],
+            "last_close": snaps[-1]["close"],
             "p5": (snaps[-1]["close"] / snaps[-6]["close"] - 1) * 100 if len(snaps) > 5 else 0.0,
             "p10": (snaps[-1]["close"] / snaps[-11]["close"] - 1) * 100 if len(snaps) > 10 else 0.0,
         })
     return window, series
 
 
-def _draw_png(window, series, out):
-    """把已算好的 (window, series) 绘制成 PNG。成功返回 True。"""
+def _fmt_pt(v):
+    """指数点位千分位，如 3372.14 → '3,372'。"""
+    try:
+        return "{:,.0f}".format(float(v))
+    except (TypeError, ValueError):
+        return "-"
+
+
+def _draw_png(window, series, out, hi_res=True):
+    """把已算好的 (window, series) 绘制成 PNG。成功返回 True。
+
+    hi_res=True（默认）：figsize 16.2×6.8 @ dpi 200 → ≈3240×1360，约为旧版的 3 倍像素，
+    便于企微内双指放大看细节（企微 image 单张 ≤2MB，实测该尺寸约 500~900KB，可安全推送）。
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei"]
     plt.rcParams["axes.unicode_minus"] = False
 
+    figsize = (16.2, 6.8) if hi_res else (10.2, 4.4)
+    dpi = 200 if hi_res else 150
     n = len(window)
-    fig, ax = plt.subplots(figsize=(10.2, 4.4), dpi=150)
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
     x = list(range(n))
     for s in series:
-        ax.plot(x, s["values"], color=s["color"], lw=1.6,
-                label="%s(%+.2f%%)" % (s["label"], s["p5"]))
-    # 末端数值标注
+        ax.plot(x, s["values"], color=s["color"], lw=2.4,
+                label="%s %s(%+.2f%%)"
+                      % (s["label"], _fmt_pt(s["last_close"]), s["p5"]))
+    # 末端累计涨跌幅标注（配合图例实际点位，涨幅与点位分开表达）
     for s in series:
-        ax.annotate("%.1f" % s["values"][-1],
+        ax.annotate("%+.1f%%" % s["values"][-1],
                     xy=(n - 1, s["values"][-1]),
-                    xytext=(6, 0), textcoords="offset points",
-                    fontsize=8, color=s["color"])
-    ax.axhline(100.0, color="#CCCCCC", lw=0.8, ls="--")
-    ax.set_xticks(range(0, n, max(1, n // 8)))
-    ax.set_xticklabels([window[i][5:] for i in range(0, n, max(1, n // 8))],
-                       fontsize=8)
+                    xytext=(8, 0), textcoords="offset points",
+                    fontsize=11, color=s["color"], fontweight="bold")
+    ax.axhline(0.0, color="#999999", lw=1.2, ls="--")
+    ax.yaxis.set_major_formatter(
+        plt.FuncFormatter(lambda v, _: "%+.1f%%" % v))
+    tick_step = max(1, n // 10)
+    ax.set_xticks(range(0, n, tick_step))
+    ax.set_xticklabels([window[i][5:] for i in range(0, n, tick_step)],
+                       fontsize=11)
     ax.set_ylim(auto=True)
-    ax.grid(alpha=0.25, lw=0.6)
-    ax.legend(loc="upper left", fontsize=8, framealpha=0.6)
-    ax.set_title("大盘4指数归一化叠加(上证/深证/科创50/创业板) 截至 %s" % window[-1],
-                 fontsize=11, pad=8)
+    ax.grid(alpha=0.22, lw=0.7)
+    ax.legend(loc="upper left", fontsize=11.5, framealpha=0.6)
+    ax.set_title("大盘4指数涨跌幅叠加(起点0=窗口首日收盘, 图例为最新实际点位) 截至 %s"
+                 % window[-1], fontsize=15, pad=10)
+    ax.set_ylabel("较窗口首日累计涨跌幅", fontsize=12)
     fig.tight_layout()
-    fig.savefig(out, dpi=150)
+    fig.savefig(out, dpi=dpi)
     plt.close(fig)
-    print("大盘图已生成: %s (%d 根, %s)" % (out, n, window[-1]))
+    print("大盘图已生成: %s (%d 根, %s, %dx%d)" % (
+        out, n, window[-1], figsize[0] * dpi, figsize[1] * dpi))
     return True
+
+
+def _export_html(window, series, out_html):
+    """导出同口径交互 HTML（plotly 离线）：滚轮/框选缩放、拖拽平移、悬停数值。
+
+    供本地放大缩小移动细看；企微推送仍走上面的高分辨率 PNG。
+    """
+    try:
+        import plotly.graph_objects as go
+    except Exception:  # noqa: BLE001 - plotly 缺失仅跳过 HTML
+        return False
+    fig = go.Figure()
+    fig.add_hline(y=0.0, line_color="#999999", line_dash="dash", line_width=1)
+    for s in series:
+        fig.add_trace(go.Scatter(
+            x=window, y=s["values"], mode="lines",
+            name="%s %s(%+.2f%%)"
+                 % (s["label"], _fmt_pt(s["last_close"]), s["p5"]),
+            line=dict(color=s["color"], width=2.4),
+            hovertemplate="%s %%{x}<br>累计%%{y:+.2f}%%<extra></extra>"
+                          % s["label"]))
+    fig.update_layout(
+        title=dict(text="大盘4指数涨跌幅叠加(起点0=窗口首日收盘, 图例为最新实际点位) 截至 %s"
+                       % window[-1], font=dict(size=18)),
+        template="plotly_white",
+        legend=dict(orientation="h", y=1.02, x=0, font=dict(size=13)),
+        hovermode="x unified",
+        margin=dict(l=50, r=24, t=70, b=40),
+        xaxis=dict(title="日期", tickformat="%m-%d"),
+        yaxis=dict(title="较窗口首日累计涨跌幅", tickformat="%+.2f%%"))
+    fig.write_html(out_html, include_plotlyjs="inline")
+    print("大盘交互HTML已导出: %s" % out_html)
+    return True
+
+
+def _render_artifacts(window, series, out):
+    """生成 PNG（高分辨率）+ 同名 .html（交互）。返回 (ok_png, png_path)。"""
+    if not window or not series:
+        print("指数数据不足，跳过绘图")
+        return False, out
+    ok = _draw_png(window, series, out)
+    html = os.path.splitext(out)[0] + ".html"
+    try:
+        _export_html(window, series, html)
+    except Exception as e:  # noqa: BLE001
+        print("交互HTML导出失败:", type(e).__name__, e)
+    return ok, out
 
 
 def render_png(out=None, days=55):
@@ -173,11 +250,7 @@ def render_png(out=None, days=55):
     try:
         data = refresh()
         window, series = _build_series(data, days)
-        if not window or not series:
-            print("指数数据不足，跳过绘图")
-            return False, out
-        _draw_png(window, series, out)
-        return True, out
+        return _render_artifacts(window, series, out)
     except Exception as e:  # noqa: BLE001
         print("大盘图生成失败:", type(e).__name__, e)
         return False, out
@@ -189,11 +262,7 @@ def render_from_snaps(index_map, out=None, days=55):
     out = out or PNG_PATH
     try:
         window, series = _build_series(index_map, days)
-        if not window or not series:
-            print("指数数据不足，跳过绘图")
-            return False, out
-        _draw_png(window, series, out)
-        return True, out
+        return _render_artifacts(window, series, out)
     except Exception as e:  # noqa: BLE001
         print("大盘图生成失败:", type(e).__name__, e)
         return False, out

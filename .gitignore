@@ -72,6 +72,17 @@ smalltools/e_imp.txt
 smalltools/_refit_out.txt
 smalltools/_portfolio_sim.txt
 
+# 守护运行态 / 一次性探针 / 临时产物（不入库）
+smalltools/*.pid
+smalltools/_daemon_rhythm.json
+smalltools/_daemon_ops.jsonl
+smalltools/_etf_cache.json
+smalltools/_news_watch_snap.json
+smalltools/_kline_cache.backup_*.json
+smalltools/_probe*.py
+smalltools/_tmp_chart.*
+smalltools/_ref/
+
 # 系统文件
 .DS_Store
 

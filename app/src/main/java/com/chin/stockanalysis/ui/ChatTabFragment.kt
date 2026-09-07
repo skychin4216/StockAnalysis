@@ -648,23 +648,25 @@ class ChatTabFragment : Fragment() {
 
         val provider = apiProvider
         if (provider == null) {
-            // Provider 尚未就绪，等待初始化完成
+            // Provider 尚未就绪：若此前获取失败（providerInitDone=false），先重新发起获取再等待
+            if (!providerInitDone && !providerLoading) initProvider()
             currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
                 addBotMessage("⏳ AI 正在连接...")
                 var waited = 0
-                while (apiProvider == null && waited < 50) {
+                while (apiProvider == null && waited < 100) {
                     kotlinx.coroutines.delay(200L)
                     waited++
                 }
-                if (apiProvider != null) {
-                    // 移除"连接中"消息
-                    if (messages.isNotEmpty() && !messages.last().isUser) {
-                        messages.removeLast()
-                        adapter.notifyItemRemoved(messages.size)
-                    }
-                    sendMessageInternal(userText, apiProvider!!, isRetry = true, skipStockContext = skipStockContext)
+                // 移除"连接中"消息
+                if (messages.isNotEmpty() && !messages.last().isUser) {
+                    messages.removeLast()
+                    adapter.notifyItemRemoved(messages.size)
+                }
+                val ready = apiProvider
+                if (ready != null) {
+                    sendMessageInternal(userText, ready, isRetry = true, skipStockContext = skipStockContext)
                 } else {
-                    addErrorMessage("❌ AI 连接超时，请稍候重试")
+                    addErrorMessage("❌ AI 连接超时，请检查网络，并在「设置→AI 配置」确认已填写可用的 API Key 后重试")
                 }
             }
             return

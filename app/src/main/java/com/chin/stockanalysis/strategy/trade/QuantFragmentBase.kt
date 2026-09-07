@@ -415,7 +415,7 @@ abstract class QuantFragmentBase : Fragment() {
     /** 周期选项列表（工作台公共「周期」行展示；空 = 该周期无周期选择，隐藏选项行） */
     open fun getPeriodOptions(): List<Pair<Int, String>> = emptyList()
 
-    /** 周期行标签（工作台公共「周期」行左侧；默认 "📊 周期:"，中线为 "📊 数据周期:"） */
+    /** 周期行标签（工作台公共「周期」行左侧；默认 "📊 周期:"） */
     open fun getPeriodRowLabel(): String = "📊 周期:"
 
     // ═══════════════════════════════════════════════════

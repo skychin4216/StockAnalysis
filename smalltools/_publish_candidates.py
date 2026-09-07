@@ -1745,9 +1745,15 @@ def _next_slot_at(now=None):
 
 
 def _sleep_until(dt, stop_check=None):
-    now = datetime.datetime.now()
-    delta = max((dt - now).total_seconds(), 1)
-    _interruptible_sleep(delta, stop_check)
+    """睡到墙钟时刻 dt。每步用当前时间重算剩余，避免系统睡眠/休眠冻结
+    time.sleep 递减计数导致"睡过头"（跨周末/整夜长睡必须按墙钟，勿改回递减式）。"""
+    while True:
+        if stop_check is not None and stop_check():
+            return
+        now = datetime.datetime.now()
+        if now >= dt:
+            return
+        time.sleep(min(0.5, (dt - now).total_seconds()))
 
 
 def _run_script(script, log=print, stop_check=None, extra=None):

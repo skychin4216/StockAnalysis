@@ -280,6 +280,81 @@ def make_tag(s):
     return " ".join(p[:4])
 
 
+def _ma_squeeze(closes, tol_pct=1.8):
+    """近端 MA5/10/20/30 极差相对中值 ≤ tol_pct% → 均线粘合（横盘蓄势）。"""
+    if len(closes) < 30:
+        return False
+    vals = [_sma(closes, n) for n in (5, 10, 20, 30)]
+    if any(v is None for v in vals):
+        return False
+    mid = sum(vals) / 4.0
+    return mid > 0 and (max(vals) - min(vals)) / mid * 100.0 <= tol_pct
+
+
+def rich_tag(snaps, max_tokens=6):
+    """候选行『指标串』：数值 RSI + SAR(含刚翻红=绿转红) + MACD(金叉/死叉/柱收窄扩大)
+    + OBV + 均线(多头/粘合) + 突破强度(距20日前高)，比 make_tag 密度更高。
+    供推送选股行使用；样本不足或异常返回 ''。"""
+    try:
+        s = analyze(snaps)
+        if not s:
+            return ""
+        closes = [float(x.get("close") or 0) for x in snaps]
+        p = []
+        rsi = s.get("rsi")
+        if rsi is not None:
+            p.append("RSI%d" % int(round(rsi)))
+        sar = s.get("sar") or {}
+        d, bars = sar.get("dir"), sar.get("bars") or 0
+        fd, fa = sar.get("flip_dir"), sar.get("flip_ago")
+        if d == "UP":
+            p.append("SAR刚翻红" if (fd == "UP" and fa and fa <= 3) else "SAR红↑%d" % bars)
+        elif d == "DOWN":
+            p.append("SAR绿↓%d" % bars)
+        mc = s.get("macd") or {}
+        if mc.get("cross") == "gold":
+            p.append("MACD金叉")
+        elif mc.get("cross") == "dead":
+            p.append("MACD死叉")
+        else:
+            hist = mc.get("hist")
+            if hist is not None:
+                try:
+                    dif = _ema_series(closes, 12)
+                    dea = _ema_series(dif, 9)
+                    prev = (dif[-2] - dea[-2]) if len(dif) > 1 and len(dea) > 1 else hist
+                except Exception:
+                    prev = hist
+                color = "红" if hist > 0 else "绿"
+                trend = "收窄" if abs(hist) < abs(prev) else "扩大"
+                p.append("MACD%s柱%s" % (color, trend))
+        obv = s.get("obv_up")
+        if obv is True:
+            p.append("OBV上行")
+        elif obv is False:
+            p.append("OBV下行")
+        ma = s.get("ma") or {}
+        if ma.get("bull") is True:
+            p.append("MA多头")
+        elif _ma_squeeze(closes):
+            p.append("均线粘合")
+        # 突破强度：今日收盘 vs 前20日高点（不含当日）
+        try:
+            prev_high = max(float(x.get("high") or 0) for x in snaps[-21:-1])
+            c = float(snaps[-1].get("close") or 0)
+            if prev_high > 0 and c > 0:
+                gap = (c / prev_high - 1) * 100
+                if gap >= 0:
+                    p.append("创20日新高")
+                elif gap >= -5:
+                    p.append("距前高%+.1f%%" % gap)
+        except Exception:
+            pass
+        return " ".join(p[:max_tokens])
+    except Exception:
+        return ""
+
+
 def sar_alert(snaps):
     """SAR 刚翻绿（空头且持续≤3日，红转绿初期）→ 预警 dict {days}，否则 None。"""
     try:

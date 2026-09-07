@@ -761,16 +761,19 @@ def screen_picks_asof(asof, hist=None, industry_only=True, dag_codes=None):
 
 def _assemble_lowbuy(seq, groups, stats, max_rows):
     """seq=[(score, gidx, pk)…] 打分组渲染低吸精选文本行。
-    同股跨ETF只保留一次；按分数降序取前 max_rows 只；无符合则给出空因摘要。"""
+    同股跨ETF只保留一次；按分数降序取前 max_rows 只；
+    SAR绿转红(fresh_up/刚翻红)不占前 N 限额——超出部分追加展示，允许输出 >5 只。
+    无符合时给出空因摘要。"""
     seq.sort(key=lambda r: -r[0])
-    seen, keep = set(), []
+    seen, keep, fresh_extra = set(), [], []
     for score, gidx, pk in seq:
         if pk["code"] in seen:
             continue
         seen.add(pk["code"])
-        keep.append((gidx, pk))
-        if len(keep) >= max_rows:
-            break
+        if len(keep) < max_rows:
+            keep.append((gidx, pk))
+        elif pk.get("fresh_up"):
+            fresh_extra.append((gidx, pk))
     if not keep:
         sar_ok = max(stats.get("cand", 0) - stats.get("sar_dn", 0), 0)
         tail = ""
@@ -779,14 +782,23 @@ def _assemble_lowbuy(seq, groups, stats, max_rows):
         return ["  (今日无符合低吸：观察%d只→SAR绿%d排除、SAR红%d只未过企稳/共振精选%s)"
                 % (stats.get("cand", 0), stats.get("sar_dn", 0), sar_ok, tail)]
     lines, prev = [], None
-    for gidx, pk in keep:
-        if gidx != prev:
-            g = groups[gidx]
-            lines.append("  %s(%s)%s:" % (g["name"], g["code"],
-                                          (" 资金入%+.1f亿" % g["fz"]) if g.get("fz") else ""))
-            prev = gidx
-        lines.append(_qualify_line(pk))
-    lines.append("  ── 口径: 前五重仓→SAR红(绿排除)→企稳/量能/MACD/OBV共振打分，取前≤%d只 ──" % max_rows)
+
+    def _flush(items):
+        nonlocal prev
+        for gidx, pk in items:
+            if gidx != prev:
+                g = groups[gidx]
+                lines.append("  %s(%s)%s:" % (g["name"], g["code"],
+                                              (" 资金入%+.1f亿" % g["fz"]) if g.get("fz") else ""))
+                prev = gidx
+            lines.append(_qualify_line(pk))
+
+    _flush(keep)
+    if fresh_extra:
+        lines.append("  ── 以下 SAR 刚翻红(绿转红) 不占前%d限额，放宽列出 ──" % max_rows)
+        _flush(fresh_extra)
+    lines.append("  ── 口径: 前五重仓→SAR红(绿排除)→企稳/量能/MACD/OBV共振打分，取前≤%d只%s ──"
+                 % (max_rows, "，绿转红可超限" if fresh_extra else ""))
     return lines
 
 

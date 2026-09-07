@@ -430,7 +430,7 @@ class QuantWorkbenchFragment : Fragment() {
         }
     }
 
-    /** 刷新内嵌周期持仓：短/中/长 + 实仓 + ETF低位（供外层 Tab 切换 / onResume 时调用） */
+    /** 刷新内嵌周期持仓：短/中/长 + 实仓 + ETF（供外层 Tab 切换 / onResume 时调用） */
     fun refreshAll() {
         childFragmentManager.executePendingTransactions()
         for (i in 0 until 5) {
@@ -653,7 +653,7 @@ class QuantWorkbenchFragment : Fragment() {
             }
     }
 
-    /** 内嵌周期页适配器：短 / 中 / 长 / 实仓 / ETF低位（超短引擎并入短线，2026-09-05） */
+    /** 内嵌周期页适配器：短 / 中 / 长 / 实仓 / ETF（超短引擎并入短线，2026-09-05） */
     private class PeriodTabAdapter(fragment: Fragment) : FragmentStateAdapter(fragment) {
         override fun getItemCount() = 5
 

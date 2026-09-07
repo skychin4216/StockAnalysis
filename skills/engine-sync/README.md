@@ -1,4 +1,13 @@
-# Engine Sync Skill — smalltools 选股引擎三端同步与验证
+# Engine Sync Skill — 选股引擎三端同步（XML DAG 主线 + 对照参考）与验证
+
+> ⚡ **架构主线定位（2026-09-07 定，勿再混淆）**：选股主线 = **XML DAG**——事实源
+> `app/src/main/assets/usecases/*.xml`（usecase + pipeline），Python 引擎同目录
+> `usecase_pipeline.py`（与 XML 同居单一事实源），APK(Kotlin) 与 exe 读同一份 XML。
+> 本 skill 前半段的 backtest_params.json 链属**对照参考层**（三周期参数化对照），同时
+> 承接 `AutoQuant/_self_fit_pipeline.py` 的牛市 trend_follow 写回（trend_follow 节）；
+> 震荡/熊市 strict 参数由该工具直接写回 XML pipeline（`<period>_{oscillation|bearish}_pipeline.xml`）。
+> 改选股参数前先分清：改 XML DAG 主线 → 走 `_self_fit_pipeline.py --write` 或改 XML；
+> 对照参考层改动不影响主线当日选股。
 
 ## 触发条件
 
@@ -134,14 +143,14 @@ cd <repo root> && gradlew.bat :app:compileDebugKotlin --console=plain
 
 ## ETF 低位低吸（etf_dip）—— XML DAG 单一源（2026-09-07）
 
-与三周期同构：规则/参数**只写一份 XML**，APK 与 Python 引擎读同一文件执行。
+XML DAG 为选股主线：规则/参数**只写一份 XML**（`assets/usecases/` 单一事实源），APK(Kotlin) 与 Python 引擎（同目录 `usecase_pipeline.py`）读同一文件执行；smalltools 旧选股引擎仅作对照参考。
 
 | 文件 | 作用 |
 |------|------|
 | `app/src/main/assets/usecases/etf_dip_usecase.xml` | ★ 入口 usecase（与三周期同格式） |
 | `app/src/main/assets/usecases/etf_dip_pipeline.xml` | ★ 三阶段 DAG：门控 `etf_gate` → 信号 `etf_dip_signal` → 离场 `etf_exit_policy`（参数全在此） |
 | `app/.../topology/nodes/EtfDipNodes.kt` | APK 执行端（与 Python `_etf_*` 模块同构） |
-| `AutoQuant/usecase_pipeline.py` | Python 引擎端（`etf_gate/etf_dip_signal/etf_exit_policy` 注册 + `run(with_stages=True)`） |
+| `app/src/main/assets/usecases/usecase_pipeline.py` | Python 引擎端（XML DAG = 主线引擎，与 usecase XML 单一事实源同居 `assets/usecases/` 主仓库管理；`etf_gate/etf_dip_signal/etf_exit_policy` 注册 + `run(with_stages=True)`；exe/usecase_screen.py 与 smalltools/_etf_publish.py 均 sys.path 指向该目录 import，不复制不漂移） |
 | `smalltools/_etf_publish.py` | PC 发布/推送入口：XML 执行 → `data/_etf_live_picks.json` → adb 推 `_etf_cache.json` 到手机 |
 | `smalltools/_etf_buy.py` | 规则出处与行情抓取（`ensure_data`），v0.3 口径未变 |
 

@@ -4,7 +4,9 @@ ETF 低位低吸 —— XML 单一事实源发布 + 手机行情推送
 ========================================================================
 架构（2026-09-07 与三周期同构）：
   - 规则/参数 = app/src/main/assets/usecases/etf_dip_pipeline.xml（唯一事实源）
-  - 执行器   = AutoQuant/usecase_pipeline.py（Python 引擎）== APK UseCaseLoader
+  - 执行器   = app/src/main/assets/usecases/usecase_pipeline.py（XML DAG Python
+    引擎，XML DAG = 主线：引擎与 usecase XML 单一事实源同居 assets/usecases，
+    供 exe(AutoQuant)/smalltools 两端 import）== APK UseCaseLoader
     （usecase etf_dip：门控 n_etf_gate → 信号 n_etf_dip_signal → 离场 n_etf_exit）
   - 数据     = smalltools/_etf_cache.json（13只ETF + sh000300，腾讯 qfq 前复权日K）
   - 发布物   = data/_etf_live_picks.json（PC/exe 展示 + APK 桥回退，与旧版同构）
@@ -24,11 +26,10 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.normpath(os.path.join(HERE, ".."))
-AUTOQUANT = os.path.join(ROOT, "AutoQuant")
-for p in (HERE, AUTOQUANT):
-    if p not in sys.path:
-        sys.path.insert(0, p)
+USECASES = os.path.normpath(os.path.join(HERE, "..", "app", "src", "main", "assets", "usecases"))
+for _p in (HERE, USECASES):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)   # HERE=smalltools 顶层模块；USECASES=usecase_pipeline.py 引擎
 
 CACHE = os.path.join(HERE, "_etf_cache.json")
 OUT = os.path.join(HERE, "data", "_etf_live_picks.json")

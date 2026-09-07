@@ -38,6 +38,8 @@ class AIAnalysisFragment : Fragment() {
     private lateinit var analyzeBtn: Button
     private var engine: StrategyEngine? = null
     private lateinit var mainBoardSwitch: Switch
+    /** 已关注板块/股票的容器（成员化，新增关注后用于局部刷新，2026-09-06） */
+    private var focusFlow: FlowLayout? = null
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         StrategyEngineHolder.init(requireContext())
@@ -101,8 +103,9 @@ class AIAnalysisFragment : Fragment() {
             setPadding(dp(4), dp(12), 0, dp(6))
         })
         val focusFlow = FlowLayout(requireContext()).apply { setPadding(dp(4), 0, 0, 0) }
+        this.focusFlow = focusFlow
         content.addView(focusFlow)
-        loadFocusSectors(focusFlow)
+        loadFocusSectors()
         content.addView(TextView(requireContext()).apply {
             text = "➕ 添加关注：输入板块名或股票名后点这里"
             textSize = 11f; setTextColor(Color.parseColor("#888888")); setPadding(dp(4), dp(6), 0, dp(2))
@@ -137,7 +140,8 @@ class AIAnalysisFragment : Fragment() {
     }
 
     // ═══════════════ 关注设置 ═══════════════
-    private fun loadFocusSectors(flow: FlowLayout) {
+    private fun loadFocusSectors() {
+        val flow = focusFlow ?: return
         lifecycleScope.launch(Dispatchers.IO) {
             val memory = UserMarketMemory(requireContext())
             val sectors = memory.getAllFocusSectors()
@@ -168,6 +172,8 @@ class AIAnalysisFragment : Fragment() {
                 UserMarketMemory(requireContext()).addOrActivateSector(text)
                 withContext(Dispatchers.Main) {
                     Toast.makeText(requireContext(), "已加入关注：$text", Toast.LENGTH_SHORT).show()
+                    // 立即刷新下方关注列表，让新添加的板块/股票立刻可见（2026-09-06）
+                    loadFocusSectors()
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { Toast.makeText(requireContext(), "添加失败: ${e.message}", Toast.LENGTH_SHORT).show() }
@@ -302,8 +308,14 @@ class AIAnalysisFragment : Fragment() {
                         )
                         return@launch
                     }
+                    // 未命中：给出近似板块提示，方便用户一键改填
+                    val near = findNearbySectors(db, trimmed)
                     withContext(Dispatchers.Main) {
-                        statusTv.text = "❌ 无法识别「$trimmed」，请输入股票代码/名称 或 板块名称"
+                        statusTv.text = if (near.isEmpty()) {
+                            "❌ 本地暂无「$trimmed」板块/个股数据，请核对名称或从上方热门板块选择"
+                        } else {
+                            "❌ 未找到板块「$trimmed」，近似: ${near.joinToString(" / ")}（点上方 chip 填入后重新分析）"
+                        }
                         analyzeBtn.isEnabled = true; analyzeBtn.text = "🚀 分析"
                     }
                     return@launch
@@ -353,12 +365,43 @@ class AIAnalysisFragment : Fragment() {
         val keys = db.sectorStockDao().getAllSectorKeys()
         // 1. 精确匹配 key
         keys.firstOrNull { it.equals(keyword, ignoreCase = true) }?.let { return it }
+        // 1.5 空格不敏感精确匹配（用户输入"AI 应用" → 板块"AI应用"）
+        val flatKw = keyword.replace(" ", "").lowercase()
+        if (flatKw.length >= 2) {
+            keys.firstOrNull { it.replace(" ", "").lowercase() == flatKw }?.let { return it }
+            for (key in keys) {
+                val nm = db.sectorStockDao().getSectorName(key) ?: continue
+                if (nm.replace(" ", "").lowercase() == flatKw) return key
+            }
+        }
         // 2. 按板块中文名匹配（精确 or 包含）
         for (key in keys) {
             val name = db.sectorStockDao().getSectorName(key) ?: continue
             if (name == keyword || name.contains(keyword) || keyword.contains(name)) return key
         }
         return null
+    }
+
+    /** 输入未命中板块时，返回按名称/词元打分的近似板块名（仅提示用，不自动分析） */
+    private suspend fun findNearbySectors(db: StockDatabase, keyword: String, top: Int = 6): List<String> {
+        val keys = db.sectorStockDao().getAllSectorKeys()
+        val kwUp = keyword.uppercase()
+        val tokens = keyword.split(Regex("[\\s\\-,，。、；;：:()（）/]+")).filter { it.isNotBlank() && it.length >= 2 }
+        val scored = mutableListOf<Pair<Int, String>>()
+        for (key in keys) {
+            val name = db.sectorStockDao().getSectorName(key) ?: continue
+            val upper = name.uppercase()
+            var s = 0
+            if (upper == kwUp) s += 80
+            else if (kwUp.contains(upper) && upper.length >= 2) s += 25
+            else if (upper.contains(kwUp) && kwUp.length >= 2) s += 25
+            for (t in tokens) {
+                if (upper.contains(t)) s += 8
+                else if (t.contains(upper) && upper.length >= 2) s += 3
+            }
+            if (s > 0) scored.add(Pair(s, name))
+        }
+        return scored.sortedByDescending { it.first }.take(top).map { it.second }
     }
 
     /** 板块成分股 Top N 逐个跑 Agent 流水线，汇总结果展示 */
