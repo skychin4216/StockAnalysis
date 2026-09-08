@@ -11,8 +11,8 @@
 
 用法：
   python _market_scan.py --once            # 跑一次（采集+对比+通知）
-  python _market_scan.py --daemon          # 交易时段每 900 秒轮询（默认）
-  python _market_scan.py --daemon --interval 900
+  python _market_scan.py --daemon          # 交易时段每 600 秒轮询（默认，与选股守护v3同频）
+  python _market_scan.py --daemon --interval 600
   python _market_scan.py --once --force    # 强制推送（忽略变动检测）
 """
 import argparse
@@ -59,7 +59,7 @@ GLOBAL_INDEX = {
     "100.399001": "沪深300",  # 占位（东财A股用不同secid，忽略）
 }
 
-DEFAULT_INTERVAL = 900  # 15 分钟（与选股守护盘中轮同节奏）
+DEFAULT_INTERVAL = 600  # 10 分钟（2026-09-08 与选股守护 v3 盘中轮同频 10 分钟选股/情报）
 
 
 # ── 1. 采集 ─────────────────────────────────────────────────────────────
@@ -428,9 +428,9 @@ def run_once(force=False, dry=False):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="盘中情报扫描器（15分钟收集+变动通知）")
+    ap = argparse.ArgumentParser(description="盘中情报扫描器（10分钟收集+变动通知）")
     ap.add_argument("--once", action="store_true", help="执行一次")
-    ap.add_argument("--daemon", action="store_true", help="守护轮询（交易时段每 900 秒）")
+    ap.add_argument("--daemon", action="store_true", help="守护轮询（交易时段每 600 秒）")
     ap.add_argument("--interval", type=int, default=DEFAULT_INTERVAL)
     ap.add_argument("--force", action="store_true", help="强制推送")
     ap.add_argument("--dry", action="store_true", help="采集但不推送")

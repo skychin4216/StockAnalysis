@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """PC 候选清单发布：四周期选股(异动共振) → 双端命中对比 → 微信通知 → 上传 COS → 守护轮询。
 
-v11 盘中共振版：每 15 分钟(交易时段)一轮，选股不再只看形态——先收集盘中市场上下文
+v11 盘中共振版：交易时段每 10 分钟一轮(v3 守护)，选股不再只看形态——先收集盘中市场上下文
 (_market_context.py：实时板块资金流 / 日榜 / 连续上榜焦点 / Android 实仓 / exe 命中)，
 对每只候选做「技术买点 + 资金/轮动/热度共振」综合排序；推送同时并列 CodeBuddy 命中
 与 exe(AutoQuant screen_report) 命中，并附实仓持仓的持/加/减/止损建议。
@@ -9,8 +9,8 @@ v11 盘中共振版：每 15 分钟(交易时段)一轮，选股不再只看形�
 用法：
   python _publish_candidates.py --once            # 跑一次（选股+对比+通知+上传）
   python _publish_candidates.py --once --dry      # 只选股+本地输出，不上传不通知
-  python _publish_candidates.py --daemon          # 每 900 秒(15分钟)轮询整轮推送
-  python _publish_candidates.py --daemon --interval 900 --no-ctx
+  python _publish_candidates.py --daemon          # 每 600 秒(10分钟)轮询，有更新才推(完整推)
+  python _publish_candidates.py --daemon --interval 600 --no-ctx
                                                   # 关闭市场上下文，纯形态快速模式
 
 数据流：
@@ -661,6 +661,52 @@ def build_candidates(cache, industry, ctx=None):
     data["positions"] = assess_positions(ctx, cache, data)
     data["portfolio"] = assess_portfolio(data["positions"])
     data = _attach_tech(data, cache)
+    data = _quality_gate(data, cache)
+    return data
+
+
+def _gate_weak(it, cache):
+    """形态质量闸门判定：SAR 绿 + 现价跌破 MA5 + 5日动量为负 → 明确走弱（阴跌/均线粘合向下）。
+    2026-09-08 用户反馈华能水电等『绿线+粘合向下』仍进中长线候选，加此闸门拦截。"""
+    if not it or not it.get("secid"):
+        return False
+    try:
+        snaps = _find_cache_snaps(cache, it["secid"])
+        closes = [float(x["close"]) for x in snaps if x.get("close")]
+        if len(closes) < 35:
+            return False
+        ma5 = sum(closes[-5:]) / 5.0
+        chg5 = (closes[-1] / closes[-6] - 1) * 100.0 if len(closes) > 6 else 0.0
+        if closes[-1] >= ma5 or chg5 >= 0:
+            return False
+        sar = ((_tech_analyze(snaps) if _TECHS_OK else {}).get("sar") or {})
+        return sar.get("dir") == "DOWN"
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _quality_gate(data, cache):
+    """候选形态质量闸门：剔除明确走弱票（仅作用于展示/上传的 groups/prepared，
+    不动评分模型与 XML DAG）。剔除的票名记入日志，便于核对。"""
+    removed = []
+    for p, items in list((data.get("groups") or {}).items()):
+        keep = []
+        for it in items:
+            if _gate_weak(it, cache):
+                removed.append("%s/%s" % (p, it.get("name") or it.get("secid")))
+            else:
+                keep.append(it)
+        data["groups"][p] = keep
+    pre_keep = []
+    for it in (data.get("prepared") or []):
+        if _gate_weak(it, cache):
+            removed.append("预备队/%s" % (it.get("name") or it.get("secid")))
+        else:
+            pre_keep.append(it)
+    data["prepared"] = pre_keep
+    if removed:
+        print("[质量闸门] 剔除 %d 只走弱候选: %s"
+              % (len(removed), "、".join(removed[:12])))
     return data
 
 
@@ -1275,7 +1321,7 @@ def _append_pos_block(lines, data):
 
 
 def _intel_lines(max_age_min=150):
-    """盘中轮正文·最新情报前导：读 _last_scan.json（情报扫描每 15 分钟刷新）。
+    """盘中轮正文·最新情报前导：读 _last_scan.json（情报扫描每 10 分钟刷新）。
 
     快照缺失/过旧(>max_age_min)/时钟超前时返回空（盘外或未启动不误报）。
     只做「展示参考」，不改动选股结果。返回页面行列表(含空行分隔)。
@@ -1451,7 +1497,7 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
     p1 = ["%s 大盘: %s %s | 池 %d" % (state_mark, state, state_cn,
                                      data.get("pool_total", 0))]
     p1 += _big_board_lines(cache, asof)  # 📊 上证/科创50/沪深300 大方向
-    p1 += _intel_lines()  # 📡 最新情报（scan 15 分钟快照，过旧自动省略）
+    p1 += _intel_lines()  # 📡 最新情报（scan 10 分钟快照，过旧自动省略）
     # ① 主线：XML DAG 当日选股（与 exe 同源；超短并入短线、按代码去重、每档≤3只）
     if dag is None:
         try:
@@ -1715,9 +1761,19 @@ def run_once(dry=False, candidates_key=None, timed_push=False, use_ctx=True, pos
     cfg = load_notify_cfg()
     old_secids = candidate_secids(old) if old else set()
     if timed_push:
-        # 守护(15分钟)轮：整轮概览推送；实仓段内嵌消息（有变化才展开，见 _append_pos_block）
-        send_wechat_round(data, ctx, cfg, old_secids=old_secids, pos_advice=pos_advice,
-                          cache=cache)
+        # 守护(10分钟)轮：候选构成/实仓建议有变化才完整推送（完整推含与上轮重复入选标的）。
+        # 无变化则跳过微信消息，但仍上传 COS、写 LAST_FILE。首轮/换盘段首轮必推。
+        sig = _cand_sig(data)
+        rhythm = _load_rhythm()
+        seg = "am" if current_session() == "am" else "pm"
+        if rhythm.get("cand_sig") != sig or rhythm.get("push_seg") != seg:
+            send_wechat_round(data, ctx, cfg, old_secids=old_secids, pos_advice=pos_advice,
+                              cache=cache)
+            rhythm["cand_sig"] = sig
+            rhythm["push_seg"] = seg
+            _save_rhythm(rhythm)
+        else:
+            print("[守护] 候选/实仓建议与上轮一致，跳过本轮微信推送（仍上传 COS）")
     else:
         # 盘中新信号：仅在新买点出现时推送
         send_wechat(data, old_secids, cfg)
@@ -1725,6 +1781,20 @@ def run_once(dry=False, candidates_key=None, timed_push=False, use_ctx=True, pos
     with open(LAST_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
     return 0
+
+
+def _cand_sig(data):
+    """候选变化指纹（推送闸门用，2026-09-08）：
+    各档候选 secid 顺序 + 预备队 secid + 实仓(code:verdict) 摘要。
+    归一化处理：价格/涨跌幅等数字变化不触发推送；只有候选构成或实仓建议状态变化才推。"""
+    parts = []
+    for p, items in (data.get("groups") or {}).items():
+        parts.append("%s[%s]" % (p, ",".join(it.get("secid", "") for it in items)))
+    parts.append("预[%s]" % ",".join(it.get("secid", "") for it in (data.get("prepared") or [])))
+    pos = data.get("positions") or []
+    parts.append("仓[%s]" % "|".join(
+        "%s:%s" % (p.get("code", ""), p.get("verdict", "")) for p in pos))
+    return "\n".join(parts)
 
 
 # ── 6. 盘段节奏守护：开盘后先「下载 + XML DAG 当日选股」，之后每 interval 秒推送 ──
@@ -1781,6 +1851,9 @@ def _load_rhythm():
     d.setdefault("sum", False)    # 15:10 收盘总结是否已推送
     d.setdefault("etf", False)    # 15:12 ETF低位useCase当日发布 + 推送行情到手机 是否完成
     d.setdefault("hit", {})       # 当日逐轮命中累计 period -> {secid: 次数}
+    d.setdefault("lunch", False)  # 11:31 午间盘中总结是否已推（2026-09-08）
+    d.setdefault("cand_sig", "")  # 候选构成/实仓建议指纹（10分钟轮推送闸门）
+    d.setdefault("push_seg", "")  # 上次微信推送所在盘段（换盘段首轮必推）
     return d
 
 
@@ -1827,15 +1900,18 @@ def rhythm_mark_round(session, now=None):
     _save_rhythm(d)
 
 
-# ── v2 时刻表辅助（2026-09-06 方案A，用户确认）───────────────────────────
+# ── v3 时刻表辅助（2026-09-08 用户确认）───────────────────────────────────
 # 交易日时刻表：
 #   09:00        预热：K线增量下载 + 情报扫描(dry)暖缓存（美股隔夜/韩股开盘/快讯研报）
-#   09:30~11:30  上午 9 轮（09:30 首次，之后每 15 分钟：09:45…11:30）
-#   13:00~14:30  下午 7 轮（每 15 分钟）；14:30 后不再盘中选股，避免尾盘诱导
+#   09:20        开盘前大盘速览：4指数同轴叠加图 + 强弱结论 + 🧭期货与库存速览
+#   09:30~11:20  上午 12 轮（09:30 首次，之后每 10 分钟）
+#   11:31-12:00  午间盘中总结（每日一次）
+#   13:00~14:30  下午 10 轮（每 10 分钟）；14:30 后不再盘中选股，避免尾盘诱导
 #   15:00        尾盘最后一次 K 线拉取（仅下载，不再选股）
 #   15:10        收盘总结：当日选股汇总 + 持仓回顾 + 纪律 + 鼓励（无做T/买卖点指令）
 #   15:12        ETF低位 usecase 当日发布（XML 单一源）+ 推送行情到手机（每日一次）
-# 守护/选股过程错误写入 _daemon_ops.jsonl，供后续矫正（用户需求）。
+# 盘中轮推送策略：候选构成/实仓建议有变化才推且完整推（含与上轮重复入选的标的），
+# 无变化不推送（仍上传 COS）。守护/选股过程错误写入 _daemon_ops.jsonl。
 OPS_LOG = os.path.join(HERE, "_daemon_ops.jsonl")
 
 
@@ -1974,13 +2050,24 @@ def _push_market_image(log=print, days=55):
 
 
 def _push_pre_market(dry, log=print):
-    """09:00 开盘前：大盘4指数归一化叠加图 + 强弱结论（每日一次，幂等由守护标记控制）。
+    """09:20 开盘前（2026-09-08 由 09:00 后即刻改到 09:20 推送）：
+    大盘4指数同轴叠加图 + 强弱结论 + 🧭期货与库存速览（每日一次，幂等由守护标记控制）。
 
     正文规则与 APK「大盘K线」一致：上证×科创50 优先级 + 深成/创业板佐证。
+    附加段：郑糖/焦煤等商品期货日盘已开，叠加 NOOA 厄尔尼诺(糖)、港口去库+供暖季(煤炭)
+    主题与 A 股映射；获取失败仅跳过该段，不阻塞主速览。
     """
     try:
         import _index_market_chart as imc
         text = imc.verdict_text()
+        try:
+            import _macro_futures as mf
+            extra = mf.render_futures()
+            if extra:
+                text += "\n\n" + "\n".join(extra)
+        except Exception as e:  # noqa: BLE001
+            log("期货库存速览获取失败: %s" % e)
+            ops_note("macro_fut_fail", repr(e))
         title = "🌅 开盘前大盘速览 %s" % datetime.date.today().strftime("%m-%d")
         if dry:
             log("[dry] 开盘前大盘速览（不推送）：\n" + text)
@@ -2247,7 +2334,91 @@ def _push_eod_summary(dry, use_ctx, log):
         return False
 
 
-def run_prep(session, interval=900, log=print, stop_check=None):
+def _push_lunch_summary(dry, use_ctx, log):
+    """11:31 午间盘中总结（2026-09-08 新增，每日一次）：上午轮次 + XML DAG 主线
+    + 上午多轮共振 + 持仓快照 + 午后节奏提示。无做T/买卖点指令。"""
+    try:
+        cache = load_cache()
+        industry = build_industry()
+        ctx = build_context() if use_ctx else None
+        data = build_candidates(cache, industry, ctx=ctx)
+    except Exception as e:  # noqa: BLE001
+        log("午间总结 构建异常：%s" % e)
+        ops_note("lunch_build_error", repr(e))
+        return False
+    if not data:
+        log("午间总结：无有效数据（缓存为空？）")
+        return False
+    r = _load_rhythm()
+    n_am = r.get("rounds", {}).get("am", 0)
+    hits = r.get("hit", {})
+    asof = data.get("asof", "")
+    lines = ["📈 午间盘中总结 asof=%s" % asof,
+             "上午完成 %d 轮选股（09:30 起每10分钟）；13:00 恢复每10分钟选股" % n_am]
+    # ① 主线 XML DAG
+    try:
+        with open(DAG_SCREEN_FILE, encoding="utf-8") as f:
+            dag = json.load(f)
+    except (OSError, ValueError):
+        dag = None
+    if dag and (dag.get("result") or {}):
+        rows = []
+        for period in ("超短", "短线", "中线", "长线"):
+            its = (dag.get("result") or {}).get(period) or []
+            if not its:
+                continue
+            names = ", ".join(
+                (it.get("name") or (it.get("code") or "?")).strip() for it in its[:6])
+            rows.append("%s(%d): %s" % (period, len(its), names))
+        if rows:
+            lines.append("⭐ 主线 XML DAG\n  " + " | ".join(rows))
+    # ② 上午多轮共振
+    if hits:
+        segs = []
+        for period, sidmap in sorted(hits.items(), key=lambda kv: -sum(kv[1].values())):
+            top = sorted(sidmap.items(), key=lambda kv: -kv[1])[:4]
+            txt = ", ".join("%s×%d" % (_find_name(data, sid), c)
+                            for sid, c in top if c > 1)
+            if txt:
+                segs.append("%s: %s" % (period, txt))
+        if segs:
+            lines.append("📊 上午多轮入选（>1次共振参考）")
+            lines.extend("  · " + s for s in segs)
+    # ③ 持仓快照
+    pos = data.get("positions") or []
+    pf = data.get("portfolio") or {}
+    pnl_all = pf.get("pnl_pct") if pf else None
+    if pos:
+        state_cn = {"止损警戒": "破位风险", "减仓警戒": "仓位偏高", "减仓应对": "回调应对",
+                    "加仓候选": "强度尚可", "持有": "持有观察", "持有观察": "观察",
+                    "数据不足": "数据不足"}
+        lines.append("💼 持仓（%d 笔，整体%s）：" % (
+            len(pos), ("%+.1f%%" % pnl_all) if pnl_all is not None else "数据不足"))
+        for p in pos[:6]:
+            pnl = ("%+.1f%%" % p["pnl_pct"]) if p.get("pnl_pct") is not None else "-"
+            note = p.get("note") or ""
+            note0 = note.splitlines()[0][:30] if note else ""
+            lines.append("  %s %s(%s) 盈亏%s %s" % (
+                state_cn.get(p["verdict"], p["verdict"]), p.get("name", ""),
+                p.get("code", ""), pnl, note0))
+    else:
+        lines.append("💼 当前无实仓持仓记录")
+    lines.append("")
+    lines.append("💡 午后 13:00 恢复每10分钟选股：候选构成有更新才推送（含与上午重复入选标的"
+                 "），无新信号不重复打扰。")
+    content = "\n".join(lines)
+    if dry:
+        log("[dry] 午间盘中总结预览（不推送）：\n" + content)
+        return True
+    try:
+        return _push_wechat("☀️ 盘中总结 %s" % asof, content, load_notify_cfg())
+    except Exception as e:  # noqa: BLE001
+        log("午间总结推送失败：%s" % e)
+        ops_note("lunch_push_error", repr(e))
+        return False
+
+
+def run_prep(session, interval=600, log=print, stop_check=None):
     """盘段首刷：下载当日K线缓存 → XML DAG 当日选股（不再跑 smalltools 回溯+拟合）。失败不标记，下个检查点重试。"""
     label = "上午" if session == "am" else "下午"
     log("[盘段%s] 首刷开始：下载K线 → XML DAG 当日选股（期间不选股，约 1~7 分钟）" % label)
@@ -2295,7 +2466,7 @@ def _interruptible_sleep(seconds, stop_check=None):
         seconds -= step
 
 
-EXPECT_ROUNDS = {"am": 9, "pm": 7}  # 09:30-11:30 9轮 / 13:00-14:30 7轮，每15分
+EXPECT_ROUNDS = {"am": 12, "pm": 10}  # 09:30-11:20 12轮 / 13:00-14:30 10轮，每10分
 
 
 def _check_rounds(log=print):
@@ -2313,25 +2484,28 @@ def _check_rounds(log=print):
         log(msg)
         ops_note("miss_rounds", msg)
     else:
-        log("  ✓ 轮次核对：上午%d/9 下午%d/7 达标" % (got.get("am", 0), got.get("pm", 0)))
+        log("  ✓ 轮次核对：上午%d/12 下午%d/10 达标" % (got.get("am", 0), got.get("pm", 0)))
 
 
-def daemon_serve(prep=True, interval=900, dry=False, use_ctx=True,
+def daemon_serve(prep=True, interval=600, dry=False, use_ctx=True,
                  log=print, stop_check=None):
-    """盘段守护 v2（2026-09-06 方案A，用户确认）：
+    """盘段守护 v3（2026-09-08 用户确认节奏）：
 
-    09:00 预热（K线下载+情报扫描暖缓存，无需等到 09:30 才拉数据）
-        → 09:30-11:30 每 15 分钟 9 轮（09:30 首次）
-        → 午休不选股
-        → 13:00-14:30 每 15 分钟 7 轮（之后不再盘中选股）
+    09:00 预热（K线下载+情报扫描暖缓存，无需等到 09:20 才拉数据）
+        → 09:20 开盘前大盘速览（4指数同轴叠加图+强弱结论+🧭期货与库存速览）
+        → 09:30-11:20 每 10 分钟 12 轮选股（09:30 首次，开盘立刻选股）
+            * 候选构成/实仓建议有变化才推送；无变化跳过（仍上传 COS 供 APK 查询）
+            * 若推送则完整推送（含与上轮重复入选的标的）
+        → 11:31-12:00 午间盘中总结（每日一次）
+        → 13:00-14:30 每 10 分钟 10 轮（之后不再盘中选股）
         → 15:00 尾盘最后一次 K 线拉取（仅下载）
         → 15:10 收盘总结：当日选股+持仓回顾+纪律+鼓励（无做T/买卖点指令）
         → 15:12 ETF低位 usecase 当日发布（XML 单一源）+ 推送行情到手机
+    盘中情报：独立 _market_scan.py 守护同频 10 分钟扫描，有变动才推送。
     盘中轮推送不再含「实仓买卖/做T」建议；守护/选股错误写入 _daemon_ops.jsonl。
-    interval 参数仅兼容旧调用，v2 固定 15 分钟整点轮。
     """
-    log("盘段守护 v2：09:00 预热 → 09:30-11:30 每15分 → 13:00-14:30 每15分 "
-        "→ 15:00 尾盘K线 → 15:10 收盘总结")
+    log("盘段守护 v3：09:20 盘前速览(期货库存) → 09:30-11:20 每10分选股 → 11:31 午间总结 "
+        "→ 13:00-14:30 每10分 → 15:00 尾盘 → 15:10 收盘总结")
     while stop_check is None or not stop_check():
         now = datetime.datetime.now()
         # ── 周末：睡到下一交易日 09:00 ──
@@ -2349,13 +2523,16 @@ def daemon_serve(prep=True, interval=900, dry=False, use_ctx=True,
                     log("[09:00 预热] 失败，2 分钟后重试")
                     _interruptible_sleep(120, stop_check)
                     continue
-            # 开盘前大盘速览：4指数归一化叠加图 + 强弱结论（每日一次）
+            # 09:20 开盘前大盘速览（每日一次）：4指数同轴叠加图 + 强弱结论 + 期货库存
             if rhythm_need_flag("pre_msg"):
+                if now.hour * 60 + now.minute < 9 * 60 + 20:
+                    _sleep_until(_today_at(9, 20), stop_check)
+                    continue
                 _push_pre_market(dry, log)
                 rhythm_mark_flag("pre_msg")
             _sleep_until(_today_at(9, 30), stop_check)
             continue
-        # ── 交易盘段：首刷 → 固定 15 分钟轮 ──
+        # ── 交易盘段：首刷 → 每 interval 秒(默认10分钟)轮 ──
         if slot in ("am", "pm"):
             if prep and rhythm_need_prep(slot):
                 run_prep(slot, interval=interval, log=log, stop_check=stop_check)
@@ -2382,6 +2559,15 @@ def daemon_serve(prep=True, interval=900, dry=False, use_ctx=True,
             continue
         # ── 空档（开盘前/午休/14:30 后）──
         hm = now.hour * 60 + now.minute
+        # 11:31-12:00 午间盘中总结（每日一次）
+        if 11 * 60 + 31 <= hm <= 12 * 60 and rhythm_need_flag("lunch"):
+            if _push_lunch_summary(dry, use_ctx, log):
+                rhythm_mark_flag("lunch")
+                log("✓ 午间盘中总结完成")
+            else:
+                log("午间盘中总结失败，2 分钟后重试")
+                _interruptible_sleep(120, stop_check)
+            continue
         if hm >= 15 * 60:
             if rhythm_need_flag("tail"):
                 run_tail_kline(log=log, stop_check=stop_check)
@@ -2432,8 +2618,9 @@ def daemon_serve(prep=True, interval=900, dry=False, use_ctx=True,
 def main():
     ap = argparse.ArgumentParser(description="PC 候选清单发布（选股→通知→COS）")
     ap.add_argument("--once", action="store_true", help="执行一次")
-    ap.add_argument("--daemon", action="store_true", help="盘段守护 v2（固定时刻表，见 daemon_serve 注释）")
-    ap.add_argument("--interval", type=int, default=900, help="兼容参数（v2 固定 15 分钟整点轮，忽略此值）")
+    ap.add_argument("--daemon", action="store_true", help="盘段守护 v3（固定时刻表，见 daemon_serve 注释）")
+    ap.add_argument("--interval", type=int, default=600,
+                    help="盘中轮间隔秒（v3 默认 600=10 分钟，首轮/尾轮仍随盘段整点）")
     ap.add_argument("--dry", action="store_true", help="不通知不上传（调试）")
     ap.add_argument("--key", default=None, help="COS candidates_key，默认 stockanalysis/quant/candidates.json")
     ap.add_argument("--timed", action="store_true", help="定时推送模式（单次执行也推送整轮概览）")
@@ -2444,8 +2631,8 @@ def main():
                     help="关闭盘段首刷/预热/尾盘(下载+XML DAG 选股)，只做固定轮次选股")
     args = ap.parse_args()
     if args.daemon:
-        print("盘段守护 v2：09:00 预热 → 09:30-11:30 每15分 → 13:00-14:30 每15分 "
-              "→ 15:00 尾盘K线 → 15:10 收盘总结")
+        print("盘段守护 v3：09:20 盘前速览(期货库存) → 09:30-11:20 每10分选股 → "
+              "11:31 午间总结 → 13:00-14:30 每10分 → 15:00 尾盘 → 15:10 收盘总结")
         daemon_serve(prep=not args.no_prep, interval=args.interval,
                      dry=args.dry, use_ctx=not args.no_ctx)
         return 0

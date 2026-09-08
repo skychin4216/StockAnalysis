@@ -140,8 +140,21 @@ def analyze(snaps, max_bars=260):
         ma10 = _sma(closes, 10)
         ma20 = _sma(closes, 20)
         ma60 = _sma(closes, 60)
-        out["ma"] = {"ma20": ma20, "ma60": ma60,
-                     "bull": (ma20 and ma60 and ma20 > ma60),
+        # MA20 斜率：今值 vs 4 交易日前（走平/向上 = 斜率 ≥0）
+        ma20_prev = _sma(closes[:-4], 20) if len(closes) >= 24 else None
+        ma20_slope = ((ma20 - ma20_prev) / ma20_prev * 100.0
+                      if (ma20 and ma20_prev) else None)
+        # 多头真义(2026-09-08 收紧)：MA5≥MA10≥MA20>MA60 排列 + 现价站上 MA5
+        # + MA20 走平/向上。避免『均线粘合向下/价破短均』仍标 MA多头 的假多头。
+        bull = bool(ma5 and ma10 and ma20 and ma60
+                    and ma5 >= ma10 and ma10 >= ma20 and ma20 > ma60
+                    and closes[-1] >= ma5
+                    and (ma20_slope is None or ma20_slope >= 0))
+        squeeze = _ma_squeeze(closes)
+        out["ma"] = {"ma20": ma20, "ma60": ma60, "bull": bull,
+                     "squeeze": squeeze,
+                     "squeeze_down": bool(squeeze and ma5 and ma10 and ma5 < ma10),
+                     "ma20_slope": ma20_slope,
                      "above20": (ma20 and closes[-1] >= ma20)}
     except Exception:
         out["ma"] = {}
@@ -273,6 +286,8 @@ def make_tag(s):
     ma = s.get("ma") or {}
     if ma.get("bull") is True:
         p.append("MA多头")
+    elif ma.get("squeeze") and len(p) < 3:
+        p.append("粘合↓" if ma.get("squeeze_down") else "粘合")
     if s.get("obv_up") is True and len(p) < 4:
         p.append("OBV升")
     if s.get("atr_pct") is not None and len(p) < 4:
@@ -336,8 +351,10 @@ def rich_tag(snaps, max_tokens=6):
         ma = s.get("ma") or {}
         if ma.get("bull") is True:
             p.append("MA多头")
-        elif _ma_squeeze(closes):
-            p.append("均线粘合")
+        elif ma.get("squeeze"):
+            p.append("均线粘合↓" if ma.get("squeeze_down") else "均线粘合")
+        elif ma.get("ma20") and ma.get("ma60") and ma.get("ma20") <= ma.get("ma60"):
+            p.append("MA偏空")
         # 突破强度：今日收盘 vs 前20日高点（不含当日）
         try:
             prev_high = max(float(x.get("high") or 0) for x in snaps[-21:-1])

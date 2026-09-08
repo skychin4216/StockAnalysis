@@ -1,8 +1,8 @@
 package com.chin.stockanalysis.strategy.topology.nodes
 
 import android.util.Log
-import com.chin.stockanalysis.stock.database.DailySnapshot
 import com.chin.stockanalysis.stock.database.StockDatabase
+import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
 import com.chin.stockanalysis.strategy.topology.core.BaseNode
 import com.chin.stockanalysis.strategy.topology.core.NodeType
 import com.chin.stockanalysis.strategy.topology.core.PipelineContext
@@ -23,7 +23,7 @@ import java.util.Locale
  */
 private const val TAG = "DipBuy"
 
-private const val GATE_INDEX = arrayOf("sh000001", "sh000688") // 上证 / 科创50
+private val GATE_INDEX = arrayOf("sh000001", "sh000688") // 上证 / 科创50
 
 /** 阶段1：大盘恐慌门控（上证/科创50 连跌≥streakDown 且5日跌≥4%、或5日≤p5Drop、或当日大跌且已连跌） */
 class DipMarketGateNode(
@@ -60,7 +60,7 @@ class DipMarketGateNode(
             val tag = if (code == "sh000001") "上证" else "科创50"
             val hit = (streak >= streakReq && p5 <= -4.0) || p5 <= p5Drop ||
                 (day <= dayDrop && streak >= streakReq - 1)
-            notes.add("$tag连跌$streak天/5日${fmt(p5)}%/当日${fmt(day)}%→${if (hit) "触发" else "未触发"}")
+            notes.add("${tag}连跌${streak}天/5日${fmt(p5)}%/当日${fmt(day)}%→${if (hit) "触发" else "未触发"}")
             if (hit) fired.add(tag)
         }
         val ok = fired.isNotEmpty()
@@ -172,7 +172,7 @@ class DipStockSignalNode(
         return out.put("as_of", asOf).put("rows", top).put("scanned", nHot)
     }
 
-    private fun avgVol(hist: List<DailySnapshot>, lo: Int, hi: Int): Double {
+    private fun avgVol(hist: List<DailySnapshotEntity>, lo: Int, hi: Int): Double {
         var sum = 0.0
         var n = 0
         for (j in lo until minOf(hi, hist.size)) {
@@ -193,7 +193,7 @@ class DipExitPolicyNode(
     private val tp: Double = 4.0,
     private val sl: Double = -2.5,
     private val hold: Int = 3
-) : BaseNode<JSONObject, JSONObject>("dip_exit_policy", "抄底离场打包", NodeType.OUTPUT) {
+) : BaseNode<JSONObject, JSONObject>("dip_exit_policy", "抄底离场打包", NodeType.TRADE_ACTION) {
 
     override suspend fun execute(context: PipelineContext, input: JSONObject): JSONObject {
         val sig = input ?: JSONObject()
@@ -205,7 +205,7 @@ class DipExitPolicyNode(
         out.put("scanned", sig.optInt("scanned", 0))
         out.put("strategy", "恐慌日抄底 dip_buy: 上证/科创50 连跌≥3且5日跌≥4%(或5日≤-6%、或当日恐慌大跌) 收盘后 → 买前期热门(前60日涨幅前35%)∩自身连跌≥3∩缩量跌透龙头；持≤3日 tp+4%/sl-2.5%")
         out.put("exit", JSONObject().put("tp", tp).put("sl", sl).put("hold", hold))
-        context.log(nodeId, "📦 dip_buy 打包完成: ${rows.length()} 只候选 (tp+$tp%/sl$sl%/持$hold日)")
+        context.log(nodeId, "📦 dip_buy 打包完成: ${rows.length()} 只候选 (tp+$tp%/sl$sl%/持${hold}日)")
         return out
     }
 }

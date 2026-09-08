@@ -759,11 +759,12 @@ def screen_picks_asof(asof, hist=None, industry_only=True, dag_codes=None):
     return out
 
 
-def _assemble_lowbuy(seq, groups, stats, max_rows):
+def _assemble_lowbuy(seq, groups, stats, max_rows, rejected=None):
     """seq=[(score, gidx, pk)…] 打分组渲染低吸精选文本行。
     同股跨ETF只保留一次；按分数降序取前 max_rows 只；
     SAR绿转红(fresh_up/刚翻红)不占前 N 限额——超出部分追加展示，允许输出 >5 只。
-    无符合时给出空因摘要。"""
+    rejected: SAR红但未过企稳/共振的 pk 列表——2026-09-08 起点名列出(🟡仅观察)，
+    不再只数个数，让用户知道"是谁"。无任何符合时给出空因摘要。"""
     seq.sort(key=lambda r: -r[0])
     seen, keep, fresh_extra = set(), [], []
     for score, gidx, pk in seq:
@@ -774,14 +775,21 @@ def _assemble_lowbuy(seq, groups, stats, max_rows):
             keep.append((gidx, pk))
         elif pk.get("fresh_up"):
             fresh_extra.append((gidx, pk))
-    if not keep:
+    # SAR红但未过企稳/共振 → 点名（与精选/fresh 去重）
+    pending = []
+    for pk in rejected or []:
+        if pk["code"] in seen:
+            continue
+        seen.add(pk["code"])
+        pending.append(pk)
+    lines, prev = [], None
+    if not keep and not pending:
         sar_ok = max(stats.get("cand", 0) - stats.get("sar_dn", 0), 0)
         tail = ""
         if stats.get("fresh"):
             tail = "；其中绿转红%d只(可留意)" % stats["fresh"]
         return ["  (今日无符合低吸：观察%d只→SAR绿%d排除、SAR红%d只未过企稳/共振精选%s)"
                 % (stats.get("cand", 0), stats.get("sar_dn", 0), sar_ok, tail)]
-    lines, prev = [], None
 
     def _flush(items):
         nonlocal prev
@@ -793,10 +801,21 @@ def _assemble_lowbuy(seq, groups, stats, max_rows):
                 prev = gidx
             lines.append(_qualify_line(pk))
 
+    if not keep:
+        lines.append("  (今日无低吸精选通过；SAR红%d只未过企稳/共振，点名如下，仅观察)"
+                     % len(pending))
     _flush(keep)
     if fresh_extra:
         lines.append("  ── 以下 SAR 刚翻红(绿转红) 不占前%d限额，放宽列出 ──" % max_rows)
         _flush(fresh_extra)
+    if pending:
+        if keep:
+            lines.append("  ── SAR红但未过企稳/共振(仅观察，勿接飞刀) ──")
+        for pk in pending[:max_rows * 2]:
+            note = pk.get("note") or ""
+            tail = (" | " + note) if note else ""
+            lines.append("    🟡 %s(%s) 距60日高%+.1f%% 今%+.1f%%%s" % (
+                pk["name"], pk["code"], pk.get("pos60") or 0, pk.get("pct") or 0, tail))
     lines.append("  ── 口径: 前五重仓→SAR红(绿排除)→企稳/量能/MACD/OBV共振打分，取前≤%d只%s ──"
                  % (max_rows, "，绿转红可超限" if fresh_extra else ""))
     return lines
@@ -806,7 +825,7 @@ def low_buy_lines_offline(asof, hist=None, dag_codes=None, max_rows=5):
     """离线『🎯 ETF持仓前五·低吸精选』文本行（全行业板块；历史回放页面2用）。
     只输出通过 _decide_pick 的合格票（SAR绿直接不展示）；无符合时明示空因。"""
     st = screen_picks_asof(asof, hist=hist, dag_codes=dag_codes)
-    groups, seq = [], []
+    groups, seq, rejected = [], [], []
     stats = {"cand": 0, "sar_dn": 0, "fresh": 0}
     seen_code = set()
     for fcode, info in st.items():
@@ -826,7 +845,9 @@ def low_buy_lines_offline(asof, hist=None, dag_codes=None, max_rows=5):
             ok, score = _decide_pick(pk)
             if ok:
                 seq.append((score, gidx, pk))
-    return _assemble_lowbuy(seq, groups, stats, max_rows)
+            else:
+                rejected.append(pk)  # SAR红但未过企稳/共振 → 点名观察
+    return _assemble_lowbuy(seq, groups, stats, max_rows, rejected)
 
 
 # 当日已取数缓存（code → _screen_meta dict），避免 15 分钟轮询重复拉日K
@@ -905,7 +926,7 @@ def low_buy_lines(hot_themes, etf_flow=None, dag_codes=None, max_rows=5):
             flow_in[nm] = yi
 
     groups, fidx = [], {}
-    seq, stats = [], {"cand": 0, "sar_dn": 0, "fresh": 0}
+    seq, stats, rejected = [], {"cand": 0, "sar_dn": 0, "fresh": 0}, []
     for code, (fcode, s) in own.items():
         q = quotes.get(code)
         if not q:
@@ -931,6 +952,7 @@ def low_buy_lines(hot_themes, etf_flow=None, dag_codes=None, max_rows=5):
             continue
         ok, score = _decide_pick(pk)
         if not ok:
+            rejected.append(pk)  # SAR红但未过企稳/共振 → 点名观察
             continue
         if fcode not in fidx:
             fidx[fcode] = len(groups)
@@ -944,7 +966,7 @@ def low_buy_lines(hot_themes, etf_flow=None, dag_codes=None, max_rows=5):
                     break
             groups.append({"code": fcode, "name": fname, "fz": fz})
         seq.append((score, fidx[fcode], pk))
-    return _assemble_lowbuy(seq, groups, stats, max_rows)
+    return _assemble_lowbuy(seq, groups, stats, max_rows, rejected)
 
 
 def summary_json(limit=15):
