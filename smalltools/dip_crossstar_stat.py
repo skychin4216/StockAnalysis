@@ -1,45 +1,104 @@
 # -*- coding: utf-8 -*-
 """
-十字星分歧信号 两场景回溯统计（2015-01 ~ 2026-09-07）
-=====================================================
-数据：smalltools/_kline_cache.json（上证 sh000001 / 科创50 sh000688 + 龙头股池，含 name）
+十字星分歧信号 四形态回溯（2008-01-02 ~ 数据末端）
+====================================================
+数据：公共市场库 StockAnalysis/data/market_data.db（kline 表，2008-01-02 起全量；
+     来源 _kline_cache.json + _extend_history_2008.py 的 2008-2015 hfq 拼接段）。
 
-用户思路：
-  大盘(上证/科创50) 连续跌几天(下跌末端) → 出现十字星(分歧) →
-    场景1: 之后出现【放量大阴线】(恐慌释放) → 大阴线当天低吸【下跌比较多∩前期热门】股票
-    场景2: 之后出现【阳线(小阳/大阳)】(转强确认) → 阳线日收盘买入，看后续继续上升概率
+背景（用户思路，做短线视角）：
+  大盘回调中出现十字星(分歧)后，星后 1..7 交易日最先走出的 K 线形态有四种：
+    big_yin    大阴线(≤-1.5%)      → 恐慌释放，低吸候选
+    small_yin  小阴线(-1.5~0)      → 弱势阴跌，低吸候选
+    big_yang   大阳线(≥+1.5%)      → 强势转阳，追买候选
+    small_yang 小阳线(0~+1.5%)     → 弱转阳，确认候选
+  不赌"次日最后一跌"，赌的是买入后未来 2-3 日反弹回本、有浮盈卖点。
 
-口径：
-  - 买入=信号日收盘，卖出=第 H 日收盘(close→close)。
-  - 十字星 = |收盘-开盘| ≤ 0.2×振幅；可选"缩量"= 星日量 ≤ 前5日均量×0.9。
-  - 放量大阴线 = 当日涨幅 ≤ -1.5%，且量 ≥ 前5日均量×1.2；出现在十字星后 1..7 交易日(取最先满足者)。
-  - 阳线日 = 十字星后第一个 涨幅>0 的交易日(1..7 日内)。
-  - 热门 = 全池个股在事件日前 60 日涨幅 前30% 分位。
-  - 跌得多 = 个股当日涨幅阈值 -2.5% / -3.5%。
+固化到数据库：
+  star_form_events 表（market_data.db）：18 年每次「星→四形态」事件明细
+  （星前连跌天数、形态日在星后第几天、形态日涨跌%、相对 MA20%、量比），
+  每次运行按指数幂等重建（_market_db.replace_star_form_events）。
+
+统计口径（选股层，逐股打分）：
+  - 买入 = 形态日收盘（对阴线=低吸，对阳线=确认买入），全池逐股评分。
+  - 热门 = 事件日前 60 日涨幅前 30% 分位。
+  - 下跌多 = 个股形态日涨跌 ≤ -2.5% / -3.5%（仅阴线分组）。
+  - 阳线分组：热门∩当日也收阳。
+  - 收盘持有：信号日收盘 → 第 H 日收盘。
+  - 盘中逃顶速查：买入后 H 日内 最高价≥成本 的占比 + 平均最高点% （核心短线口径）。
 """
+import datetime
 import json
 import os
 import random
+import sqlite3
+import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-CACHE = os.path.join(HERE, "_kline_cache.json")
-OUT = os.path.join(os.path.dirname(HERE), "AutoQuant", "backtest_logs", "_dip_crossstar_report.md")
-IDX = {"sh000688": "科创50", "sh000001": "上证指数"}
-START = "2015-01-01"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _market_db as mdb  # noqa: E402
+
+OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                   "AutoQuant", "backtest_logs", "_dip_crossstar_report.md")
+IDX = [("sh000001", "上证指数"), ("sh000688", "科创50")]
+START = "2008-01-01"
 HORIZONS = [1, 2, 3, 5, 10]
+FORMS = [
+    ("big_yin", "大阴线(≤-1.5%)", "低吸"),
+    ("small_yin", "小阴线(-1.5~0)", "低吸"),
+    ("big_yang", "大阳线(≥+1.5%)", "确认追买"),
+    ("small_yang", "小阳线(0~+1.5%)", "确认追买"),
+]
+DOJI_THR = 0.20
+BIG_THR = 1.5          # 大/小 K 分界
+WINDOW = 7             # 星后窗口
+MAX_EV = 400           # 个股打分单形态最大事件日（超出随机抽样）
 
 
-def load():
-    with open(CACHE, encoding="utf-8") as f:
-        return json.load(f)
+def load_index(conn, code):
+    """从市场库读指数日线，转内部结构（changePct 缺失时按前收重算）。"""
+    rows = mdb.query_kline(conn, code, start="2006-12-01")
+    out = []
+    prev_c = None
+    for r in rows:
+        s = {
+            "date": r["date"], "open": r["open"], "high": r["high"],
+            "low": r["low"], "close": r["close"], "volume": r["volume"] or 0.0,
+            "turnover": r["turnover"] or 0.0,
+            "changePct": r["change_pct"],
+        }
+        if s["changePct"] is None and prev_c:
+            s["changePct"] = (s["close"] / prev_c - 1) * 100
+        out.append(s)
+        if s["close"]:
+            prev_c = s["close"]
+    return out
 
 
-def seq_of(cache, code):
-    snaps = sorted((cache.get(code) or {}).get("snaps") or [], key=lambda s: s["date"])
-    return [s for s in snaps if s["date"] >= START]
+def load_stocks(conn):
+    """读全池个股序列（2008 起足够长的），返回 {code: [snap,...]}。"""
+    secs = [r["secid"] for r in conn.execute(
+        "SELECT DISTINCT secid FROM kline WHERE secid NOT IN ('sh000001','sh000688','sz399001','sz399006')"
+    ).fetchall()]
+    out = {}
+    for code in secs:
+        rows = mdb.query_kline(conn, code, start="2006-12-01")
+        if len(rows) < 220:
+            continue
+        seq = []
+        prev_c = None
+        for r in rows:
+            s = {"date": r["date"], "open": r["open"], "high": r["high"],
+                 "low": r["low"], "close": r["close"], "volume": r["volume"] or 0.0,
+                 "changePct": r["change_pct"]}
+            if s["changePct"] is None and prev_c:
+                s["changePct"] = (s["close"] / prev_c - 1) * 100
+            seq.append(s)
+            if s["close"]:
+                prev_c = s["close"]
+        out[code] = seq
+    return out
 
 
-def is_doji(s, thr=0.20):
+def is_doji(s, thr=DOJI_THR):
     hi, lo = s.get("high"), s.get("low")
     if not hi or not lo or hi <= lo:
         return False
@@ -53,8 +112,7 @@ def ma_vol(seq, i, n=5):
     return sum(vals) / len(vals) if len(vals) == n else None
 
 
-def down_days(seq, i, cap=12):
-    """第 i 日(含)往回连续下跌天数"""
+def down_days(seq, i, cap=15):
     n = 0
     for j in range(i, max(i - cap, -1), -1):
         c = seq[j].get("changePct")
@@ -64,10 +122,60 @@ def down_days(seq, i, cap=12):
     return n
 
 
+def classify(chg):
+    """K 线涨跌幅 → 四形态之一（None=平盘/无）。"""
+    if chg is None:
+        return None
+    if chg <= -BIG_THR:
+        return "big_yin"
+    if chg < 0:
+        return "small_yin"
+    if chg >= BIG_THR:
+        return "big_yang"
+    if chg > 0:
+        return "small_yang"
+    return None
+
+
+def collect_events(seq):
+    """提取指数序列全部「星→四形态」事件（2008-01-01 起）。
+
+    对每个十字星（星前不限连跌，记录 streak），在星后 1..7 日内按四种形态
+    分别取该形态**最先出现**的交易日；同一星可同时命中多个形态（不同 ev_date）。
+    返回 (events, year_cnt)：events 为 dict(form->list)，year_cnt 为 {year: 十字星数}。
+    """
+    events = {f: [] for f, *_ in FORMS}
+    year_doji = {}
+    n = len(seq)
+    for i in range(20, n - 11):
+        if seq[i]["date"] < START:
+            continue
+        if not is_doji(seq[i]):
+            continue
+        sb = down_days(seq, i - 1)
+        year_doji[seq[i]["date"][:4]] = year_doji.get(seq[i]["date"][:4], 0) + 1
+        first = {}
+        for k in range(i + 1, min(i + 1 + WINDOW, n - 10)):
+            f = classify(seq[k].get("changePct"))
+            if f and f not in first:
+                first[f] = k
+        for f, k in first.items():
+            s = seq[k]
+            vm = ma_vol(seq, k)
+            m20 = sum(x["close"] for x in seq[k - 20:k]) / 20
+            events[f].append({
+                "star_date": seq[i]["date"], "star_streak": sb, "form": f,
+                "ev_date": s["date"], "ev_gap": k - i, "ev_chg": s.get("changePct"),
+                "dev_ma20": (s["close"] / m20 - 1) * 100,
+                "vol_ratio": (s.get("volume") / vm) if vm else None,
+            })
+    return events, year_doji
+
+
 def fmt(rets):
     if not rets:
         return "-"
-    w = sum(1 for x in rets if x > 0) / len(rets) * 100
+    w = 100.0 * sum(1 for x in rets if x > 0) / len(rets)
     avg = sum(rets) / len(rets)
     gains = [x for x in rets if x > 0]
     loss = [x for x in rets if x <= 0]
@@ -78,182 +186,189 @@ def fmt(rets):
 
 
 def esc_cell(arr):
-    """H日内最高价≥买入成本的占比 / 该日内平均最高点收益(相对成本)——反弹出逃视角"""
+    """盘中逃顶速查格：H日内最高价≥成本占比 / 平均最高点%"""
     if not arr:
         return "-"
     p = 100.0 * sum(1 for x in arr if x >= 0) / len(arr)
     return "%d %.0f%% %+.2f%%" % (len(arr), p, sum(arr) / len(arr))
 
 
-def main():
-    cache = load()
-    L = []
-    out = lambda *a: L.append(" ".join(str(x) for x in a))  # noqa: E731
+def idx_detail_line(seq, k):
+    """指数形态日后续收益明细：D1/D2/D3/D5/D10 收盘% + H2 盘中最高%(自形态日收盘)。"""
+    b = seq[k]["close"]
+    rets = []
+    for h in (1, 2, 3, 5, 10):
+        rets.append("%+.1f%%" % ((seq[k + h]["close"] / b - 1) * 100))
+    hi2 = max(x["high"] for x in seq[k:k + 3])
+    return " | ".join(rets), (hi2 / b - 1) * 100
 
-    # ── 预索引（START 过滤一次）：code → snaps 与 date→pos ──
-    SN = {}
-    for code, ent in cache.items():
-        snaps = seq_of(cache, code)
-        SN[code] = snaps
-    DI = {code: {s["date"]: j for j, s in enumerate(SN[code])} for code in SN}
-    stock_codes = [k for k in SN if k not in IDX and len(SN[k]) > 210]
 
-    out("# 十字星分歧信号 两场景回溯统计（2015-01 ~ 2026-09-07）")
-    out("")
-    out("> 场景1 恐慌低吸：大盘连跌D → 十字星(分歧) → 放量大阴线(≤-1.5%且放量≥1.2×前5日均量，星后1..7日) 当日"
-        "低吸「跌得多∩前期热门(前60日涨幅前30%)」；")
-    out("> 场景2 转阳确认：大盘连跌D → 十字星 → 首个阳线日 收盘买入，看后续继续上升概率。")
-    out("> 指标格式：样本 胜率% 均值% 盈亏比(盈均/亏均)。买入口径=信号日收盘→第H日收盘。")
-    out("")
-
-    for code, cname in IDX.items():
-        seq = SN[code]
-        n = len(seq)
-        if n < 200:
+def stock_panel(events, stocks, out, fname, act):
+    """对某形态全部事件日做选股层统计：收盘持有(对照) + 盘中逃顶速查(核心)。"""
+    dates = sorted({e["ev_date"] for e in events})
+    if not dates:
+        return
+    seed_dates = dates if len(dates) <= MAX_EV else random.sample(dates, MAX_EV)
+    yin = act == "低吸"
+    if yin:
+        groups = ("所有个股", "热门前30%", "热门∩当日跌≤-2.5%", "热门∩当日跌≤-3.5%")
+    else:
+        groups = ("所有个股", "热门前30%", "热门∩当日也收阳")
+    # date -> pos 索引
+    di = {c: {s["date"]: j for j, s in enumerate(seq)} for c, seq in stocks.items()}
+    ret_h = {g: {h: [] for h in HORIZONS} for g in groups}
+    hi_h = {g: {h: [] for h in HORIZONS} for g in groups}
+    sim_h = {g: {h: [] for h in (2, 3)} for g in groups}  # 止盈纪律模拟
+    n_day = 0
+    for d in seed_dates:
+        info = []
+        for c, sd in stocks.items():
+            pos = di[c].get(d)
+            if pos is None or pos < 65 or pos + 10 >= len(sd):
+                continue
+            info.append((c, sd, pos))
+        if len(info) < 5:
             continue
-        out("## %s %s（%d 交易日 %s→%s）" % (cname, code, n, seq[0]["date"], seq[-1]["date"]))
-        out("")
-        # ── 事件收集：(D, shrink, scen) -> [(低吸/买入日 idx, date)] ──
-        events = {}
-        for i in range(6, n - 16):
-            if not is_doji(seq[i]):
-                continue
-            streak_before = down_days(seq, i - 1)
-            if streak_before < 2:
-                continue
-            vp = ma_vol(seq, i)
-            doji_shrink = bool(vp) and (seq[i].get("volume") or 0) <= vp * 0.9
-            for D in (2, 3, 4):
-                if streak_before < D:
-                    continue
-                for shrink in (False, True):
-                    if shrink and not doji_shrink:
-                        continue
-                    # 场景1：星后 1..7 日内第一个 放量大阴线(≤-1.5% 且 ≥1.2×均量)
-                    for k in range(i + 1, min(i + 8, n - 11)):
-                        c = seq[k].get("changePct")
-                        if c is None or c > -1.5:
-                            continue
-                        vm = ma_vol(seq, k)
-                        if vm and (seq[k].get("volume") or 0) < vm * 1.2:
-                            continue
-                        events.setdefault((D, shrink, 1), []).append((k, seq[k]["date"]))
-                        break
-                    # 场景2：星后 1..7 日内第一个 阳线
-                    for k in range(i + 1, min(i + 8, n - 11)):
-                        c = seq[k].get("changePct")
-                        if c is None or c <= 0:
-                            continue
-                        events.setdefault((D, shrink, 2), []).append((k, seq[k]["date"]))
-                        break
+        r60_all = sorted((sd[pos]["close"] / sd[pos - 60]["close"] - 1) * 100
+                         for _, sd, pos in info)
+        hot_th = r60_all[max(0, int(len(r60_all) * 0.7) - 1)]
+        n_day += 1
+        for c, sd, pos in info:
+            day_chg = sd[pos].get("changePct") or 0.0
+            r60 = (sd[pos]["close"] / sd[pos - 60]["close"] - 1) * 100
+            base = sd[pos]["close"]
+            grp = {"所有个股"}
+            if r60 >= hot_th:
+                grp.add("热门前30%")
+                if yin:
+                    if day_chg <= -2.5:
+                        grp.add("热门∩当日跌≤-2.5%")
+                    if day_chg <= -3.5:
+                        grp.add("热门∩当日跌≤-3.5%")
+                elif day_chg > 0:
+                    grp.add("热门∩当日也收阳")
+            mh = -1e18
+            hi_by_h = {}
+            for h in HORIZONS:
+                if pos + h < len(sd):
+                    mh = max(mh, (sd[pos + h]["high"] / base - 1) * 100)
+                    hi_by_h[h] = mh
+            for g in grp:
+                for h in HORIZONS:
+                    if pos + h < len(sd):
+                        ret_h[g][h].append((sd[pos + h]["close"] / base - 1) * 100)
+                        hi_h[g][h].append(hi_by_h[h])
+                for h in (2, 3):
+                    if pos + h < len(sd):
+                        # 冲高≥+2% 即卖；否则第 H 日收盘离场
+                        sim = 2.0 if hi_by_h.get(h, -1e18) >= 2.0 \
+                            else (sd[pos + h]["close"] / base - 1) * 100
+                        sim_h[g][h].append(sim)
+    out("#### ① 选股统计：%s（形态日收盘%s 全池逐股，事件日=%d，H=第H日收盘/盘中）"
+        % (fname, act, n_day))
+    out("**收盘持有（对照口径）**：样本 胜率% 均值% 盈亏比")
+    out("| 分组 | H=1 | H=2 | H=3 | H=5 | H=10 |")
+    out("|---|--:|--:|--:|--:|--:|")
+    for g in groups:
+        out("| " + g + " | " + " | ".join(fmt(ret_h[g][h]) for h in HORIZONS) + " |")
+    out("")
+    out("**盘中逃顶速查（短线核心口径）**：H日内最高价≥成本 占比，样本 均最高点%")
+    out("| 分组 | H=1 | H=2 | H=3 | H=5 | H=10 |")
+    out("|---|--:|--:|--:|--:|--:|")
+    for g in groups:
+        out("| " + g + " | " + " | ".join(esc_cell(hi_h[g][h]) for h in HORIZONS) + " |")
+    out("")
+    out("**止盈纪律模拟**：买入后 H 日内盘中冲高≥+2% 即卖（记+2%），否则第 H 日收盘离场；"
+        "格=成功率(收益>0) 均收益%")
+    out("| 分组 | H=2 | H=3 |")
+    out("|---|--:|--:|")
+    for g in groups:
+        def _s(arr):
+            if not arr:
+                return "-"
+            return "%d %.0f%% %+.2f%%" % (len(arr),
+                                          100.0 * sum(1 for x in arr if x > 0) / len(arr),
+                                          sum(arr) / len(arr))
+        out("| " + g + " | " + " | ".join(_s(sim_h[g][h]) for h in (2, 3)) + " |")
+    out("")
+    return n_day
 
-        # ── 场景1 逐事件明细（星→放量大阴线，唯一事件去重，连跌取星前最深）──
-        evm = {}
-        for i in range(6, n - 16):
-            if not is_doji(seq[i]):
-                continue
-            sb = down_days(seq, i - 1)
-            if sb < 2:
-                continue
-            for k in range(i + 1, min(i + 8, n - 11)):
-                c = seq[k].get("changePct")
-                if c is None or c > -1.5:
-                    continue
-                vm = ma_vol(seq, k)
-                if vm and (seq[k].get("volume") or 0) < vm * 1.2:
-                    continue
-                old = evm.get(i)
-                if old is None or sb > old[0]:
-                    m20 = sum(x["close"] for x in seq[k - 20:k]) / 20
-                    evm[i] = (sb, k, seq[k]["date"], c, k - i, (seq[k]["close"] / m20 - 1) * 100)
-                break
-        if evm:
-            out("### 场景1 逐事件明细（十字星→星后≤7日放量大阴线；后续列为指数收盘收益%）")
-            out("| 阴线日 | 星前连跌 | 阴线在星后第几天 | 阴线日跌幅% | 指数vs MA20% | D1 | D2 | D3 | D5 | D10 |")
-            out("|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
-            for i in sorted(evm):
-                sb, k, d, chg, gap, dev20 = evm[i]
-                to_fmt = ["%+.1f%%" % ((seq[k + h]["close"] / seq[k]["close"] - 1) * 100)
-                          for h in (1, 2, 3, 5, 10)]
-                out("| %s | %d | %d | %.1f | %+.1f | %s |" % (d, sb, gap, chg, dev20, " | ".join(to_fmt)))
-            out("")
 
-        random.seed(7)
-        for (D, shrink, scen), evs in sorted(events.items()):
-            key_txt = "连跌≥%d·十字星%s" % (D, "(缩量)" if shrink else "(任意)")
-            if scen == 1:
-                groups = ("所有个股", "热门前30%", "热门∩当日跌≤-2.5%", "热门∩当日跌≤-3.5%")
-            else:
-                groups = ("所有个股", "热门前30%", "热门∩当日也收阳")
-            ret_h = {g: {h: [] for h in HORIZONS} for g in groups}
-            hi_h = {g: {h: [] for h in HORIZONS} for g in groups}
-            pick = random.sample(evs, min(len(evs), 150))
-            n_day = 0
-            for k, d in pick:
-                info = []
-                for c in stock_codes:
-                    pos = DI[c].get(d)
-                    sd = SN[c]
-                    if pos is None or pos < 65 or pos + 10 >= len(sd):
-                        continue
-                    info.append((c, sd, pos))
-                if not info:
-                    continue
-                r60_all = sorted((sd[pos]["close"] / sd[pos - 60]["close"] - 1) * 100
-                                 for _, sd, pos in info)
-                hot_th = r60_all[max(0, int(len(r60_all) * 0.7) - 1)]
-                n_day += 1
-                for c, sd, pos in info:
-                    day_chg = sd[pos].get("changePct") or 0.0
-                    r60 = (sd[pos]["close"] / sd[pos - 60]["close"] - 1) * 100
-                    is_hot = r60 >= hot_th
-                    base = sd[pos]["close"]
-                    grp = set()
-                    grp.add("所有个股")
-                    if is_hot:
-                        grp.add("热门前30%")
-                        if scen == 1:
-                            if day_chg <= -2.5:
-                                grp.add("热门∩当日跌≤-2.5%")
-                            if day_chg <= -3.5:
-                                grp.add("热门∩当日跌≤-3.5%")
-                        elif day_chg > 0:
-                            grp.add("热门∩当日也收阳")
-                    hi_by_h = {}
-                    mh = -1e18
-                    for h in HORIZONS:
-                        if pos + h < len(sd):
-                            mh = max(mh, (sd[pos + h]["high"] / base - 1) * 100)
-                            hi_by_h[h] = mh
-                    for g in grp:
-                        for h in HORIZONS:
-                            if pos + h < len(sd):
-                                ret_h[g][h].append((sd[pos + h]["close"] / base - 1) * 100)
-                                hi_h[g][h].append(hi_by_h[h])
-            if scen == 1:
-                out("### 场景1 恐慌低吸 [%s] → 大阴线当日收盘 低吸（星后≤7日出现放量大阴线）" % key_txt)
-            else:
-                out("### 场景2 转阳确认 [%s] → 首个阳线日收盘 买入（后续继续上升概率）" % key_txt)
-            out("事件日样本=%d（每事件对全池逐股打分，样本数见各行首列）" % n_day)
-            out("| 分组 | H=1 | H=2 | H=3 | H=5 | H=10 |")
-            out("|---|--:|--:|--:|--:|--:|")
-            for g in groups:
-                out("| " + g + " | " + " | ".join(fmt(ret_h[g][h]) for h in HORIZONS) + " |")
-            if scen == 1:
-                out("")
-                out("逃顶速查（低吸后 H 日内 最高价≥成本的占比，样本 均最高点%）：")
-                out("| 分组 | H=1 | H=2 | H=3 | H=5 | H=10 |")
-                out("|---|--:|--:|--:|--:|--:|")
-                for g in groups:
-                    out("| " + g + " | " + " | ".join(esc_cell(hi_h[g][h]) for h in HORIZONS) + " |")
-            out("")
-        out("---")
-        out("")
+def main():
+    conn = mdb.get_conn()
+    out = []
+    O = lambda *a: out.append(" ".join(str(x) for x in a))  # noqa: E731
+    O("# 十字星分歧信号 四形态短线回溯（2008-01 ~ %s）"
+      % datetime.datetime.now().strftime("%Y-%m-%d"))
+    O("")
+    O("> 大盘回调中出现十字星(分歧)后，星后 1..7 日内最先走出的形态分四类："
+      "大阴线≤-1.5% / 小阴线(-1.5~0) / 大阳线≥+1.5% / 小阳线(0~+1.5%)。")
+    O("> 做短线不赌\"次日最后一跌\"：买点=形态日收盘(阴线=低吸、阳线=确认追买)，"
+      "核心看未来 2-3 日是否反弹回本/有浮盈卖点（盘中逃顶速查）；收盘持有表仅作对照。")
+    O("> 数据：market_data.db kline（2008-01-02 起，hfq/qfq 拼接）；"
+      "事件已固化 star_form_events 表（每次运行按指数幂等重建）。")
+    O("")
 
+    random.seed(7)
+    stocks = load_stocks(conn)
+    di_pool = {c: {s["date"]: j for j, s in enumerate(seq)} for c, seq in stocks.items()}
+    for code, cname in IDX:
+        seq = load_index(conn, code)
+        seq = [s for s in seq if s["date"] >= START]
+        n = len(seq)
+        if n < 300:
+            continue
+        events, year_doji = collect_events(seq)
+        rows = [e for lst in events.values() for e in lst]
+        mdb.replace_star_form_events(conn, code, rows)
+        span = "%s→%s" % (seq[0]["date"], seq[-1]["date"])
+        O("## %s %s（%d 交易日 %s）" % (cname, code, n, span))
+        O("")
+        # ── 事件库总览：按年分布
+        O("### 事件库固化 star_form_events（%d 条：每星段可命中多形态）" % len(rows))
+        O("| 十字星年份 | 星数 | 大阴线 | 小阴线 | 大阳线 | 小阳线 |")
+        O("|---|--:|--:|--:|--:|--:|")
+        years = sorted(year_doji)
+        for y in years:
+            cnt = {f: 0 for f, *_ in FORMS}
+            for e in rows:
+                if e["ev_date"][:4] == y:
+                    cnt[e["form"]] += 1
+            O("| %s | %d | %d | %d | %d | %d |"
+              % (y, year_doji[y], cnt["big_yin"], cnt["small_yin"],
+                 cnt["big_yang"], cnt["small_yang"]))
+        O("")
+        # ── 四形态逐事件明细 + 选股统计
+        for f, fname, act in FORMS:
+            evs = sorted(events[f], key=lambda e: e["ev_date"])
+            if not evs:
+                continue
+            O("### ① 逐事件明细：十字星→%s（星后≤7日最先出现；共 %d 个事件）" % (fname, len(evs)))
+            O("| 形态日 | 星前连跌 | 星后第几天 | 涨跌% | vsMA20% | 量比 | 指数H2盘中最高% | D1 | D2 | D3 | D5 | D10 |")
+            O("|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
+            for e in evs:
+                k = next(j for j, s in enumerate(seq) if s["date"] == e["ev_date"])
+                det, hi2 = idx_detail_line(seq, k)
+                vr = ("%.2f" % e["vol_ratio"]) if e["vol_ratio"] else "-"
+                O("| %s | %d | %d | %+.1f | %+.1f | %s | %+.1f | %s |"
+                  % (e["ev_date"], e["star_streak"], e["ev_gap"], e["ev_chg"],
+                     e["dev_ma20"], vr, hi2, det))
+            O("")
+            O("### ② 短线成功率：星→%s（%s）" % (fname, act))
+            stk_evs = [{**e} for e in evs]
+            stock_panel(stk_evs, stocks, O, fname, act)
+        O("---")
+        O("")
     with open(OUT, "w", encoding="utf-8") as f:
-        f.write("\n".join(L))
-    print("已写出: %s (%d 行)" % (OUT, len(L)))
-    print("\n".join(L))
+        f.write("\n".join(out))
+    # 控制台只打印摘要
+    print("已写出: %s (%d 行)" % (OUT, len(out)))
+    print("库: %s" % mdb.kline_stats(conn))
+    for code, cname in IDX:
+        for f, fname, _ in FORMS:
+            cnt = len(mdb.query_star_form_events(conn, idx_code=code, form=f))
+            print("  %s %s: %d 事件" % (cname, fname, cnt))
+    conn.close()
 
 
 if __name__ == "__main__":

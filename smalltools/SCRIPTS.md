@@ -39,7 +39,7 @@
 | `cloud_upload_market_db.py` | **市场库上传**：把 PC 端公共市场库 `data/market_data.db`（K线+公告）签名 PUT 到 COS `stockanalysis/db/market_data.db`，供 APK「设置→下载云端行情库」导入 Room（免逐日联网拉取）；默认保留时间戳副本，`--no-timestamp` 关闭。 | `python cloud_upload_market_db.py` |
 | `verify_cos_sign.py` | **COS 签名回归校验**：用腾讯云官方文档完整示例值离线校准 HMAC-SHA1 V5 签名，并自检配置读取 / ZIP 解包 / ListObjectsV2 XML 解析。改动签名相关代码后建议重跑。 | `python verify_cos_sign.py` |
 | `dip_rebound_stat.py` | **大盘抄底信号统计**：连跌 D 天后反弹概率、下跌中十字星(分歧)→大阴线(恐慌)信号后指数反弹、恐慌日个股回弹（热门前30% vs 冷门 vs 自身连跌），输出 `AutoQuant/backtest_logs/_dip_rebound_report.md`。 | `python dip_rebound_stat.py` |
-| `dip_crossstar_stat.py` | **十字星分歧两场景个股统计**：场景1=大盘连跌D→十字星→放量大阴线当日低吸「跌得多∩热门」；场景2=十字星→首个阳线日收盘买入。输出 `AutoQuant/backtest_logs/_dip_crossstar_report.md`。 | `python dip_crossstar_stat.py` |
+| `dip_crossstar_stat.py` | **十字星分歧四形态短线统计（2008-01 起）**：把 18 年来每次「星→大阴/小阴/大阳/小阳」（星后 1..7 日最先形态）固化到 market_data.db `star_form_events` 表（每次运行按指数幂等重建），再做选股层统计：收盘持有(对照) + 盘中逃顶速查(核心口径) + 止盈纪律模拟(冲高≥+2%即卖否则第H日收盘)。输出 `AutoQuant/backtest_logs/_dip_crossstar_report.md`。 | `python dip_crossstar_stat.py` |
 
 ---
 

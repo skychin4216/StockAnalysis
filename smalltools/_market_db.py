@@ -31,7 +31,7 @@ ROOT = os.path.dirname(SMALLTOOLS_DIR)
 DATA_DIR = os.path.join(ROOT, "data")
 DB_PATH = os.path.join(DATA_DIR, "market_data.db")
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 
 DDL = """
 CREATE TABLE IF NOT EXISTS kline (
@@ -75,6 +75,20 @@ CREATE TABLE IF NOT EXISTS market_state (
     detail_json TEXT DEFAULT '',        -- 可选：指数方向明细等
     updated_at  TEXT DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS star_form_events (
+    idx_code   TEXT NOT NULL,           -- 指数 secid，如 sh000001 / sh000688
+    star_date  TEXT NOT NULL,           -- 十字星日 YYYY-MM-DD
+    star_streak INTEGER NOT NULL,       -- 星前连续下跌天数（星前1日起回溯）
+    form       TEXT NOT NULL,           -- big_yin / small_yin / big_yang / small_yang
+    ev_date    TEXT NOT NULL,           -- 形态日
+    ev_gap     INTEGER NOT NULL,        -- 形态日在星后第几天（1..7）
+    ev_chg     REAL,                    -- 形态日指数涨跌 %
+    dev_ma20   REAL,                    -- 形态日指数收盘 vs 前20日 MA20（%）
+    vol_ratio  REAL,                    -- 形态日量 / 前5日均量
+    PRIMARY KEY (idx_code, star_date, form)
+);
+CREATE INDEX IF NOT EXISTS idx_star_form_events_ev ON star_form_events(idx_code, ev_date);
 
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
@@ -244,6 +258,52 @@ def kline_stats(conn: sqlite3.Connection) -> dict:
         "SELECT COUNT(DISTINCT secid) AS stocks, COUNT(*) AS rows, MIN(date) AS d0, MAX(date) AS d1"
         " FROM kline").fetchone()
     return dict(row)
+
+
+# ---------------------------------------------------------------- 十字星→形态 事件库
+
+def replace_star_form_events(conn: sqlite3.Connection, idx_code: str, events: list,
+                             commit: bool = True) -> int:
+    """整指数幂等重建 star_form_events（先删后插）。
+
+    events: [{star_date, star_streak, form, ev_date, ev_gap, ev_chg, dev_ma20, vol_ratio}, ...]
+    返回插入行数。供 dip_crossstar_stat 等回溯脚本固化事件用。
+    """
+    conn.execute("DELETE FROM star_form_events WHERE idx_code=?", (idx_code,))
+    rows = [(
+        idx_code, e["star_date"], e.get("star_streak", 0), e["form"],
+        e["ev_date"], e.get("ev_gap", 0), e.get("ev_chg"), e.get("dev_ma20"),
+        e.get("vol_ratio"),
+    ) for e in events]
+    conn.executemany(
+        """INSERT INTO star_form_events
+           (idx_code, star_date, star_streak, form, ev_date, ev_gap, ev_chg, dev_ma20, vol_ratio)
+           VALUES(?,?,?,?,?,?,?,?,?)""", rows)
+    if commit:
+        conn.commit()
+    return len(rows)
+
+
+def query_star_form_events(conn: sqlite3.Connection, idx_code: str = None, form: str = None,
+                           star_streak_min: int = 0, start: str = None, end: str = None) -> list:
+    """读事件库。form: big_yin/small_yin/big_yang/small_yang 或 None(全部)。按 ev_date 升序。"""
+    sql = ("SELECT idx_code, star_date, star_streak, form, ev_date, ev_gap, ev_chg,"
+           " dev_ma20, vol_ratio FROM star_form_events WHERE star_streak>=?")
+    args: list = [star_streak_min]
+    if idx_code:
+        sql += " AND idx_code=?"
+        args.append(idx_code)
+    if form:
+        sql += " AND form=?"
+        args.append(form)
+    if start:
+        sql += " AND ev_date>=?"
+        args.append(start)
+    if end:
+        sql += " AND ev_date<=?"
+        args.append(end)
+    sql += " ORDER BY ev_date"
+    return [dict(r) for r in conn.execute(sql, args).fetchall()]
 
 
 # ---------------------------------------------------------------- 公告
