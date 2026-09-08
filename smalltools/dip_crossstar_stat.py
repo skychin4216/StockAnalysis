@@ -77,6 +77,14 @@ def fmt(rets):
     return "%d %.0f%% %+.2f%% %s" % (len(rets), w, avg, pl)
 
 
+def esc_cell(arr):
+    """H日内最高价≥买入成本的占比 / 该日内平均最高点收益(相对成本)——反弹出逃视角"""
+    if not arr:
+        return "-"
+    p = 100.0 * sum(1 for x in arr if x >= 0) / len(arr)
+    return "%d %.0f%% %+.2f%%" % (len(arr), p, sum(arr) / len(arr))
+
+
 def main():
     cache = load()
     L = []
@@ -139,6 +147,37 @@ def main():
                         events.setdefault((D, shrink, 2), []).append((k, seq[k]["date"]))
                         break
 
+        # ── 场景1 逐事件明细（星→放量大阴线，唯一事件去重，连跌取星前最深）──
+        evm = {}
+        for i in range(6, n - 16):
+            if not is_doji(seq[i]):
+                continue
+            sb = down_days(seq, i - 1)
+            if sb < 2:
+                continue
+            for k in range(i + 1, min(i + 8, n - 11)):
+                c = seq[k].get("changePct")
+                if c is None or c > -1.5:
+                    continue
+                vm = ma_vol(seq, k)
+                if vm and (seq[k].get("volume") or 0) < vm * 1.2:
+                    continue
+                old = evm.get(i)
+                if old is None or sb > old[0]:
+                    m20 = sum(x["close"] for x in seq[k - 20:k]) / 20
+                    evm[i] = (sb, k, seq[k]["date"], c, k - i, (seq[k]["close"] / m20 - 1) * 100)
+                break
+        if evm:
+            out("### 场景1 逐事件明细（十字星→星后≤7日放量大阴线；后续列为指数收盘收益%）")
+            out("| 阴线日 | 星前连跌 | 阴线在星后第几天 | 阴线日跌幅% | 指数vs MA20% | D1 | D2 | D3 | D5 | D10 |")
+            out("|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
+            for i in sorted(evm):
+                sb, k, d, chg, gap, dev20 = evm[i]
+                to_fmt = ["%+.1f%%" % ((seq[k + h]["close"] / seq[k]["close"] - 1) * 100)
+                          for h in (1, 2, 3, 5, 10)]
+                out("| %s | %d | %d | %.1f | %+.1f | %s |" % (d, sb, gap, chg, dev20, " | ".join(to_fmt)))
+            out("")
+
         random.seed(7)
         for (D, shrink, scen), evs in sorted(events.items()):
             key_txt = "连跌≥%d·十字星%s" % (D, "(缩量)" if shrink else "(任意)")
@@ -147,6 +186,7 @@ def main():
             else:
                 groups = ("所有个股", "热门前30%", "热门∩当日也收阳")
             ret_h = {g: {h: [] for h in HORIZONS} for g in groups}
+            hi_h = {g: {h: [] for h in HORIZONS} for g in groups}
             pick = random.sample(evs, min(len(evs), 150))
             n_day = 0
             for k, d in pick:
@@ -179,10 +219,17 @@ def main():
                                 grp.add("热门∩当日跌≤-3.5%")
                         elif day_chg > 0:
                             grp.add("热门∩当日也收阳")
+                    hi_by_h = {}
+                    mh = -1e18
+                    for h in HORIZONS:
+                        if pos + h < len(sd):
+                            mh = max(mh, (sd[pos + h]["high"] / base - 1) * 100)
+                            hi_by_h[h] = mh
                     for g in grp:
                         for h in HORIZONS:
                             if pos + h < len(sd):
                                 ret_h[g][h].append((sd[pos + h]["close"] / base - 1) * 100)
+                                hi_h[g][h].append(hi_by_h[h])
             if scen == 1:
                 out("### 场景1 恐慌低吸 [%s] → 大阴线当日收盘 低吸（星后≤7日出现放量大阴线）" % key_txt)
             else:
@@ -192,6 +239,13 @@ def main():
             out("|---|--:|--:|--:|--:|--:|")
             for g in groups:
                 out("| " + g + " | " + " | ".join(fmt(ret_h[g][h]) for h in HORIZONS) + " |")
+            if scen == 1:
+                out("")
+                out("逃顶速查（低吸后 H 日内 最高价≥成本的占比，样本 均最高点%）：")
+                out("| 分组 | H=1 | H=2 | H=3 | H=5 | H=10 |")
+                out("|---|--:|--:|--:|--:|--:|")
+                for g in groups:
+                    out("| " + g + " | " + " | ".join(esc_cell(hi_h[g][h]) for h in HORIZONS) + " |")
             out("")
         out("---")
         out("")
