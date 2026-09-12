@@ -41,7 +41,8 @@ def main():
         old_secids=set(),
         cache=cache,
         pos_advice=not args.no_pos,
-        scene="收盘选股",
+        scene="盘外选股",
+        file_tag="盘外选股",          # 2026-09-13：产出 盘外选股_<时间>.{csv,png,xlsx}
         note_offline=None,
         lowbuy_offline=None,
         table_img_dir=None if args.dry else pc.TABLE_IMG_DIR,

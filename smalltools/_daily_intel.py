@@ -1044,10 +1044,11 @@ def push_review(dry=False, log=print):
     sections = review_sections(log=log, trade_date=trade_date)
     title = "📋 收盘复盘 %s" % trade_date
     os.makedirs(TABLE_DIR, exist_ok=True)
-    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-    csv_path = os.path.join(TABLE_DIR, "_review_%s.csv" % ts)
-    png_path = os.path.join(TABLE_DIR, "_review_%s.png" % ts)
-    xlsx_path = os.path.join(TABLE_DIR, "_review_%s.xlsx" % ts)
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    # 2026-09-13 用户要求：复盘产出用「收盘复盘_时间」命名（旧名 _review_<ts> 无语义）
+    csv_path = os.path.join(TABLE_DIR, "收盘复盘_%s.csv" % ts)
+    png_path = os.path.join(TABLE_DIR, "收盘复盘_%s.png" % ts)
+    xlsx_path = os.path.join(TABLE_DIR, "收盘复盘_%s.xlsx" % ts)
     csv_out, png, xlsx_out = None, None, None
     try:
         import _table_csv as tcsv

@@ -2522,9 +2522,26 @@ def _build_candidate_sections(data, ctx, cache, dag, old_secids, asof):
     return sections, dag_all
 
 
+def _file_tag(scene):
+    """场景 → 产出文件组标签（2026-09-13 用户要求：CSV/长图/XLSX 用「具体名称_时间」命名）。
+
+    盘中有「盘中选股」/ 盘外有「盘外选股」/ 复盘有「收盘复盘」——便于在目录里按类型 + 时间
+    直接辨认。旧名 `_round_<ts>` 无语义，且盘中轮与盘外补推都落 `_round_` 前缀无法区分。
+    """
+    s = str(scene or "")
+    if "盘中" in s:
+        return "盘中选股"
+    if "盘外" in s:
+        return "盘外选股"
+    if "复盘" in s:
+        return "收盘复盘"
+    return "盘中选股" if in_trading_time(datetime.datetime.now()) else "盘外选股"
+
+
 def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
                 scene=None, dag=None, cache=None, lowbuy_offline=None,
-                note_offline=None, table_img_dir=None, merge_pages=True):
+                note_offline=None, table_img_dir=None, merge_pages=True,
+                file_tag=None):
     """整轮消息的纯拼装（不改文件、不推送），实时推送与历史回放共用同一排版。
 
     - 页1 选股摘要：⭐ 主线·XML DAG 当日选股 + 📋 smalltool 当日选股（超短+短线合并
@@ -2552,6 +2569,7 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
     if scene is None:
         now = datetime.datetime.now()
         scene = ("盘中选股 " if in_trading_time(now) else "盘外选股 ") + now.strftime("%H:%M")
+    tag = file_tag or _file_tag(scene)      # 产出文件组前缀（2026-09-13 用户要求）
     asof = data.get("asof", "")
     state = data.get("market_state", "")
     state_cn = {"BULLISH": "上涨", "BEARISH": "下跌", "OSCILLATION": "震荡",
@@ -2668,14 +2686,17 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
     csv_path = png_path = xlsx_path = None
     if table_img_dir and img_secs:
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        csv_path = os.path.join(table_img_dir, "_round_%s.csv" % ts)
-        png_path = os.path.join(table_img_dir, "_round_%s.png" % ts)
-        xlsx_path = os.path.join(table_img_dir, "_round_%s.xlsx" % ts)
+        # 2026-09-13 用户要求：产出用「场景_时间」命名（如 盘中选股_20260913_152033.csv），
+        # 三类场景同扩展名同基名（csv/png/xlsx 一组），目录里可直接辨认与配对。
+        stem = "%s_%s" % (tag, ts)
+        csv_path = os.path.join(table_img_dir, stem + ".csv")
+        png_path = os.path.join(table_img_dir, stem + ".png")
+        xlsx_path = os.path.join(table_img_dir, stem + ".xlsx")
         try:
             import _table_csv as tcsv
             csv_path, png_path = tcsv.export(
                 csv_path, png_path,
-                "盘中选股·合并表（候选5段 / 实仓镜像 ｜ 统一长图 + 原始 CSV）",
+                "%s·合并表（候选5段 / 实仓镜像 ｜ 统一长图 + 原始 CSV）" % tag,
                 img_secs, _TABLE_HEAD,
                 note=img_note + " ｜ 各表标题与表头各自保留，明细以图 / CSV 为准")
         except Exception as e:  # noqa: BLE001
