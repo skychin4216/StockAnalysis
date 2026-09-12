@@ -144,6 +144,14 @@ object DataConfig {
     // 东方财富 (eastmoney)
     // ═══════════════════════════════════════════════
     val eastmoneyPush2 get() = get("data_sources.eastmoney.push2")
+
+    /**
+     * 东方财富 push2 备用域名（push2delay）。
+     *
+     * 2026-09-11 实测：`push2.eastmoney.com` 会 RemoteDisconnected，`push2delay.eastmoney.com`
+     * 同一套 `ulist.np/get` 接口正常返回。每日节奏情报等新链路一律走此域名。
+     */
+    val eastmoneyPush2Delay get() = get("data_sources.eastmoney.push2delay")
     val eastmoneyPush2his get() = get("data_sources.eastmoney.push2his")
     val eastmoneySearchapi get() = get("data_sources.eastmoney.searchapi")
     val eastmoneySearchToken get() = get("data_sources.eastmoney.search_token")

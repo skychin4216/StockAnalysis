@@ -137,10 +137,25 @@ def fetch_full_history(secid, beg=BEG):
     return name, all_snaps
 
 
-def ensure_data(codes):
-    """断点续拉：缓存里已含且足够新的跳过。返回 cache。"""
+def _latest_weekday(d=None):
+    """最近一个工作日（≤ d）——无本地交易日历时的保守近似（跳过周末）。"""
+    d = d or date.today()
+    while d.weekday() >= 5:            # 5=周六, 6=周日
+        d -= timedelta(days=1)
+    return d
+
+
+def ensure_data(codes, max_stale_days=10):
+    """断点续拉：缓存里已含且足够新的跳过。返回 cache。
+
+    max_stale_days：末根 K 线距今超过该天数 → 重拉。
+      实盘发布（_etf_publish.py）传 0：必须追到最近工作日。
+      2026-09-10 修：原固定 10 天窗口 → 09-04 的数据被永久判为「已就绪」，
+      ETF 选股长期跑在过期 K 线上（当日 09-10 却用 09-04 收盘）。
+      拟合/回测（本文件 main）保持默认 10：只关心长样本，末根不敏感。
+    """
     cache = load_cache()
-    end_target = date.today() - timedelta(days=10)
+    end_target = _latest_weekday() - timedelta(days=max_stale_days)
     todo = []
     for c, n in codes:
         ent = cache.get(c)
@@ -509,18 +524,30 @@ def scan_live(cache, idx_ent):
     """基于缓存最新收盘做「今日可低吸名单」。返回 dict 供 data/_etf_live_picks.json。
     规则与 v0.3 dip_buy 完全一致：在最新交易日收盘判定，次日开盘可买。
     """
-    # 大盘门控（沪深300 最新有效日：close>MA20>MA60）
-    gate = {"ok": False, "date": None, "note": "沪深300 需 close>MA20>MA60 结构多头"}
+    # 大盘门控（沪深300 最新交易日：close>MA20>MA60）。
+    # 2026-09-09 修复：原实现从末端回溯到"最近一个历史多头日"（如 2026-07-01），
+    # 导致空头行情仍误报多头可低吸并显示过期日期；现只看最新交易日，
+    # 与回测 apply_gate（按信号日判定）口径一致。
+    gate = {"ok": False, "date": None, "state": "mixed",
+            "note": "沪深300 需 close>MA20>MA60 多头排列（多头才可低吸）"}
     if idx_ent and idx_ent.get("snaps"):
         is_ = idx_ent["snaps"]
         ic = [s["close"] for s in is_]
         m20 = sma(ic, 20)
         m60 = sma(ic, 60)
-        for j in range(len(is_) - 1, -1, -1):
-            if j >= 60 and ic[j] > m20[j] > m60[j]:
-                gate = {"ok": True, "date": is_[j]["date"],
-                        "note": f"沪深300 close({ic[j]:.0f})>MA20({m20[j]:.0f})>MA60({m60[j]:.0f})"}
-                break
+        j = len(is_) - 1
+        gate["date"] = is_[j]["date"]  # 无论是否多头都带"最新交易日"，UI 显示一致
+        # 2026-09-09 三态化（与 APK EtfGateNode / usecase_pipeline._etf_gate 同步）：
+        # 非多头 ≠ 一律叫"空头"——空头排列才算空头，其余为均线纠缠。
+        if j >= 60 and ic[j] > m20[j] > m60[j]:
+            gate = {"ok": True, "date": is_[j]["date"], "state": "bull",
+                    "note": f"沪深300 close({ic[j]:.0f})>MA20({m20[j]:.0f})>MA60({m60[j]:.0f})"}
+        elif j >= 60 and ic[j] < m20[j] < m60[j]:
+            gate = {"ok": False, "date": is_[j]["date"], "state": "bear",
+                    "note": f"沪深300 空头排列 close({ic[j]:.0f})<MA20({m20[j]:.0f})<MA60({m60[j]:.0f})"}
+        elif j >= 60:
+            gate = {"ok": False, "date": is_[j]["date"], "state": "mixed",
+                    "note": f"沪深300 均线纠缠（未呈多头排列）MA20({m20[j]:.0f}) MA60({m60[j]:.0f})"}
     as_of = max((s["date"] for c, e in cache.items() if not c.startswith(("sh000", "sz399"))
                  for s in e["snaps"]), default=None)
     signals, approach, watch = [], [], []

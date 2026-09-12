@@ -3,6 +3,7 @@ package com.chin.stockanalysis.ai
 import android.content.Context
 import android.util.Log
 import com.chin.stockanalysis.ApiConfigManager
+import com.chin.stockanalysis.ApiKeysLoader
 import com.chin.stockanalysis.ApiProvider
 import com.chin.stockanalysis.ApiProviderConfig
 import com.chin.stockanalysis.OpenAiCompatibleProvider
@@ -97,14 +98,23 @@ object AiProviderPool {
                 }
 
                 // 3. 全部被占用 → 尝试共享第一个有 key 的（不论健康状态）
+                var anyKeyed = false
                 for (preferredId in PRIORITY_ORDER) {
                     val config = mgr.getProviderConfig(preferredId) ?: continue
                     if (config.apiKey.isBlank()) continue
+                    anyKeyed = true
 
                     val provider = getOrCreateProvider(config)
                     val slot = Slot(preferredId, "${config.name}(共享)", provider, allocatedBy = callerTag)
                     Log.w(TAG, "⚠️ 全部忙，共享: ${config.name} [by: $callerTag]")
                     return slot
+                }
+                // 3.5 一个 key 都没配：立即失败，不必空转等待满 timeout（否则调用方白等 60s 才报错）
+                if (!anyKeyed) {
+                    Log.e(TAG, "❌ 未配置任何 AI Provider 的 apiKey，立即失败 [by: $callerTag]")
+                    // Key 来源诊断：区分「properties 没读到」「app_config.json 没写 api_key」「真没配」
+                    Log.e(TAG, "   Key 诊断: " + ApiKeysLoader.describeKeySources(PRIORITY_ORDER))
+                    return null
                 }
             }
 

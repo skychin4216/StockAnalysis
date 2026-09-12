@@ -128,6 +128,55 @@ class OverseasFactor:
         return "NORMAL", {"weighted": weighted, "per": per,
                           "affected": True, "reason": f"外围 {weighted:.2f}% 无碍"}
 
+    def live_dual(self, **kw):
+        """当日实时「日元+费半」双定向（守护/盘中提醒用）；历史 asof 判定请用 check()。"""
+        return check_live_dual(**kw)
+
+
+# ── 双定向升级（2026-09-10）────────────────────────────────────────────
+# 原因子只用两只 A 股跨境 ETF 做代理（纳指100ETF/中韩半导体ETF）；现直读当日实时：
+#   USDJPY 跌破 148      → carry unwind 警报：当日全球科技风险仓降配
+#   费半 SOX 隔夜 ≤ -3%  → A股第一层供应链(光模块/PCB/半导体设备)开盘不追高、可等恐慌低吸
+# 数据来自 _macro_sentinel 当日缓存（东财/新浪实测源）；历史回测仍走 ETF 代理，互不影响。
+JPY_ALERT = 148.0
+SOX_ALERT = -3.0
+
+
+def live_dual():
+    """读 _macro_sentinel 当日缓存 → {jpy, sox_pct, jpy_bad, sox_bad}；无数据返回 {}。"""
+    try:
+        import _macro_sentinel as ms
+        c = ms._load()
+    except Exception:  # noqa: BLE001
+        return {}
+    jpy = (c.get("usdjpy") or {}).get("last")
+    sox = (c.get("sox") or {}).get("pct")
+    if jpy is None and sox is None:
+        return {}
+    return {"jpy": jpy, "sox_pct": sox,
+            "jpy_bad": jpy is not None and jpy < JPY_ALERT,
+            "sox_bad": sox is not None and sox <= SOX_ALERT}
+
+
+def check_live_dual(**kw):
+    """当日科技风险双定向判定：返回 (flag, info)。
+    flag: NORMAL / CAUTION(单向命中) / ALERT(双向命中) / NO_DATA。
+    """
+    d = live_dual()
+    if not d:
+        return "NO_DATA", {"reasons": ["日元/费半实时数据不足"]}
+    reasons = []
+    if d["jpy_bad"]:
+        reasons.append("USDJPY %.1f<%.0f carry unwind → 当日科技风险仓降配"
+                       % (d["jpy"], JPY_ALERT))
+    if d["sox_bad"]:
+        reasons.append("费半 %.1f%%≤%.0f%% → 光模块/PCB/半导体设备开盘不追高、可等恐慌低吸"
+                       % (d["sox_pct"], SOX_ALERT))
+    n = len(reasons)
+    flag = "ALERT" if n >= 2 else ("CAUTION" if n == 1 else "NORMAL")
+    return flag, {"jpy": d.get("jpy"), "sox_pct": d.get("sox_pct"),
+                  "reasons": reasons or ["日元/费半无警报"]}
+
 
 def make_guard(factor=None, verbose=False):
     """工厂：返回包装 collect_signals_window 的守卫函数（与实验脚本一致的注入方式）。

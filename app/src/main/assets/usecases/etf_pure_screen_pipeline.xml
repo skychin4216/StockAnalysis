@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 纯 ETF 筛选 Pipeline（V2 DAG · 门控 → 本体筛选 → 止损 三阶段）
+
+  与同目录 usecase_pipeline.py（Python 引擎，XML DAG 主线）共用同一文件 —— 单一事实源。
+
+  stageOutputs：
+    - "n_etf_gate"       JSONObject {ok, date, note}   沪深300 close>MA20>MA60
+    - "n_pure_screen"    JSONObject {as_of, marketState, rows[]/watch[], rule{}, nBaseBuy}
+                         每行 = 一只 ETF（baseBuy/tBuy/tSell + 门控明细 + exit 参数）
+    - "n_etf_stop"       JSONObject {rows[] 附 stop/stopPct/broken}（ETF 行情直接可算）
+
+  ★ 大盘要不要考虑？—— 要（三态自适应，节点内 auto 判定，取自沪深300）：
+    BULLISH     位置门槛放宽：dd 0.45~0.72、RSI6 上限 60（不必等到深回撤）
+    OSCILLATION 标准档：dd 0.35~0.65（growthRelax）、RSI6 30~55
+    BEARISH     底仓 base_buy 全关 → 只保留 t_buy/t_sell（做 T 降本）观察
+  另：宽基 ETF 打 broad 标记；excludeBroadBaseBuy=true 时宽基只做 T 不作底仓
+      （本地 13 只池以宽基为主，故默认 false，避免筛空）。
+-->
+<DagPipeline id="etf_pure_screen_dag" name="纯ETF筛选Pipeline"
+    description="沪深300门控 → ETF本体(RAS/MACD/OBV/RSI6/250日回撤/流动性)筛选 → 多理论投票止损">
+
+  <NodeList>
+    <!-- ── 阶段1：大盘门控 ── -->
+    <Node id="n_etf_gate" name="沪深300结构多头门控" module="etf_gate">
+      <config>
+        <param name="indexCode" value="sh000300" />
+        <param name="maFast" value="20" />
+        <param name="maSlow" value="60" />
+        <param name="minSnapshots" value="60" />
+      </config>
+    </Node>
+
+    <!-- ── 阶段2：ETF 本体筛选（思路文档 §1~§3 口径） ── -->
+    <Node id="n_pure_screen" name="纯ETF本体筛选" module="etf_pure_screen">
+      <config>
+        <param name="indexCode" value="sh000300" />
+        <!-- 位置：距 250 日高回撤 -->
+        <param name="ddWin" value="250" />
+        <param name="ddLo" value="0.40" />
+        <param name="ddHi" value="0.60" />
+        <param name="growthRelax" value="true" />
+        <param name="relaxLo" value="0.35" />
+        <param name="relaxHi" value="0.65" />
+        <!-- RSI6：底仓区间 + 做T阈值 -->
+        <param name="rsiLo" value="30" />
+        <param name="rsiHi" value="55" />
+        <param name="rsiSell" value="70" />
+        <!-- RAS 相对强度斜率窗口（vs 沪深300） -->
+        <param name="rasWin" value="20" />
+        <!-- 流动性：20 日均成交额（亿元）；volLot=100 表示 volume 单位为「手」 -->
+        <param name="amountWin" value="20" />
+        <param name="volLot" value="100" />
+        <param name="minAmountYi" value="0.5" />
+        <!-- 五门控开关（base_buy 必须全过） -->
+        <param name="requireRas" value="true" />
+        <param name="requireMacd" value="true" />
+        <param name="requireObv" value="true" />
+        <param name="topN" value="5" />
+        <param name="minBars" value="250" />
+        <!-- 大盘三态自适应 -->
+        <param name="marketAdapt" value="true" />
+        <param name="bearishPause" value="true" />
+        <param name="bullLo" value="0.45" />
+        <param name="bullHi" value="0.72" />
+        <param name="bullRsiHi" value="60" />
+        <!-- 宽基：只做 T 不作底仓（本地池以宽基为主，默认关闭该限制） -->
+        <param name="excludeBroadBaseBuy" value="false" />
+        <param name="broadCodes" value="510300,159915,510050,510500,510180,510880,159919,510330,510900,159901,159905,159949" />
+        <param name="strategyText" value="ETF本体筛选：base_buy = RAS绿转红 &amp; DIF>DEA &amp; OBV>OBV_MA20 &amp; RSI6∈[30,55] &amp; 距250日高回撤∈[0.35,0.65] &amp; 20日均额≥0.5亿；t_buy = RSI6≤30 且 MACD柱收窄；t_sell = RSI6≥70 且 MACD柱扩张；大盘三态自适应(见 etf_pure_screen_pipeline.xml)" />
+      </config>
+    </Node>
+
+    <!-- ── 阶段3：多理论投票止损（ETF 行情来自本地 etf_cache.json） ── -->
+    <Node id="n_etf_stop" name="多理论投票止损" module="stop_loss_vote">
+      <config>
+        <param name="target" value="etf" />
+        <param name="sourceNode" value="n_pure_screen" />
+        <param name="period" value="MID" />
+        <param name="marketState" value="auto" />
+        <param name="trailUp" value="true" />
+      </config>
+    </Node>
+  </NodeList>
+
+  <Links>
+    <Link>
+      <SourceNodeId>n_etf_gate</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_pure_screen</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_pure_screen</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_etf_stop</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+  </Links>
+</DagPipeline>

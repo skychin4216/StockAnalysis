@@ -52,6 +52,16 @@
         <param name="strategyText" value="v0.3 dip_buy: 距60日高回撤-25%~-12% + RSI6小于30 + 年线上方 + 收阳/RSI拐头 + 非5日新低 + 沪深300结构多头门控(参数见 etf_dip_pipeline.xml)" />
       </config>
     </Node>
+    <!-- ── 阶段4（2026-09-12 新增）：多理论投票止损 —— 给每行 ETF 附 stop/stopPct/broken
+         （六理论取最保守；period=MID、市场态自动判沪深300 三态；Python 端 stop_loss_vote 同构） ── -->
+    <Node id="n_etf_stop" name="多理论投票止损" module="stop_loss_vote">
+      <config>
+        <param name="target" value="etf" />
+        <param name="period" value="MID" />
+        <param name="marketState" value="auto" />
+        <param name="trailUp" value="true" />
+      </config>
+    </Node>
   </NodeList>
 
   <Links>
@@ -63,6 +73,12 @@
     </Link>
     <Link>
       <SourceNodeId>n_etf_signal</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_etf_stop</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_etf_stop</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_etf_exit</TargetNodeId>
       <TargetPortId>0</TargetPortId>

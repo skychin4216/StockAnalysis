@@ -86,4 +86,36 @@ object QuantWorkbenchState {
     fun finishQuickBuild() {
         quickBuildActive = false
     }
+
+    // ═══════════════════════════════════════════════════
+    // 📊 ETF 沪深300 门控（工作台公共行小字，2026-09-10）
+    // 门控判断的是「大盘结构」这一公共前提——三周期低吸与 ETF 低吸同用一套结论，
+    // 原先在 ETF 页独占一整行横幅纯属浪费，现上移到工作台顶部「🚀 一键建仓」同一行、
+    // 小字两行显示：line1 = 状态（沪深300 空头排列），line2 = 数值链（4554<MA20(4601)<MA60(4703)）。
+    // ETF 页 render() 成功后发布，工作台监听即时刷新；未跑 ETF 时工作台回落到上次值。
+    // ═══════════════════════════════════════════════════
+
+    /** 门控状态行（如「沪深300 空头排列」）；空 = 尚无数据，工作台隐藏小字 */
+    @Volatile
+    var etfGateLine1: String = ""
+
+    /** 门控数值链（如「4554<MA20(4601)<MA60(4703)」） */
+    @Volatile
+    var etfGateLine2: String = ""
+
+    /** 门控是否通过（多头排列）：true=可低吸（绿），false=暂停低吸（红） */
+    @Volatile
+    var etfGateOk: Boolean = true
+
+    /** 工作台监听（Main 线程回调）：ETF 页发布后即时刷新公共行小字 */
+    @Volatile
+    var etfGateListener: ((String, String, Boolean) -> Unit)? = null
+
+    /** ETF 页发布门控状态（render 成功后调用，Main 线程） */
+    fun publishEtfGate(line1: String, line2: String, ok: Boolean) {
+        etfGateLine1 = line1
+        etfGateLine2 = line2
+        etfGateOk = ok
+        etfGateListener?.invoke(line1, line2, ok)
+    }
 }

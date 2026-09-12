@@ -65,6 +65,7 @@ object TrendPatternEngine {
             crossedDown -> { stateBull = false; stateLabel = "红翻绿" }
             lastBarBull -> { stateBull = true;  stateLabel = "多头" }
             lastBarBear -> { stateBull = false; stateLabel = "空头" }
+            else -> { stateBull = m5 >= m20; stateLabel = if (stateBull) "多头" else "空头" }
         }
 
         // ── 2. 看多形态（权重高者优先，识别顺序与历史一致） ──

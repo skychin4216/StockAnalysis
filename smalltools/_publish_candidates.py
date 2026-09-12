@@ -85,6 +85,8 @@ OUT_DEFAULT = os.path.join(ROOT, "AutoQuant", "data", "candidates_quant.json")
 
 # APK 扫描结果（外部板块信号源）+ APK 上传的全量 K 线库（动态补池数据源）
 APK_SCAN_FILE = os.path.join(HERE, "_last_scan.json")
+# 每日节奏情报（_daily_intel.py 产出：08:00 宏观/美股、09:00 亚太 → 利好利空板块 + 候选）
+DAILY_INTEL_FILE = os.path.join(HERE, "data", "_daily_intel.json")
 MARKET_DB = os.path.join(ROOT, "data", "market_data.db")
 APK_MIN_SEC_MOM = 10.0  # APK 外部板块动量阈值，低于此不并入候选
 
@@ -853,8 +855,29 @@ def _push_wechat(title, content, cfg):
 
     统一实现见 push_channel.py：企微机器人为本机 POST 直推（零审核，
     不依赖第三方公众号）；pushplus/serverchan 仅作未配 wecom 时的兜底。
+
+    2026-09-11：所有文本推送统一写入 market_data.db `push_record` 账本
+    （slot 按当前盘段，kind=text），满足「推送的股票/资讯存储到数据库」。
     """
-    return push_channel.push(title, content, cfg)
+    err = ""
+    ok = False
+    try:
+        ok = push_channel.push(title, content, cfg)
+    except Exception as e:  # noqa: BLE001
+        err = "%s: %s" % (type(e).__name__, e)
+        raise
+    finally:
+        try:
+            import _market_db as mdb
+            conn = mdb.get_conn()
+            try:
+                mdb.save_push_record(conn, slot=_slot_of() or "", kind="text",
+                                     title=title, ok=ok, err=err, content=content)
+            finally:
+                conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+    return ok
 
 
 # ── 4. COS 上传 ────────────────────────────────────────────────────────
@@ -1222,15 +1245,38 @@ def _round_legacy(data, ctx, cfg, old_secids=None):
     return _push_wechat(title, content, cfg)
 
 
-def _find_name(data, secid):
+def _find_name(data, secid, extra_names=None):
+    """secid → 「名称+代码」；名称缺失时依次回退 传入名表 / 全池缓存名。
+
+    2026-09-11：收盘/午间总结的「多轮入选」是全天累计命中，命中 secid 到结算时
+    往往已不在当轮 data(prepared/groups) 内；此前直接返回裸 secid → 用户看到
+    「预备队只有代码没名称」。现由调用方传入 extra_names（rhythm.hit_name 累计名
+    ＋全池缓存名）兜底，只在彻底查不到时才退化。
+    """
     for items in (data.get("groups") or {}).values():
         for it in items:
-            if it["secid"] == secid:
-                return "%s%s" % (it.get("name", ""), secid[2:])
+            if it.get("secid") == secid and it.get("name"):
+                return "%s%s" % (it.get("name"), secid[2:])
     for it in data.get("prepared") or []:
-        if it["secid"] == secid:
-            return "%s%s" % (it.get("name", ""), secid[2:])
-    return secid
+        if it.get("secid") == secid and it.get("name"):
+            return "%s%s" % (it.get("name"), secid[2:])
+    nm = (extra_names or {}).get(secid)
+    if nm:
+        return "%s%s" % (nm, secid[2:])
+    return secid[2:] or secid
+
+
+def _name_index(cache, extra=None):
+    """全池缓存名 + 累计命中名 → {secid: 名称}（供 _find_name 兜底，一次构建复用）。"""
+    idx = {}
+    for sid, ent in (cache or {}).items():
+        nm = (ent or {}).get("name")
+        if nm:
+            idx[sid] = nm
+    for sid, nm in (extra or {}).items():
+        if nm and not idx.get(sid):
+            idx[sid] = nm
+    return idx
 
 
 # ── 5. 主流程 ──────────────────────────────────────────────────────────
@@ -1240,6 +1286,620 @@ def _find_item_by_secid(data, secid):
             if it.get("secid") == secid:
                 return it
     return None
+
+
+# ── 统一推送表格（2026-09-12 用户确认）：五段选股 + 实仓镜像共用同一套列 ──
+# 此前各段表头各行其是（主线/smalltool 12 列、ETF 全行业扫描 6 列、ETF top5 9 列），
+# 无法横向对比。用户决定：把原「ETF 全行业扫描」独有的 距60日高 / 今日 / 所属ETF / 备注
+# 上提为公共列，「ETF top5」的 RSI/SAR/MACD/OBV/均线粘合/换手/量比 亦为公共技术列 ——
+# 所有选股结果同一套列，在同一张长图 / 同一份 CSV 里逐列对齐可直接横比。
+# 2026-09-12 二次改版：曾把「趋势图谱 / 星后形态 / 趋势图」三列合并为一列「趋势形态」，
+#   导致 a1~a5 为 14 列、b 实仓镜像为 16 列（多「建议 / 盈亏%」两列）→ 两段列数差 2、
+#   列位整体错开、长图列宽对不齐。
+# 2026-09-12 三次定稿（用户确认）：统一为 16 列 —— 形态三列恢复分列（信息不丢），
+#   b 段「建议 / 盈亏%」不再单开两列，并入「备注」格 → a1~a5 与 b 完全同表头。
+# 2026-09-12 四次定稿（用户确认）：再增 1 列「机构股」→ **17 列**，与 APK/exe 的
+#   「技术假设(PickTechTable)」同口径；盘中选股与收盘复盘全部用这一套 UI 模板。
+#   机构股取值 = A·机构加仓 / B·机构参与 / C·散户票 / —（无季报数据），
+#   来源 data/_inst_holdings.json（smalltools/_inst_holdings.py 每周 --update-pool 刷新，
+#   usecase inst_holding）；口径见《机构持续加仓自动选股池.txt》与 _inst_holdings 模块。
+# 列口径 = [股票名称, 代码] + 15 格 cells
+#          （距60日高/今日/所属ETF 3 + 趋势图谱/星后形态 2 + _tech_cells 7
+#            + 趋势图 1 + 机构股 1 + 备注 1）。
+_TABLE_HEAD = ["股票名称", "代码", "距60日高", "今日", "所属ETF",
+               "趋势图谱", "星后形态", "RSI", "SAR", "MACD", "OBV",
+               "均线粘合", "换手", "量比", "趋势图", "机构股", "备注"]
+_N_CELLS = len(_TABLE_HEAD) - 2          # 15：距60日高 … 备注
+_I_INST = _TABLE_HEAD.index("机构股") - 2     # cells 下标 13（趋势图 12 之后）
+
+# ── v11b 趋势图谱列（2026-09-08）：识别「连跌x天→十字星→星后大/小阴阳」K线形态 ──
+# 口径与 dip_crossstar_stat.py（十字星分歧四形态·18年市场库）完全一致：
+#   十字星 = |收-开| ≤ 0.20×(高-低)；大/小K分界 = ±1.5%；星前连跌 = 日涨跌<0 的连续天数。
+# 命中则「趋势图谱」填 连跌x天→十字星，「星后形态」填星后第y天走出的大/小阴阳（未走出=今日星待变盘）。
+_STAR_DOJI_THR = 0.20
+_STAR_BIG_THR = 1.5
+_STAR_WINDOW = 7
+
+
+def _snap_chg_pct(snaps, i):
+    """第 i 根较前收涨跌%。缓存 snap 未必带 changePct → 自算兜底。"""
+    if i <= 0:
+        return 0.0
+    prev = snaps[i - 1].get("close") or 0.0
+    cur = snaps[i].get("close") or 0.0
+    return (cur / prev - 1.0) * 100.0 if prev else 0.0
+
+
+def _snap_chg(snaps, i):
+    c = snaps[i].get("changePct")
+    if c is None:
+        c = _snap_chg_pct(snaps, i)
+    try:
+        return float(c)
+    except (TypeError, ValueError):
+        return _snap_chg_pct(snaps, i)
+
+
+def _is_doji_snap(s):
+    hi, lo = s.get("high"), s.get("low")
+    if not hi or not lo:
+        return False
+    try:
+        hi, lo = float(hi), float(lo)
+    except (TypeError, ValueError):
+        return False
+    if hi <= lo:
+        return False
+    return abs(float(s.get("close") or 0.0) - float(s.get("open") or 0.0)) <= _STAR_DOJI_THR * (hi - lo)
+
+
+def _down_days_before(snaps, i, cap=15):
+    """从第 i 根往回（含 i）数连续阴跌天数；口径=dip_crossstar.down_days（changePct<0 计一天）。"""
+    n = 0
+    j = i
+    while j >= 0 and n < cap:
+        if _snap_chg(snaps, j) >= 0:
+            break
+        n += 1
+        j -= 1
+    return n
+
+
+def _k_form_name(chg):
+    """涨跌% → 大阴/小阴/大阳/小阳（±1.5% 分界，与 dip_crossstar.classify 同口径）。"""
+    if chg <= -_STAR_BIG_THR:
+        return "大阴"
+    if chg < 0:
+        return "小阴"
+    if chg >= _STAR_BIG_THR:
+        return "大阳"
+    if chg > 0:
+        return "小阳"
+    return None
+
+
+def _trend_cells(snaps):
+    """趋势图谱 2 格。最近 7 根内从最新往回找「星前连跌≥1」的十字星（取最近命中）：
+    [图谱="连跌x天→十字星", 星后形态="星后第y天 大阴/小阴/大阳/小阳"｜星=最新日="今日星·待变盘"]。
+    未匹配返回 ["",""]（渲染为 —），只对匹配的候选填充。"""
+    try:
+        snaps = snaps or []
+        n = len(snaps)
+        if n < 25:
+            return ["", ""]
+        for i in range(n - 1, max(n - 1 - _STAR_WINDOW, 20) - 1, -1):
+            if not _is_doji_snap(snaps[i]):
+                continue
+            x = _down_days_before(snaps, i - 1)  # 星前连跌天数（不含星日本身）
+            if x < 1:
+                continue  # 高位/横盘十字星（无前跌）不属于连跌后企稳场景，继续找更早的星
+            graph = "连跌%d天→十字星" % x
+            after = ""
+            for k in range(i + 1, min(i + 1 + _STAR_WINDOW, n)):
+                f = _k_form_name(_snap_chg(snaps, k))
+                if f:
+                    after = "星后第%d天%s" % (k - i, f)
+                    break
+            if not after:
+                after = "今日星·待变盘" if i == n - 1 else "星后未走大K"
+            return [graph, after]
+        return ["", ""]
+    except Exception:
+        return ["", ""]
+
+
+def _tw(s):
+    """显示宽度：CJK 算 2 个半角位。"""
+    return sum(2 if ord(c) > 127 else 1 for c in str(s or ""))
+
+
+def _tech_cells(tech="", snaps=None):
+    """指标摘要串(rich_tag: RSI.. SAR.. MACD.. OBV.. 均线粘合..) + 可选 snaps
+    → 7 个表格单元格 [RSI, SAR, MACD, OBV, 均线粘合, 换手, 量比]。
+    摘要串缺失时用 snaps 重算；仍缺的置 ''（渲染时显示 —）。"""
+    t = tech or ""
+    if not t and snaps:
+        try:
+            t = _tech_rich(snaps)
+        except Exception:
+            t = ""
+    d = {"rsi": "", "sar": "", "macd": "", "obv": "", "sq": "", "to": "", "vr": ""}
+    for tok in str(t).split():
+        if tok.startswith("RSI"):
+            d["rsi"] = tok[3:].lstrip(": ")
+        elif tok.startswith("SAR"):
+            d["sar"] = tok[3:]
+        elif tok.startswith("MACD"):
+            d["macd"] = tok[4:]
+        elif tok.startswith("OBV"):
+            d["obv"] = tok[3:]
+        elif "粘合" in tok:
+            d["sq"] = "粘合"
+        elif tok.startswith("MA多头"):
+            d["sq"] = "多头"
+        elif tok.startswith("MA偏空"):
+            d["sq"] = "偏空"
+        elif tok.startswith("换手"):
+            m = re.search(r"([\d.]+)%", tok)
+            if m:
+                d["to"] = m.group(1) + "%"
+        elif tok.startswith("量比"):
+            m = re.search(r"([\d.]+)", tok)
+            if m:
+                d["vr"] = m.group(1)
+    # 换手/量比在 tech 串缺时用 snaps 补齐
+    if (not d["to"] or not d["vr"]) and snaps:
+        try:
+            last = snaps[-1] or {}
+            if not d["to"] and last.get("turnover"):
+                d["to"] = "%.1f%%" % float(last["turnover"])
+            if not d["vr"]:
+                vr = _tech_vr(snaps) if _QUOTE_OK else None
+                if vr:
+                    d["vr"] = "%.1f" % vr
+        except Exception:
+            pass
+    return [d["rsi"], d["sar"], d["macd"], d["obv"], d["sq"], d["to"], d["vr"]]
+
+
+# ── 趋势图列（2026-09-10）：经典K线形态匹配 → 方向(上涨/中性/下跌) + 形态名 ──
+# 口径＝XML DAG 主线引擎 usecase_pipeline._trend_match_3way（与 APK TrendClassGate 同口径）；
+# 形态库＝assets/trend_charts/index.html（早晨之星/看涨吞没/红三兵/黄昏之星/三乌鸦…）。
+_UP_MOD = None
+
+
+def _up_module():
+    """惰性导入 XML DAG 主线引擎 usecase_pipeline（与 XML 同居 assets/usecases）。"""
+    global _UP_MOD
+    if _UP_MOD is None:
+        p = os.path.normpath(os.path.join(HERE, "..", "app", "src", "main",
+                                          "assets", "usecases"))
+        if p not in sys.path:
+            sys.path.insert(0, p)
+        import usecase_pipeline as up  # noqa: E402
+        _UP_MOD = up
+    return _UP_MOD
+
+
+def _trend_chart_cell(snaps):
+    """趋势图 1 格：『↑上涨·早晨之星 / →中性 / ↓下跌·三乌鸦』。
+
+    口径＝`_trend_match_3way`（经典K线形态库：早晨之星/看涨吞没/红三兵/黄昏之星/三乌鸦…）
+    + 方向标签；与「趋势图谱 / 星后形态」两列（十字星口径）相互独立、各自成列（2026-09-12
+    三次定稿恢复三列分列）。K线不足/异常 → —。
+    """
+    try:
+        win = snaps or []
+        if len(win) < 30:
+            return "—"
+        m = _up_module()._trend_match_3way(win)
+        lab = m.get("label") or "中性"
+        nm = m.get("bull") or m.get("bear") or ""
+        arrow = {"上涨": "↑", "下跌": "↓"}.get(lab, "→")
+        return "%s%s%s" % (arrow, lab, ("·" + nm) if nm else "")
+    except Exception:  # noqa: BLE001
+        return "—"
+
+
+def _pos60_cell(snaps):
+    """距60日高（负=低于60日高点；口径同 _etf_holdings._pos60，全表统一）。"""
+    try:
+        import _etf_holdings as _eh
+        v = _eh._pos60(snaps or [])
+    except Exception:  # noqa: BLE001
+        v = None
+    return ("%+.1f%%" % v) if isinstance(v, (int, float)) else ""
+
+
+def _day_pct_cell(snaps):
+    """今日涨跌%（最新K收盘口径；口径同 _etf_holdings._day_pct，全表统一）。"""
+    try:
+        import _etf_holdings as _eh
+        v = _eh._day_pct(snaps or [])
+    except Exception:  # noqa: BLE001
+        v = None
+    return ("%+.1f%%" % v) if isinstance(v, (int, float)) else ""
+
+
+_IND_MAP = None
+
+
+def _industry_map():
+    """{6位代码: 东财行业名}（进程内缓存；供「所属ETF」按板块关键词回填）。"""
+    global _IND_MAP
+    if _IND_MAP is None:
+        try:
+            import _industry_map as _im
+            _IND_MAP = _im.build_industry() or {}
+        except Exception:  # noqa: BLE001
+            _IND_MAP = {}
+    return _IND_MAP
+
+
+def _etf_tags(codes, industries=None, strict=False):
+    """6位代码集合 → {code: 所属ETF}。
+
+    两级口径（2026-09-12 用户确认「按板块关键词回填」）：
+      ① 命中核心 ETF 前十大重仓矩阵（data/_etf_holdings.json）→ 直接用它；
+      ② 未覆盖 → 用该票的东财行业名去 THEME_RULES 关键词匹配，回填对应行业 ETF 简称；
+      ③ 仍空 → ""（渲染为 —）。
+    `industries` = {code: 行业名}；`strict=True` 时只认 ①（实仓镜像核对用）。
+    """
+    codes = list(codes or [])
+    try:
+        import _etf_holdings as _eh
+        m = _eh.etf_tag_map() or {}
+    except Exception:  # noqa: BLE001
+        _eh, m = None, {}
+    out = {}
+    ind_map = _industry_map() if industries is None else industries
+    for c in codes:
+        tag = m.get(c, "")
+        if not tag and not strict and _eh is not None:
+            ind = ind_map.get(c) or ""
+            if ind and ind != "未知":
+                tag = _eh.industry_to_etf(ind)
+        out[c] = tag
+    return out
+
+
+_INST_MAP = {"key": None, "data": {}}
+
+
+def _inst_map():
+    """机构判定映射 {code: (grade, label, score, verdict)}（按 data/_inst_holdings.json mtime 缓存）。
+
+    数据资产由 smalltools/_inst_holdings.py 每周 --update-pool 刷新（东财机构持股一览表 +
+    股东户数）；缺失或解析失败时返回 {}，调用方降级为「—」，不阻塞推送。
+    """
+    try:
+        import _inst_holdings as _I
+    except Exception:  # noqa: BLE001
+        return {}
+    try:
+        key = os.path.getmtime(_I.OUT_FILE)
+    except OSError:
+        return {}
+    if _INST_MAP["key"] == key:
+        return _INST_MAP["data"]
+    try:
+        d = _I.load_cache()
+        m = {c: (v.get("grade") or "", _I.grade_label(v), v.get("score"),
+                 v.get("verdict") or "") for c, v in (d.get("stocks") or {}).items()}
+        _INST_MAP.update({"key": key, "data": m})
+        return m
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _code6(code):
+    c = str(code or "").strip().lower()
+    if c[:2] in ("sh", "sz", "bj"):
+        c = c[2:]
+    return c[-6:] if len(c) >= 6 else c
+
+
+def _inst_cell(code):
+    """「机构股」单元格：A·机构加仓 / B·机构参与 / C·散户票 / —（无季报数据）。"""
+    v = _inst_map().get(_code6(code))
+    return v[1] if v else "—"
+
+
+_INST_POOL_OUT = os.path.join(ROOT, "data", "_inst_pool.json")
+_INST_POOL_ASSET = os.path.join(ROOT, "app", "src", "main", "assets", "data", "_inst_pool.json")
+
+
+def _write_inst_pool(secs, asof=""):
+    """把本轮全部表（五段选股 + 实仓镜像）的股票汇总落盘 data/_inst_pool.json。
+
+    与 data/_inst_holdings.json 同目录，供 usecase `inst_holding` 的 `inst_pool_build` 节点读取
+    （APK / exe 双端），实现「推送选股池 → 机构判定 → 多理论止损」离线闭环。同时镜像到
+    assets/data 供 APK 内置读取。失败静默（不阻塞推送）。
+    """
+    try:
+        rows, idx = [], {}
+        for s in (secs or []):
+            title = str(s.get("title") or "")
+            src = "选股池"
+            for kw, tag in (("实仓", "实仓"), ("top5", "ETFtop5"), ("top 5", "ETFtop5"),
+                            ("全行业扫描", "ETF全行业扫描"), ("ETF 当日", "ETF当日"),
+                            ("smalltool", "三周期选股"), ("DAG", "三周期选股")):
+                if kw in title:
+                    src = tag
+                    break
+            for r in (s.get("rows") or s.get("body") or []):
+                if not isinstance(r, dict):
+                    continue
+                code = _code6(r.get("code"))
+                if len(code) != 6 or not code.isdigit():
+                    continue
+                name = str(r.get("name") or "").lstrip("·🔒🆕🟡√").strip()
+                row = idx.get(code)
+                if row is None:
+                    idx[code] = {"code": code, "name": name, "from": src, "entry": 0}
+                    rows.append(idx[code])
+                    continue
+                if src and src not in row["from"]:
+                    row["from"] = (row["from"] + "+" + src) if row["from"] else src
+                if name and not row["name"]:
+                    row["name"] = name
+        out = {"asof": asof,
+               "updated": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+               "n": len(rows), "rows": rows,
+               "source": "五段选股(三周期+ETF全行业扫描+ETFtop5)+实仓"}
+        for p in (_INST_POOL_OUT, _INST_POOL_ASSET):
+            try:
+                os.makedirs(os.path.dirname(p), exist_ok=True)
+                with open(p, "w", encoding="utf-8") as f:
+                    json.dump(out, f, ensure_ascii=False, indent=1)
+            except OSError:
+                continue
+        return out
+    except Exception as e:  # noqa: BLE001
+        ops_note("inst_pool_write_fail", "%s: %s" % (type(e).__name__, e))
+        return None
+
+
+def _unified_cells(snaps, tech="", etf_tag="", note="", tech_cells=None,
+                   p60=None, day=None, note_cap=26, inst=None):
+    """公共 15 单元格（五段选股 / 实仓镜像共用同一口径）。
+
+    距60日高 / 今日 / 所属ETF / 趋势图谱 / 星后形态 / RSI / SAR / MACD / OBV /
+    均线粘合 / 换手 / 量比 / 趋势图 / 机构股 / 备注。
+
+    - tech_cells：外部已算好的 7 格技术列（如 _etf_holdings._pk_tech_cells），优先；
+    - p60 / day：外部已持有的原始数值（ETF 段来自持仓覆盖 + 实时行情），优先于 snaps 重算；
+    - 趋势图谱 / 星后形态：十字星口径（_trend_cells），未匹配 → 空（渲染为 —）；
+    - 趋势图：经典K线形态 + 方向（_trend_chart_cell，_trend_match_3way 口径）；
+    - inst：「机构股」格（None 时不查表，直接给「—」；传 "" 同—）；
+    - note 里的换行会被压平（CSV 单元格内不能带换行、长图也不画多行），并截断到 note_cap 字；
+      实仓段把「建议 / 盈亏%」并入备注格，故传更大的 note_cap 以保信息完整。
+    """
+    if p60 is None:
+        p60_s = _pos60_cell(snaps)
+    else:
+        p60_s = ("%+.1f%%" % p60) if isinstance(p60, (int, float)) else ""
+    if day is None:
+        day_s = _day_pct_cell(snaps)
+    else:
+        day_s = ("%+.1f%%" % day) if isinstance(day, (int, float)) else ""
+    mid = list(tech_cells) if tech_cells else _tech_cells(tech, snaps)
+    note_s = str(note or "").replace("\r", " ").replace("\n", " ").strip()[:note_cap]
+    graph, after = _trend_cells(snaps)
+    return ([p60_s, day_s, str(etf_tag or ""), graph, after] + mid
+            + [_trend_chart_cell(snaps), inst if inst else "—", note_s])
+
+
+def _table_lines(rows):
+    """rows: [{name, code, cells(15)}] → 对齐文本表行(含表头/分隔线)。空列以 — 占位。
+    15 = 距60日高/今日/所属ETF 3 + 趋势图谱/星后形态 2
+         + 技术 7(RSI/SAR/MACD/OBV/粘合/换手/量比) + 趋势图 1 + 机构股 1 + 备注 1。"""
+    if not rows:
+        return []
+    body = []
+    for r in rows:
+        body.append([str(r["name"] or ""), str(r["code"] or "")] + [c or "—" for c in (r["cells"] or [])])
+    n = len(_TABLE_HEAD)
+    widths = [_tw(_TABLE_HEAD[i]) for i in range(n)]
+    for row in body:
+        for i in range(n):
+            widths[i] = max(widths[i], _tw(row[i]))
+
+    def fmt(row):
+        line = ""
+        for i in range(n):
+            cell = str(row[i])
+            line += cell + " " * (widths[i] - _tw(cell))
+            if i < n - 1:
+                line += "  "
+        return line.rstrip()
+
+    out = [fmt(_TABLE_HEAD), fmt(["-" * w for w in widths])]
+    out += [fmt(r) for r in body]
+    return out
+
+
+def _grid_lines(header, rows):
+    """自定义表头段 → 显示宽度对齐的文本表行（含表头/分隔线）。"""
+    head = [str(h) for h in (header or [])]
+    if not head:
+        return []
+    body = [[str(c) if c is not None else "" for c in r] for r in (rows or [])]
+    widths = [_tw(h) for h in head]
+    for row in body:
+        for i in range(len(head)):
+            widths[i] = max(widths[i], _tw(row[i] if i < len(row) else ""))
+
+    def fmt(row):
+        line = ""
+        for i in range(len(head)):
+            cell = str(row[i] if i < len(row) else "")
+            line += cell + " " * (widths[i] - _tw(cell))
+            if i < len(head) - 1:
+                line += "  "
+        return line.rstrip()
+
+    out = [fmt(head), fmt(["-" * w for w in widths])]
+    out += [fmt(r) for r in body]
+    return out
+
+
+def _sec_fallback(sec):
+    """分段 → 文本回退行（图片不可用时用；rows 形态走 _table_lines，body 形态走 _grid_lines）。"""
+    title = sec.get("title") or ""
+    if sec.get("body"):
+        return [title] + _grid_lines(sec.get("header"), sec.get("body"))
+    return [title] + _table_lines(sec.get("rows") or [])
+
+
+def _tag_section(sec, target):
+    """给分段打上页面归属 + 文本回退，供正文占位/降级共用。"""
+    sec["target"] = target
+    if not sec.get("fallback"):
+        sec["fallback"] = _sec_fallback(sec)
+    return sec
+
+
+def _readable_sec_lines(sec):
+    """分段 → 微信正文可读行（逐只一行，不依赖等宽对齐）。
+
+    2026-09-12 用户要求：正文必须带出完整表格信息（股票名/形态/技术指标/备注），
+    而不是「见长图」占位。微信是比例字体，17 列对齐文本表会错乱（这也正是当初表格
+    改发图片的原因），故这里改成「序号) 名称(代码) ｜ 列名 值 ｜ …」的逐只展开：
+    信息与长图 / CSV / XLSX 逐列一致，空列与占位符（—/-）自动省略。
+    兼容两种分段形态：`rows`（cells 对齐 _TABLE_HEAD[2:]）与 `body`（对齐 header）。
+    """
+    title = sec.get("title") or ""
+    out = [title] if title else []
+
+    def _kv(cells, head, start):
+        parts = []
+        for j, c in enumerate(cells):
+            v = str(c if c is not None else "").strip()
+            if not v or v in ("—", "-", "nan"):
+                continue
+            h = str(head[start + j]) if 0 <= start + j < len(head) else ""
+            parts.append(("%s %s" % (h, v)).strip() if h else v)
+        return parts
+
+    def _head_line(i, name, code):
+        name = (name or "").strip() or "?"
+        code = (code or "").strip()
+        return "%d) %s(%s)" % (i, name, code) if code and code != "—" else "%d) %s" % (i, name)
+
+    rows = sec.get("rows")
+    if rows:
+        for i, r in enumerate(rows, 1):
+            cells = _kv(r.get("cells") or [], _TABLE_HEAD, 2)
+            line = _head_line(i, r.get("name"), r.get("code"))
+            out.append(line + ("  ｜ " + " ｜ ".join(cells) if cells else ""))
+        return out
+
+    body = sec.get("body")
+    if body:
+        head = list(sec.get("header") or [])
+        same = head == _TABLE_HEAD
+        for i, r in enumerate(body, 1):
+            cells = [str(c) if c is not None else "" for c in r]
+            if same and len(cells) >= 2:
+                parts = _kv(cells[2:], head, 2)
+                headline = _head_line(i, cells[0], cells[1])
+            else:
+                # 非统一 17 列表（如「组合纪律」两列）→ 直接「列名 值 ｜ …」，不加序号
+                parts = _kv(cells, head, 0)
+                headline = ""
+            if headline and parts:
+                out.append(headline + "  ｜ " + " ｜ ".join(parts))
+            elif headline:
+                out.append(headline)
+            elif parts:
+                out.append(" ｜ ".join(parts))
+        return out
+
+    return out or [title]
+
+
+# ── 候选表格 → 图片（2026-09-08：微信 text 非等宽字体导致对齐表错乱 → 表格改发图片）──
+TABLE_IMG_DIR = os.path.join(HERE, "data", "round_tables")
+_IMG_MARKS = (("🔒", "封板·"), ("🆕", "新·"), ("🟡", "流出·"))
+
+
+def _name_cell_img(name):
+    """名称前缀 emoji 标记 → 图片可渲染的文字标注（matplotlib 无 emoji 字形，会出豆腐块）。"""
+    s = str(name or "")
+    for k, r in _IMG_MARKS:
+        s = s.replace(k, r)
+    return s
+
+
+def _rows_to_png(out_dir, title, rows, idx, note=None):
+    """把统一 rows（{name,code,cells}）渲染成候选表格 PNG。
+
+    成功返回图片路径；失败留痕并返回 None（调用方回退为文本表，不丢内容）。
+    """
+    try:
+        import _table_img as ti
+        os.makedirs(out_dir, exist_ok=True)
+        body = []
+        for r in rows:
+            cells = [c or "—" for c in (r.get("cells") or [])]
+            body.append([_name_cell_img(r.get("name") or ""),
+                         str(r.get("code") or "")] + cells)
+        path = os.path.join(out_dir, "_tbl_%s_%d.png" % (
+            datetime.datetime.now().strftime("%Y%m%d_%H%M%S"), idx))
+        ti.render_table(title, _TABLE_HEAD, body, path, note=note)
+        return path
+    except Exception as e:  # noqa: BLE001
+        ops_note("table_png_fail", "%s: %s" % (type(e).__name__, e))
+        print("候选表格渲染失败(回退文本表):", type(e).__name__, e)
+        return None
+
+
+def _rows_body(rows):
+    """统一 rows({name,code,cells}) → 图片二维行数据（名称 emoji 标记转文字）。"""
+    body = []
+    for r in rows:
+        cells = [c or "—" for c in (r.get("cells") or [])]
+        body.append([_name_cell_img(r.get("name") or ""),
+                     str(r.get("code") or "")] + cells)
+    return body
+
+
+def _sections_to_png(out_dir, title, sections, idx, note=None):
+    """多段表格 → 单张 PNG（2026-09-10：DAG 段 + SmallTool 段合并，各自标题保留）。
+
+    sections: [{"title": 分段标题, "rows": 统一rows}]，共用 _TABLE_HEAD；
+    2026-09-11：页2 的低吸表/绿转红表列口径不同 → 支持 {"title","header","body"}
+    直接给二维行数据（body 优先于 rows），各段可带自己的表头（图内各表仍独立）。
+    成功返回图片路径；失败留痕并返回 None（调用方回退为文本表，不丢内容）。
+    """
+    try:
+        import _table_img as ti
+        os.makedirs(out_dir, exist_ok=True)
+        pack = []
+        for s in sections or []:
+            if s.get("body"):
+                pack.append({"title": s.get("title") or "",
+                             "header": s.get("header") or _TABLE_HEAD,
+                             "rows": [[("" if c is None else str(c)) for c in r]
+                                      for r in s["body"]]})
+            elif s.get("rows"):
+                pack.append({"title": s.get("title") or "", "header": _TABLE_HEAD,
+                             "rows": _rows_body(s.get("rows") or [])})
+        if not pack:
+            return None
+        path = os.path.join(out_dir, "_tbl_%s_%d.png" % (
+            datetime.datetime.now().strftime("%Y%m%d_%H%M%S"), idx))
+        if len(pack) == 1:
+            ti.render_table(pack[0]["title"], pack[0]["header"], pack[0]["rows"],
+                            path, note=note)
+        else:
+            ti.render_multi_table(title, pack, path, note=note)
+        return path
+    except Exception as e:  # noqa: BLE001
+        ops_note("table_png_fail", "%s: %s" % (type(e).__name__, e))
+        print("候选合并表格渲染失败(回退文本表):", type(e).__name__, e)
+        return None
 
 
 def _norm_pos_txt(s):
@@ -1294,6 +1954,54 @@ def _pos_advice_lines(data):
         body.append(row)
     lines.extend(body)
     return lines
+
+
+def _pos_img_sections(data, cache):
+    """实仓镜像 → 合并图分段（逐笔建议表 + 组合纪律表）。2026-09-11 Item4 用户确认。
+
+    2026-09-12 三次定稿（用户确认）：逐笔表与五段候选**完全同一套 16 列表头**
+    （名称/代码 / 距60日高 / 今日 / 所属ETF / 趋势图谱 / 星后形态 / 技术7列 / 趋势图 / 备注），
+    2026-09-12 四次定稿：随全局升为 17 列（新增「机构股」列），仍与五段候选逐列对齐；
+    使页3 实仓与页1/页2 五段候选在同一张长图 / 同一份 CSV 里逐列直接横向对比；
+    原前置的「建议 / 盈亏%」两列并入「备注」格（信息不丢、列数与候选一致）。
+    组合纪律/整体盈亏另起一段（项目/说明）。无实仓返回 []。
+    """
+    pos = data.get("positions") or []
+    if not pos:
+        return []
+    pf = data.get("portfolio") or {}
+    tagmap = _etf_tags([(p.get("code") or "")[-6:] for p in pos[:12]])
+    rows = []
+    for p in pos[:12]:
+        sid = p.get("secid") or p.get("code") or ""
+        snaps = _find_cache_snaps(cache, sid) if cache else []
+        tag = p.get("verdict") or "-"
+        if p.get("sar_warn"):
+            tag += "·SAR绿%d日" % p["sar_warn"]
+        pnl = ("%+.1f%%" % p["pnl_pct"]) if p.get("pnl_pct") is not None else "-"
+        # 「建议 / 盈亏%」并入备注格（2026-09-12 三次定稿：不再单开两列，保列口径统一）
+        note = "建议:%s 盈亏:%s" % (tag, pnl)
+        if (p.get("note") or "").strip():
+            note += " " + str(p["note"]).strip()
+        cells = _unified_cells(snaps, tech=p.get("tech") or "", note=note,
+                               etf_tag=tagmap.get((p.get("code") or "")[-6:], ""),
+                               note_cap=48, inst=_inst_cell(p.get("code")))
+        rows.append([p.get("name") or "", p.get("code") or ""] + cells)
+    secs = [{"title": "💼 实仓镜像·逐笔建议（与候选同一套 17 列，建议/盈亏在备注格）",
+             "header": _TABLE_HEAD, "body": rows, "target": "p3",
+             "fallback": ["💼 实仓·建议变化 ↓"] + _pos_advice_lines(data)}]
+    disc = []
+    if pf.get("pnl_pct") is not None:
+        disc.append(["组合整体", "持仓%d只 整体%+.1f%%" % (
+            pf.get("n", len(pos)), pf["pnl_pct"])])
+    for a in (pf.get("alerts") or [])[:5]:
+        disc.append(["组合纪律", str(a)])
+    if disc:
+        secs.append({"title": "◆ 组合纪律与整体（实仓镜像）",
+                     "header": ["项目", "说明"], "body": disc, "target": "p3",
+                     "fallback": ["◆ 组合纪律"] + ["  " + str(a)
+                                                  for a in (pf.get("alerts") or [])]})
+    return secs
 
 
 def _append_pos_block(lines, data):
@@ -1364,9 +2072,50 @@ def _intel_lines(max_age_min=150):
             toks.append(nm + ("%d篇" % cnt if cnt else ""))
         if toks:
             parts.append("研报:" + "、".join(toks))
-    if not parts:
+    extra = _daily_intel_lines()
+    if not parts and not extra:
         return []
-    return ["", "📡 最新情报 %s" % ts[11:16], "  " + " | ".join(parts)]
+    out = [""]
+    if parts:
+        out += ["📡 最新情报 %s" % ts[11:16], "  " + " | ".join(parts)]
+    out += extra
+    return out
+
+
+def _daily_intel_lines(max_age_min=480):
+    """08:00/09:00 每日节奏情报前导：宏观 → 利好利空板块 → 候选（同日有效）。
+
+    数据源 data/_daily_intel.json（_daily_intel.py 产出）。只做展示参考，不改选股结果。
+    """
+    try:
+        with open(DAILY_INTEL_FILE, encoding="utf-8") as f:
+            it = json.load(f)
+    except (OSError, ValueError):
+        return []
+    ts = (it.get("ts") or "").strip()
+    try:
+        t = datetime.datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return []
+    age = (datetime.datetime.now() - t).total_seconds()
+    if not (0 <= age <= max_age_min * 60):
+        return []
+    boards = it.get("boards") or []
+    out = ["", "🌍 每日节奏情报 %s（%s）" % (ts[11:16], it.get("slot") or "")]
+    bulls = [b for b in boards if b.get("side") == "利好"][:4]
+    bears = [b for b in boards if b.get("side") == "利空"][:3]
+    if bulls:
+        out.append("  🟢利好: " + " ".join("%s(%s)" % (b.get("board"), b.get("strength"))
+                                         for b in bulls))
+    if bears:
+        out.append("  🔴利空: " + " ".join("%s(%s)" % (b.get("board"), b.get("strength"))
+                                         for b in bears))
+    picks = it.get("picks") or []
+    if picks:
+        out.append("  ⭐候选: " + " ".join(
+            "%s%s" % (p.get("name"), ("%+.1f%%" % p["pct"]) if p.get("pct") is not None else "")
+            for p in picks[:6]))
+    return out
 
 
 _BIG_IDX = (("sh000001", "上证"), ("sh000688", "科创50"), ("sh000300", "沪深300"))
@@ -1381,6 +2130,68 @@ def _etf_index_cache():
         except (OSError, ValueError):
             _etf_index_cache._d = {}
     return _etf_index_cache._d
+
+
+# ETF 低位 usecase 当日发布物（_etf_publish.py 产出，含 gate + signal_today + approach）
+ETF_LIVE_FILE = os.path.join(HERE, "data", "_etf_live_picks.json")
+
+
+def _etf_table_rows():
+    """ETF 低位低吸当日命中 → 并入推送候选表（2026-09-10）。
+
+    数据源 data/_etf_live_picks.json = _etf_publish.py 跑 etf_dip usecase 产出，
+    与 APK ETF 页同源；signal_today 为空 → ([], "")，调用方不建段。
+    统一 17 列（2026-09-12 四次定稿）单元格映射（ETF 无「均线粘合/所属ETF」口径，置空）：
+      距60日高/今日/趋势图谱/星后形态/趋势图←由日K现算（与股票段同口径）；趋势图谱若未命中
+      十字星口径，则改用引擎发布的跌后K形态 kline，趋势图为 — 时用 trend 方向回填 ·
+      RSI←rsi6 · SAR/MACD/OBV←引擎发布值 · 换手/量比←复用 _tech_cells 同口径 ·
+      备注←回撤60（原放段标题，现按统一列放行内）。
+    """
+    try:
+        with open(ETF_LIVE_FILE, encoding="utf-8") as f:
+            live = json.load(f)
+    except (OSError, ValueError):
+        return [], ""
+    picks = live.get("signal_today") or []
+    if not picks:
+        return [], ""
+    gate = live.get("gate") or {}
+    cache = _etf_index_cache()
+    rows = []
+    for it in picks:
+        code = it.get("code") or ""
+        snaps = _find_cache_snaps(cache, code)
+        tc = _tech_cells("", snaps)          # [RSI, SAR, MACD, OBV, 粘合, 换手, 量比]
+        rsi = it.get("rsi6")
+        if isinstance(rsi, (int, float)):
+            tc[0] = "%.0f" % rsi
+        tc[1] = it.get("sar") or tc[1]
+        tc[2] = it.get("macd") or tc[2]
+        tc[3] = it.get("obv") or tc[3]
+        dd = it.get("dd60")
+        note = "回撤60 " + (("%.1f%%" % dd) if isinstance(dd, (int, float)) else "—")
+        cells = _unified_cells(snaps, tech_cells=tc, note=note, inst=_inst_cell(code))
+        # 趋势图谱：日K现算未命中（趋势图谱/星后形态均空）时，改用引擎发布的跌后K形态；
+        # 趋势图若因日K不足落到 — 而引擎给了方向，则用「方向+标签」回填（信息不丢）。
+        if not cells[3] and (it.get("kline") or ""):
+            cells[3] = str(it["kline"])
+        tr = str(it.get("trend") or "")
+        if tr and cells[12] in ("", "—"):
+            cells[12] = {"上涨": "↑", "下跌": "↓"}.get(tr, "→") + tr
+        rows.append({
+            "name": "·" + (it.get("name") or code),
+            "code": code[2:] if code[:2] in ("sh", "sz", "bj") else code,
+            "cells": cells,
+        })
+    if not rows:
+        return [], ""
+    # 字号兼容：Microsoft YaHei 无 U+2713/U+2717 字形（渲染会缺字告警）→ 用 √ / ×
+    title = "🎯 ETF 低位低吸·当日命中(%d只) ｜ 沪深300门控:%s" % (
+        len(rows), "多头√" if gate.get("ok") else "空头×")
+    dds = [it.get("dd60") for it in picks if isinstance(it.get("dd60"), (int, float))]
+    if dds:
+        title += " ｜ 回撤60 " + ",".join("%.1f%%" % d for d in dds)
+    return rows, title
 
 
 def _big_board_lines(cache, asof):
@@ -1467,50 +2278,59 @@ def _big_board_lines(cache, asof):
     return lines
 
 
-def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
-                scene=None, dag=None, cache=None, lowbuy_offline=None,
-                note_offline=None):
-    """整轮三段消息的纯拼装（不改文件、不推送），实时推送与历史回放共用同一排版。
+def _load_intraday_dag():
+    """当日主线 DAG：取「最新有效」的今日结果（盘中快照 / 收盘定格），避开 T-1 定格。
 
-    - 页1 选股摘要：⭐ 主线·XML DAG 当日选股（超短+短线合并去重，每档最多3只，
-      每只附 RSI/SAR/MACD/OBV 等技术指标）+ 📋 对照参考(非主线·引擎精选前3)
-      + ⭐ 双端共同命中
-    - 页2 资金与低吸：💸 板块资金流入/流出 + 📈 ETF资金流向 + 🎯 ETF持仓前五低吸
-    - 页3 实仓做T（无实仓不生成）
-
-    scene=None 时按当前时间推导(盘中/盘外)；dag 缺省读 DAG_SCREEN_FILE；
-    cache={secid:{"snaps":[]}} 供 DAG 独有票补算技术指标；lowbuy_offline 传
-    离线低吸行(历史回放；此时页2 不展示无存档的实时资金流)。
-    返回 [(title, content), ...]。
+    2026-09-11 修「当日选股整天不变」：盘中各轮此前只读 dag_screen_latest.json
+    （15:00 收盘定格才有当日结果），于是 09:30-14:30 一整天显示的都是一份 T-1 结果。
+    现改为同时读取 dag_screen_lunch.json（盘中实时快照）与 dag_screen_latest.json
+    （收盘定格），只保留 asof=今日 且有 result 的文件，并按文件修改时间取最新的。
+    这样 11:31 午餐快照后优先用午餐快照；15:00 收盘定格后定格文件更新，自动切到
+    收盘结果；盘中每 30 分钟刷新的快照也会自动覆盖旧快照。文件缺一或损坏静默跳过。
     """
-    old_secids = old_secids or set()
-    if scene is None:
-        now = datetime.datetime.now()
-        scene = ("盘中选股 " if in_trading_time(now) else "盘外选股 ") + now.strftime("%H:%M")
-    asof = data.get("asof", "")
-    state = data.get("market_state", "")
-    state_cn = {"BULLISH": "上涨", "BEARISH": "下跌", "OSCILLATION": "震荡",
-                "NO_DATA": "数据不足"}.get(state, state)
-    state_mark = {"BULLISH": "🔴", "BEARISH": "🟢", "OSCILLATION": "🟡",
-                  "NO_DATA": "⚪"}.get(state, "⚪")
-    # 内容不再重复场景头行（该行与推送标题相同，2026-09-06 修复：标题=「%s | %s」）
-    p1 = ["%s 大盘: %s %s | 池 %d" % (state_mark, state, state_cn,
-                                     data.get("pool_total", 0))]
-    p1 += _big_board_lines(cache, asof)  # 📊 上证/科创50/沪深300 大方向
-    p1 += _intel_lines()  # 📡 最新情报（scan 10 分钟快照，过旧自动省略）
-    # ① 主线：XML DAG 当日选股（与 exe 同源；超短并入短线、按代码去重、每档≤3只）
-    if dag is None:
+    today = datetime.date.today().isoformat()
+    candidates = []
+    for f in (DAG_LUNCH_FILE, DAG_SCREEN_FILE):
         try:
-            with open(DAG_SCREEN_FILE, encoding="utf-8") as f:
-                dag = json.load(f)
+            with open(f, encoding="utf-8") as fh:
+                dag = json.load(fh)
         except (OSError, ValueError):
-            dag = None
+            continue
+        if not isinstance(dag, dict) or not (dag.get("result") or {}):
+            continue
+        # 两个文件都必须是今日结果；latest 在 15:00 前可能是 T-1 定格，不能误用
+        if dag.get("asof") != today:
+            continue
+        try:
+            mtime = os.path.getmtime(f)
+        except OSError:
+            mtime = 0
+        candidates.append((mtime, dag))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return candidates[0][1]
+
+
+def _build_candidate_sections(data, ctx, cache, dag, old_secids, asof):
+    """构建盘中选股 5 个模式段（2026-09-12 用户确认结构）。
+
+    返回 (sections, dag_all)。section 可为 {"title","rows"}（统一 _TABLE_HEAD）
+    或 {"title","header","body"}（自定义表头）。
+    """
+    sections = []
     dag_all = set()
+    if dag is None:
+        dag = _load_intraday_dag()
+    dag = dag or {}   # 文件缺失时 _load_intraday_dag() 返回 None → 统一成空字典
+
+    # ① 主线 DAG 当日选股
+    dag_rows = []
     if dag and (dag.get("result") or {}):
         res = dag.get("result") or {}
         bucket = {"短线": [], "中线": [], "长线": []}
         for period in ("超短", "短线", "中线", "长线"):
-            disp, _ = fold_period(period)  # 超短 → 短线
+            disp, _ = fold_period(period)
             for it in res.get(period) or []:
                 raw = (it.get("code") or "").strip()
                 code = raw[2:] if raw[:2].lower() in ("sh", "sz", "bj") else raw
@@ -1533,40 +2353,46 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
                 if not lu and hit:
                     lu = bool(hit.get("limit_up"))
                 bucket[disp].append((raw, code, nm, extra, lu))
-        rows = []
+        seen_code = set()
+        seq_all = []
         for disp in ("短线", "中线", "长线"):
-            seen = set()
-            seq_all = []
             for raw, code, nm, extra, lu in bucket[disp]:
                 key = code or raw
-                if not key or key in seen:
+                if not key or key in seen_code:
                     continue
-                seen.add(key)
-                seq_all.append((raw, code, nm, extra, lu))
-            if not seq_all:
-                continue
-            # 涨停(当日不可买入)不占可买名额：非涨停优先≤3，涨停标🔒置后，总条数可>3
-            normal = [x for x in seq_all if not x[4]]
-            ups = [x for x in seq_all if x[4]]
-            seq = normal[:3] + ups[:3]
-            for raw, _, _, _, _ in seq:
+                seen_code.add(key)
+                seq_all.append((raw, code, nm, extra, lu, disp))
                 if raw:
                     dag_all.add(raw)
-            rows.append("  %s(%d):" % (disp, len(seq)))
-            for _, code, nm, extra, lu in seq:
-                if lu:
-                    rows.append("    🔒 %s(%s) 已涨停·不可买%s" % (
-                        nm, code, (" | " + extra) if extra else ""))
-                else:
-                    rows.append("    🔴 %s(%s)%s" % (nm, code,
-                                                     (" | " + extra) if extra else ""))
-        stale = ""
-        if dag.get("asof") and dag.get("asof") != asof:
-            stale = " (asof %s)" % dag.get("asof")
-        p1.append("")
-        p1.append("⭐ 主线·XML DAG 当日选股(%d只)%s" % (len(dag_all), stale))
-        p1.append("\n".join(rows) if rows else "  (暂无 DAG 命中)")
-    # ② 对照参考：CodeBuddy 引擎候选（非主线，剔除主线 DAG 已展示代码）→ 精选最多3只
+        normal = [x for x in seq_all if not x[4]]
+        ups = [x for x in seq_all if x[4]]
+        keeps = (normal[:3] + ups[:3])[:3]
+        dag_tags = _etf_tags([(k[1] or k[0] or "")[-6:] for k in keeps])
+        for raw, code, nm, extra, lu, disp in keeps:
+            snaps = _find_cache_snaps(cache, raw or code)
+            # 备注：来源周期（超短已并入短线）+ 涨停提示，供盘后复盘核对
+            note = disp + ("·涨停不可追" if lu else "")
+            mark = "🔒" if lu else ("🆕" if (raw and raw not in old_secids) else "·")
+            dag_rows.append({
+                "name": mark + nm, "code": code or raw,
+                "cells": _unified_cells(snaps, tech=extra, note=note,
+                                        etf_tag=dag_tags.get((code or raw)[-6:], ""),
+                                        inst=_inst_cell(code or raw))})
+    dag_real = len(dag_rows)
+    if not dag_rows:
+        dag_rows = [{"name": "·今日无命中", "code": "—",
+                     "cells": [""] * _N_CELLS}]
+    dag_asof = dag.get("asof") or ""
+    stale = ""
+    if dag_asof and asof and dag_asof < asof:
+        stale = " (asof %s)" % dag_asof
+    elif dag.get("mode") == "snapshot_intraday" or (dag_asof and asof and dag_asof > asof):
+        stale = "【盘中实时】"
+    sections.append(_tag_section({
+        "title": "主线 DAG 当日选股（%d只）%s（形态匹配仅标注，看涨才买入）" % (dag_real, stale),
+        "rows": dag_rows}, "p1"))
+
+    # ② smalltool 当日选股
     ref_rows = []
     for period in DISPLAY_PERIODS:
         for it in (data.get("groups") or {}).get(period) or []:
@@ -1576,27 +2402,189 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
             tags = (it.get("reso") or {}).get("tags") or []
             flowout = any(str(t).startswith("资金流出") for t in tags)
             ref_rows.append((period, it, flowout))
+    st_rows = []
     if ref_rows:
         ref_rows.sort(key=lambda r: -(r[1].get("ratio") or 0))
-        # 涨停不占名额：非涨停(按 ratio 排序)≤3，涨停标🔒置后
-        keep = [x for x in ref_rows if not x[1].get("limit_up")][:3] + \
-               [x for x in ref_rows if x[1].get("limit_up")][:3]
-        p1.append("")
-        p1.append("📋 对照参考·非主线(%d只)" % len(keep))
+        # 同一只票可能同时挂在多个周期（超短/短线/中线）→ 按代码去重，保留 ratio 最高者
+        seen_code = set()
+        uniq = []
+        for period, it, flowout in ref_rows:
+            key = it.get("secid") or it.get("code") or it.get("name") or ""
+            if not key or key in seen_code:
+                continue
+            seen_code.add(key)
+            uniq.append((period, it, flowout))
+        keep = ([x for x in uniq if not x[1].get("limit_up")][:3]
+                + [x for x in uniq if x[1].get("limit_up")][:3])[:3]
+        st_tags = _etf_tags([(x[1].get("secid") or "")[-6:] for x in keep])
         for period, it, flowout in keep:
             lu = bool(it.get("limit_up"))
-            mark = "🔒" if lu else ("🟡" if flowout else "🔴")
-            r = it.get("ratio")
-            ratio_s = ("%.0f%%" % (r * 100)) if r is not None else ""
-            side = " 已涨停" if lu else (" 资金流出" if flowout else "")
+            mark = "🔒" if lu else ("🟡" if flowout else "·")
             newdot = "🆕" if it["secid"] not in old_secids else ""
-            tech = it.get("tech") or ""
-            base = "%s%s [%s] %s%s(%s) %s%s" % (
-                newdot, mark, period, it.get("name", ""), it.get("board", ""),
-                it["secid"][2:], ratio_s, side)
-            if tech:
-                base += "  | " + tech
-            p1.append("    " + base)
+            sid = it.get("secid") or ""
+            snaps = _find_cache_snaps(cache, sid)
+            # 备注：命中周期 + 资金流向（原文 reso.tags 里的 资金流出）
+            note = period + ("·资金流出" if flowout else "")
+            st_rows.append({
+                "name": "%s%s%s" % (newdot, mark, it.get("name", "")),
+                "code": sid[2:] or "",
+                "cells": _unified_cells(snaps, tech=it.get("tech") or "", note=note,
+                                        etf_tag=st_tags.get(sid[-6:], ""),
+                                        inst=_inst_cell(sid))})
+    st_real = len(st_rows)
+    if not st_rows:
+        st_rows = [{"name": "·今日无命中", "code": "—",
+                    "cells": [""] * _N_CELLS}]
+    sections.append(_tag_section({
+        "title": "smalltool 当日选股（%d只）（盘中实时）（形态匹配仅标注，看涨才买入）" % st_real,
+        "rows": st_rows}, "p1"))
+
+    # ③④⑤ ETF 相关三段
+    dag_codes = set()
+    if dag and (dag.get("result") or {}):
+        for period in ("超短", "短线", "中线", "长线"):
+            for it in (dag.get("result") or {}).get(period) or []:
+                raw = (it.get("code") or "").strip()
+                c6 = raw[2:] if raw[:2].lower() in ("sh", "sz", "bj") else raw
+                if c6:
+                    dag_codes.add(c6)
+    if ctx:
+        try:
+            import _etf_holdings as _eh
+            etf_flow = ctx.get("etf_flow") or []
+
+            # ③ ETF 全行业扫描（SAR 绿转红）—— 统一 17 列（2026-09-12）
+            fu_rows = []
+            for gname, pk in _eh.fresh_up_picks(
+                    etf_flow=etf_flow, dag_codes=dag_codes, max_rows=3):
+                code6 = str(pk.get("code") or "")
+                snaps = _eh._snaps_live(code6)      # 与 _meta_live 同一次拉取（当日缓存）
+                note = "绿转红√" + ((" " + str(pk.get("tag"))) if pk.get("tag") else "")
+                fu_rows.append({
+                    "name": str(pk.get("name") or code6) + ("√DAG" if pk.get("dag_hit") else ""),
+                    "code": code6,
+                    "cells": _unified_cells(
+                        snaps, etf_tag=gname, note=note,
+                        tech_cells=_eh._pk_tech_cells(pk),
+                        p60=pk.get("pos60"), day=pk.get("pct"),
+                        inst=_inst_cell(code6))})
+            fu_real = len(fu_rows)
+            if not fu_rows:
+                fu_rows = [{"name": "·今日无命中", "code": "—", "cells": [""] * _N_CELLS}]
+            sections.append(_tag_section({
+                "title": "ETF 全行业扫描 当日选股（%d只）（盘中实时）（形态匹配仅标注，看涨才买入）" % fu_real,
+                "rows": fu_rows}, "p2"))
+
+            # ④ ETF top 5（热门板块前五重仓 · 低吸精选）—— 统一 17 列（2026-09-12）
+            flow_top = ctx.get("flow_rank") or []
+            pos_f = [r for r in flow_top if r.get("main_yi", 0) > 0][:4]
+            themes = [r["name"] for r in pos_f]
+            try:
+                focus = _eh.load_focus_sectors()
+            except Exception:
+                focus = []
+            for x in (focus or []):
+                if x not in themes:
+                    themes.append(x)
+            lb_rows = []
+            if themes:
+                for gname, pk in _eh.low_buy_picks(
+                        themes, etf_flow, dag_codes=dag_codes, max_rows=3):
+                    code6 = str(pk.get("code") or "")
+                    snaps = _eh._snaps_live(code6)
+                    lb_rows.append({
+                        "name": str(pk.get("name") or code6) + ("√DAG" if pk.get("dag_hit") else ""),
+                        "code": code6,
+                        "cells": _unified_cells(
+                            snaps, etf_tag=gname, note=str(pk.get("note") or ""),
+                            tech_cells=_eh._pk_tech_cells(pk),
+                            p60=pk.get("pos60"), day=pk.get("pct"),
+                            inst=_inst_cell(code6))})
+            lb_real = len(lb_rows)
+            if not lb_rows:
+                lb_rows = [{"name": "·今日无命中", "code": "—", "cells": [""] * _N_CELLS}]
+            sections.append(_tag_section({
+                "title": "ETF top 5 当日选股（%d只）（盘中实时）（形态匹配仅标注，看涨才买入）" % lb_real,
+                "rows": lb_rows}, "p2"))
+        except Exception as e:  # noqa: BLE001
+            ops_note("candidate_etf_err", "%s: %s" % (type(e).__name__, e))
+
+    # ⑤ ETF 当日选股
+    etf_rows, _ = _etf_table_rows()
+    etf_real = len(etf_rows)
+    if not etf_rows:
+        etf_rows = [{"name": "·今日无命中", "code": "—",
+                     "cells": [""] * _N_CELLS}]
+    sections.append(_tag_section({
+        "title": "ETF 当日选股（%d只 ETF）（盘中实时）（形态匹配仅标注，看涨才买入）" % etf_real,
+        "rows": etf_rows}, "p1"))
+
+    return sections, dag_all
+
+
+def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
+                scene=None, dag=None, cache=None, lowbuy_offline=None,
+                note_offline=None, table_img_dir=None, merge_pages=True):
+    """整轮消息的纯拼装（不改文件、不推送），实时推送与历史回放共用同一排版。
+
+    - 页1 选股摘要：⭐ 主线·XML DAG 当日选股 + 📋 smalltool 当日选股（超短+短线合并
+      去重，每档最多3只，每只附 RSI/SAR/MACD/OBV 等技术指标）+ 🎯 ETF 当日选股
+      + ⭐ 双端共同命中
+    - 页2 资金与低吸：💸 板块资金流入/流出 + 📈 ETF资金流向 + 🌐 ETF 全行业扫描
+      （SAR绿转红） + 🎯 ETF top 5（前五重仓低吸精选）
+    - 页3 实仓做T（无实仓不生成）
+
+    scene=None 时按当前时间推导(盘中/盘外)；dag 缺省读 DAG_SCREEN_FILE；
+    cache={secid:{"snaps":[]}} 供 DAG 独有票补算技术指标；lowbuy_offline 传
+    离线低吸行(历史回放；此时页2 不展示无存档的实时资金流)。
+
+    table_img_dir: 传目录时，页1/页2/页3 所有表先「填充到一份 CSV」，再由该 CSV 统一
+    渲染成一张长图，并额外产出一份全左对齐 XLSX；正文同时带出完整信息（2026-09-12
+    用户要求，不再只放「见长图」占位），以「序号) 名称(代码) ｜ 列名 值 …」可读行展开
+    （微信比例字体，17 列对齐表会错乱），图片/XLSX/CSV 路径经返回值 imgs 带回由调用方
+    推送；None = 不出图（正文同口径可读行）。
+
+    返回 (pages, imgs)；pages=[(title, content), ...]，
+    imgs=[长图png, 全左对齐xlsx, 原始csv, ...]。
+    """
+    old_secids = old_secids or set()
+    imgs = []
+    if scene is None:
+        now = datetime.datetime.now()
+        scene = ("盘中选股 " if in_trading_time(now) else "盘外选股 ") + now.strftime("%H:%M")
+    asof = data.get("asof", "")
+    state = data.get("market_state", "")
+    state_cn = {"BULLISH": "上涨", "BEARISH": "下跌", "OSCILLATION": "震荡",
+                "NO_DATA": "数据不足"}.get(state, state)
+    state_mark = {"BULLISH": "🔴", "BEARISH": "🟢", "OSCILLATION": "🟡",
+                  "NO_DATA": "⚪"}.get(state, "⚪")
+    # 内容不再重复场景头行（该行与推送标题相同，2026-09-06 修复：标题=「%s | %s」）
+    p1 = ["%s 大盘: %s %s | 池 %d" % (state_mark, state, state_cn,
+                                     data.get("pool_total", 0))]
+    p1 += _big_board_lines(cache, asof)  # 📊 上证/科创50/沪深300 大方向
+    p1 += _intel_lines()  # 📡 最新情报（scan 10 分钟快照，过旧自动省略）
+    # ① ② ③④⑤ 五段候选表（2026-09-12 用户确认结构）：统一由 _build_candidate_sections
+    #   构建，正文 / 合并长图 / 原始 CSV 共用同一数据源（避免两处实现口径漂移）。
+    #   段→页面归属：①②⑤ 归页1；③④(ETF 全行业扫描 / ETF top5) 归页2。
+    cand_secs, dag_all = _build_candidate_sections(data, ctx, cache, dag, old_secids, asof)
+    img_secs = list(cand_secs)
+    cand_p2_secs = [s for s in cand_secs if s.get("target") == "p2"]
+    if not table_img_dir:  # 不出图：正文输出各段可读文本（页1 段在此，页2 段见 p2）
+        for _s in cand_secs:
+            if _s.get("target") == "p1":
+                p1.append("")
+                p1.extend(_readable_sec_lines(_s))
+    # ── 各表合并进同一张长图 + 同一份 CSV（2026-09-12 用户方案）──
+    #  页1 段(⭐DAG/📋SmallTool/🎯ETF当日) + 页2 段(🌐全行业扫描/🎯ETF top5) + 页3 段(实仓)
+    #  一律先「填充到一份 CSV」，再由该 CSV 渲染成一张长图（图 = CSV 内容，逐行一致）；
+    #  整轮只发「正文 + 长图 + 原始 CSV」。此处仅收集，待 p2/p3 段收集完再统一渲染。
+    img_note = ("统一口径：五段选股 + 实仓镜像 + APK/exe 技术假设同为 17 列（距60日高/今日/"
+                "所属ETF/趋势图谱/星后形态/RSI/SAR/MACD/OBV/均线粘合/换手/量比/趋势图/机构股/备注）"
+                " · 趋势图谱=连跌x天"
+                "→十字星 · 星后形态=星后第y天 大/小阴阳 · 趋势图=经典K线形态+方向"
+                "（如 ↑上涨·早晨之星）· 机构股=A机构加仓/B机构参与/C散户票（季报滞后，非实时信号）"
+                " ｜ 标记：封板·=当日涨停不可追 · 新·=本轮新晋 · 流出·=资金流出"
+                " · 实仓段「建议/盈亏%」在备注格 · 距60日高负值=低于60日高点")
     # ③ 双端共同命中
     both = sorted(dag_all & candidate_secids(data))
     if both:
@@ -1606,6 +2594,12 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
     # ── 页面2：资金 / ETF / 低吸（独立消息）──
     p2 = []
     p2_extra = False
+    # ③④ 段（ETF 全行业扫描 / ETF top5）：图片化时并入合并长图；文本模式在此输出
+    for _s in cand_p2_secs:
+        p2_extra = True
+        if not table_img_dir:
+            p2.append("")
+            p2.extend(_readable_sec_lines(_s))
     if ctx:
         flow_top = ctx.get("flow_rank") or []
         pos_f = [r for r in flow_top if r.get("main_yi", 0) > 0][:4]
@@ -1635,38 +2629,8 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
             p2.append("")
             p2.append("📈 ETF资金流向: " + " | ".join(eparts))
             p2_extra = True
-        # ⑥ 热门+重点关注板块 ETF 前5重仓 · 低吸精选（2026-09-06 方案B：
-        #    SAR红才列(绿=下跌趋势排除, 绿转红标SAR刚翻红) → 企稳/量能/MACD/OBV共振打分
-        #    → 取前≤5只，SAR绿转红不占限额可输出>5；当日主线DAG命中附『主线DAG✓』；无符合则明示空因）
-        try:
-            import _etf_holdings as _eh
-            dag_codes = set()
-            if dag and (dag.get("result") or {}):
-                res = dag.get("result") or {}
-                for period in ("超短", "短线", "中线", "长线"):
-                    for it in res.get(period) or []:
-                        raw = (it.get("code") or "").strip()
-                        c6 = raw[2:] if raw[:2].lower() in ("sh", "sz", "bj") else raw
-                        if c6:
-                            dag_codes.add(c6)
-            themes = [r["name"] for r in pos_f]
-            try:
-                focus = _eh.load_focus_sectors()
-            except Exception:
-                focus = []
-            for x in focus or []:
-                if x not in themes:
-                    themes.append(x)
-            if themes:
-                low = _eh.low_buy_lines(themes, ctx.get("etf_flow") or [],
-                                        dag_codes=dag_codes)
-                if low:
-                    p2.append("")
-                    p2.append("🎯 ETF持仓前五·低吸精选")
-                    p2.extend(low)
-                    p2_extra = True
-        except Exception:
-            pass
+        # ⑥ ETF 低吸精选 / 全行业绿转红补充（2026-09-06 方案B）已升级为 ③④ 段，
+        #    由 _build_candidate_sections 统一构建（2026-09-12），此处不再重复实现。
     else:
         # 离线/历史回放：板块/ETF资金流为盘中实时采集、无存档 → 说明 + 全板块前五低吸
         if note_offline:
@@ -1678,18 +2642,94 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
             p2.append("🎯 ETF持仓前五·低吸精选")
             p2.extend(lowbuy_offline)
             p2_extra = True
-    # ── 页面3：实仓与做T（独立消息；指纹无变化仅一行概要，有变化展开逐笔+指标标注）──
-    pages = [("%s | %s" % (scene, asof), "\n".join(p1).strip("\n"))]
-    if p2_extra:
-        pages.append(("📊 资金流向与低吸 | %s" % asof, "\n".join(p2).strip("\n")))
+    # ── 页面3：实仓与做T（2026-09-11 Item4 用户确认：并入合并图，与候选同口径）──
+    #  有实仓且本轮出图时：逐笔建议 + 组合纪律作为 p3 段进同一张 PNG，正文只留标题占位；
+    #  不出图（text-only / 无实仓）时沿用指纹「有变化才展开」的纯文本逻辑。
+    p3 = []
+    pos_in_img = False
     if pos_advice and (data.get("positions") or []):
-        p3 = []
-        _append_pos_block(p3, data)
-        pages.append(("💼 实仓建议与做T | %s" % asof, "\n".join(p3).strip("\n")))
-    return pages
+        if table_img_dir:
+            pos_secs = _pos_img_sections(data, cache)
+            if pos_secs:
+                img_secs.extend(pos_secs)
+                pos_in_img = True
+        if not pos_in_img:
+            _append_pos_block(p3, data)
+
+    # ── 机构判定池落盘（data/_inst_pool.json + assets 镜像）──
+    #  供 usecase inst_holding 的 inst_pool_build 读取（APK/exe 双端离线跑机构季报判定），
+    #  与 data/_inst_holdings.json 同目录；失败静默，不影响本轮推送。
+    if img_secs:
+        _write_inst_pool(img_secs, asof)
+
+    # ── 统一渲染：各段先填充到「一份 CSV」，再由该 CSV 出「一张长图」（2026-09-12 用户方案）──
+    #  页1/页2/页3 的所有表都进同一份 CSV + 同一张长图（各表标题+表头各自保留）；正文只留
+    #  标题占位，渲染失败则逐段回退文本表（内容不丢）。imgs = [长图, 原始 CSV]。
+    csv_path = png_path = xlsx_path = None
+    if table_img_dir and img_secs:
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        csv_path = os.path.join(table_img_dir, "_round_%s.csv" % ts)
+        png_path = os.path.join(table_img_dir, "_round_%s.png" % ts)
+        xlsx_path = os.path.join(table_img_dir, "_round_%s.xlsx" % ts)
+        try:
+            import _table_csv as tcsv
+            csv_path, png_path = tcsv.export(
+                csv_path, png_path,
+                "盘中选股·合并表（候选5段 / 实仓镜像 ｜ 统一长图 + 原始 CSV）",
+                img_secs, _TABLE_HEAD,
+                note=img_note + " ｜ 各表标题与表头各自保留，明细以图 / CSV 为准")
+        except Exception as e:  # noqa: BLE001
+            ops_note("round_csv_fail", "%s: %s" % (type(e).__name__, e))
+            print("合并表格 CSV/长图失败(回退文本表):", type(e).__name__, e)
+            csv_path = png_path = None
+        try:
+            # XLSX（2026-09-12 用户反馈 CSV 在表格软件里数字列右对齐）→ 全左对齐 + 文本写入
+            import _table_xlsx as txlsx
+            txlsx.write_xlsx(xlsx_path, img_secs, _TABLE_HEAD)
+        except Exception as e:  # noqa: BLE001
+            ops_note("round_xlsx_fail", "%s: %s" % (type(e).__name__, e))
+            xlsx_path = None
+        tgt = {"p1": p1, "p2": p2, "p3": p3}
+        for s in img_secs:
+            tg = tgt.get(s.get("target"), p1)
+            # 2026-09-12 用户要求：正文必须带出完整表格信息（股票名/形态/技术指标/备注），
+            # 不能只放「见长图」占位——图片 / CSV / XLSX 仍随消息附带，文本与图表同源互为备份。
+            tg.append("")
+            tg.extend(_readable_sec_lines(s))
+            if s.get("target") == "p2":
+                p2_extra = True
+        if png_path:
+            imgs.append(png_path)
+            if xlsx_path and os.path.isfile(xlsx_path):
+                imgs.append(xlsx_path)          # 全左对齐、可直接看（Excel/WPS 打开）
+            if csv_path and os.path.isfile(csv_path):
+                imgs.append(csv_path)           # 原始数据（程序/脚本消费）
+            hit = set(s.get("target") for s in img_secs)
+            for t in ("p1", "p2", "p3"):
+                if t in hit:
+                    tgt[t].append(
+                        "  （以上文本与随附合并长图 / XLSX / 原始 CSV 同源，字段逐列一致）")
+
+    # ── 整轮消息：默认合并为「1 条正文 + 1 张合并图」（2026-09-11，Item4）──
+    body_p2 = "\n".join(p2).strip("\n") if p2_extra else ""
+    body_p3 = "\n".join(p3).strip("\n")
+    if merge_pages:
+        body = "\n".join(p1).strip("\n")
+        for _t, _b in (("📊 资金流向与低吸", body_p2), ("💼 实仓建议与做T", body_p3)):
+            if _b:
+                body += ("\n\n" if body else "") + "━━ %s ━━\n%s" % (_t, _b)
+        pages = [("%s | %s" % (scene, asof), body)]
+    else:
+        pages = [("%s | %s" % (scene, asof), "\n".join(p1).strip("\n"))]
+        if body_p2:
+            pages.append(("📊 资金流向与低吸 | %s" % asof, body_p2))
+        if body_p3:
+            pages.append(("💼 实仓建议与做T | %s" % asof, body_p3))
+    return pages, imgs
 
 
-def send_wechat_round(data, ctx, cfg, old_secids=None, pos_advice=True, **kw):
+def send_wechat_round(data, ctx, cfg, old_secids=None, pos_advice=True,
+                      table_img_dir=None, **kw):
     """整轮三段独立消息推送（排版见 round_pages，2026-09-05 新版消息结构）。
 
     - 主线 = ⭐ XML DAG 当日选股（与 exe 共用同一套 XML，等同 exe 选股，不再单列 exe 段）
@@ -1699,11 +2739,21 @@ def send_wechat_round(data, ctx, cfg, old_secids=None, pos_advice=True, **kw):
     - 实仓段内嵌本轮消息（2026-09-06）：与上轮建议指纹相同仅一行概要「无新操作」，
       有变化(verdict/建议内容变化)才展开逐笔详情——每轮评估但不刷屏。
     """
-    pages = round_pages(data, ctx, cfg, old_secids=old_secids, pos_advice=pos_advice,
-                        **kw)
+    # 2026-09-08：候选表默认渲染成图片推送（微信文本表非等宽 → 错乱），文本给占位提示。
+    if table_img_dir is None:
+        table_img_dir = TABLE_IMG_DIR
+    pages, imgs = round_pages(data, ctx, cfg, old_secids=old_secids,
+                              pos_advice=pos_advice, table_img_dir=table_img_dir,
+                              **kw)
     ok = False
     for title, content in pages:
         ok = _push_wechat(title, content, cfg) or ok
+    for path in imgs:
+        # 2026-09-12：imgs = [长图png, 表格xlsx, 原始csv] → 按后缀分派
+        if str(path).lower().endswith((".csv", ".xlsx")):
+            ok = push_channel.send_file(path, cfg) or ok
+        else:
+            ok = push_channel.send_image(path, cfg) or ok
     return ok
 
 
@@ -1814,8 +2864,14 @@ def _cand_sig(data):
 #   单轮选股+推送 run_once：约 1 分钟
 RHYTHM_FILE = os.path.join(HERE, "_daemon_rhythm.json")
 PREP_DOWNLOAD = os.path.join(HERE, "_update_cache_inc.py")
+# 手机 COS 镜像同步（2026-09-11）：拉 APK 上传的实仓 real_positions + 用户关注板块
+# 到本地镜像，供 PC/exe 持仓评估与推送「📌 关注板块」消费。此前守护从不自动拉取。
+PREP_CLOUD = os.path.join(HERE, "cloud_download.py")
 PREP_DAG = os.path.normpath(os.path.join(ROOT, "AutoQuant", "usecase_screen.py"))
 DAG_SCREEN_FILE = os.path.normpath(os.path.join(ROOT, "AutoQuant", "data", "dag_screen_latest.json"))
+# 盘中实时快照层(2026-09-10)：11:31 午间用 qtg 批量实时 asof=今日 做当日盘中选股，
+# 输出到独立文件（不覆盖收盘定格 latest）；15:00 尾盘固化日K后追加收盘定格重选(latest)。
+DAG_LUNCH_FILE = os.path.normpath(os.path.join(ROOT, "AutoQuant", "data", "dag_screen_lunch.json"))
 # 每日选股自检闭环（记忆账本 + 到期结算 + 基线漂移反馈），见 _self_review.py
 SELF_REVIEW = os.path.join(HERE, "_self_review.py")
 _SESSIONS = (("am", 9 * 60 + 30, 11 * 60 + 30), ("pm", 13 * 60, 15 * 60))
@@ -1851,7 +2907,14 @@ def _load_rhythm():
     d.setdefault("sum", False)    # 15:10 收盘总结是否已推送
     d.setdefault("etf", False)    # 15:12 ETF低位useCase当日发布 + 推送行情到手机 是否完成
     d.setdefault("hit", {})       # 当日逐轮命中累计 period -> {secid: 次数}
+    # 2026-09-11：命中 secid → 名称 快照。累计命中横跨全天，到收盘时该 secid 往往
+    # 已不在当轮 data(prepared/groups) 里，只按当轮 data 反查会退化成裸 secid
+    # （收盘总结「预备队」只有代码没名称）。累计时把名称一并落盘，结算时再兜底。
+    d.setdefault("hit_name", {})
     d.setdefault("lunch", False)  # 11:31 午间盘中总结是否已推（2026-09-08）
+    d.setdefault("lunch_snap", False)  # 11:31 午间实时快照选股是否已跑(每日一次, 失败不再重试)
+    d.setdefault("snap_at", {})   # 各盘段最近一次盘中实时快照时刻 {"am":"HH:MM:SS"}(节流用)
+    d.setdefault("cfz", False)    # 15:00 尾盘后的收盘定格全池重选是否完成(2026-09-10)
     d.setdefault("cand_sig", "")  # 候选构成/实仓建议指纹（10分钟轮推送闸门）
     d.setdefault("push_seg", "")  # 上次微信推送所在盘段（换盘段首轮必推）
     return d
@@ -1937,14 +3000,16 @@ def rhythm_mark_flag(key):
 
 
 def _slot_of(now=None):
-    """守护档位：pre(09:00-09:29) / am(09:30-11:30) / pm(13:00-14:30) / None。
-    14:31 之后由 daemon 空档分支处理「尾盘拉取 + 收盘总结」。"""
+    """守护档位：pre8(08:00-08:59) / pre(09:00-09:29) / am(09:30-11:30) / pm(13:00-14:30) / None。
+    14:31 之后由 daemon 空档分支处理「尾盘拉取 + 收盘总结 + 15:20 复盘」。"""
     now = now or datetime.datetime.now()
     if now.weekday() >= 5:
         return None
     hm = now.hour * 60 + now.minute
-    if hm < 9 * 60:
+    if hm < 8 * 60:
         return None
+    if hm < 9 * 60:
+        return "pre8"
     if hm < 9 * 60 + 30:
         return "pre"
     if hm <= 11 * 60 + 30:
@@ -1975,10 +3040,20 @@ def next_weekday_0900(now=None):
             return datetime.datetime.combine(d, datetime.time(9, 0))
 
 
+def next_weekday_at(now, hour, minute=0):
+    """下一个交易日的 hour:minute（跳过周末）。"""
+    d = now.date() + datetime.timedelta(days=1)
+    while d.weekday() >= 5:
+        d += datetime.timedelta(days=1)
+    return datetime.datetime.combine(d, datetime.time(hour, minute))
+
+
 def _next_slot_at(now=None):
     """空档期下一个动作点。"""
     now = now or datetime.datetime.now()
     hm = now.hour * 60 + now.minute
+    if hm < 8 * 60:
+        return _today_at(8, 0)   # 08:00 盘前情报
     if hm < 9 * 60:
         return _today_at(9, 0)
     if hm < 9 * 60 + 30:
@@ -2029,11 +3104,18 @@ def _run_script(script, log=print, stop_check=None, extra=None):
         return False
 
 
-def _push_market_image(log=print, days=55):
-    """生成并推送「大盘4指数归一化叠加图」（企微 image；失败仅留痕，不影响文本推送）。"""
+def _push_market_image(log=print, days=55, data=None, pct=True):
+    """生成并推送「大盘4指数图」（企微 image；失败仅留痕，不影响文本推送）。
+
+    pct=True（2026-09-09 用户选定）推起点归一化涨跌幅折线图——0% 对齐看四指数
+    相对强弱/背离，比真实点位蜡烛更清晰；data 传现成刷新结果时图与正文用同一快照。
+    """
     try:
         import _index_market_chart as imc
-        ok, png = imc.render_png(days=days)
+        if pct:
+            ok, png = imc.render_pct_png(days=days, data=data)
+        else:
+            ok, png = imc.render_png(days=days, data=data)
         if not ok:
             log("大盘图生成失败，跳过图片推送")
             return False
@@ -2049,17 +3131,38 @@ def _push_market_image(log=print, days=55):
         return False
 
 
-def _push_pre_market(dry, log=print):
-    """09:20 开盘前（2026-09-08 由 09:00 后即刻改到 09:20 推送）：
-    大盘4指数同轴叠加图 + 强弱结论 + 🧭期货与库存速览（每日一次，幂等由守护标记控制）。
+def _pre_market_pick_table(log=print):
+    try:
+        import _daily_intel as di
+        if not os.path.exists(di.INTEL_JSON):
+            return None
+        with open(di.INTEL_JSON, encoding="utf-8") as f:
+            picks = json.load(f).get("picks") or []
+        if not picks:
+            return None
+        out = os.path.join(di.TABLE_DIR, "_pre_picks_%s.png" % datetime.date.today().strftime("%Y%m%d"))
+        return di.render_pick_table(picks, out, "开盘前候选标的")
+    except Exception as e:  # noqa: BLE001
+        log("候选标的表生成失败: %s" % e)
+        return None
 
-    正文规则与 APK「大盘K线」一致：上证×科创50 优先级 + 深成/创业板佐证。
-    附加段：郑糖/焦煤等商品期货日盘已开，叠加 NOOA 厄尔尼诺(糖)、港口去库+供暖季(煤炭)
-    主题与 A 股映射；获取失败仅跳过该段，不阻塞主速览。
+
+def _push_pre_market(dry, log=print):
+    """09:20 开盘前：四指数两张图（归一化折线 + 同轴真实点位蜡烛）+ 强弱结论 + 🧭期货速览。
+
+    2026-09-08/09 用户决策：正文不再发文本表格（微信里乱）。
+    2026-09-09 起配图改为两张都发：
+     ① 起点归一化涨跌幅折线图——四指数以窗口首日为 0% 对齐，看相对强弱/背离；
+     ② 同轴真实点位日K蜡烛图（带 MA5/MA20）——看上证/科创50 等是否均线纠缠、形态。
+    结论仍随文本给一句。四指数数据只在线拉一次（文本/两张图共用同一快照）。
     """
     try:
         import _index_market_chart as imc
-        text = imc.verdict_text()
+        data = imc.refresh()
+        text = ("📊 四指数图 ×2 见下方：\n"
+                "① 起点归一化涨跌幅折线——0% 对齐看相对强弱/背离\n"
+                "② 同轴真实点位日K蜡烛——看均线纠缠与形态\n\n"
+                + imc.verdict_text(table=False, data=data))
         try:
             import _macro_futures as mf
             extra = mf.render_futures()
@@ -2068,22 +3171,62 @@ def _push_pre_market(dry, log=print):
         except Exception as e:  # noqa: BLE001
             log("期货库存速览获取失败: %s" % e)
             ops_note("macro_fut_fail", repr(e))
+        # 四根宏观哨兵（美债/日元/油价/费半）：越阈给定向风控动作，未越阈给状态行
+        try:
+            import _macro_sentinel as msent
+            s_lines = msent.render_sentinel_lines()
+            if s_lines:
+                text += "\n\n" + "\n".join(s_lines)
+        except Exception as e:  # noqa: BLE001
+            log("宏观哨兵获取失败: %s" % e)
+            ops_note("macro_sentinel_fail", repr(e))
         title = "🌅 开盘前大盘速览 %s" % datetime.date.today().strftime("%m-%d")
+        # 候选标的表（图片）——取当日 08:00/09:00 情报选出的候选，正文仍为文字
+        png_pick = _pre_market_pick_table(log)
         if dry:
             log("[dry] 开盘前大盘速览（不推送）：\n" + text)
             return True
         sent_txt = _push_wechat(title, text, load_notify_cfg())
-        sent_img = _push_market_image(log=log)
-        return sent_txt or sent_img
+        # 2026-09-09 用户选定：开盘前两张图都发——归一化折线(相对强弱) + 同轴蜡烛(均线纠缠/形态)
+        sent_img1 = _push_market_image(log=log, data=data, pct=True)
+        sent_img2 = _push_market_image(log=log, data=data, pct=False)
+        sent_pick = False
+        if png_pick:
+            try:
+                sent_pick = bool(push_channel.send_image(png_pick, load_notify_cfg()))
+            except Exception as e:  # noqa: BLE001
+                log("候选表推送失败：%s" % e)
+        return sent_txt or sent_img1 or sent_img2 or sent_pick
     except Exception as e:  # noqa: BLE001
         log("开盘前大盘速览失败：%s" % e)
         ops_note("pre_msg_error", repr(e))
         return False
 
 
+def _prefetch_indexes(log=print):
+    """09:00 预热先行刷新四大指数缓存（data/_index_market.json 在线拉取）。
+
+    保证 09:20 开盘速览（结论文本 + XY 轴蜡烛图）用的必然是最新收盘数据；
+    在线失败自动回退本地缓存，且失败不阻塞预热主流程（09:20 速览还会再在线重试）。
+    """
+    try:
+        import _index_market_chart as imc
+        out = imc.refresh()
+        parts = []
+        for code, name in imc.INDEXES:
+            snaps = (out.get(code) or {}).get("snaps") or []
+            if snaps:
+                last = snaps[-1]
+                parts.append("%s %.0f(%+.1f%%)" % (name, last.get("close") or 0,
+                                                   last.get("changePct") or 0))
+        log("[09:00 预热] 四指数已刷新: %s" % (" | ".join(parts) if parts else "（无数据）"))
+    except Exception as e:  # noqa: BLE001
+        log("[09:00 预热] 四指数刷新失败（忽略，09:20 速览仍会在线重试）: %s" % e)
+
+
 def run_pre_preheat(log=print, stop_check=None):
-    """09:00 预热：K线增量下载 → 情报扫描(dry 暖缓存：美股隔夜/韩股开盘/快讯)。"""
-    log("[09:00 预热] 下载K线增量 + 情报扫描暖缓存（美股/韩股开盘前）…")
+    """09:00 预热：K线增量下载 → 四指数先行拉取 → 情报扫描(dry 暖缓存)。"""
+    log("[09:00 预热] 下载K线增量 + 四指数刷新 + 情报扫描暖缓存（美股/韩股开盘前）…")
     steps = ((PREP_DOWNLOAD, None),
              (os.path.join(HERE, "_market_scan.py"), ["--once", "--dry"]))
     for script, extra in steps:
@@ -2092,8 +3235,9 @@ def run_pre_preheat(log=print, stop_check=None):
         log("  ▶ %s" % os.path.basename(script))
         if not _run_script(script, log=log, stop_check=stop_check, extra=extra):
             return False
+    _prefetch_indexes(log)
     rhythm_mark_flag("pre")
-    log("[09:00 预热] 完成，等待 09:30 首轮选股")
+    log("[09:00 预热] 完成，等待 09:20 开盘速览 / 09:30 首轮选股")
     return True
 
 
@@ -2106,6 +3250,104 @@ def run_tail_kline(log=print, stop_check=None):
         return True
     ops_note("tail_fail", "尾盘K线拉取失败")
     return False
+
+
+def _run_python_dag(extra, log=print, stop_check=None, out=None):
+    """跑 AutoQuant/usecase_screen.py 子进程并流式打日志。返回 bool。"""
+    args = [sys.executable, PREP_DAG] + (["--out", out] if out else []) + extra
+    try:
+        proc = subprocess.Popen(args, cwd=os.path.dirname(PREP_DAG),
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, encoding="utf-8", errors="replace",
+                                bufsize=1,
+                                env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+        for line in proc.stdout:
+            line = line.rstrip()
+            if line:
+                log("    | " + line)
+        proc.wait()
+        return proc.returncode == 0
+    except Exception as e:  # noqa: BLE001
+        log("usecase_screen 子进程异常：%s" % e)
+        ops_note("dag_sub_error", repr(e))
+        return False
+
+
+SNAPSHOT_GAP_MIN = 0  # 盘中实时快照刷新间隔（分钟）。0 = 每轮必刷。
+# 2026-09-12 用户要求「每一次选股都要更新」：守护轮本身已按 15 分钟一次（interval=900），
+# 若再按 30 分钟节流，则相邻两轮共用同一份快照、候选列表整段不变。故取消节流，
+# 每轮开始都重跑一次盘中实时快照（qtg 批量约 20s），使「当日选股」逐轮随盘刷新。
+
+
+def _snap_should_refresh(session, now=None):
+    """该盘段距上次实时快照是否已满 SNAPSHOT_GAP_MIN 分钟（无记录/间隔=0=该刷）。"""
+    now = now or datetime.datetime.now()
+    d = _load_rhythm()
+    last = (d.get("snap_at") or {}).get(session) or ""
+    if not last:
+        return True
+    try:
+        hh, mm = int(last[:2]), int(last[3:5])
+        last_dt = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    except (ValueError, IndexError):
+        return True
+    return (now - last_dt).total_seconds() >= SNAPSHOT_GAP_MIN * 60
+
+
+def _mark_snapshot(session, now=None):
+    """记录本盘段最近一次实时快照时刻（供节流）。session=None(午间)时不动节流。"""
+    if not session:
+        return
+    now = now or datetime.datetime.now()
+    d = _load_rhythm()
+    d.setdefault("snap_at", {})[session] = now.strftime("%H:%M:%S")
+    _save_rhythm(d)
+
+
+def run_intraday_snapshot(session=None, log=print, stop_check=None):
+    """盘中实时快照选股（asof=今日，qtg 批量实时价，绝不写历史缓存）→ DAG_LUNCH_FILE。
+
+    2026-09-11：原只在 11:31 跑一次（仅午间总结用）。而盘中各轮推送的「当日选股」
+    主线读 dag_screen_latest.json —— 那是 15:00 收盘定格才有当日结果，于是 09:30-14:30
+    一整天主线都是一份 T-1 结果（用户反馈「当日选股候选一天不变」）。现盘中每
+    SNAPSHOT_GAP_MIN 分钟刷新一份今日实时快照，各轮/午间总结共用；失败保留上一份、
+    不阻塞轮次（写 ops 留痕）。收盘定格仍由 run_close_freeze 写 latest。
+    """
+    if stop_check is not None and stop_check():
+        return False
+    today = datetime.date.today().strftime("%Y%m%d")
+    log("[盘中快照] 实时选股 asof=%s：qtg 批量全池当日价 → XML DAG …" % today)
+    if not _run_python_dag(["--snapshot", today], log=log, stop_check=stop_check,
+                           out=DAG_LUNCH_FILE):
+        ops_note("intraday_snap_fail", "盘中实时快照选股失败(本轮退回 T-1 主线)")
+        return False
+    _mark_snapshot(session)
+    log("[盘中快照] 完成 → %s" % os.path.basename(DAG_LUNCH_FILE))
+    return True
+
+
+def run_lunch_snapshot(log=print, stop_check=None):
+    """11:31 午间实时快照（每日一次；失败不重试、不阻塞午间总结，退回 T-1 主线）。"""
+    log("[11:31 快照] 午间实时快照：全池当日价 → XML DAG asof=今日 …")
+    if not run_intraday_snapshot(session=None, log=log, stop_check=stop_check):
+        ops_note("lunch_snap_fail", "午间实时快照选股失败(退回T-1主线)")
+        return False
+    log("[11:31 快照] 午间实时快照完成 → %s" % DAG_LUNCH_FILE)
+    return True
+
+
+def run_close_freeze(log=print, stop_check=None):
+    """15:00 尾盘固化日K后，追加一次收盘定格全池精筛（asof=今日）覆盖 dag_screen_latest。
+    这是当日唯一权威收盘结果（此前盘中轮均基于 T-1 缓存/asof 昨日）。"""
+    today = datetime.date.today().isoformat()
+    log("[15:00 定格] 收盘定格重选：XML DAG 全池精筛 asof=%s …" % today)
+    if stop_check is not None and stop_check():
+        return False
+    if not _run_python_dag(["--asof", today], log=log, stop_check=stop_check):
+        ops_note("cfz_fail", "收盘定格重选失败(稍后轮次自动重试)")
+        return False
+    log("[15:00 定格] 收盘定格重选完成 → %s" % DAG_SCREEN_FILE)
+    return True
 
 
 def run_self_review(log=print, stop_check=None):
@@ -2145,10 +3387,12 @@ def run_etf_publish(log=print):
     → 尝试 adb 推送 etf_cache.json 到手机（无设备在线则跳过，不阻塞）。
     失败仅留痕，不影响守护流程。
     """
-    log("[15:12 ETF] 刷新行情 + etf_dip usecase 发布 + 推送手机…")
+    log("[15:12 ETF] 刷新行情(--all) + etf_dip usecase 发布 + 推送手机…")
     try:
+        # 2026-09-10 修：原为 --push（只发布不刷行情）→ 缓存长期停在旧交易日，
+        # ETF 选股实际跑在过期 K 线上。改 --all = 刷新行情(腾讯 qfq) + 发布 + 推送。
         proc = subprocess.Popen(
-            [sys.executable, os.path.join(HERE, "_etf_publish.py"), "--push"],
+            [sys.executable, os.path.join(HERE, "_etf_publish.py"), "--all"],
             cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace", bufsize=1)
         lines = []
@@ -2179,17 +3423,23 @@ def _acc_round_picks(log=print):
         return
     d = _load_rhythm()
     hit = d.setdefault("hit", {})
+    hit_name = d.setdefault("hit_name", {})
+
+    def _acc(period, it):
+        sid = it.get("secid")
+        if not sid:
+            return
+        m = hit.setdefault(period, {})
+        m[sid] = m.get(sid, 0) + 1
+        nm = (it.get("name") or "").strip()
+        if nm and not hit_name.get(sid):
+            hit_name[sid] = nm
+
     for period, items in (data.get("groups") or {}).items():
         for it in items:
-            sid = it.get("secid")
-            if sid:
-                m = hit.setdefault(period, {})
-                m[sid] = m.get(sid, 0) + 1
+            _acc(period, it)
     for it in data.get("prepared") or []:
-        sid = it.get("secid")
-        if sid:
-            m = hit.setdefault("预备队", {})
-            m[sid] = m.get(sid, 0) + 1
+        _acc("预备队", it)
     _save_rhythm(d)
 
 
@@ -2206,6 +3456,10 @@ def _do_round(slot, dry, use_ctx, log):
     label = "上午" if slot == "am" else "下午"
     n_next = _load_rhythm()["rounds"].get(slot, 0) + 1
     log("[%s] 整轮选股（%s 第%d轮）…" % (now.strftime("%H:%M:%S"), label, n_next))
+    # 2026-09-11：按间隔先刷新今日盘中实时快照，使本轮「当日选股」主线随盘变化
+    # （此前整天读 T-1 定格）。dry 预演不触发子进程；快照失败仅留痕、本轮照跑。
+    if not dry and _snap_should_refresh(slot):
+        run_intraday_snapshot(session=slot, log=log)
     t0 = time.time()
     try:
         rc = run_once(dry=dry, candidates_key=None,
@@ -2262,12 +3516,13 @@ def _push_eod_summary(dry, use_ctx, log):
             rows.append("%s(%d): %s" % (period, len(its), names))
         if rows:
             lines.append("⭐ 当日主线·XML DAG 选股\n  " + " | ".join(rows))
-    # ② 当日多轮入选
+    # ② 当日多轮入选（名称兜底：累计命中名 + 全池缓存名，避免只剩代码）
     if hits:
+        names = _name_index(cache, r.get("hit_name"))
         segs = []
         for period, sidmap in sorted(hits.items(), key=lambda kv: -sum(kv[1].values())):
             top = sorted(sidmap.items(), key=lambda kv: -kv[1])[:5]
-            items_txt = ", ".join("%s×%d" % (_find_name(data, sid), c)
+            items_txt = ", ".join("%s×%d" % (_find_name(data, sid, names), c)
                                   for sid, c in top if c > 1)
             if items_txt:
                 segs.append("%s: %s" % (period, items_txt))
@@ -2314,6 +3569,16 @@ def _push_eod_summary(dry, use_ctx, log):
             cheer = "今天回撤了些，辛苦了。按纪律控住仓位、稳住心态，市场会还你公道 🧘"
     else:
         cheer = "今天也完整跑完了选股流程，辛苦了，好好休息 🌙"
+    # ⑤ 四根宏观哨兵（收盘定格：WTI 当日值入连续天数账，越阈给次日定向动作）
+    try:
+        import _macro_sentinel as msent
+        s_lines = msent.render_sentinel_lines()
+        if s_lines:
+            lines.append("")
+            lines.extend(s_lines)
+    except Exception as e:  # noqa: BLE001
+        log("收盘宏观哨兵失败: %s" % e)
+        ops_note("macro_sentinel_fail", repr(e))
     lines.append("")
     lines.append("💬 " + cheer)
     content = "\n".join(lines)
@@ -2324,8 +3589,8 @@ def _push_eod_summary(dry, use_ctx, log):
         cfg = load_notify_cfg()
         ok_txt = _push_wechat("📅 收盘总结 %s" % asof, content, cfg)
         if ok_txt:
-            # 收盘后附带「大盘4指数归一化叠加图」（图片单独一条，企微机器人支持；
-            # 失败仅留痕，不影响总结本体）
+            # 收盘后附带「大盘4指数 起点归一化涨跌幅折线图」（图片单独一条，
+            # 企微机器人支持；失败仅留痕，不影响总结本体）
             _push_market_image(log=log)
         return ok_txt
     except Exception as e:  # noqa: BLE001
@@ -2355,14 +3620,11 @@ def _push_lunch_summary(dry, use_ctx, log):
     asof = data.get("asof", "")
     lines = ["📈 午间盘中总结 asof=%s" % asof,
              "上午完成 %d 轮选股（09:30 起每10分钟）；13:00 恢复每10分钟选股" % n_am]
-    # ① 主线 XML DAG
-    try:
-        with open(DAG_SCREEN_FILE, encoding="utf-8") as f:
-            dag = json.load(f)
-    except (OSError, ValueError):
-        dag = None
+    # ① 主线 XML DAG（午间优先展示 11:31 实时快照 asof=今日，退回 T-1 latest）
+    dag = _load_intraday_dag()
     if dag and (dag.get("result") or {}):
         rows = []
+        is_snap = dag.get("mode") == "snapshot_intraday"
         for period in ("超短", "短线", "中线", "长线"):
             its = (dag.get("result") or {}).get(period) or []
             if not its:
@@ -2371,13 +3633,15 @@ def _push_lunch_summary(dry, use_ctx, log):
                 (it.get("name") or (it.get("code") or "?")).strip() for it in its[:6])
             rows.append("%s(%d): %s" % (period, len(its), names))
         if rows:
-            lines.append("⭐ 主线 XML DAG\n  " + " | ".join(rows))
-    # ② 上午多轮共振
+            title = "⭐ 主线·午间实时快照(今日盘中)" if is_snap else "⭐ 主线 XML DAG"
+            lines.append(title + "\n  " + " | ".join(rows))
+    # ② 上午多轮共振（名称兜底同上）
     if hits:
+        names = _name_index(cache, r.get("hit_name"))
         segs = []
         for period, sidmap in sorted(hits.items(), key=lambda kv: -sum(kv[1].values())):
             top = sorted(sidmap.items(), key=lambda kv: -kv[1])[:4]
-            txt = ", ".join("%s×%d" % (_find_name(data, sid), c)
+            txt = ", ".join("%s×%d" % (_find_name(data, sid, names), c)
                             for sid, c in top if c > 1)
             if txt:
                 segs.append("%s: %s" % (period, txt))
@@ -2403,6 +3667,16 @@ def _push_lunch_summary(dry, use_ctx, log):
                 p.get("code", ""), pnl, note0))
     else:
         lines.append("💼 当前无实仓持仓记录")
+    # ④ 四根宏观哨兵（午间刷新实时：日元/费半/油价，越阈给定向动作）
+    try:
+        import _macro_sentinel as msent
+        s_lines = msent.render_sentinel_lines()
+        if s_lines:
+            lines.append("")
+            lines.extend(s_lines)
+    except Exception as e:  # noqa: BLE001
+        log("午间宏观哨兵失败: %s" % e)
+        ops_note("macro_sentinel_fail", repr(e))
     lines.append("")
     lines.append("💡 午后 13:00 恢复每10分钟选股：候选构成有更新才推送（含与上午重复入选标的"
                  "），无新信号不重复打扰。")
@@ -2448,6 +3722,15 @@ def run_prep(session, interval=600, log=print, stop_check=None):
             log("  ✗ %s 异常：%s" % (title, e))
         if not ok:
             break
+    # 2026-09-11：同步手机 COS 镜像（实仓 real_positions + 用户关注板块）。PC 侧 exe 与
+    # 推送的页3 实仓、📌关注板块都读本地镜像 `_records/cloud`/`user_focus_sectors.json`，
+    # 而此前守护从不自动拉取 → 镜像长期陈旧（实测停在 09-05，实仓评估失真）。
+    # 纯拉取，失败只留痕、不阻塞首刷（离线/无配置时沿用上一份镜像）。
+    if not (stop_check is not None and stop_check()):
+        if not _run_script(PREP_CLOUD, log=log, stop_check=stop_check,
+                           extra=["--max", "1", "--focus"]):
+            log("  ! 手机镜像同步失败（沿用旧镜像：实仓/关注板块可能滞后）")
+            ops_note("prep_cloud_fail", "手机COS镜像同步失败(实仓/关注板块沿用旧镜像)")
     if ok:
         rhythm_mark_prep(session)
         log("[盘段%s] 首刷完成，开始每 %d 秒选股推送（每段首次立即选股）" % (label, interval))
@@ -2466,7 +3749,7 @@ def _interruptible_sleep(seconds, stop_check=None):
         seconds -= step
 
 
-EXPECT_ROUNDS = {"am": 12, "pm": 10}  # 09:30-11:20 12轮 / 13:00-14:30 10轮，每10分
+EXPECT_ROUNDS = {"am": 9, "pm": 7}  # 09:30-11:30 9轮 / 13:00-14:30 7轮，每15分
 
 
 def _check_rounds(log=print):
@@ -2484,38 +3767,57 @@ def _check_rounds(log=print):
         log(msg)
         ops_note("miss_rounds", msg)
     else:
-        log("  ✓ 轮次核对：上午%d/12 下午%d/10 达标" % (got.get("am", 0), got.get("pm", 0)))
+        log("  ✓ 轮次核对：上午%d/9 下午%d/7 达标" % (got.get("am", 0), got.get("pm", 0)))
 
 
-def daemon_serve(prep=True, interval=600, dry=False, use_ctx=True,
+def daemon_serve(prep=True, interval=900, dry=False, use_ctx=True,
                  log=print, stop_check=None):
-    """盘段守护 v3（2026-09-08 用户确认节奏）：
+    """盘段守护 v4（2026-09-11 用户确认节奏）：
 
-    09:00 预热（K线下载+情报扫描暖缓存，无需等到 09:20 才拉数据）
+    08:00 盘前情报（宏观 + 美股收盘 → 利好利空板块判定 → 候选标的 → 推送+存库）
+        → 09:00 预热（K线下载+情报扫描暖缓存）+ 亚太情报（日经/KOSPI/恒生实时→同上）
         → 09:20 开盘前大盘速览（4指数同轴叠加图+强弱结论+🧭期货与库存速览）
-        → 09:30-11:20 每 10 分钟 12 轮选股（09:30 首次，开盘立刻选股）
+        → 09:30-11:30 每 15 分钟选股（09:30 首次，开盘立刻选股）
             * 候选构成/实仓建议有变化才推送；无变化跳过（仍上传 COS 供 APK 查询）
             * 若推送则完整推送（含与上轮重复入选的标的）
         → 11:31-12:00 午间盘中总结（每日一次）
-        → 13:00-14:30 每 10 分钟 10 轮（之后不再盘中选股）
+        → 13:00-14:30 每 15 分钟（之后不再盘中选股）
         → 15:00 尾盘最后一次 K 线拉取（仅下载）
         → 15:10 收盘总结：当日选股+持仓回顾+纪律+鼓励（无做T/买卖点指令）
         → 15:12 ETF低位 usecase 当日发布（XML 单一源）+ 推送行情到手机
-    盘中情报：独立 _market_scan.py 守护同频 10 分钟扫描，有变动才推送。
+        → 15:20 收盘复盘（表格化：板块判定对错/当日选股/近5日巡诊/实仓镜像）
+    盘中情报：独立 _market_scan.py 守护同频扫描，有变动才推送。
     盘中轮推送不再含「实仓买卖/做T」建议；守护/选股错误写入 _daemon_ops.jsonl。
     """
-    log("盘段守护 v3：09:20 盘前速览(期货库存) → 09:30-11:20 每10分选股 → 11:31 午间总结 "
-        "→ 13:00-14:30 每10分 → 15:00 尾盘 → 15:10 收盘总结")
+    log("盘段守护 v4：08:00 盘前情报 → 09:00 亚太情报 → 09:20 盘前速览 → 09:30 起每15分选股 "
+        "→ 11:31 午间总结 → 13:00 起每15分 → 15:00 尾盘 → 15:10 收盘总结 → 15:20 表格化复盘")
     while stop_check is None or not stop_check():
         now = datetime.datetime.now()
-        # ── 周末：睡到下一交易日 09:00 ──
+        # ── 周末：睡到下一交易日 08:00 ──
         if now.weekday() >= 5:
-            nxt = next_weekday_0900(now)
-            log("[%s] 周末 → 下一交易日 %s 09:00 预热" % (
+            nxt = next_weekday_at(now, 8, 0)
+            log("[%s] 周末 → 下一交易日 %s 08:00 盘前情报" % (
                 now.strftime("%m-%d %H:%M"), nxt.strftime("%m-%d")))
             _sleep_until(nxt, stop_check)
             continue
         slot = _slot_of(now)
+        # ── 08:00-08:59 盘前情报（宏观 + 美股收盘 → 利好利空板块 → 候选标的 → 存库）──
+        if slot == "pre8":
+            if rhythm_need_flag("pre8"):
+                if now.hour * 60 + now.minute < 8 * 60:
+                    _sleep_until(_today_at(8, 0), stop_check)
+                    continue
+                try:
+                    import _daily_intel
+                    _daily_intel.run_slot("pre8", dry=dry, log=log)
+                    rhythm_mark_flag("pre8")
+                    log("✓ 08:00 盘前情报完成")
+                except Exception as e:  # noqa: BLE001
+                    log("08:00 盘前情报失败：%s（2 分钟后重试）" % e)
+                    _interruptible_sleep(120, stop_check)
+                continue
+            _sleep_until(_today_at(9, 0), stop_check)
+            continue
         # ── 09:00-09:29 预热 ──
         if slot == "pre":
             if prep and rhythm_need_flag("pre"):
@@ -2523,6 +3825,15 @@ def daemon_serve(prep=True, interval=600, dry=False, use_ctx=True,
                     log("[09:00 预热] 失败，2 分钟后重试")
                     _interruptible_sleep(120, stop_check)
                     continue
+            # 09:00 亚太情报：宏观 + 日经/KOSPI/恒生/台湾/新加坡/澳洲 + 韩国权重股
+            if rhythm_need_flag("pre9"):
+                try:
+                    import _daily_intel
+                    _daily_intel.run_slot("pre9", dry=dry, log=log)
+                    rhythm_mark_flag("pre9")
+                    log("✓ 09:00 亚太情报完成")
+                except Exception as e:  # noqa: BLE001
+                    log("09:00 亚太情报失败：%s（不阻塞开盘）" % e)
             # 09:20 开盘前大盘速览（每日一次）：4指数同轴叠加图 + 强弱结论 + 期货库存
             if rhythm_need_flag("pre_msg"):
                 if now.hour * 60 + now.minute < 9 * 60 + 20:
@@ -2561,6 +3872,9 @@ def daemon_serve(prep=True, interval=600, dry=False, use_ctx=True,
         hm = now.hour * 60 + now.minute
         # 11:31-12:00 午间盘中总结（每日一次）
         if 11 * 60 + 31 <= hm <= 12 * 60 and rhythm_need_flag("lunch"):
+            if rhythm_need_flag("lunch_snap"):
+                run_lunch_snapshot(log=log, stop_check=stop_check)
+                rhythm_mark_flag("lunch_snap")  # 只尝试一次，失败不阻塞总结
             if _push_lunch_summary(dry, use_ctx, log):
                 rhythm_mark_flag("lunch")
                 log("✓ 午间盘中总结完成")
@@ -2570,7 +3884,10 @@ def daemon_serve(prep=True, interval=600, dry=False, use_ctx=True,
             continue
         if hm >= 15 * 60:
             if rhythm_need_flag("tail"):
-                run_tail_kline(log=log, stop_check=stop_check)
+                if run_tail_kline(log=log, stop_check=stop_check):
+                    if rhythm_need_flag("cfz"):
+                        if run_close_freeze(log=log, stop_check=stop_check):
+                            rhythm_mark_flag("cfz")
                 _check_rounds(log)
                 continue
             # 尾盘定格后 15:00-15:09 窗口：当日选股入账本 + 到期信号结算。
@@ -2602,8 +3919,22 @@ def daemon_serve(prep=True, interval=600, dry=False, use_ctx=True,
                     log("ETF usecase 发布失败，2 分钟后重试")
                     _interruptible_sleep(120, stop_check)
                 continue
-            # 当日流程完毕 → 次日 09:00
-            _sleep_until(next_weekday_0900(now), stop_check)
+            # 15:20：收盘复盘（表格化）a 板块判定对错 / b 当日选股 / c 近5日巡诊 / d 实仓镜像
+            if rhythm_need_flag("rev"):
+                if hm < 15 * 60 + 20:
+                    _sleep_until(_today_at(15, 20), stop_check)
+                    continue
+                try:
+                    import _daily_intel
+                    _daily_intel.push_review(dry=dry, log=log)
+                    rhythm_mark_flag("rev")
+                    log("✓ 15:20 表格化复盘完成")
+                except Exception as e:  # noqa: BLE001
+                    log("15:20 复盘失败：%s（2 分钟后重试）" % e)
+                    _interruptible_sleep(120, stop_check)
+                continue
+            # 当日流程完毕 → 次日 08:00 盘前情报
+            _sleep_until(next_weekday_at(now, 8, 0), stop_check)
             continue
         nxt = _next_slot_at(now)
         if nxt:
@@ -2618,9 +3949,9 @@ def daemon_serve(prep=True, interval=600, dry=False, use_ctx=True,
 def main():
     ap = argparse.ArgumentParser(description="PC 候选清单发布（选股→通知→COS）")
     ap.add_argument("--once", action="store_true", help="执行一次")
-    ap.add_argument("--daemon", action="store_true", help="盘段守护 v3（固定时刻表，见 daemon_serve 注释）")
-    ap.add_argument("--interval", type=int, default=600,
-                    help="盘中轮间隔秒（v3 默认 600=10 分钟，首轮/尾轮仍随盘段整点）")
+    ap.add_argument("--daemon", action="store_true", help="盘段守护 v4（固定时刻表，见 daemon_serve 注释）")
+    ap.add_argument("--interval", type=int, default=900,
+                    help="盘中轮间隔秒（v4 默认 900=15 分钟，首轮/尾轮仍随盘段整点）")
     ap.add_argument("--dry", action="store_true", help="不通知不上传（调试）")
     ap.add_argument("--key", default=None, help="COS candidates_key，默认 stockanalysis/quant/candidates.json")
     ap.add_argument("--timed", action="store_true", help="定时推送模式（单次执行也推送整轮概览）")
@@ -2631,8 +3962,9 @@ def main():
                     help="关闭盘段首刷/预热/尾盘(下载+XML DAG 选股)，只做固定轮次选股")
     args = ap.parse_args()
     if args.daemon:
-        print("盘段守护 v3：09:20 盘前速览(期货库存) → 09:30-11:20 每10分选股 → "
-              "11:31 午间总结 → 13:00-14:30 每10分 → 15:00 尾盘 → 15:10 收盘总结")
+        print("盘段守护 v4：08:00 盘前情报 → 09:00 亚太情报 → 09:20 盘前速览 → "
+              "09:30 起每15分选股 → 11:31 午间总结 → 13:00 起每15分 → 15:00 尾盘 → "
+              "15:10 收盘总结 → 15:20 表格化复盘")
         daemon_serve(prep=not args.no_prep, interval=args.interval,
                      dry=args.dry, use_ctx=not args.no_ctx)
         return 0

@@ -2,9 +2,11 @@ package com.chin.stockanalysis.strategy.topology.nodes
 
 import android.content.Context
 import android.util.Log
+import com.chin.stockanalysis.strategy.analysis.TechTags
 import com.chin.stockanalysis.strategy.topology.core.BaseNode
 import com.chin.stockanalysis.strategy.topology.core.NodeType
 import com.chin.stockanalysis.strategy.topology.core.PipelineContext
+import com.chin.stockanalysis.strategy.topology.pipelines.TrendClassGate
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -34,6 +36,10 @@ import java.util.Locale
  *   - n_etf_gate    JSONObject {ok, date, note, available}
  *   - n_etf_signal  JSONObject {as_of, rows:[{code,name,close,dd60,rsi6,...dip,dip_ok,watch_ok}]}
  *   - n_etf_exit    JSONObject {generated_at, as_of, gate, signal_today, approach, strategy, exit}
+ *
+ * 2026-09-10 双端口径统一：技术假设摘要（SAR/MACD/OBV/跌后K）与趋势图列统一走公共
+ * [TechTags]；趋势图列由「均线简版」升级为与 PC `_etf_trend_label→_trend_match_3way`
+ * 完全同口径的完整打分版（形态库经 [TechTags.toCandles] 还原后复用）。
  */
 
 /** 本地 ETF 行情缓存读取（external files 优先=最新推送，internal 兜底） */
@@ -82,39 +88,6 @@ object EtfCacheStore {
     }
 }
 
-/** 纯指标计算（对齐 smalltools/_etf_buy.py sma/rsi） */
-private object EtfMath {
-    fun sma(vals: List<Double>, n: Int): List<Double> {
-        val out = ArrayList<Double>(vals.size)
-        var acc = 0.0
-        val q = ArrayDeque<Double>()
-        for (v in vals) {
-            acc += v
-            q.addLast(v)
-            if (q.size > n) acc -= q.removeFirst()
-            out.add(acc / q.size)
-        }
-        return out
-    }
-
-    fun rsi(vals: List<Double>, n: Int = 6): List<Double> {
-        val out = ArrayList<Double>(vals.size)
-        out.add(50.0)
-        val gains = ArrayDeque<Double>()
-        val losses = ArrayDeque<Double>()
-        for (i in 1 until vals.size) {
-            val ch = vals[i] - vals[i - 1]
-            gains.addLast(if (ch > 0) ch else 0.0)
-            losses.addLast(if (ch < 0) -ch else 0.0)
-            if (gains.size > n) { gains.removeFirst(); losses.removeFirst() }
-            val ag = gains.sum() / gains.size
-            val al = losses.sum() / losses.size
-            out.add(if (al == 0.0) 100.0 else 100.0 - 100.0 / (1.0 + ag / al))
-        }
-        return out
-    }
-}
-
 /** 阶段1：沪深300 结构多头门控（close>MA20>MA60）—— 大盘不弱才出手 */
 class EtfGateNode(
     private val indexCode: String = "sh000300",
@@ -134,21 +107,30 @@ class EtfGateNode(
             context.log(nodeId, "⚠ $note")
             return JSONObject().put("ok", false).put("available", cache != null).put("date", "").put("note", note)
         }
-        val closes = (0 until snaps.length()).map { snaps.optJSONObject(it).optDouble("close") }
-        val maF = EtfMath.sma(closes, maFast)
-        val maS = EtfMath.sma(closes, maSlow)
-        for (j in snaps.length() - 1 downTo 0) {
-            if (j >= maSlow && closes[j] > maF[j] && maF[j] > maS[j]) {
-                val note = "沪深300 close(${fmt0(closes[j])})>MA$maFast(${fmt0(maF[j])})>MA$maSlow(${fmt0(maS[j])})"
-                context.log(nodeId, "✅ $note @ ${snaps.optJSONObject(j).optString("date")}")
-                return JSONObject().put("ok", true).put("date", snaps.optJSONObject(j).optString("date"))
-                    .put("note", note).put("available", true)
-            }
+        val closes = (0 until snaps.length()).map { TechTags.num(snaps.optJSONObject(it).optDouble("close")) }
+        val maF = TechTags.sma(closes, maFast)
+        val maS = TechTags.sma(closes, maSlow)
+        // 2026-09-09 修复：门控只判【最新交易日】是否结构多头（close>MA20>MA60）。
+        // 原实现从末端回溯到"最近一个历史多头日"，导致空头行情仍显示旧日期
+        // （如 2026.07.01）并误报"可低吸"。回测口径 apply_gate 同样按信号日判定。
+        val j = snaps.length() - 1
+        if (j >= maSlow && closes[j] > maF[j] && maF[j] > maS[j]) {
+            val note = "沪深300 close(${fmt0(closes[j])})>MA$maFast(${fmt0(maF[j])})>MA$maSlow(${fmt0(maS[j])})"
+            context.log(nodeId, "✅ $note @ ${snaps.optJSONObject(j).optString("date")}")
+            return JSONObject().put("ok", true).put("date", snaps.optJSONObject(j).optString("date"))
+                .put("state", "bull").put("note", note).put("available", true)
         }
         val lastDate = snaps.optJSONObject(snaps.length() - 1).optString("date")
-        context.log(nodeId, "⛔ 沪深300 非结构多头（截至 $lastDate），低吸暂停")
+        // 2026-09-09 三态化显示：非多头 ≠ 一律叫"空头"（可能是均线纠缠），按实际排列给标签
+        val bear = j >= maSlow && closes[j] < maF[j] && maF[j] < maS[j]
+        val note = if (bear)
+            "沪深300 空头排列 close(${fmt0(closes[j])})<MA$maFast(${fmt0(maF[j])})<MA$maSlow(${fmt0(maS[j])})"
+        else if (j >= maSlow)
+            "沪深300 均线纠缠（未呈多头排列）MA$maFast(${fmt0(maF[j])}) MA$maSlow(${fmt0(maS[j])})"
+        else "沪深300 数据不足（< $maSlow 根），门控无法判定"
+        context.log(nodeId, "⛔ $note（截至 $lastDate），低吸暂停")
         return JSONObject().put("ok", false).put("date", lastDate)
-            .put("note", "沪深300 未满足 close>MA$maFast>MA$maSlow 结构多头").put("available", true)
+            .put("state", if (bear) "bear" else "mixed").put("note", note).put("available", true)
     }
 
     private fun fmt0(v: Double): String = String.format(Locale.US, "%.0f", v)
@@ -203,19 +185,25 @@ class EtfDipSignalNode(
     private fun scanRow(context: PipelineContext, snaps: JSONArray, code: String, name: String, gateOk: Boolean): JSONObject? {
         val n = snaps.length()
         val closes = ArrayList<Double>(n)
-        val dates = ArrayList<String>(n)
         val opens = ArrayList<Double>(n)
+        val highs = ArrayList<Double>(n)
+        val lows = ArrayList<Double>(n)
+        val vols = ArrayList<Double>(n)
+        val dates = ArrayList<String>(n)
         for (i in 0 until n) {
             val s = snaps.optJSONObject(i)
-            closes.add(s.optDouble("close"))
-            opens.add(s.optDouble("open"))
+            closes.add(TechTags.num(s.optDouble("close")))
+            opens.add(TechTags.num(s.optDouble("open")))
+            highs.add(TechTags.num(s.optDouble("high")))
+            lows.add(TechTags.num(s.optDouble("low")))
+            vols.add(TechTags.num(s.optDouble("volume")))
             dates.add(s.optString("date"))
         }
         val i = n - 1
         if (i < maxOf(maYear, ddWin)) return null
         val c = closes[i]
-        val maY = EtfMath.sma(closes, maYear)[i]
-        val r6 = EtfMath.rsi(closes, 6)
+        val maY = TechTags.sma(closes, maYear)[i]
+        val r6 = TechTags.rsi(closes, 6)
         val r6v = r6[i]
         val r6p = if (i >= 1) r6[i - 1] else r6v
         val start = maxOf(0, i - ddWin + 1)
@@ -230,6 +218,11 @@ class EtfDipSignalNode(
             (!upCloseOrRsiTurn || upClose || rsiTurn) &&
             (!notNew5 || notNew5)
         val watchOk = !dipOk && dd60 <= watchDdMax && r6v < watchRsiMax && above250
+        // 2026-09-09：技术假设摘要列（口径对齐 PC _technicals.rich_tag）
+        val sarT = TechTags.sarText(closes, highs, lows)
+        val macdT = TechTags.macdText(closes)
+        val obvT = TechTags.obvText(closes, vols) ?: "OBV走平"
+        val kT = TechTags.klineDesc(closes, i)
         val row = JSONObject()
         row.put("code", code)
         row.put("name", name)
@@ -237,6 +230,10 @@ class EtfDipSignalNode(
         row.put("close", round(c, 3))
         row.put("dd60", round(dd60, 2))
         row.put("rsi6", round(r6v, 1))
+        row.put("sar", sarT)
+        row.put("macd", macdT)
+        row.put("obv", obvT)
+        row.put("kline", kT)
         row.put("above250", above250)
         row.put("up_close", upClose)
         row.put("rsi_turn", rsiTurn)
@@ -245,7 +242,26 @@ class EtfDipSignalNode(
         row.put("dip", dipOk && gateOk)   // 仅门控开时才视为可买信号（UI 绿标）
         row.put("dip_ok", dipOk)
         row.put("watch_ok", watchOk)
+        // 2026-09-10 新增：趋势图列（方向 + 经典K线形态），与 PC 引擎 usecase_pipeline 同列名
+        row.put("trend", trendLabel(closes, opens, highs, lows))
         return row
+    }
+
+    /** 趋势图（2026-09-10 · 口径统一）：『↑上涨·早晨之星 / →中性 / ↓下跌·三乌鸦』。
+     *
+     * 与 PC 引擎 `usecase_pipeline._etf_trend_label → _trend_match_3way` 完全同口径：
+     * 复用 [TrendClassGate] 的完整三类打分（均线结构/MA20斜率/5日动量/形态库/企稳破位），
+     * 经 [TechTags.toCandles] 把 JSON 数值序列还原成 K 线实体后走同一形态库，
+     * 不再使用旧「均线排列简版」（会与 PC 出现方向/形态名不一致）。 */
+    private fun trendLabel(closes: List<Double>, opens: List<Double>,
+                           highs: List<Double>, lows: List<Double>): String {
+        if (closes.size < 30) return "—"
+        val m = TrendClassGate.classify(TechTags.toCandles("etf", closes, opens, highs, lows))
+        val arrow = when (m.label) {
+            "上涨" -> "↑"; "下跌" -> "↓"; else -> "→"
+        }
+        val nm = m.bull ?: m.bear ?: ""
+        return if (nm.isEmpty()) "$arrow${m.label}" else "$arrow${m.label}·$nm"
     }
 
     private fun round(v: Double, digits: Int): Double {

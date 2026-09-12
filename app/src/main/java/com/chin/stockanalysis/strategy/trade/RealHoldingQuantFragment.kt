@@ -393,12 +393,21 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
                 android.util.Log.i(TAG, "🔄 refreshPositions: positionContainer AFTER update, childCount=${positionContainer.childCount}")
                 // 渲染完成后自动检测做T机会
                 checkRealPositionTSignals()
+                // 自愈：老持仓若日K不足，补拉一次（技术指标表/做T需要），避免只有 OCR 新建的才补
+                maybeBackfillMissingSnapshots()
                 android.util.Log.i(TAG, "🔄 refreshPositions DONE")
             }
         }
     }
 
-    /** 计算实仓数据哈希（orders + realPositions + picks） */
+    /**
+     * 计算实仓数据哈希（orders + realPositions + picks + 实时行情）。
+     *
+     * 2026-09-11 修复：哈希必须包含实时价。此前只含持仓结构（id/code），
+     * 于是持仓不变时点 🔄 或切回本页都会命中「数据未变化，跳过重新渲染」，
+     * 现价/盈亏永远停在首次渲染那一刻（用户反馈「实仓没有实时更新价格」）。
+     * 把现价按 0.0001 精度并入哈希后：价动则重渲染，确实没变才跳过。
+     */
     private suspend fun computeRealHoldingHash(ctx: android.content.Context): Int {
         val db = StockDatabase.getInstance(ctx)
         val orders = withContext(Dispatchers.IO) {
@@ -415,7 +424,86 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
         for (o in orders) { h = h * 31 + o.id.hashCode(); h = h * 31 + (o.stockCode ?: "").hashCode() }
         for (rp in realPositions) { h = h * 31 + rp.id.hashCode(); h = h * 31 + (rp.stockCode ?: "").hashCode() }
         for (p in picks) { h = h * 31 + (p.stockCode ?: "").hashCode(); h = h * 31 + (p.addedDate ?: "").hashCode() }
+
+        // 实时价并入哈希（统一「带前缀」口径；getRealtime 返回的 key 也是带前缀）。
+        // 2026-09-12 修复：此前这里去掉前缀 → rtMap[bare] 永远取不到价 → 实时价恒为 0
+        // → 哈希不随价格变化 → 打开/切页时命中「数据未变化」短路，实仓价格/盈亏不再刷新。
+        val codes = (realPositions.map { it.stockCode } + orders.map { it.stockCode ?: "" })
+            .map { toPrefixedCode(it) }
+            .filter { it.isNotBlank() }
+            .distinct()
+        if (codes.isNotEmpty()) {
+            try {
+                val rtMap = withContext(Dispatchers.IO) {
+                    com.chin.stockanalysis.stock.data.StockDataSourceFactory
+                        .createDefaultRepository(ctx)
+                        .getRealtime(codes)
+                }
+                for (c in codes) {
+                    val price = rtMap[c]?.price ?: 0.0
+                    h = h * 31 + c.hashCode()
+                    h = h * 31 + (price * 10000).toInt()
+                }
+            } catch (e: Exception) {
+                android.util.Log.w(TAG, "refreshPositions 哈希取实时价失败，退化为结构哈希: ${e.message}")
+            }
+        }
         return h
+    }
+
+    /** 已尝试补拉的代码（每代码每会话只尝试一次，避免渲染→补拉→刷新 的循环） */
+    private val backfillAttempted = mutableSetOf<String>()
+
+    /** 最近一次 OCR 识别的原始文字（确认框「查看原文」核对用） */
+    private var lastOcrRawText: String = ""
+
+    /**
+     * 自愈：找出日K不足 30 根的老持仓并补拉一次。
+     * OCR 新建的持仓已在导入路径补拉；这里是给「以前手工/历史遗留、当时没补上」的持仓兜底，
+     * 否则实仓「技术指标」表会因缺K线整表空白。
+     */
+    private fun maybeBackfillMissingSnapshots() {
+        if (!isAdded) return
+        val ctx = requireContext().applicationContext
+        lifecycleScope.launch(Dispatchers.IO) {
+            val db = try { StockDatabase.getInstance(ctx) } catch (_: Exception) { return@launch }
+            val positions = try { db.realPositionDao().getAllActive() } catch (_: Exception) { return@launch }
+            val todo = positions
+                .map { toPrefixedCode(it.stockCode) to it.stockName }
+                .distinctBy { it.first }
+                .filter { (code, _) ->
+                    if (!backfillAttempted.add(code)) return@filter false
+                    // daily_snapshot 以「带前缀」code 存储，此处必须同口径，否则恒判定「K线不足」
+                    try { db.dailySnapshotDao().getByCode(code, 30).size < 30 } catch (_: Exception) { false }
+                }
+            if (todo.isEmpty()) return@launch
+            android.util.Log.i(TAG, "实仓自愈：${todo.size} 只持仓日K不足30根，补拉中")
+            withContext(Dispatchers.Main) { backfillRealPositionDaily(todo) }
+        }
+    }
+
+    /**
+     * 2026-09-11 修复：持仓建仓后补齐日K快照（技术指标表/做T均依赖）。
+     *
+     * 技术指标表（PickTechTable.buildRow）要求日K ≥30 根，OCR 识别 / 手工新增的持仓
+     * 往往不在系统扫描池内、没有历史快照 → 该行返回 null → 整张「技术指标」表空白
+     * （用户反馈「实仓没有技术假设表格」）。这里对快照不足的代码补拉 60 日，补完再刷新。
+     */
+    private fun backfillRealPositionDaily(list: List<Pair<String, String>>) {
+        if (list.isEmpty() || !isAdded) return
+        val ctx = requireContext().applicationContext
+        lifecycleScope.launch(Dispatchers.IO) {
+            for ((raw, name) in list.distinctBy { it.first }) {
+                val code = toPrefixedCode(raw)   // daily_snapshot 用带前缀 code
+                val count = try {
+                    StockDatabase.getInstance(ctx).dailySnapshotDao().getByCode(code, 30).size
+                } catch (_: Exception) { 0 }
+                if (count < 30) {
+                    android.util.Log.i(TAG, "实仓 $name($code) 日K仅 $count 根，补拉后再刷新")
+                    ensureRealPositionDailyData(code, name)
+                }
+            }
+        }
     }
 
     private suspend fun buildRealHoldingReport(ctx: android.content.Context): LinearLayout {
@@ -464,11 +552,13 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
 
         // ── 将真实持仓转换为 StrategyTradeOrderEntity 格式，复用表格渲染 ──
         val orders = realPositions.map { rp ->
-            val bareCode = rp.stockCode.replace(Regex("^(sh|sz|bj)"), "")
+            // 统一「带前缀」code：priceMap / getRealtime / 做T引擎 全链路同口径。
+            // 2026-09-12 修复：此前用 bareCode，导致 priceMap[order.stockCode] 取不到现价，
+            // 现价/盈亏永远回落到买入成本价。
             StrategyTradeOrderEntity(
                 id = rp.id,
                 strategyId = "RealHolding",
-                stockCode = bareCode,
+                stockCode = toPrefixedCode(rp.stockCode),
                 stockName = rp.stockName,
                 tradeDate = rp.buyDate.ifEmpty { LocalDate.now().format(DATE_FMT) },
                 buyPrice = rp.avgBuyPrice,
@@ -552,6 +642,26 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
                     setPadding(16, 2, 0, 2)
                 })
             }
+        }
+
+        // ── 📊 技术指标（11 列，与三周期「当日选股·技术假设」、ETF 页同一公共组件 PickTechTable）──
+        // 2026-09-11 新增：实仓页同样给这张技术表，标题按用户口径统一叫「技术指标」。
+        // 数据 = 当前真实持仓（状态列「持仓」）+ 本次 Pipeline 选股（状态列「入选」），按代码去重、持仓优先。
+        val techRows = mutableListOf<PickTechRow>()
+        val seenCodes = mutableSetOf<String>()
+        for (rp in realPositions) {
+            val code = toPrefixedCode(rp.stockCode)   // PickTechTable 内部按带前缀 code 查 daily_snapshot
+            if (!seenCodes.add(code)) continue
+            PickTechTable.buildRow(db, code, rp.stockName, "持仓")?.let { techRows.add(it) }
+        }
+        for (pick in picks) {
+            val code = toPrefixedCode(pick.stockCode)
+            if (!seenCodes.add(code)) continue
+            PickTechTable.buildRow(db, code, pick.stockName, "入选")?.let { techRows.add(it) }
+        }
+        if (techRows.isNotEmpty()) {
+            android.util.Log.i(TAG, "📊 技术指标表: ${techRows.size} 行（持仓${realPositions.size} + 选股${picks.size}）")
+            renderPickTechSection(container, techRows, "📊 技术指标", "（${techRows.size} 只 · 持仓+选股）")
         }
 
         android.util.Log.i(TAG, "📋 buildRealHoldingReport DONE, childCount=${container.childCount}")
@@ -657,7 +767,8 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
                 maxLines = 1; isSingleLine = true
             })
             nameCell.addView(TextView(ctx).apply {
-                text = order.stockCode; textSize = 8f
+                // order.stockCode 现为带前缀口径（与 priceMap 对齐），展示时只取 6 位数字
+                text = order.stockCode.takeLast(6); textSize = 8f
                 setTextColor(Color.parseColor("#999999"))
             })
             row.addView(nameCell)
@@ -753,7 +864,7 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
             .forEach {
                 val ratio = curOf(it) * it.quantity / curMv * 100
                 alerts.add("  🔴 %s(%s) 占持仓%.0f%% 超上限%d%% → 建议减至≤%d%%".format(
-                    it.stockName, it.stockCode, ratio,
+                    it.stockName, it.stockCode.takeLast(6), ratio,
                     (maxSingle * 100).toInt(), (maxSingle * 100).toInt()))
             }
         if (valid.size >= 3) {
@@ -902,8 +1013,11 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
     }
 
     /** 保存真实持仓到数据库 */
-    private fun saveRealPosition(code: String, name: String, qty: Int, price: Double, date: String, period: String) {
+    private fun saveRealPosition(rawCode: String, name: String, qty: Int, price: Double, date: String, period: String) {
         val ctx = requireContext().applicationContext
+        // 入库即统一「带前缀」口径（daily_snapshot / getRealtime 全链路同 key），
+        // 避免 DB 里混存 bare/prefixed 导致查价、查K线互相 miss（2026-09-12 修复）。
+        val code = toPrefixedCode(rawCode)
         android.util.Log.i(TAG, "📥 saveRealPosition: code=$code name=$name qty=$qty price=$price date=$date period=$period")
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -961,10 +1075,9 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
         statusTv.text = "🔄 正在识别截图..."
 
         try {
-            val inputStream = ctx.contentResolver.openInputStream(uri)
-            val bitmap = BitmapFactory.decodeStream(inputStream)
-            inputStream?.close()
-
+            // 2026-09-12：原实现直接 decodeStream 原图（手机截图常 1080×2400+），
+            // 既易 OOM 又拖慢识别；改为按最长边降采样到 ≤2000px 再交给 MLKit。
+            val bitmap = decodeOcrBitmap(uri)
             if (bitmap == null) {
                 statusTv.text = "❌ 无法读取图片"
                 return
@@ -975,8 +1088,10 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
 
             recognizer.process(image)
                 .addOnSuccessListener { visionText ->
+                    try { recognizer.close() } catch (_: Exception) {}
                     if (!isAdded) return@addOnSuccessListener
                     val rawText = visionText.text
+                    lastOcrRawText = rawText
                     android.util.Log.i(TAG, "OCR 原文:\n$rawText")
 
                     // 使用 AI 解析 OCR 文字
@@ -1004,13 +1119,19 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
                                         }
                                     }
                                 }
-                                is AiParseResult.Timeout -> {
-                                    statusTv.text = "⚠️ AI 解析超时，请重试"
-                                    showAiRetryDialog(rawText)
-                                }
-                                is AiParseResult.AcquireFailed -> {
-                                    statusTv.text = "⚠️ AI 服务繁忙，请稍后重试"
-                                    showAiRetryDialog(rawText)
+                                is AiParseResult.Timeout, is AiParseResult.AcquireFailed -> {
+                                    // 2026-09-11 修复：AI 不可用（超时 / 无可用 provider）时先走本地正则兜底，
+                                    // 避免用户只看到「AI 解析失败」而完全无法建仓。
+                                    android.util.Log.i(TAG, "AI 不可用(${if (result is AiParseResult.AcquireFailed) "no-provider" else "timeout"})，尝试正则兜底...")
+                                    val fallback = parseHoldingFromOcr(rawText)
+                                    android.util.Log.i(TAG, "正则兜底结果: ${fallback.size} 只")
+                                    if (fallback.isEmpty()) {
+                                        statusTv.text = if (result is AiParseResult.AcquireFailed)
+                                            "⚠️ AI 服务繁忙，请稍后重试" else "⚠️ AI 解析超时，请重试"
+                                        showAiRetryDialog(rawText)
+                                    } else {
+                                        showOcrConfirmDialog(fallback)
+                                    }
                                 }
                                 is AiParseResult.ParseError -> {
                                     // AI 解析失败，尝试正则备选
@@ -1029,11 +1150,38 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
                     }
                 }
                 .addOnFailureListener { e ->
+                    try { recognizer.close() } catch (_: Exception) {}
                     if (!isAdded) return@addOnFailureListener
                     statusTv.text = "❌ OCR 识别失败: ${e.message}"
                 }
         } catch (e: Exception) {
             if (isAdded) statusTv.text = "❌ 图片处理失败: ${e.message}"
+        }
+    }
+
+    /**
+     * 解码截图并降采样（2026-09-12）：OCR 只需文字可读，超大原图既易 OOM 又拖慢识别。
+     * 按最长边不超过 [maxDim] 计算 inSampleSize（2 的幂），避免整图载入内存。
+     */
+    private fun decodeOcrBitmap(uri: android.net.Uri, maxDim: Int = 2000): android.graphics.Bitmap? {
+        return try {
+            val resolver = requireContext().contentResolver
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            resolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, bounds)
+            }
+            val w = bounds.outWidth
+            val h = bounds.outHeight
+            if (w <= 0 || h <= 0) return null
+            var sample = 1
+            while (w / sample > maxDim || h / sample > maxDim) sample *= 2
+            val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+            resolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, opts)
+            }
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "decodeOcrBitmap 失败: ${e.message}")
+            null
         }
     }
 
@@ -1240,6 +1388,24 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
             code.startsWith("4") || code.startsWith("8") -> "bj$code"
             else -> "sh$code"
         }
+    }
+
+    /**
+     * 统一为「带交易所前缀」口径（幂等）：`600519`/`sh600519` → `sh600519`。
+     *
+     * 2026-09-12 修复：实仓此前把代码去掉前缀（bare）后再查 `daily_snapshot` / `getRealtime`，
+     * 而全库与实时接口均以带前缀为 key（`EastMoneyStockSource.normalizeBack`）。
+     * 导致：① `priceMap[bare]` 永远 miss → 现价/盈亏回落到成本价；
+     * ② 哈希里实时价恒为 0 → 打开/切页时命中「数据未变化」短路 → 实仓不再实时刷新；
+     * ③ `PickTechTable` 取不到 K 线 → 「技术指标」表空白。
+     * 三周期之所以正常，正是因为全链路用的是带前缀 code（见 `QuantFragmentBase` 的
+     * `getRealtime(watchlistItems.map { it.stockCode })`）。此处对齐同一口径。
+     */
+    private fun toPrefixedCode(raw: String?): String {
+        val s = (raw ?: "").trim().lowercase()
+        if (s.isEmpty()) return ""
+        if (s.startsWith("sh") || s.startsWith("sz") || s.startsWith("bj")) return s
+        return normalizeStockCode(s)
     }
 
     /**
@@ -1533,6 +1699,11 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
 
                         android.util.Log.i(TAG, "✅ DB write complete: updated=${updatedCount}, inserted=${insertedCount}, calling refreshPositions()")
 
+                        // 补齐日K快照（技术指标表要求 ≥30 根；OCR 新增的持仓通常没有历史快照）
+                        backfillRealPositionDaily(positions.map {
+                            it.stockCode.replace(Regex("^(sh|sz|bj)"), "") to it.stockName
+                        })
+
                         withContext(Dispatchers.Main) {
                             if (!isAdded) {
                                 android.util.Log.w(TAG, "⚠️ insertAll: fragment detached before UI refresh, skip")
@@ -1560,7 +1731,12 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
             }
             .setNegativeButton("取消", null)
             .setNeutralButton("查看原文") { _, _ ->
-                // 可选：显示原始 OCR 文字供用户核对
+                // 2026-09-12 修复：此前是空实现（点了没反应，用户误以为「OCR 不好用」）
+                if (lastOcrRawText.isBlank()) {
+                    Toast.makeText(requireContext(), "无 OCR 原文可查看", Toast.LENGTH_SHORT).show()
+                } else {
+                    showOcrRawText(lastOcrRawText)
+                }
             }
             .show()
     }
@@ -1579,8 +1755,8 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
         if (!isAdded) return
         val ctx = requireContext()
         android.app.AlertDialog.Builder(ctx)
-            .setTitle("AI 解析失败")
-            .setMessage("AI 服务繁忙或超时，无法解析持仓信息。\n\n您可以：\n• 重试：再次调用 AI 解析\n• 查看原文：查看 OCR 识别的文字")
+            .setTitle("AI 解析未完成")
+            .setMessage("AI 服务不可用（超时 / 无可用模型），本地正则也未能识别出持仓。\n\n您可以：\n• 重试：再次调用 AI 解析\n• 查看原文：查看 OCR 识别的文字，或在设置中配置 AI Key")
             .setPositiveButton("重试") { _, _ ->
                 viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                     statusTv.text = "🤖 重新解析中..."
@@ -1597,8 +1773,14 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
                                 }
                             }
                             is AiParseResult.Timeout, is AiParseResult.AcquireFailed -> {
-                                statusTv.text = "⚠️ 重试仍然超时，请稍后再试"
-                                Toast.makeText(ctx, "AI 服务暂时不可用，请稍后再试", Toast.LENGTH_LONG).show()
+                                // 重试仍不可用 → 本地正则再兜底一次
+                                val fallback = parseHoldingFromOcr(rawOcrText)
+                                if (fallback.isNotEmpty()) {
+                                    showOcrConfirmDialog(fallback)
+                                } else {
+                                    statusTv.text = "⚠️ 重试仍然超时，请稍后再试"
+                                    Toast.makeText(ctx, "AI 服务暂时不可用，且本地未能识别，请稍后再试", Toast.LENGTH_LONG).show()
+                                }
                             }
                             is AiParseResult.ParseError -> {
                                 statusTv.text = "⚠️ 解析失败: ${result.msg}"

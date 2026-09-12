@@ -311,7 +311,9 @@ def diff_snap(prev, cur):
         changes.append(("📰 财经快讯", lines))
     # 外媒·宏观 / 名人·大行 / 券商宏观策略（_news_watch 附加组）
     pe, ce = (prev or {}).get("ext") or {}, cur.get("ext") or {}
-    for head, key in (("🌐 外媒·宏观", "world"), ("🗣️ 名人·大行动态", "names"),
+    # 2026-09-09：气候/极端天气(厄尔尼诺/拉尼娜等)最优先推——大事件需第一时间主动看到
+    for head, key in (("☀️ 气候·极端天气", "climate"), ("🌐 外媒·宏观", "world"),
+                      ("🗣️ 名人·大行动态", "names"),
                       ("📑 券商宏观·策略", "macro_reports")):
         fresh = [t for t in ce.get(key, []) if t not in set(pe.get(key, []))]
         if fresh:
@@ -379,6 +381,13 @@ def run_once(force=False, dry=False):
     t0 = time.time()
     cur = collect_all()
     cur["ext"] = _news_watch.collect_ext()  # 外媒/宏观/名人/券商宏观策略
+    # 四根宏观哨兵（美债/日元/油价/费半）：随每次扫描刷新，新越阈时随情报推送提醒
+    try:
+        import _macro_sentinel as msent
+        cur["sentinel"] = msent.refresh()
+    except Exception as e:  # noqa: BLE001
+        print("宏观哨兵采集失败:", type(e).__name__, e)
+        cur["sentinel"] = {}
     print("[%s] 采集完成 %.1fs" % (cur["ts"], time.time() - t0))
     print("  🇺🇸 美股TOP: %s" % ", ".join(
         "%s%+.1f%%" % (r["name"], r["pct"]) for r in cur["us"][:5]))
@@ -400,6 +409,12 @@ def run_once(force=False, dry=False):
         except (OSError, ValueError):
             prev = {}
     changes = diff_snap(prev, cur) if prev else []
+    # 宏观哨兵：仅「新越阈」提醒（相对上次扫描；持续越阈/回落再触发不重复刷屏）
+    _prev_ids = {x.get("id") for x in ((prev or {}).get("sentinel") or {}).get("alerts") or []}
+    _new_alerts = [x.get("text") for x in ((cur.get("sentinel") or {}).get("alerts") or [])
+                   if x.get("id") not in _prev_ids]
+    if _new_alerts:
+        changes.append(("🛰 宏观哨兵", _new_alerts))
     # 首轮或强制：推送完整概览
     if force or not prev:
         changes = [("📡 首次采集", [])] + changes if changes else [("📡 首次采集", [])]

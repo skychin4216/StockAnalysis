@@ -28,6 +28,7 @@ import com.chin.stockanalysis.strategy.StrategyEngine
 import com.chin.stockanalysis.strategy.topology.core.StockFlowRecord
 import com.chin.stockanalysis.strategy.topology.core.orderTypePeriod
 import com.chin.stockanalysis.strategy.topology.ui.PipelineFlowChart
+import com.chin.stockanalysis.strategy.trade.ui.QuantUiKit
 import android.text.TextUtils
 import com.chin.stockanalysis.ui.TradingDayPickerView
 import kotlinx.coroutines.Dispatchers
@@ -150,6 +151,12 @@ abstract class QuantFragmentBase : Fragment() {
 
     /** 最近一次 Pipeline 选股结果（用于非交易时间显示「选股」区块） */
     protected var lastPickStocks: List<Triple<String, String, Int>> = emptyList()
+    /**
+     * 最近一次选股的「技术假设」11 列表数据（与工作台·ETF 页共用同一公共组件 [PickTechTable]）。
+     * Pipeline 完成后取 [OrderGenerationResult.pickTechRows]；重启 App 后从 user_watchlist 恢复
+     * 选股时按 DB 日K重建（见 refreshPositions），保证结果区常驻可见且口径与 ETF 页一致。
+     */
+    protected var lastPickTechRows: List<PickTechRow> = emptyList()
     /** 执行日志面板顶部的「选股结果」摘要卡（标题 + 仅买入订单生成的股票），null 表示未生成 */
     private var pickResultCard: LinearLayout? = null
     /** 选股中的股票代码集合（从持仓区排除，避免重叠） */
@@ -1185,14 +1192,17 @@ abstract class QuantFragmentBase : Fragment() {
                     if (!isAdded) return@withContext
                     android.util.Log.i("QuantFragmentBase", "Pipeline 完成: selectedStocks=${r.selectedStocks.size} 只")
                     lastPickStocks = r.selectedStocks
+                    // 结果区「技术假设」表数据（Pipeline 已算好，UI 直接用；重启后按 DB 重建）
+                    lastPickTechRows = r.pickTechRows
                     pickStockCodes = if (r.selectedStocks.isNotEmpty())
                         r.selectedStocks.map { it.first }.toSet() else emptySet()
                     android.util.Log.i("QuantFragmentBase", "lastPickStocks=${lastPickStocks.size}, pickStockCodes=$pickStockCodes")
 
+                    // 2026-09-09：引擎已全量 DAG 化，标题去掉 [DAG] 前缀，避免与旧版/页签名重复造成“两套选股”观感
                     val dialogTitle = if (saveAsAiOnly) {
-                        "[DAG] ${titlePrefix} 非交易时间选股结果（已保存 AI 精选）"
+                        "${titlePrefix} 非交易时间选股结果（已保存 AI 精选）"
                     } else {
-                        "[DAG] ${titlePrefix} DAG 流程"
+                        "${titlePrefix} DAG 流程"
                     }
                     showPipelineNodeDetails(dialogTitle, r, stockNameMap)
                     showPickResultSummary(dialogTitle, r, stockNameMap)
@@ -4128,6 +4138,7 @@ abstract class QuantFragmentBase : Fragment() {
                         db.userWatchlistDao().deleteBySourceAndDate(source, today)
                         withContext(Dispatchers.Main) {
                             lastPickStocks = emptyList()
+                            lastPickTechRows = emptyList()
                             pickStockCodes = emptySet()
                             refreshPositions()
                             statusTv.text = "✅ 已清空 $periodType 选股"
@@ -4426,6 +4437,15 @@ abstract class QuantFragmentBase : Fragment() {
                     }
                 }
 
+                // 恢复选股后补建「技术假设」行：重启 App / 换页时内存里没有 Pipeline 的结果对象，
+                // 按 DB 日K重建（与 Pipeline、ETF 页同一公共构建器 PickTechTable.buildRow，
+                // 口径一致），否则三周期结果表会空白 —— 这正是此前「ETF 页有表、三周期没表」的原因
+                if (lastPickTechRows.isEmpty() && lastPickStocks.isNotEmpty()) {
+                    lastPickTechRows = lastPickStocks.mapNotNull { (code, name, _) ->
+                        PickTechTable.buildRow(db, code, name, "入选")
+                    }
+                }
+
                 // ── 数据哈希比对：未变化则跳过重新渲染 ──
                 val currentHash = computeDataHash(rawOrders, lastPickStocks)
                 if (currentHash == lastRefreshHash) {
@@ -4529,6 +4549,56 @@ abstract class QuantFragmentBase : Fragment() {
         } else {
             renderEmptySection("持仓")
         }
+
+        // ── 当日选股 · 技术假设（2026-09-10：与工作台·ETF 页同 UI，常驻可见） ──
+        // 上面「选股区块已移除」指旧版「价格/时间/评分」简表；而 ETF 页一直把 11 列技术表
+        // 当主内容展示，三周期却只在折叠的「执行日志」卡里能看到同一张表，观感割裂 →
+        // 现按 ETF 页同一公共组件（PickTechTable）常驻展示，口径 / 配色一处同步。
+        if (lastPickStocks.isNotEmpty() || lastPickTechRows.isNotEmpty()) {
+            renderPickTechSection(lastPickTechRows)
+        }
+    }
+
+    /**
+     * 渲染「当日选股 · 技术假设」区块（11 列，与工作台·ETF 页同一公共组件）。
+     * 标题行走公共构件 [QuantUiKit]（浅色主题），表格内容走 [PickTechTable]；
+     * 与 ETF 页的差别只剩一个调色板 —— 这正是「公共类创建三周期与 ETF 的 UI」的落点。
+     * 列：名称 / 代码 / 收盘 / 回撤60 / RSI6 / SAR / MACD / OBV / 跌后K形态 / 趋势图 / 状态。
+     */
+    private fun renderPickTechSection(rows: List<PickTechRow>) {
+        renderPickTechSection(
+            positionContainer, rows, "📊 当日选股 · 技术假设", "（${rows.size} 只 · 同 ETF 页口径）"
+        )
+    }
+
+    /**
+     * 通用版（2026-09-11 抽出）：把「技术指标 / 技术假设」11 列表渲染到**任意父容器**，标题可自定义。
+     * 子类复用同一公共组件（如实仓页容器由 [RealHoldingQuantFragment.buildRealHoldingReport] 构建，
+     * 与三周期页不同容器；其实仓口径标题为「📊 技术指标」）。
+     *
+     * @param parent 目标父容器（用 parent.context 建视图，避免跨线程调用 requireContext）
+     */
+    protected fun renderPickTechSection(
+        parent: LinearLayout,
+        rows: List<PickTechRow>,
+        title: String,
+        subtitle: String? = null,
+        topPaddingDp: Int = 12
+    ) {
+        val ctx = parent.context
+        parent.addView(
+            QuantUiKit.titleRow(ctx, QuantUiKit.LIGHT, title, subtitle, textSize = 12f, topPaddingDp = topPaddingDp)
+        )
+
+        val host = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        parent.addView(
+            host,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+        PickTechTable.render(ctx, host, rows)
     }
 
     /** 渲染空白区块占位（保持持仓/选股两区块标题始终可见） */
@@ -4538,26 +4608,18 @@ abstract class QuantFragmentBase : Fragment() {
         val fullTitle = if (titlePrefix.contains("量化")) "${titlePrefix}${sectionTitle}" else "${titlePrefix}量化${sectionTitle}"
         val isPickSection = sectionTitle == "选股"
 
-        val titleRow = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, if (isPickSection) 12 else 2, 0, 2)
-        }
-        titleRow.addView(TextView(requireContext()).apply {
-            text = "📌 $fullTitle"
-            textSize = 12f; setTextColor(Color.parseColor(titleColor))
-            setTypeface(null, Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        })
-        titleRow.addView(TextView(requireContext()).apply {
-            text = "暂无${sectionTitle}"; textSize = 10f
-            setTextColor(Color.parseColor("#999999")); gravity = Gravity.END
-        })
-        titleRow.addView(TextView(requireContext()).apply {
-            text = " 🔄"; textSize = 14f
-            setTextColor(Color.parseColor("#1976D2")); setPadding(8, 0, 0, 0)
-            isClickable = true; setOnClickListener { refreshPositions() }
-        })
-        positionContainer.addView(titleRow)
+        // 标题行 + 「暂无」提示 + 🔄 刷新：统一走公共构件（三周期页 = 浅色主题）
+        positionContainer.addView(
+            QuantUiKit.titleRow(
+                requireContext(), QuantUiKit.LIGHT, "📌 $fullTitle",
+                subtitle = "暂无${sectionTitle}",
+                trailing = "🔄",
+                titleColorHex = titleColor,
+                textSize = 12f,
+                topPaddingDp = if (isPickSection) 12 else 2,
+                onTrailing = { refreshPositions() }
+            )
+        )
     }
 
     /**
@@ -4881,6 +4943,7 @@ abstract class QuantFragmentBase : Fragment() {
                             }
                             pickStockCodes = emptySet()
                             lastPickStocks = emptyList()
+                            lastPickTechRows = emptyList()
                             refreshPositions()
                             statusTv.text = summary
                         }
@@ -5058,6 +5121,26 @@ abstract class QuantFragmentBase : Fragment() {
                 textSize = 13f
                 setTextColor(Color.parseColor("#999999"))
             })
+        }
+        // ── 技术假设 11 列表（2026-09-10：与工作台·ETF 页同款 UI / 同口径，短/中/长三周期共用）──
+        if (result.pickTechRows.isNotEmpty()) {
+            detailContainer.addView(TextView(ctx).apply {
+                text = "📊 技术假设（与 ETF 页同口径，点行看详情）："
+                textSize = 13f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.parseColor("#1A237E"))
+                setPadding(0, (6 * density).toInt(), 0, (4 * density).toInt())
+            })
+            val tableHost = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+            PickTechTable.render(ctx, tableHost, result.pickTechRows) { row ->
+                android.widget.Toast.makeText(
+                    ctx,
+                    "${row.name}(${row.code}) 收盘${"%.2f".format(row.close)} · 回撤${"%.1f".format(row.dd60)}% " +
+                        "· RSI6 ${"%.0f".format(row.rsi6)}\n${row.sar} · ${row.macd} · ${row.obv} · ${row.kline} · ${row.trend}",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+            detailContainer.addView(tableHost)
         }
         val card = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL

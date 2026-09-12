@@ -16,7 +16,7 @@ import _market_db
 from hot_sector_config import HOT_SECTOR_CONFIG
 
 CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
-END = "20260825"
+END = "20260909"
 
 
 def secid2key(secid):

@@ -16,6 +16,8 @@
   params(scope, version, generated_at, payload_json)      -- 拟合参数归档
   market_state(date, state, detail_json)                  -- 大盘状态历史（BULLISH/OSCILLATION/BEARISH/CRASH）
   meta(key, value)                                         -- 元信息（库版本/末端日期）
+  intel_report(trade_date, slot, created_at, ...)          -- 每日节奏情报（08:00/09:00/复盘）
+  push_record(id, trade_date, slot, kind, title, ...)      -- 推送账本（成功/失败留痕）
 
 secid 格式（与 smalltools/_kline_cache.json 一致）：
   sh600519 / sz000338 / 指数 sh000001 sz399001 sz399006
@@ -94,6 +96,39 @@ CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+-- ── 每日节奏情报（2026-09-11 新增：08:00 盘前 / 09:00 亚太 / 15:20 复盘）──
+-- 每条 = 一次「情报采集 → 利好利空板块判定 → 候选标的」的完整留痕，供复盘对错核账。
+CREATE TABLE IF NOT EXISTS intel_report (
+    trade_date   TEXT NOT NULL,      -- 交易日 YYYY-MM-DD
+    slot         TEXT NOT NULL,      -- pre8 / pre9 / review
+    created_at   TEXT NOT NULL,      -- YYYY-MM-DD HH:MM:SS
+    title        TEXT DEFAULT '',
+    digest       TEXT DEFAULT '',    -- 一句话结论
+    macro_json   TEXT DEFAULT '',    -- 全球/宏观快照（美股/亚太/商品/汇率/美债）
+    sectors_json TEXT DEFAULT '',    -- 利好利空板块判定 [{"board","side","strength","logic","trigger"}]
+    picks_json   TEXT DEFAULT '',    -- 本次推送标的 [{"secid","name","board",...}]
+    news_json    TEXT DEFAULT '',    -- 新闻原文（标题+来源+时间）
+    content      TEXT DEFAULT '',    -- 推送正文原文
+    pushed       INTEGER DEFAULT 0,  -- 是否已推送成功
+    PRIMARY KEY (trade_date, slot, created_at)
+);
+CREATE INDEX IF NOT EXISTS idx_intel_report_date ON intel_report(trade_date);
+
+-- 推送记录（所有渠道推送的统一账本：正文/图片/轮次/复盘）
+CREATE TABLE IF NOT EXISTS push_record (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    trade_date TEXT NOT NULL,
+    slot       TEXT DEFAULT '',      -- pre8 / pre9 / am / pm / lunch / eod / review
+    created_at TEXT NOT NULL,
+    kind       TEXT DEFAULT '',      -- text / image / intel / round / lunch / eod / review
+    title      TEXT DEFAULT '',
+    codes      TEXT DEFAULT '',      -- 逗号分隔 secid
+    ok         INTEGER DEFAULT 0,
+    err        TEXT DEFAULT '',
+    content    TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_push_record_date ON push_record(trade_date, slot);
 """
 
 # 供 _self_fit_pipeline 等回溯脚本复用，避免重复判定
@@ -163,6 +198,95 @@ def set_meta(conn: sqlite3.Connection, key: str, value: str):
 def get_meta(conn: sqlite3.Connection, key: str, default=None):
     row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
     return row[0] if row else default
+
+
+# ------------------------------------------------ 每日节奏：情报报告 / 推送记录
+
+def _now_ts():
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def save_intel_report(conn, slot, title="", digest="", macro=None, sectors=None,
+                      picks=None, news=None, content="", pushed=False,
+                      trade_date=None, created_at=None):
+    """写入一条每日节奏情报（08:00 / 09:00 / 复盘），供复盘时核对板块判定对错。
+
+    macro/sectors/picks/news 传 Python 对象，内部转 JSON 存储。
+    """
+    td = trade_date or datetime.date.today().isoformat()
+    ts = created_at or _now_ts()
+    conn.execute(
+        "INSERT OR REPLACE INTO intel_report"
+        "(trade_date, slot, created_at, title, digest, macro_json, sectors_json,"
+        " picks_json, news_json, content, pushed) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        (td, slot, ts, title or "", digest or "",
+         json.dumps(macro or {}, ensure_ascii=False),
+         json.dumps(sectors or [], ensure_ascii=False),
+         json.dumps(picks or [], ensure_ascii=False),
+         json.dumps(news or [], ensure_ascii=False),
+         content or "", 1 if pushed else 0))
+    conn.commit()
+    return ts
+
+
+def query_intel_report(conn, trade_date=None, slot=None, limit=50):
+    """查询情报报告（倒序）。返回 dict 列表，json 字段已解析。"""
+    sql = "SELECT * FROM intel_report WHERE 1=1"
+    args = []
+    if trade_date:
+        sql += " AND trade_date=?"
+        args.append(trade_date)
+    if slot:
+        sql += " AND slot=?"
+        args.append(slot)
+    sql += " ORDER BY trade_date DESC, created_at DESC LIMIT ?"
+    args.append(int(limit))
+    out = []
+    for row in conn.execute(sql, args).fetchall():
+        d = dict(row)
+        for k in ("macro_json", "sectors_json", "picks_json", "news_json"):
+            try:
+                d[k[:-5]] = json.loads(d.get(k) or "null")
+            except ValueError:
+                d[k[:-5]] = None
+        out.append(d)
+    return out
+
+
+def latest_intel(conn, trade_date=None, slot=None):
+    """取最近一条情报报告（dict 或 None）。"""
+    rows = query_intel_report(conn, trade_date=trade_date, slot=slot, limit=1)
+    return rows[0] if rows else None
+
+
+def save_push_record(conn, slot, kind, title="", codes=None, ok=False, err="",
+                     content="", trade_date=None, created_at=None):
+    """记录一次推送（成功/失败）。codes 传 list[str] 或逗号分隔字符串。"""
+    td = trade_date or datetime.date.today().isoformat()
+    ts = created_at or _now_ts()
+    if isinstance(codes, (list, tuple, set)):
+        codes = ",".join(str(c) for c in codes)
+    conn.execute(
+        "INSERT INTO push_record"
+        "(trade_date, slot, created_at, kind, title, codes, ok, err, content)"
+        " VALUES(?,?,?,?,?,?,?,?,?)",
+        (td, slot or "", ts, kind or "", title or "", codes or "",
+         1 if ok else 0, err or "", content or ""))
+    conn.commit()
+    return ts
+
+
+def query_push_records(conn, trade_date=None, slot=None, kind=None, limit=200):
+    """查询推送账本（倒序）。"""
+    sql = "SELECT * FROM push_record WHERE 1=1"
+    args = []
+    for col, val in (("trade_date", trade_date), ("slot", slot), ("kind", kind)):
+        if val:
+            sql += " AND %s=?" % col
+            args.append(val)
+    sql += " ORDER BY id DESC LIMIT ?"
+    args.append(int(limit))
+    return [dict(r) for r in conn.execute(sql, args).fetchall()]
 
 
 # ---------------------------------------------------------------- secid 映射

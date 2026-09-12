@@ -72,6 +72,118 @@ object NodeRegistry {
             val period = config["holdingPeriod"] ?: "SHORT"
             com.chin.stockanalysis.strategy.topology.nodes.AncestralRulesNode(holdingPeriod = period)
         }
+        // 2026-09-12 K 线口诀（《常见K线图.txt》口诀五条 + 经典/大型形态；Python 端 kline_idiom 同构）
+        register("kline_idiom") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.KlineIdiomNode(
+                bullBoost = config["bullBoost"]?.toDoubleOrNull() ?: 0.6,
+                bearPenalty = config["bearPenalty"]?.toDoubleOrNull() ?: 1.2,
+                veto = config["veto"]?.toBooleanStrictOrNull() ?: true,
+                vetoStrength = config["vetoStrength"]?.toIntOrNull() ?: 4,
+                maxBull = config["maxBull"]?.toDoubleOrNull() ?: 6.0,
+                maxBear = config["maxBear"]?.toDoubleOrNull() ?: 6.0,
+                minBars = config["minBars"]?.toIntOrNull() ?: 30
+            )
+        }
+        // 2026-09-12 多理论投票止损（《设置止损线.txt》六理论；实仓/ETF 两用，Python 端 stop_loss_vote 同构）
+        register("stop_loss_vote") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.StopLossVoteNode(
+                target = config["target"] ?: "auto",
+                period = config["period"] ?: "",
+                marketState = config["marketState"] ?: "auto",
+                trailUp = config["trailUp"]?.toBooleanStrictOrNull() ?: true,
+                atrMult = config["atrMult"]?.toDoubleOrNull() ?: -1.0,
+                trailPct = config["trailPct"]?.toDoubleOrNull() ?: -1.0,
+                maWin = config["maWin"]?.toIntOrNull() ?: 0,
+                fixedPct = config["fixedPct"]?.toDoubleOrNull() ?: -1.0,
+                sourceNode = config["sourceNode"] ?: ""
+            )
+        }
+        // ══════════ 机构持续加仓 usecase（2026-09-12；《机构持续加仓自动选股池.txt》） ══════════
+        // 链：inst_pool_build（三大周期选股+ETF全行业扫描+ETF top5+实仓汇总）→ inst_holding_judge
+        //     （贴 A 精选/B 观察/C 散户票，读 data/_inst_holdings.json）→ stop_loss_vote（多理论止损）。
+        // 参数全部在 inst_holding_pipeline.xml（双端同源）；判定算法单一事实源 = smalltools/_inst_holdings.py。
+        register("inst_pool_build") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.InstPoolBuildNode(
+                includeHoldings = config["includeHoldings"]?.toBooleanStrictOrNull() ?: true,
+                maxRows = config["maxRows"]?.toIntOrNull() ?: 200,
+                embedBars = config["embedBars"]?.toBooleanStrictOrNull() ?: true,
+                barsLimit = config["barsLimit"]?.toIntOrNull() ?: 140
+            )
+        }
+        register("inst_holding_judge") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.InstHoldingJudgeNode(
+                sourceNode = config["sourceNode"] ?: "n_inst_pool",
+                gradeFilter = config["gradeFilter"] ?: "",
+                maxRows = config["maxRows"]?.toIntOrNull() ?: 200
+            )
+        }
+        // ══════════ 三个独立 ETF 选股 usecase（2026-09-12；《ETF选股思路.txt》拆分） ══════════
+        // ① ETF 持股 top5（覆盖矩阵排行，规则/参数在 etf_holdings_top5_pipeline.xml，双端同源）
+        register("etf_holdings_rank") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.EtfHoldingsRankNode(
+                topN = config["topN"]?.toIntOrNull() ?: 15,
+                minCoverage = config["minCoverage"]?.toIntOrNull() ?: 2,
+                industryOnly = config["industryOnly"]?.toBooleanStrictOrNull() ?: true,
+                baseThemes = config["baseThemes"] ?: "宽基",
+                embedBars = config["embedBars"]?.toBooleanStrictOrNull() ?: true,
+                barsLimit = config["barsLimit"]?.toIntOrNull() ?: 140,
+                minBars = config["minBars"]?.toIntOrNull() ?: 60,
+                strategyText = config["strategyText"] ?: ""
+            )
+        }
+        // ② ETF 全行业扫描（行业ETF前五重仓个股低吸，规则/参数在 etf_industry_scan_pipeline.xml）
+        register("etf_industry_scan") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.EtfIndustryScanNode(
+                topN = config["topN"]?.toIntOrNull() ?: 5,
+                minScore = config["minScore"]?.toDoubleOrNull() ?: 5.0,
+                minBars = config["minBars"]?.toIntOrNull() ?: 60,
+                ddWin = config["ddWin"]?.toIntOrNull() ?: 60,
+                minETF = config["minETF"]?.toIntOrNull() ?: 1,
+                industryOnly = config["industryOnly"]?.toBooleanStrictOrNull() ?: true,
+                baseThemes = config["baseThemes"] ?: "宽基",
+                excludeStar = config["excludeStar"]?.toBooleanStrictOrNull() ?: true,
+                barsLimit = config["barsLimit"]?.toIntOrNull() ?: 140,
+                embedBars = config["embedBars"]?.toBooleanStrictOrNull() ?: true,
+                marketAdapt = config["marketAdapt"]?.toBooleanStrictOrNull() ?: true,
+                indexCode = config["indexCode"] ?: "sh000300",
+                oscScoreAdd = config["oscScoreAdd"]?.toDoubleOrNull() ?: 1.0,
+                oscPos60Max = config["oscPos60Max"]?.toDoubleOrNull() ?: -12.0,
+                bearishPause = config["bearishPause"]?.toBooleanStrictOrNull() ?: true,
+                strategyText = config["strategyText"] ?: ""
+            )
+        }
+        // ③ 纯 ETF 本体筛选（RAS/MACD/OBV/RSI/回撤/流动性，规则/参数在 etf_pure_screen_pipeline.xml）
+        register("etf_pure_screen") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.EtfPureScreenNode(
+                indexCode = config["indexCode"] ?: "sh000300",
+                ddLo = config["ddLo"]?.toDoubleOrNull() ?: 0.40,
+                ddHi = config["ddHi"]?.toDoubleOrNull() ?: 0.60,
+                growthRelax = config["growthRelax"]?.toBooleanStrictOrNull() ?: true,
+                relaxLo = config["relaxLo"]?.toDoubleOrNull() ?: 0.35,
+                relaxHi = config["relaxHi"]?.toDoubleOrNull() ?: 0.65,
+                ddWin = config["ddWin"]?.toIntOrNull() ?: 250,
+                rsiLo = config["rsiLo"]?.toDoubleOrNull() ?: 30.0,
+                rsiHi = config["rsiHi"]?.toDoubleOrNull() ?: 55.0,
+                rsiSell = config["rsiSell"]?.toDoubleOrNull() ?: 70.0,
+                rasWin = config["rasWin"]?.toIntOrNull() ?: 20,
+                amountWin = config["amountWin"]?.toIntOrNull() ?: 20,
+                volLot = config["volLot"]?.toDoubleOrNull() ?: 100.0,
+                minAmountYi = config["minAmountYi"]?.toDoubleOrNull() ?: 0.5,
+                topN = config["topN"]?.toIntOrNull() ?: 5,
+                minBars = config["minBars"]?.toIntOrNull() ?: 0,
+                requireRas = config["requireRas"]?.toBooleanStrictOrNull() ?: true,
+                requireMacd = config["requireMacd"]?.toBooleanStrictOrNull() ?: true,
+                requireObv = config["requireObv"]?.toBooleanStrictOrNull() ?: true,
+                marketAdapt = config["marketAdapt"]?.toBooleanStrictOrNull() ?: true,
+                bearishPause = config["bearishPause"]?.toBooleanStrictOrNull() ?: true,
+                bullLo = config["bullLo"]?.toDoubleOrNull() ?: 0.45,
+                bullHi = config["bullHi"]?.toDoubleOrNull() ?: 0.72,
+                bullRsiHi = config["bullRsiHi"]?.toDoubleOrNull() ?: 60.0,
+                excludeBroadBaseBuy = config["excludeBroadBaseBuy"]?.toBooleanStrictOrNull() ?: false,
+                broadCodes = config["broadCodes"] ?: "",
+                strategyText = config["strategyText"] ?: ""
+            )
+        }
         register("inst_tips") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.InstitutionalTipsNode() }
         register("ma_convergence") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.MaConvergenceNode() }
         register("market_ma_check") { _, _ -> com.chin.stockanalysis.strategy.topology.nodes.MarketMaConvergenceCheckNode() }
@@ -108,6 +220,14 @@ object NodeRegistry {
                 quietVolumeRatio = config["quietVolumeRatio"]?.toDoubleOrNull() ?: 1.0,
                 macroSectorKeywords = config["macroSectorKeywords"]
                     ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList(),
+                allowStableDip = config["allowStableDip"]?.toBooleanStrictOrNull() ?: false,
+                // v12 强势延续旁路（2026-09-10）：XML 参数名 strongEnable（与 Python 同键）
+                allowStrongContinuation = config["strongEnable"]?.toBooleanStrictOrNull()
+                    ?: (config["allowStrongContinuation"]?.toBooleanStrictOrNull() ?: false),
+                strongNearHigh = config["strongNearHigh"]?.toDoubleOrNull() ?: 3.0,
+                strongVolRatio = config["strongVolRatio"]?.toDoubleOrNull() ?: 1.5,
+                strongRsiLo = config["strongRsiLo"]?.toDoubleOrNull() ?: 55.0,
+                strongRsiHi = config["strongRsiHi"]?.toDoubleOrNull() ?: 70.0,
                 period = config["period"] ?: ""
             )
         }
@@ -367,6 +487,36 @@ object NodeRegistry {
                 tp = config["tp"]?.toDoubleOrNull() ?: 4.0,
                 sl = config["sl"]?.toDoubleOrNull() ?: -2.5,
                 hold = config["hold"]?.toIntOrNull() ?: 3
+            )
+        }
+        // 热门板块埋伏 sector_ambush（规则/参数在 assets/usecases/sector_ambush_pipeline.xml，双端同源）
+        register("sector_ambush_signal") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.SectorAmbushSignalNode(
+                topSectors = config["topSectors"]?.toIntOrNull() ?: 5,
+                bullMin = config["bullMin"]?.toIntOrNull() ?: 2,
+                bullMax = config["bullMax"]?.toIntOrNull() ?: 3,
+                maShort = config["maShort"]?.toIntOrNull() ?: 5,
+                maMid = config["maMid"]?.toIntOrNull() ?: 10,
+                maLong = config["maLong"]?.toIntOrNull() ?: 20,
+                volExpand = config["volExpand"]?.toDoubleOrNull() ?: 1.2,
+                volExpandMax = config["volExpandMax"]?.toDoubleOrNull() ?: 3.0,
+                requireObvUp = config["requireObvUp"]?.toBoolean() ?: true,
+                requireWash = config["requireWash"]?.toBoolean() ?: true,
+                ddWin = config["ddWin"]?.toIntOrNull() ?: 60,
+                dd60Lo = config["dd60Lo"]?.toDoubleOrNull() ?: -25.0,
+                dd60Hi = config["dd60Hi"]?.toDoubleOrNull() ?: -1.0,
+                minSnapshots = config["minSnapshots"]?.toIntOrNull() ?: 60,
+                scanCap = config["scanCap"]?.toIntOrNull() ?: 400,
+                topN = config["topN"]?.toIntOrNull() ?: 10,
+                lookbackDays = config["lookbackDays"]?.toIntOrNull() ?: 20
+            )
+        }
+        register("ambush_exit_policy") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.AmbushExitPolicyNode(
+                tp = config["tp"]?.toDoubleOrNull() ?: 8.0,
+                sl = config["sl"]?.toDoubleOrNull() ?: -5.0,
+                hold = config["hold"]?.toIntOrNull() ?: 10,
+                strategyText = config["strategyText"] ?: ""
             )
         }
         register("etf_exit_policy") { _, config ->

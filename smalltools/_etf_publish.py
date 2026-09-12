@@ -109,10 +109,16 @@ def push_cache_to_phone(serial=None):
 
 
 def ensure_fresh_cache():
-    """拉取/续拉 ETF 行情（13只+沪深300，腾讯 qfq）。"""
+    """拉取/续拉 ETF 行情（13只+沪深300，腾讯 qfq）。
+
+    max_stale_days=0：实盘发布必须追到「最近工作日」，否则会跑在过期 K 线上
+    （2026-09-10 修：原走 _etf_buy.ensure_data 默认 10 天窗口，09-04 的数据被
+    判为「已就绪」永不刷新，当日 09-10 的 ETF 选股实际用 09-04 收盘）。
+    """
     import _etf_buy
-    print("[fetch] 断点续拉行情（可能较慢）…")
-    cache = _etf_buy.ensure_data(_etf_buy.ETF_POOL + [_etf_buy.IDX_300])
+    print("[fetch] 断点续拉行情（要求追到最近工作日）…")
+    cache = _etf_buy.ensure_data(_etf_buy.ETF_POOL + [_etf_buy.IDX_300],
+                                max_stale_days=0)
     print("[fetch] 完成：%d 标的" % len(cache))
     return cache
 

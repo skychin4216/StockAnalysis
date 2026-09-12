@@ -7,12 +7,13 @@ description: 启动/停止/检查 StockAnalysis PC 侧 A 股盘段守护后台�
 
 ## 背景
 
-PC 侧两个长驻 Python 守护（候选盘段守护按 v2 时刻表自动唤醒，工作日 09:00 起）：
+PC 侧两个长驻 Python 守护（候选盘段守护按 **v4** 时刻表自动唤醒，工作日 08:00 起）：
 
 | 守护 | 脚本 | 节奏 | 产出 |
 |---|---|---|---|
-| 候选盘段守护（主） | `_publish_candidates.py --daemon` | **v2 时刻表**：09:00 预热(下载K线+情报扫描 dry 暖缓存) → 09:30-11:30 每 15 分钟 9 轮 → 13:00-14:30 每 15 分钟 7 轮 → 15:00 尾盘 K 线拉取(仅下载) → 15:00 尾盘后**选股自检**`_self_review.py`(记忆账本+到期结算) → 15:10 收盘总结；每盘段首刷「下载K线(`_update_cache_inc.py`) → XML DAG 当日选股(`AutoQuant/usecase_screen.py`)」 | 盘中轮每轮选股同时内嵌实仓段（**有变化才展开**，无变化仅一行概要"建议一致无新操作"）→ 上传 COS；15:10 收盘总结含当日选股汇总+自检复盘摘要+持仓回顾+组合纪律+鼓励 |
-| 盘中情报扫描 | `_market_scan.py --daemon` | 09:00 预热由主守护 `--once --dry` 触发一次；交易时段每 **900 秒(15 分)**收集（2026-09-07 与选股守护盘中轮同频，改动前 600s），与上次快照对比，**有变动才推** | 板块轮动/美股/韩股/研报/快讯情报 |
+| 候选盘段守护（主） | `_publish_candidates.py --daemon` | **v4 时刻表**：**08:00 盘前情报**(宏观+美股收盘→利好利空板块→候选标的) → **09:00 预热**(下载K线+情报扫描 dry 暖缓存) + **09:00 亚太情报**(日经/KOSPI/恒生/台湾/新加坡/澳洲+韩国权重股) → 09:20 盘前速览(4指数图+期货库存) → 09:30-11:30 每 **15 分钟 9 轮** → 11:31 午间总结 → 13:00-14:30 每 **15 分钟 7 轮** → 15:00 尾盘 K 线拉取(仅下载) → 尾盘后**选股自检**`_self_review.py` → 15:10 收盘总结 → **15:20 表格化复盘**；每盘段首刷「下载K线(`_update_cache_inc.py`) → XML DAG 当日选股(`AutoQuant/usecase_screen.py`)」 | 08:00/09:00 情报推送+落库(`intel_report`/`push_record`)；盘中轮每轮选股同时内嵌实仓段（**有变化才展开**，无变化仅一行概要"建议一致无新操作"）→ 上传 COS；15:10 收盘总结含当日选股汇总+自检复盘摘要+持仓回顾+组合纪律+鼓励；15:20 复盘四张表（板块判定对错/当日选股/近5日巡诊/实仓镜像） |
+| 盘中情报扫描 | `_market_scan.py --daemon` | 09:00 预热由主守护 `--once --dry` 触发一次；交易时段每 **900 秒(15 分)**收集，与上次快照对比，**有变动才推** | 板块轮动/美股/韩股/研报/快讯情报 |
+
 
 - **2026-09-04 决策**：codebuddy 不再调用 smalltools 的回溯+拟合（`_full_cycle_backtest.py` 只保留代码不执行），盘段首刷的选股环节改由 exe/APK 共用的 XML DAG 引擎（`AutoQuant/usecase_screen.py` → `usecase_pipeline.py`，同一份 `assets/usecases` XML）提供，与 App/PC DAG 结果同源。
 - **2026-09-05 决策（机构化收敛）**：候选展示面收敛为 **短线/中线/长线 三档**——超短引擎保留（walk-forward 样本外 wr51.3%、pf1.70），命中折入"短线⚡(极速档)"（条目带 `flash`/`signal_period` 字段，DAG/exe 对比同步折叠）。推送第③段新增 **⚠️ 组合纪律**：单票占持仓市值>30%、前2大>55%、组合整体浮亏≤-8% 任一触发即提醒（同阈值 App 实仓页卡片）。
@@ -23,6 +24,13 @@ PC 侧两个长驻 Python 守护（候选盘段守护按 v2 时刻表自动唤�
 - **2026-09-07 事故与修复（盘中缺轮）**：14:15/14:30 两轮缺失、节奏停在 14:00:58。根因：**电脑在交易时段休眠**使守护 5s 短轮询冻结，唤醒时已 15:00 直接跳进尾盘分支（`_sleep_until` 早已墙钟化，但盘中轮判定是"整刻+轮询"，冻结期间整刻被整体跳过）。修复：①盘中轮判定改为「段内距上轮 ≥15 分钟即轮（interval-30s 容差）」，冻结唤醒后仍在段内即补跑缺轮；②15:00 尾盘后新增 `_check_rounds()` 轮次核对：am<9/pm<7 时日志 warn + 写 `_daemon_ops.jsonl`(`miss_rounds`)。注：电脑在 14:30 前长期休眠依旧无法补（进程冻结不可执行），核对留痕至少可被发现。
 - **2026-09-07 推送正文接入盘中情报**：`_publish_candidates.py::round_pages` 页1 顶部加 `📡 最新情报` 前导（`_intel_lines()` 读 `_last_scan.json`：轮动焦点 top3+催化、最新快讯 1 条、研报机构聚合 top3；快照 ts 距今 >150 分钟自动省略，不误报盘外）。**情报已实际参与选股打分**：`_last_scan.json` 的 `rotation`（板块动量+催化剂+龙头）经 `_publish_candidates.py::load_apk_rotation` 动态补池+轮动合并进候选（APK 外部板块信号源），每轮 build_candidates 读最新快照。
 - **2026-09-07 量价指导分析（沪深300/成交量，待选股接入）**：①沪深300 是系统性风险闸门（MA20 上/下决定仓位上限，当前 09-07 在 MA20 下方=防御档）与风格指示器（hs300 5日/10日相对创业板、科创的正负 = 权重价值 vs 题材成长占优）；②缩量(两市量能 vs 前10日均)<0 → 存量博弈，候选应「少而精」锁定资金共识主线龙头 + 低价龙头/次龙头(价格低于板块中位承接好)，无量后排跟风票降权；缩量对科技(高贝塔)杀伤最大(20日维度科创明显弱于权重)，缩量后的科技反弹多为超跌修复，需放量突破确认；③放量+上证/科创共振强势才可扩散仓位。数据入口：`data/_index_market.json`(4指数) + `fetch_tencent('sh000300')`(沪深300, 49根缓存可并入)，量能用上证+深成指 volume 合计(指数口径近似)。接入形态待用户确认后实现（选股前置过滤 + 候选打分）。
+- **2026-09-11 推送排版规范（用户确认）**：能表格对比的一律用图片表（`_table_img.render_multi_table`）；需拷贝到元宝/豆包再分析的保持纯文字。
+- **2026-09-11 每日节奏（v4，用户确认）**：新增三个时段，双端同口径实现。
+  ①**08:00 盘前情报**（`_daily_intel.py --slot pre8`）：宏观（美债/美元/人民币/商品）+ 美股收盘 → 规则化「利好/利空板块」+ 强度 + 逻辑/触发/证伪 → 六维过滤选候选 → 企微推送 + 落库 `intel_report`/`push_record`；
+  ②**09:00 亚太情报**（`--slot pre9`）：叠加日经225/KOSPI/恒生/台湾/新加坡/澳洲 + 韩国权重股（三星/SK海力士/LG新能源/现代汽车）；
+  ③**15:20 表格化复盘**（`--slot review`）：a 板块判定对错（板块内权重股当日均涨 vs 判定方向）/ b 当日选股（情报候选+主线+工具+ETF 推送留痕）/ c 近5个交易日信号票巡诊（入选价→现价）/ d 实仓镜像（盈亏+应对提示），四张表经 `_table_img.py` 文本化/图片化后推送。
+  数据源踩坑：东财 `push2` 主域 2026-09-11 起 `RemoteDisconnected`，改用 **`push2delay`**（APK 侧同步新增 `DataConfig.eastmoneyPush2Delay`）；`push2delay` 偶发 ReadTimeout，故全球指数**每批重试 3 次 + 新浪兜底**（`int_nikkei`/`int_hangseng`/`gb_$dji|$ixic|$inx`，KOSPI 新浪无源仅东财）。
+  双端文件：PC `smalltools/_daily_intel.py` + `_market_db.py`（`intel_report`/`push_record` 表）↔ APK `DailyRhythmEngine.kt` / `GlobalMarketCollector.kt` / `DailyRhythmScheduler.kt` + Room `DailyIntelEntity`/`PushRecordEntity`（DB v26→v27）。
 - **实仓数据源与 COS 刷新（重要）**：PC 实仓 = `smalltools/_records/cloud/phone_<时间戳>/data.json` 的 **COS phone zip 本地镜像**，`_market_context.py::load_real_positions()` 取目录名倒序最新者读 `real_positions`。镜像由 **APK 端 CloudSyncManager** 上传 COS `stockanalysis/phone/` 后，PC 跑 `python smalltools/cloud_download.py`（无参=下载最新 1 包，解压到 `_records/cloud/<zip名>/data.json`）刷新。用户用 APK 更新实仓后说"需要刷新"=执行 cloud_download.py（10 秒级），下一轮选股的实仓建议自动用新镜像。
 - 推送渠道（`push_channel.py`，顺序）：企业微信机器人 `notify.wecom_key` > pushplus > serverchan。
 - 守护状态持久化在 `smalltools/_daemon_rhythm.json`（当天 pre/am/pm prep、tail、sum、各段轮数、逐轮命中累计），跨日自动重置，**重启守护不会重复 prep**。
@@ -74,14 +82,16 @@ Get-Content e:\Android\work\dev\StockAnalysis\smalltools\_daemon_publish.log -Ta
 Get-Content e:\Android\work\dev\StockAnalysis\smalltools\_daemon_rhythm.json -Encoding UTF8
 ```
 
-## 节奏 / 时间窗口要点（v2，2026-09-06）
+## 节奏 / 时间窗口要点（v4，2026-09-11）
 
-- 档位：`pre` 09:00-09:29（预热：K线增量下载 + 情报扫描 `--once --dry` 暖缓存）→ `am` 09:30-11:30（每 15 分钟 9 轮）→ `pm` 13:00-14:30（每 15 分钟 7 轮）→ 14:31 后不再盘中选股 → 15:00 尾盘 K 线拉取（仅下载）→ 15:10 收盘总结。
+- 档位：`pre8` 08:00-08:59（盘前情报：宏观+美股收盘）→ `pre` 09:00-09:29（预热：K线增量下载 + 情报扫描 `--once --dry` 暖缓存 + **亚太情报**）→ `am` 09:30-11:30（每 15 分钟 9 轮）→ 11:31 午间总结 → `pm` 13:00-14:30（每 15 分钟 7 轮）→ 14:31 后不再盘中选股 → 15:00 尾盘 K 线拉取（仅下载）→ 15:10 收盘总结 → 15:20 表格化复盘。
+- 日内动作点（空档期依次跳转）：08:00 → 09:00 → 09:20 → …盘中轮… → 15:00 → 15:10 → 15:20 → **次日 08:00**（`next_weekday_at(now,8,0)`，跳过周末）。
 - 轮次触发（2026-09-07 起）：段首 prep（下载+XML DAG）完成后先立即整轮，之后**距上轮 ≥900s(容差 30s) 即轮**（不再限定整刻）——短轮询若被电脑休眠冻结，唤醒后仍在本段内会立即补跑缺轮，直到段截止（am≤11:30 / pm≤14:30）进空档才停（防尾盘诱导）。
-- 标记持久化在 `_daemon_rhythm.json`：`prep.am/pm`（首刷）、`pre`（预热）、`tail`（尾盘拉取）、`learn`（尾盘后选股自检）、`sum`（收盘总结）、`rounds`（当日轮数）、`hit`（逐轮命中累计）；失败不标记、自动重试。
-- **守护需在 09:00 前（或 09:00-09:29 之间）启动**才能吃到预热段；09:30 后启动则直接进 am 首刷兜底（首轮选股会延后到下载完成）。
-- `--interval` 参数仅兼容旧调用，v2 固定 15 分钟整点轮。
+- 标记持久化在 `_daemon_rhythm.json`：`prep.am/pm`（首刷）、`pre8`/`pre9`（情报时段）、`pre`（预热）、`tail`（尾盘拉取）、`learn`（尾盘后选股自检）、`sum`（收盘总结）、`rev`（15:20 复盘）、`rounds`（当日轮数）、`hit`（逐轮命中累计）；失败不标记、自动重试。
+- **守护需在 08:00 前启动**才能吃到盘前情报段；08:00-08:59 之间启动会立即补跑 pre8；09:00 后启动则 pre8/pre9 双双跳过（不阻塞开盘）。
+- `--interval` 默认 900（15 分钟）；`daemon_serve(interval=900)`。
 - 守护内子进程（下载/XML DAG/情报扫描）自带 `PYTHONIOENCODING=utf-8`，无需额外处理。
+- **APK 侧同节奏**：`DailyRhythmScheduler.kt` 在 App 内 30 秒轮询，08:00-08:29 跑 pre8、09:00-09:29 跑 pre9、15:20-15:59 跑 review；09:30-14:30 的 15 分钟盘中轮由 `AutoPickScheduler` 承载，其通知正文前导 `DailyRhythmScheduler.roundPreamble()`（读 APK 的 `daily_intel` 表）。两端规则表/候选池/过滤闸门同口径（PC `_daily_intel.py` ↔ APK `DailyRhythmEngine.kt`）。
 
 ## 踩坑清单（务必遵守）
 
@@ -110,3 +120,7 @@ Get-Content e:\Android\work\dev\StockAnalysis\smalltools\_daemon_rhythm.json -En
 | 交易时段守护必须保持电脑唤醒 | 休眠/锁屏冻结进程会整体错过盘中轮；唤醒后只会补到段截止前（14:30 后有意不选股） |
 | 收盘总结没有「🧠 自检复盘」段 | 尾盘自检失败或 `_selfreview_report.json` 的 asof 与当日不一致；手动跑 `python _self_review.py` 看报错，查 `_records/_self_review.log` |
 | 想看选股是否真的有效 | `python _self_review.py --status`（账本/已结算笔数/各周期 extra_pass 档位） |
+| 08:00/09:00 情报没推 | ①`_daemon_rhythm.json` 看 `pre8`/`pre9` 是否 true；②守护必须在 08:00 前启动；③手跑 `python _daily_intel.py --slot pre8 --dry` 看报错；④查 `push_record` 表/`intel_report` 表 |
+| 全球指数段空白 / 日志 `东财全球指数失败` | 正常抖动：`push2delay` 偶发 ReadTimeout，已内置「每批重试 3 次 + 新浪兜底」；持续全空再查网络/代理 |
+| 15:20 复盘没推 | `_daemon_rhythm.json` 的 `rev`；复盘依赖 `intel_report`（当日无情报则 a/b 段为空，属正常）；手跑 `python _daily_intel.py --slot review --dry` |
+| 想查当日情报/推送留痕 | `python -c "import _market_db as m;c=m.get_conn();print(m.query_intel_report(c,limit=5));print(m.query_push_records(c,limit=20))"` |

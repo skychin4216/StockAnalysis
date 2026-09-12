@@ -375,10 +375,20 @@ class T1AutoSellNode(
                 if (order.buyPrice <= 0) continue
                 val pnlPct = (currentPrice - order.buyPrice) / order.buyPrice * 100
 
+                // ── 口诀卖出侧（2026-09-10，与 n_ancestral 口诀同源）──
+                //   急跌无量是洗盘 → 豁免止损（勿被洗出）
+                //   缓跌放量立马撤 / 卖在人声鼎沸 / 连续大涨要离场 → 主动卖出（不等 T+1）
+                val snaps = try {
+                    db.dailySnapshotDao().getByCode(order.stockCode, 30).sortedBy { it.date }
+                } catch (_: Exception) { emptyList() }
+                val idiom = sellIdiom(snaps)
+
                 val isT1Due = order.tradeDate < today
                 val hitStop = pnlPct <= stopLossPct || pnlPct >= takeProfitPct
+                val exemptStop = idiom.washout && pnlPct < 0          // 洗盘豁免（仅亏损侧）
+                val idiomExit = idiom.flee || idiom.euphoria || idiom.bigGain
 
-                if (isT1Due || hitStop) {
+                if (isT1Due || (hitStop && !exemptStop) || idiomExit) {
                     db.strategyTradeOrderDao().updateSellInfo(
                         id = order.id, status = "SOLD",
                         sellPrice = currentPrice,
@@ -389,8 +399,14 @@ class T1AutoSellNode(
                     totalPnl += pnlPct
                     if (isT1Due) forcedCount++
 
-                    context.log(nodeId, "卖出: ${order.stockName} 盈亏=${"%.2f".format(pnlPct)}% " +
-                        if (isT1Due) "(次日强制清仓)" else "(止损/止盈)")
+                    val why = when {
+                        isT1Due -> "(次日强制清仓)"
+                        idiomExit -> "(口诀: ${idiom.reason})"
+                        else -> "(止损/止盈)"
+                    }
+                    context.log(nodeId, "卖出: ${order.stockName} 盈亏=${"%.2f".format(pnlPct)}% $why")
+                } else if (exemptStop) {
+                    context.log(nodeId, "🛡 ${order.stockName} 触止损(${"%.2f".format(pnlPct)}%)但急跌无量判定为洗盘 → 豁免不卖")
                 }
             }
 
@@ -403,6 +419,48 @@ class T1AutoSellNode(
             context.recordError(nodeId, "T+1 卖出失败: ${e.message}")
             T1AutoSellResult(0, 0, 0.0)
         }
+    }
+
+    /** 口诀卖出侧信号（2026-09-10）。 */
+    private data class SellIdiom(
+        val washout: Boolean,   // 急跌无量是洗盘 → 豁免止损
+        val flee: Boolean,      // 缓跌放量立马撤 → 主动卖出
+        val euphoria: Boolean,  // 卖在人声鼎沸时 → 主动止盈
+        val bigGain: Boolean,   // 连续大涨要离场 → 主动止盈
+        val reason: String
+    )
+
+    /** 判定口诀卖出侧信号（与 n_ancestral 口诀同口径）。 */
+    private fun sellIdiom(
+        candles: List<com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity>
+    ): SellIdiom {
+        if (candles.size < 20) return SellIdiom(false, false, false, false, "")
+        val n = candles.size
+        val t0 = candles[n - 1]
+        fun cg(i: Int): Double {
+            if (i < 1) return 0.0
+            val b = candles[i - 1].close
+            return if (b > 0) (candles[i].close / b - 1) * 100 else 0.0
+        }
+        val c1 = cg(n - 1); val c2 = cg(n - 2); val c3 = cg(n - 3)
+        val cum3 = ((1 + c1 / 100) * (1 + c2 / 100) * (1 + c3 / 100) - 1) * 100
+        val avgV = candles.takeLast(20).map { it.volume.toDouble() }.average()
+        val vr = if (avgV > 0) t0.volume.toDouble() / avgV else 1.0
+        val closes = candles.map { it.close }
+        val hi = closes.maxOrNull() ?: t0.close
+        val lo = closes.minOrNull() ?: t0.close
+        val pos = if (hi > lo) (t0.close - lo) / (hi - lo) else 0.5
+        val washout = c1 <= -3.0 && vr < 0.8
+        val flee = c1 in -3.0..-0.1 && c2 in -3.0..-0.1 && vr > 1.5
+        val euphoria = pos > 0.95 && vr > 2.0 && Math.abs(c1) < 1.0
+        val bigGain = cum3 >= 12.0 || listOf(c1, c2, c3).count { it >= 6.0 } >= 2
+        val reason = when {
+            flee -> "缓跌放量撤(量比${"%.2f".format(vr)})"
+            bigGain -> "连续大涨要离场(3日${"%.1f".format(cum3)}%)"
+            euphoria -> "卖在人声鼎沸(高位放量滞涨)"
+            else -> ""
+        }
+        return SellIdiom(washout, flee, euphoria, bigGain, reason)
     }
 }
 

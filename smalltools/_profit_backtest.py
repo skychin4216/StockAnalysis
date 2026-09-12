@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-四周期盈利回测：用真实缓存日K，统计 2026-07-01 ~ 2026-08-13 期间
+四周期盈利回测：用真实缓存日K，统计 2026-06-01 ~ 今（近3个月，2026-09-09 起窗口改自此日）
 超短/短/中/长 四个周期选股后的实际盈利（无未来函数）。
 
 选股逻辑（与 Kotlin UnifiedStockClassifier / StockCheckPipeline 对齐）：
@@ -30,7 +30,7 @@ from _trend_proto import trend_follow_scan
 
 CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
 INDEXES = ["sh000001", "sz399001", "sz399006"]
-START = "2026-07-01"
+START = "2026-06-01"   # 近3个月窗口（2026-09-09 起）
 
 # 各周期持有天数 + 止盈止损（按策略文档）
 HOLD = {"超短": 1, "短线": 4, "中线": 10, "长线": 20}
@@ -202,7 +202,7 @@ def main():
                 print(f"    {nm} 选{sd} 买{bd}@{en:.2f} 卖{ed}@{ex:.2f} {r:+.1f}% [{reason}]")
 
     print("\n" + "=" * 80)
-    print("四周期盈利汇总（7/1 ~ 8/13，已实现交易）")
+    print("四周期盈利汇总（近3个月 %s 起，已实现交易）" % START)
     print("=" * 80)
     print(f"{'周期':<6}{'总信号':<8}{'已实现':<8}{'平均收益':<10}{'胜率':<8}{'累计收益':<10}")
     for (period, n, avg, wr, aw, al, pf, cum, opn) in summary:

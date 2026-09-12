@@ -34,6 +34,17 @@ import com.chin.stockanalysis.strategy.topology.core.*
  *    - close 在 60 日高位 5% 以内
  *    - 当日涨幅 > 3% 或有长上影线（high 远高于 open/close）
  *
+ * ### 口诀七条（2026-09-10 新增，与 Python `_ancestral_rules` 同口径）
+ *
+ * 6. **买横买坑不买竖**：近20日振幅 ≤8% 箱体 或 60日回撤 ≤-12% 低位坑 → 加分；
+ *    近5日累计涨幅 ≥15% 的陡直拉升（竖）→ 减分
+ * 7. **连续小涨是真涨**：近3日连阳且每日 0.3%~3%、累计 ≤6% → 加分
+ * 8. **连续大涨要离场**：近3日累计 ≥12% 或含 ≥2 根大阳(≥6%) → 减分
+ * 9. **大幅冲高易回踩**：当日振幅 ≥7% 且留长上影（上影 > 2×实体）→ 减分
+ * 10. **急跌无量是洗盘**：当日 ≤-3% 且量比 <0.8 → 加分（豁免误杀）
+ * 11. **缓跌放量立马撤**：连续 2 日小阴 + 量比 >1.5 → 减分
+ * 12. **不挖深坑不大买**：60日回撤 ≤-20% → 加分（重仓机会）
+ *
  * ### 位置
  * 所有周期 XML：n_bounce → **n_ancestral** → n_ai（或下游节点）
  */
@@ -205,8 +216,132 @@ class AncestralRulesNode(
             tags.add("高位利好=利空($reason$penalty)")
         }
 
+        // ═══ 规则 6：买横买坑不买竖（2026-09-10 口诀）═══
+        // 横=近20日振幅 ≤8% 的箱体（不追高低位）；坑=60日回撤 ≤-12% 且处于低位；
+        // 竖=近5日累计涨幅 ≥15%（陡直拉升，不买）→ 重罚
+        val win20 = snaps.takeLast(20)
+        val hi20 = win20.maxOf { it.high }
+        val lo20 = win20.minOf { it.low }
+        val amp20 = if (lo20 > 0) (hi20 / lo20 - 1) * 100 else 0.0
+        val base5 = if (snaps.size > 5) snaps[snaps.size - 6].close else today.close
+        val gain5 = if (base5 > 0) (today.close / base5 - 1) * 100 else 0.0
+        val hi60 = range60.maxOf { it.high }
+        val dd60 = if (hi60 > 0) (today.close / hi60 - 1) * 100 else 0.0
+        val isVertical = gain5 >= 15.0
+        val isHorizontal = amp20 in 0.001..8.0 && !isHighPosition
+        val hasPit = dd60 <= -12.0 && positionPct < 0.35
+        if (isVertical) {
+            val penalty = when (holdingPeriod) {
+                "ULTRA_SHORT" -> -12
+                "SHORT" -> -10
+                "MID" -> -8
+                else -> -5
+            }
+            totalAdj += penalty
+            tags.add("不买竖(5日${"%.1f".format(gain5)}%$penalty)")
+        } else if (isHorizontal || hasPit) {
+            val bonus = when (holdingPeriod) {
+                "ULTRA_SHORT" -> 5
+                "SHORT" -> 6
+                "MID" -> 8
+                else -> 10
+            }
+            totalAdj += bonus
+            tags.add(
+                if (hasPit) "买坑(回撤${"%.1f".format(dd60)}%+$bonus)"
+                else "买横(20日振幅${"%.1f".format(amp20)}%+$bonus)"
+            )
+        }
+
+        // ═══ 规则 7：连续小涨是真涨（近3日连阳、每日 0.3%~3%、累计 ≤6%）═══
+        val c1 = chgPct(snaps, snaps.size - 1)
+        val c2 = chgPct(snaps, snaps.size - 2)
+        val c3 = chgPct(snaps, snaps.size - 3)
+        val cum3 = ((1 + c1 / 100) * (1 + c2 / 100) * (1 + c3 / 100) - 1) * 100
+        if (listOf(c1, c2, c3).all { it in 0.3..3.0 } && cum3 <= 6.0) {
+            val bonus = when (holdingPeriod) {
+                "ULTRA_SHORT" -> 8
+                "SHORT" -> 8
+                "MID" -> 6
+                else -> 5
+            }
+            totalAdj += bonus
+            tags.add("连续小涨(3日${"%.1f".format(cum3)}%+$bonus)")
+        }
+
+        // ═══ 规则 8：连续大涨要离场（近3日累计 ≥12% 或 ≥2 根大阳 ≥6%）═══
+        val bigUpDays = listOf(c1, c2, c3).count { it >= 6.0 }
+        if (cum3 >= 12.0 || bigUpDays >= 2) {
+            val penalty = when (holdingPeriod) {
+                "ULTRA_SHORT" -> -15
+                "SHORT" -> -12
+                "MID" -> -10
+                else -> -8
+            }
+            totalAdj += penalty
+            tags.add("连续大涨(3日${"%.1f".format(cum3)}%$penalty)")
+        }
+
+        // ═══ 规则 9：大幅冲高易回踩（当日振幅 ≥7% 且留下长上影）═══
+        val bodyToday = Math.abs(today.close - today.open)
+        val upShadow = today.high - maxOf(today.open, today.close)
+        val rangeToday = if (today.low > 0) (today.high / today.low - 1) * 100 else 0.0
+        if (rangeToday >= 7.0 && upShadow > 2 * bodyToday) {
+            val penalty = when (holdingPeriod) {
+                "ULTRA_SHORT" -> -10
+                "SHORT" -> -8
+                "MID" -> -6
+                else -> -5
+            }
+            totalAdj += penalty
+            tags.add("冲高易回踩(振幅${"%.1f".format(rangeToday)}%$penalty)")
+        }
+
+        // ═══ 规则 10：急跌无量是洗盘（不扣分，反给正分：勿被洗出）═══
+        if (todayChangePct <= -3.0 && volRatio < 0.8) {
+            val bonus = when (holdingPeriod) {
+                "ULTRA_SHORT" -> 8
+                "SHORT" -> 6
+                "MID" -> 4
+                else -> 3
+            }
+            totalAdj += bonus
+            tags.add("急跌无量=洗盘(${"%.1f".format(todayChangePct)}%缩量+$bonus)")
+        }
+
+        // ═══ 规则 11：缓跌放量立马撤（连续 2 日小阴 + 量比 >1.5）═══
+        if (c1 in -3.0..-0.1 && c2 in -3.0..-0.1 && volRatio > 1.5) {
+            val penalty = when (holdingPeriod) {
+                "ULTRA_SHORT" -> -12
+                "SHORT" -> -12
+                "MID" -> -10
+                else -> -8
+            }
+            totalAdj += penalty
+            tags.add("缓跌放量撤(量比${"%.2f".format(volRatio)}$penalty)")
+        }
+
+        // ═══ 规则 12：不挖深坑不大买（60日回撤 ≤-20% = 重仓机会，正分）═══
+        if (dd60 <= -20.0) {
+            val bonus = when (holdingPeriod) {
+                "ULTRA_SHORT" -> 4
+                "SHORT" -> 5
+                "MID" -> 6
+                else -> 8
+            }
+            totalAdj += bonus
+            tags.add("深坑大买(回撤${"%.1f".format(dd60)}%+$bonus)")
+        }
+
         val summary = if (tags.isEmpty()) "无触发" else tags.joinToString("; ")
         return RuleResult(totalAdj, summary)
+    }
+
+    /** 第 i 根相对前一根的涨跌幅（%；无前值返回 0）。 */
+    private fun chgPct(snaps: List<DailySnapshotEntity>, i: Int): Double {
+        if (i < 1) return 0.0
+        val base = snaps[i - 1].close
+        return if (base > 0) (snaps[i].close / base - 1) * 100 else 0.0
     }
 
     data class RuleResult(

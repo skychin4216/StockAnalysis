@@ -14,6 +14,7 @@ import com.chin.stockanalysis.strategy.backtest.BacktestParamsLoader
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
 import com.chin.stockanalysis.strategy.backtest.FullCycleBacktestEngine
 import com.chin.stockanalysis.strategy.backtest.StrategyOptimizer
+import com.chin.stockanalysis.strategy.analysis.CandlePatternDetector
 import com.chin.stockanalysis.strategy.data.SmartMoneyCache
 import com.chin.stockanalysis.strategy.market.MarketAdaptiveStrategy
 import com.chin.stockanalysis.strategy.predict.AIPredictionEngine
@@ -135,7 +136,9 @@ data class HoldingGuardResult(
 data class OrderGenerationResult(
     val orders: List<TradeOrder>,
     val filteredCount: Int,
-    val emptyTriggered: Boolean
+    val emptyTriggered: Boolean,
+    /** 三周期结果表：每只入选股的技术假设摘要（2026-09-10，UI 复用 ETF 表格样式） */
+    val techRows: List<com.chin.stockanalysis.strategy.trade.PickTechRow> = emptyList()
 )
 
 /**
@@ -1447,6 +1450,100 @@ class HeatScoreNode : BaseNode<Any, Map<String, Int>>("heat_score", "热度计�
     }
 }
 
+/**
+ * ## 个股级三类趋势匹配门控（2026-09-08 · 需求①，超短/短线/中线/长线统一应用）
+ *
+ * 每只待买候选用自己的近端K线匹配 上涨/中性/下跌 三类趋势——
+ *   匹配到「下跌」(下跌≥3 且 > 上涨) → 直接拦截，不进入买入决策；
+ *   匹配到「上涨」(上涨≥3 且 > 下跌) → 放行进入买入 node，由内部再判断是否生成订单；
+ *   匹配到「中性」→ 继续按原流程执行（看空形态否决等全部原检查照旧）。
+ *
+ * 打分口径与 Python 引擎 usecase_pipeline._trend_match_3way 逐条同口径
+ * （窗口：最近 60 根日K，不足 30 根视为中性）：
+ *   1) 多头/空头均线结构；2) MA20 五日斜率；3) 近5日收盘动量；
+ *   4) 近端(末6根)强看涨/看跌形态——CandlePatternDetector.detect(takeLast(6))，
+ *      每方向取命中最高强度(strength≥3)直接加入（形态库复杂形态需≥30根K，6根切片内不触发）；
+ *   5) 止跌企稳(连跌≥3天后3日不新低+低点逐日抬高) +2；破位(收盘创20日前低) +1。
+ */
+object TrendClassGate {
+    data class Match(
+        val label: String, val up: Int, val down: Int,
+        val bull: String?, val bear: String?, val stable: Boolean, val detail: String
+    )
+
+    fun classify(candles: List<DailySnapshotEntity>): Match {
+        if (candles.size < 30) return Match("中性", 0, 0, null, null, false, "K线不足30根")
+        val cs = candles.takeLast(60).map { it.close }
+        val n = cs.size
+        fun avg(xs: List<Double>): Double = xs.average()
+        val ma5 = avg(cs.takeLast(5))
+        val ma10 = avg(cs.takeLast(10))
+        val ma20 = avg(cs.takeLast(20))
+        var up = 0
+        var down = 0
+        if (ma5 > ma10 && ma10 > ma20) up += 2
+        else if (ma5 > ma20 && cs.last() > ma5) up += 1
+        if (ma5 < ma10 && ma10 < ma20) down += 2
+        else if (ma5 < ma20 && cs.last() < ma5) down += 1
+        if (n >= 25) {
+            val ma20_5 = avg(cs.subList(n - 25, n - 5))
+            if (ma20 > ma20_5 * 1.004 && cs.last() > ma20) up += 1
+            else if (ma20 < ma20_5 * 0.996 && cs.last() < ma20) down += 1
+        }
+        val upd = (maxOf(n - 5, 1) until n).count { cs[it] > cs[it - 1] }
+        when {
+            upd >= 4 -> up += 2
+            upd == 3 -> up += 1
+            upd <= 1 -> down += 2
+        }
+        var bull: String? = null
+        var bear: String? = null
+        try {
+            val pats = CandlePatternDetector.detect(candles.takeLast(6)).filter { it.strength >= 3 }
+            pats.filter { it.direction == CandlePatternDetector.Direction.BULLISH }
+                .maxByOrNull { it.strength }?.let { bull = it.patternName; up += it.strength }
+            pats.filter { it.direction == CandlePatternDetector.Direction.BEARISH }
+                .maxByOrNull { it.strength }?.let { bear = it.patternName; down += it.strength }
+        } catch (_: Exception) {
+            // 形态检测异常不影响主流程
+        }
+        val stable = isStabilize(candles)
+        if (stable) up += 2
+        else if (n >= 20 && cs.last() <= (cs.subList(n - 21, n - 1).minOrNull() ?: cs.last())) down += 1
+        val detail = buildString {
+            append("涨$up 空$down")
+            bull?.let { append(" 看多[$it]") }
+            bear?.let { append(" 看空[$it]") }
+            if (stable) append(" 企稳")
+        }
+        // v11: 企稳形态(连跌后3日不新低+低点抬高)不判"下跌"——刚止跌企稳是转折点而非下跌图形，
+        // 避免 generate_orders 趋势门控把低吸机会拦掉（与 Python _trend_match_3way 同口径）
+        val label = when {
+            down >= 3 && down > up && !stable -> "下跌"
+            up >= 3 && up > down -> "上涨"
+            else -> "中性"
+        }
+        return Match(label, up, down, bull, bear, stable, detail)
+    }
+
+    /** 止跌企稳：前期存在 ≥3 连跌(结束于最近3日基座前)，随后3日不创新低且低点逐日抬高。
+     *  与 Python usecase_pipeline._is_stabilize 同口径。 */
+    private fun isStabilize(candles: List<DailySnapshotEntity>): Boolean {
+        val cs = candles.map { it.close }
+        val lows = candles.map { it.low }
+        val n = cs.size
+        if (n < 20) return false
+        var down3 = false
+        for (j in (n - 4) downTo (maxOf(n - 12, 2) + 1)) {
+            if (cs[j] < cs[j - 1] && cs[j - 1] < cs[j - 2]) { down3 = true; break }
+        }
+        val rising = lows[n - 1] > lows[n - 2] && lows[n - 2] > lows[n - 3]
+        val noNew = (lows.subList(n - 3, n).minOrNull() ?: Double.MAX_VALUE) >
+            (lows.subList(maxOf(n - 13, 0), n - 3).minOrNull() ?: Double.MAX_VALUE)
+        return down3 && rising && noNew
+    }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  9. GenerateOrdersNode (TRADE_ACTION)
 // ════════════════════════════════════════════════════════════════════════════
@@ -1608,6 +1705,19 @@ class GenerateOrdersNode(
                     continue
                 }
 
+                // 1.5 个股级三类趋势匹配门控（需求①：趋势图三类 上涨/中性/下跌 均匹配，四周期统一）
+                //     下跌 → 直接拦截；上涨 → 放行（买入 node 内再判断是否生成订单）；中性 → 继续原流程
+                val candles60 = try { db.dailySnapshotDao().getByCode(pick.stockCode, 60) } catch (_: Exception) { emptyList() }
+                val trendMatch = TrendClassGate.classify(candles60)
+                if (trendMatch.label == "下跌") {
+                    filteredCount++
+                    filteredReasons.add("${pick.stockName}(${pick.stockCode}): 趋势匹配=下跌(${trendMatch.detail})直接拦截")
+                    context.log(nodeId, "❌ ${pick.stockName}(${pick.stockCode}) 趋势匹配=下跌(${trendMatch.detail})，直接拦截不生成订单")
+                    continue
+                } else if (trendMatch.label == "上涨") {
+                    context.log(nodeId, "🟢 ${pick.stockName}(${pick.stockCode}) 趋势匹配=上涨(${trendMatch.detail})，放行进入买入node")
+                }
+
                 // 2. 同日已持有过滤（仅过滤同日重复，非同日允许加仓）
                 if (pick.stockCode in todayHoldingCodes) {
                     filteredCount++
@@ -1635,6 +1745,65 @@ class GenerateOrdersNode(
                 if (pick.stockCode.startsWith("sh000") || pick.stockCode.startsWith("sz399")) {
                     filteredCount++
                     filteredReasons.add("${pick.stockName}(${pick.stockCode}): 指数排除")
+                    continue
+                }
+
+                // 3.6 看空形态否决：K线形态匹配只做标注（日志/趋势图展示），
+                //     买入必须看涨——近端K线命中强度≥3 的看跌形态（如看跌吞没/看跌三鸦/黄昏之星等）直接否决买入
+                //     口径与 QuantFragmentBase.logTrendPatternMatches 一致（60根K、≥30根、strength≥3）
+                val bearishPattern = try {
+                    if (candles60.size >= 30) {
+                        // 只看近端(最近≤6根K收口)，与 Python 引擎 usecase_pipeline._candle_veto_bearish 同口径
+                        CandlePatternDetector.detect(candles60.takeLast(6))
+                            .firstOrNull {
+                                it.strength >= 3 &&
+                                    it.direction ==
+                                    com.chin.stockanalysis.strategy.analysis.CandlePatternDetector.Direction.BEARISH
+                            }
+                    } else null
+                } catch (_: Exception) { null }
+                if (bearishPattern != null) {
+                    filteredCount++
+                    filteredReasons.add("${pick.stockName}(${pick.stockCode}): 看空形态[${bearishPattern.patternName}]否决买入")
+                    context.log(nodeId, "❌ ${pick.stockName}(${pick.stockCode}) 命中看空形态[${bearishPattern.patternName}·看空]，否决买入（形态只标注，看涨才买入）")
+                    continue
+                }
+
+                // 3.7 口诀买前否决（2026-09-10，与 Python `_idiom_buy_veto` 同口径）
+                //     连续大涨要离场 / 买横买坑不买竖(近5日陡拉) / 大幅冲高易回踩 / 缓跌放量立马撤
+                //     注：「急跌无量是洗盘」不在此否决（由 n_ancestral 加分鼓励低吸，避免洗盘误杀）
+                val idiomVeto: String? = if (candles60.size >= 20) {
+                    val cn = candles60.size
+                    val t0 = candles60[cn - 1]
+                    val cIdm = t0.close; val oIdm = t0.open; val hIdm = t0.high; val lIdm = t0.low
+                    val bodyIdm = Math.abs(cIdm - oIdm)
+                    fun cg(i: Int): Double {
+                        if (i < 1) return 0.0
+                        val b = candles60[i - 1].close
+                        return if (b > 0) (candles60[i].close / b - 1) * 100 else 0.0
+                    }
+                    val i1 = cg(cn - 1); val i2 = cg(cn - 2); val i3 = cg(cn - 3)
+                    val cum3 = ((1 + i1 / 100) * (1 + i2 / 100) * (1 + i3 / 100) - 1) * 100
+                    val b5 = candles60[cn - 6].close
+                    val gain5 = if (b5 > 0) (cIdm / b5 - 1) * 100 else 0.0
+                    val avgV = candles60.takeLast(20).map { it.volume.toDouble() }.average()
+                    val vr = if (avgV > 0) t0.volume.toDouble() / avgV else 1.0
+                    val rngIdm = if (lIdm > 0) (hIdm / lIdm - 1) * 100 else 0.0
+                    when {
+                        cum3 >= 12.0 || listOf(i1, i2, i3).count { it >= 6.0 } >= 2 ->
+                            "连续大涨3日${"%.1f".format(cum3)}%"
+                        gain5 >= 15.0 -> "不买竖(5日${"%.1f".format(gain5)}%)"
+                        rngIdm >= 7.0 && (hIdm - maxOf(oIdm, cIdm)) > 2 * bodyIdm ->
+                            "冲高易回踩(振幅${"%.1f".format(rngIdm)}%)"
+                        i1 in -3.0..-0.1 && i2 in -3.0..-0.1 && vr > 1.5 ->
+                            "缓跌放量撤(量比${"%.2f".format(vr)})"
+                        else -> null
+                    }
+                } else null
+                if (idiomVeto != null) {
+                    filteredCount++
+                    filteredReasons.add("${pick.stockName}(${pick.stockCode}): 口诀否决[$idiomVeto]")
+                    context.log(nodeId, "❌ ${pick.stockName}(${pick.stockCode}) 口诀买前否决[$idiomVeto]（连续大涨/陡拉/冲高回踩/缓跌放量）")
                     continue
                 }
 
@@ -2047,7 +2216,17 @@ class GenerateOrdersNode(
 
             context.log(nodeId, "买入订单生成: ${topPicks.size} 只AI精选 → 过滤 $filteredCount → 最终 ${orders.size} 个订单")
 
-            OrderGenerationResult(orders, filteredCount, false)
+            // ── 2026-09-10：产出「技术假设」12 列（与工作台·ETF 页同 UI / 同口径），供三周期结果表渲染 ──
+            //  2026-09-12：新增「机构股」列（读 data/_inst_holdings.json，与 PC 推送表同口径）
+            val techRows = orders.mapNotNull { o ->
+                buildPickTechRow(db, o.stockCode, o.stockName,
+                    if (isPreSignal) "预信号" else "入选", context.androidContext)
+            }
+            if (techRows.isNotEmpty()) {
+                context.log(nodeId, "📊 技术假设 ${techRows.size} 行（SAR/MACD/OBV/跌后K/趋势图）")
+            }
+
+            OrderGenerationResult(orders, filteredCount, false, techRows)
         } catch (e: Exception) {
             context.log(nodeId, "买入订单生成失败: ${e.message}")
             context.recordError(nodeId, "买入订单生成失败: ${e.message}")
@@ -2062,6 +2241,22 @@ class GenerateOrdersNode(
             OrderGenerationResult(emptyList(), 0, false)
         }
     }
+
+    /**
+     * 构建单只股票的「技术假设」行（11 列，口径与工作台·ETF 页一致）。
+     * 2026-09-10：实现已抽到公共组件 [com.chin.stockanalysis.strategy.trade.PickTechTable.buildRow]
+     * —— 三周期 UI 在重启 App 后从 user_watchlist 恢复选股时也要重建同样的行，
+     * 此处仅转发，保证 Pipeline 与 UI 单一事实源（原私有实现已删除，避免双份口径漂移）。
+     * 数据不足 30 根（新股 / 长期停牌）时返回 null，跳过该行而非展示异常值。
+     */
+    private suspend fun buildPickTechRow(
+        db: StockDatabase,
+        code: String,
+        name: String,
+        status: String,
+        ctx: android.content.Context? = null
+    ): com.chin.stockanalysis.strategy.trade.PickTechRow? =
+        com.chin.stockanalysis.strategy.trade.PickTechTable.buildRow(db, code, name, status, ctx)
 
     /**
      * 长线建仓候选叠加 PC 端 KNN ml_prob 加权（增强点2）：

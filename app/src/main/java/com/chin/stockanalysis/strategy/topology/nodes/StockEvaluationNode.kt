@@ -51,7 +51,11 @@ data class StockEvaluationDetail(
     /** 本周期适用检查总数 */
     val totalChecks: Int = 7,
     /** 是否通过 */
-    val allPassed: Boolean = false
+    val allPassed: Boolean = false,
+    /** v11: 是否经「企稳低吸」旁路放行（免均线粘合考核） */
+    val stableDipOk: Boolean = false,
+    /** v12: 是否经「强势延续」旁路放行（2026-09-10，对应 Python `strong_codes`） */
+    val strongOk: Boolean = false
 )
 
 class StockEvaluationNode(
@@ -84,6 +88,20 @@ class StockEvaluationNode(
     val quietVolumeRatio: Double = 1.0,
     /** v9: 宏观偏好板块关键词（油价≥80化工 / 国债低高股息） */
     val macroSectorKeywords: List<String> = emptyList(),
+    /** v11: 企稳低吸旁路——连跌后 3日不新低+低点逐日抬高 的候选免均线粘合考核直接放行
+     *  （超短/短线默认开启，中线/长线走 allowLowAmbush；依据 smalltools/_stabilize_dip_stat.py） */
+    val allowStableDip: Boolean = false,
+    /** v12: 强势延续旁路——多头排列+贴近20日新高+放量+RSI6 中强区 的候选免均线粘合考核直接放行
+     *  （2026-09-10 改进B，与 Python `_strong_continuation` 同口径；XML 键 strongEnable） */
+    val allowStrongContinuation: Boolean = false,
+    /** v12: 距 20 日新高的最大回撤%（≤ 该值视为贴近新高） */
+    val strongNearHigh: Double = 3.0,
+    /** v12: 最低量比（当日量 / 前5日均量） */
+    val strongVolRatio: Double = 1.5,
+    /** v12: RSI6 下界（中强区） */
+    val strongRsiLo: Double = 55.0,
+    /** v12: RSI6 上界 */
+    val strongRsiHi: Double = 70.0,
     /** 本节点服务的周期（ultra_short / short / mid / long），决定牛市时是否启用趋势跟随模式（B11） */
     val period: String = ""
 ) : BaseNode<MergedSignalPool, MergedSignalPool>("strict_selection", "均线粘合严选", NodeType.FILTER) {
@@ -128,7 +146,13 @@ class StockEvaluationNode(
         allowLowAmbush = allowLowAmbush,
         allowQuietRise = allowQuietRise,
         quietVolumeRatio = quietVolumeRatio,
-        macroSectorKeywords = macroSectorKeywords
+        macroSectorKeywords = macroSectorKeywords,
+        allowStableDip = allowStableDip,
+        allowStrongContinuation = allowStrongContinuation,
+        strongNearHigh = strongNearHigh,
+        strongVolRatio = strongVolRatio,
+        strongRsiLo = strongRsiLo,
+        strongRsiHi = strongRsiHi
     )
 
     override suspend fun execute(context: PipelineContext, input: MergedSignalPool): MergedSignalPool {
@@ -220,7 +244,9 @@ class StockEvaluationNode(
                     aboveAllMAs = result.aboveAllMAs,
                     passCount = result.passCount,
                     totalChecks = result.totalChecks,
-                    allPassed = result.passed
+                    allPassed = result.passed,
+                    stableDipOk = result.stableDipOk,
+                    strongOk = result.strongOk
                 )
 
                 if (result.passed) {
@@ -342,7 +368,8 @@ object StockEvaluationChecker {
             aboveAllMAs = result.aboveAllMAs,
             passCount = result.passCount,
             totalChecks = result.totalChecks,
-            allPassed = result.passed
+            allPassed = result.passed,
+            strongOk = result.strongOk
         )
     }
 
@@ -366,6 +393,7 @@ object StockEvaluationChecker {
         append("  ${if (detail.aboveYearLine) "✓" else "✗"}站稳年线")
         append("  ${if (detail.changePctOk) "✓" else "✗"}涨幅达标")
         append("  ${if (detail.aboveAllMAs) "✓" else "✗"}站上均线")
+        if (detail.stableDipOk) append("  ★企稳低吸放行(免均线粘合)")
         if (!passed) appendLine("\n  ⚠️ 未达通过标准，建议观望")
     }
 }

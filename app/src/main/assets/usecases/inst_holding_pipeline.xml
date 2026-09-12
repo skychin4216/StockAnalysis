@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 机构持仓判定 Pipeline（V2 DAG · 汇总 → 判定 → 止损 三阶段）
+
+  与同目录 usecase_pipeline.py（Python 引擎，XML DAG 主线）共用同一文件 —— 单一事实源。
+
+  stageOutputs：
+    - "n_inst_pool"  JSONObject {as_of, n, rows[]}
+                     每行 {code,name,from,entry,bars[]}（bars 内嵌供下游止损定价）
+    - "n_inst_judge" JSONObject {as_of, n, a, b, c, period, available, rows[]}
+                     每行附 {grade,score,label,hold_ratio,latest_chg,streak,net_chg,
+                              n_funds,holder_chg_pct,instVerdict}
+    - "n_inst_stop"  JSONObject {rows[] 附 stop/stopPct/broken/stopTheory/momentum}
+
+  判定口径（《机构持续加仓自动选股池.txt》，算法单一事实源 = smalltools/_inst_holdings.py，
+  产物 _inst_holdings.json 已含 grade，双端只读不算，避免三处口径漂移）：
+    口径A（严格）连续 ≥2 期、持股比例环比增持 > 0.5pp
+    口径B（宽松）全程净增持 > 1pp
+    机构加仓分 ins(0~100) = 持仓水平分(≤30) + 本期环比分(≤25) + 连续增持期数×12(≤30)
+                            + 基金家数环比(±5)
+    集中度   conc(0~100) = 持仓占比分(≤60) + 股东户数下降分(≤40)
+    综合分   score = 0.6×ins + 0.4×conc
+    分级      A=口径A 且 score≥75 ｜ B=(A或B) 且 score≥50 ｜ C=其余（散户票）
+  ★ 机构季报天然滞后 1-3 月：只做中长线定性，不作实时信号。
+-->
+<DagPipeline id="inst_holding_dag" name="机构持仓判定Pipeline"
+    description="选股池+实仓汇总 → 机构季报判定(A精选/B观察/C散户票) → 多理论投票止损">
+
+  <NodeList>
+    <!-- ── 阶段1：汇总「三大周期选股 + ETF全行业扫描 + ETF top5 + 实仓」全部股票 ── -->
+    <Node id="n_inst_pool" name="选股池+实仓汇总" module="inst_pool_build">
+      <config>
+        <param name="includeHoldings" value="true" />
+        <param name="maxRows" value="200" />
+        <param name="embedBars" value="true" />
+        <param name="barsLimit" value="140" />
+      </config>
+    </Node>
+
+    <!-- ── 阶段2：机构季报判定（纯资产计算，离线可跑）── -->
+    <Node id="n_inst_judge" name="机构持仓判定" module="inst_holding_judge">
+      <config>
+        <param name="sourceNode" value="n_inst_pool" />
+        <param name="gradeFilter" value="" />
+        <param name="maxRows" value="200" />
+      </config>
+    </Node>
+
+    <!-- ── 阶段3：多理论投票止损（六理论取最保守 + 棘轮；行内嵌 bars 定价）── -->
+    <Node id="n_inst_stop" name="多理论投票止损" module="stop_loss_vote">
+      <config>
+        <param name="target" value="picks" />
+        <param name="sourceNode" value="n_inst_judge" />
+        <param name="period" value="MID" />
+        <param name="marketState" value="auto" />
+        <param name="trailUp" value="true" />
+      </config>
+    </Node>
+  </NodeList>
+
+  <Links>
+    <Link>
+      <SourceNodeId>n_inst_pool</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_inst_judge</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_inst_judge</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_inst_stop</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+  </Links>
+</DagPipeline>

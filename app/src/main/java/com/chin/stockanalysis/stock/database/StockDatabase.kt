@@ -145,9 +145,11 @@ interface AiSelectedStockDao {
         com.chin.stockanalysis.strategy.backtest.IntradayKlineEntity::class,
         InstitutionalPickEntity::class,
         BacktestMetaEntity::class,
-        BacktestSelectedStockEntity::class
+        BacktestSelectedStockEntity::class,
+        DailyIntelEntity::class,
+        PushRecordEntity::class
     ],
-    version = 26,
+    version = 27,
     exportSchema = false
 )
 abstract class StockDatabase : RoomDatabase() {
@@ -179,6 +181,10 @@ abstract class StockDatabase : RoomDatabase() {
     abstract fun institutionalPickDao(): InstitutionalPickDao
     abstract fun backtestMetaDao(): BacktestMetaDao
     abstract fun backtestSelectedStockDao(): BacktestSelectedStockDao
+
+    // 每日节奏（08:00 盘前情报 / 09:00 亚太情报 / 15:20 表格化复盘）
+    abstract fun dailyIntelDao(): DailyIntelDao
+    abstract fun pushRecordDao(): PushRecordDao
 
     companion object {
         const val DATABASE_NAME = "stock_analysis.db"
@@ -497,6 +503,50 @@ abstract class StockDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v26 → v27 迁移：新增每日节奏情报表 daily_intel（08:00 盘前 / 09:00 亚太 / 15:20 复盘）
+         * 与推送账本 push_record。字段与 PC 侧 market_data.db.intel_report / push_record 一一对应。
+         */
+        private val MIGRATION_26_27 = object : androidx.room.migration.Migration(26, 27) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `daily_intel` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `tradeDate` TEXT NOT NULL,
+                        `slot` TEXT NOT NULL,
+                        `createdAt` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `digest` TEXT NOT NULL,
+                        `macroJson` TEXT NOT NULL,
+                        `sectorsJson` TEXT NOT NULL,
+                        `picksJson` TEXT NOT NULL,
+                        `newsJson` TEXT NOT NULL,
+                        `content` TEXT NOT NULL,
+                        `pushed` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_daily_intel_tradeDate` ON `daily_intel` (`tradeDate`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_daily_intel_slot` ON `daily_intel` (`slot`)")
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `push_record` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `tradeDate` TEXT NOT NULL,
+                        `slot` TEXT NOT NULL,
+                        `createdAt` TEXT NOT NULL,
+                        `kind` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `codes` TEXT NOT NULL,
+                        `ok` INTEGER NOT NULL,
+                        `err` TEXT NOT NULL,
+                        `content` TEXT NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_push_record_tradeDate` ON `push_record` (`tradeDate`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_push_record_slot` ON `push_record` (`slot`)")
+                Log.i(TAG, "✅ v26→v27 迁移完成：已创建 daily_intel / push_record 表（每日节奏情报与推送账本）")
+            }
+        }
+
         fun getInstance(context: Context): StockDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -504,7 +554,7 @@ abstract class StockDatabase : RoomDatabase() {
                     StockDatabase::class.java,
                     DATABASE_NAME
                 )
-                    .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26)
+                    .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27)
                     .fallbackToDestructiveMigration()
                     .addCallback(destructiveCallback)
                     .build()

@@ -52,6 +52,16 @@
         <param name="maxSignalsPerStock" value="2" />
       </config>
     </Node>
+    <!-- Layer 5（2026-09-12 新增）：多理论投票止损（《设置止损线.txt》六理论：
+         ATR吊灯/结构低点/趋势均线/固定比例/移动止盈/动量收紧 → 取最保守；
+         读 realPositionDao + 策略持仓，输出每仓 stop/stopPct/broken/stopAction） -->
+    <Node id="n_rh_stop" name="多理论投票止损" module="stop_loss_vote">
+      <config>
+        <param name="target" value="holding" />
+        <param name="marketState" value="auto" />
+        <param name="trailUp" value="true" />
+      </config>
+    </Node>
   </NodeList>
 
   <Links>
@@ -129,6 +139,13 @@
       <SourceNodeId>n_holding_predict</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_t_trade</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <!-- Layer 3 → 5: 走势预测 → 多理论投票止损（并行旁路：不影响 n_t_trade 原语义） -->
+    <Link>
+      <SourceNodeId>n_holding_predict</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_rh_stop</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
   </Links>

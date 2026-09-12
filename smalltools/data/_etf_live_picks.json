@@ -1,11 +1,12 @@
 {
-  "generated_at": "2026-09-07",
-  "as_of": "2026-09-04",
+  "generated_at": "2026-09-11",
+  "as_of": "2026-09-10",
   "gate": {
-    "ok": true,
-    "date": "2026-07-01",
-    "note": "沪深300 close(4959)>MA20(4887)>MA60(4821)",
-    "available": true
+    "ok": false,
+    "date": "2026-09-10",
+    "note": "沪深300 空头排列 close(4548)<MA20(4601)<MA60(4703)",
+    "available": true,
+    "state": "bear"
   },
   "signal_today": [],
   "approach": [],

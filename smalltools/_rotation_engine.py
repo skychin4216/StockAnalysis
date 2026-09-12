@@ -42,15 +42,22 @@ MIN_STOCKS = 3            # 板块至少 N 只样本才算有效
 
 # 催化剂标签：板块名 → (权重加成, 理由)。人工/消息面注入轮动预期。
 CATALYSTS = {
-    "煤炭行业": (5.0, "9月用电需求+高股息防御，机构回补"),
-    "种植业与林业": (5.0, "种业政策催化+粮食安全，8月下旬启动"),
-    "农业种植": (5.0, "种业政策催化+粮食安全，8月下旬启动"),
-    "化学制药": (4.0, "创新药出海授权+医保谈判预期"),
-    "生物制品": (4.0, "创新药出海授权+医保谈判预期"),
-    "医疗服务": (3.0, "医药复苏+政策支持"),
-    "半导体": (2.0, "国产替代+AI算力需求"),
-    "通信设备": (2.0, "AI光通信产业趋势"),
-    "元件": (2.0, "PCB/AI硬件需求"),
+    "煤炭行业": (4.0, "9月用电需求+高股息防御，机构回补"),
+    "种植业与林业": (4.0, "种业政策催化+粮食安全，8月下旬启动"),
+    "农业种植": (4.0, "种业政策催化+粮食安全，8月下旬启动"),
+    "化学制药": (3.0, "创新药出海授权+医保谈判预期"),
+    "生物制品": (3.0, "创新药出海授权+医保谈判预期"),
+    "医疗服务": (2.0, "医药复苏+政策支持"),
+    "半导体": (1.0, "国产替代+AI算力需求（全球加息杀估值，降权）"),
+    "通信设备": (1.0, "AI光通信产业趋势（全球加息杀估值，降权）"),
+    "元件": (1.0, "PCB/AI硬件需求"),
+    "油运": (5.0, "红海/霍尔木兹断航→运距拉长、运价飙升"),
+    "航运港口": (4.0, "地缘断航→运价与港口周转受益"),
+    "石油行业": (4.0, "油价破百→上游资源重估"),
+    "燃气": (2.0, "能源替代+冬季需求"),
+    "航天航空": (2.0, "地缘紧张→军工订单与避险配置"),
+    "贵金属": (2.0, "避险+全球加息后的滞胀预期"),
+    "银行": (3.0, "全球加息→息差改善、类债高股息"),
 }
 
 # 宏观环境因子（可被 --macro-* 参数覆盖，后续引用保持统一口径）：
@@ -58,15 +65,17 @@ CATALYSTS = {
 #   高股息类债资产（银行/煤炭/化工/电力/保险）性价比凸显 → 中长线埋伏高股息。
 #   此配置同时写入了 APK app_config.json 的 macro_environment 块，保持两端一致。
 MACRO_ENV = {
-    "us_10y_yield_pct": 4.4,     # 美国 10Y 国债收益率（%）
+    "us_10y_yield_pct": 4.6,     # 美国 10Y 国债收益率（%）
     "us_10y_yield_high": 4.0,    # 超过该值视为"美债利率高"
     "usd_credit_weaken": True,   # 美元信用是否下调
     "cn_10y_yield_pct": 1.7,     # 中国 10Y 国债收益率（%）
     "cn_10y_yield_low": 2.2,     # 低于该值视为"国内利率低 → 高股息类债资产占优"
     "high_dividend_prefer": True,
-    "oil_price": 82,             # 当前油价（美元/桶）
-    "oil_price_high": 85,        # 高于该值视为"油价高"（80仅为中高位，85+才为强信号）
-    "oil_trend_rising": True,    # 油价是否处于上涨趋势（结合趋势而非只看绝对价）
+    "oil_price": 102,            # 当前油价（美元/桶）
+    "oil_price_high": 85,        # 高于该值视为"油价高"
+    "oil_trend_rising": True,    # 油价是否处于上涨趋势
+    "global_hiking": True,       # 全球加息周期（美/欧/日同步收紧）
+    "geopolitical_blockade": True,  # 红海/霍尔木兹断航等地缘供给冲击
 }
 
 # 油价>85 且上涨趋势 → 化工产业链板块（选股核心中化工股低位埋伏优先）
@@ -91,6 +100,88 @@ def macro_div_pref():
             and env["us_10y_yield_pct"] >= env["us_10y_yield_high"]
             and env["cn_10y_yield_pct"] <= env["cn_10y_yield_low"])
 
+# ══════════════ 重大宏观 / 地缘事件 → 板块加减分（2026-09-11 新增）══════════════
+# 设计：事件「配方」内置在引擎里（保证离线可用、口径可复现），
+# 每日新闻自动化（automation）把当天搜到的重大新闻写成 data/_daily_macro_news.json，
+# 引擎读取后按事件名匹配配方、叠加自定义 sectors，实现「新闻 → 板块加分」闭环。
+NEWS_FILE = os.path.join(HERE, "data", "_daily_macro_news.json")
+
+MACRO_EVENT_RECIPES = {
+    "霍尔木兹封锁": {
+        "sectors": {"航运港口": 6.0, "石油行业": 4.0, "航天航空": 3.0,
+                    "贵金属": 2.0, "化学制品": 1.0, "航空": -3.0},
+        "note": "海峡/红海断航→运距拉长运价飙升、油价避险溢价、军工避险",
+    },
+    "红海断航": {
+        "sectors": {"航运港口": 5.0, "石油行业": 2.0, "贵金属": 1.0},
+        "note": "红海航线绕行好望角→集装箱/油运运价与运距双升",
+    },
+    "油价破百": {
+        "sectors": {"石油行业": 5.0, "航运港口": 2.0, "煤炭行业": 3.0,
+                    "化学制品": 3.0, "燃气": 2.0},
+        "note": "油价高位→上游资源重估、煤化工/气替代受益、下游成本承压",
+    },
+    "全球加息周期": {
+        "sectors": {"银行": 4.0, "保险": 3.0, "煤炭行业": 2.0, "电力": 1.0,
+                    "贵金属": -1.0, "半导体": -2.0, "生物制品": -2.0,
+                    "元件": -2.0, "通信设备": -2.0},
+        "note": "美/欧/日同步加息→贴现率上行杀高估值成长，利好银行息差与类债高股息",
+    },
+}
+
+# 当前生效的内置事件（自动化/人工维护；新闻文件可追加同名事件并按板块叠加）
+ACTIVE_MACRO_EVENTS = ["霍尔木兹封锁", "油价破百", "全球加息周期"]
+
+
+def load_news_events():
+    """读取每日新闻自动化产出 → {事件名: {"sectors": {板块: 分}, "note": 说明}}。"""
+    if not os.path.exists(NEWS_FILE):
+        return {}
+    try:
+        j = json.load(open(NEWS_FILE, encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+    out = {}
+    for ev in (j.get("events") or []):
+        name = (ev.get("name") or "").strip()
+        if name:
+            out[name] = {"sectors": ev.get("sectors") or {}, "note": ev.get("note") or ""}
+    return out
+
+
+def active_events():
+    """合并「内置生效事件」与「当日新闻事件」（同名则板块加分叠加）。"""
+    ev = {k: {"sectors": dict(v["sectors"]), "note": v["note"]}
+          for k, v in MACRO_EVENT_RECIPES.items() if k in ACTIVE_MACRO_EVENTS}
+    for name, v in load_news_events().items():
+        base = ev.setdefault(name, {"sectors": {}, "note": ""})
+        for sector, sc in (v.get("sectors") or {}).items():
+            base["sectors"][sector] = base["sectors"].get(sector, 0.0) + float(sc)
+        if v.get("note") and not base.get("note"):
+            base["note"] = v["note"]
+    return ev
+
+
+def macro_event_bonus(ind_group, ind_name, events):
+    """板块 → (事件加分, 命中事件说明)。
+
+    同时匹配「显式板块键名」(如 油运) 与「东财行业名」(如 航运港口)，
+    这样新闻自动化写 `航运港口` 或 `油运` 都能命中。
+    """
+    bonus, reasons = 0.0, []
+    for name, v in events.items():
+        sc = 0.0
+        for key in (ind_group, ind_name):
+            val = v["sectors"].get(key)
+            if val:
+                sc = float(val)
+                break
+        if sc:
+            bonus += sc
+            reasons.append("%s%+.0f" % (name, sc))
+    return bonus, "；".join(reasons)
+
+
 # 显式轮动板块成分表：板块名 → 成分股 secid。
 # 行业映射(CSV/静态表)覆盖不到的轮动板块在此固化，引擎直接按成分股聚合动量。
 ROTATION_SECTORS = {
@@ -100,11 +191,19 @@ ROTATION_SECTORS = {
     "创新药": ["sh603259", "sh600276", "sz300122", "sz300142", "sz000661", "sh688235"],
     "光通信": ["sz300308", "sz300502", "sh600487", "sh600105", "sz002281", "sh601869"],
     "黄金贵金属": ["sh600547", "sh600489", "sh600988", "sz002155", "sz000975"],
+    # ↓ 2026-09-11 新增：地缘断航 / 油价破百 → 油运航运、石油、军工的受益板块
+    "油运": ["sh601919", "sh600026", "sh601872", "sh601975", "sh601866"],
+    "石油行业": ["sh601857", "sh600028", "sh600938", "sh601808", "sh600583"],
+    "天然气": ["sh600256", "sh600803", "sz002267", "sh601139", "sz000593"],
+    "军工": ["sh600760", "sh600893", "sh600038", "sz002179", "sh600150"],
+    "银行": ["sh601398", "sh601288", "sh600036", "sh601166", "sh600016"],
 }
 # 显式板块 → 东财行业名（用于与行业聚合结果对齐）
 ROTATION_SECTOR_IND = {
     "农业种植": "种植业与林业", "煤炭行业": "煤炭行业", "创新药": "生物制品",
     "光通信": "通信设备", "黄金贵金属": "贵金属",
+    "油运": "航运港口", "石油行业": "石油行业", "天然气": "燃气",
+    "军工": "航天航空", "银行": "银行",
 }
 
 
@@ -149,6 +248,7 @@ def vol_ratio(snaps):
 
 def rotate(cache, asof, industry, window=DEFAULT_WINDOW, min_mom=DEFAULT_MIN_MOM, top=DEFAULT_TOP):
     """返回轮动板块清单 [{industry, sec_mom, catalyst, leaders:[...]}]"""
+    events = active_events()
     # 1) 板块聚合动量（截取到 asof 的数据，兼容历史回放）
     agg = {}
     for code, ent in cache.items():
@@ -193,13 +293,31 @@ def rotate(cache, asof, industry, window=DEFAULT_WINDOW, min_mom=DEFAULT_MIN_MOM
             continue
         sec_mom = sum(s[0] for s in stocks) / len(stocks)
         cat_bonus, cat_reason = CATALYSTS.get(ind, (0.0, ""))
-        # 宏观因子：美债利率高+美元信用下调+国内利率低 → 高股息板块加权重（中长线埋伏）
+        ind_name = ROTATION_SECTOR_IND.get(ind, ind)
+
+        # ── 动量加速度：近5日动量 vs 20日均速（>0 加速启动，<0 钝化退潮）──
+        m5s = [m for m in (momentum(s[3], 5) for s in stocks) if m is not None]
+        sec_mom5 = sum(m5s) / len(m5s) if m5s else 0.0
+        accel = round(sec_mom5 - sec_mom / 4.0, 1)
+        accel_bonus = round(max(min(accel, 8.0), -8.0) * 0.5, 1)
+
+        # ── 过热惩罚：短线涨幅过大 → 鱼尾风险，降权防接力 ──
+        overheat = -6.0 if sec_mom > 25 else (-3.0 if sec_mom > 18 else 0.0)
+
+        # ── 宏观因子：美债高+美元弱+国内利率低 → 高股息板块加分（中长线埋伏）──
         macro_bonus = 0.0
         macro_reason = ""
         if macro_div_pref() and ind in HIGH_DIVIDEND_SECTORS:
             macro_bonus = 4.0
             macro_reason = "宏观:美债高+美元弱+国债低→高股息类债占优"
-        score = sec_mom + cat_bonus + macro_bonus
+        if MACRO_ENV.get("global_hiking") and ind in HIGH_DIVIDEND_SECTORS:
+            macro_bonus += 2.0
+            macro_reason = (macro_reason + "；全球加息→类债资产占优").strip("；")
+
+        # ── 事件因子：地缘断航 / 油价破百 / 全球加息 → 板块加减分 ──
+        event_bonus, event_reason = macro_event_bonus(ind, ind_name, events)
+
+        score = sec_mom + cat_bonus + macro_bonus + accel_bonus + overheat + event_bonus
         # 板块内龙头：动量 + 量比
         leaders = []
         for mom, code, nm, snaps in stocks:
@@ -207,12 +325,17 @@ def rotate(cache, asof, industry, window=DEFAULT_WINDOW, min_mom=DEFAULT_MIN_MOM
             ld_score = mom + (vr or 0) * 2.0
             leaders.append((ld_score, code, nm, mom, vr))
         leaders.sort(reverse=True)
-        ind_name = ROTATION_SECTOR_IND.get(ind, ind)
         rows.append({
             "industry": ind_name,
             "group": ind,
             "explicit": explicit,
             "sec_mom": round(sec_mom, 1),
+            "sec_mom5": round(sec_mom5, 1),
+            "accel": accel,
+            "accel_bonus": accel_bonus,
+            "overheat": overheat,
+            "event_bonus": round(event_bonus, 1),
+            "event_reason": event_reason,
             "catalyst_bonus": round(cat_bonus, 1),
             "catalyst_reason": cat_reason,
             "macro_bonus": round(macro_bonus, 1),
@@ -259,16 +382,24 @@ def main():
         print(json.dumps({"asof": asof, "rotation": rows}, ensure_ascii=False, indent=1))
         return 0
     print("轮动扫描 asof=%s  板块20日动量阈值≥%.1f%%" % (asof, args.min_mom))
-    if macro_div_pref():
-        print("宏观环境: 美债%.1f%%(高)+美元信用下调+中国10Y国债%.1f%%(低) → 高股息板块(银行/煤炭/化工)加分%.1f"
-              % (MACRO_ENV["us_10y_yield_pct"], MACRO_ENV["cn_10y_yield_pct"], 4.0))
-    print("=" * 84)
+    print("宏观环境: 油价%.0f(高) 美债%.1f%%(高) 全球加息=%s 地缘断航=%s 中国10Y国债%.1f%%(低)"
+          % (MACRO_ENV["oil_price"], MACRO_ENV["us_10y_yield_pct"],
+             MACRO_ENV["global_hiking"], MACRO_ENV["geopolitical_blockade"],
+             MACRO_ENV["cn_10y_yield_pct"]))
+    evs = active_events()
+    if evs:
+        print("生效事件: " + " | ".join("%s(%s)" % (k, v["note"] or "") for k, v in evs.items())[:200])
+    print("=" * 100)
     for r in rows:
         cat = "  [催化剂 %s]" % r["catalyst_reason"] if r["catalyst_reason"] else ""
         mac = "  [宏观 %s]" % r["macro_reason"] if r["macro_reason"] else ""
-        print("\n%s  板块动量%+.1f%%(催化剂%+.1f/宏观%+.1f→总分%.1f)%s%s  (样本%d)"
-              % (r["industry"], r["sec_mom"], r["catalyst_bonus"], r["macro_bonus"],
-                 r["score"], cat, mac, r["count"]))
+        evt = "  [事件 %s]" % r["event_reason"] if r["event_reason"] else ""
+        print("\n%s  板块动量%+.1f%%(5日%+.1f 加速%+.1f)  "
+              "加分[事件%+.1f/催化%+.1f/宏观%+.1f/加速%+.1f/过热%+.1f] → 总分%.1f  (样本%d)"
+              % (r["industry"], r["sec_mom"], r["sec_mom5"], r["accel"],
+                 r["event_bonus"], r["catalyst_bonus"], r["macro_bonus"],
+                 r["accel_bonus"], r["overheat"], r["score"], r["count"]))
+        print("   %s%s%s" % (cat, mac, evt))
         for l in r["leaders"]:
             print("    %-6s %-8s %s  20日%+.1f%%  量比%s" % (
                 l["secid"][2:], l["name"], l["board"], l["mom20"], l["vol_ratio"]))

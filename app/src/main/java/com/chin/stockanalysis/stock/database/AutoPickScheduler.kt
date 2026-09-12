@@ -192,17 +192,25 @@ object AutoPickScheduler {
         }
         if (rows.isEmpty()) return
 
-        // 本轮信号指纹（stock + 分数），与上轮一致则跳过推送
+        // 本轮信号指纹（stock + 分数）：仅用于正文标注是否与上轮一致
         val sig = rows.map { "${it.stockCode}_${it.score.toInt()}" }.toSet()
-        if (sig.isNotEmpty() && sig == lastNotifiedSig) {
-            Log.i(TAG, "本轮候选与上轮一致（${sig.size} 只），跳过重复推送")
-            return
-        }
+        val unchanged = sig.isNotEmpty() && sig == lastNotifiedSig
         lastNotifiedSig = sig
+
+        // 每日节奏前导（08:00/09:00 情报：板块 + 候选 + 快讯），满足「09:30 综合 1 和 2 的信息」
+        val preamble = try {
+            DailyRhythmScheduler.roundPreamble(context)
+        } catch (_: Exception) {
+            ""
+        }
 
         val bySource = rows.groupBy { it.source }
         val body = buildString {
-            append("🕙 ${LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))} 更新")
+            if (preamble.isNotBlank()) {
+                append(preamble).append('\n')
+            }
+            append("🕙 ${LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))} 盘中轮")
+            if (unchanged) append("（名单较上轮无变化）")
             append("\n")
             for ((source, list) in bySource) {
                 val label = PERIOD_PLANS.firstOrNull { "$AUTO_PREFIX${it.shortKey}" == source }?.label
@@ -216,15 +224,21 @@ object AutoPickScheduler {
                 append('\n')
             }
             append("打开 App 查看「AI 精选」详情")
-        }
+        }.trim()
+
         try {
-            TradeNotifier.sendSystemOnly(
-                context, NOTIFY_TITLE, body.toString().trim(),
-                tag = "AUTO_PICK_$today"
-            )
-            Log.i(TAG, "🔔 自动选股通知已推送（${rows.size} 只候选）")
+            // 用户要求：09:30 起每 15 分钟推送一次 → 不再因名单未变而静默
+            TradeNotifier.sendSystemOnly(context, NOTIFY_TITLE, body, tag = "AUTO_PICK_$today")
+            Log.i(TAG, "🔔 自动选股通知已推送（${rows.size} 只候选${if (unchanged) "，名单未变" else ""}）")
         } catch (e: Exception) {
             Log.w(TAG, "自动选股通知失败: ${e.message}")
+        }
+        // 推送账本留痕（新闻 + 推送的股票，满足「存储到数据库」）
+        try {
+            DailyRhythmScheduler.logRound(
+                context, NOTIFY_TITLE, body, rows.map { it.stockCode }
+            )
+        } catch (_: Exception) {
         }
     }
 }

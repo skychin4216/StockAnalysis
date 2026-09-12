@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## ETF 全行业扫描 Pipeline（V2 DAG · 门控→扫描→止损 三阶段）
+
+  与同目录 usecase_pipeline.py（Python 引擎，XML DAG 主线）共用同一文件 ——
+  修改任何参数/标的池，双端行为自动一致（单一事实源）。
+
+  stageOutputs：
+    - "n_etf_gate"       JSONObject {ok, date, note}   沪深300 close>MA20>MA60
+    - "n_industry_scan"  JSONObject {as_of, marketState, universe, scanned, rows[]}
+                         每行 = 一只行业ETF前五重仓股（含 score/etfs/themes/pos60/bars）
+    - "n_scan_stop"      JSONObject {rows[] 附 stop/stopPct/broken/stopTheory}
+
+  ★ 大盘要不要考虑？—— 要，且按三态差异化（节点内 auto 判定，取自沪深300）：
+    BULLISH     正常扫描
+    OSCILLATION 门槛 +1.0 且要求 pos60 ≤ -12%（只接更深回撤的低吸）
+    BEARISH     暂停开仓 → 全部降级为「观察清单」（ok=false），不产生买入信号
+-->
+<DagPipeline id="etf_industry_scan_dag" name="ETF全行业扫描Pipeline"
+    description="沪深300门控 → 行业ETF前五重仓低吸打分top5 → 多理论投票止损">
+
+  <NodeList>
+    <!-- ── 阶段1：大盘门控（沪深300结构多头）：仅作 UI 横幅与阻断提示，节点内部另按三态自动自适应 ── -->
+    <Node id="n_etf_gate" name="沪深300结构多头门控" module="etf_gate">
+      <config>
+        <param name="indexCode" value="sh000300" />
+        <param name="maFast" value="20" />
+        <param name="maSlow" value="60" />
+        <param name="minSnapshots" value="60" />
+      </config>
+    </Node>
+
+    <!-- ── 阶段2：全行业扫描：行业/主题ETF(剔除宽基) → 前五重仓股 → 低吸打分 → topN ── -->
+    <Node id="n_industry_scan" name="ETF全行业低吸扫描" module="etf_industry_scan">
+      <config>
+        <param name="topN" value="5" />
+        <param name="minScore" value="5.0" />
+        <param name="minBars" value="60" />
+        <param name="ddWin" value="60" />
+        <param name="minETF" value="1" />
+        <param name="industryOnly" value="true" />
+        <param name="baseThemes" value="宽基" />
+        <param name="excludeStar" value="true" />
+        <param name="embedBars" value="true" />
+        <param name="barsLimit" value="140" />
+        <!-- 大盘三态自适应 -->
+        <param name="marketAdapt" value="true" />
+        <param name="indexCode" value="sh000300" />
+        <param name="oscScoreAdd" value="1.0" />
+        <param name="oscPos60Max" value="-12" />
+        <param name="bearishPause" value="true" />
+        <param name="strategyText" value="行业/主题ETF前五重仓 → SAR红(硬门控) + MACD金叉/红柱 + OBV上行 + RSI6∈[20,55] + 放量企稳(收阳&amp;量比≥1.05&amp;站上MA5&amp;三日不新低) + 距60日高回撤分层加分；score≥5.0 且含转折确认；大盘三态自适应(见 etf_industry_scan_pipeline.xml)" />
+      </config>
+    </Node>
+
+    <!-- ── 阶段3：多理论投票止损（六理论取最保守+棘轮）：直接消费上游行内嵌 bars ── -->
+    <Node id="n_scan_stop" name="多理论投票止损" module="stop_loss_vote">
+      <config>
+        <param name="target" value="picks" />
+        <param name="sourceNode" value="n_industry_scan" />
+        <param name="period" value="MID" />
+        <param name="marketState" value="auto" />
+        <param name="trailUp" value="true" />
+      </config>
+    </Node>
+  </NodeList>
+
+  <Links>
+    <Link>
+      <SourceNodeId>n_etf_gate</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_industry_scan</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_industry_scan</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_scan_stop</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+  </Links>
+</DagPipeline>

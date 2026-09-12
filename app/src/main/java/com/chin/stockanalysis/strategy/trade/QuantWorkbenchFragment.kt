@@ -2,7 +2,9 @@ package com.chin.stockanalysis.strategy.trade
 
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.text.TextUtils
 import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -76,6 +78,14 @@ class QuantWorkbenchFragment : Fragment() {
     private lateinit var periodLabelTv: TextView
     private lateinit var periodRadioGroup: RadioGroup
 
+    /** 「🚀 一键建仓」行右侧的沪深300 门控小字（公共前提：三周期/ETF 同用，见 QuantWorkbenchState） */
+    private var etfGateTv: TextView? = null
+
+    /** 门控监听实例：固定引用，便于 onDestroyView 时按同一实例清空共享单例里的静态引用 */
+    private val etfGateListener: (String, String, Boolean) -> Unit = { l1, l2, ok ->
+        applyEtfGate(l1, l2, ok)
+    }
+
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
@@ -98,23 +108,58 @@ class QuantWorkbenchFragment : Fragment() {
         refreshAll()
     }
 
+    override fun onDestroyView() {
+        // QuantWorkbenchState 是全局单例，静态监听若不清理会一直持有本 Fragment（并可能在视图销毁后回调）；
+        // 同时置空 etfGateTv，使 applyEtfGate 在视图销毁后自动 no-op。
+        if (QuantWorkbenchState.etfGateListener === etfGateListener) {
+            QuantWorkbenchState.etfGateListener = null
+        }
+        etfGateTv = null
+        super.onDestroyView()
+    }
+
     // ═══════════════════════════════════════════════════
     // UI 构建
     // ═══════════════════════════════════════════════════
 
     private fun buildUI() {
-        // ── 标题行：仅保留一键建仓（状态矩阵拟合 / 拟合参数导入 / PC 候选 已整合到 量化选股→数据 Tab）──
+        // ── 标题行：仅保留「建仓」圆形按钮（状态矩阵拟合 / 拟合参数导入 / PC 候选 已整合到 量化选股→数据 Tab）──
+        // 2026-09-11：按钮由整行填充的「🚀 一键建仓」改为固定 32dp 圆形「建仓」，行高随之减半（去 Button 默认 48dp 最小高）；
+        // 省下的宽度留给右侧沪深300 门控小字，使其由两行折行变为一行展示。
         rootLayout.addView(LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
-            setPadding(12, 10, 12, 4)
-            addView(Button(requireContext()).apply {
-                text = "🚀 一键建仓"; textSize = 11f; setTextColor(Color.WHITE)
-                setBackgroundColor(Color.parseColor("#E65100")); isAllCaps = false
-                setPadding(2, 6, 2, 6)
+            setPadding(dp(12), dp(2), dp(12), dp(2))
+            addView(TextView(requireContext()).apply {
+                text = "建仓"
+                textSize = 10f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.parseColor("#E65100"))
+                }
+                isClickable = true
                 setOnClickListener { runQuickBuild() }
+            }, LinearLayout.LayoutParams(dp(32), dp(32)))
+            // 沪深300 门控：判断的是「大盘结构」这一公共前提（三周期低吸与 ETF 低吸同用），
+            // 故不再在 ETF 页独占整行横幅，改为挂在「建仓」同一行右侧、小字单行显示。
+            addView(TextView(requireContext()).apply {
+                etfGateTv = this
+                textSize = 9f
+                gravity = Gravity.CENTER_VERTICAL or Gravity.END
+                setPadding(dp(6), 0, 0, 0)
+                isSingleLine = true
+                ellipsize = TextUtils.TruncateAt.END
+                visibility = View.GONE
             }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         })
+        // ETF 页 render 成功后发布门控 → 即时刷新本行小字（未跑 ETF 时回落到上次值）
+        QuantWorkbenchState.etfGateListener = etfGateListener
+        applyEtfGate(
+            QuantWorkbenchState.etfGateLine1, QuantWorkbenchState.etfGateLine2,
+            QuantWorkbenchState.etfGateOk
+        )
         // ── 公共「交易日」行：日期选择 + 仅主板 + 当前周期提示（随 Tab 切换）──
         rootLayout.addView(LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -207,8 +252,10 @@ class QuantWorkbenchFragment : Fragment() {
                 0 -> getString(com.chin.stockanalysis.R.string.tab_short)
                 1 -> getString(com.chin.stockanalysis.R.string.tab_mid)
                 2 -> getString(com.chin.stockanalysis.R.string.tab_long)
-                3 -> "💰 实仓"
-                4 -> "🧲 ETF"
+                // 2026-09-09：去掉 💰/🧲 前缀图标（用户反馈难看），页签保持纯文字
+                3 -> "实仓"
+                4 -> "ETF"
+                5 -> "埋伏"
                 else -> throw IllegalStateException("period tab count mismatch: $position")
             }
         }.attach()
@@ -223,6 +270,24 @@ class QuantWorkbenchFragment : Fragment() {
             }
         })
     }
+
+    /**
+     * 刷新「建仓」行右侧的沪深300 门控小字（2026-09-11：按钮改圆形后宽度充足，两行合并为一行）。
+     * line1 = 状态（沪深300 空头排列），line2 = 数值链（4554<MA20(4601)<MA60(4703)）。
+     * 多头=绿（可低吸）/ 非多头=红（低吸暂停）；无数据时整块隐藏，不留空位。
+     */
+    private fun applyEtfGate(line1: String, line2: String, ok: Boolean) {
+        val tv = etfGateTv ?: return
+        if (line1.isBlank()) {
+            tv.visibility = View.GONE
+            return
+        }
+        tv.visibility = View.VISIBLE
+        tv.text = if (line2.isBlank()) line1 else "$line1 $line2"
+        tv.setTextColor(Color.parseColor(if (ok) "#2E7D32" else "#C62828"))
+    }
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density + 0.5f).toInt()
 
     /** 根据当前 Tab 刷新公共「交易日」行提示 + 公共「周期」行选项/选中态（选项/选中态均来自共享状态） */
     private fun updateCommonRowsForTab(position: Int, frag: QuantFragmentBase?) {
@@ -430,13 +495,19 @@ class QuantWorkbenchFragment : Fragment() {
         }
     }
 
-    /** 刷新内嵌周期持仓：短/中/长 + 实仓 + ETF（供外层 Tab 切换 / onResume 时调用） */
+    /** 刷新内嵌周期持仓：短/中/长 + 实仓 + ETF + 埋伏（供外层 Tab 切换 / onResume 时调用） */
     fun refreshAll() {
+        // 门控小字随公共行一起刷新（ETF 页 render 是异步的，切回工作台时用其发布的最新值兜底）
+        applyEtfGate(
+            QuantWorkbenchState.etfGateLine1, QuantWorkbenchState.etfGateLine2,
+            QuantWorkbenchState.etfGateOk
+        )
         childFragmentManager.executePendingTransactions()
-        for (i in 0 until 5) {
+        for (i in 0 until 6) {
             when (val f = childFragmentManager.findFragmentByTag("f$i")) {
                 is QuantFragmentBase -> f.refreshPositions()
                 is EtfDipFragment -> f.refresh()
+                is SectorAmbushFragment -> f.refresh()
                 else -> Unit
             }
         }
@@ -537,7 +608,7 @@ class QuantWorkbenchFragment : Fragment() {
         val order = listOf("短线", "中线", "长线")
         val db = try { com.chin.stockanalysis.stock.database.StockDatabase.getInstance(ctx) } catch (_: Exception) { null }
         val dao = db?.dailySnapshotDao()
-        return order.mapNotNull { label ->
+        val base = order.mapNotNull { label ->
             val list = picks[label].orEmpty()
             val rows = mutableListOf<QuickBuildRow>()
             for ((rawCode, name, score) in list) {
@@ -576,6 +647,43 @@ class QuantWorkbenchFragment : Fragment() {
             }
             label to rows
         }
+        // 2026-09-11 新增：把 ETF 低吸最近一次选股结果并入同窗展示。
+        // 用户反馈「点击建仓之后，结果页没有 ETF 信息」——此前结果窗只覆盖短/中/长三周期。
+        val etf = buildEtfQuickBuildSection(ctx)
+        return if (etf != null) base + etf else base
+    }
+
+    /**
+     * 读取 ETF 低吸最近一次选股结果（EtfDipFragment 落盘在 etf_live/last_json），
+     * 转成聚合结果窗的一行。无缓存/无信号时返回 null（结果窗会提示该节未运行）。
+     */
+    private fun buildEtfQuickBuildSection(ctx: android.content.Context): Pair<String, List<QuickBuildRow>>? {
+        val prefs = ctx.getSharedPreferences("etf_live", android.content.Context.MODE_PRIVATE)
+        val json = prefs.getString("last_json", null) ?: return null
+        return try {
+            val root = org.json.JSONObject(json)
+            val arr = root.optJSONArray("signal_today")
+                ?.takeIf { it.length() > 0 }
+                ?: root.optJSONArray("approach")?.takeIf { it.length() > 0 }
+                ?: return null
+            val rows = mutableListOf<QuickBuildRow>()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val code = o.optString("code", "").replace(Regex("^(sh|sz|bj)"), "")
+                if (code.length != 6) continue
+                val name = o.optString("name", code).ifBlank { code }
+                val close = o.optDouble("close", 0.0)
+                val detail = "回撤${"%.1f".format(o.optDouble("dd60", 0.0))}%  " +
+                    "RSI ${"%.0f".format(o.optDouble("rsi6", 0.0))}  " +
+                    "SAR ${o.optString("sar", "-")}  MACD ${o.optString("macd", "-")}  " +
+                    "OBV ${o.optString("obv", "-")}  ${o.optString("trend", "—")}"
+                rows.add(QuickBuildRow(code, name, 0, close, 0.0, detail))
+            }
+            if (rows.isEmpty()) null else "ETF低吸" to rows
+        } catch (e: Exception) {
+            Log.w(TAG, "ETF 结果解析失败: ${e.message}")
+            null
+        }
     }
 
     /** 弹出可关闭的三周期聚合结果窗（全屏可滚动） */
@@ -589,7 +697,8 @@ class QuantWorkbenchFragment : Fragment() {
             setPadding((12 * density).toInt(), (8 * density).toInt(), (12 * density).toInt(), (8 * density).toInt())
         }
         content.addView(TextView(ctx).apply {
-            text = "已完成 短/中/长 三周期一键建仓，共选中 $total 只" +
+            text = "已完成 短/中/长 三周期" + (if (sections.any { it.first == "ETF低吸" }) " + ETF低吸" else "") +
+                " 一键建仓，共选中 $total 只" +
                 (if (isTrading) "（已生成订单并入账）" else "（已保存 AI 精选）")
             textSize = 14f
             setTypeface(null, Typeface.BOLD)
@@ -643,7 +752,7 @@ class QuantWorkbenchFragment : Fragment() {
             addView(content)
         }
         AlertDialog.Builder(ctx)
-            .setTitle("🚀 一键建仓 · 三周期选股结果")
+            .setTitle("🚀 一键建仓 · 三周期 + ETF 选股结果")
             .setView(sv)
             .setPositiveButton("关闭", null)
             .create()
@@ -653,9 +762,9 @@ class QuantWorkbenchFragment : Fragment() {
             }
     }
 
-    /** 内嵌周期页适配器：短 / 中 / 长 / 实仓 / ETF（超短引擎并入短线，2026-09-05） */
+    /** 内嵌周期页适配器：短 / 中 / 长 / 实仓 / ETF / 埋伏（超短引擎并入短线，2026-09-05；埋伏 2026-09-11 新增） */
     private class PeriodTabAdapter(fragment: Fragment) : FragmentStateAdapter(fragment) {
-        override fun getItemCount() = 5
+        override fun getItemCount() = 6
 
         override fun createFragment(position: Int): Fragment {
             return when (position) {
@@ -664,6 +773,7 @@ class QuantWorkbenchFragment : Fragment() {
                 2 -> LongTermQuantFragment()
                 3 -> RealHoldingQuantFragment()
                 4 -> EtfDipFragment()
+                5 -> SectorAmbushFragment()
                 else -> throw IllegalStateException("Unknown position: $position")
             }
         }

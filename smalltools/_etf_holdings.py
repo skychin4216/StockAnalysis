@@ -58,6 +58,7 @@ QUOTE_API = "https://qt.gtimg.cn/q="
 # ── 宽基（进覆盖矩阵，但行业低吸推送不参与）──
 BASE_FUNDS = [
     ("510050", "上证50ETF"), ("510300", "沪深300ETF"),
+    ("510500", "中证500ETF"), ("512100", "中证1000ETF"),
     ("159915", "创业板ETF"), ("588000", "科创50ETF"),
 ]
 
@@ -84,9 +85,32 @@ THEME_RULES = [
     (("汽车整车", "汽车零部件", "汽车服务"), [("516110", "汽车ETF")]),
     (("人工智能", "AI", "机器人"), [("515070", "人工智能ETF"), ("562500", "机器人ETF")]),
     (("互联网服务", "软件开发", "人工智能"), [("513050", "中概互联网ETF")]),
+    (("化学制品", "化学原料"), [("159870", "化工ETF")]),
+    (("钢铁",), [("515210", "钢铁ETF")]),
+    (("水泥建材", "玻璃玻纤", "装修建材", "非金属材料"), [("159745", "建材ETF")]),
+    (("专用设备", "通用设备", "工程机械"), [("159886", "机械ETF")]),
+    (("风电设备", "电源设备"), [("516180", "风电ETF")]),
+    (("电力", "公用事业"), [("561560", "电力ETF")]),
+    (("石油石化", "石油", "油服工程"), [("561360", "石油ETF")]),
+    (("环保",), [("512580", "环保ETF")]),
+    (("农牧饲渔", "农业", "种植业", "养殖业"), [("159825", "农业ETF")]),
+    (("物流", "交通运输"), [("516910", "物流ETF")]),
+    (("光学光电子", "电子化学品", "元件"), [("515260", "电子ETF")]),
+    (("旅游酒店", "旅游景区", "酒店餐饮"), [("159766", "旅游ETF")]),
+    (("消费电子", "消费"), [("159928", "消费ETF")]),
 ]
 
 ALL_FUNDS = [(c, n) for _, lst in THEME_RULES for (c, n) in lst] + BASE_FUNDS
+
+
+def industry_to_etf(industry):
+    """东财行业名 → 核心 ETF 简称（未命中 ""）。推送端「所属ETF」列回填用。"""
+    ind = str(industry or "")
+    for kws, lst in THEME_RULES:
+        if any(k and k in ind for k in kws):
+            return lst[0][1].replace("ETF", "")
+    return ""
+
 
 
 # ══════════════════════════════════════════
@@ -852,7 +876,19 @@ def low_buy_lines_offline(asof, hist=None, dag_codes=None, max_rows=5):
 
 # 当日已取数缓存（code → _screen_meta dict），避免 15 分钟轮询重复拉日K
 _KLINE_TODAY = {}
+_SNAP_TODAY = {}   # code → 最近 300 根日K（与 _KLINE_TODAY 同一次拉取，2026-09-12）
 _KLINE_DATE = ""
+
+
+def _snaps_live(code):
+    """code → 最近 300 根日K（与 _meta_live 同一次拉取、同一份当日缓存；失败 []）。
+
+    2026-09-12：统一表格口径后，所有选股结果都要「距60日高 / 今日 / 趋势图谱 /
+    星后形态 / 趋势图」，这些需原始日K；故把 _meta_live 拉到的 rows 一并缓存复用，
+    不额外发请求。
+    """
+    _meta_live(code)
+    return _SNAP_TODAY.get(code) or []
 
 
 def _meta_live(code):
@@ -862,6 +898,7 @@ def _meta_live(code):
     today = _dt.date.today().isoformat()
     if _KLINE_DATE != today:
         _KLINE_TODAY.clear()
+        _SNAP_TODAY.clear()
         _KLINE_DATE = today
     if code in _KLINE_TODAY:
         return _KLINE_TODAY[code]
@@ -870,6 +907,7 @@ def _meta_live(code):
         import _overseas_fetch
         rows = _overseas_fetch.fetch_kline(_prefixed(code), count=300)
         if rows:
+            _SNAP_TODAY[code] = rows
             meta = _screen_meta(rows)
     except Exception:
         meta = {}
@@ -888,20 +926,19 @@ def _confirm_note(code):
     return _confirm_and_tag(code)[0]
 
 
-def low_buy_lines(hot_themes, etf_flow=None, dag_codes=None, max_rows=5):
-    """实时『热门+重点关注板块 → ETF 前5重仓 → 低吸精选』文本行（供每轮推送页面2）。
+def _lowbuy_collect(hot_themes, etf_flow=None, dag_codes=None):
+    """实时『热门+重点关注板块 → ETF 前5重仓 → 低吸候选』收集（low_buy_lines/low_buy_table 共用）。
 
     hot_themes: 板块名列表（资金流入热门在前、用户重点关注殿后，已按优先级排好）
     etf_flow: ctx["etf_flow"]（东财ETF净流入榜 [{name,in_yi,chg_pct}]，用于标注板块资金）
     dag_codes: 当日主线DAG命中代码集合(6位)；命中票附『主线DAG✓』并加分
-    只输出通过 _decide_pick 的合格票（SAR绿直接不展示）；无符合时明示空因。
-    """
+    返回 (seq, groups, stats, rejected)；基础数据缺失返回 None。"""
     hold = load_holdings()
     if not hold:
-        return []
+        return None
     theme_funds = match_funds_by_theme(hot_themes)
     if not theme_funds:
-        return []
+        return None
     top_by_fund = {f["code"]: f["top"] for f in hold.get("funds") or []}
     name_by_fund = {f["code"]: f["name"] for f in hold.get("funds") or []}
     theme_of_fund = {fcode: theme for fcode, _, theme in theme_funds}
@@ -915,7 +952,7 @@ def low_buy_lines(hot_themes, etf_flow=None, dag_codes=None, max_rows=5):
             own.setdefault(s["code"], (fcode, s))
     quotes = tencent_quotes(list(own.keys()))
     if not quotes:
-        return []
+        return None
 
     # ETF 当日资金净流入（用于标注，名称含 ETF 主题词或简称）
     flow_in = {}
@@ -966,7 +1003,321 @@ def low_buy_lines(hot_themes, etf_flow=None, dag_codes=None, max_rows=5):
                     break
             groups.append({"code": fcode, "name": fname, "fz": fz})
         seq.append((score, fidx[fcode], pk))
+    return seq, groups, stats, rejected
+
+
+def low_buy_lines(hot_themes, etf_flow=None, dag_codes=None, max_rows=5):
+    """实时低吸精选 → 文本行（原排版；委托 _lowbuy_collect，逻辑与表格版同源）。"""
+    col = _lowbuy_collect(hot_themes, etf_flow, dag_codes)
+    if col is None:
+        return []
+    seq, groups, stats, rejected = col
     return _assemble_lowbuy(seq, groups, stats, max_rows, rejected)
+
+
+def low_buy_table(hot_themes, etf_flow=None, dag_codes=None, max_rows=5):
+    """实时低吸精选 → 对齐文本表（2026-09-08 推送表格化）。
+
+    列：股票名称/代码/RSI/SAR/MACD/OBV/均线粘合/换手/量比；与 low_buy_lines 同源。
+    换手率需离线K线、均线粘合为离线因子——实时行情缺字段以 — 占位。
+    返回文本行列表（首行为表头）。"""
+    col = _lowbuy_collect(hot_themes, etf_flow, dag_codes)
+    if col is None:
+        return []
+    seq, groups, stats, rejected = col
+    return _assemble_lowbuy_table(seq, groups, stats, max_rows, rejected)
+
+
+# 全行业绿转红补充结果缓存（15 分钟 TTL），避免守护 10 分钟轮询重复拉取全市场日K
+_FRESH_UP_CACHE = {"date": "", "ts": 0.0, "lines": []}
+
+
+def fresh_up_lines(etf_flow=None, dag_codes=None, max_rows=6, themes=None, ttl=900):
+    """实时『全行业·SAR 绿转红』补充清单（2026-09-10 新增）。
+
+    盘中热门口径（low_buy_table）只覆盖「资金流入热门 + 用户重点关注」板块的 ETF 前五，
+    常与 SAR 翻红机会错配（例：09-10 热点在种植业/通用设备/煤炭，而绿转红机会在
+    白酒/医疗/汽车）→ 推送低吸段整段为空。本函数放开到全行业 ETF 前五重仓，
+    只保留「SAR 刚翻红(绿转红)」且过 _decide_pick（企稳/量能/MACD/OBV 共振）的票，
+    按分数取前 max_rows 只。
+
+    themes=None → 全行业主题（industry_funds 全部）；也可传板块名子集。
+    同进程内缓存 15 分钟，避免守护轮询反复全量拉取日K。
+    返回文本行；无命中返回 []（调用方跳过该段）。
+    """
+    global _FRESH_UP_CACHE
+    import time as _t
+    today = _dt.date.today().isoformat()
+    if themes is None and _FRESH_UP_CACHE["date"] == today and \
+            (_t.time() - _FRESH_UP_CACHE["ts"]) < ttl:
+        return _FRESH_UP_CACHE["lines"]
+    th = themes or [t for _, _, t in industry_funds()]
+    th = list(dict.fromkeys([t for t in th if t]))
+    if not th:
+        return []
+    col = _lowbuy_collect(th, etf_flow, dag_codes)
+    if col is None:
+        return []
+    seq, groups, _stats, _rejected = col
+    fresh = [(sc, gi, pk) for sc, gi, pk in seq if pk.get("fresh_up")]
+    if not fresh:
+        return []
+    fresh.sort(key=lambda r: -r[0])
+    seen, lines = set(), []
+    for _sc, gi, pk in fresh:
+        if pk["code"] in seen:
+            continue
+        if len(seen) >= max_rows:
+            break
+        seen.add(pk["code"])
+        gname = ((groups[gi].get("name") if 0 <= gi < len(groups) else "") or "").replace("ETF", "")
+        tail = (" | " + pk["tag"]) if pk.get("tag") else ""
+        lines.append("  🔴 %s(%s) 距60日高%+.1f%% 今%+.1f%% | %s | 绿转红✓%s" % (
+            pk["name"], pk["code"], pk.get("pos60") or 0, pk.get("pct") or 0, gname, tail))
+    lines.append("  ── 口径: 全行业ETF前五重仓 → SAR绿转红 + 企稳/量能/MACD/OBV共振，取前≤%d只 ──"
+                 % max_rows)
+    if themes is None:
+        _FRESH_UP_CACHE = {"date": today, "ts": _t.time(), "lines": lines}
+        globals()["_FRESH_UP_CACHE"] = _FRESH_UP_CACHE
+    return lines
+
+
+# 全行业绿转红「原始候选」缓存（供推送端统一成 16 列公共表；与 _FRESH_UP_CACHE 同 TTL 同口径）
+_FRESH_UP_PICKS_CACHE = {"date": "", "ts": 0.0, "picks": []}
+
+
+def fresh_up_picks(etf_flow=None, dag_codes=None, max_rows=6, themes=None, ttl=900):
+    """全行业 SAR 绿转红 → [(gname, pk), ...]（原始候选，口径与 fresh_up_lines 完全一致）。
+
+    2026-09-12：推送端不再要「预格式化好的表行」，而要原始 pk（含 _screen_meta 明细）
+    + 归属 ETF 短名，以便与主线 DAG / smalltool / 实仓镜像拼成同一张 16 列公共表
+    （距60日高 / 今日 / 所属ETF / 趋势图谱 / 星后形态 / … / 趋势图 / 备注）。去重、取前 max_rows 只、
+    TTL 缓存三者与 fresh_up_lines 一致，故「图 / CSV / 文本段」永远同口径。无命中返回 []。
+    """
+    global _FRESH_UP_PICKS_CACHE
+    import time as _t
+    today = _dt.date.today().isoformat()
+    if themes is None and _FRESH_UP_PICKS_CACHE["date"] == today and \
+            (_t.time() - _FRESH_UP_PICKS_CACHE["ts"]) < ttl:
+        return _FRESH_UP_PICKS_CACHE["picks"]
+    th = themes or [t for _, _, t in industry_funds()]
+    th = list(dict.fromkeys([t for t in th if t]))
+    if not th:
+        return []
+    col = _lowbuy_collect(th, etf_flow, dag_codes)
+    if col is None:
+        return []
+    seq, groups, _stats, _rejected = col
+    fresh = [(sc, gi, pk) for sc, gi, pk in seq if pk.get("fresh_up")]
+    fresh.sort(key=lambda r: -r[0])
+    picks, seen = [], set()
+    for _sc, gi, pk in fresh:
+        if pk["code"] in seen:
+            continue
+        if len(seen) >= max_rows:
+            break
+        seen.add(pk["code"])
+        gname = ((groups[gi].get("name") if 0 <= gi < len(groups) else "") or "").replace("ETF", "")
+        picks.append((gname, pk))
+    if themes is None:
+        globals()["_FRESH_UP_PICKS_CACHE"] = {"date": today, "ts": _t.time(), "picks": picks}
+    return picks
+
+
+def _tw2(s):
+    """显示宽度：CJK 算 2 个半角位。"""
+    return sum(2 if ord(c) > 127 else 1 for c in str(s or ""))
+
+
+def _align_table(head, rows):
+    """head/rows(等长 list) → 按显示宽度空格对齐的文本行（含表头与分隔线）。"""
+    widths = [_tw2(h) for h in head]
+    for row in rows:
+        for i in range(len(head)):
+            widths[i] = max(widths[i], _tw2(row[i]))
+
+    def fmt(row):
+        line = ""
+        for i in range(len(head)):
+            cell = str(row[i] if i < len(row) else "")
+            line += cell + " " * (widths[i] - _tw2(cell))
+            if i < len(head) - 1:
+                line += "  "
+        return line.rstrip()
+
+    out = [fmt(head), fmt(["-" * w for w in widths])]
+    out += [fmt(r) for r in rows]
+    return out
+
+
+# 公共别名：推送端渲染「任意表头+二维行」的文本回退（图片渲染失败时用），
+# 与低吸表/绿转红表同一套对齐口径（2026-09-11）。
+align_table = _align_table
+
+
+def _pk_tech_cells(pk):
+    """pk(_screen_meta 明细) → 7 个技术单元格
+    [RSI, SAR, MACD, OBV, 均线粘合, 换手, 量比]（换手需离线K线，实时缺 → —）。
+
+    2026-09-12：文本表(_pk_table_row) 与推送端「统一表格」(16 列公共表) 共用同一份
+    技术口径，避免两处各写一遍导致数值漂移。
+    """
+    rsi = pk.get("rsi")
+    rsi_s = ("%d" % int(round(rsi))) if isinstance(rsi, (int, float)) else "—"
+    d = pk.get("sar_dir")
+    bars = pk.get("sar_bars") or 0
+    if d == "UP":
+        sar_s = "刚翻红" if pk.get("fresh_up") else ("红↑%d" % bars)
+    elif d == "DOWN":
+        sar_s = "绿↓%d" % bars
+    else:
+        sar_s = "—"
+    if pk.get("macd_golden"):
+        macd_s = "金叉"
+    else:
+        h = pk.get("macd_hist")
+        macd_s = ("红柱" if isinstance(h, (int, float)) and h > 0
+                  else ("绿柱" if isinstance(h, (int, float)) and h < 0 else "—"))
+    obv = pk.get("obv_up")
+    obv_s = "上行" if obv is True else ("下行" if obv is False else "—")
+    tag = str(pk.get("tag") or "")
+    sq_s = "粘合" if "粘合" in tag else ("多头" if "多头" in tag else "—")
+    vr = pk.get("vol_ratio")
+    vr_s = ("%.1f" % vr) if isinstance(vr, (int, float)) else "—"
+    return [rsi_s, sar_s, macd_s, obv_s, sq_s, "—", vr_s]
+
+
+def _pk_table_row(gname, pk):
+    """pk → 文本表行 [名称, 代码, RSI, SAR, MACD, OBV, 均线粘合, 换手, 量比]。"""
+    code = str(pk.get("code") or "")
+    nm = str(pk.get("name") or code)
+    name = ("%s·%s" % (gname, nm)) if gname else nm
+    if pk.get("dag_hit"):
+        # YaHei 无 U+2713 字形（图片渲染会缺字告警）→ 与推送端统一用 √
+        name += "√DAG"
+    return [name, code] + _pk_tech_cells(pk)
+
+
+def _lowbuy_split(seq, max_rows, rejected=None):
+    """打分序列 → (keep, fresh_extra, pending)：同股去重、SAR绿转红不占限额。
+
+    2026-09-11 抽出：文本表(_assemble_lowbuy_table) 与推送端候选(low_buy_picks/fresh_up_picks)
+    共用同一选取口径，避免两处各写一遍导致口径漂移。
+    """
+    seq.sort(key=lambda r: -r[0])
+    seen, keep, fresh_extra = set(), [], []
+    for score, gidx, pk in seq:
+        if pk["code"] in seen:
+            continue
+        seen.add(pk["code"])
+        if len(keep) < max_rows:
+            keep.append((gidx, pk))
+        elif pk.get("fresh_up"):
+            fresh_extra.append((gidx, pk))
+    pending = []
+    for pk in rejected or []:
+        if pk["code"] in seen:
+            continue
+        seen.add(pk["code"])
+        pending.append(pk)
+    return keep, fresh_extra, pending
+
+
+# 低吸文本表的列头（_assemble_lowbuy_table 用；推送端改成 16 列公共表后不再用它拼图）
+LOWBUY_TABLE_HEAD = ["股票名称", "代码", "RSI", "SAR", "MACD", "OBV",
+                     "均线粘合", "换手", "量比"]
+
+
+def low_buy_picks(hot_themes, etf_flow=None, dag_codes=None, max_rows=5):
+    """实时低吸精选 → [(gname, pk), ...]（原始候选，口径与 low_buy_table 完全同源）。
+
+    2026-09-12：推送端把「页1候选表 + 页2低吸表 + 页2绿转红表 + 实仓镜像」统一成同一套
+    16 列公共表后再拼一张长图 / 一份 CSV / 一份 XLSX，故这里只返回原始 pk（含 _screen_meta 明细）+
+    归属 ETF 短名，行格式化交给推送端（趋势图谱 / 星后形态 / 趋势图 需日K，由 _snaps_live
+    提供）。去重与限额口径完全复用 _lowbuy_split → 与 low_buy_table 逐行一致。无数据返回 []。
+    """
+    col = _lowbuy_collect(hot_themes, etf_flow, dag_codes)
+    if col is None:
+        return []
+    seq, groups, _stats, rejected = col
+    keep, fresh_extra, _pending = _lowbuy_split(seq, max_rows, rejected)
+    single = len(groups) <= 1
+
+    def gname_of(gidx):
+        g = groups[gidx] if 0 <= gidx < len(groups) else None
+        return (g["name"] or "").replace("ETF", "").replace("联接", "") if g else ""
+
+    return [("" if single else gname_of(gi), pk) for gi, pk in (keep + fresh_extra)]
+
+
+# 「所属ETF」列缓存（覆盖矩阵随季报低频变动，30 分钟足够）
+_TAG_MAP_CACHE = {"ts": 0.0, "map": {}}
+
+
+def etf_tag_map(ttl=1800, max_names=2):
+    """{6位代码: '军工/半导体'}：该票被哪些核心 ETF 持有（行业主题优先、宽基垫底）。
+
+    2026-09-12：统一表格新增「所属ETF」列 —— 主线 DAG / smalltool / ETF 段 / 实仓镜像
+    都能一眼看出「这票是被哪只核心 ETF 的重仓带出来的」，便于横向判断 ETF 主线归属。
+    数据源 data/_etf_holdings.json（季报级低频），进程内 ttl 缓存；未被覆盖的代码不在
+    返回字典里（调用方按 "" 降级为 —）。
+    """
+    global _TAG_MAP_CACHE
+    import time as _t
+    if _TAG_MAP_CACHE["map"] and (_t.time() - _TAG_MAP_CACHE["ts"]) < ttl:
+        return _TAG_MAP_CACHE["map"]
+    hold = load_holdings() or {}
+    name_of, theme_of = {}, {}
+    for f in (hold.get("funds") or []):
+        name_of[f.get("code")] = f.get("name") or ""
+        theme_of[f.get("code")] = f.get("theme") or ""
+    out = {}
+    for code, ent in (hold.get("stocks") or {}).items():
+        theme, base = [], []
+        for fc in (ent.get("funds") or []):
+            nm = (name_of.get(fc) or fc or "").replace("ETF", "").replace("联接", "")
+            (base if theme_of.get(fc) == "宽基" else theme).append(nm)
+        tag = "/".join([n for n in (theme + base) if n][:max_names])
+        if tag:
+            out[code] = tag
+    _TAG_MAP_CACHE = {"ts": _t.time(), "map": out}
+    return out
+
+
+def _assemble_lowbuy_table(seq, groups, stats, max_rows, rejected=None):
+    """seq→ 表格行渲染（语义与 _assemble_lowbuy 一致：同股去重、SAR绿转红不占限额、
+    SAR红未过企稳/共振只点名列观察，不占表）。"""
+    keep, fresh_extra, pending = _lowbuy_split(seq, max_rows, rejected)
+    if not keep and not fresh_extra:
+        if not pending:
+            sar_ok = max(stats.get("cand", 0) - stats.get("sar_dn", 0), 0)
+            tail = "；其中绿转红%d只(可留意)" % stats["fresh"] if stats.get("fresh") else ""
+            return ["  (今日无符合低吸：观察%d只→SAR绿%d排除、SAR红%d只未过企稳/共振精选%s)"
+                    % (stats.get("cand", 0), stats.get("sar_dn", 0), sar_ok, tail)]
+        lines = ["  (今日无低吸精选通过；SAR红%d只未过企稳/共振，点名如下，仅观察)" % len(pending)]
+        for pk in pending[:max_rows * 2]:
+            note = pk.get("note") or ""
+            tail = (" | " + note) if note else ""
+            lines.append("    🟡 %s(%s) 距60日高%+.1f%% 今%+.1f%%%s" % (
+                pk["name"], pk["code"], pk.get("pos60") or 0, pk.get("pct") or 0, tail))
+        return lines
+    single = len(groups) <= 1
+
+    def gname_of(gidx):
+        g = groups[gidx]
+        return (g["name"] or "").replace("ETF", "").replace("联接", "") if g else ""
+
+    rows = [_pk_table_row("" if single else gname_of(gidx), pk) for gidx, pk in keep]
+    rows += [_pk_table_row("" if single else gname_of(gidx), pk) for gidx, pk in fresh_extra]
+    head = LOWBUY_TABLE_HEAD
+    lines = _align_table(head, rows)
+    if pending:
+        lines.append("  ── SAR红但未过企稳/共振(仅观察勿接飞刀): %s ──" % "、".join(
+            "%s(%s)" % (p["name"], p["code"]) for p in pending[:6]))
+    lines.append("  ── 口径: 前五重仓→SAR红(绿排除)→企稳/量能/MACD/OBV共振，精选≤%d只%s；"
+                 "换手/均线粘合需离线K，实时以 — 占位 ──" % (
+                     max_rows, "；SAR刚翻红可超限" if fresh_extra else ""))
+    return lines
 
 
 def summary_json(limit=15):

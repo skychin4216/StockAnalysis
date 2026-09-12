@@ -277,20 +277,21 @@ class ApiConfigManager(context: Context) {
     /**
      * 获取指定 ID 的提供商配置。
      *
-     * API Key 优先级（三重回退）：
+     * API Key 优先级（回退链）：
      * 1. 用户在设置中手动填写的 Key（SharedPreferences）- 最高优先级
-     * 2. 本地配置文件 api_keys_local.properties 中的 Key - 次高优先级
-     * 3. 空字符串（无 Key）
+     * 2. api_keys_local.properties（assets/内部存储/sdcard）
+     * 3. assets/data/app_config.json 的 ai_providers.<section>.api_key（2026-09-11 新增）
+     * 4. 空字符串（无 Key）
      */
     fun getProviderConfig(providerId: String): ApiProviderConfig? {
         val builtIn = builtInProviders.find { it.id == providerId } ?: return null
         val selectedModel = getSelectedModel(providerId)
         // 优先级1: 用户设置
         val userKey = getUserApiKey(providerId)
-        // 优先级2: 本地配置文件
+        // 优先级2: 本地配置（api_keys_local.properties → app_config.json 的 ai_providers.<x>.api_key）
         val localKey = if (userKey == null) {
             try {
-                com.chin.stockanalysis.ApiKeysLoader.get(getLocalKeyName(providerId))
+                com.chin.stockanalysis.ApiKeysLoader.getForProvider(providerId)
             } catch (_: Exception) { "" }
         } else null
         val effectiveKey = userKey ?: localKey ?: ""
@@ -401,19 +402,4 @@ class ApiConfigManager(context: Context) {
         }
     }
 
-    /**
-     * 根据提供商 ID 获取本地配置文件中的 Key 名称
-     */
-    private fun getLocalKeyName(providerId: String): String {
-        return when (providerId) {
-            "siliconflow-v3-flash", "siliconflow-v3", "siliconflow-r1",
-            "siliconflow-qwen", "siliconflow-llama", "siliconflow-v25" ->
-                ApiKeysLoader.KEY_SILICONFLOW
-            "doubao" -> ApiKeysLoader.KEY_DOUBAO
-            "deepseek-official" -> ApiKeysLoader.KEY_DEEPSEEK
-            // 阿里云 DashScope 统一使用 ALIYUN_MAAS_KEY
-            "aliyun-maas", "dashscope", "dashscope-qwen3" -> ApiKeysLoader.KEY_ALIYUN_MAAS
-            else -> "${providerId.uppercase()}_KEY"
-        }
-    }
 }

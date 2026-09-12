@@ -100,7 +100,7 @@ def dag_for(day):
 
 
 def render_chart(cacheD, asof, chart_days=CHART_DAYS):
-    """四大指数归一化叠加图（离线切片）。返回 (ok, png)。"""
+    """四大指数「起点归一化涨跌幅折线图」（离线切片，2026-09-09 与实盘推送同风格）。返回 (ok, png)。"""
     idx = {}
     for code, nm in INDEX_NAMES.items():
         ent = cacheD.get(code)
@@ -110,7 +110,7 @@ def render_chart(cacheD, asof, chart_days=CHART_DAYS):
         return False, ""
     png = os.path.join(ROOT, "data", "_index_market_replay_%s.png"
                        % asof.replace("-", ""))
-    return IMC.render_from_snaps(idx, out=png, days=chart_days), png
+    return IMC.render_pct_from_snaps(idx, out=png, days=chart_days), png
 
 
 def replay_one(day, cache, hist, args):
@@ -141,9 +141,9 @@ def replay_one(day, cache, hist, args):
                  if hist else [])
     note = ("💡 回放说明：板块/ETF资金流为盘中实时采集、无历史存档；"
             "本页以 %s 收盘K线口径展示全行业ETF前五低吸。" % asof)
-    pages = PC.round_pages(data, None, None, scene="盘外选股", dag=dag,
-                           cache=cacheD, lowbuy_offline=low_lines,
-                           note_offline=note)
+    pages, _tbl_imgs = PC.round_pages(data, None, None, scene="盘外选股", dag=dag,
+                                      cache=cacheD, lowbuy_offline=low_lines,
+                                      note_offline=note)
     # 大盘K图（开盘前推送）
     ok_img, png = (False, "")
     if not args.skip_chart:

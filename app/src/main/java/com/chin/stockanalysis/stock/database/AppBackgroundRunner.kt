@@ -124,6 +124,13 @@ object AppBackgroundRunner {
             Log.w(TAG, "自动选股调度启动失败: ${e.message}")
         }
 
+        // 启动每日节奏调度（08:00 盘前情报 / 09:00 亚太情报 / 15:20 表格化复盘）
+        try {
+            DailyRhythmScheduler.start(context.applicationContext, scope)
+        } catch (e: Exception) {
+            Log.w(TAG, "每日节奏调度启动失败: ${e.message}")
+        }
+
         // 启动时执行一次：迁移超过 5 天的 AI 精选到自选股
         scope.launch(Dispatchers.IO) {
             try {

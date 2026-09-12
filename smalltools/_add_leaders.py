@@ -38,13 +38,16 @@ def load_leaders_secids():
     return []
 
 
-def fetch_full(secid):
-    """东财一次全量（四年）；失败用腾讯分段拼接。返回 (name, snaps, src)。"""
-    name, snaps = fetch_east(secid, BEG, END)
+def fetch_full(secid, beg=BEG, end=END):
+    """东财一次全量（默认四年）；失败用腾讯分段拼接。返回 (name, snaps, src)。
+
+    beg/end 可覆盖（如 `_add_rotation_sectors.py` 需要拉到今日最新交易日）。
+    """
+    name, snaps = fetch_east(secid, beg, end)
     if snaps:
         return name, snaps, "east"
-    name1, seg1 = fetch_tencent(secid, BEG, SEG1_END)
-    name2, seg2 = fetch_tencent(secid, SEG1_END, END)
+    name1, seg1 = fetch_tencent(secid, beg, SEG1_END)
+    name2, seg2 = fetch_tencent(secid, SEG1_END, end)
     snaps = merge_snaps([seg1, seg2])
     if snaps:
         return name1 or name2 or "", snaps, "tencent"

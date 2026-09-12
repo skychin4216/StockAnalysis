@@ -20,6 +20,7 @@ END_DATE = "20260812"  # 回测截止 8/12 收盘（过滤掉 8/13 大涨日）
 
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 PROXIES = {"http": None, "https": None}
+_SESSION = requests.Session()  # 连接复用（keep-alive），避免每请求 TCP+TLS 握手（拉取提速）
 
 # ───────────────────────── 数据拉取 ─────────────────────────
 # 腾讯 fqkline 为主（稳定）；换手率 = 成交量 / 流通股本（流通股本由实时接口反推）
@@ -61,7 +62,7 @@ def fetch_east(secid, beg="20250101", end=END_DATE):
     for attempt in range(3):
         host = random.choice(HOSTS)
         try:
-            r = requests.get(host + "/api/qt/stock/kline/get", params=params,
+            r = _SESSION.get(host + "/api/qt/stock/kline/get", params=params,
                              timeout=10, headers=HEADERS, proxies=PROXIES)
             data = r.json()
             if data.get("data") and data["data"].get("klines"):
@@ -77,7 +78,7 @@ def fetch_tencent_float_shares(secid):
     if secid.startswith("sh000") or secid.startswith("sz399"):
         return None
     try:
-        r = requests.get("https://qt.gtimg.cn/q=" + secid, timeout=10,
+        r = _SESSION.get("https://qt.gtimg.cn/q=" + secid, timeout=10,
                          headers=HEADERS, proxies=PROXIES)
         r.encoding = "gbk"
         m = re.search(r'="([^"]*)"', r.text)
@@ -105,7 +106,7 @@ def fetch_tencent(secid, beg="20250101", end=END_DATE):
     params = {"param": f"{secid},day,{fmt_tencent_date(beg)},{fmt_tencent_date(end)},640,qfq"}
     for attempt in range(3):
         try:
-            r = requests.get(url, params=params, timeout=15, headers=HEADERS, proxies=PROXIES)
+            r = _SESSION.get(url, params=params, timeout=15, headers=HEADERS, proxies=PROXIES)
             data = r.json()
             node = (data.get("data") or {}).get(secid) or {}
             rows = node.get("qfqday") or node.get("day") or []
@@ -221,6 +222,24 @@ def find_swing_high_index(snaps, start_idx, left_n, right_n):
 
 def avg(xs):
     return sum(xs) / len(xs)
+
+
+def _is_stable_dip(snaps):
+    """连跌后企稳形态：基座(最近3日)前存在≥3连跌，且近3日不创新低、低点逐日抬高。
+    与 usecase_pipeline._is_stabilize 同口径（v11 企稳低吸旁路使用）。"""
+    try:
+        closes = [float(s["close"]) for s in snaps]
+        lows = [float(s["low"]) for s in snaps]
+    except (TypeError, ValueError, KeyError):
+        return False
+    n = len(closes)
+    if n < 20:
+        return False
+    down3 = any(closes[j] < closes[j - 1] and closes[j - 1] < closes[j - 2]
+                for j in range(n - 4, max(n - 12, 2), -1))
+    rising = lows[-1] > lows[-2] > lows[-3]
+    no_new = min(lows[-3:]) > min(lows[max(n - 13, 0):-3])
+    return down3 and rising and no_new
 
 
 def analyze_snaps(snaps, p, market_trend, market_vol_ratio=None):
@@ -422,6 +441,21 @@ def analyze_snaps(snaps, p, market_trend, market_vol_ratio=None):
     # v9: 低位埋伏通道——均线粘合+多头+三日不新低+站上MA5 直接通过（中长线低位埋伏）
     if p.get("allowLowAmbush", False) and ambush_ok:
         passed = True
+    # v11: 企稳低吸旁路（2026-09-08 · 晋控能源型场景）——
+    #   出现「连跌后 3日不新低 + 低点逐日抬高」企稳形态的候选视为低吸机会，
+    #   免去均线粘合/多头排列/放量等"突破型"考核（口径依据 smalltools/_stabilize_dip_stat.py：
+    #   企稳"粘合 vs 非粘合"短线差异不显著，粘合过严会漏掉晋控这类企稳低吸机会）。
+    #   仅保留两项数据保护：当日非跌停级下跌、非异常天量(除权/停牌复牌污染)。
+    stable_dip_bypass = False
+    if p.get("allowStableDip", False) and _is_stable_dip(snaps):
+        chg = 0.0
+        try:
+            chg = float(latest.get("changePct", 0))
+        except (TypeError, ValueError):
+            pass
+        if chg > -9.5 and (volume_ratio or 0) < 20.0:
+            passed = True
+            stable_dip_bypass = True
 
     return {
         "convergenceDegree": convergence_degree,
@@ -432,6 +466,7 @@ def analyze_snaps(snaps, p, market_trend, market_vol_ratio=None):
         "effectiveLookback": effective_lookback, "effectiveConvergence": effective_convergence,
         "close": latest["close"], "changePctReal": latest["changePct"], "turnover": latest["turnover"],
         "date": latest["date"], "regime": regime,
+        "stableDipBypass": stable_dip_bypass,
     }
 
 
@@ -446,7 +481,8 @@ PARAMS = {
                  useMA250InBullish=False, requireAboveYearLine=False,
                  requireAboveAllMAs=False, requireVolumeShrink=False,
                  moderateVolumeLower=0.0, moderateVolumeUpper=0.0,
-                 allowQuietRise=True, quietVolumeRatio=1.0, allowLowAmbush=False),
+                 allowQuietRise=True, quietVolumeRatio=1.0, allowLowAmbush=False,
+                 allowStableDip=True),
     "短线": dict(convergenceThreshold=3.0, useMA60=True, convergenceDurationDays=10,
                 volumeBreakoutRatio=1.5, minChangePct=3.0, requireChangePct=True,
                 minDrawdownPct=20.0, requireAboveAllMAs=True, lookbackDays=60,
@@ -455,7 +491,8 @@ PARAMS = {
                 useMA250InBullish=False, requireAboveYearLine=False,
                 requireCloseAboveConvergenceTop=False, requireOpenBelowMAs=False,
                 requireVolumeShrink=False, moderateVolumeLower=0.0, moderateVolumeUpper=0.0,
-                allowQuietRise=True, quietVolumeRatio=1.0, allowLowAmbush=False),
+                allowQuietRise=True, quietVolumeRatio=1.0, allowLowAmbush=False,
+                allowStableDip=True),
     "中线": dict(convergenceThreshold=2.5, useMA60=True, convergenceDurationDays=15,
                 minDrawdownPct=15.0, requireMA60Rising=True, requireAboveAllMAs=True,
                 allowLowAmbush=True, allowQuietRise=False,

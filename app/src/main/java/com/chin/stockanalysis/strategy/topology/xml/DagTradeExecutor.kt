@@ -85,6 +85,8 @@ object DagTradeExecutor {
         val diagnosticSummary: String = "",
         val strictEvalDetail: String = "",
         val selectedStocks: List<Triple<String, String, Int>> = emptyList(),
+        /** 三周期结果表数据（技术假设 11 列，复用 ETF 表格 UI） */
+        val pickTechRows: List<com.chin.stockanalysis.strategy.trade.PickTechRow> = emptyList(),
         val nodeFlowDetails: List<NodeFlowDetail> = emptyList()
     )
 
@@ -166,6 +168,8 @@ object DagTradeExecutor {
         var typedGuardResult: HoldingGuardResult? = null
         var typedSwapResult: SwapWeakResult? = null
         val selectedStocks = mutableListOf<Triple<String, String, Int>>()
+        // 三周期结果表数据（技术假设 11 列，UI 复用 ETF 表格样式）
+        val pickTechRows = mutableListOf<com.chin.stockanalysis.strategy.trade.PickTechRow>()
         // AI 精选质量闸门：非交易一键建仓（saveAsAiOnly）时按周期登记 code->score，
         // 四周期全部登记后由 AiSelectionQualityGate 统一过滤（多周期共振≥3 或 分≥85 才保留）
         val aiOnlySelected = mutableMapOf<String, Int>()
@@ -181,6 +185,7 @@ object DagTradeExecutor {
                     selectedStocks.addAll(ordersOutput.orders.map {
                         Triple(it.stockCode, it.stockName, it.scoreAtBuy)
                     })
+                    pickTechRows.addAll(ordersOutput.techRows)
                     Log.i(TAG, "[$useCaseId] 订单生成: $ordersCount 笔")
 
                     // 写入 user_watchlist 供选股区 UI 渲染完整表格（价格/时间/评分）
@@ -509,6 +514,7 @@ object DagTradeExecutor {
             diagnosticSummary = diagnosticSummary,
             strictEvalDetail = strictEvalDetail,
             selectedStocks = selectedStocks,
+            pickTechRows = pickTechRows,
             nodeFlowDetails = nodeFlowDetails
         )
     }

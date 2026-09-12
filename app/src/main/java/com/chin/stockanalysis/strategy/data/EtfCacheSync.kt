@@ -135,10 +135,14 @@ class EtfCacheSync(private val context: Context) {
                         try {
                             val (name, snaps) = fetchFullHistory(code)
                             if (snaps.size >= MIN_SNAPS) {
+                                // 手动组装 JSONArray：部分设备 org.json 缺少 put(String, Collection)
+                                // 与 JSONArray(Collection) 重载，直接 put 集合会抛 NoSuchMethodError
+                                val snapsArr = JSONArray()
+                                snaps.forEach { snapsArr.put(it) }
                                 code to JSONObject()
                                     .put("name", if (name.isBlank()) defName else name)
                                     .put("src", "tencent")
-                                    .put("snaps", snaps)
+                                    .put("snaps", snapsArr)
                             } else {
                                 Log.w(TAG, "$code 样本不足（${snaps.size} < $MIN_SNAPS），保留旧数据")
                                 code to null

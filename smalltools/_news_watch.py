@@ -45,6 +45,30 @@ NAME_KW = ("马斯克", "特斯拉", "英伟达", "黄仁勋", "OpenAI", "Anthro
 # 排除噪音
 SKIP_KW = ("泥石流", "遇难", "武装", "袭击", "空袭", "北约", "俄罗斯国防部", "乌克兰武装")
 
+# ── 2026-09-09：气候/极端天气大事件主动关注（厄尔尼诺/拉尼娜等）──
+# 用户指出"厄尔尼诺此前是告知后才挖掘，之后要主动盯——这是大事件"。
+# 机制：1) 东财快讯/新浪7x24 文本关键词命中 → climate 组（先于行业消息面推送）；
+#       2) NOAA ONI(厄尔尼诺3.4区)指数自动拉取（外网可达时生效、2天缓存，
+#          不可达静默跳过，绝不阻塞情报主流程）。
+CLIMATE_KW = ("厄尔尼诺", "拉尼娜", "ENSO", "厄尔尼", "暖冬", "冷冬", "倒春寒",
+              "台风", "超强台风", "高温", "热浪", "寒潮", "暴雨", "洪涝",
+              "干旱", "极端天气", "气候大会", "拉尼娜事件", "厄尔尼诺事件")
+CLIMATE_TAG = {
+    "厄尔尼诺": "→ 糖/棕榈油/铜矿/制冷需求(空调啤酒)，南美干旱扰动农产品",
+    "拉尼娜": "→ 冷冬取暖(煤炭天然气)、农业防冻、风电增强，需防冻害题材",
+    "台风": "→ 农业受灾/保险/灾后重建(基建管材)，沿海港口航运扰动",
+    "高温": "→ 电力负荷/空调/啤酒饮料/冷链，农产品干旱减产",
+    "热浪": "→ 电力负荷/空调/啤酒饮料/冷链，农产品干旱减产",
+    "暴雨": "→ 水利/城市应急/基建管材，农业渍涝减产",
+    "洪涝": "→ 水利/城市应急/基建管材，农业渍涝减产",
+    "干旱": "→ 粮食/糖/棉花涨价预期，灌溉水利",
+    "寒潮": "→ 煤炭/天然气取暖需求，农业防冻(蔬菜/水果)",
+    "冷冬": "→ 煤炭/天然气取暖需求，羽绒服/防寒服饰",
+    "暖冬": "→ 取暖能源需求弱，羽绒服库存压力",
+    "倒春寒": "→ 果树花期冻害(苹果/梨/柑橘)，防冻题材",
+}
+CLIMATE_KW = tuple(dict.fromkeys(CLIMATE_KW))  # 去重保留顺序
+
 
 def _get(url, params):
     r = requests.get(url, params=params, timeout=TIMEOUT, headers=HEADERS, proxies=PROXIES)
@@ -94,21 +118,89 @@ def _east_macro_reports():
         return []
 
 
+def _clim_tag(txt):
+    """给气候新闻补一个板块提示（命中多个关键词时取首个映射），无映射返回 None。"""
+    for k, tag in CLIMATE_TAG.items():
+        if k in txt:
+            return tag
+    return None
+
+
+def fetch_oni_state():
+    """NOAA ONI(厄尔尼诺3.4区)自动拉取 → 状态文本/None。
+
+    数据：https://www.cpc.ncep.noaa.gov/data/indices/oni.ascii（每季滚动值）。
+    外网可达时约 2 天更新一次；不可达静默返回 None（并 1 小时内不重试），
+    不影响 _market_scan 主流程 —— 新闻关键词命中是保底通道。
+    """
+    cache = os.path.join(HERE, "_oni_state.json")
+    try:
+        if os.path.exists(cache):
+            with open(cache, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            if time.time() - d.get("ts", 0) < (172800 if d.get("ok") else 3600):
+                return d.get("text") or None
+        r = requests.get("https://www.cpc.ncep.noaa.gov/data/indices/oni.ascii",
+                         timeout=8, headers=HEADERS, proxies=PROXIES)
+        r.raise_for_status()
+        rows = [ln.split() for ln in r.text.splitlines() if ln.strip()]
+        rec = rows[-1]  # 末行 = 最新季度
+        if len(rec) < 4:
+            raise ValueError("oni.ascii 末行字段不足: %r" % rec)
+        season, year, oni = rec[0], rec[1], float(rec[3])
+        if oni >= 0.5:
+            tag, hint = "厄尔尼诺", "（≥+0.5°C 连续季为事件）"
+        elif oni <= -0.5:
+            tag, hint = "拉尼娜", "（≤-0.5°C 连续季为事件）"
+        else:
+            tag, hint = "中性", "（未达 ±0.5°C 事件阈值）"
+        tag_txt = CLIMATE_TAG.get("厄尔尼诺" if tag == "厄尔尼诺" else
+                                  ("拉尼娜" if tag == "拉尼娜" else ""), "")
+        text = ("NOAA ONI 厄尔尼诺3.4区 %s %s = %+.1f°C → %s %s %s"
+                % (season, year, oni, tag, hint, tag_txt)).strip()
+        with open(cache, "w", encoding="utf-8") as f:
+            json.dump({"ts": time.time(), "ok": True, "text": text}, f, ensure_ascii=False)
+        return text
+    except Exception as e:  # noqa: BLE001（外网不通是常态，静默跳过）
+        try:
+            with open(cache, "w", encoding="utf-8") as f:
+                json.dump({"ts": time.time(), "ok": False}, f)
+        except OSError:
+            pass
+        return None
+
+
 def collect_ext():
-    """采集并归类 → 返回 dict；同时写 _news_watch_snap.json。"""
+    """采集并归类 → 返回 dict；同时写 _news_watch_snap.json。
+
+    2026-09-09 起气候事件(厄尔尼诺/拉尼娜/极端天气)最优先：climate 组先收，
+    命中的文本不再重复进 names/world（seen 去重），保证大盘前能主动看到。
+    """
     t0 = time.time()
     g100 = _east_fast(100)      # 全球（外媒财经）
     g103 = _east_fast(103)      # 要闻（美股盘面/AH公司）
     sina = _sina_live()
     macro = _east_macro_reports()
 
-    # 名人·大行优先收（驱动情绪/题材），外媒·宏观后收并去重，避免重叠
     seen = set()
+    # ① 气候/极端天气（大事件优先，最先行推）
+    clim = []
+    for t in g100 + g103 + sina:
+        if any(k in t for k in CLIMATE_KW) and not any(k in t for k in SKIP_KW) and t not in seen:
+            seen.add(t)
+            tg = _clim_tag(t)
+            clim.append(t if not tg else t[:70] + " " + tg)
+    oni = fetch_oni_state()
+    if oni:
+        clim.insert(0, oni)
+    clim = clim[:5]
+    # ② 名人·大行（驱动情绪/题材）
     names = []
     for t in g103 + sina:
         if any(k in t for k in NAME_KW) and not any(k in t for k in SKIP_KW) and t not in seen:
             seen.add(t)
             names.append(t)
+    # ③ 外媒·宏观
     world = []
     for t in g100 + g103:
         if any(k in t for k in WORLD_KW) and not any(k in t for k in SKIP_KW) and t not in seen:
@@ -119,6 +211,7 @@ def collect_ext():
 
     out = {
         "ts": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "climate": clim,
         "world": world,
         "names": names,
         "macro_reports": macro[:3],
@@ -128,13 +221,16 @@ def collect_ext():
             json.dump(out, f, ensure_ascii=False, indent=1)
     except OSError:
         pass
-    print("[news_watch] 采集 %.1fs world=%d names=%d macro=%d"
-          % (time.time() - t0, len(world), len(names), len(macro)))
+    print("[news_watch] 采集 %.1fs climate=%d world=%d names=%d macro=%d"
+          % (time.time() - t0, len(clim), len(world), len(names), len(macro)))
     return out
 
 
 if __name__ == "__main__":
     out = collect_ext()
+    print("☀️ 气候·极端天气:")
+    for t in out["climate"]:
+        print("  -", t[:70])
     print("🌐 外媒·宏观:")
     for t in out["world"]:
         print("  -", t[:60])

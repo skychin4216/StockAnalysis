@@ -101,6 +101,10 @@
     <Node id="n_ancestral" name="大A祖训" module="ancestral_rules">
       <config><param name="holdingPeriod" value="MID" /></config>
     </Node>
+    <!-- 2026-09-12 K线口诀（《常见K线图.txt》口诀五条+经典/大型形态；可与 n_ancestral/n_event 口径对照，Python 端 kline_idiom 同构） -->
+    <Node id="n_idiom" name="K线口诀" module="kline_idiom">
+      <config><param name="bullBoost" value="0.6" /><param name="bearPenalty" value="1.2" /><param name="veto" value="false" /><param name="vetoStrength" value="4" /><param name="minBars" value="30" /><param name="period" value="MID" /></config>
+    </Node>
     <Node id="n_inst_tips" name="机构线索加分" module="inst_tips" />
 
     <!-- v6：先判方向再定周期（中线只买 蓄势/上升/突破，剔除 下降/震荡） -->
@@ -280,6 +284,13 @@
     <!-- Layer 3.5b → 3.6: 大A祖训 → 机构线索加分 -->
     <Link>
       <SourceNodeId>n_ancestral</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_idiom</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <Link>
+      <SourceNodeId>n_idiom</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_inst_tips</TargetNodeId>
       <TargetPortId>0</TargetPortId>

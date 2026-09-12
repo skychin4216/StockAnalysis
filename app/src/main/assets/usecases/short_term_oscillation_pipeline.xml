@@ -57,10 +57,14 @@
         <param name="lookbackDays" value="60" />
         <param name="quietVolumeRatio" value="1.0" />
         <param name="period" value="short" />
-      <param name="convergenceThreshold" value="3.0" /><param name="volumeBreakoutRatio" value="2.5" /><param name="minChangePct" value="0.0" /><param name="minDrawdownPct" value="10.0" /><param name="minPassCount" value="6" /><param name="requireThreeDayConfirm" value="true" /><param name="requireOpenBelowMAs" value="false" /><param name="requireCloseAboveConvergenceTop" value="true" /><param name="allowQuietRise" value="false" /></config>
+      <param name="convergenceThreshold" value="3.0" /><param name="volumeBreakoutRatio" value="2.5" /><param name="minChangePct" value="0.0" /><param name="minDrawdownPct" value="10.0" /><param name="minPassCount" value="6" /><param name="requireThreeDayConfirm" value="true" /><param name="requireOpenBelowMAs" value="false" /><param name="requireCloseAboveConvergenceTop" value="true" /><param name="allowQuietRise" value="false" /><!-- v11: 企稳低吸旁路(连跌后3日不新低+低点抬高→免均线粘合, 2026-09-08, _stabilize_dip_stat.py) --><param name="allowStableDip" value="true" /><!-- v12: 强势延续旁路(多头排列+近20日高回撤≤nearHigh+量比≥volRatio+RSI6∈[lo,hi]→免粘合严选, 2026-09-10 改进B；PC 引擎 usecase_pipeline._strong_continuation 实现) --><param name="strongEnable" value="true" /><param name="strongRsiLo" value="55" /><param name="strongRsiHi" value="70" /><param name="strongNearHigh" value="3.0" /><param name="strongVolRatio" value="1.5" /><param name="strongScore" value="70" /></config>
     </Node>
     <Node id="n_ancestral" name="大A祖训" module="ancestral_rules">
       <config><param name="holdingPeriod" value="SHORT" /></config>
+    </Node>
+    <!-- 2026-09-12 K线口诀（《常见K线图.txt》口诀五条+经典/大型形态；可与 n_ancestral/n_event 口径对照，Python 端 kline_idiom 同构） -->
+    <Node id="n_idiom" name="K线口诀" module="kline_idiom">
+      <config><param name="bullBoost" value="0.6" /><param name="bearPenalty" value="1.2" /><param name="veto" value="false" /><param name="vetoStrength" value="4" /><param name="minBars" value="30" /><param name="period" value="SHORT" /></config>
     </Node>
     <Node id="n_inst_tips" name="机构线索加分" module="inst_tips" />
 
@@ -218,6 +222,13 @@
     
     <Link>
       <SourceNodeId>n_ancestral</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_idiom</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <Link>
+      <SourceNodeId>n_idiom</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_inst_tips</TargetNodeId>
       <TargetPortId>0</TargetPortId>

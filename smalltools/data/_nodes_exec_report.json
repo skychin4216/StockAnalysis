@@ -1,0 +1,1767 @@
+{
+ "asof": "2026-09-11",
+ "generated_at": "2026-09-12T14:33:56",
+ "cases": [
+  {
+   "usecase": "ultra_short",
+   "period": "ultra_short",
+   "source": "kline",
+   "orders": 3,
+   "market_state": {
+    "state": "OSCILLATION",
+    "detail": "OSCILLATION"
+   },
+   "direction": "OSCILLATION",
+   "executed": [
+    "n_a_market",
+    "n_adaptive",
+    "n_ai",
+    "n_ancestral",
+    "n_boost",
+    "n_bounce",
+    "n_cand",
+    "n_ctx",
+    "n_guard",
+    "n_idiom",
+    "n_import",
+    "n_ma_unified",
+    "n_market_direction",
+    "n_merge",
+    "n_merge_pos",
+    "n_orders",
+    "n_pool",
+    "n_pool_filter",
+    "n_pool_hint",
+    "n_smart",
+    "n_strict",
+    "n_swap",
+    "n_vp"
+   ],
+   "passthrough": [],
+   "bypassed": [
+    "n_bg",
+    "n_candle",
+    "n_finance",
+    "n_inst_tips",
+    "n_intraday",
+    "n_news_str",
+    "n_newsguard",
+    "n_sector_leaders",
+    "n_sector_strength",
+    "n_style_rotation",
+    "n_t1sell"
+   ],
+   "bypass_reasons": {
+    "n_sector_strength": "未实现 module",
+    "n_style_rotation": "未实现 module",
+    "n_bg": "降级为透传",
+    "n_sector_leaders": "降级为透传",
+    "n_intraday": "降级为透传",
+    "n_inst_tips": "降级为透传",
+    "n_candle": "降级为透传",
+    "n_news_str": "降级为透传",
+    "n_newsguard": "降级为透传",
+    "n_finance": "降级为透传",
+    "n_t1sell": "未实现 module"
+   },
+   "silent": [],
+   "notes": [
+    "[n_sector_strength] 未实现 module=sector_strength",
+    "[n_style_rotation] 未实现 module=style_rotation",
+    "[n_bg] bg_manager 无回测数据，已降级为透传",
+    "[n_sector_leaders] market_sector_leaders 无回测数据，已降级为透传",
+    "[n_intraday] intraday_analysis 无回测数据，已降级为透传",
+    "[n_ancestral] 📜 大A祖训: 10/16 只触发",
+    "[n_idiom] 🕯 K线口诀: 看涨6 看跌3 否决0 / 16 只",
+    "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
+    "[n_candle] candle_pattern 无回测数据，已降级为透传",
+    "[n_news_str] news_strength 无回测数据，已降级为透传",
+    "[n_newsguard] news_guard 无回测数据，已降级为透传",
+    "[n_finance] financial_health 无回测数据，已降级为透传",
+    "[n_t1sell] 未实现 module=t1_auto_sell"
+   ]
+  },
+  {
+   "usecase": "short",
+   "period": "short",
+   "source": "kline",
+   "orders": 5,
+   "market_state": {
+    "state": "OSCILLATION",
+    "detail": "OSCILLATION"
+   },
+   "direction": "OSCILLATION",
+   "executed": [
+    "n_a_market",
+    "n_adaptive",
+    "n_ai",
+    "n_ancestral",
+    "n_boost",
+    "n_bounce",
+    "n_cand",
+    "n_ctx",
+    "n_guard",
+    "n_idiom",
+    "n_import",
+    "n_ma_unified",
+    "n_market_direction",
+    "n_merge",
+    "n_merge_pos",
+    "n_orders",
+    "n_pool",
+    "n_pool_filter",
+    "n_pool_hint",
+    "n_smart",
+    "n_strict",
+    "n_swap",
+    "n_vp",
+    "vp_detail"
+   ],
+   "passthrough": [],
+   "bypassed": [
+    "n_bg",
+    "n_candle",
+    "n_crosstab",
+    "n_finance",
+    "n_heat",
+    "n_inst_tips",
+    "n_intraday",
+    "n_multihot",
+    "n_news_str",
+    "n_newsguard",
+    "n_rot_pen",
+    "n_sector_leaders",
+    "n_sector_strength",
+    "n_style_rotation",
+    "n_zipline"
+   ],
+   "bypass_reasons": {
+    "n_sector_strength": "未实现 module",
+    "n_style_rotation": "未实现 module",
+    "n_bg": "降级为透传",
+    "n_sector_leaders": "降级为透传",
+    "n_multihot": "降级为透传",
+    "n_zipline": "降级为透传",
+    "n_intraday": "降级为透传",
+    "n_heat": "降级为透传",
+    "n_inst_tips": "降级为透传",
+    "n_news_str": "降级为透传",
+    "n_rot_pen": "未实现 module",
+    "n_candle": "降级为透传",
+    "n_newsguard": "降级为透传",
+    "n_finance": "降级为透传",
+    "n_crosstab": "降级为透传"
+   },
+   "silent": [],
+   "notes": [
+    "[n_sector_strength] 未实现 module=sector_strength",
+    "[n_style_rotation] 未实现 module=style_rotation",
+    "[n_bg] bg_manager 无回测数据，已降级为透传",
+    "[n_sector_leaders] market_sector_leaders 无回测数据，已降级为透传",
+    "[n_multihot] multi_period_hot 无回测数据，已降级为透传",
+    "[n_zipline] zipline_factor 无回测数据，已降级为透传",
+    "[n_intraday] intraday_analysis 无回测数据，已降级为透传",
+    "[n_heat] heat_score 无回测数据，已降级为透传",
+    "[n_ancestral] 📜 大A祖训: 8/14 只触发",
+    "[n_idiom] 🕯 K线口诀: 看涨5 看跌2 否决0 / 14 只",
+    "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
+    "[n_news_str] news_strength 无回测数据，已降级为透传",
+    "[n_rot_pen] 未实现 module=rotation_penalty",
+    "[n_candle] candle_pattern 无回测数据，已降级为透传",
+    "[n_newsguard] news_guard 无回测数据，已降级为透传",
+    "[n_finance] financial_health 无回测数据，已降级为透传",
+    "[n_crosstab] crosstab_publish 无回测数据，已降级为透传"
+   ]
+  },
+  {
+   "usecase": "mid",
+   "period": "mid",
+   "source": "kline",
+   "orders": 5,
+   "market_state": {
+    "state": "OSCILLATION",
+    "detail": "OSCILLATION"
+   },
+   "direction": "OSCILLATION",
+   "executed": [
+    "n_a_market",
+    "n_adaptive",
+    "n_ai",
+    "n_ancestral",
+    "n_boost",
+    "n_bounce",
+    "n_cand",
+    "n_ctx",
+    "n_guard",
+    "n_idiom",
+    "n_import",
+    "n_ma_unified",
+    "n_market_direction",
+    "n_merge",
+    "n_merge_pos",
+    "n_orders",
+    "n_pool",
+    "n_pool_filter",
+    "n_pool_hint",
+    "n_smart",
+    "n_strict",
+    "n_swap",
+    "n_vp",
+    "vp_detail"
+   ],
+   "passthrough": [],
+   "bypassed": [
+    "n_base_guard",
+    "n_bg",
+    "n_candle",
+    "n_crossday",
+    "n_crosstab",
+    "n_defensive",
+    "n_direction",
+    "n_finance",
+    "n_heat",
+    "n_inst_tips",
+    "n_leader",
+    "n_multihot",
+    "n_news_str",
+    "n_newsguard",
+    "n_pe_peer",
+    "n_rot_pen",
+    "n_season",
+    "n_sector_leaders",
+    "n_sector_pool",
+    "n_sector_strength",
+    "n_style_rotation"
+   ],
+   "bypass_reasons": {
+    "n_sector_strength": "未实现 module",
+    "n_style_rotation": "未实现 module",
+    "n_bg": "降级为透传",
+    "n_sector_leaders": "降级为透传",
+    "n_multihot": "降级为透传",
+    "n_sector_pool": "未实现 module",
+    "n_heat": "降级为透传",
+    "n_crossday": "未实现 module",
+    "n_defensive": "未实现 module",
+    "n_base_guard": "未实现 module",
+    "n_inst_tips": "降级为透传",
+    "n_direction": "未实现 module",
+    "n_season": "未实现 module",
+    "n_leader": "未实现 module",
+    "n_pe_peer": "降级为透传",
+    "n_news_str": "降级为透传",
+    "n_rot_pen": "未实现 module",
+    "n_candle": "降级为透传",
+    "n_newsguard": "降级为透传",
+    "n_finance": "降级为透传",
+    "n_crosstab": "降级为透传"
+   },
+   "silent": [],
+   "notes": [
+    "[n_sector_strength] 未实现 module=sector_strength",
+    "[n_style_rotation] 未实现 module=style_rotation",
+    "[n_bg] bg_manager 无回测数据，已降级为透传",
+    "[n_sector_leaders] market_sector_leaders 无回测数据，已降级为透传",
+    "[n_multihot] multi_period_hot 无回测数据，已降级为透传",
+    "[n_sector_pool] 未实现 module=sector_stock_pool",
+    "[n_heat] heat_score 无回测数据，已降级为透传",
+    "[n_crossday] 未实现 module=cross_day_aggregation",
+    "[n_defensive] 未实现 module=defensive_dividend",
+    "[n_base_guard] 未实现 module=base_position_guard",
+    "[n_ancestral] 📜 大A祖训: 7/13 只触发",
+    "[n_idiom] 🕯 K线口诀: 看涨5 看跌2 否决0 / 13 只",
+    "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
+    "[n_direction] 未实现 module=direction_label",
+    "[n_season] 未实现 module=seasonality_boost",
+    "[n_leader] 未实现 module=leader_track",
+    "[n_pe_peer] sector_relative_pe 无回测数据，已降级为透传",
+    "[n_news_str] news_strength 无回测数据，已降级为透传",
+    "[n_rot_pen] 未实现 module=rotation_penalty",
+    "[n_candle] candle_pattern 无回测数据，已降级为透传",
+    "[n_newsguard] news_guard 无回测数据，已降级为透传",
+    "[n_finance] financial_health 无回测数据，已降级为透传",
+    "[n_crosstab] crosstab_publish 无回测数据，已降级为透传"
+   ]
+  },
+  {
+   "usecase": "long",
+   "period": "long",
+   "source": "kline",
+   "orders": 5,
+   "market_state": {
+    "state": "OSCILLATION",
+    "detail": "OSCILLATION"
+   },
+   "direction": "OSCILLATION",
+   "executed": [
+    "n_a_market",
+    "n_adaptive",
+    "n_ai",
+    "n_ancestral",
+    "n_boost",
+    "n_bounce",
+    "n_cand",
+    "n_ctx",
+    "n_event",
+    "n_guard",
+    "n_idiom",
+    "n_import",
+    "n_ma_unified",
+    "n_market_direction",
+    "n_merge",
+    "n_merge_pos",
+    "n_orders",
+    "n_pool",
+    "n_pool_filter",
+    "n_pool_hint",
+    "n_smart",
+    "n_strict",
+    "n_vp",
+    "vp_detail"
+   ],
+   "passthrough": [],
+   "bypassed": [
+    "n_base_guard",
+    "n_bg",
+    "n_candle",
+    "n_defensive",
+    "n_direction",
+    "n_finance",
+    "n_heat",
+    "n_inst_tips",
+    "n_leader",
+    "n_newsguard",
+    "n_pe_peer",
+    "n_season",
+    "n_sector_leaders",
+    "n_sector_pool",
+    "n_sector_strength",
+    "n_style_rotation"
+   ],
+   "bypass_reasons": {
+    "n_sector_strength": "未实现 module",
+    "n_style_rotation": "未实现 module",
+    "n_bg": "降级为透传",
+    "n_sector_leaders": "降级为透传",
+    "n_sector_pool": "未实现 module",
+    "n_heat": "降级为透传",
+    "n_defensive": "未实现 module",
+    "n_base_guard": "未实现 module",
+    "n_inst_tips": "降级为透传",
+    "n_direction": "未实现 module",
+    "n_season": "未实现 module",
+    "n_leader": "未实现 module",
+    "n_pe_peer": "降级为透传",
+    "n_candle": "降级为透传",
+    "n_newsguard": "降级为透传",
+    "n_finance": "降级为透传"
+   },
+   "silent": [],
+   "notes": [
+    "[n_sector_strength] 未实现 module=sector_strength",
+    "[n_style_rotation] 未实现 module=style_rotation",
+    "[n_bg] bg_manager 无回测数据，已降级为透传",
+    "[n_sector_leaders] market_sector_leaders 无回测数据，已降级为透传",
+    "[n_sector_pool] 未实现 module=sector_stock_pool",
+    "[n_heat] heat_score 无回测数据，已降级为透传",
+    "[n_defensive] 未实现 module=defensive_dividend",
+    "[n_base_guard] 未实现 module=base_position_guard",
+    "[n_ancestral] 📜 大A祖训: 7/13 只触发",
+    "[n_idiom] 🕯 K线口诀: 看涨5 看跌2 否决0 / 13 只",
+    "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
+    "[n_direction] 未实现 module=direction_label",
+    "[n_season] 未实现 module=seasonality_boost",
+    "[n_leader] 未实现 module=leader_track",
+    "[n_pe_peer] sector_relative_pe 无回测数据，已降级为透传",
+    "[n_candle] candle_pattern 无回测数据，已降级为透传",
+    "[n_newsguard] news_guard 无回测数据，已降级为透传",
+    "[n_finance] financial_health 无回测数据，已降级为透传"
+   ]
+  },
+  {
+   "usecase": "dip_buy",
+   "period": "ultra_short",
+   "source": "kline",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [
+    "n_dip_exit",
+    "n_dip_gate",
+    "n_dip_signal"
+   ],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [],
+   "notes": [
+    "[n_dip_gate] 大盘恐慌门控: 上证连跌2天/5日-1.1%/当日-1.2%→未触发 | 科创50连跌4天/5日-1.5%/当日-1.0%→未触发",
+    "[n_dip_signal] 大盘无恐慌/深度回调信号(门控关闭)，跳过抄底扫描"
+   ]
+  },
+  {
+   "usecase": "real_holding",
+   "period": "mid",
+   "source": "merged",
+   "orders": 0,
+   "market_state": {
+    "state": "OSCILLATION",
+    "detail": "OSCILLATION"
+   },
+   "direction": "OSCILLATION",
+   "executed": [
+    "n_a_market",
+    "n_import",
+    "n_pool_hint",
+    "n_rh_stop"
+   ],
+   "passthrough": [],
+   "bypassed": [
+    "n_bg",
+    "n_holding_diag",
+    "n_holding_predict",
+    "n_leader_analysis",
+    "n_news",
+    "n_rh_eval",
+    "n_t_trade"
+   ],
+   "bypass_reasons": {
+    "n_bg": "降级为透传",
+    "n_news": "降级为透传",
+    "n_leader_analysis": "未实现 module",
+    "n_rh_eval": "降级为透传",
+    "n_holding_diag": "降级为透传",
+    "n_holding_predict": "降级为透传",
+    "n_t_trade": "未实现 module"
+   },
+   "silent": [],
+   "notes": [
+    "[n_bg] bg_manager 无回测数据，已降级为透传",
+    "[n_news] news_strength 无回测数据，已降级为透传",
+    "[n_leader_analysis] 未实现 module=sector_leader_analysis",
+    "[n_rh_eval] real_holding_eval 无回测数据，已降级为透传",
+    "[n_holding_diag] holding_diagnostic 无回测数据，已降级为透传",
+    "[n_holding_predict] holding_prediction 无回测数据，已降级为透传",
+    "[n_t_trade] 未实现 module=t_trade_eval",
+    "[n_rh_stop] 🛑 止损投票(参考 MID): 0 只"
+   ]
+  },
+  {
+   "usecase": "t_trade",
+   "period": "short",
+   "source": "kline",
+   "orders": 0,
+   "market_state": {
+    "state": "OSCILLATION",
+    "detail": "OSCILLATION"
+   },
+   "direction": "OSCILLATION",
+   "executed": [
+    "t_adaptive",
+    "t_mctx"
+   ],
+   "passthrough": [],
+   "bypassed": [
+    "t_bg",
+    "t_hold",
+    "t_import",
+    "t_inst",
+    "t_kline",
+    "t_leader",
+    "t_news",
+    "t_nguard",
+    "t_save",
+    "t_synth",
+    "t_zf"
+   ],
+   "bypass_reasons": {
+    "t_bg": "降级为透传",
+    "t_import": "未实现 module",
+    "t_hold": "未实现 module",
+    "t_zf": "降级为透传",
+    "t_leader": "未实现 module",
+    "t_inst": "未实现 module",
+    "t_kline": "降级为透传",
+    "t_news": "降级为透传",
+    "t_nguard": "降级为透传",
+    "t_synth": "未实现 module",
+    "t_save": "未实现 module"
+   },
+   "silent": [],
+   "notes": [
+    "[t_bg] bg_manager 无回测数据，已降级为透传",
+    "[t_import] 未实现 module=t_trade_import",
+    "[t_hold] 未实现 module=t_holdings_load",
+    "[t_zf] zipline_factor 无回测数据，已降级为透传",
+    "[t_leader] 未实现 module=sector_leader_analysis",
+    "[t_inst] 未实现 module=t_inst_intent",
+    "[t_kline] candle_pattern 无回测数据，已降级为透传",
+    "[t_news] news_strength 无回测数据，已降级为透传",
+    "[t_nguard] news_guard 无回测数据，已降级为透传",
+    "[t_synth] 未实现 module=t_signal_synthesize",
+    "[t_save] 未实现 module=t_recommend_save"
+   ]
+  },
+  {
+   "usecase": "stock_deep_analysis",
+   "period": "short",
+   "source": "kline",
+   "orders": 0,
+   "market_state": {
+    "state": "OSCILLATION",
+    "detail": "OSCILLATION"
+   },
+   "direction": "OSCILLATION",
+   "executed": [
+    "n_a_market",
+    "n_import",
+    "n_market_direction",
+    "n_pool_hint"
+   ],
+   "passthrough": [],
+   "bypassed": [
+    "n_periods",
+    "n_sector_strength",
+    "n_style_rotation"
+   ],
+   "bypass_reasons": {
+    "n_sector_strength": "未实现 module",
+    "n_style_rotation": "未实现 module",
+    "n_periods": "降级为透传"
+   },
+   "silent": [],
+   "notes": [
+    "[n_sector_strength] 未实现 module=sector_strength",
+    "[n_style_rotation] 未实现 module=style_rotation",
+    "[n_periods] stock_deep_analysis 无回测数据，已降级为透传"
+   ]
+  },
+  {
+   "usecase": "direction",
+   "period": "short",
+   "source": "kline",
+   "orders": 5,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [
+    "n_ai",
+    "n_ancestral",
+    "n_boost",
+    "n_bounce",
+    "n_cand",
+    "n_merge",
+    "n_merge_pos",
+    "n_orders",
+    "n_smart",
+    "n_strict",
+    "n_swap"
+   ],
+   "passthrough": [],
+   "bypassed": [
+    "n_base_guard",
+    "n_candle",
+    "n_crossday",
+    "n_crosstab",
+    "n_defensive",
+    "n_direction",
+    "n_heat",
+    "n_inst_tips",
+    "n_leader",
+    "n_multihot",
+    "n_news_str",
+    "n_newsguard",
+    "n_pe_peer",
+    "n_rot_pen",
+    "n_season",
+    "n_sector_pool"
+   ],
+   "bypass_reasons": {
+    "n_multihot": "降级为透传",
+    "n_sector_pool": "未实现 module",
+    "n_heat": "降级为透传",
+    "n_crossday": "未实现 module",
+    "n_defensive": "未实现 module",
+    "n_base_guard": "未实现 module",
+    "n_inst_tips": "降级为透传",
+    "n_direction": "未实现 module",
+    "n_season": "未实现 module",
+    "n_leader": "未实现 module",
+    "n_pe_peer": "降级为透传",
+    "n_news_str": "降级为透传",
+    "n_rot_pen": "未实现 module",
+    "n_candle": "降级为透传",
+    "n_newsguard": "降级为透传",
+    "n_crosstab": "降级为透传"
+   },
+   "silent": [],
+   "notes": [
+    "[n_multihot] multi_period_hot 无回测数据，已降级为透传",
+    "[n_sector_pool] 未实现 module=sector_stock_pool",
+    "[n_heat] heat_score 无回测数据，已降级为透传",
+    "[n_crossday] 未实现 module=cross_day_aggregation",
+    "[n_defensive] 未实现 module=defensive_dividend",
+    "[n_base_guard] 未实现 module=base_position_guard",
+    "[n_ancestral] 📜 大A祖训: 6/12 只触发",
+    "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
+    "[n_direction] 未实现 module=direction_label",
+    "[n_season] 未实现 module=seasonality_boost",
+    "[n_leader] 未实现 module=leader_track",
+    "[n_pe_peer] sector_relative_pe 无回测数据，已降级为透传",
+    "[n_news_str] news_strength 无回测数据，已降级为透传",
+    "[n_rot_pen] 未实现 module=rotation_penalty",
+    "[n_candle] candle_pattern 无回测数据，已降级为透传",
+    "[n_newsguard] news_guard 无回测数据，已降级为透传",
+    "[n_crosstab] crosstab_publish 无回测数据，已降级为透传",
+    "[n_sector_pool] 未实现 module=sector_stock_pool",
+    "[n_heat] heat_score 无回测数据，已降级为透传",
+    "[n_defensive] 未实现 module=defensive_dividend",
+    "[n_base_guard] 未实现 module=base_position_guard",
+    "[n_ancestral] 📜 大A祖训: 6/12 只触发",
+    "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
+    "[n_direction] 未实现 module=direction_label",
+    "[n_season] 未实现 module=seasonality_boost",
+    "[n_leader] 未实现 module=leader_track",
+    "[n_pe_peer] sector_relative_pe 无回测数据，已降级为透传",
+    "[n_candle] candle_pattern 无回测数据，已降级为透传",
+    "[n_newsguard] news_guard 无回测数据，已降级为透传"
+   ]
+  },
+  {
+   "usecase": "screening",
+   "period": "short",
+   "source": "kline",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [],
+   "notes": []
+  },
+  {
+   "usecase": "sector_ambush",
+   "period": "short",
+   "source": "kline",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [
+    "n_amb_import",
+    "n_ambush_exit",
+    "n_ambush_signal",
+    "n_pool_hint"
+   ],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [],
+   "notes": [
+    "[n_ambush_signal] 热门板块埋伏(近20日)：油运航运(近10日+6.1%)、光通信(近10日+3.5%)、军工国防(近10日+4.6%)、银行红利(近10日+3.7%)、PCB(近10日+1.9%) | 扫描46只 → 命中0只",
+    "[n_ambush_exit] 📦 sector_ambush 打包完成: 0 只 (tp+8.0%/sl-5.0%/持10日)"
+   ]
+  },
+  {
+   "usecase": "etf_dip",
+   "period": "mid",
+   "source": "etf",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [
+    "n_etf_exit",
+    "n_etf_gate",
+    "n_etf_signal",
+    "n_etf_stop"
+   ],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [],
+   "notes": [
+    "[n_etf_signal] ETF 扫描完成 13 只（数据截至 2026-09-10）",
+    "[n_etf_stop] 🛑 止损投票(MID): 13 只定价 · 12 只已破位"
+   ]
+  },
+  {
+   "usecase": "etf_holdings_top5",
+   "period": "mid",
+   "source": "merged",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [
+    "n_holdings_stop",
+    "n_holdings_top5"
+   ],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [],
+   "notes": [
+    "[n_holdings_top5] 🧺 ETF 持股 top5: 15 只（覆盖≥2 只行业ETF）",
+    "[n_holdings_stop] 🛑 止损投票(个股 MID): 15 只定价 / 15 只 · 14 只已破位"
+   ]
+  },
+  {
+   "usecase": "etf_industry_scan",
+   "period": "mid",
+   "source": "merged",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [
+    "n_etf_gate",
+    "n_industry_scan",
+    "n_scan_stop"
+   ],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [],
+   "notes": [
+    "[n_industry_scan] 🔭 ETF 全行业扫描(BEARISH): 候选 172 只 → 打分 39 只 → 降级观察 5 只（跳过 133 只无行情）",
+    "[n_scan_stop] 🛑 止损投票(个股 MID): 5 只定价 / 5 只 · 3 只已破位"
+   ]
+  },
+  {
+   "usecase": "etf_pure_screen",
+   "period": "mid",
+   "source": "etf",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [
+    "n_etf_gate",
+    "n_etf_stop",
+    "n_pure_screen"
+   ],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [],
+   "notes": [
+    "[n_pure_screen] 🎯 纯ETF筛选: 池 14 → 可判 13 → base_buy 0 只（跳过 0 只样本不足）",
+    "[n_etf_stop] 🛑 止损投票(MID): 5 只定价 · 4 只已破位"
+   ]
+  },
+  {
+   "usecase": "common",
+   "period": "mid",
+   "source": "merged",
+   "orders": 0,
+   "market_state": {
+    "state": "OSCILLATION",
+    "detail": "OSCILLATION"
+   },
+   "direction": "OSCILLATION",
+   "executed": [
+    "n_a_market",
+    "n_adaptive",
+    "n_ctx",
+    "n_guard",
+    "n_import",
+    "n_ma_unified",
+    "n_market_direction",
+    "n_pool",
+    "n_pool_filter",
+    "n_pool_hint"
+   ],
+   "passthrough": [],
+   "bypassed": [
+    "n_bg",
+    "n_sector_leaders",
+    "n_sector_strength",
+    "n_style_rotation"
+   ],
+   "bypass_reasons": {
+    "n_sector_strength": "未实现 module",
+    "n_style_rotation": "未实现 module",
+    "n_bg": "降级为透传",
+    "n_sector_leaders": "降级为透传"
+   },
+   "silent": [],
+   "notes": [
+    "[n_sector_strength] 未实现 module=sector_strength",
+    "[n_style_rotation] 未实现 module=style_rotation",
+    "[n_bg] bg_manager 无回测数据，已降级为透传",
+    "[n_sector_leaders] market_sector_leaders 无回测数据，已降级为透传"
+   ]
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "period": "mid",
+   "source": "merged",
+   "orders": 5,
+   "market_state": {
+    "state": "OSCILLATION",
+    "detail": "OSCILLATION"
+   },
+   "direction": "OSCILLATION",
+   "executed": [
+    "n_a_market",
+    "n_adaptive",
+    "n_ai",
+    "n_ancestral",
+    "n_boost",
+    "n_bounce",
+    "n_cand",
+    "n_ctx",
+    "n_event",
+    "n_guard",
+    "n_idiom",
+    "n_import",
+    "n_ma_unified",
+    "n_market_direction",
+    "n_merge",
+    "n_merge_pos",
+    "n_orders",
+    "n_pool",
+    "n_pool_filter",
+    "n_pool_hint",
+    "n_smart",
+    "n_strict",
+    "n_swap",
+    "n_vp",
+    "vp_detail"
+   ],
+   "passthrough": [],
+   "bypassed": [
+    "n_base_guard",
+    "n_bg",
+    "n_candle",
+    "n_crossday",
+    "n_crosstab",
+    "n_defensive",
+    "n_direction",
+    "n_finance",
+    "n_heat",
+    "n_inst_tips",
+    "n_intraday",
+    "n_leader",
+    "n_multihot",
+    "n_news_str",
+    "n_newsguard",
+    "n_pe_peer",
+    "n_rot_pen",
+    "n_season",
+    "n_sector_leaders",
+    "n_sector_pool",
+    "n_sector_strength",
+    "n_style_rotation",
+    "n_t1sell",
+    "n_zipline"
+   ],
+   "bypass_reasons": {
+    "n_sector_strength": "未实现 module",
+    "n_style_rotation": "未实现 module",
+    "n_bg": "降级为透传",
+    "n_sector_leaders": "降级为透传",
+    "n_intraday": "降级为透传",
+    "n_inst_tips": "降级为透传",
+    "n_candle": "降级为透传",
+    "n_news_str": "降级为透传",
+    "n_newsguard": "降级为透传",
+    "n_finance": "降级为透传",
+    "n_t1sell": "未实现 module",
+    "n_multihot": "降级为透传",
+    "n_zipline": "降级为透传",
+    "n_heat": "降级为透传",
+    "n_rot_pen": "未实现 module",
+    "n_crosstab": "降级为透传",
+    "n_sector_pool": "未实现 module",
+    "n_crossday": "未实现 module",
+    "n_defensive": "未实现 module",
+    "n_base_guard": "未实现 module",
+    "n_direction": "未实现 module",
+    "n_season": "未实现 module",
+    "n_leader": "未实现 module",
+    "n_pe_peer": "降级为透传"
+   },
+   "silent": [],
+   "notes": [
+    "[n_sector_strength] 未实现 module=sector_strength",
+    "[n_style_rotation] 未实现 module=style_rotation",
+    "[n_bg] bg_manager 无回测数据，已降级为透传",
+    "[n_sector_leaders] market_sector_leaders 无回测数据，已降级为透传",
+    "[n_intraday] intraday_analysis 无回测数据，已降级为透传",
+    "[n_ancestral] 📜 大A祖训: 10/16 只触发",
+    "[n_idiom] 🕯 K线口诀: 看涨6 看跌3 否决0 / 16 只",
+    "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
+    "[n_candle] candle_pattern 无回测数据，已降级为透传",
+    "[n_news_str] news_strength 无回测数据，已降级为透传",
+    "[n_newsguard] news_guard 无回测数据，已降级为透传",
+    "[n_finance] financial_health 无回测数据，已降级为透传",
+    "[n_t1sell] 未实现 module=t1_auto_sell",
+    "[n_multihot] multi_period_hot 无回测数据，已降级为透传",
+    "[n_zipline] zipline_factor 无回测数据，已降级为透传",
+    "[n_intraday] intraday_analysis 无回测数据，已降级为透传",
+    "[n_heat] heat_score 无回测数据，已降级为透传",
+    "[n_ancestral] 📜 大A祖训: 8/14 只触发",
+    "[n_idiom] 🕯 K线口诀: 看涨5 看跌2 否决0 / 14 只",
+    "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
+    "[n_news_str] news_strength 无回测数据，已降级为透传",
+    "[n_rot_pen] 未实现 module=rotation_penalty",
+    "[n_candle] candle_pattern 无回测数据，已降级为透传",
+    "[n_newsguard] news_guard 无回测数据，已降级为透传",
+    "[n_finance] financial_health 无回测数据，已降级为透传",
+    "[n_crosstab] crosstab_publish 无回测数据，已降级为透传",
+    "[n_multihot] multi_period_hot 无回测数据，已降级为透传",
+    "[n_sector_pool] 未实现 module=sector_stock_pool",
+    "[n_heat] heat_score 无回测数据，已降级为透传",
+    "[n_crossday] 未实现 module=cross_day_aggregation",
+    "[n_defensive] 未实现 module=defensive_dividend",
+    "[n_base_guard] 未实现 module=base_position_guard",
+    "[n_ancestral] 📜 大A祖训: 7/13 只触发",
+    "[n_idiom] 🕯 K线口诀: 看涨5 看跌2 否决0 / 13 只",
+    "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
+    "[n_direction] 未实现 module=direction_label",
+    "[n_season] 未实现 module=seasonality_boost",
+    "[n_leader] 未实现 module=leader_track",
+    "[n_pe_peer] sector_relative_pe 无回测数据，已降级为透传",
+    "[n_news_str] news_strength 无回测数据，已降级为透传",
+    "[n_rot_pen] 未实现 module=rotation_penalty",
+    "[n_candle] candle_pattern 无回测数据，已降级为透传",
+    "[n_newsguard] news_guard 无回测数据，已降级为透传",
+    "[n_finance] financial_health 无回测数据，已降级为透传",
+    "[n_crosstab] crosstab_publish 无回测数据，已降级为透传",
+    "[n_sector_pool] 未实现 module=sector_stock_pool",
+    "[n_heat] heat_score 无回测数据，已降级为透传",
+    "[n_defensive] 未实现 module=defensive_dividend",
+    "[n_base_guard] 未实现 module=base_position_guard",
+    "[n_ancestral] 📜 大A祖训: 7/13 只触发",
+    "[n_idiom] 🕯 K线口诀: 看涨5 看跌2 否决0 / 13 只",
+    "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
+    "[n_direction] 未实现 module=direction_label",
+    "[n_season] 未实现 module=seasonality_boost",
+    "[n_leader] 未实现 module=leader_track",
+    "[n_pe_peer] sector_relative_pe 无回测数据，已降级为透传",
+    "[n_candle] candle_pattern 无回测数据，已降级为透传",
+    "[n_newsguard] news_guard 无回测数据，已降级为透传",
+    "[n_finance] financial_health 无回测数据，已降级为透传"
+   ]
+  },
+  {
+   "usecase": "long_term_period",
+   "period": "long",
+   "source": "merged",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [
+    "n_ai",
+    "n_ancestral",
+    "n_base_guard",
+    "n_boost",
+    "n_bounce",
+    "n_cand",
+    "n_candle",
+    "n_defensive",
+    "n_direction",
+    "n_event",
+    "n_finance",
+    "n_heat",
+    "n_idiom",
+    "n_inst_tips",
+    "n_leader",
+    "n_merge",
+    "n_merge_pos",
+    "n_newsguard",
+    "n_orders",
+    "n_pe_peer",
+    "n_season",
+    "n_sector_pool",
+    "n_smart",
+    "n_strict",
+    "n_vp"
+   ],
+   "notes": []
+  },
+  {
+   "usecase": "mid_term_period",
+   "period": "mid",
+   "source": "merged",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [
+    "n_ai",
+    "n_ancestral",
+    "n_base_guard",
+    "n_boost",
+    "n_bounce",
+    "n_cand",
+    "n_candle",
+    "n_crossday",
+    "n_crosstab",
+    "n_defensive",
+    "n_direction",
+    "n_finance",
+    "n_heat",
+    "n_idiom",
+    "n_inst_tips",
+    "n_leader",
+    "n_merge",
+    "n_merge_pos",
+    "n_multihot",
+    "n_news_str",
+    "n_newsguard",
+    "n_orders",
+    "n_pe_peer",
+    "n_rot_pen",
+    "n_season",
+    "n_sector_pool",
+    "n_smart",
+    "n_strict",
+    "n_swap",
+    "n_vp"
+   ],
+   "notes": []
+  },
+  {
+   "usecase": "short_term_period",
+   "period": "short",
+   "source": "merged",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [
+    "n_ai",
+    "n_ancestral",
+    "n_boost",
+    "n_bounce",
+    "n_cand",
+    "n_candle",
+    "n_crosstab",
+    "n_finance",
+    "n_heat",
+    "n_idiom",
+    "n_inst_tips",
+    "n_intraday",
+    "n_merge",
+    "n_merge_pos",
+    "n_multihot",
+    "n_news_str",
+    "n_newsguard",
+    "n_orders",
+    "n_rot_pen",
+    "n_smart",
+    "n_strict",
+    "n_swap",
+    "n_vp",
+    "n_zipline"
+   ],
+   "notes": []
+  },
+  {
+   "usecase": "ultra_short_period",
+   "period": "ultra_short",
+   "source": "merged",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [
+    "n_ai",
+    "n_ancestral",
+    "n_boost",
+    "n_bounce",
+    "n_cand",
+    "n_candle",
+    "n_finance",
+    "n_idiom",
+    "n_inst_tips",
+    "n_intraday",
+    "n_merge",
+    "n_merge_pos",
+    "n_news_str",
+    "n_newsguard",
+    "n_orders",
+    "n_smart",
+    "n_strict",
+    "n_swap",
+    "n_t1sell",
+    "n_vp"
+   ],
+   "notes": []
+  }
+ ],
+ "bypassed": [
+  {
+   "usecase": "ultra_short",
+   "node": "n_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_candle",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_finance",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_inst_tips",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_intraday",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_news_str",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_newsguard",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_sector_leaders",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_sector_strength",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_style_rotation",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_t1sell",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "short",
+   "node": "n_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_candle",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_crosstab",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_finance",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_heat",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_inst_tips",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_intraday",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_multihot",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_news_str",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_newsguard",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_rot_pen",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "short",
+   "node": "n_sector_leaders",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_sector_strength",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "short",
+   "node": "n_style_rotation",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "short",
+   "node": "n_zipline",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_base_guard",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_candle",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_crossday",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_crosstab",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_defensive",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_direction",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_finance",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_heat",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_inst_tips",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_leader",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_multihot",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_news_str",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_newsguard",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_pe_peer",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_rot_pen",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_season",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_sector_leaders",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_sector_pool",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_sector_strength",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_style_rotation",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "long",
+   "node": "n_base_guard",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "long",
+   "node": "n_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_candle",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_defensive",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "long",
+   "node": "n_direction",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "long",
+   "node": "n_finance",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_heat",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_inst_tips",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_leader",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "long",
+   "node": "n_newsguard",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_pe_peer",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_season",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "long",
+   "node": "n_sector_leaders",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_sector_pool",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "long",
+   "node": "n_sector_strength",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "long",
+   "node": "n_style_rotation",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "real_holding",
+   "node": "n_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "real_holding",
+   "node": "n_holding_diag",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "real_holding",
+   "node": "n_holding_predict",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "real_holding",
+   "node": "n_leader_analysis",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "real_holding",
+   "node": "n_news",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "real_holding",
+   "node": "n_rh_eval",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "real_holding",
+   "node": "n_t_trade",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_hold",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_import",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_inst",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_kline",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_leader",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_news",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_nguard",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_save",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_synth",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_zf",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "stock_deep_analysis",
+   "node": "n_periods",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "stock_deep_analysis",
+   "node": "n_sector_strength",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "stock_deep_analysis",
+   "node": "n_style_rotation",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_base_guard",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_candle",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_crossday",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_crosstab",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_defensive",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_direction",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_heat",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_inst_tips",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_leader",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_multihot",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_news_str",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_newsguard",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_pe_peer",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_rot_pen",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_season",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_sector_pool",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "common",
+   "node": "n_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "common",
+   "node": "n_sector_leaders",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "common",
+   "node": "n_sector_strength",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "common",
+   "node": "n_style_rotation",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_base_guard",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_candle",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_crossday",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_crosstab",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_defensive",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_direction",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_finance",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_heat",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_inst_tips",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_intraday",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_leader",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_multihot",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_news_str",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_newsguard",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_pe_peer",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_rot_pen",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_season",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_sector_leaders",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_sector_pool",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_sector_strength",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_style_rotation",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_t1sell",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_zipline",
+   "reason": "降级为透传"
+  }
+ ],
+ "errors": [],
+ "notes": [],
+ "bypass_count": 128,
+ "silent_count": 99,
+ "error_count": 0,
+ "bypass_reasons": {
+  "降级为透传": 73,
+  "未实现 module": 55
+ },
+ "ok": false,
+ "selfcheck": {
+  "code": 0,
+  "ok": false,
+  "bypass_count": 128,
+  "silent_count": 99,
+  "error_count": 0,
+  "new": [],
+  "fixed": [],
+  "baseline": "_nodes_exec_baseline.json"
+ }
+}

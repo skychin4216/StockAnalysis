@@ -18,6 +18,8 @@ notify 配置（app_config.json）：
 用法：
   import push_channel
   sent = push_channel.push(title, content, cfg)    # cfg = app_config.json 的 notify 段
+  push_channel.send_image(png_path, cfg)           # 图片（企微 image，≤2MB）
+  push_channel.send_file(csv_path, cfg)            # 文件（企微 file，5B~20MB，如原始 CSV / 全左对齐 XLSX）
 """
 import base64
 import hashlib
@@ -29,6 +31,8 @@ import urllib.request
 
 WECOM_BASE = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send"
 WECOM_IMAGE_LIMIT = 2 * 1024 * 1024  # 企业微信 image 消息单张 ≤ 2MB
+WECOM_FILE_MIN = 5                   # 企业微信 file 消息 5B ~ 20MB
+WECOM_FILE_MAX = 20 * 1024 * 1024
 WECOM_TEXT_LIMIT = 2000  # 企业微信 text 单条上限 2048 字节，留余量按 UTF-8 字节切块
 PUSH_HEADERS = {"User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}
 
@@ -194,6 +198,77 @@ def send_image(png_path, cfg):
         return ok
     except Exception as e:  # noqa: BLE001
         print("企微机器人 图片发送失败:", type(e).__name__, e)
+        return False
+
+
+def send_file(file_path, cfg):
+    """发送文件（仅企业微信群机器人 file 消息，pushplus/serverchan 不支持）。
+
+    流程：① 用 webhook key 上传「临时素材」换 media_id
+    （`/cgi-bin/webhook/upload_media?key=..&type=file`，multipart/form-data）
+    → ② 以 `msgtype=file` 发出。文件需 5B~20MB。
+
+    返回是否成功。CSV/Excel 等原始表格文件经此推送后，微信里可直接下载。
+    """
+    key = (cfg.get("wecom_key") or "").strip()
+    if not key:
+        print("未配置 wecom_key，跳过文件推送（文件仅企微机器人支持）")
+        return False
+    if not os.path.isfile(file_path):
+        print("文件不存在：%s" % file_path)
+        return False
+    size = os.path.getsize(file_path)
+    if not (WECOM_FILE_MIN <= size <= WECOM_FILE_MAX):
+        print("文件 %.1f KB 不在企微 file 消息允许区间(5B~20MB)" % (size / 1024.0))
+        return False
+    opener = _opener()
+    base = (cfg.get("wecom_url") or WECOM_BASE).rstrip("/")
+    upload_url = base.replace("/webhook/send", "/webhook/upload_media")
+    if "/upload_media" not in upload_url:
+        upload_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/upload_media"
+    upload_url += "?key=%s&type=file" % urllib.parse.quote(key, safe="")
+    fname = os.path.basename(file_path)
+    boundary = "----StockAnalysis%s" % hashlib.md5(
+        ("%s%d" % (fname, time.time())).encode("utf-8")).hexdigest()[:16]
+    with open(file_path, "rb") as f:
+        raw = f.read()
+    body = b"".join([
+        ("--%s\r\n" % boundary).encode("utf-8"),
+        ('Content-Disposition: form-data; name="media"; filename="%s"\r\n'
+         % fname).encode("utf-8"),
+        b"Content-Type: application/octet-stream\r\n\r\n",
+        raw,
+        ("\r\n--%s--\r\n" % boundary).encode("utf-8"),
+    ])
+    media_id = None
+    try:
+        req = urllib.request.Request(
+            upload_url, data=body, method="POST",
+            headers={"User-Agent": "Mozilla/5.0",
+                     "Content-Type": "multipart/form-data; boundary=%s" % boundary})
+        with opener.open(req, timeout=60) as r:
+            resp = json.loads(r.read().decode("utf-8"))
+        if resp.get("errcode") in (0, "0") and resp.get("media_id"):
+            media_id = resp["media_id"]
+        else:
+            print("企微素材上传失败: %s" % resp.get("errmsg"))
+            return False
+    except Exception as e:  # noqa: BLE001
+        print("企微素材上传异常:", type(e).__name__, e)
+        return False
+    url = "%s?key=%s" % (base, urllib.parse.quote(key, safe=""))
+    payload = json.dumps({"msgtype": "file", "file": {"media_id": media_id}},
+                         ensure_ascii=False).encode("utf-8")
+    try:
+        req = urllib.request.Request(url, data=payload, headers=PUSH_HEADERS, method="POST")
+        with opener.open(req, timeout=30) as r:
+            resp = json.loads(r.read().decode("utf-8"))
+            ok = resp.get("errcode") in (0, "0")
+        print("企微机器人 文件(%s) %s" % (
+            fname, "成功" if ok else "失败:%s" % resp.get("errmsg")))
+        return ok
+    except Exception as e:  # noqa: BLE001
+        print("企微机器人 文件发送失败:", type(e).__name__, e)
         return False
 
 

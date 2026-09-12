@@ -117,7 +117,22 @@ class StockCheckPipeline(
     var macroSectorKeywords: List<String> = emptyList(),
     // ── v10: 大盘量能调节（大盘缩量→个股缩量是市场整体行为，量能阈值动态下调） ──
     /** 大盘当日量/前5日均量（<1 大盘缩量），null=不调节 */
-    var marketVolumeRatio: Double? = null
+    var marketVolumeRatio: Double? = null,
+    // ── v11: 企稳低吸旁路（2026-09-08 · 晋控能源型场景） ──
+    /** 企稳低吸放行：出现「连跌后 3日不新低 + 低点逐日抬高」企稳形态 → 免均线粘合考核直接放行
+     *   （默认仅超短/短线开启，中线/长线走 allowLowAmbush 低位埋伏；依据 smalltools/_stabilize_dip_stat.py） */
+    val allowStableDip: Boolean = false,
+    // ── v12: 强势延续旁路（2026-09-10 改进B · 与 Python `_strong_continuation` 同口径） ──
+    /** 强势延续放行：多头排列 + 贴近20日新高 + 放量 + RSI6 中强区 → 免粘合考核放行（仅超短/短线） */
+    val allowStrongContinuation: Boolean = false,
+    /** 距20日新高的最大回撤%（≤ 该值视为贴近新高） */
+    val strongNearHigh: Double = 3.0,
+    /** 最低量比（当日量 / 前5日均量） */
+    val strongVolRatio: Double = 1.5,
+    /** RSI6 下界（中强区） */
+    val strongRsiLo: Double = 55.0,
+    /** RSI6 上界 */
+    val strongRsiHi: Double = 70.0
 ) {
 
     companion object {
@@ -170,6 +185,57 @@ class StockCheckPipeline(
             return -1
         }
 
+        /** 止跌企稳形态：基座(最近3日)前存在≥3连跌，且近3日不创新低、低点逐日抬高。
+         *  与 Python backtest_guangmo._is_stable_dip / usecase_pipeline._is_stabilize 同口径（v11 企稳低吸旁路）。
+         *  基座期 = 最近3日（不创新低+低点抬高的确认段）；连跌发生在基座前（最远回望 11~12 根）。 */
+        fun isStableDip(snaps: List<DailySnapshotEntity>): Boolean {
+            val n = snaps.size
+            if (n < 20) return false
+            var down3 = false
+            val jEnd = maxOf(n - 12, 2)
+            var j = n - 4
+            while (j > jEnd && !down3) {
+                if (snaps[j].close < snaps[j - 1].close && snaps[j - 1].close < snaps[j - 2].close) down3 = true
+                j--
+            }
+            if (!down3) return false
+            val rising = snaps[n - 1].low > snaps[n - 2].low && snaps[n - 2].low > snaps[n - 3].low
+            if (!rising) return false
+            val last3Min = minOf(snaps[n - 3].low, snaps[n - 2].low, snaps[n - 1].low)
+            val prevStart = maxOf(n - 13, 0)
+            var prevMin = Double.MAX_VALUE
+            for (k in prevStart until n - 3) prevMin = minOf(prevMin, snaps[k].low)
+            return last3Min > prevMin
+        }
+
+        /** 强势延续旁路判据（2026-09-10 改进B，与 Python `_strong_continuation` 同口径）：
+         *  多头排列(MA5>MA10>MA20 且 close>MA5) + 贴近20日新高(回撤 ≤ nearHigh%) +
+         *  放量(量比 ≥ vrMin) + RSI6 处于 [rsiLo, rsiHi] 中强区。 */
+        fun isStrongContinuation(
+            snaps: List<DailySnapshotEntity>,
+            nearHigh: Double = 3.0,
+            vrMin: Double = 1.5,
+            rsiLo: Double = 55.0,
+            rsiHi: Double = 70.0
+        ): Boolean {
+            if (snaps.size < 25) return false
+            val cs = snaps.map { it.close }
+            val vs = snaps.map { it.volume.toDouble() }
+            val hs = snaps.map { it.high }
+            val ma5 = cs.takeLast(5).average()
+            val ma10 = cs.takeLast(10).average()
+            val ma20 = cs.takeLast(20).average()
+            if (!(ma5 > ma10 && ma10 > ma20 && cs.last() > ma5)) return false
+            val hi20 = hs.takeLast(20).maxOrNull() ?: cs.last()
+            val dd = if (hi20 > 0) (hi20 - cs.last()) / hi20 * 100 else 99.0
+            if (dd > nearHigh) return false
+            val v5 = if (vs.size >= 6) vs.subList(vs.size - 6, vs.size - 1).average() else 0.0
+            val vr = if (v5 > 0) vs.last() / v5 else 0.0
+            if (vr < vrMin) return false
+            val r6 = com.chin.stockanalysis.strategy.analysis.TechTags.rsi(cs, 6).lastOrNull() ?: return false
+            return r6 in rsiLo..rsiHi
+        }
+
         /**
          * 超短线 v3：BULLISH 趋势跟随模式（趋势向上、贴近新高、放量、当日上涨）；
          * 不再死守"均线粘合+三日不新低"（上升趋势中会错误过滤强势股）。
@@ -193,6 +259,10 @@ class StockCheckPipeline(
                 lookbackDays = 30,
                 minPassCount = 7,
                 requireThreeDayConfirm = true,
+                // v11: 企稳低吸旁路开启（超短线，震荡/熊市均线粘合语境下免粘合放行企稳股）
+                allowStableDip = true,
+                // v12: 强势延续旁路开启（超短线，捕捉仍在强势上行的票，避免形态因子整体挡掉）
+                allowStrongContinuation = true,
                 mode = AnalysisMode.TREND_FOLLOW,
                 marketTrend = marketTrend
             )
@@ -224,6 +294,10 @@ class StockCheckPipeline(
                 lookbackDays = 60,
                 minPassCount = 6,
                 requireThreeDayConfirm = true,
+                // v11: 企稳低吸旁路开启（短线，震荡/熊市均线粘合语境下免粘合放行企稳股）
+                allowStableDip = true,
+                // v12: 强势延续旁路开启（短线，捕捉仍在强势上行的票，避免形态因子整体挡掉）
+                allowStrongContinuation = true,
                 mode = AnalysisMode.TREND_FOLLOW,
                 marketTrend = marketTrend
             )
@@ -349,6 +423,11 @@ class StockCheckPipeline(
         val totalChecks: Int = 7,
         /** 是否通过（passCount >= minPassCount） */
         val passed: Boolean = false,
+        // ── v11: 企稳低吸旁路 ──
+        /** 是否通过「企稳低吸」旁路放行（免均线粘合考核） */
+        val stableDipOk: Boolean = false,
+        /** 是否通过「强势延续」旁路放行（v12，免均线粘合考核） */
+        val strongOk: Boolean = false,
         /** 当前价格 */
         val currentPrice: Double = 0.0,
         /** PE 值 */
@@ -646,6 +725,31 @@ class StockCheckPipeline(
             EnhancedPoolFilter.passCountOverride(p)?.let { if (passCount < it) passed = false }
         }
 
+        // ── v11: 企稳低吸旁路（2026-09-08 · 晋控能源型场景，依据 smalltools/_stabilize_dip_stat.py）——
+        //   出现「连跌后 3日不新低 + 低点逐日抬高」企稳形态的候选视为低吸机会，
+        //   免去均线粘合/多头排列/放量等"突破型"考核（企稳粘合 vs 非粘合短线差异不显著，
+        //   粘合过严会漏掉晋控这类低吸机会）。仅保留两项数据保护：当日非跌停级、量比非异常(除权污染)。
+        var stableDipOk = false
+        if (allowStableDip && isStableDip(snaps)) {
+            val latestChg = try { latest.changePct.toDouble() } catch (_: Exception) { 0.0 }
+            if (latestChg > -9.5 && volumeRatio < 20.0) {
+                passed = true
+                stableDipOk = true
+            }
+        }
+
+        // ── v12: 强势延续旁路（2026-09-10 改进B · 与 Python `_strong_continuation` 同口径）──
+        //   弱市/震荡链只走「粘合低吸 + 企稳低吸」（防守型），强势仍在上行的票（多头排列+贴近新高+
+        //   放量+RSI6 中强区，例：超声电子 RSI61/量比2.1）会被形态因子整体挡掉 → 开一条旁路。
+        //   阈值来自 XML（n_strict 的 strongEnable/strongNearHigh/strongVolRatio/strongRsiLo/strongRsiHi）。
+        var strongOk = false
+        if (allowStrongContinuation && !passed &&
+            isStrongContinuation(snaps, strongNearHigh, strongVolRatio, strongRsiLo, strongRsiHi)
+        ) {
+            passed = true
+            strongOk = true
+        }
+
         // ── v5: IC 排序因子（口径与 smalltools/_factor_ic.py 一致：close/均线-1 再*100） ──
         val changePct = latest.changePct
         val momentum5 = if (closes.size >= 5 && ma5 > 0) (latest.close / ma5 - 1) * 100 else Double.NaN
@@ -690,6 +794,8 @@ class StockCheckPipeline(
             passCount = passCount,
             totalChecks = totalChecks,
             passed = passed,
+            stableDipOk = stableDipOk,
+            strongOk = strongOk,
             currentPrice = latest.close,
             pe = latest.pe,
             turnoverRate = latest.turnoverRate,

@@ -26,6 +26,7 @@ import com.chin.stockanalysis.agent.stock.StockAnalysisAgent
 import com.chin.stockanalysis.strategy.backtest.PeriodDeepAnalysisRunner
 import com.chin.stockanalysis.strategy.topology.xml.UseCaseExecution
 import com.chin.stockanalysis.strategy.analysis.CandlePatternDetector
+import com.chin.stockanalysis.strategy.analysis.MacdDivergenceAnalyzer
 import com.chin.stockanalysis.strategy.analysis.MaConvergenceAnalyzer
 import com.chin.stockanalysis.strategy.analysis.TrendPatternEngine
 import com.chin.stockanalysis.strategy.data.InstitutionalRatingProvider
@@ -1949,6 +1950,16 @@ class StockDetailFragment : Fragment() {
             recent3Lows.all { it > prevMinLow }
         } else false
         sb.append("\n三天不新低: ${if (threeDayNoNewLow) "✓ 是（止跌企稳）" else "✗ 否"}")
+
+        // ── 2.5 MACD 柱底背离：价格创新低但动能柱底抬高（不必等三天不新低） ──
+        val macdDiv = MacdDivergenceAnalyzer.analyze(snaps)
+        val macdDivText = when {
+            macdDiv.bullDivergence -> "MACD柱背离: ✓ 是 | ${macdDiv.hint}"
+            macdDiv.macdShrinking -> "MACD柱背离: ◐ 动能衰竭 | ${macdDiv.hint}"
+            macdDiv.priceNewLow -> "MACD柱背离: ✗ 否 | ${macdDiv.hint}"
+            else -> null
+        }
+        if (macdDivText != null) sb.append("\n$macdDivText")
 
         // ── 3. 均线粘合向上（共用工具） ──
         val maConvResult = MaConvergenceAnalyzer.analyze(snaps)
