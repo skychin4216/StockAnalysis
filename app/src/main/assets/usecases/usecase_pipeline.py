@@ -742,13 +742,187 @@ def _strict_selection(ctx, node, inputs):
     return out
 
 
+def _base_position_analyze(snaps):
+    """BasePositionAnalyzer.analyze 同构（convergenceThreshold=0.02，纯 K 线，无 IO）。
+
+    总纲：长线看势，中线看价，短线看量，超短看情绪；逃顶要快，抄底要慢。
+      ① 三天不新低：近 3 日 low 全部 > 之前所有日最低 low（StabilityChecker.ABOVE_PRIOR_MIN）
+      ② MA5/MA10/MA30 离散率 < 2% 且 MA5 上翘 → 粘合向上
+      ③ 逃顶急：3 日跌幅 < -5% 或仍在创新低
+    返回 dict(ready/converged_up/escape_urgent/hint)。
+    """
+    closes = [float(s["close"]) for s in snaps]
+    lows = [float(s.get("low") if s.get("low") is not None else s["close"]) for s in snaps]
+    prev = lows[:-3]
+    no_new_low = bool(prev) and all(v > min(prev) for v in lows[-3:])
+    ma5 = sum(closes[-5:]) / 5.0
+    ma10 = sum(closes[-10:]) / 10.0
+    ma30 = sum(closes[-30:]) / 30.0
+    lo, hi = min(ma5, ma10, ma30), max(ma5, ma10, ma30)
+    divergence = (hi - lo) / lo if lo > 0 else 1.0
+    converged = divergence < 0.02
+    y_ma5 = sum(closes[-6:-1]) / 5.0 if len(closes) >= 6 else ma5
+    upward = ma5 > y_ma5
+    chg3 = ((closes[-1] - closes[-4]) / closes[-4] * 100.0
+            if len(snaps) >= 4 and closes[-4] > 0 else 0.0)
+    ready = no_new_low and converged and upward
+    escape = (chg3 < -5.0 or not no_new_low) and not ready
+    hint = "%s | MA离散%.1f%%%s%s" % (
+        "✅3天不新低" if no_new_low else "⚠️仍在创新低", divergence * 100.0,
+        "✅粘合" if converged else "⚠️分散", "↑" if upward else "↓")
+    return {"ready": ready, "converged_up": converged and upward,
+            "escape_urgent": escape, "hint": hint}
+
+
+@register("base_position_guard")
+def _base_position_guard(ctx, node, inputs):
+    """打底仓守门 + 逃顶要快（2026-09-12 新增：APK BasePositionGuardNode 同构移植）。
+
+    背景：本 module 此前在 PC/Python 引擎「未实现」→ exe 跑同一份 pipeline XML 时
+    n_base_guard 被 bypass，中线/长线买入缺「打底仓」门控，打分与 APK 漂移
+    （见 smalltools/_nodes_exec_report.py 的 bypass 清单）。
+
+    config：holdingPeriod = MID|SHORT|ULTRA_SHORT|LONG（默认 MID）
+    规则（与 APK 逐字一致，score 为合并池强度 0~100）：
+      买入(>50) 且打底仓未就绪 → −20（LONG −30）
+      买入 且 MA 粘合向上      → +12（LONG +20）
+      卖出(≤50) 且逃顶要快     → +12（LONG +18）
+    上游 n_strict，输出 stage 到本节点 id（pipeline 固定 n_base_guard）。
+    """
+    hp = str(node.config.get("holdingPeriod") or "MID").upper()
+    pool = ctx.get("n_strict") or ctx.get("n_boost") or ctx.get("n_merge") or []
+    if not pool:
+        ctx.stage(node.id, pool)
+        return pool
+    cache = ctx.cache or {}
+    out, hit = [], 0
+    for cid, sc in pool:
+        snaps = sorted((cache.get(cid) or {}).get("snaps") or [],
+                       key=lambda s: s["date"])
+        if len(snaps) < 30:
+            out.append((cid, sc))
+            continue
+        a = _base_position_analyze(snaps)
+        is_buy = sc > 50
+        ns = sc
+        if is_buy and not a["ready"]:
+            ns = sc - (30 if hp == "LONG" else 20)
+            hit += 1
+        elif is_buy and a["converged_up"]:
+            ns = sc + (20 if hp == "LONG" else 12)
+            hit += 1
+        elif (not is_buy) and a["escape_urgent"]:
+            ns = sc + (18 if hp == "LONG" else 12)
+            hit += 1
+        out.append((cid, max(0.0, min(100.0, float(ns)))))
+    out.sort(key=lambda x: -x[1])
+    ctx.stage(node.id, out)
+    if hit:
+        ctx.notes.append("[%s] 🛡️ 打底仓守门(%s): %d/%d 只触发"
+                         % (node.id, hp, hit, len(pool)))
+    return out
+
+
+_DIR_CN = {"UPTREND": "上升趋势", "DOWNTREND": "下降趋势",
+           "ACCUMULATION": "横盘蓄势", "BREAKOUT": "放量突破",
+           "OSCILLATION": "区间震荡"}
+
+
+def _direction_of(snaps, price=None):
+    """DirectionLabelNode.computeDirection 的「从 K 线重算」分支 + DirectionAnalyzer.analyze 同构。
+
+    PC 引擎没有 APK 的 `strict_selection_eval` 中间产物，故一律走重算路径
+    （snaps < 30 根时 APK 亦返回 OSCILLATION，此处保持一致）。
+    判定优先级：突破 > 蓄势 > 上升 > 下降 > 震荡。
+    """
+    if not snaps:
+        return "OSCILLATION"
+    closes = [float(s["close"]) for s in snaps]
+    highs = [float(s.get("high") if s.get("high") is not None else s["close"]) for s in snaps]
+    lows = [float(s.get("low") if s.get("low") is not None else s["close"]) for s in snaps]
+    vols = [float(s.get("volume") or 0) for s in snaps]
+    if len(closes) < 30:
+        return "OSCILLATION"
+    ma5 = sum(closes[-5:]) / 5.0
+    ma10 = sum(closes[-10:]) / 10.0
+    ma20 = sum(closes[-20:]) / 20.0
+    ma60 = sum(closes[-60:]) / 60.0 if len(closes) >= 60 else None
+    ma60_rising = (ma60 is not None and len(closes) >= 66
+                   and closes[len(closes) - 61] < ma60)
+    high20, low20 = max(highs[-20:]), min(lows[-20:])
+    conv = (high20 - low20) / low20 * 100.0 if low20 > 0 else 999.0
+    conv_ok = conv <= 6.0
+    close_above_top = closes[-1] >= high20 * 0.995
+    above_all = closes[-1] > ma20
+    vol5 = sum(vols[-5:]) / 5.0
+    vol20 = sum(vols[-20:]) / 20.0
+    vr = vol5 / vol20 if vol20 > 0 else 1.0
+    close = float(price) if price else closes[-1]
+    # 粘合持续天数：APK 用 convergenceOk 折算 (10 天 / 0 天)
+    converging = 0.1 <= conv <= 6.0 and (10 if conv_ok else 0) >= 8
+    if converging and close_above_top and vr >= 1.15 and above_all:
+        return "BREAKOUT"
+    if converging:
+        return "ACCUMULATION"
+    if ma5 > ma10 > ma20 and close > ma5 and ma60_rising:
+        return "UPTREND"
+    if ma5 < ma10 < ma20 and close < ma5 and not ma60_rising:
+        return "DOWNTREND"
+    return "OSCILLATION"
+
+
+@register("direction_label")
+def _direction_label(ctx, node, inputs):
+    """个股方向标签（先判方向，再定周期，2026-09-12 新增：APK DirectionLabelNode 同构移植）。
+
+    config：exclude="DOWNTREND,OSCILLATION"（要剔除的方向）、penalty="25"（剔除方向扣分）
+    上游 n_idiom（经 n_inst_tips 透传），输出 stage 到本节点 id，并把逐股标签写入
+    stage 键 `direction_labels`（供 leader_track 复用）。剔除只扣分不硬删，
+    与 APK 一致（低于后续过滤线自然被淘汰）。
+    """
+    cfg = node.config or {}
+    exclude = [x.strip().upper() for x in
+               str(cfg.get("exclude") or "DOWNTREND,OSCILLATION").split(",") if x.strip()]
+    penalty = float(cfg.get("penalty") or 25)
+    pool = (ctx.get("n_inst_tips") or ctx.get("n_idiom") or ctx.get("n_ancestral")
+            or ctx.get("n_boost") or ctx.get("n_merge") or [])
+    if not pool:
+        ctx.stage(node.id, pool)
+        return pool
+    cache = ctx.cache or {}
+    labels, out, excluded = {}, [], 0
+    for cid, sc in pool:
+        snaps = sorted((cache.get(cid) or {}).get("snaps") or [],
+                       key=lambda s: s["date"])
+        d = _direction_of(snaps)
+        labels[cid] = d
+        if d in exclude:
+            excluded += 1
+            out.append((cid, max(0.0, min(100.0, float(sc) - penalty))))
+        else:
+            out.append((cid, sc))
+    out.sort(key=lambda x: -x[1])
+    ctx.stage(node.id, out)
+    ctx.stage("direction_labels", labels)
+    dist = " ".join("%s:%d" % (k, sum(1 for v in labels.values() if v == k))
+                    for k in ("UPTREND", "ACCUMULATION", "BREAKOUT",
+                              "DOWNTREND", "OSCILLATION")
+                    if any(v == k for v in labels.values()))
+    ctx.notes.append("[%s] 🧭 方向标签 %d 只(%s)，剔除[%s] %d 只"
+                     % (node.id, len(labels), dist, "/".join(exclude), excluded))
+    return out
+
+
 @register("ancestral_rules")
 def _ancestral_rules(ctx, node, inputs):
     """大A祖训：12 条规则对候选加减分（与 APK AncestralRulesNode 同口径）。
 
     2026-09-10：补齐原空实现（原仅 stage 透传 → exe 侧祖训完全失效、与 APK
-    打分漂移）。规则 1~5 为原有祖训；6~12 为 2026-09-10 新增口诀七条。"""
-    scored = ctx.get("n_strict") or ctx.get("n_boost") or []
+    打分漂移）。规则 1~5 为原有祖训；6~12 为 2026-09-10 新增口诀七条。
+    2026-09-12：接线修正 —— mid/long/direction 链为 n_strict → **n_base_guard** → n_ancestral，
+    优先读 n_base_guard（无该节点的管线自动回落 n_strict）。"""
+    scored = (ctx.get("n_base_guard") or ctx.get("n_strict")
+              or ctx.get("n_boost") or [])
     hp = str(node.config.get("holdingPeriod") or "SHORT").upper()
     cache = ctx.cache or {}
     out, hit = [], 0

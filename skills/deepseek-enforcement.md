@@ -19,6 +19,20 @@
 - 禁止因为「担心轮次/请求上限」而提前收尾、留 TODO 或把半成品交给用户。
 - 只有**不可恢复的硬错误**（磁盘写满、依赖缺失且无法自愈、账号/权限被封）才允许停下并报告原因。
 
+### 2.2 根因与真实开关（2026-09-12 实测定位，已从源头关闭）
+- 该暂停提示来自 CodeBuddy 客户端扩展 `genie/out/extension/index.js` 的步数上限判定
+  （`AgentStateListener.isMaxStepLimit` + `AgentContextBuilder`），**不是模型自己选择的停止**，
+  所以「写规则文档」无法阻止；必须改客户端设置。
+- 取值优先级：`codingcopilot.requestMaxStepLimit`（用户设置）→ 产品配置下发（本机为 **500**）→ 默认 `100`；
+  子 Agent 另有 `codingcopilot.customAgentMaxStep`（用户设置 → 产品配置 → 默认 `500`）。
+- **已在本机用户设置生效**：`%APPDATA%/CodeBuddy CN/User/settings.json`
+  ```json
+  "codingcopilot.requestMaxStepLimit": 1000000,
+  "codingcopilot.customAgentMaxStep": 100000
+  ```
+  备份在同目录 `settings.json.bak`。改完即时生效（设置变更会被 `workspace.getConfiguration` 重新读取）。
+- 若日后升级客户端 / 换机后该暂停再次出现，**先检查这两个键是否被覆盖或丢失**，不要再去写规则文档。
+
 ### 3. 方案确定后直接执行
 - 用户一旦选择了某个技术方案或 AI 方案，**立即执行，不要再问"是否确认"**。
 - 不要输出"你确定要这样做吗？"、"要开始实施吗？"等二次确认。

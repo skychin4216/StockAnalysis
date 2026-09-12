@@ -1,6 +1,6 @@
 {
  "asof": "2026-09-11",
- "generated_at": "2026-09-12T14:33:56",
+ "generated_at": "2026-09-13T00:08:30",
  "cases": [
   {
    "usecase": "ultra_short",
@@ -184,14 +184,17 @@
    },
    "direction": "OSCILLATION",
    "executed": [
+    "direction_labels",
     "n_a_market",
     "n_adaptive",
     "n_ai",
     "n_ancestral",
+    "n_base_guard",
     "n_boost",
     "n_bounce",
     "n_cand",
     "n_ctx",
+    "n_direction",
     "n_guard",
     "n_idiom",
     "n_import",
@@ -211,13 +214,11 @@
    ],
    "passthrough": [],
    "bypassed": [
-    "n_base_guard",
     "n_bg",
     "n_candle",
     "n_crossday",
     "n_crosstab",
     "n_defensive",
-    "n_direction",
     "n_finance",
     "n_heat",
     "n_inst_tips",
@@ -243,9 +244,7 @@
     "n_heat": "降级为透传",
     "n_crossday": "未实现 module",
     "n_defensive": "未实现 module",
-    "n_base_guard": "未实现 module",
     "n_inst_tips": "降级为透传",
-    "n_direction": "未实现 module",
     "n_season": "未实现 module",
     "n_leader": "未实现 module",
     "n_pe_peer": "降级为透传",
@@ -267,11 +266,10 @@
     "[n_heat] heat_score 无回测数据，已降级为透传",
     "[n_crossday] 未实现 module=cross_day_aggregation",
     "[n_defensive] 未实现 module=defensive_dividend",
-    "[n_base_guard] 未实现 module=base_position_guard",
     "[n_ancestral] 📜 大A祖训: 7/13 只触发",
     "[n_idiom] 🕯 K线口诀: 看涨5 看跌2 否决0 / 13 只",
     "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
-    "[n_direction] 未实现 module=direction_label",
+    "[n_direction] 🧭 方向标签 13 只(UPTREND:2 ACCUMULATION:2 OSCILLATION:9)，剔除[DOWNTREND/OSCILLATION] 9 只",
     "[n_season] 未实现 module=seasonality_boost",
     "[n_leader] 未实现 module=leader_track",
     "[n_pe_peer] sector_relative_pe 无回测数据，已降级为透传",
@@ -294,14 +292,17 @@
    },
    "direction": "OSCILLATION",
    "executed": [
+    "direction_labels",
     "n_a_market",
     "n_adaptive",
     "n_ai",
     "n_ancestral",
+    "n_base_guard",
     "n_boost",
     "n_bounce",
     "n_cand",
     "n_ctx",
+    "n_direction",
     "n_event",
     "n_guard",
     "n_idiom",
@@ -321,11 +322,9 @@
    ],
    "passthrough": [],
    "bypassed": [
-    "n_base_guard",
     "n_bg",
     "n_candle",
     "n_defensive",
-    "n_direction",
     "n_finance",
     "n_heat",
     "n_inst_tips",
@@ -346,9 +345,7 @@
     "n_sector_pool": "未实现 module",
     "n_heat": "降级为透传",
     "n_defensive": "未实现 module",
-    "n_base_guard": "未实现 module",
     "n_inst_tips": "降级为透传",
-    "n_direction": "未实现 module",
     "n_season": "未实现 module",
     "n_leader": "未实现 module",
     "n_pe_peer": "降级为透传",
@@ -365,11 +362,10 @@
     "[n_sector_pool] 未实现 module=sector_stock_pool",
     "[n_heat] heat_score 无回测数据，已降级为透传",
     "[n_defensive] 未实现 module=defensive_dividend",
-    "[n_base_guard] 未实现 module=base_position_guard",
     "[n_ancestral] 📜 大A祖训: 7/13 只触发",
     "[n_idiom] 🕯 K线口诀: 看涨5 看跌2 否决0 / 13 只",
     "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
-    "[n_direction] 未实现 module=direction_label",
+    "[n_direction] 🧭 方向标签 13 只(UPTREND:2 ACCUMULATION:2 OSCILLATION:9)，剔除[DOWNTREND/OSCILLATION] 9 只",
     "[n_season] 未实现 module=seasonality_boost",
     "[n_leader] 未实现 module=leader_track",
     "[n_pe_peer] sector_relative_pe 无回测数据，已降级为透传",
@@ -544,11 +540,14 @@
    "market_state": {},
    "direction": "UNKNOWN",
    "executed": [
+    "direction_labels",
     "n_ai",
     "n_ancestral",
+    "n_base_guard",
     "n_boost",
     "n_bounce",
     "n_cand",
+    "n_direction",
     "n_merge",
     "n_merge_pos",
     "n_orders",
@@ -558,12 +557,10 @@
    ],
    "passthrough": [],
    "bypassed": [
-    "n_base_guard",
     "n_candle",
     "n_crossday",
     "n_crosstab",
     "n_defensive",
-    "n_direction",
     "n_heat",
     "n_inst_tips",
     "n_leader",
@@ -581,9 +578,7 @@
     "n_heat": "降级为透传",
     "n_crossday": "未实现 module",
     "n_defensive": "未实现 module",
-    "n_base_guard": "未实现 module",
     "n_inst_tips": "降级为透传",
-    "n_direction": "未实现 module",
     "n_season": "未实现 module",
     "n_leader": "未实现 module",
     "n_pe_peer": "降级为透传",
@@ -600,10 +595,9 @@
     "[n_heat] heat_score 无回测数据，已降级为透传",
     "[n_crossday] 未实现 module=cross_day_aggregation",
     "[n_defensive] 未实现 module=defensive_dividend",
-    "[n_base_guard] 未实现 module=base_position_guard",
     "[n_ancestral] 📜 大A祖训: 6/12 只触发",
     "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
-    "[n_direction] 未实现 module=direction_label",
+    "[n_direction] 🧭 方向标签 12 只(UPTREND:2 ACCUMULATION:2 OSCILLATION:8)，剔除[DOWNTREND/OSCILLATION] 8 只",
     "[n_season] 未实现 module=seasonality_boost",
     "[n_leader] 未实现 module=leader_track",
     "[n_pe_peer] sector_relative_pe 无回测数据，已降级为透传",
@@ -615,10 +609,9 @@
     "[n_sector_pool] 未实现 module=sector_stock_pool",
     "[n_heat] heat_score 无回测数据，已降级为透传",
     "[n_defensive] 未实现 module=defensive_dividend",
-    "[n_base_guard] 未实现 module=base_position_guard",
     "[n_ancestral] 📜 大A祖训: 6/12 只触发",
     "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
-    "[n_direction] 未实现 module=direction_label",
+    "[n_direction] 🧭 方向标签 12 只(UPTREND:2 ACCUMULATION:2 OSCILLATION:8)，剔除[DOWNTREND/OSCILLATION] 8 只",
     "[n_season] 未实现 module=seasonality_boost",
     "[n_leader] 未实现 module=leader_track",
     "[n_pe_peer] sector_relative_pe 无回测数据，已降级为透传",
@@ -800,14 +793,17 @@
    },
    "direction": "OSCILLATION",
    "executed": [
+    "direction_labels",
     "n_a_market",
     "n_adaptive",
     "n_ai",
     "n_ancestral",
+    "n_base_guard",
     "n_boost",
     "n_bounce",
     "n_cand",
     "n_ctx",
+    "n_direction",
     "n_event",
     "n_guard",
     "n_idiom",
@@ -828,13 +824,11 @@
    ],
    "passthrough": [],
    "bypassed": [
-    "n_base_guard",
     "n_bg",
     "n_candle",
     "n_crossday",
     "n_crosstab",
     "n_defensive",
-    "n_direction",
     "n_finance",
     "n_heat",
     "n_inst_tips",
@@ -873,8 +867,6 @@
     "n_sector_pool": "未实现 module",
     "n_crossday": "未实现 module",
     "n_defensive": "未实现 module",
-    "n_base_guard": "未实现 module",
-    "n_direction": "未实现 module",
     "n_season": "未实现 module",
     "n_leader": "未实现 module",
     "n_pe_peer": "降级为透传"
@@ -912,11 +904,10 @@
     "[n_heat] heat_score 无回测数据，已降级为透传",
     "[n_crossday] 未实现 module=cross_day_aggregation",
     "[n_defensive] 未实现 module=defensive_dividend",
-    "[n_base_guard] 未实现 module=base_position_guard",
     "[n_ancestral] 📜 大A祖训: 7/13 只触发",
     "[n_idiom] 🕯 K线口诀: 看涨5 看跌2 否决0 / 13 只",
     "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
-    "[n_direction] 未实现 module=direction_label",
+    "[n_direction] 🧭 方向标签 13 只(UPTREND:2 ACCUMULATION:2 OSCILLATION:9)，剔除[DOWNTREND/OSCILLATION] 9 只",
     "[n_season] 未实现 module=seasonality_boost",
     "[n_leader] 未实现 module=leader_track",
     "[n_pe_peer] sector_relative_pe 无回测数据，已降级为透传",
@@ -929,17 +920,38 @@
     "[n_sector_pool] 未实现 module=sector_stock_pool",
     "[n_heat] heat_score 无回测数据，已降级为透传",
     "[n_defensive] 未实现 module=defensive_dividend",
-    "[n_base_guard] 未实现 module=base_position_guard",
     "[n_ancestral] 📜 大A祖训: 7/13 只触发",
     "[n_idiom] 🕯 K线口诀: 看涨5 看跌2 否决0 / 13 只",
     "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
-    "[n_direction] 未实现 module=direction_label",
+    "[n_direction] 🧭 方向标签 13 只(UPTREND:2 ACCUMULATION:2 OSCILLATION:9)，剔除[DOWNTREND/OSCILLATION] 9 只",
     "[n_season] 未实现 module=seasonality_boost",
     "[n_leader] 未实现 module=leader_track",
     "[n_pe_peer] sector_relative_pe 无回测数据，已降级为透传",
     "[n_candle] candle_pattern 无回测数据，已降级为透传",
     "[n_newsguard] news_guard 无回测数据，已降级为透传",
     "[n_finance] financial_health 无回测数据，已降级为透传"
+   ]
+  },
+  {
+   "usecase": "inst_holding",
+   "period": "mid",
+   "source": "merged",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [
+    "n_inst_judge",
+    "n_inst_pool",
+    "n_inst_stop"
+   ],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [],
+   "notes": [
+    "[n_inst_pool] 🏛️ 机构判定池: 20 只（内嵌日K 20 只）｜来源: ETFtop5/三周期选股",
+    "[n_inst_judge] 🏛️ 机构判定(2026-06-30): 20 只 → A 0 / B 3 / C 17",
+    "[n_inst_stop] 🛑 止损投票(个股 MID): 20 只定价 / 20 只 · 18 只已破位"
    ]
   },
   {
@@ -1235,11 +1247,6 @@
   },
   {
    "usecase": "mid",
-   "node": "n_base_guard",
-   "reason": "未实现 module"
-  },
-  {
-   "usecase": "mid",
    "node": "n_bg",
    "reason": "降级为透传"
   },
@@ -1261,11 +1268,6 @@
   {
    "usecase": "mid",
    "node": "n_defensive",
-   "reason": "未实现 module"
-  },
-  {
-   "usecase": "mid",
-   "node": "n_direction",
    "reason": "未实现 module"
   },
   {
@@ -1340,11 +1342,6 @@
   },
   {
    "usecase": "long",
-   "node": "n_base_guard",
-   "reason": "未实现 module"
-  },
-  {
-   "usecase": "long",
    "node": "n_bg",
    "reason": "降级为透传"
   },
@@ -1356,11 +1353,6 @@
   {
    "usecase": "long",
    "node": "n_defensive",
-   "reason": "未实现 module"
-  },
-  {
-   "usecase": "long",
-   "node": "n_direction",
    "reason": "未实现 module"
   },
   {
@@ -1525,11 +1517,6 @@
   },
   {
    "usecase": "direction",
-   "node": "n_base_guard",
-   "reason": "未实现 module"
-  },
-  {
-   "usecase": "direction",
    "node": "n_candle",
    "reason": "降级为透传"
   },
@@ -1546,11 +1533,6 @@
   {
    "usecase": "direction",
    "node": "n_defensive",
-   "reason": "未实现 module"
-  },
-  {
-   "usecase": "direction",
-   "node": "n_direction",
    "reason": "未实现 module"
   },
   {
@@ -1625,11 +1607,6 @@
   },
   {
    "usecase": "complete_closed_loop",
-   "node": "n_base_guard",
-   "reason": "未实现 module"
-  },
-  {
-   "usecase": "complete_closed_loop",
    "node": "n_bg",
    "reason": "降级为透传"
   },
@@ -1651,11 +1628,6 @@
   {
    "usecase": "complete_closed_loop",
    "node": "n_defensive",
-   "reason": "未实现 module"
-  },
-  {
-   "usecase": "complete_closed_loop",
-   "node": "n_direction",
    "reason": "未实现 module"
   },
   {
@@ -1746,22 +1718,31 @@
  ],
  "errors": [],
  "notes": [],
- "bypass_count": 128,
+ "bypass_count": 120,
  "silent_count": 99,
  "error_count": 0,
  "bypass_reasons": {
   "降级为透传": 73,
-  "未实现 module": 55
+  "未实现 module": 47
  },
  "ok": false,
  "selfcheck": {
   "code": 0,
   "ok": false,
-  "bypass_count": 128,
+  "bypass_count": 120,
   "silent_count": 99,
   "error_count": 0,
   "new": [],
-  "fixed": [],
+  "fixed": [
+   "complete_closed_loop::n_base_guard",
+   "complete_closed_loop::n_direction",
+   "direction::n_base_guard",
+   "direction::n_direction",
+   "long::n_base_guard",
+   "long::n_direction",
+   "mid::n_base_guard",
+   "mid::n_direction"
+  ],
   "baseline": "_nodes_exec_baseline.json"
  }
 }
