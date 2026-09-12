@@ -42,7 +42,7 @@ flowchart TB
         AGENT --> TOOLS
 
         SERVICES["服务层"]
-        DATASVC["data_service.py DataService<br/>HTTP :8888"]
+        DATASVC["data_service.py DataService<br/>HTTP :8888（→ 仅本机）<br/>双端通讯改走 COS 中继"]
         REMOTE["remote_control.py 远程任务队列"]
         DATASVC -. "/etf_live /candidates /rotation /push" .-> APK
         REMOTE -. "任务提交/状态轮询" .-> APK
@@ -99,7 +99,7 @@ flowchart TB
 | 数据 | akshare/东财实时 + `data/cache` 日K | 手机直连东财/腾讯 + PC 桥 |
 | 参数源 | 产出方 → `app/src/main/assets/backtest_params.json` | 消费方（启动加载） |
 | Agent | `agent_loop` 计划-执行 + `multi_agent.py` 多Agent | ChatTab 工具化 ReAct + AgentHub 专家 |
-| 服务 | `data_service.py` HTTP :8888 供 APK 桥 | `PcBridgeClient` 消费 PC 桥 |
+| 服务 | `data_service.py` HTTP :8888（⚠️ 将降为仅本机；双端通讯改走 COS 中继，不填 IP） | `PcBridgeClient` → 转发 `CosRelayClient`（待落地） |
 | 构建 | `build_all.bat` (PyInstaller) | Gradle assembleDebug |
 
 ## 三、主链路

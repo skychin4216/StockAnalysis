@@ -1,19 +1,27 @@
 # C/S「登录即聊」配置清单（APK ↔ PC AutoQuant）
 
+> ⚠️ **2026-09-13 变更：局域网 / 填 IP 方案已废弃，本页「查 PC 局域网 IP」「填 IP」等步骤不再需要。**
+> 目标形态：**两端只要能上外网就自动互通**（腾讯云 COS 中转），不填 IP、不要求同一 WiFi、不需要 PC 有公网 IP。
+> 设计定稿见 [bridge-relay-design.md](bridge-relay-design.md)。
+> 中继落地前，下面的 8888 直连可**临时**使用；中继上线后 `0.0.0.0:8888` 降为仅本机监听，本页对应步骤同步删除。
+
 > 目标：像微信/QQ 一样，手机端打开 App 就能连上 PC、发消息 → PC 收到并回复 → 手机看到回复。
-> 本文给出**可照做**的分步配置，覆盖局域网 + 公网两种场景。
+> （历史版本曾覆盖"局域网 + 公网"两种场景 —— 已废弃，见上）
 
 ---
 
 ## 0. 原理（先看懂再配，30 秒）
 
-- **PC = 服务端**：GUI（`run_gui.py` 或 exe）启动时自动拉起 `DataService`，监听 `0.0.0.0:8888`，提供 HTTP 接口。
+- **PC = 服务端（旧模式，待拆除）**：GUI（`run_gui.py` 或 exe）启动时自动拉起 `DataService`，监听 `0.0.0.0:8888`，提供 HTTP 接口。
+  → 新方案 PC **不再对外开端口**，改为 relay worker 轮询 COS（见 bridge-relay-design.md）。
 - **APK = 客户端**：每 3 秒轮询 PC 接口。发消息走 `POST /remote/msg`（写入 PC 的 inbox），回复写 outbox，APK 轮询拉到回复 → 显示在「📡 远程」面板。
 - **AI 回复侧 = PC「💬 消息消费」页**：GUI 内置消息消费者，消费 inbox 待处理消息 → 交给 AI Agent（豆包/DeepSeek 等，可自调选股/行情/复盘工具）生成回复 → 写回 outbox 回传手机。
 - **鉴权**：每次请求带 `X-Token`。Token 存在 PC 的 `AutoQuant/data/remote_token.txt`，APK 内置预置同一 token → 开箱即用。
+  → 新方案改为每设备 `deviceToken` + HMAC 签名（旧单 token 退役）。
 
 ```
-手机 APK ──HTTP(3秒轮询)──▶ PC DataService(0.0.0.0:8888)
+旧链路（待拆除）：手机 APK ──HTTP(3秒轮询)──▶ PC DataService(0.0.0.0:8888)
+新链路（目标）  ：手机 APK ⇄ 腾讯云 COS(中继消息盒) ⇄ PC relay worker
     ▲                          │ 任务队列 RemoteControl / 消息桥 inbox
     │                          ▼
     └────────── outbox 回复 ◀── PC「💬 消息消费」页 → AI Agent 回复
@@ -29,7 +37,7 @@
 
 > 窗口要**保持打开**，最小化可以；关闭 = PC 端下线，手机立即"连接失败"。
 
-### ② 查 PC 局域网 IP
+### ② 查 PC 局域网 IP —— ⚠️ 新方案**不需要填 IP**（本步仅在中继落地前临时排障时用）
 打开 PowerShell 输入：
 
 ```powershell

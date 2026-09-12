@@ -10,7 +10,7 @@
 
 本项目为双端闭环：**AutoQuant（`AutoQuant/`，Python/PyQt5，Windows exe）** 负责 PC 回测/拟合/选股/Agent，
 **StockAnalysis APK（`app/`，Kotlin）** 负责手机行情/工作台/对话/监控。二者经 `backtest_params.json`
-（唯一参数源）、`data_service.py HTTP :8888`（PC 桥）、COS/远程控制互相打通。详见
+（唯一参数源）、`data_service.py HTTP :8888`（PC 桥，⚠️ **2026-09-13 起定位变更：`0.0.0.0:8888` 局域网直连将降为仅本机监听，双端通讯改为腾讯云 COS 中继，不填 IP**，见 [bridge-relay-design.md](bridge-relay-design.md)）、COS/远程控制互相打通。详见
 [architecture/dual-end-overview.md](architecture/dual-end-overview.md)。
 
 ## 一、文档导航（点击进入子文档）
