@@ -117,6 +117,24 @@ object NodeRegistry {
                 maxRows = config["maxRows"]?.toIntOrNull() ?: 200
             )
         }
+        // ══════════ 国家队 / 大基金持有进出（2026-09-13；national_flow_research.md + institutional_breakout_guide.md） ══════════
+        // 数据资产 data/_national_flow_hist.json（smalltools/_national_flow.py --build 产出并同步 assets）。
+        // 判定算法单一事实源 = smalltools/_national_flow.py；资产内 snap 已含结果，双端只读不算，避免口径漂移。
+        // 已挂入：etf_holdings_top5_pipeline.xml（阶段2）/ etf_industry_scan_pipeline.xml（阶段3）/
+        //         inst_holding_pipeline.xml（filter：三周期选股 + 两条 ETF 链 + 实仓汇总池）。
+        // ★ 硬约束：身份只取十大流通股东法定披露（ETF 申赎不计入）；NOTICE_DATE ≤ 信号日无未来函数；
+        //   季报滞后 1-3 月 → 中长线定性、非实时信号。
+        register("national_flow") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.NationalFlowNode(
+                sourceNode = config["sourceNode"] ?: "n_holdings_top5",
+                mode = config["mode"] ?: "annotate",
+                requireNat = config["requireNat"]?.toBooleanStrictOrNull() ?: false,
+                requireBig = config["requireBig"]?.toBooleanStrictOrNull() ?: false,
+                minScore = config["minScore"]?.toDoubleOrNull() ?: 50.0,
+                excludeOut = config["excludeOut"]?.toBooleanStrictOrNull() ?: false,
+                maxRows = config["maxRows"]?.toIntOrNull() ?: 200
+            )
+        }
         // ══════════ 三个独立 ETF 选股 usecase（2026-09-12；《ETF选股思路.txt》拆分） ══════════
         // ① ETF 持股 top5（覆盖矩阵排行，规则/参数在 etf_holdings_top5_pipeline.xml，双端同源）
         register("etf_holdings_rank") { _, config ->

@@ -1,16 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  ## 机构持仓判定 Pipeline（V2 DAG · 汇总 → 判定 → 止损 三阶段）
+  ## 机构持仓判定 Pipeline（V2 DAG · 汇总 → 季报判定 → 国家队/大基金 → 止损 四阶段）
 
   与同目录 usecase_pipeline.py（Python 引擎，XML DAG 主线）共用同一文件 —— 单一事实源。
 
   stageOutputs：
-    - "n_inst_pool"  JSONObject {as_of, n, rows[]}
-                     每行 {code,name,from,entry,bars[]}（bars 内嵌供下游止损定价）
-    - "n_inst_judge" JSONObject {as_of, n, a, b, c, period, available, rows[]}
-                     每行附 {grade,score,label,hold_ratio,latest_chg,streak,net_chg,
-                              n_funds,holder_chg_pct,instVerdict}
-    - "n_inst_stop"  JSONObject {rows[] 附 stop/stopPct/broken/stopTheory/momentum}
+    - "n_inst_pool"      JSONObject {as_of, n, rows[]}
+                         每行 {code,name,from,entry,bars[]}（bars 内嵌供下游止损定价）
+    - "n_inst_judge"     JSONObject {as_of, n, a, b, c, period, available, rows[]}
+                         每行附 {grade,score,label,hold_ratio,latest_chg,streak,net_chg,
+                                 n_funds,holder_chg_pct,instVerdict}
+    - "n_national_flow"  JSONObject {as_of, judge_day, counts{}, rows[]}
+                         每行附 {natState/natStrong/natRatio/natChg/natEnd/natNotice/natNames,
+                                 bigState/…, ssState/…, flowScore, flowLabel, semi}
+    - "n_inst_stop"      JSONObject {rows[] 附 stop/stopPct/broken/stopTheory/momentum}
 
   判定口径（《机构持续加仓自动选股池.txt》，算法单一事实源 = smalltools/_inst_holdings.py，
   产物 _inst_holdings.json 已含 grade，双端只读不算，避免三处口径漂移）：
@@ -22,9 +25,16 @@
     综合分   score = 0.6×ins + 0.4×conc
     分级      A=口径A 且 score≥75 ｜ B=(A或B) 且 score≥50 ｜ C=其余（散户票）
   ★ 机构季报天然滞后 1-3 月：只做中长线定性，不作实时信号。
+
+  ★ 2026-09-13 新增阶段3「国家队/大基金持有进出」（module=national_flow）：
+    数据资产 data/_national_flow_hist.json，判定算法单一事实源 = smalltools/_national_flow.py。
+    本链的标的池 = 「三周期选股 + ETF 全行业扫描 + ETF top5 + 实仓」汇总（n_inst_pool），
+    因此**三个选股链与实仓链都会自动带上**国家队/大基金口径，无需各自改造。
+    默认 annotate（只贴标签、保持 A/B/C 排序）；若想直接筛掉没有国家队/大基金流入的票，
+    把 mode 改为 filter 并按需打开 requireNat / requireBig / excludeOut / minScore。
 -->
 <DagPipeline id="inst_holding_dag" name="机构持仓判定Pipeline"
-    description="选股池+实仓汇总 → 机构季报判定(A精选/B观察/C散户票) → 多理论投票止损">
+    description="选股池+实仓汇总 → 机构季报判定(A精选/B观察/C散户票) → 国家队/大基金持有进出 → 多理论投票止损">
 
   <NodeList>
     <!-- ── 阶段1：汇总「三大周期选股 + ETF全行业扫描 + ETF top5 + 实仓」全部股票 ── -->
@@ -46,11 +56,25 @@
       </config>
     </Node>
 
-    <!-- ── 阶段3：多理论投票止损（六理论取最保守 + 棘轮；行内嵌 bars 定价）── -->
+    <!-- ── 阶段3：国家队/大基金持有进出（默认贴标签；要筛票就改 mode=filter）── -->
+    <Node id="n_national_flow" name="国家队/大基金持有进出" module="national_flow">
+      <config>
+        <param name="sourceNode" value="n_inst_judge" />
+        <param name="mode" value="annotate" />
+        <param name="requireNat" value="false" />
+        <param name="requireBig" value="false" />
+        <param name="excludeOut" value="false" />
+        <param name="minScore" value="50" />
+        <param name="maxRows" value="200" />
+        <param name="strategyText" value="十大流通股东法定披露：国家队(中央汇金/证金) + 大基金(国家集成电路产业投资基金等) + 社保；NOTICE_DATE≤信号日无未来函数；连续≥2期缺席判「退出」；流入按连续确认期数加权(国家队≥3期/大基金·社保≥2期)" />
+      </config>
+    </Node>
+
+    <!-- ── 阶段4：多理论投票止损（六理论取最保守 + 棘轮；行内嵌 bars 定价）── -->
     <Node id="n_inst_stop" name="多理论投票止损" module="stop_loss_vote">
       <config>
         <param name="target" value="picks" />
-        <param name="sourceNode" value="n_inst_judge" />
+        <param name="sourceNode" value="n_national_flow" />
         <param name="period" value="MID" />
         <param name="marketState" value="auto" />
         <param name="trailUp" value="true" />
@@ -67,6 +91,12 @@
     </Link>
     <Link>
       <SourceNodeId>n_inst_judge</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_national_flow</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_national_flow</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_inst_stop</TargetNodeId>
       <TargetPortId>0</TargetPortId>

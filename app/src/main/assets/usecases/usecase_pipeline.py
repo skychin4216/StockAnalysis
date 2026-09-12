@@ -3600,6 +3600,111 @@ def _inst_holding_judge_node(ctx, node, inputs):
     return out
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# 国家队 / 大基金持有进出（national_flow，2026-09-13 新增）
+#   规则出处：E:\Android\work\dev\选股思路\national_flow_research.md
+#             E:\Android\work\dev\选股思路\institutional_breakout_guide.md（§8 FundFlowAnalyzer）
+#   数据资产：data/_national_flow_hist.json（smalltools/_national_flow.py --build）
+#   ★ 判定算法单一事实源 = smalltools/_national_flow.py；资产内 snap 已含判定结果，
+#     Python 节点 / Kotlin 节点 / 推送表三处只读不算，避免口径漂移。
+# ══════════════════════════════════════════════════════════════════════════
+
+_NF_FILE = os.path.join(_REPO_ROOT, "data", "_national_flow_hist.json")
+_NF_MEM = {"key": None, "data": None}
+
+
+def _national_flow_data():
+    """国家队/大基金持有进出资产（data/_national_flow_hist.json）。缺失返回 None。"""
+    return _load_json_lazy(_NF_FILE, _NF_MEM)
+
+
+@register("national_flow")
+def _national_flow_node(ctx, node, inputs):
+    """国家队（中央汇金/证金）+ 大基金（国家集成电路产业投资基金等）持有进出判定。
+
+    ★ 硬约束（research 文档 §7.4「实盘红线」）：
+      1) 身份只取「十大流通股东」法定披露 —— ETF 申赎/估算资金流一律不计入国家队口径；
+      2) NOTICE_DATE ≤ 信号日（无未来函数，由 `_national_flow.flow_state` 保证）；
+      3) 季报滞后 1-3 月 → 只做中长线定性，**非实时信号**；看不见前十大之后的仓位。
+    ★ 关键口径：「退出」= 曾进前十大、现**连续 ≥2 期缺席**（每季披露，连续缺席即已退出）。
+       否则会把 2015 年一次新进一路带到 2026 年 —— 实测 002371 国家队披露停在 2021Q1、
+       300308 停在 2020Q2，与 research 文档「汇金 2015 后个股可见度下降、转向 ETF」一致。
+    ★ 计分：flowScore = 50 + Σ(渠道权重×方向)，国家队/大基金 1.0、社保 0.9；
+       流入按连续确认期数放大 1.35（国家队 ≥3 期、大基金/社保 ≥2 期才算 strong）；
+       流出扣满权重、退出按 0.6 折算（可能仅掉出十名之外）。
+
+    config：
+      sourceNode  上游节点 id（缺省 n_holdings_top5；也接 n_industry_scan / n_inst_pool）
+      mode        annotate（默认，只贴标签、保持上游顺序）/ filter（按下面门槛筛）
+      requireNat  filter 下要求国家队「流入」
+      requireBig  filter 下要求大基金「流入」
+      minScore    filter 下要求 flowScore ≥（默认 50）
+      excludeOut  filter 下剔除国家队「流出/退出」
+      maxRows     限行（默认 200）
+    输出：{as_of, judge_day, n, counts{流入,流出,退出,持稳,无}, rows:[…+natState/natStrong/
+      natRatio/natChg/natEnd/natNotice/natNames/bigState/…/ssState/…/flowScore/flowLabel/semi]}
+    """
+    cfg = dict(node.config or {})
+    src_id = str(cfg.get("sourceNode") or "n_holdings_top5")
+    src = ctx.get(src_id)
+    if not isinstance(src, dict) or not src.get("rows"):
+        src = _upstream_rows(inputs, (src_id,)) or src
+    src = src if isinstance(src, dict) else {"rows": []}
+    rows = [dict(r) for r in (src.get("rows") or [])]
+    d = _national_flow_data()
+    if not d or not d.get("snap"):
+        ctx.notes.append("[%s] ✗ 缺 data/_national_flow_hist.json（国家队/大基金数据资产）" % node.id)
+        out = dict(src)
+        out.update({"available": False, "rows": rows,
+                    "note": "缺数据资产：先跑 smalltools/_national_flow.py --build"})
+        ctx.stage(node.id, out)
+        return out
+    snap = d.get("snap") or {}
+    cnt = {"流入": 0, "流出": 0, "退出": 0, "持稳": 0, "无": 0}
+    for r in rows:
+        s = snap.get(_etf_code6(r.get("code"))) or {}
+        st = s.get("natState") or "无"
+        cnt[st] = cnt.get(st, 0) + 1
+        r.update({"natState": st, "natStrong": bool(s.get("natStrong")),
+                  "natRatio": s.get("natRatio"), "natChg": s.get("natChg"),
+                  "natEnd": s.get("natEnd"), "natNotice": s.get("natNotice"),
+                  "natNames": s.get("natNames") or [],
+                  "bigState": s.get("bigState") or "无", "bigStrong": bool(s.get("bigStrong")),
+                  "bigRatio": s.get("bigRatio"), "bigChg": s.get("bigChg"),
+                  "bigEnd": s.get("bigEnd"), "bigNotice": s.get("bigNotice"),
+                  "ssState": s.get("ssState") or "无", "ssRatio": s.get("ssRatio"),
+                  "flowScore": s.get("flowScore", 50.0),
+                  "flowLabel": s.get("flowLabel") or "无披露",
+                  "semi": bool(s.get("semi"))})
+    if str(cfg.get("mode") or "annotate").lower() == "filter":
+        min_score = float(cfg.get("minScore", 50) or 0)
+        req_nat = _bool_cfg(cfg.get("requireNat"), False)
+        req_big = _bool_cfg(cfg.get("requireBig"), False)
+        ex_out = _bool_cfg(cfg.get("excludeOut"), False)
+
+        def _keep(r):
+            if req_nat and r.get("natState") != "流入":
+                return False
+            if req_big and r.get("bigState") != "流入":
+                return False
+            if ex_out and r.get("natState") in ("流出", "退出"):
+                return False
+            return float(r.get("flowScore") or 0) >= min_score
+
+        rows = [r for r in rows if _keep(r)]
+    rows = rows[:int(cfg.get("maxRows", 200) or 200)]
+    out = dict(src)
+    out.update({"as_of": src.get("as_of") or ctx.asof, "available": True,
+                "judge_day": d.get("judge_day"), "built": d.get("built"),
+                "rule": d.get("rule"), "states": d.get("states"),
+                "n": len(rows), "counts": cnt, "rows": rows})
+    ctx.stage(node.id, out)
+    ctx.notes.append("[%s] 🏛️ 国家队/大基金(%s): %d 只 → 流入 %d / 流出 %d / 退出 %d / 持稳 %d"
+                     % (node.id, d.get("judge_day"), len(rows),
+                        cnt["流入"], cnt["流出"], cnt["退出"], cnt["持稳"]))
+    return out
+
+
 @register("etf_holdings_rank")
 def _etf_holdings_rank_node(ctx, node, inputs):
     """ETF 持股 top5：被多只核心（行业/主题）ETF 前五重仓覆盖的个股排行。

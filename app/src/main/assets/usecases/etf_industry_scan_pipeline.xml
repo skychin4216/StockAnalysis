@@ -1,23 +1,35 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  ## ETF 全行业扫描 Pipeline（V2 DAG · 门控→扫描→止损 三阶段）
+  ## ETF 全行业扫描 Pipeline（V2 DAG · 门控→扫描→国家队/大基金→止损 四阶段）
 
   与同目录 usecase_pipeline.py（Python 引擎，XML DAG 主线）共用同一文件 ——
   修改任何参数/标的池，双端行为自动一致（单一事实源）。
 
   stageOutputs：
-    - "n_etf_gate"       JSONObject {ok, date, note}   沪深300 close>MA20>MA60
-    - "n_industry_scan"  JSONObject {as_of, marketState, universe, scanned, rows[]}
-                         每行 = 一只行业ETF前五重仓股（含 score/etfs/themes/pos60/bars）
-    - "n_scan_stop"      JSONObject {rows[] 附 stop/stopPct/broken/stopTheory}
+    - "n_etf_gate"        JSONObject {ok, date, note}   沪深300 close>MA20>MA60
+    - "n_industry_scan"   JSONObject {as_of, marketState, universe, scanned, rows[]}
+                          每行 = 一只行业ETF前五重仓股（含 score/etfs/themes/pos60/bars）
+    - "n_national_flow"   JSONObject {as_of, judge_day, counts{}, rows[]}
+                          每行 = 上行 + {natState/natStrong/natRatio/natChg/natEnd/natNotice/natNames,
+                          bigState/…, ssState/…, flowScore, flowLabel, semi}
+    - "n_scan_stop"       JSONObject {rows[] 附 stop/stopPct/broken/stopTheory}
 
   ★ 大盘要不要考虑？—— 要，且按三态差异化（节点内 auto 判定，取自沪深300）：
     BULLISH     正常扫描
     OSCILLATION 门槛 +1.0 且要求 pos60 ≤ -12%（只接更深回撤的低吸）
     BEARISH     暂停开仓 → 全部降级为「观察清单」（ok=false），不产生买入信号
+
+  ★ 2026-09-13 新增阶段3「国家队/大基金持有进出」（module=national_flow）：
+    数据资产 data/_national_flow_hist.json，判定算法单一事实源 = smalltools/_national_flow.py，
+    资产内 snap 已含判定结果，双端只读不算。硬约束三条（见 usecase_pipeline.py 节点 docstring）：
+      ① 身份只取十大流通股东法定披露，ETF 申赎不计入国家队口径；
+      ② NOTICE_DATE ≤ 信号日（无未来函数）；
+      ③ 季度披露天然滞后 1-3 月 → 中长线定性，非实时信号。
+    本链用 annotate 模式（只贴标签不改排序）：低吸分数体现「技术位置」，国家队/大基金体现
+    「谁在低位收货」，两者叠加读；若要用门槛筛选，见 inst_holding_pipeline.xml 的 filter 用法。
 -->
 <DagPipeline id="etf_industry_scan_dag" name="ETF全行业扫描Pipeline"
-    description="沪深300门控 → 行业ETF前五重仓低吸打分top5 → 多理论投票止损">
+    description="沪深300门控 → 行业ETF前五重仓低吸打分top5 → 国家队/大基金持有进出 → 多理论投票止损">
 
   <NodeList>
     <!-- ── 阶段1：大盘门控（沪深300结构多头）：仅作 UI 横幅与阻断提示，节点内部另按三态自动自适应 ── -->
@@ -53,11 +65,21 @@
       </config>
     </Node>
 
-    <!-- ── 阶段3：多理论投票止损（六理论取最保守+棘轮）：直接消费上游行内嵌 bars ── -->
+    <!-- ── 阶段3：国家队/大基金持有进出贴标签（不改顺序、不筛行）── -->
+    <Node id="n_national_flow" name="国家队/大基金持有进出" module="national_flow">
+      <config>
+        <param name="sourceNode" value="n_industry_scan" />
+        <param name="mode" value="annotate" />
+        <param name="maxRows" value="200" />
+        <param name="strategyText" value="十大流通股东法定披露：国家队(中央汇金/证金) + 大基金(国家集成电路产业投资基金等) + 社保；NOTICE_DATE≤信号日无未来函数；连续≥2期缺席判「退出」；流入按连续确认期数加权" />
+      </config>
+    </Node>
+
+    <!-- ── 阶段4：多理论投票止损（六理论取最保守+棘轮）：直接消费上游行内嵌 bars ── -->
     <Node id="n_scan_stop" name="多理论投票止损" module="stop_loss_vote">
       <config>
         <param name="target" value="picks" />
-        <param name="sourceNode" value="n_industry_scan" />
+        <param name="sourceNode" value="n_national_flow" />
         <param name="period" value="MID" />
         <param name="marketState" value="auto" />
         <param name="trailUp" value="true" />
@@ -74,6 +96,12 @@
     </Link>
     <Link>
       <SourceNodeId>n_industry_scan</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_national_flow</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_national_flow</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_scan_stop</TargetNodeId>
       <TargetPortId>0</TargetPortId>
