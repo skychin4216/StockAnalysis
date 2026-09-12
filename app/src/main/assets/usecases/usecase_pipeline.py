@@ -823,6 +823,190 @@ def _base_position_guard(ctx, node, inputs):
     return out
 
 
+# ── 板块强弱 / 风格轮动（2026-09-12 新增：APK MarketPublicPipelineNodes.kt 同构移植）──
+# 跨端口径说明：APK 的 SectorStrengthNode 从 `sector_daily_record` 表读板块热度记录；
+# PC 无该表，改用 `hot_sector_config.HOT_SECTOR_CONFIG` 的板块成分股 K 线重算
+# （与本文件 sector_ambush 同源口径，见 2678 行说明）。排序规则与 APK 逐条一致：
+#     热门天数 ↓ → 综合分 ↓ → 日均涨跌 ↓ → 主力净流入 ↓
+# 其中「主力净流入」PC 侧无资金流数据，恒为 0.0（不引入额外排序差异）。
+
+
+def _sector_members(hs):
+    """板块名 → 成分股 key 列表（'601969.SH' → 'sh601969'）。"""
+    out = {}
+    for board, bv in (hs or {}).items():
+        codes = set()
+        for _sub, sv in ((bv or {}).get("sub_sectors") or {}).items():
+            for secid in ((sv or {}).get("leaders") or {}):
+                codes.add(_amb_secid_to_key(secid))
+        if codes:
+            out[board] = sorted(codes)
+    return out
+
+
+def _sector_avg_ret(cache, ctx, codes, win):
+    """板块成分股近 win 日平均涨幅（%）；样本不足返回 None。"""
+    rs = []
+    for c in codes:
+        snaps = (cache.get(c) or {}).get("snaps") or []
+        i = _dip_row_at(ctx, snaps)
+        if i < win or not snaps[i].get("close"):
+            continue
+        c0 = snaps[i - win].get("close")
+        if c0:
+            rs.append((snaps[i]["close"] / c0 - 1) * 100.0)
+    return (sum(rs) / len(rs)) if rs else None
+
+
+@register("sector_strength")
+def _sector_strength(ctx, node, inputs):
+    """板块强弱监测：Top N 强势板块 + 热门板块代码。
+
+    config：lookbackDays="20"（统计窗口）、topN="15"（输出数量）
+    输出 stage：{as_of, topSectors[], hotSectorCodes[], text}
+    下游：style_rotation 读 n_sector_strength 拿强势板块。
+    """
+    cfg = node.config or {}
+    lookback = int(cfg.get("lookbackDays") or 20)
+    top_n = int(cfg.get("topN") or 15)
+    cache = ctx.cache or {}
+    members = _sector_members(_load_hot_sector_config())
+    if not members:
+        ctx.notes.append("[%s] ⚠️ 无板块成分股映射（hot_sector_config 缺失），板块强弱跳过"
+                         % node.id)
+        out = {"as_of": "", "topSectors": [], "hotSectorCodes": [], "text": "无板块数据"}
+        ctx.stage(node.id, out)
+        return out
+
+    stats, as_of = [], ""
+    for board, codes in members.items():
+        rets, up_days, used = [], [], 0
+        for c in codes:
+            snaps = (cache.get(c) or {}).get("snaps") or []
+            i = _dip_row_at(ctx, snaps)
+            if i < lookback or not snaps[i].get("close"):
+                continue
+            seg = snaps[i - lookback:i + 1]
+            c0 = seg[0].get("close")
+            if not c0:
+                continue
+            rets.append((seg[-1]["close"] / c0 - 1) * 100.0)
+            up_days.append(sum(1 for k in range(1, len(seg))
+                               if seg[k]["close"] > seg[k - 1]["close"]))
+            used += 1
+            if snaps[i]["date"] > as_of:
+                as_of = snaps[i]["date"]
+        if not rets:
+            continue
+        r5 = _sector_avg_ret(cache, ctx, codes, 5)
+        r10 = _sector_avg_ret(cache, ctx, codes, 10)
+        r20 = _sector_avg_ret(cache, ctx, codes, 20)
+        stats.append({
+            "code": board, "name": board,
+            "avgChangePct": sum(rets) / len(rets),
+            "hotDays": (sum(up_days) / len(up_days)) if up_days else 0.0,
+            "compositeScore": 0.5 * (r10 or 0.0) + 0.3 * (r20 or 0.0) + 0.2 * (r5 or 0.0),
+            "mainNetInflow": 0.0, "memberCount": used,
+        })
+    if not stats:
+        ctx.notes.append("[%s] ⚠️ 板块成分股在缓存中无数据，无法计算板块强弱" % node.id)
+        out = {"as_of": "", "topSectors": [], "hotSectorCodes": [], "text": "无板块数据"}
+        ctx.stage(node.id, out)
+        return out
+
+    stats.sort(key=lambda s: (-s["hotDays"], -s["compositeScore"],
+                              -s["avgChangePct"], -s["mainNetInflow"]))
+    for k, s in enumerate(stats[:top_n]):
+        s["rank"] = k + 1
+    top = stats[:top_n]
+
+    lines = ["📊 板块强弱监测（近 %d 日）" % lookback, "最强板块 Top %d：" % len(top)]
+    for s in top[:8]:
+        lines.append("  #%d %s  日均涨跌 %+.2f%%  上涨 %d 天  动量 %.2f"
+                     % (s["rank"], s["name"], s["avgChangePct"],
+                        int(round(s["hotDays"])), s["compositeScore"]))
+    if len(top) > 8:
+        lines.append("  ... 共 %d 个板块上榜" % len(top))
+    lines.append("热门板块: %s" % "、".join(s["name"] for s in top[:8]))
+
+    out = {"as_of": as_of, "lookbackDays": lookback, "topSectors": top,
+           "hotSectorCodes": [s["name"] for s in top], "text": "\n".join(lines)}
+    ctx.stage(node.id, out)
+    ctx.stage("n_sector_strength", out)
+    ctx.notes.append("[%s] 📊 板块强弱：%s | 共 %d 个板块"
+                     % (node.id, "、".join(s["name"] for s in top[:5]), len(stats)))
+    return out
+
+
+_STYLE_SEASON = {
+    12: "📅 冬播春耕季：关注化肥/草甘膦/农化（12-1月备耕、2-4月主升浪）",
+    1: "📅 冬播春耕季：关注化肥/草甘膦/农化（12-1月备耕、2-4月主升浪）",
+    2: "📅 春季主升浪窗口：题材活跃度提升，可适当提高短线参与度",
+    3: "📅 春季主升浪窗口：题材活跃度提升，可适当提高短线参与度",
+    4: "📅 春季主升浪窗口：题材活跃度提升，可适当提高短线参与度",
+    5: "📅 年中震荡期：业绩窗口临近，回避纯题材炒作",
+    6: "📅 年中震荡期：业绩窗口临近，回避纯题材炒作",
+    7: "📅 年中震荡期：业绩窗口临近，回避纯题材炒作",
+    8: "📅 中报密集期：关注业绩确定性（银行/资源/高股息）",
+    9: "📅 中报密集期：关注业绩确定性（银行/资源/高股息）",
+    10: "📅 四季度：关注低估值修复 + 来年春季行情预演",
+    11: "📅 四季度：关注低估值修复 + 来年春季行情预演",
+}
+
+
+@register("style_rotation")
+def _style_rotation(ctx, node, inputs):
+    """风格轮动判断：大盘环境 + 板块强弱 → 风格 / 风险 / 建议持仓周期 + 提示。
+
+    依赖：n_a_market（a_market_analysis → ctx.market）、n_sector_strength
+    输出 stage：{styleLabel, leadingSectors[], suggestedPeriod, riskLevel, text}
+    与 APK 一致：大盘缺失时走「均衡震荡」兜底分支（APK 的 market == null 分支）。
+    """
+    import datetime as _dt
+    sec = ctx.get("n_sector_strength") or {}
+    leading = [s.get("name") for s in (sec.get("topSectors") or [])[:5] if s.get("name")]
+    market = getattr(ctx, "market", None) or {}
+    detail = market.get("detail") if isinstance(market.get("detail"), dict) else {}
+    state = market.get("state") or getattr(ctx, "direction", None) or "OSCILLATION"
+
+    if state == "BEARISH":
+        style, risk, period = "弱势防守（价值防御）", "中高", "长线/高股息防御"
+    elif state == "BULLISH":
+        style, risk, period = "趋势上行（顺势进攻）", "中低", "中期/趋势跟随"
+    else:
+        style, risk, period = "均衡震荡（结构性行情）", "中", "超短/短线快进快出"
+
+    names = "".join(leading)
+    if any(k in names for k in ("银行", "煤炭", "电力", "保险", "石油", "高速公路")):
+        style_hint = "（偏价值/高股息防守）"
+    elif any(k in names for k in ("半导体", "通信", "软件", "电子", "传媒", "游戏")):
+        style_hint = "（偏成长/科技）"
+    elif any(k in names for k in ("有色", "化工", "钢铁", "基建", "地产")):
+        style_hint = "（偏周期）"
+    else:
+        style_hint = ""
+
+    temp = str(detail.get("temp") or detail.get("marketTemp") or "")
+    season = _STYLE_SEASON.get(_dt.date.today().month, "")
+    lines = ["🎨 风格轮动判断：%s %s" % (style, style_hint),
+             "   当前强势板块: %s" % ("、".join(leading) if leading else "暂无"),
+             "   建议持仓周期: %s" % period,
+             "   风险等级: %s" % risk]
+    if temp:
+        lines.append("   市场温度: %s" % temp)
+    if season:
+        lines.append("   " + season)
+
+    out = {"styleLabel": style + style_hint, "leadingSectors": leading,
+           "suggestedPeriod": period, "riskLevel": risk,
+           "text": "\n".join(lines)}
+    ctx.stage(node.id, out)
+    ctx.stage("n_style_rotation", out)
+    ctx.notes.append("[%s] 🎨 风格轮动：%s | 强势板块 %s"
+                     % (node.id, out["styleLabel"], "、".join(leading[:3]) or "无"))
+    return out
+
+
 _DIR_CN = {"UPTREND": "上升趋势", "DOWNTREND": "下降趋势",
            "ACCUMULATION": "横盘蓄势", "BREAKOUT": "放量突破",
            "OSCILLATION": "区间震荡"}

@@ -1,6 +1,6 @@
 {
  "asof": "2026-09-11",
- "generated_at": "2026-09-13T00:08:30",
+ "generated_at": "2026-09-13T00:17:14",
  "cases": [
   {
    "usecase": "ultra_short",
@@ -32,8 +32,10 @@
     "n_pool",
     "n_pool_filter",
     "n_pool_hint",
+    "n_sector_strength",
     "n_smart",
     "n_strict",
+    "n_style_rotation",
     "n_swap",
     "n_vp"
    ],
@@ -47,13 +49,9 @@
     "n_news_str",
     "n_newsguard",
     "n_sector_leaders",
-    "n_sector_strength",
-    "n_style_rotation",
     "n_t1sell"
    ],
    "bypass_reasons": {
-    "n_sector_strength": "未实现 module",
-    "n_style_rotation": "未实现 module",
     "n_bg": "降级为透传",
     "n_sector_leaders": "降级为透传",
     "n_intraday": "降级为透传",
@@ -66,8 +64,8 @@
    },
    "silent": [],
    "notes": [
-    "[n_sector_strength] 未实现 module=sector_strength",
-    "[n_style_rotation] 未实现 module=style_rotation",
+    "[n_sector_strength] 📊 板块强弱：军工国防、银行红利、油运航运、石油石化、有色金属 | 共 20 个板块",
+    "[n_style_rotation] 🎨 风格轮动：均衡震荡（结构性行情）（偏价值/高股息防守） | 强势板块 军工国防、银行红利、油运航运",
     "[n_bg] bg_manager 无回测数据，已降级为透传",
     "[n_sector_leaders] market_sector_leaders 无回测数据，已降级为透传",
     "[n_intraday] intraday_analysis 无回测数据，已降级为透传",
@@ -111,8 +109,10 @@
     "n_pool",
     "n_pool_filter",
     "n_pool_hint",
+    "n_sector_strength",
     "n_smart",
     "n_strict",
+    "n_style_rotation",
     "n_swap",
     "n_vp",
     "vp_detail"
@@ -131,13 +131,9 @@
     "n_newsguard",
     "n_rot_pen",
     "n_sector_leaders",
-    "n_sector_strength",
-    "n_style_rotation",
     "n_zipline"
    ],
    "bypass_reasons": {
-    "n_sector_strength": "未实现 module",
-    "n_style_rotation": "未实现 module",
     "n_bg": "降级为透传",
     "n_sector_leaders": "降级为透传",
     "n_multihot": "降级为透传",
@@ -154,8 +150,8 @@
    },
    "silent": [],
    "notes": [
-    "[n_sector_strength] 未实现 module=sector_strength",
-    "[n_style_rotation] 未实现 module=style_rotation",
+    "[n_sector_strength] 📊 板块强弱：军工国防、银行红利、油运航运、石油石化、有色金属 | 共 20 个板块",
+    "[n_style_rotation] 🎨 风格轮动：均衡震荡（结构性行情）（偏价值/高股息防守） | 强势板块 军工国防、银行红利、油运航运",
     "[n_bg] bg_manager 无回测数据，已降级为透传",
     "[n_sector_leaders] market_sector_leaders 无回测数据，已降级为透传",
     "[n_multihot] multi_period_hot 无回测数据，已降级为透传",
@@ -206,8 +202,10 @@
     "n_pool",
     "n_pool_filter",
     "n_pool_hint",
+    "n_sector_strength",
     "n_smart",
     "n_strict",
+    "n_style_rotation",
     "n_swap",
     "n_vp",
     "vp_detail"
@@ -230,13 +228,9 @@
     "n_rot_pen",
     "n_season",
     "n_sector_leaders",
-    "n_sector_pool",
-    "n_sector_strength",
-    "n_style_rotation"
+    "n_sector_pool"
    ],
    "bypass_reasons": {
-    "n_sector_strength": "未实现 module",
-    "n_style_rotation": "未实现 module",
     "n_bg": "降级为透传",
     "n_sector_leaders": "降级为透传",
     "n_multihot": "降级为透传",
@@ -257,8 +251,8 @@
    },
    "silent": [],
    "notes": [
-    "[n_sector_strength] 未实现 module=sector_strength",
-    "[n_style_rotation] 未实现 module=style_rotation",
+    "[n_sector_strength] 📊 板块强弱：军工国防、银行红利、油运航运、石油石化、有色金属 | 共 20 个板块",
+    "[n_style_rotation] 🎨 风格轮动：均衡震荡（结构性行情）（偏价值/高股息防守） | 强势板块 军工国防、银行红利、油运航运",
     "[n_bg] bg_manager 无回测数据，已降级为透传",
     "[n_sector_leaders] market_sector_leaders 无回测数据，已降级为透传",
     "[n_multihot] multi_period_hot 无回测数据，已降级为透传",
@@ -315,8 +309,10 @@
     "n_pool",
     "n_pool_filter",
     "n_pool_hint",
+    "n_sector_strength",
     "n_smart",
     "n_strict",
+    "n_style_rotation",
     "n_vp",
     "vp_detail"
    ],
@@ -333,13 +329,9 @@
     "n_pe_peer",
     "n_season",
     "n_sector_leaders",
-    "n_sector_pool",
-    "n_sector_strength",
-    "n_style_rotation"
+    "n_sector_pool"
    ],
    "bypass_reasons": {
-    "n_sector_strength": "未实现 module",
-    "n_style_rotation": "未实现 module",
     "n_bg": "降级为透传",
     "n_sector_leaders": "降级为透传",
     "n_sector_pool": "未实现 module",
@@ -355,8 +347,8 @@
    },
    "silent": [],
    "notes": [
-    "[n_sector_strength] 未实现 module=sector_strength",
-    "[n_style_rotation] 未实现 module=style_rotation",
+    "[n_sector_strength] 📊 板块强弱：军工国防、银行红利、油运航运、石油石化、有色金属 | 共 20 个板块",
+    "[n_style_rotation] 🎨 风格轮动：均衡震荡（结构性行情）（偏价值/高股息防守） | 强势板块 军工国防、银行红利、油运航运",
     "[n_bg] bg_manager 无回测数据，已降级为透传",
     "[n_sector_leaders] market_sector_leaders 无回测数据，已降级为透传",
     "[n_sector_pool] 未实现 module=sector_stock_pool",
@@ -512,23 +504,21 @@
     "n_a_market",
     "n_import",
     "n_market_direction",
-    "n_pool_hint"
-   ],
-   "passthrough": [],
-   "bypassed": [
-    "n_periods",
+    "n_pool_hint",
     "n_sector_strength",
     "n_style_rotation"
    ],
+   "passthrough": [],
+   "bypassed": [
+    "n_periods"
+   ],
    "bypass_reasons": {
-    "n_sector_strength": "未实现 module",
-    "n_style_rotation": "未实现 module",
     "n_periods": "降级为透传"
    },
    "silent": [],
    "notes": [
-    "[n_sector_strength] 未实现 module=sector_strength",
-    "[n_style_rotation] 未实现 module=style_rotation",
+    "[n_sector_strength] 📊 板块强弱：军工国防、银行红利、油运航运、石油石化、有色金属 | 共 20 个板块",
+    "[n_style_rotation] 🎨 风格轮动：均衡震荡（结构性行情）（偏价值/高股息防守） | 强势板块 军工国防、银行红利、油运航运",
     "[n_periods] stock_deep_analysis 无回测数据，已降级为透传"
    ]
   },
@@ -759,25 +749,23 @@
     "n_market_direction",
     "n_pool",
     "n_pool_filter",
-    "n_pool_hint"
+    "n_pool_hint",
+    "n_sector_strength",
+    "n_style_rotation"
    ],
    "passthrough": [],
    "bypassed": [
     "n_bg",
-    "n_sector_leaders",
-    "n_sector_strength",
-    "n_style_rotation"
+    "n_sector_leaders"
    ],
    "bypass_reasons": {
-    "n_sector_strength": "未实现 module",
-    "n_style_rotation": "未实现 module",
     "n_bg": "降级为透传",
     "n_sector_leaders": "降级为透传"
    },
    "silent": [],
    "notes": [
-    "[n_sector_strength] 未实现 module=sector_strength",
-    "[n_style_rotation] 未实现 module=style_rotation",
+    "[n_sector_strength] 📊 板块强弱：军工国防、银行红利、油运航运、石油石化、有色金属 | 共 20 个板块",
+    "[n_style_rotation] 🎨 风格轮动：均衡震荡（结构性行情）（偏价值/高股息防守） | 强势板块 军工国防、银行红利、油运航运",
     "[n_bg] bg_manager 无回测数据，已降级为透传",
     "[n_sector_leaders] market_sector_leaders 无回测数据，已降级为透传"
    ]
@@ -816,8 +804,10 @@
     "n_pool",
     "n_pool_filter",
     "n_pool_hint",
+    "n_sector_strength",
     "n_smart",
     "n_strict",
+    "n_style_rotation",
     "n_swap",
     "n_vp",
     "vp_detail"
@@ -842,14 +832,10 @@
     "n_season",
     "n_sector_leaders",
     "n_sector_pool",
-    "n_sector_strength",
-    "n_style_rotation",
     "n_t1sell",
     "n_zipline"
    ],
    "bypass_reasons": {
-    "n_sector_strength": "未实现 module",
-    "n_style_rotation": "未实现 module",
     "n_bg": "降级为透传",
     "n_sector_leaders": "降级为透传",
     "n_intraday": "降级为透传",
@@ -873,8 +859,8 @@
    },
    "silent": [],
    "notes": [
-    "[n_sector_strength] 未实现 module=sector_strength",
-    "[n_style_rotation] 未实现 module=style_rotation",
+    "[n_sector_strength] 📊 板块强弱：军工国防、银行红利、油运航运、石油石化、有色金属 | 共 20 个板块",
+    "[n_style_rotation] 🎨 风格轮动：均衡震荡（结构性行情）（偏价值/高股息防守） | 强势板块 军工国防、银行红利、油运航运",
     "[n_bg] bg_manager 无回测数据，已降级为透传",
     "[n_sector_leaders] market_sector_leaders 无回测数据，已降级为透传",
     "[n_intraday] intraday_analysis 无回测数据，已降级为透传",
@@ -1157,16 +1143,6 @@
   },
   {
    "usecase": "ultra_short",
-   "node": "n_sector_strength",
-   "reason": "未实现 module"
-  },
-  {
-   "usecase": "ultra_short",
-   "node": "n_style_rotation",
-   "reason": "未实现 module"
-  },
-  {
-   "usecase": "ultra_short",
    "node": "n_t1sell",
    "reason": "未实现 module"
   },
@@ -1229,16 +1205,6 @@
    "usecase": "short",
    "node": "n_sector_leaders",
    "reason": "降级为透传"
-  },
-  {
-   "usecase": "short",
-   "node": "n_sector_strength",
-   "reason": "未实现 module"
-  },
-  {
-   "usecase": "short",
-   "node": "n_style_rotation",
-   "reason": "未实现 module"
   },
   {
    "usecase": "short",
@@ -1331,16 +1297,6 @@
    "reason": "未实现 module"
   },
   {
-   "usecase": "mid",
-   "node": "n_sector_strength",
-   "reason": "未实现 module"
-  },
-  {
-   "usecase": "mid",
-   "node": "n_style_rotation",
-   "reason": "未实现 module"
-  },
-  {
    "usecase": "long",
    "node": "n_bg",
    "reason": "降级为透传"
@@ -1398,16 +1354,6 @@
   {
    "usecase": "long",
    "node": "n_sector_pool",
-   "reason": "未实现 module"
-  },
-  {
-   "usecase": "long",
-   "node": "n_sector_strength",
-   "reason": "未实现 module"
-  },
-  {
-   "usecase": "long",
-   "node": "n_style_rotation",
    "reason": "未实现 module"
   },
   {
@@ -1506,16 +1452,6 @@
    "reason": "降级为透传"
   },
   {
-   "usecase": "stock_deep_analysis",
-   "node": "n_sector_strength",
-   "reason": "未实现 module"
-  },
-  {
-   "usecase": "stock_deep_analysis",
-   "node": "n_style_rotation",
-   "reason": "未实现 module"
-  },
-  {
    "usecase": "direction",
    "node": "n_candle",
    "reason": "降级为透传"
@@ -1594,16 +1530,6 @@
    "usecase": "common",
    "node": "n_sector_leaders",
    "reason": "降级为透传"
-  },
-  {
-   "usecase": "common",
-   "node": "n_sector_strength",
-   "reason": "未实现 module"
-  },
-  {
-   "usecase": "common",
-   "node": "n_style_rotation",
-   "reason": "未实现 module"
   },
   {
    "usecase": "complete_closed_loop",
@@ -1697,16 +1623,6 @@
   },
   {
    "usecase": "complete_closed_loop",
-   "node": "n_sector_strength",
-   "reason": "未实现 module"
-  },
-  {
-   "usecase": "complete_closed_loop",
-   "node": "n_style_rotation",
-   "reason": "未实现 module"
-  },
-  {
-   "usecase": "complete_closed_loop",
    "node": "n_t1sell",
    "reason": "未实现 module"
   },
@@ -1718,30 +1634,44 @@
  ],
  "errors": [],
  "notes": [],
- "bypass_count": 120,
+ "bypass_count": 106,
  "silent_count": 99,
  "error_count": 0,
  "bypass_reasons": {
   "降级为透传": 73,
-  "未实现 module": 47
+  "未实现 module": 33
  },
  "ok": false,
  "selfcheck": {
   "code": 0,
   "ok": false,
-  "bypass_count": 120,
+  "bypass_count": 106,
   "silent_count": 99,
   "error_count": 0,
   "new": [],
   "fixed": [
+   "common::n_sector_strength",
+   "common::n_style_rotation",
    "complete_closed_loop::n_base_guard",
    "complete_closed_loop::n_direction",
+   "complete_closed_loop::n_sector_strength",
+   "complete_closed_loop::n_style_rotation",
    "direction::n_base_guard",
    "direction::n_direction",
    "long::n_base_guard",
    "long::n_direction",
+   "long::n_sector_strength",
+   "long::n_style_rotation",
    "mid::n_base_guard",
-   "mid::n_direction"
+   "mid::n_direction",
+   "mid::n_sector_strength",
+   "mid::n_style_rotation",
+   "short::n_sector_strength",
+   "short::n_style_rotation",
+   "stock_deep_analysis::n_sector_strength",
+   "stock_deep_analysis::n_style_rotation",
+   "ultra_short::n_sector_strength",
+   "ultra_short::n_style_rotation"
   ],
   "baseline": "_nodes_exec_baseline.json"
  }
