@@ -215,13 +215,18 @@ def fetch_sse_scale(date_str):
     return out
 
 
-def do_backfill(days, funds):
+def do_backfill(days, funds, workers=5):
     """回补沪市宽基 ETF 日频份额 → 并入 DAILY_FILE（只补缺失日期，不覆盖已有快照）。
 
     ★ 口径（2026-09-13 实测）：上交所可按 STAT_DATE 取任意历史交易日；
       深交所 ShowReport 忽略一切日期参数、只回「当前规模(份)」→ 深市 159915/159919
       无历史，故回补行只含 5 开头标的，`covered` 记录在场标的，
       跨日比较由 daily_drift 按「共有标的」计算，避免口径不一致。
+
+    ★ 提速（2026-09-13）：接口**一次请求返回全部 904 只沪市 ETF**（实测单次 ~5~8s），
+      但**不支持日期区间**（补 START_DATE/END_DATE 实测被忽略，仍只回 STAT_DATE 当日），
+      故 20 日只能 20 次请求。原串行 ≈ 2 分钟 → 改线程池并发（默认 workers=5）≈ 30s。
+      「拿当天最新」无需回补：`--backfill 1` 即 1 次请求。
     """
     sh = [(c, n) for c, n in funds if str(c).startswith("5")]
     if not sh:
@@ -229,13 +234,28 @@ def do_backfill(days, funds):
         return 0
     daily = _load(DAILY_FILE, {"note": DAILY_NOTE, "snap": []})
     have = {x.get("date"): x for x in (daily.get("snap") or [])}
-    got, added = 0, 0
-    for d in _recent_trade_days(days):
+    dates = _recent_trade_days(days)
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _one(d):
         try:
-            m = fetch_sse_scale(d)
+            return d, fetch_sse_scale(d)
         except Exception as e:                                   # noqa: BLE001
             print("  %s 抓取失败: %s" % (d, e))
-            continue
+            return d, None
+
+    fetched = {}
+    t0 = time.time()
+    with ThreadPoolExecutor(max_workers=max(1, min(workers, len(dates)))) as ex:
+        for d, m in ex.map(_one, dates):
+            if m:
+                fetched[d] = m
+    print("  · 并发抓取 %d 日（workers=%d）耗时 %.1fs" % (len(dates), workers, time.time() - t0))
+
+    got, added = 0, 0
+    for d in dates:
+        m = fetched.get(d)
         if not m:
             continue                                             # 非交易日 / 未披露
         fl = {c: {"shares": m[c], "scale": None, "nav": None, "src": "sse"}

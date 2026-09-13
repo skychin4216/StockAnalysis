@@ -2571,8 +2571,10 @@ def _build_candidate_sections(data, ctx, cache, dag, old_secids, asof):
         st_tags = _etf_tags([(x[1].get("secid") or "")[-6:] for x in keep])
         for period, it, flowout in keep:
             lu = bool(it.get("limit_up"))
-            mark = "🔒" if lu else ("🟡" if flowout else "·")
             newdot = "🆕" if it["secid"] not in old_secids else ""
+            # 已有 🆕 前缀时不再叠「·」占位符（否则 CSV 长图会渲染成「新··中国巨石」；
+            # 与 ① DAG 段的标记写法保持一致）
+            mark = "🔒" if lu else ("🟡" if flowout else ("" if newdot else "·"))
             sid = it.get("secid") or ""
             snaps = _find_cache_snaps(cache, sid)
             # 备注：命中周期 + 资金流向（原文 reso.tags 里的 资金流出）
@@ -2611,7 +2613,11 @@ def _build_candidate_sections(data, ctx, cache, dag, old_secids, asof):
                     etf_flow=etf_flow, dag_codes=dag_codes, max_rows=10):
                 code6 = str(pk.get("code") or "")
                 snaps = _eh._snaps_live(code6)      # 与 _meta_live 同一次拉取（当日缓存）
-                note = "绿转红√" + ((" " + str(pk.get("tag"))) if pk.get("tag") else "")
+                # 备注只留 ETF 扫描自身的「绿转红√」判定：原先还回显 pk.tag
+                # （"RSI58 SAR红↑1 MACD红柱扩大"），而 RSI/SAR/MACD 三列由 _pk_tech_cells(pk)
+                # 按**当日实时 snaps** 另算 → 同一张表里同一指标出现两个值（59 vs 58 等），
+                # 故去掉 tag 回显，避免自相矛盾。
+                note = "绿转红√"
                 fu_rows.append({
                     "name": str(pk.get("name") or code6) + ("√DAG" if pk.get("dag_hit") else ""),
                     "code": code6,

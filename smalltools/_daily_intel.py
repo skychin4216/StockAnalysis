@@ -1012,9 +1012,12 @@ def review_sections(log=print, trade_date=None):
             cur = q.get("price")
             base = v.get("close")
             ret = ((cur / base - 1) * 100) if (cur and base) else None
+            # 来源 src 由 _self_review 合并（dag / round / prepared 以 + 相连，
+            # 最长 "dag+prepared+round"=19 字符）；旧 [:12] 会把 "prepared+round"
+            # 截成 "prepared+rou"（长图/CSV 里出现半截词），改放宽到 20。
             rows_d.append([v.get("name") or sid, sid[2:], v.get("period") or "—",
                            v.get("asof") or "—", _fmt_num(base), _fmt_num(cur),
-                           _fmt_pct(ret), (v.get("src") or "—")[:12]])
+                           _fmt_pct(ret), (v.get("src") or "—")[:20]])
         rows_d.sort(key=lambda r: -(_f(r[6].replace("%", "").replace("+", ""), -99) or -99))
     if rows_d:
         sections.append({"title": "d. 近5日信号票巡诊（持有中标的今日表现）",
