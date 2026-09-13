@@ -74,7 +74,14 @@ abstract class QuantFragmentBase : Fragment() {
     /** 滚动执行日志视图（四周期 UI 实时展示 pipeline 执行步骤，含公共 pipeline） */
     protected lateinit var pipelineLogView: TextView
 
-    /** 执行日志缓冲（最多保留 300 条） */
+    /**
+     * 执行日志缓冲上限（条）。
+     * 2026-09-13：300 → 1000。节点输入/输出股票改为“完整列出、每 8 只换行”后，
+     * 单个节点就可能占几十行，300 条会把早先的阶段标题/节点行挤掉，故放大缓冲。
+     */
+    private val LOG_BUFFER_MAX = 1000
+
+    /** 执行日志缓冲（最多保留 [LOG_BUFFER_MAX] 条） */
     private val logBuffer = ArrayDeque<String>()
 
     // ── 可折叠执行日志面板（进度条 + 状态文字 + 日志合并，可收起/展开） ──
@@ -766,7 +773,7 @@ abstract class QuantFragmentBase : Fragment() {
         if (!::pipelineLogView.isInitialized) return
         val ts = java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
         logBuffer.addLast("[$ts] $text")
-        while (logBuffer.size > 300) logBuffer.removeFirst()
+        while (logBuffer.size > LOG_BUFFER_MAX) logBuffer.removeFirst()
         lifecycleScope.launch(Dispatchers.Main) {
             if (!isAdded || !::pipelineLogView.isInitialized) return@launch
             ensureLogExpanded()
@@ -805,7 +812,7 @@ abstract class QuantFragmentBase : Fragment() {
     private fun appendNodeLog(text: String, logKey: String = lastPipelineName) {
         if (!::pipelineLogView.isInitialized) return
         logBuffer.addLast(text)
-        while (logBuffer.size > 300) logBuffer.removeFirst()
+        while (logBuffer.size > LOG_BUFFER_MAX) logBuffer.removeFirst()
         nodeLogIndexes[logKey] = logBuffer.size - 1
         lifecycleScope.launch(Dispatchers.Main) {
             if (!isAdded || !::pipelineLogView.isInitialized) return@launch

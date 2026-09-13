@@ -2429,7 +2429,7 @@ def _big_board_lines(cache, asof):
     return lines
 
 
-def _load_intraday_dag():
+def _load_intraday_dag(expect=None):
     """当日主线 DAG：取「最新有效」的今日结果（盘中快照 / 收盘定格），避开 T-1 定格。
 
     2026-09-11 修「当日选股整天不变」：盘中各轮此前只读 dag_screen_latest.json
@@ -2438,8 +2438,13 @@ def _load_intraday_dag():
     （收盘定格），只保留 asof=今日 且有 result 的文件，并按文件修改时间取最新的。
     这样 11:31 午餐快照后优先用午餐快照；15:00 收盘定格后定格文件更新，自动切到
     收盘结果；盘中每 30 分钟刷新的快照也会自动覆盖旧快照。文件缺一或损坏静默跳过。
+
+    2026-09-13 增 [expect]：期望的 asof，默认今日。**盘中/收盘实时不动**（严格今日）；
+    仅当盘外回放（收盘复盘 publish_close_round / 历史回放）时由调用方传入报告自身的
+    asof —— 否则复盘永远卡在「今日无结果」，主线段恒显示「今日无命中」，
+    与同一份报告里的 smalltool 段（同 asof）自相矛盾。
     """
-    today = datetime.date.today().isoformat()
+    today = expect or datetime.date.today().isoformat()
     candidates = []
     for f in (DAG_LUNCH_FILE, DAG_SCREEN_FILE):
         try:
@@ -2463,16 +2468,24 @@ def _load_intraday_dag():
     return candidates[0][1]
 
 
-def _build_candidate_sections(data, ctx, cache, dag, old_secids, asof):
+def _build_candidate_sections(data, ctx, cache, dag, old_secids, asof, intraday=True):
     """构建盘中选股 5 个模式段（2026-09-12 用户确认结构）。
 
     返回 (sections, dag_all)。section 可为 {"title","rows"}（统一 _TABLE_HEAD）
     或 {"title","header","body"}（自定义表头）。
+
+    [intraday]（2026-09-13 增）：是否盘中实时轮次。段标题里的「（盘中实时）」此前
+    是四处硬编码，导致 `publish_close_round.py --dry`（盘外收盘复盘）也标「盘中实时」，
+    与同一份报告里的 DAG 段（stale 标记是按 mode 动态算的）自相矛盾 → 现统一为
+    盘中=「（盘中实时）」、盘外/复盘=「（收盘定格）」。
     """
+    _rt = "（盘中实时）" if intraday else "（收盘定格）"
     sections = []
     dag_all = set()
     if dag is None:
-        dag = _load_intraday_dag()
+        dag = _load_intraday_dag()            # 实时：严格 asof=今日（避免误用 T-1 定格）
+        if not dag and asof:                  # 盘外回放/收盘复盘：按报告 asof 取当日归档
+            dag = _load_intraday_dag(expect=asof)
     dag = dag or {}   # 文件缺失时 _load_intraday_dag() 返回 None → 统一成空字典
 
     # ① 主线 DAG 当日选股
@@ -2590,7 +2603,7 @@ def _build_candidate_sections(data, ctx, cache, dag, old_secids, asof):
         st_rows = [{"name": "·今日无命中", "code": "—",
                     "cells": [""] * _N_CELLS}]
     sections.append(_tag_section({
-        "title": "smalltool 当日选股（%d只）（盘中实时）（形态匹配仅标注，看涨才买入）" % st_real,
+        "title": "smalltool 当日选股（%d只）%s（形态匹配仅标注，看涨才买入）" % (st_real, _rt),
         "rows": st_rows}, "p1"))
 
     # ③④⑤ ETF 相关三段
@@ -2630,7 +2643,7 @@ def _build_candidate_sections(data, ctx, cache, dag, old_secids, asof):
             if not fu_rows:
                 fu_rows = [{"name": "·今日无命中", "code": "—", "cells": [""] * _N_CELLS}]
             sections.append(_tag_section({
-                "title": "ETF 全行业扫描 当日选股（%d只）（盘中实时）（形态匹配仅标注，看涨才买入）" % fu_real,
+                "title": "ETF 全行业扫描 当日选股（%d只）%s（形态匹配仅标注，看涨才买入）" % (fu_real, _rt),
                 "rows": fu_rows}, "p2"))
 
             # ④ ETF top 5（热门板块前五重仓 · 低吸精选）—— 统一 17 列（2026-09-12）
@@ -2662,7 +2675,7 @@ def _build_candidate_sections(data, ctx, cache, dag, old_secids, asof):
             if not lb_rows:
                 lb_rows = [{"name": "·今日无命中", "code": "—", "cells": [""] * _N_CELLS}]
             sections.append(_tag_section({
-                "title": "ETF top 5 当日选股（%d只）（盘中实时）（形态匹配仅标注，看涨才买入）" % lb_real,
+                "title": "ETF top 5 当日选股（%d只）%s（形态匹配仅标注，看涨才买入）" % (lb_real, _rt),
                 "rows": lb_rows}, "p2"))
         except Exception as e:  # noqa: BLE001
             ops_note("candidate_etf_err", "%s: %s" % (type(e).__name__, e))
@@ -2674,7 +2687,7 @@ def _build_candidate_sections(data, ctx, cache, dag, old_secids, asof):
         etf_rows = [{"name": "·今日无命中", "code": "—",
                      "cells": [""] * _N_CELLS}]
     sections.append(_tag_section({
-        "title": "ETF 当日选股（%d只 ETF）（盘中实时）（形态匹配仅标注，看涨才买入）" % etf_real,
+        "title": "ETF 当日选股（%d只 ETF）%s（形态匹配仅标注，看涨才买入）" % (etf_real, _rt),
         "rows": etf_rows}, "p1"))
 
     return sections, dag_all
@@ -2742,7 +2755,8 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
     # ① ② ③④⑤ 五段候选表（2026-09-12 用户确认结构）：统一由 _build_candidate_sections
     #   构建，正文 / 合并长图 / 原始 CSV 共用同一数据源（避免两处实现口径漂移）。
     #   段→页面归属：①②⑤ 归页1；③④(ETF 全行业扫描 / ETF top5) 归页2。
-    cand_secs, dag_all = _build_candidate_sections(data, ctx, cache, dag, old_secids, asof)
+    cand_secs, dag_all = _build_candidate_sections(
+        data, ctx, cache, dag, old_secids, asof, intraday=("盘中" in (scene or "")))
     img_secs = list(cand_secs)
     cand_p2_secs = [s for s in cand_secs if s.get("target") == "p2"]
     if not table_img_dir:  # 不出图：正文输出各段可读文本（页1 段在此，页2 段见 p2）

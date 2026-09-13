@@ -76,12 +76,21 @@ object DagDetailLogger {
     fun extractStockCodes(v: Any?): List<String> = extractCodes(v)
 
     /**
-     * 按板块把股票清单格式化为多行，供 UI 执行日志“先显示板块、再显示具体股票”：
-     * 每行 = 一个板块及其股票明细；超过 [maxStocks] 的板块只列前几只并标注剩余。
+     * 按板块把股票清单格式化为多行，供 UI 执行日志“先显示板块、再显示具体股票”。
+     *
+     * 规则（2026-09-13 修订）：**完整列出、不再截断**；每个板块先输出一行标题
+     * `【板块名】N只：`，随后该板块全部股票按 **[perLine] 只/行**（默认 8 只）换行铺开。
+     *
+     * 旧实现按 `maxStocks=8` 截断 + 最多 15 行，用户反馈“进出节点只列出前 8 只”，故改为：
+     *  - 去掉每板块 8 只上限与 15 行总上限（节点输入/输出可能上百只，必须给全）；
+     *  - 去掉“…等 N 只 / 其余 N 只”的省略尾行（不再有隐藏股票）；
+     *  - 行宽控制由“每 8 只强制换行”承担，长行不再挤在一行里。
+     *
+     * 注意：UI 日志缓冲上限见 `QuantFragmentBase.LOG_BUFFER_MAX`，已同步放大以容纳完整清单。
      */
     fun formatStockBySector(
         codes: List<String>,
-        maxStocks: Int = 8
+        perLine: Int = 8
     ): List<String> {
         if (codes.isEmpty()) return emptyList()
         val sector = sectorOf
@@ -89,22 +98,16 @@ object DagDetailLogger {
         val distinct = codes.distinct()
         val grouped = LinkedHashMap<String, MutableList<String>>()
         for (c in distinct) grouped.getOrPut(sector[c] ?: "其他") { mutableListOf() }.add(c)
+        val step = if (perLine < 1) 1 else perLine
         val lines = mutableListOf<String>()
-        var shownCount = 0
         for ((secName, list) in grouped) {
-            if (lines.size >= 15) break
-            val shown = list.take(maxStocks)
-            val stockText = shown.joinToString("  ") { c ->
-                val n = names[c] ?: ""
-                if (n.isNotEmpty()) "$c $n" else c
+            lines.add("      【$secName】${list.size}只：")
+            list.chunked(step).forEach { chunk ->
+                lines.add("        " + chunk.joinToString("  ") { c ->
+                    val n = names[c] ?: ""
+                    if (n.isNotEmpty()) "$c $n" else c
+                })
             }
-            val tail = if (list.size > shown.size) "…等${list.size - shown.size}只" else ""
-            lines.add("      【$secName】${list.size}只：$stockText$tail")
-            shownCount += shown.size
-        }
-        val hidden = distinct.size - shownCount
-        if (hidden > 0) {
-            lines.add("      … 其余 ${hidden} 只（共 ${grouped.size} 个板块，仅列前 $shownCount 只）")
         }
         return lines
     }
