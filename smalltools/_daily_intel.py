@@ -933,6 +933,15 @@ def review_sections(log=print, trade_date=None):
             dag = _read_json(DAG_SCREEN)
             cand_secs, _ = pc._build_candidate_sections(
                 data or {}, ctx, cache, dag, set(), (data or {}).get("asof", ""))
+            # 引擎指纹（2026-09-13）：a 段表头已由 _build_candidate_sections 标 ⚠，但
+            # 表头在长图缩略图/CSV 首列里极易被忽略，故再出一条独立提示段（置 a 段之前）。
+            _eng = pc._dag_engine_stale(dag)
+            if _eng:
+                sections.append({"title": "a0. ⚠ 引擎已更新（归档非当前引擎）",
+                                 "header": ["归档指纹", "现引擎指纹", "处置"],
+                                 "body": [[_eng[0], _eng[1],
+                                           "归档由旧版本引擎/XML 产出，结果与设计不符；"
+                                           "建议重跑 DAG 后再采纳"]]})
             for i, s in enumerate(cand_secs, 1):
                 sections.append({"title": "a%d. %s" % (i, s.get("title") or ""),
                                  "header": s.get("header"), "rows": s.get("rows"),

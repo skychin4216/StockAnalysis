@@ -39,7 +39,7 @@ for _p in (HERE, AUTOQ, USECASES):
         sys.path.insert(0, _p)
 
 import _market_db  # noqa: E402
-from usecase_pipeline import UseCaseRunner  # noqa: E402
+from usecase_pipeline import UseCaseRunner, engine_fingerprint  # noqa: E402
 from usecase_screen import prescreen, INDEX_PREFIX  # noqa: E402
 
 PERIODS = ["ultra_short", "short", "mid", "long"]
@@ -162,6 +162,13 @@ def run_full(rows_by, names, cal, start=None, limit=None):
     except (OSError, ValueError):
         pass
     last_done = meta.get("last_done")
+    # 引擎指纹（2026-09-13）：jsonl 是长期累积文件，中途升级引擎/改 XML 会让前后行分属
+    # 不同版本，混在一起统计等于「拿两种口径做一次汇总」。续跑前比对 meta 上次指纹告警，
+    # 每行也写 engine_fp，summarize 据此检出混版。
+    fp = engine_fingerprint()
+    if meta.get("engine_fp") and meta["engine_fp"] != fp:
+        print("⚠ 引擎已更新（%s → %s）：续跑将向同一 jsonl 追加新引擎结果，"
+              "跨版本行不可直接合并统计。" % (meta["engine_fp"], fp))
     t_total0 = time.time()
     n_skip = 0
     n_miss_days = 0
@@ -212,7 +219,7 @@ def run_full(rows_by, names, cal, start=None, limit=None):
             "date": date, "pool": pool, "surv": len(surv), "dead": len(dead),
             "compression": round((1 - len(surv) / pool) * 100, 1) if pool else 0,
             "orders": ords, "miss": miss, "miss_det": miss_det,
-            "run_s": round(time.time() - t0, 1),
+            "engine_fp": fp, "run_s": round(time.time() - t0, 1),
         }
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
         fh.flush()
@@ -223,7 +230,7 @@ def run_full(rows_by, names, cal, start=None, limit=None):
         if run_n % 10 == 0 or run_n == 1:
             with open(META_FILE, "w", encoding="utf-8") as f:
                 json.dump({"last_done": date, "updated_at": datetime.datetime.now().isoformat(),
-                           "days_done": run_n}, f)
+                           "days_done": run_n, "engine_fp": fp}, f)
             el = time.time() - t_total0
             per_day = el / max(1, run_n)
             remain = (len(cal) - cal.index(date) - 1) * per_day / 3600
@@ -237,7 +244,7 @@ def run_full(rows_by, names, cal, start=None, limit=None):
     with open(META_FILE, "w", encoding="utf-8") as f:
         json.dump({"last_done": last_date or cal[-1],
                    "updated_at": datetime.datetime.now().isoformat(),
-                   "days_done": run_n}, f)
+                   "days_done": run_n, "engine_fp": fp}, f)
     fh.close()
     print("完成/中止：共跑 %d 个交易日（跳过 %d 个过早期），漏杀日 %d，总耗时 %.0fs"
           % (run_n, n_skip, n_miss_days, time.time() - t_total0))
@@ -251,6 +258,8 @@ def summarize():
     first = last = None
     comps = []
     reason_cnt = collections.Counter()
+    # 引擎版本分布（2026-09-13）：旧行无 engine_fp，记为 "-"（历史遗留，无法追溯）
+    fps = collections.Counter()
     with open(OUT_JSONL, encoding="utf-8") as f:
         for ln in f:
             ln = ln.strip()
@@ -261,6 +270,7 @@ def summarize():
             first = first or r["date"]
             last = r["date"]
             comps.append(r["compression"])
+            fps[r.get("engine_fp") or "-"] += 1
             if r["miss"]:
                 miss_days += 1
                 miss_codes += len(r["miss"])
@@ -269,6 +279,15 @@ def summarize():
     print("汇总：%d 个交易日 %s → %s，平均压缩 %.1f%%（min %.0f%% / max %.0f%%）"
           % (n, first, last, avg, min(comps) if comps else 0, max(comps) if comps else 0))
     print("漏杀日 %d 个 / 漏杀票 %d 个" % (miss_days, miss_codes))
+    # 跨引擎版本告警（2026-09-13）：混版统计出的压缩率/漏杀率没有统一口径意义，
+    # 必须显式提示，否则会被当成「一个引擎的全史结论」。
+    if len(fps) > 1:
+        print("⚠ 本 jsonl 混有 %d 个引擎版本，统计口径不统一：%s"
+              % (len(fps), "、".join("%s×%d" % (k, v) for k, v in fps.most_common())))
+        print("  建议：升级引擎后归档旧文件（mv history_dag_run.jsonl "
+              "history_dag_run.<fp>.jsonl）再重跑。")
+    else:
+        print("引擎版本：%s（单一版本）" % (next(iter(fps), "-")))
     for reason, c in reason_cnt.most_common(10):
         print("  - [%s] ×%d" % (reason, c))
 

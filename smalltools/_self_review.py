@@ -37,6 +37,12 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# 引擎指纹校验（2026-09-13）：直接取 XML DAG 引擎的纯本地实现（只读 assets/usecases
+# 下的文件，绝不触网），刻意不经 _publish_candidates —— 其顶层会拉起 network 模块。
+sys.path.insert(0, os.path.normpath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..", "app", "src", "main", "assets", "usecases")))
+from usecase_pipeline import dag_engine_stale  # noqa: E402
 
 # 轻量依赖：不 import _publish_candidates（其顶层会拉起 network 模块），只取回测核心
 from _full_cycle_backtest import (  # noqa: E402
@@ -243,6 +249,16 @@ def record_day(asof=None, dag=None, cand=None, cache=None, all_dates=None, date_
     if ledger_already(asof):
         print("账本已含 %s，幂等跳过" % asof)
         return 0
+    # 引擎指纹校验（2026-09-13）：账本是【只增、持久化】的，错误票一旦入账会被后续结算/
+    # 自学习反复消费（不像展示表格下一轮就刷新），故真正入账前必须判归档是否由旧引擎产出。
+    # 只告警不阻断（留痕 + rec 记 engine_fp，便于审计/重跑核对）；刻意放在幂等检查之后 ——
+    # 跳过轮次本次什么都没写，此时告警只会变成噪音（账本既有的 engine_fp 可另行审计）。
+    _eng = dag_engine_stale(dag) if dag else None
+    if _eng:
+        print("⚠ 引擎已更新: 归档指纹 %s ≠ 现引擎 %s（本次入账为旧版本引擎产出，"
+              "口径待重跑后核对）" % _eng)
+        _log("stale_engine asof=%s fp=%s->%s"
+             % ((dag or {}).get("asof"), _eng[0], _eng[1]))
     # 合并 dag + round/prepared，同日同周期同标的去重（来源合并标注）
     picks = {}
     for it in normalize_dag(dag) + normalize_candidates(cand):
@@ -264,6 +280,9 @@ def record_day(asof=None, dag=None, cand=None, cache=None, all_dates=None, date_
     state = state_on(cache, all_dates, date_to_idx, asof)
     rec = {"asof": asof, "state": state,
            "rules": rules_snapshot(state),
+           # 引擎版本留痕（2026-09-13）：配合 dag_engine_stale() 事后审计「这条账目
+           # 是哪个引擎版本产出的」，重跑对账时不必靠猜。
+           "engine_fp": (dag or {}).get("engine_fingerprint"),
            "picks": sorted(picks.values(), key=lambda x: (PERIODS.index(x["period"]), x["secid"])),
            "recorded_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
     append_ledger(rec)

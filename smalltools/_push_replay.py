@@ -181,6 +181,13 @@ def replay_one(day, cache, hist, args):
     else:
         note = ("💡 回放说明[%s]：板块/ETF资金流为盘中实时采集、无历史存档；"
                 "本页以 %s 收盘K线口径展示全行业ETF前五低吸。" % (scene, asof))
+    # 引擎指纹（2026-09-13）：回放是「拿归档重放历史」，若归档由旧引擎产出，重放出的
+    # 页面会与归档本身的选股不一致（引擎变了），此时页面结论不可当该日口径。
+    _eng = PC._dag_engine_stale(dag)
+    if _eng:
+        note += (" ⚠ 当日 DAG 归档由旧版本引擎产出（指纹 %s≠%s），页面按归档原样回放，"
+                 "仅供追溯，勿作当日口径。" % _eng)
+        print("  ⚠ %s 归档指纹 %s ≠ 现引擎 %s（旧版本归档）" % (day, _eng[0], _eng[1]))
     pages, _tbl_imgs = PC.round_pages(data, None, None, scene=scene, dag=dag,
                                       cache=cacheD, lowbuy_offline=low_lines,
                                       note_offline=note)

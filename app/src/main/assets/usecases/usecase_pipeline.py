@@ -24,6 +24,7 @@ exe/PC 无需改代码即可同步。与 smalltools 引擎桥接：
     runner = up.UseCaseRunner(usecase_id="etf_dip", cache=cache)
     result = runner.run(with_stages=True)   # -> {orders, market_state, stages, ...}
 """
+import ast
 import hashlib
 import importlib
 import json
@@ -226,8 +227,41 @@ def register(*modules):
     return deco
 
 
+def _semantic_digest(path):
+    """单个引擎文件的【语义】摘要（20 字节 sha1）：
+
+      · `.py`  → `ast.dump(ast.parse(src))`：排除注释/空白/缩进/换行风格，
+                 保留全部代码语义（含 docstring，文档变化亦代表引擎版本推进）；
+      · `.xml` → `ElementTree.canonicalize`：排除注释/空白、属性顺序归一；
+    两者解析失败则退化为原文 sha1（宁严不漏）。
+
+    为何不直接 hash 字节：改个注释/空行就让归档被判「过期」，告警会被习惯性忽略，
+    机制等于失效；语义摘要只在「代码/流水线真的变了」时变化。
+    """
+    src = None
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            src = fh.read()
+    except (OSError, UnicodeDecodeError):
+        src = None
+    if src is not None:
+        try:
+            if path.lower().endswith(".xml"):
+                norm = ET.canonicalize(xml_data=src, strip_text=True)
+            else:
+                norm = ast.dump(ast.parse(src))
+            return hashlib.sha1(norm.encode("utf-8")).digest()
+        except Exception:  # noqa: BLE001 — 语法错误/DTD 实体等异常路径统一回退
+            pass
+    try:
+        with open(path, "rb") as fh:
+            return hashlib.sha1(fh.read()).digest()
+    except OSError:
+        return b"missing"
+
+
 def engine_fingerprint():
-    """引擎指纹：本文件 + 同目录全部 `*_usecase.xml`/`*_pipeline.xml` 【内容】sha1。
+    """引擎指纹：本文件 + 同目录全部 `*_usecase.xml`/`*_pipeline.xml` 的【语义】sha1。
 
     用途（2026-09-13）：DAG 归档 `dag_screen_latest.json` 写入本指纹；consumers 比对
     「归档指纹 vs 现引擎指纹」，不一致即说明引擎/XML 在归档生成后又被改过 —— 归档结果
@@ -236,8 +270,9 @@ def engine_fingerprint():
       · 09-13 12:40 归档：缺 6 个 P1 节点(seasonality/leader/sector_pool/crossday/
         rotation_penalty/defensive)，`degraded=true`；同日 14:15 补齐实现后同 asof
         重跑订单即漂移（中线 5 只 → 4 只），说明「asof 相同」不等于「结果可复现」。
-    取【内容】而非 mtime，避免 git clone/checkout 造成误报；已注册 module 数一并计入，
-    module 增减（=引擎能力变化）本身也改变指纹。返回 16 位十六进制短串。
+    摘要口径见 `_semantic_digest`：不取 mtime（避免 clone/checkout 误报），也不取原始
+    字节（避免注释/格式误报）；已注册 module 数一并计入，module 增减（=引擎能力变化）
+    本身也改变指纹。返回 16 位十六进制短串。
     """
     files = ["usecase_pipeline.py"]
     try:
@@ -249,13 +284,25 @@ def engine_fingerprint():
     h.update(("modules=%d|" % len(NODE_IMPLS)).encode("utf-8"))
     for f in files:
         h.update(f.encode("utf-8") + b"|")
-        try:
-            with open(os.path.join(_HERE, f), "rb") as fh:
-                h.update(hashlib.sha1(fh.read()).digest())
-        except OSError:
-            h.update(b"missing")
+        h.update(_semantic_digest(os.path.join(_HERE, f)))
         h.update(b"|")
     return h.hexdigest()[:16]
+
+
+def dag_engine_stale(dag):
+    """比对归档引擎指纹 vs 现引擎指纹；不一致返回 (归档fp, 现fp)，一致/无指纹返回 None。
+
+    归档由旧版本引擎/XML 产出时（改过引擎却没重跑），选股结果与设计不符，不可直接采纳；
+    `built_at`/`cache_last` 只保证「数据新鲜」，管不住「引擎版本」。
+    本函数纯本地（只读本目录文件，绝不触网），供守护/自检/回放/复盘等所有消费端复用 ——
+    `_self_review.py` 等模块明确「不 import _publish_candidates（顶层会拉起 network）」，
+    故算法落在此处而非 smalltools 侧。
+    """
+    arch = (dag or {}).get("engine_fingerprint") if isinstance(dag, dict) else None
+    if not arch:
+        return None
+    now = engine_fingerprint()
+    return (arch, now) if now != arch else None
 
 
 def _inputs(ctx, node):

@@ -1514,21 +1514,18 @@ def _up_module():
 
 
 def _dag_engine_stale(dag):
-    """比对归档引擎指纹 vs 现引擎指纹；不一致返回 (归档fp, 现fp)，一致/无指纹返回 None。
+    """归档引擎指纹 vs 现引擎指纹；不一致返回 (归档fp, 现fp)，一致/无指纹返回 None。
 
-    2026-09-13：`built_at`/`cache_last` 只保证「数据新鲜」，管不住「引擎版本」。归档若由
-    旧引擎产出（改过 XML/usecase_pipeline.py 后没重跑），选股结果会与设计不符 —— 事故：
-    09-13 12:40 归档缺 6 个 P1 节点(degraded=true)，同日 14:15 补齐实现后，同 asof 重跑
-    订单即漂移（中线 5 只 → 4 只）：「asof 相同」≠「结果可复现」。
+    算法单一事实源 = `usecase_pipeline.dag_engine_stale`（纯本地、无网络依赖），此处只做
+    惰性委托 —— 保持与 `_self_review.py` / `_history_dag_run.py` 等「不 import 本模块
+    （顶层会拉起 network）」的消费端同口径，避免两处实现漂移。
+    事故：2026-09-13 12:40 归档缺 6 个 P1 节点(degraded=true)，同日 14:15 补齐后同 asof
+    重跑订单即漂移（中线 5 只 → 4 只）——「asof 相同」≠「结果可复现」。
     """
-    arch = (dag or {}).get("engine_fingerprint")
-    if not arch:
-        return None
     try:
-        now = _up_module().engine_fingerprint()
+        return _up_module().dag_engine_stale(dag)
     except Exception:  # noqa: BLE001
         return None
-    return (arch, now) if now != arch else None
 
 
 def _trend_chart_cell(snaps):
