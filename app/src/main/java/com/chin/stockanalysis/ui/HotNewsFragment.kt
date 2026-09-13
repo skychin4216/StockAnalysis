@@ -50,7 +50,6 @@ class HotNewsFragment : Fragment() {
             setBackgroundColor(Color.parseColor("#F5F6FA"))
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         }
-        root.addView(TextView(ctx).apply { text = "init" }) // placeholder below
 
         return root
     }
@@ -68,7 +67,7 @@ class HotNewsFragment : Fragment() {
         root.removeAllViews()
         root.addView(inner)
 
-        // ─── Header：Tab 切換 + 刷新按鈕 ───
+        // ─── Header：Tab 切换 + 刷新按钮 ───
         val header = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             setPadding(12, 12, 12, 12); setBackgroundColor(Color.WHITE)
@@ -109,13 +108,13 @@ class HotNewsFragment : Fragment() {
         }; header.addView(refreshBtn)
         inner.addView(header)
 
-        // ─── 內容共用區域 (FrameLayout: 熱門板塊 / 新聞列表) ───
+        // ─── 内容共用区域 (FrameLayout: 热门板块 / 新闻列表) ───
         val contentFrame = FrameLayout(ctx).apply {
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f)
             setBackgroundColor(Color.WHITE)
         }
 
-        // ── 熱門板塊 ──
+        // ── 热门板块 ──
         sectorContainer = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(16, 12, 16, 12)
@@ -133,14 +132,14 @@ class HotNewsFragment : Fragment() {
         sectorContainer.addView(hotSectorTv)
         contentFrame.addView(sectorContainer)
 
-        // ── 新聞列表加載中提示 ──
+        // ── 新闻列表加载中提示 ──
         loadingTv = TextView(ctx).apply {
             text = "加载中..."; textSize = 12f; setTextColor(Color.parseColor("#888888"))
             setPadding(16, 8, 16, 4); visibility = View.GONE
         }
         contentFrame.addView(loadingTv)
 
-        // ── 新聞空狀態 ──
+        // ── 新闻空状态 ──
         emptyTv = TextView(ctx).apply {
             text = "暂无热点新闻\n请先确保已导入历史数据，App 启动后会自动拉取"
             textSize = 14f; setTextColor(Color.parseColor("#AAAAAA"))
@@ -148,7 +147,7 @@ class HotNewsFragment : Fragment() {
         }
         contentFrame.addView(emptyTv)
 
-        // ── 新聞 RecyclerView ──
+        // ── 新闻 RecyclerView ──
         recyclerView = RecyclerView(ctx).apply {
             layoutManager = LinearLayoutManager(ctx)
             adapter = NewsAdapter(emptyList(), ::onNewsClick, ::onRelatedStocks)
@@ -165,7 +164,7 @@ class HotNewsFragment : Fragment() {
     private fun dp(v: Int) = (v * resources.displayMetrics.density + 0.5f).toInt()
     override fun onResume() { super.onResume(); loadAndPopulateDropdown() }
 
-    // ─── Tab 切換 ───
+    // ─── Tab 切换 ───
 
     private fun switchToSectors() {
         showingSectors = true
@@ -201,7 +200,7 @@ class HotNewsFragment : Fragment() {
 
     // ─── 加载并填充热门板块 ───
     private fun loadAndPopulateDropdown() {
-        lifecycleScope.launch(Dispatchers.IO) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             val display = getHotSectorsDisplay()
             withContext(Dispatchers.Main) {
                 hotSectorTv.text = if (display.isNotEmpty()) display else "暂无热门板块"
@@ -286,7 +285,7 @@ class HotNewsFragment : Fragment() {
     }
 
     private fun startHotSectorRefresh() {
-        lifecycleScope.launch(Dispatchers.IO) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             while (isActive) {
                 delay(3 * 60_000L)
                 val display = getHotSectorsDisplay()
@@ -299,7 +298,7 @@ class HotNewsFragment : Fragment() {
 
     // ─── 下拉弹窗 ───
     private fun showSectorDropdown() {
-        lifecycleScope.launch(Dispatchers.IO) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             val top5 = getTop5HotSectors()
             withContext(Dispatchers.Main) {
                 val ctx = requireContext()
@@ -387,10 +386,13 @@ class HotNewsFragment : Fragment() {
 
     // ─── 加载新闻 ───
     private fun loadNews(forceRefresh: Boolean = false) {
-        loadingTv.text = "⏳ ${if (forceRefresh) "正在搜索最新新闻..." else "加载中..."}"
-        loadingTv.visibility = View.VISIBLE
-        recyclerView.visibility = View.GONE; emptyTv.visibility = View.GONE
-        lifecycleScope.launch {
+        // 仅在新闻 Tab 激活时才显示 loadingTv，避免与板块 Tab 重叠
+        if (!showingSectors) {
+            loadingTv.text = "⏳ ${if (forceRefresh) "正在搜索最新新闻..." else "加载中..."}"
+            loadingTv.visibility = View.VISIBLE
+            recyclerView.visibility = View.GONE; emptyTv.visibility = View.GONE
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
             val hasLocalData = withContext(Dispatchers.IO) {
                 try { StockDatabase.getInstance(requireContext()).newsFactorDao().getAllActive(1).isNotEmpty() } catch (_: Exception) { false }
             }
@@ -408,6 +410,8 @@ class HotNewsFragment : Fragment() {
                     .sortedByDescending { it.newsDate }
             }
             withContext(Dispatchers.Main) {
+                // 仅在新闻 Tab 激活时才更新新闻区可见性，避免覆盖板块 Tab
+                if (showingSectors) return@withContext
                 loadingTv.visibility = View.GONE
                 if (news.isEmpty()) { emptyTv.visibility = View.VISIBLE; recyclerView.visibility = View.GONE } else { emptyTv.visibility = View.GONE; recyclerView.visibility = View.VISIBLE; (recyclerView.adapter as? NewsAdapter)?.update(news) }
             }

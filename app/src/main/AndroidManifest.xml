@@ -3,6 +3,14 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- App 自更新：Android 8.0+ 安装 APK 需要 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:allowBackup="true"
@@ -13,18 +21,47 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Stockanalysis"
+        android:usesCleartextTraffic="true"
         tools:targetApi="31">
 
         <!-- 主Activity - Tab架构 -->
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- 接收其他應用分享的圖片/文字（微信截圖、PDF 等） -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
         </activity>
+
+        <!-- FileProvider（拍照用） -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.provider.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <!-- AI 聊天助手 Activity -->
         <activity
@@ -32,6 +69,29 @@
             android:exported="false"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.Stockanalysis" />
+
+        <!-- Pipeline 拓撲編輯器 Activity -->
+        <activity
+            android:name=".strategy.topology.ui.TopologyEditorActivity"
+            android:exported="false"
+            android:label="Pipeline 拓撲編輯器"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.Stockanalysis" />
+
+        <!-- 量化前台服务 — pipeline 执行期间防止被系统杀死 -->
+        <service
+            android:name=".service.QuantForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- adb 广播命令接收器：触发「检查数据新鲜度→下载→同步COS」闭环 -->
+        <receiver
+            android:name=".cloud.CommandReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.chin.stockanalysis.CMD" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="2020" height="400" viewBox="0 0 2020 400" font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif">
+  <defs>
+    <linearGradient id="bgGradient" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1e293b" />
+    </linearGradient>
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L9,3 L0,6 Z" fill="#64748b" />
+    </marker>
+  </defs>
+<rect width="2020" height="400" fill="url(#bgGradient)" />
+  <text x="1010.0" y="30" text-anchor="middle" font-size="20" font-weight="bold" fill="#f1f5f9">熱點驅動短線</text>
+  <text x="1010.0" y="52" text-anchor="middle" font-size="12" fill="#94a3b8">從熱門板塊成分股中篩選動量+新聞+主力資金共振個股</text>
+  <text x="60" y="102" font-size="11" font-weight="bold" fill="#475569">Layer 0</text>
+  <text x="380" y="102" font-size="11" font-weight="bold" fill="#475569">Layer 1</text>
+  <text x="700" y="102" font-size="11" font-weight="bold" fill="#475569">Layer 2</text>
+  <text x="1020" y="102" font-size="11" font-weight="bold" fill="#475569">Layer 3</text>
+  <text x="1340" y="102" font-size="11" font-weight="bold" fill="#475569">Layer 4</text>
+  <text x="1660" y="102" font-size="11" font-weight="bold" fill="#475569">Layer 5</text>
+  <g id="edges">
+  <path d="M 250.0,185.0 C 290.0,185.0 240.0,185.0 280.0,185.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 480.0,185.0 C 520.0,185.0 470.0,185.0 510.0,185.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 710.0,185.0 C 750.0,185.0 700.0,185.0 740.0,185.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 940.0,185.0 C 980.0,185.0 930.0,185.0 970.0,185.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 1170.0,185.0 C 1210.0,185.0 1160.0,185.0 1200.0,185.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  </g>
+  <g id="nodes">
+  <rect x="50" y="150" width="200" height="70" rx="8" ry="8" fill="#059669" fill-opacity="0.85" stroke="#059669" stroke-width="2" />
+  <text x="150.0" y="174" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">熱門板塊源</text>
+  <text x="150.0" y="194" text-anchor="middle" font-size="10" fill="#cbd5e1">hot_sector_source</text>
+  <text x="150.0" y="210" text-anchor="middle" font-size="8" fill="#94a3b8">hs_source</text>
+  <rect x="280" y="150" width="200" height="70" rx="8" ry="8" fill="#DC2626" fill-opacity="0.85" stroke="#DC2626" stroke-width="2" />
+  <text x="380.0" y="174" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">動量過濾</text>
+  <text x="380.0" y="194" text-anchor="middle" font-size="10" fill="#cbd5e1">momentum_filter</text>
+  <text x="380.0" y="210" text-anchor="middle" font-size="8" fill="#94a3b8">hs_momentum</text>
+  <rect x="510" y="150" width="200" height="70" rx="8" ry="8" fill="#DC2626" fill-opacity="0.85" stroke="#DC2626" stroke-width="2" />
+  <text x="610.0" y="174" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">新聞過濾</text>
+  <text x="610.0" y="194" text-anchor="middle" font-size="10" fill="#cbd5e1">news_filter</text>
+  <text x="610.0" y="210" text-anchor="middle" font-size="8" fill="#94a3b8">hs_news_filter</text>
+  <rect x="740" y="150" width="200" height="70" rx="8" ry="8" fill="#DC2626" fill-opacity="0.85" stroke="#DC2626" stroke-width="2" />
+  <text x="840.0" y="174" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">主力資金過濾</text>
+  <text x="840.0" y="194" text-anchor="middle" font-size="10" fill="#cbd5e1">smart_money_filter</text>
+  <text x="840.0" y="210" text-anchor="middle" font-size="8" fill="#94a3b8">hs_smart_money</text>
+  <rect x="970" y="150" width="200" height="70" rx="8" ry="8" fill="#4F46E5" fill-opacity="0.85" stroke="#4F46E5" stroke-width="2" />
+  <text x="1070.0" y="174" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">評分排序</text>
+  <text x="1070.0" y="194" text-anchor="middle" font-size="10" fill="#cbd5e1">score_sort</text>
+  <text x="1070.0" y="210" text-anchor="middle" font-size="8" fill="#94a3b8">hs_score_sort</text>
+  <rect x="1200" y="150" width="200" height="70" rx="8" ry="8" fill="#6B7280" fill-opacity="0.85" stroke="#6B7280" stroke-width="2" />
+  <text x="1300.0" y="174" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">結果輸出</text>
+  <text x="1300.0" y="194" text-anchor="middle" font-size="10" fill="#cbd5e1">result_output_sink</text>
+  <text x="1300.0" y="210" text-anchor="middle" font-size="8" fill="#94a3b8">hs_output</text>
+  </g>
+  <g id="legend">
+  <text x="40" y="310" font-size="12" font-weight="bold" fill="#94a3b8">圖例</text>
+  <rect x="40.0" y="330" width="14" height="14" rx="3" fill="#059669" />
+  <text x="60.0" y="342" font-size="11" fill="#94a3b8">數據源</text>
+  <rect x="428.0" y="330" width="14" height="14" rx="3" fill="#DC2626" />
+  <text x="448.0" y="342" font-size="11" fill="#94a3b8">過濾器</text>
+  <rect x="816.0" y="330" width="14" height="14" rx="3" fill="#4F46E5" />
+  <text x="836.0" y="342" font-size="11" fill="#94a3b8">聚合</text>
+  <rect x="1204.0" y="330" width="14" height="14" rx="3" fill="#6B7280" />
+  <text x="1224.0" y="342" font-size="11" fill="#94a3b8">數據轉換</text>
+  </g>
+</svg>

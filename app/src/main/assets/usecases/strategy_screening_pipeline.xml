@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 策略筛选 Pipeline（共享）
+
+  所有策略并行筛选。策略 Node 在运行时由 NodeRegistry 动态注入。
+  量化选股、短线量化、中线量化 共用此 Pipeline。
+-->
+<pipeline id="strategy_screening" name="策略筛选" description="多策略并行筛选" version="1">
+  <nodes>
+    <!-- 策略 Node 在运行时动态注入 -->
+  </nodes>
+  <stages>
+    <stage name="策略筛选" parallel="true">
+      <!-- 运行时由 UseCaseLoader 注入策略 LinkList -->
+    </stage>
+  </stages>
+</pipeline>

@@ -3,24 +3,24 @@ package com.chin.stockanalysis.skill
 import android.util.Log
 
 /**
- * ## Skill 執行引擎
+ * ## Skill 执行引擎
  *
- * 在 AI 對話中，用戶輸入個股後，自動執行所有匹配的 Skill，
- * 返回結構化的選股分析結果，供：
- * 1. AI prompt 注入（讓 AI 基於 Skill 分析回答）
- * 2. 模擬交易導入（SkillPick 可直接用於交易候選池）
+ * 在 AI 对话中，用户输入个股后，自动执行所有匹配的 Skill，
+ * 返回结构化的选股分析结果，供：
+ * 1. AI prompt 注入（让 AI 基于 Skill 分析回答）
+ * 2. 模拟交易导入（SkillPick 可直接用于交易候选池）
  *
- * ### 數據流
+ * ### 数据流
  * ```
- * ChatTabFragment.sendMessage("兆易創新")
+ * ChatTabFragment.sendMessage("兆易创新")
  *   ↓
  * StockQueryEngine.buildSystemPrompt()
  *   ↓
- * SkillOrchestrator.runSkills("603986", "兆易創新", userInput)
+ * SkillOrchestrator.runSkills("603986", "兆易创新", userInput)
  *   ↓
  * 返回 List<SkillExecutionResult>
  *   ├─ 注入 AI prompt
- *   └─ 存入模擬交易可用數據
+ *   └─ 存入模拟交易可用数据
  * ```
  */
 class SkillOrchestrator(private val skillEngine: SkillEngine) {
@@ -30,44 +30,44 @@ class SkillOrchestrator(private val skillEngine: SkillEngine) {
     }
 
     /**
-     * 單個 Skill 對單只股票的執行結果
+     * 单个 Skill 对单只股票的执行结果
      */
     data class SkillExecutionResult(
         val skillId: String,
         val skillName: String,
         val stockCode: String,
         val stockName: String,
-        /** 注入給 AI 的完整 prompt（含用戶輸入上下文） */
+        /** 注入给 AI 的完整 prompt（含用户输入上下文） */
         val prompt: String,
-        /** 結構化選股結果（供模擬交易使用，AI 分析後填充） */
+        /** 结构化选股结果（供模拟交易使用，AI 分析后填充） */
         val picks: List<SkillPick> = emptyList(),
         val executionTimeMs: Long = 0L
     )
 
     /**
-     * 結構化選股結果
+     * 结构化选股结果
      */
     data class SkillPick(
         val rank: Int,
         val stockCode: String,
         val stockName: String,
-        /** 選股理由 */
+        /** 选股理由 */
         val reason: String,
         /** 信心度 0-1 */
         val confidence: Float = 0.5f,
-        /** 來源 Skill ID */
+        /** 来源 Skill ID */
         val sourceSkillId: String,
-        /** 選股來源類型 */
+        /** 选股来源类型 */
         val pickSource: String = "ai_skill_pick"
     )
 
     /**
-     * 對單只股票執行所有匹配的 Skill
+     * 对单只股票执行所有匹配的 Skill
      *
-     * @param stockCode 股票代碼（如 "603986"）
-     * @param stockName 股票名稱（如 "兆易創新"）
-     * @param userInput 用戶原始輸入
-     * @return 每個匹配 Skill 的執行結果列表
+     * @param stockCode 股票代码（如 "603986"）
+     * @param stockName 股票名称（如 "兆易创新"）
+     * @param userInput 用户原始输入
+     * @return 每个匹配 Skill 的执行结果列表
      */
     suspend fun runSkills(
         stockCode: String,
@@ -80,18 +80,18 @@ class SkillOrchestrator(private val skillEngine: SkillEngine) {
         Log.i(TAG, "═══════════════════════════════════════")
         Log.i(TAG, "🚀 SkillOrchestrator.runSkills()")
         Log.i(TAG, "   股票: $stockName ($stockCode)")
-        Log.i(TAG, "   板塊: ${sectors.ifEmpty { listOf("無") }.joinToString(", ")}")
-        Log.i(TAG, "   用戶輸入: ${userInput.take(80)}")
+        Log.i(TAG, "   板块: ${sectors.ifEmpty { listOf("无") }.joinToString(", ")}")
+        Log.i(TAG, "   用户输入: ${userInput.take(80)}")
 
-        // 獲取所有啟用的自動觸發 Skill
+        // 获取所有启用的自动触发 Skill
         val allSkills = skillEngine.getAll()
         val autoSkills = skillEngine.getAutoTriggerSkills()
-        Log.i(TAG, "   已註冊 Skill 總數: ${allSkills.size}, 自動觸發: ${autoSkills.size}")
+        Log.i(TAG, "   已注册 Skill 总数: ${allSkills.size}, 自动触发: ${autoSkills.size}")
         allSkills.forEach { s ->
             Log.d(TAG, "     [${if (s.enabled) "✓" else "✗"}] ${s.id} (autoTrigger=${s.autoTrigger}) - ${s.name}")
         }
 
-        // 也獲取用戶手動觸發的 Skill（關鍵詞匹配）
+        // 也获取用户手动触发的 Skill（关键词匹配）
         val triggeredSkills = allSkills.filter { skill ->
             skill.enabled && skill.triggerPrompt != null &&
                 skill.triggerPrompt.split(",").any { keyword ->
@@ -99,15 +99,15 @@ class SkillOrchestrator(private val skillEngine: SkillEngine) {
                 }
         }
         if (triggeredSkills.isNotEmpty()) {
-            Log.i(TAG, "   關鍵詞觸發 Skill: ${triggeredSkills.joinToString { it.id }}")
+            Log.i(TAG, "   关键词触发 Skill: ${triggeredSkills.joinToString { it.id }}")
         }
 
-        // 合併去重
+        // 合并去重
         val matchedSkills = (autoSkills + triggeredSkills).distinctBy { it.id }
-        Log.i(TAG, "   匹配 Skill: ${matchedSkills.joinToString { it.id }.ifEmpty { "無" }}")
+        Log.i(TAG, "   匹配 Skill: ${matchedSkills.joinToString { it.id }.ifEmpty { "无" }}")
 
         if (matchedSkills.isEmpty()) {
-            Log.d(TAG, "⚠️ 無匹配 Skill for $stockCode $stockName")
+            Log.d(TAG, "⚠️ 无匹配 Skill for $stockCode $stockName")
             Log.i(TAG, "═══════════════════════════════════════")
             return emptyList()
         }
@@ -129,30 +129,30 @@ class SkillOrchestrator(private val skillEngine: SkillEngine) {
                         stockCode = stockCode,
                         stockName = stockName,
                         prompt = prompt,
-                        picks = emptyList(),  // AI 分析後由 parsePicksFromAiResponse() 填充
+                        picks = emptyList(),  // AI 分析后由 parsePicksFromAiResponse() 填充
                         executionTimeMs = System.currentTimeMillis() - skillStart
                     )
                 )
-                // 記錄使用次數
+                // 记录使用次数
                 skillEngine.recordUsage(skill.id)
                 Log.i(TAG, "   ✅ ${skill.id} | prompt=${prompt.length}字 | ${System.currentTimeMillis() - skillStart}ms")
             } catch (e: Exception) {
-                Log.w(TAG, "   ❌ Skill ${skill.id} 執行失敗: ${e.message}")
+                Log.w(TAG, "   ❌ Skill ${skill.id} 执行失败: ${e.message}")
             }
         }
 
-        Log.i(TAG, "📊 完成 ${results.size} 個 Skill 執行 for $stockCode (${System.currentTimeMillis() - startTime}ms)")
+        Log.i(TAG, "📊 完成 ${results.size} 个 Skill 执行 for $stockCode (${System.currentTimeMillis() - startTime}ms)")
         Log.i(TAG, "═══════════════════════════════════════")
         return results
     }
 
     /**
-     * 處理「動態建立 Skill」意圖
+     * 处理「动态建立 Skill」意图
      *
-     * 偵測使用者輸入是否包含建立新技能的意圖，
-     * 若有則自動建立並持久化，返回結果訊息供 AI 回覆。
+     * 侦测使用者输入是否包含建立新技能的意图，
+     * 若有则自动建立并持久化，返回结果讯息供 AI 回复。
      *
-     * @return 建立結果的描述字串，若無意圖則回傳 null
+     * @return 建立结果的描述字串，若无意图则回传 null
      */
     fun handleDynamicSkillCreation(userInput: String): String? {
         val intent = com.chin.stockanalysis.skill.stock_picking.SkillIntentDetector.detect(userInput)
@@ -171,22 +171,22 @@ class SkillOrchestrator(private val skillEngine: SkillEngine) {
             "✅ 已建立新技能「${created.name}」\n" +
                 "- ID: ${created.id}\n" +
                 "- 描述: ${created.description}\n" +
-                "- 觸發關鍵詞: ${intent.keywords.joinToString(", ")}\n" +
-                "- 自動觸發: 已啟用\n\n" +
-                "之後對話中提到相關關鍵詞時，此技能會自動執行。"
+                "- 触发关键词: ${intent.keywords.joinToString(", ")}\n" +
+                "- 自动触发: 已启用\n\n" +
+                "之后对话中提到相关关键词时，此技能会自动执行。"
         } else {
-            "⚠️ 技能建立失敗：ID「${intent.id}」已存在，請更換名稱後再試。"
+            "⚠️ 技能建立失败：ID「${intent.id}」已存在，请更换名称后再试。"
         }
     }
 
     /**
-     * 將選股 Skill 結果格式化為 AI prompt 注入片段
+     * 将选股 Skill 结果格式化为 AI prompt 注入片段
      *
-     * 過濾掉基礎 Skill（早盤關注、尾盤異動等），只保留選股相關 Skill，
-     * 每個選股 Skill 單獨輸出一個分析區塊，方便 AI 逐一分析。
+     * 过滤掉基础 Skill（早盘关注、尾盘异动等），只保留选股相关 Skill，
+     * 每个选股 Skill 单独输出一个分析区块，方便 AI 逐一分析。
      */
     fun formatForPrompt(results: List<SkillExecutionResult>): String {
-        // 過濾：只保留選股相關 Skill（排除 morning_check, afternoon_review 等）
+        // 过滤：只保留选股相关 Skill（排除 morning_check, afternoon_review 等）
         val pickingSkills = results.filter { it.skillId.startsWith("stock_picking_") }
         if (pickingSkills.isEmpty()) return ""
 
@@ -216,7 +216,7 @@ class SkillOrchestrator(private val skillEngine: SkillEngine) {
     }
 
     /**
-     * 為單個 Skill 構建完整的 prompt
+     * 为单个 Skill 构建完整的 prompt
      */
     private fun buildSkillPrompt(
         skill: Skill,
@@ -227,10 +227,10 @@ class SkillOrchestrator(private val skillEngine: SkillEngine) {
     ): String {
         val sb = StringBuilder()
 
-        // Skill 的描述和目標
+        // Skill 的描述和目标
         sb.appendLine("分析目标: 使用「${skill.name}」方法分析「$stockName ($stockCode)」")
 
-        // 注入板塊信息
+        // 注入板块信息
         if (sectors.isNotEmpty()) {
             sb.appendLine("所属板块: ${sectors.joinToString(", ")}")
             sb.appendLine()
@@ -241,7 +241,7 @@ class SkillOrchestrator(private val skillEngine: SkillEngine) {
             if (skill.prompts.size > 1) {
                 sb.appendLine("### Step ${i + 1}")
             }
-            // 替換提示中的佔位符
+            // 替换提示中的占位符
             val resolvedPrompt = prompt
                 .replace("{stockCode}", stockCode)
                 .replace("{stockName}", stockName)

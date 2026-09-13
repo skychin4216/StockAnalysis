@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 新闻优先选股拓扑
+
+  流程：全市场扫描 → 板块加权 → 新闻过滤 → 动量过滤 → 基本面过滤 → 评分排序 → 输出
+
+  适用场景：消息面驱动的短线选股，优先用新闻利好筛选。
+-->
+<topology id="news_first" name="新闻优先选股" description="优先按新闻利好筛选，再通过动量和基本面指标精选" version="1">
+    <nodes>
+        <node id="nf_source" module="market_source" displayName="全市场扫描">
+            <position x="50" y="100" />
+            <config>
+                <param name="minMarketCap" value="50" />
+                <param name="excludeSt" value="true" />
+                <param name="excludeETF" value="true" />
+            </config>
+        </node>
+        <node id="nf_sector_boost" module="sector_boost" displayName="板块加权">
+            <position x="250" y="100" />
+            <config>
+                <param name="boostMode" value="HOT_SECTOR" />
+                <param name="boostWeight" value="10.0" />
+            </config>
+        </node>
+        <node id="nf_news_filter" module="news_filter" displayName="新闻过滤">
+            <position x="450" y="100" />
+            <config>
+                <param name="minImpactStrength" value="50" />
+                <param name="sentimentMode" value="POSITIVE_ONLY" />
+            </config>
+        </node>
+        <node id="nf_momentum" module="momentum_filter" displayName="动量过滤">
+            <position x="650" y="100" />
+            <config>
+                <param name="minChangePercent" value="1.0" />
+                <param name="minAmount" value="50000000" />
+                <param name="priceAboveOpen" value="true" />
+            </config>
+        </node>
+        <node id="nf_basic_filter" module="basic_filter" displayName="基本面过滤">
+            <position x="850" y="100" />
+            <config>
+                <param name="maxPe" value="50" />
+                <param name="excludeNegative" value="true" />
+            </config>
+        </node>
+        <node id="nf_score_sort" module="score_sort" displayName="评分排序">
+            <position x="1050" y="100" />
+            <config>
+                <param name="maxOutput" value="20" />
+            </config>
+        </node>
+        <node id="nf_output" module="result_output_sink" displayName="结果输出">
+            <position x="1250" y="100" />
+        </node>
+    </nodes>
+    <streams>
+        <stream id="nf_s1" source="nf_source" sourcePort="stocks_out" sink="nf_sector_boost" sinkPort="stocks_in" />
+        <stream id="nf_s2" source="nf_sector_boost" sourcePort="boosted_out" sink="nf_news_filter" sinkPort="stocks_in" />
+        <stream id="nf_s3" source="nf_news_filter" sourcePort="filtered_out" sink="nf_momentum" sinkPort="stocks_in" />
+        <stream id="nf_s4" source="nf_momentum" sourcePort="filtered_out" sink="nf_basic_filter" sinkPort="stocks_in" />
+        <stream id="nf_s5" source="nf_basic_filter" sourcePort="filtered_out" sink="nf_score_sort" sinkPort="stocks_in" />
+        <stream id="nf_s6" source="nf_sector_boost" sourcePort="scores_out" sink="nf_score_sort" sinkPort="scores_in" />
+        <stream id="nf_s7" source="nf_score_sort" sourcePort="sorted_out" sink="nf_output" sinkPort="final_in" />
+    </streams>
+</topology>

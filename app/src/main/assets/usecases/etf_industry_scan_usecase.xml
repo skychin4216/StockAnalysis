@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## ETF 全行业扫描 UseCase（与 etf_dip / sector_ambush 同构的 XML DAG 单一事实源）
+
+  ★ 与另外两个 ETF usecase 的分工（务必区分，勿合并）：
+    · etf_industry_scan   ETF 全行业扫描 —— 入口=**行业/主题板块**：
+        全市场行业/主题 ETF → 各自前五重仓股 → 低吸打分 → topN（炒的是**个股**）
+    · etf_holdings_top5   ETF 持股 top5 —— 入口=**ETF 前五重仓覆盖**：
+        覆盖矩阵排行（被多少只行业 ETF 重仓覆盖）→ 观察清单（炒的是**个股覆盖度**）
+    · etf_pure_screen     纯 ETF 筛选   —— 入口=**ETF 本体**：
+        ETF 自身的 RAS/MACD/OBV/RSI6/250日回撤/流动性 → 底仓 & 做 T（炒的是**ETF 本身**）
+
+  双端共用：APK UseCaseLoader 直接加载执行；usecase_pipeline.py（与本 XML 同居
+  assets/usecases 的 Python 引擎）解析同一份 XML —— 任何一端只改 XML，双端行为自动同源。
+  参数全部在 pipeline XML（etf_industry_scan_pipeline.xml），改参数只改那一处。
+  规则出处：E:\Android\work\dev\选股思路\ETF选股思路.txt + smalltools/_etf_holdings.py
+-->
+<usecase id="etf_industry_scan" name="ETF全行业扫描">
+  <description>行业/主题ETF → 前五重仓股 → 低吸打分(SAR红硬门控+转折确认) → top10 → 多理论投票止损</description>
+  <steps>
+    <pipeline ref="usecases/etf_industry_scan_pipeline.xml" name="etf_industry_scan_dag" />
+  </steps>
+  <config>
+    <param name="orderType" value="EtfIndustryScan" />
+    <param name="maxHoldings" value="10" />
+    <param name="holdingPeriod" value="etf" />
+  </config>
+</usecase>

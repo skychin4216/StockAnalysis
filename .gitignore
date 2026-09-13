@@ -20,9 +20,87 @@ local.properties
 *local.properties
 api_keys_local.properties
 app/src/main/assets/api_keys_local.properties
+AutoQuant/ai_keys.properties
+AutoQuant/journal/
+SecretKey.csv
+*SecretKey*.csv
+
+# Release 签名（本地密钥，不入库）
+keystore.properties
+*.keystore
+*.jks
+
+# 发版产物
+release/output/
+release/cos_config.json
+
+# 临时编译/调试输出（output/ 及根目录散落的 txt）
+/output/
+/compile_*.txt
+/t_*.txt
+/err_*.txt
+/out_*.txt
+
+# AI 工具工作区（记忆等，不入库）
+.workbuddy/
+
+# AutoQuant 独立仓库（内含 .git，需删除其 .git 后才可并入主仓库；待批准合并）
+# 注意：必须锚定根目录，否则会误伤 skills/autoquant 架构 skill（Windows core.ignorecase=true）
+/AutoQuant/
+
+# 公共市场数据库（SQLite 生成物，由 smalltools/_market_db.py 建库/增量维护）
+data/market_data.db
+data/market_data.db.bak
+
+# 本地 K 线/新闻/公告缓存（可随时由 smalltools 重新抓取，不入库）
+smalltools/_kline_cache.json
+smalltools/_kline_cache.json.bak
+smalltools/_news_cache.json
+smalltools/_news_cache.json.bak
+smalltools/_announce_cache.json
+smalltools/_announce_cache.json.bak
+
+# smalltools 运行临时输出（不入库）
+smalltools/out*.txt
+smalltools/err*.txt
+smalltools/*_result.txt
+smalltools/*_verify.txt
+smalltools/o.txt
+smalltools/o_imp.txt
+smalltools/t_out.txt
+smalltools/e_imp.txt
+smalltools/_refit_out.txt
+smalltools/_portfolio_sim.txt
+
+# 守护运行态 / 一次性探针 / 临时产物（不入库）
+smalltools/*.pid
+smalltools/_daemon_rhythm.json
+smalltools/_daemon_ops.jsonl
+smalltools/_etf_cache.json
+smalltools/_news_watch_snap.json
+smalltools/_kline_cache.backup_*.json
+smalltools/_probe*.py
+smalltools/_tmp_chart.*
+smalltools/_ref/
 
 # 系统文件
 .DS_Store
 
 # 其他
 *.log
+.trae-html-share-packages/
+.vscode/
+__pycache__/
+*.pyc
+smalltools/data/_index_market.html
+smalltools/_records/cloud/
+
+# 审计 / 复盘 / 回放产物（可随时由 smalltools 重跑生成，不入库）
+smalltools/data/review_tables/
+smalltools/data/round_tables/
+smalltools/_records/replay/
+data/_index_market_replay_*.png
+/_s*.png
+
+# 抓取原始缓存（_inst_holdings.py reuse 用，可重抓）
+data/_inst_raw.json.gz

@@ -2,22 +2,30 @@ package com.chin.stockanalysis.ui
 
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
+import com.chin.stockanalysis.agent.stock.StockAnalysisAgent
+import com.chin.stockanalysis.ai.StockEntityExtractor
 
 /**
- * 統一的股票詳情頁跳轉導航器
- * 任何 Fragment/Activity 中點擊股票名稱/代碼，調用此類跳轉到 StockDetailFragment
+ * 统一的股票详情页跳转导航器
+ * 任何 Fragment/Activity 中点击股票名称/代码，调用此类跳转到 StockDetailFragment
  */
 object StockDetailNavigator {
 
+    /** 解析中文名称 → 代码，再标准化 */
+    private fun resolveAndNormalize(code: String): String {
+        val resolved = StockEntityExtractor.resolveSync(code) ?: code
+        return StockAnalysisAgent.normalizeStockCode(resolved)
+    }
+
     /**
-     * 從 Fragment 跳轉到股票詳情頁
-     * @param fragment 當前 Fragment
-     * @param stockCode 股票代碼（如 "sh600519"）
-     * @param stockName 股票名稱
-     * @param price 當前價格（可選）
-     * @param changePct 漲跌幅（可選）
-     * @param sectorName 所屬板塊（可選）
-     * @param autoExpandAi 是否自動展開 AI 分析區（默認 true，跳過簡單頁面）
+     * 从 Fragment 跳转到股票详情页
+     * @param fragment 当前 Fragment
+     * @param stockCode 股票代码（如 "sh600519"）或中文名称
+     * @param stockName 股票名称
+     * @param price 当前价格（可选）
+     * @param changePct 涨跌幅（可选）
+     * @param sectorName 所属板块（可选）
+     * @param autoExpandAi 是否自动展开 AI 分析区（默认 true，跳过简单页面）
      */
     fun navigateFromFragment(
         fragment: Fragment,
@@ -29,7 +37,7 @@ object StockDetailNavigator {
         autoExpandAi: Boolean = true
     ) {
         val detail = StockDetailFragment.newInstance(
-            stockCode = stockCode,
+            stockCode = resolveAndNormalize(stockCode),
             stockName = stockName,
             price = price,
             changePct = changePct,
@@ -44,7 +52,7 @@ object StockDetailNavigator {
     }
 
     /**
-     * 從 Activity 跳轉到股票詳情頁
+     * 从 Activity 跳转到股票详情页
      */
     fun navigateFromActivity(
         activity: FragmentActivity,
@@ -56,7 +64,7 @@ object StockDetailNavigator {
         autoExpandAi: Boolean = true
     ) {
         val detail = StockDetailFragment.newInstance(
-            stockCode = stockCode,
+            stockCode = resolveAndNormalize(stockCode),
             stockName = stockName,
             price = price,
             changePct = changePct,

@@ -3,11 +3,13 @@ package com.chin.stockanalysis.strategy.trade
 import android.content.Context
 import android.util.Log
 import com.chin.stockanalysis.stock.database.StockDatabase
+import com.chin.stockanalysis.stock.data.StockDataSourceFactory
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
 import com.chin.stockanalysis.strategy.Strategy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import kotlin.math.abs
 import kotlin.math.sqrt
@@ -20,7 +22,7 @@ import kotlin.math.sqrt
  * ### 层级1: 强制风控层（优先级最高）
  * 1. **硬止损 (Hard Stop)**: 亏损 > 8% → 无条件卖出
  * 2. **最大回撤止损 (Max Drawdown Stop)**: 从持仓最高点回撤 > 12% → 卖出
- * 3. **时间强制平仓 (Time Force Close)**: 持仓 > 15天 → 强制卖出
+ * 3. **时间无进展强制平仓 (Time + No Progress Stop)**: 持仓 ≥ 10天且近3日动量 < 1% → 卖出（死钱换股）
  *
  * ### 层级2: 动态止盈层
  * 4. **阶梯止盈 (Tiered Take Profit)**: +10%卖1/3, +15%卖1/3, +20%卖剩余
@@ -55,13 +57,15 @@ class AutoSellEngine(private val context: Context) {
         const val MA_SHORT = 5
         const val MA_LONG = 20
 
-        data class TakeProfitTier(val profitPct: Double, val sellRatio: Double)
         val TP_TIERS = listOf(
             TakeProfitTier(10.0, 0.33),
             TakeProfitTier(15.0, 0.33),
             TakeProfitTier(20.0, 1.0)
         )
     }
+
+    /** 止盈档位：profitPct=盈利百分比阈值，sellRatio=达到时卖出的比例 */
+    data class TakeProfitTier(val profitPct: Double, val sellRatio: Double)
 
     data class AutoSellConfig(
         val tradeDate: String = LocalDate.now().format(DATE_FMT),
@@ -79,7 +83,10 @@ class AutoSellEngine(private val context: Context) {
         val enableSectorWeakness: Boolean = true,
         val volumeSurgeMult: Double = VOLUME_SURGE_MULT,
         val volumeClimaxPricePct: Double = VOLUME_CLIMAX_PRICE_PCT,
-        val rsiOverbought: Int = RSI_OVERBOUGHT
+        val rsiOverbought: Int = RSI_OVERBOUGHT,
+        // 自定义止盈档位：null 时用默认 TP_TIERS（10/15/20% 阶梯）
+        // 2026-08-15 一年回溯拟合：中线最优为 单档 +20% 全卖（持有15天/-10%止损）
+        val tpTiers: List<TakeProfitTier>? = null
     )
 
     data class SellDecision(
@@ -91,7 +98,9 @@ class AutoSellEngine(private val context: Context) {
         val strategy: String,
         val sellRatio: Double = 1.0,
         val urgency: Int = 0,
-        val technicalDetails: Map<String, String> = emptyMap()
+        val technicalDetails: Map<String, String> = emptyMap(),
+        // 触发档位索引（用于 executeSells 记录已减仓档位；-1 表示非阶梯止盈）
+        val tierIndex: Int = -1
     )
 
     data class SellPerformanceStats(
@@ -132,14 +141,41 @@ class AutoSellEngine(private val context: Context) {
     ): List<SellDecision> = withContext(Dispatchers.IO) {
         val decisions = mutableListOf<SellDecision>()
         try {
+            // B7: 只评估已成交持仓（BUYING=建仓中 / HELD=持有），PENDING 是未成交挂单，不参与卖出评估
+            // T+1: A股当日买入次日才能卖出，跳过 tradeDate >= config.tradeDate（当天/未来建仓）的持仓
             val holdingOrders = db.strategyTradeOrderDao().getRecent(500)
-                .filter { it.status == "BUYING" || it.status == "PENDING" || it.status == "HELD" }
+                .filter { it.status == "BUYING" || it.status == "HELD" }
+                .filter { it.tradeDate < config.tradeDate }
             if (holdingOrders.isEmpty()) return@withContext decisions
 
             val todayData = getTradingDayData(config.tradeDate)
-            val todayPriceMap = todayData.associate { it.code to it.close }
+            val todayPriceMap = todayData.associate { it.code to it.close }.toMutableMap()
             val todayVolumeMap = todayData.associate { it.code to it.volume }
-            val recentDates = db.dailySnapshotDao().getAvailableDates(30).sorted()
+
+            // 盘中交易时段：用实时价覆盖收盘快照，止损/止盈判断更准确
+            val now = LocalTime.now()
+            val morningSession = now >= LocalTime.of(9, 30) && now <= LocalTime.of(11, 30)
+            val afternoonSession = now >= LocalTime.of(13, 0) && now <= LocalTime.of(15, 0)
+            val isTradingHours = isTradingDay() && (morningSession || afternoonSession)
+            if (isTradingHours) {
+                try {
+                    val repo = StockDataSourceFactory.createDefaultRepository(context)
+                    val codes = holdingOrders.map { it.stockCode }
+                    val realtime = repo.getRealtime(codes)
+                    var overrideCount = 0
+                    for ((code, rt) in realtime) {
+                        if (rt.price > 0) {
+                            todayPriceMap[code] = rt.price
+                            overrideCount++
+                        }
+                    }
+                    Log.i(TAG, "盘中实时价覆盖: $overrideCount/${codes.size} 只")
+                } catch (e: Exception) {
+                    Log.w(TAG, "盘中实时价获取失败: ${e.message}")
+                }
+            }
+            // B8: 回撤/最高价需覆盖持仓全周期（最长持仓可达一年），取近 250 个交易日
+            val recentDates = db.dailySnapshotDao().getAvailableDates(250).sorted()
             val priceHistory = buildPriceHistory(recentDates)
             val volumeHistory = buildVolumeHistory(recentDates)
             val sectorChanges = getSectorChangePct(config.tradeDate)
@@ -192,7 +228,7 @@ class AutoSellEngine(private val context: Context) {
                     "drawdown%" to "%.2f".format(-drawdownFromPeak)))
         }
 
-        // ③ 時間+無進展止損 (Time + No Progress Stop)
+        // ③ 时间+无进展止损 (Time + No Progress Stop)
         // 持仓超时且近3日无正向动量（涨幅<1%）→ 死钱换股
         if (snap.daysHeld >= config.timeForceCloseDays && snap.priceHistory.size >= 4) {
             val recent3 = snap.priceHistory.takeLast(4)
@@ -206,16 +242,21 @@ class AutoSellEngine(private val context: Context) {
             }
         }
 
-        // ④ 阶梯止盈
+        // ④ 阶梯止盈（已减仓过的档位不再重复触发，避免多次评估重复减仓）
         if (config.enableTieredTP) {
-            for (tier in TP_TIERS.reversed()) {
+            val tiers = config.tpTiers ?: TP_TIERS
+            val takenTiers = takenTpTiers(snap.order.reason)
+            for (tier in tiers.reversed()) {
+                val tierIndex = tiers.indexOf(tier)
+                if (takenTiers.contains(tierIndex)) continue
                 if (snap.profitPct >= tier.profitPct) {
                     return SellDecision(snap.order,
-                        "🎯 阶梯止盈: +${"%.1f".format(snap.profitPct)}% 触发第${TP_TIERS.indexOf(tier)+1}档",
+                        "🎯 阶梯止盈: +${"%.1f".format(snap.profitPct)}% 触发第${tierIndex+1}档",
                         snap.currentPrice, snap.profitPct, true, "TieredTP", tier.sellRatio, 5,
                         mapOf("trigger" to "阶梯止盈",
-                            "tier" to "${TP_TIERS.indexOf(tier)+1}/${TP_TIERS.size}",
-                            "sellRatio" to "${(tier.sellRatio*100).toInt()}%"))
+                            "tier" to "${tierIndex+1}/${tiers.size}",
+                            "sellRatio" to "${(tier.sellRatio*100).toInt()}%"),
+                        tierIndex = tierIndex)
                 }
             }
         }
@@ -319,9 +360,9 @@ class AutoSellEngine(private val context: Context) {
     // 执行卖出
     // ═══════════════════════════════════════════════
 
-    suspend fun executeSells(decisions: List<SellDecision>, today: String = LocalDate.now().format(DATE_FMT)): Int = withContext(Dispatchers.IO) {
+    suspend fun executeSells(decisions: List<SellDecision>, today: String = LocalDate.now().format(DATE_FMT), force: Boolean = false): Int = withContext(Dispatchers.IO) {
         var executedCount = 0
-        for (dec in decisions.filter { it.shouldSell }) {
+        for (dec in if (force) decisions else decisions.filter { it.shouldSell }) {
             try {
                 if (dec.sellRatio >= 1.0) {
                     db.strategyTradeOrderDao().updateSellInfo(
@@ -330,6 +371,12 @@ class AutoSellEngine(private val context: Context) {
                 } else {
                     val soldQuantity = (dec.order.quantity * dec.sellRatio).toInt().coerceAtLeast(1)
                     db.strategyTradeOrderDao().updateQuantity(dec.order.id, dec.order.quantity - soldQuantity)
+                    // 记录已减仓的档位，防止后续评估对同一档重复减仓
+                    if (dec.strategy == "TieredTP" && dec.tierIndex >= 0 &&
+                        !takenTpTiers(dec.order.reason).contains(dec.tierIndex)) {
+                        db.strategyTradeOrderDao().updateReason(
+                            dec.order.id, dec.order.reason + "[TP_TIER_${dec.tierIndex + 1}]")
+                    }
                     db.strategyTradeOrderDao().insert(StrategyTradeOrderEntity(
                         strategyId = dec.order.strategyId, stockCode = dec.order.stockCode,
                         stockName = dec.order.stockName, tradeDate = dec.order.tradeDate,
@@ -363,12 +410,7 @@ class AutoSellEngine(private val context: Context) {
     }
 
     fun calculateRSI(prices: List<Double>, period: Int = 14): Double {
-        if (prices.size < period + 1) return 50.0
-        val changes = prices.zipWithNext { a, b -> b - a }.takeLast(period)
-        val gains = changes.filter { it > 0 }.sum()
-        val losses = changes.filter { it < 0 }.sum().let { abs(it) }
-        if (losses == 0.0) return 100.0
-        return 100.0 - 100.0 / (1.0 + gains / losses)
+        return com.chin.stockanalysis.strategy.analysis.RsiCalculator.compute(prices, period)
     }
 
     // ═══════════════════════════════════════════════
@@ -379,12 +421,18 @@ class AutoSellEngine(private val context: Context) {
         java.time.temporal.ChronoUnit.DAYS.between(LocalDate.parse(buyDate, DATE_FMT), LocalDate.parse(today, DATE_FMT)).toInt()
     } catch (_: Exception) { 0 }
 
+    /** 判断今天是否为交易日（简化：周一到周五） */
+    private fun isTradingDay(): Boolean {
+        val dow = LocalDate.now().dayOfWeek
+        return dow != java.time.DayOfWeek.SATURDAY && dow != java.time.DayOfWeek.SUNDAY
+    }
+
     private suspend fun getTradingDayData(date: String): List<DailySnapshotEntity> =
         try { db.dailySnapshotDao().getByDate(date) } catch (_: Exception) { emptyList() }
 
     private suspend fun buildPriceHistory(dates: List<String>): Map<String, List<Double>> {
         val map = mutableMapOf<String, MutableList<Double>>()
-        for (date in dates.takeLast(30)) {
+        for (date in dates) {
             try { db.dailySnapshotDao().getByDate(date).forEach { map.getOrPut(it.code){ mutableListOf() }.add(it.close) } }
             catch (_: Exception) {}
         }
@@ -393,17 +441,37 @@ class AutoSellEngine(private val context: Context) {
 
     private suspend fun buildVolumeHistory(dates: List<String>): Map<String, List<Long>> {
         val map = mutableMapOf<String, MutableList<Long>>()
-        for (date in dates.takeLast(30)) {
+        for (date in dates) {
             try { db.dailySnapshotDao().getByDate(date).forEach { map.getOrPut(it.code){ mutableListOf() }.add(it.volume) } }
             catch (_: Exception) {}
         }
         return map
     }
 
+    /**
+     * 计算每只持仓个股所属板块的涨跌幅（板块真实涨跌，而非个股自身涨跌幅）。
+     *
+     * 匹配链路：个股 stockCode → sector_stocks.sector_name → sector_daily_record.change_pct。
+     * 一只股票可能属于多个板块，取跌幅最大的板块作为参考（最坏情形）。
+     */
     private suspend fun getSectorChangePct(date: String): Map<String, Double> {
         val map = mutableMapOf<String, Double>()
-        try { db.dailySnapshotDao().getByDate(date).forEach { map[it.code] = it.changePct } }
-        catch (_: Exception) {}
+        try {
+            // 当日板块涨跌（sector_name → changePct）
+            val sectorNameToChange = db.sectorDailyRecordDao().getByDate(date)
+                .associate { it.sectorName to it.changePct }
+            if (sectorNameToChange.isEmpty()) return map
+            // 每只持仓股票 → 所属板块跌幅（取最差）；只统计已成交持仓
+            val holdings = db.strategyTradeOrderDao().getRecent(500)
+                .filter { it.status == "BUYING" || it.status == "HELD" }
+            for (order in holdings) {
+                val sectorChanges = db.sectorStockDao().getSectorNamesByStockCode(order.stockCode)
+                    .mapNotNull { sectorNameToChange[it] }
+                if (sectorChanges.isNotEmpty()) {
+                    map[order.stockCode] = sectorChanges.minOrNull() ?: 0.0
+                }
+            }
+        } catch (_: Exception) {}
         return map
     }
 
@@ -432,6 +500,12 @@ class AutoSellEngine(private val context: Context) {
         stats
     }
 
+    /** 从持仓 reason 中解析已减仓的阶梯止盈档位（0-based index） */
+    private fun takenTpTiers(reason: String): Set<Int> {
+        if (!reason.contains("[TP_TIER_")) return emptySet()
+        return TP_TIERS.indices.filter { reason.contains("[TP_TIER_${it + 1}]") }.toSet()
+    }
+
     private fun extractStrategyFromReason(reason: String): String = when {
         reason.contains("硬止损") -> "HardStop"
         reason.contains("最大回撤") -> "MaxDrawdown"
@@ -444,9 +518,9 @@ class AutoSellEngine(private val context: Context) {
         reason.contains("放量滞涨") -> "VolumeClimax"
         reason.contains("RSI超买") -> "RSIOverbought"
         reason.contains("板块弱势") -> "SectorWeakness"
-        reason.contains("ATR止損") || reason.contains("ATR止损") -> "ATRStop"
-        reason.contains("動量衰竭") || reason.contains("动量衰竭") -> "MomentumDecay"
-        reason.contains("目標止盈") || reason.contains("目标止盈") -> "TakeProfit"
+        reason.contains("ATR止损") -> "ATRStop"
+        reason.contains("动量衰竭") -> "MomentumDecay"
+        reason.contains("目标止盈") -> "TakeProfit"
         else -> "Other"
     }
 }

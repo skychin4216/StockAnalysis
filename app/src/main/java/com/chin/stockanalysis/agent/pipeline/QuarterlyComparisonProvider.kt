@@ -75,8 +75,8 @@ object QuarterlyComparisonProvider {
                 latestLabel = "", previousLabel = "",
                 netProfitQoQ = 0.0, revenueQoQ = 0.0, deductNpQoQ = 0.0,
                 trend = QuarterlyTrend.UNKNOWN,
-                trendDescription = "數據不足，無法判定環比趨勢",
-                scoreAdjustment = 0, scoreReason = "數據不足，無法判定環比趨勢",
+                trendDescription = "数据不足，无法判定环比趋势",
+                scoreAdjustment = 0, scoreReason = "数据不足，无法判定环比趋势",
                 dataDate = "", isFresh = false, hasData = false
             )
 
@@ -101,17 +101,17 @@ object QuarterlyComparisonProvider {
                     append("&sortColumns=REPORT_DATE&sortTypes=-1")
                 }
 
-                Log.i(TAG, "獲取季度財報: $pureCode")
+                Log.i(TAG, "获取季度财报: $pureCode")
 
                 val req = Request.Builder()
                     .url(url)
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                    .header("Referer", "https://data.eastmoney.com")
+                    .header("Referer", DataConfig.eastmoneyData)
                     .build()
 
                 val resp = client.newCall(req).execute()
                 if (!resp.isSuccessful) {
-                    Log.w(TAG, "季度財報 API 失敗: ${resp.code}")
+                    Log.w(TAG, "季度财报 API 失败: ${resp.code}")
                     return@withContext emptyResult
                 }
 
@@ -127,13 +127,13 @@ object QuarterlyComparisonProvider {
                 }
 
                 if (allItems.size < 2) {
-                    Log.w(TAG, "季度財報數據不足: ${allItems.size} 條")
+                    Log.w(TAG, "季度财报数据不足: ${allItems.size} 条")
                     return@withContext emptyResult
                 }
 
-                val nonAnnual = allItems.filter { it.reportType != "年報" }
+                val nonAnnual = allItems.filter { it.reportType != "年报" }
                 if (nonAnnual.size < 2) {
-                    Log.w(TAG, "非年報季度數據不足: ${nonAnnual.size} 條")
+                    Log.w(TAG, "非年报季度数据不足: ${nonAnnual.size} 条")
                     return@withContext emptyResult
                 }
 
@@ -166,7 +166,7 @@ object QuarterlyComparisonProvider {
                     hasData = true
                 )
             } catch (e: Exception) {
-                Log.w(TAG, "獲取季度財報異常: ${e.message}")
+                Log.w(TAG, "获取季度财报异常: ${e.message}")
                 emptyResult
             }
         }
@@ -239,9 +239,9 @@ object QuarterlyComparisonProvider {
         if (nonAnnual.size < 2) {
             return TrendInfo(
                 trend = QuarterlyTrend.UNKNOWN,
-                description = "數據不足，無法判定環比趨勢",
+                description = "数据不足，无法判定环比趋势",
                 scoreAdjustment = 0,
-                scoreReason = "數據不足，無法判定環比趨勢"
+                scoreReason = "数据不足，无法判定环比趋势"
             )
         }
 
@@ -274,33 +274,33 @@ object QuarterlyComparisonProvider {
         return when {
             isLatestPositive && isPrevPositive -> TrendInfo(
                 trend = QuarterlyTrend.ACCELERATING_IMPROVEMENT,
-                description = "連續2季環比上升，經營加速改善",
+                description = "连续2季环比上升，经营加速改善",
                 scoreAdjustment = 5,
-                scoreReason = "連續2季環比上升，經營加速改善"
+                scoreReason = "连续2季环比上升，经营加速改善"
             )
             isLatestNegative && isPrevNegative -> TrendInfo(
                 trend = QuarterlyTrend.ACCELERATING_DECLINE,
-                description = "連續2季環比下降，經營頹勢明顯",
+                description = "连续2季环比下降，经营颓势明显",
                 scoreAdjustment = -10,
-                scoreReason = "連續2季環比下降，經營頹勢明顯"
+                scoreReason = "连续2季环比下降，经营颓势明显"
             )
             isLatestPositive -> TrendInfo(
                 trend = QuarterlyTrend.SINGLE_IMPROVEMENT,
-                description = "單季環比改善，需觀察後續延續性",
+                description = "单季环比改善，需观察后续延续性",
                 scoreAdjustment = 2,
-                scoreReason = "單季環比改善，需觀察後續延續性"
+                scoreReason = "单季环比改善，需观察后续延续性"
             )
             isLatestNegative -> TrendInfo(
                 trend = QuarterlyTrend.SINGLE_DECLINE,
-                description = "單季環比下滑，需關注是否持續",
+                description = "单季环比下滑，需关注是否持续",
                 scoreAdjustment = -5,
-                scoreReason = "單季環比下滑，需關注是否持續"
+                scoreReason = "单季环比下滑，需关注是否持续"
             )
             else -> TrendInfo(
                 trend = QuarterlyTrend.FLAT,
-                description = "環比平穩，無明顯趨勢",
+                description = "环比平稳，无明显趋势",
                 scoreAdjustment = 0,
-                scoreReason = "環比平穩，無明顯趨勢"
+                scoreReason = "环比平稳，无明显趋势"
             )
         }
     }
@@ -343,7 +343,7 @@ object QuarterlyComparisonProvider {
         val now = System.currentTimeMillis()
         val cached = cache[stockCode]
         if (cached != null && (now - cached.second) < CACHE_DURATION_MS) {
-            Log.d(TAG, "使用緩存: $stockCode")
+            Log.d(TAG, "使用缓存: $stockCode")
             return cached.first
         }
 
@@ -354,7 +354,7 @@ object QuarterlyComparisonProvider {
 
     fun formatForAgentInjection(result: QuarterlyComparisonResult): String {
         if (!result.hasData || result.latest == null || result.previous == null) {
-            return "【季度环比數據】無可用數據"
+            return "【季度环比数据】无可用数据"
         }
 
         val latestNpYi = result.latest.parentNetProfit / 100000000.0
@@ -370,22 +370,22 @@ object QuarterlyComparisonProvider {
 
         val trendText = when (result.trend) {
             QuarterlyTrend.ACCELERATING_IMPROVEMENT -> "加速改善"
-            QuarterlyTrend.ACCELERATING_DECLINE -> "出現頹勢"
-            QuarterlyTrend.SINGLE_IMPROVEMENT -> "單季回暖"
-            QuarterlyTrend.SINGLE_DECLINE -> "單季回落"
-            QuarterlyTrend.FLAT -> "平穩震蕩"
-            QuarterlyTrend.UNKNOWN -> "數據不足"
+            QuarterlyTrend.ACCELERATING_DECLINE -> "出现颓势"
+            QuarterlyTrend.SINGLE_IMPROVEMENT -> "单季回暖"
+            QuarterlyTrend.SINGLE_DECLINE -> "单季回落"
+            QuarterlyTrend.FLAT -> "平稳震荡"
+            QuarterlyTrend.UNKNOWN -> "数据不足"
         }
 
         return buildString {
-            appendLine("【季度环比數據】（數據截至: ${result.latestLabel}）")
-            appendLine("| 指標 | ${result.latestLabel} | ${result.previousLabel} | 環比變化 | 趨勢判定 |")
+            appendLine("【季度环比数据】（数据截至: ${result.latestLabel}）")
+            appendLine("| 指标 | ${result.latestLabel} | ${result.previousLabel} | 环比变化 | 趋势判定 |")
             appendLine("|------|---------|---------|---------|---------|")
-            appendLine("| 單季歸母淨利潤 | ${String.format("%.2f", latestNpYi)}億 | ${String.format("%.2f", prevNpYi)}億 | $npChange | $npTrend |")
-            appendLine("| 單季營業收入 | ${String.format("%.2f", latestRevYi)}億 | ${String.format("%.2f", prevRevYi)}億 | $revChange | $revTrend |")
-            appendLine("| 綜合判定 | — | — | — | $trendText |")
-            appendLine("趨勢結論: ${result.trendDescription}")
-            append("評分調整: ${result.scoreAdjustment}分 — ${result.scoreReason}")
+            appendLine("| 单季归母净利润 | ${String.format("%.2f", latestNpYi)}亿 | ${String.format("%.2f", prevNpYi)}亿 | $npChange | $npTrend |")
+            appendLine("| 单季营业收入 | ${String.format("%.2f", latestRevYi)}亿 | ${String.format("%.2f", prevRevYi)}亿 | $revChange | $revTrend |")
+            appendLine("| 综合判定 | — | — | — | $trendText |")
+            appendLine("趋势结论: ${result.trendDescription}")
+            append("评分调整: ${result.scoreAdjustment}分 — ${result.scoreReason}")
         }
     }
 

@@ -1,0 +1,127 @@
+graph TD
+
+    %% 短線量化DAG Pipeline | id=short_term_dag
+    %% 市場上下文→多周期熱門→股票池→策略篩選+熱度→板塊加權→新聞力度/輪動懲罰→主力過濾→新聞攔截→AI精選→訂單生成→持倉合併/騰龍換鳥/擬合保存
+
+    %% ===== Layer 0 =====
+    subgraph L0["Layer 0"]
+        n_import(["數據導入檢查"]):::dataSource
+        n_ctx(["市場上下文"]):::dataSource
+        n_multihot[["多周期熱門股聚合"]]:::enrichment
+        n_bg[/"後臺暫停/恢復"\]:::dataTransform
+        n_adaptive[["大盤分析+自適應參數"]]:::enrichment
+    end
+
+    %% ===== Layer 1 =====
+    subgraph L1["Layer 1"]
+        n_pool(["股票池"]):::dataSource
+        n_ma_conv[["均線粘合偵測"]]:::enrichment
+        n_guard["持倉風控"]:::filter
+    end
+
+    %% ===== Layer 2 =====
+    subgraph L2["Layer 2"]
+        n_cand(["候選池過濾"]):::dataSource
+        n_heat[["熱度計算"]]:::enrichment
+    end
+
+    %% ===== Layer 3 =====
+    subgraph L3["Layer 3"]
+        n_zipline[/"Zipline因子計算"\]:::dataTransform
+    end
+
+    %% ===== Layer 4 =====
+    subgraph L4["Layer 4"]
+        n_merge[("信號合併")]:::aggregation
+    end
+
+    %% ===== Layer 5 =====
+    subgraph L5["Layer 5"]
+        n_boost[("板塊加權")]:::aggregation
+    end
+
+    %% ===== Layer 6 =====
+    subgraph L6["Layer 6"]
+        n_bounce{"跌後反彈加分"}:::factorCompute
+        n_news_str[["新聞力度計算"]]:::enrichment
+        n_rot_pen[["板塊輪動懲罰"]]:::enrichment
+    end
+
+    %% ===== Layer 7 =====
+    subgraph L7["Layer 7"]
+        n_inst_tips[["機構線索加分"]]:::enrichment
+    end
+
+    %% ===== Layer 8 =====
+    subgraph L8["Layer 8"]
+        n_smart["主力資金過濾"]:::filter
+    end
+
+    %% ===== Layer 9 =====
+    subgraph L9["Layer 9"]
+        n_candle{"K線形態偵測"}:::factorCompute
+        n_newsguard["新聞攔截+技術過濾"]:::filter
+    end
+
+    %% ===== Layer 10 =====
+    subgraph L10["Layer 10"]
+        n_ai("AI精選"):::aiPrediction
+    end
+
+    %% ===== Layer 11 =====
+    subgraph L11["Layer 11"]
+        n_orders(("買入訂單生成")):::tradeAction
+    end
+
+    %% ===== Layer 12 =====
+    subgraph L12["Layer 12"]
+        n_swap(("騰龍換鳥")):::tradeAction
+        n_fit[/"擬合計算+保存"\]:::dataTransform
+    end
+
+    %% ===== Layer 13 =====
+    subgraph L13["Layer 13"]
+        n_merge_pos(("持倉合併")):::tradeAction
+    end
+
+    %% ===== Layer 14 =====
+    subgraph L14["Layer 14"]
+        n_crosstab(("跨Tab發布")):::tradeAction
+    end
+
+    %% ===== 連線 =====
+    n_import --> n_pool
+    n_import --> n_ma_conv
+    n_ctx --> n_pool
+    n_ctx --> n_guard
+    n_pool --> n_cand
+    n_cand --> n_zipline
+    n_zipline --> n_merge
+    n_pool --> n_heat
+    n_merge --> n_boost
+    n_heat --> n_boost
+    n_boost --> n_bounce
+    n_boost --> n_news_str
+    n_boost --> n_rot_pen
+    n_bounce --> n_inst_tips
+    n_inst_tips --> n_smart
+    n_news_str --> n_smart
+    n_smart --> n_newsguard
+    n_smart --> n_candle
+    n_newsguard --> n_ai
+    n_ai --> n_orders
+    n_adaptive --> n_orders
+    n_orders --> n_swap
+    n_swap --> n_merge_pos
+    n_merge_pos --> n_crosstab
+    n_orders --> n_fit
+
+    %% ===== 樣式定義 =====
+    classDef dataSource fill:#059669,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef filter fill:#DC2626,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef aiPrediction fill:#2563EB,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef enrichment fill:#0891B2,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef aggregation fill:#4F46E5,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef tradeAction fill:#D97706,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef factorCompute fill:#0D9488,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef dataTransform fill:#6B7280,stroke:#ffffff,stroke-width:1px,color:#ffffff

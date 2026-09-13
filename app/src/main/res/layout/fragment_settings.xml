@@ -15,7 +15,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="⚙️ 设置"
+            android:text="@string/settings_title"
             android:textSize="24sp"
             android:textStyle="bold"
             android:layout_marginBottom="24dp" />
@@ -52,7 +52,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="AI 配置"
+            android:text="@string/settings_ai_config"
             android:textSize="16sp"
             android:textStyle="bold"
             android:layout_marginBottom="8dp" />
@@ -61,7 +61,7 @@
             android:id="@+id/btnChangeApiKey"
             android:layout_width="match_parent"
             android:layout_height="48dp"
-            android:text="选择提供商 / 模型 / 用户 API Key"
+            android:text="@string/settings_select_provider"
             android:textSize="14sp"
             android:layout_marginBottom="24dp" />
 
@@ -69,7 +69,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="数据管理"
+            android:text="@string/settings_data_mgmt"
             android:textSize="16sp"
             android:textStyle="bold"
             android:layout_marginBottom="8dp" />
@@ -78,7 +78,7 @@
             android:id="@+id/btnClearCache"
             android:layout_width="match_parent"
             android:layout_height="48dp"
-            android:text="清除缓存"
+            android:text="@string/settings_clear_cache"
             android:textSize="14sp"
             android:layout_marginBottom="16dp" />
 
@@ -201,13 +201,283 @@
             android:layout_height="48dp"
             android:text="风控模块"
             android:textSize="14sp"
+            android:layout_marginBottom="16dp" />
+
+        <!-- 週期級別路線（Phase 10） -->
+        <TextView
+            android:id="@+id/tvPeriodRouteTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="週期級別路線（策略執行）"
+            android:textSize="13sp"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginBottom="4dp" />
+
+        <Switch
+            android:id="@+id/swRouteUltraShort"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:text="超短線 → Agent(QUICK)"
+            android:textSize="13sp"
+            android:layout_marginBottom="4dp" />
+
+        <Switch
+            android:id="@+id/swRouteShort"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:text="短線 → Agent(QUICK)"
+            android:textSize="13sp"
+            android:layout_marginBottom="4dp" />
+
+        <Switch
+            android:id="@+id/swRouteMid"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:text="中線 → Agent(PIPELINE)"
+            android:textSize="13sp"
+            android:layout_marginBottom="4dp" />
+
+        <Switch
+            android:id="@+id/swRouteLong"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:text="長線 → Agent(V2)"
+            android:textSize="13sp"
             android:layout_marginBottom="24dp" />
+
+        <!-- 做T 微信通知 & 自动执行（可折叠） -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@android:color/darker_gray"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:id="@+id/tvWechatSectionHeader"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="▶ 做T 微信通知 &amp; 自动执行"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:padding="8dp"
+            android:background="#F5F5F5"
+            android:layout_marginBottom="4dp" />
+
+        <LinearLayout
+            android:id="@+id/layoutWechatContent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="做T信号出现时推送微信，置信度超阈值可自动执行买卖"
+                android:textSize="12sp"
+                android:textColor="@android:color/darker_gray"
+                android:layout_marginBottom="12dp" />
+
+            <Switch
+                android:id="@+id/swWechatEnabled"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="ServerChan 微信通知"
+                android:textSize="14sp"
+                android:layout_marginBottom="4dp" />
+
+            <EditText
+                android:id="@+id/etServerChanKey"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:hint="ServerChan SendKey（https://sct.ftqq.com 获取）"
+                android:textSize="12sp"
+                android:inputType="text"
+                android:padding="8dp"
+                android:layout_marginBottom="8dp" />
+
+            <Switch
+                android:id="@+id/swPushPlusEnabled"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="PushPlus 微信通知"
+                android:textSize="14sp"
+                android:layout_marginBottom="4dp" />
+
+            <EditText
+                android:id="@+id/etPushPlusToken"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:hint="PushPlus Token（https://www.pushplus.plus 获取）"
+                android:textSize="12sp"
+                android:inputType="text"
+                android:padding="8dp"
+                android:layout_marginBottom="8dp" />
+
+            <Switch
+                android:id="@+id/swAutoExecute"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="自动执行（置信度超阈值自动买卖）"
+                android:textSize="14sp"
+                android:layout_marginBottom="4dp" />
+
+            <EditText
+                android:id="@+id/etAutoExecThreshold"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:hint="自动执行置信度阈值（默认 0.7，范围 0~1）"
+                android:textSize="12sp"
+                android:inputType="numberDecimal"
+                android:padding="8dp"
+                android:layout_marginBottom="24dp" />
+        </LinearLayout>
+
+        <!-- 语言设置 -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@android:color/darker_gray"
+            android:layout_marginBottom="16dp"
+            android:layout_marginTop="16dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_language"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btnLanguage"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="@string/settings_select_language"
+            android:textSize="14sp"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:id="@+id/tvCurrentLanguage"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="当前语言: 跟随系统"
+            android:textSize="12sp"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginBottom="24dp" />
+
+        <!-- 应用更新（App 自更新） -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@android:color/darker_gray"
+            android:layout_marginBottom="16dp"
+            android:layout_marginTop="16dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="应用更新"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="4dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="更新清单自动从云端配置（COS）读取，可手动检查或启动时自动检查新版本并下载安装"
+            android:textSize="12sp"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:id="@+id/tvUpdateVersion"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="当前版本: v1.0"
+            android:textSize="13sp"
+            android:textColor="@android:color/darker_gray"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btnCheckUpdate"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="检查更新"
+            android:textSize="14sp"
+            android:layout_marginBottom="24dp" />
+
+        <!-- 云端数据同步（腾讯云 COS，可折叠） -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@android:color/darker_gray"
+            android:layout_marginBottom="16dp"
+            android:layout_marginTop="16dp" />
+
+        <TextView
+            android:id="@+id/tvCloudSectionHeader"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="▶ 云端数据同步（腾讯云 COS）"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:padding="8dp"
+            android:background="#F5F5F5"
+            android:layout_marginBottom="4dp" />
+
+        <LinearLayout
+            android:id="@+id/layoutCloudContent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="将每日策略结果打包上传 COS，供 PC 回溯拟合；也可下载 PC 拟合好的最新参数并立即生效。"
+                android:textSize="12sp"
+                android:textColor="@android:color/darker_gray"
+                android:layout_marginBottom="12dp" />
+
+            <TextView
+                android:id="@+id/tvCloudStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="云端同步未配置"
+                android:textSize="13sp"
+                android:textColor="@android:color/darker_gray"
+                android:layout_marginBottom="8dp" />
+
+            <Button
+                android:id="@+id/btnCloudUpload"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="上传今日数据到 COS"
+                android:textSize="14sp"
+                android:layout_marginBottom="8dp" />
+
+            <Button
+                android:id="@+id/btnCloudDownloadParams"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="下载最新拟合参数"
+                android:textSize="14sp"
+                android:layout_marginBottom="8dp" />
+
+            <Button
+                android:id="@+id/btnCloudDownloadDb"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="下载云端行情库（PC 市场库）"
+                android:textSize="14sp"
+                android:layout_marginBottom="24dp" />
+        </LinearLayout>
 
         <!-- About -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="关于应用"
+            android:text="@string/settings_about"
             android:textSize="16sp"
             android:textStyle="bold"
             android:layout_marginBottom="8dp" />

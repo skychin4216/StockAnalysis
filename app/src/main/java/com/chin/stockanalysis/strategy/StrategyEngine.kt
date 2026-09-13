@@ -9,6 +9,7 @@ import com.chin.stockanalysis.strategy.models.ScreeningResult
 import com.chin.stockanalysis.strategy.models.StrategySignal
 import com.chin.stockanalysis.strategy.models.SignalAction
 import kotlinx.coroutines.*
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * ## 量化选股策略引擎
@@ -46,16 +47,17 @@ class StrategyEngine(
     }
 
     /** 所有已注册的策略（线程安全） */
-    private val strategies = mutableMapOf<String, Strategy>()
+    private val strategies = ConcurrentHashMap<String, Strategy>()
 
     /** 策略持久化 */
     private val prefs: SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    /** 最近的扫描结果缓存 */
-    private val lastResults = mutableMapOf<String, ScreeningResult>()
+    /** 最近的扫描结果缓存（线程安全） */
+    private val lastResults = ConcurrentHashMap<String, ScreeningResult>()
 
     /** 当前扫描 Job */
+    @Volatile
     private var scanJob: Job? = null
 
     // ═══════════════════════════════
@@ -109,6 +111,18 @@ class StrategyEngine(
      */
     fun getEnabledStrategies(): List<Strategy> =
         strategies.values.filter { isEnabled(it.id) }
+
+    /**
+     * 获取指定周期的启用策略
+     */
+    fun getEnabledStrategiesByPeriod(period: HoldingPeriod): List<Strategy> =
+        strategies.values.filter { isEnabled(it.id) && period in it.holdingPeriods }
+
+    /**
+     * 获取指定周期的全部策略（含未启用）
+     */
+    fun getStrategiesByPeriod(period: HoldingPeriod): List<Strategy> =
+        strategies.values.filter { period in it.holdingPeriods }
 
     // ═══════════════════════════════
     // 执行扫描
@@ -227,14 +241,49 @@ class StrategyEngine(
     }
 
     /**
-     * 获取最近扫描结果
+     * 获取最近扫描结果（已过滤过期信号）
      */
-    fun getLastResult(id: String): ScreeningResult? = lastResults[id]
+    fun getLastResult(id: String): ScreeningResult? =
+        lastResults[id]?.filterExpired(getMaxAgeForStrategy(id))
 
     /**
-     * 获取所有最近结果
+     * 获取所有最近结果（已过滤过期信号）
      */
-    fun getAllLastResults(): List<ScreeningResult> = lastResults.values.toList()
+    fun getAllLastResults(): List<ScreeningResult> =
+        lastResults.map { it.value.filterExpired(getMaxAgeForStrategy(it.key)) }
+
+    /**
+     * 根据策略的持仓周期获取对应的信号最大有效期。
+     */
+    private fun getMaxAgeForStrategy(strategyId: String): Long {
+        val strategy = strategies[strategyId] ?: return StrategySignal.DEFAULT_MAX_AGE_MS
+        return when (strategy.defaultPeriod) {
+            HoldingPeriod.ULTRA_SHORT -> StrategySignal.ULTRA_SHORT_MAX_AGE_MS
+            HoldingPeriod.SHORT -> StrategySignal.SHORT_MAX_AGE_MS
+            HoldingPeriod.MID -> StrategySignal.MID_MAX_AGE_MS
+            HoldingPeriod.LONG -> StrategySignal.LONG_MAX_AGE_MS
+        }
+    }
+
+    /**
+     * 清除所有过期的扫描结果缓存。
+     * 建议在 App 启动或交易日开始时调用。
+     */
+    fun cleanExpiredResults() {
+        val iterator = lastResults.entries.iterator()
+        var removed = 0
+        while (iterator.hasNext()) {
+            val (id, result) = iterator.next()
+            val maxAge = getMaxAgeForStrategy(id)
+            if (result.signals.all { it.isExpired(maxAge) }) {
+                iterator.remove()
+                removed++
+            }
+        }
+        if (removed > 0) {
+            Log.i(TAG, "清除 $removed 个过期扫描结果缓存")
+        }
+    }
 
     /**
      * 取消扫描

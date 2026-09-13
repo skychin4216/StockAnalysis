@@ -122,7 +122,7 @@ object PinyinUtils {
         // ========== Q ==========
         "七" to "qi", "期" to "qi", "漆" to "qi", "齐" to "qi", "奇" to "qi", "旗" to "qi",
         "企" to "qi", "启" to "qi", "起" to "qi", "气" to "qi", "汽" to "qi", "器" to "qi",
-        "千" to "qian", "迁" to "qian", "前" to "qian", "钱" to "qian", "乾" to "qian", "浅" to "qian",
+        "千" to "qian", "迁" to "qian", "前" to "qian", "钱" to "qian", "干" to "qian", "浅" to "qian",
         "欠" to "qian", "强" to "qiang", "墙" to "qiang", "桥" to "qiao", "巧" to "qiao", "切" to "qie",
         "亲" to "qin", "秦" to "qin", "勤" to "qin", "青" to "qing", "轻" to "qing", "清" to "qing",
         "情" to "qing", "庆" to "qing", "穷" to "qiong", "秋" to "qiu", "求" to "qiu", "球" to "qiu",

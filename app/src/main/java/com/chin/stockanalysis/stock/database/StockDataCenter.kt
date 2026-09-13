@@ -28,10 +28,10 @@ object StockDataCenter {
     val marketStatus: StateFlow<String> = _marketStatus.asStateFlow()
 
     // ═══════════════════════════════════════════════════════
-    // v10.1: 用戶搜索記錄（重點關注股票池）
+    // v10.1: 用户搜索记录（重点关注股票池）
     // ═══════════════════════════════════════════════════════
 
-    /** 用戶搜索過的股票完整記錄（含價格連結、搜索次數） */
+    /** 用户搜索过的股票完整记录（含价格连结、搜索次数） */
     data class UserStockEntry(
         val stockCode: String,
         val stockName: String,
@@ -42,7 +42,7 @@ object StockDataCenter {
         val lastSearchedAt: Long = System.currentTimeMillis()
     )
 
-    /** 來自 AI Skill 分析的精選股票記錄 */
+    /** 来自 AI Skill 分析的精选股票记录 */
     data class SkillPickEntry(
         val rank: Int,
         val stockCode: String,
@@ -53,17 +53,17 @@ object StockDataCenter {
         val createdAt: Long = System.currentTimeMillis()
     )
 
-    /** v10.0: AI 對話中用戶搜索過的股票（向後兼容） */
+    /** v10.0: AI 对话中用户搜索过的股票（向后兼容） */
     @Volatile
     var userSearchHistory: List<Pair<String, String>> = emptyList()
         private set
 
-    /** v10.1: 用戶搜索股票完整記錄（含價格、搜索次數） */
+    /** v10.1: 用户搜索股票完整记录（含价格、搜索次数） */
     @Volatile
     var userSearchHistoryEntries: List<UserStockEntry> = emptyList()
         private set
 
-    /** v10.0: AI 對話中 Skill 精選出的股票（供模擬交易使用） */
+    /** v10.0: AI 对话中 Skill 精选出的股票（供模拟交易使用） */
     @Volatile
     var skillPicks: List<SkillPickEntry> = emptyList()
         private set
@@ -114,13 +114,50 @@ object StockDataCenter {
         return emptyList()
     }
 
+    /** 常用股票 → 板块的硬编码映射（DB 无数据时的降级方案） */
+    private val FALLBACK_NAME_SECTOR = mapOf(
+        "兆易创新" to listOf("存储芯片", "半导体"),
+        "兆易创新" to listOf("存储芯片", "半导体"),
+        "贵州茅台" to listOf("白酒"),
+        "宁德时代" to listOf("电池"),
+        "比亚迪" to listOf("新能源汽车"),
+        "中芯国际" to listOf("半导体"),
+        "韦尔股份" to listOf("存储芯片", "半导体"),
+        "北方华创" to listOf("半导体设备"),
+        "中际旭创" to listOf("光模块", "通信设备"),
+        "立讯精密" to listOf("消费电子"),
+        "海康威视" to listOf("安防"),
+        "招商银行" to listOf("银行"),
+        "长江电力" to listOf("电力"),
+        "恒瑞医药" to listOf("医药"),
+        "药明康德" to listOf("CXO"),
+        "美的集团" to listOf("家电"),
+        "格力电器" to listOf("家电"),
+        "五粮液" to listOf("白酒"),
+        "中国平安" to listOf("保险")
+    )
+
     suspend fun getSectorsByStock(stockCode: String): List<String> {
         stockSectorCache[stockCode]?.let { return it }
         val ctx = appContext ?: return emptyList()
         val db = StockDatabase.getInstance(ctx)
         val sectors = db.sectorStockDao().getSectorNamesByStockCode(stockCode)
-        if (sectors.isNotEmpty()) stockSectorCache[stockCode] = sectors
-        return sectors
+        if (sectors.isNotEmpty()) {
+            stockSectorCache[stockCode] = sectors
+            return sectors
+        }
+        // 降级：尝试用股票名称匹配硬编码映射
+        try {
+            val snap = db.dailySnapshotDao().getByCode(stockCode).firstOrNull()
+            val name = snap?.name ?: ""
+            for ((key, value) in FALLBACK_NAME_SECTOR) {
+                if (name.contains(key) || key.contains(name)) {
+                    stockSectorCache[stockCode] = value
+                    return value
+                }
+            }
+        } catch (_: Exception) {}
+        return emptyList()
     }
 
     suspend fun getSubSectorByStock(stockCode: String, stockName: String): String {
@@ -133,7 +170,7 @@ object StockDataCenter {
     }
 
     // ═══════════════════════════════════════════════════════
-    // code-to-name + 股價查詢
+    // code-to-name + 股价查询
     // ═══════════════════════════════════════════════════════
 
     data class StockQuote(
@@ -145,22 +182,22 @@ object StockDataCenter {
     )
 
     /**
-     * 根據股票代碼查詢名稱 + 最近交易日股價
-     * 優先從緩存獲取，緩存未命中則查數據庫
+     * 根据股票代码查询名称 + 最近交易日股价
+     * 优先从缓存获取，缓存未命中则查数据库
      */
     suspend fun getStockQuote(stockCode: String): StockQuote? {
         val ctx = appContext ?: return null
         val db = StockDatabase.getInstance(ctx)
 
-        // 1. 從 stock_basics 獲取名稱
+        // 1. 从 stock_basics 获取名称
         val basic = try { db.stockBasicDao().getByCode(stockCode) } catch (_: Exception) { null }
 
-        // 2. 獲取最近交易日
+        // 2. 获取最近交易日
         val today = java.time.LocalDate.now().toString()
         val dates = try { db.dailySnapshotDao().getAvailableDates(5) } catch (_: Exception) { emptyList() }
         val targetDate = dates.filter { it <= today }.maxOrNull() ?: today
 
-        // 3. 從日快照獲取股價
+        // 3. 从日快照获取股价
         val snaps = try { db.dailySnapshotDao().getByDate(targetDate) } catch (_: Exception) { emptyList() }
         val snap = snaps.find { it.code == stockCode }
 
@@ -174,7 +211,7 @@ object StockDataCenter {
     }
 
     /**
-     * 批量查詢股票名稱（從 stock_basics 緩存）
+     * 批量查询股票名称（从 stock_basics 缓存）
      */
     suspend fun getStockNames(codes: Collection<String>): Map<String, String> {
         val ctx = appContext ?: return emptyMap()
@@ -185,7 +222,7 @@ object StockDataCenter {
     }
 
     /**
-     * 根據股票代碼查詢名稱（簡化版）
+     * 根据股票代码查询名称（简化版）
      */
     suspend fun getStockName(stockCode: String): String {
         return getStockQuote(stockCode)?.name ?: stockCode
@@ -250,7 +287,16 @@ object StockDataCenter {
             for (key in allKeys) {
                 if (key !in sectorStockCache) {
                     val codes = db.sectorStockDao().getStockCodesBySector(key)
-                    if (codes.isNotEmpty()) sectorStockCache[key] = codes
+                    if (codes.isNotEmpty()) {
+                        sectorStockCache[key] = codes
+                        // 同时构建反向缓存：stockCode → sectors
+                        for (code in codes) {
+                            val existing = stockSectorCache[code] ?: emptyList()
+                            if (key !in existing) {
+                                stockSectorCache[code] = existing + key
+                            }
+                        }
+                    }
                 }
             }
             if (allKeys.size > 30) yield()
@@ -261,7 +307,7 @@ object StockDataCenter {
     fun getStatus(): String = "数据: ${sectorStockCache.size}个板块, ${stockSectorCache.size}只股票已索引"
 
     // ═══════════════════════════════════════════════════════
-    // v10.1: 用戶搜索記錄 API
+    // v10.1: 用户搜索记录 API
     // ═══════════════════════════════════════════════════════
 
     fun recordUserSearch(
@@ -288,7 +334,7 @@ object StockDataCenter {
                 lastPrice = price, lastChangePct = changePct,
                 searchCount = 1, firstSearchedAt = now, lastSearchedAt = now
             ))
-            Log.i(TAG, "👤 用戶搜索新股票: $stockName ($stockCode)")
+            Log.i(TAG, "👤 用户搜索新股票: $stockName ($stockCode)")
         }
         if (current.size > 30) current.removeAt(current.size - 1)
         userSearchHistoryEntries = current.toList()
@@ -306,14 +352,14 @@ object StockDataCenter {
     }
 
     /**
-     * 用戶搜索加權分數（基於對數衰減 + 上限 10 分的階梯式設計）
+     * 用户搜索加权分数（基于对数衰减 + 上限 10 分的阶梯式设计）
      *
-     * 設計原理：
-     * - 第1次搜索：+3 分（首次關注信號）
-     * - 第2次搜索：+5 分（重複關注，信心提升）
-     * - 第3次搜索：+7 分（持續關注，高分信號）
+     * 设计原理：
+     * - 第1次搜索：+3 分（首次关注信号）
+     * - 第2次搜索：+5 分（重复关注，信心提升）
+     * - 第3次搜索：+7 分（持续关注，高分信号）
      * - 第4次搜索：+8 分
-     * - 第5次+    ：+9~10 分區間趨近（邊際遞減，避免氾濫）
+     * - 第5次+    ：+9~10 分区间趋近（边际递减，避免泛滥）
      *
      * 公式：3 + floor(ln(searchCount) * 3.0)，上限 10
      */
@@ -345,7 +391,7 @@ object StockDataCenter {
     }
 
     // ═══════════════════════════════════════════════════════
-    // v10.0: Skill 精選股票池
+    // v10.0: Skill 精选股票池
     // ═══════════════════════════════════════════════════════
 
     fun addSkillPicks(picks: List<SkillPickEntry>) {
@@ -355,7 +401,7 @@ object StockDataCenter {
         current.removeAll { it.sourceSkillId in sourceIds }
         current.addAll(0, picks)
         skillPicks = if (current.size > 50) current.take(50) else current.toList()
-        Log.i(TAG, "📌 SkillPick 已存入: ${picks.size}隻 (Skill: ${sourceIds.joinToString()}), 總計: ${skillPicks.size}隻")
+        Log.i(TAG, "📌 SkillPick 已存入: ${picks.size}只 (Skill: ${sourceIds.joinToString()}), 总计: ${skillPicks.size}只")
     }
 
     fun getRecentSkillPicks(limit: Int = 20): List<SkillPickEntry> = skillPicks.take(limit)
@@ -364,16 +410,16 @@ object StockDataCenter {
         return skillPicks.filter { it.sourceSkillId == skillId }
     }
 
-    /** v11.0: 取得 Skill/Agent 精選池中的所有股票代碼（供模擬交易優先考慮） */
+    /** v11.0: 取得 Skill/Agent 精选池中的所有股票代码（供模拟交易优先考虑） */
     fun getSkillPickStockCodes(): Set<String> {
         return skillPicks.map { it.stockCode }.toSet()
     }
 
     // ═══════════════════════════════════════════════════════
-    // v13.0: 自選股票池（作為額外信號源，不加分不過濾）
+    // v13.0: 自选股票池（作为额外信号源，不加分不过滤）
     // ═══════════════════════════════════════════════════════
 
-    /** 從 SharedPreferences 讀取自選股票代碼 */
+    /** 从 SharedPreferences 读取自选股票代码 */
     fun getWatchlistStockCodes(context: Context): Set<String> {
         val prefs = context.getSharedPreferences("watchlist_prefs", Context.MODE_PRIVATE)
         val json = prefs.getString("groups", "[]") ?: "[]"
@@ -392,13 +438,13 @@ object StockDataCenter {
     }
 
     /**
-     * Skill/Agent 精選股票加權分數（上限 10 分）
+     * Skill/Agent 精选股票加权分数（上限 10 分）
      *
-     * 設計原理：
-     * - 基於 AI 信心度（confidence）× 8 分
+     * 设计原理：
+     * - 基于 AI 信心度（confidence）× 8 分
      * - 排名加分：rank=1 +2分, rank≤3 +1分
-     * - 多次精選加分：每多一次 +0.5分（邊際遞減）
-     * - 上限 10 分，確保用戶搜索和智能體精選在同一尺度
+     * - 多次精选加分：每多一次 +0.5分（边际递减）
+     * - 上限 10 分，确保用户搜索和智能体精选在同一尺度
      */
     fun getSkillPickBoost(stockCode: String): Int {
         val picks = skillPicks.filter { it.stockCode == stockCode }
@@ -410,11 +456,11 @@ object StockDataCenter {
     }
 
     // ═══════════════════════════════════════════════════════
-    // 綜合股票熱度評分 (v12.0)
+    // 综合股票热度评分 (v12.0)
     // ═══════════════════════════════════════════════════════
 
     /**
-     * 技術壁壘核心概念板塊 — 科技類中具有高護城河的子行業
+     * 技术壁垒核心概念板块 — 科技类中具有高护城河的子行业
      */
     private val TECH_MOAT_SECTORS = setOf(
         "光刻机", "光刻胶", "芯片设计", "芯片制造", "先进封装", "EDA",
@@ -427,18 +473,18 @@ object StockDataCenter {
     )
 
     /**
-     * 計算一隻股票的綜合熱度分數 (0-100 分)
+     * 计算一只股票的综合热度分数 (0-100 分)
      *
-     * 五個維度：
-     * 1. 交易量能 (30分) — 換手率 + 成交額佔比 + 量比
-     * 2. 資金動向 (20分) — 主力淨流入 + 板塊資金強度
-     * 3. 板塊歷史熱度 (20分) — 近60天板塊上榜次數 + 綜合評分
-     * 4. 價格位置 (15分) — 漲跌幅歷史分位 + 是否階段新高
-     * 5. 概念壁壘 (15分) — 是否核心科技概念 + 是否技術壁壘板塊
+     * 五个维度：
+     * 1. 交易量能 (30分) — 换手率 + 成交额占比 + 量比
+     * 2. 资金动向 (20分) — 主力净流入 + 板块资金强度
+     * 3. 板块历史热度 (20分) — 近60天板块上榜次数 + 综合评分
+     * 4. 价格位置 (15分) — 涨跌幅历史分位 + 是否阶段新高
+     * 5. 概念壁垒 (15分) — 是否核心科技概念 + 是否技术壁垒板块
      *
-     * @param stockCode 股票代碼 (如 sh600519)
-     * @param todaySnapshots 當日全市場快照 (用於計算全市場統計)
-     * @return 0-100 分，越高越熱門
+     * @param stockCode 股票代码 (如 sh600519)
+     * @param todaySnapshots 当日全市场快照 (用于计算全市场统计)
+     * @return 0-100 分，越高越热门
      */
     suspend fun calculateStockHeatScore(
         stockCode: String,
@@ -448,19 +494,19 @@ object StockDataCenter {
         val db = StockDatabase.getInstance(ctx)
         val today = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
 
-        // 找當前股票的當日數據
+        // 找当前股票的当日数据
         val selfSnap = todaySnapshots.find { it.code == stockCode } ?: return 15
 
         var score = 0
 
         // ════════════════════════════════════════════
-        // 維度1: 交易量能 (0-30分)
+        // 维度1: 交易量能 (0-30分)
         // ════════════════════════════════════════════
 
-        // 1a. 換手率評分 (0-10分) — 越活躍越高，但極高會警示
+        // 1a. 换手率评分 (0-10分) — 越活跃越高，但极高会警示
         val turnoverRate = selfSnap.turnoverRate.coerceIn(0.0, 50.0)
         val turnoverScore = when {
-            turnoverRate >= 8 -> 10  // 8%+ 極活躍
+            turnoverRate >= 8 -> 10  // 8%+ 极活跃
             turnoverRate >= 5 -> 8
             turnoverRate >= 3 -> 6
             turnoverRate >= 1 -> 3
@@ -468,13 +514,13 @@ object StockDataCenter {
         }
         score += turnoverScore
 
-        // 1b. 成交額佔全市場排名 (0-10分)
+        // 1b. 成交额占全市场排名 (0-10分)
         if (todaySnapshots.isNotEmpty()) {
             val totalAmount = todaySnapshots.sumOf { it.amount }
             if (totalAmount > 0) {
                 val pct = selfSnap.amount / totalAmount
                 val amountScore = when {
-                    pct >= 0.03 -> 10 // 佔全市場3%+
+                    pct >= 0.03 -> 10 // 占全市场3%+
                     pct >= 0.01 -> 7
                     pct >= 0.005 -> 5
                     pct >= 0.001 -> 3
@@ -484,7 +530,7 @@ object StockDataCenter {
             }
         }
 
-        // 1c. 量比（近5日均量對比，0-10分）
+        // 1c. 量比（近5日均量对比，0-10分）
         try {
             val recentDates = db.dailySnapshotDao().getAvailableDates(5)
                 .filter { it <= today }.sorted().takeLast(5)
@@ -507,10 +553,10 @@ object StockDataCenter {
         } catch (_: Exception) { score += 3 }
 
         // ════════════════════════════════════════════
-        // 維度2: 資金動向 (0-20分)
+        // 维度2: 资金动向 (0-20分)
         // ════════════════════════════════════════════
 
-        // 2a. 所屬板塊的主力資金淨流入
+        // 2a. 所属板块的主力资金净流入
         try {
             val sectors = db.sectorStockDao().getSectorNamesByStockCode(stockCode)
             val allSectors = EastMoneyHotSectorSource.industrySectors + EastMoneyHotSectorSource.conceptSectors
@@ -519,7 +565,7 @@ object StockDataCenter {
                 val maxInflow = matchedSectors.maxOf { it.mainNetInflow }
                 val avgComposite = matchedSectors.map { it.compositeScore }.average()
                 val inflowScore = when {
-                    maxInflow >= 10 -> 10  // 主力淨流入 >= 10億
+                    maxInflow >= 10 -> 10  // 主力净流入 >= 10亿
                     maxInflow >= 5 -> 7
                     maxInflow >= 1 -> 5
                     maxInflow > 0 -> 3
@@ -528,12 +574,12 @@ object StockDataCenter {
                 val compositeScore = (avgComposite / 20.0).toInt().coerceIn(0, 10)
                 score += inflowScore + compositeScore
             } else {
-                score += 5  // 無板塊歸屬，給基礎分
+                score += 5  // 无板块归属，给基础分
             }
         } catch (_: Exception) { score += 5 }
 
         // ════════════════════════════════════════════
-        // 維度3: 板塊歷史熱度 (0-20分)
+        // 维度3: 板块历史热度 (0-20分)
         // ════════════════════════════════════════════
         try {
             val sectors = db.sectorStockDao().getSectorNamesByStockCode(stockCode)
@@ -553,13 +599,13 @@ object StockDataCenter {
         } catch (_: Exception) { score += 5 }
 
         // ════════════════════════════════════════════
-        // 維度4: 價格位置 (0-15分)
+        // 维度4: 价格位置 (0-15分)
         // ════════════════════════════════════════════
 
-        // 4a. 當前漲跌幅動能 (0-8分)
+        // 4a. 当前涨跌幅动能 (0-8分)
         val changePct = kotlin.math.abs(selfSnap.changePct)
         val changeScore = when {
-            changePct >= 9.5 -> 8  // 漲停/跌停
+            changePct >= 9.5 -> 8  // 涨停/跌停
             changePct >= 7 -> 6
             changePct >= 5 -> 5
             changePct >= 3 -> 3
@@ -568,7 +614,7 @@ object StockDataCenter {
         }
         score += changeScore
 
-        // 4b. 是否階段新高（近30日最高收盤價）(0-7分)
+        // 4b. 是否阶段新高（近30日最高收盘价）(0-7分)
         try {
             val recent30 = db.dailySnapshotDao().getAvailableDates(30)
                 .filter { it <= today }.sorted().takeLast(30)
@@ -577,13 +623,13 @@ object StockDataCenter {
             }
             if (recentHighs.isNotEmpty()) {
                 val maxClose = recentHighs.max()
-                val isNewHigh = selfSnap.close >= maxClose * 0.98  // 2% 誤差容忍
+                val isNewHigh = selfSnap.close >= maxClose * 0.98  // 2% 误差容忍
                 score += if (isNewHigh) 7 else 3
             }
         } catch (_: Exception) { score += 3 }
 
         // ════════════════════════════════════════════
-        // 維度5: 概念壁壘 (0-15分)
+        // 维度5: 概念壁垒 (0-15分)
         // ════════════════════════════════════════════
         try {
             val stockSectors = db.sectorStockDao().getSectorNamesByStockCode(stockCode)

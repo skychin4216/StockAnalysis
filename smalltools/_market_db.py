@@ -1,0 +1,533 @@
+# -*- coding: utf-8 -*-
+"""公共市场数据库模块（SQLite）—— exe / smalltools / APK 统一数据源
+
+背景：
+  之前三端各自维护数据：
+    - smalltools: _kline_cache.json（四年K线）+ _announce_cache.json（三年公告）+ _news_cache.json（新闻）
+    - AutoQuant/exe: data/cache/*.csv（仅约一年半，字段不全）
+    - APK: 自拉东财 + assets 参数
+  本模块提供单文件 SQLite 数据库（StockAnalysis/data/market_data.db），
+  三类数据统一入库，两端共用同一数据源。
+
+表结构：
+  kline(secid, date, open, high, low, close, volume, change_pct, turnover, src, name)
+  announce(secid, date, title)
+  news(secid, date, title, summary)
+  params(scope, version, generated_at, payload_json)      -- 拟合参数归档
+  market_state(date, state, detail_json)                  -- 大盘状态历史（BULLISH/OSCILLATION/BEARISH/CRASH）
+  meta(key, value)                                         -- 元信息（库版本/末端日期）
+  intel_report(trade_date, slot, created_at, ...)          -- 每日节奏情报（08:00/09:00/复盘）
+  push_record(id, trade_date, slot, kind, title, ...)      -- 推送账本（成功/失败留痕）
+
+secid 格式（与 smalltools/_kline_cache.json 一致）：
+  sh600519 / sz000338 / 指数 sh000001 sz399001 sz399006
+exe 侧 symbol 格式：000338_SZ / 600519_SH / INDEX_SH
+"""
+import datetime
+import json
+import os
+import sqlite3
+
+SMALLTOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(SMALLTOOLS_DIR)
+DATA_DIR = os.path.join(ROOT, "data")
+DB_PATH = os.path.join(DATA_DIR, "market_data.db")
+
+SCHEMA_VERSION = "1.1"
+
+DDL = """
+CREATE TABLE IF NOT EXISTS kline (
+    secid      TEXT NOT NULL,
+    date       TEXT NOT NULL,
+    open       REAL, high REAL, low REAL, close REAL,
+    volume     REAL, change_pct REAL, turnover REAL,
+    src        TEXT, name TEXT,
+    PRIMARY KEY (secid, date)
+);
+CREATE INDEX IF NOT EXISTS idx_kline_date ON kline(date);
+
+CREATE TABLE IF NOT EXISTS announce (
+    secid  TEXT NOT NULL,
+    date   TEXT NOT NULL,
+    title  TEXT NOT NULL,
+    PRIMARY KEY (secid, date, title)
+);
+CREATE INDEX IF NOT EXISTS idx_announce_date ON announce(date);
+
+CREATE TABLE IF NOT EXISTS news (
+    secid   TEXT NOT NULL,
+    date    TEXT NOT NULL,
+    title   TEXT NOT NULL,
+    summary TEXT DEFAULT '',
+    PRIMARY KEY (secid, date, title)
+);
+CREATE INDEX IF NOT EXISTS idx_news_date ON news(date);
+
+CREATE TABLE IF NOT EXISTS params (
+    scope        TEXT NOT NULL,
+    version      TEXT NOT NULL,
+    generated_at TEXT DEFAULT '',
+    payload_json TEXT NOT NULL,
+    PRIMARY KEY (scope, version)
+);
+
+CREATE TABLE IF NOT EXISTS market_state (
+    date        TEXT PRIMARY KEY,       -- 交易日 YYYY-MM-DD
+    state       TEXT NOT NULL,          -- BULLISH / OSCILLATION / BEARISH / CRASH / UNKNOWN
+    detail_json TEXT DEFAULT '',        -- 可选：指数方向明细等
+    updated_at  TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS star_form_events (
+    idx_code   TEXT NOT NULL,           -- 指数 secid，如 sh000001 / sh000688
+    star_date  TEXT NOT NULL,           -- 十字星日 YYYY-MM-DD
+    star_streak INTEGER NOT NULL,       -- 星前连续下跌天数（星前1日起回溯）
+    form       TEXT NOT NULL,           -- big_yin / small_yin / big_yang / small_yang
+    ev_date    TEXT NOT NULL,           -- 形态日
+    ev_gap     INTEGER NOT NULL,        -- 形态日在星后第几天（1..7）
+    ev_chg     REAL,                    -- 形态日指数涨跌 %
+    dev_ma20   REAL,                    -- 形态日指数收盘 vs 前20日 MA20（%）
+    vol_ratio  REAL,                    -- 形态日量 / 前5日均量
+    PRIMARY KEY (idx_code, star_date, form)
+);
+CREATE INDEX IF NOT EXISTS idx_star_form_events_ev ON star_form_events(idx_code, ev_date);
+
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+
+-- ── 每日节奏情报（2026-09-11 新增：08:00 盘前 / 09:00 亚太 / 15:20 复盘）──
+-- 每条 = 一次「情报采集 → 利好利空板块判定 → 候选标的」的完整留痕，供复盘对错核账。
+CREATE TABLE IF NOT EXISTS intel_report (
+    trade_date   TEXT NOT NULL,      -- 交易日 YYYY-MM-DD
+    slot         TEXT NOT NULL,      -- pre8 / pre9 / review
+    created_at   TEXT NOT NULL,      -- YYYY-MM-DD HH:MM:SS
+    title        TEXT DEFAULT '',
+    digest       TEXT DEFAULT '',    -- 一句话结论
+    macro_json   TEXT DEFAULT '',    -- 全球/宏观快照（美股/亚太/商品/汇率/美债）
+    sectors_json TEXT DEFAULT '',    -- 利好利空板块判定 [{"board","side","strength","logic","trigger"}]
+    picks_json   TEXT DEFAULT '',    -- 本次推送标的 [{"secid","name","board",...}]
+    news_json    TEXT DEFAULT '',    -- 新闻原文（标题+来源+时间）
+    content      TEXT DEFAULT '',    -- 推送正文原文
+    pushed       INTEGER DEFAULT 0,  -- 是否已推送成功
+    PRIMARY KEY (trade_date, slot, created_at)
+);
+CREATE INDEX IF NOT EXISTS idx_intel_report_date ON intel_report(trade_date);
+
+-- 推送记录（所有渠道推送的统一账本：正文/图片/轮次/复盘）
+CREATE TABLE IF NOT EXISTS push_record (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    trade_date TEXT NOT NULL,
+    slot       TEXT DEFAULT '',      -- pre8 / pre9 / am / pm / lunch / eod / review
+    created_at TEXT NOT NULL,
+    kind       TEXT DEFAULT '',      -- text / image / intel / round / lunch / eod / review
+    title      TEXT DEFAULT '',
+    codes      TEXT DEFAULT '',      -- 逗号分隔 secid
+    ok         INTEGER DEFAULT 0,
+    err        TEXT DEFAULT '',
+    content    TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_push_record_date ON push_record(trade_date, slot);
+"""
+
+# 供 _self_fit_pipeline 等回溯脚本复用，避免重复判定
+def sync_market_states(date_state):
+    """写入大盘状态历史 {date: state}（幂等 upsert）。date_state: {str: str} 或 {str: (state, detail)}。"""
+    conn = get_conn()
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    rows = []
+    for d, v in date_state.items():
+        if isinstance(v, (tuple, list)):
+            st, detail = v[0], (v[1] if len(v) > 1 else "")
+        else:
+            st, detail = v, ""
+        rows.append((d, st, json.dumps(detail, ensure_ascii=False) if detail else "", ts))
+    conn.executemany(
+        """INSERT INTO market_state(date,state,detail_json,updated_at) VALUES(?,?,?,?)
+           ON CONFLICT(date) DO UPDATE SET
+             state=excluded.state, detail_json=excluded.detail_json, updated_at=excluded.updated_at""",
+        rows)
+    conn.commit()
+    conn.close()
+
+
+def load_market_states(start=None, end=None):
+    """读取大盘状态历史 → {date: state}。"""
+    conn = get_conn()
+    sql = "SELECT date, state FROM market_state"
+    args = []
+    if start:
+        sql += " WHERE date>=?"
+        args.append(start)
+    if end:
+        sql += " AND date<=?" if not args else " AND date<=?"
+        args.append(end)
+    sql += " ORDER BY date"
+    out = {}
+    for r in conn.execute(sql, args).fetchall():
+        out[r["date"]] = r["state"]
+    conn.close()
+    return out
+
+
+# ---------------------------------------------------------------- 基础 API
+
+def get_conn(db_path: str = None) -> sqlite3.Connection:
+    """打开连接（自动建目录与表）。"""
+    path = db_path or DB_PATH
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    init_db(conn)
+    return conn
+
+
+def init_db(conn: sqlite3.Connection):
+    conn.executescript(DDL)
+    conn.commit()
+
+
+def set_meta(conn: sqlite3.Connection, key: str, value: str):
+    conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES(?,?)", (key, str(value)))
+    conn.commit()
+
+
+def get_meta(conn: sqlite3.Connection, key: str, default=None):
+    row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+    return row[0] if row else default
+
+
+# ------------------------------------------------ 每日节奏：情报报告 / 推送记录
+
+def _now_ts():
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def save_intel_report(conn, slot, title="", digest="", macro=None, sectors=None,
+                      picks=None, news=None, content="", pushed=False,
+                      trade_date=None, created_at=None):
+    """写入一条每日节奏情报（08:00 / 09:00 / 复盘），供复盘时核对板块判定对错。
+
+    macro/sectors/picks/news 传 Python 对象，内部转 JSON 存储。
+    """
+    td = trade_date or datetime.date.today().isoformat()
+    ts = created_at or _now_ts()
+    conn.execute(
+        "INSERT OR REPLACE INTO intel_report"
+        "(trade_date, slot, created_at, title, digest, macro_json, sectors_json,"
+        " picks_json, news_json, content, pushed) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        (td, slot, ts, title or "", digest or "",
+         json.dumps(macro or {}, ensure_ascii=False),
+         json.dumps(sectors or [], ensure_ascii=False),
+         json.dumps(picks or [], ensure_ascii=False),
+         json.dumps(news or [], ensure_ascii=False),
+         content or "", 1 if pushed else 0))
+    conn.commit()
+    return ts
+
+
+def query_intel_report(conn, trade_date=None, slot=None, limit=50):
+    """查询情报报告（倒序）。返回 dict 列表，json 字段已解析。"""
+    sql = "SELECT * FROM intel_report WHERE 1=1"
+    args = []
+    if trade_date:
+        sql += " AND trade_date=?"
+        args.append(trade_date)
+    if slot:
+        sql += " AND slot=?"
+        args.append(slot)
+    sql += " ORDER BY trade_date DESC, created_at DESC LIMIT ?"
+    args.append(int(limit))
+    out = []
+    for row in conn.execute(sql, args).fetchall():
+        d = dict(row)
+        for k in ("macro_json", "sectors_json", "picks_json", "news_json"):
+            try:
+                d[k[:-5]] = json.loads(d.get(k) or "null")
+            except ValueError:
+                d[k[:-5]] = None
+        out.append(d)
+    return out
+
+
+def latest_intel(conn, trade_date=None, slot=None):
+    """取最近一条情报报告（dict 或 None）。"""
+    rows = query_intel_report(conn, trade_date=trade_date, slot=slot, limit=1)
+    return rows[0] if rows else None
+
+
+def save_push_record(conn, slot, kind, title="", codes=None, ok=False, err="",
+                     content="", trade_date=None, created_at=None):
+    """记录一次推送（成功/失败）。codes 传 list[str] 或逗号分隔字符串。"""
+    td = trade_date or datetime.date.today().isoformat()
+    ts = created_at or _now_ts()
+    if isinstance(codes, (list, tuple, set)):
+        codes = ",".join(str(c) for c in codes)
+    conn.execute(
+        "INSERT INTO push_record"
+        "(trade_date, slot, created_at, kind, title, codes, ok, err, content)"
+        " VALUES(?,?,?,?,?,?,?,?,?)",
+        (td, slot or "", ts, kind or "", title or "", codes or "",
+         1 if ok else 0, err or "", content or ""))
+    conn.commit()
+    return ts
+
+
+def query_push_records(conn, trade_date=None, slot=None, kind=None, limit=200):
+    """查询推送账本（倒序）。"""
+    sql = "SELECT * FROM push_record WHERE 1=1"
+    args = []
+    for col, val in (("trade_date", trade_date), ("slot", slot), ("kind", kind)):
+        if val:
+            sql += " AND %s=?" % col
+            args.append(val)
+    sql += " ORDER BY id DESC LIMIT ?"
+    args.append(int(limit))
+    return [dict(r) for r in conn.execute(sql, args).fetchall()]
+
+
+# ---------------------------------------------------------------- secid 映射
+# smalltools secid: sh600519 / sz000338 / sh000001
+# exe symbol:       600519_SH / 000338_SZ / INDEX_SH
+
+def to_secid(symbol: str) -> str:
+    """exe/显示 symbol → secid。支持 '600519_SH'/'sh600519'/'600519' 三种输入。"""
+    s = symbol.strip()
+    if s.lower().startswith(("sh", "sz", "bj")):
+        return s.lower()
+    if "_" in s:
+        code, mkt = s.rsplit("_", 1)
+        return mkt.lower() + code
+    if s.startswith(("sh", "sz", "bj")):
+        return s.lower()
+    if s.startswith("6"):
+        return "sh" + s
+    if s.startswith(("4", "8")):
+        return "bj" + s
+    return "sz" + s
+
+
+def from_secid(secid: str) -> str:
+    """secid → exe symbol（000338_SZ）。指数 sh000001→INDEX_SH 不做特殊映射，保留原格式。"""
+    s = secid.lower()
+    if s.startswith(("sh", "sz", "bj")):
+        return s[2:] + "_" + s[:2].upper()
+    return s
+
+
+# ---------------------------------------------------------------- K线
+
+def upsert_kline(conn: sqlite3.Connection, secid: str, snaps: list, src: str = None,
+                 name: str = None, commit: bool = True):
+    """单只标的增量更新（按 (secid,date) 去重 upsert）。snaps 项: {date,open,close,high,low,volume,changePct,turnover}"""
+    rows = [(
+        secid, s["date"], s.get("open"), s.get("high"), s.get("low"), s.get("close"),
+        s.get("volume"), s.get("changePct"), s.get("turnover"), src or "",
+        name or "",
+    ) for s in snaps]
+    conn.executemany(
+        """INSERT INTO kline(secid,date,open,high,low,close,volume,change_pct,turnover,src,name)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(secid,date) DO UPDATE SET
+             open=excluded.open, high=excluded.high, low=excluded.low, close=excluded.close,
+             volume=excluded.volume, change_pct=excluded.change_pct, turnover=excluded.turnover,
+             src=excluded.src, name=excluded.name""",
+        rows)
+    if commit:
+        conn.commit()
+
+
+def import_kline_json(conn: sqlite3.Connection, cache_path: str = None, cache: dict = None):
+    """全量导入 _kline_cache.json。返回 (标的数, 行数)。"""
+    if cache is None:
+        with open(cache_path or os.path.join(SMALLTOOLS_DIR, "_kline_cache.json"),
+                  "r", encoding="utf-8") as f:
+            cache = json.load(f)
+    n_rows = 0
+    for secid, ent in cache.items():
+        snaps = ent.get("snaps") or []
+        if not snaps:
+            continue
+        upsert_kline(conn, secid, snaps, src=ent.get("src"), name=ent.get("name"), commit=False)
+        n_rows += len(snaps)
+    conn.commit()
+    return len(cache), n_rows
+
+
+def query_kline(conn: sqlite3.Connection, secid: str, start: str = None, end: str = None,
+                fields: tuple = ("date", "open", "high", "low", "close", "volume", "change_pct", "turnover")) -> list:
+    """按 (secid, date) 升序查询，返回 dict 列表。"""
+    sql = "SELECT %s FROM kline WHERE secid=?" % ", ".join(fields)
+    args = [to_secid(secid)]
+    if start:
+        sql += " AND date>=?"
+        args.append(start)
+    if end:
+        sql += " AND date<=?"
+        args.append(end)
+    sql += " ORDER BY date"
+    return [dict(r) for r in conn.execute(sql, args).fetchall()]
+
+
+def get_latest_date(conn: sqlite3.Connection) -> str:
+    row = conn.execute("SELECT MAX(date) FROM kline").fetchone()
+    return row[0] if row and row[0] else ""
+
+
+def kline_stats(conn: sqlite3.Connection) -> dict:
+    row = conn.execute(
+        "SELECT COUNT(DISTINCT secid) AS stocks, COUNT(*) AS rows, MIN(date) AS d0, MAX(date) AS d1"
+        " FROM kline").fetchone()
+    return dict(row)
+
+
+# ---------------------------------------------------------------- 十字星→形态 事件库
+
+def replace_star_form_events(conn: sqlite3.Connection, idx_code: str, events: list,
+                             commit: bool = True) -> int:
+    """整指数幂等重建 star_form_events（先删后插）。
+
+    events: [{star_date, star_streak, form, ev_date, ev_gap, ev_chg, dev_ma20, vol_ratio}, ...]
+    返回插入行数。供 dip_crossstar_stat 等回溯脚本固化事件用。
+    """
+    conn.execute("DELETE FROM star_form_events WHERE idx_code=?", (idx_code,))
+    rows = [(
+        idx_code, e["star_date"], e.get("star_streak", 0), e["form"],
+        e["ev_date"], e.get("ev_gap", 0), e.get("ev_chg"), e.get("dev_ma20"),
+        e.get("vol_ratio"),
+    ) for e in events]
+    conn.executemany(
+        """INSERT INTO star_form_events
+           (idx_code, star_date, star_streak, form, ev_date, ev_gap, ev_chg, dev_ma20, vol_ratio)
+           VALUES(?,?,?,?,?,?,?,?,?)""", rows)
+    if commit:
+        conn.commit()
+    return len(rows)
+
+
+def query_star_form_events(conn: sqlite3.Connection, idx_code: str = None, form: str = None,
+                           star_streak_min: int = 0, start: str = None, end: str = None) -> list:
+    """读事件库。form: big_yin/small_yin/big_yang/small_yang 或 None(全部)。按 ev_date 升序。"""
+    sql = ("SELECT idx_code, star_date, star_streak, form, ev_date, ev_gap, ev_chg,"
+           " dev_ma20, vol_ratio FROM star_form_events WHERE star_streak>=?")
+    args: list = [star_streak_min]
+    if idx_code:
+        sql += " AND idx_code=?"
+        args.append(idx_code)
+    if form:
+        sql += " AND form=?"
+        args.append(form)
+    if start:
+        sql += " AND ev_date>=?"
+        args.append(start)
+    if end:
+        sql += " AND ev_date<=?"
+        args.append(end)
+    sql += " ORDER BY ev_date"
+    return [dict(r) for r in conn.execute(sql, args).fetchall()]
+
+
+# ---------------------------------------------------------------- 公告
+
+def import_announce_json(conn: sqlite3.Connection, cache_path: str = None, cache: dict = None):
+    """全量导入 _announce_cache.json {secid:{name, items:[{date,title}]}}"""
+    if cache is None:
+        with open(cache_path or os.path.join(SMALLTOOLS_DIR, "_announce_cache.json"),
+                  "r", encoding="utf-8") as f:
+            cache = json.load(f)
+    n = 0
+    for secid, ent in cache.items():
+        for it in (ent.get("items") or []):
+            if not it.get("date") or not it.get("title"):
+                continue
+            conn.execute("INSERT OR IGNORE INTO announce(secid,date,title) VALUES(?,?,?)",
+                         (secid, it["date"][:10], it["title"]))
+            n += 1
+    conn.commit()
+    return len(cache), n
+
+
+# ---------------------------------------------------------------- 新闻
+
+def import_news_json(conn: sqlite3.Connection, cache_path: str = None, cache: dict = None):
+    """全量导入 _news_cache.json {secid:{name, items:[{date,title,summary}]}}"""
+    if cache is None:
+        if cache_path is None:
+            cache_path = os.path.join(SMALLTOOLS_DIR, "_news_cache.json")
+        if not os.path.exists(cache_path):
+            return 0, 0
+        with open(cache_path, "r", encoding="utf-8") as f:
+            cache = json.load(f)
+    n = 0
+    for secid, ent in cache.items():
+        for it in (ent.get("items") or []):
+            if not it.get("date") or not it.get("title"):
+                continue
+            conn.execute(
+                "INSERT OR REPLACE INTO news(secid,date,title,summary) VALUES(?,?,?,?)",
+                (secid, it["date"], it["title"], it.get("summary") or ""))
+            n += 1
+    conn.commit()
+    return len(cache), n
+
+
+# ---------------------------------------------------------------- 参数归档
+
+def save_params(conn: sqlite3.Connection, scope: str, version: str, payload: dict,
+                generated_at: str = None):
+    """拟合参数归档。scope 如 'walk_forward'，version 如 '2026-08'。"""
+    conn.execute(
+        """INSERT INTO params(scope,version,generated_at,payload_json) VALUES(?,?,?,?)
+           ON CONFLICT(scope,version) DO UPDATE SET
+             generated_at=excluded.generated_at, payload_json=excluded.payload_json""",
+        (scope, version, generated_at or datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+         json.dumps(payload, ensure_ascii=False)))
+    conn.commit()
+
+
+def get_params(conn: sqlite3.Connection, scope: str, version: str = None) -> dict:
+    if version:
+        row = conn.execute("SELECT payload_json FROM params WHERE scope=? AND version=?",
+                           (scope, version)).fetchone()
+    else:
+        row = conn.execute("SELECT payload_json FROM params WHERE scope=? ORDER BY version DESC LIMIT 1",
+                           (scope,)).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+# ---------------------------------------------------------------- 便捷入口
+
+def build_db(cache_path=None, announce_path=None, news_path=None, db_path=None):
+    """一次性建库：导入 K线 + 公告 + 新闻，写库元信息。返回统计 dict。"""
+    conn = get_conn(db_path)
+    stats = {}
+    stats["kline"] = import_kline_json(conn, cache_path=cache_path)
+    stats["announce"] = import_announce_json(conn, cache_path=announce_path)
+    stats["news"] = import_news_json(conn, cache_path=news_path)
+    set_meta(conn, "schema_version", SCHEMA_VERSION)
+    set_meta(conn, "latest_date", get_latest_date(conn))
+    set_meta(conn, "built_at", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    conn.close()
+    return stats
+
+
+if __name__ == "__main__":
+    import sys
+    if "--build" in sys.argv:
+        s = build_db()
+        print("建库完成 → %s" % DB_PATH)
+        print("  K线   : %d 只 / %d 行" % s["kline"])
+        print("  公告  : %d 只 / %d 条" % s["announce"])
+        print("  新闻  : %d 只 / %d 条" % s["news"])
+    elif "--stats" in sys.argv:
+        c = get_conn()
+        print("库: %s" % DB_PATH)
+        print("K线: %s" % kline_stats(c))
+        print("公告: %s" % dict(c.execute("SELECT COUNT(DISTINCT secid), COUNT(*) FROM announce").fetchone()))
+        print("新闻: %s" % dict(c.execute("SELECT COUNT(DISTINCT secid), COUNT(*) FROM news").fetchone()))
+        c.close()
+    else:
+        print("用法: python _market_db.py --build | --stats")

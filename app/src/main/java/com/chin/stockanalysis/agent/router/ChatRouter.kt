@@ -6,7 +6,7 @@ import com.chin.stockanalysis.agent.chat.ChatAgentResult
 import com.chin.stockanalysis.config.FeatureFlagManager
 
 /**
- * ## 對話路由層
+ * ## 对话路由层
  */
 interface ChatService {
     suspend fun handleMessage(
@@ -17,7 +17,7 @@ interface ChatService {
     ): ChatAgentResult
 }
 
-/** Legacy：直接走原有 ChatTabFragment 的專家分析流程 */
+/** Legacy：直接走原有 ChatTabFragment 的专家分析流程 */
 class LegacyChatService : ChatService {
     override suspend fun handleMessage(
         context: Context,
@@ -36,7 +36,7 @@ class LegacyChatService : ChatService {
     }
 }
 
-/** Agent 實現 */
+/** Agent 实现 */
 class AgentChatService : ChatService {
     override suspend fun handleMessage(
         context: Context,

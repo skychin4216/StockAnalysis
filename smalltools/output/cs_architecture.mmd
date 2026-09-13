@@ -1,0 +1,36 @@
+flowchart TB
+    subgraph APK["APK (Android · 客户端)"]
+        A1["量化工作台\nPcCandidatesDialog"] --> A2["🎛 RemoteControlDialog\n(新 UI)"]
+        A2 --> A3["PcBridgeClient.kt\n(OkHttp 网络层)"]
+        A4["任务卡片列表\n状态/日志/取消"] --> A2
+        A5["2s 轮询增量日志"] --> A4
+    end
+
+    subgraph PC["PC (AutoQuant-GUI.exe · 服务端)"]
+        B1["data_service.py\nThreadingHTTPServer :8888"] --> B2["remote_control.py\nRemoteControl"]
+        B2 --> B3["任务队列\nThreadPoolExecutor(2)"]
+        B3 --> B4["任务持久化\ndata/remote_tasks.json"]
+        B2 --> B5["Token 鉴权\ndata/remote_token.txt"]
+    end
+
+    subgraph EXEC["执行器 (PC 侧)"]
+        C1["smalltools 脚本\n选股/回测/拟合/刷新/上传"] --> C2["输出: candidates_quant.json\nbacktest_params.json"]
+        C3["CodeBuddy CLI\ncodebuddy run &lt;prompt&gt;"] 
+        C4["adb 广播\n触发 APK 刷新"]
+    end
+
+    subgraph CLOUD["云端 (可选)"]
+        D1["COS: candidates / params\n/ market_data.db / phone_*.zip"]
+    end
+
+    A3 -- "POST /task/submit" --> B1
+    A3 -- "GET /task/get|list|logs" --> B1
+    A3 -- "POST /task/cancel" --> B1
+    B1 -- "X-Token 校验" --> B5
+    B3 -- "subprocess" --> C1
+    B3 -- "subprocess" --> C3
+    B3 -- "subprocess" --> C4
+    C1 --> C2
+    C2 --> D1
+    D1 -- "APK 下载候选/参数" --> A1
+    C4 -- "adb broadcast" --> A4

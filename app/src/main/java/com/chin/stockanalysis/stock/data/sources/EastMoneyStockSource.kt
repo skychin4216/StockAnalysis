@@ -66,7 +66,7 @@ class EastMoneyStockSource : StockDataSource {
                 val request = Request.Builder()
                     .url(url)
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                    .header("Referer", "https://quote.eastmoney.com/")
+                    .header("Referer", DataConfig.eastmoneyQuote)
                     .build()
 
                 val response = client.newCall(request).execute()
@@ -124,10 +124,10 @@ class EastMoneyStockSource : StockDataSource {
                             amount = item.optDoubleSafe("f6") * 10000, // 万元->元
                             changePercent = changePercent,
                             changeAmount = if (changeAmount.isNaN() || changeAmount == 0.0) price - yestClose else changeAmount,
-                            turnoverRate = item.optDoubleSafe("f8"),  // f8=換手率%
-                            pe = item.optDoubleSafe("f9"),             // f9=市盈率(動態)
-                            pb = item.optDoubleSafe("f23"),            // f23=市淨率
-                            marketCap = item.optDoubleSafe("f20"),     // f20=總市值(元)
+                            turnoverRate = item.optDoubleSafe("f8"),  // f8=换手率%
+                            pe = item.optDoubleSafe("f9"),             // f9=市盈率(动态)
+                            pb = item.optDoubleSafe("f23"),            // f23=市净率
+                            marketCap = item.optDoubleSafe("f20"),     // f20=总市值(元)
                             timestamp = System.currentTimeMillis()
                         )
                     )

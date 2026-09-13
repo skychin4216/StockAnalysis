@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## AI+主力资金过滤 Pipeline（共享）
+
+  AI 精选 → 主力资金过滤。2 个 Node 串联。
+  短线量化和中线量化共用此 Pipeline，量化选股不使用。
+-->
+<pipeline id="ai_filter" name="AI+主力过滤" description="AI精选→主力资金过滤" version="1">
+  <nodes>
+    <node id="n_ai" module="ai_predict" />
+    <node id="n_smart" module="smart_money_filter">
+      <config>
+        <param name="minScore" value="55" />
+      </config>
+    </node>
+  </nodes>
+  <stages>
+    <stage name="AI+主力过滤" parallel="false">
+      <linkList name="AI精选+主力过滤">
+        <link from="n_ai" to="n_smart" />
+      </linkList>
+    </stage>
+  </stages>
+</pipeline>

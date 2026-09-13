@@ -40,6 +40,74 @@ interface Strategy {
     /** 策略来源：BUILTIN / USER_CUSTOM */
     val source: StrategySource
 
+    /** 策略适用的持仓周期（默认短线，向后兼容） */
+    val holdingPeriods: List<HoldingPeriod>
+        get() = listOf(HoldingPeriod.SHORT)
+
+    /** 默认推荐周期 */
+    val defaultPeriod: HoldingPeriod
+        get() = holdingPeriods.first()
+
+    // ───────────────────────────────────────────
+    // 风控默认值（下沉到策略，Fragment 不再硬编码）
+    // ───────────────────────────────────────────
+
+    /** 默认止损比率（如 -0.02 表示 -2%）。null 表示该策略不设默认止损 */
+    val defaultStopLoss: Float?
+        get() = null
+
+    /** 默认止盈比率（如 0.03 表示 +3%）。null 表示该策略不设默认止盈 */
+    val defaultTakeProfit: Float?
+        get() = null
+
+    /** 该策略在同周期内最大同时持有数量（默认 5） */
+    val maxPositions: Int
+        get() = 5
+
+    // ───────────────────────────────────────────
+    // 持仓天数建议（默认取周期枚举的范围）
+    // ───────────────────────────────────────────
+
+    /** 最短建议持仓天数 */
+    val minHoldingDays: Int
+        get() = defaultPeriod.holdingDays.first
+
+    /** 最长建议持仓天数 */
+    val maxHoldingDays: Int
+        get() = defaultPeriod.holdingDays.last
+
+    // ───────────────────────────────────────────
+    // 数据依赖
+    // ───────────────────────────────────────────
+
+    /** 是否需要 Level2 实时数据（超短线必备） */
+    val requiresL2Data: Boolean
+        get() = false
+
+    /** 是否需要财务季报/年报数据（长线必备） */
+    val requiresFinancialData: Boolean
+        get() = false
+
+    /** 数据频率 */
+    val dataFrequency: DataFrequency
+        get() = DataFrequency.DAILY
+
+    // ───────────────────────────────────────────
+    // 过滤开关（动态：可覆写为基于时间的 get()）
+    // ───────────────────────────────────────────
+
+    /** 是否需要主力资金过滤（>=55分）。超短线可覆写为时间动态开关 */
+    val requiresSmartMoney: Boolean
+        get() = false
+
+    /** 是否需要 AI 精选加权。超短线可覆写为盘后动态开关 */
+    val requiresAIRefine: Boolean
+        get() = false
+
+    /** 信号有效期（小时），过期作废。默认 24 小时 */
+    val signalExpiryHours: Int
+        get() = 24
+
     /**
      * 执行选股扫描（使用实时 API）
      */
@@ -72,4 +140,26 @@ enum class StrategyCategory(val label: String, val icon: String, val description
 enum class StrategySource(val label: String) {
     BUILTIN("系统内置"),
     USER_CUSTOM("用户自定义")
+}
+
+/**
+ * 持仓周期。
+ *
+ * [holdingDays] 为"已持有天数归类区间"，必须与实仓 Fragment 的 classifyPeriod 边界保持一致：
+ * ULTRA_SHORT=1天、SHORT=2~29天、MID=30~180天、LONG=181天以上。
+ * （SHORT 曾为 1..14，与 classifyPeriod 的 <=29 冲突，15~29 天会落入真空区，已修正。）
+ */
+enum class HoldingPeriod(val label: String, val icon: String, val holdingDays: IntRange) {
+    ULTRA_SHORT("超短线", "⚡", 1..1),
+    SHORT("短线", "🤖", 2..29),
+    MID("中线", "📈", 30..180),
+    LONG("长线", "💎", 180..365)
+}
+
+/** 数据频率 */
+enum class DataFrequency(val label: String) {
+    TICK("逐笔"),
+    MIN5("5分钟"),
+    DAILY("日K"),
+    WEEKLY("周K")
 }

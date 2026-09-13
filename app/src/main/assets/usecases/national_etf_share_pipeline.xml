@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 国家队（汇金）宽基 ETF 份额动向 Pipeline（V2 DAG · 单节点市场级横幅）
+
+  与同目录 usecase_pipeline.py（Python 引擎，XML DAG 主线）共用同一文件 —— 单一事实源。
+  APK UseCaseLoader 直接加载执行；exe/PC（AutoQuant）与 smalltools 走同一份 XML。
+
+  ★ 定位：这是一个**市场级/宽基级**研判链，不产生个股买卖信号，只回答两件事：
+      「国家队（汇金）在买还是在卖」+「拐点发生在什么时间点」。
+    它与 national_flow（十大流通股东·**个股**级）互补，**勿合并**：
+      · national_flow      = 十大流通股东 —— 个股级、季报滞后 1~3 月，
+                             汇金 2015 后个股披露基本停止（只留 2015~2021 的历史痕迹）；
+      · national_etf_share = 宽基 ETF 份额 —— 市场/宽基级、**每日可观测**，
+                             汇金 2015 年后主要借道沪深300/上证50/中证500/中证1000/科创50/创业板 ETF。
+
+  stageOutputs（n_nat_etf）：
+    {as_of, available, updated, verdict, level, lines[],
+     quarterly{current,at,net_sub,turns[]},          ← 季度披露：当期净申购/净赎回 + 时间点
+     lastTurn{at,dir,netSub},                        ← 最近一次「由升转降 / 由降转升」拐点
+     huijin{code,pct,names},                         ← 汇金身份（年报§9.2 前十名持有人点名）
+     attr{...},                                      ← 机构/个人/内部持有结构归因（cyrjg）
+     daily{...},                                     ← 日频份额快照（f84）最新值 + 变动
+     push, why[],                                    ← 是否应推送 + 触发理由
+     funds:[{code,name,last,dSharesPct,dNavPct,netSub,quadrant}]}
+    available=false 时（缺资产）仅含 {available,note}，透传上游不阻断。
+
+  ★ 判定算法**单一事实源** = smalltools/_etf_share_flow.py（份额拐点 + 四象限 + 持有人点名），
+    产出 data/_etf_share_signal.json（当日信号）与 data/_etf_share_hist.json（逐只份额四象限）；
+    本节点双端**只读不算**，避免 Python / Kotlin / 推送表三处口径漂移。
+    四象限（份额 vs 单位净值）：
+      份额↑ & 价格↓ → 低位承接★（国家队低吸，买点信号）
+      份额↑ & 价格↑ → 追涨申购
+      份额↓ & 价格↑ → 高位派发★（卖点信号）
+      份额↓ & 价格↓ → 赎回杀跌
+  ★ 汇金身份取证：只能取**年度报告**§9.2「期末上市基金前十名持有人」
+    （半年报无此子项，§11.1 只有「单一投资者≥20%」的匿名提示）。
+  ★ 推送口径见 smalltools/_publish_candidates.py：表列「国家队」+ 页面②「🏛 国家队ETF份额」横幅
+    + 拐点日微信推送（_etf_share_alert）。
+
+  已挂入的其它链（作为市场级横幅阶段，透传 rows、不改顺序、不筛行）：
+    · etf_industry_scan_pipeline.xml 阶段3
+    · etf_holdings_top5_pipeline.xml 阶段2
+-->
+<DagPipeline id="national_etf_share_dag" name="国家队ETF份额动向Pipeline"
+    description="国家队(汇金)宽基ETF份额(申赎) → 四象限判定 → 拐点/买点卖点 + 时间点（市场级横幅）">
+
+  <NodeList>
+    <!-- 单节点：本链无上游依赖；节点直接读资产，输出市场级结论 -->
+    <Node id="n_nat_etf" name="国家队(汇金)ETF份额动向" module="national_etf_share">
+      <config>
+        <param name="maxFunds" value="10" />
+        <param name="emitFunds" value="true" />
+        <param name="strategyText" value="宽基ETF份额(申赎)四象限：份额↑&amp;价↓=低位承接(买) / 份额↓&amp;价↑=高位派发(卖)；汇金身份取年报§9.2前十名持有人（半年报无此子项）；日频快照给拐点时点，季度披露给方向；判定算法单一事实源=smalltools/_etf_share_flow.py" />
+      </config>
+    </Node>
+  </NodeList>
+
+  <Links />
+
+</DagPipeline>

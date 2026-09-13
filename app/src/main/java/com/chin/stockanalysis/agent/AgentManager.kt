@@ -172,8 +172,8 @@ class AgentManager(private val context: Context) {
     }
 
     /**
-     * v2 升级迁移：用 skill_config.json 正确值覆寫 FROM_SKILL 來源的舊髒數據
-     * v3 擴展：同時修正 description + 添加缺失的 pipeline agents
+     * v2 升级迁移：用 skill_config.json 正确值覆写 FROM_SKILL 来源的旧脏数据
+     * v3 扩展：同时修正 description + 添加缺失的 pipeline agents
      */
     private fun reMigrateFromSkills() {
         Log.i(TAG, "🔄 v2 升级：重新修正 FROM_SKILL 智能体的 quickPrompt/systemPrompt/description...")
@@ -184,7 +184,7 @@ class AgentManager(private val context: Context) {
             for (config in skillConfigs) {
                 val existing = agents[config.id]
                 if (existing != null) {
-                    // 只修正來源為 FROM_SKILL 的，保留用戶親手創建/編輯過的
+                    // 只修正来源为 FROM_SKILL 的，保留用户亲手创建/编辑过的
                     if (existing.source != AgentSource.FROM_SKILL) continue
                     // 修正空字段
                     val needsFix = existing.quickPrompt.isBlank() || existing.systemPrompt.isBlank() || existing.description.isBlank()
@@ -198,7 +198,7 @@ class AgentManager(private val context: Context) {
                     fixed++
                     Log.d(TAG, "  ✅ 修正 ${existing.id}: description=${config.description.take(30)}...")
                 } else {
-                    // 添加缺失的 pipeline agents（用戶升級後首次啟動時）
+                    // 添加缺失的 pipeline agents（用户升级后首次启动时）
                     val agent = Agent(
                         id = config.id,
                         name = config.name,

@@ -1,0 +1,363 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 长线量化 DAG Pipeline — 高通 Camera Pipeline 风格
+
+  长线特征：持仓 1 年以上，深度基本面，公司成长+价值，重仓持有。
+  不追热点、不频繁换股，但需 news_guard 防黑天鹅利空。
+
+  公共 L0/L1（data_import → market_context → bg_manager → adaptive_params →
+  stock_pool → market_ma_unified → holding_guard）已抽取至 stock_picking_common_pipeline.xml，
+  在 usecase 中先于本 pipeline 执行；本 pipeline 从 stageOutputs 兜底读取股票池/自适应参数。
+
+  共 12 个 Node：
+    Layer 0 (并行): sector_stock_pool（板块精选池，根节点，从 context 兜底读取市场上下文）
+    Layer 1.5: candidate_pool（根节点，从 stageOutputs 兜底读取股票池）
+    Layer 2 (并行): signal_merge（策略动态注入）, heat_score（根节点，从 stageOutputs 兜底读取股票池）, defensive_dividend（防守高息）
+    Layer 3: sector_boost（依赖 signal_merge + heat_score，MA 结果从 stageOutputs 兜底读取）→ bounce_reversal
+    Layer 4: smart_money_filter（依赖 bounce_reversal）
+    Layer 5: news_guard（依赖 smart_money_filter，防重大利空）
+    Layer 6: ai_predict（依赖 news_guard，最终裁切 take 5）
+    Layer 7: generate_orders（依赖 ai_predict，自适应参数从 context 兜底读取）
+    Layer 8: position_merge（依赖 generate_orders）
+-->
+<DagPipeline id="long_term_dag_oscillation" name="long_term_pipeline_oscillation" description="板块精选池→策略筛选+热度+防守高息→板块加权→主力过滤→新闻拦截→AI精选→订单生成→持仓合并（公共 L0/L1 由 stock_picking_common_pipeline.xml 提供）（环境：震荡）">
+
+  <!-- ══════════ NodeList ══════════ -->
+  <NodeList>
+    <!-- Layer 0（根节点）: 板块精选池（市场上下文由公共 L0/L1 的 n_ctx 写入 context 后兜底读取）
+         维度 = 月热门 + 季度热门 + 轮动预测（长线聚焦中期走强板块，不追当日热点） -->
+    <Node id="n_sector_pool" name="板块精选池" module="sector_stock_pool">
+      <config>
+        <param name="hotDims" value="monthly,quarterly,rotation" />
+      </config>
+    </Node>
+
+    <!-- Layer 1.5: 候选池过滤（根节点，股票池由公共 L0/L1 的 n_pool 写入 stageOutputs 后兜底读取） -->
+    <Node id="n_cand" name="候选池过滤" module="candidate_pool" />
+
+    <!-- 聚合 Layer 2 -->
+    <Node id="n_merge" name="信号合并" module="signal_merge" />
+
+        <Node id="n_vp" name="量价因子加权" module="volume_price_factor">
+      <config>
+        <param name="mode" value="penalty" />
+        <param name="benchmark" value="sh000300" />
+        <param name="relWinDays" value="10" />
+        <param name="rsHi" value="3.0" />
+        <param name="rsBonus" value="4.0" />
+        <param name="rsLo" value="-2.0" />
+        <param name="rsPenalty" value="-3.0" />
+        <param name="thinVr" value="0.5" />
+        <param name="thinPenalty" value="-4.0" />
+        <param name="shrinkVr" value="0.8" />
+        <param name="shrinkPenalty" value="-2.0" />
+        <param name="lowPriceMax" value="10.0" />
+        <param name="leaderTopK" value="5" />
+        <param name="leaderBonus" value="3.0" />
+      </config>
+    </Node>
+
+
+    <!-- 热度计算 Layer 2（并行，依赖 stock_pool，输出存入 context 供板块加权读取） -->
+    <Node id="n_heat" name="热度计算" module="heat_score" />
+
+    <!-- 增强 Layer 3 -->
+    <Node id="n_boost" name="板块加权" module="sector_boost" />
+    <Node id="n_bounce" name="跌后反弹加分" module="bounce_reversal" />
+    <!-- 长线参数修复（2026-08-15 一年回溯实证）：原 minDrawdownPct=40 + minPassCount=7 与
+         站上年线+MA250上升几乎互斥 → 一年仅6信号且全亏；放宽后 222 信号、平均+4.20%、因子2.41 -->
+        <Node id="n_strict" name="均线粘合严选" module="strict_selection">
+      <config>
+        <param name="convergenceThreshold" value="4.0" />
+        <param name="useMA60" value="true" />
+        <param name="convergenceDurationDays" value="20" />
+        <param name="convergenceDurationRatio" value="0.8" />
+        <param name="volumeBreakoutRatio" value="1.5" />
+        <param name="minDrawdownPct" value="10" />
+        <param name="minChangePct" value="1.0" />
+        <param name="requireChangePct" value="true" />
+        <param name="requireMA60Rising" value="true" />
+        <param name="maRisingDays" value="10" />
+        <param name="requireMA250Rising" value="true" />
+        <param name="useMA250InBullish" value="true" />
+        <param name="requireAboveYearLine" value="true" />
+        <param name="requireAboveAllMAs" value="true" />
+        <param name="requireThreeDayConfirm" value="true" />
+        <param name="swingLeftN" value="5" />
+        <param name="swingRightN" value="2" />
+        <param name="lookbackDays" value="250" />
+        <param name="minPassCount" value="6" />
+        <param name="allowLowAmbush" value="true" />
+      </config>
+    </Node>
+    <Node id="n_base_guard" name="打底仓守门" module="base_position_guard">
+      <config><param name="holdingPeriod" value="LONG" /></config>
+    </Node>
+    <Node id="n_ancestral" name="大A祖训" module="ancestral_rules">
+      <config><param name="holdingPeriod" value="LONG" /></config>
+    </Node>
+    <!-- 2026-09-12 K线口诀（《常见K线图.txt》口诀五条+经典/大型形态；可与 n_ancestral/n_event 口径对照，Python 端 kline_idiom 同构） -->
+    <Node id="n_idiom" name="K线口诀" module="kline_idiom">
+      <config><param name="bullBoost" value="0.6" /><param name="bearPenalty" value="1.2" /><param name="veto" value="false" /><param name="vetoStrength" value="4" /><param name="minBars" value="30" /><param name="period" value="LONG" /></config>
+    </Node>
+    <Node id="n_inst_tips" name="机构线索加分" module="inst_tips" />
+
+    <!-- v6：先判方向再定周期（长线只买 蓄势/上升/突破，剔除 下降/震荡） -->
+    <Node id="n_direction" name="个股方向标签" module="direction_label">
+      <config>
+        <param name="exclude" value="DOWNTREND,OSCILLATION" />
+        <param name="penalty" value="25" />
+      </config>
+    </Node>
+    <Node id="n_season" name="行业季节日历" module="seasonality_boost" />
+    <Node id="n_leader" name="龙头股跟踪" module="leader_track" />
+
+    <!-- 2026-09-04 新增：行业相对估值（科技同侪/行业PE中位比较，只加权不剔除） -->
+    <Node id="n_pe_peer" name="行业相对估值" module="sector_relative_pe" />
+
+    <!-- 防守高息（熊市/震荡时启动，寻找银行/电力/高速公路等高息防御股）
+         maxPerSector=1：每板块最多 1 只，避免长线候选全部集中在银行 -->
+    <Node id="n_defensive" name="防守高息" module="defensive_dividend">
+      <config>
+        <param name="maxPb" value="1.5" />
+        <param name="maxDebt" value="70" />
+        <param name="maxCandidates" value="5" />
+        <param name="maxPerSector" value="1" />
+      </config>
+    </Node>
+
+    <!-- AI+过滤 Layer 4-5 -->
+    <Node id="n_finance" name="财务健康筛选" module="financial_health" />
+    <Node id="n_ai" name="AI精选" module="ai_predict" />
+
+    <!-- 2026-09-05 新增：宏观事件驱动（事件库节点，读 assets/macro_events/event_library.json；
+         当前窗口内活跃事件按 seed_map 关键词给候选加权；只调序不加删） -->
+    <Node id="n_event" name="宏观事件驱动" module="macro_event_bias">
+      <config>
+        <param name="boostScale" value="1.0" />
+      </config>
+    </Node>
+    <Node id="n_smart" name="主力资金过滤" module="smart_money_filter">
+      <config>
+        <param name="minScore" value="55" />
+      </config>
+    </Node>
+    <Node id="n_candle" name="K线形态侦测" module="candle_pattern" />
+
+    <!-- 新闻拦截 Layer 6（防黑天鹅） -->
+    <Node id="n_newsguard" name="新闻拦截+技术过滤" module="news_guard">
+      <config>
+        <param name="impactThreshold" value="75" />
+        <param name="sentimentThreshold" value="-30" />
+      </config>
+    </Node>
+
+    <!-- 订单生成 Layer 7 -->
+    <Node id="n_orders" name="买入订单生成" module="generate_orders">
+      <config>
+        <param name="maxHoldings" value="5" />
+        <param name="orderType" value="LongTermQuant" />
+        <param name="totalCapRatio" value="50" />
+        <param name="singlePositionRatio" value="15" />
+      </config>
+    </Node>
+
+    <!-- 持仓合并 Layer 8 -->
+    <Node id="n_merge_pos" name="持仓合并" module="position_merge" />
+  </NodeList>
+
+  <!-- ══════════ Links ══════════ -->
+  <Links>
+    <!-- 公共 L0/L1（data_import → market_context → bg_manager → adaptive_params →
+         stock_pool → market_ma_unified → holding_guard）由 stock_picking_common_pipeline.xml 执行，
+         输出写入 stageOutputs/context；下方各节点内部兜底读取，不再显式引用公共节点。
+
+    Layer 0 → 1.5: 板块精选池 → 候选池过滤（板块股票注入候选池，市场上下文从 context 兜底读取） -->
+    <Link>
+      <SourceNodeId>n_sector_pool</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_cand</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 0 → 2: 防守高息 → 信号合并（防守候选并入主流程；股票池由公共 L0/L1 的 n_pool
+         写入 stageOutputs，n_defensive 内部兜底读取） -->
+    <Link>
+      <SourceNodeId>n_defensive</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_merge</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 1.5 → 2: 候选池过滤 → 信号合并（策略动态注入在 Java 层完成） -->
+    <Link>
+      <SourceNodeId>n_cand</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_merge</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 2 → 3: 信号合并 → 板块加权 -->
+    <Link>
+      <SourceNodeId>n_merge</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_vp</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+        <Link>
+      <SourceNodeId>n_vp</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_boost</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+
+    <!-- Layer 2 → 3: 热度计算 → 板块加权（热度作为板块加权输入；MA 收敛结果由公共 L0/L1
+         的 n_ma_unified 写入 stageOutputs，n_boost 内部兜底读取） -->
+    <Link>
+      <SourceNodeId>n_heat</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_boost</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 3 → 3.5: 板块加权 → 跌后反弹加分 -->
+    <Link>
+      <SourceNodeId>n_boost</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_bounce</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 3.5 → 严选: 跌后反弹加分 → 六项严选检查 -->
+    <Link>
+      <SourceNodeId>n_bounce</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_strict</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 严选 → 3.5a: 六项严选检查 → 打底仓守门 -->
+    <Link>
+      <SourceNodeId>n_strict</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_base_guard</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 3.5a → 3.5b: 打底仓守门 → 大A祖训 -->
+    <Link>
+      <SourceNodeId>n_base_guard</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_ancestral</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 3.5b → 3.6: 大A祖训 → 机构线索加分 -->
+    <Link>
+      <SourceNodeId>n_ancestral</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_idiom</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <Link>
+      <SourceNodeId>n_idiom</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_inst_tips</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 3.6 → 3.7: 机构线索加分 → 个股方向标签（先判方向） -->
+    <Link>
+      <SourceNodeId>n_inst_tips</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_direction</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <!-- Layer 3.7 → 3.8: 个股方向标签 → 行业季节日历（再叠加季节） -->
+    <Link>
+      <SourceNodeId>n_direction</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_season</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <!-- Layer 3.8 → 3.9: 行业季节日历 → 龙头股跟踪（龙头优先） -->
+    <Link>
+      <SourceNodeId>n_season</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_leader</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <!-- Layer 3.9 → 4: 龙头股跟踪 → 主力资金过滤（先过滤再AI精选） -->
+    <!-- Layer 3.9 → 3.10: 龙头跟踪 → 行业相对估值（2026-09-04 新增） -->
+    <Link>
+      <SourceNodeId>n_leader</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_pe_peer</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <!-- Layer 3.10 → 3.11: 行业相对估值 → 宏观事件驱动 -->
+    <Link>
+      <SourceNodeId>n_pe_peer</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_event</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <!-- Layer 3.11 → 5: 宏观事件驱动 → 主力资金过滤 -->
+    <Link>
+      <SourceNodeId>n_event</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_smart</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 4 → 5: 主力资金过滤 → 新闻截+技术过滤 -->
+    <Link>
+      <SourceNodeId>n_smart</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_newsguard</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 4 → 5: 主力资金过滤 → K线形态侦测（并行，辅助提醒） -->
+    <Link>
+      <SourceNodeId>n_smart</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_candle</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 5 → 6: 新闻拦截 → AI精选（最终裁切 take 5） -->
+    <Link>
+      <SourceNodeId>n_newsguard</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_finance</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_finance</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_ai</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 6 → 7: AI精选 → 买入订单生成 -->
+    <Link>
+      <SourceNodeId>n_ai</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_orders</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 7 → 8: 买入订单生成 → 持仓合并（自适应参数由公共 L0/L1 的 n_adaptive
+         写入 context，n_orders 内部兜底读取） -->
+    <Link>
+      <SourceNodeId>n_orders</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_merge_pos</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+  </Links>
+</DagPipeline>

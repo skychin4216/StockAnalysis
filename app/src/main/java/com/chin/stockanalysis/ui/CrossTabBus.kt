@@ -2,8 +2,12 @@ package com.chin.stockanalysis.ui
 
 import com.chin.stockanalysis.strategy.models.ScreeningResult
 import com.chin.stockanalysis.strategy.models.StrategySignal
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
@@ -47,9 +51,14 @@ object CrossTabBus {
     private val _stockContext = MutableStateFlow<Map<String, String>>(emptyMap())
     val stockContext: StateFlow<Map<String, String>> = _stockContext.asStateFlow()
 
-    /** 对话指令（对话Tab → 任意Tab） */
-    private val _command = MutableStateFlow<CrossTabCommand?>(null)
-    val command: StateFlow<CrossTabCommand?> = _command.asStateFlow()
+    /** 对话指令（对话Tab → 任意Tab） — SharedFlow 广播：每个订阅者都能收到，
+     *  避免 StrategyFragment 与 ChatTabFragment 两个 collector 竞争 Channel 导致指令被抢走丢弃 */
+    private val _commands = MutableSharedFlow<CrossTabCommand>(
+        replay = 0,
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+    val commandFlow: SharedFlow<CrossTabCommand> = _commands.asSharedFlow()
 
     /** 智能体建议（智能体Tab → 对话Tab） */
     private val _agentSuggestion = MutableStateFlow<String?>(null)
@@ -63,11 +72,9 @@ object CrossTabBus {
     fun postAiTopPicks(picks: List<com.chin.stockanalysis.strategy.predict.AIPredictionEngine.AIPick>) { _aiTopPicks.value = picks }
     fun postMergedPool(pool: Map<String, List<Pair<String, Int>>>) { _mergedPool.value = pool }
     fun postStockContext(ctx: Map<String, String>) { _stockContext.value = ctx }
-    fun postCommand(cmd: CrossTabCommand) { _command.value = cmd }
+    suspend fun postCommand(cmd: CrossTabCommand) { _commands.emit(cmd) }
+    fun tryPostCommand(cmd: CrossTabCommand): Boolean = _commands.tryEmit(cmd)
     fun postAgentSuggestion(text: String?) { _agentSuggestion.value = text }
-
-    /** 消费指令（一次性） */
-    fun consumeCommand(): CrossTabCommand? { val cmd = _command.value; _command.value = null; return cmd }
 
     // ═══════════════════════════════════════
     // 序列化（AI上下文构建用）

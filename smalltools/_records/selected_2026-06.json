@@ -1,0 +1,188 @@
+{
+ "window": [
+  "2026-06-15",
+  "2026-07-15"
+ ],
+ "signals": {
+  "超短": [],
+  "短线": [],
+  "中线": [],
+  "长线": [
+   [
+    "sh688313",
+    "仕佳光子",
+    "2026-07-14",
+    957,
+    "BEARISH"
+   ]
+  ]
+ },
+ "trades": {
+  "超短": [],
+  "短线": [],
+  "中线": [],
+  "长线": [
+   {
+    "code": "sh688313",
+    "name": "仕佳光子",
+    "sig": "2026-07-14",
+    "buy": "2026-07-15",
+    "sell": "2026-07-17",
+    "entry": 153.11,
+    "exit": 117.99,
+    "ret": -22.93775716804911,
+    "reason": "止损",
+    "state": "BEARISH",
+    "tProfit": 0.0,
+    "tCount": null
+   }
+  ]
+ },
+ "state_dist": {
+  "超短": {
+   "BEARISH": 5,
+   "OSCILLATION": 5,
+   "BULLISH": 7,
+   "CRASH": 4
+  },
+  "短线": {
+   "BEARISH": 5,
+   "OSCILLATION": 5,
+   "BULLISH": 7,
+   "CRASH": 4
+  },
+  "中线": {
+   "BEARISH": 5,
+   "OSCILLATION": 5,
+   "BULLISH": 7,
+   "CRASH": 4
+  },
+  "长线": {
+   "BEARISH": 5,
+   "OSCILLATION": 5,
+   "BULLISH": 7,
+   "CRASH": 4
+  }
+ },
+ "params_used": {
+  "超短": {},
+  "短线": {},
+  "中线": {},
+  "长线": {
+   "BEARISH": {
+    "style": "hold",
+    "maxHold": 40,
+    "tp": 50,
+    "sl": -12,
+    "tRatio": 0.4
+   }
+  }
+ },
+ "fitted": {
+  "超短": {},
+  "短线": {
+   "BULLISH": {
+    "rule": {
+     "style": "streak",
+     "streakDays": 2,
+     "maBreak": 5,
+     "maxHold": 5,
+     "tp": 0.0,
+     "sl": 0.0
+    },
+    "avg": 0.6765640781411673,
+    "wr": 50.0,
+    "n": 4
+   },
+   "OSCILLATION": {
+    "rule": {
+     "style": "streak",
+     "streakDays": 3,
+     "maBreak": 8,
+     "maxHold": 5,
+     "tp": 0.0,
+     "sl": 0.0
+    },
+    "avg": -1.6009416240575474,
+    "wr": 50.0,
+    "n": 4
+   }
+  },
+  "中线": {
+   "BULLISH": {
+    "rule": {
+     "style": "hold",
+     "maxHold": 20,
+     "tp": 25,
+     "sl": -8,
+     "tRatio": 0.4
+    },
+    "avg": 9.190923331021953,
+    "wr": 89.45578231292517,
+    "n": 294
+   },
+   "OSCILLATION": {
+    "rule": {
+     "style": "hold",
+     "maxHold": 20,
+     "tp": 25,
+     "sl": -6,
+     "tRatio": 0.4
+    },
+    "avg": 2.731932093213449,
+    "wr": 64.19753086419753,
+    "n": 81
+   },
+   "BEARISH": {
+    "rule": {
+     "style": "hold",
+     "maxHold": 12,
+     "tp": 15,
+     "sl": -6,
+     "tRatio": 0.4
+    },
+    "avg": 2.791189905914568,
+    "wr": 73.33333333333333,
+    "n": 15
+   }
+  },
+  "长线": {
+   "BULLISH": {
+    "rule": {
+     "style": "hold",
+     "maxHold": 40,
+     "tp": 50,
+     "sl": -12,
+     "tRatio": 0.4
+    },
+    "avg": 9.52668926102349,
+    "wr": 80.40816326530611,
+    "n": 490
+   },
+   "OSCILLATION": {
+    "rule": {
+     "style": "hold",
+     "maxHold": 40,
+     "tp": 50,
+     "sl": -12,
+     "tRatio": 0.4
+    },
+    "avg": 8.518079873273752,
+    "wr": 72.93577981651376,
+    "n": 218
+   },
+   "BEARISH": {
+    "rule": {
+     "style": "hold",
+     "maxHold": 40,
+     "tp": 50,
+     "sl": -12,
+     "tRatio": 0.4
+    },
+    "avg": 10.003905475734111,
+    "wr": 77.68595041322314,
+    "n": 121
+   }
+  }
+ }
+}

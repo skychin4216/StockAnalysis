@@ -37,7 +37,20 @@ class StrategyDetailFragment : BottomSheetDialogFragment() {
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
         }
 
-        val s = strategy ?: return root
+        val s = strategy
+        if (s == null) {
+            root.addView(TextView(ctx).apply {
+                text = "⚠️ 策略数据缺失，无法编辑\n\n请从策略列表重新打开。"
+                textSize = 14f; setTextColor(Color.parseColor("#E65100"))
+                gravity = Gravity.CENTER
+                setPadding(16, 32, 16, 32)
+            })
+            root.addView(Button(ctx).apply {
+                text = "关闭"
+                setOnClickListener { dismiss() }
+            })
+            return root
+        }
 
         // title
         val titleRow = LinearLayout(ctx).apply {
@@ -244,11 +257,5 @@ class StrategyDetailFragment : BottomSheetDialogFragment() {
         }
     }
 
-    companion object {
-        fun newInstance(strategyId: String): StrategyDetailFragment {
-            return StrategyDetailFragment().apply {
-                arguments = Bundle().apply { putString("strategy_id", strategyId) }
-            }
-        }
-    }
+    companion object
 }

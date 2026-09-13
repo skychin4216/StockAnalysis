@@ -4,6 +4,7 @@ import android.util.Log
 import com.chin.stockanalysis.stock.StockRealtime
 import com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource
 import com.chin.stockanalysis.strategy.*
+import com.chin.stockanalysis.strategy.data.Level2DataProvider
 import com.chin.stockanalysis.strategy.data.StockScreener
 import com.chin.stockanalysis.strategy.models.WeightFactor
 import com.chin.stockanalysis.strategy.models.ScreeningResult
@@ -39,7 +40,41 @@ class EarlyMorningChaseStrategy(
     override var name = "早盘追涨选股"
     override var description = "以单个交易日为单位，分析热门板块中追涨机会（V型反转+补涨信号）"
     override val category = StrategyCategory.MOMENTUM
+    override val holdingPeriods = listOf(HoldingPeriod.ULTRA_SHORT)
     override val source = StrategySource.USER_CUSTOM
+
+    // ── 风控默认值（下沉自 Fragment） ──
+    override val defaultStopLoss = -0.02f      // -2% 硬止损
+    override val defaultTakeProfit = 0.03f     // +3% 止盈
+    override val maxPositions = 3
+    override val signalExpiryHours = 2         // 仅当日 09:30-11:30 有效
+
+    // ── 数据依赖 ──
+    override val requiresL2Data = true
+    override val dataFrequency = DataFrequency.TICK
+
+    // ── 动态开关（基于时间计算，非写死 false） ──
+    override val requiresSmartMoney: Boolean
+        get() = java.time.LocalTime.now().isBefore(java.time.LocalTime.of(14, 30))
+    override val requiresAIRefine: Boolean
+        get() {
+            val now = java.time.LocalTime.now()
+            return now.isAfter(java.time.LocalTime.of(15, 0)) &&
+                now.isBefore(java.time.LocalTime.of(16, 0))
+        }
+
+    /**
+     * 超轻量级 Level2 即时过滤（取代笨重的 AI，仅耗时 ~5ms）。
+     * 早盘追涨需要确认主力资金进场：特大单买入占比 > 15%，且买卖价差小（流动性佳）。
+     * 支持部分数据：仅有 largeOrderBuyRatio 时只检查主力资金，仅有 bidAskSpread 时只检查流动性。
+     */
+    fun fastLevel2Filter(largeOrderBuyRatio: Double, bidAskSpread: Double): Boolean {
+        // 超大单买入占比过低（主力未进场），仅有数据时检查
+        if (largeOrderBuyRatio > 0 && largeOrderBuyRatio <= 0.15) return false
+        // 买卖价差过大（流动性差），仅有数据时检查
+        if (bidAskSpread > 0 && bidAskSpread >= 0.02) return false
+        return true
+    }
 
     override val config = StrategyConfig.custom(
         params = mapOf(
@@ -92,15 +127,15 @@ class EarlyMorningChaseStrategy(
 
         Log.i(id, "========== V型反转筛选 pool=${pool.size} isBacktest=$isBacktest ==========")
 
-        // 大盤環境預檢：BEARISH 時提高追漲門檻，避免在下跌趨勢中追高
+        // 大盘环境预检：BEARISH 时提高追涨门槛，避免在下跌趋势中追高
         val marketDirection = try { screener.detectMarketDirection() } catch (_: Exception) { "OSCILLATION" }
 
         val isBearish = marketDirection == "BEARISH"
         val isOscillation = marketDirection == "OSCILLATION"
-        // BEARISH 時提高門檻，減少追漲風險
+        // BEARISH 时提高门槛，减少追涨风险
         val dynamicVThreshold = if (isBearish) config.getInt("v_score_threshold", 60) + 15 else config.getInt("v_score_threshold", 60)
         val dynamicCatchupThreshold = if (isBearish) config.getInt("catchup_score_threshold", 50) + 15 else config.getInt("catchup_score_threshold", 50)
-        Log.i(id, "大盤環境: $marketDirection → V型門檻: $dynamicVThreshold, 補漲門檻: $dynamicCatchupThreshold")
+        Log.i(id, "大盘环境: $marketDirection → V型门槛: $dynamicVThreshold, 补涨门槛: $dynamicCatchupThreshold")
 
         // 获取当日热门板块（实时用概念板块，回测也可使用）
         val hotSectors = EastMoneyHotSectorSource.conceptSectors.map { it.name }.toSet()
@@ -121,8 +156,29 @@ class EarlyMorningChaseStrategy(
 
         Log.i(id, "V型检测: pool=${pool.size} → V型=${vCandidates.size} | 无V型=${cntNoV}")
 
+        // Step 1.5: Level2 数据填充 + 即时过滤
+        val enrichedVCandidates = Level2DataProvider.enrichStocks(vCandidates.map { it.stock }).mapIndexed { i, stock ->
+            vCandidates[i].copy(stock = stock)
+        }
+        val l2FilteredVCandidates = enrichedVCandidates.filter { v ->
+            val stock = v.stock
+            if (stock.largeOrderBuyRatio > 0 || stock.bidAskSpread > 0) {
+                val passed = fastLevel2Filter(stock.largeOrderBuyRatio, stock.bidAskSpread)
+                if (!passed) {
+                    Log.d(id, "Level2过滤淘汰V型: ${stock.code} ${stock.name} " +
+                        "大单买入比=${"%.3f".format(stock.largeOrderBuyRatio)} 买卖价差=${"%.4f".format(stock.bidAskSpread)}")
+                }
+                passed
+            } else {
+                true
+            }
+        }
+        if (l2FilteredVCandidates.size < vCandidates.size) {
+            Log.i(id, "Level2过滤V型: ${vCandidates.size} → ${l2FilteredVCandidates.size} (淘汰${vCandidates.size - l2FilteredVCandidates.size}只)")
+        }
+
         // Step 2: 打分 V 型反转
-        val vScored = vCandidates.map { v ->
+        val vScored = l2FilteredVCandidates.map { v ->
             val score = scoreVReversal(v)
             v to score
         }.filter { (_, s) -> s >= dynamicVThreshold }
@@ -218,13 +274,13 @@ class EarlyMorningChaseStrategy(
         val amplitude = if (basePrice > 0) ((stock.high - stock.low) / basePrice) * 100 else 0.0
         if (amplitude < 5.0) return null
 
-        // 回升比例：從砸盤低點恢復了多少（相對於砸盤幅度 open-low）
-        // 分母用 open-low（砸盤空間）而非 high-low（全日振幅），避免開盤衝高後砸盤的情況下比例被壓低
+        // 回升比例：从砸盘低点恢复了多少（相对于砸盘幅度 open-low）
+        // 分母用 open-low（砸盘空间）而非 high-low（全日振幅），避免开盘冲高后砸盘的情况下比例被压低
         val recoveryRatio = if (stock.open > stock.low) {
             (stock.price - stock.low) / (stock.open - stock.low)
         } else 0.0
 
-        // 回升比例必須 ≥ 50%（即從低點回升了砸盤幅度的至少一半）
+        // 回升比例必须 ≥ 50%（即从低点回升了砸盘幅度的至少一半）
         if (recoveryRatio < 0.50) return null
 
         // 板块匹配：检查是否属于热门板块
@@ -275,7 +331,7 @@ class EarlyMorningChaseStrategy(
             else -> 15
         }
 
-        // 2b. 回彈板塊額外加分
+        // 2b. 回弹板块额外加分
         val bounceBonus = try {
             val bounceFactor = com.chin.stockanalysis.strategy.sector.SectorBounceFactor(
                 com.chin.stockanalysis.stock.database.StockDatabase.getInstance(screener.context)
@@ -293,18 +349,18 @@ class EarlyMorningChaseStrategy(
             else -> 4
         }
 
-        // 4. 入場位置 (0-10)：在拉升確認區間得分最高
-        // positionInV 表示從低點回升到高點的比例
-        // <0.3 剛拉起未確認風險大，0.4-0.7 拉升確認最佳上車，>0.85 追高風險大
+        // 4. 入场位置 (0-10)：在拉升确认区间得分最高
+        // positionInV 表示从低点回升到高点的比例
+        // <0.3 刚拉起未确认风险大，0.4-0.7 拉升确认最佳上车，>0.85 追高风险大
         val positionInV = if (s.high > s.low) {
             (s.price - s.low) / (s.high - s.low)
         } else 1.0
         val positionScore = when {
-            positionInV < 0.3 -> 4    // 剛拉起，未確認反轉
-            positionInV < 0.5 -> 8    // 拉升中，初步確認
-            positionInV < 0.7 -> 10   // 拉升確認，最佳上車區間
-            positionInV < 0.85 -> 7   // 拉升較多，仍可追
-            else -> 3                  // 接近高位，追高風險大
+            positionInV < 0.3 -> 4    // 刚拉起，未确认反转
+            positionInV < 0.5 -> 8    // 拉升中，初步确认
+            positionInV < 0.7 -> 10   // 拉升确认，最佳上车区间
+            positionInV < 0.85 -> 7   // 拉升较多，仍可追
+            else -> 3                  // 接近高位，追高风险大
         }
 
         return minOf(vScore + sectorScore + bounceBonus + capitalScore + positionScore, 100)

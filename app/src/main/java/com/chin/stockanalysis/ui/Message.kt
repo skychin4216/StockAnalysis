@@ -26,9 +26,9 @@ data class Message(
     val loadingStatus: String? = null,
     /** P2: 内容块列表（动态布局），非 null 时优先使用 */
     val contentBlocks: List<ContentBlock>? = null,
-    /** EntityConfirmCard: 歧義實體列表，非 null 且非空時顯示確認卡片 */
+    /** EntityConfirmCard: 歧义实体列表，非 null 且非空时显示确认卡片 */
     val ambiguousEntities: List<StockEntityExtractor.ExtractedEntity>? = null,
-    /** EntityConfirmCard 回調：確認選擇 & 取消 */
+    /** EntityConfirmCard 回调：确认选择 & 取消 */
     val onEntityConfirm: ((EntityConfirmCard.Candidate) -> Unit)? = null,
     val onEntityCancel: (() -> Unit)? = null
 )

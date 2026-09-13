@@ -1,0 +1,19 @@
+{
+  "generated_at": "2026-09-11",
+  "as_of": "2026-09-10",
+  "gate": {
+    "ok": false,
+    "date": "2026-09-10",
+    "note": "沪深300 空头排列 close(4548)<MA20(4601)<MA60(4703)",
+    "available": true,
+    "state": "bear"
+  },
+  "signal_today": [],
+  "approach": [],
+  "strategy": "v0.3 dip_buy: 距60日高回撤-25%~-12% + RSI6小于30 + 年线上方 + 收阳/RSI拐头 + 非5日新低 + 沪深300结构多头门控(参数见 etf_dip_pipeline.xml)",
+  "exit": {
+    "tp": 2.0,
+    "sl": -6.0,
+    "hold": 30
+  }
+}

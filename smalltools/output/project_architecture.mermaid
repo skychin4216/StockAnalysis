@@ -1,0 +1,100 @@
+graph TD
+
+    %% 架構圖 | id=architecture
+
+    %% ===== Layer 0 =====
+    subgraph L0["Layer 0"]
+        stock_screener(["StockScreener (全市場掃描)"]):::dataSource
+        historical_fetcher(["HistoricalDataFetcher (歷史數據導入)"]):::dataSource
+        multi_source_repo(["MultiSourceStockRepository (多源數據)"]):::dataSource
+    end
+
+    %% ===== Layer 1 =====
+    subgraph L1["Layer 1"]
+        strategy_engine[("StrategyEngine (策略引擎)")]:::aggregation
+        strategies{{"20+ Strategies (20+策略並發)"}}:::strategy
+        market_analyzer[["MarketAnalyzer (市場環境分析)"]]:::enrichment
+    end
+
+    %% ===== Layer 2 =====
+    subgraph L2["Layer 2"]
+        usecase_loader[/"UseCaseLoader (UseCase加載)"\]:::dataTransform
+        dag_pipeline[("DagPipeline (Kahn拓撲排序)")]:::aggregation
+        node_registry[/"NodeRegistry (節點工廠)"\]:::dataTransform
+        pipeline_nodes{"20+ Pipeline Nodes (20+節點)"}:::factorCompute
+    end
+
+    %% ===== Layer 3 =====
+    subgraph L3["Layer 3"]
+        dag_trade_executor(("DagTradeExecutor (DAG交易執行器)")):::tradeAction
+        generate_orders(("GenerateOrdersNode (訂單生成)")):::tradeAction
+        swap_weak(("SwapWeakNode (騰龍換鳥)")):::tradeAction
+    end
+
+    %% ===== Layer 4 =====
+    subgraph L4["Layer 4"]
+        quant_fragment_base[/"QuantFragmentBase (持倉管理基類)"\]:::dataTransform
+        auto_sell_engine["AutoSellEngine (智能賣出引擎10策略)"]:::filter
+        period_holding_profit[/"PeriodHoldingProfitEntity (各週期收益固化)"\]:::dataTransform
+    end
+
+    %% ===== Layer 5 =====
+    subgraph L5["Layer 5"]
+        ai_orchestrator("AiOrchestrator (AI編排)"):::aiPrediction
+        agent_orchestrator("AgentOrchestrator (多智能體)"):::aiPrediction
+        stock_picking_agent("StockPickingAgent (選股Agent)"):::aiPrediction
+    end
+
+    %% ===== Layer 6 =====
+    subgraph L6["Layer 6"]
+        stock_database(["StockDatabase (Room DB v14)"]):::dataSource
+        db_tables(["14 張表 (strategy_trade_orders, daily_snapshot, period_holding_profit 等)"]):::dataSource
+    end
+
+    %% ===== Layer 7 =====
+    subgraph L7["Layer 7"]
+        main_activity[/"MainActivity (主界面)"\]:::dataTransform
+        quant_fragments[/"4個 QuantFragment (超短/短/中/長線)"\]:::dataTransform
+        topology_editor[/"TopologyEditorActivity (拓撲編輯器)"\]:::dataTransform
+    end
+
+    %% ===== 連線 =====
+    stock_screener -->|全市場掃描結果| strategy_engine
+    historical_fetcher -->|歷史數據導入| stock_database
+    multi_source_repo -->|多源數據匯入| strategy_engine
+    strategy_engine -->|策略信號| usecase_loader
+    strategies -->|策略並發結果| strategy_engine
+    market_analyzer -->|市場環境上下文| dag_pipeline
+    usecase_loader -->|UseCase 配置| dag_pipeline
+    node_registry -->|節點工廠實例化| dag_pipeline
+    pipeline_nodes -->|因子計算結果| dag_pipeline
+    dag_pipeline -->|Pipeline 執行結果| dag_trade_executor
+    dag_trade_executor -->|觸發訂單生成| generate_orders
+    dag_trade_executor -->|持倉滿時換鳥| swap_weak
+    dag_trade_executor -->|交易結果入持倉| quant_fragment_base
+    generate_orders -->|訂單持久化| stock_database
+    quant_fragment_base -->|持倉委託賣出評估| auto_sell_engine
+    auto_sell_engine -->|賣出訂單持久化| stock_database
+    ai_orchestrator -->|AI 策略增強| strategy_engine
+    agent_orchestrator -->|多智能體調度| stock_picking_agent
+    stock_picking_agent -->|AI 選股結果注入| dag_trade_executor
+    stock_database -->|持倉數據讀取| quant_fragment_base
+    stock_database -->|表結構映射| db_tables
+    stock_database -->|UI 數據源| main_activity
+    stock_database -->|各週期持倉展示| quant_fragments
+    main_activity -->|界面觸發持倉操作| quant_fragment_base
+    quant_fragments -->|Fragment 持倉交互| quant_fragment_base
+    quant_fragment_base -->|打開拓撲編輯| topology_editor
+    quant_fragment_base -->|週期結算收益固化| period_holding_profit
+    period_holding_profit -->|收益數據持久化| stock_database
+
+    %% ===== 樣式定義 =====
+    classDef dataSource fill:#059669,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef strategy fill:#7C3AED,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef filter fill:#DC2626,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef aiPrediction fill:#2563EB,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef enrichment fill:#0891B2,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef aggregation fill:#4F46E5,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef tradeAction fill:#D97706,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef factorCompute fill:#0D9488,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef dataTransform fill:#6B7280,stroke:#ffffff,stroke-width:1px,color:#ffffff

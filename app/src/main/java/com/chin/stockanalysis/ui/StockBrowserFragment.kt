@@ -3,24 +3,36 @@ package com.chin.stockanalysis.ui
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
+import android.util.Log
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.TextView
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
+import com.chin.stockanalysis.stock.data.StockDataSourceFactory
+import com.chin.stockanalysis.stock.database.StockDataCenter
+import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.Locale
 
 /**
  * ## 股票浏览面板 - 参考同花顺设计
  *
  * 以 BottomSheetDialogFragment 形式弹出，
- * 显示 A股 / ETF / 热门 / 涨幅 / 跌幅 五个分页。
+ * 显示 A股 / ETF / 热门 / 涨幅 / 跌幅 / 主线 六个分页。
  *
  * ### 使用方式（在 ChatActivity 中）
  * ```kotlin
@@ -31,6 +43,10 @@ import com.google.android.material.tabs.TabLayoutMediator
  * }
  * dialog.show(supportFragmentManager, "stock_browser")
  * ```
+ *
+ * ### 搜索（v2.0）
+ * 通过 `StockDataCenter.searchStocks()` 在真实股票库中检索（代码/名称/拼音），
+ * 并批量拉取实时行情展示。
  */
 class StockBrowserFragment : BottomSheetDialogFragment() {
 
@@ -41,13 +57,17 @@ class StockBrowserFragment : BottomSheetDialogFragment() {
     private lateinit var viewPager: ViewPager2
     private lateinit var searchInput: EditText
     private lateinit var btnSearch: ImageButton
+    private lateinit var searchContainer: ViewGroup
     private lateinit var searchResultsView: RecyclerView
+    private lateinit var searchProgress: ProgressBar
+    private lateinit var searchEmpty: TextView
 
     private val pages = mutableListOf<StockListFragment>()
     private val pageTitles = mutableListOf<String>()
 
-    // 全部股票合并（用于搜索）
-    private val allStocks = mutableListOf<StockListFragment.StockItem>()
+    private val repository by lazy {
+        StockDataSourceFactory.createDefaultRepository(requireContext())
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -56,7 +76,7 @@ class StockBrowserFragment : BottomSheetDialogFragment() {
     ): View = LinearLayout(requireContext()).apply {
         layoutParams = ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            (resources.displayMetrics.heightPixels * 0.82).toInt()
+            ViewGroup.LayoutParams.MATCH_PARENT
         )
         orientation = LinearLayout.VERTICAL
         setBackgroundColor(context.getColor(android.R.color.white))
@@ -67,16 +87,42 @@ class StockBrowserFragment : BottomSheetDialogFragment() {
         // ── 搜索栏 ──
         addView(createSearchBar())
 
-        // ── 搜索结果 RecyclerView（默认隐藏）──
+        // ── 搜索结果区（默认隐藏）──
+        searchContainer = LinearLayout(context).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT
+            )
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        searchProgress = ProgressBar(context).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        searchContainer.addView(searchProgress)
         searchResultsView = RecyclerView(context).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.MATCH_PARENT
             )
             layoutManager = LinearLayoutManager(context)
-            visibility = View.GONE
         }
-        addView(searchResultsView)
+        searchContainer.addView(searchResultsView)
+        searchEmpty = TextView(context).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT
+            )
+            gravity = Gravity.CENTER
+            text = "未找到相关股票"
+            textSize = 14f
+            setTextColor(0xFF999999.toInt())
+        }
+        searchContainer.addView(searchEmpty)
+        addView(searchContainer)
 
         // ── TabLayout ──
         tabLayout = TabLayout(context).apply {
@@ -100,6 +146,23 @@ class StockBrowserFragment : BottomSheetDialogFragment() {
         addView(viewPager)
 
         setupViewPager()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // 展开到接近全屏（自适应横屏/分屏，避免硬编码高度溢出）
+        try {
+            dialog?.findViewById<View>(
+                com.google.android.material.R.id.design_bottom_sheet
+            )?.let { sheet ->
+                val behavior = BottomSheetBehavior.from(sheet)
+                behavior.skipCollapsed = true
+                behavior.maxHeight = (resources.displayMetrics.heightPixels * 0.82).toInt()
+                behavior.state = BottomSheetBehavior.STATE_EXPANDED
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "BottomSheet 高度设置失败: ${e.message}")
+        }
     }
 
     // ── 顶部标题行 ──
@@ -209,66 +272,109 @@ class StockBrowserFragment : BottomSheetDialogFragment() {
         }.attach()
     }
 
-    // ── 搜索过滤 ──
+    // ── 搜索过滤（真实数据源）──
 
     private fun filterStocks(query: String) {
         if (query.isBlank()) {
             // 恢复 Tab 显示
             tabLayout.visibility = View.VISIBLE
             viewPager.visibility = View.VISIBLE
-            searchResultsView.visibility = View.GONE
+            searchContainer.visibility = View.GONE
             return
         }
 
-        // 隐藏 Tab，显示搜索结果
+        // 隐藏 Tab，显示搜索结果 + loading
         tabLayout.visibility = View.GONE
         viewPager.visibility = View.GONE
-        searchResultsView.visibility = View.VISIBLE
+        showSearchLoading()
 
-        // 收集所有示例数据（实际项目应从数据源查询）
-        val allItems = buildAllStockList()
-        val filtered = allItems.filter { stock ->
-            stock.name.contains(query, ignoreCase = true) ||
-                    stock.code.contains(query, ignoreCase = true) ||
-                    stock.code.takeLast(6).contains(query, ignoreCase = true)
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val items = withContext(Dispatchers.IO) { realSearch(query) }
+                if (view == null) return@launch
+                if (items.isEmpty()) showSearchEmpty() else showSearchResults(items)
+            } catch (e: Exception) {
+                Log.w(TAG, "搜索失败: ${e.message}", e)
+                if (view == null) return@launch
+                showSearchEmpty()
+            }
         }
+    }
 
-        searchResultsView.adapter = StockListAdapter(filtered) { stock ->
+    /** 真实搜索：StockDataCenter 检索 + 批量实时行情 */
+    private suspend fun realSearch(query: String): List<StockListFragment.StockItem> {
+        val pairs = StockDataCenter.searchStocks(query)
+        if (pairs.isEmpty()) return emptyList()
+
+        val codes = pairs.map { it.first }
+        val nameMap = pairs.toMap()
+        val rtMap = try { repository.getRealtimeSuspend(codes) } catch (e: Exception) {
+            Log.w(TAG, "搜索行情拉取失败: ${e.message}")
+            emptyMap()
+        }
+        return codes.mapNotNull { code ->
+            val rt = rtMap[code] ?: return@mapNotNull null
+            StockListFragment.StockItem(
+                code = code,
+                name = rt.name.ifBlank { nameMap[code] ?: code },
+                price = formatPrice(rt.price),
+                change = formatPercent(rt.changePercent),
+                arrow = when {
+                    rt.changePercent > 0 -> "🟢"
+                    rt.changePercent < 0 -> "🔴"
+                    else -> "⚪"
+                }
+            )
+        }
+    }
+
+    private fun hideSearchArea() {
+        tabLayout.visibility = View.VISIBLE
+        viewPager.visibility = View.VISIBLE
+        searchContainer.visibility = View.GONE
+        searchProgress.visibility = View.GONE
+        searchResultsView.visibility = View.GONE
+        searchEmpty.visibility = View.GONE
+    }
+
+    private fun showSearchLoading() {
+        searchContainer.visibility = View.VISIBLE
+        searchProgress.visibility = View.VISIBLE
+        searchResultsView.visibility = View.GONE
+        searchEmpty.visibility = View.GONE
+    }
+
+    private fun showSearchResults(items: List<StockListFragment.StockItem>) {
+        searchContainer.visibility = View.VISIBLE
+        searchProgress.visibility = View.GONE
+        searchResultsView.visibility = View.VISIBLE
+        searchEmpty.visibility = View.GONE
+        searchResultsView.adapter = StockListAdapter(items) { stock ->
             onStockSelected?.invoke(stock)
             dismiss()
         }
     }
 
-    /** 聚合所有分页的示例数据供搜索使用 */
-    private fun buildAllStockList(): List<StockListFragment.StockItem> = listOf(
-        // A股主板
-        StockListFragment.StockItem("sh600519", "贵州茅台", "1734.50", "+2.15%", "🟢"),
-        StockListFragment.StockItem("sh600000", "浦发银行", "7.42", "+1.23%", "🟢"),
-        StockListFragment.StockItem("sh601988", "中国银行", "4.15", "-0.58%", "🔴"),
-        StockListFragment.StockItem("sz000858", "五粮液", "134.80", "+3.45%", "🟢"),
-        StockListFragment.StockItem("sz000651", "格力电器", "40.25", "-2.34%", "🔴"),
-        StockListFragment.StockItem("sh601318", "中国平安", "43.60", "+0.92%", "🟢"),
-        StockListFragment.StockItem("sh600036", "招商银行", "35.80", "+1.10%", "🟢"),
-        StockListFragment.StockItem("sz000333", "美的集团", "58.30", "+1.88%", "🟢"),
-        StockListFragment.StockItem("sz002594", "比亚迪", "285.40", "+4.20%", "🟢"),
-        StockListFragment.StockItem("sh600900", "长江电力", "26.80", "+0.75%", "🟢"),
-        // ETF
-        StockListFragment.StockItem("sz159915", "创业板ETF", "1.823", "+1.23%", "🟢"),
-        StockListFragment.StockItem("sh510050", "50ETF", "3.128", "+0.34%", "🟢"),
-        StockListFragment.StockItem("sh588000", "科创50", "0.924", "-1.23%", "🔴"),
-        StockListFragment.StockItem("sh510300", "沪深300ETF", "4.012", "+0.88%", "🟢"),
-        StockListFragment.StockItem("sz159919", "沪深300ETF", "4.015", "+0.90%", "🟢"),
-        StockListFragment.StockItem("sh512010", "医疗ETF", "0.891", "-0.55%", "🔴"),
-        StockListFragment.StockItem("sh512880", "证券ETF", "0.754", "+2.10%", "🟢"),
-        StockListFragment.StockItem("sz159941", "纳指ETF", "1.245", "+0.40%", "🟢"),
-    )
+    private fun showSearchEmpty() {
+        searchContainer.visibility = View.VISIBLE
+        searchProgress.visibility = View.GONE
+        searchResultsView.visibility = View.GONE
+        searchEmpty.visibility = View.VISIBLE
+    }
 
     // ── 工具 ──
+
+    private fun formatPrice(p: Double): String =
+        if (p <= 0) "--" else String.format(Locale.US, "%.2f", p)
+
+    private fun formatPercent(p: Double): String =
+        if (p == 0.0) "0.00%" else String.format(Locale.US, "%+.2f%%", p)
 
     private fun Int.dpToPx(): Int =
         (this * resources.displayMetrics.density).toInt()
 
     companion object {
+        private const val TAG = "StockBrowserFragment"
         fun newInstance() = StockBrowserFragment()
     }
 }

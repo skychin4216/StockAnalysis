@@ -1,0 +1,1620 @@
+{
+ "asof": "2026-09-11",
+ "generated_at": "2026-09-13T15:00:42",
+ "cases": [
+  {
+   "usecase": "ultra_short",
+   "period": "ultra_short",
+   "source": "kline",
+   "orders": 3,
+   "market_state": {
+    "state": "OSCILLATION",
+    "detail": "OSCILLATION"
+   },
+   "direction": "OSCILLATION",
+   "executed": [
+    "n_a_market",
+    "n_adaptive",
+    "n_ai",
+    "n_ancestral",
+    "n_boost",
+    "n_bounce",
+    "n_cand",
+    "n_ctx",
+    "n_guard",
+    "n_idiom",
+    "n_import",
+    "n_ma_unified",
+    "n_market_direction",
+    "n_merge",
+    "n_merge_pos",
+    "n_orders",
+    "n_pool",
+    "n_pool_filter",
+    "n_pool_hint",
+    "n_sector_strength",
+    "n_smart",
+    "n_strict",
+    "n_style_rotation",
+    "n_swap",
+    "n_vp"
+   ],
+   "passthrough": [],
+   "bypassed": [
+    "n_bg",
+    "n_candle",
+    "n_finance",
+    "n_inst_tips",
+    "n_intraday",
+    "n_news_str",
+    "n_newsguard",
+    "n_sector_leaders",
+    "n_t1sell"
+   ],
+   "bypass_reasons": {
+    "n_bg": "降级为透传",
+    "n_sector_leaders": "降级为透传",
+    "n_intraday": "降级为透传",
+    "n_inst_tips": "降级为透传",
+    "n_candle": "降级为透传",
+    "n_news_str": "降级为透传",
+    "n_newsguard": "降级为透传",
+    "n_finance": "降级为透传",
+    "n_t1sell": "降级为透传"
+   },
+   "silent": [],
+   "notes": [
+    "[n_sector_strength] 📊 板块强弱：军工国防、银行红利、油运航运、石油石化、有色金属 | 共 20 个板块",
+    "[n_style_rotation] 🎨 风格轮动：均衡震荡（结构性行情）（偏价值/高股息防守） | 强势板块 军工国防、银行红利、油运航运",
+    "[n_bg] bg_manager 无回测数据，已降级为透传",
+    "[n_sector_leaders] market_sector_leaders 无回测数据，已降级为透传",
+    "[n_intraday] intraday_analysis 无回测数据，已降级为透传",
+    "[n_ancestral] 📜 大A祖训: 9/16 只触发",
+    "[n_idiom] 🕯 K线口诀: 看涨6 看跌2 否决0 / 16 只",
+    "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
+    "[n_candle] candle_pattern 无回测数据，已降级为透传",
+    "[n_news_str] news_strength 无回测数据，已降级为透传",
+    "[n_newsguard] news_guard 无回测数据，已降级为透传",
+    "[n_finance] financial_health 无回测数据，已降级为透传",
+    "[n_t1sell] t1_auto_sell 需超短线持仓库(strategyTradeOrderDao) + 实时价格，PC 无持仓库，已降级为透传"
+   ]
+  },
+  {
+   "usecase": "short",
+   "period": "short",
+   "source": "kline",
+   "orders": 5,
+   "market_state": {
+    "state": "OSCILLATION",
+    "detail": "OSCILLATION"
+   },
+   "direction": "OSCILLATION",
+   "executed": [
+    "n_a_market",
+    "n_adaptive",
+    "n_ai",
+    "n_ancestral",
+    "n_boost",
+    "n_bounce",
+    "n_cand",
+    "n_ctx",
+    "n_guard",
+    "n_idiom",
+    "n_import",
+    "n_ma_unified",
+    "n_market_direction",
+    "n_merge",
+    "n_merge_pos",
+    "n_orders",
+    "n_pool",
+    "n_pool_filter",
+    "n_pool_hint",
+    "n_rot_pen",
+    "n_sector_strength",
+    "n_smart",
+    "n_strict",
+    "n_style_rotation",
+    "n_swap",
+    "n_vp",
+    "vp_detail"
+   ],
+   "passthrough": [],
+   "bypassed": [
+    "n_bg",
+    "n_candle",
+    "n_crosstab",
+    "n_finance",
+    "n_heat",
+    "n_inst_tips",
+    "n_intraday",
+    "n_multihot",
+    "n_news_str",
+    "n_newsguard",
+    "n_sector_leaders",
+    "n_zipline"
+   ],
+   "bypass_reasons": {
+    "n_bg": "降级为透传",
+    "n_sector_leaders": "降级为透传",
+    "n_multihot": "降级为透传",
+    "n_zipline": "降级为透传",
+    "n_intraday": "降级为透传",
+    "n_heat": "降级为透传",
+    "n_inst_tips": "降级为透传",
+    "n_news_str": "降级为透传",
+    "n_candle": "降级为透传",
+    "n_newsguard": "降级为透传",
+    "n_finance": "降级为透传",
+    "n_crosstab": "降级为透传"
+   },
+   "silent": [],
+   "notes": [
+    "[n_sector_strength] 📊 板块强弱：军工国防、银行红利、油运航运、石油石化、有色金属 | 共 20 个板块",
+    "[n_style_rotation] 🎨 风格轮动：均衡震荡（结构性行情）（偏价值/高股息防守） | 强势板块 军工国防、银行红利、油运航运",
+    "[n_bg] bg_manager 无回测数据，已降级为透传",
+    "[n_sector_leaders] market_sector_leaders 无回测数据，已降级为透传",
+    "[n_multihot] multi_period_hot 无回测数据，已降级为透传",
+    "[n_zipline] zipline_factor 无回测数据，已降级为透传",
+    "[n_intraday] intraday_analysis 无回测数据，已降级为透传",
+    "[n_heat] heat_score 无回测数据，已降级为透传",
+    "[n_ancestral] 📜 大A祖训: 7/14 只触发",
+    "[n_idiom] 🕯 K线口诀: 看涨5 看跌2 否决0 / 14 只",
+    "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
+    "[n_news_str] news_strength 无回测数据，已降级为透传",
+    "[n_rot_pen] ⚠️ 轮动惩罚v2 -15 分（轮动因子 1.0，跨日重合度 50%）：银行红利(3次/退潮12 d/-15)",
+    "[n_smart] 🧊 轮动惩罚施加：3 只降分",
+    "[n_candle] candle_pattern 无回测数据，已降级为透传",
+    "[n_newsguard] news_guard 无回测数据，已降级为透传",
+    "[n_finance] financial_health 无回测数据，已降级为透传",
+    "[n_crosstab] crosstab_publish 无回测数据，已降级为透传"
+   ]
+  },
+  {
+   "usecase": "mid",
+   "period": "mid",
+   "source": "kline",
+   "orders": 4,
+   "market_state": {
+    "state": "OSCILLATION",
+    "detail": "OSCILLATION"
+   },
+   "direction": "OSCILLATION",
+   "executed": [
+    "defensive_codes",
+    "direction_labels",
+    "leader_map",
+    "leader_status",
+    "n_a_market",
+    "n_adaptive",
+    "n_ai",
+    "n_ancestral",
+    "n_base_guard",
+    "n_boost",
+    "n_bounce",
+    "n_cand",
+    "n_crossday",
+    "n_ctx",
+    "n_defensive",
+    "n_direction",
+    "n_guard",
+    "n_idiom",
+    "n_import",
+    "n_leader",
+    "n_ma_unified",
+    "n_market_direction",
+    "n_merge",
+    "n_merge_pos",
+    "n_orders",
+    "n_pool",
+    "n_pool_filter",
+    "n_pool_hint",
+    "n_rot_pen",
+    "n_season",
+    "n_sector_pool",
+    "n_sector_strength",
+    "n_smart",
+    "n_strict",
+    "n_style_rotation",
+    "n_swap",
+    "n_vp",
+    "seasonality_themes",
+    "sector_stock_codes",
+    "vp_detail"
+   ],
+   "passthrough": [],
+   "bypassed": [
+    "n_bg",
+    "n_candle",
+    "n_crosstab",
+    "n_finance",
+    "n_heat",
+    "n_inst_tips",
+    "n_multihot",
+    "n_news_str",
+    "n_newsguard",
+    "n_pe_peer",
+    "n_sector_leaders"
+   ],
+   "bypass_reasons": {
+    "n_bg": "降级为透传",
+    "n_sector_leaders": "降级为透传",
+    "n_multihot": "降级为透传",
+    "n_heat": "降级为透传",
+    "n_inst_tips": "降级为透传",
+    "n_pe_peer": "降级为透传",
+    "n_news_str": "降级为透传",
+    "n_candle": "降级为透传",
+    "n_newsguard": "降级为透传",
+    "n_finance": "降级为透传",
+    "n_crosstab": "降级为透传"
+   },
+   "silent": [],
+   "notes": [
+    "[n_sector_strength] 📊 板块强弱：军工国防、银行红利、油运航运、石油石化、有色金属 | 共 20 个板块",
+    "[n_style_rotation] 🎨 风格轮动：均衡震荡（结构性行情）（偏价值/高股息防守） | 强势板块 军工国防、银行红利、油运航运",
+    "[n_bg] bg_manager 无回测数据，已降级为透传",
+    "[n_sector_leaders] market_sector_leaders 无回测数据，已降级为透传",
+    "[n_multihot] multi_period_hot 无回测数据，已降级为透传",
+    "[n_sector_pool] 🧺 板块精选池：73 只（维度 today,weekly,rotation，覆盖板块 军工国防、银行红利、油运航运、石油石化、有色金属、PCB、光通信、煤炭）",
+    "[n_heat] heat_score 无回测数据，已降级为透传",
+    "[n_crossday] 🔁 跨日聚合：回溯 5 天 / 131 只股票，20 只入围 Top20（sz002815 5天, sh601975 4天, sh603186 4天）",
+    "[n_defensive] 🛡 防守高息：5 只候选（中国石油(石油), 中国海油(石油), 平煤股份(煤炭), 工商银行(银行), 大唐电信(电信)）｜⚠️ 缺基本面字段，走降级口径(21 只)",
+    "[n_ancestral] 📜 大A祖训: 7/13 只触发",
+    "[n_idiom] 🕯 K线口诀: 看涨5 看跌2 否决0 / 13 只",
+    "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
+    "[n_direction] 🧭 方向标签 13 只(UPTREND:2 ACCUMULATION:2 OSCILLATION:9)，剔除[DOWNTREND/OSCILLATION] 9 只",
+    "[n_season] 📅 9月生效 6 个主题，0 只命中（光伏装机旺季 | 金九银十 | 锂价下跌(电池受益) | 油价上涨 | 铜价上涨 | 金价上涨）",
+    "[n_leader] 🐲 2 个板块标龙头（电力→长江电力 | 银行→农业银行），龙头加分 8，共 2 只",
+    "[n_pe_peer] sector_relative_pe 无回测数据，已降级为透传",
+    "[n_news_str] news_strength 无回测数据，已降级为透传",
+    "[n_rot_pen] ⚠️ 轮动惩罚v2 -15 分（轮动因子 1.0，跨日重合度 50%）：银行红利(3次/退潮12 d/-15)",
+    "[n_smart] 🧊 轮动惩罚施加：3 只降分",
+    "[n_smart] 🛡 防守高息保留 3 只",
+    "[n_candle] candle_pattern 无回测数据，已降级为透传",
+    "[n_newsguard] news_guard 无回测数据，已降级为透传",
+    "[n_finance] financial_health 无回测数据，已降级为透传",
+    "[n_orders] ❌ 中国石油(sh601857) 近端命中看空形态[三乌鸦·看空]，否决买入（形态仅标注，看涨才买入）",
+    "[n_crosstab] crosstab_publish 无回测数据，已降级为透传"
+   ]
+  },
+  {
+   "usecase": "long",
+   "period": "long",
+   "source": "kline",
+   "orders": 4,
+   "market_state": {
+    "state": "OSCILLATION",
+    "detail": "OSCILLATION"
+   },
+   "direction": "OSCILLATION",
+   "executed": [
+    "defensive_codes",
+    "direction_labels",
+    "leader_map",
+    "leader_status",
+    "n_a_market",
+    "n_adaptive",
+    "n_ai",
+    "n_ancestral",
+    "n_base_guard",
+    "n_boost",
+    "n_bounce",
+    "n_cand",
+    "n_ctx",
+    "n_defensive",
+    "n_direction",
+    "n_event",
+    "n_guard",
+    "n_idiom",
+    "n_import",
+    "n_leader",
+    "n_ma_unified",
+    "n_market_direction",
+    "n_merge",
+    "n_merge_pos",
+    "n_orders",
+    "n_pool",
+    "n_pool_filter",
+    "n_pool_hint",
+    "n_season",
+    "n_sector_pool",
+    "n_sector_strength",
+    "n_smart",
+    "n_strict",
+    "n_style_rotation",
+    "n_vp",
+    "seasonality_themes",
+    "sector_stock_codes",
+    "vp_detail"
+   ],
+   "passthrough": [],
+   "bypassed": [
+    "n_bg",
+    "n_candle",
+    "n_finance",
+    "n_heat",
+    "n_inst_tips",
+    "n_newsguard",
+    "n_pe_peer",
+    "n_sector_leaders"
+   ],
+   "bypass_reasons": {
+    "n_bg": "降级为透传",
+    "n_sector_leaders": "降级为透传",
+    "n_heat": "降级为透传",
+    "n_inst_tips": "降级为透传",
+    "n_pe_peer": "降级为透传",
+    "n_candle": "降级为透传",
+    "n_newsguard": "降级为透传",
+    "n_finance": "降级为透传"
+   },
+   "silent": [],
+   "notes": [
+    "[n_sector_strength] 📊 板块强弱：军工国防、银行红利、油运航运、石油石化、有色金属 | 共 20 个板块",
+    "[n_style_rotation] 🎨 风格轮动：均衡震荡（结构性行情）（偏价值/高股息防守） | 强势板块 军工国防、银行红利、油运航运",
+    "[n_bg] bg_manager 无回测数据，已降级为透传",
+    "[n_sector_leaders] market_sector_leaders 无回测数据，已降级为透传",
+    "[n_sector_pool] 🧺 板块精选池：70 只（维度 monthly,quarterly,rotation，覆盖板块 油运航运、石油石化、军工国防、银行红利、光通信、PCB、煤炭、有色金属）",
+    "[n_heat] heat_score 无回测数据，已降级为透传",
+    "[n_defensive] 🛡 防守高息：5 只候选（中国石油(石油), 平煤股份(煤炭), 工商银行(银行), 大唐电信(电信), 明星电力(电力)）｜⚠️ 缺基本面字段，走降级口径(21 只)",
+    "[n_ancestral] 📜 大A祖训: 7/13 只触发",
+    "[n_idiom] 🕯 K线口诀: 看涨5 看跌2 否决0 / 13 只",
+    "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
+    "[n_direction] 🧭 方向标签 13 只(UPTREND:2 ACCUMULATION:2 OSCILLATION:9)，剔除[DOWNTREND/OSCILLATION] 9 只",
+    "[n_season] 📅 9月生效 6 个主题，0 只命中（光伏装机旺季 | 金九银十 | 锂价下跌(电池受益) | 油价上涨 | 铜价上涨 | 金价上涨）",
+    "[n_leader] 🐲 2 个板块标龙头（电力→长江电力 | 银行→农业银行），龙头加分 8，共 2 只",
+    "[n_pe_peer] sector_relative_pe 无回测数据，已降级为透传",
+    "[n_smart] 🛡 防守高息保留 2 只",
+    "[n_candle] candle_pattern 无回测数据，已降级为透传",
+    "[n_newsguard] news_guard 无回测数据，已降级为透传",
+    "[n_finance] financial_health 无回测数据，已降级为透传",
+    "[n_orders] ❌ 中国石油(sh601857) 近端命中看空形态[三乌鸦·看空]，否决买入（形态仅标注，看涨才买入）"
+   ]
+  },
+  {
+   "usecase": "dip_buy",
+   "period": "ultra_short",
+   "source": "kline",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [
+    "n_dip_exit",
+    "n_dip_gate",
+    "n_dip_signal"
+   ],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [],
+   "notes": [
+    "[n_dip_gate] 大盘恐慌门控: 上证连跌2天/5日-1.1%/当日-1.2%→未触发 | 科创50连跌4天/5日-1.5%/当日-1.0%→未触发",
+    "[n_dip_signal] 大盘无恐慌/深度回调信号(门控关闭)，跳过抄底扫描"
+   ]
+  },
+  {
+   "usecase": "real_holding",
+   "period": "mid",
+   "source": "merged",
+   "orders": 0,
+   "market_state": {
+    "state": "OSCILLATION",
+    "detail": "OSCILLATION"
+   },
+   "direction": "OSCILLATION",
+   "executed": [
+    "n_a_market",
+    "n_import",
+    "n_pool_hint",
+    "n_rh_stop"
+   ],
+   "passthrough": [],
+   "bypassed": [
+    "n_bg",
+    "n_holding_diag",
+    "n_holding_predict",
+    "n_leader_analysis",
+    "n_news",
+    "n_rh_eval",
+    "n_t_trade"
+   ],
+   "bypass_reasons": {
+    "n_bg": "降级为透传",
+    "n_news": "降级为透传",
+    "n_leader_analysis": "降级为透传",
+    "n_rh_eval": "降级为透传",
+    "n_holding_diag": "降级为透传",
+    "n_holding_predict": "降级为透传",
+    "n_t_trade": "降级为透传"
+   },
+   "silent": [],
+   "notes": [
+    "[n_bg] bg_manager 无回测数据，已降级为透传",
+    "[n_news] news_strength 无回测数据，已降级为透传",
+    "[n_leader_analysis] sector_leader_analysis 需 SectorSignalStore（Android 盘中每 10 分钟刷新的板块龙头状态），已降级为透传",
+    "[n_rh_eval] real_holding_eval 无回测数据，已降级为透传",
+    "[n_holding_diag] holding_diagnostic 无回测数据，已降级为透传",
+    "[n_holding_predict] holding_prediction 无回测数据，已降级为透传",
+    "[n_t_trade] t_trade_eval 需真实持仓（Android Room realPositionDao）+ TTradeEngine 实时快照，已降级为透传",
+    "[n_rh_stop] 🛑 止损投票(参考 MID): 0 只"
+   ]
+  },
+  {
+   "usecase": "t_trade",
+   "period": "short",
+   "source": "kline",
+   "orders": 0,
+   "market_state": {
+    "state": "OSCILLATION",
+    "detail": "OSCILLATION"
+   },
+   "direction": "OSCILLATION",
+   "executed": [
+    "t_adaptive",
+    "t_import",
+    "t_mctx"
+   ],
+   "passthrough": [],
+   "bypassed": [
+    "t_bg",
+    "t_hold",
+    "t_inst",
+    "t_kline",
+    "t_leader",
+    "t_news",
+    "t_nguard",
+    "t_save",
+    "t_synth",
+    "t_zf"
+   ],
+   "bypass_reasons": {
+    "t_bg": "降级为透传",
+    "t_hold": "降级为透传",
+    "t_zf": "降级为透传",
+    "t_leader": "降级为透传",
+    "t_inst": "降级为透传",
+    "t_kline": "降级为透传",
+    "t_news": "降级为透传",
+    "t_nguard": "降级为透传",
+    "t_synth": "降级为透传",
+    "t_save": "降级为透传"
+   },
+   "silent": [],
+   "notes": [
+    "[t_bg] bg_manager 无回测数据，已降级为透传",
+    "[t_import] 📅 做T交易日 2026-09-11：✅ 交易日（PC 按工作日近似，无节假日表）",
+    "[t_hold] t_holdings_load 需 Android Room 持仓库（realPositionDao + strategyTradeOrderDao），PC 无持仓库，已降级为透传",
+    "[t_zf] zipline_factor 无回测数据，已降级为透传",
+    "[t_leader] sector_leader_analysis 需 SectorSignalStore（Android 盘中每 10 分钟刷新的板块龙头状态），已降级为透传",
+    "[t_inst] t_inst_intent 需真实持仓（Android Room strategyTradeOrderDao）+ 日内快照，PC 无持仓库，已降级为透传",
+    "[t_kline] candle_pattern 无回测数据，已降级为透传",
+    "[t_news] news_strength 无回测数据，已降级为透传",
+    "[t_nguard] news_guard 无回测数据，已降级为透传",
+    "[t_synth] t_signal_synthesize 需真实持仓 + 实时行情 + 分时 + K线形态（Android），PC 无持仓库，已降级为透传",
+    "[t_save] t_recommend_save 需写入 Android Room t_trade_recommendations 表并推送微信，PC 无此表，已降级为透传"
+   ]
+  },
+  {
+   "usecase": "stock_deep_analysis",
+   "period": "short",
+   "source": "kline",
+   "orders": 0,
+   "market_state": {
+    "state": "OSCILLATION",
+    "detail": "OSCILLATION"
+   },
+   "direction": "OSCILLATION",
+   "executed": [
+    "n_a_market",
+    "n_import",
+    "n_market_direction",
+    "n_pool_hint",
+    "n_sector_strength",
+    "n_style_rotation"
+   ],
+   "passthrough": [],
+   "bypassed": [
+    "n_periods"
+   ],
+   "bypass_reasons": {
+    "n_periods": "降级为透传"
+   },
+   "silent": [],
+   "notes": [
+    "[n_sector_strength] 📊 板块强弱：军工国防、银行红利、油运航运、石油石化、有色金属 | 共 20 个板块",
+    "[n_style_rotation] 🎨 风格轮动：均衡震荡（结构性行情）（偏价值/高股息防守） | 强势板块 军工国防、银行红利、油运航运",
+    "[n_periods] stock_deep_analysis 无回测数据，已降级为透传"
+   ]
+  },
+  {
+   "usecase": "direction",
+   "period": "short",
+   "source": "kline",
+   "orders": 5,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [
+    "defensive_codes",
+    "direction_labels",
+    "leader_map",
+    "leader_status",
+    "n_ai",
+    "n_ancestral",
+    "n_base_guard",
+    "n_boost",
+    "n_bounce",
+    "n_cand",
+    "n_crossday",
+    "n_defensive",
+    "n_direction",
+    "n_leader",
+    "n_merge",
+    "n_merge_pos",
+    "n_orders",
+    "n_rot_pen",
+    "n_season",
+    "n_sector_pool",
+    "n_smart",
+    "n_strict",
+    "n_swap",
+    "seasonality_themes",
+    "sector_stock_codes"
+   ],
+   "passthrough": [],
+   "bypassed": [
+    "n_candle",
+    "n_crosstab",
+    "n_heat",
+    "n_inst_tips",
+    "n_multihot",
+    "n_news_str",
+    "n_newsguard",
+    "n_pe_peer"
+   ],
+   "bypass_reasons": {
+    "n_multihot": "降级为透传",
+    "n_heat": "降级为透传",
+    "n_inst_tips": "降级为透传",
+    "n_pe_peer": "降级为透传",
+    "n_news_str": "降级为透传",
+    "n_candle": "降级为透传",
+    "n_newsguard": "降级为透传",
+    "n_crosstab": "降级为透传"
+   },
+   "silent": [],
+   "notes": [
+    "[n_multihot] multi_period_hot 无回测数据，已降级为透传",
+    "[n_sector_pool] 🧺 板块精选池：0 只（维度 today,weekly,rotation，覆盖板块 无）",
+    "[n_heat] heat_score 无回测数据，已降级为透传",
+    "[n_crossday] 🔁 跨日聚合：回溯 5 天 / 131 只股票，20 只入围 Top20（sz002815 5天, sh601975 4天, sh603186 4天）",
+    "[n_defensive] 🛡 大盘 UNKNOWN，非防守模式，跳过",
+    "[n_ancestral] 📜 大A祖训: 6/12 只触发",
+    "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
+    "[n_direction] 🧭 方向标签 12 只(UPTREND:2 ACCUMULATION:2 OSCILLATION:8)，剔除[DOWNTREND/OSCILLATION] 8 只",
+    "[n_season] 📅 9月生效 6 个主题，0 只命中（光伏装机旺季 | 金九银十 | 锂价下跌(电池受益) | 油价上涨 | 铜价上涨 | 金价上涨）",
+    "[n_leader] 🐲 2 个板块标龙头（电力→长江电力 | 银行→农业银行），龙头加分 8，共 2 只",
+    "[n_pe_peer] sector_relative_pe 无回测数据，已降级为透传",
+    "[n_news_str] news_strength 无回测数据，已降级为透传",
+    "[n_rot_pen] ⚠️ 轮动惩罚v2 -5 分（轮动因子 1.0，跨日重合度 50%）：银行红利(3次/启动0 d/-5)",
+    "[n_smart] 🧊 轮动惩罚施加：3 只降分",
+    "[n_candle] candle_pattern 无回测数据，已降级为透传",
+    "[n_newsguard] news_guard 无回测数据，已降级为透传",
+    "[n_crosstab] crosstab_publish 无回测数据，已降级为透传",
+    "[n_sector_pool] 🧺 板块精选池：0 只（维度 monthly,quarterly,rotation，覆盖板块 无）",
+    "[n_heat] heat_score 无回测数据，已降级为透传",
+    "[n_defensive] 🛡 大盘 UNKNOWN，非防守模式，跳过",
+    "[n_ancestral] 📜 大A祖训: 6/12 只触发",
+    "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
+    "[n_direction] 🧭 方向标签 12 只(UPTREND:2 ACCUMULATION:2 OSCILLATION:8)，剔除[DOWNTREND/OSCILLATION] 8 只",
+    "[n_season] 📅 9月生效 6 个主题，0 只命中（光伏装机旺季 | 金九银十 | 锂价下跌(电池受益) | 油价上涨 | 铜价上涨 | 金价上涨）",
+    "[n_leader] 🐲 2 个板块标龙头（电力→长江电力 | 银行→农业银行），龙头加分 8，共 2 只",
+    "[n_pe_peer] sector_relative_pe 无回测数据，已降级为透传",
+    "[n_smart] 🧊 轮动惩罚施加：3 只降分",
+    "[n_candle] candle_pattern 无回测数据，已降级为透传",
+    "[n_newsguard] news_guard 无回测数据，已降级为透传"
+   ]
+  },
+  {
+   "usecase": "screening",
+   "period": "short",
+   "source": "kline",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [],
+   "notes": []
+  },
+  {
+   "usecase": "sector_ambush",
+   "period": "short",
+   "source": "kline",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [
+    "n_amb_import",
+    "n_ambush_exit",
+    "n_ambush_signal",
+    "n_pool_hint"
+   ],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [],
+   "notes": [
+    "[n_ambush_signal] 热门板块埋伏(近20日)：油运航运(近10日+6.1%)、光通信(近10日+3.5%)、军工国防(近10日+4.6%)、银行红利(近10日+3.7%)、PCB(近10日+1.9%) | 扫描46只 → 命中0只",
+    "[n_ambush_exit] 📦 sector_ambush 打包完成: 0 只 (tp+8.0%/sl-5.0%/持10日)"
+   ]
+  },
+  {
+   "usecase": "etf_dip",
+   "period": "mid",
+   "source": "etf",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [
+    "n_etf_exit",
+    "n_etf_gate",
+    "n_etf_signal",
+    "n_etf_stop"
+   ],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [],
+   "notes": [
+    "[n_etf_signal] ETF 扫描完成 13 只（数据截至 2026-09-10）",
+    "[n_etf_stop] 🛑 止损投票(MID): 13 只定价 · 12 只已破位"
+   ]
+  },
+  {
+   "usecase": "etf_holdings_top5",
+   "period": "mid",
+   "source": "merged",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [
+    "n_holdings_stop",
+    "n_holdings_top5",
+    "n_nat_etf",
+    "n_national_flow"
+   ],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [],
+   "notes": [
+    "[n_holdings_top5] 🧺 ETF 持股 top5: 10 只（覆盖≥2 只行业ETF）",
+    "[n_nat_etf] 🏛️ 国家队ETF份额: 卖出/派发（置信 中）｜宽基合计 净赎回（2026-06-30）净 -1263.77 亿份，份额变化中位 -57.8%；日频净申购领先：588000 科创50ETF华夏 +13.14 亿份（+2.40%）@ 2026-09-11",
+    "[n_national_flow] 🏛️ 国家队/大基金(2026-09-11): 10 只 → 流入 0 / 流出 1 / 退出 3 / 持稳 0 ｜锁定 流入0 ｜公告 流入0",
+    "[n_holdings_stop] 🛑 止损投票(个股 MID): 10 只定价 / 10 只 · 10 只已破位"
+   ]
+  },
+  {
+   "usecase": "etf_industry_scan",
+   "period": "mid",
+   "source": "merged",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [
+    "n_etf_gate",
+    "n_industry_scan",
+    "n_nat_etf",
+    "n_national_flow",
+    "n_scan_stop"
+   ],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [],
+   "notes": [
+    "[n_industry_scan] 🔭 ETF 全行业扫描(BEARISH): 候选 172 只 → 打分 39 只 → 降级观察 10 只（跳过 133 只无行情）",
+    "[n_nat_etf] 🏛️ 国家队ETF份额: 卖出/派发（置信 中）｜宽基合计 净赎回（2026-06-30）净 -1263.77 亿份，份额变化中位 -57.8%；日频净申购领先：588000 科创50ETF华夏 +13.14 亿份（+2.40%）@ 2026-09-11",
+    "[n_national_flow] 🏛️ 国家队/大基金(2026-09-11): 10 只 → 流入 0 / 流出 1 / 退出 5 / 持稳 2 ｜锁定 流入0 ｜公告 流入0",
+    "[n_scan_stop] 🛑 止损投票(个股 MID): 10 只定价 / 10 只 · 6 只已破位"
+   ]
+  },
+  {
+   "usecase": "etf_pure_screen",
+   "period": "mid",
+   "source": "etf",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [
+    "n_etf_gate",
+    "n_etf_stop",
+    "n_pure_screen"
+   ],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [],
+   "notes": [
+    "[n_pure_screen] 🎯 纯ETF筛选: 池 14 → 可判 13 → base_buy 0 只（跳过 0 只样本不足）",
+    "[n_etf_stop] 🛑 止损投票(MID): 5 只定价 · 4 只已破位"
+   ]
+  },
+  {
+   "usecase": "common",
+   "period": "mid",
+   "source": "merged",
+   "orders": 0,
+   "market_state": {
+    "state": "OSCILLATION",
+    "detail": "OSCILLATION"
+   },
+   "direction": "OSCILLATION",
+   "executed": [
+    "n_a_market",
+    "n_adaptive",
+    "n_ctx",
+    "n_guard",
+    "n_import",
+    "n_ma_unified",
+    "n_market_direction",
+    "n_pool",
+    "n_pool_filter",
+    "n_pool_hint",
+    "n_sector_strength",
+    "n_style_rotation"
+   ],
+   "passthrough": [],
+   "bypassed": [
+    "n_bg",
+    "n_sector_leaders"
+   ],
+   "bypass_reasons": {
+    "n_bg": "降级为透传",
+    "n_sector_leaders": "降级为透传"
+   },
+   "silent": [],
+   "notes": [
+    "[n_sector_strength] 📊 板块强弱：军工国防、银行红利、油运航运、石油石化、有色金属 | 共 20 个板块",
+    "[n_style_rotation] 🎨 风格轮动：均衡震荡（结构性行情）（偏价值/高股息防守） | 强势板块 军工国防、银行红利、油运航运",
+    "[n_bg] bg_manager 无回测数据，已降级为透传",
+    "[n_sector_leaders] market_sector_leaders 无回测数据，已降级为透传"
+   ]
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "period": "mid",
+   "source": "merged",
+   "orders": 4,
+   "market_state": {
+    "state": "OSCILLATION",
+    "detail": "OSCILLATION"
+   },
+   "direction": "OSCILLATION",
+   "executed": [
+    "defensive_codes",
+    "direction_labels",
+    "leader_map",
+    "leader_status",
+    "n_a_market",
+    "n_adaptive",
+    "n_ai",
+    "n_ancestral",
+    "n_base_guard",
+    "n_boost",
+    "n_bounce",
+    "n_cand",
+    "n_crossday",
+    "n_ctx",
+    "n_defensive",
+    "n_direction",
+    "n_event",
+    "n_guard",
+    "n_idiom",
+    "n_import",
+    "n_leader",
+    "n_ma_unified",
+    "n_market_direction",
+    "n_merge",
+    "n_merge_pos",
+    "n_orders",
+    "n_pool",
+    "n_pool_filter",
+    "n_pool_hint",
+    "n_rot_pen",
+    "n_season",
+    "n_sector_pool",
+    "n_sector_strength",
+    "n_smart",
+    "n_strict",
+    "n_style_rotation",
+    "n_swap",
+    "n_vp",
+    "seasonality_themes",
+    "sector_stock_codes",
+    "vp_detail"
+   ],
+   "passthrough": [],
+   "bypassed": [
+    "n_bg",
+    "n_candle",
+    "n_crosstab",
+    "n_finance",
+    "n_heat",
+    "n_inst_tips",
+    "n_intraday",
+    "n_multihot",
+    "n_news_str",
+    "n_newsguard",
+    "n_pe_peer",
+    "n_sector_leaders",
+    "n_t1sell",
+    "n_zipline"
+   ],
+   "bypass_reasons": {
+    "n_bg": "降级为透传",
+    "n_sector_leaders": "降级为透传",
+    "n_intraday": "降级为透传",
+    "n_inst_tips": "降级为透传",
+    "n_candle": "降级为透传",
+    "n_news_str": "降级为透传",
+    "n_newsguard": "降级为透传",
+    "n_finance": "降级为透传",
+    "n_t1sell": "降级为透传",
+    "n_multihot": "降级为透传",
+    "n_zipline": "降级为透传",
+    "n_heat": "降级为透传",
+    "n_crosstab": "降级为透传",
+    "n_pe_peer": "降级为透传"
+   },
+   "silent": [],
+   "notes": [
+    "[n_sector_strength] 📊 板块强弱：军工国防、银行红利、油运航运、石油石化、有色金属 | 共 20 个板块",
+    "[n_style_rotation] 🎨 风格轮动：均衡震荡（结构性行情）（偏价值/高股息防守） | 强势板块 军工国防、银行红利、油运航运",
+    "[n_bg] bg_manager 无回测数据，已降级为透传",
+    "[n_sector_leaders] market_sector_leaders 无回测数据，已降级为透传",
+    "[n_intraday] intraday_analysis 无回测数据，已降级为透传",
+    "[n_ancestral] 📜 大A祖训: 9/16 只触发",
+    "[n_idiom] 🕯 K线口诀: 看涨6 看跌2 否决0 / 16 只",
+    "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
+    "[n_candle] candle_pattern 无回测数据，已降级为透传",
+    "[n_news_str] news_strength 无回测数据，已降级为透传",
+    "[n_newsguard] news_guard 无回测数据，已降级为透传",
+    "[n_finance] financial_health 无回测数据，已降级为透传",
+    "[n_t1sell] t1_auto_sell 需超短线持仓库(strategyTradeOrderDao) + 实时价格，PC 无持仓库，已降级为透传",
+    "[n_multihot] multi_period_hot 无回测数据，已降级为透传",
+    "[n_zipline] zipline_factor 无回测数据，已降级为透传",
+    "[n_intraday] intraday_analysis 无回测数据，已降级为透传",
+    "[n_heat] heat_score 无回测数据，已降级为透传",
+    "[n_ancestral] 📜 大A祖训: 7/14 只触发",
+    "[n_idiom] 🕯 K线口诀: 看涨5 看跌2 否决0 / 14 只",
+    "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
+    "[n_news_str] news_strength 无回测数据，已降级为透传",
+    "[n_rot_pen] ⚠️ 轮动惩罚v2 -15 分（轮动因子 1.0，跨日重合度 50%）：银行红利(3次/退潮12 d/-15)",
+    "[n_smart] 🧊 轮动惩罚施加：3 只降分",
+    "[n_candle] candle_pattern 无回测数据，已降级为透传",
+    "[n_newsguard] news_guard 无回测数据，已降级为透传",
+    "[n_finance] financial_health 无回测数据，已降级为透传",
+    "[n_crosstab] crosstab_publish 无回测数据，已降级为透传",
+    "[n_multihot] multi_period_hot 无回测数据，已降级为透传",
+    "[n_sector_pool] 🧺 板块精选池：73 只（维度 today,weekly,rotation，覆盖板块 军工国防、银行红利、油运航运、石油石化、有色金属、PCB、光通信、煤炭）",
+    "[n_heat] heat_score 无回测数据，已降级为透传",
+    "[n_crossday] 🔁 跨日聚合：回溯 5 天 / 131 只股票，20 只入围 Top20（sz002815 5天, sh601975 4天, sh603186 4天）",
+    "[n_defensive] 🛡 防守高息：5 只候选（中国石油(石油), 中国海油(石油), 平煤股份(煤炭), 工商银行(银行), 大唐电信(电信)）｜⚠️ 缺基本面字段，走降级口径(21 只)",
+    "[n_ancestral] 📜 大A祖训: 7/13 只触发",
+    "[n_idiom] 🕯 K线口诀: 看涨5 看跌2 否决0 / 13 只",
+    "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
+    "[n_direction] 🧭 方向标签 13 只(UPTREND:2 ACCUMULATION:2 OSCILLATION:9)，剔除[DOWNTREND/OSCILLATION] 9 只",
+    "[n_season] 📅 9月生效 6 个主题，0 只命中（光伏装机旺季 | 金九银十 | 锂价下跌(电池受益) | 油价上涨 | 铜价上涨 | 金价上涨）",
+    "[n_leader] 🐲 2 个板块标龙头（电力→长江电力 | 银行→农业银行），龙头加分 8，共 2 只",
+    "[n_pe_peer] sector_relative_pe 无回测数据，已降级为透传",
+    "[n_news_str] news_strength 无回测数据，已降级为透传",
+    "[n_rot_pen] ⚠️ 轮动惩罚v2 -15 分（轮动因子 1.0，跨日重合度 50%）：银行红利(3次/退潮12 d/-15)",
+    "[n_smart] 🧊 轮动惩罚施加：3 只降分",
+    "[n_smart] 🛡 防守高息保留 3 只",
+    "[n_candle] candle_pattern 无回测数据，已降级为透传",
+    "[n_newsguard] news_guard 无回测数据，已降级为透传",
+    "[n_finance] financial_health 无回测数据，已降级为透传",
+    "[n_orders] ❌ 中国石油(sh601857) 近端命中看空形态[三乌鸦·看空]，否决买入（形态仅标注，看涨才买入）",
+    "[n_crosstab] crosstab_publish 无回测数据，已降级为透传",
+    "[n_sector_pool] 🧺 板块精选池：70 只（维度 monthly,quarterly,rotation，覆盖板块 油运航运、石油石化、军工国防、银行红利、光通信、PCB、煤炭、有色金属）",
+    "[n_heat] heat_score 无回测数据，已降级为透传",
+    "[n_defensive] 🛡 防守高息：5 只候选（中国石油(石油), 平煤股份(煤炭), 工商银行(银行), 大唐电信(电信), 明星电力(电力)）｜⚠️ 缺基本面字段，走降级口径(21 只)",
+    "[n_ancestral] 📜 大A祖训: 7/13 只触发",
+    "[n_idiom] 🕯 K线口诀: 看涨5 看跌2 否决0 / 13 只",
+    "[n_inst_tips] inst_tips 无回测数据，已降级为透传",
+    "[n_direction] 🧭 方向标签 13 只(UPTREND:2 ACCUMULATION:2 OSCILLATION:9)，剔除[DOWNTREND/OSCILLATION] 9 只",
+    "[n_season] 📅 9月生效 6 个主题，0 只命中（光伏装机旺季 | 金九银十 | 锂价下跌(电池受益) | 油价上涨 | 铜价上涨 | 金价上涨）",
+    "[n_leader] 🐲 2 个板块标龙头（电力→长江电力 | 银行→农业银行），龙头加分 8，共 2 只",
+    "[n_pe_peer] sector_relative_pe 无回测数据，已降级为透传",
+    "[n_smart] 🧊 轮动惩罚施加：3 只降分",
+    "[n_smart] 🛡 防守高息保留 2 只",
+    "[n_candle] candle_pattern 无回测数据，已降级为透传",
+    "[n_newsguard] news_guard 无回测数据，已降级为透传",
+    "[n_finance] financial_health 无回测数据，已降级为透传",
+    "[n_orders] ❌ 中国石油(sh601857) 近端命中看空形态[三乌鸦·看空]，否决买入（形态仅标注，看涨才买入）"
+   ]
+  },
+  {
+   "usecase": "inst_holding",
+   "period": "mid",
+   "source": "merged",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [
+    "n_inst_judge",
+    "n_inst_pool",
+    "n_inst_stop",
+    "n_national_flow"
+   ],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [],
+   "notes": [
+    "[n_inst_pool] 🏛️ 机构判定池: 20 只（内嵌日K 20 只）｜来源: ETFtop5/三周期选股",
+    "[n_inst_judge] 🏛️ 机构判定(2026-06-30): 20 只 → A 0 / B 2 / C 18",
+    "[n_national_flow] 🏛️ 国家队/大基金(2026-09-11): 20 只 → 流入 0 / 流出 1 / 退出 8 / 持稳 2 ｜锁定 流入0 ｜公告 流入0",
+    "[n_inst_stop] 🛑 止损投票(个股 MID): 20 只定价 / 20 只 · 17 只已破位"
+   ]
+  },
+  {
+   "usecase": "long_term_period",
+   "period": "long",
+   "source": "merged",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [
+    "n_ai",
+    "n_ancestral",
+    "n_base_guard",
+    "n_boost",
+    "n_bounce",
+    "n_cand",
+    "n_candle",
+    "n_defensive",
+    "n_direction",
+    "n_event",
+    "n_finance",
+    "n_heat",
+    "n_idiom",
+    "n_inst_tips",
+    "n_leader",
+    "n_merge",
+    "n_merge_pos",
+    "n_newsguard",
+    "n_orders",
+    "n_pe_peer",
+    "n_season",
+    "n_sector_pool",
+    "n_smart",
+    "n_strict",
+    "n_vp"
+   ],
+   "notes": []
+  },
+  {
+   "usecase": "mid_term_period",
+   "period": "mid",
+   "source": "merged",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [
+    "n_ai",
+    "n_ancestral",
+    "n_base_guard",
+    "n_boost",
+    "n_bounce",
+    "n_cand",
+    "n_candle",
+    "n_crossday",
+    "n_crosstab",
+    "n_defensive",
+    "n_direction",
+    "n_finance",
+    "n_heat",
+    "n_idiom",
+    "n_inst_tips",
+    "n_leader",
+    "n_merge",
+    "n_merge_pos",
+    "n_multihot",
+    "n_news_str",
+    "n_newsguard",
+    "n_orders",
+    "n_pe_peer",
+    "n_rot_pen",
+    "n_season",
+    "n_sector_pool",
+    "n_smart",
+    "n_strict",
+    "n_swap",
+    "n_vp"
+   ],
+   "notes": []
+  },
+  {
+   "usecase": "national_etf_share",
+   "period": "mid",
+   "source": "merged",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [
+    "n_nat_etf"
+   ],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [],
+   "notes": [
+    "[n_nat_etf] 🏛️ 国家队ETF份额: 卖出/派发（置信 中）｜宽基合计 净赎回（2026-06-30）净 -1263.77 亿份，份额变化中位 -57.8%；日频净申购领先：588000 科创50ETF华夏 +13.14 亿份（+2.40%）@ 2026-09-11"
+   ]
+  },
+  {
+   "usecase": "short_term_period",
+   "period": "short",
+   "source": "merged",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [
+    "n_ai",
+    "n_ancestral",
+    "n_boost",
+    "n_bounce",
+    "n_cand",
+    "n_candle",
+    "n_crosstab",
+    "n_finance",
+    "n_heat",
+    "n_idiom",
+    "n_inst_tips",
+    "n_intraday",
+    "n_merge",
+    "n_merge_pos",
+    "n_multihot",
+    "n_news_str",
+    "n_newsguard",
+    "n_orders",
+    "n_rot_pen",
+    "n_smart",
+    "n_strict",
+    "n_swap",
+    "n_vp",
+    "n_zipline"
+   ],
+   "notes": []
+  },
+  {
+   "usecase": "ultra_short_period",
+   "period": "ultra_short",
+   "source": "merged",
+   "orders": 0,
+   "market_state": {},
+   "direction": "UNKNOWN",
+   "executed": [],
+   "passthrough": [],
+   "bypassed": [],
+   "bypass_reasons": {},
+   "silent": [
+    "n_ai",
+    "n_ancestral",
+    "n_boost",
+    "n_bounce",
+    "n_cand",
+    "n_candle",
+    "n_finance",
+    "n_idiom",
+    "n_inst_tips",
+    "n_intraday",
+    "n_merge",
+    "n_merge_pos",
+    "n_news_str",
+    "n_newsguard",
+    "n_orders",
+    "n_smart",
+    "n_strict",
+    "n_swap",
+    "n_t1sell",
+    "n_vp"
+   ],
+   "notes": []
+  }
+ ],
+ "bypassed": [
+  {
+   "usecase": "ultra_short",
+   "node": "n_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_candle",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_finance",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_inst_tips",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_intraday",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_news_str",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_newsguard",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_sector_leaders",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_t1sell",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_candle",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_crosstab",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_finance",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_heat",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_inst_tips",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_intraday",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_multihot",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_news_str",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_newsguard",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_sector_leaders",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_zipline",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_candle",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_crosstab",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_finance",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_heat",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_inst_tips",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_multihot",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_news_str",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_newsguard",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_pe_peer",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_sector_leaders",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_candle",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_finance",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_heat",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_inst_tips",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_newsguard",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_pe_peer",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_sector_leaders",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "real_holding",
+   "node": "n_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "real_holding",
+   "node": "n_holding_diag",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "real_holding",
+   "node": "n_holding_predict",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "real_holding",
+   "node": "n_leader_analysis",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "real_holding",
+   "node": "n_news",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "real_holding",
+   "node": "n_rh_eval",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "real_holding",
+   "node": "n_t_trade",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_hold",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_inst",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_kline",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_leader",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_news",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_nguard",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_save",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_synth",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_zf",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "stock_deep_analysis",
+   "node": "n_periods",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_candle",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_crosstab",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_heat",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_inst_tips",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_multihot",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_news_str",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_newsguard",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_pe_peer",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "common",
+   "node": "n_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "common",
+   "node": "n_sector_leaders",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_candle",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_crosstab",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_finance",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_heat",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_inst_tips",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_intraday",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_multihot",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_news_str",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_newsguard",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_pe_peer",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_sector_leaders",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_t1sell",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_zipline",
+   "reason": "降级为透传"
+  }
+ ],
+ "errors": [],
+ "notes": [],
+ "bypass_count": 82,
+ "silent_count": 99,
+ "error_count": 0,
+ "bypass_reasons": {
+  "降级为透传": 82
+ },
+ "ok": false,
+ "selfcheck": {
+  "code": 0,
+  "ok": false,
+  "bypass_count": 82,
+  "silent_count": 99,
+  "error_count": 0,
+  "new": [],
+  "fixed": [
+   "common::n_sector_strength",
+   "common::n_style_rotation",
+   "complete_closed_loop::n_base_guard",
+   "complete_closed_loop::n_crossday",
+   "complete_closed_loop::n_defensive",
+   "complete_closed_loop::n_direction",
+   "complete_closed_loop::n_leader",
+   "complete_closed_loop::n_rot_pen",
+   "complete_closed_loop::n_season",
+   "complete_closed_loop::n_sector_pool",
+   "complete_closed_loop::n_sector_strength",
+   "complete_closed_loop::n_style_rotation",
+   "direction::n_base_guard",
+   "direction::n_crossday",
+   "direction::n_defensive",
+   "direction::n_direction",
+   "direction::n_leader",
+   "direction::n_rot_pen",
+   "direction::n_season",
+   "direction::n_sector_pool",
+   "long::n_base_guard",
+   "long::n_defensive",
+   "long::n_direction",
+   "long::n_leader",
+   "long::n_season",
+   "long::n_sector_pool",
+   "long::n_sector_strength",
+   "long::n_style_rotation",
+   "mid::n_base_guard",
+   "mid::n_crossday",
+   "mid::n_defensive",
+   "mid::n_direction",
+   "mid::n_leader",
+   "mid::n_rot_pen",
+   "mid::n_season",
+   "mid::n_sector_pool",
+   "mid::n_sector_strength",
+   "mid::n_style_rotation",
+   "short::n_rot_pen",
+   "short::n_sector_strength",
+   "short::n_style_rotation",
+   "stock_deep_analysis::n_sector_strength",
+   "stock_deep_analysis::n_style_rotation",
+   "t_trade::t_import",
+   "ultra_short::n_sector_strength",
+   "ultra_short::n_style_rotation"
+  ],
+  "baseline": "_nodes_exec_baseline.json"
+ }
+}

@@ -1,0 +1,52 @@
+graph TD
+
+    %% StockAnalysis 項目架構圖 | id=project_arch
+    %% 數據採集層 → 策略分析層 → DAG Pipeline層 → 交易執行層 → 持倉管理層
+
+    %% ===== Layer 0 =====
+    subgraph L0["Layer 0"]
+        data(["數據採集層"]):::dataSource
+    end
+
+    %% ===== Layer 1 =====
+    subgraph L1["Layer 1"]
+        strategy{{"策略分析層"}}:::strategy
+        factor{"因子計算層"}:::factorCompute
+    end
+
+    %% ===== Layer 2 =====
+    subgraph L2["Layer 2"]
+        dag[("DAG Pipeline層")]:::aggregation
+        ai("AI 預測層"):::aiPrediction
+    end
+
+    %% ===== Layer 3 =====
+    subgraph L3["Layer 3"]
+        trade(("交易執行層")):::tradeAction
+        sell["賣出引擎"]:::filter
+    end
+
+    %% ===== Layer 4 =====
+    subgraph L4["Layer 4"]
+        holding[/"持倉管理層"\]:::dataTransform
+    end
+
+    %% ===== 連線 =====
+    data --> strategy
+    strategy --> dag
+    ai -->|AI增強| dag
+    factor -->|因子輸入| strategy
+    dag --> trade
+    trade --> holding
+    holding -->|止盈止損| sell
+    sell -->|反饋調整| strategy
+
+    %% ===== 樣式定義 =====
+    classDef dataSource fill:#059669,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef strategy fill:#7C3AED,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef filter fill:#DC2626,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef aiPrediction fill:#2563EB,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef aggregation fill:#4F46E5,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef tradeAction fill:#D97706,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef factorCompute fill:#0D9488,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef dataTransform fill:#6B7280,stroke:#ffffff,stroke-width:1px,color:#ffffff

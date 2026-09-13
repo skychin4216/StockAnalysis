@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 合并+板块加权 Pipeline（共享）
+
+  信号合并 → 板块加权。2 个 Node 串联。
+  量化选股、短线量化、中线量化 共用此 Pipeline。
+-->
+<pipeline id="merge_boost" name="合并+板块加权" description="多策略信号合并→板块加权" version="1">
+  <nodes>
+    <node id="n_merge" module="signal_merge" />
+    <node id="n_boost" module="sector_boost" />
+  </nodes>
+  <stages>
+    <stage name="合并加权" parallel="false">
+      <linkList name="合并+板块加权">
+        <link from="n_merge" to="n_boost" />
+      </linkList>
+    </stage>
+  </stages>
+</pipeline>

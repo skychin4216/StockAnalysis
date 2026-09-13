@@ -27,7 +27,9 @@ class GapUpMomentumStrategy(
     override var name = "高开高走策略"
     override var description = "高开2%以上且持续放量走强，捕捉动量突破机会"
     override val category = StrategyCategory.MOMENTUM
+    override val holdingPeriods = listOf(HoldingPeriod.SHORT)
     override val source = StrategySource.BUILTIN
+    override val signalExpiryHours = 24    // 当日全天，次日清零
 
     override val config = StrategyConfig.custom(
         params = mapOf("gap_min" to 2.0, "strength_min" to 1.0, "change_min" to 3.0),
@@ -63,14 +65,14 @@ class GapUpMomentumStrategy(
             signals = emptyList(), totalScanned = 0, scanTimeMs = System.currentTimeMillis() - startTime
         ))
 
-        // 大盤環境預檢：BEARISH 時提高缺口追漲門檻，避免在下跌趨勢中追高
+        // 大盘环境预检：BEARISH 时提高缺口追涨门槛，避免在下跌趋势中追高
         val marketDirection = try { screener.detectMarketDirection() } catch (_: Exception) { "OSCILLATION" }
 
         val isBearish = marketDirection == "BEARISH"
-        // BEARISH 時提高缺口門檻（+1%）與最低分數門檻（+15分）
+        // BEARISH 时提高缺口门槛（+1%）与最低分数门槛（+15分）
         val dynamicGapMin = if (isBearish) 2.0 else 1.0
         val dynamicStrengthThreshold = if (isBearish) 45 else 30
-        Log.i(id, "大盤環境: $marketDirection → 缺口門檻已調整 gap≥${dynamicGapMin}%, strength≥${dynamicStrengthThreshold}")
+        Log.i(id, "大盘环境: $marketDirection → 缺口门槛已调整 gap≥${dynamicGapMin}%, strength≥${dynamicStrengthThreshold}")
 
         val step1 = pool.filter { it.yestClose > 0 && it.open > 0 && it.price > 0 }
         val step2 = step1.filter {

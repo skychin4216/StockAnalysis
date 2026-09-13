@@ -48,7 +48,23 @@ data class DailySnapshotEntity(
     val turnoverRate: Double = 0.0,
 
     @ColumnInfo(name = "main_net_inflow")
-    val mainNetInflow: Double = 0.0   // 主力净流入(万元)，默认0
+    val mainNetInflow: Double = 0.0,  // 主力净流入(万元)，默认0
+
+    // ── 基本面字段（v12 新增，同步时由 FundamentalsProvider 批量填充，0 = 无数据）──
+    @ColumnInfo(name = "pe")
+    val pe: Double = 0.0,                       // 市盈率(动态)，负值=亏损
+    @ColumnInfo(name = "pb")
+    val pb: Double = 0.0,                       // 市净率
+    @ColumnInfo(name = "market_cap")
+    val marketCap: Double = 0.0,                // 总市值(元)
+    @ColumnInfo(name = "roe_ttm")
+    val roeTTM: Double = 0.0,                   // ROE加权(最新报告期)%
+    @ColumnInfo(name = "gross_margin_ttm")
+    val grossMarginTTM: Double = 0.0,           // 销售毛利率%
+    @ColumnInfo(name = "debt_to_asset")
+    val debtToAsset: Double = 0.0,              // 资产负债率%
+    @ColumnInfo(name = "operating_cash_flow")
+    val operatingCashFlow: Double = 0.0         // 经营现金流净额(元)
 )
 
 /**
@@ -166,6 +182,22 @@ interface DailySnapshotDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(snapshots: List<DailySnapshotEntity>)
 
+    /** Pipeline 回溯用：获取最近的交易日列表 */
+    @Query("SELECT DISTINCT date FROM daily_snapshot ORDER BY date DESC LIMIT :limit")
+    suspend fun getRecentTradeDates(limit: Int = 30): List<String>
+
+    /** Pipeline 回溯用：获取某日所有股票代码 */
+    @Query("SELECT DISTINCT code FROM daily_snapshot WHERE date = :date")
+    suspend fun getStockCodesByDate(date: String): List<String>
+
+    /** Pipeline 回溯用：获取某日之前（含）的数据 */
+    @Query("SELECT * FROM daily_snapshot WHERE code = :code AND date <= :beforeDate ORDER BY date DESC LIMIT :limit")
+    suspend fun getByCodeBefore(code: String, beforeDate: String, limit: Int = 100): List<DailySnapshotEntity>
+
+    /** Pipeline 回溯用：获取某日之后的数据 */
+    @Query("SELECT * FROM daily_snapshot WHERE code = :code AND date > :afterDate ORDER BY date ASC LIMIT :limit")
+    suspend fun getByCodeAfter(code: String, afterDate: String, limit: Int = 10): List<DailySnapshotEntity>
+
     /** 删除超过N天的旧数据 */
     @Query("DELETE FROM daily_snapshot WHERE date < :beforeDate")
     suspend fun deleteOlderThan(beforeDate: String): Int
@@ -173,6 +205,70 @@ interface DailySnapshotDao {
     /** 批量更新股票名称（覆盖空名和错名） */
     @Query("UPDATE daily_snapshot SET name = :name WHERE code = :code")
     suspend fun updateName(code: String, name: String)
+
+    /**
+     * 更新基本面字段（同步时 FundamentalsProvider 批量回写）
+     * turnover_rate 用 CASE 保护：新值为 0 时保留原值
+     */
+    @Query("""UPDATE daily_snapshot SET pe = :pe, pb = :pb, market_cap = :marketCap,
+        roe_ttm = :roeTTM, gross_margin_ttm = :grossMarginTTM,
+        debt_to_asset = :debtToAsset, operating_cash_flow = :operatingCashFlow,
+        turnover_rate = CASE WHEN :turnoverRate > 0 THEN :turnoverRate ELSE turnover_rate END
+        WHERE code = :code AND date = :date""")
+    suspend fun updateFundamentals(
+        code: String, date: String,
+        pe: Double, pb: Double, marketCap: Double,
+        roeTTM: Double, grossMarginTTM: Double, debtToAsset: Double,
+        operatingCashFlow: Double, turnoverRate: Double
+    ): Int
+
+    /**
+     * 批量回填历史基本面：将某只股票在指定日期范围内的基本面字段统一更新。
+     * 仅覆盖 roe_ttm = 0 的行（避免覆盖已有数据）。
+     */
+    @Query("""UPDATE daily_snapshot SET
+        roe_ttm = :roeTTM, gross_margin_ttm = :grossMarginTTM,
+        debt_to_asset = :debtToAsset, operating_cash_flow = :operatingCashFlow
+        WHERE code = :code AND date >= :fromDate AND date <= :toDate
+        AND roe_ttm = 0 AND gross_margin_ttm = 0""")
+    suspend fun updateFundamentalsForDateRange(
+        code: String, fromDate: String, toDate: String,
+        roeTTM: Double, grossMarginTTM: Double,
+        debtToAsset: Double, operatingCashFlow: Double
+    ): Int
+
+    /** 增量拉取：每只股票已有数据的最大日期（空表返回空列表） */
+    @Query("SELECT code, MAX(date) AS maxDate FROM daily_snapshot GROUP BY code")
+    suspend fun getMaxDateByCode(): List<CodeMaxDate>
+
+    /**
+     * 名称回填：批量取指定股票「最新一根日K」的名称（stock_basics 缺名时兜底，
+     * 覆盖有日K数据但没有基础资料行的股票，如刚上市/换代码/个别遗漏）。
+     */
+    @Query("""SELECT t.code AS code, t.name AS name FROM daily_snapshot t
+        INNER JOIN (
+            SELECT code, MAX(date) AS md FROM daily_snapshot
+            WHERE code IN (:codes) GROUP BY code
+        ) m ON t.code = m.code AND t.date = m.md
+        WHERE t.name IS NOT NULL AND trim(t.name) != ''""")
+    suspend fun getLastNames(codes: List<String>): List<CodeName>
+
+    /** 增量拉取：单只股票已有数据的最大日期 */
+    @Query("SELECT MAX(date) FROM daily_snapshot WHERE code = :code")
+    suspend fun getMaxDate(code: String): String?
+
+    /** 盘中/选股前刷新：仅更新行情字段（保留基本面字段），返回受影响行数 */
+    @Query("""UPDATE daily_snapshot SET open = :open, close = :close, high = :high, low = :low,
+        volume = :volume, amount = :amount, change_pct = :changePct,
+        turnover_rate = CASE WHEN :turnoverRate > 0 THEN :turnoverRate ELSE turnover_rate END,
+        pe = :pe, pb = :pb, market_cap = :marketCap
+        WHERE code = :code AND date = :date""")
+    suspend fun updateQuote(
+        code: String, date: String,
+        open: Double, close: Double, high: Double, low: Double,
+        volume: Long, amount: Double, changePct: Double,
+        turnoverRate: Double, pe: Double, pb: Double, marketCap: Double
+    ): Int
 }
 
 @Dao
@@ -232,6 +328,18 @@ interface StrategyWeightSnapshotDao {
 data class DateCount(
     val date: String,
     val cnt: Int
+)
+
+/** 每只股票已同步的最大日期（增量拉取判断缺失区间用） */
+data class CodeMaxDate(
+    val code: String,
+    val maxDate: String
+)
+
+/** 股票代码 + 最新名称（stock_basics 缺名时由日K快照回填用） */
+data class CodeName(
+    val code: String,
+    val name: String
 )
 
 data class StrategyAccuracyStat(

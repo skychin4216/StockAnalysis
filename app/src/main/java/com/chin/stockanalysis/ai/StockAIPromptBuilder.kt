@@ -1,23 +1,23 @@
 package com.chin.stockanalysis.ai
 
 /**
- * ## 股票分析 AI 提示詞構建器
+ * ## 股票分析 AI 提示词构建器
  *
- * 集中管理所有股票分析相關的 system prompt，
- * 供 ChatTabFragment、StrategyFragment 等多個入口共用。
+ * 集中管理所有股票分析相关的 system prompt，
+ * 供 ChatTabFragment、StrategyFragment 等多个入口共用。
  *
- * ### 設計原則
- * - 強制要求 AI 聯網搜索，禁止使用訓練數據中的舊資訊
- * - 指定權威數據來源（巨潮、財聯社、東財）
- * - 嵌入選股框架（BOM 拆解、空頭證偽、里程碑監控）
+ * ### 设计原则
+ * - 强制要求 AI 联网搜索，禁止使用训练数据中的旧资讯
+ * - 指定权威数据来源（巨潮、财联社、东财）
+ * - 嵌入选股框架（BOM 拆解、空头证伪、里程碑监控）
  */
 object StockAIPromptBuilder {
 
     /**
-     * 構建基礎 system prompt（用於 AI 對話框）
+     * 构建基础 system prompt（用于 AI 对话框）
      *
-     * 包含角色設定、數據使用規則、輸出規範。
-     * 強調必須聯網獲取最新數據，禁止使用 2024 年訓練數據。
+     * 包含角色设定、数据使用规则、输出规范。
+     * 强调必须联网获取最新数据，禁止使用 2024 年训练数据。
      */
     fun buildBaseSystemPrompt(): String {
         return """你是一个专业的A股股票投资分析助手（角色: 量化分析+投资顾问）。
@@ -72,13 +72,13 @@ object StockAIPromptBuilder {
     }
 
     /**
-     * 構建個股深度分析 prompt（注入到用戶問題之後）
+     * 构建个股深度分析 prompt（注入到用户问题之后）
      *
-     * 引導 AI 從多個權威來源分析個股：
-     * 1. 巨潮公告原文 → 確認消息真偽
-     * 2. 東方財富資金流 → 分辨主力出貨
-     * 3. 財聯社快訊 → 催化事件解讀
-     * 4. 財務數據 → 毛利率/CapEx/籌碼
+     * 引导 AI 从多个权威来源分析个股：
+     * 1. 巨潮公告原文 → 确认消息真伪
+     * 2. 东方财富资金流 → 分辨主力出货
+     * 3. 财联社快讯 → 催化事件解读
+     * 4. 财务数据 → 毛利率/CapEx/筹码
      */
     fun buildDeepAnalysisPrompt(stockName: String, stockCode: String): String {
         return """
@@ -97,7 +97,7 @@ object StockAIPromptBuilder {
     }
 
     /**
-     * 構建主力資金分析 prompt
+     * 构建主力资金分析 prompt
      */
     fun buildCapitalFlowPrompt(stockCode: String, stockName: String): String {
         return """
@@ -113,7 +113,7 @@ object StockAIPromptBuilder {
     }
 
     /**
-     * 構建公告與消息面分析 prompt
+     * 构建公告与消息面分析 prompt
      */
     fun buildNewsAnalysisPrompt(stockCode: String, stockName: String): String {
         return """
@@ -129,9 +129,9 @@ object StockAIPromptBuilder {
     }
 
     /**
-     * 構建選股分析提示（結合豆包選股框架）
+     * 构建选股分析提示（结合豆包选股框架）
      *
-     * 用於 Skill 引擎觸發時，在每個選股 Skill 的 prompt 前添加引導
+     * 用于 Skill 引擎触发时，在每个选股 Skill 的 prompt 前添加引导
      */
     fun buildSkillAnalysisPrefix(stockCode: String, stockName: String): String {
         return """
@@ -141,7 +141,7 @@ object StockAIPromptBuilder {
     }
 
     /**
-     * 構建主力出貨識別檢查清單（可選注入）
+     * 构建主力出货识别检查清单（可选注入）
      */
     fun buildCapitalOutflowChecklist(): String {
         return """
@@ -162,7 +162,7 @@ object StockAIPromptBuilder {
 """
     }
 
-    /** 當前日期（供 prompt 使用） */
+    /** 当前日期（供 prompt 使用） */
     private val currentDate: String
         get() = java.time.LocalDate.now().toString()
 }

@@ -154,7 +154,7 @@ class ThemeStockService(
         minCap: Long
     ): Pair<String, List<SectorStock>>? {
         // 检测是否包含行业/板块相关词
-        val sectorKeywords = EastMoneySectorSource.SECTOR_CODE_MAP.keys.toList()
+        val sectorKeywords = EastMoneySectorSource.SECTOR_KEYWORDS
         val matchedSector = sectorKeywords.firstOrNull { userInput.contains(it, ignoreCase = true) }
             ?: return null
 

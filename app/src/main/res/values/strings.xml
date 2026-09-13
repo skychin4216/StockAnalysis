@@ -1,16 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">股票分析</string>
 
-    <!-- AI 聊天相关 -->
+    <!-- 底部导航 -->
+    <string name="nav_chat">对话</string>
+    <string name="nav_agent">智能体</string>
+    <string name="nav_stock">股票</string>
+    <string name="nav_strategy">量化选股</string>
+    <string name="nav_mine">我的</string>
+
+    <!-- AI 聊天 -->
     <string name="chat_title">AI 智能助手</string>
     <string name="chat_input_hint">发消息或按住说话...</string>
     <string name="chat_send">发送</string>
-
-    <!-- 底部导航（豆包风格4个Tab） -->
-    <string name="nav_chat">对话</string>
-    <string name="nav_stock">股票</string>
-    <string name="nav_strategy">策略</string>
-    <string name="nav_mine">我的</string>
 
     <!-- 对话页 -->
     <string name="new_conversation">新建对话</string>
@@ -36,10 +38,114 @@
     <string name="stocks_gain">涨幅</string>
     <string name="stocks_lose">跌幅</string>
 
-    <!-- 策略 -->
-    <string name="strategy_title">策略中心</string>
+    <!-- 策略 Tab 名称 -->
+    <string name="tab_ultra_short">超短线</string>
+    <string name="tab_short">短线</string>
+    <string name="tab_mid">中线</string>
+    <string name="tab_long">长线</string>
+    <string name="tab_real">实仓</string>
+    <string name="tab_stock_picking">量化</string>
+    <string name="tab_strategy">策略</string>
+    <string name="tab_data">数据</string>
+    <string name="tab_my_workbench">我的工作台</string>
+    <string name="tab_ai_analysis">AI 分析</string>
 
-    <!-- 我的（原设置） -->
-    <string name="mine_title">我的</string>
-    <string name="settings_title">设置</string>
+    <!-- 实仓 -->
+    <string name="real_holding_title">📌 真实持仓</string>
+    <string name="real_holding_build_title">实仓建仓</string>
+    <string name="real_holding_pipeline">📊 执行实仓分析 Pipeline</string>
+    <string name="real_holding_manual_add">✏️ 手动添加持仓</string>
+    <string name="real_holding_ocr_import">📷 截图识别导入</string>
+    <string name="real_holding_no_data">暂无持仓记录\n\n点击「📈建仓」执行大盘分析 Pipeline\n点击「📦持仓」添加真实持仓</string>
+    <string name="real_holding_section">🏦 真实持仓</string>
+    <string name="real_holding_strategy_section">📊 策略持仓</string>
+    <string name="real_holding_pick_section">🎯 实仓选股</string>
+    <string name="real_holding_no_fitting">实仓无拟合功能</string>
+    <string name="real_holding_no_backtrack">实仓无回溯功能</string>
+    <string name="real_holding_no_clear">实仓数据不可清除</string>
+    <string name="real_holding_unit">只</string>
+    <string name="real_holding_unit_order">笔</string>
+    <string name="real_holding_shares">股</string>
+
+    <!-- 通用按钮 -->
+    <string name="btn_build">📈建仓</string>
+    <string name="btn_pipeline">🔀Pipeline</string>
+    <string name="btn_sell_eval">💰买卖评估</string>
+    <string name="btn_holdings">📦持仓</string>
+    <string name="btn_report">📊报告</string>
+    <string name="btn_backtrack">🔙回溯</string>
+    <string name="btn_fitting">📐拟合</string>
+    <string name="btn_sell">💰卖出</string>
+    <string name="btn_data">📦数据</string>
+    <string name="btn_t_trade">🔄做T</string>
+
+    <!-- 持仓/选股区域标题 -->
+    <string name="section_holding">持仓</string>
+    <string name="section_picking">选股</string>
+    <string name="section_total_holding">总持仓</string>
+    <string name="section_total_pnl">总盈亏</string>
+    <string name="section_clear">清空</string>
+    <string name="section_refresh">🔄</string>
+
+    <!-- 设置页 -->
+    <string name="settings_title">⚙️ 设置</string>
+    <string name="settings_ai_config">AI 配置</string>
+    <string name="settings_select_provider">选择提供商 / 模型 / 用户 API Key</string>
+    <string name="settings_data_mgmt">数据管理</string>
+    <string name="settings_clear_cache">清除缓存</string>
+    <string name="settings_cache_info">缓存大小: %s</string>
+    <string name="settings_cache_cleared">缓存已清除</string>
+    <string name="settings_agent_framework">Agent Framework</string>
+    <string name="settings_global_mode">全局模式</string>
+    <string name="settings_module_config">模块级别配置</string>
+    <string name="settings_stock_picking_module">选股模块（AI Pipeline）</string>
+    <string name="settings_analysis_module">分析模块（单股深度分析）</string>
+    <string name="settings_trade_module">交易模块（买卖执行）</string>
+    <string name="settings_chat_module">对话模块（AI 聊天）</string>
+    <string name="settings_news_module">新闻监控模块</string>
+    <string name="settings_risk_module">风控模块</string>
+    <string name="settings_period_route">周期级别路线（策略执行）</string>
+    <string name="settings_about">关于应用</string>
+
+    <!-- 语言设置 -->
+    <string name="settings_language">语言设置</string>
+    <string name="settings_select_language">选择语言</string>
+    <string name="settings_follow_system">跟随系统</string>
+    <string name="settings_language_changed">语言已切换</string>
+
+    <!-- 通用 -->
+    <string name="dialog_cancel">取消</string>
+    <string name="dialog_confirm">确认</string>
+    <string name="dialog_save">保存</string>
+    <string name="dialog_add">添加</string>
+    <string name="dialog_delete">删除</string>
+    <string name="status_loading">加载中...</string>
+    <string name="status_empty">暂无数据</string>
+    <string name="status_error">加载失败</string>
+    <string name="status_success">操作成功</string>
+
+    <!-- 周期标签 -->
+    <string name="period_ultra_short">⚡ 超短线</string>
+    <string name="period_short">📈 短线</string>
+    <string name="period_mid">📊 中线</string>
+    <string name="period_long">💎 长线</string>
+
+    <!-- 量化系统标题 -->
+    <string name="title_ultra_short_system" formatted="false">⚡ 超短线量化系统 (T+1 卖出，止损-2%/止盈+3%)</string>
+    <string name="title_short_system">🤖 短线量化系统 (Zipline Pipeline + AI精选)</string>
+    <string name="title_mid_system">🤖 中线量化系统(价值投资，持仓 1-6 个月)</string>
+    <string name="title_long_system">💎 长线量化系统 (价值投资，持仓6月-1年+)</string>
+
+    <!-- 股票 Tab 标签 -->
+    <string name="stock_tab_picks">📊 精选股票</string>
+    <string name="stock_tab_trend">📈 K线趋势</string>
+    <string name="stock_tab_hot">🔥 热门行情</string>
+    <string name="stock_tab_news">📰 热点新闻</string>
+
+    <!-- 策略按钮 -->
+    <string name="btn_build_position">📈建仓</string>
+    <string name="btn_stock_picking">📈选股</string>
+    <string name="btn_trade_eval">💰买卖评估 ▾</string>
+    <string name="btn_holdings_label">📦持仓</string>
+    <string name="btn_report_label">📊报告</string>
 </resources>

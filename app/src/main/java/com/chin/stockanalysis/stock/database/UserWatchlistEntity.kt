@@ -3,7 +3,7 @@ package com.chin.stockanalysis.stock.database
 import androidx.room.*
 
 /**
- * 用戶自選股（策略精選 → 後臺監控買賣點 → 自動交易）
+ * 用户自选股（策略精选 → 后台监控买卖点 → 自动交易）
  */
 @Entity(tableName = "user_watchlist", indices = [Index(value = ["stock_code"], unique = true)])
 data class UserWatchlistEntity(
@@ -18,5 +18,6 @@ data class UserWatchlistEntity(
     @ColumnInfo(name = "sell_price") val sellPrice: Double = 0.0,
     @ColumnInfo(name = "sell_date") val sellDate: String = "",
     @ColumnInfo(name = "score_at_add") val scoreAtAdd: Int = 0,
-    @ColumnInfo(name = "last_monitor_time") val lastMonitorTime: Long = 0L
+    @ColumnInfo(name = "last_monitor_time") val lastMonitorTime: Long = 0L,
+    @ColumnInfo(name = "notes") val notes: String = ""
 )

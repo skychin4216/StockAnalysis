@@ -1,0 +1,48 @@
+graph TD
+
+    %% 估值優先選股 | id=value_first
+    %% 優先按基本面估值篩選，再通過技術指標和板塊熱度精選
+
+    %% ===== Layer 0 =====
+    subgraph L0["Layer 0"]
+        vf_source(["全市場掃描"]):::dataSource
+    end
+
+    %% ===== Layer 1 =====
+    subgraph L1["Layer 1"]
+        vf_basic_filter["基本面過濾"]:::filter
+    end
+
+    %% ===== Layer 2 =====
+    subgraph L2["Layer 2"]
+        vf_tech_filter["技術過濾"]:::filter
+    end
+
+    %% ===== Layer 3 =====
+    subgraph L3["Layer 3"]
+        vf_sector_boost[("板塊加權")]:::aggregation
+    end
+
+    %% ===== Layer 4 =====
+    subgraph L4["Layer 4"]
+        vf_score_sort[("評分排序")]:::aggregation
+    end
+
+    %% ===== Layer 5 =====
+    subgraph L5["Layer 5"]
+        vf_output[/"結果輸出"\]:::dataTransform
+    end
+
+    %% ===== 連線 =====
+    vf_source --> vf_basic_filter
+    vf_basic_filter --> vf_tech_filter
+    vf_tech_filter --> vf_sector_boost
+    vf_sector_boost --> vf_score_sort
+    vf_sector_boost --> vf_score_sort
+    vf_score_sort --> vf_output
+
+    %% ===== 樣式定義 =====
+    classDef dataSource fill:#059669,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef filter fill:#DC2626,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef aggregation fill:#4F46E5,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef dataTransform fill:#6B7280,stroke:#ffffff,stroke-width:1px,color:#ffffff

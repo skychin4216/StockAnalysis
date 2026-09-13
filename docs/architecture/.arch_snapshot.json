@@ -1,0 +1,655 @@
+{
+  "scan_time": "2026-09-06T05:32:45.253333",
+  "summary": {
+    "fragments": 35,
+    "agents": 7,
+    "agent_roles": 5,
+    "strategies": 24,
+    "pipeline_nodes": 43,
+    "data_sources": 9,
+    "intent_handlers": 7,
+    "db_entities": 14,
+    "db_version": "26",
+    "v2_components": 3,
+    "xml_configs": 46,
+    "backtest_components": 12
+  },
+  "details": {
+    "fragments": [
+      {
+        "name": "AIAnalysisFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\AIAnalysisFragment.kt"
+      },
+      {
+        "name": "AgentChatFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\AgentChatFragment.kt"
+      },
+      {
+        "name": "AgentTabFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\AgentTabFragment.kt"
+      },
+      {
+        "name": "AiSelectedStocksFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\AiSelectedStocksFragment.kt"
+      },
+      {
+        "name": "CandidatePoolFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\CandidatePoolFragment.kt"
+      },
+      {
+        "name": "ChatTabFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\ChatTabFragment.kt"
+      },
+      {
+        "name": "ConversationListFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\ConversationListFragment.kt"
+      },
+      {
+        "name": "EtfDipFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\trade\\EtfDipFragment.kt"
+      },
+      {
+        "name": "HotNewsDetailFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\HotNewsDetailFragment.kt"
+      },
+      {
+        "name": "HotNewsFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\HotNewsFragment.kt"
+      },
+      {
+        "name": "InstitutionalPickFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\InstitutionalPickFragment.kt"
+      },
+      {
+        "name": "MainActivity",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\MainActivity.kt"
+      },
+      {
+        "name": "MarketHotFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\MarketHotFragment.kt"
+      },
+      {
+        "name": "QuantFragmentBase",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\trade\\QuantFragmentBase.kt"
+      },
+      {
+        "name": "QuantWorkbenchFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\trade\\QuantWorkbenchFragment.kt"
+      },
+      {
+        "name": "SectorDetailFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\SectorDetailFragment.kt"
+      },
+      {
+        "name": "SectorLeaderMapFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\SectorLeaderMapFragment.kt"
+      },
+      {
+        "name": "SectorRotationChartFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\SectorRotationChartFragment.kt"
+      },
+      {
+        "name": "SectorTabFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\SectorTabFragment.kt"
+      },
+      {
+        "name": "SectorTrendChartFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\SectorTrendChartFragment.kt"
+      },
+      {
+        "name": "SettingsFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\SettingsFragment.kt"
+      },
+      {
+        "name": "StockBrowserFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\StockBrowserFragment.kt"
+      },
+      {
+        "name": "StockDetailFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\StockDetailFragment.kt"
+      },
+      {
+        "name": "StockListFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\StockListFragment.kt"
+      },
+      {
+        "name": "StockSelectionSystemFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\trade\\StockSelectionSystemFragment.kt"
+      },
+      {
+        "name": "StockTabFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\StockTabFragment.kt"
+      },
+      {
+        "name": "StrategyDetailFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\StrategyDetailFragment.kt"
+      },
+      {
+        "name": "StrategyFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\StrategyFragment.kt"
+      },
+      {
+        "name": "StrategyImportFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\StrategyImportFragment.kt"
+      },
+      {
+        "name": "StrategyListFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\StrategyListFragment.kt"
+      },
+      {
+        "name": "StrategyResultDialogFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\StrategyResultDialogFragment.kt"
+      },
+      {
+        "name": "StrategyStatsFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\StrategyStatsFragment.kt"
+      },
+      {
+        "name": "TrendChartTabFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\TrendChartTabFragment.kt"
+      },
+      {
+        "name": "WatchlistGroupFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\WatchlistGroupFragment.kt"
+      },
+      {
+        "name": "WatchlistUnifiedFragment",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\ui\\WatchlistUnifiedFragment.kt"
+      }
+    ],
+    "agents": [
+      {
+        "name": "ChatAgent",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\agent\\chat\\ChatAgent.kt"
+      },
+      {
+        "name": "NewsMonitoringAgent",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\agent\\news\\NewsMonitoringAgent.kt"
+      },
+      {
+        "name": "PlanningAgent",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\agent\\core\\PlanningAgent.kt"
+      },
+      {
+        "name": "RiskManagementAgent",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\agent\\risk\\RiskManagementAgent.kt"
+      },
+      {
+        "name": "StockAnalysisAgent",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\agent\\stock\\StockAnalysisAgent.kt"
+      },
+      {
+        "name": "StockPickingAgent",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\agent\\stock\\StockPickingAgent.kt"
+      },
+      {
+        "name": "TradeExecutionAgent",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\agent\\stock\\TradeExecutionAgent.kt"
+      }
+    ],
+    "agent_roles": [
+      "ANALYST",
+      "EXECUTOR",
+      "GUARDIAN",
+      "ORCHESTRATOR",
+      "SCOUT"
+    ],
+    "strategies": [
+      {
+        "name": "AIPredictionStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\AIPredictionStrategy.kt"
+      },
+      {
+        "name": "BollingerBandStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\BollingerBandStrategy.kt"
+      },
+      {
+        "name": "CandlePatternStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\CandlePatternStrategy.kt"
+      },
+      {
+        "name": "CyclicalLowPositionStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\CyclicalLowPositionStrategy.kt"
+      },
+      {
+        "name": "DragonHeadDipStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\DragonHeadDipStrategy.kt"
+      },
+      {
+        "name": "EarlyMorningChaseStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\EarlyMorningChaseStrategy.kt"
+      },
+      {
+        "name": "FundamentalFilterStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\FundamentalFilterStrategy.kt"
+      },
+      {
+        "name": "GapUpMomentumStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\GapUpMomentumStrategy.kt"
+      },
+      {
+        "name": "HotSpotDrivenStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\HotSpotDrivenStrategy.kt"
+      },
+      {
+        "name": "InstitutionalAccumulationStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\InstitutionalAccumulationStrategy.kt"
+      },
+      {
+        "name": "InstitutionalIntentStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\InstitutionalIntentStrategy.kt"
+      },
+      {
+        "name": "LowValuationStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\LowValuationStrategy.kt"
+      },
+      {
+        "name": "MarketSentimentStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\MarketSentimentStrategy.kt"
+      },
+      {
+        "name": "MoatLeaderStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\MoatLeaderStrategy.kt"
+      },
+      {
+        "name": "MovingAverageStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\MovingAverageStrategy.kt"
+      },
+      {
+        "name": "RSIDivergenceStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\RSIDivergenceStrategy.kt"
+      },
+      {
+        "name": "SectorRotationStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\SectorRotationStrategy.kt"
+      },
+      {
+        "name": "SmartMoneyDetectionStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\SmartMoneyDetectionStrategy.kt"
+      },
+      {
+        "name": "StrictSelectionStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\StrictSelectionStrategy.kt"
+      },
+      {
+        "name": "TailLowPickStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\TailLowPickStrategy.kt"
+      },
+      {
+        "name": "TrendFollowingStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\TrendFollowingStrategy.kt"
+      },
+      {
+        "name": "TrendScoreStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\TrendScoreStrategy.kt"
+      },
+      {
+        "name": "TurnoverFilterStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\TurnoverFilterStrategy.kt"
+      },
+      {
+        "name": "VolumeBreakStrategy",
+        "id": "unknown",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\strategies\\VolumeBreakStrategy.kt"
+      }
+    ],
+    "pipeline_nodes": [
+      {
+        "name": "AIPredictNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\PipelineNodes.kt"
+      },
+      {
+        "name": "AMarketAnalysisNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\AMarketAnalysisNode.kt"
+      },
+      {
+        "name": "AncestralRulesNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\AncestralRulesNode.kt"
+      },
+      {
+        "name": "BasePositionGuardNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\BasePositionGuardNode.kt"
+      },
+      {
+        "name": "BounceReversalNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\BounceReversalNode.kt"
+      },
+      {
+        "name": "CandidatePoolNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\HardcodeCompatNodes.kt"
+      },
+      {
+        "name": "CandlePatternNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\PipelineNodes.kt"
+      },
+      {
+        "name": "CrossTabPublishNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\HardcodeCompatNodes.kt"
+      },
+      {
+        "name": "DataImportNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\DataImportNode.kt"
+      },
+      {
+        "name": "DefensiveDividendNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\DefensiveDividendNode.kt"
+      },
+      {
+        "name": "DirectionLabelNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\PeriodV23Nodes.kt"
+      },
+      {
+        "name": "FinancialHealthNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\FinancialHealthNode.kt"
+      },
+      {
+        "name": "HoldingDiagnosticNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\HoldingDiagnosticNode.kt"
+      },
+      {
+        "name": "HoldingPredictionNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\HoldingPredictionNode.kt"
+      },
+      {
+        "name": "InstitutionalTipsNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\InstitutionalTipsNode.kt"
+      },
+      {
+        "name": "IntradayAnalysisNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\IntradayAnalysisNode.kt"
+      },
+      {
+        "name": "LeaderTrackNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\PeriodV23Nodes.kt"
+      },
+      {
+        "name": "MaConvergenceNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\MaConvergenceNode.kt"
+      },
+      {
+        "name": "MacroEventBiasNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\MacroEventBiasNode.kt"
+      },
+      {
+        "name": "MainBoardFilterNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\PipelineNodes.kt"
+      },
+      {
+        "name": "MarketContextNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\PipelineNodes.kt"
+      },
+      {
+        "name": "MarketDirectionNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\MarketPublicPipelineNodes.kt"
+      },
+      {
+        "name": "MarketMaConvergenceCheckNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\MarketMaCheckNode.kt"
+      },
+      {
+        "name": "MarketMaUnifiedNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\MarketMaUnifiedNode.kt"
+      },
+      {
+        "name": "MarketSectorLeadersNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\MarketSectorLeadersNode.kt"
+      },
+      {
+        "name": "RealHoldingAnalysisNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\RealHoldingAnalysisNode.kt"
+      },
+      {
+        "name": "SeasonalityBoostNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\PeriodV23Nodes.kt"
+      },
+      {
+        "name": "SectorBoostNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\PipelineNodes.kt"
+      },
+      {
+        "name": "SectorLeaderAnalysisNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\SectorLeaderAnalysisNode.kt"
+      },
+      {
+        "name": "SectorRelativePeNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\SectorRelativePeNode.kt"
+      },
+      {
+        "name": "SectorStockPoolNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\HardcodeCompatNodes.kt"
+      },
+      {
+        "name": "SectorStrengthNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\MarketPublicPipelineNodes.kt"
+      },
+      {
+        "name": "SignalMergeNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\PipelineNodes.kt"
+      },
+      {
+        "name": "SmartMoneyFilterNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\PipelineNodes.kt"
+      },
+      {
+        "name": "StockDeepAnalysisNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\StockDeepAnalysisNode.kt"
+      },
+      {
+        "name": "StockEvaluationNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\StockEvaluationNode.kt"
+      },
+      {
+        "name": "StockPoolFilterNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\PipelineNodes.kt"
+      },
+      {
+        "name": "StockPoolNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\PipelineNodes.kt"
+      },
+      {
+        "name": "StrategyNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\PipelineNodes.kt"
+      },
+      {
+        "name": "StyleRotationNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\MarketPublicPipelineNodes.kt"
+      },
+      {
+        "name": "T1AutoSellNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\HardcodeCompatNodes.kt"
+      },
+      {
+        "name": "TTradeEvalNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\TTradeEvalNode.kt"
+      },
+      {
+        "name": "ZiplineFactorNode",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\strategy\\topology\\nodes\\HardcodeCompatNodes.kt"
+      }
+    ],
+    "data_sources": [
+      {
+        "name": "AKShareSource",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\stock\\data\\sources\\AKShareSource.kt"
+      },
+      {
+        "name": "EastMoneyBidAskSource",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\stock\\data\\sources\\EastMoneyBidAskSource.kt"
+      },
+      {
+        "name": "EastMoneyHotSectorSource",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\stock\\data\\sources\\EastMoneyHotSectorSource.kt"
+      },
+      {
+        "name": "EastMoneySectorSource",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\stock\\data\\sources\\EastMoneySectorSource.kt"
+      },
+      {
+        "name": "EastMoneyStockSource",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\stock\\data\\sources\\EastMoneyStockSource.kt"
+      },
+      {
+        "name": "JoinQuantsSource",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\stock\\data\\sources\\JoinQuantsSource.kt"
+      },
+      {
+        "name": "SinaStockSource",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\stock\\data\\sources\\SinaStockSource.kt"
+      },
+      {
+        "name": "StockNewsFetcher",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\stock\\data\\sources\\StockNewsFetcher.kt"
+      },
+      {
+        "name": "TencentStockSource",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\stock\\data\\sources\\TencentStockSource.kt"
+      }
+    ],
+    "intent_handlers": [
+      {
+        "name": "AiIntentHandler",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\stock\\intent\\handlers\\AiIntentHandler.kt"
+      },
+      {
+        "name": "FuzzyStockNameHandler",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\stock\\intent\\handlers\\FuzzyStockNameHandler.kt"
+      },
+      {
+        "name": "GeneralStockHandler",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\stock\\intent\\handlers\\GeneralStockHandler.kt"
+      },
+      {
+        "name": "IndexHandler",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\stock\\intent\\handlers\\IndexHandler.kt"
+      },
+      {
+        "name": "StockCodeHandler",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\stock\\intent\\handlers\\StockCodeHandler.kt"
+      },
+      {
+        "name": "StockNameHandler",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\stock\\intent\\handlers\\StockNameHandler.kt"
+      },
+      {
+        "name": "TrieStockNameHandler",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\stock\\intent\\handlers\\TrieStockNameHandler.kt"
+      }
+    ],
+    "db_entities": [
+      "AiSelectedStockEntity",
+      "BacktestMetaEntity",
+      "BacktestSelectedStockEntity",
+      "ConversationEntity",
+      "InstitutionalPickEntity",
+      "InstitutionalTipEntity",
+      "IntradayKlineEntity",
+      "KeyMemoryEntity",
+      "NewsFactorEntity",
+      "SectorStockEntity",
+      "StockBasicEntity",
+      "UserFocusSectorEntity",
+      "UserWatchlistEntity",
+      "WeightCalibrationEntity"
+    ],
+    "db_version": "26",
+    "v2_components": [
+      {
+        "name": "DecisionInput",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\agent\\v2\\V2DecisionMatrix.kt"
+      },
+      {
+        "name": "PositionCapResult",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\agent\\v2\\PositionWaterValve.kt"
+      },
+      {
+        "name": "V2Result",
+        "file": "app\\src\\main\\java\\com\\chin\\stockanalysis\\agent\\v2\\V2Result.kt"
+      }
+    ],
+    "xml_configs": [
+      "ai_filter_pipeline.xml",
+      "common_usecase.xml",
+      "complete_closed_loop_usecase.xml",
+      "data_prep_pipeline.xml",
+      "direction_usecase.xml",
+      "long_agent.json",
+      "long_term_bearish_pipeline.xml",
+      "long_term_bullish_pipeline.xml",
+      "long_term_oscillation_pipeline.xml",
+      "long_term_period_usecase.xml",
+      "long_term_pipeline.xml",
+      "long_term_usecase.xml",
+      "market_analysis_pipeline.xml",
+      "market_rotation_pipeline.xml",
+      "merge_boost_pipeline.xml",
+      "mid_agent.json",
+      "mid_term_bearish_pipeline.xml",
+      "mid_term_bullish_pipeline.xml",
+      "mid_term_oscillation_pipeline.xml",
+      "mid_term_period_usecase.xml",
+      "mid_term_pipeline.xml",
+      "mid_term_usecase.xml",
+      "real_holding_pipeline.xml",
+      "real_holding_usecase.xml",
+      "screening_pipeline.xml",
+      "screening_usecase.xml",
+      "short_agent.json",
+      "short_term_bearish_pipeline.xml",
+      "short_term_bullish_pipeline.xml",
+      "short_term_oscillation_pipeline.xml",
+      "short_term_period_usecase.xml",
+      "short_term_pipeline.xml",
+      "short_term_usecase.xml",
+      "stock_deep_analysis_pipeline.xml",
+      "stock_deep_analysis_usecase.xml",
+      "stock_picking_common_pipeline.xml",
+      "strategy_screening_pipeline.xml",
+      "t_trade_pipeline.xml",
+      "t_trade_usecase.xml",
+      "ultra_short_agent.json",
+      "ultra_short_bearish_pipeline.xml",
+      "ultra_short_bullish_pipeline.xml",
+      "ultra_short_oscillation_pipeline.xml",
+      "ultra_short_period_usecase.xml",
+      "ultra_short_pipeline.xml",
+      "ultra_short_usecase.xml"
+    ],
+    "backtest_components": [
+      "BacktestEngine",
+      "HistoricalBacktestEngine",
+      "MaTrendResult",
+      "MarketState",
+      "PeriodDeepAnalysisRunner",
+      "PipelineBacktestEngine",
+      "SectorPeriodTracker",
+      "SectorRotationEngine",
+      "StrategyOptimizer",
+      "StrategySelfTuner",
+      "TTradeParams",
+      "WeightCalibrator"
+    ]
+  }
+}
