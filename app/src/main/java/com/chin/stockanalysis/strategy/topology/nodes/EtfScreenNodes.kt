@@ -279,7 +279,7 @@ private suspend fun etfStockSnaps(context: PipelineContext, code6: String, minBa
  * 输出：{as_of, updated, fundsTotal, stocksTotal, rows[], industryOnly, minCoverage, note}
  */
 class EtfHoldingsRankNode(
-    private val topN: Int = 15,
+    private val topN: Int = 10,
     private val minCoverage: Int = 2,
     private val industryOnly: Boolean = true,
     private val baseThemes: String = "宽基",
@@ -374,7 +374,7 @@ class EtfHoldingsRankNode(
  * 行内嵌 `bars` 供下游 stop_loss_vote target=picks 直接定价。
  */
 class EtfIndustryScanNode(
-    private val topN: Int = 5,
+    private val topN: Int = 10,
     private val minScore: Double = 5.0,
     private val minBars: Int = 60,
     private val ddWin: Int = 60,

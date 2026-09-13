@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  ## ETF 全行业扫描 Pipeline（V2 DAG · 门控→扫描→国家队/大基金→止损 四阶段）
+  ## ETF 全行业扫描 Pipeline（V2 DAG · 门控→扫描→国家队ETF份额→国家队/大基金→止损 五阶段）
 
   与同目录 usecase_pipeline.py（Python 引擎，XML DAG 主线）共用同一文件 ——
   修改任何参数/标的池，双端行为自动一致（单一事实源）。
@@ -9,6 +9,11 @@
     - "n_etf_gate"        JSONObject {ok, date, note}   沪深300 close>MA20>MA60
     - "n_industry_scan"   JSONObject {as_of, marketState, universe, scanned, rows[]}
                           每行 = 一只行业ETF前五重仓股（含 score/etfs/themes/pos60/bars）
+    - "n_nat_etf"         JSONObject {as_of, available, verdict, level, lines[],
+                          quarterly{current,at,net_sub}, lastTurn{at,dir,netSub},
+                          huijin{code,pct,names}, funds[], rows[]（透传上行）}
+                          ★ 市场级横幅：国家队(汇金)宽基ETF份额动向（买/卖 + 时间点），
+                            只贴标签、不改顺序、不筛行
     - "n_national_flow"   JSONObject {as_of, judge_day, counts{}, rows[]}
                           每行 = 上行 + {natState/natStrong/natRatio/natChg/natEnd/natNotice/natNames,
                           bigState/…, ssState/…, flowScore, flowLabel, semi}
@@ -19,7 +24,16 @@
     OSCILLATION 门槛 +1.0 且要求 pos60 ≤ -12%（只接更深回撤的低吸）
     BEARISH     暂停开仓 → 全部降级为「观察清单」（ok=false），不产生买入信号
 
-  ★ 2026-09-13 新增阶段3「国家队/大基金持有进出」（module=national_flow）：
+  ★ 2026-09-13 新增阶段3「国家队(汇金)宽基ETF份额动向」（module=national_etf_share）：
+    数据资产 data/_etf_share_signal.json（当日信号）+ data/_etf_share_hist.json（逐只份额四象限），
+    判定算法单一事实源 = smalltools/_etf_share_flow.py，资产内 judge 已含结论，双端只读不算。
+    与阶段4的 national_flow 分工互补（勿合并）：
+      · national_etf_share = 宽基 ETF 份额(申赎) —— 市场/宽基级、每日可观测，汇金 2015 后主要借道；
+      · national_flow      = 十大流通股东     —— 个股级、季报滞后，汇金个股披露 2015 后稀少。
+    四象限：份额↑&价↓=低位承接(买) / 份额↓&价↑=高位派发(卖)；汇金身份只能年报§9.2点名。
+    本阶段是**市场级横幅**（透传 rows、不改顺序、不筛行），供推送显示「国家队在买还是在卖 + 时间点」。
+
+  ★ 2026-09-13 新增阶段4「国家队/大基金持有进出」（module=national_flow）：
     数据资产 data/_national_flow_hist.json，判定算法单一事实源 = smalltools/_national_flow.py，
     资产内 snap 已含判定结果，双端只读不算。硬约束三条（见 usecase_pipeline.py 节点 docstring）：
       ① 身份只取十大流通股东法定披露，ETF 申赎不计入国家队口径；
@@ -29,7 +43,7 @@
     「谁在低位收货」，两者叠加读；若要用门槛筛选，见 inst_holding_pipeline.xml 的 filter 用法。
 -->
 <DagPipeline id="etf_industry_scan_dag" name="ETF全行业扫描Pipeline"
-    description="沪深300门控 → 行业ETF前五重仓低吸打分top5 → 国家队/大基金持有进出 → 多理论投票止损">
+    description="沪深300门控 → 行业ETF前五重仓低吸打分top5 → 国家队ETF份额动向 → 国家队/大基金持有进出 → 多理论投票止损">
 
   <NodeList>
     <!-- ── 阶段1：大盘门控（沪深300结构多头）：仅作 UI 横幅与阻断提示，节点内部另按三态自动自适应 ── -->
@@ -45,7 +59,7 @@
     <!-- ── 阶段2：全行业扫描：行业/主题ETF(剔除宽基) → 前五重仓股 → 低吸打分 → topN ── -->
     <Node id="n_industry_scan" name="ETF全行业低吸扫描" module="etf_industry_scan">
       <config>
-        <param name="topN" value="5" />
+        <param name="topN" value="10" />
         <param name="minScore" value="5.0" />
         <param name="minBars" value="60" />
         <param name="ddWin" value="60" />
@@ -65,7 +79,17 @@
       </config>
     </Node>
 
-    <!-- ── 阶段3：国家队/大基金持有进出贴标签（不改顺序、不筛行）── -->
+    <!-- ── 阶段3：国家队(汇金)宽基ETF份额动向（市场级横幅，透传 rows、不改顺序、不筛行）── -->
+    <Node id="n_nat_etf" name="国家队(汇金)ETF份额动向" module="national_etf_share">
+      <config>
+        <param name="sourceNode" value="n_industry_scan" />
+        <param name="maxFunds" value="10" />
+        <param name="emitFunds" value="true" />
+        <param name="strategyText" value="宽基ETF份额(申赎)四象限：份额↑&amp;价↓=低位承接(买) / 份额↓&amp;价↑=高位派发(卖)；汇金身份取年报§9.2前十名持有人；日频快照给拐点时点，季度披露给方向" />
+      </config>
+    </Node>
+
+    <!-- ── 阶段4：国家队/大基金持有进出贴标签（不改顺序、不筛行）── -->
     <Node id="n_national_flow" name="国家队/大基金持有进出" module="national_flow">
       <config>
         <param name="sourceNode" value="n_industry_scan" />
@@ -75,7 +99,7 @@
       </config>
     </Node>
 
-    <!-- ── 阶段4：多理论投票止损（六理论取最保守+棘轮）：直接消费上游行内嵌 bars ── -->
+    <!-- ── 阶段5：多理论投票止损（六理论取最保守+棘轮）：直接消费上游行内嵌 bars ── -->
     <Node id="n_scan_stop" name="多理论投票止损" module="stop_loss_vote">
       <config>
         <param name="target" value="picks" />
@@ -96,6 +120,12 @@
     </Link>
     <Link>
       <SourceNodeId>n_industry_scan</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_nat_etf</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_nat_etf</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_national_flow</TargetNodeId>
       <TargetPortId>0</TargetPortId>

@@ -122,8 +122,10 @@ object NodeRegistry {
         // 判定算法单一事实源 = smalltools/_national_flow.py；资产内 snap 已含结果，双端只读不算，避免口径漂移。
         // 已挂入：etf_holdings_top5_pipeline.xml（阶段2）/ etf_industry_scan_pipeline.xml（阶段3）/
         //         inst_holding_pipeline.xml（filter：三周期选股 + 两条 ETF 链 + 实仓汇总池）。
-        // ★ 硬约束：身份只取十大流通股东法定披露（ETF 申赎不计入）；NOTICE_DATE ≤ 信号日无未来函数；
-        //   季报滞后 1-3 月 → 中长线定性、非实时信号。
+        // ★ 硬约束：身份只取法定披露（十大股东/十大流通股东/增减持·定增公告，ETF 申赎不计入）；
+        //   NOTICE_DATE/公告日 ≤ 信号日无未来函数；季报滞后 1-3 月（公告通道 T+1）→ 中长线定性。
+        // ★ 三条直接持股通道（2026-09-13 v2）：free 季报十大流通股东 / lock 十大股东锁定部分
+        //   （限售=定增锁定，原口径硬缺口）/ ann 股东增减持+定增获配公告（T+1）。
         register("national_flow") { _, config ->
             com.chin.stockanalysis.strategy.topology.nodes.NationalFlowNode(
                 sourceNode = config["sourceNode"] ?: "n_holdings_top5",
@@ -132,14 +134,32 @@ object NodeRegistry {
                 requireBig = config["requireBig"]?.toBooleanStrictOrNull() ?: false,
                 minScore = config["minScore"]?.toDoubleOrNull() ?: 50.0,
                 excludeOut = config["excludeOut"]?.toBooleanStrictOrNull() ?: false,
+                requireLock = config["requireLock"]?.toBooleanStrictOrNull() ?: false,
+                requireAnn = config["requireAnn"]?.toBooleanStrictOrNull() ?: false,
+                annInWindow = config["annInWindow"]?.toBooleanStrictOrNull() ?: true,
+                minDirect = config["minDirect"]?.toDoubleOrNull() ?: 0.0,
                 maxRows = config["maxRows"]?.toIntOrNull() ?: 200
+            )
+        }
+        // ══════════ 国家队（汇金）宽基 ETF 份额动向（2026-09-13；national_etf_share） ══════════
+        // 数据资产 data/_etf_share_signal.json（当日信号）+ data/_etf_share_hist.json（逐只份额四象限）。
+        // 与 national_flow 的分工：national_flow 读「十大流通股东」=个股级、季报滞后；
+        // 本节点读「宽基 ETF 份额(申赎)」=市场/宽基级、每日可观测（汇金 2015 后主要借道宽基 ETF）。
+        // 判定算法单一事实源 = smalltools/_etf_share_flow.py；资产内 judge 已含结论，双端只读不算。
+        // 已挂入：etf_industry_scan_pipeline.xml（阶段3前）/ etf_holdings_top5_pipeline.xml /
+        //         national_etf_share_pipeline.xml（独立 usecase，市场级横幅）。
+        register("national_etf_share") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.NationalEtfShareNode(
+                sourceNode = config["sourceNode"] ?: "",
+                maxFunds = config["maxFunds"]?.toIntOrNull() ?: 10,
+                emitFunds = config["emitFunds"]?.toBooleanStrictOrNull() ?: true
             )
         }
         // ══════════ 三个独立 ETF 选股 usecase（2026-09-12；《ETF选股思路.txt》拆分） ══════════
         // ① ETF 持股 top5（覆盖矩阵排行，规则/参数在 etf_holdings_top5_pipeline.xml，双端同源）
         register("etf_holdings_rank") { _, config ->
             com.chin.stockanalysis.strategy.topology.nodes.EtfHoldingsRankNode(
-                topN = config["topN"]?.toIntOrNull() ?: 15,
+                topN = config["topN"]?.toIntOrNull() ?: 10,
                 minCoverage = config["minCoverage"]?.toIntOrNull() ?: 2,
                 industryOnly = config["industryOnly"]?.toBooleanStrictOrNull() ?: true,
                 baseThemes = config["baseThemes"] ?: "宽基",
@@ -152,7 +172,7 @@ object NodeRegistry {
         // ② ETF 全行业扫描（行业ETF前五重仓个股低吸，规则/参数在 etf_industry_scan_pipeline.xml）
         register("etf_industry_scan") { _, config ->
             com.chin.stockanalysis.strategy.topology.nodes.EtfIndustryScanNode(
-                topN = config["topN"]?.toIntOrNull() ?: 5,
+                topN = config["topN"]?.toIntOrNull() ?: 10,
                 minScore = config["minScore"]?.toDoubleOrNull() ?: 5.0,
                 minBars = config["minBars"]?.toIntOrNull() ?: 60,
                 ddWin = config["ddWin"]?.toIntOrNull() ?: 60,

@@ -6,6 +6,8 @@
   python _push_replay.py 2026-09-01 --days 4
   python _push_replay.py 2026-09-01 --days 4 --push      # 真实推送（企微：大盘图 + 三段消息）
   python _push_replay.py 2026-09-01 --days 4 --skip-chart
+  python _push_replay.py 2026-09-11 --days 1 --dag lunch --push   # 盘中快照口径(11:31 实时选股)
+  python _push_replay.py 2026-09-11 --days 1 --dag close --push   # 收盘定格口径(15:00 重选，默认)
 
 回溯拟合：
   python _push_replay.py --fit --start 2026-08-03 --end 2026-09-04
@@ -39,8 +41,8 @@ import push_channel                 # noqa: E402
 
 REC_DIR = os.path.join(HERE, "_records", "replay")
 MARKET_DB = os.path.join(ROOT, "data", "market_data.db")
-INDEX_NAMES = {"sh000001": "上证指数", "sz399001": "深证成指",
-               "sh000688": "科创50", "sz399006": "创业板指"}
+# 与 _index_market_chart.INDEXES 对齐（同一组 4 指数，否则 _build_series 因缺键报错）
+INDEX_NAMES = dict(IMC.INDEXES)
 CHART_DAYS = 55
 
 
@@ -80,47 +82,75 @@ def truncate_cache(cache, asof):
     return out
 
 
-def dag_for(day):
-    """当日 dag 文件（asof 匹配兜底 latest）。"""
-    path = os.path.join(ROOT, "AutoQuant", "data",
-                        "dag_screen_%s.json" % day.replace("-", ""))
-    if os.path.exists(path):
+DAG_DIR = os.path.join(ROOT, "AutoQuant", "data")
+# DAG 两种口径（2026-09-13）：close=15:00 收盘定格层（盘外选股）；
+# lunch=盘中实时快照层（qtg 实时价 asof=当日，见 _publish_candidates.run_intraday_snapshot）。
+# 归档名带日期，asof 必须等于回放日；兜底的 latest/lunch 文件额外校验 asof 防 T-1 串档。
+DAG_KINDS = {
+    "close": ("dag_screen_%s.json", "dag_screen_latest.json"),
+    "lunch": ("dag_screen_lunch_%s.json", "dag_screen_lunch.json"),
+}
+
+
+def dag_for(day, kind="close"):
+    """当日 dag 文件：归档(dag_screen[_lunch]_YYYYMMDD.json) 优先，兜底 latest/lunch。
+
+    kind=close → 收盘定格层；kind=lunch → 盘中快照层。两者结果常不同
+    （如 2026-09-11：盘中 短线5/中线5/长线5；收盘定格 短线4/中线4/长线4）。
+    """
+    arch, latest = DAG_KINDS.get(kind) or DAG_KINDS["close"]
+    for name, strict in ((arch % day.replace("-", ""), False), (latest, True)):
+        path = os.path.join(DAG_DIR, name)
+        if not os.path.exists(path):
+            continue
         try:
             with open(path, encoding="utf-8") as f:
-                return json.load(f)
+                d = json.load(f)
         except (OSError, ValueError):
-            return None
-    path2 = os.path.join(ROOT, "AutoQuant", "data", "dag_screen_latest.json")
-    try:
-        with open(path2, encoding="utf-8") as f:
-            d = json.load(f)
-        return d if (d.get("asof") or "") == day else None
-    except (OSError, ValueError):
-        return None
+            continue
+        if not strict or (d.get("asof") or "") == day:
+            return d
+    return None
 
 
-def render_chart(cacheD, asof, chart_days=CHART_DAYS):
-    """四大指数「起点归一化涨跌幅折线图」（离线切片，2026-09-09 与实盘推送同风格）。返回 (ok, png)。"""
+def render_chart(cacheD, asof, chart_days=CHART_DAYS, suffix=""):
+    """四大指数「起点归一化涨跌幅折线图」（离线切片，2026-09-09 与实盘推送同风格）。返回 (ok, png)。
+
+    sh000300(沪深300) 不在 PC 全量池 cache（_kline_cache.json 只有深证成指），
+    与 _big_board_lines 口径一致走 _etf_index_cache()（_etf_cache.json）兜底，
+    再统一截断到 asof（无未来函数）。
+    """
     idx = {}
+    etf = None
     for code, nm in INDEX_NAMES.items():
-        ent = cacheD.get(code)
-        if ent and ent.get("snaps"):
-            idx[code] = {"name": nm, "snaps": ent["snaps"]}
+        snaps = (cacheD.get(code) or {}).get("snaps") or []
+        if not snaps:
+            if etf is None:
+                etf = PC._etf_index_cache()
+            snaps = (etf.get(code) or {}).get("snaps") or []
+        snaps = [s for s in snaps if s.get("date") and s["date"] <= asof]
+        if snaps:
+            idx[code] = {"name": nm, "snaps": snaps}
     if len(idx) < 2:
         return False, ""
-    png = os.path.join(ROOT, "data", "_index_market_replay_%s.png"
-                       % asof.replace("-", ""))
-    return IMC.render_pct_from_snaps(idx, out=png, days=chart_days), png
+    png = os.path.join(ROOT, "data", "_index_market_replay_%s%s.png"
+                       % (asof.replace("-", ""), suffix))
+    # IMC.render_pct_from_snaps 返回 (ok, out_path) 二元组，必须原样透传；
+    # 旧写法多包了一层 (tuple, png)，使 ok 恒为真元组、推图时才发现文件不存在。
+    return IMC.render_pct_from_snaps(idx, out=png, days=chart_days)
 
 
 def replay_one(day, cache, hist, args):
-    dag = dag_for(day)
+    kind = getattr(args, "dag", "close") or "close"
+    dag = dag_for(day, kind)
     if not dag:
-        print("  ✗ 跳过 %s：无当日 DAG 文件" % day)
+        print("  ✗ 跳过 %s：无当日 DAG 文件（口径 %s）" % (day, kind))
         return None
     asof = dag.get("asof") or day
     t0 = time.time()
-    print("── %s 回放开始 (asof=%s) ──" % (day, asof))
+    scene = getattr(args, "scene", None) or (
+        "盘中选股 11:31" if kind == "lunch" else "盘外选股 15:05")
+    print("── %s 回放开始 (asof=%s | %s | dag=%s) ──" % (day, asof, scene, kind))
     cacheD = truncate_cache(cache, asof)
     industry = PC.build_industry()
     data = PC.build_candidates(cacheD, industry, ctx=None)
@@ -139,28 +169,31 @@ def replay_one(day, cache, hist, args):
                     dag_codes.add(c6)
     low_lines = (EH.low_buy_lines_offline(asof, hist=hist, dag_codes=dag_codes)
                  if hist else [])
-    note = ("💡 回放说明：板块/ETF资金流为盘中实时采集、无历史存档；"
-            "本页以 %s 收盘K线口径展示全行业ETF前五低吸。" % asof)
-    pages, _tbl_imgs = PC.round_pages(data, None, None, scene="盘外选股", dag=dag,
+    note = ("💡 回放说明[%s]：板块/ETF资金流为盘中实时采集、无历史存档；"
+            "本页以 %s 收盘K线口径展示全行业ETF前五低吸。" % (scene, asof))
+    pages, _tbl_imgs = PC.round_pages(data, None, None, scene=scene, dag=dag,
                                       cache=cacheD, lowbuy_offline=low_lines,
                                       note_offline=note)
     # 大盘K图（开盘前推送）
     ok_img, png = (False, "")
     if not args.skip_chart:
-        ok_img, png = render_chart(cacheD, asof, args.chart_days)
+        ok_img, png = render_chart(cacheD, asof, args.chart_days,
+                                   suffix="_lunch" if kind == "lunch" else "")
     print("  大盘图 %s (%s) | 引擎 %s | 池 %d | %.0fs" % (
         "ok" if ok_img else "跳过", os.path.basename(png) if png else "-",
         data.get("market_state"), data.get("pool_total", 0), time.time() - t0))
-    rec = {"date": day, "asof": asof, "market_state": data.get("market_state"),
+    rec = {"date": day, "asof": asof, "dag_kind": kind, "scene": scene,
+           "market_state": data.get("market_state"),
            "pool_total": data.get("pool_total", 0),
            "dag": dag.get("result") or {},
            "engine_groups": {k: len(v) for k, v in (data.get("groups") or {}).items()},
            "lowbuy_funds": len(EH.screen_picks_asof(asof, hist=hist)),
            "png": png,
            "pages": [{"title": t, "content": c} for t, c in pages]}
-    # 落盘记录 + 控制台预览
+    # 落盘记录 + 控制台预览（盘中/盘后分文件，避免互相覆盖）
     os.makedirs(REC_DIR, exist_ok=True)
-    rec_path = os.path.join(REC_DIR, "%s.json" % asof.replace("-", ""))
+    rec_path = os.path.join(REC_DIR, "%s%s.json" % (
+        asof.replace("-", ""), "_lunch" if kind == "lunch" else ""))
     with open(rec_path, "w", encoding="utf-8") as f:
         json.dump(rec, f, ensure_ascii=False, indent=1)
     for title, content in pages:
@@ -172,10 +205,10 @@ def replay_one(day, cache, hist, args):
         cfg = PC.load_notify_cfg()
         if ok_img:
             push_channel.send_image(png, cfg)
-        PC.send_wechat_round(data, None, cfg, scene="盘外选股", dag=dag,
+        PC.send_wechat_round(data, None, cfg, scene=scene, dag=dag,
                              cache=cacheD, lowbuy_offline=low_lines,
                              note_offline=note)
-        print("  ✓ %s 已推送" % day)
+        print("  ✓ %s 已推送（%s）" % (day, scene))
     return rec
 
 
@@ -574,6 +607,10 @@ def main():
                     help="从首个日期往前推N个交易日回放")
     ap.add_argument("--push", action="store_true", help="真实推送(企微图+三段消息)")
     ap.add_argument("--skip-chart", action="store_true")
+    ap.add_argument("--dag", default="close", choices=["close", "lunch"],
+                    help="DAG 口径：close=收盘定格(盘外选股，默认) / lunch=盘中实时快照(盘中选股)")
+    ap.add_argument("--scene", default=None,
+                    help="场景标签（缺省按 --dag 推导：盘中选股 11:31 / 盘外选股 15:05）")
     ap.add_argument("--chart-days", type=int, default=CHART_DAYS)
     ap.add_argument("--fit", action="store_true")
     ap.add_argument("--start", default="2026-08-03")

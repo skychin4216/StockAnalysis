@@ -25,10 +25,20 @@ import java.io.File
  * ★ 判定算法**单一事实源** = `smalltools/_national_flow.py`；资产 `data/_national_flow_hist.json`
  *   内已含 `snap`（当前时点判定结果），双端**只读不算**，避免 Python / Kotlin / 推送表三处口径漂移。
  *
+ * ★ 三条**直接持股**通道（2026-09-13 v2，回答「国家队/社保会不会直接买某只股票」）：
+ *   ① free 季报十大流通股东（nat/big/ss 分类）；
+ *   ② lock 锁定通道 = 十大股东（RPT_F10_EH_HOLDERS）可见、十大流通榜**不可见**的持股
+ *      ⇒ 限售/非流通（大基金定增锁定 18 个月、战投、发起人股）。**原口径硬缺口**：
+ *      锁定股不进「十大流通股东」排名，季报流通通道最长漏 18 个月。
+ *      注意：「退出」**不计分**（锁定股退出十大股东最常见是**解禁转流通**，非减持）；
+ *   ③ ann 公告通道 = 股东增减持 + 定增获配（**T+1**，比季报快 1-3 个月）。窗口 365 天，
+ *      窗口内计分并置 `annFresh=true`；超窗口仍保留 `annDir/annNotice` 供展示「时间点」。
+ *
  * ★ 三条硬约束（research 文档 §7.4「实盘红线」，实现层强制）：
- *   1) 国家队/大基金身份**只能**来自「十大流通股东」法定披露；ETF 申赎、估算资金流不得计入；
- *   2) 判定必须 NOTICE_DATE ≤ 信号日（无未来函数，由 `_national_flow.flow_state` 保证）；
- *   3) 季报天然滞后 1-3 月 → 只做中长线定性，**非实时信号**。
+ *   1) 身份**只能**来自法定披露（十大股东/十大流通股东/增减持·定增公告）；ETF 申赎、
+ *      估算资金流不得计入本节点（ETF 另见 `national_etf_share` 节点）；
+ *   2) 判定必须 NOTICE_DATE/公告日 ≤ 信号日（无未来函数，由 `_national_flow` 保证）；
+ *   3) 季报滞后 1-3 月（公告通道 T+1）→ 仍属中长线定性，**非实时信号**。
  *
  * ★ 状态口径：`流入` / `流出` / `退出` / `持稳` / `无`。
  *   「退出」= 曾进前十大、现**连续 ≥2 期缺席**（每季披露，连续缺席即已退出）；
@@ -95,12 +105,20 @@ private object NationalFlowStore {
  *   requireBig  filter 下要求大基金「流入」
  *   minScore    filter 下要求 flowScore ≥（默认 50）
  *   excludeOut  filter 下剔除国家队「流出/退出」
+ *   requireLock filter 下要求锁定通道「流入」（十大股东新增锁定持股=定增/战投在建仓）
+ *   requireAnn  filter 下要求公告通道「流入」（近一年增减持/定增公告净买入）
+ *   annInWindow requireAnn 时是否只认窗口内公告（默认 true，超窗口的历史公告不算买入）
+ *   minDirect   filter 下要求 directScore ≥（默认 0=不过滤）
  *   maxRows     限行（默认 200）
  *
  * 输出：{as_of, judge_day, built, rule, states, n, available, counts{流入,流出,退出,持稳,无},
+ *   counts_lock{…}, counts_ann{流入,流出,历史,无},
  *   rows:[…+natState/natStrong/natRatio/natChg/natEnd/natNotice/natNames,
  *         bigState/bigStrong/bigRatio/bigChg/bigEnd/bigNotice,
- *         ssState/ssRatio, flowScore, flowLabel, semi]}
+ *         ssState/ssRatio, flowScore, directScore,
+ *         lockState/lockStrong/lockKind/lockRatio/lockEnd/lockNotice/lockTypes/lockNames,
+ *         annState/annDir/annKind/annNotice/annFresh/annN/annNames/annDetail,
+ *         flowLabel, semi]}
  */
 class NationalFlowNode(
     private val sourceNode: String = "n_holdings_top5",
@@ -109,6 +127,10 @@ class NationalFlowNode(
     private val requireBig: Boolean = false,
     private val minScore: Double = 50.0,
     private val excludeOut: Boolean = false,
+    private val requireLock: Boolean = false,
+    private val requireAnn: Boolean = false,
+    private val annInWindow: Boolean = true,
+    private val minDirect: Double = 0.0,
     private val maxRows: Int = 200
 ) : BaseNode<Any, JSONObject>("national_flow", "国家队/大基金持有进出", NodeType.FACTOR_COMPUTE) {
 
@@ -129,6 +151,8 @@ class NationalFlowNode(
         }
 
         val cnt = HashMap<String, Int>()
+        val lkc = HashMap<String, Int>()
+        val anc = HashMap<String, Int>()
         val rows = ArrayList<JSONObject>()
         for (i in 0 until srcRows.length()) {
             val r = srcRows.optJSONObject(i) ?: continue
@@ -137,6 +161,12 @@ class NationalFlowNode(
             val s = if (c6.length == 6) snap.optJSONObject(c6) else null
             val natState = s?.optString("natState").orEmpty().ifBlank { "无" }
             cnt[natState] = (cnt[natState] ?: 0) + 1
+            val lockState = s?.optString("lockState").orEmpty().ifBlank { "无" }
+            lkc[lockState] = (lkc[lockState] ?: 0) + 1
+            val annSt0 = s?.optString("annState").orEmpty().ifBlank { "无" }
+            val annFresh = s?.optBoolean("annFresh") ?: false
+            val annKey = if (annSt0 != "无" && !annFresh) "历史" else annSt0
+            anc[annKey] = (anc[annKey] ?: 0) + 1
             row.put("natState", natState)
             row.put("natStrong", s?.optBoolean("natStrong") ?: false)
             row.put("natRatio", s?.opt("natRatio") ?: JSONObject.NULL)
@@ -152,7 +182,29 @@ class NationalFlowNode(
             row.put("bigNotice", s?.optString("bigNotice").orEmpty())
             row.put("ssState", s?.optString("ssState").orEmpty().ifBlank { "无" })
             row.put("ssRatio", s?.opt("ssRatio") ?: JSONObject.NULL)
+            // ① 锁定通道（十大股东可见 / 流通榜不可见 = 限售，如大基金定增锁定中）
+            row.put("lockState", lockState)
+            row.put("lockStrong", s?.optBoolean("lockStrong") ?: false)
+            row.put("lockKind", s?.optString("lockKind").orEmpty())
+            row.put("lockRatio", s?.opt("lockRatio") ?: JSONObject.NULL)
+            row.put("lockEnd", s?.optString("lockEnd").orEmpty())
+            row.put("lockNotice", s?.optString("lockNotice").orEmpty())
+            row.put("lockTypes", s?.optJSONArray("lockTypes") ?: JSONArray())
+            row.put("lockNames", s?.optJSONArray("lockNames") ?: JSONArray())
+            // ② 公告通道（股东增减持 / 定增获配，T+1）
+            row.put("annState", annSt0)
+            row.put("annDir", s?.optString("annDir").orEmpty())
+            row.put("annKind", s?.optString("annKind").orEmpty())
+            row.put("annRatio", s?.opt("annRatio") ?: JSONObject.NULL)
+            row.put("annNotice", s?.optString("annNotice").orEmpty())
+            row.put("annEnd", s?.optString("annEnd").orEmpty())
+            row.put("annSrc", s?.optString("annSrc").orEmpty())
+            row.put("annFresh", annFresh)
+            row.put("annN", s?.optInt("annN", 0) ?: 0)
+            row.put("annNames", s?.optJSONArray("annNames") ?: JSONArray())
+            row.put("annDetail", s?.optJSONArray("annDetail") ?: JSONArray())
             row.put("flowScore", s?.optDouble("flowScore", 50.0) ?: 50.0)
+            row.put("directScore", s?.optDouble("directScore", 50.0) ?: 50.0)
             row.put("flowLabel", s?.optString("flowLabel").orEmpty().ifBlank { "无披露" })
             row.put("semi", s?.optBoolean("semi") ?: false)
             rows.add(row)
@@ -162,6 +214,10 @@ class NationalFlowNode(
             (!requireNat || r.optString("natState") == "流入") &&
                 (!requireBig || r.optString("bigState") == "流入") &&
                 (!excludeOut || (r.optString("natState") != "流出" && r.optString("natState") != "退出")) &&
+                (!requireLock || r.optString("lockState") == "流入") &&
+                (!requireAnn || (r.optString("annState") == "流入" &&
+                    (!annInWindow || r.optBoolean("annFresh")))) &&
+                (minDirect <= 0.0 || r.optDouble("directScore", 50.0) >= minDirect) &&
                 r.optDouble("flowScore", 50.0) >= minScore
         }
 
@@ -182,12 +238,23 @@ class NationalFlowNode(
                     .put("退出", cnt["退出"] ?: 0).put("持稳", cnt["持稳"] ?: 0)
                     .put("无", cnt["无"] ?: 0)
             )
+            .put(
+                "counts_lock", JSONObject()
+                    .put("流入", lkc["流入"] ?: 0).put("流出", lkc["流出"] ?: 0)
+                    .put("退出", lkc["退出"] ?: 0).put("无", lkc["无"] ?: 0)
+            )
+            .put(
+                "counts_ann", JSONObject()
+                    .put("流入", anc["流入"] ?: 0).put("流出", anc["流出"] ?: 0)
+                    .put("历史", anc["历史"] ?: 0).put("无", anc["无"] ?: 0)
+            )
             .put("rows", outArr)
         context.setStageOutput(nodeId, out)
         context.log(
             nodeId, "🏛️ 国家队/大基金(${out.optString("judge_day")}): ${outArr.length()} 只 → " +
                 "流入 ${cnt["流入"] ?: 0} / 流出 ${cnt["流出"] ?: 0} / " +
-                "退出 ${cnt["退出"] ?: 0} / 持稳 ${cnt["持稳"] ?: 0}"
+                "退出 ${cnt["退出"] ?: 0} / 持稳 ${cnt["持稳"] ?: 0} ｜ " +
+                "锁定流入 ${lkc["流入"] ?: 0} ｜ 公告流入 ${anc["流入"] ?: 0}"
         )
         return out
     }

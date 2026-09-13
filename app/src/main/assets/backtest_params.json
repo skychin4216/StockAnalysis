@@ -112,12 +112,12 @@
     },
     "短线": {
       "useMA60": true,
-      "nearHighDrawdownPct": 1.0,
+      "nearHighDrawdownPct": 0.5,
       "volumeRatio": 2.0,
-      "minPassCount": 6,
+      "minPassCount": 5,
       "requireChangePct": true,
       "guard_chg": 4.0,
-      "guard_vr": 1.5
+      "guard_vr": 2.5
     }
   },
   "seasonality": {

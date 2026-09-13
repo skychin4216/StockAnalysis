@@ -94,3 +94,13 @@ __pycache__/
 *.pyc
 smalltools/data/_index_market.html
 smalltools/_records/cloud/
+
+# 审计 / 复盘 / 回放产物（可随时由 smalltools 重跑生成，不入库）
+smalltools/data/review_tables/
+smalltools/data/round_tables/
+smalltools/_records/replay/
+data/_index_market_replay_*.png
+/_s*.png
+
+# 抓取原始缓存（_inst_holdings.py reuse 用，可重抓）
+data/_inst_raw.json.gz

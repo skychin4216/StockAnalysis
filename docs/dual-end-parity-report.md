@@ -112,3 +112,41 @@ SELFCHECK code=0 bypass=106 new=0 fixed=22 silent=99 error=0 asof=2026-09-11
   FIXED: {common,short,mid,long,ultra_short,direction,stock_deep_analysis}::n_sector_strength
   FIXED: {common,short,mid,long,ultra_short,direction,stock_deep_analysis}::n_style_rotation
 ```
+
+---
+
+## 5. 2026-09-13 结论：P2「做T / 实仓」链路的定性
+
+P1（选股主线 6 个 module：`seasonality_boost` / `leader_track` / `sector_stock_pool` /
+`cross_day_aggregation` / `rotation_penalty` / `defensive_dividend`）已全部同构移植，
+`未实现 module` 归零。
+
+原 P2 列表的 8 个 module 经逐行复核，**全部是 Android 运行时节点**：
+
+| module | 缺什么（APK 侧数据源） |
+|---|---|
+| `t_holdings_load` | Room `realPositionDao` + `strategyTradeOrderDao` + `dailySnapshotDao` |
+| `t_inst_intent` | 上者产物（真实持仓） + 日内快照 |
+| `t_signal_synthesize` | 上者 + 实时行情 + 分时 + K线形态 |
+| `t_recommend_save` | Room `t_trade_recommendations` 表 + 微信推送 |
+| `t_trade_eval` | Room `realPositionDao` + `TTradeEngine` 实时快照 |
+| `sector_leader_analysis` | `SectorSignalStore`（盘中每 10 分钟刷新，进程内内存表） |
+| `t1_auto_sell` | `strategyTradeOrderDao` + 实时价格 |
+| `t_trade_import` | 无（纯逻辑：交易日判定） |
+
+实测证据（PC 侧手机镜像 `smalltools/_records/cloud/phone_20260911_005705/data.json`）：
+`real_positions = 0`、`strategy_trade_orders = 0`、`t_trade_records = 0`、
+`t_trade_recommendations = 0` —— PC 端**没有任何持仓/成交/做T数据源**，
+再完整的移植也只是空跑，属于「代码缺失 vs 数据源缺失」里的后者。
+
+处理方式：
+- `t_trade_import`（唯一的纯逻辑节点）已在 `usecase_pipeline.py` 真实现；
+- 其余 7 个按仓库既有约定进入 `_passthrough` 的**声明式降级**，并在 `_PASSTHROUGH_WHY`
+  里写清每个 module 缺的是哪张表 / 哪个运行时数据源 —— 审计报告从此显示
+  「降级为透传（数据源缺失）」而不是「未实现 module（代码缺失）」。
+
+本轮实测输出：
+```
+SELFCHECK code=0 bypass=82 new=0 fixed=46 silent=99 error=0 asof=2026-09-11
+bypass_reasons: {'降级为透传': 82}     # 「未实现 module」= 0
+```

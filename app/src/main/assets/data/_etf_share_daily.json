@@ -1,0 +1,1339 @@
+{
+  "note": "日频 ETF 份额序列（--snap 累积当日 + --backfill 回补沪市历史）",
+  "snap": [
+    {
+      "date": "2026-08-17",
+      "src": "sse",
+      "covered": [
+        "510050",
+        "510300",
+        "510310",
+        "510330",
+        "510500",
+        "512100",
+        "512500",
+        "588000"
+      ],
+      "total_shares": 110504711500.0,
+      "total_scale": null,
+      "funds": {
+        "510300": {
+          "shares": 23044087700.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510310": {
+          "shares": 11311844000.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510330": {
+          "shares": 8537649800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510050": {
+          "shares": 6919866800.000001,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510500": {
+          "shares": 5141768600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512500": {
+          "shares": 1837608800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512100": {
+          "shares": 6681217600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "588000": {
+          "shares": 47030668200.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        }
+      }
+    },
+    {
+      "date": "2026-08-18",
+      "src": "sse",
+      "covered": [
+        "510050",
+        "510300",
+        "510310",
+        "510330",
+        "510500",
+        "512100",
+        "512500",
+        "588000"
+      ],
+      "total_shares": 109153011500.0,
+      "total_scale": null,
+      "funds": {
+        "510300": {
+          "shares": 22693987700.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510310": {
+          "shares": 11228144000.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510330": {
+          "shares": 8380149800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510050": {
+          "shares": 6703866800.000001,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510500": {
+          "shares": 4948568600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512500": {
+          "shares": 1782408800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512100": {
+          "shares": 6277217600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "588000": {
+          "shares": 47138668200.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        }
+      }
+    },
+    {
+      "date": "2026-08-19",
+      "src": "sse",
+      "covered": [
+        "510050",
+        "510300",
+        "510310",
+        "510330",
+        "510500",
+        "512100",
+        "512500",
+        "588000"
+      ],
+      "total_shares": 114713411500.0,
+      "total_scale": null,
+      "funds": {
+        "510300": {
+          "shares": 23858587700.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510310": {
+          "shares": 11433344000.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510330": {
+          "shares": 8501649800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510050": {
+          "shares": 6940566800.000001,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510500": {
+          "shares": 5164568600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512500": {
+          "shares": 1868808800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512100": {
+          "shares": 7341217600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "588000": {
+          "shares": 49604668200.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        }
+      }
+    },
+    {
+      "date": "2026-08-20",
+      "src": "sse",
+      "covered": [
+        "510050",
+        "510300",
+        "510310",
+        "510330",
+        "510500",
+        "512100",
+        "512500",
+        "588000"
+      ],
+      "total_shares": 114621611500.0,
+      "total_scale": null,
+      "funds": {
+        "510300": {
+          "shares": 23743387700.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510310": {
+          "shares": 11522444000.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510330": {
+          "shares": 8501649800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510050": {
+          "shares": 7292466800.000001,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510500": {
+          "shares": 5069768600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512500": {
+          "shares": 1836008800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512100": {
+          "shares": 6787217600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "588000": {
+          "shares": 49868668200.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        }
+      }
+    },
+    {
+      "date": "2026-08-21",
+      "src": "sse",
+      "covered": [
+        "510050",
+        "510300",
+        "510310",
+        "510330",
+        "510500",
+        "512100",
+        "512500",
+        "588000"
+      ],
+      "total_shares": 113856211500.0,
+      "total_scale": null,
+      "funds": {
+        "510300": {
+          "shares": 23481487700.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510310": {
+          "shares": 11458544000.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510330": {
+          "shares": 8378349800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510050": {
+          "shares": 7325766800.000001,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510500": {
+          "shares": 5050968600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512500": {
+          "shares": 1823208800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512100": {
+          "shares": 6571217600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "588000": {
+          "shares": 49766668200.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        }
+      }
+    },
+    {
+      "date": "2026-08-24",
+      "src": "sse",
+      "covered": [
+        "510050",
+        "510300",
+        "510310",
+        "510330",
+        "510500",
+        "512100",
+        "512500",
+        "588000"
+      ],
+      "total_shares": 115460711500.0,
+      "total_scale": null,
+      "funds": {
+        "510300": {
+          "shares": 23809087700.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510310": {
+          "shares": 11505344000.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510330": {
+          "shares": 8416149800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510050": {
+          "shares": 7521066800.000001,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510500": {
+          "shares": 4926568600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512500": {
+          "shares": 1809608800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512100": {
+          "shares": 6437217600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "588000": {
+          "shares": 51035668200.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        }
+      }
+    },
+    {
+      "date": "2026-08-25",
+      "src": "sse",
+      "covered": [
+        "510050",
+        "510300",
+        "510310",
+        "510330",
+        "510500",
+        "512100",
+        "512500",
+        "588000"
+      ],
+      "total_shares": 117356811500.0,
+      "total_scale": null,
+      "funds": {
+        "510300": {
+          "shares": 24052987700.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510310": {
+          "shares": 11563844000.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510330": {
+          "shares": 8437749800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510050": {
+          "shares": 7633566800.000001,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510500": {
+          "shares": 5176168600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512500": {
+          "shares": 1837608800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512100": {
+          "shares": 6881217600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "588000": {
+          "shares": 51773668200.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        }
+      }
+    },
+    {
+      "date": "2026-08-26",
+      "src": "sse",
+      "covered": [
+        "510050",
+        "510300",
+        "510310",
+        "510330",
+        "510500",
+        "512100",
+        "512500",
+        "588000"
+      ],
+      "total_shares": 115761411500.0,
+      "total_scale": null,
+      "funds": {
+        "510300": {
+          "shares": 23853187700.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510310": {
+          "shares": 11572844000.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510330": {
+          "shares": 8428749800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510050": {
+          "shares": 7246566800.000001,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510500": {
+          "shares": 5173368600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512500": {
+          "shares": 1860808800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512100": {
+          "shares": 6623217600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "588000": {
+          "shares": 51002668200.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        }
+      }
+    },
+    {
+      "date": "2026-08-27",
+      "src": "sse",
+      "covered": [
+        "510050",
+        "510300",
+        "510310",
+        "510330",
+        "510500",
+        "512100",
+        "512500",
+        "588000"
+      ],
+      "total_shares": 114472211500.0,
+      "total_scale": null,
+      "funds": {
+        "510300": {
+          "shares": 23578687700.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510310": {
+          "shares": 11465744000.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510330": {
+          "shares": 8399949800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510050": {
+          "shares": 6909966800.000001,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510500": {
+          "shares": 5406968600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512500": {
+          "shares": 1872008800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512100": {
+          "shares": 6793217600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "588000": {
+          "shares": 50045668200.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        }
+      }
+    },
+    {
+      "date": "2026-08-28",
+      "src": "sse",
+      "covered": [
+        "510050",
+        "510300",
+        "510310",
+        "510330",
+        "510500",
+        "512100",
+        "512500",
+        "588000"
+      ],
+      "total_shares": 114143311500.0,
+      "total_scale": null,
+      "funds": {
+        "510300": {
+          "shares": 23295187700.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510310": {
+          "shares": 11430644000.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510330": {
+          "shares": 8392749800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510050": {
+          "shares": 6826266800.000001,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510500": {
+          "shares": 5334168600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512500": {
+          "shares": 1850408800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512100": {
+          "shares": 6677217600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "588000": {
+          "shares": 50336668200.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        }
+      }
+    },
+    {
+      "date": "2026-08-31",
+      "src": "sse",
+      "covered": [
+        "510050",
+        "510300",
+        "510310",
+        "510330",
+        "510500",
+        "512100",
+        "512500",
+        "588000"
+      ],
+      "total_shares": 114510411500.0,
+      "total_scale": null,
+      "funds": {
+        "510300": {
+          "shares": 23503987700.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510310": {
+          "shares": 11469344000.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510330": {
+          "shares": 8407149800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510050": {
+          "shares": 6793866800.000001,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510500": {
+          "shares": 5402568600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512500": {
+          "shares": 1845608800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512100": {
+          "shares": 6547217600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "588000": {
+          "shares": 50540668200.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        }
+      }
+    },
+    {
+      "date": "2026-09-01",
+      "src": "sse",
+      "covered": [
+        "510050",
+        "510300",
+        "510310",
+        "510330",
+        "510500",
+        "512100",
+        "512500",
+        "588000"
+      ],
+      "total_shares": 113584611500.0,
+      "total_scale": null,
+      "funds": {
+        "510300": {
+          "shares": 22999987700.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510310": {
+          "shares": 11294744000.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510330": {
+          "shares": 8375649800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510050": {
+          "shares": 6533766800.000001,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510500": {
+          "shares": 5189368600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512500": {
+          "shares": 1807208800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512100": {
+          "shares": 6237217600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "588000": {
+          "shares": 51146668200.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        }
+      }
+    },
+    {
+      "date": "2026-09-02",
+      "src": "sse",
+      "covered": [
+        "510050",
+        "510300",
+        "510310",
+        "510330",
+        "510500",
+        "512100",
+        "512500",
+        "588000"
+      ],
+      "total_shares": 113364911500.0,
+      "total_scale": null,
+      "funds": {
+        "510300": {
+          "shares": 22956787700.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510310": {
+          "shares": 11290244000.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510330": {
+          "shares": 8352249800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510050": {
+          "shares": 6472566800.000001,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510500": {
+          "shares": 5063368600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512500": {
+          "shares": 1744808800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512100": {
+          "shares": 6065217600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "588000": {
+          "shares": 51419668200.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        }
+      }
+    },
+    {
+      "date": "2026-09-03",
+      "src": "sse",
+      "covered": [
+        "510050",
+        "510300",
+        "510310",
+        "510330",
+        "510500",
+        "512100",
+        "512500",
+        "588000"
+      ],
+      "total_shares": 114493011500.0,
+      "total_scale": null,
+      "funds": {
+        "510300": {
+          "shares": 23120587700.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510310": {
+          "shares": 11296544000.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510330": {
+          "shares": 8355849800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510050": {
+          "shares": 6560766800.000001,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510500": {
+          "shares": 5059368600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512500": {
+          "shares": 1732008800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512100": {
+          "shares": 6111217600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "588000": {
+          "shares": 52256668200.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        }
+      }
+    },
+    {
+      "date": "2026-09-04",
+      "src": "sse",
+      "covered": [
+        "510050",
+        "510300",
+        "510310",
+        "510330",
+        "510500",
+        "512100",
+        "512500",
+        "588000"
+      ],
+      "total_shares": 117548611500.0,
+      "total_scale": null,
+      "funds": {
+        "510300": {
+          "shares": 23377087700.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510310": {
+          "shares": 11353244000.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510330": {
+          "shares": 8384649800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510050": {
+          "shares": 6810966800.000001,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510500": {
+          "shares": 5219368600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512500": {
+          "shares": 1750408800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512100": {
+          "shares": 6557217600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "588000": {
+          "shares": 54095668200.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        }
+      }
+    },
+    {
+      "date": "2026-09-07",
+      "src": "sse",
+      "covered": [
+        "510050",
+        "510300",
+        "510310",
+        "510330",
+        "510500",
+        "512100",
+        "512500",
+        "588000"
+      ],
+      "total_shares": 118002611500.0,
+      "total_scale": null,
+      "funds": {
+        "510300": {
+          "shares": 23648887700.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510310": {
+          "shares": 11464844000.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510330": {
+          "shares": 8435949800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510050": {
+          "shares": 7018866800.000001,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510500": {
+          "shares": 5531368600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512500": {
+          "shares": 1792808800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512100": {
+          "shares": 6575217600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "588000": {
+          "shares": 53534668200.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        }
+      }
+    },
+    {
+      "date": "2026-09-08",
+      "src": "sse",
+      "covered": [
+        "510050",
+        "510300",
+        "510310",
+        "510330",
+        "510500",
+        "512100",
+        "512500",
+        "588000"
+      ],
+      "total_shares": 117690911500.0,
+      "total_scale": null,
+      "funds": {
+        "510300": {
+          "shares": 23468887700.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510310": {
+          "shares": 11396444000.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510330": {
+          "shares": 8390049800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510050": {
+          "shares": 6847866800.000001,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510500": {
+          "shares": 5500968600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512500": {
+          "shares": 1788808800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512100": {
+          "shares": 6439217600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "588000": {
+          "shares": 53858668200.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        }
+      }
+    },
+    {
+      "date": "2026-09-09",
+      "src": "sse",
+      "covered": [
+        "510050",
+        "510300",
+        "510310",
+        "510330",
+        "510500",
+        "512100",
+        "512500",
+        "588000"
+      ],
+      "total_shares": 117468211500.0,
+      "total_scale": null,
+      "funds": {
+        "510300": {
+          "shares": 23185387700.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510310": {
+          "shares": 11384744000.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510330": {
+          "shares": 8372049800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510050": {
+          "shares": 6846966800.000001,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510500": {
+          "shares": 5380168600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512500": {
+          "shares": 1788008800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512100": {
+          "shares": 6265217600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "588000": {
+          "shares": 54245668200.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        }
+      }
+    },
+    {
+      "date": "2026-09-10",
+      "src": "sse",
+      "covered": [
+        "510050",
+        "510300",
+        "510310",
+        "510330",
+        "510500",
+        "512100",
+        "512500",
+        "588000"
+      ],
+      "total_shares": 117896411500.0,
+      "total_scale": null,
+      "funds": {
+        "510300": {
+          "shares": 23190787700.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510310": {
+          "shares": 11377544000.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510330": {
+          "shares": 8362149800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510050": {
+          "shares": 6718266800.000001,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "510500": {
+          "shares": 5442968600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512500": {
+          "shares": 1800808800.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "512100": {
+          "shares": 6245217600.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        },
+        "588000": {
+          "shares": 54758668200.0,
+          "scale": null,
+          "nav": null,
+          "src": "sse"
+        }
+      }
+    },
+    {
+      "date": "2026-09-11",
+      "src": "sse",
+      "covered": [
+        "159915",
+        "159919",
+        "510050",
+        "510300",
+        "510310",
+        "510330",
+        "510500",
+        "512100",
+        "512500",
+        "588000"
+      ],
+      "total_shares": 145005083180.0,
+      "total_scale": 469668341654.304,
+      "funds": {
+        "510300": {
+          "shares": 23398687700.0,
+          "scale": 106165890626.304,
+          "nav": 4.579,
+          "src": "sse"
+        },
+        "510310": {
+          "shares": 11347844000.0,
+          "scale": 50595937883.392,
+          "nav": 4.447,
+          "src": "sse"
+        },
+        "510330": {
+          "shares": 8340549800.0,
+          "scale": 40256352560.128,
+          "nav": 4.772,
+          "src": "sse"
+        },
+        "159919": {
+          "shares": 6287616768.0,
+          "scale": 29879959654.4,
+          "nav": 4.783,
+          "src": "f84"
+        },
+        "510050": {
+          "shares": 7031466800.000001,
+          "scale": 20410807983.104,
+          "nav": 2.981,
+          "src": "sse"
+        },
+        "510500": {
+          "shares": 5232168600.0,
+          "scale": 40948464006.144,
+          "nav": 7.611,
+          "src": "sse"
+        },
+        "512500": {
+          "shares": 1758408800.0,
+          "scale": 7707285031.200001,
+          "nav": 4.299,
+          "src": "sse"
+        },
+        "512100": {
+          "shares": 6087217600.0,
+          "scale": 19817706039.295998,
+          "nav": 3.014,
+          "src": "sse"
+        },
+        "588000": {
+          "shares": 56072668200.0,
+          "scale": 88908650009.344,
+          "nav": 1.6389999999999998,
+          "src": "sse"
+        },
+        "159915": {
+          "shares": 19448454912.0,
+          "scale": 64977287860.992004,
+          "nav": 3.341,
+          "src": "f84"
+        }
+      }
+    }
+  ]
+}

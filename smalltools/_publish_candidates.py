@@ -1134,6 +1134,23 @@ def _round_legacy(data, ctx, cfg, old_secids=None):
     except (OSError, ValueError):
         dag = None
     if dag and (dag.get("result") or {}):
+        # ── 2026-09-13 强化：归档降级管线 + 老化告警 ──
+        # 事故复盘：09-12 12:05 的 dag_screen_latest.json（n_direction/n_base_guard
+        # 未实现透传）被当 9.11 盘后推送；consumers 此前对归档是否"残缺/过期"无感。
+        _miss = dag.get("bypass_missing") or []
+        if dag.get("degraded") and _miss:
+            lines.append("⚠️ 降级管线: 本次 DAG 缺 %d 个未实现节点(%s)，结果可能与设计不符，谨慎采纳" %
+                         (len(_miss), "、".join(_miss[:6]) + ("…" if len(_miss) > 6 else "")))
+        _built = dag.get("built_at")
+        if _built:
+            try:
+                _age = (datetime.datetime.now() - datetime.datetime.strptime(
+                    _built, "%Y-%m-%d %H:%M:%S")).total_seconds()
+                if _age > 7200:
+                    lines.append("⚠️ 归档老化: built_at=%s cache_last=%s（>2h 未重跑）" %
+                                 (_built, dag.get("cache_last", "")))
+            except Exception:
+                pass
         dag_lines = []
         dag_all = set()
         for period, items in (dag.get("result") or {}).items():
@@ -1303,14 +1320,25 @@ def _find_item_by_secid(data, secid):
 #   机构股取值 = A·机构加仓 / B·机构参与 / C·散户票 / —（无季报数据），
 #   来源 data/_inst_holdings.json（smalltools/_inst_holdings.py 每周 --update-pool 刷新，
 #   usecase inst_holding）；口径见《机构持续加仓自动选股池.txt》与 _inst_holdings 模块。
-# 列口径 = [股票名称, 代码] + 15 格 cells
+# 2026-09-13 五次定稿（用户要求）：再增 1 列「国家队」→ **18 列**（与 APK/exe 的
+#   national_flow 节点同一份资产 data/_national_flow_hist.json，推送侧只读不算）。
+#   国家队取值 = ▲国 06-30（国家队流入+披露日）/ ▼基 03-31（大基金流出）/ 退社 12-31（社保退出）
+#   / =国·基·社（有披露但持稳）/ —（无披露记录）；最多并列 2 条，均带季报披露日。
+#   用户诉求原话：「要能看到是否有国家队/大基金/机构买入或者卖出，以及买入卖出的时间点」。
+# 2026-09-13 同日 v2（用户追问「它们会不会**直接买某只股票**，而不是只买 ETF？」）：
+#   该列扩为**三类直接持股证据合流**（详见 _nat_cell 上方区块）：
+#   告▲基 04-24（公告级：增减持/定增获配，T+1，最新最及时）/ 锁基 06-30（锁定持股=十大股东
+#   可见而流通榜不可见的限售部分）/ ▲国 06-30（季报十大流通股东，原口径）/ 史▼基 25-09
+#   （超 365 天窗口的公告历史，仅给时间点、不计分）。对应资产侧新增 blk/ann 两条通道。
+# 列口径 = [股票名称, 代码] + 16 格 cells
 #          （距60日高/今日/所属ETF 3 + 趋势图谱/星后形态 2 + _tech_cells 7
-#            + 趋势图 1 + 机构股 1 + 备注 1）。
+#            + 趋势图 1 + 机构股 1 + 国家队 1 + 备注 1）。
 _TABLE_HEAD = ["股票名称", "代码", "距60日高", "今日", "所属ETF",
                "趋势图谱", "星后形态", "RSI", "SAR", "MACD", "OBV",
-               "均线粘合", "换手", "量比", "趋势图", "机构股", "备注"]
-_N_CELLS = len(_TABLE_HEAD) - 2          # 15：距60日高 … 备注
+               "均线粘合", "换手", "量比", "趋势图", "机构股", "国家队", "备注"]
+_N_CELLS = len(_TABLE_HEAD) - 2          # 16：距60日高 … 备注
 _I_INST = _TABLE_HEAD.index("机构股") - 2     # cells 下标 13（趋势图 12 之后）
+_I_NAT = _TABLE_HEAD.index("国家队") - 2       # cells 下标 14（机构股 13 之后）
 
 # ── v11b 趋势图谱列（2026-09-08）：识别「连跌x天→十字星→星后大/小阴阳」K线形态 ──
 # 口径与 dip_crossstar_stat.py（十字星分歧四形态·18年市场库）完全一致：
@@ -1602,7 +1630,125 @@ def _code6(code):
 def _inst_cell(code):
     """「机构股」单元格：A·机构加仓 / B·机构参与 / C·散户票 / —（无季报数据）。"""
     v = _inst_map().get(_code6(code))
-    return v[1] if v else "—"
+    txt = v[1] if v else "—"
+    if txt[:2] == "C·" and _nat_map().get(_code6(code)):
+        return txt + "｜国持"
+    return txt
+
+
+# ── 「国家队」列（2026-09-13 新增；同日 v2 扩为「直接持股证据链」）────────────────
+# 用户要求：推送里要能直接看到「国家队 / 大基金 / 社保」是买还是卖、以及**时间点**
+#          —— 并且要回答「它们会不会**直接买某只股票**（而不是只买 ETF）」。
+# 答：会。ETF 只是汇金 2015 后的主通道；社保（委托组合）、大基金（定增/战投）、
+#     证金（2015 救市资管计划）基本都是**直接持股个股**。因此本列合流三类证据，
+#     数据源 = data/_national_flow_hist.json 的 snap 字段（_national_flow.build_snapshot
+#     预计算，与 APK/exe 的 national_flow 节点同一份资产、同一口径，推送侧只读不算）。
+#
+#   ① 告▲基 04-24  公告级：股东增减持 / 定增获配公告（**T+1**，比季报快 1-3 个月）
+#   ② 锁基 06-30    锁定持股：十大股东榜可见、十大流通榜**不可见**＝限售/非流通
+#                   （大基金定增锁定 18 个月、战投、发起人股）——原口径的硬缺口
+#   ③ ▲国 06-30     季报十大流通股东进出（原口径，②③为季报披露日）
+#   ④ 史▼基 25-09   公告历史（超 365 天窗口，只给**时间点**、不计分）
+#   「—」= 三类通道均无记录。
+#   符号：▲流入 ▼流出 退=退出 =持稳；前缀 告=公告级 锁=锁定持股 史=历史公告。
+_NAT_MAP = {"key": None, "snap": {}}
+_NAT_SYM = {"流入": "▲", "流出": "▼", "退出": "退", "持稳": "="}
+_ANN_SYM = {"增持": "▲", "减持": "▼"}
+_NAT_KIND = {"nat": "国", "big": "基", "ss": "社", "nb": "北", "": ""}
+_NAT_LAB = (("nat", "国"), ("big", "基"), ("ss", "社"))
+_NAT_ASSET = os.path.join(ROOT, "data", "_national_flow_hist.json")
+
+
+def _nat_map():
+    """国家队快照 {code: {...}}（按资产 mtime 缓存）；缺失时返回 {}，不阻塞推送。
+
+    资产由 smalltools/_national_flow.py 维护（与 APK/exe 的 national_flow 节点同一份）。
+    """
+    try:
+        key = os.path.getmtime(_NAT_ASSET)
+    except OSError:
+        return {}
+    if _NAT_MAP["key"] == key:
+        return _NAT_MAP["snap"]
+    snap = {}
+    try:
+        with open(_NAT_ASSET, encoding="utf-8") as f:
+            snap = (json.load(f) or {}).get("snap") or {}
+    except Exception as e:  # noqa: BLE001
+        ops_note("nat_map_fail", "%s: %s" % (type(e).__name__, e))
+        snap = {}
+    _NAT_MAP.update({"key": key, "snap": snap})
+    return snap
+
+
+def _nat_day(d):
+    """披露/公告日 → 单元格里的短日期（MM-DD）。"""
+    d = str(d or "")[:10]
+    return (" " + d[5:]) if len(d) >= 7 else ""
+
+
+def _nat_cell(code):
+    """「国家队」单元格 = 直接持股证据链（时效性优先，最多 4 段，每段都带时间点）。
+
+    ① 告▲基 04-24（公告级，T+1，参与计分）  ② 锁基 06-30（锁定/限售持股）
+    ③ ▲国 06-30（季报十大流通股东）          ④ 史▼基 25-09（超窗口公告，仅时间点）
+    详见上方 _NAT_* 区块注释；「—」= 三类通道均无记录。
+    """
+    v = _nat_map().get(_code6(code))
+    if not v:
+        return "—"
+    fresh, quarter = [], []
+    # ① 公告级（最新、最及时；只有窗口内才计分，由 annFresh 标记）
+    ast = v.get("annState")
+    if ast in ("流入", "流出"):
+        fresh.append("告%s%s%s" % (_NAT_SYM.get(ast, ""),
+                                 _NAT_KIND.get(v.get("annKind") or "", ""),
+                                 _nat_day(v.get("annNotice"))))
+    # ② 锁定持股（十大股东可见 / 十大流通榜不可见 = 限售、定增锁定中）
+    lst = v.get("lockState")
+    if lst in ("流入", "流出"):
+        fresh.append("锁%s%s" % (_NAT_KIND.get(v.get("lockKind") or "", ""),
+                               _nat_day(v.get("lockNotice"))))
+    # ③ 季报十大流通股东（原口径）
+    for k, short in _NAT_LAB:
+        st = v.get(k + "State")
+        if st not in ("流入", "流出", "退出"):
+            continue
+        quarter.append("%s%s%s" % (_NAT_SYM.get(st, ""), short,
+                                 _nat_day(v.get(k + "Notice") or v.get(k + "End"))))
+    parts = fresh[:2] + quarter[:2]
+    # ④ 公告历史（超出 365 天窗口）：给出「最后一次直接买卖」的时间点，明确标注为「史」
+    if not fresh and v.get("annNotice"):
+        parts.append("史%s%s%s" % (_ANN_SYM.get(v.get("annDir") or "", "·"),
+                                 _NAT_KIND.get(v.get("annKind") or "", ""),
+                                 _nat_day(v.get("annNotice"))))
+    return " ".join(parts[:4]) if parts else "—"
+
+
+def _national_etf_lines(max_lines=4):
+    """🏛 国家队（汇金）ETF 份额摘要 —— 直接读 _etf_share_signal.json 的 judge 段。
+
+    2026-09-13 新增（用户要求：ETF 页要能看到国家队在买还是在卖 + 时间点 + 判断）。
+    资产由 smalltools/_etf_share_flow.py 维护：
+      份额(gmbd 季度) + 日频快照(push2 f84) + 持有人结构(cyrjg) + 年报 §9.2 前十名持有人(点名汇金)。
+    缺失时返回 []，不影响推送。
+    """
+    try:
+        with open(os.path.join(ROOT, "data", "_etf_share_signal.json"), encoding="utf-8") as f:
+            sig = json.load(f) or {}
+    except Exception:  # noqa: BLE001
+        return []
+    j = sig.get("judge") or {}
+    if not j:
+        return []
+    mark = {"买入/承接": "🟢买入/承接", "卖出/派发": "🔴卖出/派发"}.get(
+        j.get("verdict") or "", "⚪" + (j.get("verdict") or "?"))
+    out = ["🏛 国家队ETF份额（汇金动向）",
+           "  判断：%s（置信 %s）｜口径：份额↓+价格↑=高位派发（在卖）；份额↑+价格↓=低位承接（在买）"
+           % (mark, j.get("level") or "?")]
+    for ln in (j.get("lines") or [])[:max_lines]:
+        out.append("  · " + ln)
+    return out
 
 
 _INST_POOL_OUT = os.path.join(ROOT, "data", "_inst_pool.json")
@@ -1661,17 +1807,19 @@ def _write_inst_pool(secs, asof=""):
 
 
 def _unified_cells(snaps, tech="", etf_tag="", note="", tech_cells=None,
-                   p60=None, day=None, note_cap=26, inst=None):
-    """公共 15 单元格（五段选股 / 实仓镜像共用同一口径）。
+                   p60=None, day=None, note_cap=26, inst=None, nat=None):
+    """公共 16 单元格（五段选股 / 实仓镜像共用同一口径）。
 
     距60日高 / 今日 / 所属ETF / 趋势图谱 / 星后形态 / RSI / SAR / MACD / OBV /
-    均线粘合 / 换手 / 量比 / 趋势图 / 机构股 / 备注。
+    均线粘合 / 换手 / 量比 / 趋势图 / 机构股 / 国家队 / 备注。
 
     - tech_cells：外部已算好的 7 格技术列（如 _etf_holdings._pk_tech_cells），优先；
     - p60 / day：外部已持有的原始数值（ETF 段来自持仓覆盖 + 实时行情），优先于 snaps 重算；
     - 趋势图谱 / 星后形态：十字星口径（_trend_cells），未匹配 → 空（渲染为 —）；
     - 趋势图：经典K线形态 + 方向（_trend_chart_cell，_trend_match_3way 口径）；
     - inst：「机构股」格（None 时不查表，直接给「—」；传 "" 同—）；
+    - nat：「国家队」格（2026-09-13 新增，见 _nat_cell）——**直接持股证据链**：
+      公告级(告▲基 04-24)/锁定持股(锁基 06-30)/季报十大流通股东(▲国 06-30)/公告历史(史▼基 25-09)；
     - note 里的换行会被压平（CSV 单元格内不能带换行、长图也不画多行），并截断到 note_cap 字；
       实仓段把「建议 / 盈亏%」并入备注格，故传更大的 note_cap 以保信息完整。
     """
@@ -1687,13 +1835,14 @@ def _unified_cells(snaps, tech="", etf_tag="", note="", tech_cells=None,
     note_s = str(note or "").replace("\r", " ").replace("\n", " ").strip()[:note_cap]
     graph, after = _trend_cells(snaps)
     return ([p60_s, day_s, str(etf_tag or ""), graph, after] + mid
-            + [_trend_chart_cell(snaps), inst if inst else "—", note_s])
+            + [_trend_chart_cell(snaps), inst if inst else "—",
+               nat if nat else "—", note_s])
 
 
 def _table_lines(rows):
-    """rows: [{name, code, cells(15)}] → 对齐文本表行(含表头/分隔线)。空列以 — 占位。
-    15 = 距60日高/今日/所属ETF 3 + 趋势图谱/星后形态 2
-         + 技术 7(RSI/SAR/MACD/OBV/粘合/换手/量比) + 趋势图 1 + 机构股 1 + 备注 1。"""
+    """rows: [{name, code, cells(16)}] → 对齐文本表行(含表头/分隔线)。空列以 — 占位。
+    16 = 距60日高/今日/所属ETF 3 + 趋势图谱/星后形态 2
+        + 技术 7(RSI/SAR/MACD/OBV/粘合/换手/量比) + 趋势图 1 + 机构股 1 + 国家队 1 + 备注 1。"""
     if not rows:
         return []
     body = []
@@ -1985,7 +2134,8 @@ def _pos_img_sections(data, cache):
             note += " " + str(p["note"]).strip()
         cells = _unified_cells(snaps, tech=p.get("tech") or "", note=note,
                                etf_tag=tagmap.get((p.get("code") or "")[-6:], ""),
-                               note_cap=48, inst=_inst_cell(p.get("code")))
+                               note_cap=48, inst=_inst_cell(p.get("code")),
+                               nat=_nat_cell(p.get("code")))
         rows.append([p.get("name") or "", p.get("code") or ""] + cells)
     secs = [{"title": "💼 实仓镜像·逐笔建议（与候选同一套 17 列，建议/盈亏在备注格）",
              "header": _TABLE_HEAD, "body": rows, "target": "p3",
@@ -2170,7 +2320,8 @@ def _etf_table_rows():
         tc[3] = it.get("obv") or tc[3]
         dd = it.get("dd60")
         note = "回撤60 " + (("%.1f%%" % dd) if isinstance(dd, (int, float)) else "—")
-        cells = _unified_cells(snaps, tech_cells=tc, note=note, inst=_inst_cell(code))
+        cells = _unified_cells(snaps, tech_cells=tc, note=note, inst=_inst_cell(code),
+                               nat=_nat_cell(code))
         # 趋势图谱：日K现算未命中（趋势图谱/星后形态均空）时，改用引擎发布的跌后K形态；
         # 趋势图若因日K不足落到 — 而引擎给了方向，则用「方向+标签」回填（信息不丢）。
         if not cells[3] and (it.get("kline") or ""):
@@ -2377,7 +2528,8 @@ def _build_candidate_sections(data, ctx, cache, dag, old_secids, asof):
                 "name": mark + nm, "code": code or raw,
                 "cells": _unified_cells(snaps, tech=extra, note=note,
                                         etf_tag=dag_tags.get((code or raw)[-6:], ""),
-                                        inst=_inst_cell(code or raw))})
+                                        inst=_inst_cell(code or raw),
+                                        nat=_nat_cell(code or raw))})
     dag_real = len(dag_rows)
     if not dag_rows:
         dag_rows = [{"name": "·今日无命中", "code": "—",
@@ -2430,7 +2582,7 @@ def _build_candidate_sections(data, ctx, cache, dag, old_secids, asof):
                 "code": sid[2:] or "",
                 "cells": _unified_cells(snaps, tech=it.get("tech") or "", note=note,
                                         etf_tag=st_tags.get(sid[-6:], ""),
-                                        inst=_inst_cell(sid))})
+                                        inst=_inst_cell(sid), nat=_nat_cell(sid))})
     st_real = len(st_rows)
     if not st_rows:
         st_rows = [{"name": "·今日无命中", "code": "—",
@@ -2456,7 +2608,7 @@ def _build_candidate_sections(data, ctx, cache, dag, old_secids, asof):
             # ③ ETF 全行业扫描（SAR 绿转红）—— 统一 17 列（2026-09-12）
             fu_rows = []
             for gname, pk in _eh.fresh_up_picks(
-                    etf_flow=etf_flow, dag_codes=dag_codes, max_rows=3):
+                    etf_flow=etf_flow, dag_codes=dag_codes, max_rows=10):
                 code6 = str(pk.get("code") or "")
                 snaps = _eh._snaps_live(code6)      # 与 _meta_live 同一次拉取（当日缓存）
                 note = "绿转红√" + ((" " + str(pk.get("tag"))) if pk.get("tag") else "")
@@ -2467,7 +2619,7 @@ def _build_candidate_sections(data, ctx, cache, dag, old_secids, asof):
                         snaps, etf_tag=gname, note=note,
                         tech_cells=_eh._pk_tech_cells(pk),
                         p60=pk.get("pos60"), day=pk.get("pct"),
-                        inst=_inst_cell(code6))})
+                        inst=_inst_cell(code6), nat=_nat_cell(code6))})
             fu_real = len(fu_rows)
             if not fu_rows:
                 fu_rows = [{"name": "·今日无命中", "code": "—", "cells": [""] * _N_CELLS}]
@@ -2489,7 +2641,7 @@ def _build_candidate_sections(data, ctx, cache, dag, old_secids, asof):
             lb_rows = []
             if themes:
                 for gname, pk in _eh.low_buy_picks(
-                        themes, etf_flow, dag_codes=dag_codes, max_rows=3):
+                        themes, etf_flow, dag_codes=dag_codes, max_rows=10):
                     code6 = str(pk.get("code") or "")
                     snaps = _eh._snaps_live(code6)
                     lb_rows.append({
@@ -2499,7 +2651,7 @@ def _build_candidate_sections(data, ctx, cache, dag, old_secids, asof):
                             snaps, etf_tag=gname, note=str(pk.get("note") or ""),
                             tech_cells=_eh._pk_tech_cells(pk),
                             p60=pk.get("pos60"), day=pk.get("pct"),
-                            inst=_inst_cell(code6))})
+                            inst=_inst_cell(code6), nat=_nat_cell(code6))})
             lb_real = len(lb_rows)
             if not lb_rows:
                 lb_rows = [{"name": "·今日无命中", "code": "—", "cells": [""] * _N_CELLS}]
@@ -2596,11 +2748,15 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
     #  页1 段(⭐DAG/📋SmallTool/🎯ETF当日) + 页2 段(🌐全行业扫描/🎯ETF top5) + 页3 段(实仓)
     #  一律先「填充到一份 CSV」，再由该 CSV 渲染成一张长图（图 = CSV 内容，逐行一致）；
     #  整轮只发「正文 + 长图 + 原始 CSV」。此处仅收集，待 p2/p3 段收集完再统一渲染。
-    img_note = ("统一口径：五段选股 + 实仓镜像 + APK/exe 技术假设同为 17 列（距60日高/今日/"
-                "所属ETF/趋势图谱/星后形态/RSI/SAR/MACD/OBV/均线粘合/换手/量比/趋势图/机构股/备注）"
+    img_note = ("统一口径：五段选股 + 实仓镜像 + APK/exe 技术假设同为 18 列（距60日高/今日/"
+                "所属ETF/趋势图谱/星后形态/RSI/SAR/MACD/OBV/均线粘合/换手/量比/趋势图/机构股/国家队/备注）"
                 " · 趋势图谱=连跌x天"
                 "→十字星 · 星后形态=星后第y天 大/小阴阳 · 趋势图=经典K线形态+方向"
                 "（如 ↑上涨·早晨之星）· 机构股=A机构加仓/B机构参与/C散户票（季报滞后，非实时信号）"
+                " · 国家队（直接持股证据链，三类合流）：告▲基 04-24=股东增减持/定增获配公告"
+                "(T+1，最快) · 锁基 06-30=锁定持股(十大股东可见而流通榜不可见=限售，"
+                "如大基金定增锁定18个月) · ▲国 06-30=季报十大流通股东流入(退=退出，披露日)"
+                " · 史▼基 25-09=超365天窗口的公告历史(仅给时间点，不计分)"
                 " ｜ 标记：封板·=当日涨停不可追 · 新·=本轮新晋 · 流出·=资金流出"
                 " · 实仓段「建议/盈亏%」在备注格 · 距60日高负值=低于60日高点")
     # ③ 双端共同命中
@@ -2660,6 +2816,12 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
             p2.append("🎯 ETF持仓前五·低吸精选")
             p2.extend(lowbuy_offline)
             p2_extra = True
+    # ⑦ 🏛 国家队（汇金）ETF 份额动向（2026-09-13 新增；离线回放与实时都带）
+    nat_etf = _national_etf_lines()
+    if nat_etf:
+        p2.append("")
+        p2.extend(nat_etf)
+        p2_extra = True
     # ── 页面3：实仓与做T（2026-09-11 Item4 用户确认：并入合并图，与候选同口径）──
     #  有实仓且本轮出图时：逐笔建议 + 组合纪律作为 p3 段进同一张 PNG，正文只留标题占位；
     #  不出图（text-only / 无实仓）时沿用指纹「有变化才展开」的纯文本逻辑。
@@ -2993,7 +3155,7 @@ def rhythm_mark_round(session, now=None):
 #   13:00~14:30  下午 10 轮（每 10 分钟）；14:30 后不再盘中选股，避免尾盘诱导
 #   15:00        尾盘最后一次 K 线拉取（仅下载，不再选股）
 #   15:10        收盘总结：当日选股汇总 + 持仓回顾 + 纪律 + 鼓励（无做T/买卖点指令）
-#   15:12        ETF低位 usecase 当日发布（XML 单一源）+ 推送行情到手机（每日一次）
+#   15:12        ETF低位 usecase 当日发布（XML 单一源）+ 推送行情到手机 + 宽基ETF份额快照 + 拐点预警（每日一次）
 # 盘中轮推送策略：候选构成/实仓建议有变化才推且完整推（含与上轮重复入选的标的），
 # 无变化不推送（仍上传 COS）。守护/选股过程错误写入 _daemon_ops.jsonl。
 OPS_LOG = os.path.join(HERE, "_daemon_ops.jsonl")
@@ -3407,6 +3569,7 @@ def run_etf_publish(log=print):
     （APK 与 Python 引擎共用），刷新 ETF 行情(腾讯 qfq) → 发布 data/_etf_live_picks.json
     → 尝试 adb 推送 etf_cache.json 到手机（无设备在线则跳过，不阻塞）。
     失败仅留痕，不影响守护流程。
+    2026-09-13：顺带跑一次宽基 ETF 份额快照（见 _etf_share_snap），用于日频跟踪国家队。
     """
     log("[15:12 ETF] 刷新行情(--all) + etf_dip usecase 发布 + 推送手机…")
     try:
@@ -3426,12 +3589,94 @@ def run_etf_publish(log=print):
         proc.wait()
         if proc.returncode == 0:
             log("…ETF usecase 发布完成（工作台 ETF 页可看当日名单）")
+            _etf_share_snap(log)
             return True
         ops_note("etf_publish_fail", "退出码=%d %s" % (proc.returncode, " | ".join(lines[-3:])))
     except Exception as e:  # noqa: BLE001
         log("ETF usecase 发布异常：%s" % e)
         ops_note("etf_publish_error", repr(e))
     return False
+
+
+def _etf_share_snap(log=print):
+    """15:12 顺带追加一次宽基 ETF 份额快照 —— 自建「日频」国家队（汇金/证金）观测序列。
+
+    ★ 免费源（天天基金 gmbd）只给**季度**份额，没有日频历史份额，
+      所以日频序列只能从今天起靠每个交易日追加累积（data/_etf_share_daily.json）。
+      时点选 15:12：收盘后当日份额已定。非阻塞：失败只留痕，不影响守护流程。
+    2026-09-13 追加：份额「由升转降 / 由降转升」拐点（或机构主导赎回）出现时，
+      再单独推一条微信（见 _etf_share_alert）—— 这是唯一能**当日**看到国家队进出的通道
+      （个股股东名册要等季报，滞后 1~3 个月）。
+    """
+    log("[15:12 ETF] 宽基 ETF 份额快照（国家队日频观测）…")
+    proc = None
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, os.path.join(HERE, "_etf_share_flow.py"), "--snap", "--sync-apk"],
+            cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace")
+        out, _ = proc.communicate(timeout=240)
+        for ln in (out or "").strip().splitlines()[-4:]:
+            log("  " + ln.rstrip())
+        if proc.returncode == 0:
+            log("…份额快照已追加（data/_etf_share_daily.json）")
+            _etf_share_alert(log)
+            return True
+        ops_note("etf_share_snap_fail", "退出码=%d" % proc.returncode)
+    except Exception as e:  # noqa: BLE001
+        log("ETF 份额快照异常：%s" % e)
+        ops_note("etf_share_snap_error", repr(e))
+        if proc is not None:
+            try:
+                proc.kill()
+            except Exception:  # noqa: BLE001
+                pass
+    return False
+
+
+_ETFSIG_SENT = os.path.join(ROOT, "data", "_etf_share_alert.json")
+
+
+def _etf_share_alert(log=print):
+    """读 _etf_share_signal.json：出现份额拐点 / 机构主导赎回 → 单独推一条微信。
+
+    ★ 幂等：以 data/_etf_share_alert.json 记账「已推送的日期」，同一交易日只推一次
+      （守护可能重启，故不能只用内存标记）。
+    """
+    try:
+        with open(os.path.join(ROOT, "data", "_etf_share_signal.json"), encoding="utf-8") as f:
+            sig = json.load(f) or {}
+    except Exception as e:  # noqa: BLE001
+        log("  份额拐点信号读取失败：%s" % e)
+        return False
+    if not sig.get("push"):
+        log("  份额拐点：无（%s）" % ("；".join(sig.get("why") or []) or "未见拐点"))
+        return False
+    day = str(sig.get("as_of") or "")[:10]
+    sent_day = ""
+    try:
+        with open(_ETFSIG_SENT, encoding="utf-8") as f:
+            sent_day = (json.load(f) or {}).get("day") or ""
+    except (OSError, ValueError):
+        sent_day = ""
+    if sent_day == day:
+        log("  份额拐点：%s 当日已推送过，跳过" % day)
+        return False
+    body = "\n".join(_national_etf_lines(max_lines=4))
+    why = sig.get("why") or []
+    if why:
+        body += "\n\n触发：" + "；".join(why)
+    try:
+        ok = _push_wechat("🏛 国家队ETF份额拐点 %s" % day, body, load_notify_cfg())
+        if ok:
+            with open(_ETFSIG_SENT, "w", encoding="utf-8") as f:
+                json.dump({"day": day, "why": why}, f, ensure_ascii=False, indent=1)
+        log("  份额拐点推送%s：%s" % ("成功" if ok else "失败", "；".join(why) or "-"))
+        return ok
+    except Exception as e:  # noqa: BLE001
+        log("  份额拐点推送异常：%s" % e)
+        ops_note("etf_share_alert_error", repr(e))
+        return False
 
 
 def _acc_round_picks(log=print):

@@ -13,13 +13,13 @@
   参数全部在 pipeline XML（etf_holdings_top5_pipeline.xml）。
 -->
 <usecase id="etf_holdings_top5" name="ETF持股Top5">
-  <description>ETF前五重仓覆盖矩阵 → 覆盖度排行(行业ETF优先) → 观察清单 → 多理论投票止损</description>
+  <description>ETF前五重仓覆盖矩阵 → 覆盖度排行top10(行业ETF优先) → 观察清单 → 多理论投票止损</description>
   <steps>
     <pipeline ref="usecases/etf_holdings_top5_pipeline.xml" name="etf_holdings_top5_dag" />
   </steps>
   <config>
     <param name="orderType" value="EtfHoldingsTop5" />
-    <param name="maxHoldings" value="15" />
+    <param name="maxHoldings" value="10" />
     <param name="holdingPeriod" value="etf" />
   </config>
 </usecase>

@@ -238,11 +238,30 @@ def _inputs(ctx, node):
           "intraday_analysis", "zipline_factor", "multi_period_hot",
           "heat_score", "market_sector_leaders", "real_holding_eval",
           "holding_diagnostic", "holding_prediction", "stock_deep_analysis",
-          "sector_relative_pe")
+          "sector_relative_pe",
+          # ── t_trade / real_holding 链路（2026-09-13）：均为「Android 运行时」节点 ──
+          #    入参全部来自 Room 持仓库(strategyTradeOrderDao/tTradeRecordDao/
+          #    realPositionDao) + 实时行情 + 分时 + 墙上时钟时段，PC 回测均无此数据源，
+          #    故按既有约定声明式透传（原因见 _PASSTHROUGH_WHY）。
+          "t_trade_eval", "sector_leader_analysis", "t1_auto_sell",
+          "t_holdings_load", "t_inst_intent", "t_signal_synthesize", "t_recommend_save")
 def _passthrough(ctx, node, inputs):
     """回测中无对应数据的 node：透传，记录降级。"""
-    ctx.notes.append("[%s] %s 无回测数据，已降级为透传" % (node.id, node.module))
+    why = _PASSTHROUGH_WHY.get(node.module, "无回测数据")
+    ctx.notes.append("[%s] %s %s，已降级为透传" % (node.id, node.module, why))
     return None
+
+
+# 声明式透传的原因表（让审计报告自解释：是「代码缺失」还是「数据源缺失」）
+_PASSTHROUGH_WHY = {
+    "t_holdings_load": "需 Android Room 持仓库（realPositionDao + strategyTradeOrderDao），PC 无持仓库",
+    "t_inst_intent": "需真实持仓（Android Room strategyTradeOrderDao）+ 日内快照，PC 无持仓库",
+    "t_signal_synthesize": "需真实持仓 + 实时行情 + 分时 + K线形态（Android），PC 无持仓库",
+    "t_recommend_save": "需写入 Android Room t_trade_recommendations 表并推送微信，PC 无此表",
+    "t_trade_eval": "需真实持仓（Android Room realPositionDao）+ TTradeEngine 实时快照",
+    "sector_leader_analysis": "需 SectorSignalStore（Android 盘中每 10 分钟刷新的板块龙头状态）",
+    "t1_auto_sell": "需超短线持仓库(strategyTradeOrderDao) + 实时价格，PC 无持仓库",
+}
 
 
 @register("data_import")
@@ -340,6 +359,19 @@ def _candidate_pool(ctx, node, inputs):
                          cn, ctx.cache, ctx.all_dates, ctx.date_to_idx, ctx.asof)
         if r is not None and r is not False:
             cands.append(cid)
+    # 板块精选池并入（对齐 APK CandidatePoolNode 合并 sectorStockCodes 口径）
+    sec_codes = ctx.get("sector_stock_codes") or []
+    added = []
+    for cid in sec_codes:
+        if cid in cands or cid not in ctx.cache:
+            continue
+        r = extra_filter(cid, ctx.cache[cid].get("name", ""), {},
+                         cn, ctx.cache, ctx.all_dates, ctx.date_to_idx, ctx.asof)
+        if r is not None and r is not False:
+            cands.append(cid)
+            added.append(cid)
+    if added:
+        ctx.notes.append("[%s] 🧺 板块精选池并入候选 %d 只" % (node.id, len(added)))
     ctx.candidates = cands
     return cands
 
@@ -446,7 +478,11 @@ def _signal_merge(ctx, node, inputs):
     s_vr = float(cfg.get("strongVolRatio", 1.5))
     s_score = float(cfg.get("strongScore", 70.0))
     strong = set()
-    pool = ctx.candidates or ctx.stock_pool or []
+    # 防守高息候选并入（对齐 APK DefensiveDividend → signal_merge 口径）
+    pool = list(ctx.candidates or ctx.stock_pool or [])
+    for cid in (ctx.get("defensive_codes") or []):
+        if cid in ctx.cache and cid not in pool:
+            pool.append(cid)
     scored = []
     for cid in pool:
         snaps = [dict(s) for s in ctx.cache.get(cid, {}).get("snaps", [])
@@ -1097,6 +1133,539 @@ def _direction_label(ctx, node, inputs):
     return out
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# v6 三节点（季节日历 / 龙头跟踪）+ 板块精选池 + 跨日聚合 + 轮动惩罚 + 防守高息
+# 2026-09-13 新增：APK PeriodV23Nodes.kt / QuantTradingPipeline.kt /
+# HardcodeCompatNodes.kt / DefensiveDividendNode.kt 同构移植，补齐
+# smalltools/_nodes_exec_report.py 的 P1「未实现 module」清单：
+#   seasonality_boost / leader_track / sector_stock_pool /
+#   cross_day_aggregation / rotation_penalty / defensive_dividend
+# ──────────────────────────────────────────────────────────────────────────
+
+# ── ① 行业季节/周期日历（与 APK IndustrySeasonalityCalendar.ENTRIES 逐条一致）──
+# (主题, 名称关键词, monthFrom, monthTo, weight, anchor, anchorUp)
+_SEASON_ENTRIES = (
+    ("春耕备耕", ("化肥", "农药", "种业", "种子", "农机", "尿素", "钾肥", "磷肥"), 2, 4, 1.2, None, True),
+    ("年报预增季", ("预增",), 1, 4, 0.8, None, True),
+    ("汛期防汛", ("水利", "防汛", "管网", "水泵"), 5, 7, 0.9, None, True),
+    ("夏季用电高峰", ("电力", "电网", "特高压", "智能电网", "变压器", "电线电缆", "光伏", "储能"), 6, 8, 1.1, None, True),
+    ("光伏装机旺季", ("光伏", "太阳能", "多晶硅", "逆变器"), 6, 11, 0.9, None, True),
+    ("中报预增季", ("预增",), 7, 8, 0.8, None, True),
+    ("金九银十", ("消费电子", "汽车电子", "家电", "PCB", "铜缆"), 9, 10, 1.0, None, True),
+    ("年底备货", ("半导体", "算力", "存储", "光模块", "光通信", "服务器", "PCB"), 11, 12, 1.0, None, True),
+    ("春季拉货", ("半导体", "面板", "PCB"), 2, 3, 0.9, None, True),
+    ("供暖季", ("燃气", "煤炭", "供热", "电力"), 11, 1, 0.9, None, True),
+    ("锂价上涨", ("锂", "盐湖"), 1, 12, 1.0, "锂价", True),
+    ("锂价下跌(电池受益)", ("电池", "正极", "负极", "电解液"), 1, 12, 0.8, "锂价", False),
+    ("油价上涨", ("石油", "油气", "油服", "石化"), 1, 12, 1.0, "油价", True),
+    ("油价下跌(化工受益)", ("化工", "化纤", "塑料", "PTA"), 1, 12, 0.8, "油价", False),
+    ("铜价上涨", ("铜", "电缆"), 1, 12, 1.0, "铜价", True),
+    ("金价上涨", ("黄金", "贵金属"), 1, 12, 0.9, "金价", True),
+)
+
+
+def _season_month(ctx):
+    """当前月（1..12）：优先 asof 交易日，缺省用系统月（对齐 APK tradeDate 取值）。"""
+    d = str(getattr(ctx, "asof", "") or "")
+    if len(d) >= 7:
+        try:
+            return int(d[5:7])
+        except ValueError:
+            pass
+    import datetime as _dt
+    return _dt.date.today().month
+
+
+def _season_anchors():
+    """backtest_params.seasonality → (enabled, anchors)。缺文件按(True, {})兜底。"""
+    try:
+        p = os.path.normpath(os.path.join(_HERE, os.pardir, "backtest_params.json"))
+        with open(p, encoding="utf-8") as f:
+            s = (json.load(f) or {}).get("seasonality") or {}
+        return bool(s.get("enabled", True)), dict(s.get("anchors") or {})
+    except Exception:
+        return True, {}
+
+
+def _season_active_themes(month, anchors):
+    """当期生效主题 [(theme, keywords, weight)]（含锚定方向确认，支持跨年窗口）。"""
+    out = []
+    for theme, kws, mf, mt, w, anchor, up in _SEASON_ENTRIES:
+        in_win = (mf <= month <= mt) if mf <= mt else (month >= mf or month <= mt)
+        if not in_win:
+            continue
+        if anchor is not None and anchors.get(anchor) != ("up" if up else "down"):
+            continue
+        out.append((theme, kws, w))
+    return out
+
+
+@register("seasonality_boost")
+def _seasonality_boost(ctx, node, inputs):
+    """行业季节日历加分（APK SeasonalityBoostNode 同构移植）。
+
+    命中当期主题 → strength += bonus，bonus = int(命中权重和 × 10 × multiplier)
+    并 clamp [1,30]；重排后 stage 到本节点 id，生效主题写入 `seasonality_themes`。
+    上游 n_direction；config：multiplier（默认 1.0）。
+    """
+    pool = (ctx.get("n_direction") or ctx.get("n_inst_tips") or ctx.get("n_idiom")
+            or ctx.get("n_ancestral") or ctx.get("n_boost") or ctx.get("n_merge") or [])
+    if not pool:
+        ctx.stage(node.id, pool)
+        return pool
+    enabled, anchors = _season_anchors()
+    if not enabled:
+        ctx.notes.append("[%s] 📅 seasonality.enabled=false，跳过" % node.id)
+        ctx.stage(node.id, pool)
+        return pool
+    month = _season_month(ctx)
+    active = _season_active_themes(month, anchors)
+    if not active:
+        ctx.notes.append("[%s] 📅 %d月无生效季节主题（锚定:%s）" % (node.id, month, anchors or {}))
+        ctx.stage(node.id, pool)
+        return pool
+    multiplier = float((node.config or {}).get("multiplier") or 1.0)
+    cache = ctx.cache or {}
+    out, hit_n = [], 0
+    for cid, sc in pool:
+        name = (cache.get(cid) or {}).get("name") or ""
+        matched = [w for _t, kws, w in active if any(k in name for k in kws)]
+        if not matched:
+            out.append((cid, sc))
+            continue
+        hit_n += 1
+        bonus = int(max(1, min(30, sum(matched) * 10 * multiplier)))
+        out.append((cid, max(0.0, min(100.0, float(sc) + bonus))))
+    out.sort(key=lambda x: -x[1])
+    ctx.stage(node.id, out)
+    ctx.stage("seasonality_themes", [t for t, _k, _w in active])
+    ctx.notes.append("[%s] 📅 %d月生效 %d 个主题，%d 只命中（%s）"
+                     % (node.id, month, len(active), hit_n,
+                        " | ".join(t for t, _k, _w in active)))
+    return out
+
+
+# ── ② 龙头股跟踪（与 APK LeaderTracker 同分 / LeaderTrackNode 同序）──
+def _leader_mainline_configs():
+    """产业主线板块 → 龙头 secid 列表（PC 侧 data/_industry_leader_map.json）。
+
+    对齐 APK LeaderStockPool.getMainlineConfigs（cfg.name + subSectors[].stocks）。
+    """
+    out, path = [], os.path.join(_REPO_ROOT, "data", "_industry_leader_map.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+        for sec in (d.get("sectors") or []):
+            tname = sec.get("track") or sec.get("board") or ""
+            codes = [l.get("secid") for l in (sec.get("core_leaders") or []) if l.get("secid")]
+            if tname and codes:
+                out.append((tname, codes))
+    except Exception:
+        pass
+    return out
+
+
+def _leader_dir_bonus(direction):
+    """方向加成：突破 4 / 上升 3 / 蓄势 2，其余 0（APK LeaderTracker.directionBonus）。"""
+    return {"BREAKOUT": 4.0, "UPTREND": 3.0, "ACCUMULATION": 2.0}.get(direction, 0.0)
+
+
+@register("leader_track")
+def _leader_track(ctx, node, inputs):
+    """龙头股跟踪（APK LeaderTrackNode + LeaderTracker 同构移植）。
+
+    同产业主线板块内按 leaderScore 取最高者为龙头 → strength += bonus（默认 8）；
+    板块龙头 / 状态写入 `leader_map` / `leader_status`。上游 n_season。
+    config：bonus（默认 8）、onlyMainline（PC 只有主线一份口径）。
+    """
+    pool = (ctx.get("n_season") or ctx.get("n_direction") or ctx.get("n_inst_tips")
+            or ctx.get("n_boost") or ctx.get("n_merge") or [])
+    if not pool:
+        ctx.stage(node.id, pool)
+        return pool
+    cfg = node.config or {}
+    bonus = int(cfg.get("bonus") or 8)
+    sector_of = {}
+    for tname, codes in _leader_mainline_configs():
+        for c in codes:
+            sector_of.setdefault(c, tname)
+    if not sector_of:
+        ctx.notes.append("[%s] 🐲 未找到产业主线板块映射（_industry_leader_map.json），跳过"
+                         % node.id)
+        ctx.stage(node.id, pool)
+        return pool
+    labels = ctx.get("direction_labels") or {}
+    cache = ctx.cache or {}
+    groups = {}
+    for cid, sc in pool:
+        sec = sector_of.get(cid)
+        if not sec:
+            continue
+        snaps = (cache.get(cid) or {}).get("snaps") or []
+        chg = float((snaps[-1].get("changePct") if snaps else 0.0) or 0.0)
+        # APK 入参固定 volumeRatio=1.0 / passCount=1 / drawdownPct=0.0
+        score = (float(sc) * 0.5 + chg * 0.8 + 1.0 * 0.5 + 1 * 1.5
+                 + _leader_dir_bonus(labels.get(cid)))
+        groups.setdefault(sec, []).append((score, cid))
+    leader_map = {sec: max(v)[1] for sec, v in groups.items()}
+    if not leader_map:
+        ctx.notes.append("[%s] 🐲 候选股未命中产业主线板块，跳过" % node.id)
+        ctx.stage(node.id, pool)
+        return pool
+    leader_codes = set(leader_map.values())
+    out, n = [], 0
+    for cid, sc in pool:
+        if cid in leader_codes:
+            n += 1
+            out.append((cid, max(0.0, min(100.0, float(sc) + bonus))))
+        else:
+            out.append((cid, sc))
+    out.sort(key=lambda x: -x[1])
+    ctx.stage(node.id, out)
+    ctx.stage("leader_map", leader_map)
+    names = {cid: (cache.get(cid) or {}).get("name", cid) for cid, _ in pool}
+    ctx.stage("leader_status", ";".join("%s:%s(%s)" % (s, c, names.get(c, c))
+                                        for s, c in leader_map.items()))
+    ctx.notes.append("[%s] 🐲 %d 个板块标龙头（%s），龙头加分 %d，共 %d 只"
+                     % (node.id, len(leader_map),
+                        " | ".join("%s→%s" % (s, names.get(c, c)) for s, c in leader_map.items()),
+                        bonus, n))
+    return out
+
+
+# ── ③ 板块精选池（APK SectorStockPoolNode + HotSectorStockPool 同构移植）──
+def _amb_is_main_board(code):
+    """主板判定（与 APK HotSectorStockPool.isMainBoard 一致）。"""
+    return not code.startswith(("sz300", "sz301", "sh688", "bj"))
+
+
+@register("sector_stock_pool")
+def _sector_stock_pool(ctx, node, inputs):
+    """板块精选池：热门板块 → 每(子)板块「前 5 主板 + 前 5 科创/创业」合并去重。
+
+    config：hotDims="today,weekly,rotation"（逗号分隔，可含 monthly/quarterly）
+    输出 stage `sector_stock_codes`，供 candidate_pool 合并；返回市场上下文透传。
+    跨端说明：APK 从 StrategyMarketContext 取各周期热门板块并用 SectorSubDivision
+    展开子板块；PC 以 n_sector_strength 折算 today（hotDays 序）/weekly（综合分序）/
+    monthly|quarterly（日均涨跌序），rotation 取 n_style_rotation.leadingSectors，
+    子板块直接用 hot_sector_config 已内置的 sub_sectors。
+    """
+    cfg = node.config or {}
+    dims = [d.strip() for d in str(cfg.get("hotDims") or "today").split(",") if d.strip()]
+    top = list((ctx.get("n_sector_strength") or {}).get("topSectors") or [])
+    names = []
+    if "today" in dims:
+        names += [s["name"] for s in top[:8]]
+    if "weekly" in dims:
+        names += [s["name"] for s in sorted(top, key=lambda x: -x.get("compositeScore", 0))[:8]]
+    if "monthly" in dims or "quarterly" in dims:
+        names += [s["name"] for s in sorted(top, key=lambda x: -x.get("avgChangePct", 0))[:8]]
+    if "rotation" in dims:
+        names += list((ctx.get("n_style_rotation") or {}).get("leadingSectors") or [])
+    if not names:
+        names = [s["name"] for s in top[:8]]
+    names = [n for n in dict.fromkeys(names) if n]
+    hs = _load_hot_sector_config() or {}
+    picked = []
+    for board in names:
+        subs = ((hs.get(board) or {}).get("sub_sectors") or {})
+        for _sub, sv in subs.items():
+            main_b, sci = [], []
+            for secid in ((sv or {}).get("leaders") or {}):
+                c = _amb_secid_to_key(secid)
+                (main_b if _amb_is_main_board(c) else sci).append(c)
+            picked += main_b[:5] + sci[:5]
+    codes = sorted(set(picked))
+    ctx.stage("sector_stock_codes", codes)
+    ctx.notes.append("[%s] 🧺 板块精选池：%d 只（维度 %s，覆盖板块 %s）"
+                     % (node.id, len(codes), ",".join(dims) or "today",
+                        "、".join(names[:8]) or "无"))
+    return ctx.get("n_ctx") or ctx.market or {}
+
+
+# ── ④ 跨日聚合（APK CrossDayAggregationNode 同构移植）──
+@register("cross_day_aggregation")
+def _cross_day_aggregation(ctx, node, inputs):
+    """跨日聚合：回溯最近 windowDays 个交易日逐日重跑策略，统计命中天数取 Top N。
+
+    config：windowDays（默认 5）、topN（默认 20）
+    输出 [(code, days), ...] stage 到本节点 id（中线需连续性验证，短线用不上）。
+    跨端说明：APK 由 `_strategies` 注入策略列表；PC 用同一套引擎
+    （BULLISH+短周期 → trend_follow_scan，否则 → 粘合引擎 analyze_snaps）。
+    """
+    cfg = node.config or {}
+    window = int(cfg.get("windowDays") or 5)
+    top_n = int(cfg.get("topN") or 20)
+    pool = list(ctx.candidates or ctx.stock_pool or ctx.get("n_multihot") or [])
+    if not pool:
+        ctx.notes.append("[%s] 🔁 股票池为空，跳过跨日聚合" % node.id)
+        ctx.stage(node.id, [])
+        return []
+    dates = [d for d in (ctx.all_dates or []) if d <= (ctx.asof or "")][-window:]
+    if len(dates) < 2:
+        ctx.notes.append("[%s] 🔁 可用交易日仅 %d 天，数据不足" % (node.id, len(dates)))
+        ctx.stage(node.id, [])
+        return []
+    period = ctx.adaptive.get("period", "short")
+    bg = _st("backtest_guangmo")
+    analyze_snaps, PARAMS = bg.analyze_snaps, bg.PARAMS
+    base = PARAMS.get(_PERIOD_PARAM_KEY.get(period, "短线"), PARAMS["短线"])
+    base = _xml_params(type("_n", (), {"config": ctx.node_configs.get("strict_selection") or {}}),
+                       base)
+    tf_scan = _st("_trend_proto").trend_follow_scan
+    cache = ctx.cache or {}
+    hits = {}
+    for d in dates:
+        for cid in pool:
+            snaps = [s for s in (cache.get(cid) or {}).get("snaps") or [] if s["date"] <= d]
+            if len(snaps) < 30:
+                continue
+            snaps = [dict(s) for s in snaps]
+            snaps[-1]["name"] = (cache.get(cid) or {}).get("name", "")
+            try:
+                if ctx.direction == "BULLISH" and period in ("ultra_short", "short"):
+                    res = tf_scan(snaps, ctx.direction,
+                                  "ultra_short" if period == "ultra_short" else "short")
+                    ok = bool(res[0]) if isinstance(res, tuple) else bool(res)
+                else:
+                    r = analyze_snaps(snaps, base, ctx.direction)
+                    ok = bool(r and r.get("passed"))
+            except Exception:
+                ok = False
+            if ok:
+                hits[cid] = hits.get(cid, 0) + 1
+    ranking = sorted(hits.items(), key=lambda kv: (-kv[1], kv[0]))[:top_n]
+    ctx.stage(node.id, ranking)
+    ctx.notes.append("[%s] 🔁 跨日聚合：回溯 %d 天 / %d 只股票，%d 只入围 Top%d%s"
+                     % (node.id, len(dates), len(pool), len(ranking), top_n,
+                        ("（" + ", ".join("%s %d天" % (c, n) for c, n in ranking[:3]) + "）")
+                        if ranking else ""))
+    return ranking
+
+
+# ── ⑤ 板块轮动惩罚（APK RotationPenaltyNode v2 同构移植）──
+_STOCK_SECTOR_MAP = None
+
+
+def _stock_sector_map():
+    """个股 → 板块名列表（反查 hot_sector_config，对齐 APK StockDataCenter.getSectorsByStock）。"""
+    global _STOCK_SECTOR_MAP
+    if _STOCK_SECTOR_MAP is None:
+        rev = {}
+        for board, codes in _sector_members(_load_hot_sector_config()).items():
+            for c in codes:
+                rev.setdefault(c, []).append(board)
+        _STOCK_SECTOR_MAP = rev
+    return _STOCK_SECTOR_MAP
+
+
+@register("rotation_penalty")
+def _rotation_penalty(ctx, node, inputs):
+    """板块轮动惩罚 v2：集中度(对数衰减) × 生命周期 × 跨日轮动因子。
+
+    config：thresholdDays（默认 3）、penaltyPerExcess（默认 10）
+    输出 {rotationPenalty, sectorPenalties, rotationSpeedFactor, overlap}，下游
+    smart_money_filter 据此对受罚板块个股降分（惩罚闭环）。
+    跨端说明：APK 的 sectorDailyRecord（板块连续热门天数 / 昨日 Top10 板块）PC 无此表，
+    hotDays 改由 n_sector_strength.hotDays 折算；昨日板块 PC 无历史 → overlap 取 0.5
+    默认中等轮动（rotationSpeedFactor=1.0），不引入额外惩罚偏差。
+    """
+    import math
+    cfg = node.config or {}
+    threshold = int(cfg.get("thresholdDays") or 3)
+    per_excess = int(cfg.get("penaltyPerExcess") or 10)
+    pool = ctx.get("n_boost") or ctx.get("n_merge") or []
+    if not pool:
+        res = {"rotationPenalty": 0, "sectorPenalties": {},
+               "rotationSpeedFactor": 1.0, "overlap": 0.5}
+        ctx.stage(node.id, res)
+        return res
+    rev = _stock_sector_map()
+    counts = {}
+    for cid, _sc in pool:
+        for s in rev.get(cid, ()):
+            counts[s] = counts.get(s, 0) + 1
+    hot_days = {s.get("name"): int(round(s.get("hotDays") or 0))
+                for s in ((ctx.get("n_sector_strength") or {}).get("topSectors") or [])}
+    today_top = {s for s, c in counts.items() if c >= 2}
+    y_sectors = set(ctx.get("yesterday_sectors") or ())
+    overlap = (len(today_top & y_sectors) / float(len(today_top))
+               if (today_top and y_sectors) else 0.5)
+    factor = 1.3 if overlap < 0.3 else (0.7 if overlap > 0.7 else 1.0)
+    penalty, sector_pen, labels = 0, {}, []
+    for s, c in counts.items():
+        if c < threshold:
+            continue
+        base_p = int(math.log2(c - threshold + 2.0) * per_excess)   # log2(excess+1)
+        hd = hot_days.get(s, 0)
+        lf = 0.5 if hd <= 2 else (1.0 if hd <= 4 else 1.5)
+        sp = int(base_p * lf)
+        penalty -= sp
+        sector_pen[s] = -sp
+        labels.append("%s(%d次/%s/-%d)"
+                      % (s, c, ("启动%d d" % hd) if hd <= 2 else
+                         (("高潮%d d" % hd) if hd <= 4 else ("退潮%d d" % hd)), sp))
+    final = max(-100, min(0, int(penalty * factor)))
+    scaled = {s: max(-100, min(0, int(p * factor))) for s, p in sector_pen.items()}
+    res = {"rotationPenalty": final, "sectorPenalties": scaled,
+           "rotationSpeedFactor": factor, "overlap": overlap}
+    ctx.stage(node.id, res)
+    if final < 0:
+        ctx.notes.append("[%s] ⚠️ 轮动惩罚v2 %d 分（轮动因子 %.1f，跨日重合度 %.0f%%）：%s"
+                         % (node.id, final, factor, overlap * 100, ", ".join(labels)))
+    else:
+        ctx.notes.append("[%s] ⚠️ 轮动惩罚v2：无惩罚（板块分散度正常）" % node.id)
+    return res
+
+
+# ── ⑥ 防守高息（APK DefensiveDividendNode 同构移植）──
+_DEFENSIVE_SECTORS = ("银行", "保险", "电力", "高速公路", "煤炭", "石油", "电信",
+                      "水务", "燃气", "铁路", "港口", "机场")
+_HIGH_DEBT_EXEMPT = ("银行", "保险")
+
+
+def _defensive_fundamentals(cid, cache):
+    """取基本面字段（APK daily_snapshot v12）：pb/pe/marketCap/roeTTM/debtToAsset。
+
+    PC 缓存当前只有价量 → 返回 None，节点按「降级口径」运行并在 notes 说明；
+    一旦缓存补齐这些字段即自动切到完整口径。
+    """
+    e = cache.get(cid) or {}
+    snaps = e.get("snaps") or []
+    if not snaps:
+        return None
+    s = snaps[-1]
+    if not any(k in s for k in ("pb", "pe", "marketCap", "roeTTM", "debtToAsset")):
+        return None
+    return {"pb": float(s.get("pb") or 0), "pe": float(s.get("pe") or 0),
+            "marketCap": float(s.get("marketCap") or 0),
+            "roe": float(s.get("roeTTM") or 0),
+            "debtToAsset": float(s.get("debtToAsset") or 0)}
+
+
+def _defensive_cap_proxy(cid):
+    """市值代理（亿 → 元）：用 _industry_leader_map 的 mv_yi；无则 0（视为未知）。"""
+    _ensure_leader_mv()
+    return (_LEADER_MV.get(cid) or 0.0) * 1e8
+
+
+_LEADER_MV = {}
+_LEADER_MV_READY = False
+
+
+def _ensure_leader_mv():
+    global _LEADER_MV, _LEADER_MV_READY
+    if _LEADER_MV_READY:
+        return
+    _LEADER_MV_READY = True
+    for sec in (_load_leader_map_raw().get("sectors") or []):
+        for l in (sec.get("core_leaders") or []):
+            if l.get("secid") and l.get("mv_yi"):
+                _LEADER_MV[l["secid"]] = float(l["mv_yi"])
+
+
+_LEADER_RAW = None
+
+
+def _load_leader_map_raw():
+    global _LEADER_RAW
+    if _LEADER_RAW is None:
+        try:
+            with open(os.path.join(_REPO_ROOT, "data", "_industry_leader_map.json"),
+                      encoding="utf-8") as f:
+                _LEADER_RAW = json.load(f) or {}
+        except Exception:
+            _LEADER_RAW = {}
+    return _LEADER_RAW
+
+
+@register("defensive_dividend")
+def _defensive_dividend(ctx, node, inputs):
+    """防守高息：仅在 BEARISH/OSCILLATION 启动，找防御板块的低估值稳定标的。
+
+    config：maxPb / minMarketCap / maxDebt / maxCandidates / maxPerSector。
+    输出候选代码列表并 stage `defensive_codes`（供 signal_merge 并入主流程）。
+    跨端差异（重要）：APK 从 daily_snapshot v12 读 PB/PE/市值/ROE/负债率做硬性过滤；
+    PC 缓存无基本面字段 → 本实现在缺字段时**跳过数值硬过滤**、改用
+    「防御板块(名称/板块双口径) + 近 20 日稳定性(≥-10%) + 市值代理」近似评分，
+    并在 ctx.notes 明确标注降级；缓存补齐基本面后自动走完整口径。
+    """
+    cfg = node.config or {}
+    max_pb = float(cfg.get("maxPb") or 1.5)
+    min_cap = float(cfg.get("minMarketCap") or 5e11)
+    max_debt = float(cfg.get("maxDebt") or 70)
+    max_cand = int(cfg.get("maxCandidates") or 5)
+    max_per_sec = int(cfg.get("maxPerSector") or 2)
+    if ctx.direction not in ("BEARISH", "OSCILLATION"):
+        ctx.notes.append("[%s] 🛡 大盘 %s，非防守模式，跳过" % (node.id, ctx.direction))
+        ctx.stage(node.id, [])
+        ctx.stage("defensive_codes", [])
+        return []
+    cache = ctx.cache or {}
+    rev = _stock_sector_map()
+    pool = ctx.stock_pool or [cid for cid in cache
+                              if not cid.startswith(("sh000", "sz399", "sh880", "bj"))]
+    degraded = 0
+    rows = []
+    for cid in pool:
+        name = (cache.get(cid) or {}).get("name") or ""
+        sectors = rev.get(cid, ())
+        kw = next((k for k in _DEFENSIVE_SECTORS
+                   if any(k in s for s in sectors) or k in name), None)
+        if kw is None:
+            continue
+        f = _defensive_fundamentals(cid, cache)
+        if f is not None:
+            if f["pb"] <= 0 or f["pb"] >= max_pb:
+                continue
+            if f["pe"] <= 0:
+                continue
+            if f["marketCap"] < min_cap:
+                continue
+            exempt = any(k in s for s in sectors for k in _HIGH_DEBT_EXEMPT)
+            if not exempt and f["debtToAsset"] > max_debt > 0:
+                continue
+        else:
+            degraded += 1
+        snaps = (cache.get(cid) or {}).get("snaps") or []
+        closes = [s.get("close") or 0.0 for s in snaps]
+        if len(closes) >= 10:
+            base = closes[-20] if len(closes) >= 20 else closes[0]
+            chg20 = ((closes[-1] / base - 1) * 100.0) if base else 0.0
+        else:
+            chg20 = 0.0
+        if chg20 < -10.0:
+            continue
+        if f is not None:
+            pb_score = (max_pb - f["pb"]) / max_pb * 30.0
+            roe_score = min(f["roe"], 20.0) / 20.0 * 20.0
+            cap = f["marketCap"] or _defensive_cap_proxy(cid)
+        else:
+            pb_score, roe_score = 15.0, 10.0        # 缺基本面 → 中性
+            cap = _defensive_cap_proxy(cid)
+        cap_score = min(cap / 2e12, 1.0) * 20.0 if cap else 10.0
+        stab_score = max(0.0, min(1.0, 1.0 - abs(chg20) / 10.0)) * 15.0
+        rows.append((cid, kw, chg20, pb_score + roe_score + cap_score + 15.0 + stab_score))
+    rows.sort(key=lambda r: -r[3])
+    picked, per_sec = [], {}
+    for cid, kw, _chg, _sc in rows:
+        if per_sec.get(kw, 0) >= max_per_sec:
+            continue
+        per_sec[kw] = per_sec.get(kw, 0) + 1
+        picked.append((cid, kw))
+        if len(picked) >= max_cand:
+            break
+    codes = [c for c, _k in picked]
+    ctx.stage(node.id, codes)
+    ctx.stage("defensive_codes", codes)
+    ctx.notes.append("[%s] 🛡 防守高息：%d 只候选（%s）%s"
+                     % (node.id, len(codes),
+                        ", ".join("%s(%s)" % ((cache.get(c) or {}).get("name", c), k)
+                                  for c, k in picked) or "无",
+                        "｜⚠️ 缺基本面字段，走降级口径(%d 只)" % degraded if degraded else ""))
+    return codes
+
+
 @register("ancestral_rules")
 def _ancestral_rules(ctx, node, inputs):
     """大A祖训：12 条规则对候选加减分（与 APK AncestralRulesNode 同口径）。
@@ -1325,10 +1894,34 @@ def _ancestral_adjust(snaps, hp):
 
 @register("smart_money_filter")
 def _smart_money_filter(ctx, node, inputs):
-    """主力资金过滤：无资金数据时取前 minScore 名排序。"""
+    """主力资金过滤：无资金数据时取前 minScore 名排序；并施加板块轮动惩罚(v6)。
+
+    惩罚闭环对齐 APK SmartMoneyFilter：读上游 n_rot_pen.sectorPenalties 对所属
+    受罚板块的个股降分；防守模式下（defensive_codes 非空）保留防守高息候选。
+    """
     scored = (ctx.get("n_event") or ctx.get("n_idiom") or ctx.get("n_ancestral")
               or ctx.get("n_boost") or [])
     scored = sorted(scored, key=lambda x: -x[1])[:50]
+    pen = (ctx.get("n_rot_pen") or {}).get("sectorPenalties") or {}
+    if pen:
+        rev = _stock_sector_map()
+        adj, n_pen = [], 0
+        for cid, sc in scored:
+            d = sum(pen[s] for s in rev.get(cid, ()) if s in pen)
+            if d:
+                n_pen += 1
+                adj.append((cid, max(0.0, min(100.0, float(sc) + max(-100, d)))))
+            else:
+                adj.append((cid, sc))
+        adj.sort(key=lambda x: -x[1])
+        scored = adj
+        ctx.notes.append("[%s] 🧊 轮动惩罚施加：%d 只降分" % (node.id, n_pen))
+    # 防守高息候选兜底保留（APK SmartMoneyFilter 防守模式放宽 minScore）
+    have = {c for c, _s in scored}
+    kept = [c for c in (ctx.get("defensive_codes") or []) if c not in have]
+    if kept:
+        scored = sorted(scored + [(c, 25.0) for c in kept], key=lambda x: -x[1])
+        ctx.notes.append("[%s] 🛡 防守高息保留 %d 只" % (node.id, len(kept)))
     ctx.stage("n_smart", scored)
     return scored
 
@@ -3601,10 +4194,12 @@ def _inst_holding_judge_node(ctx, node, inputs):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 国家队 / 大基金持有进出（national_flow，2026-09-13 新增）
+# 国家队 / 大基金持有进出（national_flow，2026-09-13 新增；同日 v2 扩直接持股通道）
 #   规则出处：E:\Android\work\dev\选股思路\national_flow_research.md
 #             E:\Android\work\dev\选股思路\institutional_breakout_guide.md（§8 FundFlowAnalyzer）
 #   数据资产：data/_national_flow_hist.json（smalltools/_national_flow.py --build）
+#   三条通道 —— ①free 十大流通股东（季报）②lock 十大股东锁定部分（限售=定增锁定，季报）
+#             ③ann 股东增减持+定增获配公告（T+1）
 #   ★ 判定算法单一事实源 = smalltools/_national_flow.py；资产内 snap 已含判定结果，
 #     Python 节点 / Kotlin 节点 / 推送表三处只读不算，避免口径漂移。
 # ══════════════════════════════════════════════════════════════════════════
@@ -3622,10 +4217,19 @@ def _national_flow_data():
 def _national_flow_node(ctx, node, inputs):
     """国家队（中央汇金/证金）+ 大基金（国家集成电路产业投资基金等）持有进出判定。
 
+    ★ 三条直接持股通道（2026-09-13 v2，回答「国家队/社保会不会**直接买某只股票**」）：
+      ① free 季报十大流通股东（HOLDER_NAME 分类 nat/big/ss）；
+      ② lock 锁定通道 = 十大股东（RPT_F10_EH_HOLDERS）可见、十大流通榜**不可见**的 nat/big/ss
+         持股 ⇒ 限售/非流通（大基金定增锁定 18 个月、战投、发起人股）。原口径硬缺口：
+         锁定股不进「十大流通股东」排名，季报流通通道最长漏 18 个月。占比口径=占总股本%。
+         注意：「退出」**不计分**（锁定股退出十大股东最常见是**解禁转流通**，非减持）；
+      ③ ann 公告通道 = 股东增减持 + 定增获配（T+1，比季报快 1-3 个月）。窗口 365 天，
+         窗口内参与计分并置 annFresh=True；超窗口仍保留 annDir/annNotice 供展示「时间点」。
     ★ 硬约束（research 文档 §7.4「实盘红线」）：
-      1) 身份只取「十大流通股东」法定披露 —— ETF 申赎/估算资金流一律不计入国家队口径；
-      2) NOTICE_DATE ≤ 信号日（无未来函数，由 `_national_flow.flow_state` 保证）；
-      3) 季报滞后 1-3 月 → 只做中长线定性，**非实时信号**；看不见前十大之后的仓位。
+      1) 身份只取法定披露（十大股东/十大流通股东/增减持·定增公告）—— ETF 申赎、
+         估算资金流一律不进本节点的 nat/big/ss 口径（ETF 另见 national_etf_share 节点）；
+      2) NOTICE_DATE/公告日 ≤ 信号日（无未来函数，由 `_national_flow` 保证）；
+      3) 季报滞后 1-3 月（公告通道 T+1）→ 仍非实时信号；看不见前十大之后的仓位。
     ★ 关键口径：「退出」= 曾进前十大、现**连续 ≥2 期缺席**（每季披露，连续缺席即已退出）。
        否则会把 2015 年一次新进一路带到 2026 年 —— 实测 002371 国家队披露停在 2021Q1、
        300308 停在 2020Q2，与 research 文档「汇金 2015 后个股可见度下降、转向 ETF」一致。
@@ -3640,9 +4244,15 @@ def _national_flow_node(ctx, node, inputs):
       requireBig  filter 下要求大基金「流入」
       minScore    filter 下要求 flowScore ≥（默认 50）
       excludeOut  filter 下剔除国家队「流出/退出」
+      requireLock filter 下要求锁定通道「流入」（十大股东新增锁定持股=定增/战投在建仓）
+      requireAnn  filter 下要求公告通道「流入」（近一年增减持/定增公告净买入）
+      annInWindow requireAnn 时是否只认窗口内公告（默认 true；false 会认超窗口的历史公告）
+      minDirect   filter 下要求 directScore ≥（默认 0=不过滤）
       maxRows     限行（默认 200）
     输出：{as_of, judge_day, n, counts{流入,流出,退出,持稳,无}, rows:[…+natState/natStrong/
-      natRatio/natChg/natEnd/natNotice/natNames/bigState/…/ssState/…/flowScore/flowLabel/semi]}
+      natRatio/natChg/natEnd/natNotice/natNames/bigState/…/ssState/…/flowScore/directScore/
+      lockState/lockKind/lockRatio/lockEnd/lockNotice/lockTypes/lockNames/
+      annState/annDir/annKind/annNotice/annFresh/annN/annNames/annDetail/flowLabel/semi]}
     """
     cfg = dict(node.config or {})
     src_id = str(cfg.get("sourceNode") or "n_holdings_top5")
@@ -3661,10 +4271,17 @@ def _national_flow_node(ctx, node, inputs):
         return out
     snap = d.get("snap") or {}
     cnt = {"流入": 0, "流出": 0, "退出": 0, "持稳": 0, "无": 0}
+    lkc = {"流入": 0, "流出": 0, "退出": 0, "持稳": 0, "无": 0}
+    anc = {"流入": 0, "流出": 0, "历史": 0, "无": 0}
     for r in rows:
         s = snap.get(_etf_code6(r.get("code"))) or {}
         st = s.get("natState") or "无"
         cnt[st] = cnt.get(st, 0) + 1
+        lkc[s.get("lockState") or "无"] = lkc.get(s.get("lockState") or "无", 0) + 1
+        _an = s.get("annState") or "无"
+        if _an != "无" and not s.get("annFresh"):
+            _an = "历史"
+        anc[_an] = anc.get(_an, 0) + 1
         r.update({"natState": st, "natStrong": bool(s.get("natStrong")),
                   "natRatio": s.get("natRatio"), "natChg": s.get("natChg"),
                   "natEnd": s.get("natEnd"), "natNotice": s.get("natNotice"),
@@ -3673,7 +4290,21 @@ def _national_flow_node(ctx, node, inputs):
                   "bigRatio": s.get("bigRatio"), "bigChg": s.get("bigChg"),
                   "bigEnd": s.get("bigEnd"), "bigNotice": s.get("bigNotice"),
                   "ssState": s.get("ssState") or "无", "ssRatio": s.get("ssRatio"),
+                  # ① 锁定通道（十大股东可见/流通榜不可见＝限售，如大基金定增锁定中）
+                  "lockState": s.get("lockState") or "无",
+                  "lockStrong": bool(s.get("lockStrong")),
+                  "lockKind": s.get("lockKind") or "", "lockRatio": s.get("lockRatio"),
+                  "lockEnd": s.get("lockEnd"), "lockNotice": s.get("lockNotice"),
+                  "lockTypes": s.get("lockTypes") or [], "lockNames": s.get("lockNames") or [],
+                  # ② 公告通道（股东增减持/定增获配，T+1）
+                  "annState": s.get("annState") or "无", "annDir": s.get("annDir") or "",
+                  "annKind": s.get("annKind") or "", "annRatio": s.get("annRatio"),
+                  "annNotice": s.get("annNotice") or "", "annEnd": s.get("annEnd") or "",
+                  "annSrc": s.get("annSrc") or "", "annFresh": bool(s.get("annFresh")),
+                  "annN": s.get("annN", 0), "annNames": s.get("annNames") or [],
+                  "annDetail": s.get("annDetail") or [],
                   "flowScore": s.get("flowScore", 50.0),
+                  "directScore": s.get("directScore", 50.0),
                   "flowLabel": s.get("flowLabel") or "无披露",
                   "semi": bool(s.get("semi"))})
     if str(cfg.get("mode") or "annotate").lower() == "filter":
@@ -3681,6 +4312,11 @@ def _national_flow_node(ctx, node, inputs):
         req_nat = _bool_cfg(cfg.get("requireNat"), False)
         req_big = _bool_cfg(cfg.get("requireBig"), False)
         ex_out = _bool_cfg(cfg.get("excludeOut"), False)
+        # 直接持股通道（2026-09-13 v2）：锁定持股 / 近一年公告增持
+        req_lock = _bool_cfg(cfg.get("requireLock"), False)
+        req_ann = _bool_cfg(cfg.get("requireAnn"), False)
+        min_direct = float(cfg.get("minDirect", 0) or 0)
+        ann_win_only = _bool_cfg(cfg.get("annInWindow"), True)
 
         def _keep(r):
             if req_nat and r.get("natState") != "流入":
@@ -3688,6 +4324,15 @@ def _national_flow_node(ctx, node, inputs):
             if req_big and r.get("bigState") != "流入":
                 return False
             if ex_out and r.get("natState") in ("流出", "退出"):
+                return False
+            if req_lock and r.get("lockState") != "流入":
+                return False
+            if req_ann:
+                if r.get("annState") != "流入":
+                    return False
+                if ann_win_only and not r.get("annFresh"):
+                    return False          # 超窗口的公告只是「历史时间点」，不能当买入信号
+            if min_direct and float(r.get("directScore") or 0) < min_direct:
                 return False
             return float(r.get("flowScore") or 0) >= min_score
 
@@ -3697,11 +4342,131 @@ def _national_flow_node(ctx, node, inputs):
     out.update({"as_of": src.get("as_of") or ctx.asof, "available": True,
                 "judge_day": d.get("judge_day"), "built": d.get("built"),
                 "rule": d.get("rule"), "states": d.get("states"),
-                "n": len(rows), "counts": cnt, "rows": rows})
+                "n": len(rows), "counts": cnt,
+                "counts_lock": lkc, "counts_ann": anc, "rows": rows})
     ctx.stage(node.id, out)
     ctx.notes.append("[%s] 🏛️ 国家队/大基金(%s): %d 只 → 流入 %d / 流出 %d / 退出 %d / 持稳 %d"
+                     " ｜锁定 流入%d ｜公告 流入%d"
                      % (node.id, d.get("judge_day"), len(rows),
-                        cnt["流入"], cnt["流出"], cnt["退出"], cnt["持稳"]))
+                        cnt["流入"], cnt["流出"], cnt["退出"], cnt["持稳"],
+                        lkc["流入"], anc["流入"]))
+    return out
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 国家队（汇金）宽基 ETF 份额动向（national_etf_share，2026-09-13 新增）
+#   规则出处：E:\Android\work\dev\选股思路\national_flow_research.md、
+#             institutional_breakout_guide.md（§8 FundFlowAnalyzer 流入/流出扫描）
+#   数据资产：data/_etf_share_signal.json（当日拐点信号，smalltools/_etf_share_flow.py）
+#             data/_etf_share_hist.json（逐只宽基 ETF 份额四象限 + 持有人结构）
+#   ★ 与 national_flow 的分工（互补，勿合并）：
+#     national_flow 读「十大流通股东」——**个股**级、季报滞后、汇金 2015 后披露稀少；
+#     national_etf_share 读「宽基 ETF 份额」——**市场/宽基**级、每日可观测；
+#     汇金 2015 年后主要借道宽基 ETF，份额(申赎)才是其进出的直接计量。
+#   ★ 判定算法单一事实源 = smalltools/_etf_share_flow.py；资产内 judge 已含结论，
+#     Python 节点 / Kotlin 节点 / 推送表三处只读不算，避免口径漂移。
+#   ★ 四象限（份额 vs 单位净值）：份额↑&价↓=低位承接(买) / 份额↓&价↑=高位派发(卖)；
+#     汇金身份取**年度报告**§9.2「期末上市基金前十名持有人」（半年报无此子项，只能年报点名）。
+#   ★ 本节点是**市场级横幅**：只贴标签、不改上游顺序、不筛行。
+# ══════════════════════════════════════════════════════════════════════════
+
+_ETF_SHARE_SIGNAL_FILE = os.path.join(_REPO_ROOT, "data", "_etf_share_signal.json")
+_ETF_SHARE_HIST_FILE = os.path.join(_REPO_ROOT, "data", "_etf_share_hist.json")
+_ETF_SHARE_SIGNAL_MEM = {"key": None, "data": None}
+_ETF_SHARE_HIST_MEM = {"key": None, "data": None}
+
+
+def _etf_share_signal():
+    """当日 ETF 份额拐点信号（data/_etf_share_signal.json）。缺失返回 None。"""
+    return _load_json_lazy(_ETF_SHARE_SIGNAL_FILE, _ETF_SHARE_SIGNAL_MEM)
+
+
+def _etf_share_hist():
+    """宽基 ETF 份额历史 + 持有人（data/_etf_share_hist.json）。缺失返回 None。"""
+    return _load_json_lazy(_ETF_SHARE_HIST_FILE, _ETF_SHARE_HIST_MEM)
+
+
+@register("national_etf_share")
+def _national_etf_share_node(ctx, node, inputs):
+    """国家队（汇金）宽基 ETF 份额动向：市场级横幅，透传上游 rows，不改顺序、不筛行。
+
+    config：
+      sourceNode  上游节点 id（缺省取第一个带 rows 的上游；仅作透传）
+      maxFunds    逐只 ETF 明细条数（默认 10）
+      emitFunds   是否附带 funds 明细（默认 true；false 只回 judge 摘要）
+    输出（在上游输出之外追加）：
+      {available, updated, verdict, level, lines[],
+       quarterly{current,at,net_sub,turns[]}, lastTurn{at,dir,net_sub},
+       huijin{code,pct,names}, attr{...}, daily{...},
+       dailyLead{from,to,n,outflow[],inflow[]}, recentDaily{from,to,d_pct,lead,board},
+       push, why[],
+       funds:[{code,name,last,dSharesPct,dNavPct,netSub,quadrant}], rule}
+    缺失资产时 available=false 并透传上游（不阻断链路）。
+    """
+    cfg = dict(node.config or {})
+    src_id = str(cfg.get("sourceNode") or "")
+    src = ctx.get(src_id) if src_id else None
+    if not isinstance(src, dict) or not src.get("rows"):
+        src = _upstream_rows(inputs, (src_id,) if src_id else ()) or src
+    src = src if isinstance(src, dict) else {}
+    sig = _etf_share_signal()
+    j = (sig or {}).get("judge") or {}
+    if not sig or not j.get("lines"):
+        ctx.notes.append("[%s] ✗ 缺 data/_etf_share_signal.json（国家队ETF份额资产）" % node.id)
+        out = dict(src)
+        out.update({"available": False,
+                    "note": "缺数据资产：先跑 smalltools/_etf_share_flow.py（或 --snap）"})
+        ctx.stage(node.id, out)
+        return out
+    max_funds = int(cfg.get("maxFunds", 10) or 10)
+    funds = []
+    if _bool_cfg(cfg.get("emitFunds"), True):
+        for code, w in ((_etf_share_hist() or {}).get("width") or {}).items():
+            per = w.get("periods") or []
+            last = per[-1] if per else {}
+            funds.append({"code": code, "name": w.get("name") or "",
+                          "last": last.get("end"),
+                          "dSharesPct": last.get("d_shares_pct"),
+                          "dNavPct": last.get("d_nav_pct"),
+                          "netSub": last.get("net_sub"),
+                          "quadrant": last.get("quadrant")})
+        funds.sort(key=lambda x: (x.get("last") or "", x.get("code") or ""), reverse=True)
+        funds = funds[:max_funds]
+    q = j.get("quarterly") or {}
+    lt = j.get("last_turn") or {}
+    out = dict(src)
+    out.update({
+        "as_of": src.get("as_of") or ctx.asof,
+        "available": True,
+        "updated": sig.get("as_of"),
+        "verdict": j.get("verdict"), "level": j.get("level"),
+        "lines": j.get("lines") or [],
+        "quarterly": q,
+        "lastTurn": ({"at": lt.get("at"), "dir": lt.get("dir"),
+                      "netSub": lt.get("net_sub")} if lt else None),
+        "huijin": j.get("huijin"), "attr": j.get("attr"),
+        "attrCode": j.get("attr_code"), "daily": j.get("daily"),
+        "dailyLead": j.get("daily_lead"), "recentDaily": j.get("recent_daily"),
+        "push": bool(sig.get("push")), "why": sig.get("why") or [],
+        "funds": funds,
+        "rule": ("宽基ETF份额(申赎)四象限：份额↑&价↓=低位承接(买) / 份额↓&价↑=高位派发(卖)；"
+                 "汇金身份取年报§9.2前十名持有人（法定披露，滞后；半年报无此子项）；"
+                 "日频快照每交易日追加，季度披露给方向、日频给拐点时点"),
+    })
+    ctx.stage(node.id, out)
+    # 横幅取「季度方向 + 日频近端」两条：季度给方向、日频给拐点时点（9.11 净申购等）
+    ls = [x for x in (j.get("lines") or []) if x]
+    core = ([ls[0]] if ls else [])
+    for x in ls:
+        if ("日频净申购领先" in x or "背离" in x) and x not in core:
+            core.append(x)
+    if len(core) < 2:
+        for x in ls[1:]:
+            if x.startswith("日频") and x not in core:
+                core.append(x)
+                break
+    ctx.notes.append("[%s] 🏛️ 国家队ETF份额: %s（置信 %s）｜%s"
+                     % (node.id, j.get("verdict"), j.get("level"), "；".join(core[:2])))
     return out
 
 
@@ -3710,14 +4475,14 @@ def _etf_holdings_rank_node(ctx, node, inputs):
     """ETF 持股 top5：被多只核心（行业/主题）ETF 前五重仓覆盖的个股排行。
 
     输入：`data/_etf_holdings.json` 的 `stocks` 覆盖矩阵（排行本身无需行情）。
-    config：topN=15、minCoverage=2、industryOnly=true、baseThemes=宽基、
+    config：topN=10、minCoverage=2、industryOnly=true、baseThemes=宽基、
       embedBars=true、barsLimit=140、minBars=60（内嵌行情供下游止损定价）、
       strategyText=""（发布口径文案）。
     输出：{as_of, updated, fundsTotal, stocksTotal, rows:[{code,name,n,funds[],themes[],
       sumRatio,pos60,stopPct 建议口径}], note}
     """
     cfg = dict(node.config or {})
-    top_n = int(cfg.get("topN", 15))
+    top_n = int(cfg.get("topN", 10))
     min_cov = int(cfg.get("minCoverage", 2))
     ind_only = _bool_cfg(cfg.get("industryOnly"), True)
     base_themes = set(x.strip() for x in str(cfg.get("baseThemes", "宽基")).split(",") if x.strip())
@@ -3789,14 +4554,14 @@ def _etf_industry_scan_node(ctx, node, inputs):
     行情的取数顺序：ctx.cache[code].snaps → data/_etf_top5_hist.json 全史日K。
     输出行内嵌 `bars`（近 barsLimit 根），供下游 `stop_loss_vote target=picks` 直接定价。
 
-    config：topN=5、minScore=5.0、minBars=60、ddWin=60、industryOnly=true、
+    config：topN=10、minScore=5.0、minBars=60、ddWin=60、industryOnly=true、
       baseThemes=宽基、excludeStar=true、barsLimit=140、embedBars=true、
       minETF=1（至少被 1 只行业ETF 前五重仓）、strategyText=""
       + 大盘自适应：marketAdapt=true、indexCode=sh000300、oscScoreAdd=1.0、
         oscPos60Max=-12、bearishPause=true。
     """
     cfg = dict(node.config or {})
-    top_n = int(cfg.get("topN", 5))
+    top_n = int(cfg.get("topN", 10))
     min_score = float(cfg.get("minScore", 5.0))
     min_bars = int(cfg.get("minBars", 60))
     dd_win = int(cfg.get("ddWin", 60))
@@ -4057,6 +4822,40 @@ def _etf_pure_screen_node(ctx, node, inputs):
     ctx.stage(node.id, out)
     ctx.notes.append("[%s] 🎯 纯ETF筛选: 池 %d → 可判 %d → base_buy %d 只（跳过 %d 只样本不足）"
                      % (node.id, len(cache), len(rows), n_base, len(skipped)))
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 做T链路入口：t_trade_import（对齐 APK T_TradeImportNode）
+#
+# 其余 t_trade / real_holding 节点（t_holdings_load / t_inst_intent /
+# t_signal_synthesize / t_recommend_save / t_trade_eval / sector_leader_analysis /
+# t1_auto_sell）的 Kotlin 实现全部依赖 Android Room 持仓库
+# （realPositionDao / strategyTradeOrderDao / tTradeRecordDao）+ 实时行情 +
+# 分时 + 墙上时钟时段，PC 回测环境无对应数据源（已实测：手机镜像
+# real_positions / strategy_trade_orders / t_trade_records 三张表均为空），
+# 因此按既有约定在 _passthrough 中声明式降级（原因见 _PASSTHROUGH_WHY），
+# 不做「永远跑不出结果」的空实现。
+# ──────────────────────────────────────────────────────────────────────────
+@register("t_trade_import")
+def _n_t_trade_import(ctx, node, inputs):
+    """做T交易日导入：对齐 T_TradeImportNode 的 isTradingDay/tradeDate 语义。
+
+    PC 口径按 ctx.asof 的工作日近似（无 A 股节假日表；节假日会误判为交易日，
+    但下游 t_holdings_load 因无持仓库仍降级，不影响选股主线结论）。
+    """
+    d = None
+    try:
+        d = _dt.date.fromisoformat(str(ctx.asof or "")[:10])
+    except Exception:
+        pass
+    is_td = True if d is None else (d.weekday() < 5)
+    out = {"isTradingDay": is_td, "tradeDate": ctx.asof or "",
+           "source": "asof-weekday(PC 近似)"}
+    ctx.stage(node.id, out)
+    ctx.stage("t_import", out)
+    ctx.notes.append("[%s] 📅 做T交易日 %s：%s（PC 按工作日近似，无节假日表）"
+                     % (node.id, out["tradeDate"], "✅ 交易日" if is_td else "⛔ 非交易日"))
     return out
 
 

@@ -16,13 +16,13 @@
   规则出处：E:\Android\work\dev\选股思路\ETF选股思路.txt + smalltools/_etf_holdings.py
 -->
 <usecase id="etf_industry_scan" name="ETF全行业扫描">
-  <description>行业/主题ETF → 前五重仓股 → 低吸打分(SAR红硬门控+转折确认) → top5 → 多理论投票止损</description>
+  <description>行业/主题ETF → 前五重仓股 → 低吸打分(SAR红硬门控+转折确认) → top10 → 多理论投票止损</description>
   <steps>
     <pipeline ref="usecases/etf_industry_scan_pipeline.xml" name="etf_industry_scan_dag" />
   </steps>
   <config>
     <param name="orderType" value="EtfIndustryScan" />
-    <param name="maxHoldings" value="5" />
+    <param name="maxHoldings" value="10" />
     <param name="holdingPeriod" value="etf" />
   </config>
 </usecase>
