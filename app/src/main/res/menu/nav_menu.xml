@@ -4,26 +4,26 @@
     <item
         android:id="@+id/nav_chat"
         android:icon="@drawable/ic_nav_chat"
-        android:title="对话" />
+        android:title="@string/nav_chat" />
 
     <item
         android:id="@+id/nav_agent"
         android:icon="@drawable/ic_nav_agent"
-        android:title="智能体" />
+        android:title="@string/nav_agent" />
 
     <item
         android:id="@+id/nav_stock"
         android:icon="@drawable/ic_nav_stock"
-        android:title="股票" />
+        android:title="@string/nav_stock" />
 
     <item
         android:id="@+id/nav_strategy"
         android:icon="@drawable/ic_nav_strategy"
-        android:title="策略" />
+        android:title="@string/nav_strategy" />
 
     <item
         android:id="@+id/nav_mine"
         android:icon="@drawable/ic_nav_mine"
-        android:title="我的" />
+        android:title="@string/nav_mine" />
 
 </menu>

@@ -20,10 +20,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * ## 備選池 Fragment
+ * ## 备选池 Fragment
  *
- * 顯示 CandidatePool 中的股票列表，支持僅主板過濾。
- * 所有字段通過 StockDataService.enrich() 批量填充。
+ * 显示 CandidatePool 中的股票列表，支持仅主板过滤。
+ * 所有字段通过 StockDataService.enrich() 批量填充。
  */
 class CandidatePoolFragment : Fragment() {
 
@@ -52,26 +52,26 @@ class CandidatePoolFragment : Fragment() {
         }
         root.addView(outer)
 
-        // ── 標題欄 ──
+        // ── 标题栏 ──
         val headerRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         headerRow.addView(TextView(ctx).apply {
-            text = "備選池"
+            text = "备选池"
             textSize = 18f
             setTextColor(Color.parseColor("#1A1A2E"))
             setTypeface(null, Typeface.BOLD)
             layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
         })
 
-        // 僅主板 Switch
+        // 仅主板 Switch
         val switchRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         switchRow.addView(TextView(ctx).apply {
-            text = "僅主板"
+            text = "仅主板"
             textSize = 13f
             setTextColor(Color.parseColor("#333333"))
             setPadding(0, 0, 8, 0)
@@ -96,13 +96,13 @@ class CandidatePoolFragment : Fragment() {
         headerRow.addView(refreshBtn)
         outer.addView(headerRow)
 
-        // ── 統計信息 ──
+        // ── 统计信息 ──
         val statsRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, 8, 0, 12)
         }
         countTv = TextView(ctx).apply {
-            text = "加載中..."
+            text = "加载中..."
             textSize = 12f
             setTextColor(Color.parseColor("#666666"))
         }
@@ -117,7 +117,7 @@ class CandidatePoolFragment : Fragment() {
         outer.addView(statsRow)
 
         outer.addView(TextView(ctx).apply {
-            text = "核心龍頭 + ETF熱門板塊 + 東方財富熱門板塊，去重後約100-200只主板股票"
+            text = "核心龙头 + ETF热门板块 + 东方财富热门板块，去重后约100-200只主板股票"
             textSize = 11f
             setTextColor(Color.parseColor("#999999"))
             setPadding(0, 0, 0, 12)
@@ -142,7 +142,7 @@ class CandidatePoolFragment : Fragment() {
                 renderList()
             } catch (e: Exception) {
                 container.addView(TextView(requireContext()).apply {
-                    text = "加載失敗: ${e.message}"
+                    text = "加载失败: ${e.message}"
                     textSize = 14f; setTextColor(Color.parseColor("#E53935"))
                     setPadding(0, 20, 0, 20)
                 })
@@ -165,19 +165,19 @@ class CandidatePoolFragment : Fragment() {
 
         val mainBoardCount = allStocks.count { isMainBoard(it.code) }
         val kcCyCount = allStocks.size - mainBoardCount
-        countTv.text = "主板 ${mainBoardCount} 只 / 科創/創業 ${kcCyCount} 只"
+        countTv.text = "主板 ${mainBoardCount} 只 / 科创/创业 ${kcCyCount} 只"
         updateTimeTv.text = "更新: ${snapshot.updateTime}"
 
         if (filteredStocks.isEmpty()) {
             container.addView(TextView(ctx).apply {
-                text = "暫無數據"; textSize = 14f
+                text = "暂无数据"; textSize = 14f
                 setTextColor(Color.parseColor("#999999"))
                 gravity = Gravity.CENTER; setPadding(0, 48, 0, 48)
             })
             return
         }
 
-        // 異步填充完整數據
+        // 异步填充完整数据
         lifecycleScope.launch {
             try {
                 val codes = filteredStocks.map { it.code }
@@ -216,7 +216,7 @@ class CandidatePoolFragment : Fragment() {
                     )
                 }
             } catch (e: Exception) {
-                Log.e("CandidatePool", "渲染失敗", e)
+                Log.e("CandidatePool", "渲染失败", e)
                 withContext(Dispatchers.Main) { /* show empty */ }
             }
         }

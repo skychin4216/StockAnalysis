@@ -1,0 +1,972 @@
+{
+ "date": "2026-09-06",
+ "generated_at": "2026-09-06 02:34:25",
+ "mode": "blend",
+ "source": "push2delay.eastmoney.com clist (行业板块榜 + 板块成分, 市值取龙头)",
+ "total_tracks": 45,
+ "n_leaders_per_board": 3,
+ "sectors": [
+  {
+   "track": "传媒/游戏",
+   "board": "传媒",
+   "code": "BK0486",
+   "group": "通信与软件",
+   "rank": {
+    "chg20_pct": 6.95,
+    "chg_pct": 2.32,
+    "main_yi": 61.74,
+    "members": 98
+   },
+   "core_leaders": [
+    {
+     "secid": "sz002602",
+     "code": "002602",
+     "name": "世纪华通",
+     "mv_yi": 1159.4,
+     "chg_pct": 7.96
+    },
+    {
+     "secid": "sz002027",
+     "code": "002027",
+     "name": "分众传媒",
+     "mv_yi": 704.8,
+     "chg_pct": 2.31
+    },
+    {
+     "secid": "sz300418",
+     "code": "300418",
+     "name": "昆仑万维",
+     "mv_yi": 583.8,
+     "chg_pct": 2.64
+    }
+   ],
+   "day_hot": {
+    "secid": "sz301171",
+    "code": "301171",
+    "name": "易点天下",
+    "mv_yi": 236.8,
+    "chg_pct": 11.12
+   },
+   "month_hot": {
+    "secid": "sh605577",
+    "code": "605577",
+    "name": "龙版传媒",
+    "mv_yi": 69.1,
+    "chg_pct": 9.97
+   }
+  },
+  {
+   "track": "生猪养殖",
+   "board": "生猪养殖",
+   "code": "BK1512",
+   "group": "周期与消费",
+   "rank": {
+    "chg20_pct": 6.14,
+    "chg_pct": 6.23,
+    "main_yi": 7.91,
+    "members": 11
+   },
+   "core_leaders": [
+    {
+     "secid": "sz002714",
+     "code": "002714",
+     "name": "牧原股份",
+     "mv_yi": 2538.4,
+     "chg_pct": 4.49
+    },
+    {
+     "secid": "sz300498",
+     "code": "300498",
+     "name": "温氏股份",
+     "mv_yi": 1022.0,
+     "chg_pct": 6.15
+    },
+    {
+     "secid": "sz002157",
+     "code": "002157",
+     "name": "正邦科技",
+     "mv_yi": 297.9,
+     "chg_pct": 6.27
+    }
+   ],
+   "day_hot": {
+    "secid": "sz000735",
+    "code": "000735",
+    "name": "罗牛山",
+    "mv_yi": 70.6,
+    "chg_pct": 10.05
+   },
+   "month_hot": {
+    "secid": "sz002124",
+    "code": "002124",
+    "name": "天邦食品",
+    "mv_yi": 53.8,
+    "chg_pct": 10.0
+   }
+  },
+  {
+   "track": "白酒",
+   "board": "白酒Ⅱ",
+   "code": "BK1277",
+   "group": "周期与消费",
+   "rank": {
+    "chg20_pct": 2.55,
+    "chg_pct": 2.82,
+    "main_yi": 10.32,
+    "members": 19
+   },
+   "core_leaders": [
+    {
+     "secid": "sh600519",
+     "code": "600519",
+     "name": "贵州茅台",
+     "mv_yi": 16626.1,
+     "chg_pct": 2.4
+    },
+    {
+     "secid": "sz000858",
+     "code": "000858",
+     "name": "五粮液",
+     "mv_yi": 2794.0,
+     "chg_pct": 1.84
+    },
+    {
+     "secid": "sh600809",
+     "code": "600809",
+     "name": "山西汾酒",
+     "mv_yi": 1495.2,
+     "chg_pct": 4.79
+    }
+   ],
+   "day_hot": {
+    "secid": "sz000860",
+    "code": "000860",
+    "name": "顺鑫农业",
+    "mv_yi": 81.8,
+    "chg_pct": 5.35
+   },
+   "month_hot": {
+    "secid": "sz000860",
+    "code": "000860",
+    "name": "顺鑫农业",
+    "mv_yi": 81.8,
+    "chg_pct": 5.35
+   }
+  },
+  {
+   "track": "软件开发",
+   "board": "软件开发",
+   "code": "BK0737",
+   "group": "通信与软件",
+   "rank": {
+    "chg20_pct": 2.13,
+    "chg_pct": 1.26,
+    "main_yi": 23.58,
+    "members": 97
+   },
+   "core_leaders": [
+    {
+     "secid": "sz300033",
+     "code": "300033",
+     "name": "同花顺",
+     "mv_yi": 1670.9,
+     "chg_pct": 1.14
+    },
+    {
+     "secid": "sh688111",
+     "code": "688111",
+     "name": "金山办公",
+     "mv_yi": 1127.5,
+     "chg_pct": 1.65
+    },
+    {
+     "secid": "sz002230",
+     "code": "002230",
+     "name": "科大讯飞",
+     "mv_yi": 948.8,
+     "chg_pct": 0.77
+    }
+   ],
+   "day_hot": {
+    "secid": "sz300468",
+    "code": "300468",
+    "name": "四方精创",
+    "mv_yi": 145.9,
+    "chg_pct": 14.58
+   },
+   "month_hot": {
+    "secid": "sz300468",
+    "code": "300468",
+    "name": "四方精创",
+    "mv_yi": 145.9,
+    "chg_pct": 14.58
+   }
+  },
+  {
+   "track": "银行",
+   "board": "银行",
+   "code": "BK1283",
+   "group": "金融",
+   "rank": {
+    "chg20_pct": 3.68,
+    "chg_pct": 0.65,
+    "main_yi": -0.38,
+    "members": 42
+   },
+   "core_leaders": [
+    {
+     "secid": "sh601398",
+     "code": "601398",
+     "name": "工商银行",
+     "mv_yi": 28975.8,
+     "chg_pct": 0.37
+    },
+    {
+     "secid": "sh601939",
+     "code": "601939",
+     "name": "建设银行",
+     "mv_yi": 28723.7,
+     "chg_pct": 0.27
+    },
+    {
+     "secid": "sh601288",
+     "code": "601288",
+     "name": "农业银行",
+     "mv_yi": 24358.8,
+     "chg_pct": 1.02
+    }
+   ],
+   "day_hot": {
+    "secid": "sh600000",
+    "code": "600000",
+    "name": "浦发银行",
+    "mv_yi": 3140.7,
+    "chg_pct": 1.73
+   },
+   "month_hot": {
+    "secid": "sh600000",
+    "code": "600000",
+    "name": "浦发银行",
+    "mv_yi": 3140.7,
+    "chg_pct": 1.73
+   }
+  },
+  {
+   "track": "白色家电",
+   "board": "白色家电",
+   "code": "BK1239",
+   "group": "周期与消费",
+   "rank": {
+    "chg20_pct": 2.07,
+    "chg_pct": 0.36,
+    "main_yi": 2.6,
+    "members": 10
+   },
+   "core_leaders": [
+    {
+     "secid": "sz000333",
+     "code": "000333",
+     "name": "美的集团",
+     "mv_yi": 6680.8,
+     "chg_pct": 0.37
+    },
+    {
+     "secid": "sz000651",
+     "code": "000651",
+     "name": "格力电器",
+     "mv_yi": 2183.4,
+     "chg_pct": 0.62
+    },
+    {
+     "secid": "sh600690",
+     "code": "600690",
+     "name": "海尔智家",
+     "mv_yi": 2046.7,
+     "chg_pct": 0.82
+    }
+   ],
+   "day_hot": {
+    "secid": "sz000921",
+    "code": "000921",
+    "name": "海信家电",
+    "mv_yi": 386.1,
+    "chg_pct": 2.58
+   },
+   "month_hot": {
+    "secid": "sz000921",
+    "code": "000921",
+    "name": "海信家电",
+    "mv_yi": 386.1,
+    "chg_pct": 2.58
+   }
+  },
+  {
+   "track": "航运",
+   "board": "航运",
+   "code": "BK1482",
+   "group": "周期与消费",
+   "rank": {
+    "chg20_pct": 2.23,
+    "chg_pct": 1.05,
+    "main_yi": -2.96,
+    "members": 18
+   },
+   "core_leaders": [
+    {
+     "secid": "sh601919",
+     "code": "601919",
+     "name": "中远海控",
+     "mv_yi": 2452.1,
+     "chg_pct": -3.08
+    },
+    {
+     "secid": "sh601872",
+     "code": "601872",
+     "name": "招商轮船",
+     "mv_yi": 1550.3,
+     "chg_pct": -0.52
+    },
+    {
+     "secid": "sh600026",
+     "code": "600026",
+     "name": "中远海能",
+     "mv_yi": 1112.8,
+     "chg_pct": 0.05
+    }
+   ],
+   "day_hot": {
+    "secid": "sh603162",
+    "code": "603162",
+    "name": "海通发展",
+    "mv_yi": 201.3,
+    "chg_pct": 9.99
+   },
+   "month_hot": {
+    "secid": "sh603162",
+    "code": "603162",
+    "name": "海通发展",
+    "mv_yi": 201.3,
+    "chg_pct": 9.99
+   }
+  },
+  {
+   "track": "保险",
+   "board": "保险Ⅱ",
+   "code": "BK0474",
+   "group": "金融",
+   "rank": {
+    "chg20_pct": 6.04,
+    "chg_pct": 0.11,
+    "main_yi": -2.01,
+    "members": 5
+   },
+   "core_leaders": [
+    {
+     "secid": "sh601628",
+     "code": "601628",
+     "name": "中国人寿",
+     "mv_yi": 11071.3,
+     "chg_pct": -0.25
+    },
+    {
+     "secid": "sh601318",
+     "code": "601318",
+     "name": "中国平安",
+     "mv_yi": 10545.9,
+     "chg_pct": 0.41
+    },
+    {
+     "secid": "sh601319",
+     "code": "601319",
+     "name": "中国人保",
+     "mv_yi": 3533.5,
+     "chg_pct": -0.62
+    }
+   ],
+   "day_hot": {
+    "secid": "sh601336",
+    "code": "601336",
+    "name": "新华保险",
+    "mv_yi": 1941.9,
+    "chg_pct": 0.53
+   },
+   "month_hot": {
+    "secid": "sh601336",
+    "code": "601336",
+    "name": "新华保险",
+    "mv_yi": 1941.9,
+    "chg_pct": 0.53
+   }
+  },
+  {
+   "track": "券商",
+   "board": "证券Ⅱ",
+   "code": "BK0473",
+   "group": "金融",
+   "rank": {
+    "chg20_pct": 0.75,
+    "chg_pct": 0.73,
+    "main_yi": 6.02,
+    "members": 49
+   },
+   "core_leaders": [
+    {
+     "secid": "sh600030",
+     "code": "600030",
+     "name": "中信证券",
+     "mv_yi": 4373.2,
+     "chg_pct": 0.47
+    },
+    {
+     "secid": "sh601211",
+     "code": "601211",
+     "name": "国泰海通",
+     "mv_yi": 3141.7,
+     "chg_pct": 1.02
+    },
+    {
+     "secid": "sz300059",
+     "code": "300059",
+     "name": "东方财富",
+     "mv_yi": 3030.0,
+     "chg_pct": 0.74
+    }
+   ],
+   "day_hot": {
+    "secid": "sh600095",
+    "code": "600095",
+    "name": "湘财股份",
+    "mv_yi": 290.8,
+    "chg_pct": 7.51
+   },
+   "month_hot": {
+    "secid": "sh600095",
+    "code": "600095",
+    "name": "湘财股份",
+    "mv_yi": 290.8,
+    "chg_pct": 7.51
+   }
+  },
+  {
+   "track": "电力",
+   "board": "电力",
+   "code": "BK0428",
+   "group": "电力设备与新能源",
+   "rank": {
+    "chg20_pct": -0.24,
+    "chg_pct": 0.13,
+    "main_yi": 3.02,
+    "members": 99
+   },
+   "core_leaders": [
+    {
+     "secid": "sh600900",
+     "code": "600900",
+     "name": "长江电力",
+     "mv_yi": 6953.9,
+     "chg_pct": -0.07
+    },
+    {
+     "secid": "sz003816",
+     "code": "003816",
+     "name": "中国广核",
+     "mv_yi": 2206.8,
+     "chg_pct": -0.68
+    },
+    {
+     "secid": "sh601985",
+     "code": "601985",
+     "name": "中国核电",
+     "mv_yi": 1867.6,
+     "chg_pct": -0.44
+    }
+   ],
+   "day_hot": {
+    "secid": "sh605580",
+    "code": "605580",
+    "name": "恒盛能源",
+    "mv_yi": 62.9,
+    "chg_pct": 9.99
+   },
+   "month_hot": {
+    "secid": "sh605580",
+    "code": "605580",
+    "name": "恒盛能源",
+    "mv_yi": 62.9,
+    "chg_pct": 9.99
+   }
+  },
+  {
+   "track": "电网设备",
+   "board": "电网设备",
+   "code": "BK0457",
+   "group": "电力设备与新能源",
+   "rank": {
+    "chg20_pct": 0.82,
+    "chg_pct": -0.13,
+    "main_yi": 0.96,
+    "members": 98
+   },
+   "core_leaders": [
+    {
+     "secid": "sh600406",
+     "code": "600406",
+     "name": "国电南瑞",
+     "mv_yi": 1824.0,
+     "chg_pct": 0.53
+    },
+    {
+     "secid": "sz002028",
+     "code": "002028",
+     "name": "思源电气",
+     "mv_yi": 1151.9,
+     "chg_pct": 2.24
+    },
+    {
+     "secid": "sh600089",
+     "code": "600089",
+     "name": "特变电工",
+     "mv_yi": 954.0,
+     "chg_pct": 0.27
+    }
+   ],
+   "day_hot": {
+    "secid": "sz300444",
+    "code": "300444",
+    "name": "双杰电气",
+    "mv_yi": 77.9,
+    "chg_pct": 5.33
+   },
+   "month_hot": null
+  },
+  {
+   "track": "通信服务",
+   "board": "通信服务",
+   "code": "BK0736",
+   "group": "通信与软件",
+   "rank": {
+    "chg20_pct": 1.74,
+    "chg_pct": -0.2,
+    "main_yi": -1.87,
+    "members": 34
+   },
+   "core_leaders": [
+    {
+     "secid": "sh600941",
+     "code": "600941",
+     "name": "中国移动",
+     "mv_yi": 21756.0,
+     "chg_pct": -0.23
+    },
+    {
+     "secid": "sh601728",
+     "code": "601728",
+     "name": "中国电信",
+     "mv_yi": 5838.2,
+     "chg_pct": -0.31
+    },
+    {
+     "secid": "sh600050",
+     "code": "600050",
+     "name": "中国联通",
+     "mv_yi": 1328.7,
+     "chg_pct": -0.23
+    }
+   ],
+   "day_hot": {
+    "secid": "sh603322",
+    "code": "603322",
+    "name": "超讯科技",
+    "mv_yi": 42.8,
+    "chg_pct": 4.26
+   },
+   "month_hot": {
+    "secid": "sh603322",
+    "code": "603322",
+    "name": "超讯科技",
+    "mv_yi": 42.8,
+    "chg_pct": 4.26
+   }
+  },
+  {
+   "track": "石油石化",
+   "board": "石油石化",
+   "code": "BK0464",
+   "group": "有色与资源",
+   "rank": {
+    "chg20_pct": -0.7,
+    "chg_pct": 0.28,
+    "main_yi": -0.47,
+    "members": 45
+   },
+   "core_leaders": [
+    {
+     "secid": "sh601857",
+     "code": "601857",
+     "name": "中国石油",
+     "mv_yi": 20443.4,
+     "chg_pct": -0.36
+    },
+    {
+     "secid": "sh600938",
+     "code": "600938",
+     "name": "中国海油",
+     "mv_yi": 15879.8,
+     "chg_pct": -0.06
+    },
+    {
+     "secid": "sh600028",
+     "code": "600028",
+     "name": "中国石化",
+     "mv_yi": 6626.7,
+     "chg_pct": 0.55
+    }
+   ],
+   "day_hot": {
+    "secid": "sh600506",
+    "code": "600506",
+    "name": "统一股份",
+    "mv_yi": 46.1,
+    "chg_pct": 10.01
+   },
+   "month_hot": {
+    "secid": "sh600506",
+    "code": "600506",
+    "name": "统一股份",
+    "mv_yi": 46.1,
+    "chg_pct": 10.01
+   }
+  },
+  {
+   "track": "乘用车",
+   "board": "乘用车",
+   "code": "BK1262",
+   "group": "周期与消费",
+   "rank": {
+    "chg20_pct": -1.83,
+    "chg_pct": 0.71,
+    "main_yi": 1.2,
+    "members": 8
+   },
+   "core_leaders": [
+    {
+     "secid": "sz002594",
+     "code": "002594",
+     "name": "比亚迪",
+     "mv_yi": 7968.4,
+     "chg_pct": 0.1
+    },
+    {
+     "secid": "sh601633",
+     "code": "601633",
+     "name": "长城汽车",
+     "mv_yi": 1281.6,
+     "chg_pct": 0.2
+    },
+    {
+     "secid": "sh600104",
+     "code": "600104",
+     "name": "上汽集团",
+     "mv_yi": 1203.6,
+     "chg_pct": 1.26
+    }
+   ],
+   "day_hot": {
+    "secid": "sh601127",
+    "code": "601127",
+    "name": "赛力斯",
+    "mv_yi": 862.6,
+    "chg_pct": 1.27
+   },
+   "month_hot": {
+    "secid": "sh601127",
+    "code": "601127",
+    "name": "赛力斯",
+    "mv_yi": 862.6,
+    "chg_pct": 1.27
+   }
+  },
+  {
+   "track": "钢铁",
+   "board": "钢铁",
+   "code": "BK0479",
+   "group": "周期与消费",
+   "rank": {
+    "chg20_pct": -1.32,
+    "chg_pct": 0.23,
+    "main_yi": -0.77,
+    "members": 42
+   },
+   "core_leaders": [
+    {
+     "secid": "sh600019",
+     "code": "600019",
+     "name": "宝钢股份",
+     "mv_yi": 1276.4,
+     "chg_pct": 0.34
+    },
+    {
+     "secid": "sh600010",
+     "code": "600010",
+     "name": "包钢股份",
+     "mv_yi": 999.5,
+     "chg_pct": -0.45
+    },
+    {
+     "secid": "sz000708",
+     "code": "000708",
+     "name": "中信特钢",
+     "mv_yi": 685.9,
+     "chg_pct": 0.97
+    }
+   ],
+   "day_hot": {
+    "secid": "sh600295",
+    "code": "600295",
+    "name": "鄂尔多斯",
+    "mv_yi": 411.7,
+    "chg_pct": 5.9
+   },
+   "month_hot": {
+    "secid": "sh600295",
+    "code": "600295",
+    "name": "鄂尔多斯",
+    "mv_yi": 411.7,
+    "chg_pct": 5.9
+   }
+  },
+  {
+   "track": "医疗器械",
+   "board": "医疗器械",
+   "code": "BK1041",
+   "group": "医药生物",
+   "rank": {
+    "chg20_pct": -0.49,
+    "chg_pct": -0.05,
+    "main_yi": -4.14,
+    "members": 98
+   },
+   "core_leaders": [
+    {
+     "secid": "sz300760",
+     "code": "300760",
+     "name": "迈瑞医疗",
+     "mv_yi": 2059.0,
+     "chg_pct": 1.34
+    },
+    {
+     "secid": "sh688271",
+     "code": "688271",
+     "name": "联影医疗",
+     "mv_yi": 894.9,
+     "chg_pct": 3.33
+    },
+    {
+     "secid": "sz300832",
+     "code": "300832",
+     "name": "新产业",
+     "mv_yi": 404.6,
+     "chg_pct": 2.34
+    }
+   ],
+   "day_hot": {
+    "secid": "sz301087",
+    "code": "301087",
+    "name": "可孚医疗",
+    "mv_yi": 122.4,
+    "chg_pct": 7.55
+   },
+   "month_hot": {
+    "secid": "sz301087",
+    "code": "301087",
+    "name": "可孚医疗",
+    "mv_yi": 122.4,
+    "chg_pct": 7.55
+   }
+  },
+  {
+   "track": "汽车零部件",
+   "board": "汽车零部件",
+   "code": "BK0481",
+   "group": "周期与消费",
+   "rank": {
+    "chg20_pct": 1.17,
+    "chg_pct": -0.95,
+    "main_yi": -2.11,
+    "members": 99
+   },
+   "core_leaders": [
+    {
+     "secid": "sz000338",
+     "code": "000338",
+     "name": "潍柴动力",
+     "mv_yi": 2319.9,
+     "chg_pct": 2.56
+    },
+    {
+     "secid": "sh600660",
+     "code": "600660",
+     "name": "福耀玻璃",
+     "mv_yi": 1496.2,
+     "chg_pct": 0.56
+    },
+    {
+     "secid": "sh601689",
+     "code": "601689",
+     "name": "拓普集团",
+     "mv_yi": 796.3,
+     "chg_pct": -4.2
+    }
+   ],
+   "day_hot": {
+    "secid": "sh600698",
+    "code": "600698",
+    "name": "湖南天雁",
+    "mv_yi": 84.5,
+    "chg_pct": 10.01
+   },
+   "month_hot": null
+  },
+  {
+   "track": "风电设备",
+   "board": "风电设备",
+   "code": "BK1032",
+   "group": "电力设备与新能源",
+   "rank": {
+    "chg20_pct": -1.23,
+    "chg_pct": -0.13,
+    "main_yi": -2.41,
+    "members": 30
+   },
+   "core_leaders": [
+    {
+     "secid": "sz002202",
+     "code": "002202",
+     "name": "金风科技",
+     "mv_yi": 738.7,
+     "chg_pct": -1.19
+    },
+    {
+     "secid": "sz002487",
+     "code": "002487",
+     "name": "大金重工",
+     "mv_yi": 245.9,
+     "chg_pct": -0.39
+    },
+    {
+     "secid": "sh601615",
+     "code": "601615",
+     "name": "明阳智能",
+     "mv_yi": 210.5,
+     "chg_pct": 1.42
+    }
+   ],
+   "day_hot": {
+    "secid": "sh688660",
+    "code": "688660",
+    "name": "电气风电",
+    "mv_yi": 112.3,
+    "chg_pct": 12.57
+   },
+   "month_hot": {
+    "secid": "sh688660",
+    "code": "688660",
+    "name": "电气风电",
+    "mv_yi": 112.3,
+    "chg_pct": 12.57
+   }
+  },
+  {
+   "track": "计算机设备",
+   "board": "计算机设备",
+   "code": "BK0735",
+   "group": "通信与软件",
+   "rank": {
+    "chg20_pct": 1.22,
+    "chg_pct": -0.37,
+    "main_yi": -27.61,
+    "members": 79
+   },
+   "core_leaders": [
+    {
+     "secid": "sz002415",
+     "code": "002415",
+     "name": "海康威视",
+     "mv_yi": 3195.8,
+     "chg_pct": -0.31
+    },
+    {
+     "secid": "sz301666",
+     "code": "301666",
+     "name": "大普微-UW",
+     "mv_yi": 1768.8,
+     "chg_pct": -4.9
+    },
+    {
+     "secid": "sh603019",
+     "code": "603019",
+     "name": "中科曙光",
+     "mv_yi": 1209.9,
+     "chg_pct": -1.97
+    }
+   ],
+   "day_hot": {
+    "secid": "sz002970",
+    "code": "002970",
+    "name": "锐明技术",
+    "mv_yi": 89.5,
+    "chg_pct": 4.39
+   },
+   "month_hot": {
+    "secid": "sz002970",
+    "code": "002970",
+    "name": "锐明技术",
+    "mv_yi": 89.5,
+    "chg_pct": 4.39
+   }
+  },
+  {
+   "track": "中药",
+   "board": "中药Ⅱ",
+   "code": "BK1040",
+   "group": "医药生物",
+   "rank": {
+    "chg20_pct": -2.21,
+    "chg_pct": -0.08,
+    "main_yi": -2.1,
+    "members": 59
+   },
+   "core_leaders": [
+    {
+     "secid": "sz000538",
+     "code": "000538",
+     "name": "云南白药",
+     "mv_yi": 910.3,
+     "chg_pct": 0.49
+    },
+    {
+     "secid": "sh600436",
+     "code": "600436",
+     "name": "片仔癀",
+     "mv_yi": 746.6,
+     "chg_pct": 1.05
+    },
+    {
+     "secid": "sz000999",
+     "code": "000999",
+     "name": "华润三九",
+     "mv_yi": 414.4,
+     "chg_pct": 0.32
+    }
+   ],
+   "day_hot": {
+    "secid": "sz000423",
+    "code": "000423",
+    "name": "东阿阿胶",
+    "mv_yi": 310.6,
+    "chg_pct": 2.06
+   },
+   "month_hot": null
+  }
+ ]
+}

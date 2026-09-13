@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="4900" height="920" viewBox="0 0 4900 920" font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif">
+  <defs>
+    <linearGradient id="bgGradient" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1e293b" />
+    </linearGradient>
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L9,3 L0,6 Z" fill="#64748b" />
+    </marker>
+  </defs>
+<rect width="4900" height="920" fill="url(#bgGradient)" />
+  <text x="2450.0" y="30" text-anchor="middle" font-size="20" font-weight="bold" fill="#f1f5f9">短線量化 DAG Pipeline（持倉3-5天，熱點+輪動+新聞情緒）</text>
+  <text x="2450.0" y="52" text-anchor="middle" font-size="12" fill="#94a3b8">市場上下文→多周期熱門→股票池→策略篩選+熱度→板塊加權→新聞力度/輪動懲罰→主力過濾→新聞攔截→AI精選→訂單生成→持倉合併/騰龍換鳥/擬合保存</text>
+  <text x="60" y="102" font-size="11" font-weight="bold" fill="#475569">Layer 0</text>
+  <text x="380" y="102" font-size="11" font-weight="bold" fill="#475569">Layer 1</text>
+  <text x="700" y="102" font-size="11" font-weight="bold" fill="#475569">Layer 2</text>
+  <text x="1020" y="102" font-size="11" font-weight="bold" fill="#475569">Layer 3</text>
+  <text x="1340" y="102" font-size="11" font-weight="bold" fill="#475569">Layer 4</text>
+  <text x="1660" y="102" font-size="11" font-weight="bold" fill="#475569">Layer 5</text>
+  <text x="1980" y="102" font-size="11" font-weight="bold" fill="#475569">Layer 6</text>
+  <text x="2300" y="102" font-size="11" font-weight="bold" fill="#475569">Layer 7</text>
+  <text x="2620" y="102" font-size="11" font-weight="bold" fill="#475569">Layer 8</text>
+  <text x="2940" y="102" font-size="11" font-weight="bold" fill="#475569">Layer 9</text>
+  <text x="3260" y="102" font-size="11" font-weight="bold" fill="#475569">Layer 10</text>
+  <text x="3580" y="102" font-size="11" font-weight="bold" fill="#475569">Layer 11</text>
+  <text x="3900" y="102" font-size="11" font-weight="bold" fill="#475569">Layer 12</text>
+  <text x="4220" y="102" font-size="11" font-weight="bold" fill="#475569">Layer 13</text>
+  <text x="4540" y="102" font-size="11" font-weight="bold" fill="#475569">Layer 14</text>
+  <g id="edges">
+  <path d="M 260.0,155.0 C 308.0,155.0 332.0,155.0 380.0,155.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 260.0,155.0 C 308.0,155.0 332.0,285.0 380.0,285.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 260.0,285.0 C 308.0,285.0 332.0,155.0 380.0,155.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 260.0,285.0 C 308.0,285.0 332.0,415.0 380.0,415.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 580.0,155.0 C 628.0,155.0 652.0,155.0 700.0,155.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 900.0,155.0 C 948.0,155.0 972.0,155.0 1020.0,155.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 1220.0,155.0 C 1268.0,155.0 1292.0,155.0 1340.0,155.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 580.0,155.0 C 628.0,155.0 652.0,285.0 700.0,285.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 1540.0,155.0 C 1588.0,155.0 1612.0,155.0 1660.0,155.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 900.0,285.0 C 1204.0,285.0 1356.0,155.0 1660.0,155.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 1860.0,155.0 C 1908.0,155.0 1932.0,155.0 1980.0,155.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 1860.0,155.0 C 1908.0,155.0 1932.0,285.0 1980.0,285.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 1860.0,155.0 C 1908.0,155.0 1932.0,415.0 1980.0,415.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 2180.0,155.0 C 2228.0,155.0 2252.0,155.0 2300.0,155.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 2500.0,155.0 C 2548.0,155.0 2572.0,155.0 2620.0,155.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 2180.0,285.0 C 2356.0,285.0 2444.0,155.0 2620.0,155.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 2820.0,155.0 C 2868.0,155.0 2892.0,285.0 2940.0,285.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 2820.0,155.0 C 2868.0,155.0 2892.0,155.0 2940.0,155.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 3140.0,285.0 C 3188.0,285.0 3212.0,155.0 3260.0,155.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 3460.0,155.0 C 3508.0,155.0 3532.0,155.0 3580.0,155.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 260.0,675.0 C 1588.0,675.0 2252.0,155.0 3580.0,155.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 3780.0,155.0 C 3828.0,155.0 3852.0,155.0 3900.0,155.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 4100.0,155.0 C 4148.0,155.0 4172.0,155.0 4220.0,155.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 4420.0,155.0 C 4468.0,155.0 4492.0,155.0 4540.0,155.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  <path d="M 3780.0,155.0 C 3828.0,155.0 3852.0,285.0 3900.0,285.0" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)" opacity="0.75" />
+  </g>
+  <g id="nodes">
+  <rect x="60" y="120" width="200" height="70" rx="8" ry="8" fill="#059669" fill-opacity="0.85" stroke="#059669" stroke-width="2" />
+  <text x="160.0" y="144" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">數據導入檢查</text>
+  <text x="160.0" y="164" text-anchor="middle" font-size="10" fill="#cbd5e1">data_import</text>
+  <text x="160.0" y="180" text-anchor="middle" font-size="8" fill="#94a3b8">n_import</text>
+  <rect x="60" y="250" width="200" height="70" rx="8" ry="8" fill="#059669" fill-opacity="0.85" stroke="#059669" stroke-width="2" />
+  <text x="160.0" y="274" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">市場上下文</text>
+  <text x="160.0" y="294" text-anchor="middle" font-size="10" fill="#cbd5e1">market_context</text>
+  <text x="160.0" y="310" text-anchor="middle" font-size="8" fill="#94a3b8">n_ctx</text>
+  <rect x="60" y="380" width="200" height="70" rx="8" ry="8" fill="#0891B2" fill-opacity="0.85" stroke="#0891B2" stroke-width="2" />
+  <text x="160.0" y="404" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">多周期熱門股聚合</text>
+  <text x="160.0" y="424" text-anchor="middle" font-size="10" fill="#cbd5e1">multi_period_hot</text>
+  <text x="160.0" y="440" text-anchor="middle" font-size="8" fill="#94a3b8">n_multihot</text>
+  <rect x="60" y="510" width="200" height="70" rx="8" ry="8" fill="#6B7280" fill-opacity="0.85" stroke="#6B7280" stroke-width="2" />
+  <text x="160.0" y="534" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">後臺暫停/恢復</text>
+  <text x="160.0" y="554" text-anchor="middle" font-size="10" fill="#cbd5e1">bg_manager</text>
+  <text x="160.0" y="570" text-anchor="middle" font-size="8" fill="#94a3b8">n_bg</text>
+  <rect x="60" y="640" width="200" height="70" rx="8" ry="8" fill="#0891B2" fill-opacity="0.85" stroke="#0891B2" stroke-width="2" />
+  <text x="160.0" y="664" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">大盤分析+自適應參數</text>
+  <text x="160.0" y="684" text-anchor="middle" font-size="10" fill="#cbd5e1">adaptive_params</text>
+  <text x="160.0" y="700" text-anchor="middle" font-size="8" fill="#94a3b8">n_adaptive</text>
+  <rect x="380" y="120" width="200" height="70" rx="8" ry="8" fill="#059669" fill-opacity="0.85" stroke="#059669" stroke-width="2" />
+  <text x="480.0" y="144" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">股票池</text>
+  <text x="480.0" y="164" text-anchor="middle" font-size="10" fill="#cbd5e1">stock_pool</text>
+  <text x="480.0" y="180" text-anchor="middle" font-size="8" fill="#94a3b8">n_pool</text>
+  <rect x="380" y="250" width="200" height="70" rx="8" ry="8" fill="#0891B2" fill-opacity="0.85" stroke="#0891B2" stroke-width="2" />
+  <text x="480.0" y="274" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">均線粘合偵測</text>
+  <text x="480.0" y="294" text-anchor="middle" font-size="10" fill="#cbd5e1">ma_convergence</text>
+  <text x="480.0" y="310" text-anchor="middle" font-size="8" fill="#94a3b8">n_ma_conv</text>
+  <rect x="380" y="380" width="200" height="70" rx="8" ry="8" fill="#DC2626" fill-opacity="0.85" stroke="#DC2626" stroke-width="2" />
+  <text x="480.0" y="404" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">持倉風控</text>
+  <text x="480.0" y="424" text-anchor="middle" font-size="10" fill="#cbd5e1">holding_guard</text>
+  <text x="480.0" y="440" text-anchor="middle" font-size="8" fill="#94a3b8">n_guard</text>
+  <rect x="700" y="120" width="200" height="70" rx="8" ry="8" fill="#059669" fill-opacity="0.85" stroke="#059669" stroke-width="2" />
+  <text x="800.0" y="144" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">候選池過濾</text>
+  <text x="800.0" y="164" text-anchor="middle" font-size="10" fill="#cbd5e1">candidate_pool</text>
+  <text x="800.0" y="180" text-anchor="middle" font-size="8" fill="#94a3b8">n_cand</text>
+  <rect x="1020" y="120" width="200" height="70" rx="8" ry="8" fill="#6B7280" fill-opacity="0.85" stroke="#6B7280" stroke-width="2" />
+  <text x="1120.0" y="144" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">Zipline因子計算</text>
+  <text x="1120.0" y="164" text-anchor="middle" font-size="10" fill="#cbd5e1">zipline_factor</text>
+  <text x="1120.0" y="180" text-anchor="middle" font-size="8" fill="#94a3b8">n_zipline</text>
+  <rect x="1340" y="120" width="200" height="70" rx="8" ry="8" fill="#4F46E5" fill-opacity="0.85" stroke="#4F46E5" stroke-width="2" />
+  <text x="1440.0" y="144" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">信號合併</text>
+  <text x="1440.0" y="164" text-anchor="middle" font-size="10" fill="#cbd5e1">signal_merge</text>
+  <text x="1440.0" y="180" text-anchor="middle" font-size="8" fill="#94a3b8">n_merge</text>
+  <rect x="700" y="250" width="200" height="70" rx="8" ry="8" fill="#0891B2" fill-opacity="0.85" stroke="#0891B2" stroke-width="2" />
+  <text x="800.0" y="274" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">熱度計算</text>
+  <text x="800.0" y="294" text-anchor="middle" font-size="10" fill="#cbd5e1">heat_score</text>
+  <text x="800.0" y="310" text-anchor="middle" font-size="8" fill="#94a3b8">n_heat</text>
+  <rect x="1660" y="120" width="200" height="70" rx="8" ry="8" fill="#4F46E5" fill-opacity="0.85" stroke="#4F46E5" stroke-width="2" />
+  <text x="1760.0" y="144" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">板塊加權</text>
+  <text x="1760.0" y="164" text-anchor="middle" font-size="10" fill="#cbd5e1">sector_boost</text>
+  <text x="1760.0" y="180" text-anchor="middle" font-size="8" fill="#94a3b8">n_boost</text>
+  <rect x="1980" y="120" width="200" height="70" rx="8" ry="8" fill="#0D9488" fill-opacity="0.85" stroke="#0D9488" stroke-width="2" />
+  <text x="2080.0" y="144" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">跌後反彈加分</text>
+  <text x="2080.0" y="164" text-anchor="middle" font-size="10" fill="#cbd5e1">bounce_reversal</text>
+  <text x="2080.0" y="180" text-anchor="middle" font-size="8" fill="#94a3b8">n_bounce</text>
+  <rect x="2300" y="120" width="200" height="70" rx="8" ry="8" fill="#0891B2" fill-opacity="0.85" stroke="#0891B2" stroke-width="2" />
+  <text x="2400.0" y="144" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">機構線索加分</text>
+  <text x="2400.0" y="164" text-anchor="middle" font-size="10" fill="#cbd5e1">inst_tips</text>
+  <text x="2400.0" y="180" text-anchor="middle" font-size="8" fill="#94a3b8">n_inst_tips</text>
+  <rect x="1980" y="250" width="200" height="70" rx="8" ry="8" fill="#0891B2" fill-opacity="0.85" stroke="#0891B2" stroke-width="2" />
+  <text x="2080.0" y="274" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">新聞力度計算</text>
+  <text x="2080.0" y="294" text-anchor="middle" font-size="10" fill="#cbd5e1">news_strength</text>
+  <text x="2080.0" y="310" text-anchor="middle" font-size="8" fill="#94a3b8">n_news_str</text>
+  <rect x="1980" y="380" width="200" height="70" rx="8" ry="8" fill="#0891B2" fill-opacity="0.85" stroke="#0891B2" stroke-width="2" />
+  <text x="2080.0" y="404" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">板塊輪動懲罰</text>
+  <text x="2080.0" y="424" text-anchor="middle" font-size="10" fill="#cbd5e1">rotation_penalty</text>
+  <text x="2080.0" y="440" text-anchor="middle" font-size="8" fill="#94a3b8">n_rot_pen</text>
+  <rect x="3260" y="120" width="200" height="70" rx="8" ry="8" fill="#2563EB" fill-opacity="0.85" stroke="#2563EB" stroke-width="2" />
+  <text x="3360.0" y="144" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">AI精選</text>
+  <text x="3360.0" y="164" text-anchor="middle" font-size="10" fill="#cbd5e1">ai_predict</text>
+  <text x="3360.0" y="180" text-anchor="middle" font-size="8" fill="#94a3b8">n_ai</text>
+  <rect x="2620" y="120" width="200" height="70" rx="8" ry="8" fill="#DC2626" fill-opacity="0.85" stroke="#DC2626" stroke-width="2" />
+  <text x="2720.0" y="144" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">主力資金過濾</text>
+  <text x="2720.0" y="164" text-anchor="middle" font-size="10" fill="#cbd5e1">smart_money_filter</text>
+  <text x="2720.0" y="180" text-anchor="middle" font-size="8" fill="#94a3b8">n_smart</text>
+  <rect x="2940" y="120" width="200" height="70" rx="8" ry="8" fill="#0D9488" fill-opacity="0.85" stroke="#0D9488" stroke-width="2" />
+  <text x="3040.0" y="144" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">K線形態偵測</text>
+  <text x="3040.0" y="164" text-anchor="middle" font-size="10" fill="#cbd5e1">candle_pattern</text>
+  <text x="3040.0" y="180" text-anchor="middle" font-size="8" fill="#94a3b8">n_candle</text>
+  <rect x="2940" y="250" width="200" height="70" rx="8" ry="8" fill="#DC2626" fill-opacity="0.85" stroke="#DC2626" stroke-width="2" />
+  <text x="3040.0" y="274" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">新聞攔截+技術過濾</text>
+  <text x="3040.0" y="294" text-anchor="middle" font-size="10" fill="#cbd5e1">news_guard</text>
+  <text x="3040.0" y="310" text-anchor="middle" font-size="8" fill="#94a3b8">n_newsguard</text>
+  <rect x="3580" y="120" width="200" height="70" rx="8" ry="8" fill="#D97706" fill-opacity="0.85" stroke="#D97706" stroke-width="2" />
+  <text x="3680.0" y="144" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">買入訂單生成</text>
+  <text x="3680.0" y="164" text-anchor="middle" font-size="10" fill="#cbd5e1">generate_orders</text>
+  <text x="3680.0" y="180" text-anchor="middle" font-size="8" fill="#94a3b8">n_orders</text>
+  <rect x="4220" y="120" width="200" height="70" rx="8" ry="8" fill="#D97706" fill-opacity="0.85" stroke="#D97706" stroke-width="2" />
+  <text x="4320.0" y="144" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">持倉合併</text>
+  <text x="4320.0" y="164" text-anchor="middle" font-size="10" fill="#cbd5e1">position_merge</text>
+  <text x="4320.0" y="180" text-anchor="middle" font-size="8" fill="#94a3b8">n_merge_pos</text>
+  <rect x="4540" y="120" width="200" height="70" rx="8" ry="8" fill="#D97706" fill-opacity="0.85" stroke="#D97706" stroke-width="2" />
+  <text x="4640.0" y="144" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">跨Tab發布</text>
+  <text x="4640.0" y="164" text-anchor="middle" font-size="10" fill="#cbd5e1">crosstab_publish</text>
+  <text x="4640.0" y="180" text-anchor="middle" font-size="8" fill="#94a3b8">n_crosstab</text>
+  <rect x="3900" y="120" width="200" height="70" rx="8" ry="8" fill="#D97706" fill-opacity="0.85" stroke="#D97706" stroke-width="2" />
+  <text x="4000.0" y="144" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">騰龍換鳥</text>
+  <text x="4000.0" y="164" text-anchor="middle" font-size="10" fill="#cbd5e1">swap_weak</text>
+  <text x="4000.0" y="180" text-anchor="middle" font-size="8" fill="#94a3b8">n_swap</text>
+  <rect x="3900" y="250" width="200" height="70" rx="8" ry="8" fill="#6B7280" fill-opacity="0.85" stroke="#6B7280" stroke-width="2" />
+  <text x="4000.0" y="274" text-anchor="middle" font-size="14" font-weight="bold" fill="#ffffff">擬合計算+保存</text>
+  <text x="4000.0" y="294" text-anchor="middle" font-size="10" fill="#cbd5e1">fitting_save</text>
+  <text x="4000.0" y="310" text-anchor="middle" font-size="8" fill="#94a3b8">n_fit</text>
+  </g>
+  <g id="legend">
+  <text x="40" y="830" font-size="12" font-weight="bold" fill="#94a3b8">圖例</text>
+  <rect x="40.0" y="850" width="14" height="14" rx="3" fill="#059669" />
+  <text x="60.0" y="862" font-size="11" fill="#94a3b8">數據源</text>
+  <rect x="1004.0" y="850" width="14" height="14" rx="3" fill="#DC2626" />
+  <text x="1024.0" y="862" font-size="11" fill="#94a3b8">過濾器</text>
+  <rect x="1968.0" y="850" width="14" height="14" rx="3" fill="#2563EB" />
+  <text x="1988.0" y="862" font-size="11" fill="#94a3b8">AI預測</text>
+  <rect x="2932.0" y="850" width="14" height="14" rx="3" fill="#0891B2" />
+  <text x="2952.0" y="862" font-size="11" fill="#94a3b8">數據增強</text>
+  <rect x="3896.0" y="850" width="14" height="14" rx="3" fill="#4F46E5" />
+  <text x="3916.0" y="862" font-size="11" fill="#94a3b8">聚合</text>
+  <rect x="40.0" y="878" width="14" height="14" rx="3" fill="#D97706" />
+  <text x="60.0" y="890" font-size="11" fill="#94a3b8">交易動作</text>
+  <rect x="1004.0" y="878" width="14" height="14" rx="3" fill="#0D9488" />
+  <text x="1024.0" y="890" font-size="11" fill="#94a3b8">因子計算</text>
+  <rect x="1968.0" y="878" width="14" height="14" rx="3" fill="#6B7280" />
+  <text x="1988.0" y="890" font-size="11" fill="#94a3b8">數據轉換</text>
+  </g>
+</svg>

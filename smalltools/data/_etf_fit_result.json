@@ -1,0 +1,245 @@
+{
+  "fitted_at": "2026-09-09",
+  "range": "2015→今",
+  "meta": {
+    "pool": [
+      {
+        "code": "sh510300",
+        "name": "沪深300ETF华泰柏瑞",
+        "n": 2838
+      },
+      {
+        "code": "sz159915",
+        "name": "创业板ETF易方达",
+        "n": 2837
+      },
+      {
+        "code": "sh510050",
+        "name": "上证50ETF华夏",
+        "n": 2838
+      },
+      {
+        "code": "sh510500",
+        "name": "中证500ETF南方",
+        "n": 2836
+      },
+      {
+        "code": "sh510180",
+        "name": "上证180ETF华安",
+        "n": 2838
+      },
+      {
+        "code": "sh510880",
+        "name": "红利ETF华泰柏瑞",
+        "n": 2838
+      },
+      {
+        "code": "sz159919",
+        "name": "沪深300ETF嘉实",
+        "n": 2837
+      },
+      {
+        "code": "sh510330",
+        "name": "沪深300ETF华夏",
+        "n": 2838
+      },
+      {
+        "code": "sh512010",
+        "name": "医药ETF易方达",
+        "n": 2836
+      },
+      {
+        "code": "sz159928",
+        "name": "消费ETF汇添富",
+        "n": 2838
+      },
+      {
+        "code": "sh510900",
+        "name": "恒生中国企业ETF易方达",
+        "n": 2838
+      },
+      {
+        "code": "sz159920",
+        "name": "恒生ETF华夏",
+        "n": 2838
+      },
+      {
+        "code": "sh510660",
+        "name": "医药ETF华夏",
+        "n": 2838
+      },
+      {
+        "code": "sh000300",
+        "name": "沪深300",
+        "n": 2840
+      }
+    ]
+  },
+  "with_gate": {
+    "signal": "dip_buy",
+    "gate": "MA20>MA60 结构多头",
+    "use_gate": true,
+    "cool_days": 30,
+    "exit": [
+      2.0,
+      -6.0,
+      30
+    ],
+    "is": {
+      "n": 44,
+      "win_rate": 81.82,
+      "avg_win": 3.15,
+      "avg_loss": -7.19,
+      "profit_factor": 1.97,
+      "total_ret": 66.72,
+      "cagr": 13.99,
+      "mdd": -34.65
+    },
+    "oos": {
+      "n": 11,
+      "win_rate": 100.0,
+      "avg_win": 2.92,
+      "avg_loss": 0.0,
+      "profit_factor": 99.0,
+      "total_ret": 37.07,
+      "cagr": 20.2,
+      "mdd": 0.0
+    },
+    "oos_slices": [
+      {
+        "n": 3,
+        "win_rate": 100.0,
+        "avg_win": 2.418054803218269,
+        "avg_loss": 0.0,
+        "profit_factor": 99.0,
+        "total_ret": 7.430048444246817,
+        "mdd": 0.0
+      },
+      {
+        "n": 9,
+        "win_rate": 100.0,
+        "avg_win": 3.1022308739592197,
+        "avg_loss": 0.0,
+        "profit_factor": 99.0,
+        "total_ret": 31.52646954198857,
+        "mdd": 0.0
+      }
+    ],
+    "full": {
+      "n": 55,
+      "win_rate": 85.45,
+      "avg_win": 3.1,
+      "avg_loss": -7.19,
+      "profit_factor": 2.53,
+      "total_ret": 128.52,
+      "cagr": 10.22,
+      "mdd": -34.65
+    },
+    "per_code": [
+      {
+        "code": "sh510050",
+        "name": "上证50ETF华夏",
+        "n": 4,
+        "win_rate": 75.0,
+        "total_ret": 6.38,
+        "mdd": -1.2
+      },
+      {
+        "code": "sh510180",
+        "name": "上证180ETF华安",
+        "n": 4,
+        "win_rate": 100.0,
+        "total_ret": 12.25,
+        "mdd": 0.0
+      },
+      {
+        "code": "sh510300",
+        "name": "沪深300ETF华泰柏瑞",
+        "n": 4,
+        "win_rate": 100.0,
+        "total_ret": 11.07,
+        "mdd": 0.0
+      },
+      {
+        "code": "sh510330",
+        "name": "沪深300ETF华夏",
+        "n": 4,
+        "win_rate": 100.0,
+        "total_ret": 11.15,
+        "mdd": 0.0
+      },
+      {
+        "code": "sh510500",
+        "name": "中证500ETF南方",
+        "n": 6,
+        "win_rate": 100.0,
+        "total_ret": 15.66,
+        "mdd": 0.0
+      },
+      {
+        "code": "sh510660",
+        "name": "医药ETF华夏",
+        "n": 5,
+        "win_rate": 60.0,
+        "total_ret": -7.88,
+        "mdd": -16.29
+      },
+      {
+        "code": "sh510880",
+        "name": "红利ETF华泰柏瑞",
+        "n": 5,
+        "win_rate": 60.0,
+        "total_ret": 4.51,
+        "mdd": -8.24
+      },
+      {
+        "code": "sh510900",
+        "name": "恒生中国企业ETF易方达",
+        "n": 2,
+        "win_rate": 100.0,
+        "total_ret": 6.58,
+        "mdd": 0.0
+      },
+      {
+        "code": "sh512010",
+        "name": "医药ETF易方达",
+        "n": 8,
+        "win_rate": 87.5,
+        "total_ret": 9.99,
+        "mdd": -11.14
+      },
+      {
+        "code": "sz159915",
+        "name": "创业板ETF易方达",
+        "n": 6,
+        "win_rate": 83.33,
+        "total_ret": 10.53,
+        "mdd": -9.46
+      },
+      {
+        "code": "sz159919",
+        "name": "沪深300ETF嘉实",
+        "n": 4,
+        "win_rate": 100.0,
+        "total_ret": 13.16,
+        "mdd": 0.0
+      },
+      {
+        "code": "sz159920",
+        "name": "恒生ETF华夏",
+        "n": 1,
+        "win_rate": 100.0,
+        "total_ret": 3.57,
+        "mdd": 0.0
+      },
+      {
+        "code": "sz159928",
+        "name": "消费ETF汇添富",
+        "n": 2,
+        "win_rate": 50.0,
+        "total_ret": -8.32,
+        "mdd": -10.36
+      }
+    ]
+  }
+}

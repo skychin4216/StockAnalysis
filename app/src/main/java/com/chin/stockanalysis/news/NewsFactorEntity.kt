@@ -141,6 +141,10 @@ interface NewsFactorDao {
     @Query("DELETE FROM news_factors WHERE id = :id")
     suspend fun deleteById(id: Long)
 
+    /** 按来源+日期删除（用于同源同日去重，如机构研报） */
+    @Query("DELETE FROM news_factors WHERE source = :source AND news_date = :date")
+    suspend fun deleteBySourceAndDate(source: String, date: String)
+
     /** 清空表 */
     @Query("DELETE FROM news_factors")
     suspend fun deleteAll()

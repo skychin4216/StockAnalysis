@@ -11,17 +11,17 @@ import kotlinx.coroutines.withContext
 import java.time.format.DateTimeFormatter
 
 /**
- * ## 交易執行 Agent（Plan-and-Execute 模式）
+ * ## 交易执行 Agent（Plan-and-Execute 模式）
  *
- * 替代現有的 SimulationTradeEngine 硬編碼流程，實現智能交易決策：
- * 1. 規劃交易步驟（選股 → 分析 → 下單 → 監控 → 賣出）
- * 2. 動態調整策略組合和倉位分配
- * 3. 集成風控檢查
+ * 替代现有的 SimulationTradeEngine 硬编码流程，实现智能交易决策：
+ * 1. 规划交易步骤（选股 → 分析 → 下单 → 监控 → 卖出）
+ * 2. 动态调整策略组合和仓位分配
+ * 3. 集成风控检查
  */
 class TradeExecutionAgent(context: Context) : AgentBase(
     id = "trade_execution",
-    name = "交易執行 Agent",
-    description = "根據市場環境和策略信號，執行智能買賣決策",
+    name = "交易执行 Agent",
+    description = "根据市场环境和策略信号，执行智能买卖决策",
     context = context
 ) {
     companion object {
@@ -38,30 +38,30 @@ class TradeExecutionAgent(context: Context) : AgentBase(
     }
 
     override fun buildSystemPrompt(): String = """
-        你是一位專業的 A 股交易執行 Agent，負責將選股和分析結果轉化為實際交易操作。
+        你是一位专业的 A 股交易执行 Agent，负责将选股和分析结果转化为实际交易操作。
 
-        ## 核心職責
-        1. 評估當前持倉狀態和現金倉位
-        2. 根據選股結果和分析報告決定買入名單和倉位分配
-        3. 執行風控檢查（止損、止盈、最大回撤）
-        4. 決定賣出時機和順序
-        5. 記錄交易決策理由
+        ## 核心职责
+        1. 评估当前持仓状态和现金仓位
+        2. 根据选股结果和分析报告决定买入名单和仓位分配
+        3. 执行风控检查（止损、止盈、最大回撤）
+        4. 决定卖出时机和顺序
+        5. 记录交易决策理由
 
-        ## 交易規則
-        - 最大持倉數: $MAX_HOLDINGS 只
-        - 單只股票最大倉位: 30%
-        - 新買入必須有明確的止損位（虧損 > 8% 強制止損）
-        - 賣出優先級: 觸發止損 > 達到止盈 > 板塊走弱 > 持倉超期
-        - 騰籠換鳥: 當持倉已滿且有更優標的時，先賣出最差持倉再買入
+        ## 交易规则
+        - 最大持仓数: $MAX_HOLDINGS 只
+        - 单只股票最大仓位: 30%
+        - 新买入必须有明确的止损位（亏损 > 8% 强制止损）
+        - 卖出优先级: 触发止损 > 达到止盈 > 板块走弱 > 持仓超期
+        - 腾笼换鸟: 当持仓已满且有更优标的时，先卖出最差持仓再买入
 
-        ## 輸出格式
+        ## 输出格式
         {
           "action": "BUY|SELL|HOLD|MIXED",
           "buy_orders": [
-            {"code": "600519", "name": "貴州茅台", "price": 1500.0, "quantity": 100, "reason": "...", "stop_loss": 1400}
+            {"code": "600519", "name": "贵州茅台", "price": 1500.0, "quantity": 100, "reason": "...", "stop_loss": 1400}
           ],
           "sell_orders": [
-            {"code": "000001", "name": "平安銀行", "reason": "觸發止損", "profit_pct": -8.5}
+            {"code": "000001", "name": "平安银行", "reason": "触发止损", "profit_pct": -8.5}
           ],
           "portfolio_after": {"cash_ratio": 30, "stock_ratio": 70, "holdings": 5},
           "reasoning": "..."
@@ -69,13 +69,13 @@ class TradeExecutionAgent(context: Context) : AgentBase(
     """.trimIndent()
 
     /**
-     * 執行交易決策（買入 + 賣出）
+     * 执行交易决策（买入 + 卖出）
      */
     suspend fun executeTrade(
         candidates: List<StockRecommendation>? = null,
         onProgress: ((String) -> Unit)? = null
     ): TradeExecutionResult {
-        onProgress?.invoke("📈 交易 Agent 啟動...")
+        onProgress?.invoke("📈 交易 Agent 启动...")
 
         val ctx = AgentContext().apply {
             candidates?.let { put("candidates", it) }
@@ -84,7 +84,7 @@ class TradeExecutionAgent(context: Context) : AgentBase(
         }
 
         val result = planAndExecute(
-            goal = "根據當前市場環境、持倉狀態和候選股票，制定今日交易計劃（買入+賣出）",
+            goal = "根据当前市场环境、持仓状态和候选股票，制定今日交易计划（买入+卖出）",
             ctx = ctx,
             maxSteps = 10
         )
@@ -134,7 +134,7 @@ class TradeExecutionAgent(context: Context) : AgentBase(
                 steps = result.steps
             )
         } catch (e: Exception) {
-            Log.w(TAG, "解析交易結果失敗: ${e.message}")
+            Log.w(TAG, "解析交易结果失败: ${e.message}")
             TradeExecutionResult(
                 success = result.success,
                 rawOutput = result.output,
@@ -144,7 +144,7 @@ class TradeExecutionAgent(context: Context) : AgentBase(
     }
 }
 
-/** 交易執行結果 */
+/** 交易执行结果 */
 data class TradeExecutionResult(
     val success: Boolean,
     val action: String = "HOLD",
@@ -172,10 +172,10 @@ data class SellOrder(
 )
 
 /** ================================================================ */
-/** 持倉狀態工具 */
+/** 持仓状态工具 */
 class PortfolioStatusTool(private val ctx: Context) : AgentTool {
     override val name = "portfolio_status"
-    override val description = "獲取當前持倉狀態、現金比例、盈虧情況"
+    override val description = "获取当前持仓状态、现金比例、盈亏情况"
     override val parameters = listOf<String>()
 
     override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
@@ -189,34 +189,34 @@ class PortfolioStatusTool(private val ctx: Context) : AgentTool {
                 val holdings = orders.map { "${it.stockCode}(${it.stockName}) x${it.quantity} @${it.buyPrice}" }
 
                 buildString {
-                    appendLine("【持倉狀態】")
-                    appendLine("- 持倉數: ${orders.size}")
-                    appendLine("- 總市值: ${"%.2f".format(totalValue)}")
-                    appendLine("- 持倉列表:")
+                    appendLine("【持仓状态】")
+                    appendLine("- 持仓数: ${orders.size}")
+                    appendLine("- 总市值: ${"%.2f".format(totalValue)}")
+                    appendLine("- 持仓列表:")
                     holdings.forEach { appendLine("  • $it") }
                 }
             } catch (e: Exception) {
-                "錯誤: 獲取持倉失敗: ${e.message}"
+                "错误: 获取持仓失败: ${e.message}"
             }
         }
     }
 }
 
-/** 下單買入工具 */
+/** 下单买入工具 */
 class PlaceBuyOrderTool(private val ctx: Context) : AgentTool {
     override val name = "place_buy_order"
-    override val description = "創建買入訂單（寫入數據庫）"
+    override val description = "创建买入订单（写入数据库）"
     override val parameters = listOf("stock_code", "stock_name", "price", "quantity", "reason", "strategy_id")
 
     override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
         val c = ctx
         return withContext(Dispatchers.IO) {
             try {
-                val code = params["stock_code"] ?: return@withContext "錯誤: 缺少股票代碼"
+                val code = params["stock_code"] ?: return@withContext "错误: 缺少股票代码"
                 val name = params["stock_name"] ?: code
-                val price = params["price"]?.toDoubleOrNull() ?: return@withContext "錯誤: 缺少價格"
+                val price = params["price"]?.toDoubleOrNull() ?: return@withContext "错误: 缺少价格"
                 val qty = params["quantity"]?.toIntOrNull() ?: 100
-                val reason = params["reason"] ?: "Agent 決策買入"
+                val reason = params["reason"] ?: "Agent 决策买入"
                 val strategyId = params["strategy_id"] ?: "AgentTrade"
                 val today = TradingDayPickerView.recentTradingDay()
                     .format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
@@ -230,7 +230,7 @@ class PlaceBuyOrderTool(private val ctx: Context) : AgentTool {
                         tradeDate = today,
                         buyPrice = price,
                         quantity = qty,
-                        orderType = "Agent買入",
+                        orderType = "Agent买入",
                         status = "BUYING",
                         reason = reason,
                         createdAt = System.currentTimeMillis(),
@@ -238,48 +238,48 @@ class PlaceBuyOrderTool(private val ctx: Context) : AgentTool {
                         buyTime = java.time.LocalTime.now().toString().take(8)
                     )
                 )
-                "✅ 已創建買入訂單: $name($code) ${qty}股 @${price}"
+                "✅ 已创建买入订单: $name($code) ${qty}股 @${price}"
             } catch (e: Exception) {
-                "錯誤: 創建買入訂單失敗: ${e.message}"
+                "错误: 创建买入订单失败: ${e.message}"
             }
         }
     }
 }
 
-/** 下單賣出工具 */
+/** 下单卖出工具 */
 class PlaceSellOrderTool(private val ctx: Context) : AgentTool {
     override val name = "place_sell_order"
-    override val description = "標記持倉為賣出狀態"
+    override val description = "标记持仓为卖出状态"
     override val parameters = listOf("stock_code", "reason")
 
     override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
         val c = ctx
         return withContext(Dispatchers.IO) {
             try {
-                val code = params["stock_code"] ?: return@withContext "錯誤: 缺少股票代碼"
-                val reason = params["reason"] ?: "Agent 決策賣出"
+                val code = params["stock_code"] ?: return@withContext "错误: 缺少股票代码"
+                val reason = params["reason"] ?: "Agent 决策卖出"
                 val db = StockDatabase.getInstance(c)
 
                 val activeOrders = db.strategyTradeOrderDao().getRecent(200)
                     .filter { it.stockCode == code && it.status in listOf("BUYING", "PENDING") }
-                if (activeOrders.isEmpty()) return@withContext "錯誤: 未找到股票 $code 的活躍持倉"
+                if (activeOrders.isEmpty()) return@withContext "错误: 未找到股票 $code 的活跃持仓"
                 val order = activeOrders.first()
                 db.strategyTradeOrderDao().updateSellInfo(
                     order.id, "SOLD", order.buyPrice,
                     java.time.LocalDate.now().format(
                         java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd")) + " 15:00", 0.0)
-                "✅ 已標記賣出: $code | 理由: $reason"
+                "✅ 已标记卖出: $code | 理由: $reason"
             } catch (e: Exception) {
-                "錯誤: 標記賣出失敗: ${e.message}"
+                "错误: 标记卖出失败: ${e.message}"
             }
         }
     }
 }
 
-/** 風控檢查工具 */
+/** 风控检查工具 */
 class RiskCheckTool(private val ctx: Context) : AgentTool {
     override val name = "risk_check"
-    override val description = "檢查持倉風險（止損、回撤、超期）"
+    override val description = "检查持仓风险（止损、回撤、超期）"
     override val parameters = listOf("stock_code")
 
     override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
@@ -306,23 +306,23 @@ class RiskCheckTool(private val ctx: Context) : AgentTool {
                     val pct = (snap.close - o.buyPrice) / o.buyPrice * 100
 
                     when {
-                        pct < -8 -> risks.add("${o.stockCode}: 虧損 ${"%.1f".format(pct)}% > 8%，觸發止損")
-                        pct > 20 -> risks.add("${o.stockCode}: 盈利 ${"%.1f".format(pct)}% > 20%，建議止盈")
+                        pct < -8 -> risks.add("${o.stockCode}: 亏损 ${"%.1f".format(pct)}% > 8%，触发止损")
+                        pct > 20 -> risks.add("${o.stockCode}: 盈利 ${"%.1f".format(pct)}% > 20%，建议止盈")
                     }
                 }
 
-                if (risks.isEmpty()) "✅ 所有持倉風險可控" else "⚠️ 風險警告:\n${risks.joinToString("\n")}"
+                if (risks.isEmpty()) "✅ 所有持仓风险可控" else "⚠️ 风险警告:\n${risks.joinToString("\n")}"
             } catch (e: Exception) {
-                "錯誤: 風控檢查失敗: ${e.message}"
+                "错误: 风控检查失败: ${e.message}"
             }
         }
     }
 }
 
-/** 擇時工具 */
+/** 择时工具 */
 class MarketTimingTool(private val ctx: Context) : AgentTool {
     override val name = "market_timing"
-    override val description = "評估當前市場時機是否適合交易"
+    override val description = "评估当前市场时机是否适合交易"
     override val parameters = listOf<String>()
 
     override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
@@ -337,20 +337,20 @@ class MarketTimingTool(private val ctx: Context) : AgentTool {
                 val upRatio = if (data.isNotEmpty()) data.count { it.changePct > 0 }.toDouble() / data.size else 0.0
 
                 val timing = when {
-                    avgChange > 2 && upRatio > 0.7 -> "強勢市場，積極做多"
-                    avgChange > 0 && upRatio > 0.5 -> "偏多市場，適度參與"
-                    avgChange < -2 && upRatio < 0.3 -> "弱勢市場，控制倉位"
-                    else -> "震蕩市場，精選個股"
+                    avgChange > 2 && upRatio > 0.7 -> "强势市场，积极做多"
+                    avgChange > 0 && upRatio > 0.5 -> "偏多市场，适度参与"
+                    avgChange < -2 && upRatio < 0.3 -> "弱势市场，控制仓位"
+                    else -> "震荡市场，精选个股"
                 }
 
                 buildString {
-                    appendLine("【擇時評估】 $today")
-                    appendLine("- 平均漲跌幅: ${"%.2f".format(avgChange)}%")
-                    appendLine("- 上漲比例: ${"%.1f".format(upRatio * 100)}%")
-                    appendLine("- 建議: $timing")
+                    appendLine("【择时评估】 $today")
+                    appendLine("- 平均涨跌幅: ${"%.2f".format(avgChange)}%")
+                    appendLine("- 上涨比例: ${"%.1f".format(upRatio * 100)}%")
+                    appendLine("- 建议: $timing")
                 }
             } catch (e: Exception) {
-                "錯誤: 擇時評估失敗: ${e.message}"
+                "错误: 择时评估失败: ${e.message}"
             }
         }
     }

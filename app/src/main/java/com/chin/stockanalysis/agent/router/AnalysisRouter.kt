@@ -9,13 +9,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * ## 股票分析路由層
+ * ## 股票分析路由层
  */
 interface StockAnalysisService {
     suspend fun analyze(context: Context, stockCode: String): StockAnalysisResult
 }
 
-/** Legacy 實現：包装旧 StockAnalyzerService */
+/** Legacy 实现：包装旧 StockAnalyzerService */
 class LegacyStockAnalysisService : StockAnalysisService {
     override suspend fun analyze(context: Context, stockCode: String): StockAnalysisResult {
         return withContext(Dispatchers.IO) {
@@ -34,7 +34,7 @@ class LegacyStockAnalysisService : StockAnalysisService {
     }
 }
 
-/** Agent 實現 */
+/** Agent 实现 */
 class AgentStockAnalysisService : StockAnalysisService {
     override suspend fun analyze(context: Context, stockCode: String): StockAnalysisResult {
         val agent = StockAnalysisAgent(context)

@@ -13,12 +13,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * ## 均線金叉策略（V2 — 真實均線交叉檢測）
+ * ## 均线金叉策略（V2 — 真实均线交叉检测）
  *
- * 檢測 MA5 上穿 MA20 的金叉信號，配合成交量確認趨勢啟動。
- * - 前一天 MA5 < MA20，今天 MA5 > MA20 → 金叉確認
- * - 輔助條件：收陽線、漲幅 > 0.5%、成交額 > 5000 萬
- * - BEARISH 時提高門檻
+ * 检测 MA5 上穿 MA20 的金叉信号，配合成交量确认趋势启动。
+ * - 前一天 MA5 < MA20，今天 MA5 > MA20 → 金叉确认
+ * - 辅助条件：收阳线、涨幅 > 0.5%、成交额 > 5000 万
+ * - BEARISH 时提高门槛
  */
 class MovingAverageStrategy(
     private val screener: StockScreener
@@ -28,7 +28,9 @@ class MovingAverageStrategy(
     override var name = "均线金叉策略"
     override var description = "5日均线上穿20日均线，配合成交量放大确认趋势启动"
     override val category = StrategyCategory.TREND
+    override val holdingPeriods = listOf(HoldingPeriod.MID)
     override val source = StrategySource.BUILTIN
+    override val signalExpiryHours = 120   // 5个交易日
 
     override val config = StrategyConfig.custom(
         params = mapOf("short_period" to 5, "long_period" to 20, "volume_ratio_min" to 1.5),
@@ -36,7 +38,7 @@ class MovingAverageStrategy(
     )
 
     override var weightFactors: List<WeightFactor> = listOf(
-        WeightFactor("golden_cross", "金叉確認", 35, "MA5上穿MA20的金叉強度"),
+        WeightFactor("golden_cross", "金叉确认", 35, "MA5上穿MA20的金叉强度"),
         WeightFactor("momentum", "动量得分", 30, "基于涨跌幅的动量评分"),
         WeightFactor("volume", "量比得分", 35, "基于成交额的量比评分")
     )
@@ -66,23 +68,23 @@ class MovingAverageStrategy(
             signals = emptyList(), totalScanned = 0, scanTimeMs = System.currentTimeMillis() - startTime
         ))
 
-        // 大盤環境預檢
+        // 大盘环境预检
         val marketDir = try { screener.detectMarketDirection() } catch (_: Exception) { "OSCILLATION" }
         val isBearish = marketDir == "BEARISH"
         val dynamicChangeMin = if (isBearish) 1.0 else 0.5
         val dynamicStrengthThreshold = if (isBearish) 45 else 30
         val dynamicAmountMin = if (isBearish) 100_000_000.0 else 50_000_000.0
-        Log.i("MA_Strategy", "大盤環境: $marketDir → 門檻 chg≥${dynamicChangeMin}%, amt≥${dynamicAmountMin/1e6}M, strength≥$dynamicStrengthThreshold")
+        Log.i("MA_Strategy", "大盘环境: $marketDir → 门槛 chg≥${dynamicChangeMin}%, amt≥${dynamicAmountMin/1e6}M, strength≥$dynamicStrengthThreshold")
 
-        // Step 1: 基本過濾（收陽線 + 漲幅 + 成交額）
+        // Step 1: 基本过滤（收阳线 + 涨幅 + 成交额）
         val step1 = pool.filter { it.price > it.yestClose && it.changePercent >= dynamicChangeMin && it.amount >= dynamicAmountMin }
-        Log.i("MA_Strategy", "pool=${pool.size} → 基本過濾=${step1.size}")
+        Log.i("MA_Strategy", "pool=${pool.size} → 基本过滤=${step1.size}")
 
-        // Step 2: MA5/MA20 金叉檢測（查最近21天K線數據）
+        // Step 2: MA5/MA20 金叉检测（查最近21天K线数据）
         val availableDates = try { db.dailySnapshotDao().getAvailableDates(25) } catch (_: Exception) { emptyList() }
         val todayDate = availableDates.firstOrNull() ?: ""
 
-        // 批量預加載近21天的收盤價（避免 N+1）
+        // 批量预加载近21天的收盘价（避免 N+1）
         val closesByCode = mutableMapOf<String, List<Double>>()
         if (availableDates.size >= 21) {
             val datesNeeded = availableDates.take(21)
@@ -97,7 +99,7 @@ class MovingAverageStrategy(
             }
         }
 
-        // 計算 MA 並檢測金叉
+        // 计算 MA 并检测金叉
         val goldenCrossStocks = mutableListOf<StockRealtime>()
         for (stock in step1) {
             val closes = closesByCode[stock.code]?.takeLast(21)
@@ -105,13 +107,13 @@ class MovingAverageStrategy(
 
             val todayMA5 = closes.takeLast(5).average()
             val todayMA20 = closes.takeLast(20).average()
-            // 前一天：去掉今天，計算昨天 MA5/MA20
+            // 前一天：去掉今天，计算昨天 MA5/MA20
             val yesterdayCloses = closes.dropLast(1)
             val yesterdayMA5 = yesterdayCloses.takeLast(5).average()
             val yesterdayMA20 = yesterdayCloses.takeLast(20).average()
 
             val isGoldenCross = yesterdayMA5 <= yesterdayMA20 && todayMA5 > todayMA20
-            val isNearCross = todayMA5 > todayMA20 && (todayMA5 - todayMA20) / todayMA20 < 0.02 // 接近金叉（2%以內）
+            val isNearCross = todayMA5 > todayMA20 && (todayMA5 - todayMA20) / todayMA20 < 0.02 // 接近金叉（2%以内）
 
             if (isGoldenCross || isNearCross) {
                 val crossType = if (isGoldenCross) "金叉" else "接近金叉"
@@ -119,12 +121,12 @@ class MovingAverageStrategy(
                 goldenCrossStocks.add(stock)
             }
         }
-        Log.i("MA_Strategy", "金叉檢測: ${goldenCrossStocks.size}/${step1.size}")
+        Log.i("MA_Strategy", "金叉检测: ${goldenCrossStocks.size}/${step1.size}")
 
         // Step 3: 打分
         val step3 = goldenCrossStocks.map { calculateSignal(it) }
         val step4 = step3.filter { it.strength >= dynamicStrengthThreshold }
-        Log.i("MA_Strategy", "打分後 strength≥$dynamicStrengthThreshold: ${step4.size}")
+        Log.i("MA_Strategy", "打分后 strength≥$dynamicStrengthThreshold: ${step4.size}")
         if (step3.isNotEmpty()) {
             val top = step3.sortedByDescending { it.strength }.take(3)
             Log.i("MA_Strategy", "  Top3: ${top.joinToString { "${it.stockName}=${it.strength}" }}")
@@ -140,7 +142,7 @@ class MovingAverageStrategy(
 
     private fun calculateSignal(stock: StockRealtime): StrategySignal {
         val w = weightFactors.associateBy { it.key }
-        // 金叉確認得分：漲幅越大說明金叉越強
+        // 金叉确认得分：涨幅越大说明金叉越强
         val crossScore = when {
             stock.changePercent > 5 -> 35
             stock.changePercent > 3 -> 28
@@ -148,7 +150,7 @@ class MovingAverageStrategy(
             stock.changePercent > 0 -> 12
             else -> 5
         }
-        // 動量得分
+        // 动量得分
         val momentumScore = when {
             stock.changePercent > 5 -> 30
             stock.changePercent > 3 -> 22

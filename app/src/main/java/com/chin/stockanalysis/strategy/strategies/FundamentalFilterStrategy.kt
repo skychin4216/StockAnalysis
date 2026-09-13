@@ -3,6 +3,7 @@ package com.chin.stockanalysis.strategy.strategies
 import android.util.Log
 import com.chin.stockanalysis.stock.StockRealtime
 import com.chin.stockanalysis.strategy.Strategy
+import com.chin.stockanalysis.strategy.HoldingPeriod
 import com.chin.stockanalysis.strategy.StrategyCategory
 import com.chin.stockanalysis.strategy.StrategyConfig
 import com.chin.stockanalysis.strategy.StrategySource
@@ -30,7 +31,9 @@ class FundamentalFilterStrategy(
     override var description =
         "基础排除(4项) -> 第一层基础价值(8项) -> 第二层优质成长(12项) -> 第三层核心精选(15项) -> 换手率出货警告"
     override val category = StrategyCategory.VALUE
+    override val holdingPeriods = listOf(HoldingPeriod.LONG)
     override val source = StrategySource.BUILTIN
+    override val signalExpiryHours = 720   // 30个交易日
 
     override val config = StrategyConfig.custom(
         params = mapOf("layer" to 2.0, "max_results" to 30.0),
@@ -153,12 +156,12 @@ class FundamentalFilterStrategy(
     private suspend fun doScreen(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
         if (pool.isEmpty()) return success(emptyList(), 0, startTime)
 
-        // 大盤環境預檢
+        // 大盘环境预检
         val marketDir = try { screener.detectMarketDirection() } catch (_: Exception) { "OSCILLATION" }
         val isBearish = marketDir == "BEARISH"
         val strengthThreshold = if (isBearish) 35 else 20
         val maxRes = if (isBearish) config.maxResults / 2 else config.maxResults
-        Log.i(id, "大盤環境: $marketDir → 基本面門檻 ${if (isBearish) "20→35, maxResults減半" else "標準門檻20"}")
+        Log.i(id, "大盘环境: $marketDir → 基本面门槛 ${if (isBearish) "20→35, maxResults减半" else "标准门槛20"}")
 
         val layer = (config.params["layer"] as? Number)?.toInt() ?: 2
         val base = pool.filter { !baseExcluded(it) }

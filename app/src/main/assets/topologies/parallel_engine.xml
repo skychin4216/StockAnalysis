@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 并行双引擎拓扑
+
+  流程：
+    全市场源 ──→ [基本面子管: 基本面过滤] ──┐
+             ──→ [新闻子管: 新闻过滤]   ──┤→ 合并(UNION) → 评分排序 → 输出
+
+  适用场景：基本面线和新闻线并行执行，结果合并后统一排序。
+-->
+<topology id="parallel_engine" name="并行双引擎" description="基本面和新闻双线并行筛选，合并后统一评分排序" version="1">
+    <nodes>
+        <node id="pe_source" module="market_source" displayName="全市场扫描">
+            <position x="50" y="200" />
+            <config>
+                <param name="minMarketCap" value="50" />
+                <param name="excludeETF" value="true" />
+            </config>
+        </node>
+        <node id="pe_basic_filter" module="basic_filter" displayName="基本面子管">
+            <position x="300" y="100" />
+            <config>
+                <param name="maxPe" value="40" />
+                <param name="excludeNegative" value="true" />
+            </config>
+        </node>
+        <node id="pe_news_filter" module="news_filter" displayName="新闻子管">
+            <position x="300" y="300" />
+            <config>
+                <param name="minImpactStrength" value="40" />
+            </config>
+        </node>
+        <node id="pe_merge" module="merge" displayName="合并">
+            <position x="550" y="200" />
+            <config>
+                <param name="mode" value="UNION" />
+            </config>
+        </node>
+        <node id="pe_score_sort" module="score_sort" displayName="评分排序">
+            <position x="800" y="200" />
+            <config>
+                <param name="maxOutput" value="20" />
+            </config>
+        </node>
+        <node id="pe_output" module="result_output_sink" displayName="结果输出">
+            <position x="1050" y="200" />
+        </node>
+    </nodes>
+    <streams>
+        <!-- 全市场源 → 基本面子管 -->
+        <stream id="pe_s1" source="pe_source" sourcePort="stocks_out" sink="pe_basic_filter" sinkPort="stocks_in" />
+        <!-- 全市场源 → 新闻子管 -->
+        <stream id="pe_s2" source="pe_source" sourcePort="stocks_out" sink="pe_news_filter" sinkPort="stocks_in" />
+        <!-- 基本面过滤 → 合并(in_a) -->
+        <stream id="pe_s3" source="pe_basic_filter" sourcePort="filtered_out" sink="pe_merge" sinkPort="in_a" />
+        <!-- 新闻过滤 → 合并(in_b) -->
+        <stream id="pe_s4" source="pe_news_filter" sourcePort="filtered_out" sink="pe_merge" sinkPort="in_b" />
+        <!-- 合并 → 评分排序 -->
+        <stream id="pe_s5" source="pe_merge" sourcePort="merged_out" sink="pe_score_sort" sinkPort="stocks_in" />
+        <!-- 评分排序 → 结果输出 -->
+        <stream id="pe_s6" source="pe_score_sort" sourcePort="sorted_out" sink="pe_output" sinkPort="final_in" />
+    </streams>
+</topology>

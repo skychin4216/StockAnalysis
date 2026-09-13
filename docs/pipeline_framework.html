@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>量化交易框架 — Pipeline 全景图</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif; background:#0f1923; color:#e0e0e0; }
+.header { background:linear-gradient(135deg,#1a237e,#0d47a1); padding:20px 32px; display:flex; align-items:center; gap:16px; }
+.header h1 { font-size:22px; color:#fff; }
+.header .sub { font-size:13px; color:#90caf9; margin-top:4px; }
+.tabs { display:flex; flex-wrap:wrap; gap:6px; padding:16px 24px; background:#152232; }
+.tab { padding:8px 16px; border-radius:8px; cursor:pointer; font-size:13px; border:1px solid #334; background:#1e2d3d; color:#aaa; transition:all .2s; }
+.tab:hover { background:#263d52; color:#fff; }
+.tab.active { background:#1565c0; color:#fff; border-color:#1976d2; }
+.content { display:flex; height:calc(100vh - 140px); }
+.graph-area { flex:1; overflow:auto; padding:24px; }
+.detail-panel { width:360px; background:#152232; border-left:1px solid #263d52; overflow-y:auto; padding:20px; }
+.detail-panel h3 { color:#90caf9; font-size:15px; margin-bottom:12px; }
+.detail-panel .field { margin-bottom:10px; }
+.detail-panel .label { font-size:11px; color:#607d8b; text-transform:uppercase; }
+.detail-panel .value { font-size:13px; color:#e0e0e0; margin-top:2px; line-height:1.5; }
+.dag { display:flex; flex-direction:column; gap:16px; }
+.layer { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-start; }
+.layer-label { font-size:10px; color:#546e7a; min-width:40px; padding-top:12px; text-align:right; padding-right:8px; }
+.node-card { background:#1e2d3d; border:1px solid #334; border-radius:10px; padding:10px 14px; cursor:pointer; transition:all .2s; min-width:120px; max-width:200px; position:relative; }
+.node-card:hover { border-color:#42a5f5; transform:translateY(-2px); box-shadow:0 4px 12px rgba(66,165,245,.2); }
+.node-card.selected { border-color:#42a5f5; background:#1a3a5c; box-shadow:0 0 16px rgba(66,165,245,.3); }
+.node-card .name { font-size:12px; font-weight:600; color:#e3f2fd; }
+.node-card .module { font-size:10px; color:#78909c; margin-top:3px; font-family:monospace; }
+.node-card .id-tag { font-size:9px; color:#546e7a; position:absolute; top:4px; right:8px; }
+.node-card.type-data { border-left:3px solid #66bb6a; }
+.node-card.type-filter { border-left:3px solid #ffa726; }
+.node-card.type-analysis { border-left:3px solid #42a5f5; }
+.node-card.type-output { border-left:3px solid #ab47bc; }
+.node-card.type-infra { border-left:3px solid #78909c; }
+.node-card.type-strategy { border-left:3px solid #ef5350; }
+.links-svg { position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; }
+.legend { display:flex; gap:16px; padding:12px 24px; background:#152232; border-top:1px solid #263d52; flex-wrap:wrap; }
+.legend-item { display:flex; align-items:center; gap:6px; font-size:11px; color:#90a4ae; }
+.legend-dot { width:12px; height:12px; border-radius:3px; }
+.usecase-desc { background:#1a2d3d; border-radius:8px; padding:14px 18px; margin-bottom:16px; border:1px solid #263d52; }
+.usecase-desc h2 { font-size:16px; color:#e3f2fd; margin-bottom:6px; }
+.usecase-desc p { font-size:12px; color:#90a4ae; line-height:1.6; }
+.usecase-desc .config { font-size:11px; color:#78909c; margin-top:8px; font-family:monospace; }
+.arrow { color:#455a64; font-size:18px; display:flex; align-items:center; padding:0 4px; }
+.section-title { font-size:14px; color:#90caf9; margin:16px 0 8px; padding-bottom:4px; border-bottom:1px solid #263d52; }
+.empty-state { text-align:center; padding:60px 20px; color:#546e7a; }
+.empty-state .icon { font-size:48px; margin-bottom:16px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div>
+    <h1>量化交易框架 — Pipeline 全景图</h1>
+    <div class="sub">UseCase → Pipeline → Node 拓扑结构 | 点击节点查看详情</div>
+  </div>
+</div>
+<div class="tabs" id="tabs"></div>
+<div class="content">
+  <div class="graph-area" id="graphArea"></div>
+  <div class="detail-panel" id="detailPanel">
+    <div class="empty-state">
+      <div class="icon">🔍</div>
+      <div>点击任意节点查看详细信息</div>
+    </div>
+  </div>
+</div>
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#78909c"></div>基础设施</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#66bb6a"></div>数据层</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#42a5f5"></div>分析层</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#ffa726"></div>过滤层</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#ab47bc"></div>输出层</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#ef5350"></div>策略节点</div>
+</div>
+
+<script>
+const NODE_DESCS = {
+  data_import: "【数据导入检查】检查数据库快照是否充足（天数/条数），若不满足则提前终止Pipeline。输入：StockDatabase.dailySnapshotDao()。输出：dataSufficient=true/false, snapshotCount。阈值：最少30天日K数据。",
+  market_context: "【市场全局上下文】构建市场全局上下文：大盘趋势(上证/深证/创业板)、外盘状态(美股/港股/A50期货)、板块热度(Top10热门板块)、情绪指标(涨跌比/涨停数)。为后续所有节点提供宏观环境判断。输出：marketTrend=up/down/sideways, sentimentScore=0-100。",
+  bg_manager: "【后台管理器】Pipeline执行前暂停后台定时任务(AppBackgroundRunner)避免数据竞争，执行后恢复。确保Pipeline运行期间不会有其他后台任务修改共享数据。",
+  adaptive_params: "【大盘分析+自适应参数】分析大盘均线形态(5/10/20/60日线)判断多头/空头/震荡状态。动态调整后续节点阈值：空头市场时strict_selection通过率从4/6提升到5/6，smart_money阈值从20提升到30。同时获取外盘数据(纳指/恒指)辅助判断。输出：marketState=bull/bear/neutral, paramOverrides={}。",
+  stock_pool: "【股票池载入】加载全市场股票池(约5000只)，根据基本条件初步过滤：剔除ST/*ST、停牌股、上市不足60天次新股、日均成交额<5000万低流动性股。输出：filteredStocks List<StockBasicEntity>。",
+  market_ma_unified: "【大盘均线统一检查】计算上证/深证/创业板多条均线(5/10/20/60日)，判断市场处于多头(价格>MA20>MA60)/空头(价格<MA20<MA60)/震荡状态。超过阈值时触发全局降仓信号。输出：maState=多/空/震荡, ma5, ma20, ma60。阈值：MA20斜率>2%为多头确认。",
+  holding_guard: "【持仓风控节点】检查当前持仓的整体风险敞口：行业集中度(单行业不超过40%)、总仓位占比(不超过80%)、持仓相关性。若风险过高则限制新开仓数量。输出：riskLevel=low/medium/high, maxNewPositions。",
+  candidate_pool: "【候选池过滤】合并策略信号和股票池，剔除已持仓(避免重复)、已涨停(无法买入)、流动性不足(日成交额<1亿)的标的。输出：candidates List<Stock>。",
+  intraday_analysis: "【盘中K线分析】盘中5分钟K线分析：计算日内量价形态(放量突破、缩量回调、V型反转等)，为短线交易提供入场时机参考。输出：intradayPattern=突破/回调/整理, intradayScore=0-100。",
+  multi_period_hot: "【多周期热门聚合】统计近1/3/5/10天出现在热门板块的股票，找出持续活跃的标的。持续多天热门的股票得分更高。输出：hotStocks Map<code, hotScore>。",
+  sector_stock_pool: "【板块精选池】从热门行业/概念板块中提取龙头股，结合板块资金流向(主力净流入)和涨幅排名(近5日)。输出：sectorLeaders List<Stock>。",
+  zipline_factor: "【Zipline技术因子】计算量化技术指标：RSI相对强弱(14日)、BOLL布林带位置(20日,2倍标准差)、ATR真实波动幅度(14日)、MACD(12,26,9)。输出：rsi, bollPos, atr, macdHist。",
+  heat_score: "【热度计算】综合股票的换手率(权重30%)、成交量变化(25%)、搜索热度(20%)、板块关联度(25%)计算综合热度分。输出：heatScore=0-100。阈值：heatScore>60为热门。",
+  cross_day_aggregation: "【跨日聚合】统计近N天(默认5天)内反复出现在策略信号中的股票，找出持续被看好的标的。多日命中次数越多得分越高。输出：crossDayHits Map<code, hitCount>。",
+  signal_merge: "【信号合并】将多个策略产生的买入信号进行汇总去重，同一股票被多个策略同时看多时提升排名。输出：mergedSignals List<Signal>。",
+  sector_boost: "【板块加权】对处于当前热门板块的股票给予额外加分(热度分+10-20分)，顺应板块轮动趋势。输出：boostedScores。",
+  bounce_reversal: "【跌后反弹加分】识别经历连续下跌(连跌3天+)后出现企稳信号(下影线/十字星)的股票，这类超跌反弹标的给予额外评分(+5-15分)。输出：bounceCandidates。",
+  strict_selection: "【六项严选检查】PE估值(<行业均值)、MA偏离度(<15%)、活跃天数(>60天)、换手率(>2%)、历史分位(<80%)、均线多头排列。至少通过N/6项才放行(默认4/6)。输出：strictPassed=true/false, passCount。",
+  base_position_guard: "【打底仓守门】检查该股票是否适合作为底仓持有(中线/长线)，关注基本面稳定性(ROE>10%连续3年)和估值合理性(PE<30)。输出：baseQualified=true/false。",
+  ancestral_rules: "【大A祖训】基于A股历史经验的风控规则：不追涨停板(封板风险)、回避高质押股(质押率>50%)、规避解禁期(未来30天解禁市值>10%)、回避商誉过高(商誉/净资产>30%)。输出：ancestralPassed=true/false。",
+  inst_tips: "【机构线索加分】利用机构调研(近30天调研次数)、大宗交易(溢价率)、北向资金(连续净流入天数)等数据，对机构关注的股票给予加分(+5-15分)。输出：instScore。",
+  defensive_dividend: "【防守高息筛选】筛选高股息(股息率>3%)、低PB(<1.5)、低负债(<50%)的防御性股票，适合中线和长线配置。输出：defensiveStocks。",
+  news_strength: "【新闻力度计算】回溯近N天(默认7天)的相关新闻，计算新闻热度(提及次数)和情感倾向(正面/负面/中性)。输出：newsScore=0-100, sentiment=positive/negative。",
+  rotation_penalty: "【板块轮动惩罚v2】集中度对数衰减惩罚(log2)+板块生命周期(启动/高潮/退潮)+跨日轮动检测(重合度<30%×1.3、>70%×0.7)。输出：RotationPenaltyResult(rotationPenalty总惩罚 + sectorPenalties板块惩罚表)，smart_money_filter对受罚板块个股降分，实现惩罚闭环。",
+  smart_money_filter: "【主力资金过滤】计算主力净流入/流出(大单买入-大单卖出)，低于最低分数阈值(默认20分)的股票被过滤掉。确保只买入有资金关注的标的。输出：smartMoneyScore, filtered=true/false。",
+  candle_pattern: "【K线形态侦测】识别15种经典K线形态：早晨之星、锤子线、吞没形态、乌云盖顶、黄昏之星、十字星、T字线、吊颈线等。为技术面判断提供辅助。输出：patterns List<String>。",
+  news_guard: "【新闻拦截+技术过滤】重大利空新闻直接拦截(如暴雷、监管处罚、业绩大幅下滑)，同时结合技术面过滤异常走势(如高位放量滞涨)。输出：newsGuardPassed=true/false, blockReason。",
+  ai_predict: "【AI精选评分】使用机器学习模型对候选股票进行综合评分，融合基本面(PE/PB/ROE)、技术面(MA/RSI/MACD)、资金面(主力流向/北向)、情绪面(新闻/热度)多维特征。输出：aiScore=0-100。",
+  generate_orders: "【买入订单生成】根据最终排名和持仓上限(maxHoldings=6)，生成买入订单。考虑当前持仓数量和可用资金。输出：orders List<TradeOrder>。",
+  swap_weak: "【腾龙换鸟】当持仓已满时，比较新候选与现有持仓中最弱的标的(综合评分最低)，若新标的明显更优(评分差距>10分)则换仓。输出：swapCandidate, weakHolding。",
+  position_merge: "【持仓合并】将新生成的订单与现有持仓合并，更新持仓视图。输出：mergedPositions。",
+  t1_auto_sell: "【T+1自动卖出】对昨日买入的股票检查止损/止盈条件：止损-2%、止盈+3%、时间止损(持仓>3天无盈利)。触发则自动卖出。输出：sellOrders。",
+  crosstab_publish: "【跨Tab发布】将精选结果发布到其他周期Tab，实现信息共享(如短线发现的机会通知中线关注)。输出：publishedTo List<periodType>。",
+  t_trade_import: "【做T交易日检查】确认当天是否为交易日(排除周末/节假日)，检查做T的前置条件(持仓可用、T+0限制)。输出：isTradingDay=true/false。",
+  t_holdings_load: "【持仓载入+日K数据】加载当前持仓的日K线数据(近60天)，为做T分析提供基础数据。输出：holdingsWithKline。",
+  t_inst_intent: "【日K机构意图判断】通过大单分析(主力净流入/流出)、分时走势(早盘/尾盘异动)判断机构当天的操作意图：吸筹/出货/观望。输出：instIntent=吸筹/出货/观望, confidence=0-1。",
+  t_signal_synthesize: "【交叉验证+置信度评分】综合日K形态、机构意图、新闻情绪、外盘走势等多维度，给出做T/反T的建议和置信度。置信度>0.3才输出建议。输出：action=做T/反T/观望, confidence=0-1。",
+  t_recommend_save: "【建议保存+追踪结算】将做T建议保存到数据库(t_trade_recommendations表)，后续追踪实际执行情况并结算盈亏，统计成功率。输出：savedRecommendation。",
+  real_holding_eval: "【实仓持仓评估】对每个真实持仓进行逐一分析，结合大盘状态、个股走势、基本面变化，给出持有/做T/减仓/清仓的操作建议。输出：evaluations List<HoldingEval>。",
+  a_market_analysis: "【大盘K线六维分析】趋势维度(均线排列)、量能维度(成交量趋势)、情绪维度(涨跌比/涨停数)、状态机(多头/空头/震荡转换)。综合判断大盘当前状态和未来走势概率。输出：marketState, trendScore, volumeScore, sentimentScore。",
+};
+
+function nodeType(module) {
+  if (['data_import','bg_manager','t_trade_import'].includes(module)) return 'infra';
+  if (['stock_pool','candidate_pool','sector_stock_pool','t_holdings_load'].includes(module)) return 'data';
+  if (['market_context','adaptive_params','market_ma_unified','holding_guard','zipline_factor','heat_score','cross_day_aggregation','multi_period_hot','intraday_analysis','candle_pattern','a_market_analysis','real_holding_eval','t_inst_intent','t_signal_synthesize'].includes(module)) return 'analysis';
+  if (['signal_merge','sector_boost','bounce_reversal','strict_selection','base_position_guard','ancestral_rules','inst_tips','defensive_dividend','news_strength','rotation_penalty','smart_money_filter','news_guard','ai_predict','t_zf','t_kline','t_news','t_nguard'].includes(module)) return 'filter';
+  if (['generate_orders','swap_weak','position_merge','t1_auto_sell','crosstab_publish','t_recommend_save'].includes(module)) return 'output';
+  return 'infra';
+}
+
+const USECASES = [
+  {
+    id:'ultra_short', name:'超短线量化', icon:'⚡',
+    desc:'市场上下文 → 股票池 → 策略筛选 → 板块加权 → AI精选 → 主力过滤 → 订单生成 → 持仓合并',
+    config:'orderType=UltraShortQuant | maxHoldings=6 | holdingPeriod=ultra_short',
+    pipeline:'ultra_short_pipeline.xml',
+    layers:[
+      [{id:'n_import',name:'数据导入检查',mod:'data_import'},{id:'n_ctx',name:'市场上下文',mod:'market_context'},{id:'n_bg',name:'后台管理',mod:'bg_manager'},{id:'n_adaptive',name:'大盘分析+自适应',mod:'adaptive_params'}],
+      [{id:'n_pool',name:'股票池',mod:'stock_pool'},{id:'n_ma_unified',name:'大盘均线检查',mod:'market_ma_unified'},{id:'n_guard',name:'持仓风控',mod:'holding_guard'}],
+      [{id:'n_cand',name:'候选池过滤',mod:'candidate_pool'},{id:'n_intraday',name:'盘中K线分析',mod:'intraday_analysis'}],
+      [{id:'n_merge',name:'信号合并',mod:'signal_merge'}],
+      [{id:'n_boost',name:'板块加权',mod:'sector_boost'},{id:'n_bounce',name:'跌后反弹加分',mod:'bounce_reversal'}],
+      [{id:'n_strict',name:'六项严选',mod:'strict_selection'}],
+      [{id:'n_ancestral',name:'大A祖训',mod:'ancestral_rules'}],
+      [{id:'n_inst_tips',name:'机构线索',mod:'inst_tips'}],
+      [{id:'n_smart',name:'主力资金过滤',mod:'smart_money_filter'},{id:'n_candle',name:'K线形态',mod:'candle_pattern'}],
+      [{id:'n_ai',name:'AI精选',mod:'ai_predict'}],
+      [{id:'n_orders',name:'买入订单生成',mod:'generate_orders'}],
+      [{id:'n_swap',name:'腾龙换鸟',mod:'swap_weak'}],
+      [{id:'n_merge_pos',name:'持仓合并',mod:'position_merge'}],
+      [{id:'n_t1sell',name:'T+1自动卖出',mod:'t1_auto_sell'}]
+    ],
+    links:[['n_import','n_pool'],['n_import','n_ma_unified'],['n_ctx','n_pool'],['n_ctx','n_guard'],['n_pool','n_cand'],['n_cand','n_merge'],['n_cand','n_intraday'],['n_merge','n_boost'],['n_ma_unified','n_boost'],['n_boost','n_bounce'],['n_bounce','n_strict'],['n_strict','n_ancestral'],['n_ancestral','n_inst_tips'],['n_inst_tips','n_smart'],['n_smart','n_ai'],['n_smart','n_candle'],['n_ai','n_orders'],['n_adaptive','n_orders'],['n_orders','n_swap'],['n_swap','n_merge_pos'],['n_merge_pos','n_t1sell']]
+  },
+  {
+    id:'short_term', name:'短线量化', icon:'🔥',
+    desc:'多周期热门 → 策略筛选+热度 → 板块加权 → 新闻拦截 → AI精选 → 订单生成 → 腾龙换鸟',
+    config:'orderType=ShortTermQuant | maxHoldings=6 | holdingPeriod=short',
+    pipeline:'short_term_pipeline.xml',
+    layers:[
+      [{id:'n_import',name:'数据导入检查',mod:'data_import'},{id:'n_ctx',name:'市场上下文',mod:'market_context'},{id:'n_multihot',name:'多周期热门',mod:'multi_period_hot'},{id:'n_bg',name:'后台管理',mod:'bg_manager'},{id:'n_adaptive',name:'大盘分析+自适应',mod:'adaptive_params'}],
+      [{id:'n_pool',name:'股票池',mod:'stock_pool'},{id:'n_ma_unified',name:'大盘均线检查',mod:'market_ma_unified'},{id:'n_guard',name:'持仓风控',mod:'holding_guard'}],
+      [{id:'n_cand',name:'候选池过滤',mod:'candidate_pool'},{id:'n_zipline',name:'Zipline因子',mod:'zipline_factor'},{id:'n_intraday',name:'盘中K线',mod:'intraday_analysis'}],
+      [{id:'n_merge',name:'信号合并',mod:'signal_merge'},{id:'n_heat',name:'热度计算',mod:'heat_score'}],
+      [{id:'n_boost',name:'板块加权',mod:'sector_boost'}],
+      [{id:'n_bounce',name:'跌后反弹',mod:'bounce_reversal'},{id:'n_strict',name:'六项严选',mod:'strict_selection'},{id:'n_news_str',name:'新闻力度',mod:'news_strength'},{id:'n_rot_pen',name:'轮动惩罚',mod:'rotation_penalty'}],
+      [{id:'n_ancestral',name:'大A祖训',mod:'ancestral_rules'}],
+      [{id:'n_inst_tips',name:'机构线索',mod:'inst_tips'}],
+      [{id:'n_smart',name:'主力资金过滤',mod:'smart_money_filter'},{id:'n_candle',name:'K线形态',mod:'candle_pattern'}],
+      [{id:'n_newsguard',name:'新闻拦截',mod:'news_guard'}],
+      [{id:'n_ai',name:'AI精选',mod:'ai_predict'}],
+      [{id:'n_orders',name:'买入订单',mod:'generate_orders'}],
+      [{id:'n_swap',name:'腾龙换鸟',mod:'swap_weak'}],
+      [{id:'n_merge_pos',name:'持仓合并',mod:'position_merge'}],
+      [{id:'n_crosstab',name:'跨Tab发布',mod:'crosstab_publish'}]
+    ],
+    links:[['n_import','n_pool'],['n_import','n_ma_unified'],['n_ctx','n_pool'],['n_ctx','n_guard'],['n_pool','n_cand'],['n_cand','n_zipline'],['n_cand','n_intraday'],['n_zipline','n_merge'],['n_pool','n_heat'],['n_merge','n_boost'],['n_heat','n_boost'],['n_multihot','n_merge'],['n_ma_unified','n_boost'],['n_boost','n_bounce'],['n_bounce','n_strict'],['n_strict','n_ancestral'],['n_boost','n_news_str'],['n_boost','n_rot_pen'],['n_ancestral','n_inst_tips'],['n_inst_tips','n_smart'],['n_news_str','n_smart'],['n_smart','n_newsguard'],['n_smart','n_candle'],['n_newsguard','n_ai'],['n_ai','n_orders'],['n_adaptive','n_orders'],['n_orders','n_swap'],['n_swap','n_merge_pos'],['n_merge_pos','n_crosstab']]
+  },
+  {
+    id:'mid_term', name:'中线量化', icon:'📊',
+    desc:'自适应参数 → 跨日聚合 → 策略筛选 → 板块加权 → 新闻拦截 → AI精选 → 腾龙换鸟',
+    config:'orderType=MidTermQuant | maxHoldings=6 | holdingPeriod=mid',
+    pipeline:'mid_term_pipeline.xml',
+    layers:[
+      [{id:'n_import',name:'数据导入',mod:'data_import'},{id:'n_adaptive',name:'大盘分析+自适应',mod:'adaptive_params'},{id:'n_multihot',name:'多周期热门',mod:'multi_period_hot'},{id:'n_ctx',name:'市场上下文',mod:'market_context'},{id:'n_bg',name:'后台管理',mod:'bg_manager'}],
+      [{id:'n_pool',name:'股票池',mod:'stock_pool'},{id:'n_ma_unified',name:'均线检查',mod:'market_ma_unified'},{id:'n_sector_pool',name:'板块精选池',mod:'sector_stock_pool'},{id:'n_guard',name:'持仓风控',mod:'holding_guard'}],
+      [{id:'n_cand',name:'候选池',mod:'candidate_pool'},{id:'n_defensive',name:'防守高息',mod:'defensive_dividend'}],
+      [{id:'n_merge',name:'信号合并',mod:'signal_merge'},{id:'n_heat',name:'热度',mod:'heat_score'},{id:'n_crossday',name:'跨日聚合',mod:'cross_day_aggregation'}],
+      [{id:'n_boost',name:'板块加权',mod:'sector_boost'}],
+      [{id:'n_bounce',name:'跌后反弹',mod:'bounce_reversal'},{id:'n_news_str',name:'新闻力度',mod:'news_strength'},{id:'n_rot_pen',name:'轮动惩罚',mod:'rotation_penalty'}],
+      [{id:'n_strict',name:'六项严选',mod:'strict_selection'}],
+      [{id:'n_base_guard',name:'打底仓守门',mod:'base_position_guard'}],
+      [{id:'n_ancestral',name:'大A祖训',mod:'ancestral_rules'}],
+      [{id:'n_inst_tips',name:'机构线索',mod:'inst_tips'}],
+      [{id:'n_smart',name:'主力过滤',mod:'smart_money_filter'},{id:'n_candle',name:'K线形态',mod:'candle_pattern'}],
+      [{id:'n_newsguard',name:'新闻拦截',mod:'news_guard'}],
+      [{id:'n_ai',name:'AI精选',mod:'ai_predict'}],
+      [{id:'n_orders',name:'买入订单',mod:'generate_orders'}],
+      [{id:'n_swap',name:'腾龙换鸟',mod:'swap_weak'}],
+      [{id:'n_merge_pos',name:'持仓合并',mod:'position_merge'}],
+      [{id:'n_crosstab',name:'跨Tab发布',mod:'crosstab_publish'}]
+    ],
+    links:[['n_import','n_pool'],['n_import','n_ma_unified'],['n_ctx','n_pool'],['n_ctx','n_sector_pool'],['n_ctx','n_guard'],['n_adaptive','n_merge'],['n_multihot','n_crossday'],['n_sector_pool','n_cand'],['n_pool','n_cand'],['n_pool','n_heat'],['n_pool','n_crossday'],['n_pool','n_defensive'],['n_defensive','n_merge'],['n_cand','n_merge'],['n_merge','n_boost'],['n_ma_unified','n_boost'],['n_heat','n_boost'],['n_boost','n_news_str'],['n_boost','n_rot_pen'],['n_boost','n_bounce'],['n_bounce','n_strict'],['n_strict','n_base_guard'],['n_base_guard','n_ancestral'],['n_ancestral','n_inst_tips'],['n_inst_tips','n_smart'],['n_news_str','n_smart'],['n_smart','n_newsguard'],['n_smart','n_candle'],['n_newsguard','n_ai'],['n_ai','n_orders'],['n_orders','n_swap'],['n_swap','n_merge_pos'],['n_merge_pos','n_crosstab']]
+  },
+  {
+    id:'long_term', name:'长线量化', icon:'🏦',
+    desc:'板块精选池 → 策略筛选 → 防守高息 → 主力过滤 → 新闻拦截 → AI精选 → 订单生成',
+    config:'orderType=LongTermQuant | maxHoldings=6 | holdingPeriod=long',
+    pipeline:'long_term_pipeline.xml',
+    layers:[
+      [{id:'n_import',name:'数据导入',mod:'data_import'},{id:'n_ctx',name:'市场上下文',mod:'market_context'},{id:'n_bg',name:'后台管理',mod:'bg_manager'},{id:'n_adaptive',name:'大盘分析+自适应',mod:'adaptive_params'}],
+      [{id:'n_pool',name:'股票池',mod:'stock_pool'},{id:'n_ma_unified',name:'均线检查',mod:'market_ma_unified'},{id:'n_sector_pool',name:'板块精选池',mod:'sector_stock_pool'},{id:'n_guard',name:'持仓风控',mod:'holding_guard'}],
+      [{id:'n_cand',name:'候选池',mod:'candidate_pool'},{id:'n_defensive',name:'防守高息',mod:'defensive_dividend'}],
+      [{id:'n_merge',name:'信号合并',mod:'signal_merge'},{id:'n_heat',name:'热度',mod:'heat_score'}],
+      [{id:'n_boost',name:'板块加权',mod:'sector_boost'}],
+      [{id:'n_bounce',name:'跌后反弹',mod:'bounce_reversal'},{id:'n_strict',name:'六项严选',mod:'strict_selection'}],
+      [{id:'n_base_guard',name:'打底仓守门',mod:'base_position_guard'}],
+      [{id:'n_ancestral',name:'大A祖训',mod:'ancestral_rules'}],
+      [{id:'n_inst_tips',name:'机构线索',mod:'inst_tips'}],
+      [{id:'n_smart',name:'主力过滤',mod:'smart_money_filter'},{id:'n_candle',name:'K线形态',mod:'candle_pattern'}],
+      [{id:'n_newsguard',name:'新闻拦截',mod:'news_guard'}],
+      [{id:'n_ai',name:'AI精选',mod:'ai_predict'}],
+      [{id:'n_orders',name:'买入订单',mod:'generate_orders'}],
+      [{id:'n_merge_pos',name:'持仓合并',mod:'position_merge'}]
+    ],
+    links:[['n_import','n_pool'],['n_import','n_ma_unified'],['n_ctx','n_pool'],['n_ctx','n_sector_pool'],['n_ctx','n_guard'],['n_sector_pool','n_cand'],['n_pool','n_cand'],['n_pool','n_defensive'],['n_pool','n_heat'],['n_defensive','n_merge'],['n_cand','n_merge'],['n_merge','n_boost'],['n_ma_unified','n_boost'],['n_heat','n_boost'],['n_boost','n_bounce'],['n_bounce','n_strict'],['n_strict','n_base_guard'],['n_base_guard','n_ancestral'],['n_ancestral','n_inst_tips'],['n_inst_tips','n_smart'],['n_smart','n_newsguard'],['n_smart','n_candle'],['n_newsguard','n_ai'],['n_ai','n_orders'],['n_adaptive','n_orders'],['n_orders','n_merge_pos']]
+  },
+  {
+    id:'t_trade', name:'做T决策', icon:'🔄',
+    desc:'日K机构意图 + 外盘情绪 + 板块新闻 → 交叉验证 → 做T/反T建议',
+    config:'periodType=做T | minConfidence=0.3',
+    pipeline:'t_trade_pipeline.xml',
+    layers:[
+      [{id:'t_bg',name:'后台管理',mod:'bg_manager'},{id:'t_adaptive',name:'大盘分析+自适应',mod:'adaptive_params'},{id:'t_import',name:'交易日检查',mod:'t_trade_import'}],
+      [{id:'t_hold',name:'持仓载入+日K',mod:'t_holdings_load'},{id:'t_mctx',name:'板块上下文',mod:'market_context'},{id:'t_zf',name:'技术因子',mod:'zipline_factor'}],
+      [{id:'t_inst',name:'机构意图',mod:'t_inst_intent'},{id:'t_kline',name:'K线形态',mod:'candle_pattern'},{id:'t_news',name:'新闻热度',mod:'news_strength'},{id:'t_nguard',name:'新闻过滤',mod:'news_guard'}],
+      [{id:'t_synth',name:'交叉验证+评分',mod:'t_signal_synthesize'}],
+      [{id:'t_save',name:'建议保存+结算',mod:'t_recommend_save'}]
+    ],
+    links:[['t_import','t_hold'],['t_adaptive','t_mctx'],['t_import','t_zf'],['t_hold','t_inst'],['t_zf','t_inst'],['t_hold','t_kline'],['t_mctx','t_news'],['t_mctx','t_nguard'],['t_inst','t_synth'],['t_kline','t_synth'],['t_news','t_synth'],['t_nguard','t_synth'],['t_adaptive','t_synth'],['t_hold','t_synth'],['t_synth','t_save']]
+  },
+  {
+    id:'real_holding', name:'实仓分析', icon:'💼',
+    desc:'大盘K线六维分析 → 逐持仓评估 → 操作建议(持有/做T/减仓/清仓)',
+    config:'orderType=RealHolding | holdingPeriod=all',
+    pipeline:'real_holding_pipeline.xml',
+    layers:[
+      [{id:'n_import',name:'数据导入',mod:'data_import'},{id:'n_bg',name:'后台管理',mod:'bg_manager'}],
+      [{id:'n_a_market',name:'大盘K线分析',mod:'a_market_analysis'}],
+      [{id:'n_rh_eval',name:'实仓评估',mod:'real_holding_eval'}]
+    ],
+    links:[['n_import','n_a_market'],['n_a_market','n_rh_eval']]
+  },
+  {
+    id:'screening', name:'量化选股(筛选)', icon:'🔍',
+    desc:'数据准备 → 多策略并行筛选 → 合并加权',
+    config:'orderType=Screening | maxHoldings=0',
+    pipeline:'screening (composite)',
+    layers:[
+      [{id:'n_ctx',name:'市场上下文',mod:'market_context'}],
+      [{id:'n_pool',name:'股票池',mod:'stock_pool'}],
+      [{id:'n_strategies',name:'策略节点(动态注入)',mod:'strategy:*'}],
+      [{id:'n_merge',name:'信号合并',mod:'signal_merge'}],
+      [{id:'n_boost',name:'板块加权',mod:'sector_boost'}]
+    ],
+    links:[['n_ctx','n_pool'],['n_pool','n_strategies'],['n_strategies','n_merge'],['n_merge','n_boost']]
+  }
+];
+
+let selectedUc = 0;
+let selectedNode = null;
+
+function render() {
+  const tabsEl = document.getElementById('tabs');
+  tabsEl.innerHTML = USECASES.map((uc,i) =>
+    `<div class="tab ${i===selectedUc?'active':''}" onclick="selectUc(${i})">${uc.icon} ${uc.name}</div>`
+  ).join('');
+
+  const uc = USECASES[selectedUc];
+  const graphEl = document.getElementById('graphArea');
+
+  let html = `<div class="usecase-desc"><h2>${uc.icon} ${uc.name}</h2><p>${uc.desc}</p><div class="config">📄 ${uc.pipeline} | ${uc.config}</div></div>`;
+  html += '<div class="dag">';
+  uc.layers.forEach((layer, li) => {
+    html += `<div class="layer"><div class="layer-label">L${li}</div>`;
+    layer.forEach(n => {
+      const t = nodeType(n.mod);
+      const sel = selectedNode && selectedNode.id === n.id ? 'selected' : '';
+      html += `<div class="node-card type-${t} ${sel}" onclick="selectNode('${n.id}','${n.name}','${n.mod}')">
+        <div class="id-tag">${n.id}</div>
+        <div class="name">${n.name}</div>
+        <div class="module">${n.mod}</div>
+      </div>`;
+    });
+    html += '</div>';
+  });
+  html += '</div>';
+
+  // Connection summary
+  html += '<div class="section-title" style="margin-top:24px">🔗 连接关系</div>';
+  html += '<div style="font-size:11px;color:#78909c;line-height:1.8">';
+  const nodeMap = {};
+  uc.layers.forEach(l => l.forEach(n => nodeMap[n.id] = n.name));
+  uc.links.forEach(([s,t]) => {
+    html += `${nodeMap[s]||s} → ${nodeMap[t]||t}<br>`;
+  });
+  html += '</div>';
+
+  graphEl.innerHTML = html;
+}
+
+function selectUc(i) { selectedUc = i; selectedNode = null; render(); resetDetail(); }
+function selectNode(id, name, mod) {
+  selectedNode = {id, name, mod};
+  render();
+  const panel = document.getElementById('detailPanel');
+  const desc = NODE_DESCS[mod] || '暂无详细描述';
+  const uc = USECASES[selectedUc];
+  const inLinks = uc.links.filter(([s,t]) => t === id).map(([s]) => {
+    const n = uc.layers.flat().find(x => x.id === s);
+    return n ? n.name : s;
+  });
+  const outLinks = uc.links.filter(([s,t]) => s === id).map(([s,t]) => {
+    const n = uc.layers.flat().find(x => x.id === t);
+    return n ? n.name : t;
+  });
+
+  panel.innerHTML = `
+    <h3>${name}</h3>
+    <div class="field"><div class="label">Node ID</div><div class="value" style="font-family:monospace">${id}</div></div>
+    <div class="field"><div class="label">Module Type</div><div class="value" style="font-family:monospace;color:#42a5f5">${mod}</div></div>
+    <div class="field"><div class="label">所属 Pipeline</div><div class="value">${uc.pipeline}</div></div>
+    <div class="field"><div class="label">所属 UseCase</div><div class="value">${uc.icon} ${uc.name}</div></div>
+    <div class="field"><div class="label">功能描述</div><div class="value">${desc}</div></div>
+    ${inLinks.length ? `<div class="field"><div class="label">上游输入 (${inLinks.length})</div><div class="value">${inLinks.map(n=>'📥 '+n).join('<br>')}</div></div>` : ''}
+    ${outLinks.length ? `<div class="field"><div class="label">下游输出 (${outLinks.length})</div><div class="value">${outLinks.map(n=>'📤 '+n).join('<br>')}</div></div>` : ''}
+  `;
+}
+function resetDetail() {
+  document.getElementById('detailPanel').innerHTML = '<div class="empty-state"><div class="icon">🔍</div><div>点击任意节点查看详细信息</div></div>';
+}
+
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 数据准备 Pipeline（共享）
+
+  市场上下文构建 → 股票池加载。2 个 Node 串联，需要独立 Pipeline。
+  量化选股、短线量化、中线量化 共用此 Pipeline。
+-->
+<pipeline id="data_prep" name="数据准备" description="市场上下文构建→股票池加载" version="1">
+  <nodes>
+    <node id="n_ctx" module="market_context" />
+    <node id="n_pool" module="stock_pool" />
+  </nodes>
+  <stages>
+    <stage name="数据准备" parallel="false">
+      <linkList name="市场上下文+股票池">
+        <link from="n_ctx" to="n_pool" />
+      </linkList>
+    </stage>
+  </stages>
+</pipeline>

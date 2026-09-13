@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 短线量化 UseCase
+
+  持仓 1 天~2 周，技术面为主，资金情绪脉冲。
+  流程：市场上下文→多周期热门→股票池→策略筛选+热度→板块加权→AI精选→主力过滤→新闻拦截→订单生成→持仓合并/腾龙换鸟/拟合保存
+-->
+<usecase id="short_term" name="短线量化">
+  <description>市场上下文→多周期热门→股票池→策略筛选+热度→板块加权→AI精选→主力过滤→新闻拦截→订单生成→持仓合并/腾龙换鸟/拟合保存</description>
+  <steps>
+    <pipeline ref="usecases/market_rotation_pipeline.xml" name="市场公共研判（大盘→风格→板块）" />
+    <pipeline ref="usecases/stock_picking_common_pipeline.xml" name="选股公共数据准备（股票池/自适应参数/风控）" />
+    <!-- 周期×环境矩阵路由：根据 n_adaptive 输出的大盘方向选择环境专属 pipeline（smalltool usecase_matrix 9格） -->
+    <pipeline ref="usecases/short_term_bullish_pipeline.xml" name="短线·牛市DAG（S1严选+涨停基因 tp+1.5/sl-1.5）" if="${n_market_direction}.direction == 'BULLISH'" />
+    <pipeline ref="usecases/short_term_oscillation_pipeline.xml" name="短线·震荡DAG（S4K线反转 tp+1.5/sl-1.5）" if="${n_market_direction}.direction == 'OSCILLATION'" />
+    <pipeline ref="usecases/short_term_bearish_pipeline.xml" name="短线·熊市DAG（S3深跌低吸 tp+1.5/sl-5.0）" if="${n_market_direction}.direction == 'BEARISH'" />
+  </steps>
+  <config>
+    <param name="orderType" value="ShortTermQuant" />
+    <param name="maxHoldings" value="5" />
+    <param name="maxStocksPerStrategy" value="15" />
+    <param name="holdingPeriod" value="short" />
+  </config>
+</usecase>

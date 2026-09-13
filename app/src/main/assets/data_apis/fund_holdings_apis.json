@@ -2,9 +2,9 @@
   "apis": [
     {
       "id": "eastmoney_f10_jjcc",
-      "name": "東方財富 F10 基金持股",
+      "name": "东方财富 F10 基金持股",
       "enabled": true,
-      "description": "東方財富股票 F10 頁面的基金持股數據，返回持倉基金列表（基金名稱、代碼、持股數、持股市值、占流通股比例）",
+      "description": "东方财富股票 F10 页面的基金持股数据，返回持仓基金列表（基金名称、代码、持股数、持股市值、占流通股比例）",
       "url_template": "https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax?code={SECUCODE}",
       "method": "GET",
       "headers": {
@@ -16,8 +16,8 @@
       },
       "param_mapping": {
         "SECUCODE": {
-          "description": "東方財富格式股票代碼（如 SH603986、SZ002371）",
-          "rule": "6開頭用SH，0/3開頭用SZ，4/8開頭用BJ",
+          "description": "东方财富格式股票代码（如 SH603986、SZ002371）",
+          "rule": "6开头用SH，0/3开头用SZ，4/8开头用BJ",
           "examples": {
             "sh603986": "SH603986",
             "sz002371": "SZ002371"
@@ -28,24 +28,24 @@
         "format": "JSON",
         "data_path": "jjcc",
         "fields": {
-          "HOLDER_NAME": "基金名稱",
-          "FUND_CODE": "基金代碼",
-          "FUND_DERIVECODE": "基金完整代碼（含交易所後綴）",
-          "TOTAL_SHARES": "持股數量（股）",
+          "HOLDER_NAME": "基金名称",
+          "FUND_CODE": "基金代码",
+          "FUND_DERIVECODE": "基金完整代码（含交易所后缀）",
+          "TOTAL_SHARES": "持股数量（股）",
           "HOLD_VALUE": "持股市值（元）",
-          "TOTALSHARES_RATIO": "占總股本比例（小數，如 0.07 表示 7%）",
-          "FREESHARES_RATIO": "占流通股比例（小數）",
+          "TOTALSHARES_RATIO": "占总股本比例（小数，如 0.07 表示 7%）",
+          "FREESHARES_RATIO": "占流通股比例（小数）",
           "FREE_MARKET_CAP": "流通市值（元）",
-          "FREE_SHARES": "自由流通持股數",
-          "SECURITY_CODE": "股票代碼",
-          "REPORT_DATE": "報告期（如 2026-03-31）",
-          "ORG_TYPE": "機構類型（01=基金）",
-          "NETVALUE_RATIO": "基金淨值相關比率"
+          "FREE_SHARES": "自由流通持股数",
+          "SECURITY_CODE": "股票代码",
+          "REPORT_DATE": "报告期（如 2026-03-31）",
+          "ORG_TYPE": "机构类型（01=基金）",
+          "NETVALUE_RATIO": "基金净值相关比率"
         },
         "sample_data": [
           {
             "ORG_TYPE": "01",
-            "HOLDER_NAME": "易方達藍籌精選混合",
+            "HOLDER_NAME": "易方达蓝筹精选混合",
             "FUND_CODE": "005827",
             "FUND_DERIVECODE": "005827.OF",
             "TOTAL_SHARES": 1100000,
@@ -57,22 +57,22 @@
         ]
       },
       "notes": [
-        "數據來源：東方財富 emweb F10 股東研究頁面",
-        "更新頻率：季度更新（Q1/Q2/Q3/Q4 報告）",
-        "數據時效性：最新報告期為上一季度（如當前Q2期間顯示Q1數據）",
-        "無需認證，無調用次數限制",
-        "返回完整基金持股列表（不僅TOP10），可按持股市值排序"
+        "数据来源：东方财富 emweb F10 股东研究页面",
+        "更新频率：季度更新（Q1/Q2/Q3/Q4 报告）",
+        "数据时效性：最新报告期为上一季度（如当前Q2期间显示Q1数据）",
+        "无需认证，无调用次数限制",
+        "返回完整基金持股列表（不仅TOP10），可按持股市值排序"
       ],
       "tested_at": "2026-07-07",
       "test_status": "SUCCESS",
-      "test_stock": "SH603986（兆易創新）",
-      "test_result": "返回 34KB JSON，包含完整基金持股明細數據"
+      "test_stock": "SH603986（兆易创新）",
+      "test_result": "返回 34KB JSON，包含完整基金持股明细数据"
     },
     {
       "id": "tushare_fund_stock_portfolio",
       "name": "Tushare 基金持股",
       "enabled": false,
-      "description": "Tushare Pro 提供 fund_stock_portfolio 接口查詢基金持股明細，需要註冊並獲取 token",
+      "description": "Tushare Pro 提供 fund_stock_portfolio 接口查询基金持股明细，需要注册并获取 token",
       "url_template": "https://api.tushare.pro",
       "method": "POST",
       "auth": {
@@ -86,55 +86,55 @@
         "period": "{REPORT_DATE}"
       },
       "notes": [
-        "需要 Tushare Pro token（免費註冊，積分限制調用頻率）",
-        "查詢維度：基金代碼 → 持有哪些股票（反向查詢）",
-        "不支持：股票代碼 → 哪些基金持有（需要先知道持倉基金列表）",
-        "單次最大 10000 條",
+        "需要 Tushare Pro token（免费注册，积分限制调用频率）",
+        "查询维度：基金代码 → 持有哪些股票（反向查询）",
+        "不支持：股票代码 → 哪些基金持有（需要先知道持仓基金列表）",
+        "单次最大 10000 条",
         "Python SDK: pip install tushare; ts.fund_stock_portfolio(ts_code='005827.OF')"
       ],
       "tested_at": "2026-07-07",
       "test_status": "SKIPPED",
-      "reason": "需要 API token，且查詢維度是基金→股票而非股票→基金"
+      "reason": "需要 API token，且查询维度是基金→股票而非股票→基金"
     },
     {
       "id": "akshare_fund_individual_stock_info",
-      "name": "AKShare 基金持倉",
+      "name": "AKShare 基金持仓",
       "enabled": false,
-      "description": "AKShare 開源 Python 庫，支持基金持股等數據查詢",
+      "description": "AKShare 开源 Python 库，支持基金持股等数据查询",
       "auth": {
         "type": "none",
         "install": "pip install akshare"
       },
       "python_usage": "import akshare as ak; ak.fund_individual_stock_info(symbol='603986')",
       "notes": [
-        "Python 庫，非 HTTP 接口，無法直接在 Android 中調用",
-        "數據底層來源可能也是東方財富",
-        "適合服務端/本地腳本使用"
+        "Python 库，非 HTTP 接口，无法直接在 Android 中调用",
+        "数据底层来源可能也是东方财富",
+        "适合服务端/本地脚本使用"
       ],
       "tested_at": "2026-07-07",
       "test_status": "SKIPPED",
-      "reason": "Python 庫，非 HTTP 接口，不適用於 Android 直接調用"
+      "reason": "Python 库，非 HTTP 接口，不适用于 Android 直接调用"
     },
     {
       "id": "eastmoney_datacenter_fund_holderstock",
-      "name": "東方財富 datacenter RPT_FUND_HOLDERSTOCK（已失效）",
+      "name": "东方财富 datacenter RPT_FUND_HOLDERSTOCK（已失效）",
       "enabled": false,
-      "description": "東方財富 datacenter API 的基金持倉報表，已於 2025 年棄用",
+      "description": "东方财富 datacenter API 的基金持仓报表，已于 2025 年弃用",
       "url_template": "https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_FUND_HOLDERSTOCK&columns=ALL&filter=(SECURITY_CODE=\"{CODE}\")&pageNumber=1&pageSize=10&sortTypes=-1&sortColumns=HOLD_MARKET_CAP&source=WEB&client=WEB",
       "method": "GET",
       "notes": [
-        "已失效：返回 '報表配置不存在,RPT_FUND_HOLDERSTOCK'（error code 9501）",
+        "已失效：返回 '报表配置不存在,RPT_FUND_HOLDERSTOCK'（error code 9501）",
         "替代方案：使用 eastmoney_f10_jjcc 接口"
       ],
       "tested_at": "2026-07-07",
       "test_status": "FAILED",
-      "test_error": "報表配置不存在,RPT_FUND_HOLDERSTOCK (code: 9501)"
+      "test_error": "报表配置不存在,RPT_FUND_HOLDERSTOCK (code: 9501)"
     },
     {
       "id": "eastmoney_datacenter_lico_fn_cpd",
-      "name": "東方財富 datacenter RPT_LICO_FN_CPD（財務數據）",
+      "name": "东方财富 datacenter RPT_LICO_FN_CPD（财务数据）",
       "enabled": true,
-      "description": "東方財富 datacenter 的財務報表 API，返回 EPS、營收、淨利潤等財務指標（非基金持倉）",
+      "description": "东方财富 datacenter 的财务报表 API，返回 EPS、营收、净利润等财务指标（非基金持仓）",
       "url_template": "https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_LICO_FN_CPD&columns=ALL&filter=(SECURITY_CODE=\"{CODE}\")&pageNumber=1&pageSize=10&sortTypes=-1&sortColumns=REPORTDATE&source=WEB&client=WEB",
       "method": "GET",
       "headers": {
@@ -142,19 +142,19 @@
         "Referer": "https://data.eastmoney.com"
       },
       "notes": [
-        "有效接口，返回財務數據（非基金持倉數據）",
-        "可用於基本面分析（EPS、營收同比、淨利同比、毛利率等）"
+        "有效接口，返回财务数据（非基金持仓数据）",
+        "可用于基本面分析（EPS、营收同比、净利同比、毛利率等）"
       ],
       "tested_at": "2026-07-07",
       "test_status": "SUCCESS",
-      "test_stock": "603986（兆易創新）",
-      "test_result": "返回 48 條財務數據（2023-2026Q1）"
+      "test_stock": "603986（兆易创新）",
+      "test_result": "返回 48 条财务数据（2023-2026Q1）"
     },
     {
       "id": "eastmoney_push2_daily_fund_flow",
-      "name": "東方財富 日線資金流向",
+      "name": "东方财富 日线资金流向",
       "enabled": true,
-      "description": "東方財富 push2 API 的日線資金流向數據，返回主力/超大/大/中/小單淨流入、占比等",
+      "description": "东方财富 push2 API 的日线资金流向数据，返回主力/超大/大/中/小单净流入、占比等",
       "url_template": "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get?secid={SECID}&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65&lmt=0&klt=101&fqt=0&beg={START_DATE}&end={END_DATE}",
       "method": "GET",
       "headers": {
@@ -162,29 +162,29 @@
       },
       "params": {
         "SECID": {
-          "description": "市場.代碼（如 1.603986 表示上海 603986）",
+          "description": "市场.代码（如 1.603986 表示上海 603986）",
           "rule": "上海用1，深圳用0"
         }
       },
       "notes": [
-        "有效接口，返回日線級別的資金流向數據",
-        "可用於資金面分析",
-        "格式：日期,主力淨流入,超大單,大單,中單,小單,主力占比,..."
+        "有效接口，返回日线级别的资金流向数据",
+        "可用于资金面分析",
+        "格式：日期,主力净流入,超大单,大单,中单,小单,主力占比,..."
       ],
       "tested_at": "2026-07-07",
       "test_status": "SUCCESS",
-      "test_stock": "1.603986（兆易創新）",
-      "test_result": "返回約 120 個交易日的資金流向數據（2026-01~2026-07）"
+      "test_stock": "1.603986（兆易创新）",
+      "test_result": "返回约 120 个交易日的资金流向数据（2026-01~2026-07）"
     }
   ],
   "recommendation": {
     "primary_fund_holdings_api": "eastmoney_f10_jjcc",
-    "reason": "東方財富 F10 基金持股接口無需認證、返回完整 JSON、數據完整（基金名稱/代碼/持股數/持股市值/占比），可直接在 Android 中通過 OkHttp 調用",
+    "reason": "东方财富 F10 基金持股接口无需认证、返回完整 JSON、数据完整（基金名称/代码/持股数/持股市值/占比），可直接在 Android 中通过 OkHttp 调用",
     "integration_notes": [
-      "股票代碼格式需轉換：sh603986 → SH603986，sz002371 → SZ002371",
-      "數據按季度更新，非交易日數據會滯後",
-      "可在 InstitutionalRatingProvider 中新增 getFundHoldings() 調用此接口",
-      "響應中 jjcc 數組即為基金持股列表，可按 HOLD_VALUE（持股市值）降序排列取 TOP10"
+      "股票代码格式需转换：sh603986 → SH603986，sz002371 → SZ002371",
+      "数据按季度更新，非交易日数据会滞后",
+      "可在 InstitutionalRatingProvider 中新增 getFundHoldings() 调用此接口",
+      "响应中 jjcc 数组即为基金持股列表，可按 HOLD_VALUE（持股市值）降序排列取 TOP10"
     ]
   }
 }

@@ -27,7 +27,8 @@ strategy/
 │   ├── EarlyMorningChaseStrategy.kt # 早盘追涨选股分析 (5维+全板块, maxResult=10)
 │   └── TailLowPickStrategy.kt       # 超短线尾盘低吸 (7维+全板块+分级仓位)
 ├── predict/
-│   └── AIPredictionEngine.kt        # 🔥 AI 综合预测（方案A:多日OHLCV / 方案B:新闻+技术指标 / 自动回退豆包）
+│   ├── AIPredictionEngine.kt        # 🔥 AI 综合预测（方案A:多日OHLCV / 方案B:新闻+技术指标 / 自动回退豆包）
+│   └── NewsScoreCalculator.kt       # 🔥 新闻因子量化评分器（匹配+时间衰减+归一化）
 ├── backtest/
 │   ├── HistoricalDataStore.kt       # Room 实体 + DAO（3表）
 │   ├── BacktestEngine.kt            # T+1 / 5日评估引擎
@@ -153,6 +154,32 @@ strategy/
 **两套方案（AI动态选择）**：
 - **方案A**：近5日 OHLCV 序列特征 → LLM 推理
 - **方案B**：NewsFactor（利好利空）+ 技术指标 → LLM 推理
+
+### 2.1 新闻因子量化评分（2026-08-13 新增）
+
+`NewsScoreCalculator` 将非结构化新闻因子转化为可量化数值，避免 AI 忽略消息面：
+
+**匹配规则**：stock_code 精确 → company_name 互含 → tags 标签 → sector 板块关键词
+
+**评分公式**：
+```
+rawScore = Σ (sentiment × impactStrength × timeDecay)
+timeDecay: 当日1.0 | 1-3天0.8 | 4-7天0.6 | 8-14天0.4 | 15天+0.2
+```
+
+**混合评分**：
+```
+hybridScore = strategyWeight × 策略分 + newsWeight × 新闻分
+
+大盘自适应权重：
+  BULLISH → 50%:50%（进攻行情消息面更重要）
+  OSCILLATION → 60%:40%
+  BEARISH → 70%:30%（防御行情技术面优先）
+```
+
+**Prompt 增强**：候选表新增「新闻分」「混合分」列，AI 必须以混合分为基准 ±10 分调整。
+
+**后处理校验**：新闻分 ≥ 70 但加分不足 → 额外 +5；有利空且新闻分 < 20 → -5。
 
 ### 3. 策略自测调优引擎 (StrategySelfTuner)
 

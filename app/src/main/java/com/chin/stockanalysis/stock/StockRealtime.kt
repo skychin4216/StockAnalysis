@@ -26,5 +26,10 @@ data class StockRealtime(
     val grossMarginTTM: Double = 0.0,
     val debtToAsset: Double = 0.0,
     val operatingCashFlow: Double = 0.0,
+    // ── Level2 data (optional, 0 = no data) ──
+    /** 特大单买入占比（单笔>50万），0 = 无数据 */
+    val largeOrderBuyRatio: Double = 0.0,
+    /** 买卖价差（流动性指标），0 = 无数据 */
+    val bidAskSpread: Double = 0.0,
     val timestamp: Long
 )

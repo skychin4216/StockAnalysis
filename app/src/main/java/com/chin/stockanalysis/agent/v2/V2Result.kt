@@ -50,7 +50,7 @@ data class MarketEnvironment(
     val direction: String,       // BULLISH / BEARISH / OSCILLATION
     val strength: Int,           // 0-100
     val description: String,     // 趋势描述
-    val sellType: String = "NONE" // 主力撤資/量化砸盤/正常
+    val sellType: String = "NONE" // 主力撤资/量化砸盘/正常
 )
 
 /** 利润质量分析 */
@@ -66,7 +66,7 @@ data class ProfitQualityAnalysis(
     val deductNpYoY: Double,               // 扣非净利润同比增长 %
     val grossMargin: Double,               // 毛利率 %
     val roe: Double,                       // ROE %
-    val warningFlags: List<String> = emptyList(),  // 警告標籤
+    val warningFlags: List<String> = emptyList(),  // 警告标签
     val reportDate: String = ""
 )
 

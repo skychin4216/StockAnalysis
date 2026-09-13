@@ -19,9 +19,9 @@ import io.noties.prism4j.Prism4j
  * ChatAdapter P0~P3
  *
  * - P0: Markwon Markdown 渲染（取代 HtmlCompat）
- * - P1: 語法高亮 + 多 ViewType
- * - P2: 圖表 ViewType 支援 (ContentBlock)
- * - P3: LaTeX 數學公式
+ * - P1: 语法高亮 + 多 ViewType
+ * - P2: 图表 ViewType 支援 (ContentBlock)
+ * - P3: LaTeX 数学公式
  */
 class ChatAdapter(
     private val messages: MutableList<Message>
@@ -62,10 +62,10 @@ class ChatAdapter(
     }
 
     // ================================================================
-    //  ViewHolder 類型
+    //  ViewHolder 类型
     // ================================================================
 
-    // ── 用戶消息 ──
+    // ── 用户消息 ──
     inner class UserViewHolder(private val binding: ItemMessageBinding)
         : RecyclerView.ViewHolder(binding.root) {
 
@@ -100,8 +100,8 @@ class ChatAdapter(
                 layoutUser.visibility = View.GONE
                 layoutBot.visibility = View.VISIBLE
 
-                // P0: Markwon 渲染 Markdown（表格、粗斜體、代碼區塊等）
-                // P3: JLatexMathPlugin 自動處理 $$...$$ 和 $...$ 公式
+                // P0: Markwon 渲染 Markdown（表格、粗斜体、代码区块等）
+                // P3: JLatexMathPlugin 自动处理 $$...$$ 和 $...$ 公式
                 getMarkwon(root.context).setMarkdown(tvBotMessage, message.content)
                 tvBotMessage.visibility = View.VISIBLE
                 tvTypingIndicator.visibility = View.GONE
@@ -121,7 +121,7 @@ class ChatAdapter(
         }
     }
 
-    // ── 串流消息（純文本，不解析 Markdown）──
+    // ── 串流消息（纯文本，不解析 Markdown）──
     inner class StreamingViewHolder(private val binding: ItemMessageBinding)
         : RecyclerView.ViewHolder(binding.root) {
 
@@ -133,13 +133,13 @@ class ChatAdapter(
                 layoutUser.visibility = View.GONE
 
                 if (message.loadingStatus != null) {
-                    // Loading 狀態：只顯示 loading 文字，不顯示空的 streaming view
+                    // Loading 状态：只显示 loading 文字，不显示空的 streaming view
                     tvLoadingStatus.text = message.loadingStatus
                     tvLoadingStatus.visibility = View.VISIBLE
                     tvBotMessage.visibility = View.GONE
                     tvTypingIndicator.visibility = View.VISIBLE
                 } else {
-                    // 正常顯示內容
+                    // 正常显示内容
                     tvLoadingStatus.visibility = View.GONE
                     tvBotMessage.text = message.content
                     tvBotMessage.visibility = if (message.content.isNotEmpty()) View.VISIBLE else View.GONE
@@ -152,7 +152,7 @@ class ChatAdapter(
         }
     }
 
-    // ── 錯誤消息 ──
+    // ── 错误消息 ──
     inner class ErrorViewHolder(private val binding: ItemMessageBinding)
         : RecyclerView.ViewHolder(binding.root) {
 
@@ -174,7 +174,7 @@ class ChatAdapter(
         }
     }
 
-    // ── 圖表消息（P2）──
+    // ── 图表消息（P2）──
     inner class ChartViewHolder(private val binding: ItemMessageChartBinding)
         : RecyclerView.ViewHolder(binding.root) {
 
@@ -183,9 +183,9 @@ class ChatAdapter(
                 tvTime.text = formatTime(message.timestamp)
                 tvTime.visibility = View.VISIBLE
 
-                // 解析 content 中的圖表參數（格式: __CHART__|stockCode|stockName|title）
+                // 解析 content 中的图表参数（格式: __CHART__|stockCode|stockName|title）
                 val parts = message.content.split("|")
-                val chartTitle = if (parts.size >= 4) parts[3] else "📊 走勢圖"
+                val chartTitle = if (parts.size >= 4) parts[3] else "📊 走势图"
                 val stockCode = if (parts.size >= 2) parts[1] else ""
                 val stockDesc = if (parts.size >= 3 && parts[2].isNotBlank()) parts[2] else stockCode
 
@@ -195,21 +195,21 @@ class ChatAdapter(
                 tvChartDesc.visibility = View.VISIBLE
                 lineChart.visibility = View.VISIBLE
 
-                // 清空樣本數據（實際數據由外部注入）
+                // 清空样本数据（实际数据由外部注入）
                 lineChart.data = null
                 lineChart.invalidate()
             }
         }
     }
 
-    // ── 實體確認卡片（歧義消解） ──
+    // ── 实体确认卡片（歧义消解） ──
     inner class EntityConfirmViewHolder(private val card: EntityConfirmCard)
         : RecyclerView.ViewHolder(card) {
 
         fun bind(message: Message) {
             val entities = message.ambiguousEntities ?: return
-            card.setTitle("找到 ${entities.size} 個匹配")
-            card.setSubtitle("請選擇您要分析的股票")
+            card.setTitle("找到 ${entities.size} 个匹配")
+            card.setSubtitle("请选择您要分析的股票")
             card.setCandidates(entities.map { e ->
                 EntityConfirmCard.Candidate(
                     displayName = e.name,
@@ -223,7 +223,7 @@ class ChatAdapter(
     }
 
     // ================================================================
-    //  Adapter 實現
+    //  Adapter 实现
     // ================================================================
 
     override fun getItemViewType(position: Int): Int {

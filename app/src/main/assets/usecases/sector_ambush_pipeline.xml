@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 热门板块「埋伏」Pipeline（V2 DAG · 板块热度 → 埋伏信号 → 离场打包）
+
+  设计思路（参考公开的行业轮动 + 主力吸筹形态研究）：
+    1) 先选板块、再选个股 —— 行业/题材轮动是 A 股最稳定的规律之一：资金从弱板块流向强板块。
+       只在「热门板块」的成分股里找机会，冷门股即使形态好也常常无人接力。
+    2) 启动形态：连续 2~3 根阳线（刚启动不久，不追已经连涨多日的高位票）。
+    3) 趋势确认：close > MA5 > MA10 > MA20（多头排列）且 MA20 相比 5 日前抬升。
+    4) 主力埋伏痕迹（三条独立证据）：
+       · ① 梯量/温和放量：阳线段量能阶梯式放大，且不过分（天量常为出货）
+       · ② OBV 上行：量价累积资金流向上（主力吸筹的经典指标）
+       · ③ 洗盘确认：启动前有缩量回调且不破 MA20（洗盘不破位 → 主力控盘）
+    5) 位置不高：距 60 日高点仍留有回撤空间（-25% ~ -1%），既非深跌破位、也非追高。
+
+  stageOutputs：
+    - "n_ambush_signal"  JSONObject {as_of, hotSectors[], rows[], scanned}
+    - "n_ambush_exit"    JSONObject {as_of, hotSectors, signal_today, strategy, exit{tp,sl,hold}}
+
+  双端共用：APK UseCaseLoader / AutoQuant usecase_pipeline.py 解析同一份 XML（单一事实源）。
+  注意：PC 侧 Python 引擎的「板块→成分股」映射来自 AutoQuant/autoquant/hot_sector_config.py，
+  APK 侧来自 sector_daily_record（板块热度）+ sector_stocks（成分股），两端下游规则完全一致。
+-->
+<DagPipeline id="sector_ambush_dag" name="热门板块埋伏Pipeline"
+    description="板块热度排序 → 2~3连阳+多头+主力埋伏扫描 → 离场参数打包">
+
+  <NodeList>
+    <!-- ── 阶段0：数据导入检查（保证后续节点有足够日K） ── -->
+    <Node id="n_amb_import" name="数据导入检查" module="data_import">
+      <config>
+        <param name="days" value="60" />
+        <param name="minSnapshots" value="60" />
+      </config>
+    </Node>
+
+    <!-- ── 阶段1：热门板块埋伏信号扫描（规则参数全部下沉至此，供双端引擎读取） ── -->
+    <Node id="n_ambush_signal" name="热门板块埋伏信号扫描" module="sector_ambush_signal">
+      <config>
+        <!-- 板块热度：读近 lookbackDays 日板块记录，取最强前 topSectors 个板块 -->
+        <param name="lookbackDays" value="20" />
+        <param name="topSectors" value="5" />
+        <!-- 启动形态：连续阳线根数区间（2~3 根 = 刚启动，不追连涨多日的高位票） -->
+        <param name="bullMin" value="2" />
+        <param name="bullMax" value="3" />
+        <!-- 趋势：均线多头排列 close>MA5>MA10>MA20 且 MA20 抬升 -->
+        <param name="maShort" value="5" />
+        <param name="maMid" value="10" />
+        <param name="maLong" value="20" />
+        <!-- 主力埋伏证据①：梯量/温和放量（阳线段均量 / 前 10 日均量） -->
+        <param name="volExpand" value="1.2" />
+        <param name="volExpandMax" value="3.0" />
+        <!-- 主力埋伏证据②：OBV 上行（资金累积流入） -->
+        <param name="requireObvUp" value="true" />
+        <!-- 主力埋伏证据③：启动前缩量洗盘且不破 MA20 -->
+        <param name="requireWash" value="true" />
+        <!-- 位置：距 ddWin 日高点回撤区间（太低=破位，太高=追高） -->
+        <param name="ddWin" value="60" />
+        <param name="dd60Lo" value="-25" />
+        <param name="dd60Hi" value="-1" />
+        <param name="minSnapshots" value="60" />
+        <!-- 扫描上限（热门板块成分股合并去重后的最大扫描只数，防止耗时过长） -->
+        <param name="scanCap" value="400" />
+        <param name="topN" value="10" />
+      </config>
+    </Node>
+
+    <!-- ── 阶段2：离场参数 + 发布打包（埋伏型，中线持有） ── -->
+    <Node id="n_ambush_exit" name="埋伏离场打包" module="ambush_exit_policy">
+      <config>
+        <param name="tp" value="8.0" />
+        <param name="sl" value="-5.0" />
+        <param name="hold" value="10" />
+        <param name="strategyText" value="热门板块埋伏: 板块热度Top5 → 2~3连阳 + close>MA5>MA10>MA20且MA20抬升 + 梯量温和放量(1.2~3倍) + OBV上行 + 启动前缩量洗盘不破MA20 + 距60日高回撤-25%~-1%；持≤10日 tp+8%/sl-5%" />
+      </config>
+    </Node>
+  </NodeList>
+
+  <Links>
+    <Link>
+      <SourceNodeId>n_amb_import</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_ambush_signal</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_ambush_signal</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_ambush_exit</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+  </Links>
+</DagPipeline>

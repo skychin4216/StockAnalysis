@@ -16,6 +16,12 @@ class BacktestEngine(private val context: Context) {
     companion object {
         private const val TAG = "BacktestEngine"
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+
+        /**
+         * 历史数据保留天数：工作台「回溯+拟合」需 2024 年起的历史（一年窗口 + MA250 回看 + 持仓期），
+         * 因此 120 → 1000 天（约 2.7 年，覆盖 2024-01 至今，SQLite 约几 MB，可接受）。
+         */
+        const val RETENTION_DAYS: Long = 1000
     }
 
     private val db: StockDatabase by lazy { StockDatabase.getInstance(context) }
@@ -200,8 +206,13 @@ class BacktestEngine(private val context: Context) {
         return -1
     }
 
+    /**
+     * 历史数据保留天数。
+     * 工作台「回溯+拟合」需要一年窗口 + 中/长线选股 MA250 回看 + 持仓期，
+     * 因此从 120 天提升到 550 天（约 2 年交易日）。
+     */
     suspend fun cleanupOldData() {
-        val cutoffDate = LocalDate.now().minusDays(120).format(DATE_FMT)
+        val cutoffDate = LocalDate.now().minusDays(RETENTION_DAYS).format(DATE_FMT)
         snapshotDao.deleteOlderThan(cutoffDate)
         predictionDao.deleteOlderThan(cutoffDate)
         Log.d(TAG, "清理历史数据完成")

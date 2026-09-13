@@ -1,8 +1,11 @@
 package com.chin.stockanalysis.ui
 
 import android.content.Context
+import android.graphics.Color
 import android.os.Bundle
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -14,14 +17,21 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import com.chin.stockanalysis.ApiConfigManager
 import com.chin.stockanalysis.ApiProviderConfig
+import com.chin.stockanalysis.cloud.CloudSyncManager
 import com.chin.stockanalysis.config.AgentRoute
 import com.chin.stockanalysis.config.FeatureFlagManager
 import com.chin.stockanalysis.config.GlobalMode
+import com.chin.stockanalysis.config.LanguageManager
 import com.chin.stockanalysis.databinding.FragmentSettingsBinding
+import com.chin.stockanalysis.notification.TradeNotifier
 import com.chin.stockanalysis.stock.StockService
 import com.chin.stockanalysis.stock.data.StockDataSourceFactory
+import com.chin.stockanalysis.strategy.HoldingPeriod
+import com.chin.stockanalysis.update.AppUpdateManager
+import kotlinx.coroutines.launch
 
 class SettingsFragment : Fragment() {
     private var _binding: FragmentSettingsBinding? = null
@@ -49,12 +59,230 @@ class SettingsFragment : Fragment() {
 
     private fun setupUI() {
         refreshProviderInfo()
+        refreshLanguageInfo()
         binding.apply {
             btnChangeApiKey.setOnClickListener { showApiConfigDialog() }
             btnClearCache.setOnClickListener { clearAppCache() }
+            btnLanguage.setOnClickListener { showLanguageDialog() }
             tvAbout.text = buildAboutText()
         }
         setupAgentFramework()
+        setupWechatNotification()
+        setupAppUpdate()
+        setupCloudSync()
+    }
+
+    /** 绑定做T 微信通知 & 自动执行 配置（Phase 11，可折叠） */
+    private fun setupWechatNotification() {
+        setupCollapsible(binding.tvWechatSectionHeader, binding.layoutWechatContent)
+        binding.apply {
+            swWechatEnabled.isChecked = TradeNotifier.isWechatEnabled(requireContext())
+            swWechatEnabled.setOnCheckedChangeListener { _, isChecked ->
+                TradeNotifier.setWechatEnabled(requireContext(), isChecked)
+            }
+            etServerChanKey.setText(TradeNotifier.getServerChanKey(requireContext()))
+            etServerChanKey.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    TradeNotifier.setServerChanKey(requireContext(), s?.toString()?.trim().orEmpty())
+                }
+            })
+
+            swPushPlusEnabled.isChecked = TradeNotifier.isPushPlusEnabled(requireContext())
+            swPushPlusEnabled.setOnCheckedChangeListener { _, isChecked ->
+                TradeNotifier.setPushPlusEnabled(requireContext(), isChecked)
+            }
+            etPushPlusToken.setText(TradeNotifier.getPushPlusToken(requireContext()))
+            etPushPlusToken.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    TradeNotifier.setPushPlusToken(requireContext(), s?.toString()?.trim().orEmpty())
+                }
+            })
+
+            swAutoExecute.isChecked = TradeNotifier.isAutoExecuteEnabled(requireContext())
+            swAutoExecute.setOnCheckedChangeListener { _, isChecked ->
+                TradeNotifier.setAutoExecuteEnabled(requireContext(), isChecked)
+            }
+            val threshold = TradeNotifier.getAutoExecuteThreshold(requireContext())
+            etAutoExecThreshold.setText(if (threshold >= 0) "%.2f".format(threshold) else "0.70")
+            etAutoExecThreshold.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    val v = s?.toString()?.trim()?.toDoubleOrNull() ?: return
+                    if (v in 0.0..1.0) {
+                        TradeNotifier.setAutoExecuteThreshold(requireContext(), v)
+                    }
+                }
+            })
+        }
+    }
+
+    /** 应用更新：显示当前版本、自动从云端配置（COS）读取更新清单、手动检查更新 */
+    private fun setupAppUpdate() {
+        binding.apply {
+            val ctx = requireContext()
+            tvUpdateVersion.text = "当前版本: v${AppUpdateManager.currentVersionName(ctx)}" +
+                " (${AppUpdateManager.currentVersionCode(ctx)})"
+
+            btnCheckUpdate.setOnClickListener {
+                Toast.makeText(ctx, "正在检查更新…", Toast.LENGTH_SHORT).show()
+                AppUpdateManager.checkForUpdateDetailed(ctx) { result ->
+                    requireActivity().runOnUiThread {
+                        when (result) {
+                            is AppUpdateManager.CheckResult.NotConfigured ->
+                                Toast.makeText(ctx, "未配置更新地址（app_config.json 中 update.manifest_url 或 cloud_sync 均未配置）", Toast.LENGTH_LONG).show()
+                            is AppUpdateManager.CheckResult.NoUpdate ->
+                                Toast.makeText(ctx, "当前已是最新版本", Toast.LENGTH_SHORT).show()
+                            is AppUpdateManager.CheckResult.Failed ->
+                                Toast.makeText(ctx, "检查更新失败: ${result.message}", Toast.LENGTH_LONG).show()
+                            is AppUpdateManager.CheckResult.HasUpdate ->
+                                AppUpdateManager.showUpdateDialog(requireActivity(), result.info)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** 云端数据同步（腾讯云 COS，可折叠）：显示状态、上传今日数据、下载最新拟合参数 */
+    private fun setupCloudSync() {
+        setupCollapsible(binding.tvCloudSectionHeader, binding.layoutCloudContent)
+        refreshCloudStatus()
+        binding.btnCloudUpload.setOnClickListener {
+            viewLifecycleOwner.lifecycleScope.launch {
+                binding.btnCloudUpload.isEnabled = false
+                setCloudStatus("正在打包并上传…", Color.parseColor("#FF9800"))
+                val manager = CloudSyncManager(requireContext())
+                val cfg = manager.loadConfig()
+                manager.uploadData(cfg) { status ->
+                    requireActivity().runOnUiThread { setCloudStatus(status, Color.parseColor("#FF9800")) }
+                }.onSuccess { msg ->
+                    // 顺带同步用户关注板块（focus_sectors.json，供 PC 三段推送使用）
+                    manager.uploadFocusSectors(cfg) { status ->
+                        requireActivity().runOnUiThread { setCloudStatus(status, Color.parseColor("#FF9800")) }
+                    }.onSuccess { _ ->
+                        setCloudStatus(msg, Color.parseColor("#2E7D32"))
+                        Toast.makeText(requireContext(), "$msg；关注板块已同步", Toast.LENGTH_LONG).show()
+                    }.onFailure { e ->
+                        setCloudStatus("数据包上传成功，但关注板块同步失败: ${e.message}", Color.parseColor("#C62828"))
+                        Toast.makeText(requireContext(), "$msg；关注板块同步失败: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                }.onFailure { e ->
+                    setCloudStatus(e.message ?: "上传失败", Color.parseColor("#C62828"))
+                    Toast.makeText(requireContext(), "上传失败: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+                binding.btnCloudUpload.isEnabled = true
+            }
+        }
+        binding.btnCloudDownloadParams.setOnClickListener {
+            viewLifecycleOwner.lifecycleScope.launch {
+                binding.btnCloudDownloadParams.isEnabled = false
+                setCloudStatus("正在下载最新参数…", Color.parseColor("#FF9800"))
+                val manager = CloudSyncManager(requireContext())
+                val result = manager.downloadParams(manager.loadConfig()) { status ->
+                    requireActivity().runOnUiThread { setCloudStatus(status, Color.parseColor("#FF9800")) }
+                }
+                binding.btnCloudDownloadParams.isEnabled = true
+                result.onSuccess { msg ->
+                    setCloudStatus(msg, Color.parseColor("#2E7D32"))
+                    Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
+                }.onFailure { e ->
+                    setCloudStatus(e.message ?: "下载失败", Color.parseColor("#C62828"))
+                    Toast.makeText(requireContext(), "下载失败: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+        binding.btnCloudDownloadDb.setOnClickListener {
+            viewLifecycleOwner.lifecycleScope.launch {
+                binding.btnCloudDownloadDb.isEnabled = false
+                setCloudStatus("正在下载并导入行情库…", Color.parseColor("#FF9800"))
+                val manager = CloudSyncManager(requireContext())
+                val result = manager.downloadMarketDb(manager.loadConfig()) { status ->
+                    requireActivity().runOnUiThread { setCloudStatus(status, Color.parseColor("#FF9800")) }
+                }
+                binding.btnCloudDownloadDb.isEnabled = true
+                result.onSuccess { msg ->
+                    setCloudStatus(msg, Color.parseColor("#2E7D32"))
+                    Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
+                }.onFailure { e ->
+                    setCloudStatus(e.message ?: "下载失败", Color.parseColor("#C62828"))
+                    Toast.makeText(requireContext(), "下载失败: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    /** 通用折叠效果：点击 header 展开/收起 content（▶/▼ 图标切换） */
+    private fun setupCollapsible(header: TextView, content: View) {
+        header.setOnClickListener {
+            val isExpanded = content.visibility == View.VISIBLE
+            content.visibility = if (isExpanded) View.GONE else View.VISIBLE
+            val arrow = if (isExpanded) "▶" else "▼"
+            val text = header.text.toString()
+            header.text = (if (text.startsWith("▶") || text.startsWith("▼")) text.drop(1) else text).let { arrow + it }
+        }
+    }
+
+    private fun refreshCloudStatus() {
+        val cfg = CloudSyncManager(requireContext()).loadConfig()
+        if (!cfg.enabled) {
+            setCloudStatus("云端同步未配置（app_config.json 中 cloud_sync.enabled=false）", Color.parseColor("#757575"))
+            return
+        }
+        val maskedId = cfg.secretId.take(4) + "****"
+        val lastUpload = CloudSyncManager(requireContext()).lastUploadDate()
+        val lastUploadText = if (lastUpload != null) "\n上次上传: $lastUpload（同日不重复上传）" else ""
+        setCloudStatus(
+            "已配置: bucket=${cfg.bucket}  region=${cfg.region}\nSecretId=$maskedId  prefix=${cfg.prefix}$lastUploadText",
+            Color.parseColor("#2E7D32")
+        )
+    }
+
+    private fun setCloudStatus(text: String, color: Int) {
+        binding.tvCloudStatus.text = text
+        binding.tvCloudStatus.setTextColor(color)
+    }
+
+    private fun refreshLanguageInfo() {
+        val currentLang = LanguageManager.getCurrentLanguageName(requireContext())
+        binding.tvCurrentLanguage.text = "当前语言: $currentLang"
+    }
+
+    private fun showLanguageDialog() {
+        val context = requireContext()
+        val languages = LanguageManager.SUPPORTED_LANGUAGES
+        val currentLang = LanguageManager.getSavedLanguage(context)
+
+        // 构建选项列表：第一项是"跟随系统"
+        val displayNames = mutableListOf("跟随系统")
+        displayNames.addAll(languages.map { it.second })
+
+        val currentIndex = if (currentLang == null) 0
+        else languages.indexOfFirst { it.first == currentLang } + 1
+
+        AlertDialog.Builder(context)
+            .setTitle("选择语言")
+            .setSingleChoiceItems(
+                displayNames.toTypedArray(),
+                currentIndex
+            ) { dialog, which ->
+                val selectedCode = if (which == 0) null
+                else languages[which - 1].first
+
+                LanguageManager.setLanguage(context, selectedCode)
+                refreshLanguageInfo()
+                dialog.dismiss()
+
+                // 重建 Activity 以应用新语言
+                Toast.makeText(context, "语言已切换", Toast.LENGTH_SHORT).show()
+                activity?.recreate()
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     private fun refreshProviderInfo() {
@@ -281,8 +509,14 @@ class SettingsFragment : Fragment() {
                 FeatureFlagManager.globalMode = mode
                 updateModuleSwitchesEnabled(mode)
                 when (mode) {
-                    GlobalMode.LEGACY -> setAllModuleRoutes(AgentRoute.LEGACY)
-                    GlobalMode.AGENT -> setAllModuleRoutes(AgentRoute.AGENT_FRAMEWORK)
+                    GlobalMode.LEGACY -> {
+                        setAllModuleRoutes(AgentRoute.LEGACY)
+                        FeatureFlagManager.setAllPeriodRoutes(AgentRoute.LEGACY)
+                    }
+                    GlobalMode.AGENT -> {
+                        setAllModuleRoutes(AgentRoute.AGENT_FRAMEWORK)
+                        FeatureFlagManager.setAllPeriodRoutes(AgentRoute.AGENT_FRAMEWORK)
+                    }
                     GlobalMode.HYBRID -> {}
                 }
                 refreshModuleSwitches()
@@ -327,6 +561,27 @@ class SettingsFragment : Fragment() {
                         if (isChecked) AgentRoute.AGENT_FRAMEWORK else AgentRoute.LEGACY
                 }
             }
+
+            // ── 周期级别路线开关（Phase 10） ──
+            setupPeriodRouteSwitch(swRouteUltraShort, HoldingPeriod.ULTRA_SHORT)
+            setupPeriodRouteSwitch(swRouteShort, HoldingPeriod.SHORT)
+            setupPeriodRouteSwitch(swRouteMid, HoldingPeriod.MID)
+            setupPeriodRouteSwitch(swRouteLong, HoldingPeriod.LONG)
+
+            // 通用 DAG 开关已移除（pipeline 已全面启用）
+        }
+    }
+
+    /** 设置单个周期路线开关的初始状态和监听器（Phase 10） */
+    private fun setupPeriodRouteSwitch(switch: android.widget.Switch, period: HoldingPeriod) {
+        switch.isChecked = FeatureFlagManager.getRoute(period) == AgentRoute.AGENT_FRAMEWORK
+        switch.setOnCheckedChangeListener { _, isChecked ->
+            if (FeatureFlagManager.isHybrid) {
+                FeatureFlagManager.setRoute(
+                    period,
+                    if (isChecked) AgentRoute.AGENT_FRAMEWORK else AgentRoute.LEGACY
+                )
+            }
         }
     }
 
@@ -338,6 +593,11 @@ class SettingsFragment : Fragment() {
             swChat.isChecked = FeatureFlagManager.chatRoute == AgentRoute.AGENT_FRAMEWORK
             swNewsMonitor.isChecked = FeatureFlagManager.newsMonitoringRoute == AgentRoute.AGENT_FRAMEWORK
             swRiskManagement.isChecked = FeatureFlagManager.riskManagementRoute == AgentRoute.AGENT_FRAMEWORK
+            // 周期路线开关
+            swRouteUltraShort.isChecked = FeatureFlagManager.getRoute(HoldingPeriod.ULTRA_SHORT) == AgentRoute.AGENT_FRAMEWORK
+            swRouteShort.isChecked = FeatureFlagManager.getRoute(HoldingPeriod.SHORT) == AgentRoute.AGENT_FRAMEWORK
+            swRouteMid.isChecked = FeatureFlagManager.getRoute(HoldingPeriod.MID) == AgentRoute.AGENT_FRAMEWORK
+            swRouteLong.isChecked = FeatureFlagManager.getRoute(HoldingPeriod.LONG) == AgentRoute.AGENT_FRAMEWORK
         }
     }
 
@@ -351,16 +611,21 @@ class SettingsFragment : Fragment() {
     }
 
     private fun updateModuleSwitchesEnabled(mode: GlobalMode) {
-        val enabled = (mode == GlobalMode.HYBRID)
-        val alpha = if (enabled) 1.0f else 0.4f
+        // 模块级别配置 + 周期级别路线：仅在 Hybrid 模式下显示，否则隐藏，避免占用 UI
+        val visibility = if (mode == GlobalMode.HYBRID) View.VISIBLE else View.GONE
         binding.apply {
-            tvModuleConfigTitle.alpha = alpha
-            swStockPicking.isEnabled = enabled; swStockPicking.alpha = alpha
-            swStockAnalysis.isEnabled = enabled; swStockAnalysis.alpha = alpha
-            swTradeExecution.isEnabled = enabled; swTradeExecution.alpha = alpha
-            swChat.isEnabled = enabled; swChat.alpha = alpha
-            swNewsMonitor.isEnabled = enabled; swNewsMonitor.alpha = alpha
-            swRiskManagement.isEnabled = enabled; swRiskManagement.alpha = alpha
+            tvModuleConfigTitle.visibility = visibility
+            swStockPicking.visibility = visibility
+            swStockAnalysis.visibility = visibility
+            swTradeExecution.visibility = visibility
+            swChat.visibility = visibility
+            swNewsMonitor.visibility = visibility
+            swRiskManagement.visibility = visibility
+            tvPeriodRouteTitle.visibility = visibility
+            swRouteUltraShort.visibility = visibility
+            swRouteShort.visibility = visibility
+            swRouteMid.visibility = visibility
+            swRouteLong.visibility = visibility
         }
     }
 
@@ -379,6 +644,7 @@ class SettingsFragment : Fragment() {
         • BottomNavigationView + ViewPager2
         • OkHttp + org.json/Gson
         • MPAndroidChart
+        • DAG 拓扑引擎（Pipeline 并行调度）
         
         © 2026 StockAnalysis Team
     """.trimIndent()

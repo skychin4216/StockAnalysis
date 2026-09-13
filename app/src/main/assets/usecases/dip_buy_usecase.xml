@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 恐慌日抄底 UseCase（个股短线 dip_buy）
+
+  大盘恐慌/深度回调窗口（上证或科创50 连跌>=3 且 5日跌>=4%、或 5日<=-6%、或当日大跌且已连跌）自动触发；
+  与 ETF dip_buy 互补：ETF 管 13 只池低吸，本 usecase 管热门股票龙头跌透抄底（短线周期）。
+  日常非恐慌日 gate 关闭 → 不出信号，不影响三周期主线选股。
+-->
+<usecase id="dip_buy" name="恐慌日抄底(热门跌透龙头)">
+  <description>大盘恐慌门控 → 前期热门+自身连跌>=3+缩量 跌透龙头低吸 → 离场参数打包（超短线周期专用，统计支撑见 dip_rebound_report.md）</description>
+  <steps>
+    <pipeline ref="usecases/dip_buy_pipeline.xml" name="dip_buy_dag" />
+  </steps>
+  <config>
+    <param name="orderType" value="DipBuy" />
+    <param name="maxHoldings" value="3" />
+    <param name="holdingPeriod" value="ultra_short" />
+  </config>
+</usecase>

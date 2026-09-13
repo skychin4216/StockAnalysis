@@ -13,10 +13,10 @@ import java.net.URL
 import java.net.URLEncoder
 
 /**
- * ## 股票名稱解析器
+ * ## 股票名称解析器
  *
- * 當數據庫中沒有股票名稱時，從東方財富 API 動態獲取。
- * 利用東方財富的公開行情接口，通過股票代碼查詢名稱。
+ * 当数据库中没有股票名称时，从东方财富 API 动态获取。
+ * 利用东方财富的公开行情接口，通过股票代码查询名称。
  *
  * 使用方式：
  * ```kotlin
@@ -28,21 +28,21 @@ object StockNameResolver {
     private const val TAG = "StockNameResolver"
     private const val TIMEOUT_MS = 5000
 
-    /** 內存緩存（避免重複請求） */
+    /** 内存缓存（避免重复请求） */
     private val cache = mutableMapOf<String, String>()
 
     /**
-     * 根據股票代碼獲取名稱
+     * 根据股票代码获取名称
      *
-     * @param code 純數字代碼或 sh/sz 前綴代碼（如 "600519", "sh600519", "sz000858"）
-     * @return 股票名稱，失敗返回 null
+     * @param code 纯数字代码或 sh/sz 前缀代码（如 "600519", "sh600519", "sz000858"）
+     * @return 股票名称，失败返回 null
      */
     suspend fun resolve(code: String): String? {
-        // 去除前綴
+        // 去除前缀
         val rawCode = code.removePrefix("sh").removePrefix("sz").trim()
         if (rawCode.isBlank() || rawCode.length < 6) return null
 
-        // 緩存命中
+        // 缓存命中
         cache[rawCode]?.let { return it }
 
         return try {
@@ -50,13 +50,13 @@ object StockNameResolver {
                 fetchFromEastMoney(rawCode)?.also { cache[rawCode] = it }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "獲取名稱失敗: $rawCode — ${e.message}")
+            Log.w(TAG, "获取名称失败: $rawCode — ${e.message}")
             null
         }
     }
 
     /**
-     * 批量解析（並發請求，最多 10 個並發）
+     * 批量解析（并发请求，最多 10 个并发）
      */
     suspend fun resolveBatch(codes: List<String>): Map<String, String> {
         val result = mutableMapOf<String, String>()
@@ -66,7 +66,7 @@ object StockNameResolver {
         }
         if (unresolved.isEmpty()) return result
 
-        // 每批最多 20 個
+        // 每批最多 20 个
         unresolved.chunked(20).forEach { batch ->
             val batchResult = fetchBatchFromEastMoney(batch)
             batchResult.forEach { (code, name) ->
@@ -83,7 +83,7 @@ object StockNameResolver {
     // ═══════════════════════════════════════
 
     /**
-     * 單個股票查詢
+     * 单个股票查询
      * API: https://push2.eastmoney.com/api/qt/stock/get?secid=1.600519&fields=f57,f58
      */
     private fun fetchFromEastMoney(rawCode: String): String? {
@@ -114,7 +114,7 @@ object StockNameResolver {
     }
 
     /**
-     * 批量查詢（最多 50 個）
+     * 批量查询（最多 50 个）
      * API: https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=50&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12,f14
      */
     private fun fetchBatchFromEastMoney(codes: List<String>): Map<String, String> {
@@ -159,7 +159,7 @@ object StockNameResolver {
     }
 
     /**
-     * 清除緩存
+     * 清除缓存
      */
     fun clearCache() {
         cache.clear()

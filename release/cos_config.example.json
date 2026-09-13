@@ -1,0 +1,9 @@
+{
+  "// 说明": "复制本文件为 release/cos_config.json，填入腾讯云 COS 信息（勿提交到 git，已在 .gitignore 中忽略）",
+  "secret_id": "AKIDxxxxxxxxxxxxxxxxxxxxxxxx",
+  "secret_key": "xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "bucket": "stock-update-1250000000",
+  "region": "ap-guangzhou",
+  "remote_prefix": "update",
+  "public_base": "https://stock-update-1250000000.cos.ap-guangzhou.myqcloud.com"
+}

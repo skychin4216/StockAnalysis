@@ -61,7 +61,16 @@ interface SectorStockDao {
     @Query("DELETE FROM sector_stocks") suspend fun clearAll()
     @Query("SELECT stock_code FROM sector_stocks") suspend fun getAllStockCodes(): List<String>
     @Query("SELECT DISTINCT sector_name FROM sector_stocks WHERE stock_code = :stockCode LIMIT 3") suspend fun getSectorNamesByStockCode(stockCode: String): List<String>
+    @Query("SELECT stock_code, sector_name FROM sector_stocks GROUP BY stock_code") suspend fun getAllStockSectorPairs(): List<StockSectorPair>
+    /** 差集清理：删除该板块下已不在指定成分列表中的旧行（含历史错配脏数据） */
+    @Query("DELETE FROM sector_stocks WHERE sector_key = :sectorKey AND stock_code NOT IN (:keepCodes)")
+    suspend fun pruneSectorKeyNotIn(sectorKey: String, keepCodes: List<String>)
+    /** 按板块键批量删除（升级清理历史"别名键"脏数据用） */
+    @Query("DELETE FROM sector_stocks WHERE sector_key IN (:keys)")
+    suspend fun deleteSectorKeys(keys: List<String>)
 }
+
+data class StockSectorPair(val stock_code: String, val sector_name: String)
 
 @Dao
 interface WeightCalibrationDao {
@@ -70,33 +79,40 @@ interface WeightCalibrationDao {
     @Query("DELETE FROM weight_calibrations WHERE strategy_id = :strategyId") suspend fun deleteByStrategy(strategyId: String)
 }
 
-/** 用戶自選股 DAO */
+/** 用户自选股 DAO */
 @Dao
 interface UserWatchlistDao {
     @Query("SELECT * FROM user_watchlist WHERE status = :status ORDER BY added_date DESC") suspend fun getByStatus(status: String): List<UserWatchlistEntity>
     @Query("SELECT * FROM user_watchlist ORDER BY added_date DESC") suspend fun getAll(): List<UserWatchlistEntity>
     @Query("SELECT * FROM user_watchlist WHERE stock_code = :code LIMIT 1") suspend fun getByCode(code: String): UserWatchlistEntity?
+    @Query("SELECT DISTINCT source FROM user_watchlist WHERE source != '' ORDER BY source") suspend fun getDistinctSources(): List<String>
+    @Query("SELECT * FROM user_watchlist WHERE source = :source ORDER BY added_date DESC") suspend fun getBySource(source: String): List<UserWatchlistEntity>
+    @Query("SELECT * FROM user_watchlist WHERE source = :source AND added_date = :date ORDER BY added_date DESC") suspend fun getBySourceAndDate(source: String, date: String): List<UserWatchlistEntity>
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(entity: UserWatchlistEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(entities: List<UserWatchlistEntity>)
     @Update suspend fun update(entity: UserWatchlistEntity)
     @Query("DELETE FROM user_watchlist WHERE stock_code = :code") suspend fun deleteByCode(code: String)
+    @Query("DELETE FROM user_watchlist WHERE source = :source AND added_date = :date") suspend fun deleteBySourceAndDate(source: String, date: String)
     @Query("DELETE FROM user_watchlist") suspend fun clearAll()
 }
 
-/** AI 精選股 DAO */
+/** AI 精选股 DAO */
 @Dao
 interface AiSelectedStockDao {
-    @Query("SELECT * FROM ai_selected_stock WHERE selected_date = :date ORDER BY score DESC") suspend fun getByDate(date: String): List<AiSelectedStockEntity>
-    @Query("SELECT * FROM ai_selected_stock ORDER BY selected_date DESC, score DESC") suspend fun getAll(): List<AiSelectedStockEntity>
-    @Query("SELECT * FROM ai_selected_stock WHERE selected_date = :date") fun getByDateFlow(date: String): kotlinx.coroutines.flow.Flow<List<AiSelectedStockEntity>>
+    @Query("SELECT * FROM ai_selected_stock WHERE selected_date = :date ORDER BY created_at DESC") suspend fun getByDate(date: String): List<AiSelectedStockEntity>
+    @Query("SELECT * FROM ai_selected_stock ORDER BY created_at DESC") suspend fun getAll(): List<AiSelectedStockEntity>
+    @Query("SELECT * FROM ai_selected_stock WHERE selected_date = :date ORDER BY created_at DESC") fun getByDateFlow(date: String): kotlinx.coroutines.flow.Flow<List<AiSelectedStockEntity>>
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insert(entity: AiSelectedStockEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(entities: List<AiSelectedStockEntity>)
     @Query("DELETE FROM ai_selected_stock WHERE selected_date != :today") suspend fun keepOnlyToday(today: String)
     @Query("DELETE FROM ai_selected_stock WHERE selected_date < :minDate") suspend fun deleteBeforeDate(minDate: String)
-    @Query("SELECT * FROM ai_selected_stock WHERE selected_date >= :minDate ORDER BY selected_date DESC, score DESC")
+    @Query("SELECT * FROM ai_selected_stock WHERE selected_date >= :minDate ORDER BY created_at DESC")
     suspend fun getRecentDays(minDate: String): List<AiSelectedStockEntity>
     @Query("DELETE FROM ai_selected_stock") suspend fun clearAll()
     @Query("DELETE FROM ai_selected_stock WHERE selected_date = :date") suspend fun deleteByDate(date: String)
+    @Query("DELETE FROM ai_selected_stock WHERE selected_date = :date AND source LIKE :prefix") suspend fun deleteByDateAndSourcePrefix(date: String, prefix: String)
+    @Query("DELETE FROM ai_selected_stock WHERE stock_code = :code")
+    suspend fun deleteByCode(code: String)
 }
 
 // ── Room Database ────────────────────────────────
@@ -116,10 +132,24 @@ interface AiSelectedStockDao {
         com.chin.stockanalysis.strategy.trade.StrategyTradeFittingParamEntity::class,
         com.chin.stockanalysis.strategy.trade.DailyNewsHotPickEntity::class,
         com.chin.stockanalysis.strategy.trade.StrategyTradeOrderEntity::class,
+        com.chin.stockanalysis.strategy.trade.StrategyTradeBacktestEntity::class,
         UserWatchlistEntity::class,
-        AiSelectedStockEntity::class
+        AiSelectedStockEntity::class,
+        com.chin.stockanalysis.strategy.topology.nodes.InstitutionalTipEntity::class,
+        com.chin.stockanalysis.strategy.trade.PeriodHoldingProfitEntity::class,
+        com.chin.stockanalysis.strategy.trade.TTradeRecordEntity::class,
+        com.chin.stockanalysis.strategy.trade.TTradeRecommendationEntity::class,
+        com.chin.stockanalysis.strategy.trade.RealPositionEntity::class,
+        com.chin.stockanalysis.strategy.backtest.SectorPeriodSummaryEntity::class,
+        com.chin.stockanalysis.strategy.sector.UserFocusSectorEntity::class,
+        com.chin.stockanalysis.strategy.backtest.IntradayKlineEntity::class,
+        InstitutionalPickEntity::class,
+        BacktestMetaEntity::class,
+        BacktestSelectedStockEntity::class,
+        DailyIntelEntity::class,
+        PushRecordEntity::class
     ],
-    version = 10,
+    version = 27,
     exportSchema = false
 )
 abstract class StockDatabase : RoomDatabase() {
@@ -131,14 +161,30 @@ abstract class StockDatabase : RoomDatabase() {
     abstract fun strategyPredictionDao(): com.chin.stockanalysis.strategy.backtest.StrategyPredictionDao
     abstract fun strategyWeightSnapshotDao(): com.chin.stockanalysis.strategy.backtest.StrategyWeightSnapshotDao
     abstract fun sectorDailyRecordDao(): com.chin.stockanalysis.strategy.backtest.SectorDailyRecordDao
+    abstract fun sectorPeriodSummaryDao(): com.chin.stockanalysis.strategy.backtest.SectorPeriodSummaryDao
     abstract fun newsFactorDao(): com.chin.stockanalysis.news.NewsFactorDao
     abstract fun weightCalibrationDao(): WeightCalibrationDao
     abstract fun dailyPeriodResultDao(): com.chin.stockanalysis.strategy.trade.DailyPeriodResultDao
     abstract fun strategyTradeFittingParamDao(): com.chin.stockanalysis.strategy.trade.StrategyTradeFittingParamDao
     abstract fun dailyNewsHotPickDao(): com.chin.stockanalysis.strategy.trade.DailyNewsHotPickDao
     abstract fun strategyTradeOrderDao(): com.chin.stockanalysis.strategy.trade.StrategyTradeOrderDao
+    abstract fun strategyTradeBacktestDao(): com.chin.stockanalysis.strategy.trade.StrategyTradeBacktestDao
     abstract fun userWatchlistDao(): UserWatchlistDao
     abstract fun aiSelectedStockDao(): AiSelectedStockDao
+    abstract fun institutionalTipDao(): com.chin.stockanalysis.strategy.topology.nodes.InstitutionalTipDao
+    abstract fun periodHoldingProfitDao(): com.chin.stockanalysis.strategy.trade.PeriodHoldingProfitDao
+    abstract fun tTradeRecordDao(): com.chin.stockanalysis.strategy.trade.TTradeRecordDao
+    abstract fun tTradeRecommendationDao(): com.chin.stockanalysis.strategy.trade.TTradeRecommendationDao
+    abstract fun realPositionDao(): com.chin.stockanalysis.strategy.trade.RealPositionDao
+    abstract fun userFocusSectorDao(): com.chin.stockanalysis.strategy.sector.UserFocusSectorDao
+    abstract fun intradayKlineDao(): com.chin.stockanalysis.strategy.backtest.IntradayKlineDao
+    abstract fun institutionalPickDao(): InstitutionalPickDao
+    abstract fun backtestMetaDao(): BacktestMetaDao
+    abstract fun backtestSelectedStockDao(): BacktestSelectedStockDao
+
+    // 每日节奏（08:00 盘前情报 / 09:00 亚太情报 / 15:20 表格化复盘）
+    abstract fun dailyIntelDao(): DailyIntelDao
+    abstract fun pushRecordDao(): PushRecordDao
 
     companion object {
         const val DATABASE_NAME = "stock_analysis.db"
@@ -157,6 +203,350 @@ abstract class StockDatabase : RoomDatabase() {
 
         @Volatile private var INSTANCE: StockDatabase? = null
 
+        /**
+         * v12 → v13 迁移：新增 institutional_tips 表（不破坏已有数据）
+         */
+        private val MIGRATION_12_13 = object : androidx.room.migration.Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `institutional_tips` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `stock_code` TEXT NOT NULL,
+                        `stock_name` TEXT NOT NULL DEFAULT '',
+                        `sector` TEXT NOT NULL DEFAULT '',
+                        `source` TEXT NOT NULL DEFAULT 'ai_chat',
+                        `tip_type` TEXT NOT NULL DEFAULT 'research',
+                        `summary` TEXT NOT NULL DEFAULT '',
+                        `chat_id` TEXT NOT NULL DEFAULT '',
+                        `created_date` TEXT NOT NULL DEFAULT '',
+                        `expire_date` TEXT NOT NULL DEFAULT ''
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_institutional_tips_stock_code` ON `institutional_tips` (`stock_code`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_institutional_tips_expire_date` ON `institutional_tips` (`expire_date`)")
+                Log.i(TAG, "✅ v12→v13 迁移完成：已创建 institutional_tips 表（保留已有数据）")
+            }
+        }
+
+        private val MIGRATION_13_14 = object : androidx.room.migration.Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `period_holding_profit` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `period_type` TEXT NOT NULL,
+                        `trade_date` TEXT NOT NULL,
+                        `holding_count` INTEGER NOT NULL,
+                        `total_cost` REAL NOT NULL,
+                        `total_value` REAL NOT NULL,
+                        `total_pnl` REAL NOT NULL,
+                        `total_pnl_pct` REAL NOT NULL,
+                        `stock_codes` TEXT NOT NULL DEFAULT '',
+                        `created_at` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_period_holding_profit_period_type_trade_date` ON `period_holding_profit` (`period_type`, `trade_date`)")
+                Log.i(TAG, "✅ v13→v14 迁移完成：已创建 period_holding_profit 表（各周期持有收益独立固化）")
+            }
+        }
+
+        /**
+         * v14 → v15 迁移：新增 t_trade_records 表（做T/反T 日内交易记录）
+         */
+        private val MIGRATION_14_15 = object : androidx.room.migration.Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `t_trade_records` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `stockCode` TEXT NOT NULL,
+                        `stockName` TEXT NOT NULL,
+                        `tradeDate` TEXT NOT NULL,
+                        `tradeType` TEXT NOT NULL,
+                        `quantity` INTEGER NOT NULL,
+                        `price` REAL NOT NULL,
+                        `pairedPrice` REAL NOT NULL,
+                        `profit` REAL NOT NULL,
+                        `profitPct` REAL NOT NULL,
+                        `status` TEXT NOT NULL,
+                        `periodType` TEXT NOT NULL,
+                        `basePositionQty` INTEGER NOT NULL,
+                        `createdAt` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                Log.i(TAG, "✅ v14→v15 迁移完成：已创建 t_trade_records 表（做T/反T日内交易记录）")
+            }
+        }
+
+        /**
+         * v15 → v16 迁移：新增 real_positions 表（真实持仓手动导入）
+         */
+        private val MIGRATION_15_16 = object : androidx.room.migration.Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `real_positions` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `stockCode` TEXT NOT NULL,
+                        `stockName` TEXT NOT NULL,
+                        `quantity` INTEGER NOT NULL,
+                        `avgBuyPrice` REAL NOT NULL,
+                        `buyDate` TEXT NOT NULL,
+                        `periodType` TEXT NOT NULL DEFAULT '',
+                        `sector` TEXT NOT NULL DEFAULT '',
+                        `notes` TEXT NOT NULL DEFAULT '',
+                        `isActive` INTEGER NOT NULL DEFAULT 1,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                Log.i(TAG, "✅ v15→v16 迁移完成：已创建 real_positions 表（真实持仓手动导入）")
+            }
+        }
+
+        /**
+         * v16 → v17 迁移：新增 t_trade_recommendations 表（做T推荐记录）
+         */
+        private val MIGRATION_16_17 = object : androidx.room.migration.Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `t_trade_recommendations` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `stock_code` TEXT NOT NULL,
+                        `stock_name` TEXT NOT NULL DEFAULT '',
+                        `trade_date` TEXT NOT NULL,
+                        `signal_type` TEXT NOT NULL,
+                        `suggested_price` REAL NOT NULL,
+                        `target_price` REAL NOT NULL,
+                        `quantity` INTEGER NOT NULL,
+                        `expected_profit_pct` REAL NOT NULL,
+                        `reason` TEXT NOT NULL DEFAULT '',
+                        `status` TEXT NOT NULL DEFAULT 'PENDING',
+                        `source` TEXT NOT NULL DEFAULT 'REAL',
+                        `executed_price` REAL NOT NULL DEFAULT 0,
+                        `executed_at` INTEGER NOT NULL DEFAULT 0,
+                        `created_at` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_t_trade_recommendations_stock_code_trade_date_signal_type` ON `t_trade_recommendations` (`stock_code`, `trade_date`, `signal_type`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_t_trade_recommendations_status` ON `t_trade_recommendations` (`status`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_t_trade_recommendations_trade_date` ON `t_trade_recommendations` (`trade_date`)")
+                Log.i(TAG, "✅ v16→v17 迁移完成：已创建 t_trade_recommendations 表（做T推荐记录）")
+            }
+        }
+
+        /**
+         * v17 → v18 迁移：t_trade_recommendations 新增做T结果跟踪字段
+         */
+        private val MIGRATION_17_18 = object : androidx.room.migration.Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `t_trade_recommendations` ADD COLUMN `period_type` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `t_trade_recommendations` ADD COLUMN `peak_price_after` REAL NOT NULL DEFAULT 0.0")
+                db.execSQL("ALTER TABLE `t_trade_recommendations` ADD COLUMN `trough_price_after` REAL NOT NULL DEFAULT 0.0")
+                db.execSQL("ALTER TABLE `t_trade_recommendations` ADD COLUMN `target_hit` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `t_trade_recommendations` ADD COLUMN `virtual_profit_pct` REAL NOT NULL DEFAULT 0.0")
+                Log.i(TAG, "✅ v17→v18 迁移完成：做T推荐新增跟踪字段（period_type, peak/trough, target_hit, virtual_profit）")
+            }
+        }
+
+        /**
+         * v19 → v20 迁移：新增 user_focus_sectors 表（用户关注板块历史记录）
+         */
+        private val MIGRATION_19_20 = object : androidx.room.migration.Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `user_focus_sectors` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `sector_name` TEXT NOT NULL,
+                        `is_active` INTEGER NOT NULL DEFAULT 1,
+                        `created_at` INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_user_focus_sectors_sector_name` ON `user_focus_sectors` (`sector_name`)")
+                Log.i(TAG, "✅ v19→v20 迁移完成：已创建 user_focus_sectors 表")
+            }
+        }
+
+        /**
+         * v20 → v21 迁移：新增 intraday_kline 表（盘中分钟 K 线）
+         */
+        private val MIGRATION_20_21 = object : androidx.room.migration.Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `intraday_kline` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `code` TEXT NOT NULL,
+                        `name` TEXT NOT NULL DEFAULT '',
+                        `datetime` TEXT NOT NULL,
+                        `date` TEXT NOT NULL,
+                        `open` REAL NOT NULL,
+                        `close` REAL NOT NULL,
+                        `high` REAL NOT NULL,
+                        `low` REAL NOT NULL,
+                        `volume` INTEGER NOT NULL,
+                        `amount` REAL NOT NULL DEFAULT 0.0,
+                        `interval_min` INTEGER NOT NULL DEFAULT 5
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_intraday_kline_code_datetime_interval_min` ON `intraday_kline` (`code`, `datetime`, `interval_min`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_intraday_kline_date` ON `intraday_kline` (`date`)")
+                Log.i(TAG, "✅ v20→v21 迁移完成：已创建 intraday_kline 表（盘中分钟 K 线）")
+            }
+        }
+
+        /**
+         * v21 → v22 迁移：新增 institutional_picks 表（机构推荐股票）
+         */
+        private val MIGRATION_21_22 = object : androidx.room.migration.Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `institutional_picks` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `institution_name` TEXT NOT NULL,
+                        `stock_code` TEXT NOT NULL,
+                        `stock_name` TEXT NOT NULL DEFAULT '',
+                        `recommend_date` TEXT NOT NULL DEFAULT '',
+                        `target_price` REAL NOT NULL DEFAULT 0.0,
+                        `reason` TEXT NOT NULL DEFAULT '',
+                        `source_type` TEXT NOT NULL DEFAULT 'manual',
+                        `sub_group` TEXT NOT NULL DEFAULT '',
+                        `notes` TEXT NOT NULL DEFAULT '',
+                        `created_at` INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_institutional_picks_institution_name` ON `institutional_picks` (`institution_name`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_institutional_picks_stock_code` ON `institutional_picks` (`stock_code`)")
+                Log.i(TAG, "✅ v21→v22 迁移完成：已创建 institutional_picks 表（机构推荐股票）")
+            }
+        }
+
+        /**
+         * v22 → v23 迁移：user_watchlist 新增 notes 字段（统一推荐备注）
+         */
+        private val MIGRATION_22_23 = object : androidx.room.migration.Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `user_watchlist` ADD COLUMN `notes` TEXT NOT NULL DEFAULT ''")
+                Log.i(TAG, "✅ v22→v23 迁移完成：user_watchlist 新增 notes 字段")
+            }
+        }
+
+        /**
+         * v23 → v24 迁移：real_positions 新增 currentPrice/pe/turnoverRate 字段（OCR 后网络行情增强）
+         */
+        private val MIGRATION_23_24 = object : androidx.room.migration.Migration(23, 24) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `real_positions` ADD COLUMN `currentPrice` REAL NOT NULL DEFAULT 0.0")
+                db.execSQL("ALTER TABLE `real_positions` ADD COLUMN `pe` REAL NOT NULL DEFAULT 0.0")
+                db.execSQL("ALTER TABLE `real_positions` ADD COLUMN `turnoverRate` REAL NOT NULL DEFAULT 0.0")
+                Log.i(TAG, "✅ v23→v24 迁移完成：real_positions 新增 currentPrice/pe/turnoverRate 字段")
+            }
+        }
+
+        /**
+         * v24 → v25 迁移：新增 strategy_trade_backtests 表（历史回溯结果落库，按周期分别保存）
+         */
+        private val MIGRATION_24_25 = object : androidx.room.migration.Migration(24, 25) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `strategy_trade_backtests` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `period_key` TEXT NOT NULL,
+                        `strategy_id` TEXT NOT NULL,
+                        `strategy_name` TEXT NOT NULL,
+                        `trade_date` TEXT NOT NULL,
+                        `total_days` INTEGER NOT NULL,
+                        `signal_count` INTEGER NOT NULL,
+                        `correct_count` INTEGER NOT NULL,
+                        `accuracy` REAL NOT NULL,
+                        `avg_return` REAL NOT NULL,
+                        `max_gain` REAL NOT NULL,
+                        `max_loss` REAL NOT NULL,
+                        `created_at` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_strategy_trade_backtests_period_key_strategy_id_trade_date` ON `strategy_trade_backtests` (`period_key`, `strategy_id`, `trade_date`)")
+                Log.i(TAG, "✅ v24→v25 迁移完成：已创建 strategy_trade_backtests 表（回溯结果落库）")
+            }
+        }
+
+        /**
+         * v25 → v26 迁移：新增 backtest_meta（增量回溯状态/拟合矩阵）与
+         * backtest_selected_stock（历史选中记录，中/长线长期保留、短期30天）
+         */
+        private val MIGRATION_25_26 = object : androidx.room.migration.Migration(25, 26) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `backtest_meta` (
+                        `meta_key` TEXT NOT NULL,
+                        `meta_value` TEXT NOT NULL,
+                        PRIMARY KEY(`meta_key`)
+                    )
+                """.trimIndent())
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `backtest_selected_stock` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `period` TEXT NOT NULL,
+                        `code` TEXT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `signal_date` TEXT NOT NULL,
+                        `market_state` TEXT NOT NULL,
+                        `buy_date` TEXT NOT NULL,
+                        `buy_price` REAL NOT NULL,
+                        `sell_date` TEXT,
+                        `sell_price` REAL,
+                        `ret_pct` REAL NOT NULL,
+                        `exit_reason` TEXT NOT NULL,
+                        `t_profit_pct` REAL NOT NULL,
+                        `created_at` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_backtest_selected_stock_period_signal_date_code` ON `backtest_selected_stock` (`period`, `signal_date`, `code`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_backtest_selected_stock_signal_date` ON `backtest_selected_stock` (`signal_date`)")
+                Log.i(TAG, "✅ v25→v26 迁移完成：已创建 backtest_meta / backtest_selected_stock 表（增量回溯与选中记录）")
+            }
+        }
+
+        /**
+         * v26 → v27 迁移：新增每日节奏情报表 daily_intel（08:00 盘前 / 09:00 亚太 / 15:20 复盘）
+         * 与推送账本 push_record。字段与 PC 侧 market_data.db.intel_report / push_record 一一对应。
+         */
+        private val MIGRATION_26_27 = object : androidx.room.migration.Migration(26, 27) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `daily_intel` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `tradeDate` TEXT NOT NULL,
+                        `slot` TEXT NOT NULL,
+                        `createdAt` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `digest` TEXT NOT NULL,
+                        `macroJson` TEXT NOT NULL,
+                        `sectorsJson` TEXT NOT NULL,
+                        `picksJson` TEXT NOT NULL,
+                        `newsJson` TEXT NOT NULL,
+                        `content` TEXT NOT NULL,
+                        `pushed` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_daily_intel_tradeDate` ON `daily_intel` (`tradeDate`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_daily_intel_slot` ON `daily_intel` (`slot`)")
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `push_record` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `tradeDate` TEXT NOT NULL,
+                        `slot` TEXT NOT NULL,
+                        `createdAt` TEXT NOT NULL,
+                        `kind` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `codes` TEXT NOT NULL,
+                        `ok` INTEGER NOT NULL,
+                        `err` TEXT NOT NULL,
+                        `content` TEXT NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_push_record_tradeDate` ON `push_record` (`tradeDate`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_push_record_slot` ON `push_record` (`slot`)")
+                Log.i(TAG, "✅ v26→v27 迁移完成：已创建 daily_intel / push_record 表（每日节奏情报与推送账本）")
+            }
+        }
+
         fun getInstance(context: Context): StockDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -164,6 +554,7 @@ abstract class StockDatabase : RoomDatabase() {
                     StockDatabase::class.java,
                     DATABASE_NAME
                 )
+                    .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27)
                     .fallbackToDestructiveMigration()
                     .addCallback(destructiveCallback)
                     .build()

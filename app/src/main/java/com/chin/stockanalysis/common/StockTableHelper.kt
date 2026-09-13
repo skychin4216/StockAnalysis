@@ -11,23 +11,23 @@ import android.widget.LinearLayout
 import android.widget.TextView
 
 /**
- * ## 股票表格公共輔助類
+ * ## 股票表格公共辅助类
  *
- * 備選池/自選/AI精選 共用：
- * - 創建標準表頭（動態列，默認8列）
- * - 創建數據行
- * - 支持水平滾動，列數可動態配置
- * - 向後兼容：createHeaderRow / createDataRow 簽名不變
+ * 备选池/自选/AI精选 共用：
+ * - 创建标准表头（动态列，默认8列）
+ * - 创建数据行
+ * - 支持水平滚动，列数可动态配置
+ * - 向后兼容：createHeaderRow / createDataRow 签名不变
  */
 object StockTableHelper {
 
     // ═══════════════════════════════════════════════════════════════
-    //  ColumnDef — 動態列定義
+    //  ColumnDef — 动态列定义
     // ═══════════════════════════════════════════════════════════════
     data class ColumnDef(
-        val key: String,           // 唯一標識（如 "name", "sector", "change_pct"）
-        val title: String,         // 表頭顯示文字
-        val widthDp: Int,          // 列寬
+        val key: String,           // 唯一标识（如 "name", "sector", "change_pct"）
+        val title: String,         // 表头显示文字
+        val widthDp: Int,          // 列宽
         val gravity: Int = Gravity.CENTER,
         val fontSize: Float = 10f,
         val bold: Boolean = false,
@@ -35,7 +35,7 @@ object StockTableHelper {
     )
 
     // ═══════════════════════════════════════════════════════════════
-    //  StockDisplayItem — 擴展字段
+    //  StockDisplayItem — 扩展字段
     // ═══════════════════════════════════════════════════════════════
     data class StockDisplayItem(
         val code: String,
@@ -51,7 +51,7 @@ object StockTableHelper {
         val hasSnapshot: Boolean = true,
         val source: String = "",
         val score: Int = 0,
-        // 擴展字段
+        // 扩展字段
         val high: Double = 0.0,
         val low: Double = 0.0,
         val volume: Long = 0,
@@ -60,47 +60,47 @@ object StockTableHelper {
     )
 
     // ═══════════════════════════════════════════════════════════════
-    //  預設列配置
+    //  预设列配置
     // ═══════════════════════════════════════════════════════════════
 
-    /** 預設列配置（與現有8列完全一致） */
+    /** 预设列配置（与现有8列完全一致） */
     fun defaultColumns(): List<ColumnDef> = listOf(
-        ColumnDef("name", "股票名稱", 72, Gravity.START, 13f, true, "#1A1A2E"),
-        ColumnDef("sector", "板塊", 44, Gravity.START, 10f, false, "#666666"),
-        ColumnDef("change_pct", "漲幅", 50, Gravity.CENTER, 11f, true),
-        ColumnDef("price", "現價", 44, Gravity.CENTER, 12f, true, "#333333"),
+        ColumnDef("name", "股票名称", 72, Gravity.START, 13f, true, "#1A1A2E"),
+        ColumnDef("sector", "板块", 44, Gravity.START, 10f, false, "#666666"),
+        ColumnDef("change_pct", "涨幅", 50, Gravity.CENTER, 11f, true),
+        ColumnDef("price", "现价", 44, Gravity.CENTER, 12f, true, "#333333"),
         ColumnDef("pe", "市盈", 36, Gravity.CENTER, 10f),
-        ColumnDef("turnover", "換手率", 44, Gravity.CENTER, 10f),
+        ColumnDef("turnover", "换手率", 44, Gravity.CENTER, 10f),
         ColumnDef("market_cap", "市值", 44, Gravity.CENTER, 10f),
         ColumnDef("delete", "清空", 26, Gravity.CENTER, 14f, true, "#E53935")
     )
 
-    /** 擴展列配置（新增更多東方財富字段） */
+    /** 扩展列配置（新增更多东方财富字段） */
     fun extendedColumns(): List<ColumnDef> = listOf(
-        ColumnDef("name", "股票名稱", 72, Gravity.START, 13f, true, "#1A1A2E"),
-        ColumnDef("sector", "板塊", 44, Gravity.START, 10f),
-        ColumnDef("change_pct", "漲幅", 50, Gravity.CENTER, 11f, true),
-        ColumnDef("price", "現價", 44, Gravity.CENTER, 12f, true, "#333333"),
-        ColumnDef("change_amount", "漲跌", 40, Gravity.CENTER, 10f),
+        ColumnDef("name", "股票名称", 72, Gravity.START, 13f, true, "#1A1A2E"),
+        ColumnDef("sector", "板块", 44, Gravity.START, 10f),
+        ColumnDef("change_pct", "涨幅", 50, Gravity.CENTER, 11f, true),
+        ColumnDef("price", "现价", 44, Gravity.CENTER, 12f, true, "#333333"),
+        ColumnDef("change_amount", "涨跌", 40, Gravity.CENTER, 10f),
         ColumnDef("high", "最高", 44, Gravity.CENTER, 10f),
         ColumnDef("low", "最低", 44, Gravity.CENTER, 10f),
         ColumnDef("volume", "成交量", 50, Gravity.CENTER, 10f),
-        ColumnDef("amount", "成交額", 50, Gravity.CENTER, 10f),
-        ColumnDef("turnover", "換手率", 44, Gravity.CENTER, 10f),
+        ColumnDef("amount", "成交额", 50, Gravity.CENTER, 10f),
+        ColumnDef("turnover", "换手率", 44, Gravity.CENTER, 10f),
         ColumnDef("pe", "市盈", 36, Gravity.CENTER, 10f),
-        ColumnDef("pb", "市淨", 36, Gravity.CENTER, 10f),
+        ColumnDef("pb", "市净", 36, Gravity.CENTER, 10f),
         ColumnDef("market_cap", "市值", 50, Gravity.CENTER, 10f),
         ColumnDef("delete", "清空", 26, Gravity.CENTER, 14f, true, "#E53935")
     )
 
     // ═══════════════════════════════════════════════════════════════
-    //  DynamicStockTable — 動態列表格構建器
+    //  DynamicStockTable — 动态列表格构建器
     // ═══════════════════════════════════════════════════════════════
 
     /**
-     * 動態列定義的表格構建器。
-     * 支持 addColumn / removeColumn / setColumns 動態調整列，
-     * createHeaderRow / createDataRow / createBulkRows 生成帶水平滾動的表格行。
+     * 动态列定义的表格构建器。
+     * 支持 addColumn / removeColumn / setColumns 动态调整列，
+     * createHeaderRow / createDataRow / createBulkRows 生成带水平滚动的表格行。
      */
     class DynamicStockTable(private val context: Context) {
 
@@ -124,10 +124,10 @@ object StockTableHelper {
 
         fun getColumns(): List<ColumnDef> = columns.toList()
 
-        /** 總列寬（dp） */
+        /** 总列宽（dp） */
         fun totalWidthDp(): Int = columns.sumOf { it.widthDp }
 
-        // ── 表頭 ──
+        // ── 表头 ──
         fun createHeaderRow(onClearAll: (() -> Unit)? = null): LinearLayout {
             val dp = context.resources.displayMetrics.density
             val row = LinearLayout(context).apply {
@@ -158,7 +158,7 @@ object StockTableHelper {
             return row
         }
 
-        // ── 單行數據 ──
+        // ── 单行数据 ──
         fun createDataRow(
             item: StockDisplayItem,
             isLast: Boolean,
@@ -225,7 +225,7 @@ object StockTableHelper {
             return container
         }
 
-        // ── 單元格渲染 ──
+        // ── 单元格渲染 ──
         private fun buildCell(
             col: ColumnDef,
             item: StockDisplayItem,
@@ -236,14 +236,14 @@ object StockTableHelper {
             val widthPx = (col.widthDp * dp).toInt()
 
             return when (col.key) {
-                // ── 股票名稱（兩行：名稱+質量標籤 + 代碼） ──
+                // ── 股票名称（两行：名称+质量标签 + 代码） ──
                 "name" -> {
                     LinearLayout(context).apply {
                         orientation = LinearLayout.VERTICAL
                         gravity = Gravity.START
                         layoutParams = LinearLayout.LayoutParams(widthPx, LinearLayout.LayoutParams.WRAP_CONTENT)
                     }.also { cell ->
-                        // 名稱行：名稱 + 利潤質量標籤（水平排列）
+                        // 名称行：名称 + 利润质量标签（水平排列）
                         val nameRow = LinearLayout(context).apply {
                             orientation = LinearLayout.HORIZONTAL
                             gravity = Gravity.CENTER_VERTICAL
@@ -256,7 +256,7 @@ object StockTableHelper {
                             maxLines = 1
                             ellipsize = android.text.TextUtils.TruncateAt.END
                         })
-                        // 預留利潤質量標籤（異步填充）
+                        // 预留利润质量标签（异步填充）
                         nameRow.addView(TextView(context).apply {
                             text = "⚪"
                             textSize = 10f
@@ -273,7 +273,7 @@ object StockTableHelper {
                     }
                 }
 
-                // ── 板塊 ──
+                // ── 板块 ──
                 "sector" -> {
                     TextView(context).apply {
                         text = when {
@@ -290,7 +290,7 @@ object StockTableHelper {
                     }
                 }
 
-                // ── 漲幅（帶顏色背景） ──
+                // ── 涨幅（带颜色背景） ──
                 "change_pct" -> {
                     val changeText = when {
                         !item.hasSnapshot -> "--"
@@ -319,7 +319,7 @@ object StockTableHelper {
                     }
                 }
 
-                // ── 現價 ──
+                // ── 现价 ──
                 "price" -> {
                     TextView(context).apply {
                         text = if (item.hasSnapshot) String.format("%.2f", item.price) else "--"
@@ -331,7 +331,7 @@ object StockTableHelper {
                     }
                 }
 
-                // ── 漲跌 ──
+                // ── 涨跌 ──
                 "change_amount" -> {
                     val amountText = when {
                         !item.hasSnapshot -> "--"
@@ -369,7 +369,7 @@ object StockTableHelper {
                     }
                 }
 
-                // ── 成交量（格式化為萬/億） ──
+                // ── 成交量（格式化为万/亿） ──
                 "volume" -> {
                     TextView(context).apply {
                         text = formatVolume(item.volume)
@@ -380,7 +380,7 @@ object StockTableHelper {
                     }
                 }
 
-                // ── 成交額（格式化為萬/億） ──
+                // ── 成交额（格式化为万/亿） ──
                 "amount" -> {
                     TextView(context).apply {
                         text = formatAmount(item.amount)
@@ -391,7 +391,7 @@ object StockTableHelper {
                     }
                 }
 
-                // ── 換手率 ──
+                // ── 换手率 ──
                 "turnover" -> {
                     TextView(context).apply {
                         text = if (item.turnoverRate > 0) String.format("%.2f%%", item.turnoverRate) else "-"
@@ -413,7 +413,7 @@ object StockTableHelper {
                     }
                 }
 
-                // ── 市淨率 ──
+                // ── 市净率 ──
                 "pb" -> {
                     TextView(context).apply {
                         text = if (item.pb > 0) String.format("%.2f", item.pb) else "-"
@@ -424,7 +424,7 @@ object StockTableHelper {
                     }
                 }
 
-                // ── 市值（億） ──
+                // ── 市值（亿） ──
                 "market_cap" -> {
                     TextView(context).apply {
                         text = if (item.marketCap > 0) String.format("%.0f", item.marketCap) else "-"
@@ -435,7 +435,7 @@ object StockTableHelper {
                     }
                 }
 
-                // ── 刪除按鈕 ──
+                // ── 删除按钮 ──
                 "delete" -> {
                     TextView(context).apply {
                         text = "\u2715"  // ✕
@@ -449,7 +449,7 @@ object StockTableHelper {
                     }
                 }
 
-                // ── 未知 key，顯示 "- " ──
+                // ── 未知 key，显示 "- " ──
                 else -> {
                     TextView(context).apply {
                         text = "-"
@@ -462,12 +462,12 @@ object StockTableHelper {
             }
         }
 
-        // ── 數值格式化工具 ──
+        // ── 数值格式化工具 ──
         private fun formatVolume(volume: Long): String {
             if (volume <= 0) return "-"
             return when {
-                volume >= 100_000_000 -> String.format("%.2f億", volume / 100_000_000.0)
-                volume >= 10_000 -> String.format("%.1f萬", volume / 10_000.0)
+                volume >= 100_000_000 -> String.format("%.2f亿", volume / 100_000_000.0)
+                volume >= 10_000 -> String.format("%.1f万", volume / 10_000.0)
                 else -> volume.toString()
             }
         }
@@ -475,28 +475,28 @@ object StockTableHelper {
         private fun formatAmount(amount: Double): String {
             if (amount <= 0) return "-"
             return when {
-                amount >= 100_000_000.0 -> String.format("%.2f億", amount / 100_000_000.0)
-                amount >= 10_000.0 -> String.format("%.1f萬", amount / 10_000.0)
+                amount >= 100_000_000.0 -> String.format("%.2f亿", amount / 100_000_000.0)
+                amount >= 10_000.0 -> String.format("%.1f万", amount / 10_000.0)
                 else -> String.format("%.0f", amount)
             }
         }
     }
 
     // ═══════════════════════════════════════════════════════════════
-    //  公開 API — 向後兼容（簽名不變）
+    //  公开 API — 向后兼容（签名不变）
     // ═══════════════════════════════════════════════════════════════
 
     /**
-     * 創建表頭行（兼容現有簽名，內部使用 DynamicStockTable + defaultColumns）。
-     * 返回 HorizontalScrollView 包裹的表頭，當列總寬超過屏幕時可水平滾動。
+     * 创建表头行（兼容现有签名，内部使用 DynamicStockTable + defaultColumns）。
+     * 返回 HorizontalScrollView 包裹的表头，当列总宽超过屏幕时可水平滚动。
      */
     fun createHeaderRow(context: Context, onClearAll: (() -> Unit)? = null): View {
         return createDynamicHeaderRow(context, defaultColumns(), onClearAll)
     }
 
     /**
-     * 創建數據行（兼容現有簽名，內部使用 DynamicStockTable + defaultColumns）。
-     * 返回 HorizontalScrollView 包裹的數據行。
+     * 创建数据行（兼容现有签名，内部使用 DynamicStockTable + defaultColumns）。
+     * 返回 HorizontalScrollView 包裹的数据行。
      */
     fun createDataRow(
         context: Context,
@@ -509,12 +509,12 @@ object StockTableHelper {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    //  公開 API — 動態列版本（新增）
+    //  公开 API — 动态列版本（新增）
     // ═══════════════════════════════════════════════════════════════
 
     /**
-     * 使用自定義列配置創建表頭行。
-     * 返回 HorizontalScrollView，當列總寬超過屏幕時可水平滾動。
+     * 使用自定义列配置创建表头行。
+     * 返回 HorizontalScrollView，当列总宽超过屏幕时可水平滚动。
      */
     fun createDynamicHeaderRow(
         context: Context,
@@ -527,8 +527,8 @@ object StockTableHelper {
     }
 
     /**
-     * 使用自定義列配置創建數據行。
-     * 返回 HorizontalScrollView，當列總寬超過屏幕時可水平滾動。
+     * 使用自定义列配置创建数据行。
+     * 返回 HorizontalScrollView，当列总宽超过屏幕时可水平滚动。
      */
     fun createDynamicDataRow(
         context: Context,
@@ -544,7 +544,7 @@ object StockTableHelper {
     }
 
     /**
-     * 使用自定義列配置批量創建數據行（共用一個 HorizontalScrollView）。
+     * 使用自定义列配置批量创建数据行（共用一个 HorizontalScrollView）。
      */
     fun createDynamicBulkRows(
         context: Context,
@@ -559,7 +559,7 @@ object StockTableHelper {
     }
 
     /**
-     * 使用自定義列配置創建完整表格（表頭 + 數據行，共用一個 HorizontalScrollView）。
+     * 使用自定义列配置创建完整表格（表头 + 数据行，共用一个 HorizontalScrollView）。
      */
     fun createDynamicTable(
         context: Context,
@@ -581,12 +581,12 @@ object StockTableHelper {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    //  內部工具
+    //  内部工具
     // ═══════════════════════════════════════════════════════════════
 
     /**
-     * 將內容包裹在 HorizontalScrollView 中。
-     * 如果內容寬度 <= 屏幕寬度，則不添加滾動條（設置 horizontalScrollBarEnabled = false）。
+     * 将内容包裹在 HorizontalScrollView 中。
+     * 如果内容宽度 <= 屏幕宽度，则不添加滚动条（设置 horizontalScrollBarEnabled = false）。
      */
     private fun wrapInScrollView(context: Context, content: View): HorizontalScrollView {
         return HorizontalScrollView(context).apply {

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 完整闭环交易系统 UseCase（豆包全套系统化交易体系）
+
+  豆包体系四层闭环：
+    第一层·大环境研判：沪深300 MACD>0 为多头市场，周线三连阳明确做多 → market_rotation_pipeline（n_market_direction 大盘方向）
+    第二层·板块风格轮动：板块资金流（超大单/主力）、板块涨幅、涨停家数定风格 → 同上 pipeline（板块轮动输出）
+    第三层·板块内选股：财务（盈利>0/营收增速>15%/利润增速>20%/毛利率>35%，剔除 ST/亏损）
+      + 量价（主力5日净流入>0/现价>5日均线/MACD金叉）+ K线打分（涨停基因/连板基因/趋势多头）
+      + AI 产业链精选（业务→产业链地位→供需格局）→ screening_pipeline + ai_filter_pipeline
+    第四层·四大流水线闭环：超短/短/中/长 周期 × 牛/震荡/熊 环境矩阵路由
+
+  豆包体系四周期硬性风控（2026-08 更新）：
+    · 超短（1-3日）：单票≤3% / 总仓≤15% / 止损5% / 止盈3-7% / 持股≤3交易日
+    · 短波（3-15日）：单票≤6% / 总仓≤25% / 止损6-7% / 止盈8-15%分批 / 持股≤15交易日
+    · 中线（1-6月）：单票≤10% / 总仓≤40% / 跌破60周均线清仓(兜底-10%) / 止盈新高分批 / 持股45交易日
+    · 长线（6月-3年）：单票≤15% / 总仓≤50% / 逻辑离场(兜底-25%) / 仅突发利空卖出 / 持股180交易日
+    市场风险四级：极佳→可满仓 / 中性→正常仓位只做主线 / 偏弱→严控仓位只低吸 / 极差→轻仓或空仓
+
+  已在工作台“选股系统”Tab 中提供；也可用 UseCaseSelectorDialog 直接运行。
+-->
+<usecase id="complete_closed_loop" name="完整闭环交易系统（豆包体系）">
+  <description>豆包全套系统化交易体系：大环境研判→板块轮动→财务量价AI严选→四大周期流水线闭环</description>
+  <steps>
+    <!-- 第一层 + 第二层：大盘环境研判 + 板块风格轮动 -->
+    <pipeline ref="usecases/market_rotation_pipeline.xml" name="第一层·大盘环境研判（多头/震荡/空头）" />
+    <pipeline ref="usecases/stock_picking_common_pipeline.xml" name="第二层·选股公共准备（股票池/自适应参数/风控）" />
+    <!-- 第三层：财务+量价多策略严选 → AI 产业链精选 + 主力资金过滤 -->
+    <pipeline ref="usecases/screening_pipeline.xml" name="第三层·财务量价多策略严选（营收/利润/毛利率/主力资金/量价）" />
+    <pipeline ref="usecases/ai_filter_pipeline.xml" name="第三层·AI产业链精选 + 主力资金过滤" />
+    <!-- 第四层：周期×环境矩阵路由（四大流水线闭环，按大盘方向命中唯一流水线） -->
+    <pipeline ref="usecases/ultra_short_bullish_pipeline.xml" name="超短·牛市流水线（首板+连板基因）" if="${n_market_direction}.direction == 'BULLISH'" />
+    <pipeline ref="usecases/ultra_short_oscillation_pipeline.xml" name="超短·震荡流水线（低吸）" if="${n_market_direction}.direction == 'OSCILLATION'" />
+    <pipeline ref="usecases/ultra_short_bearish_pipeline.xml" name="超短·熊市流水线（深跌反弹）" if="${n_market_direction}.direction == 'BEARISH'" />
+    <pipeline ref="usecases/short_term_bullish_pipeline.xml" name="短线·牛市流水线（S1严选+涨停基因）" if="${n_market_direction}.direction == 'BULLISH'" />
+    <pipeline ref="usecases/short_term_oscillation_pipeline.xml" name="短线·震荡流水线（S4K线反转）" if="${n_market_direction}.direction == 'OSCILLATION'" />
+    <pipeline ref="usecases/short_term_bearish_pipeline.xml" name="短线·熊市流水线（S3深跌低吸）" if="${n_market_direction}.direction == 'BEARISH'" />
+    <pipeline ref="usecases/mid_term_bullish_pipeline.xml" name="中线·牛市流水线" if="${n_market_direction}.direction == 'BULLISH'" />
+    <pipeline ref="usecases/mid_term_oscillation_pipeline.xml" name="中线·震荡流水线" if="${n_market_direction}.direction == 'OSCILLATION'" />
+    <pipeline ref="usecases/mid_term_bearish_pipeline.xml" name="中线·熊市流水线" if="${n_market_direction}.direction == 'BEARISH'" />
+    <pipeline ref="usecases/long_term_bullish_pipeline.xml" name="长线·牛市流水线" if="${n_market_direction}.direction == 'BULLISH'" />
+    <pipeline ref="usecases/long_term_oscillation_pipeline.xml" name="长线·震荡流水线" if="${n_market_direction}.direction == 'OSCILLATION'" />
+    <pipeline ref="usecases/long_term_bearish_pipeline.xml" name="长线·熊市流水线" if="${n_market_direction}.direction == 'BEARISH'" />
+  </steps>
+  <config>
+    <param name="orderType" value="ClosedLoopQuant" />
+    <param name="maxHoldings" value="8" />
+    <param name="maxStocksPerStrategy" value="20" />
+    <param name="holdingPeriod" value="short" />
+  </config>
+</usecase>

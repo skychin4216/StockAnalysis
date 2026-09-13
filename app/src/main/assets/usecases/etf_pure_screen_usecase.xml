@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 纯 ETF 筛选 UseCase（与 etf_dip 同构的 XML DAG 单一事实源）
+
+  ★ 与另外两个 ETF usecase 的分工（勿合并，见 etf_industry_scan_usecase.xml 头注）：
+    本 usecase 入口 = **ETF 本体**（不是成分股）：
+      对 ETF 自身做 RAS 相对强度 / MACD / OBV / RSI6 / 距250日高回撤 / 流动性 筛选，
+      输出「底仓 base_buy（大周期）+ 正T低吸 t_buy + 反T高抛 t_sell」三档信号与离场参数。
+    · 与 etf_dip（dip_buy v0.3 距60日高回撤低吸）的区别：etf_dip 是**短线低吸**；
+      本 usecase 是**大周期底仓 + 做 T 降本**，位置口径用 250 日（年线级），
+      并且要求「RAS 绿转红 + MACD + OBV」三重共振（思路文档 §2）。
+
+  规则出处：E:\Android\work\dev\选股思路\ETF选股思路.txt §1（初选池）/§2（底仓 base_buy）/§3（做T）
+  双端共用：APK UseCaseLoader 直接加载执行；usecase_pipeline.py 解析同一份 XML。
+  参数全部在 pipeline XML（etf_pure_screen_pipeline.xml）。
+-->
+<usecase id="etf_pure_screen" name="纯ETF筛选">
+  <description>ETF本体 RAS绿转红+MACD+OBV+RSI6+250日回撤+流动性 → 底仓/正T/反T信号 + 离场参数（大盘三态自适应）</description>
+  <steps>
+    <pipeline ref="usecases/etf_pure_screen_pipeline.xml" name="etf_pure_screen_dag" />
+  </steps>
+  <config>
+    <param name="orderType" value="EtfPureScreen" />
+    <param name="maxHoldings" value="5" />
+    <param name="holdingPeriod" value="etf" />
+  </config>
+</usecase>

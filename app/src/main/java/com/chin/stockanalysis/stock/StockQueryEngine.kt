@@ -225,7 +225,7 @@ class StockQueryEngine private constructor(
                 // 记录查询，供下次预取使用
                 prefetchScheduler.recordQuery(ctx.intent.stockCodes)
 
-                // v10.1: 記錄用戶搜索的股票到 StockDataCenter（含價格）
+                // v10.1: 记录用户搜索的股票到 StockDataCenter（含价格）
                 ctx.intent.stockCodes.forEach { code ->
                     val name = ctx.promptPrefix.lines().firstOrNull { it.contains("名称") }
                         ?.substringAfter("名称:")?.trim() ?: code
@@ -240,12 +240,12 @@ class StockQueryEngine private constructor(
                     )
                 }
 
-                // v10.1: 將即時行情持久化到 daily_snapshot 表（供模擬交易使用）
+                // v10.1: 将即时行情持久化到 daily_snapshot 表（供模拟交易使用）
                 saveRealtimeToSnapshot(ctx)
 
                 // ========== v6.0 新增：个股 + 板块 + 新闻 综合分析 ==========
                 val enrichedPrompt = buildEnrichedStockPrompt(ctx)
-                // ========== v10.0: Skill 選股分析 ==========
+                // ========== v10.0: Skill 选股分析 ==========
                 val skillPrompt = buildSkillPrompt(ctx, userText)
                 Log.d(TAG, "═══════════════════════════════════════")
                 "$baseSystemPrompt$prefPrompt$enrichedPrompt$skillPrompt"
@@ -386,7 +386,7 @@ class StockQueryEngine private constructor(
                 }
             }
 
-            // ========== 4. 获取即時公告、新聞、資金流向（從權威來源） ==========
+            // ========== 4. 获取即时公告、新闻、资金流向（从权威来源） ==========
             promptBuilder.append("\n【实时市场数据】(以下数据为系统实时从权威来源获取，非训练数据)")
             val stockName = ctx.promptPrefix.lines().firstOrNull { it.contains("名称") }
                 ?.substringAfter("名称:")?.trim() ?: firstStockCode
@@ -396,7 +396,7 @@ class StockQueryEngine private constructor(
                 promptBuilder.append(newsContext.toPromptInjection())
             } catch (e: Exception) {
                 Log.w(TAG, "⚠️ StockNewsFetcher 失败: ${e.message}")
-                // Fallback: 使用本地新聞數據庫
+                // Fallback: 使用本地新闻数据库
                 try {
                     val relatedNews = mutableListOf<String>()
                     val newsByCode = newsManager.searchByStockCode(firstStockCode, limit = 5)
@@ -444,26 +444,26 @@ class StockQueryEngine private constructor(
      */
     private suspend fun buildSkillPrompt(ctx: StockContext, userInput: String = ""): String {
         val orchestrator = skillOrchestrator ?: run {
-            Log.d(TAG, "🔧 SkillOrchestrator 未初始化，跳過 Skill 分析")
+            Log.d(TAG, "🔧 SkillOrchestrator 未初始化，跳过 Skill 分析")
             return ""
         }
         val firstStockCode = ctx.intent.stockCodes.firstOrNull() ?: run {
-            Log.d(TAG, "🔧 buildSkillPrompt: 無股票代碼，跳過")
+            Log.d(TAG, "🔧 buildSkillPrompt: 无股票代码，跳过")
             return ""
         }
         val stockName = ctx.promptPrefix.lines().firstOrNull { it.contains("名称") }
             ?.substringAfter("名称:")?.trim() ?: firstStockCode
 
-        Log.i(TAG, "🎯 buildSkillPrompt: 開始 Skill 分析 for $stockName ($firstStockCode)")
+        Log.i(TAG, "🎯 buildSkillPrompt: 开始 Skill 分析 for $stockName ($firstStockCode)")
 
-        // 獲取板塊信息
+        // 获取板块信息
         val sectors = try {
             dbManager.db.sectorStockDao().getSectorNamesByStockCode(firstStockCode)
         } catch (e: Exception) {
-            Log.w(TAG, "⚠️ 獲取板塊信息失敗: ${e.message}")
+            Log.w(TAG, "⚠️ 获取板块信息失败: ${e.message}")
             emptyList()
         }
-        Log.d(TAG, "   板塊: ${sectors.ifEmpty { listOf("無") }.joinToString(", ")}")
+        Log.d(TAG, "   板块: ${sectors.ifEmpty { listOf("无") }.joinToString(", ")}")
 
         return try {
             val results = orchestrator.runSkills(
@@ -473,11 +473,11 @@ class StockQueryEngine private constructor(
                 sectors = sectors
             )
             if (results.isEmpty()) {
-                Log.d(TAG, "📭 Skill 執行結果為空")
+                Log.d(TAG, "📭 Skill 执行结果为空")
                 ""
             } else {
                 val prompt = orchestrator.formatForPrompt(results)
-                Log.i(TAG, "📝 Skill prompt 已生成: ${prompt.length}字, ${results.size}個 Skill")
+                Log.i(TAG, "📝 Skill prompt 已生成: ${prompt.length}字, ${results.size}个 Skill")
                 prompt
             }
         } catch (e: Exception) {
@@ -487,12 +487,12 @@ class StockQueryEngine private constructor(
     }
 
     /**
-     * v10.1: 將即時行情數據持久化到 daily_snapshot 表
+     * v10.1: 将即时行情数据持久化到 daily_snapshot 表
      *
-     * 用戶在 AI 對話中查詢個股時，StockService 從網路即時拉取了行情數據，
-     * 這些數據在此寫入 daily_snapshot 表，供模擬交易引擎使用。
+     * 用户在 AI 对话中查询个股时，StockService 从网路即时拉取了行情数据，
+     * 这些数据在此写入 daily_snapshot 表，供模拟交易引擎使用。
      *
-     * 如果當日數據已存在則跳過（避免重複寫入）。
+     * 如果当日数据已存在则跳过（避免重复写入）。
      */
     private suspend fun saveRealtimeToSnapshot(ctx: StockContext) {
         if (ctx.realtimeData.isEmpty()) return
@@ -517,16 +517,23 @@ class StockQueryEngine private constructor(
                         volume = stock.volume,
                         amount = stock.amount,
                         changePct = stock.changePercent,
-                        turnoverRate = 0.0,
-                        mainNetInflow = 0.0
+                        turnoverRate = stock.turnoverRate,
+                        mainNetInflow = 0.0,
+                        pe = stock.pe,
+                        pb = stock.pb,
+                        marketCap = stock.marketCap,
+                        roeTTM = stock.roeTTM,
+                        grossMarginTTM = stock.grossMarginTTM,
+                        debtToAsset = stock.debtToAsset,
+                        operatingCashFlow = stock.operatingCashFlow
                     )
                 }
             if (entities.isNotEmpty()) {
                 db.dailySnapshotDao().insertAll(entities)
-                Log.i(TAG, "💾 已寫入 ${entities.size} 條即時行情到 daily_snapshot ($today)")
+                Log.i(TAG, "💾 已写入 ${entities.size} 条即时行情到 daily_snapshot ($today)")
             }
         } catch (e: Exception) {
-            Log.w(TAG, "⚠️ 寫入 daily_snapshot 失敗: ${e.message}")
+            Log.w(TAG, "⚠️ 写入 daily_snapshot 失败: ${e.message}")
         }
     }
 }

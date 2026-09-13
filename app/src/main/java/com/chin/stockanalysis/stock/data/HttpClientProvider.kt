@@ -26,10 +26,11 @@ object HttpClientProvider {
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(8, TimeUnit.SECONDS)
             .writeTimeout(8, TimeUnit.SECONDS)
-            .connectionPool(ConnectionPool(10, 60, TimeUnit.SECONDS))
+            .connectionPool(ConnectionPool(20, 60, TimeUnit.SECONDS))
             .retryOnConnectionFailure(true)
             .followRedirects(true)
             .followSslRedirects(true)
+            .addInterceptor(RetryInterceptor(maxRetries = 2, baseDelayMs = 300L, tag = "HttpRetry"))
             .build()
     }
 
@@ -62,9 +63,9 @@ object HttpClientProvider {
     }
 
     /**
-     * 网页爬取客户端（模擬瀏覽器，避免 403）
-     * - 使用完整的瀏覽器頭
-     * - 較長超時（部分網站響應慢）
+     * 网页爬取客户端（模拟浏览器，避免 403）
+     * - 使用完整的浏览器头
+     * - 较长超时（部分网站响应慢）
      */
     val webScrapeClient: OkHttpClient by lazy {
         OkHttpClient.Builder()

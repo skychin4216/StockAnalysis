@@ -30,6 +30,13 @@ class EastMoneyHotSectorSource {
 
         fun startPoolScheduler(scope: CoroutineScope) {
             if (started) return; started = true
+            scope.launch {
+                try {
+                    coroutineScope { awaitCancellation() }
+                } finally {
+                    started = false
+                }
+            }
             val source = EastMoneyHotSectorSource()
             poolJob = scope.launch(Dispatchers.IO) {
                 // 立即拉取第一次
@@ -68,13 +75,15 @@ class EastMoneyHotSectorSource {
         val turnoverRate: Double = 0.0, val mainNetInflow: Double = 0.0,
         val top1StockName: String = "", val top1StockCode: String = "",
         val top1ChangePercent: Double = 0.0, val compositeScore: Double = 0.0,
-        val sectorType: Int = 2
+        val sectorType: Int = 2,
+        val change5d: Double = 0.0, val change10d: Double = 0.0, val change20d: Double = 0.0
     )
     data class GlobalIndex(val code: String, val name: String, val price: Double, val changePercent: Double, val changeAmount: Double)
     data class LeaderStock(
         val code: String, val name: String, val price: Double, val changePercent: Double,
         val turnoverRate: Double, val mainNetInflow: Double, val marketCap: Double = 0.0,
-        val isBoard: Boolean = false, val limitDays: Int = 0, val threeDayInflow: Double = 0.0
+        val isBoard: Boolean = false, val limitDays: Int = 0, val threeDayInflow: Double = 0.0,
+        val board: String = ""
     )
 
     /** 板块名称中常见的编号后缀，需要剥离后去重合并 */
@@ -97,6 +106,14 @@ class EastMoneyHotSectorSource {
     private fun stripSuffix(name: String): String {
         return name.replace(STRIP_SUFFIX_REGEX, "").trim().replace("·$".toRegex(), "").replace("\\.$".toRegex(), "")
     }
+
+    /** 根据股票代码判断所属板块（主板/创业板/科创板/北交所） */
+    private fun boardOf(code: String): String = when {
+        code.startsWith("300") || code.startsWith("301") -> "创业板"
+        code.startsWith("688") || code.startsWith("689") -> "科创板"
+        code.startsWith("8") || code.startsWith("4") || code.startsWith("920") -> "北交所"
+        else -> "主板"
+    }
     private fun filterAndMerge(raw: List<HotSector>): List<HotSector> {
         val filtered = raw
             .filter { s -> !BLACKLIST_KW.any { s.name.contains(it, true) } }
@@ -118,7 +135,7 @@ class EastMoneyHotSectorSource {
                 val url = "${DataConfig.eastmoneyPush2}/clist/get?" +
                     "pn=1&pz=50&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281" +
                     "&fltt=2&invt=2&fid=f3&fs=m:90+t:${type}+f:!50" +
-                    "&fields=f2,f3,f5,f8,f12,f14,f62,f128,f140,f124&_=$timestamp"
+                    "&fields=f2,f3,f5,f8,f12,f14,f62,f109,f185,f186,f128,f140,f124&_=$timestamp"
                 val req = Request.Builder()
                     .url(url)
                     .addHeader("User-Agent", "Mozilla/5.0")
@@ -133,13 +150,15 @@ class EastMoneyHotSectorSource {
                     val item = diffs.getJSONObject(i)
                     val c = item.optDouble("f3", 0.0); val t = item.optDouble("f8", 0.0)
                     val inflow = item.optDouble("f62", 0.0) / 1_0000_0000; val top = item.optDouble("f124", 0.0)
+                    val c5 = item.optDouble("f109", 0.0); val c10 = item.optDouble("f185", 0.0); val c20 = item.optDouble("f186", 0.0)
                     all.add(HotSector(code = item.optString("f12", ""), name = item.optString("f14", ""),
                         changePercent = c, sectorIndex = item.optDouble("f2", 0.0),
                         hotScore = Math.abs(c) + t * 0.5 + (inflow / 10.0).coerceIn(0.0, 5.0),
                         turnoverRate = t, mainNetInflow = inflow,
                         top1StockName = item.optString("f128", ""),
                         top1StockCode = item.optString("f140", "").ifEmpty { item.optString("f136", "") },
-                        top1ChangePercent = top, compositeScore = computeScore(c, t, inflow, top), sectorType = type))
+                        top1ChangePercent = top, compositeScore = computeScore(c, t, inflow, top), sectorType = type,
+                        change5d = c5, change10d = c10, change20d = c20))
                 }
             } catch (_: Exception) {}
         }
@@ -186,7 +205,7 @@ class EastMoneyHotSectorSource {
             val url = "${DataConfig.eastmoneyPush2}/clist/get?" +
                 "pn=1&pz=$topN&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281" +
                 "&fltt=2&invt=2&fid=f3&fs=m:90+t:${type}+f:!50" +
-                "&fields=f2,f3,f5,f8,f12,f14,f62,f128,f140,f124&_=$timestamp"
+                "&fields=f2,f3,f5,f8,f12,f14,f62,f109,f185,f186,f128,f140,f124&_=$timestamp"
             val req = Request.Builder()
                 .url(url)
                 .addHeader("User-Agent", "Mozilla/5.0")
@@ -201,24 +220,32 @@ class EastMoneyHotSectorSource {
                 val item = diffs.getJSONObject(i)
                 val c = item.optDouble("f3", 0.0); val t = item.optDouble("f8", 0.0)
                 val inflow = item.optDouble("f62", 0.0) / 1_0000_0000; val top = item.optDouble("f124", 0.0)
+                val c5 = item.optDouble("f109", 0.0); val c10 = item.optDouble("f185", 0.0); val c20 = item.optDouble("f186", 0.0)
                 HotSector(code = item.optString("f12", ""), name = item.optString("f14", ""),
                     changePercent = c, sectorIndex = item.optDouble("f2", 0.0),
                     hotScore = Math.abs(c) + t * 0.5 + (inflow / 10.0).coerceIn(0.0, 5.0),
                     turnoverRate = t, mainNetInflow = inflow,
                     top1StockName = item.optString("f128", ""),
                     top1StockCode = item.optString("f140", "").ifEmpty { item.optString("f136", "") },
-                    top1ChangePercent = top, compositeScore = computeScore(c, t, inflow, top), sectorType = type)
+                    top1ChangePercent = top, compositeScore = computeScore(c, t, inflow, top), sectorType = type,
+                    change5d = c5, change10d = c10, change20d = c20)
             }
             filterAndMerge(result).sortedByDescending { it.compositeScore }.take(topN)
         } catch (_: Exception) { emptyList() }
     }
 
-    fun fetchSectorLeaders(blockCode: String, topN: Int = 10): List<LeaderStock> {
+    /**
+     * 拉取板块成分股龙头榜。
+     * @param blockCode 板块代码（BKxxxx）
+     * @param topN 返回前 N 名
+     * @param fid 排序字段：f20=按总市值（默认），f3=按当日涨幅（板块龙头异动监测推荐）
+     */
+    fun fetchSectorLeaders(blockCode: String, topN: Int = 10, fid: String = "f20"): List<LeaderStock> {
         return try {
             val timestamp = System.currentTimeMillis()
             val url = "${DataConfig.eastmoneyPush2}/clist/get?" +
                 "pn=1&pz=$topN&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281" +
-                "&fltt=2&invt=2&fid=f20&fs=b:${blockCode}+f:!50" +
+                "&fltt=2&invt=2&fid=$fid&fs=b:${blockCode}+f:!50" +
                 "&fields=f2,f3,f8,f12,f14,f20,f62,f184,f192&_=$timestamp"
             val req = Request.Builder()
                 .url(url)
@@ -239,7 +266,8 @@ class EastMoneyHotSectorSource {
                     marketCap = item.optDouble("f20", 0.0) / 1_0000_0000,
                     isBoard = (item.optDouble("f3", 0.0) >= 9.8),
                     limitDays = item.optInt("f192", 0),
-                    threeDayInflow = item.optDouble("f184", 0.0) / 1_0000_0000)
+                    threeDayInflow = item.optDouble("f184", 0.0) / 1_0000_0000,
+                    board = boardOf(item.optString("f12", "")))
             }
         } catch (e: Exception) { emptyList() }
     }

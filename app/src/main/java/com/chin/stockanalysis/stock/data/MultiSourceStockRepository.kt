@@ -8,6 +8,8 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
+import java.util.concurrent.ConcurrentHashMap
+
 /**
  * ## 多源股票数据仓储 - 并发请求、自动选源、健康检查
  *
@@ -36,8 +38,8 @@ class MultiSourceStockRepository(
     private val cache: SmartStockCache = SmartStockCache()
 ) {
     private val tag = "MultiSourceRepository"
-    private val sourceHealth = mutableMapOf<StockDataSource, Boolean>()
-    private val requestTimeouts = mutableMapOf<StockDataSource, Long>()
+    private val sourceHealth = ConcurrentHashMap<StockDataSource, Boolean>()
+    private val requestTimeouts = ConcurrentHashMap<StockDataSource, Long>()
 
     init {
         for (source in sources) {
@@ -121,12 +123,16 @@ class MultiSourceStockRepository(
                 }
             }
 
-            // 3. 等待所有完成，取最快有数据的
+            // 3. 等待所有完成，取最快有数据的（价格/量以最快源为准）
             val results = tasks.awaitAll()
-            val freshData = results
-                .filter { (data, _) -> data.isNotEmpty() }
+            val nonEmpty = results.filter { (data, _) -> data.isNotEmpty() }
+            val winner = nonEmpty
                 .sortedBy { (_, source) -> requestTimeouts[source] ?: Long.MAX_VALUE }
                 .firstOrNull()?.first ?: emptyMap()
+
+            // 基本面回填：新浪/腾讯不返回 PE/PB/市值/换手（仅东方财富有），
+            // 若最快源缺这些字段，从其他源补齐，避免下游读到 PE=0（V2 决策矩阵/基本面策略）
+            val freshData = mergeFundamentals(winner, nonEmpty.map { it.first })
 
             // 4. 写入缓存
             if (freshData.isNotEmpty()) {
@@ -136,6 +142,38 @@ class MultiSourceStockRepository(
             Log.d(tag, "Complete: ${(cached + freshData).size}/${codes.size}")
             cached + freshData
         }
+
+    /**
+     * 基本面跨源回填。
+     *
+     * 价格/成交量以最快源（winner）为准；但 PE/PB/市值/换手率只有东方财富源提供，
+     * 当 winner 是新浪/腾讯时这些字段为 0。此函数从其余源的结果中补齐缺失字段，
+     * 保证下游（V2 决策矩阵、基本面策略、聊天行情卡）读到的基本面不为 0。
+     */
+    private fun mergeFundamentals(
+        winner: Map<String, StockRealtime>,
+        allResults: List<Map<String, StockRealtime>>
+    ): Map<String, StockRealtime> {
+        if (winner.isEmpty() || allResults.size <= 1) return winner
+        return winner.mapValues { (code, stock) ->
+            // 基本面齐全则无需回填
+            if (stock.pe > 0 && stock.pb > 0 && stock.marketCap > 0 && stock.turnoverRate > 0) {
+                return@mapValues stock
+            }
+            var pe = stock.pe
+            var pb = stock.pb
+            var marketCap = stock.marketCap
+            var turnoverRate = stock.turnoverRate
+            for (other in allResults) {
+                val o = other[code] ?: continue
+                if (pe <= 0 && o.pe > 0) pe = o.pe
+                if (pb <= 0 && o.pb > 0) pb = o.pb
+                if (marketCap <= 0 && o.marketCap > 0) marketCap = o.marketCap
+                if (turnoverRate <= 0 && o.turnoverRate > 0) turnoverRate = o.turnoverRate
+            }
+            stock.copy(pe = pe, pb = pb, marketCap = marketCap, turnoverRate = turnoverRate)
+        }
+    }
 
     /**
      * 健康检查 - 检测所有数据源是否可用

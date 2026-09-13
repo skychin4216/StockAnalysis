@@ -4,7 +4,7 @@ package com.chin.stockanalysis.stock.intent
  * 股票查询意图枚举
  */
 enum class StockIntent {
-    QUERY_PRICE,        // 查询实时股价（单隻/多隻）
+    QUERY_PRICE,        // 查询实时股价（单只/多只）
     QUERY_INDEX,        // 查询大盘指数
     QUERY_HOT_STOCKS,   // 热门股票/涨停板
     QUERY_HISTORY,      // 历史K线数据

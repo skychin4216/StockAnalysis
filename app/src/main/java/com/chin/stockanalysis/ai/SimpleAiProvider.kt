@@ -32,11 +32,11 @@ object SimpleAiProvider {
     private var configManager: ApiConfigManager? = null
     private var currentConfigId: String? = null
     private var currentSlot: AiProviderPool.Slot? = null
-    /** 已失败的 provider ID，避免循環切換 */
+    /** 已失败的 provider ID，避免循环切换 */
     private val failedIds = mutableSetOf<String>()
 
     /**
-     * 動態獲取所有已配置 apiKey 的 Provider 列表（按 builtInProviders 順序）
+     * 动态获取所有已配置 apiKey 的 Provider 列表（按 builtInProviders 顺序）
      */
     private fun getAvailableIds(): List<String> {
         val mgr = configManager ?: return emptyList()
@@ -59,7 +59,7 @@ object SimpleAiProvider {
                 return null
             }
 
-            // 先嘗試上次成功的（未在失敗列表中）
+            // 先尝试上次成功的（未在失败列表中）
             currentConfigId?.let { id ->
                 if (id !in failedIds) {
                     val config = mgr.getProviderConfig(id)
@@ -73,7 +73,7 @@ object SimpleAiProvider {
                 }
             }
 
-            // 找第一個可用的（跳過已失敗的）
+            // 找第一个可用的（跳过已失败的）
             for (id in availableIds) {
                 if (id in failedIds) continue
                 val config = mgr.getProviderConfig(id) ?: continue
@@ -86,8 +86,8 @@ object SimpleAiProvider {
                 return slot
             }
 
-            // 全部失敗，不再重試
-            Log.e(TAG, "❌ 所有 ${availableIds.size} 個 Provider 均已失敗")
+            // 全部失败，不再重试
+            Log.e(TAG, "❌ 所有 ${availableIds.size} 个 Provider 均已失败")
             return null
         }
     }
@@ -101,10 +101,10 @@ object SimpleAiProvider {
             val availableIds = getAvailableIds()
             if (availableIds.isEmpty()) return null
 
-            // 標記當前 provider 為已失敗
+            // 标记当前 provider 为已失败
             currentConfigId?.let { failedIds.add(it) }
 
-            // 從當前位置的下一個開始，找第一個未失敗的
+            // 从当前位置的下一个开始，找第一个未失败的
             val currentIdx = availableIds.indexOf(currentConfigId)
             for (i in 1..availableIds.size) {
                 val nextIdx = (currentIdx + i) % availableIds.size
@@ -120,8 +120,8 @@ object SimpleAiProvider {
                 }
             }
 
-            // 全部失敗，不再重試
-            Log.e(TAG, "❌ 所有 ${availableIds.size} 個 Provider 均已失敗")
+            // 全部失败，不再重试
+            Log.e(TAG, "❌ 所有 ${availableIds.size} 个 Provider 均已失败")
             return null
         }
     }

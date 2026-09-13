@@ -21,11 +21,13 @@ import com.chin.stockanalysis.strategy.strategies.*
  * ```
  */
 object StrategyEngineHolder {
+    @Volatile
     private var engine: StrategyEngine? = null
 
     /**
      * 初始化全局引擎（只执行一次）
      */
+    @Synchronized
     fun init(context: Context) {
         if (engine != null) return
         val repo = StockDataSourceFactory.createDefaultRepository(context.applicationContext)
@@ -40,9 +42,26 @@ object StrategyEngineHolder {
             registerStrategy(RSIDivergenceStrategy(screener))
             registerStrategy(FundamentalFilterStrategy(screener))
             registerStrategy(EarlyMorningChaseStrategy(screener))
-            registerStrategy(TailLowPickStrategy(screener))
+            registerStrategy(TailLowPickStrategy(screener, context.applicationContext))
             registerStrategy(AIPredictionStrategy(context.applicationContext))
             registerStrategy(HotSpotDrivenStrategy(screener))
+            registerStrategy(DragonHeadDipStrategy(context.applicationContext, screener))
+            registerStrategy(InstitutionalAccumulationStrategy(screener))
+            registerStrategy(MoatLeaderStrategy(screener))
+            // ── v1.1 新增策略 ──
+            registerStrategy(TrendFollowingStrategy(context.applicationContext, screener))
+            registerStrategy(SectorRotationStrategy(context.applicationContext, screener))
+            registerStrategy(MarketSentimentStrategy(context.applicationContext, screener))
+            // ── v1.2 趋势加减分策略（不过滤标的，只加减分）──
+            registerStrategy(TrendScoreStrategy(context.applicationContext, screener))
+            // ── v1.3 周期低位策略（长线左侧布局，防暴雷+52周低位）──
+            registerStrategy(CyclicalLowPositionStrategy(context.applicationContext, screener))
+            // ── v1.4 Pipeline-based 策略（复用 DAG 分析工具）──
+            registerStrategy(StrictSelectionStrategy(screener, context.applicationContext))
+            registerStrategy(CandlePatternStrategy(screener, context.applicationContext))
+            registerStrategy(InstitutionalIntentStrategy(screener, context.applicationContext))
+            // 启动时清理过期信号缓存
+            cleanExpiredResults()
         }
     }
 

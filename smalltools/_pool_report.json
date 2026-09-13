@@ -1,0 +1,46 @@
+{
+  "total": 183,
+  "st_count": 6,
+  "st_list": [
+    {
+      "secid": "sh600745",
+      "name": "*ST闻泰"
+    },
+    {
+      "secid": "sz002055",
+      "name": "ST得润"
+    },
+    {
+      "secid": "sz002168",
+      "name": "ST惠程"
+    },
+    {
+      "secid": "sh601258",
+      "name": "*ST庞大"
+    },
+    {
+      "secid": "sz002501",
+      "name": "*ST利源"
+    },
+    {
+      "secid": "sz002288",
+      "name": "*ST超华"
+    }
+  ],
+  "leader_missing_count": 7,
+  "leader_missing": [
+    "sh603912",
+    "sz002837",
+    "sz300249",
+    "sz300499",
+    "sz300548",
+    "sz300990",
+    "sz301018"
+  ],
+  "stale_count": 2,
+  "stale_sample": [
+    "sh601258",
+    "sz002288"
+  ],
+  "latest_date": "2026-08-24"
+}

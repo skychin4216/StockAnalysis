@@ -18,9 +18,9 @@ data class Agent(
     val icon: String = "🤖",
     /** 设定描述 — 智能体的角色说明 */
     val description: String = "",
-    /** 输入指令描述 — quickPrompt：用戶自由編寫的簡單命令觸發詞 */
+    /** 输入指令描述 — quickPrompt：用户自由编写的简单命令触发词 */
     val quickPrompt: String = "",
-    /** 全自动执行规则描述 — systemPrompt：AI 根据設定描述自动生成并填充 */
+    /** 全自动执行规则描述 — systemPrompt：AI 根据设定描述自动生成并填充 */
     val systemPrompt: String = "",
     /** 触发关键词（备用，用于 AI 对话中的关键词匹配） */
     val triggerKeywords: List<String> = emptyList(),

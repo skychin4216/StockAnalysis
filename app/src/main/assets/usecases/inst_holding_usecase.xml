@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 机构持续加仓 UseCase（规则出处《机构持续加仓自动选股池.txt》）
+
+  ★ 定位：本 usecase **不负责"选股"**，负责给「三大周期选股 + ETF 全行业扫描 + ETF top5
+    + 实仓」的**全部股票**贴一个「机构 / 散户」标签 ——
+      A 精选 = 机构真在加仓的强趋势（口径A 连续≥2期环比增持>0.5pp 且 综合分≥75）
+      B 观察 = 机构温和参与（(口径A或B) 且 综合分≥50）
+      C 排除 = 机构撤退 / 散户票（参考方案里的「散户票」）
+    下游：机构列进推送 17 列表（`机构股` 列）+ 《交易决策工作台》Excel。
+
+  数据资产：data/_inst_holdings.json（东财 RPT_MAIN_ORGHOLD 机构持股一览表 +
+    RPT_HOLDERNUMLATEST 股东户数；每周由 smalltools/_inst_holdings.py 的 update-pool 模式刷新，
+    APK 内置同名资产 app/src/main/assets/data/_inst_holdings.json）
+  双端共用：APK UseCaseLoader 直接加载执行；usecase_pipeline.py 解析同一份 XML。
+  参数全部在 pipeline XML（inst_holding_pipeline.xml）。
+
+  ★ 重要提醒：机构持仓季度披露、天然滞后 1-3 月，只能做中长线趋势判断、**不可作实时信号**；
+    机构加仓 ≠ 必涨，必须与「趋势规律7条 + 多理论投票止损」三系统共振才入场。
+-->
+<usecase id="inst_holding" name="机构持仓判定">
+  <description>选股池+实仓汇总 → 机构季报/股东户数判定(A精选/B观察/C散户票) → 多理论投票止损</description>
+  <steps>
+    <pipeline ref="usecases/inst_holding_pipeline.xml" name="inst_holding_dag" />
+  </steps>
+  <config>
+    <param name="orderType" value="InstHolding" />
+    <param name="maxHoldings" value="30" />
+    <param name="holdingPeriod" value="mid" />
+  </config>
+</usecase>

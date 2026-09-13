@@ -1,0 +1,295 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 超短线量化 DAG Pipeline — 高通 Camera Pipeline 风格
+
+  超短线特征：持仓 1 天，纯技术面，隔夜情绪溢价，快进快出。
+  流程最精简，不加热点/轮动等中长线专有节点。
+
+  公共 L0/L1（data_import → market_context → bg_manager → adaptive_params →
+  stock_pool → market_ma_unified → holding_guard）已抽取至 stock_picking_common_pipeline.xml，
+  在 usecase 中先于本 pipeline 执行；本 pipeline 从 stageOutputs 兜底读取股票池/自适应参数。
+
+  共 15 个 Node：
+    Layer 0 (并行): candidate_pool（候选池过滤，根节点，从 stageOutputs 兜底读取股票池）
+    Layer 1.5b: intraday_analysis（盘中K线分析，依赖 candidate_pool）
+    Layer 2: signal_merge（策略动态注入在 Java 层完成，依赖 candidate_pool + 策略）
+    Layer 3: sector_boost（依赖 signal_merge，MA 结果从 stageOutputs 兜底读取）→ bounce_reversal → inst_tips
+    Layer 4: smart_money_filter（依赖 inst_tips，阈值30——超短V型票主力分天然低）
+    Layer 5: ai_predict（依赖 smart_money_filter，最终裁切 take 5）
+    Layer 6: generate_orders（依赖 ai_predict，自适应参数从 context 兜底读取）
+    Layer 7: swap_weak（依赖 generate_orders，持仓满时卖弱买强）
+    Layer 8: position_merge（依赖 swap_weak，换鸟后再入库）
+    Layer 9: t1_auto_sell（依赖 position_merge）
+    并行辅助: candle_pattern（依赖 smart_money_filter，形态警示）
+-->
+<DagPipeline id="ultra_short_dag_bullish" name="ultra_short_pipeline_bullish" description="策略筛选→板块加权→主力过滤→AI精选→订单生成→持仓合并/拟合保存（公共 L0/L1 由 stock_picking_common_pipeline.xml 提供）（环境：牛市）">
+
+  <!-- ══════════ NodeList ══════════ -->
+  <NodeList>
+    <!-- Layer 0（根节点）: 候选池过滤 — 公共 L0/L1 的股票池从 stageOutputs 兜底读取 -->
+    <Node id="n_cand" name="候选池过滤" module="candidate_pool" />
+
+    <!-- Layer 1.5b: 盘中 K 线分析（交易时段自动获取分钟线） -->
+    <Node id="n_intraday" name="盘中K线分析" module="intraday_analysis">
+      <config>
+        <param name="intervalMin" value="5" />
+        <param name="minBars" value="5" />
+      </config>
+    </Node>
+
+    <!-- 聚合 Layer 2 -->
+    <Node id="n_merge" name="信号合并" module="signal_merge" />
+
+        <Node id="n_vp" name="量价因子加权" module="volume_price_factor">
+      <config>
+        <param name="mode" value="full" />
+        <param name="benchmark" value="sh000300" />
+        <param name="relWinDays" value="10" />
+        <param name="rsHi" value="3.0" />
+        <param name="rsBonus" value="4.0" />
+        <param name="rsLo" value="-2.0" />
+        <param name="rsPenalty" value="-3.0" />
+        <param name="thinVr" value="0.5" />
+        <param name="thinPenalty" value="-4.0" />
+        <param name="shrinkVr" value="0.8" />
+        <param name="shrinkPenalty" value="-2.0" />
+        <param name="lowPriceMax" value="10.0" />
+        <param name="leaderTopK" value="5" />
+        <param name="leaderBonus" value="3.0" />
+      </config>
+    </Node>
+
+
+    <!-- 增强 Layer 3 -->
+    <Node id="n_boost" name="板块加权" module="sector_boost" />
+    <Node id="n_bounce" name="跌后反弹加分" module="bounce_reversal" />
+        <Node id="n_strict" name="均线粘合严选" module="strict_selection">
+      <config>
+        <param name="convergenceThreshold" value="3.5" />
+        <param name="useMA60" value="true" />
+        <param name="convergenceDurationDays" value="5" />
+        <param name="convergenceDurationRatio" value="0.8" />
+        <param name="volumeBreakoutRatio" value="1.5" />
+        <param name="minChangePct" value="1.0" />
+        <param name="requireChangePct" value="true" />
+        <param name="minDrawdownPct" value="10.0" />
+        <param name="requireCloseAboveConvergenceTop" value="false" />
+        <param name="requireOpenBelowMAs" value="true" />
+        <param name="requireThreeDayConfirm" value="false" />
+        <param name="swingLeftN" value="5" />
+        <param name="swingRightN" value="2" />
+        <param name="lookbackDays" value="30" />
+        <param name="minPassCount" value="6" />
+        <param name="allowQuietRise" value="true" />
+        <param name="quietVolumeRatio" value="1.0" />
+        <param name="period" value="ultra_short" />
+      </config>
+    </Node>
+    <Node id="n_ancestral" name="大A祖训" module="ancestral_rules">
+      <config><param name="holdingPeriod" value="ULTRA_SHORT" /></config>
+    </Node>
+    <!-- 2026-09-12 K线口诀（《常见K线图.txt》口诀五条+经典/大型形态；可与 n_ancestral/n_event 口径对照，Python 端 kline_idiom 同构） -->
+    <Node id="n_idiom" name="K线口诀" module="kline_idiom">
+      <config><param name="bullBoost" value="0.6" /><param name="bearPenalty" value="1.2" /><param name="veto" value="false" /><param name="vetoStrength" value="4" /><param name="minBars" value="30" /><param name="period" value="ULTRA_SHORT" /></config>
+    </Node>
+    <Node id="n_inst_tips" name="机构线索加分" module="inst_tips" />
+
+    <!-- AI+过滤 Layer 4-5 -->
+    <Node id="n_finance" name="财务健康筛选" module="financial_health" />
+    <Node id="n_ai" name="AI精选" module="ai_predict" />
+    <Node id="n_smart" name="主力资金过滤" module="smart_money_filter">
+      <config>
+        <param name="minScore" value="30" />
+      </config>
+    </Node>
+    <Node id="n_candle" name="K线形态侦测" module="candle_pattern" />
+
+    <!-- 2026-09-04 新增：超短也纳入新闻消息因子（新闻力度评分 + 新闻拦截；快进快出不等于不关心消息面） -->
+    <Node id="n_news_str" name="新闻力度计算" module="news_strength" />
+    <Node id="n_newsguard" name="新闻拦截+技术过滤" module="news_guard" />
+
+    <!-- 订单生成 Layer 6 -->
+    <Node id="n_orders" name="买入订单生成" module="generate_orders">
+      <config>
+        <param name="maxHoldings" value="3" />
+        <param name="orderType" value="UltraShortQuant" />
+        <param name="totalCapRatio" value="15" />
+        <param name="singlePositionRatio" value="3" />
+      </config>
+    </Node>
+
+    <!-- 腾龙换鸟 Layer 7（持仓满时卖弱买强） -->
+    <Node id="n_swap" name="腾龙换鸟" module="swap_weak">
+      <config>
+        <param name="maxHoldings" value="3" />
+      </config>
+    </Node>
+
+    <!-- 持仓合并 + T+1卖出 + 拟合 Layer 8-9 -->
+    <Node id="n_merge_pos" name="持仓合并" module="position_merge" />
+    <Node id="n_t1sell" name="T+1自动卖出" module="t1_auto_sell">
+      <config>
+        <param name="stopLossPct" value="-5.0" />
+        <param name="takeProfitPct" value="3.0" />
+      </config>
+    </Node>
+  </NodeList>
+
+  <!-- ══════════ Links ══════════ -->
+  <Links>
+    <!-- Layer 0 → 2: 候选池过滤 → 信号合并（策略动态注入在 Java 层完成） -->
+    <Link>
+      <SourceNodeId>n_cand</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_merge</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 1.5 → 1.5b: 候选池过滤 → 盘中K线分析 -->
+    <Link>
+      <SourceNodeId>n_cand</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_intraday</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 2 → 3: 信号合并 → 板块加权 -->
+    <Link>
+      <SourceNodeId>n_merge</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_vp</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+        <Link>
+      <SourceNodeId>n_vp</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_boost</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+
+    <!-- Layer 3 → 3.5: 板块加权 → 跌后反弹加分（MA 收敛结果由公共 L0/L1 的 n_ma_unified 写入 stageOutputs，n_boost 内部兜底读取） -->
+    <Link>
+      <SourceNodeId>n_boost</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_bounce</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 3 → 3.4: 板块加权 → 新闻力度（2026-09-04 新增：并行计算新闻强度，供主力过滤/报告读取） -->
+    <Link>
+      <SourceNodeId>n_boost</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_news_str</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <!-- Layer 3.4 → 4: 新闻力度 → 主力资金过滤 -->
+    <Link>
+      <SourceNodeId>n_news_str</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_smart</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 3.5 → 严选: 跌后反弹加分 → 六项严选检查 -->
+    <Link>
+      <SourceNodeId>n_bounce</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_strict</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 严选 → 3.5b: 六项严选检查 → 大A祖训 -->
+    <Link>
+      <SourceNodeId>n_strict</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_ancestral</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 3.5b → 3.6: 大A祖训 → 机构线索加分 -->
+    <Link>
+      <SourceNodeId>n_ancestral</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_idiom</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <Link>
+      <SourceNodeId>n_idiom</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_inst_tips</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 3.6 → 4: 机构线索加分 → 主力资金过滤（先过滤再AI精选） -->
+    <Link>
+      <SourceNodeId>n_inst_tips</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_smart</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 4 → 5: 主力资金过滤 → 新闻拦截+技术过滤（2026-09-04 新增） -->
+    <Link>
+      <SourceNodeId>n_smart</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_newsguard</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <!-- Layer 5 → 5.5: 新闻拦截 → 财务健康筛选 -->
+    <Link>
+      <SourceNodeId>n_newsguard</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_finance</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_finance</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_ai</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 5 → 6: AI精选 → 买入订单生成 -->
+    <Link>
+      <SourceNodeId>n_ai</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_orders</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 4 → 5: 主力资金过滤 → K线形态侦测（并行，辅助提醒） -->
+    <Link>
+      <SourceNodeId>n_smart</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_candle</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 6 → 7: 买入订单生成 → 腾龙换鸟（持仓满时卖弱买强；自适应参数由公共 L0/L1 的 n_adaptive 写入 context，n_orders 内部兜底读取） -->
+    <Link>
+      <SourceNodeId>n_orders</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_swap</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 7 → 8: 腾龙换鸟 → 持仓合并（换鸟后再入库，避免超持） -->
+    <Link>
+      <SourceNodeId>n_swap</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_merge_pos</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+
+    <!-- Layer 7 → 8: 持仓合并 → T+1 自动卖出 -->
+    <Link>
+      <SourceNodeId>n_merge_pos</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_t1sell</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+  </Links>
+</DagPipeline>

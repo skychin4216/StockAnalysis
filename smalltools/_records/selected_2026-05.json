@@ -1,0 +1,416 @@
+{
+ "window": [
+  "2026-05-15",
+  "2026-06-15"
+ ],
+ "signals": {
+  "超短": [
+   [
+    "sz300274",
+    "阳光电源",
+    "2026-05-15",
+    916,
+    "BULLISH"
+   ],
+   [
+    "sh600378",
+    "昊华科技",
+    "2026-05-22",
+    921,
+    "OSCILLATION"
+   ],
+   [
+    "sh600378",
+    "昊华科技",
+    "2026-05-26",
+    923,
+    "OSCILLATION"
+   ]
+  ],
+  "短线": [
+   [
+    "sz002055",
+    "ST得润",
+    "2026-05-20",
+    919,
+    "OSCILLATION"
+   ],
+   [
+    "sz002055",
+    "ST得润",
+    "2026-05-22",
+    921,
+    "OSCILLATION"
+   ],
+   [
+    "sh600011",
+    "华能国际",
+    "2026-05-28",
+    925,
+    "BULLISH"
+   ]
+  ],
+  "中线": [
+   [
+    "sz002055",
+    "ST得润",
+    "2026-05-22",
+    921,
+    "OSCILLATION"
+   ],
+   [
+    "sh600900",
+    "长江电力",
+    "2026-06-01",
+    927,
+    "OSCILLATION"
+   ]
+  ],
+  "长线": [
+   [
+    "sh600025",
+    "华能水电",
+    "2026-05-29",
+    926,
+    "BULLISH"
+   ],
+   [
+    "sz002902",
+    "铭普光磁",
+    "2026-06-05",
+    931,
+    "BEARISH"
+   ]
+  ]
+ },
+ "trades": {
+  "超短": [
+   {
+    "code": "sz300274",
+    "name": "阳光电源",
+    "sig": "2026-05-15",
+    "buy": "2026-05-18",
+    "sell": "2026-05-19",
+    "entry": 152.9,
+    "exit": 157.38,
+    "ret": 2.9300196206671014,
+    "reason": "隔日卖",
+    "state": "BULLISH"
+   },
+   {
+    "code": "sh600378",
+    "name": "昊华科技",
+    "sig": "2026-05-22",
+    "buy": "2026-05-25",
+    "sell": "2026-05-26",
+    "entry": 36.008,
+    "exit": 38.858,
+    "ret": 7.914907798267046,
+    "reason": "隔日卖",
+    "state": "OSCILLATION"
+   },
+   {
+    "code": "sh600378",
+    "name": "昊华科技",
+    "sig": "2026-05-26",
+    "buy": "2026-05-27",
+    "sell": "2026-05-28",
+    "entry": 40.478,
+    "exit": 39.988,
+    "ret": -1.2105341172982897,
+    "reason": "隔日卖",
+    "state": "OSCILLATION"
+   }
+  ],
+  "短线": [
+   {
+    "code": "sz002055",
+    "name": "ST得润",
+    "sig": "2026-05-20",
+    "buy": "2026-05-21",
+    "sell": "2026-06-02",
+    "entry": 7.07,
+    "exit": 7.38,
+    "ret": 4.38472418670437,
+    "reason": "跌破8日线",
+    "state": "OSCILLATION"
+   },
+   {
+    "code": "sz002055",
+    "name": "ST得润",
+    "sig": "2026-05-22",
+    "buy": "2026-05-25",
+    "sell": "2026-06-02",
+    "entry": 7.53,
+    "exit": 7.38,
+    "ret": -1.9920318725099695,
+    "reason": "跌破8日线",
+    "state": "OSCILLATION"
+   },
+   {
+    "code": "sh600011",
+    "name": "华能国际",
+    "sig": "2026-05-28",
+    "buy": "2026-05-29",
+    "sell": "2026-06-04",
+    "entry": 7.68,
+    "exit": 8.35,
+    "ret": 8.723958333333325,
+    "reason": "跌破5日线",
+    "state": "BULLISH"
+   }
+  ],
+  "中线": [
+   {
+    "code": "sz002055",
+    "name": "ST得润",
+    "sig": "2026-05-22",
+    "buy": "2026-05-25",
+    "sell": "2026-06-11",
+    "entry": 7.53,
+    "exit": 5.79,
+    "ret": -6.852589641434259,
+    "reason": "止损",
+    "state": "OSCILLATION",
+    "tProfit": 16.254980079681275,
+    "tCount": null
+   },
+   {
+    "code": "sh600900",
+    "name": "长江电力",
+    "sig": "2026-06-01",
+    "buy": "2026-06-02",
+    "sell": "2026-07-01",
+    "entry": 27.03,
+    "exit": 25.85,
+    "ret": -0.10358860525342406,
+    "reason": "持有到期",
+    "state": "OSCILLATION",
+    "tProfit": 4.261931187569367,
+    "tCount": null
+   }
+  ],
+  "长线": [
+   {
+    "code": "sh600025",
+    "name": "华能水电",
+    "sig": "2026-05-29",
+    "buy": "2026-06-01",
+    "sell": "2026-07-28",
+    "entry": 9.705,
+    "exit": 9.97,
+    "ret": 9.860896445131374,
+    "reason": "持有到期",
+    "state": "BULLISH",
+    "tProfit": 7.130345182895405,
+    "tCount": null
+   },
+   {
+    "code": "sz002902",
+    "name": "铭普光磁",
+    "sig": "2026-06-05",
+    "buy": "2026-06-08",
+    "sell": "2026-07-17",
+    "entry": 31.28,
+    "exit": 22.14,
+    "ret": -13.925831202046036,
+    "reason": "止损",
+    "state": "BEARISH",
+    "tProfit": 15.294117647058824,
+    "tCount": null
+   }
+  ]
+ },
+ "state_dist": {
+  "超短": {
+   "BULLISH": 6,
+   "OSCILLATION": 7,
+   "BEARISH": 6,
+   "CRASH": 2
+  },
+  "短线": {
+   "BULLISH": 6,
+   "OSCILLATION": 7,
+   "BEARISH": 6,
+   "CRASH": 2
+  },
+  "中线": {
+   "BULLISH": 6,
+   "OSCILLATION": 7,
+   "BEARISH": 6,
+   "CRASH": 2
+  },
+  "长线": {
+   "BULLISH": 6,
+   "OSCILLATION": 7,
+   "BEARISH": 6,
+   "CRASH": 2
+  }
+ },
+ "params_used": {
+  "超短": {
+   "BULLISH": {
+    "style": "nextday",
+    "maxHold": 2,
+    "tp": 0.0,
+    "sl": 0.0
+   },
+   "OSCILLATION": {
+    "style": "nextday",
+    "maxHold": 2,
+    "tp": 0.0,
+    "sl": 0.0
+   }
+  },
+  "短线": {
+   "OSCILLATION": {
+    "style": "streak",
+    "streakDays": 4,
+    "maBreak": 8,
+    "maxHold": 8,
+    "tp": 0.0,
+    "sl": 0.0
+   },
+   "BULLISH": {
+    "style": "streak",
+    "streakDays": 3,
+    "maBreak": 5,
+    "maxHold": 5,
+    "tp": 0.0,
+    "sl": 0.0
+   }
+  },
+  "中线": {
+   "OSCILLATION": {
+    "style": "hold",
+    "maxHold": 20,
+    "tp": 25,
+    "sl": -6,
+    "tRatio": 0.4
+   }
+  },
+  "长线": {
+   "BULLISH": {
+    "style": "hold",
+    "maxHold": 40,
+    "tp": 50,
+    "sl": -12,
+    "tRatio": 0.4
+   },
+   "BEARISH": {
+    "style": "hold",
+    "maxHold": 40,
+    "tp": 50,
+    "sl": -12,
+    "tRatio": 0.4
+   }
+  }
+ },
+ "fitted": {
+  "超短": {},
+  "短线": {
+   "BULLISH": {
+    "rule": {
+     "style": "streak",
+     "streakDays": 2,
+     "maBreak": 5,
+     "maxHold": 5,
+     "tp": 0.0,
+     "sl": 0.0
+    },
+    "avg": -0.7695802034185248,
+    "wr": 42.857142857142854,
+    "n": 7
+   },
+   "OSCILLATION": {
+    "rule": {
+     "style": "streak",
+     "streakDays": 4,
+     "maBreak": 8,
+     "maxHold": 8,
+     "tp": 0.0,
+     "sl": 0.0
+    },
+    "avg": -1.6376848375905428,
+    "wr": 20.0,
+    "n": 5
+   }
+  },
+  "中线": {
+   "BULLISH": {
+    "rule": {
+     "style": "hold",
+     "maxHold": 20,
+     "tp": 25,
+     "sl": -8,
+     "tRatio": 0.4
+    },
+    "avg": 9.190923331021953,
+    "wr": 89.45578231292517,
+    "n": 294
+   },
+   "OSCILLATION": {
+    "rule": {
+     "style": "hold",
+     "maxHold": 20,
+     "tp": 25,
+     "sl": -6,
+     "tRatio": 0.4
+    },
+    "avg": 2.731932093213449,
+    "wr": 64.19753086419753,
+    "n": 81
+   },
+   "BEARISH": {
+    "rule": {
+     "style": "hold",
+     "maxHold": 12,
+     "tp": 15,
+     "sl": -6,
+     "tRatio": 0.4
+    },
+    "avg": 2.791189905914568,
+    "wr": 73.33333333333333,
+    "n": 15
+   }
+  },
+  "长线": {
+   "BULLISH": {
+    "rule": {
+     "style": "hold",
+     "maxHold": 40,
+     "tp": 50,
+     "sl": -12,
+     "tRatio": 0.4
+    },
+    "avg": 9.52668926102349,
+    "wr": 80.40816326530611,
+    "n": 490
+   },
+   "OSCILLATION": {
+    "rule": {
+     "style": "hold",
+     "maxHold": 40,
+     "tp": 50,
+     "sl": -12,
+     "tRatio": 0.4
+    },
+    "avg": 8.518079873273752,
+    "wr": 72.93577981651376,
+    "n": 218
+   },
+   "BEARISH": {
+    "rule": {
+     "style": "hold",
+     "maxHold": 40,
+     "tp": 50,
+     "sl": -12,
+     "tRatio": 0.4
+    },
+    "avg": 10.278419331098972,
+    "wr": 78.33333333333333,
+    "n": 120
+   }
+  }
+ }
+}

@@ -119,4 +119,81 @@ object ApiKeysLoader {
     fun deepseekKey(): String = get(KEY_DEEPSEEK)
     fun aliyunMaasKey(): String = get(KEY_ALIYUN_MAAS)
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // 2026-09-11 新增：app_config.json 回退 + 按 providerId 统一取 Key
+    //
+    // 背景：日志中 RealHoldingOCR 反复「⏳ 等待释放」直到 60s 超时、且从未出现
+    // 「✅ acquire / 📤 请求 / ❌ HTTP」→ 请求根本没发出去，说明 APK 运行时读不到任何 Key。
+    // 而工程里既没有 api_keys_local.properties（assets 内也没有），app_config.json 的
+    // ai_providers 也从未包含 api_key 字段 → AiProviderPool 把 4 个 provider 全部
+    // `continue` 掉，空转 60 秒后报「AI 解析失败」。这与「额度用完」无关。
+    //
+    // 现在支持双通道：properties 文件 → app_config.json 的 ai_providers.<section>.api_key。
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /** providerId → api_keys_local.properties 中的 Key 名 */
+    fun propertiesKeyName(providerId: String): String = when (providerId) {
+        "siliconflow-v3-flash", "siliconflow-v3", "siliconflow-r1",
+        "siliconflow-qwen", "siliconflow-llama", "siliconflow-v25" -> KEY_SILICONFLOW
+        "doubao" -> KEY_DOUBAO
+        "deepseek-official" -> KEY_DEEPSEEK
+        "aliyun-maas", "dashscope", "dashscope-qwen3" -> KEY_ALIYUN_MAAS
+        else -> "${providerId.uppercase()}_KEY"
+    }
+
+    /** providerId → app_config.json 中 ai_providers 的 section 名 */
+    private fun configSection(providerId: String): String = when (providerId) {
+        "doubao" -> "doubao"
+        "dashscope-qwen3", "dashscope" -> "qwen3"
+        "aliyun-maas" -> "aliyun_maas"
+        "siliconflow-v3-flash", "siliconflow-v3", "siliconflow-r1",
+        "siliconflow-qwen", "siliconflow-llama", "siliconflow-v25" -> "siliconflow"
+        "deepseek-official" -> "deepseek"
+        "baidu-qianfan" -> "baidu"
+        "iflytek" -> "spark"
+        else -> providerId
+    }
+
+    /**
+     * 从 `assets/data/app_config.json` 的 `ai_providers.<section>.api_key` 读取。
+     * 用户只需在这一个 JSON 里补 `"api_key": "sk-..."` 即可生效（免建 properties 文件）。
+     */
+    private fun getFromAppConfig(providerId: String): String {
+        val ctx = appContext ?: return ""
+        return try {
+            com.chin.stockanalysis.config.DataConfig.load(ctx)   // 幂等，已加载则直接返回
+            com.chin.stockanalysis.config.DataConfig
+                .get("ai_providers.${configSection(providerId)}.api_key", "").trim()
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
+    /**
+     * 运行时按 providerId 统一取 Key（供 ApiConfigManager 使用）：
+     * 1. `api_keys_local.properties`（assets / 内部存储 / sdcard）
+     * 2. `assets/data/app_config.json` 的 `ai_providers.<section>.api_key`
+     */
+    fun getForProvider(providerId: String): String {
+        val byProps = get(propertiesKeyName(providerId))
+        if (byProps.isNotBlank()) return byProps
+        return getFromAppConfig(providerId)
+    }
+
+    /** 诊断：列出各 provider 的 Key 来源（脱敏），用于排查「AI 不可用」到底卡在哪 */
+    fun describeKeySources(providerIds: List<String>): String =
+        providerIds.joinToString(", ") { id ->
+            val propsKey = get(propertiesKeyName(id))
+            val jsonKey = getFromAppConfig(id)
+            val src = when {
+                propsKey.isNotBlank() -> "properties(${mask(propsKey)})"
+                jsonKey.isNotBlank() -> "app_config.json(${mask(jsonKey)})"
+                else -> "无"
+            }
+            "$id=$src"
+        }
+
+    private fun mask(k: String): String =
+        if (k.length <= 8) "****" else k.take(4) + "****" + k.takeLast(4)
+
 }

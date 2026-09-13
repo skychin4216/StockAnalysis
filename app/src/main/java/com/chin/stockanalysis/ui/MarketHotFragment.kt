@@ -41,6 +41,8 @@ class MarketHotFragment : Fragment() {
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         }
         tabLayout = TabLayout(requireContext()).apply {
+            // 5 个子 Tab（走势已合入轮动 2026-09-06），可横向滚动避免文本被挤压
+            tabMode = TabLayout.MODE_SCROLLABLE
             setSelectedTabIndicatorColor(Color.parseColor("#E65100"))
             setTabTextColors(Color.parseColor("#999999"), Color.parseColor("#E65100"))
             setBackgroundColor(Color.WHITE)
@@ -77,7 +79,7 @@ class MarketHotFragment : Fragment() {
         }
         root.addView(viewPager, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
         TabLayoutMediator(tabLayout, viewPager) { tab, pos ->
-            tab.text = when(pos) { 0 -> "🏭 行业" 1 -> "💡 概念" 2 -> "📈 指数" else -> "" }
+            tab.text = when(pos) { 0 -> "🏭 行业" 1 -> "💡 概念" 2 -> "📈 指数" 3 -> "🔄 轮动" 4 -> "🏆 龙头图谱" else -> "" }
         }.attach()
 
         startPoolScheduler(lifecycleScope)
@@ -86,9 +88,13 @@ class MarketHotFragment : Fragment() {
     }
 
     private class SectorTabAdapter(f: Fragment) : FragmentStateAdapter(f) {
-        override fun getItemCount() = 3
+        override fun getItemCount() = 5
         override fun createFragment(pos: Int) = when(pos) {
-            0, 1, 2 -> SectorTabFragment.newInstance(when(pos) { 0->2 1->3 2->1 else->2 })
+            0 -> SectorTabFragment.newInstance(2)
+            1 -> SectorTabFragment.newInstance(3)
+            2 -> SectorTabFragment.newInstance(1)
+            3 -> SectorRotationChartFragment()
+            4 -> SectorLeaderMapFragment()
             else -> SectorTabFragment.newInstance(2)
         }
     }
@@ -148,6 +154,7 @@ class MarketHotFragment : Fragment() {
     }
 
     private fun updateIndexRow(indices: List<EastMoneyHotSectorSource.GlobalIndex>) {
+        if (!isAdded) return
         indexRow.removeAllViews()
         if (indices.isEmpty()) {
             indexRow.addView(TextView(requireContext()).apply{text="更新中...";textSize=10f;setTextColor(Color.parseColor("#999999"));setPadding(4,4,4,4)})

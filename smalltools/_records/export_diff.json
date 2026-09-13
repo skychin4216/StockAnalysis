@@ -1,0 +1,167 @@
+{
+ "exported_at": "2026-08-16",
+ "source": "StockAnalysis APK 本机拟合导出 → PC walk-forward 素材",
+ "sell_rules": {
+  "超短": {
+   "default": {
+    "style": "nextday",
+    "maxHold": 2,
+    "tp": 0.0,
+    "sl": 0.0,
+    "avg": 0.0,
+    "wr": 0.0,
+    "n": 0
+   },
+   "by_state": {
+    "BULLISH": {
+     "style": "nextday",
+     "maxHold": 1,
+     "tp": 0.0,
+     "sl": 0.0,
+     "avg": 3.27,
+     "wr": 44.5,
+     "n": 44
+    },
+    "OSCILLATION": {
+     "style": "nextday",
+     "maxHold": 1,
+     "tp": 0.0,
+     "sl": 0.0,
+     "avg": 1.51,
+     "wr": 56.1,
+     "n": 207
+    },
+    "BEARISH": {
+     "style": "nextday",
+     "maxHold": 1,
+     "tp": 0.0,
+     "sl": 0.0,
+     "avg": 5.08,
+     "wr": 67.3,
+     "n": 129
+    }
+   }
+  },
+  "短线": {
+   "default": {
+    "style": "streak",
+    "maxHold": 10,
+    "tp": 0.0,
+    "sl": 0.0,
+    "avg": 0.0,
+    "wr": 0.0,
+    "n": 0
+   },
+   "by_state": {
+    "BULLISH": {
+     "style": "streak",
+     "maxHold": 8,
+     "tp": 0.0,
+     "sl": 0.0,
+     "avg": 1.26,
+     "wr": 53.0,
+     "n": 55
+    },
+    "OSCILLATION": {
+     "style": "streak",
+     "maxHold": 10,
+     "tp": 0.0,
+     "sl": 0.0,
+     "avg": 2.68,
+     "wr": 56.5,
+     "n": 50,
+     "maBreak": 10
+    },
+    "BEARISH": {
+     "style": "streak",
+     "maxHold": 8,
+     "tp": 0.0,
+     "sl": 0.0,
+     "avg": 6.79,
+     "wr": 43.7,
+     "n": 134
+    }
+   }
+  },
+  "中线": {
+   "default": {
+    "style": "hold",
+    "maxHold": 15,
+    "tp": 20.0,
+    "sl": -10.0,
+    "avg": 0.0,
+    "wr": 0.0,
+    "n": 0
+   },
+   "by_state": {
+    "BULLISH": {
+     "style": "hold",
+     "maxHold": 28,
+     "tp": 25,
+     "sl": -8,
+     "avg": 5.41,
+     "wr": 57.5,
+     "n": 51
+    },
+    "OSCILLATION": {
+     "style": "hold",
+     "maxHold": 20,
+     "tp": 25,
+     "sl": -6,
+     "avg": 5.04,
+     "wr": 51.9,
+     "n": 133
+    },
+    "BEARISH": {
+     "style": "hold",
+     "maxHold": 12,
+     "tp": 15,
+     "sl": -6,
+     "avg": 1.33,
+     "wr": 65.8,
+     "n": 168
+    }
+   }
+  },
+  "长线": {
+   "default": {
+    "style": "hold",
+    "maxHold": 30,
+    "tp": 40.0,
+    "sl": -12.0,
+    "avg": 0.0,
+    "wr": 0.0,
+    "n": 0
+   },
+   "by_state": {
+    "BULLISH": {
+     "style": "hold",
+     "maxHold": 40,
+     "tp": 50,
+     "sl": -8,
+     "avg": 3.93,
+     "wr": 56.2,
+     "n": 177
+    },
+    "OSCILLATION": {
+     "style": "hold",
+     "maxHold": 40,
+     "tp": 40,
+     "sl": -12,
+     "avg": 4.92,
+     "wr": 60.5,
+     "n": 72
+    },
+    "BEARISH": {
+     "style": "hold",
+     "maxHold": 40,
+     "tp": 50,
+     "sl": -18,
+     "avg": 5.07,
+     "wr": 59.2,
+     "n": 210
+    }
+   }
+  }
+ }
+}

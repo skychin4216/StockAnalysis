@@ -73,10 +73,15 @@ class StrategyDataIntegrityTest {
         roeTTM: Double = 0.0, grossMarginTTM: Double = 0.0,
         debtToAsset: Double = 0.0, operatingCashFlow: Double = 0.0
     ): StockRealtime = StockRealtime(
-        code, name, price, open, yestClose, high, low,
-        volume, amount, changePercent, changeAmount, turnoverRate,
-        pe, pb, marketCap, roeTTM, grossMarginTTM, debtToAsset, operatingCashFlow,
-        System.currentTimeMillis()
+        code = code, name = name, price = price, open = open, yestClose = yestClose,
+        high = high, low = low,
+        volume = volume, amount = amount,
+        changePercent = changePercent, changeAmount = changeAmount,
+        turnoverRate = turnoverRate,
+        pe = pe, pb = pb, marketCap = marketCap,
+        roeTTM = roeTTM, grossMarginTTM = grossMarginTTM,
+        debtToAsset = debtToAsset, operatingCashFlow = operatingCashFlow,
+        timestamp = System.currentTimeMillis()
     )
 
     @Before
@@ -164,7 +169,8 @@ class StrategyDataIntegrityTest {
         val stock = StockRealtime(
             "sh600519", "贵州茅台", 1500.0, 1495.0, 1490.0,
             1510.0, 1480.0, 10_000_000L, 15_000_000_000.0,
-            0.3, 5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, System.currentTimeMillis()
+            0.3, 5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, System.currentTimeMillis()
         )
         // amount ≈ price * volume / 100（粗略：万元）
         assertTrue("交易金额应>0", stock.amount > 0)
