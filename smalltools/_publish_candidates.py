@@ -1141,6 +1141,10 @@ def _round_legacy(data, ctx, cfg, old_secids=None):
         if dag.get("degraded") and _miss:
             lines.append("⚠️ 降级管线: 本次 DAG 缺 %d 个未实现节点(%s)，结果可能与设计不符，谨慎采纳" %
                          (len(_miss), "、".join(_miss[:6]) + ("…" if len(_miss) > 6 else "")))
+        _eng = _dag_engine_stale(dag)
+        if _eng:
+            lines.append("⚠️ 引擎已更新: 归档指纹 %s ≠ 现引擎 %s（归档为旧版本产出，"
+                         "结果不可直接采纳，请重跑 DAG）" % _eng)
         _built = dag.get("built_at")
         if _built:
             try:
@@ -1507,6 +1511,24 @@ def _up_module():
         import usecase_pipeline as up  # noqa: E402
         _UP_MOD = up
     return _UP_MOD
+
+
+def _dag_engine_stale(dag):
+    """比对归档引擎指纹 vs 现引擎指纹；不一致返回 (归档fp, 现fp)，一致/无指纹返回 None。
+
+    2026-09-13：`built_at`/`cache_last` 只保证「数据新鲜」，管不住「引擎版本」。归档若由
+    旧引擎产出（改过 XML/usecase_pipeline.py 后没重跑），选股结果会与设计不符 —— 事故：
+    09-13 12:40 归档缺 6 个 P1 节点(degraded=true)，同日 14:15 补齐实现后，同 asof 重跑
+    订单即漂移（中线 5 只 → 4 只）：「asof 相同」≠「结果可复现」。
+    """
+    arch = (dag or {}).get("engine_fingerprint")
+    if not arch:
+        return None
+    try:
+        now = _up_module().engine_fingerprint()
+    except Exception:  # noqa: BLE001
+        return None
+    return (arch, now) if now != arch else None
 
 
 def _trend_chart_cell(snaps):
@@ -2407,6 +2429,48 @@ def _big_board_lines(cache, asof):
     lines = ["📊 大盘(%s): %s" % (asof, " ".join(row_parts))]
     strong = " ".join("%s 5日%+.1f/20日%+.1f" % (m["disp"], m["p5"] or 0, m["p20"] or 0) for m in meta)
     lines.append("   强弱(5日/20日) %s" % strong)
+    # ── 技术面明细 + 关键点（2026-09-13 新增）────────────────────────────
+    # 用户要求：大盘总结不能只有涨跌幅，要和个股表同口径给出
+    # RSI / SAR / MACD / OBV / 均线粘合 / 量比 / 趋势图，并对 MACD 顶/底背离、
+    # 锤子线等**关键点**单独点名（这些点往往就是买卖决策点）。
+    try:
+        import _technicals as _T
+        tech_parts, key_parts, comments = [], [], []
+        for code, disp in _BIG_IDX:
+            sl = [s for s in (snaps_map.get(code) or []) if (s.get("date") or "") <= asof]
+            if len(sl) < 60:
+                continue
+            brief = _T.index_brief(sl, name=disp)
+            if brief:
+                tech_parts.append(brief)
+            d = _T.macd_divergence(sl)
+            p = _T.patterns(sl)
+            if d:
+                key_parts.append("%s %s(%s·%s｜对比%s)" % (
+                    disp, "MACD底背离" if d["kind"] == "bottom" else "MACD顶背离",
+                    "跨级" if d.get("level") == "cross" else "就近",
+                    "柱" if d.get("by") == "hist" else "DIF", d["p1"]))
+                if d["kind"] == "bottom":
+                    if p.get("hammer"):
+                        comments.append("底背离+锤子线：动能衰竭且下影有承接，"
+                                        "可小仓左侧试探（止损设该K线最低点下方，放量阳线再加）；"
+                                        "★指数1600根回测该组合无显著超额，仅作观察不作依据")
+                    else:
+                        comments.append("底背离但未现承接K线：动能衰竭≠止跌，等确认再动"
+                                        "（★指数回测底背离无显著超额，勿单用）")
+                else:
+                    comments.append("顶背离：涨势动能衰竭，勿追高，反弹逢高减仓")
+            if p.get("hammer"):
+                key_parts.append("%s 锤子线(%s)" % (
+                    disp, "缩量" if p.get("shrink") else "量比%.1f" % (p.get("vol_ratio") or 0)))
+        if tech_parts:
+            lines.append("   技术面: " + "  ｜ ".join(tech_parts))
+        if key_parts:
+            lines.append("   ⚠ 关键点: " + " ； ".join(key_parts))
+        if comments:
+            lines.append("   ↳ " + " ； ".join(dict.fromkeys(comments)))
+    except Exception:
+        pass
     # 大方向建议（依据回溯统计）
     deep = [m for m in meta if (m["p5"] or 0) <= -6]
     down3 = [m for m in meta if (m["streak"] or 0) <= -3]
@@ -2426,6 +2490,14 @@ def _big_board_lines(cache, asof):
     else:
         tip = "🟡 震荡：精选个股——非牛市只惩罚不追强；优先均线粘合+缩量企稳/超跌热门龙头"
     lines.append("   大方向: %s" % tip)
+    # 2026-09-13：上面的反弹统计（_dip_rebound_stat）是按主板/权重样本统计的，
+    # 不能直接套到高波动的科创50 —— 1600 根回测显示其「连跌≥4」后 5/10/20 日
+    # 胜率仅 47/45/36%、均为负超额。命中时显式提示，避免误导。
+    kc = [m for m in meta if m["disp"] == "科创50"]
+    if kc and (kc[0]["p20"] or 0) <= -6:
+        lines.append("   ↳ 注：科创50 已 20日%+.1f%%，上述反弹统计不适用该指数"
+                     "（回测 5/10/20日胜率47/45/36%%，负超额），需放量收复5日线再谈"
+                     % (kc[0]["p20"] or 0))
     return lines
 
 
@@ -2553,6 +2625,11 @@ def _build_candidate_sections(data, ctx, cache, dag, old_secids, asof, intraday=
         stale = " (asof %s)" % dag_asof
     elif dag.get("mode") == "snapshot_intraday" or (dag_asof and asof and dag_asof > asof):
         stale = "【盘中实时】"
+    # 引擎版本校验（2026-09-13）：归档若由旧引擎产出，表里标的与设计不符 —— 表头直接标红，
+    # 避免「引擎已更新但归档没重跑」被当有效选股采纳（12:40 缺 6 个 P1 节点那次的教训）。
+    _eng = _dag_engine_stale(dag)
+    if _eng:
+        stale += " ⚠归档非当前引擎(fp %s≠%s)" % _eng
     sections.append(_tag_section({
         "title": "主线 DAG 当日选股（%d只）%s（形态匹配仅标注，看涨才买入）" % (dag_real, stale),
         "rows": dag_rows}, "p1"))
@@ -2630,7 +2707,15 @@ def _build_candidate_sections(data, ctx, cache, dag, old_secids, asof, intraday=
                 # （"RSI58 SAR红↑1 MACD红柱扩大"），而 RSI/SAR/MACD 三列由 _pk_tech_cells(pk)
                 # 按**当日实时 snaps** 另算 → 同一张表里同一指标出现两个值（59 vs 58 等），
                 # 故去掉 tag 回显，避免自相矛盾。
-                note = "绿转红√"
+                # 2026-09-13：不再无条件写「绿转红√」。旧实现硬编码，一旦底层
+                # snaps 陈旧（hist 冻结在 09-04 却按 09-11 口径推送）就会输出
+                # 与事实相反的断言 → 改为按 pk 真实状态判定。
+                if pk.get("stale"):
+                    note = "⚠%s口径" % (pk.get("data_asof") or "?")
+                elif pk.get("fresh_up"):
+                    note = "绿转红√"
+                else:
+                    note = "SAR红非绿转红"
                 fu_rows.append({
                     "name": str(pk.get("name") or code6) + ("√DAG" if pk.get("dag_hit") else ""),
                     "code": code6,
@@ -3790,6 +3875,10 @@ def _push_eod_summary(dry, use_ctx, log):
             dag = json.load(f)
     except (OSError, ValueError):
         dag = None
+    _eng = _dag_engine_stale(dag)
+    if _eng:
+        lines.append("⚠️ 引擎已更新: 归档指纹 %s ≠ 现引擎 %s（归档为旧版本产出，建议重跑 DAG）"
+                     % _eng)
     if dag and (dag.get("result") or {}):
         rows = []
         for period in ("超短", "短线", "中线", "长线"):

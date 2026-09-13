@@ -24,6 +24,7 @@ exe/PC 无需改代码即可同步。与 smalltools 引擎桥接：
     runner = up.UseCaseRunner(usecase_id="etf_dip", cache=cache)
     result = runner.run(with_stages=True)   # -> {orders, market_state, stages, ...}
 """
+import hashlib
 import importlib
 import json
 import os
@@ -223,6 +224,38 @@ def register(*modules):
             NODE_IMPLS[m] = fn
         return fn
     return deco
+
+
+def engine_fingerprint():
+    """引擎指纹：本文件 + 同目录全部 `*_usecase.xml`/`*_pipeline.xml` 【内容】sha1。
+
+    用途（2026-09-13）：DAG 归档 `dag_screen_latest.json` 写入本指纹；consumers 比对
+    「归档指纹 vs 现引擎指纹」，不一致即说明引擎/XML 在归档生成后又被改过 —— 归档结果
+    由旧版本引擎产出，不可直接展示。事故复盘：
+      · 09-12 12:05 归档：`n_direction`(下跌趋势剔除) 静默透传 → 选出 9.11 -5% 大跌票；
+      · 09-13 12:40 归档：缺 6 个 P1 节点(seasonality/leader/sector_pool/crossday/
+        rotation_penalty/defensive)，`degraded=true`；同日 14:15 补齐实现后同 asof
+        重跑订单即漂移（中线 5 只 → 4 只），说明「asof 相同」不等于「结果可复现」。
+    取【内容】而非 mtime，避免 git clone/checkout 造成误报；已注册 module 数一并计入，
+    module 增减（=引擎能力变化）本身也改变指纹。返回 16 位十六进制短串。
+    """
+    files = ["usecase_pipeline.py"]
+    try:
+        files += sorted(f for f in os.listdir(_HERE)
+                        if f.endswith(("_usecase.xml", "_pipeline.xml")))
+    except OSError:
+        pass
+    h = hashlib.sha1()
+    h.update(("modules=%d|" % len(NODE_IMPLS)).encode("utf-8"))
+    for f in files:
+        h.update(f.encode("utf-8") + b"|")
+        try:
+            with open(os.path.join(_HERE, f), "rb") as fh:
+                h.update(hashlib.sha1(fh.read()).digest())
+        except OSError:
+            h.update(b"missing")
+        h.update(b"|")
+    return h.hexdigest()[:16]
 
 
 def _inputs(ctx, node):

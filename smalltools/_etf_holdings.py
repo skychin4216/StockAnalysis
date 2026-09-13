@@ -355,6 +355,46 @@ def _slice_by_date(snaps, asof):
     return [s for s in snaps if s["date"] <= asof]
 
 
+def _last_date(snaps):
+    """日K序列末日（无数据返回 ''）。"""
+    return str((snaps[-1] or {}).get("date") or "") if snaps else ""
+
+
+def _expected_last_date(now=None):
+    """『最近一个应有收盘K线』的日期（仅按周末回退，不处理节假日）。
+
+    15:00 前视为当日未定格 → 取上一工作日；周六/周日继续回退。
+    节假日时该值会偏新，最坏后果是多重拉一次行情 —— 方向安全（宁可多拉，
+    绝不允许把陈旧数据当成当日口径，正是 2026-09-13 事故要防的事）。
+    """
+    t = now or _dt.datetime.now()
+    d = t.date()
+    if t.hour < 15:
+        d -= _dt.timedelta(days=1)
+    while d.weekday() >= 5:
+        d -= _dt.timedelta(days=1)
+    return d.isoformat()
+
+
+def _slice_fresh(snaps, asof):
+    """按 asof 截断 → (sliced, last_date, fresh)。
+
+    ★ 2026-09-13 严重事故修复：
+    旧口径只做 `date <= asof` 截断、**从不校验末日**。`data/_etf_top5_hist.json`
+    冻结在 2026-09-04（`build_top5_hist` 只补「缺失 code」，从不刷新「已存在但
+    陈旧」的 code），而回放/复盘把 09-04 的切片当成「2026-09-11 收盘K线口径」
+    推送 —— 09-04 是普涨日，于是茅台(600519)/五粮液(000858)/洋河(002304)/
+    赛力斯(601127)/爱尔眼科(300015)/联影医疗(688271) 等被标成
+    「SAR红↑1 · 绿转红✓」，而它们到 09-11 真实 SAR 早已翻绿（下跌趋势）。
+
+    现在统一用本函数：末日 != asof 即 `fresh=False`，调用方**必须**降级标注，
+    禁止再输出「当日/绿转红/刚刚翻红」这类当日断言。
+    """
+    sl = [s for s in snaps if s.get("date") and s["date"] <= asof]
+    last = _last_date(sl)
+    return sl, last, bool(last and last == asof)
+
+
 def _pos60(snaps):
     """距60日收盘高点的回撤%（负=低于高点）；样本不足返回 None。与线上 pos60 同口径。"""
     if len(snaps) < 21:
@@ -522,6 +562,17 @@ def _screen_meta(snaps):
         pass
     out["note"] = _confirm_note_from_snaps(snaps)
     out["tag"] = _ind_tag(snaps) if n >= 30 else ""
+    # MACD 顶/底背离（2026-09-13 新增）：关键点要在表格里点名。
+    # 注意：指数 1600 根回测显示底背离**无显著超额**，故仅作观察标记，
+    # 不单独构成买卖依据（文案里已注明）。
+    try:
+        import _technicals as T
+        _d = T.macd_divergence(snaps)
+        out["divergence"] = (_d or {}).get("kind") or ""
+        out["divergence_txt"] = T.divergence_text(_d)
+    except Exception:
+        out["divergence"] = ""
+        out["divergence_txt"] = ""
     return out
 
 
@@ -589,11 +640,19 @@ def _decide_pick(pk):
     return (score >= _DECIDE_MIN_SCORE and core), score
 
 
+def _pct_txt(pk):
+    """『今+x%』文案。陈旧切片（stale）显式带实际口径日，避免被读成当日涨幅。"""
+    s = "今%+.1f%%" % (pk.get("pct") or 0)
+    if pk.get("stale"):
+        s += "(截至%s)" % (pk.get("data_asof") or "?")
+    return s
+
+
 def _qualify_line(pk):
     """精选合格票的单行（🔴 候选推荐；含指标/确认/主线DAG标记）。
     精选行不再输出『未企稳·勿接飞刀』等负面标注，改为转折催化剂结论。"""
-    line = "    🔴 %s(%s) 距60日高%+.1f%% 今%+.1f%%" % (
-        pk["name"], pk["code"], pk.get("pos60") or 0, pk.get("pct") or 0)
+    line = "    🔴 %s(%s) 距60日高%+.1f%% %s" % (
+        pk["name"], pk["code"], pk.get("pos60") or 0, _pct_txt(pk))
     extras = []
     if pk.get("tag"):
         extras.append(pk["tag"])
@@ -616,8 +675,8 @@ def _qualify_line(pk):
 
 def _pick_line(pk):
     """低吸候选单行（🔴 名称(代码) 距60日高x% 今y% | 指标 | 确认）。"""
-    base = "    🔴 %s(%s) 距60日高%+.1f%% 今%+.1f%%" % (
-        pk["name"], pk["code"], pk["pos60"], pk["pct"])
+    base = "    🔴 %s(%s) 距60日高%+.1f%% %s" % (
+        pk["name"], pk["code"], pk["pos60"], _pct_txt(pk))
     if pk.get("tag"):
         base += " | " + pk["tag"]
     if pk.get("note"):
@@ -633,6 +692,18 @@ def load_top5_hist():
         return d if isinstance(d, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+def hist_stale(codes, want=None):
+    """codes({code:{name,snaps}}) 中是否存在「末日 < 期望最近交易日」的票。
+
+    供回放/推送方在复用本地全史前先判断要不要重建（避免再次拿陈旧切片当当日口径）。
+    """
+    want = want or _expected_last_date()
+    for ent in (codes or {}).values():
+        if _last_date((ent or {}).get("snaps") or []) < want:
+            return True
+    return False
 
 
 def save_top5_hist(codes):
@@ -696,19 +767,29 @@ def build_top5_hist(refresh_missing=True, print_log=None):
         for s in (f.get("top") or [])[:5]:
             need.setdefault(s["code"], s.get("name") or "")
     old = (load_top5_hist().get("codes") or {})
-    codes = {}
+    want = _expected_last_date()
+    codes, stale = {}, []
     for c, nm in need.items():
         ent = old.get(c) or {}
-        if ent.get("snaps") and len(ent["snaps"]) >= 40:
-            codes[c] = {"name": ent.get("name") or nm, "snaps": ent["snaps"]}
+        sn = ent.get("snaps") or []
+        if len(sn) >= 40 and _last_date(sn) >= want:
+            codes[c] = {"name": ent.get("name") or nm, "snaps": sn}
+        elif len(sn) >= 40:
+            stale.append(c)      # 有历史但末日落后 → 必须重取（旧实现漏掉这一步，
+                                 # 导致文件一旦生成就永久冻结：实测冻结在 09-04）
     if not refresh_missing:
         return codes
+    if stale:
+        log("[top5hist] %d 只已存在但末日 < %s，将重新拉取" % (len(stale), want))
     todo = [c for c in need if c not in codes]
     if not todo:
         return codes
-    # db 补齐
+    # db 补齐（只对**完全缺失**的票；陈旧票跳过 db —— db 与 hist 同源同样会陈旧，
+    # 必须走腾讯直取最新，否则「刷新」会变成把旧数据原样搬回来）
     db_ok, fetched = 0, 0
     for c in todo:
+        if c in stale:
+            continue
         snaps = _db_snaps(c)
         if snaps and len(snaps) >= 40:
             codes[c] = {"name": need[c], "snaps": snaps}
@@ -758,7 +839,7 @@ def screen_picks_asof(asof, hist=None, industry_only=True, dag_codes=None):
             ent = hist.get(s["code"])
             if not ent:
                 continue
-            snaps = _slice_by_date(ent.get("snaps") or [], asof)
+            snaps, data_asof, fresh = _slice_fresh(ent.get("snaps") or [], asof)
             if len(snaps) < 2:
                 continue
             pct = _day_pct(snaps)
@@ -773,8 +854,16 @@ def screen_picks_asof(asof, hist=None, industry_only=True, dag_codes=None):
                 "name": (ent.get("name") or s.get("name") or s["code"]),
                 "pos60": pos60, "pct": pct,
                 "dag_hit": s["code"] in dag_codes,
+                "data_asof": data_asof, "stale": (not fresh),
             }
             pk.update(meta)
+            if not fresh:
+                # 陈旧切片不得冒充当日：抑制一切「当日」类断言（否则就是
+                # 2026-09-13 那批「SAR红↑1 / 绿转红✓」误标的成因）。
+                pk["fresh_up_raw"] = pk.get("fresh_up")
+                pk["fresh_up"] = False
+                pk["note_raw"] = pk.get("note")
+                pk["note"] = "⚠%s口径" % (data_asof or "?")
             picks.append(pk)
         if not picks:
             continue
@@ -838,8 +927,8 @@ def _assemble_lowbuy(seq, groups, stats, max_rows, rejected=None):
         for pk in pending[:max_rows * 2]:
             note = pk.get("note") or ""
             tail = (" | " + note) if note else ""
-            lines.append("    🟡 %s(%s) 距60日高%+.1f%% 今%+.1f%%%s" % (
-                pk["name"], pk["code"], pk.get("pos60") or 0, pk.get("pct") or 0, tail))
+            lines.append("    🟡 %s(%s) 距60日高%+.1f%% %s%s" % (
+                pk["name"], pk["code"], pk.get("pos60") or 0, _pct_txt(pk), tail))
     lines.append("  ── 口径: 前五重仓→SAR红(绿排除)→企稳/量能/MACD/OBV共振打分，取前≤%d只%s ──"
                  % (max_rows, "，绿转红可超限" if fresh_extra else ""))
     return lines
@@ -847,7 +936,11 @@ def _assemble_lowbuy(seq, groups, stats, max_rows, rejected=None):
 
 def low_buy_lines_offline(asof, hist=None, dag_codes=None, max_rows=5):
     """离线『🎯 ETF持仓前五·低吸精选』文本行（全行业板块；历史回放页面2用）。
-    只输出通过 _decide_pick 的合格票（SAR绿直接不展示）；无符合时明示空因。"""
+
+    只输出通过 _decide_pick 的合格票（SAR绿直接不展示）；无符合时明示空因。
+    2026-09-13：若切片末日 != asof（本地前五历史K线陈旧），段首插入显式告警行，
+    并把陈旧票的「绿转红」断言一并抑制（见 `_slice_fresh`）。
+    """
     st = screen_picks_asof(asof, hist=hist, dag_codes=dag_codes)
     groups, seq, rejected = [], [], []
     stats = {"cand": 0, "sar_dn": 0, "fresh": 0}
@@ -871,7 +964,15 @@ def low_buy_lines_offline(asof, hist=None, dag_codes=None, max_rows=5):
                 seq.append((score, gidx, pk))
             else:
                 rejected.append(pk)  # SAR红但未过企稳/共振 → 点名观察
-    return _assemble_lowbuy(seq, groups, stats, max_rows, rejected)
+    lines = _assemble_lowbuy(seq, groups, stats, max_rows, rejected)
+    stale = sorted({pk.get("data_asof") for info in st.values()
+                    for pk in info.get("picks") or []
+                    if pk.get("stale") and pk.get("data_asof")})
+    if stale:
+        lines.insert(0, "  ⚠ 本地前五重仓K线仅到 %s（非 %s 口径）：本表指标为 %s 值，"
+                        "「绿转红/当日」断言已抑制，勿当当日信号执行"
+                     % ("、".join(stale), asof, "、".join(stale)))
+    return lines
 
 
 # 当日已取数缓存（code → _screen_meta dict），避免 15 分钟轮询重复拉日K
@@ -1178,6 +1279,11 @@ def _pk_tech_cells(pk):
         h = pk.get("macd_hist")
         macd_s = ("红柱" if isinstance(h, (int, float)) and h > 0
                   else ("绿柱" if isinstance(h, (int, float)) and h < 0 else "—"))
+    # MACD 单元格顺带点名背离关键点（表格里能一眼看到，无需另加列）
+    if pk.get("divergence") == "bottom":
+        macd_s += "·底背离"
+    elif pk.get("divergence") == "top":
+        macd_s += "·顶背离"
     obv = pk.get("obv_up")
     obv_s = "上行" if obv is True else ("下行" if obv is False else "—")
     tag = str(pk.get("tag") or "")
@@ -1298,8 +1404,8 @@ def _assemble_lowbuy_table(seq, groups, stats, max_rows, rejected=None):
         for pk in pending[:max_rows * 2]:
             note = pk.get("note") or ""
             tail = (" | " + note) if note else ""
-            lines.append("    🟡 %s(%s) 距60日高%+.1f%% 今%+.1f%%%s" % (
-                pk["name"], pk["code"], pk.get("pos60") or 0, pk.get("pct") or 0, tail))
+            lines.append("    🟡 %s(%s) 距60日高%+.1f%% %s%s" % (
+                pk["name"], pk["code"], pk.get("pos60") or 0, _pct_txt(pk), tail))
         return lines
     single = len(groups) <= 1
 

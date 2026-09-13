@@ -169,8 +169,18 @@ def replay_one(day, cache, hist, args):
                     dag_codes.add(c6)
     low_lines = (EH.low_buy_lines_offline(asof, hist=hist, dag_codes=dag_codes)
                  if hist else [])
-    note = ("💡 回放说明[%s]：板块/ETF资金流为盘中实时采集、无历史存档；"
-            "本页以 %s 收盘K线口径展示全行业ETF前五低吸。" % (scene, asof))
+    # 2026-09-13：说明文案不再无条件宣称「以 asof 口径」——先取实际K线末日，
+    # 陈旧时如实披露（此前硬写 asof，把 09-04 的数据说成 09-11 口径）。
+    _hist_dates = [EH._last_date((v or {}).get("snaps") or [])
+                   for v in (hist or {}).values()]
+    _hist_last = min([d for d in _hist_dates if d] or [""])
+    if _hist_last and _hist_last != asof:
+        note = ("💡 回放说明[%s]：板块/ETF资金流为盘中实时采集、无历史存档；"
+                "⚠ 本地前五重仓K线仅到 %s，本页为 %s 口径（非 %s），"
+                "「绿转红/当日」类断言已抑制。" % (scene, _hist_last, _hist_last, asof))
+    else:
+        note = ("💡 回放说明[%s]：板块/ETF资金流为盘中实时采集、无历史存档；"
+                "本页以 %s 收盘K线口径展示全行业ETF前五低吸。" % (scene, asof))
     pages, _tbl_imgs = PC.round_pages(data, None, None, scene=scene, dag=dag,
                                       cache=cacheD, lowbuy_offline=low_lines,
                                       note_offline=note)
@@ -217,8 +227,11 @@ def replay_days(days, args):
     cache = PC.load_cache()
     print("  标的 %d 只" % len(cache))
     hist = EH.load_top5_hist().get("codes") or {}
-    if len(hist) < 30:
-        print("构建ETF前五历史K线(首次较慢, db+腾讯补缺)...")
+    # 2026-09-13：除「数量不足」外，末日落后的陈旧文件也必须重建 ——
+    # 旧实现只在 len<30 时构建，文件一旦生成便永久冻结（实测冻结在 09-04，
+    # 被当成 09-11 口径回放，导致「SAR红↑1 / 绿转红✓」全线误标）。
+    if len(hist) < 30 or EH.hist_stale(hist):
+        print("构建/刷新ETF前五历史K线(首次较慢, db+腾讯补缺)...")
         hist = EH.build_top5_hist()
     recs = []
     for day in days:

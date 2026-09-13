@@ -115,12 +115,15 @@ def analyze(snaps, max_bars=260):
     if not snaps or len(snaps) < 30:
         return {}
     ss = snaps[-max_bars:]
-    closes = [s.get("close") for s in ss]
-    if any(c is None for c in closes):
-        closes = [c for c in closes if c is not None]
-    closes = [float(c) for c in closes]
-    if len(closes) < 30:
+    # ★ 2026-09-13 修对齐 bug：旧实现在 close 含 None 时把 closes 过滤短了，
+    # 而 highs/lows/vols 仍按 ss 原长度构造 → 三个数组下标错位，SAR/MACD/ATR
+    # 会在「某天 close 缺失」时整体算错（静默、且看起来数值正常）。
+    # 现在统一按同一批「close 有效」的样本构造所有序列。
+    keep = [i for i, s in enumerate(ss) if s.get("close") is not None]
+    if len(keep) < 30:
         return {}
+    ss = [ss[i] for i in keep]
+    closes = [float(s.get("close")) for s in ss]
     highs = [float(s.get("high") or closes[i]) for i, s in enumerate(ss)]
     lows = [float(s.get("low") or closes[i]) for i, s in enumerate(ss)]
     vols = [float(s.get("volume") or 0) for s in ss]
@@ -432,3 +435,246 @@ def annotate_quote(turnover=None, pe=None, volume_ratio=None):
         else:
             tags.append("量比%.1f·缩量" % volume_ratio)
     return tags
+
+
+# ── K线形态 / MACD 顶底背离 / 指数一行技术摘要（2026-09-13 新增）──────────────
+def _fnum(row, key):
+    """取 row[key]，缺失时回退 close。"""
+    v = row.get(key)
+    if v is None:
+        v = row.get("close")
+    return float(v or 0)
+
+
+def patterns(snaps):
+    """末根K线的**形态**判定（日线，旧→新）。
+
+    返回 dict：hammer(锤子线)/doji(十字星)/bullish_engulf(看涨吞没)/
+    morning_star(早晨之星)/vol_ratio(量比)/shrink(缩量)。
+
+    锤子线口径（与 _idea_scan.py 一致）：下影 ≥ 2×实体、上影 ≤ max(实体, 12%振幅)、
+    收阳或收平、且最低价落在近 10 日低位区（避免把下跌中继的长下影当底部信号）。
+    """
+    if not snaps or len(snaps) < 4:
+        return {}
+    k, p1, p2 = snaps[-1], snaps[-2], snaps[-3]
+    o, c, h, l = (_fnum(k, "open"), _fnum(k, "close"),
+                  _fnum(k, "high"), _fnum(k, "low"))
+    body = abs(c - o)
+    rng = max(h - l, 1e-9)
+    up_sh, lo_sh = h - max(o, c), min(o, c) - l
+    lo10 = min(_fnum(x, "low") for x in snaps[-10:])
+    o1, c1 = _fnum(p1, "open"), _fnum(p1, "close")
+    o2, c2 = _fnum(p2, "open"), _fnum(p2, "close")
+    vols = [float(x.get("volume") or 0) for x in snaps]
+    v5 = sum(vols[-6:-1]) / max(len(vols[-6:-1]), 1)
+    vr = round(vols[-1] / v5, 2) if v5 > 0 else None
+    return {
+        "hammer": bool(lo_sh >= 2 * body and up_sh <= max(body, rng * 0.12)
+                       and c >= o and l <= lo10 * 1.01),
+        "doji": bool(body <= rng * 0.03),
+        "bullish_engulf": bool(c1 < o1 and c > o and c >= o1 and o <= c1),
+        "morning_star": bool(c2 < o2
+                             and abs(c1 - o1) <= max(abs(c2 - o2) * 0.35, rng * 0.15)
+                             and c > o and c >= (o2 + c2) / 2),
+        "vol_ratio": vr,
+        "shrink": bool(vr is not None and vr < 0.8),
+    }
+
+
+def _pivots(vals, gap=3, kind="low"):
+    """摆动点索引：kind='low' → 左右各 gap 根内最低（含自身）。"""
+    out = []
+    for i in range(gap, len(vals) - gap):
+        seg = vals[i - gap:i + gap + 1]
+        if kind == "low":
+            if vals[i] <= min(seg):
+                out.append(i)
+        else:
+            if vals[i] >= max(seg):
+                out.append(i)
+    return out
+
+
+def macd_divergence(snaps, lookback=120, gap=3, max_bars=260):
+    """MACD 顶/底背离检测（日线，旧→新）。
+
+    口径说明（两种都判，`by` 记录命中口径）：
+    - **柱口径(hist = DIF-DEA)**：价格新低但**绿柱未同步创新低**（收窄）→ 最常用的
+      「MACD底背离」；顶背离则是价格新高而红柱未同步创新高。
+    - **DIF 口径**：价格新低且 DIF 抬高（动能线本身背离）。
+
+    `level` 区分两种情况：
+    - **near（就近背离）**：与**前一个摆动低点**比较 —— 教科书式标准判定；
+    - **cross（跨级背离）**：就近不成立，但与该低点之前、价格**更高**的某个摆动低点
+      比较成立（例：2026-09-11 科创50 日线 1516.20 破 08-03 低点 1549.74，而 MACD 绿柱
+      由 -64.7 收窄到 -24.7 → 跨级柱背离）。这类信号弱于就近背离，输出时须标注对比日。
+
+    返回 {"kind","level","by","p1","p2","price1","price2","dif1","dif2","hist1","hist2","ago"}；
+    无背离返回 {}。ago = 距今多少根K线出现确认极值点。
+    """
+    if not snaps or len(snaps) < 40:
+        return {}
+    ss = snaps[-max_bars:]
+    ss = [s for s in ss if s.get("close") is not None]
+    if len(ss) < 40:
+        return {}
+    closes = [float(s["close"]) for s in ss]
+    lows = [_fnum(s, "low") or closes[i] for i, s in enumerate(ss)]
+    highs = [_fnum(s, "high") or closes[i] for i, s in enumerate(ss)]
+    dif = _ema_series(_ema_series(closes, 12), 9)
+    dea = _ema_series(dif, 9)
+    if len(dif) != len(closes):
+        return {}
+    hist = [a - b for a, b in zip(dif, dea)]
+    lo0 = max(0, len(closes) - lookback)
+
+    def _cands(vals, kind):
+        """摆动点候选：常规 pivot + 「末根若为近 gap*2 根极值」也算
+        （关键点常常就是当天确认的，必须能被评估）。"""
+        idx = [i for i in _pivots(vals, gap, kind) if i >= lo0]
+        last_i = len(vals) - 1
+        seg0 = max(lo0, last_i - gap * 2)
+        if last_i - lo0 >= gap:
+            if kind == "low" and vals[last_i] <= min(vals[seg0:last_i + 1]):
+                idx.append(last_i)
+            elif kind == "high" and vals[last_i] >= max(vals[seg0:last_i + 1]):
+                idx.append(last_i)
+        return sorted(set(idx))
+
+    def _pack(kind, level, by, a, b):
+        is_bottom = kind == "bottom"
+        return {"kind": kind, "level": level, "by": by,
+                "p1": ss[a].get("date"), "p2": ss[b].get("date"),
+                "price1": round(lows[a] if is_bottom else highs[a], 2),
+                "price2": round(lows[b] if is_bottom else highs[b], 2),
+                "dif1": round(dif[a], 3), "dif2": round(dif[b], 3),
+                "hist1": round(hist[a], 3), "hist2": round(hist[b], 3),
+                "ago": len(closes) - 1 - b}
+
+    def _scan(vals, kind, compare):
+        """compare(a, b)：价格方向与动能方向是否构成背离，返回 'hist'/'dif'/''。"""
+        cs = _cands(vals, kind)
+        if len(cs) < 2:
+            return {}
+        b = cs[-1]
+        trials = [("near", cs[-2])] + [("cross", x) for x in reversed(cs[:-1][:-1])]
+        for level, a in trials:
+            if not compare(a, b):
+                continue
+            if kind == "low":
+                by = "hist" if hist[b] > hist[a] else ("dif" if dif[b] > dif[a] else "")
+            else:
+                by = "hist" if hist[b] < hist[a] else ("dif" if dif[b] < dif[a] else "")
+            if by:
+                return _pack("bottom" if kind == "low" else "top", level, by, a, b)
+        return {}
+
+    bot = _scan(lows, "low", lambda a, b: lows[b] < lows[a])
+    top = _scan(highs, "high", lambda a, b: highs[b] > highs[a])
+    if bot and top:
+        return bot if bot["ago"] <= top["ago"] else top
+    return bot or top
+
+
+def divergence_text(d):
+    """背离 dict → 中文摘要（无背离返回 ''）。"""
+    if not d:
+        return ""
+    lv = "跨级" if d.get("level") == "cross" else "就近"
+    by = "柱" if d.get("by") == "hist" else "DIF"
+    if d["kind"] == "bottom":
+        return "MACD底背离[%s·%s](%s→%s 价%.2f<%.2f 而%s未同步走低)" % (
+            lv, by, d["p1"], d["p2"], d["price2"], d["price1"], by)
+    return "MACD顶背离[%s·%s](%s→%s 价%.2f>%.2f 而%s未同步走高)" % (
+        lv, by, d["p1"], d["p2"], d["price2"], d["price1"], by)
+
+
+def trend_label(snaps):
+    """『↑上涨/↓下跌/→震荡』+ 当日形态（大盘与个股共用的一行趋势图文案）。"""
+    s = analyze(snaps)
+    if not s:
+        return ""
+    ma = s.get("ma") or {}
+    sar = s.get("sar") or {}
+    c = s.get("close") or 0
+    ma20 = ma.get("ma20") or 0
+    if sar.get("dir") == "UP" and ma20 and c >= ma20:
+        base = "↑上涨"
+    elif sar.get("dir") == "DOWN" and ma20 and c < ma20:
+        base = "↓下跌"
+    else:
+        base = "→震荡"
+    p = patterns(snaps)
+    extra = []
+    if p.get("hammer"):
+        extra.append("锤子线看涨")
+    elif p.get("bullish_engulf"):
+        extra.append("看涨吞没")
+    elif p.get("morning_star"):
+        extra.append("早晨之星")
+    elif p.get("doji"):
+        extra.append("十字星")
+    if p.get("shrink"):
+        extra.append("缩量")
+    return "·".join([base] + extra) if extra else base
+
+
+def index_brief(snaps, name="", max_bars=260):
+    """指数/大盘一行技术摘要（与个股表同口径）：
+    RSI / SAR / MACD / OBV / 均线粘合 / 量比 / 趋势图 / MACD背离。
+    """
+    s = analyze(snaps, max_bars=max_bars)
+    if not s:
+        return ""
+    p = []
+    rsi = s.get("rsi")
+    if isinstance(rsi, (int, float)):
+        rsi_s = "RSI%.0f" % rsi
+        if rsi >= 70:
+            rsi_s += "超买"
+        elif rsi <= 30:
+            rsi_s += "超卖"
+        p.append(rsi_s)
+    sar = s.get("sar") or {}
+    if sar.get("dir") == "UP":
+        if sar.get("flip_dir") == "UP" and (sar.get("flip_ago") or 0) <= 3:
+            p.append("SAR刚翻红↑")
+        else:
+            p.append("SAR红↑%d" % (sar.get("bars") or 0))
+    elif sar.get("dir") == "DOWN":
+        if sar.get("flip_dir") == "DOWN" and (sar.get("flip_ago") or 0) <= 3:
+            p.append("SAR刚翻绿↓%d" % (sar.get("flip_ago") or 0))
+        else:
+            p.append("SAR绿↓%d" % (sar.get("bars") or 0))
+    mc = s.get("macd") or {}
+    if mc.get("cross") == "gold":
+        p.append("MACD金叉")
+    elif mc.get("cross") == "dead":
+        p.append("MACD死叉")
+    elif mc.get("bull"):
+        p.append("MACD红柱")
+    else:
+        p.append("MACD绿柱")
+    if s.get("obv_up") is True:
+        p.append("OBV上行")
+    elif s.get("obv_up") is False:
+        p.append("OBV下行")
+    ma = s.get("ma") or {}
+    if ma.get("squeeze"):
+        p.append("均线粘合↓" if ma.get("squeeze_down") else "均线粘合")
+    elif ma.get("bull"):
+        p.append("MA多头")
+    vr = s.get("atr_pct")
+    v = volume_ratio_of(snaps)
+    if v is not None:
+        p.append("量比%.1f" % v)
+    elif isinstance(vr, (int, float)):
+        p.append("ATR%.1f%%" % vr)
+    t = trend_label(snaps)
+    if t:
+        p.append("趋势图 " + t)
+    d = macd_divergence(snaps)
+    if d:
+        p.append("⚠" + ("MACD底背离" if d["kind"] == "bottom" else "MACD顶背离"))
+    return ("%s " % name if name else "") + " ".join(p)
