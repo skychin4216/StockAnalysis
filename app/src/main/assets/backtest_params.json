@@ -1,6 +1,6 @@
 {
   "version": 4,
-  "generated": "2026-09-14 06:29",
+  "generated": "2026-09-14 12:55",
   "source": "AutoQuant export_params.py (params_history + App 基准)",
   "period": "2025-12-23 ~ 2026-09-11",
   "select_params": {
@@ -377,7 +377,7 @@
     },
     "pc_build_time": "2026-08-25 10:30:00",
     "period": "2023-08-15 ~ 2026-08-25",
-    "fit_time": "2026-09-14 06:29",
+    "fit_time": "2026-09-14 12:55",
     "fit_source": "AutoQuant _self_fit_pipeline.py 三状态回溯自拟合",
     "fit_data_range": "2008-01-02 ~ 2026-09-11",
     "fit_phases": {
