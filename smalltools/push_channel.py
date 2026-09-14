@@ -25,6 +25,7 @@ import base64
 import hashlib
 import json
 import os
+import sys
 import time
 import urllib.parse
 import urllib.request
@@ -272,10 +273,32 @@ def send_file(file_path, cfg):
         return False
 
 
-def push(title, content, cfg):
+def relay_push(title, content, cfg, kind="notice"):
+    """P3：并联「PC → APK 中继箱」通道（best-effort，绝不影响企微结果）。
+
+    企业微信把消息推给**人**，中继箱把消息推给**APK 本身** —— 两者职责不同，
+    故并联而非替换（见 docs/bridge-relay-design.md §6.2）。
+    缺 COS 配置 / relay 模块不可用 / 无已登记设备时静默跳过，绝不抛异常。
+    """
+    try:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        rp_dir = os.path.join(root, "AutoQuant", "autoquant")
+        if os.path.isdir(rp_dir) and rp_dir not in sys.path:
+            sys.path.insert(0, rp_dir)
+        import relay_push as _rp  # 延迟导入：无 COS 依赖时不影响企微推送
+        return _rp.push(title, content, kind=kind)
+    except Exception as e:  # noqa: BLE001
+        print("中继推送跳过:", type(e).__name__, e)
+        return 0
+
+
+def push(title, content, cfg, kind="notice", relay=True):
     """统一微信推送入口。渠道顺序：企业微信机器人 > pushplus > serverchan。
 
     cfg 为 app_config.json 的 notify 段（dict）。返回是否至少一路发送成功。
+
+    @param kind  推送类型，中继箱通道据此给 APK 分类（notice / candidates / intel）
+    @param relay False = 只走微信通道，不写 PC→APK 中继箱
     """
     sent = push_wecom(title, content, cfg)
     if not sent:
@@ -285,4 +308,8 @@ def push(title, content, cfg):
     if not sent:
         print("未配置推送(notify.wecom_key / pushplus_token / serverchan_key)，"
               "以下消息未发送：\n%s\n%s" % (title, content))
+    # P3：并联中继箱。**无论企微成功与否都要写** —— 两者是互补通道，
+    # 企微失败（限流/未配置）时 APK 更要能拿到消息。
+    if relay:
+        relay_push(title, content, cfg, kind=kind)
     return sent

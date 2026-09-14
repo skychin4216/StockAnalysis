@@ -10,12 +10,12 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.Window
-import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.chin.stockanalysis.cloud.CloudSyncManager
+import com.chin.stockanalysis.stock.data.CosRelayClient
 import com.chin.stockanalysis.stock.data.PcBridgeClient
 import com.chin.stockanalysis.stock.database.AiSelectedStockEntity
 import com.chin.stockanalysis.stock.database.AppBackgroundRunner
@@ -34,9 +34,10 @@ import java.util.Locale
 /**
  * PC 候选清单 Dialog（工作台「📋 PC 候选」入口）。
  *
- * 从 COS 下载 smalltools `_publish_candidates.py` 发布的候选清单并展示：
+ * 优先经**联网中继**（`PcBridgeClient` → `CosRelayClient`，无需填 IP / Token）实时拉取；
+ * 中继不可用时回退到 COS 直下 smalltools `_publish_candidates.py` 发布的候选清单。
  * 大盘状态 / 周期分组(短线·中线·长线，超短并入短线⚡) / 预备队 / 热点板块。
- * 支持：🔄 重新下载、➕ 一键把全部候选加入 AI 精选（ai_selected_stock，source=pc_candidates）。
+ * 支持：🔄 重新拉取、➕ 一键把全部候选加入 AI 精选（ai_selected_stock，source=pc_candidates）。
  */
 class PcCandidatesDialog(context: Context) : Dialog(context) {
 
@@ -50,14 +51,18 @@ class PcCandidatesDialog(context: Context) : Dialog(context) {
     private lateinit var listBox: LinearLayout
     private lateinit var emptyView: TextView
     private lateinit var addBtn: TextView
-    private lateinit var hostInput: EditText
-    private lateinit var connectBtn: TextView
+    private lateinit var relayView: TextView
+    /** P3：PC 主动推送（选股完成 / 盘前情报 / 任务结束）展示区 */
+    private lateinit var pushView: TextView
     private var watchJob: Job? = null
+    private var pushJob: Job? = null
     private var usingPc = false
 
     private fun Int.dp() = (this * density + 0.5f).toInt()
 
     init {
+        // 联网中继需要 Application Context（IP / Token 均已废弃）
+        PcBridgeClient.init(context)
         requestWindowFeature(Window.FEATURE_NO_TITLE)
         setContentView(buildView())
         window?.apply {
@@ -69,6 +74,7 @@ class PcCandidatesDialog(context: Context) : Dialog(context) {
 
     override fun dismiss() {
         watchJob?.cancel()
+        pushJob?.cancel()
         scope.cancel()
         super.dismiss()
     }
@@ -95,30 +101,28 @@ class PcCandidatesDialog(context: Context) : Dialog(context) {
         titleBar.addView(TextBtn("✕") { dismiss() })
         root.addView(titleBar)
 
-        // ── PC 直连行 ──
+        // ── 中继状态行（联网中继：无需填 IP / Token） ──
         val pcBar = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(12.dp(), 8.dp(), 12.dp(), 8.dp())
             setBackgroundColor(0xFFE3F2FD.toInt())
         }
-        hostInput = EditText(context).apply {
-            hint = "PC 地址: 192.168.x.x:8888"
-            textSize = 13f
-            setText(PcBridgeClient.loadHost(context))
-            setSingleLine(true)
+        relayView = TextView(context).apply {
+            text = CosRelayClient.statusText(context)
+            textSize = 11f
+            setTextColor(0xFF1565C0.toInt())
         }
-        pcBar.addView(hostInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        connectBtn = TextView(context).apply {
-            text = "🔗 直连"
+        pcBar.addView(relayView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        pcBar.addView(TextView(context).apply {
+            text = "🔗 中继拉取"
             textSize = 13f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             setPadding(14.dp(), 8.dp(), 14.dp(), 8.dp())
             background = rnd(0xFF00838F.toInt(), 6.dp())
-            setOnClickListener { connectToPc() }
-        }
-        pcBar.addView(connectBtn)
+            setOnClickListener { refresh() }
+        })
         root.addView(pcBar)
 
         // ── 状态行 ──
@@ -129,6 +133,15 @@ class PcCandidatesDialog(context: Context) : Dialog(context) {
             text = "正在下载 PC 候选清单…"
         }
         root.addView(statusView)
+
+        // ── PC 主动推送（P3）：PC 侧选股/盘前情报完成即写入 pc/push/，这里只做展示 ──
+        pushView = TextView(context).apply {
+            setPadding(16.dp(), 0, 16.dp(), 6.dp())
+            textSize = 12f
+            setTextColor(0xFF6A1B9A.toInt())
+            visibility = View.GONE
+        }
+        root.addView(pushView)
 
         // ── 列表 ──
         val scroll = ScrollView(context).apply { isFillViewport = true }
@@ -188,13 +201,27 @@ class PcCandidatesDialog(context: Context) : Dialog(context) {
     // 加载与渲染
     // ═══════════════════════════════════════════
 
+    /** 优先走联网中继（实时，无需 IP）；中继不可用则回退 COS 直下已发布的候选。 */
     private fun refresh() {
-        val host = PcBridgeClient.loadHost(context)
-        if (host.isNotBlank()) {
-            connectToPc()
-            return
+        usingPc = true
+        watchJob?.cancel()
+        statusView.text = "正在经中继拉取 PC 候选…"
+        addBtn.isEnabled = false
+        scope.launch {
+            try {
+                val json = PcBridgeClient.fetchCandidates()
+                latestJson = json
+                usingPc = true
+                statusView.text = "🔗 中继拉取成功（联网实时）"
+                relayView.text = CosRelayClient.statusText(context)
+                render(json)
+                startWatch()
+            } catch (e: Exception) {
+                usingPc = false
+                statusView.text = "中继不可用（${e.message}），改用 COS 缓存…"
+                refreshFromCloud()
+            }
         }
-        refreshFromCloud()
     }
 
     private fun refreshFromCloud() {
@@ -226,40 +253,39 @@ class PcCandidatesDialog(context: Context) : Dialog(context) {
         }
     }
 
-    /** 直连 PC 服务器(exe): 拉取候选 + 启动长轮询实时推送。 */
-    private fun connectToPc() {
-        val host = hostInput.text.toString().trim()
-        if (host.isEmpty()) {
-            Toast.makeText(context, "请输入 PC 地址（如 192.168.1.100:8888）", Toast.LENGTH_SHORT).show()
-            return
-        }
-        PcBridgeClient.saveHost(context, host)
-        usingPc = true
+    /** 中继轮询: PC 候选更新时自动刷新（无长轮询，固定间隔拉取）。 */
+    private fun startWatch() {
         watchJob?.cancel()
-        statusView.text = "正在连接 PC 服务器 $host …"
-        addBtn.isEnabled = false
-        scope.launch {
-            try {
-                val json = PcBridgeClient.fetchCandidates(host)
-                latestJson = json
-                statusView.text = "🔗 PC 直连 $host 成功（实时推送中）"
-                render(json)
-                startWatch(host)
-            } catch (e: Exception) {
-                usingPc = false
-                statusView.text = "PC 直连失败：${e.message}"
-                Toast.makeText(context, "无法连接 PC：${e.message}", Toast.LENGTH_SHORT).show()
-            }
+        watchJob = PcBridgeClient.watch(scope = scope) { json ->
+            latestJson = json
+            statusView.text = "🔗 中继更新 ${System.currentTimeMillis() % 100000}"
+            relayView.text = CosRelayClient.statusText(context)
+            render(json)
         }
+        startPushWatch()
     }
 
-    /** 长轮询: PC 候选更新时自动刷新。 */
-    private fun startWatch(host: String) {
-        watchJob?.cancel()
-        watchJob = PcBridgeClient.watch(host, scope) { json ->
-            latestJson = json
-            statusView.text = "🔗 PC 直连 $host 已更新 ${System.currentTimeMillis() % 100000}"
-            render(json)
+    /**
+     * P3：订阅 PC **主动推送**（选股完成 / 盘前情报 / 任务结束）。
+     *
+     * 与 [startWatch] 互补：候选是「APK 问、PC 才答」，而推送是 PC 侧主动写进
+     * `pc/push/{deviceId}/` 的，打开本对话框就能看到，不必等下一次轮询窗口。
+     * 每条新消息弹一次**系统**通知（PC 侧已同步推过企业微信，这里不重复推微信）。
+     */
+    private fun startPushWatch() {
+        pushJob?.cancel()
+        pushJob = PcBridgeClient.watchPushes(scope = scope) { list ->
+            val latest = list.last()
+            val title = latest.optString("title").ifBlank { "PC 推送" }
+            val content = latest.optString("content")
+            pushView.visibility = View.VISIBLE
+            pushView.text = "📨 $title（本次 ${list.size} 条新推送）\n${content.take(160)}"
+            scope.launch {
+                runCatching {
+                    com.chin.stockanalysis.notification.TradeNotifier
+                        .sendSystemOnly(context, "📨 $title", content.take(300), tag = "pc_push")
+                }
+            }
         }
     }
 

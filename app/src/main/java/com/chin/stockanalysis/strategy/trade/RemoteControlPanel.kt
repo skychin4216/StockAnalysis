@@ -13,8 +13,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import com.chin.stockanalysis.stock.data.CosRelayClient
 import com.chin.stockanalysis.stock.data.PcBridgeClient
-import com.chin.stockanalysis.stock.data.RemoteConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -33,7 +33,7 @@ import org.json.JSONObject
  * - RemoteControlDialog（全屏）：AI 对话框「📡 远程」按钮等打开，含任务列表 + 日志区
  * - StrategyImportFragment「🎛 远程」卡片（compact=true）：数据→PC参数 页，含连接信息 + 快捷任务 + CodeBuddy 消息
  *
- * 连接配置走 RemoteConfig（JSON 文件 + 本机 IP 探测 + 旧 SP 迁移）。
+ * 连接配置走**联网中继**（`CosRelayClient`，纯 COS）：无需填 IP / Token，两端联网即可。
  */
 class RemoteControlPanel(context: Context, private val compact: Boolean = false) :
     LinearLayout(context) {
@@ -43,8 +43,6 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
     private var pollJob: Job? = null
     private var msgPollJob: Job? = null
 
-    private var hostInput: EditText? = null
-    private var tokenInput: EditText? = null
     private var statusTv: TextView? = null
     private var taskListBox: LinearLayout? = null
     private var logBox: LinearLayout? = null
@@ -56,12 +54,12 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
     private var msgScroll: ScrollView? = null
     private var lastReplySeq = 0
 
-    private val cfg = RemoteConfig.load(context)
-
     private fun Int.dp() = (this * density + 0.5f).toInt()
 
     init {
         orientation = LinearLayout.VERTICAL
+        // 联网中继需要 Application Context（PC 地址/token 均已废弃，无需用户填写任何地址）
+        PcBridgeClient.init(context)
         // buildView() 内部已把子视图 addView 到 this（root），这里不能再 addView 返回值，
         // 否则会把自己添加为自己，形成父子循环引用 → resetResolvedLayoutDirection 无限递归 → StackOverflowError
         buildView()
@@ -88,40 +86,30 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
     private fun buildView(): View {
         val root = this
 
-        // ── 连接配置（预置 + 可编辑 + 本机IP） ──
+        // ── 连接配置（联网中继：无需 IP、无需 Token） ──
         val cfgBox = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(12.dp(), 8.dp(), 12.dp(), 8.dp())
             setBackgroundColor(0xFFEDE7F6.toInt())
         }
-        val localIp = RemoteConfig.getLocalIp(context)
         cfgBox.addView(TextView(context).apply {
-            text = "📡 本机IP: ${if (localIp.isBlank()) "未连接WiFi" else localIp}" +
-                    "   |   PC地址: ${cfg.port}"
-            textSize = 11f
+            text = "📡 联网中继（无需填 IP / 无需填 Token）"
+            textSize = 12f
             setTextColor(0xFF7B1FA2.toInt())
+            setTypeface(null, Typeface.BOLD)
         })
         cfgBox.addView(TextView(context).apply {
-            text = "📶 同一WiFi填 PC 局域网IP；异地用公网地址(域名/IP:8888)，PC 端需映射端口"
+            text = "两端各自联网即可，不要求同一 WiFi；PC 端需运行 python -m autoquant.relay_worker"
             textSize = 10f
             setTextColor(0xFFB39DDB.toInt())
         })
-        hostInput = EditText(context).apply {
-            hint = "PC 地址: 192.168.x.x:8888（预置 ${cfg.host.ifBlank { "待填写" }}）"
-            textSize = 13f
-            setText(cfg.host)
-            setSingleLine(true)
-        }
-        tokenInput = EditText(context).apply {
-            hint = "Token (PC端 AutoQuant/data/remote_token.txt)"
-            textSize = 13f
-            setText(cfg.token)
-            setSingleLine(true)
-        }
-        cfgBox.addView(hostInput, ViewGroup.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        cfgBox.addView(tokenInput, ViewGroup.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         cfgBox.addView(TextView(context).apply {
-            text = "🔗 保存并测试"
+            text = CosRelayClient.statusText(context)
+            textSize = 11f
+            setTextColor(0xFF4527A0.toInt())
+        })
+        cfgBox.addView(TextView(context).apply {
+            text = "🔗 测试中继连接"
             textSize = 13f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
@@ -280,30 +268,21 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
     // 操作
     // ═══════════════════════════════════════════
 
-    private fun host(): String {
-        val h = hostInput?.text?.toString()?.trim().orEmpty()
-        return if (':' in h) h else "$h:${cfg.port}"
-    }
+    /** 中继模式已无「地址」概念；保留空串仅为兼容旧调用点。 */
+    private fun host(): String = ""
 
+    /** 测试中继连通性（无需任何地址 / token 输入）。 */
     private fun saveAndTest() {
-        val h = hostInput?.text?.toString()?.trim().orEmpty()
-        val t = tokenInput?.text?.toString()?.trim().orEmpty()
-        cfg.host = h
-        cfg.token = t
-        cfg.localIp = RemoteConfig.getLocalIp(context)
-        RemoteConfig.save(context, cfg)
-        val hp = host()
-        statusTv?.text = "测试连接 $hp …"
+        statusTv?.text = "测试中继连接…"
         scope.launch {
             try {
-                val s = PcBridgeClient.remoteStatus(hp, t)
-                val j = JSONObject(s)
-                statusTv?.text = "✅ 已连接 ${j.optString("server", "PC")} | token=${j.optString("token", "")}"
+                val j = PcBridgeClient.ping()
+                statusTv?.text = "✅ 中继已连通 ${j.optString("server", "PC")}"
                 refreshTasks()
                 startMsgPolling()
             } catch (e: Exception) {
-                statusTv?.text = "❌ 连接失败: ${e.message}"
-                Toast.makeText(context, "连接失败: ${e.message}", Toast.LENGTH_LONG).show()
+                statusTv?.text = "❌ 中继连接失败: ${e.message}"
+                Toast.makeText(context, "中继连接失败: ${e.message}", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -318,15 +297,9 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
             Toast.makeText(context, "请输入消息内容", Toast.LENGTH_LONG).show()
             return
         }
-        val hp = host()
-        val tk = tokenInput?.text?.toString()?.trim().orEmpty()
-        if (hp.isBlank() || tk.isBlank()) {
-            Toast.makeText(context, "请先填写 PC 地址和 Token", Toast.LENGTH_LONG).show()
-            return
-        }
         scope.launch {
             try {
-                val r = PcBridgeClient.sendMsg(hp, tk, content)
+                val r = PcBridgeClient.sendMsg(content = content)
                 val j = JSONObject(r)
                 if (j.optBoolean("ok", false)) {
                     addMsgRow("我: $content", fromApk = true)
@@ -344,13 +317,10 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
     /** 轮询 CodeBuddy 回复（outbox） */
     private fun startMsgPolling() {
         msgPollJob?.cancel()
-        val hp = host()
-        val tk = tokenInput?.text?.toString()?.trim().orEmpty()
-        if (hp.isBlank() || tk.isBlank()) return
         msgPollJob = scope.launch {
             while (isActive) {
                 try {
-                    val r = PcBridgeClient.fetchMsgReplies(hp, tk, lastReplySeq)
+                    val r = PcBridgeClient.fetchMsgReplies(after = lastReplySeq)
                     val j = JSONObject(r)
                     val msgs = j.optJSONArray("messages") ?: JSONArray()
                     for (i in 0 until msgs.length()) {
@@ -388,16 +358,10 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
     }
 
     private fun submit(taskType: String) {
-        val hp = host()
-        val tk = tokenInput?.text?.toString()?.trim().orEmpty()
-        if (hp.isBlank() || tk.isBlank()) {
-            Toast.makeText(context, "请先填写 PC 地址和 Token", Toast.LENGTH_LONG).show()
-            return
-        }
         statusTv?.text = "提交任务 $taskType …"
         scope.launch {
             try {
-                val r = PcBridgeClient.submitTask(hp, tk, taskType)
+                val r = PcBridgeClient.submitTask(taskType = taskType)
                 val j = JSONObject(r)
                 if (j.optBoolean("ok", false)) {
                     Toast.makeText(context, "任务已提交: ${j.optString("task_id")}", Toast.LENGTH_SHORT).show()
@@ -414,21 +378,15 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
 
     private fun refreshTasks() {
         if (compact) return
-        val hp = host()
-        if (hp.isBlank()) {
-            statusTv?.text = "未配置 PC 地址"
-            return
-        }
-        val tk = tokenInput?.text?.toString()?.trim().orEmpty()
         scope.launch {
             try {
-                val r = PcBridgeClient.listTasks(hp, tk)
+                val r = PcBridgeClient.listTasks()
                 val tasks = JSONObject(r).optJSONArray("tasks") ?: JSONArray()
                 taskListBox?.removeAllViews()
                 for (i in 0 until tasks.length()) {
                     taskListBox?.addView(taskCard(tasks.getJSONObject(i)))
                 }
-                statusTv?.text = "共 ${tasks.length()} 个任务（最近） | PC: $hp"
+                statusTv?.text = "共 ${tasks.length()} 个任务（最近） | 中继"
             } catch (e: Exception) {
                 statusTv?.text = "⚠ 获取任务列表失败: ${e.message}"
             }
@@ -494,7 +452,7 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
                 background = rnd(0xFFC62828.toInt(), 4.dp())
                 setOnClickListener {
                     scope.launch {
-                        PcBridgeClient.cancelTask(host(), tokenInput?.text?.toString()?.trim().orEmpty(), id)
+                        PcBridgeClient.cancelTask(taskId = id)
                         refreshTasks()
                     }
                 }
@@ -524,7 +482,7 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
     private fun showLogs(taskId: String) {
         scope.launch {
             try {
-                val r = PcBridgeClient.taskLogs(host(), tokenInput?.text?.toString()?.trim().orEmpty(), taskId, 0)
+                val r = PcBridgeClient.taskLogs(taskId = taskId, cursor = 0)
                 val j = JSONObject(r)
                 val logs = j.optJSONArray("logs") ?: JSONArray()
                 logBox?.removeAllViews()
@@ -551,7 +509,7 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
             var cursor = 0
             while (isActive) {
                 try {
-                    val r = PcBridgeClient.taskLogs(host(), tokenInput?.text?.toString()?.trim().orEmpty(), taskId, cursor)
+                    val r = PcBridgeClient.taskLogs(taskId = taskId, cursor = cursor)
                     val j = JSONObject(r)
                     val logs = j.optJSONArray("logs") ?: JSONArray()
                     for (i in 0 until logs.length()) {

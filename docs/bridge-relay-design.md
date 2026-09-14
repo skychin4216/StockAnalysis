@@ -283,6 +283,33 @@ APK 删掉 IP/HTTP 后会**只认中继**。若中继尚未落地，删完立刻
 | **P3** | PC 主动推送落 `pc/push/`（与现有企业微信推送并联） | 选股完成自动到达 APK |
 | **P4** | MQTT 替换运输层（信封/方法表不变） | 秒级双向 |
 
+> **落地状态（2026-09-14 更新）**：**P0 / P1 / P2 / P3 已完成**，端到端实测通过 ——
+> `status.get` / `task.types` / `task.submit` / `task.get` / `task.list` / `task.cancel` /
+> `task.logs` / `msg.send` / `msg.replies` / `candidates.fetch` / `rotation.fetch` / `etf.live` 全通，
+> 且全仓库 `preset_host|preset_port|preset_token|exe_host|RemoteConfig` **零命中**。
+> **P4（MQTT）不做**：COS 轮询已满足当前需求，等真要秒级双向时再上。
+>
+> 实际落地与 6.2 计划的三点差异（以实际为准）：
+> 1. `RemoteConfig.kt` **整文件删除**，而非"保留中继字段" —— 中继的 deviceId/seq 由
+>    `CosRelayClient` 自管（`SharedPreferences: cos_relay`），不需要中间配置层。
+> 2. `relay_worker.METHODS` 初版**漏了 `task.submit`**（远程控制的核心动作），已补：
+>    `("POST", "task/submit", ("task_type", "params", "requester"))`。
+> 3. APK 侧候选刷新由"长轮询推送"改为 `PcBridgeClient.watch()` **定期间隔拉取**
+>    （中继无长轮询语义）。
+>
+> **P3 落地细节（2026-09-14）**
+> - PC 新增 `AutoQuant/autoquant/relay_push.py`：广播写 `pc/push/{deviceId}/`，
+>   每设备滚动保留 50 条（`_prune`）、best-effort（异常全吞，**绝不**影响选股主流程）；
+>   已登记设备 = `devices/` 心跳 ∪ `pc/inbox`/`pc/outbox` 里出现过的 deviceId
+>   （后者是兜底：心跳是后加的，老版本 APK 没有）。
+> - PC 接入：`smalltools/push_channel.push()` **并联**调用 —— 企业微信推给"人"、
+>   中继箱推给"APK 本身"，故企微成功与否都写中继箱；新增 `kind=` 供 APK 分类。
+> - APK：`CosRelayClient.fetchPushes()`（游标 `push_seq`，**不删对象**，多入口可重复
+>   安全调用）+ `beat()` 设备心跳（`command()` 成功后顺带上报）；
+>   `PcBridgeClient.watchPushes()` 60s 轮询、**只在新消息到达时**回调；
+>   `PcCandidatesDialog` 展示最新推送并弹**系统**通知
+>   （PC 侧已推过企微，APK 不再重复推微信，避免双重打扰）。
+
 ---
 
 ## 附录 A：与现有文档的关系

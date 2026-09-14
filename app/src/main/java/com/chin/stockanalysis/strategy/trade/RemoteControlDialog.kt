@@ -17,7 +17,7 @@ import android.widget.TextView
  *
  * 入口：AI 对话框「📡 远程」按钮 / PC 候选旧入口
  * 内容：RemoteControlPanel（连接配置 + 快捷任务 + CodeBuddy 消息 + 任务列表 + 日志）
- * 连接配置由 RemoteConfig（JSON）管理，含本机 IP 探测与预置。
+ * 连接走**联网中继**（CosRelayClient，纯 COS）：无需填 IP / Token，两端联网即可。
  */
 class RemoteControlDialog(context: Context) : Dialog(context) {
 
