@@ -9,7 +9,7 @@ import time
 import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from backtest_guangmo import fetch_tencent_float_shares  # noqa: E402
+from backtest_guangmo import fetch_tencent_float_shares, vol_shares_factor  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(HERE, "_kline_cache.json")
@@ -85,8 +85,9 @@ def fetch_full(secid):
             snaps[i]["changePct"] = (snaps[i]["close"] / prev - 1) * 100
     fs = fetch_tencent_float_shares(secid)
     if fs and fs > 0:
+        k = vol_shares_factor(secid)
         for s in snaps:
-            s["turnover"] = s["volume"] * 100 / fs * 100
+            s["turnover"] = s["volume"] * k / fs * 100
     return (qt_name or secid), snaps
 
 

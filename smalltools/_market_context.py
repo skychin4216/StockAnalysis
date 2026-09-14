@@ -299,6 +299,11 @@ def load_real_positions():
     返回 (positions, asof)：positions 为实体列表，字段与 Android 打包一致
     (stock_code, stock_name, period_type, quantity, avg_buy_price, buy_date,
      current_price, sector)。asof 为镜像目录名(phone_YYYYMMDD_HHMMSS)或 None。
+
+    `real_positions == []` = 用户**真清仓**（2026-09-13 用户确认），故最新镜像即权威，
+    不回退到更旧的非空镜像。镜像只在手机「云同步 → 上传」后刷新，PC 本地副本可能滞后于
+    手机实盘：例 phone_20260911_005705 上传的是空仓，用户此后又买入兖矿能源，本地要等
+    下一次上传才看得到。滞后时以镜像 asof 为准，不做任何推断/填补。
     """
     try:
         dirs = [d for d in os.listdir(CLOUD_DIR)

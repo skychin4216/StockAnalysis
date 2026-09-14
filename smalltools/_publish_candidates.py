@@ -3559,9 +3559,9 @@ def _run_python_dag(extra, log=print, stop_check=None, out=None):
 
 
 SNAPSHOT_GAP_MIN = 0  # 盘中实时快照刷新间隔（分钟）。0 = 每轮必刷。
-# 2026-09-12 用户要求「每一次选股都要更新」：守护轮本身已按 15 分钟一次（interval=900），
-# 若再按 30 分钟节流，则相邻两轮共用同一份快照、候选列表整段不变。故取消节流，
-# 每轮开始都重跑一次盘中实时快照（qtg 批量约 20s），使「当日选股」逐轮随盘刷新。
+# 2026-09-12 用户要求「每一次选股都要更新」：守护轮本身已按 10 分钟一次（interval=600，
+# 2026-09-13 由 900 改），若再按 30 分钟节流，则相邻两轮共用同一份快照、候选列表整段不变。
+# 故取消节流，每轮开始都重跑一次盘中实时快照（qtg 批量约 20s），使「当日选股」逐轮随盘刷新。
 
 
 def _snap_should_refresh(session, now=None):
@@ -4121,7 +4121,7 @@ def _interruptible_sleep(seconds, stop_check=None):
         seconds -= step
 
 
-EXPECT_ROUNDS = {"am": 9, "pm": 7}  # 09:30-11:30 9轮 / 13:00-14:30 7轮，每15分
+EXPECT_ROUNDS = {"am": 12, "pm": 10}  # 09:30-11:20 12轮 / 13:00-14:30 10轮，每10分（下限，少则告警）
 
 
 def _check_rounds(log=print):
@@ -4139,21 +4139,22 @@ def _check_rounds(log=print):
         log(msg)
         ops_note("miss_rounds", msg)
     else:
-        log("  ✓ 轮次核对：上午%d/9 下午%d/7 达标" % (got.get("am", 0), got.get("pm", 0)))
+        log("  ✓ 轮次核对：上午%d/%d 下午%d/%d 达标" % (
+            got.get("am", 0), EXPECT_ROUNDS["am"], got.get("pm", 0), EXPECT_ROUNDS["pm"]))
 
 
-def daemon_serve(prep=True, interval=900, dry=False, use_ctx=True,
+def daemon_serve(prep=True, interval=600, dry=False, use_ctx=True,
                  log=print, stop_check=None):
-    """盘段守护 v4（2026-09-11 用户确认节奏）：
+    """盘段守护 v4（2026-09-11 用户确认节奏；2026-09-13 间隔 15→10 分钟）：
 
     08:00 盘前情报（宏观 + 美股收盘 → 利好利空板块判定 → 候选标的 → 推送+存库）
         → 09:00 预热（K线下载+情报扫描暖缓存）+ 亚太情报（日经/KOSPI/恒生实时→同上）
         → 09:20 开盘前大盘速览（4指数同轴叠加图+强弱结论+🧭期货与库存速览）
-        → 09:30-11:30 每 15 分钟选股（09:30 首次，开盘立刻选股）
+        → 09:30-11:30 每 10 分钟选股（09:30 首次，开盘立刻选股）
             * 候选构成/实仓建议有变化才推送；无变化跳过（仍上传 COS 供 APK 查询）
             * 若推送则完整推送（含与上轮重复入选的标的）
         → 11:31-12:00 午间盘中总结（每日一次）
-        → 13:00-14:30 每 15 分钟（之后不再盘中选股）
+        → 13:00-14:30 每 10 分钟（之后不再盘中选股）
         → 15:00 尾盘最后一次 K 线拉取（仅下载）
         → 15:10 收盘总结：当日选股+持仓回顾+纪律+鼓励（无做T/买卖点指令）
         → 15:12 ETF低位 usecase 当日发布（XML 单一源）+ 推送行情到手机
@@ -4161,8 +4162,8 @@ def daemon_serve(prep=True, interval=900, dry=False, use_ctx=True,
     盘中情报：独立 _market_scan.py 守护同频扫描，有变动才推送。
     盘中轮推送不再含「实仓买卖/做T」建议；守护/选股错误写入 _daemon_ops.jsonl。
     """
-    log("盘段守护 v4：08:00 盘前情报 → 09:00 亚太情报 → 09:20 盘前速览 → 09:30 起每15分选股 "
-        "→ 11:31 午间总结 → 13:00 起每15分 → 15:00 尾盘 → 15:10 收盘总结 → 15:20 表格化复盘")
+    log("盘段守护 v4：08:00 盘前情报 → 09:00 预热/亚太情报 → 09:20 盘前速览 → 09:30 起每10分选股 "
+        "→ 11:31 午间总结 → 13:00 起每10分 → 15:00 尾盘 → 15:10 收盘总结 → 15:20 表格化复盘")
     while stop_check is None or not stop_check():
         now = datetime.datetime.now()
         # ── 周末：睡到下一交易日 08:00 ──
@@ -4322,8 +4323,8 @@ def main():
     ap = argparse.ArgumentParser(description="PC 候选清单发布（选股→通知→COS）")
     ap.add_argument("--once", action="store_true", help="执行一次")
     ap.add_argument("--daemon", action="store_true", help="盘段守护 v4（固定时刻表，见 daemon_serve 注释）")
-    ap.add_argument("--interval", type=int, default=900,
-                    help="盘中轮间隔秒（v4 默认 900=15 分钟，首轮/尾轮仍随盘段整点）")
+    ap.add_argument("--interval", type=int, default=600,
+                    help="盘中轮间隔秒（v4 默认 600=10 分钟；首轮在段首立即选股）")
     ap.add_argument("--dry", action="store_true", help="不通知不上传（调试）")
     ap.add_argument("--key", default=None, help="COS candidates_key，默认 stockanalysis/quant/candidates.json")
     ap.add_argument("--timed", action="store_true", help="定时推送模式（单次执行也推送整轮概览）")
@@ -4334,8 +4335,8 @@ def main():
                     help="关闭盘段首刷/预热/尾盘(下载+XML DAG 选股)，只做固定轮次选股")
     args = ap.parse_args()
     if args.daemon:
-        print("盘段守护 v4：08:00 盘前情报 → 09:00 亚太情报 → 09:20 盘前速览 → "
-              "09:30 起每15分选股 → 11:31 午间总结 → 13:00 起每15分 → 15:00 尾盘 → "
+        print("盘段守护 v4：08:00 盘前情报 → 09:00 预热/亚太情报 → 09:20 盘前速览 → "
+              "09:30 起每10分选股 → 11:31 午间总结 → 13:00 起每10分 → 15:00 尾盘 → "
               "15:10 收盘总结 → 15:20 表格化复盘")
         daemon_serve(prep=not args.no_prep, interval=args.interval,
                      dry=args.dry, use_ctx=not args.no_ctx)

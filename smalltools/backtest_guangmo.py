@@ -94,6 +94,20 @@ def fetch_tencent_float_shares(secid):
         return None
 
 
+def vol_shares_factor(secid):
+    """腾讯日K的 volume → 成交【股数】的换算系数（手→股 通常 ×100）。
+
+    ★ 2026-09-13 修：腾讯日K的 volume 单位**按板块不一致** —— 沪深主板/创业板为「手」
+    (1 手 = 100 股)，科创板 sh688/sh689 为「股」。旧代码在四处一律写
+    `turnover = volume * 100 / fs * 100`，导致**科创板换手率被放大 100 倍**：
+    安杰思(688581) 2026-09-11 实际 7.44%，缓存/推送里却是 743.9%。
+    判据：腾讯批量实时接口直接给的 f38 换手率（sh688581=7.44%）与
+    `volume*fs/1` 口径吻合、与 `volume*100/fs` 口径差 100 倍；同池创业板/主板两口径一致。
+    北交所(bj)未在本池中，未验证，暂按主板处理。
+    """
+    return 1 if secid.startswith(("sh688", "sh689")) else 100
+
+
 def fmt_tencent_date(d):
     """20260812 -> 2026-08-12（腾讯要求带横杠）"""
     if len(d) == 8 and d.isdigit():
@@ -128,8 +142,9 @@ def fetch_tencent(secid, beg="20250101", end=END_DATE):
                 # 用流通股本估算换手率（腾讯日K不直接给换手率）
                 fs = fetch_tencent_float_shares(secid)
                 if fs and fs > 0:
+                    k = vol_shares_factor(secid)
                     for s in snaps:
-                        s["turnover"] = s["volume"] * 100 / fs * 100
+                        s["turnover"] = s["volume"] * k / fs * 100
                 # 名称解析：qt 是 dict {secid: [市场, 名称, 代码, ...]}，
                 # 真实名称在 qt[secid][1]（如 ['51','中际旭创','300308',...]）
                 name = None

@@ -147,8 +147,9 @@ def _fetch_tencent_host(src, secid, beg, end, session):
             snaps[i]["changePct"] = (snaps[i]["close"] / prev - 1) * 100
     fs = _bg.fetch_tencent_float_shares(secid)
     if fs and fs > 0:
+        k = _bg.vol_shares_factor(secid)
         for s in snaps:
-            s["turnover"] = s["volume"] * 100 / fs * 100
+            s["turnover"] = s["volume"] * k / fs * 100
     name = None
     qt = node.get("qt")
     if isinstance(qt, dict):

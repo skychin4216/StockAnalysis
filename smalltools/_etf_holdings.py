@@ -441,12 +441,12 @@ def _ind_tag(snaps):
             p.append("RSI%d" % int(rsi))
         sar = s.get("sar") or {}
         d, bars = sar.get("dir"), sar.get("bars") or 0
-        fd, fa = sar.get("flip_dir"), sar.get("flip_ago")
+        fa = sar.get("flip_ago")
         if d == "UP":
-            p.append("SAR刚翻红" if (fd == "UP" and fa and fa <= 3) else "SAR红↑%d" % bars)
+            p.append("SAR刚翻红" if T.is_sar_flip(sar, "UP") else "SAR红↑%d" % bars)
         elif d == "DOWN":
             p.append("SAR刚翻绿%d天" % (fa or 0)
-                     if (fd == "DOWN" and fa and fa <= 3) else "SAR绿↓%d" % bars)
+                     if T.is_sar_flip(sar, "DOWN") else "SAR绿↓%d" % bars)
         mc = s.get("macd") or {}
         if mc.get("cross") == "gold":
             p.append("MACD金叉")

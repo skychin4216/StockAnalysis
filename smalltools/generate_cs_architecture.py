@@ -16,16 +16,18 @@ def build():
     b = ArchitectureDiagramBuilder()
     # Layer 0: APK 客户端
     b.add_node("apk_bench", "量化工作台\nPcCandidatesDialog", NodeType.TRADE_ACTION, layer=0)
-    b.add_node("apk_dlg", "🎛 RemoteControlDialog\n(新 UI: 提交/状态/日志/取消)", NodeType.DATA_TRANSFORM, layer=0)
-    b.add_node("apk_client", "PcBridgeClient.kt\nOkHttp + X-Token", NodeType.DATA_TRANSFORM, layer=0)
+    b.add_node("apk_dlg", "📡 远程面板\nRemoteControlPanel/Dialog", NodeType.DATA_TRANSFORM, layer=0)
+    b.add_node("apk_client", "PcBridgeClient.kt\n业务 API（无地址概念）", NodeType.DATA_TRANSFORM, layer=0)
+    b.add_node("apk_relay", "CosRelayClient.kt\n信封 + HMAC 元数据签名", NodeType.DATA_TRANSFORM, layer=0)
 
-    # Layer 1: 传输
-    b.add_node("http", "局域网 HTTP :8888\nJSON REST + 2s 长轮询", NodeType.DATA_TRANSFORM, layer=1)
+    # Layer 1: 传输（联网中继，已无局域网/IP）
+    b.add_node("relay_cos", "腾讯云 COS 中继\npc/inbox·pc/outbox/{deviceId}", NodeType.DATA_TRANSFORM, layer=1)
 
-    # Layer 2: PC 服务端
-    b.add_node("svc_http", "data_service.py\nThreadingHTTPServer", NodeType.DATA_SOURCE, layer=2)
+    # Layer 2: PC 中继守护 + 本机服务端
+    b.add_node("svc_relay", "relay_worker.py\n轮询 inbox → 本机 API → outbox", NodeType.AGGREGATION, layer=2)
+    b.add_node("svc_http", "data_service.py\nThreadingHTTPServer 127.0.0.1:8888", NodeType.DATA_SOURCE, layer=2)
     b.add_node("svc_rc", "remote_control.py\nRemoteControl 任务队列", NodeType.AGGREGATION, layer=2)
-    b.add_node("svc_token", "Token 鉴权\ndata/remote_token.txt", NodeType.FILTER, layer=2)
+    b.add_node("svc_token", "本机 API 鉴权\ndata/remote_token.txt（仅本机）", NodeType.FILTER, layer=2)
     b.add_node("svc_store", "任务持久化\ndata/remote_tasks.json", NodeType.DATA_SOURCE, layer=2)
 
     # Layer 3: 执行器
@@ -39,10 +41,13 @@ def build():
 
     b.add_edge("apk_bench", "apk_dlg", "打开")
     b.add_edge("apk_dlg", "apk_client", "调用")
-    b.add_edge("apk_client", "http", "submit/get/list/logs/cancel")
-    b.add_edge("http", "svc_http", "REST")
+    b.add_edge("apk_client", "apk_relay", "转发")
+    b.add_edge("apk_relay", "relay_cos", "PUT 命令 / 轮询应答")
+    b.add_edge("relay_cos", "svc_relay", "轮询 pc/inbox")
+    b.add_edge("svc_relay", "relay_cos", "应答写 outbox")
+    b.add_edge("svc_relay", "svc_http", "调用 127.0.0.1:8888")
     b.add_edge("svc_http", "svc_rc", "任务路由")
-    b.add_edge("svc_http", "svc_token", "X-Token 校验")
+    b.add_edge("svc_http", "svc_token", "本机 token 校验")
     b.add_edge("svc_rc", "svc_store", "读写")
     b.add_edge("svc_rc", "ex_small", "subprocess 执行")
     b.add_edge("svc_rc", "ex_cb", "subprocess 执行")

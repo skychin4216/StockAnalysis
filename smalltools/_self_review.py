@@ -706,7 +706,11 @@ def _secid_of_pos(raw):
 
 
 def load_positions_mirror():
-    """读本地最新 COS phone 镜像 real_positions（离现实仓快照）。返回 (pos, asof)。"""
+    """读本地最新 COS phone 镜像 real_positions（离现实仓快照）。返回 (pos, asof)。
+
+    2026-09-13：与 _market_context.load_real_positions 同步 —— `[]` = 真清仓（用户确认），
+    最新镜像即权威，不回退更旧的非空镜像；镜像滞后于手机实盘时不推断填补。
+    """
     cloud = os.path.join(RECORDS, "cloud")
     try:
         dirs = [d for d in os.listdir(cloud) if os.path.isdir(os.path.join(cloud, d))] \
@@ -722,8 +726,9 @@ def load_positions_mirror():
         try:
             data = json.load(open(f, encoding="utf-8"))
             pos = data.get("real_positions") or []
-            if isinstance(pos, list):
-                return pos, d
+            if not isinstance(pos, list):
+                continue
+            return pos, d
         except (OSError, ValueError):
             continue
     return [], None

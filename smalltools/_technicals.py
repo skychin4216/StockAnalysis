@@ -8,6 +8,7 @@
 对外 API:
   analyze(snaps) -> dict   # 结构化指标判定
   make_tag(s)     -> str   # 单行紧凑技术摘要（≤~30 字符）
+  is_sar_flip(sar, dir) -> bool  # SAR 是否刚翻到该方向(≤3日)：绿转红 / 红转绿
   sar_alert(snaps) -> dict | None  # SAR 刚转绿(≤3日) 预警
 用法: _publish_candidates.py 在选股后对候选/实仓附加，随消息推送。
 """
@@ -110,23 +111,28 @@ def _run_bars(seq, tail=20):
 
 
 # ── 单票综合分析 ────────────────────────────────────────
+def _ohlc(snaps, max_bars=260):
+    """snaps(旧→新) → (closes, highs, lows, vols)，四序列【同长且下标对齐】。
+
+    ★ 2026-09-13 修对齐 bug：旧实现先按 close 过滤、highs/lows/vols 却按原长度构造
+    → 某天 close 缺失时三个数组整体错位，SAR/MACD/ATR 会静默算错（数值看着还正常）。
+    现集中在这里保证「同一批 close 有效样本」构造所有序列，analyze 与自检复算共用。
+    """
+    ss = [s for s in (snaps or [])[-max_bars:] if s.get("close") is not None]
+    closes = [float(s["close"]) for s in ss]
+    highs = [float(s.get("high") or closes[i]) for i, s in enumerate(ss)]
+    lows = [float(s.get("low") or closes[i]) for i, s in enumerate(ss)]
+    vols = [float(s.get("volume") or 0) for s in ss]
+    return closes, highs, lows, vols
+
+
 def analyze(snaps, max_bars=260):
     """snaps(旧→新) → 结构化指标判定 dict；数据不足返回 {}。"""
     if not snaps or len(snaps) < 30:
         return {}
-    ss = snaps[-max_bars:]
-    # ★ 2026-09-13 修对齐 bug：旧实现在 close 含 None 时把 closes 过滤短了，
-    # 而 highs/lows/vols 仍按 ss 原长度构造 → 三个数组下标错位，SAR/MACD/ATR
-    # 会在「某天 close 缺失」时整体算错（静默、且看起来数值正常）。
-    # 现在统一按同一批「close 有效」的样本构造所有序列。
-    keep = [i for i, s in enumerate(ss) if s.get("close") is not None]
-    if len(keep) < 30:
+    closes, highs, lows, vols = _ohlc(snaps, max_bars)
+    if len(closes) < 30:
         return {}
-    ss = [ss[i] for i in keep]
-    closes = [float(s.get("close")) for s in ss]
-    highs = [float(s.get("high") or closes[i]) for i, s in enumerate(ss)]
-    lows = [float(s.get("low") or closes[i]) for i, s in enumerate(ss)]
-    vols = [float(s.get("volume") or 0) for s in ss]
     out = {}
     # SAR
     try:
@@ -255,6 +261,19 @@ def analyze(snaps, max_bars=260):
     return out
 
 
+def is_sar_flip(sar, target_dir):
+    """SAR 是否「刚翻到 target_dir」（绿转红 / 红转绿，且翻转 ≤3 日）。
+
+    易错点：`_run_bars` 返回的 `flip_dir` 是【翻转前】的方向，与当前 `dir` 必然相反
+    （None = 样本内从未翻转）。历史上此处被写成 `flip_dir == dir`，数学上恒为 False，
+    导致「SAR刚翻红/刚翻绿」提示与 `sar_alert` 红转绿预警长期静默失效（2026-09-13 修复）。
+    这里改用 `flip_dir != dir` 表达「方向发生过反转」，比硬编码方向更难写反。
+    """
+    fd = sar.get("flip_dir")
+    return bool(sar.get("dir") == target_dir and fd and fd != sar.get("dir")
+                and (sar.get("flip_ago") or 99) <= 3)
+
+
 def make_tag(s):
     """指标结构 → 单行紧凑中文摘要；空结构返回 ''。"""
     if not s:
@@ -262,14 +281,14 @@ def make_tag(s):
     p = []
     sar = s.get("sar") or {}
     d, bars = sar.get("dir"), sar.get("bars")
-    fd, fa = sar.get("flip_dir"), sar.get("flip_ago")
+    fa = sar.get("flip_ago")
     if d == "UP":
-        if fd == "UP" and fa and fa <= 3:
+        if is_sar_flip(sar, "UP"):
             p.append("SAR刚翻红↑")   # 绿转红：重点关注加分
         else:
             p.append("SAR红↑%d" % (bars or 0))
     elif d == "DOWN":
-        if fd == "DOWN" and fa and fa <= 3:
+        if is_sar_flip(sar, "DOWN"):
             p.append("SAR刚翻绿%d天!" % (fa or 0))  # 红转绿：不选/预警
         else:
             p.append("SAR绿↓%d" % (bars or 0))
@@ -324,11 +343,12 @@ def rich_tag(snaps, max_tokens=6):
             p.append("RSI%d" % int(round(rsi)))
         sar = s.get("sar") or {}
         d, bars = sar.get("dir"), sar.get("bars") or 0
-        fd, fa = sar.get("flip_dir"), sar.get("flip_ago")
+        fa = sar.get("flip_ago")
         if d == "UP":
-            p.append("SAR刚翻红" if (fd == "UP" and fa and fa <= 3) else "SAR红↑%d" % bars)
+            p.append("SAR刚翻红" if is_sar_flip(sar, "UP") else "SAR红↑%d" % bars)
         elif d == "DOWN":
-            p.append("SAR绿↓%d" % bars)
+            p.append("SAR刚翻绿%d天" % (fa or 0) if is_sar_flip(sar, "DOWN")
+                     else "SAR绿↓%d" % bars)
         mc = s.get("macd") or {}
         if mc.get("cross") == "gold":
             p.append("MACD金叉")
@@ -376,14 +396,12 @@ def rich_tag(snaps, max_tokens=6):
 
 
 def sar_alert(snaps):
-    """SAR 刚翻绿（空头且持续≤3日，红转绿初期）→ 预警 dict {days}，否则 None。"""
+    """SAR 刚翻绿（红转绿初期，翻转≤3日）→ 预警 dict {days}，否则 None。"""
     try:
         s = analyze(snaps)
         sar = s.get("sar") or {}
-        if sar.get("dir") == "DOWN" and sar.get("flip_dir") == "DOWN":
-            ago = sar.get("flip_ago") or sar.get("bars") or 0
-            if ago <= 3:
-                return {"days": ago}
+        if is_sar_flip(sar, "DOWN"):
+            return {"days": sar.get("flip_ago") or sar.get("bars") or 0}
     except Exception:
         pass
     return None
@@ -638,15 +656,11 @@ def index_brief(snaps, name="", max_bars=260):
         p.append(rsi_s)
     sar = s.get("sar") or {}
     if sar.get("dir") == "UP":
-        if sar.get("flip_dir") == "UP" and (sar.get("flip_ago") or 0) <= 3:
-            p.append("SAR刚翻红↑")
-        else:
-            p.append("SAR红↑%d" % (sar.get("bars") or 0))
+        p.append("SAR刚翻红↑" if is_sar_flip(sar, "UP")
+                 else "SAR红↑%d" % (sar.get("bars") or 0))
     elif sar.get("dir") == "DOWN":
-        if sar.get("flip_dir") == "DOWN" and (sar.get("flip_ago") or 0) <= 3:
-            p.append("SAR刚翻绿↓%d" % (sar.get("flip_ago") or 0))
-        else:
-            p.append("SAR绿↓%d" % (sar.get("bars") or 0))
+        p.append("SAR刚翻绿↓%d" % (sar.get("flip_ago") or 0) if is_sar_flip(sar, "DOWN")
+                 else "SAR绿↓%d" % (sar.get("bars") or 0))
     mc = s.get("macd") or {}
     if mc.get("cross") == "gold":
         p.append("MACD金叉")
@@ -678,3 +692,113 @@ def index_brief(snaps, name="", max_bars=260):
     if d:
         p.append("⚠" + ("MACD底背离" if d["kind"] == "bottom" else "MACD顶背离"))
     return ("%s " % name if name else "") + " ".join(p)
+
+
+# ── 命令行体检（2026-09-13）────────────────────────────────
+# 用法:
+#   python _technicals.py                 # 全池体检：列「刚翻红 / 刚翻绿」重点票
+#   python _technicals.py sh600973 ...    # 指定代码 → 全指标明细
+#   python _technicals.py --selfcheck     # SAR 语义不变量自检（防「刚翻红」判断写反）
+def _load_cache():
+    import json
+    import os
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
+    with open(p, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _detail(code, name, snaps):
+    s = analyze(snaps)
+    if not s:
+        return "%-9s %s  样本不足(<30 根)" % (code, name)
+    sar = s.get("sar") or {}
+    return "\n".join([
+        "%-9s %s" % (code, name),
+        "  SAR       dir=%s bars=%s flip=%s/%s → 刚翻红=%s 刚翻绿=%s"
+        % (sar.get("dir"), sar.get("bars"), sar.get("flip_dir"), sar.get("flip_ago"),
+           is_sar_flip(sar, "UP"), is_sar_flip(sar, "DOWN")),
+        "  sar_alert %s" % sar_alert(snaps),
+        "  RSI %s  MACD %s" % (s.get("rsi"), s.get("macd")),
+        "  KDJ %s" % (s.get("kdj"),),
+        "  MA %s" % (s.get("ma"),),
+        "  OBV升 %s  ATR%% %s  量比 %s"
+        % (s.get("obv_up"), s.get("atr_pct"), volume_ratio_of(snaps)),
+        "  趋势 %s   背离 %s" % (trend_label(snaps), macd_divergence(snaps)),
+        "  make_tag %s" % make_tag(s),
+        "  rich_tag %s" % rich_tag(snaps),
+    ])
+
+
+def _selfcheck(cache):
+    """SAR 语义自检：① 翻转前方向必与当前相反 ② 独立复算 bars/flip ③ 显示与判定一致。"""
+    bad, n, fu, fd = [], 0, 0, 0
+    for code, e in (cache or {}).items():
+        snaps = (e or {}).get("snaps") or []
+        if len(snaps) < 30:
+            continue
+        n += 1
+        s = analyze(snaps)
+        sar = s.get("sar") or {}
+        d, bars, fdir, fago = (sar.get("dir"), sar.get("bars"),
+                               sar.get("flip_dir"), sar.get("flip_ago"))
+        if fdir is not None and fdir == d:
+            bad.append("%s flip_dir==dir(%s)：翻转前方向不可能与当前相同" % (code, d))
+        closes, highs, lows, _v = _ohlc(snaps)
+        last, b2, f2, a2 = _run_bars(_dir_series(closes, parabolic_sar(highs, lows, closes)))
+        if (d, bars, fdir, fago) != (last, b2, f2, a2):
+            bad.append("%s 复算不一致 analyze=%s 复算=%s"
+                       % (code, (d, bars, fdir, fago), (last, b2, f2, a2)))
+        up, dn = is_sar_flip(sar, "UP"), is_sar_flip(sar, "DOWN")
+        fu += up
+        fd += dn
+        for tag in (make_tag(s), rich_tag(snaps)):
+            if tag and ("SAR刚翻红" in tag) != up:
+                bad.append("%s 刚翻红显示不一致: %s" % (code, tag))
+        if (sar_alert(snaps) is not None) != dn:
+            bad.append("%s sar_alert 与 is_sar_flip 不一致" % code)
+        # ④ 数据合理性：A 股个股单日换手率不可能 >100%（科创板曾因 volume 在日K路径
+        #    被当「手」而放大 100 倍，见 backtest_guangmo.vol_shares_factor）
+        to = (snaps[-1] or {}).get("turnover") or 0
+        if to > 100:
+            bad.append("%s 换手率异常 %.1f%%（疑 volume 单位错）" % (code, to))
+    print("SAR 自检：样本 %d 只 · 刚翻红 %d · 刚翻绿 %d · 异常 %d 处" % (n, fu, fd, len(bad)))
+    for b in bad[:20]:
+        print("  ✗ " + b)
+    return 1 if bad else 0
+
+
+def main(argv):
+    cache = _load_cache()
+    if "--selfcheck" in argv:
+        return _selfcheck(cache)
+    codes = [a for a in argv if not a.startswith("-")]
+    if codes:
+        for c in codes:
+            e = cache.get(c)
+            if not e:
+                print("未找到 %s（缓存共 %d 只）" % (c, len(cache)))
+                continue
+            print(_detail(c, e.get("name") or "", e.get("snaps") or []))
+            print()
+        return 0
+    rows = []
+    for code, e in cache.items():
+        snaps = (e or {}).get("snaps") or []
+        if len(snaps) >= 30:
+            s = analyze(snaps)
+            rows.append((code, (e or {}).get("name") or "", s.get("sar") or {}, s))
+    up_rows = [r for r in rows if is_sar_flip(r[2], "UP")]
+    dn_rows = [r for r in rows if is_sar_flip(r[2], "DOWN")]
+    print("全池体检 %d 只：刚翻红 %d、刚翻绿 %d" % (len(rows), len(up_rows), len(dn_rows)))
+    print("\n【刚翻红（绿转红 ≤3 日，重点关注）】")
+    for code, name, _sar, s in up_rows:
+        print("  %-9s %-7s %s" % (code, name[:7], make_tag(s)))
+    print("\n【刚翻绿（红转绿 ≤3 日，预警）】")
+    for code, name, _sar, s in dn_rows:
+        print("  %-9s %-7s %s" % (code, name[:7], make_tag(s)))
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main(sys.argv[1:]))
