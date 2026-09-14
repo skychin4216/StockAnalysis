@@ -171,13 +171,12 @@ def _slug(s):
 
 
 def load_notify_cfg():
-    """读 app_config.json 的 notify 段（与 _market_scan/_publish_candidates 同源）。"""
-    try:
-        with open(APP_CONFIG, encoding="utf-8") as f:
-            cfg = json.load(f)
-    except (OSError, ValueError):
-        return {}
-    return cfg.get("notify") or cfg
+    """notify 推送配置（与 _market_scan/_publish_candidates 同源统一入口）。
+
+    2026-09-14 密钥迁移：改存 AutoQuant/cloud_config.json（AES-GCM 加密入库），
+    统一入口 = push_channel.load_notify_cfg()（支持从 .enc 内存解密）。
+    """
+    return push_channel.load_notify_cfg()
 
 
 # ────────────────────────────── 采集 ──────────────────────────────

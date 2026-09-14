@@ -37,6 +37,65 @@ WECOM_FILE_MAX = 20 * 1024 * 1024
 WECOM_TEXT_LIMIT = 2000  # 企业微信 text 单条上限 2048 字节，留余量按 UTF-8 字节切块
 PUSH_HEADERS = {"User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}
 
+# ── notify 配置加载（2026-09-14 密钥迁移后的统一入口）──────────────────
+# wecom_key / pushplus_token / serverchan_key 等推送密钥已从
+# app/src/main/assets/data/app_config.json（随 APK 明文入库，泄露面大）迁至
+# AutoQuant/cloud_config.json 的 notify 段 —— 该文件 AES-256-GCM 加密入库
+# （AutoQuant/_secrets.py，明文只留本地）。各脚本原先自带的 load_notify_cfg()
+# 一律转发到这里，勿再各写一份。
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # smalltools/ 上级 = 仓库根
+CLOUD_CONFIG = os.path.join(_ROOT, "AutoQuant", "cloud_config.json")
+CLOUD_ENC = CLOUD_CONFIG + ".enc"
+_ASSET_CONFIG = os.path.join(_ROOT, "app", "src", "main", "assets", "data", "app_config.json")
+_NOTIFY_CACHE = {}
+
+
+def _decrypt_cloud_notify():
+    """从 cloud_config.json.enc 内存解密出 notify 段（不落盘明文）。失败返回 None。"""
+    aq = os.path.join(_ROOT, "AutoQuant")
+    if aq not in sys.path:
+        sys.path.insert(0, aq)
+    import _secrets  # AutoQuant/_secrets.py（AES-256-GCM + scrypt）
+    env_pw = os.environ.get(_secrets.ENV_PASS)
+    if not env_pw and not _secrets.PASS_FILE.exists():
+        return None  # 无口令（如 CI/换机器未恢复），静默走回退
+    pw = env_pw.encode("utf-8") if env_pw else _secrets.load_passphrase(create=False)
+    try:
+        data = _secrets.decrypt_file("cloud_config.json", pw, write=False)
+        return (json.loads(data.decode("utf-8")).get("notify")) or None
+    except SystemExit as e:  # _secrets 用 SystemExit 报「口令不对/密文被篡改」
+        print("cloud_config.json.enc 解密失败：%s" % e)
+        return None
+
+
+def load_notify_cfg():
+    """加载 notify 推送配置（所有调用方的统一入口）。
+
+    优先级：
+      1. AutoQuant/cloud_config.json 明文的 notify 段（换机器后 python _secrets.py decrypt 还原）
+      2. 同名 .enc 内存解密（明文不在时自动进行，无需预先 decrypt）
+      3. 回退 assets app_config.json 的 notify 段（密钥已清空，仅剩 2 个 URL）
+    """
+    if "cfg" in _NOTIFY_CACHE:
+        return _NOTIFY_CACHE["cfg"]
+    cfg = None
+    try:
+        if os.path.isfile(CLOUD_CONFIG):
+            with open(CLOUD_CONFIG, encoding="utf-8") as f:
+                cfg = json.load(f).get("notify") or None
+        elif os.path.isfile(CLOUD_ENC):
+            cfg = _decrypt_cloud_notify()
+    except (OSError, ValueError) as e:
+        print("读取加密推送配置失败:", type(e).__name__, e)
+    if not cfg:
+        try:
+            with open(_ASSET_CONFIG, encoding="utf-8") as f:
+                cfg = json.load(f).get("notify") or {}
+        except (OSError, ValueError):
+            cfg = {}
+    _NOTIFY_CACHE["cfg"] = cfg
+    return cfg
+
 
 def _opener():
     """禁用系统代理的 opener（与 cos_utils / 各守护脚本一致）。"""

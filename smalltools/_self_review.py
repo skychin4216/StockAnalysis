@@ -89,11 +89,9 @@ def _log(msg):
 
 
 def load_notify_cfg():
-    try:
-        with open(APP_CONFIG, encoding="utf-8") as f:
-            return (json.load(f).get("notify") or {})
-    except (OSError, ValueError):
-        return {}
+    # 2026-09-14 密钥迁移：notify 段改存 AutoQuant/cloud_config.json（AES-GCM 加密入库），
+    # 统一入口 = push_channel.load_notify_cfg()（支持从 .enc 内存解密）
+    return push_channel.load_notify_cfg()
 
 
 # ---------------------------------------------------------------- 缓存与日期

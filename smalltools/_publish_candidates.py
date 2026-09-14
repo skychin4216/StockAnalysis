@@ -808,11 +808,9 @@ def candidate_secids(data):
 
 # ── 3. 微信通知 ────────────────────────────────────────────────────────
 def load_notify_cfg():
-    try:
-        with open(APP_CONFIG, encoding="utf-8") as f:
-            return (json.load(f).get("notify") or {})
-    except (OSError, ValueError):
-        return {}
+    # 2026-09-14 密钥迁移：notify 段改存 AutoQuant/cloud_config.json（AES-GCM 加密入库），
+    # 统一入口 = push_channel.load_notify_cfg()（支持从 .enc 内存解密）
+    return push_channel.load_notify_cfg()
 
 
 def send_wechat(new_data, old_data, cfg):
