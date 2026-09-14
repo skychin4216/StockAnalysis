@@ -136,7 +136,7 @@ private suspend fun AgentOrchestrator.runQuickAnalysis(
     val (analysis, risk, marketReport) = coroutineScope {
         val a = async { runCatching { StockAnalysisAgent(appContext).analyze(stockCode, stockName) }.getOrNull() }
         val r = async { runCatching { RiskManagementAgent(appContext).assessStockRiskDirect(stockCode) }.getOrNull() }
-        val m = async { runCatching { MarketAnalyzer.analyze(appContext, emptyList()) }.getOrNull() }
+        val m = async { runCatching { GlobalMarketCache.report(appContext) }.getOrNull() }
         Triple(a.await(), r.await(), m.await())
     }
 
@@ -358,7 +358,7 @@ private suspend fun AgentOrchestrator.runDeepAnalysis(
         analystResult = DeepAnalystEngine(appContext, stockCode, stockName, config.analystSteps)
             .execute(ctx, stepListener, quantSignalsProvider)
 
-        val marketReport = runCatching { MarketAnalyzer.analyze(appContext, emptyList()) }.getOrNull()
+        val marketReport = runCatching { GlobalMarketCache.report(appContext) }.getOrNull()
         decision = computeDecision(
             stockCode,
             marketReport?.trend?.direction ?: "OSCILLATION",

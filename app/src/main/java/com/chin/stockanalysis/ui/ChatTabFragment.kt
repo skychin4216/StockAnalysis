@@ -126,6 +126,12 @@ class ChatTabFragment : Fragment() {
     private val backgroundPredictor by lazy { BackgroundPredictor(memoryManager, smartContext) }
     private val orchestrator = AiOrchestrator()
 
+    /** 🧭 意图路由 + 核心编排器（Step 5：聊天意图 → Agent 群） */
+    private val chatIntentRouter by lazy { com.chin.stockanalysis.agent.core.IntentRouter() }
+    private val coreAgentOrchestrator by lazy {
+        com.chin.stockanalysis.agent.core.AgentOrchestrator(requireContext().applicationContext)
+    }
+
     // 多 AI Provider（由 AiProbe 注入 — 仅用于 secondary，primary 由池管理）
     private var secondaryProvider: ApiProvider? = null
     private var tertiaryProvider: ApiProvider? = null
@@ -680,6 +686,12 @@ class ChatTabFragment : Fragment() {
         binding.etInput.setText(""); hideKeyboard()
         if (!hasAutoTitle) { hasAutoTitle = true; binding.tvChatTitle.text = extractSmartTitle(userText) }
 
+        // 🧭 意图路由（Step 5）：确定性分流，零 token 消耗。
+        // 此前「今天大盘怎么样」「我持仓风险大吗」都会被当成通用问答丢给 LLM 闲聊（慢且贵），
+        // 现在识别为 QUICK_SCAN / RISK_CHECK / FOLLOW_UP 后只跑单角色精简组合
+        // （Scout / Guardian / Analyst）。返回 false 时完全落回原有分流逻辑，不影响既有行为。
+        if (dispatchByIntent(userText)) return
+
         // ⚡ 快速模式：纯本地解析 + 本地分析（豆包 useCase / 板块多周期），不调用 LLM
         if (analysisMode == AnalysisMode.QUICK) {
             handleQuickModeInput(userText)
@@ -1173,6 +1185,87 @@ $memory
     private fun addMessage(message: Message) { binding.tvNewTopicHint.visibility = View.GONE; messages.add(message); adapter.notifyItemInserted(messages.size - 1); binding.recyclerView.scrollToPosition(messages.size - 1) }
     private fun addBotMessage(text: String) = addMessage(Message(content = text, isUser = false))
     private fun addErrorMessage(text: String) = addMessage(Message(content = text, isUser = false, isError = true))
+
+    // ════════════════════════════════════════════════════════════
+    //  🧭 意图路由（Step 5：聊天意图 → Agent 群）
+    // ════════════════════════════════════════════════════════════
+
+    /**
+     * 用 [com.chin.stockanalysis.agent.core.IntentRouter] 的确定性规则分流。
+     *
+     * 只接管三类**高置信**意图：
+     * - `QUICK_SCAN`  → 仅 Scout（纯量化，无 LLM）
+     * - `RISK_CHECK`  → 仅 Guardian（含纯算法后备）
+     * - `FOLLOW_UP`   → 仅 Analyst（**必须**能定位到股票，否则追问无上下文，落回原逻辑）
+     *
+     * `DEEP_ANALYSIS` / `GENERAL_CHAT` 一律返回 false，交回 [sendMessageInternal] 的原有逻辑，
+     * 保证既有行为零回归。
+     */
+    private fun dispatchByIntent(userText: String): Boolean {
+        val stockCode = extractStockCodeFromText(userText)
+        val intent = chatIntentRouter.resolve(userText, stockCode, null)
+        val handled = when (intent.type) {
+            com.chin.stockanalysis.agent.core.IntentType.QUICK_SCAN,
+            com.chin.stockanalysis.agent.core.IntentType.RISK_CHECK -> true
+            com.chin.stockanalysis.agent.core.IntentType.FOLLOW_UP -> stockCode != null
+            else -> false
+        }
+        if (!handled) return false
+        runIntentAnalysis(intent, stockCode)
+        return true
+    }
+
+    /** 按意图跑精简 Agent 组合并渲染结果 */
+    private fun runIntentAnalysis(
+        intent: com.chin.stockanalysis.agent.core.UserIntent,
+        stockCode: String?
+    ) {
+        val index = messages.size
+        addMessage(Message(content = "🧭 ${intentLabel(intent.type)}　正在调度 Agent…", isUser = false))
+        currentStreamingJob?.cancel()
+        currentStreamingJob = viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    coreAgentOrchestrator.execute(intent = intent, stockCode = stockCode)
+                }
+                if (!isAdded) return@launch
+                val text = when {
+                    result.cancelled -> "⏹ 已取消"
+                    result.error != null -> "❌ ${result.error}"
+                    result.summary.isNotBlank() -> result.summary
+                    else -> "⚠️ 未产出结果（${result.announces.size} 个环节）"
+                }
+                requireActivity().runOnUiThread {
+                    if (index in messages.indices) {
+                        messages[index] = Message(content = text, isUser = false, isError = result.error != null)
+                        adapter.notifyItemChanged(index)
+                    } else {
+                        addBotMessage(text)
+                    }
+                    binding.recyclerView.scrollToPosition(messages.size - 1)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "runIntentAnalysis", e)
+                if (isAdded) requireActivity().runOnUiThread {
+                    if (index in messages.indices) {
+                        messages[index] = Message(
+                            content = "❌ 意图分析异常：${e.message?.take(80)}",
+                            isUser = false, isError = true
+                        )
+                        adapter.notifyItemChanged(index)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun intentLabel(type: com.chin.stockanalysis.agent.core.IntentType): String = when (type) {
+        com.chin.stockanalysis.agent.core.IntentType.QUICK_SCAN -> "市场速览（Scout）"
+        com.chin.stockanalysis.agent.core.IntentType.RISK_CHECK -> "持仓风控（Guardian）"
+        com.chin.stockanalysis.agent.core.IntentType.FOLLOW_UP -> "追问（Analyst）"
+        com.chin.stockanalysis.agent.core.IntentType.DEEP_ANALYSIS -> "深度分析（全链路）"
+        com.chin.stockanalysis.agent.core.IntentType.GENERAL_CHAT -> "通用问答"
+    }
     private fun hideKeyboard() { (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(binding.etInput.windowToken, 0) }
     private fun isTrivialMessage(text: String): Boolean = text.replace(Regex("[\\s,.，。!！?？、；;：:【】()（）、·]+"), "").length < 3
     private fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density + 0.5f).toInt()

@@ -94,9 +94,7 @@ class ApiConfigManager(context: Context) {
                 "doubao-seed-1-6-vision-250815",      // Seed 1.6 Vision 多模态
                 "doubao-seed-code-preview-251028",    // Seed Code Preview (旧)
                 // 经典 1.5
-                "doubao-1-5-pro-32k-250115",          // 1.5 Pro 32k
-                // 自定义接入点 ID（按需启用）
-                "ep-20260515024618-chcvf"
+                "doubao-1-5-pro-32k-250115"           // 1.5 Pro 32k
             ),
             fallbackModels = listOf(
                 "doubao-seed-2-0-code-preview-260215",
@@ -344,8 +342,12 @@ class ApiConfigManager(context: Context) {
         return allModels.filter { it !in KNOWN_INVALID_MODELS }
     }
 
-    /** 已知无效的模型 ID 列表（会在 getProviderModels() 中自动过滤） */
-    private val KNOWN_INVALID_MODELS = emptySet<String>()
+    /** 已知无效的模型 ID 列表（会在 getProviderModels() 中自动过滤）。
+     *  2026-09-13：ep-20260515024618-chcvf 实测 HTTP 500 InternalServiceError（接入点已失效），
+     *  从可选列表移入黑名单；老用户 prefs 里若仍存着它，getSelectedModel() 会自动回退到默认模型。 */
+    private val KNOWN_INVALID_MODELS = setOf(
+        "ep-20260515024618-chcvf"
+    )
 
     /** 获取当前提供商选中的模型；未配置时返回默认模型。
      *  如果持久化的模型已不在有效列表中，自动清除并回退到默认模型。 */

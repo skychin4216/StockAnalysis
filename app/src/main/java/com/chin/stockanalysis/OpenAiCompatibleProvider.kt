@@ -178,7 +178,7 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
                 }
 
                 try {
-                    handleResponse(response, onSuccess, onComplete, onError, onToolCalls, jsonMode)
+                    handleResponse(response, onSuccess, onComplete, onError, onToolCalls, jsonMode, model)
                 } catch (e: Exception) {
                     Log.e(TAG, "❌ 响应处理异常: ${e.message}")
                     val partial = accumulated?.toString() ?: ""
@@ -262,6 +262,9 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
             // Pipeline Agent 分层：简单 Agent 4096，复杂 Agent 6144，通用预设 6144
             put("max_tokens", maxTokens ?: if (jsonMode) 6144 else 4096)
             put("stream", true)
+            // Token 用量统计（Phase E）：流式模式下服务端默认**不回传** usage，
+            // 必须显式声明 include_usage，否则 TokenUsageTracker 永远统计不到东西。
+            put("stream_options", JSONObject().apply { put("include_usage", true) })
             if (jsonMode) {
                 put("response_format", JSONObject().apply { put("type", "json_object") })
                 // 关闭思考模式（doubao-seed-1.6 等推理模型支持），避免思考过程混入输出
@@ -332,7 +335,9 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         onComplete: (String) -> Unit,
         onError: (String) -> Unit,
         onToolCalls: ((List<ChatTools.ToolCall>) -> Unit)? = null,
-        jsonMode: Boolean = false
+        jsonMode: Boolean = false,
+        /** 本次请求实际使用的模型 ID，用于 Token 用量归属 */
+        model: String = ""
     ) {
         val body = response.body
         if (body == null) {
@@ -367,7 +372,7 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
 
                 // 容错：如果单行 JSON 解析失败，尝试累积下一行（SSE 可能因推理模型新行符分裂）
                 try {
-                    parseSSEData(data, sb, onSuccess, toolCallBuilders, finishReason, jsonMode)
+                    parseSSEData(data, sb, onSuccess, toolCallBuilders, finishReason, jsonMode, model)
                 } catch (e: Exception) {
                     val nextLine = source.readUtf8Line()
                     if (nextLine != null) {
@@ -381,7 +386,7 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
                             // 当前 JSON 被换行符截断，尝试拼接
                             val merged = data + nextTrimmed
                             try {
-                                parseSSEData(merged, sb, onSuccess, toolCallBuilders, finishReason, jsonMode)
+                                parseSSEData(merged, sb, onSuccess, toolCallBuilders, finishReason, jsonMode, model)
                             } catch (e2: Exception) {
                                 if (lineCount <= 3) Log.v(TAG, "跳过非 JSON 行(合并后): ${data.take(80)} | next=${nextTrimmed.take(40)}")
                             }
@@ -447,9 +452,24 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         onSuccess: (String) -> Unit,
         toolCallBuilders: MutableMap<Int, MutableMap<String, StringBuilder>>,
         _finishReason: String?,
-        jsonMode: Boolean = false
+        jsonMode: Boolean = false,
+        model: String = ""
     ) {
         val json = JSONObject(data)
+
+        // ── Token 用量（Phase E）──
+        // 必须放在 choices 早退**之前**：带 usage 的收尾 chunk 里 choices 是空数组，
+        // 走原来的 `choices.length() == 0 -> return` 会把 usage 整段丢掉。
+        json.optJSONObject("usage")?.let { usage ->
+            com.chin.stockanalysis.ai.TokenUsageTracker.record(
+                model = model,
+                promptTokens = usage.optLong("prompt_tokens", 0L),
+                completionTokens = usage.optLong("completion_tokens", 0L),
+                cachedTokens = usage.optJSONObject("prompt_tokens_details")
+                    ?.optLong("cached_tokens", 0L) ?: 0L
+            )
+        }
+
         val choices = json.optJSONArray("choices")
         if (choices == null || choices.length() == 0) return
         val choice = choices.getJSONObject(0)

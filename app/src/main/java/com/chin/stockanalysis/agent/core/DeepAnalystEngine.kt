@@ -232,13 +232,21 @@ class DeepAnalystEngine(
         val summary = buildReport(target, resolvedName, stockData, analyses, agents,
             chainScore, riskResult, sentiment, tradePlan, finalScore, recommendation)
 
+        // ══ 6. 运行诊断（Phase E）：Token 用量 / 分析缓存命中率 / 市场环境缓存 ══
+        val summaryWithDiag = summary + buildString {
+            append("\n\n---\n")
+            append("· ").append(com.chin.stockanalysis.ai.TokenUsageTracker.report()).append('\n')
+            append("· ").append(AnalysisCache.global.stats()).append('\n')
+            append("· ").append(GlobalMarketCache.stats())
+        }
+
         ctx.log("深度分析完成: score=$finalScore, recommendation=$recommendation")
 
         mapOf(
             "score" to finalScore,
             "recommendation" to recommendation,
             "confidence" to if (analyses.size >= agents.size - 1) "HIGH" else "MEDIUM",
-            "summary" to summary,
+            "summary" to summaryWithDiag,
             "riskFactors" to riskFactors,
             "targetPrice" to tradePlan?.targets?.firstOrNull(),
             "stopLoss" to tradePlan?.stopLoss,
@@ -285,7 +293,29 @@ class DeepAnalystEngine(
                     basePrompt.replace("{today_hot_sectors}", hotSectors),
                     def, target, resolvedName, stockData, quarterlyText, priorAnalyses, quantSignalsText
                 )
+
+                // Phase E：相同「股票 + 分析维度 + 周期 + 模型层级」在 TTL(30min) 内直接复用，
+                // 跳过 LLM 调用（用户反复点深度分析 / 同一票多链路分析时命中率最高）。
+                // maxSteps 是周期的代理（≤3 超短线 / ≤5 短线 / ≥6 中长线），必须进 key。
+                val cacheKey = AnalysisCache.global.makeKey(
+                    stockCode = stockCode,
+                    analysisType = def.agentId,
+                    tradeDate = java.time.LocalDate.now().toString(),
+                    tier = LlmTier.STRONG,      // PIPELINE_EXPERT 场景对应 STRONG
+                    variant = "s$maxSteps"
+                )
+                val cached = AnalysisCache.global.get(cacheKey)
+                    ?.response?.get(AnalysisCache.TEXT_KEY) as? String
+                if (cached != null) {
+                    ctx.log("${def.displayName} 命中分析缓存（${cached.length} 字），跳过 LLM")
+                    stepListener?.onStepComplete(
+                        step, StructuredOutputParser.formatReadable(def.agentId, cached), emptyMap()
+                    )
+                    return cached
+                }
+
                 val output = callLLM(def, prompt)
+                AnalysisCache.global.put(cacheKey, mapOf(AnalysisCache.TEXT_KEY to output), def.agentId)
                 ctx.log("${def.displayName} 完成 (${output.length} 字)")
                 stepListener?.onStepComplete(step, StructuredOutputParser.formatReadable(def.agentId, output), emptyMap())
                 output

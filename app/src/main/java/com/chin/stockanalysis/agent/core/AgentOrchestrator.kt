@@ -570,9 +570,9 @@ class ScoutTask(private val appContext: Context) {
         ctx.log("开始市场环境侦察")
 
         return try {
-            // 调用现有 MarketAnalyzer（holdingCodes 传空 = 不评估持仓）
-            val marketReport = com.chin.stockanalysis.strategy.market.MarketAnalyzer
-                .analyze(appContext, emptyList())
+            // 走全局市场环境缓存（Phase E）：同交易日 TTL 内跨任务复用，
+            // Scout 第二次执行不再重算 ADX/MFI/板块轮动
+            val marketReport = GlobalMarketCache.report(appContext)
 
             val result = mutableMapOf<String, Any?>(
                 "marketDirection" to marketReport.trend.direction,

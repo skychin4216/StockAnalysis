@@ -2,6 +2,7 @@ package com.chin.stockanalysis.agent.core
 
 import android.util.Log
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Semaphore
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -50,6 +51,36 @@ class SubAgentSpawner(
     private val taskCounter = AtomicInteger(0)
 
     /**
+     * 角色级并发闸门（Phase E 并发调度优化）。
+     *
+     * `AgentRole.maxConcurrent` 此前只是个从未被读取的声明值：Sub-Agent 想派生多少就派生多少，
+     * 同一角色堆几十个并发协程会同时压 LLM 配额与内存。这里按角色建信号量把它兑现——
+     * 同角色同时最多 `maxConcurrent` 个在跑，其余在闸门外挂起（协程挂起不占线程）。
+     */
+    private val gates = ConcurrentHashMap<String, Semaphore>()
+
+    private fun gateOf(role: AgentRole): Semaphore =
+        gates.getOrPut(role.name) { Semaphore(role.maxConcurrent.coerceAtLeast(1)) }
+
+    /**
+     * 角色调度优先级（数值小的先占闸门许可）。
+     * 用 `AgentRoles.*.name` 作键而非字面量，避免角色改名后静默失配。
+     */
+    private fun priorityOf(role: AgentRole): Int = when (role.name) {
+        AgentRoles.ORCHESTRATOR.name -> 0
+        AgentRoles.SCOUT.name -> 10
+        AgentRoles.ANALYST.name -> 20
+        AgentRoles.GUARDIAN.name -> 30
+        AgentRoles.EXECUTOR.name -> 40
+        else -> 50
+    }
+
+    /** 各角色闸门空闲许可（诊断用） */
+    fun gateStatus(): String =
+        gates.entries.joinToString(", ") { (name, sem) -> "$name=${sem.availablePermits}空闲" }
+            .ifEmpty { "尚无角色派生" }
+
+    /**
      * 派生子 Agent 并返回 Deferred（非阻塞，可并行派生多个）
      *
      * @param role Agent 角色（决定权限、超时、LLM 层级）
@@ -75,32 +106,43 @@ class SubAgentSpawner(
                 parentSession = session
             )
 
-            Log.i(TAG, "▶ spawn ${role.emoji} ${role.displayName} [$taskId] timeout=${role.timeoutMs}ms")
-
+            // 并发闸门：同角色最多 role.maxConcurrent 个同时执行（Phase E）
+            val gate = gateOf(role)
+            if (gate.availablePermits <= 0) {
+                Log.i(TAG, "⏳ ${role.displayName} [$taskId] 排队等许可（${role.name} 上限 ${role.maxConcurrent}）")
+            }
+            // 许可在超时计时**之前**获取：排队等待不算进角色自己的 timeoutMs
+            gate.acquire()
             try {
-                val result = withTimeout(role.timeoutMs) {
-                    task.execute(context)
+                Log.i(TAG, "▶ spawn ${role.emoji} ${role.displayName} [$taskId] timeout=${role.timeoutMs}ms")
+
+                try {
+                    val result = withTimeout(role.timeoutMs) {
+                        task.execute(context)
+                    }
+                    // 将 execute 返回的 result 也记录到 context
+                    result.forEach { (k, v) -> context.recordToolResult(k, v) }
+
+                    val announce = context.buildAnnounce()
+                    Log.i(TAG, "✓ ${role.displayName} [$taskId] 完成: ${announce.status} (${announce.durationMs}ms)")
+                    announce
+
+                } catch (e: TimeoutCancellationException) {
+                    Log.w(TAG, "⏱ ${role.displayName} [$taskId] 超时: ${role.timeoutMs}ms")
+                    AgentAnnounce.timedOut(taskId, role.name, role.timeoutMs)
+
+                } catch (e: CancellationException) {
+                    Log.w(TAG, "⊘ ${role.displayName} [$taskId] 被取消")
+                    AgentAnnounce.failed(taskId, role.name,
+                        listOf(AgentError("CANCELLED", "任务被取消")))
+
+                } catch (e: Exception) {
+                    Log.e(TAG, "✗ ${role.displayName} [$taskId] 异常: ${e.message}", e)
+                    context.recordError("EXCEPTION", e.message ?: "unknown")
+                    AgentAnnounce.failed(taskId, role.name, context.getErrors())
                 }
-                // 将 execute 返回的 result 也记录到 context
-                result.forEach { (k, v) -> context.recordToolResult(k, v) }
-
-                val announce = context.buildAnnounce()
-                Log.i(TAG, "✓ ${role.displayName} [$taskId] 完成: ${announce.status} (${announce.durationMs}ms)")
-                announce
-
-            } catch (e: TimeoutCancellationException) {
-                Log.w(TAG, "⏱ ${role.displayName} [$taskId] 超时: ${role.timeoutMs}ms")
-                AgentAnnounce.timedOut(taskId, role.name, role.timeoutMs)
-
-            } catch (e: CancellationException) {
-                Log.w(TAG, "⊘ ${role.displayName} [$taskId] 被取消")
-                AgentAnnounce.failed(taskId, role.name,
-                    listOf(AgentError("CANCELLED", "任务被取消")))
-
-            } catch (e: Exception) {
-                Log.e(TAG, "✗ ${role.displayName} [$taskId] 异常: ${e.message}", e)
-                context.recordError("EXCEPTION", e.message ?: "unknown")
-                AgentAnnounce.failed(taskId, role.name, context.getErrors())
+            } finally {
+                gate.release()
             }
         }
     }
@@ -118,10 +160,12 @@ class SubAgentSpawner(
         session: AgentSession,
         scope: CoroutineScope
     ): List<AgentAnnounce> {
-        val deferreds = tasks.map { (role, task) ->
-            spawn(role, task, session, scope)
-        }
-        return deferreds.awaitAll()
+        // 按角色优先级依次发起：许可先到先得，先发起的角色先占坑。
+        // （仅影响许可竞争顺序，返回顺序仍与传入的 tasks 一致）
+        val deferreds = tasks.indices
+            .sortedBy { priorityOf(tasks[it].first) }
+            .map { it to spawn(tasks[it].first, tasks[it].second, session, scope) }
+        return deferreds.sortedBy { it.first }.map { it.second.await() }
     }
 }
 

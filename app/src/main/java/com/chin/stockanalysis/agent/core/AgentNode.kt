@@ -175,16 +175,40 @@ class AnalysisCache(
         }
     }
 
+    /** 命中 / 未命中计数（Phase E 命中率观测用） */
+    @Volatile
+    var hitCount = 0
+        private set
+
+    @Volatile
+    var missCount = 0
+        private set
+
     @Synchronized
     fun get(key: String): CacheEntry? {
-        val entry = cache[key] ?: return null
+        val entry = cache[key]
+        if (entry == null) {
+            missCount++
+            return null
+        }
         val ageMinutes = (System.currentTimeMillis() - entry.timestamp) / 60_000
         if (ageMinutes > ttlMinutes) {
             cache.remove(key)
+            missCount++
             return null
         }
+        hitCount++
         return entry
     }
+
+    /** 命中率（0.0 ~ 1.0；样本不足时返回 0.0） */
+    fun hitRate(): Double {
+        val total = hitCount + missCount
+        return if (total == 0) 0.0 else hitCount.toDouble() / total
+    }
+
+    /** 诊断串，附在分析报告末尾 */
+    fun stats(): String = "分析缓存 命中 $hitCount / 未命中 $missCount（命中率 ${"%.0f".format(hitRate() * 100)}%）"
 
     @Synchronized
     fun put(key: String, response: Map<String, Any?>, model: String = "") {
@@ -197,12 +221,31 @@ class AnalysisCache(
     @Synchronized
     fun clear() { cache.clear() }
 
-    fun makeKey(stockCode: String, analysisType: String, tradeDate: String, tier: LlmTier): String {
-        return "${stockCode}_${analysisType}_${tradeDate}_${tier.name}"
+    /**
+     * 生成缓存 key。
+     *
+     * @param variant 周期/深度变体（如 DeepAnalystEngine 的 `maxSteps`）。
+     *   2026-09-13 补：原 key 只有 股票 + 类型 + 日期 + 模型层级，而同一只票的
+     *   超短线(≤3 步) / 短线(≤5 步) / 中长线(≥6 步) 结论完全不同，
+     *   不带上它会出现「日线跑完再跑周线误命中日线结论」。
+     */
+    fun makeKey(
+        stockCode: String,
+        analysisType: String,
+        tradeDate: String,
+        tier: LlmTier,
+        variant: String = ""
+    ): String = buildString {
+        append(stockCode).append('_').append(analysisType).append('_').append(tradeDate)
+            .append('_').append(tier.name)
+        if (variant.isNotEmpty()) append('_').append(variant)
     }
 
     companion object {
         /** 全局共享缓存实例 */
         val global = AnalysisCache(ttlMinutes = 30, maxSize = 200)
+
+        /** CacheEntry.response 里存放 LLM 原始文本的字段名 */
+        const val TEXT_KEY = "text"
     }
 }
