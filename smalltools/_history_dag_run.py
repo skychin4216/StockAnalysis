@@ -41,6 +41,7 @@ for _p in (HERE, AUTOQ, USECASES):
 import _market_db  # noqa: E402
 from usecase_pipeline import UseCaseRunner, engine_fingerprint  # noqa: E402
 from usecase_screen import prescreen, INDEX_PREFIX  # noqa: E402
+import _kline_store
 
 PERIODS = ["ultra_short", "short", "mid", "long"]
 OUT_JSONL = os.path.join(AUTOQ, "data", "history_dag_run.jsonl")
@@ -51,8 +52,8 @@ MIN_BARS = 30
 
 def load_rows():
     """从 market_data.db 读全史：每只票按日期升序的原始行元组（省内存）。
-    池 = _kline_cache.json 键集。返回 (rows_by, names, cal)。"""
-    with open(os.path.join(HERE, "_kline_cache.json"), encoding="utf-8") as f:
+    池 = data/kline_store.json 键集。返回 (rows_by, names, cal)。"""
+    with open(_kline_store.store_path(), encoding="utf-8") as f:
         pool = json.load(f)
     conn = _market_db.get_conn()
     rows_by, names = {}, {}

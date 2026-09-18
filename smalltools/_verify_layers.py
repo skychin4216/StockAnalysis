@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 # [参考归档] 一次性验证脚本（2026-09-03 用户确认留档，勿删/勿当正式流程运行）
-#   用途: 校验 缓存池(_kline_cache) vs 全市场快照(_market_snapshot) vs 分层清单(_pool_layers) 一致性
+#   用途: 校验 缓存池(kline_store) vs 全市场快照(_market_snapshot) vs 分层清单(_pool_layers) 一致性
 #   用法: 在 smalltools 目录下运行（依赖 ../data/_market_snapshot.json、_pool_layers.json）
 #   转正: 无 —— 分层清单正式产出在 _market_snapshot.py
 import json, os
+import _kline_store
 
 snap = json.load(open(os.path.join('..', 'data', '_market_snapshot.json'), encoding='utf-8'))
 layers = json.load(open(os.path.join('..', 'data', '_pool_layers.json'), encoding='utf-8'))
-cache = json.load(open('_kline_cache.json', encoding='utf-8'))
+cache = json.load(open(_kline_store.store_path(), encoding='utf-8'))
 
 miss = [c for c in cache if c not in snap and not c.startswith(('sh000', 'sz399'))]
 print('缓存 %d 只, 不在快照 %d 只' % (len(cache), len(miss)))

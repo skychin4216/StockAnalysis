@@ -190,7 +190,7 @@ object NodeRegistry {
                 strategyText = config["strategyText"] ?: ""
             )
         }
-        // ③ 纯 ETF 本体筛选（RAS/MACD/OBV/RSI/回撤/流动性，规则/参数在 etf_pure_screen_pipeline.xml）
+        // ③ 纯 ETF 本体筛选（RS/MACD/OBV/RSI/回撤/流动性，规则/参数在 etf_pure_screen_pipeline.xml）
         register("etf_pure_screen") { _, config ->
             com.chin.stockanalysis.strategy.topology.nodes.EtfPureScreenNode(
                 indexCode = config["indexCode"] ?: "sh000300",
@@ -369,6 +369,19 @@ object NodeRegistry {
         register("bg_manager") { ctx, _ -> BackgroundManagerNode() }
         register("fitting_save") { ctx, _ -> FittingSaveNode() }
 
+        // ══════════ 月内机构买入检测（2026-09-17 用户需求） ══════════
+        // 对全池（三周期+ETF全行业扫描+ETFtop5+实仓）检测近35天披露的十大流通股东
+        // 机构增持；命中票保送 generate_orders（JSONObject 输入分支），命中即 view log
+        // 红色标注（🚨）。与 Python usecase_pipeline.py inst_buy_recent 同口径。
+        register("inst_buy_recent") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.InstBuyRecentNode(
+                sourceNode = config["sourceNode"] ?: "n_inst_pool",
+                topN = config["topN"]?.toIntOrNull() ?: 80,
+                noticeDays = config["noticeDays"]?.toLongOrNull() ?: 35L,
+                endDays = config["endDays"]?.toLongOrNull() ?: 130L
+            )
+        }
+
         // ══════════ Hardcode 补齐 Node（HardcodeCompatNodes.kt） ══════════
 
         // 候选池过滤（所有周期共用）
@@ -546,7 +559,12 @@ object NodeRegistry {
                 minSnapshots = config["minSnapshots"]?.toIntOrNull() ?: 60,
                 scanCap = config["scanCap"]?.toIntOrNull() ?: 400,
                 topN = config["topN"]?.toIntOrNull() ?: 10,
-                lookbackDays = config["lookbackDays"]?.toIntOrNull() ?: 20
+                lookbackDays = config["lookbackDays"]?.toIntOrNull() ?: 20,
+                universe = config["universe"] ?: "hot_sector",
+                industryOnly = config["industryOnly"]?.toBoolean() ?: true,
+                baseThemes = config["baseThemes"] ?: "宽基",
+                excludeStar = config["excludeStar"]?.toBoolean() ?: true,
+                minETF = config["minETF"]?.toIntOrNull() ?: 1
             )
         }
         register("ambush_exit_policy") { _, config ->

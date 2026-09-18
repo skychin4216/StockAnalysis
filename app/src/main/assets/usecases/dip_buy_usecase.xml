@@ -13,7 +13,7 @@
   </steps>
   <config>
     <param name="orderType" value="DipBuy" />
-    <param name="maxHoldings" value="3" />
+    <param name="maxHoldings" value="5" />
     <param name="holdingPeriod" value="ultra_short" />
   </config>
 </usecase>

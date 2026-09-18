@@ -80,6 +80,27 @@
         <param name="trailUp" value="true" />
       </config>
     </Node>
+
+    <!-- ── 阶段5：月内机构买入检测 + 机构保送订单（2026-09-17 用户需求）──
+         对全池（三周期 + ETF 全行业扫描 + ETF top5 + 实仓）检测近 35 天披露的
+         十大流通股东机构增持（国家队/社保/大基金/公募/险资/QFII/北向）；
+         命中票直接保送到生成订单 node，是否买入或拦截由买入订单 node 的最终
+         操作决定（趋势/形态/口诀检查全走）；命中即 view log 红色标注（🚨）。 -->
+    <Node id="n_inst_buy" name="月内机构买入检测" module="inst_buy_recent">
+      <config>
+        <param name="sourceNode" value="n_inst_pool" />
+        <param name="topN" value="80" />
+        <param name="noticeDays" value="35" />
+        <param name="endDays" value="130" />
+      </config>
+    </Node>
+    <Node id="n_orders" name="买入订单生成（机构保送）" module="generate_orders">
+      <config>
+        <param name="sourceNode" value="n_inst_buy" />
+        <param name="maxHoldings" value="5" />
+        <param name="orderType" value="MidTermQuant" />
+      </config>
+    </Node>
   </NodeList>
 
   <Links>
@@ -99,6 +120,18 @@
       <SourceNodeId>n_national_flow</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_inst_stop</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_inst_stop</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_inst_buy</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_inst_buy</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_orders</TargetNodeId>
       <TargetPortId>0</TargetPortId>
     </Link>
   </Links>

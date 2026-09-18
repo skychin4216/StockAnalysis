@@ -13,6 +13,7 @@
 用法: _publish_candidates.py 在选股后对候选/实仓附加，随消息推送。
 """
 import math
+import _kline_store
 
 
 # ── 基础 ────────────────────────────────────────────────
@@ -702,7 +703,7 @@ def index_brief(snaps, name="", max_bars=260):
 def _load_cache():
     import json
     import os
-    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
+    p = _kline_store.store_path()
     with open(p, encoding="utf-8") as fh:
         return json.load(fh)
 

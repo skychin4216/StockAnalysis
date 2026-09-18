@@ -3,7 +3,7 @@
 十字星分歧信号 四形态回溯（2008-01-02 ~ 数据末端）
 ====================================================
 数据：公共市场库 StockAnalysis/data/market_data.db（kline 表，2008-01-02 起全量；
-     来源 _kline_cache.json + _extend_history_2008.py 的 2008-2015 hfq 拼接段）。
+     来源 data/kline_store.json + _extend_history_2008.py 的 2008-2015 hfq 拼接段）。
 
 背景（用户思路，做短线视角）：
   大盘回调中出现十字星(分歧)后，星后 1..7 交易日最先走出的 K 线形态有四种：

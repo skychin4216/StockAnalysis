@@ -111,7 +111,7 @@
     <!-- 订单生成 Layer 6 -->
     <Node id="n_orders" name="买入订单生成" module="generate_orders">
       <config>
-        <param name="maxHoldings" value="3" />
+        <param name="maxHoldings" value="5" />
         <param name="orderType" value="UltraShortQuant" />
         <param name="totalCapRatio" value="15" />
         <param name="singlePositionRatio" value="3" />
@@ -121,7 +121,7 @@
     <!-- 腾龙换鸟 Layer 7（持仓满时卖弱买强） -->
     <Node id="n_swap" name="腾龙换鸟" module="swap_weak">
       <config>
-        <param name="maxHoldings" value="3" />
+        <param name="maxHoldings" value="5" />
       </config>
     </Node>
 

@@ -147,7 +147,7 @@ object EtfScreenMath {
         return if (den != 0.0) num / den else 0.0
     }
 
-    /** RAS 相对强度(ETF/沪深300) 的 win 日滚动斜率序列。 */
+    /** RS 相对强度(ETF/沪深300) 的 win 日滚动斜率序列。 */
     fun rasSlopeSeries(etfCloses: List<Double>, benchCloses: List<Double>, win: Int): List<Double> {
         val m = min(etfCloses.size, benchCloses.size)
         if (m < win + 1) return emptyList()
@@ -161,6 +161,10 @@ object EtfScreenMath {
     /**
      * 低吸打分（自包含，与 Python `_etf_pick_score` 逐项一致）。
      * 硬门控：SAR 绿（下跌趋势）直接排除。返回 null=样本不足。
+     *
+     * 2026-09-16 技术因子扩容（用户需求：ETF 全行业扫描/top5 不能只看 SAR）：
+     * 新增 KDJ(9,3,3) / BOLL(20,2) / CCI(14) / ADX(14) / 均线多头排列·粘合 / MA20 趋势线斜率。
+     * 权重与 usecase_pipeline.py `_etf_pick_score` 逐项同口径，任何调整请双端同步。
      */
     fun pickScore(
         closes: List<Double>, opens: List<Double>, highs: List<Double>,
@@ -181,6 +185,20 @@ object EtfScreenMath {
         val v5 = if (n >= 6) vols.subList(n - 6, n - 1).average() else 0.0
         val vr = if (v5 > 0) vols[n - 1] / v5 else 1.0
         val stable = upDay && vr >= 1.05 && c > ma5 && threeNoLow
+        // ── 2026-09-16 新增技术因子（与 Python _etf_pick_score 同口径）──
+        val ma20 = closes.takeLast(20).average()
+        val ma60 = closes.takeLast(60).average()
+        val kdjJ = kdjJ(highs, lows, closes)
+        val kdjJPrev = kdjPrevJ(highs, lows, closes)
+        val bollV = boll(closes)
+        val cciV = cci(highs, lows, closes)
+        val cciPrev = cciPrev(highs, lows, closes)
+        val adxT = adx(highs, lows, closes)
+        val maStack = ma5 > ma10 && ma10 > ma20 && ma20 > ma60
+        val mas = listOf(ma5, ma10, ma20, ma60)
+        val maGlu = ma60 > 0 && (mas.max() / mas.min() - 1.0) <= 0.03
+        val ma20Prev = if (n >= 40) closes.subList(n - 40, n - 20).average() else 0.0
+        val ma20SlopeUp = n >= 40 && ma20Prev > 0 && ma20 > ma20Prev
         var s = 0.0
         if (stable) s += 3.0
         if (fresh) s += 2.0
@@ -193,8 +211,47 @@ object EtfScreenMath {
         if (threeNoLow) s += 1.2
         if (upDay) s += 0.6
         if (upDay && vr >= 1.0 && vr <= 3.5) s += 1.0
+        // ── 新增因子打分（低吸语义：超卖+企稳+趋势转折，不追强）──
+        if (kdjJ != null && kdjJ < 20) {
+            s += 1.2
+            if (kdjJPrev != null && kdjJPrev < 0 && kdjJ >= 0) s += 0.5
+        }
+        if (bollV != null) {
+            val (mid, _, lo) = bollV
+            if (lows[n - 1] <= lo * 1.005 && c > lo) s += 1.0
+            if (c > mid) s += 0.8
+        }
+        if (cciV != null) {
+            if (cciPrev != null && cciPrev < -100 && cciV >= -100) s += 1.0
+            else if (Math.abs(cciV) < 100) s += 0.3
+        }
+        if (maStack) s += 1.0
+        if (maGlu) s += 0.8
+        if (ma20SlopeUp) s += 0.4
+        if (adxT != null) {
+            val (adxV, pdi, mdi) = adxT
+            if (adxV >= 25 && pdi > mdi) s += 0.8
+            else if (adxV < 20) s += 0.4
+        }
         val core = stable || fresh || macdT == "金叉"
-        return JSONObject()
+        // 因子文本（推送表/APK 行可直接读）
+        val kdjS = if (kdjJ != null) {
+            "J=%.0f".format(kdjJ) + (if (kdjJPrev != null && kdjJPrev < 0 && kdjJ >= 0) "↑回升" else "")
+        } else ""
+        val bollS = if (bollV != null) {
+            val (mid, _, lo) = bollV
+            when {
+                lows[n - 1] <= lo * 1.005 && c > lo -> "下轨"
+                c > mid -> "中轨上"
+                c > lo -> "中轨下"
+                else -> "破下轨"
+            }
+        } else ""
+        val cciS = if (cciV != null) "%d".format(Math.round(cciV)) else ""
+        val adxS = if (adxT != null) {
+            "%.0f".format(adxT.first) + (if (adxT.second > adxT.third) "多头" else "空头")
+        } else ""
+        val json = JSONObject()
             .put("score", round(s, 2)).put("core", core)
             .put("sar", if (!fresh) "SAR红↑$sarBars" else "SAR刚翻红")
             .put("sarDir", d).put("sarBars", sarBars).put("freshUp", fresh)
@@ -202,6 +259,103 @@ object EtfScreenMath {
             .put("above5", c > ma5).put("above10", c > ma10)
             .put("threeNoLow", threeNoLow).put("upDay", upDay)
             .put("volRatio", round(vr, 2)).put("stable", stable)
+            .put("kdj", kdjS).put("boll", bollS).put("cci", cciS).put("adx", adxS)
+            .put("maStack", maStack).put("maGlu", maGlu).put("ma20SlopeUp", ma20SlopeUp)
+        if (kdjJ != null) json.put("kdjJ", round(kdjJ, 1))
+        if (cciV != null) json.put("cciVal", Math.round(cciV).toInt())
+        if (adxT != null) json.put("adxVal", round(adxT.first, 1))
+        return json
+    }
+
+    /** KDJ(n,k1,d1) 末值 J=3K-2D（RSV 递推，K/D 种子 50）。与 Python `_etf_kdj_j` 同口径。 */
+    fun kdjJ(highs: List<Double>, lows: List<Double>, closes: List<Double>,
+             n: Int = 9, k1: Int = 3, d1: Int = 3): Double? {
+        if (closes.size < n + 1) return null
+        var k = 50.0; var d = 50.0
+        for (i in closes.indices) {
+            val from = max(0, i - n + 1)
+            val hi = highs.subList(from, i + 1).max()
+            val lw = lows.subList(from, i + 1).min()
+            val rsv = if (hi <= lw) 50.0 else (closes[i] - lw) / (hi - lw) * 100.0
+            k = (k1 - 1).toDouble() / k1 * k + rsv / k1
+            d = (d1 - 1).toDouble() / d1 * d + k / d1
+        }
+        return 3.0 * k - 2.0 * d
+    }
+
+    /** 前一日 KDJ J 值（判『超卖回升』用）。 */
+    fun kdjPrevJ(highs: List<Double>, lows: List<Double>, closes: List<Double>,
+                 n: Int = 9): Double? {
+        if (closes.size < n + 2) return null
+        val sz = closes.size - 1
+        return kdjJ(highs.subList(0, sz), lows.subList(0, sz), closes.subList(0, sz), n)
+    }
+
+    /** BOLL(n,w) → Triple(mid, up, lo) 末值（总体标准差）。样本不足 null。与 Python `_etf_boll` 同口径。 */
+    fun boll(closes: List<Double>, n: Int = 20, w: Double = 2.0): Triple<Double, Double, Double>? {
+        if (closes.size < n) return null
+        val win = closes.takeLast(n)
+        val mid = win.average()
+        val sd = Math.sqrt(win.map { (it - mid) * (it - mid) }.average())
+        return Triple(mid, mid + w * sd, mid - w * sd)
+    }
+
+    /** CCI(n) 末值。样本不足 null。与 Python `_etf_cci` 同口径。 */
+    fun cci(highs: List<Double>, lows: List<Double>, closes: List<Double>,
+            n: Int = 14): Double? {
+        if (closes.size < n) return null
+        val tps = highs.indices.map { (highs[it] + lows[it] + closes[it]) / 3.0 }
+        val win = tps.takeLast(n)
+        val ma = win.average()
+        val md = win.map { Math.abs(it - ma) }.average()
+        if (md <= 1e-12) return 0.0
+        return (tps.last() - ma) / (0.015 * md)
+    }
+
+    /** 前一日 CCI（判『穿越-100回升』用）。 */
+    fun cciPrev(highs: List<Double>, lows: List<Double>, closes: List<Double>,
+                n: Int = 14): Double? {
+        if (closes.size < n + 1) return null
+        val sz = closes.size - 1
+        return cci(highs.subList(0, sz), lows.subList(0, sz), closes.subList(0, sz), n)
+    }
+
+    /** Wilder ADX(n) → Triple(adx, pdi, mdi)。样本不足 null。与 Python `_etf_adx` 同口径。 */
+    fun adx(highs: List<Double>, lows: List<Double>, closes: List<Double>,
+            n: Int = 14): Triple<Double, Double, Double>? {
+        if (closes.size < 2 * n + 1) return null
+        val trL = ArrayList<Double>(); val pdmL = ArrayList<Double>(); val mdmL = ArrayList<Double>()
+        for (i in 1 until closes.size) {
+            val tr = max(max(highs[i] - lows[i], Math.abs(highs[i] - closes[i - 1])),
+                Math.abs(lows[i] - closes[i - 1]))
+            val up = highs[i] - highs[i - 1]
+            val dn = lows[i - 1] - lows[i]
+            pdmL.add(if (up > dn && up > 0) up else 0.0)
+            mdmL.add(if (dn > up && dn > 0) dn else 0.0)
+            trL.add(tr)
+        }
+        fun wma(vals: List<Double>): List<Double> {
+            val out = ArrayList<Double>(vals.size); var acc = 0.0
+            for ((i, v) in vals.withIndex()) {
+                acc = if (i < n) acc + v else acc - acc / n + v
+                out.add(acc)
+            }
+            return out
+        }
+        val trS = wma(trL); val pdmS = wma(pdmL); val mdmS = wma(mdmL)
+        val dxL = ArrayList<Double>()
+        for (i in trS.indices) {
+            if (trS[i] <= 1e-12) continue
+            val pdi = 100.0 * pdmS[i] / trS[i]
+            val mdi = 100.0 * mdmS[i] / trS[i]
+            if (pdi + mdi > 1e-12) dxL.add(100.0 * Math.abs(pdi - mdi) / (pdi + mdi))
+        }
+        if (dxL.size < n) return null
+        var adxV = dxL.take(n).average()
+        for (dx in dxL.drop(n)) adxV = (adxV * (n - 1) + dx) / n
+        val pdi = if (trS.last() > 1e-12) 100.0 * pdmS.last() / trS.last() else 0.0
+        val mdi = if (trS.last() > 1e-12) 100.0 * mdmS.last() / trS.last() else 0.0
+        return Triple(adxV, pdi, mdi)
     }
 
     /** snaps → 精简 K 线（供下游 stop_loss_vote target=picks 内嵌，免二次取数）。 */
@@ -470,6 +624,11 @@ class EtfIndustryScanNode(
                     .put("volRatio", sc.optDouble("volRatio")).put("stable", sc.optBoolean("stable"))
                     .put("above5", sc.optBoolean("above5")).put("above10", sc.optBoolean("above10"))
                     .put("threeNoLow", sc.optBoolean("threeNoLow")).put("upDay", sc.optBoolean("upDay"))
+                    // 2026-09-16 新增技术因子（ETF 全行业扫描不再只看 SAR）
+                    .put("kdj", sc.optString("kdj")).put("boll", sc.optString("boll"))
+                    .put("cci", sc.optString("cci")).put("adx", sc.optString("adx"))
+                    .put("maStack", sc.optBoolean("maStack")).put("maGlu", sc.optBoolean("maGlu"))
+                    .put("ma20SlopeUp", sc.optBoolean("ma20SlopeUp"))
                     .put("kline", TechTags.klineDesc(closes, closes.size - 1))
                     .put("trend", EtfScreenMath.trendLabel(closes, opens, highs, lows))
                 if (embedBars) row.put("bars", EtfScreenMath.barsPack(snaps, barsLimit))
@@ -505,7 +664,7 @@ class EtfIndustryScanNode(
 /**
  * ## ③ 纯 ETF 本体筛选（module=etf_pure_screen）
  *
- * ETF 自身 RAS 相对强度 / MACD / OBV / RSI6 / 距250日高回撤 / 流动性 → base_buy / t_buy / t_sell。
+ * ETF 自身 RS 相对强度 / MACD / OBV / RSI6 / 距250日高回撤 / 流动性 → base_buy / t_buy / t_sell。
  * 内置**大盘三态自适应**：BULLISH 放宽位置门槛 / OSCILLATION 标准档 / BEARISH 底仓全关仅做 T。
  */
 class EtfPureScreenNode(
@@ -618,7 +777,7 @@ class EtfPureScreenNode(
                         .put("trend", EtfScreenMath.trendLabel(closes, opens, highs, lows))
                         .put("exit", JSONObject().put("tpRsi", 75.0)
                             .put("sl250", EtfScreenMath.round(lo250 * 0.95, 3))
-                            .put("note", "底仓止盈: RSI6>75 或 RAS转绿；底仓止损: 跌破250日低点下方5%")))
+                            .put("note", "底仓止盈: RSI6>75 或 RS转绿；底仓止损: 跌破250日低点下方5%")))
                 }
             }
             rows.sortWith(Comparator { a, b ->

@@ -312,8 +312,171 @@ def sentinels():
         return [], {"error": type(e).__name__}
 
 
-def collect_news(top=12):
-    """东财 7x24 财经快讯。"""
+# ══════════════════════════════════════════════════════════════════════════
+# 利率决议/加息事件深度分析卡（2026-09-17 用户需求）
+#   用户反馈「对加息的分析有点简单，应该参考历史加息对股市的影响，同时增加
+#   预期加息一次还是加息完之后还会再加息，进行多情景分析规划和总结」。
+#   触发：快讯/事件标题命中 利率决议/FOMC/议息/加息/降息 关键词时，在
+#   08:00 盘前情报 / offhour 宏观警报正文追加本卡：
+#   事件定位 → 历史案例 → 路径预期（一次 vs 周期）→ 三情景规划 → 验证清单。
+# ══════════════════════════════════════════════════════════════════════════
+
+_RATE_TRIGGER_KW = ("加息", "降息", "利率决议", "FOMC", "议息", "点阵图",
+                    "联邦基金利率", "货币政策声明", "鲍威尔", "拉加德", "上调利率", "下调利率")
+
+_RATE_HIST_CASES = (
+    ("2015-12~2018-12 美联储加息周期（9次共225bp）",
+     "上证累计-27%、创业板更深；风格切向价值/红利/消费；每次落地后1-3个月震荡消化，"
+     "周期末段（2018H2）市场提前交易衰退宽松"),
+    ("2022-03~2023-07 美联储加息周期（11次共525bp，40年最快）",
+     "上证2022年-15%；高估值成长（创业板/纳指）承压最深，煤炭/红利/油气逆势走强；"
+     "最后1-2次加息时市场已提前反弹（交易宽松预期）"),
+    ("2019-07~10 / 2024-09 美联储预防式降息",
+     "成长科技弹性最大；A股/港股风险偏好修复、北向回流、人民币升值"),
+    ("历史规律总结（4条）",
+     "①首次加息冲击 > 后续每次加息；②对A股是「外资流动性+汇率」间接传导，"
+     "人民币贬值期北向流出放大压力；③加息尾声=布局点、首次加息=减仓点；"
+     "④滞胀环境（油价90+且加息）→ 能源/红利最强、成长最弱"),
+)
+
+# 2026-09-17 量化实证（kline_store 4 大指数实测，详见 docs/fed_hike_a_share_impact.md
+# 与 event_library.json → learned_history.fed_rate_hike）：
+# C1=2015-12-17→2018-12-19(+225bp)；C2=2022-03-17→2023-07-26(+525bp)。
+_RATE_EMPIRICAL = (
+    "T+5 首周：四指数 ±1%（利空提前定价，首日勿恐慌割肉）",
+    "T+20~T+60 杀估值期：上证 -0.6%(C2)~-19%(C1)，创业板 -8%~-25%（估值越高跌越深）",
+    "T+120 半年：C2 沪+1.5%/创-6.0%；C1 沪-19.8%/创-25.9%（关键=国内是否宽松对冲）",
+    "T+250 一年：C2 沪+0.9%/创-12.6%；C1 沪-12.8%/创-30.4%",
+    "整轮：C1 沪-28.8%/创-55.3%；C2 沪+0.3%/创-19.2%（独立性=国内货币方向）",
+    "修复时间：沪 5周(C2)~2.4年(C1)；深 6周~1.8年；创业板 1.8~2.3年（等降息+国内政策共振）",
+    "最低点早于末次加息 1~3 个月（市场抢跑末段）",
+)
+
+_RATE_PATH_RULES = (
+    ("声明含 additional/ongoing/进一步/继续", "加息周期延续，后面还会再加", "情景B"),
+    ("声明含 data-dependent/视数据而定/暂停/pause", "本次为单次加息后暂停观察", "情景A"),
+    ("单次幅度 ≥50bp", "紧急应对通胀/汇率压力，通常不是最后一次", "情景B"),
+    ("年内已连续 ≥2 次加息", "周期中段，市场已部分定价，冲击递减", "B（中性化）"),
+    ("通胀(CPI)仍在走高 + 加息", "抗通胀优先，倾向继续加", "情景B"),
+    ("加息伴随就业/PMI走弱（衰退信号）", "可能已是「最后一次」，末段特征", "情景A"),
+)
+
+_RATE_SCENARIOS = (
+    ("情景A：单次加息后暂停（本轮最后一步）", (
+        "市场提前交易宽松预期，压制解除 → 超跌成长/科技反弹弹性最大",
+        "高股息红利仍是底仓，但相对收益下降（避险溢价回落）",
+        "操作：成长+红利哑铃；逢回调布局超跌成长（半导体/创新药/新能源）")),
+    ("情景B：加息周期延续（后面还会再加）", (
+        "美债利率维持高位 → 北向流出 + 人民币贬值压力延续",
+        "高估值成长持续承压；煤炭/银行/红利/油气相对占优",
+        "操作：防御为主、缩成长仓位；等「末段信号」（点阵图下修/首次讨论暂停）再转攻")),
+    ("情景C：鹰派意外转鸽（声明偏鸽或直接降息）", (
+        "风险偏好快速修复，A股港股共振反弹，弹性最大=恒生科技+创业板",
+        "人民币升值 → 北向回流 → 白酒/医药/新能源等外资重仓股受益",
+        "操作：转进攻，指数ETF + 超跌白马")),
+)
+
+
+def rate_cycle_card(news_titles, snap=None):
+    """利率决议深度分析卡（历史案例+路径预期+三情景规划）。无触发返回 []。"""
+    titles = [str(t or "") for t in (news_titles or [])]
+    hit = [t for t in titles if any(k in t for k in _RATE_TRIGGER_KW)]
+    if not hit:
+        return []
+    txt = " ".join(hit)
+    lines = ["", "【利率决议·深度分析】（命中 %d 条相关快讯）" % len(hit)]
+    lines.append("  触发: " + hit[0][:70])
+    # ── ① 事件定位（多标题混合时按关键词出现次数定方向，避免单条噪音抢先）──
+    n_hike = txt.count("加息") + txt.count("上调利率")
+    n_cut = txt.count("降息") + txt.count("下调利率")
+    if n_hike > n_cut:
+        direction = "加息"
+    elif n_cut > n_hike:
+        direction = "降息"
+    elif n_hike > 0:
+        direction = "加息/降息信号混合（以点阵图与声明为准）"
+    else:
+        direction = "利率决议/议息"
+    size = next((bp for bp in ("50基点", "50个基点", "25基点", "25个基点") if bp in txt), "")
+    who = next((c for c in ("美联储", "欧央行", "欧洲央行", "日央行", "日本央行", "英国央行", "中国央行", "央行")
+                if c in txt), "")
+    lines.append("  ① 事件定位: %s%s%s" % (who or "主要央行", direction,
+                                          ("·" + size) if size else ""))
+    # ── ② 历史加息对股市的影响（案例库）──
+    lines.append("  ② 历史案例（加息/降息周期对 A 股影响）")
+    for nm, concl in _RATE_HIST_CASES:
+        lines.append("     · %s" % nm)
+        lines.append("       %s" % concl)
+    # ── ②b 量化实证（kline_store 4 大指数实测，2026-09-17）──
+    lines.append("  ②b 量化实证（4 大指数实测·短期/长期/修复）")
+    for ln in _RATE_EMPIRICAL:
+        lines.append("     · " + ln)
+    # ── ③ 路径预期：一次还是连续 ──
+    lines.append("  ③ 路径预期（判断「加一次就停」还是「还会再加」，按声明特征对号入座）")
+    for rule, concl, scen in _RATE_PATH_RULES:
+        lines.append("     · 若%s → %s（倾向 %s）" % (rule, concl, scen))
+    if "暂停" not in txt and "additional" not in txt and "pause" not in txt:
+        lines.append("     · 声明细节未在快讯中披露 → 按「周期中段」中性处理，等点阵图/发布会")
+    # ── ④ 三情景规划 ──
+    lines.append("  ④ 三情景规划与操作")
+    for nm, pts in _RATE_SCENARIOS:
+        lines.append("     ▸ %s" % nm)
+        for p in pts:
+            lines.append("       - %s" % p)
+    # ── ⑤ 验证清单 ──
+    lines.append("  ⑤ 验证清单（下一步盯什么）")
+    lines.append("     - 声明措辞（additional=继续加 / data-dependent=暂停）+ 点阵图中值变动")
+    lines.append("     - 2年期美债利率（继续上行=市场定价再加；快速回落=末段信号）")
+    lines.append("     - 人民币汇率与北向流向（贬值+流出=情景B压力项）")
+    us = (snap or {}).get("us_close") or []
+    if us:
+        lines.append("     - 美股即时反应: " + " | ".join(
+            "%s %s" % (r.get("name"), _fmt_pct(r.get("pct"))) for r in us))
+    return lines
+
+
+def collect_news(top=12, authoritative=True, drain_pool=True):
+    """财经快讯。
+
+    2026-09-17 用户口径：新闻解析量太大 → 收敛为权威源
+    （美国 1财经+1政治+1机构 / 中国 1财经+1政治+1机构，见 _news_watch.collect_authoritative）。
+
+    · authoritative=True（默认）：优先取六类权威条目（5 分钟复用缓存），
+      并合并非交易时段 offhour 新闻池（drain_pool=True 时消费即清空）；
+      权威源为空时退化为原东财 7x24 全量快讯。
+    · drain_pool=False：只读不消费池（供 offhour 哨兵自查，避免把池吃空）。
+    """
+    if authoritative:
+        out = []
+        try:
+            import _news_watch
+            auth = _news_watch.collect_authoritative()
+            hm = (auth.get("ts") or "")[11:16]
+            for key in ("us_finance", "us_politics", "us_agency",
+                        "cn_finance", "cn_politics", "cn_agency"):
+                for it in (auth.get(key) or []):
+                    # 条目 {title,url,time,src}（2026-09-17）；url 供整理溯源
+                    if isinstance(it, dict):
+                        out.append({"title": (it.get("title") or "")[:80],
+                                    "time": it.get("time") or hm, "src": key,
+                                    "url": it.get("url") or ""})
+                    else:
+                        out.append({"title": str(it)[:80], "time": hm,
+                                    "src": key, "url": ""})
+        except Exception as e:  # noqa: BLE001
+            print("权威源采集失败: %s" % type(e).__name__)
+        if drain_pool:
+            try:
+                import _offhour_watch
+                for it in _offhour_watch.drain_news_pool(max_items=40):
+                    out.append({"title": (it.get("title") or "")[:80],
+                                "time": it.get("time") or "", "src": "offhour_pool",
+                                "url": it.get("url") or ""})
+            except Exception:  # noqa: BLE001
+                pass
+        if out:
+            return out
+    # 兜底：东财 7x24 全量
     try:
         r = requests.get(
             "https://np-listapi.eastmoney.com/comm/web/getFastNewsList",
@@ -326,20 +489,33 @@ def collect_news(top=12):
         return []
     out = []
     for it in lst[:top]:
+        code = str(it.get("code") or "").strip()
         out.append({"title": (it.get("title") or it.get("summary", ""))[:80],
-                    "time": it.get("showTime") or it.get("digestTime") or ""})
+                    "time": it.get("showTime") or it.get("digestTime") or "",
+                    # 原文网页 URL（2026-09-17 用户需求：参考过的消息保留网页方便整理）
+                    "url": it.get("uniqueUrl") or (
+                        "https://finance.eastmoney.com/a/%s.html" % code if code else "")})
     return out
 
 
-def snapshot(slot):
-    """一次完整采集（08:00 / 09:00 共用，09:00 额外带亚太实时与韩国权重股）。"""
+def snapshot(slot, prefetched=None):
+    """一次完整采集（08:00 / 09:00 共用，09:00 额外带亚太实时与韩国权重股）。
+
+    prefetched（2026-09-17 用户口径·节流）：offhour 哨兵已在顶部抓过 news/us_close/commodity_fx，
+    调 run_slot("offhour") 时把数据传进来直接复用，避免 4 次重复网络抓取（30s+ 延迟）。
+    结构：{"news": [...], "us_close": [...], "commodity": {...}}；缺位字段兜底为单次抓取。
+    """
+    pf = prefetched or {}
+    news = pf.get("news") if pf.get("news") is not None else collect_news()
+    us = pf.get("us_close") if pf.get("us_close") is not None else us_close()
+    cmd = pf.get("commodity") if pf.get("commodity") is not None else commodity_fx()
     snap = {
         "ts": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "slot": slot,
         "global": east_global(),
-        "us_close": us_close(),
-        "commodity": commodity_fx(),
-        "news": collect_news(),
+        "us_close": us,
+        "commodity": cmd,
+        "news": news,
     }
     if slot == "pre9":
         try:
@@ -648,13 +824,23 @@ def render_board_report(snap, verd, picks):
         lines.append("附：盘前快讯")
         lines.extend("  · %s" % n["title"] for n in news)
 
+    # 2026-09-17 用户需求：利率决议（加息/降息/FOMC）命中 → 深度分析卡
+    # （历史案例 + 一次还是连续的路径预期 + 三情景规划 + 验证清单）
+    try:
+        rc = rate_cycle_card([n.get("title") for n in (snap.get("news") or [])], snap)
+        if rc:
+            lines.extend(rc)
+    except Exception as e:  # noqa: BLE001
+        print("利率分析卡追加失败:", type(e).__name__, e)
+
     return "\n".join(lines)
 
 
 def render_pre9_text(snap, verd, picks, slot):
-    """09:00 亚太情报正文（保持原有格式）。"""
+    """09:00 亚太情报正文（保持原有格式）。offhour 复用此格式，仅换头行。"""
     ts = snap.get("ts", "")
-    lines = ["【每日节奏·%s】%s" % ("09:00亚太", ts), ""]
+    _head = "盘后宏观警报" if slot == "offhour" else "09:00亚太"
+    lines = ["【每日节奏·%s】%s" % (_head, ts), ""]
 
     # 一、全球市场快照
     lines.append("一、全球市场快照")
@@ -718,6 +904,14 @@ def render_pre9_text(snap, verd, picks, slot):
         lines.append("")
         lines.append("四、盘前快讯")
         lines.extend("  · %s" % n["title"] for n in news)
+
+    # 2026-09-17 用户需求：利率决议（加息/降息/FOMC）命中 → 深度分析卡
+    try:
+        rc = rate_cycle_card([n.get("title") for n in (snap.get("news") or [])], snap)
+        if rc:
+            lines.extend(rc)
+    except Exception as e:  # noqa: BLE001
+        print("利率分析卡追加失败:", type(e).__name__, e)
 
     return "\n".join(lines)
 
@@ -812,18 +1006,33 @@ def _save_json_intel(snap, verd, picks, content, slot):
         print("_daily_intel.json 写入失败: %s" % e)
 
 
-def run_slot(slot, dry=False, log=print):
-    """执行一个情报时段：采集 → 判定 → 选股 → 推送 → 存库。"""
+def run_slot(slot, dry=False, log=print, prefetched=None):
+    """执行一个情报时段：采集 → 判定 → 选股 → 推送 → 存库。
+
+    prefetched（2026-09-17）：复用上游已抓数据，透传给 snapshot()。仅 offhour 哨兵用。
+    """
     t0 = time.time()
     log("[%s] %s 情报采集…" % (datetime.datetime.now().strftime("%H:%M:%S"), slot))
-    snap = snapshot(slot)
+    snap = snapshot(slot, prefetched=prefetched)
     verd = verdicts(snap)
     picks = screen(verd, log=log)
     content = render_text(snap, verd, picks, slot)
+    # 2026-09-16 用户需求：08:00/09:00 推送末尾加"活跃宏观事件"行（加息/战争/石油/美国资本担忧等）
+    try:
+        from _publish_candidates import _macro_events_lines
+        me = _macro_events_lines(asof=datetime.date.today().strftime("%Y-%m-%d"))
+        if me:
+            content = content + "\n\n" + "\n".join(me)
+    except Exception as e:
+        log("[%s] 宏观事件行追加失败: %s" % (slot, e))
     title = "📡 %s情报 %s" % ("盘前08:00" if slot == "pre8" else "盘前09:00亚太",
                               snap.get("ts", "")[5:16])
     if slot == "pre8":
         title = "📡 板块情报 %s" % snap.get("ts", "")[5:16]
+    elif slot == "offhour":
+        # 2026-09-17 用户需求：非交易时间确定级宏观事件 → 宏观分析+选股+推送
+        # （_offhour_watch 触发，与盘前情报同一链路）
+        title = "🚨 非交易时间宏观警报 %s" % snap.get("ts", "")[5:16]
 
     # 表格 PNG（板块 + 候选），失败自动降级为纯文本
     tag = "%s_%s" % (datetime.date.today().strftime("%Y%m%d"),
@@ -999,37 +1208,72 @@ def review_sections(log=print, trade_date=None):
                          "header": ["方向", "强度", "板块", "板块均涨", "结论", "判定时间"],
                          "body": rows_c1})
 
-    # ── d. 近5个交易日信号票巡诊（原格式）──
+    # ── d. 近5个交易日信号票巡诊（2026-09-17 改版：逐日 D+1~D+5）──
+    # 旧版只有「至今涨跌」一列，且 ledger 写入端 close 大多为 null（只有部分来源带价）
+    # → 入选价/涨跌大面积「—」。现在用腾讯日K按入选日对齐：
+    #   · 入选价 base = ledger close（缺则回填入选日K线收盘）；
+    #   · D+1~D+5 = 入选日后第 k 个交易日收盘相对入选价的涨跌（未到 → ·）；
+    #   · 入选超过 5 个交易日的信号剔除（过期不再巡诊）。
     rows_d = []
-    ledgers = _recent_ledgers(5)
-    latest = {}
+    ledgers = _recent_ledgers(6)
+    sig = {}
     for lg in ledgers:
         for p in (lg.get("picks") or []):
             sid = p.get("secid")
             if not sid:
                 continue
-            prev = latest.get(sid)
+            prev = sig.get(sid)
             if prev is None or (lg.get("asof") or "") > (prev.get("asof") or ""):
-                latest[sid] = {"name": p.get("name"), "period": p.get("period"),
-                               "asof": lg.get("asof"), "close": p.get("close"),
-                               "src": p.get("src")}
-    if latest:
-        qs = quotes([(sid, v["name"] or sid, "巡诊") for sid, v in latest.items()])
-        for sid, v in latest.items():
-            q = qs.get(sid) or {}
-            cur = q.get("price")
-            base = v.get("close")
-            ret = ((cur / base - 1) * 100) if (cur and base) else None
-            # 来源 src 由 _self_review 合并（dag / round / prepared 以 + 相连，
-            # 最长 "dag+prepared+round"=19 字符）；旧 [:12] 会把 "prepared+round"
-            # 截成 "prepared+rou"（长图/CSV 里出现半截词），改放宽到 20。
-            rows_d.append([v.get("name") or sid, sid[2:], v.get("period") or "—",
-                           v.get("asof") or "—", _fmt_num(base), _fmt_num(cur),
-                           _fmt_pct(ret), (v.get("src") or "—")[:20]])
-        rows_d.sort(key=lambda r: -(_f(r[6].replace("%", "").replace("+", ""), -99) or -99))
+                sig[sid] = {"name": p.get("name"), "period": p.get("period"),
+                            "asof": lg.get("asof"), "close": p.get("close"),
+                            "src": p.get("src")}
+    if sig:
+        try:
+            from backtest_guangmo import fetch_tencent
+        except Exception as e:  # noqa: BLE001
+            fetch_tencent = None
+            log("巡诊：日K模块不可用 %s" % e)
+        if fetch_tencent is not None:
+            beg = (datetime.date.today() - datetime.timedelta(days=25)).strftime("%Y%m%d")
+            end = datetime.date.today().strftime("%Y%m%d")
+            for sid, v in sig.items():
+                try:
+                    _, snaps = fetch_tencent(sid, beg, end)
+                except Exception:
+                    snaps = []
+                kmap = {str(s.get("date"))[:10]: float(s["close"])
+                        for s in (snaps or []) if s.get("close")}
+                if not kmap:
+                    continue                      # 日K拉不到 → 整行跳过（无锚点无法逐日）
+                days = sorted(kmap)
+                asof = v.get("asof") or ""
+                if asof not in kmap:
+                    continue                      # 入选日无K线（停牌/超窗）→ 无法对齐
+                base = v.get("close") or kmap[asof]
+                after = days[days.index(asof) + 1:]
+                if len(after) > 5:
+                    continue                      # 超过5个交易日 → 剔除
+                dcells = []
+                for k in range(1, 6):
+                    dcells.append("%.1f%%" % ((kmap[after[k - 1]] / base - 1) * 100)
+                                  if len(after) >= k else "·")
+                rows_d.append([v.get("name") or sid, sid[2:], v.get("period") or "—",
+                               asof, _fmt_num(base)] + dcells
+                              + [(v.get("src") or "—")[:20]])
+            # 排序：按已实现的最远日涨跌降序（同旧版按涨跌排，读者先看最好/最差）
+            def _last_pct(r):
+                for c in reversed(r[5:10]):
+                    if c not in ("·", ""):
+                        try:
+                            return float(c.replace("%", "").replace("+", ""))
+                        except ValueError:
+                            return -99.0
+                return -99.0
+            rows_d.sort(key=lambda r: -_last_pct(r))
     if rows_d:
-        sections.append({"title": "d. 近5日信号票巡诊（持有中标的今日表现）",
-                         "header": ["名称", "代码", "周期", "入选日", "入选价", "现价", "至今涨跌", "来源"],
+        sections.append({"title": "d. 近5日信号票巡诊（入选后逐日涨跌，超5日剔除）",
+                         "header": ["名称", "代码", "周期", "入选日", "入选价",
+                                    "D+1", "D+2", "D+3", "D+4", "D+5", "来源"],
                          "body": rows_d[:20]})
     return sections
 
@@ -1048,6 +1292,64 @@ def _last_trade_date():
     return datetime.date.today().isoformat()
 
 
+# ── 收盘复盘尾句池（2026-09-17 用户需求：不要千篇一律，每天换一句）──
+# 风格混排：财经谚语 / 寓言 / 段子 / 无关冷知识；_pick_review_tail 随机且
+# 避免最近 10 天内重复（留痕 _records/_review_tails.json，只存最近 50 条）。
+_REVIEW_TAILS = [
+    "💬 复盘是为了下一次更准，不是为了后悔。按纪律走，把仓位留给确定性 👊",
+    "💬 市场永远不缺机会，缺的是机会来临时你还有子弹。",
+    "💬 芒格说：如果我知道我会死在哪，我就永远不去那儿。空仓也是一种仓位。",
+    "💬 趋势是朋友，但朋友也会翻脸——止损就是给翻脸买的保险。",
+    "💬 巴菲特的雪球靠的是很湿的雪和很长的坡，不是每天滚得最快的那个人。",
+    "💬 别人恐惧我贪婪，前提是先数清楚自己兜里有几个钢镚儿。",
+    "💬 老渔民说：出海看天，收网看汛。行情没到那份上，网补好就行。",
+    "💬 猎人大部分时间在等，扣扳机只要一秒。交易难的是那一秒之外的忍耐。",
+    "💬 亏钱的单子教会你的，往往比赚钱的多——但学费交一次就该毕业。",
+    "💬 利弗莫尔：赚大钱靠的是坐得住，不是频繁折腾。",
+    "💬 高手和菜鸟的区别：高手亏小钱，菜鸟亏大钱，速度还更快。",
+    "💬 农夫不会因为昨天歉收就把种子全炒了吃。播种和收获不在同一个季节。",
+    "💬 行情好的时候猪都能飞，退潮了才知道谁在裸泳——今天检查泳裤了吗。",
+    "💬 华尔街最贵的一句话：这次不一样。",
+    "💬 短线是别人的游戏，纪律才是自己的护城河。",
+    "💬 一位交易员安慰自己：我没亏，只是给市场交了会员费。",
+    "💬 散户三大错觉：我能抄底、我能逃顶、这次听我的。复盘就是打醒自己。",
+    "💬 龟兔赛跑在股市的版本：乌龟满仓乌龟壳，兔子加杠杆跑得快。",
+    "💬 温水煮青蛙的股市版：每天跌一点，你每天都说「再等等」。",
+    "💬 索罗斯：重要的不是对错，而是对的时候赚多少、错的时候亏多少。",
+    "💬 昨天的价格已经过去，今天的仓位才是唯一能决定的事。",
+    "💬 厨师看火候，裁缝看尺寸，交易员看仓位——各凭手艺吃饭。",
+    "💬 达利欧的原则：痛苦 + 复盘 = 进步。今天痛不痛不知道，复盘是复盘了。",
+    "💬 冷知识：章鱼有三颗心脏。炒股只需要一颗大心脏，可惜大多数人没有。",
+    "💬 冷知识：蜂蜜永不变质。好的持仓也一样，不折腾它就不会坏。",
+    "💬 冷知识：树懒一天睡 20 小时。它从不追涨杀跌，所以心态比我们都好。",
+    "💬 冷知识：光从太阳到地球要 8 分钟。你看到的好消息，市场可能早消化完了。",
+    "💬 冷知识：鲨鱼比树还古老。活得久，比长得快重要——仓位的生存哲学。",
+    "💬 彼得·林奇：决定投资成败的，不是头脑，而是屁股——坐得住的屁股。",
+    "💬 每天收盘后的十分钟复盘，胜过盘中盯四个小时的分时图。",
+]
+_REVIEW_TAIL_LOG = os.path.join(HERE, "_records", "_review_tails.json")
+
+
+def _pick_review_tail():
+    """随机挑一句复盘尾句，避开最近用过的（留痕去重，失败静默退化随机）。"""
+    import random
+    used = []
+    try:
+        with open(_REVIEW_TAIL_LOG, encoding="utf-8") as f:
+            used = json.load(f) or []
+    except (OSError, ValueError):
+        used = []
+    pool = [t for t in _REVIEW_TAILS if t not in used[-10:]] or _REVIEW_TAILS
+    pick = random.choice(pool)
+    try:
+        used.append(pick)
+        with open(_REVIEW_TAIL_LOG, "w", encoding="utf-8") as f:
+            json.dump(used[-50:], f, ensure_ascii=False, indent=1)
+    except OSError:
+        pass
+    return pick
+
+
 def push_review(dry=False, log=print):
     """15:20 表格化复盘：各段先「填充到一份 CSV」，再由该 CSV 统一渲染成一张长图，
     推送「正文 + 长图 + 原始 CSV」，并存库（2026-09-12 用户方案）。"""
@@ -1064,10 +1366,24 @@ def push_review(dry=False, log=print):
     try:
         import _table_csv as tcsv
         import _publish_candidates as pc
+        # 合同/市值 列回填（2026-09-15 用户需求）：a/b 段与盘中推送同一套口径，
+        # 失败静默 → 整列「—」，不阻塞复盘。
+        try:
+            pc._annotate_contracts(sections)
+        except Exception as e:  # noqa: BLE001
+            log("复盘：合同/市值列回填失败（显示—）：%s" % e)
+        # 基本面 6 列回填（2026-09-17 修复）：此前 push_review 只回填了合同/市值，
+        # 漏调 _annotate_fundamentals → 复盘长图/XLSX 里 PE静/PB/营收%/净利%/ROE%/PEG
+        # 整块为「—」（盘中推送有值、复盘没有，口径不一致）。现补上，与盘中同源。
+        try:
+            pc._annotate_fundamentals(sections)
+        except Exception as e:  # noqa: BLE001
+            log("复盘：基本面列回填失败（显示—）：%s" % e)
         csv_out, png = tcsv.export(
             csv_path, png_path, title, sections, pc._TABLE_HEAD,
-            note="统一口径：a 当日选股（与盘中同 5 段 / 16 列）· b 实仓镜像（同 16 列，"
-                 "建议/盈亏在备注格）· c 板块判定对错 · d 近5日信号票巡诊 ｜ 各表标题与表头各自保留"
+            note="统一口径：a 当日选股（与盘中同 5 段 / 17 列，含合同/市值）· "
+                 "b 实仓镜像（同 17 列，建议/盈亏在备注格）· c 板块判定对错 · "
+                 "d 近5日信号票巡诊 ｜ 各表标题与表头各自保留"
                  " · 趋势图谱/星后形态/趋势图三列分列（区别于曾经的合并口径）")
     except Exception as e:  # noqa: BLE001
         log("复盘表格 CSV/长图失败（回退纯文本）：%s" % e)
@@ -1078,15 +1394,15 @@ def push_review(dry=False, log=print):
     except Exception as e:  # noqa: BLE001
         log("复盘 XLSX 生成失败：%s" % e)
 
-    brief = ["（表格见下方合并长图 / 原始 CSV，两者内容一致）", ""]
+    brief = ["（表格见下方合并长图 / XLSX，两者内容一致）", ""]
     for s in sections:
         brief.append("· %s：%d 行" % (s.get("title") or "",
                                      len(s.get("rows") or s.get("body") or [])))
     brief.append("")
-    brief.append("口径：a 当日选股与盘中同一构建器（主线DAG / smalltool / ETF全行业扫描 / "
-                 "ETF top5 / ETF当日）；b 实仓镜像逐笔建议 + 组合纪律；c 用板块内权重股当日均涨"
-                 "核对情报判定；d 近5日信号票按入选价对现价算至今涨跌。")
-    brief.append("💬 复盘是为了下一次更准，不是为了后悔。按纪律走，把仓位留给确定性 👊")
+    brief.append("口径：a 当日选股与盘中同一构建器（主线DAG / smalltool / ETF全行业扫描 / ETF "
+                 "top5 / ETF当日）；b 实仓镜像逐笔建议 + 组合纪律；c 用板块内权重股当日均涨"
+                 "核对情报判定；d 近5日信号票按入选价逐日算 D+1~D+5 收盘涨跌（未到为 ·，超5日剔除）。")
+    brief.append(_pick_review_tail())
     content = "\n".join(brief)
 
     pushed, err = False, ""
@@ -1098,10 +1414,9 @@ def push_review(dry=False, log=print):
             pushed = bool(push_channel.push(title, content, cfg))
             if png:
                 pushed = bool(push_channel.send_image(png, cfg)) and pushed
+            # 2026-09-15 用户要求：XLSX 与 CSV 内容一致，只发 XLSX（CSV 仍落盘，供程序消费）
             if xlsx_out and os.path.isfile(xlsx_out):
                 pushed = bool(push_channel.send_file(xlsx_out, cfg)) and pushed
-            if csv_out:
-                pushed = bool(push_channel.send_file(csv_out, cfg)) and pushed
         except Exception as e:  # noqa: BLE001
             err = repr(e)
             log("复盘推送失败：%s" % e)

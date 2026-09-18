@@ -16,8 +16,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from backtest_guangmo import get_index_dir, triple_vote, parse_market_regime
+import _kline_store
 
-CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
+CACHE_FILE = _kline_store.store_path()
 INDEXES = ["sh000001", "sz399001", "sz399006"]
 SCAN_DATES = ["20260811", "20260812", "20260813"]
 OUT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out_trend.txt")

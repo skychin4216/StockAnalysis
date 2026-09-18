@@ -17,7 +17,7 @@ import kotlin.math.pow
  * `选股思路/ETF选股思路.txt` 的完整方法论落成可执行、可回测、可拟合、可修正的闭环：
  *
  *  1. **选股五条件**（日线底仓信号，思路文档「一/二」节）
- *     ① RAS 相对强度(ETF/沪深300) 20 日斜率 **绿转红**（相对走强）
+ *     ① RS 相对强度(ETF/沪深300) 20 日斜率 **绿转红**（相对走强）
  *     ② MACD 金叉 / DIF 底部拐头向上
  *     ③ OBV 在 OBV_MA20 上方（资金进场）
  *     ④ RSI(6) ∈ [30, 55]（低位未超买）
@@ -25,7 +25,7 @@ import kotlin.math.pow
  *
  *  2. **买卖 / 做T 信号**（思路文档「二、三」节）
  *     · 底仓买入：日线五条件全中（T 日收盘判定，T+1 开盘可买）
- *     · 底仓清仓：RAS 转绿 / RSI6 > 75（超买）/ MACD 死叉
+ *     · 底仓清仓：RS 转绿 / RSI6 > 75（超买）/ MACD 死叉
  *     · 正T 低吸：RSI6 ≤ 30 且 MACD 柱由绿转升（绿柱缩短），OBV 不创新低
  *     · 反T 高抛：RSI6 ≥ 70 且 MACD 红柱缩短
  *
@@ -256,7 +256,7 @@ object EtfStrategyLab {
         }
         log.add("行情就绪：${cache.length()} 个标的")
 
-        // ── 基准沪深300：门控 + RAS 相对强度 ──
+        // ── 基准沪深300：门控 + RS 相对强度 ──
         val bench = buildSeries(cache, EtfCacheSync.IDX_300.first)
         val gateDates = if (bench != null) buildGateDates(bench) else emptySet()
         val gateNote = buildGateNote(bench)
@@ -372,7 +372,7 @@ object EtfStrategyLab {
             dd250.add(if (peak > 0) (1 - closes[i] / peak) * 100.0 else 0.0)
         }
 
-        // RAS = close_etf / close_bench，按日期对齐基准后前向填充
+        // RS = close_etf / close_bench，按日期对齐基准后前向填充
         val benchMap = HashMap<String, Double>()
         bench?.dates?.forEachIndexed { i, d -> benchMap[d] = bench.closes[i] }
         val rs = ArrayList<Double>(closes.size)
@@ -501,7 +501,7 @@ object EtfStrategyLab {
             else -> "空头"
         }
         val obvState = if (condObv(ind, i)) "上行" else "下行"
-        // 推荐分：命中数为主，回撤越靠近区间中值、RAS 越强越高
+        // 推荐分：命中数为主，回撤越靠近区间中值、RS 越强越高
         val ddMid = (p.ddLo + p.ddHi) / 2
         val score = pass * 100.0 - abs(ind.dd250[i] - ddMid) + if (rasState == "绿转红") 8 else 0
         return PickCard(
@@ -526,10 +526,10 @@ object EtfStrategyLab {
                 out.add(SignalRow(code, name, close, "底仓买入",
                     "五条件全中 · 回撤${"%.0f".format(ind.dd250[i])}% RSI6 ${"%.0f".format(ind.rsi6[i])}（次日开盘可买）"))
             }
-            // 底仓清仓：RAS 转绿 / RSI 超买 / MACD 死叉
+            // 底仓清仓：RS 转绿 / RSI 超买 / MACD 死叉
             val deathCross = ind.dif[i] < ind.dea[i] && ind.dif[i - 1] >= ind.dea[i - 1]
             if (ind.rasRed2Green.getOrElse(i) { false }) {
-                out.add(SignalRow(code, name, close, "底仓清仓", "RAS 相对强度红转绿 · 主趋势转弱"))
+                out.add(SignalRow(code, name, close, "底仓清仓", "RS 相对强度红转绿 · 主趋势转弱"))
             } else if (ind.rsi6[i] > p.rsiOverbought) {
                 out.add(SignalRow(code, name, close, "底仓清仓",
                     "RSI6 ${"%.0f".format(ind.rsi6[i])} > ${p.rsiOverbought.toInt()} 超买"))

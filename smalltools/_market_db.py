@@ -3,7 +3,7 @@
 
 背景：
   之前三端各自维护数据：
-    - smalltools: _kline_cache.json（四年K线）+ _announce_cache.json（三年公告）+ _news_cache.json（新闻）
+    - smalltools: data/kline_store.json（四年K线）+ _announce_cache.json（三年公告）+ _news_cache.json（新闻）
     - AutoQuant/exe: data/cache/*.csv（仅约一年半，字段不全）
     - APK: 自拉东财 + assets 参数
   本模块提供单文件 SQLite 数据库（StockAnalysis/data/market_data.db），
@@ -19,7 +19,7 @@
   intel_report(trade_date, slot, created_at, ...)          -- 每日节奏情报（08:00/09:00/复盘）
   push_record(id, trade_date, slot, kind, title, ...)      -- 推送账本（成功/失败留痕）
 
-secid 格式（与 smalltools/_kline_cache.json 一致）：
+secid 格式（与 data/kline_store.json 一致）：
   sh600519 / sz000338 / 指数 sh000001 sz399001 sz399006
 exe 侧 symbol 格式：000338_SZ / 600519_SH / INDEX_SH
 """
@@ -27,10 +27,18 @@ import datetime
 import json
 import os
 import sqlite3
+import sys
+import _kline_store
 
 SMALLTOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(SMALLTOOLS_DIR)
-DATA_DIR = os.path.join(ROOT, "data")
+if getattr(sys, "frozen", False):
+    # PyInstaller onefile（2026-09-15 保鲜修复）：__file__ 指向 _MEIPASS 临时目录，
+    # 每次启动重建、退出即焚，不能当持久库位置。exe 模式数据库放 exe 同级 data/，
+    # 打开 exe 后 _update_cache_inc 增量补数据即写到这里，下次启动仍在。
+    DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "data")
+else:
+    ROOT = os.path.dirname(SMALLTOOLS_DIR)
+    DATA_DIR = os.path.join(ROOT, "data")
 DB_PATH = os.path.join(DATA_DIR, "market_data.db")
 
 SCHEMA_VERSION = "1.1"
@@ -341,9 +349,9 @@ def upsert_kline(conn: sqlite3.Connection, secid: str, snaps: list, src: str = N
 
 
 def import_kline_json(conn: sqlite3.Connection, cache_path: str = None, cache: dict = None):
-    """全量导入 _kline_cache.json。返回 (标的数, 行数)。"""
+    """全量导入 data/kline_store.json。返回 (标的数, 行数)。"""
     if cache is None:
-        with open(cache_path or os.path.join(SMALLTOOLS_DIR, "_kline_cache.json"),
+        with open(cache_path or _kline_store.store_path(),
                   "r", encoding="utf-8") as f:
             cache = json.load(f)
     n_rows = 0

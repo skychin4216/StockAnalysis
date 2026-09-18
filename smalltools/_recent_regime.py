@@ -3,13 +3,14 @@
 import json
 import glob
 import os
+import _kline_store
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def main():
     # 1) 指数近期走势
-    cache = json.load(open(os.path.join(HERE, "_kline_cache.json"), encoding="utf-8"))
+    cache = json.load(open(_kline_store.store_path(), encoding="utf-8"))
     print("===== 指数近期走势 =====")
     for idx in ["sh000001", "sz399001", "sz399006"]:
         ent = cache.get(idx) or {}

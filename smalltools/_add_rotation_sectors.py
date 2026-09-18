@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""补齐「轮动板块成分股」到 _kline_cache.json + 公共数据库。
+"""补齐「轮动板块成分股」到 data/kline_store.json + 公共数据库。
 
 背景：`_rotation_engine.ROTATION_SECTORS` 是显式轮动板块成分表（油运/航运/石油/
-军工/银行等）。这些标的多数不在核心池 `_kline_cache.json` 里，导致引擎因
+军工/银行等）。这些标的多数不在核心池 `data/kline_store.json` 里，导致引擎因
 「板块样本 < MIN_STOCKS」而丢弃该板块，地缘断航/油价破百/全球加息等事件加分
 无处落地（选不出对应板块个股）。
 
@@ -26,9 +26,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _add_leaders import fetch_full  # noqa: E402
 from _rotation_engine import ROTATION_SECTORS  # noqa: E402
 import _market_db  # noqa: E402
+import _kline_store
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CACHE_FILE = os.path.join(HERE, "_kline_cache.json")
+CACHE_FILE = _kline_store.store_path()
 
 
 def all_secids():

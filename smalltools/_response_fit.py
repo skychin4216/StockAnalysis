@@ -10,7 +10,7 @@
   另 E1：风险分级前瞻有效性（L3 后市场是否继续跌），校准阈值。
 
 口径：与 _full_cycle_backtest.simulate_trade / _self_review.market_risk 完全一致（代码同步复刻，
-长线用真实做T现金账户模型）。缓存：smalltools/_kline_cache.json（2008→2026-09-04，218只池股+科创50）。
+长线用真实做T现金账户模型）。缓存：data/kline_store.json（2008→2026-09-04，218只池股+科创50）。
 
 用法： python _response_fit.py            # 1年 + 3年
       python _response_fit.py --years 1   # 只跑 1 年

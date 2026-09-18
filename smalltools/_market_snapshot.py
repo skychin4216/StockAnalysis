@@ -27,6 +27,7 @@ import sys
 import time
 
 import requests
+import _kline_store
 
 UA = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -177,12 +178,12 @@ def build_layers(snapshot, min_mv=20.0, max_count_per_sector=120):
 
 def export_small_pool(snapshot, mv_min=20.0, mv_max=120.0, price_max=40.0, need_cache=True):
     """导出「低价小市值分析池」：20~120亿流通市值且现价<=40元。
-    need_cache=True 时过滤掉已在核心池(_kline_cache.json)的股票，得到待补清单。
+    need_cache=True 时过滤掉已在核心池(data/kline_store.json)的股票，得到待补清单。
     供轮动规律统计 / 小票轮动实验使用（仅分析层，选股 pipeline 不自动放开）。
     """
     cache = {}
     if need_cache:
-        cache_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
+        cache_path = _kline_store.store_path()
         if os.path.exists(cache_path):
             cache = json.load(open(cache_path, encoding="utf-8"))
     rows = []

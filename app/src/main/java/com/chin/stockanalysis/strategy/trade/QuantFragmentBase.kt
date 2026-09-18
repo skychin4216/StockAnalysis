@@ -366,6 +366,21 @@ abstract class QuantFragmentBase : Fragment() {
                                 else
                                     base + summarizeOutput(output)
                                 replaceLastNodeLog(nodeLine, "$pipelineName::$nodeName")
+                                // 2026-09-17 用户需求：月内机构买入检测命中 → view log
+                                // 红色标注（🚨 前缀 → refreshLogView 红色；即使最终没买入也标注）
+                                try {
+                                    val ibrHits = (output as? org.json.JSONObject)?.optJSONArray("instBuyHits")
+                                    if (ibrHits != null) {
+                                        for (i in 0 until ibrHits.length()) {
+                                            val h = ibrHits.optJSONObject(i) ?: continue
+                                            val chg = h.optDouble("chg_ratio", 0.0)
+                                            appendLog("🚨 [月内机构买入] ${h.optString("name")}(${h.optString("code")}) " +
+                                                    "${h.optString("kind")}·${h.optString("holder")} 增持${if (chg >= 0) "+" else ""}%.1f%%（${h.optString("notice_date")}披露）"
+                                                .format(chg))
+                                        }
+                                    }
+                                } catch (_: Exception) {
+                                }
                             }
                         }
                     }
@@ -1183,6 +1198,21 @@ abstract class QuantFragmentBase : Fragment() {
                                 else
                                     base + summarizeOutput(output)
                                 replaceLastNodeLog(nodeLine, "$pipelineName::$nodeName")
+                                // 2026-09-17 用户需求：月内机构买入检测命中 → view log
+                                // 红色标注（🚨 前缀 → refreshLogView 红色；即使最终没买入也标注）
+                                try {
+                                    val ibrHits = (output as? org.json.JSONObject)?.optJSONArray("instBuyHits")
+                                    if (ibrHits != null) {
+                                        for (i in 0 until ibrHits.length()) {
+                                            val h = ibrHits.optJSONObject(i) ?: continue
+                                            val chg = h.optDouble("chg_ratio", 0.0)
+                                            appendLog("🚨 [月内机构买入] ${h.optString("name")}(${h.optString("code")}) " +
+                                                    "${h.optString("kind")}·${h.optString("holder")} 增持${if (chg >= 0) "+" else ""}%.1f%%（${h.optString("notice_date")}披露）"
+                                                .format(chg))
+                                        }
+                                    }
+                                } catch (_: Exception) {
+                                }
                             }
                         }
                     },
@@ -2710,6 +2740,11 @@ abstract class QuantFragmentBase : Fragment() {
                         }
                         // 补齐该股日K快照（做T引擎要求 ≥10 天），完成后再次刷新触发做T检测
                         ensureRealPositionDailyData(code, if (name.isNotEmpty()) name else code)
+                        // 持仓变更自动 force 上传云端（PC 盘中守护 ≤10 分钟感知；60s 节流/未配置静默跳过）
+                        try {
+                            com.chin.stockanalysis.cloud.CloudSyncManager(ctx.applicationContext)
+                                .autoSyncAfterHoldingsEdit()
+                        } catch (_: Exception) {}
                     } catch (e: Exception) {
                         withContext(Dispatchers.Main) {
                             android.widget.Toast.makeText(ctx, "❌ 添加失败: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
@@ -2842,6 +2877,11 @@ abstract class QuantFragmentBase : Fragment() {
                             android.widget.Toast.makeText(ctx, "✅ 已更新 $label", android.widget.Toast.LENGTH_SHORT).show()
                             refreshPositions()
                         }
+                        // 持仓编辑自动 force 上传云端（PC 盘中守护 ≤10 分钟感知；60s 节流/未配置静默跳过）
+                        try {
+                            com.chin.stockanalysis.cloud.CloudSyncManager(ctx.applicationContext)
+                                .autoSyncAfterHoldingsEdit()
+                        } catch (_: Exception) {}
                     } catch (e: Exception) {
                         withContext(Dispatchers.Main) {
                             android.widget.Toast.makeText(ctx, "❌ 更新失败: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
@@ -2980,6 +3020,11 @@ abstract class QuantFragmentBase : Fragment() {
                             statusTv.text = msg
                             refreshPositions()
                         }
+                        // 持仓减/清仓自动 force 上传云端（PC 盘中守护 ≤10 分钟感知；60s 节流/未配置静默跳过）
+                        try {
+                            com.chin.stockanalysis.cloud.CloudSyncManager(ctx.applicationContext)
+                                .autoSyncAfterHoldingsEdit()
+                        } catch (_: Exception) {}
                     } catch (e: Exception) {
                         withContext(Dispatchers.Main) {
                             android.widget.Toast.makeText(ctx, "❌ 卖出失败: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()

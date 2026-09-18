@@ -6,8 +6,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 from backtest_guangmo import fetch_east  # noqa: E402
+import _kline_store
 
-CACHE = os.path.join(os.path.dirname(__file__), "_kline_cache.json")
+CACHE = _kline_store.store_path()
 OUT = os.path.join(os.path.dirname(__file__), "..", "docs", "上证指数周K_2012-2026.png")
 
 

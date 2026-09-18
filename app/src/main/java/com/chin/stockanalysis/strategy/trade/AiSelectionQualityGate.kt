@@ -124,7 +124,7 @@ object AiSelectionQualityGate {
                 return
             }
 
-            // 趋势加权（RSA 状态机，对应“中长线趋势权重更高；低权重因素不硬拦截，看多则放行”）：
+            // 趋势加权（SAR 状态机，对应“中长线趋势权重更高；低权重因素不硬拦截，看多则放行”）：
             // - 趋势偏多 → +1 权重；若该股同时被中线/长线周期选中 → +2
             // - 通过条件 = 共振数 + 趋势权重 >= RESONANCE（或单周期高分），弱票不再被一刀切拦截
             val midLong = (day["mid_term_period"] ?: emptySet()) +
@@ -136,7 +136,7 @@ object AiSelectionQualityGate {
                 val best = scores[row.stockCode] ?: row.score
                 if (resonance < RESONANCE && best < GATE_SCORE) needTrend.add(row.stockCode)
             }
-            // 预取 K 线判断 RSA 是否偏多（在挂起上下文中以普通循环执行）
+            // 预取 K 线判断 SAR 是否偏多（在挂起上下文中以普通循环执行）
             val bullMap = HashMap<String, Boolean>()
             for (code in needTrend) {
                 bullMap[code] = try {

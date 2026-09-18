@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
-"""用腾讯实时接口批量解析股票名称，更新 _kline_cache.json 中的 name 字段
+"""用腾讯实时接口批量解析股票名称，更新 data/kline_store.json 中的 name 字段
 （修复 is_cyclical_industry 失效问题，不用重新拉K线）
 """
 import json, os, re, time, sys
 import requests
+import _kline_store
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
+CACHE_FILE = _kline_store.store_path()
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 def load_cache():

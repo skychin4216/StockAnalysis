@@ -31,8 +31,8 @@ class MidTermQuantFragment : QuantFragmentBase() {
         private const val TAG = "MidTermQuant"
         /** 共享状态中中线周期选择的 key */
         private const val STATE_KEY = "mid"
-        private val PERIOD_LABELS = mapOf(1 to "当日", 3 to "近3日", 10 to "近10日",
-            30 to "近30日", 50 to "近50日", 100 to "近100日")
+        private val PERIOD_LABELS = mapOf(1 to "当日", 3 to "3日", 10 to "10日",
+            30 to "30日", 50 to "50日", 100 to "100日")
     }
 
     // ── 抽象方法实现 ──

@@ -29,9 +29,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from _industry_map import build_industry  # noqa: E402
+import _kline_store
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CACHE = os.path.join(HERE, "_kline_cache.json")
+CACHE = _kline_store.store_path()
 EXTRA = os.path.join(HERE, "_aug_extra.json")
 
 DEFAULT_WINDOW = 20

@@ -4,7 +4,7 @@
 
 | 数据 | 改造前 | 改造后 |
 |---|---|---|
-| K 线（日） | smalltools `_kline_cache.json`（四年） vs exe `data/cache/*.csv`（一年半、字段不全） | 统一存 SQLite `kline` 表 |
+| K 线（日） | smalltools `data/kline_store.json`（四年） vs exe `data/cache/*.csv`（一年半、字段不全） | 统一存 SQLite `kline` 表 |
 | 公告 | 仅 smalltools `_announce_cache.json` | 统一存 SQLite `announce` 表 |
 | 新闻 | 仅 smalltools（`_news_cache.json`，未生成） | 统一存 SQLite `news` 表 |
 | 拟合参数 | `_records/selected_*.json` + `backtest_params.json` | 追加归档 SQLite `params` 表（JSON 流程保留，APK 兼容） |
@@ -32,7 +32,7 @@ StockAnalysis/data/market_data.db   （生成物，.gitignore 忽略）
 ## 维护流程（smalltools 侧，命令）
 
 ```bash
-# 一次性建库：导入 _kline_cache.json + _announce_cache.json (+ _news_cache.json 若存在)
+# 一次性建库：导入 data/kline_store.json + _announce_cache.json (+ _news_cache.json 若存在)
 python smalltools/_market_db.py --build
 
 # 查看库统计

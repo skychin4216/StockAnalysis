@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""将 MLCC 产业链标的补入 _kline_cache.json + 公共数据库（四年 K 线）。
+"""将 MLCC 产业链标的补入 data/kline_store.json + 公共数据库（四年 K 线）。
 
 背景（2026-09-14）：开源证券 09-14 研报《泛射频龙头，卫星、MLCC、端侧AI共驱增长》
 （信维通信）+ 元件板块轮动动量 +9.5，但选股链路选不到任何 MLCC 股 —— 根因是
@@ -17,8 +17,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from backtest_guangmo import fetch_east, fetch_tencent  # noqa: E402
 import _market_db  # noqa: E402
 from _extend_cache import merge_snaps, SEG1_END  # noqa: E402
+import _kline_store
 
-CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
+CACHE_FILE = _kline_store.store_path()
 BEG, END = "20220801", "20260914"
 
 # MLCC 产业链（上游粉体/载带 → 中游制造 → 军品/高Q → 泛射频平台）

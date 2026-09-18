@@ -87,7 +87,7 @@ THEME_RULES = [
     (("互联网服务", "软件开发", "人工智能"), [("513050", "中概互联网ETF")]),
     (("化学制品", "化学原料"), [("159870", "化工ETF")]),
     (("钢铁",), [("515210", "钢铁ETF")]),
-    (("水泥建材", "玻璃玻纤", "装修建材", "非金属材料"), [("159745", "建材ETF")]),
+    (("水泥建材", "玻璃玻纤", "玻璃纤维", "装修建材", "非金属材料"), [("159745", "建材ETF")]),
     (("专用设备", "通用设备", "工程机械"), [("159886", "机械ETF")]),
     (("风电设备", "电源设备"), [("516180", "风电ETF")]),
     (("电力", "公用事业"), [("561560", "电力ETF")]),
@@ -104,11 +104,16 @@ ALL_FUNDS = [(c, n) for _, lst in THEME_RULES for (c, n) in lst] + BASE_FUNDS
 
 
 def industry_to_etf(industry):
-    """东财行业名 → 核心 ETF 简称（未命中 ""）。推送端「所属ETF」列回填用。"""
+    """东财行业名 → '编码+简称'（如 '516180风电'；未命中 ""）。
+
+    2026-09-16 用户需求：「所属ETF」列不要只写板块名（金风科技→风电、
+    中国巨石→建材），要写具体 ETF 编码，能看出是被哪只 ETF 选中的。
+    """
     ind = str(industry or "")
     for kws, lst in THEME_RULES:
         if any(k and k in ind for k in kws):
-            return lst[0][1].replace("ETF", "")
+            fc, fn = lst[0]
+            return "%s%s" % (fc, fn.replace("ETF", ""))
     return ""
 
 
@@ -185,7 +190,12 @@ def fetch_kline_pos(code, count=65):
 
 
 def tencent_quotes(codes):
-    """腾讯批量行情 → {code: {price,pct,high52,low52,name}}（code 为6位数字）"""
+    """腾讯批量行情 → {code: {price,pct,high52,low52,name}}（code 为6位数字）。
+
+    2026-09-16 用户需求（当日 15:12 拉取失败）：加新浪 hq.sinajs.cn 备选源 ——
+    腾讯失败/返回空时自动回落。新浪需 Referer 头（2023 起强制），字段比腾讯少
+    （无 52 周高低），high52/low52 缺省 None，消费方只用 price/pct/name 不受影响。
+    """
     items = [(c, _prefixed(c)) for c in dict.fromkeys(_norm6(x) for x in codes)]
     if not items:
         return {}
@@ -194,9 +204,25 @@ def tencent_quotes(codes):
         r = requests.get(url, timeout=8, headers=HEADERS, proxies=PROXIES)
         r.encoding = "gbk"
     except Exception:
+        r = None
+    out = _parse_tencent(r.text if r is not None else "")
+    if out:
+        return out
+    # ── 备选：新浪（腾讯超时/被限/返回空时）──
+    try:
+        sina_headers = dict(HEADERS)
+        sina_headers["Referer"] = "https://finance.sina.com.cn"
+        surl = "https://hq.sinajs.cn/list=" + ",".join(p for _, p in items)
+        sr = requests.get(surl, timeout=8, headers=sina_headers, proxies=PROXIES)
+        sr.encoding = "gbk"
+        return _parse_sina(sr.text)
+    except Exception:
         return {}
+
+
+def _parse_tencent(text):
     out = {}
-    for seg in r.text.split(";"):
+    for seg in (text or "").split(";"):
         seg = seg.strip()
         if not seg or "=" not in seg:
             continue
@@ -219,6 +245,31 @@ def tencent_quotes(codes):
                 "high52": float(f[47]),
                 "low52": float(f[48]),
             }
+        except (ValueError, IndexError):
+            continue
+    return out
+
+
+def _parse_sina(text):
+    """新浪行情 → 同结构 dict。字段：0名称 1今开 2昨收 3现价 4最高 5最低...；pct 自算。"""
+    out = {}
+    for seg in (text or "").split(";"):
+        seg = seg.strip()
+        if not seg or "=" not in seg:
+            continue
+        pref, _, body = seg.partition("=")
+        body = body.strip().strip('"')
+        f = body.split(",")
+        if len(f) < 4 or not body:
+            continue
+        key = pref.replace("var hq_str_", "")
+        code6 = key[2:] if key[:2] in ("sh", "sz", "bj") else _norm6(key)
+        try:
+            price = float(f[3])
+            prev = float(f[2])
+            pct = round((price / prev - 1) * 100, 2) if prev > 0 else 0.0
+            out[code6] = {"name": f[0], "price": price, "pct": pct,
+                          "high52": None, "low52": None}
         except (ValueError, IndexError):
             continue
     return out
@@ -348,7 +399,7 @@ def match_funds_by_theme(hot_themes):
 
 
 # ══════════════════════════════════════════
-# 离线评估基元（回放 / 回溯拟合共用；口径与 _kline_cache.json 一致）
+# 离线评估基元（回放 / 回溯拟合共用；口径与 data/kline_store.json 一致）
 # ══════════════════════════════════════════
 
 def _slice_by_date(snaps, asof):
@@ -562,6 +613,98 @@ def _screen_meta(snaps):
         pass
     out["note"] = _confirm_note_from_snaps(snaps)
     out["tag"] = _ind_tag(snaps) if n >= 30 else ""
+    # ── 2026-09-16 技术因子扩容（与 usecase_pipeline._etf_pick_score 同口径）──
+    # KDJ/BOLL/CCI/ADX/均线形态：ETF 全行业扫描不再只看 SAR 反转。
+    try:
+        highs = [float(x.get("high") or 0) for x in snaps]
+        lows_ = [float(x.get("low") or 0) for x in snaps]
+        if n >= 20:
+            ma20 = sum(closes[-20:]) / 20.0
+            ma60 = (sum(closes[-60:]) / 60.0) if n >= 60 else None
+            ma5_ = ma5 if ma5 is not None else None
+            # KDJ(9,3,3)
+            k = d = 50.0
+            for i in range(n):
+                lo_i = max(0, i - 8)
+                hi_w = max(highs[lo_i:i + 1]); lw_w = min(lows_[lo_i:i + 1])
+                rsv = 50.0 if hi_w <= lw_w else (closes[i] - lw_w) / (hi_w - lw_w) * 100.0
+                k = 2.0 / 3.0 * k + rsv / 3.0
+                d = 2.0 / 3.0 * d + k / 3.0
+            j = 3.0 * k - 2.0 * d
+            out["kdj_j"] = round(j, 1)
+            # 前一日 J（判回升）
+            if n >= 11:
+                k2 = d2 = 50.0
+                for i in range(n - 1):
+                    lo_i = max(0, i - 8)
+                    hi_w = max(highs[lo_i:i + 1]); lw_w = min(lows_[lo_i:i + 1])
+                    rsv = 50.0 if hi_w <= lw_w else (closes[i] - lw_w) / (hi_w - lw_w) * 100.0
+                    k2 = 2.0 / 3.0 * k2 + rsv / 3.0
+                    d2 = 2.0 / 3.0 * d2 + k2 / 3.0
+                out["kdj_j_prev"] = round(3.0 * k2 - 2.0 * d2, 1)
+            # BOLL(20,2)
+            win = closes[-20:]
+            mid = sum(win) / 20.0
+            sd = (sum((x - mid) ** 2 for x in win) / 20.0) ** 0.5
+            boll_lo = mid - 2.0 * sd
+            out["boll_pos"] = ("下轨" if (lows_[-1] <= boll_lo * 1.005 and c > boll_lo)
+                               else ("中轨上" if c > mid else "中轨下"))
+            # 均线形态
+            if ma60 and ma5_:
+                mas = [ma5_, ma10, ma20, ma60]
+                out["ma_stack"] = bool(ma5_ > ma10 > ma20 > ma60)
+                out["ma_glu"] = bool((max(mas) / min(mas) - 1.0) <= 0.03)
+            # MA20 趋势线斜率
+            if n >= 40:
+                ma20_prev = sum(closes[-40:-20]) / 20.0
+                out["ma20_slope_up"] = bool(ma20_prev > 0 and ma20 > ma20_prev)
+        if n >= 15:
+            # CCI(14)
+            tps = [(highs[i] + lows_[i] + closes[i]) / 3.0 for i in range(n)]
+            def _cci_at(arr):
+                w = arr[-14:]
+                m = sum(w) / 14.0
+                md = sum(abs(x - m) for x in w) / 14.0
+                return 0.0 if md <= 1e-12 else (arr[-1] - m) / (0.015 * md)
+            out["cci"] = round(_cci_at(tps), 0)
+            if n >= 16:
+                out["cci_prev"] = round(_cci_at(tps[:-1]), 0)
+        # ADX(14) Wilder
+        if n >= 29:
+            tr_l, pdm_l, mdm_l = [], [], []
+            for i in range(1, n):
+                tr = max(highs[i] - lows_[i], abs(highs[i] - closes[i - 1]),
+                         abs(lows_[i] - closes[i - 1]))
+                up = highs[i] - highs[i - 1]
+                dn = lows_[i - 1] - lows_[i]
+                pdm_l.append(up if (up > dn and up > 0) else 0.0)
+                mdm_l.append(dn if (dn > up and dn > 0) else 0.0)
+                tr_l.append(tr)
+            def _wma14(vals):
+                o, acc = [], 0.0
+                for i, v in enumerate(vals):
+                    acc = acc + v if i < 14 else acc - acc / 14.0 + v
+                    o.append(acc)
+                return o
+            tr_s, pdm_s, mdm_s = _wma14(tr_l), _wma14(pdm_l), _wma14(mdm_l)
+            dx_l = []
+            for i in range(len(tr_s)):
+                if tr_s[i] <= 1e-12:
+                    continue
+                pdi = 100.0 * pdm_s[i] / tr_s[i]
+                mdi = 100.0 * mdm_s[i] / tr_s[i]
+                if pdi + mdi > 1e-12:
+                    dx_l.append(100.0 * abs(pdi - mdi) / (pdi + mdi))
+            if len(dx_l) >= 14:
+                adx_v = sum(dx_l[:14]) / 14.0
+                for dx in dx_l[14:]:
+                    adx_v = (adx_v * 13.0 + dx) / 14.0
+                pdi = 100.0 * pdm_s[-1] / tr_s[-1] if tr_s[-1] > 1e-12 else 0.0
+                mdi = 100.0 * mdm_s[-1] / tr_s[-1] if tr_s[-1] > 1e-12 else 0.0
+                out["adx"] = round(adx_v, 1)
+                out["adx_bull"] = bool(pdi > mdi)
+    except Exception:
+        pass
     # MACD 顶/底背离（2026-09-13 新增）：关键点要在表格里点名。
     # 注意：指数 1600 根回测显示底背离**无显著超额**，故仅作观察标记，
     # 不单独构成买卖依据（文案里已注明）。
@@ -624,6 +767,35 @@ def _decide_pick(pk):
         score += 0.8
     if pk.get("above10"):
         score += 0.4
+    # ── 2026-09-16 新增技术因子打分（与 usecase_pipeline._etf_pick_score 同口径）──
+    jj, jjp = pk.get("kdj_j"), pk.get("kdj_j_prev")
+    if isinstance(jj, (int, float)) and jj < 20:
+        score += 1.2
+        if isinstance(jjp, (int, float)) and jjp < 0 <= jj:
+            score += 0.5
+    bp = pk.get("boll_pos")
+    if bp == "下轨":
+        score += 1.0
+    elif bp == "中轨上":
+        score += 0.8
+    cci_v, cci_p = pk.get("cci"), pk.get("cci_prev")
+    if isinstance(cci_v, (int, float)):
+        if isinstance(cci_p, (int, float)) and cci_p < -100 <= cci_v:
+            score += 1.0
+        elif abs(cci_v) < 100:
+            score += 0.3
+    if pk.get("ma_stack"):
+        score += 1.0
+    if pk.get("ma_glu"):
+        score += 0.8
+    if pk.get("ma20_slope_up"):
+        score += 0.4
+    adx_v = pk.get("adx")
+    if isinstance(adx_v, (int, float)):
+        if adx_v >= 25 and pk.get("adx_bull"):
+            score += 0.8
+        elif adx_v < 20:
+            score += 0.4
     if pk.get("three_no_low"):
         score += 1.2
     if pk.get("up_day"):
@@ -1102,7 +1274,7 @@ def _lowbuy_collect(hot_themes, etf_flow=None, dag_codes=None):
                 if (theme and theme in fn) or short in fn or fname in fn:
                     fz = yi
                     break
-            groups.append({"code": fcode, "name": fname, "fz": fz})
+            groups.append({"code": fcode, "name": fname, "fz": fz, "theme": theme})
         seq.append((score, fidx[fcode], pk))
     return seq, groups, stats, rejected
 
@@ -1218,7 +1390,11 @@ def fresh_up_picks(etf_flow=None, dag_codes=None, max_rows=6, themes=None, ttl=9
         if len(seen) >= max_rows:
             break
         seen.add(pk["code"])
-        gname = ((groups[gi].get("name") if 0 <= gi < len(groups) else "") or "").replace("ETF", "")
+        # 2026-09-17：所属ETF 短名 → 「编码+板块」（如 '512800银行'），与
+        # etf_tag_map/industry_to_etf 的「编码+简称」口径对齐（用户要求带代码）。
+        g = groups[gi] if 0 <= gi < len(groups) else {}
+        gname = "%s%s" % (g.get("code") or "",
+                          g.get("theme") or (g.get("name") or "").replace("ETF", ""))
         picks.append((gname, pk))
     if themes is None:
         globals()["_FRESH_UP_PICKS_CACHE"] = {"date": today, "ts": _t.time(), "picks": picks}
@@ -1257,11 +1433,12 @@ align_table = _align_table
 
 
 def _pk_tech_cells(pk):
-    """pk(_screen_meta 明细) → 7 个技术单元格
-    [RSI, SAR, MACD, OBV, 均线粘合, 换手, 量比]（换手需离线K线，实时缺 → —）。
+    """pk(_screen_meta 明细) → 10 个技术单元格
+    [RSI, SAR, MACD, OBV, KDJ, BOLL, 均线粘合, 换手, 量比, VOL]
+    （换手需离线K线，实时缺 → —）。
 
-    2026-09-12：文本表(_pk_table_row) 与推送端「统一表格」(16 列公共表) 共用同一份
-    技术口径，避免两处各写一遍导致数值漂移。
+    2026-09-16：技术列从 7 扩 10，新增 KDJ(9,3,3 短线择时) / BOLL(20,2 位置)
+    / VOL(当日成交额+缩放量判定)，用户需求。
     """
     rsi = pk.get("rsi")
     rsi_s = ("%d" % int(round(rsi))) if isinstance(rsi, (int, float)) else "—"
@@ -1286,11 +1463,39 @@ def _pk_tech_cells(pk):
         macd_s += "·顶背离"
     obv = pk.get("obv_up")
     obv_s = "上行" if obv is True else ("下行" if obv is False else "—")
+    # KDJ / BOLL / VOL：实时仅当 pk 携带 snaps 时算（与推送端 _publish_candidates 同源）
+    snaps = pk.get("snaps") or []
+    kdj_s = boll_s = vol_s = ""
+    if snaps:
+        try:
+            from smalltools_path import _publish_candidates as _pc  # noqa: F401
+        except Exception:
+            try:
+                import sys as _sys, os as _os
+                _p = _os.path.dirname(_os.path.abspath(__file__))
+                if _p not in _sys.path:
+                    _sys.path.insert(0, _p)
+                import _publish_candidates as _pc
+            except Exception:
+                _pc = None
+        if _pc:
+            try:
+                kdj_s = _pc._tech_kdj(snaps)
+            except Exception:
+                pass
+            try:
+                boll_s = _pc._tech_boll(snaps)
+            except Exception:
+                pass
+            try:
+                vol_s = _pc._tech_vol(snaps, secid=str(pk.get("code") or ""))
+            except Exception:
+                pass
     tag = str(pk.get("tag") or "")
     sq_s = "粘合" if "粘合" in tag else ("多头" if "多头" in tag else "—")
     vr = pk.get("vol_ratio")
     vr_s = ("%.1f" % vr) if isinstance(vr, (int, float)) else "—"
-    return [rsi_s, sar_s, macd_s, obv_s, sq_s, "—", vr_s]
+    return [rsi_s, sar_s, macd_s, obv_s, kdj_s, boll_s, sq_s, "—", vr_s, vol_s]
 
 
 def _pk_table_row(gname, pk):
@@ -1350,8 +1555,12 @@ def low_buy_picks(hot_themes, etf_flow=None, dag_codes=None, max_rows=5):
     single = len(groups) <= 1
 
     def gname_of(gidx):
+        # 2026-09-17：「编码+板块」（如 '512800银行'），与统一表其它段带代码口径一致。
         g = groups[gidx] if 0 <= gidx < len(groups) else None
-        return (g["name"] or "").replace("ETF", "").replace("联接", "") if g else ""
+        if not g:
+            return ""
+        return "%s%s" % (g.get("code") or "",
+                         g.get("theme") or (g.get("name") or "").replace("ETF", ""))
 
     return [("" if single else gname_of(gi), pk) for gi, pk in (keep + fresh_extra)]
 
@@ -1361,10 +1570,12 @@ _TAG_MAP_CACHE = {"ts": 0.0, "map": {}}
 
 
 def etf_tag_map(ttl=1800, max_names=2):
-    """{6位代码: '军工/半导体'}：该票被哪些核心 ETF 持有（行业主题优先、宽基垫底）。
+    """{6位代码: '516180风电/159995芯片'}：该票被哪些核心 ETF 持有（行业主题优先、宽基垫底）。
 
     2026-09-12：统一表格新增「所属ETF」列 —— 主线 DAG / smalltool / ETF 段 / 实仓镜像
     都能一眼看出「这票是被哪只核心 ETF 的重仓带出来的」，便于横向判断 ETF 主线归属。
+    2026-09-16：输出从简称（'风电'）改为 '编码+简称'（'516180风电'）——用户要求
+    写具体 ETF 编码，能直接看出被哪只 ETF 选中。
     数据源 data/_etf_holdings.json（季报级低频），进程内 ttl 缓存；未被覆盖的代码不在
     返回字典里（调用方按 "" 降级为 —）。
     """
@@ -1381,8 +1592,8 @@ def etf_tag_map(ttl=1800, max_names=2):
     for code, ent in (hold.get("stocks") or {}).items():
         theme, base = [], []
         for fc in (ent.get("funds") or []):
-            nm = (name_of.get(fc) or fc or "").replace("ETF", "").replace("联接", "")
-            (base if theme_of.get(fc) == "宽基" else theme).append(nm)
+            nm = (name_of.get(fc) or fc or "").replace("联接", "")
+            (base if theme_of.get(fc) == "宽基" else theme).append("%s%s" % (fc, nm.replace("ETF", "")))
         tag = "/".join([n for n in (theme + base) if n][:max_names])
         if tag:
             out[code] = tag
@@ -1411,7 +1622,10 @@ def _assemble_lowbuy_table(seq, groups, stats, max_rows, rejected=None):
 
     def gname_of(gidx):
         g = groups[gidx]
-        return (g["name"] or "").replace("ETF", "").replace("联接", "") if g else ""
+        if not g:
+            return ""
+        return "%s%s" % (g.get("code") or "",
+                         g.get("theme") or (g.get("name") or "").replace("ETF", ""))
 
     rows = [_pk_table_row("" if single else gname_of(gidx), pk) for gidx, pk in keep]
     rows += [_pk_table_row("" if single else gname_of(gidx), pk) for gidx, pk in fresh_extra]

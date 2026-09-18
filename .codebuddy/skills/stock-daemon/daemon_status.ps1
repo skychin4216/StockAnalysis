@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("publish", "scan", "all")]
+    [ValidateSet("publish", "scan", "holdings", "all")]
     [string]$Daemon = "all"
 )
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
@@ -26,9 +26,12 @@ function Show-One([string]$tag, [string]$scriptName) {
 }
 
 switch ($Daemon) {
-    "publish" { Show-One "publish" "_publish_candidates.py" }
-    "scan"    { Show-One "scan" "_market_scan.py" }
-    "all"     { Show-One "publish" "_publish_candidates.py"; Show-One "scan" "_market_scan.py" }
+    "publish"  { Show-One "publish" "_publish_candidates.py" }
+    "scan"     { Show-One "scan" "_market_scan.py" }
+    "holdings" { Show-One "holdings_flow" "_holdings_flow_daemon.py" }
+    "all"      { Show-One "publish" "_publish_candidates.py"
+                 Show-One "scan" "_market_scan.py"
+                 Show-One "holdings_flow" "_holdings_flow_daemon.py" }
 }
 
 $rhythm = Join-Path $dir "_daemon_rhythm.json"

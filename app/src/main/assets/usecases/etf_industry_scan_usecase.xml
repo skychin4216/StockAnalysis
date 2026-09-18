@@ -8,7 +8,7 @@
     · etf_holdings_top5   ETF 持股 top5 —— 入口=**ETF 前五重仓覆盖**：
         覆盖矩阵排行（被多少只行业 ETF 重仓覆盖）→ 观察清单（炒的是**个股覆盖度**）
     · etf_pure_screen     纯 ETF 筛选   —— 入口=**ETF 本体**：
-        ETF 自身的 RAS/MACD/OBV/RSI6/250日回撤/流动性 → 底仓 & 做 T（炒的是**ETF 本身**）
+        ETF 自身的 RS(相对强度)/MACD/OBV/RSI6/250日回撤/流动性 → 底仓 & 做 T（炒的是**ETF 本身**）
 
   双端共用：APK UseCaseLoader 直接加载执行；usecase_pipeline.py（与本 XML 同居
   assets/usecases 的 Python 引擎）解析同一份 XML —— 任何一端只改 XML，双端行为自动同源。

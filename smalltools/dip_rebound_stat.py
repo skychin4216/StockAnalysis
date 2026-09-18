@@ -2,7 +2,7 @@
 """
 大盘抄底信号回溯统计（2015-01 ~ 2026-09-07）
 ================================================
-数据：smalltools/_kline_cache.json（上证 sh000001 / 深成 sz399001 / 创业板 sz399006 /
+数据：data/kline_store.json（上证 sh000001 / 深成 sz399001 / 创业板 sz399006 /
       科创50 sh000688 + 215 只龙头股，含 name 全量）
 
 回答：
@@ -17,9 +17,10 @@ import json
 import os
 import random
 from collections import Counter
+import _kline_store
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CACHE = os.path.join(HERE, "_kline_cache.json")
+CACHE = _kline_store.store_path()
 OUT = os.path.join(os.path.dirname(HERE), "AutoQuant", "backtest_logs", "_dip_rebound_report.md")
 IDX = {"sh000001": "上证指数", "sh000688": "科创50", "sz399001": "深证成指", "sz399006": "创业板指"}
 START = "2015-01-01"

@@ -9,7 +9,7 @@ AutoTradePortfolioEngine 原型验证
 """
 import json
 
-CACHE = "smalltools/_kline_cache.json"
+CACHE = "data/kline_store.json"
 
 def ma(v, n):
     if len(v) < n: return None
@@ -28,7 +28,7 @@ def is_st(name):
 # ── 配置（与 Kotlin AutoTradePortfolioEngine 一致） ──
 TOTAL = 1_000_000
 MAX_HOLD = 5
-MAX_OPEN = 3
+MAX_OPEN = 5
 SINGLE_RATIO = 0.20
 MIN_CASH_RATIO = 0.10
 T_RATIO = 0.40

@@ -24,11 +24,12 @@ import json
 import os
 
 import requests
+import _kline_store
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 PROXIES = {"http": None, "https": None}
 HERE = os.path.dirname(os.path.abspath(__file__))
-KLINE_CACHE = os.path.join(HERE, "_kline_cache.json")
+KLINE_CACHE = _kline_store.store_path()
 
 _prev_cache = None
 

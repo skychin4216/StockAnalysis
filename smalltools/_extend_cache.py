@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""扩展 _kline_cache.json 历史到 2023-01-01（长线回溯需要 250 根日K计算 MA250/年线）。
+"""扩展 data/kline_store.json 历史到 2023-01-01（长线回溯需要 250 根日K计算 MA250/年线）。
 仅刷新 snaps，保留原有 name 字段。东财优先（全量），腾讯兜底（640 根上限）。
 """
 import json
@@ -9,8 +9,9 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from backtest_guangmo import fetch_east, fetch_tencent
+import _kline_store
 
-CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
+CACHE_FILE = _kline_store.store_path()
 BEG, END = "20220801", "20260813"
 # 腾讯单次 640 根上限，4 年需分两段拼接；东财接口当前不可用则直接走腾讯
 SEG1_END = "20240601"

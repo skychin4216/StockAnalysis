@@ -22,12 +22,13 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from backtest_guangmo import fetch_east, fetch_tencent  # noqa: E402
 import _market_db  # noqa: E402
-from _extend_cache import merge_snaps, SEG1_END  # noqa: E402
+from _extend_cache import merge_snaps  # noqa: E402
+import _kline_store
 
-CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
+CACHE_FILE = _kline_store.store_path()
 HOLDINGS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                              "data", "_etf_holdings.json")
-BEG, END = "20220801", "20260914"
+BEG, END = "20080101", "20260914"  # 2026-09-14 起补池即拉 2008 年起长历史（上市不足则从上市日）
 A股_RE = re.compile(r"^\d{6}$")  # 6 位数字 A 股代码（排除港股 00700/09988/PDD 等）
 
 
@@ -41,15 +42,29 @@ def to_secid(code6):
 
 
 def fetch_full(secid, beg=BEG, end=END):
-    """东财一次全量；失败用腾讯分段拼接。返回 (name, snaps, src)。"""
+    """东财一次全量；失败用腾讯分段拼接（单次 640 根上限 → 2 年/段循环）。
+
+    返回 (name, snaps, src)。
+    """
     name, snaps = fetch_east(secid, beg, end)
     if snaps:
         return name, snaps, "east"
-    name1, seg1 = fetch_tencent(secid, beg, SEG1_END)
-    name2, seg2 = fetch_tencent(secid, SEG1_END, end)
-    snaps = merge_snaps([seg1, seg2])
+    segs = []
+    name1 = ""
+    y = int(beg[:4])
+    pts = [beg]
+    while y < int(end[:4]):
+        y += 2
+        pts.append("%04d0101" % y)
+    if pts[-1] < end:
+        pts.append(end)
+    for a, b in zip(pts, pts[1:]):
+        name1, seg = fetch_tencent(secid, a, b)
+        if seg:
+            segs.append(seg)
+    snaps = merge_snaps(segs)
     if snaps:
-        return name1 or name2 or "", snaps, "tencent"
+        return name1 or "", snaps, "tencent"
     return None, [], "none"
 
 

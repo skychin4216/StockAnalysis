@@ -41,7 +41,7 @@ def build():
     b.add_node("ds_news", "新闻/公告\n(关键词情绪)", NodeType.DATA_SOURCE, layer=0)
 
     # ══════════ Layer 1: smalltools 选股引擎（核心） ══════════
-    b.add_node("st_cache", "_kline_cache.json\n(核心池日K缓存 2023起)", NodeType.DATA_SOURCE, layer=1)
+    b.add_node("st_cache", "data/kline_store.json\n(核心池日K缓存 2023起)", NodeType.DATA_SOURCE, layer=1)
     b.add_node("st_guangmo", "backtest_guangmo.py\nanalyze_snaps 13项粘合链", NodeType.STRATEGY, layer=1)
     b.add_node("st_trend", "_trend_proto.py\ntrend_follow_scan 趋势链", NodeType.STRATEGY, layer=1)
     b.add_node("st_market", "market_state/triple_vote\n大盘状态(BULLISH/OSC/BEAR/CRASH)", NodeType.ENRICHMENT, layer=1)

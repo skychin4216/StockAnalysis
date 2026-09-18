@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """将 exe 龙头池（AutoQuant/autoquant/hot_sector_config）缺失的标的补入
-_kline_cache.json + 公共数据库（四年 K 线）。
+data/kline_store.json + 公共数据库（四年 K 线）。
 
 背景：统一数据源后，公共库需覆盖 exe 的 101 只 leaders；
-_kline_cache.json 目前只覆盖其中一部分，本脚本补齐缺失标的。
+data/kline_store.json 目前只覆盖其中一部分，本脚本补齐缺失标的。
 
 用法：python _add_leaders.py
 """
@@ -16,8 +16,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from backtest_guangmo import fetch_east, fetch_tencent  # noqa: E402
 import _market_db  # noqa: E402
 from _extend_cache import merge_snaps, SEG1_END  # noqa: E402
+import _kline_store
 
-CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
+CACHE_FILE = _kline_store.store_path()
 BEG, END = "20220801", "20260820"
 
 

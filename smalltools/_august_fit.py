@@ -20,8 +20,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from backtest_guangmo import analyze_snaps, PARAMS, get_index_dir, triple_vote
 from _pool_filters import extra_filter, set_filters, build_sector_ret_table, sector_of
+import _kline_store
 
-CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
+CACHE = _kline_store.store_path()
 EXTRA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_aug_extra.json")
 INDEXES = ["sh000001", "sz399001", "sz399006"]
 

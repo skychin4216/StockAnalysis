@@ -93,7 +93,11 @@ def load_notify_cfg():
                 cfg = json.load(f).get("notify") or {}
         except (OSError, ValueError):
             cfg = {}
-    _NOTIFY_CACHE["cfg"] = cfg
+    # 2026-09-14 修复：密钥迁移/换机器时可能先读到回退段（密钥已清空）。
+    # 空密钥配置不缓存 —— cloud_config.json 迁移完成后无需重启守护即可恢复推送。
+    has_key = any(cfg.get(k) for k in ("wecom_key", "pushplus_token", "serverchan_key"))
+    if has_key:
+        _NOTIFY_CACHE["cfg"] = cfg
     return cfg
 
 
@@ -358,6 +362,10 @@ def push(title, content, cfg, kind="notice", relay=True):
 
     @param kind  推送类型，中继箱通道据此给 APK 分类（notice / candidates / intel）
     @param relay False = 只走微信通道，不写 PC→APK 中继箱
+
+    2026-09-15 加固（「无论如何都要推送」）：三通道全失败时消息**落盘排队**
+    （_records/_push_queue.jsonl，同 title 去重），之后任一次推送成功自动补发
+    积压 —— 密钥迁移/网络抖动/企微限流期间消息不丢，恢复即送达。
     """
     sent = push_wecom(title, content, cfg)
     if not sent:
@@ -365,10 +373,86 @@ def push(title, content, cfg, kind="notice", relay=True):
     if not sent:
         sent = _push_serverchan(title, content, cfg)
     if not sent:
-        print("未配置推送(notify.wecom_key / pushplus_token / serverchan_key)，"
-              "以下消息未发送：\n%s\n%s" % (title, content))
+        print("未配置推送(notify.wecom_key / pushplus_token / serverchan_key)或通道故障，"
+              "已落盘排队待补发：\n%s\n%s" % (title, content))
+        _enqueue_failed(title, content, kind)
+    else:
+        try:
+            flush_pending()
+        except Exception as e:  # noqa: BLE001
+            print("积压补发异常:", type(e).__name__, e)
     # P3：并联中继箱。**无论企微成功与否都要写** —— 两者是互补通道，
     # 企微失败（限流/未配置）时 APK 更要能拿到消息。
     if relay:
         relay_push(title, content, cfg, kind=kind)
+    return sent
+
+
+# ── 失败排队 + 自动补发（2026-09-15）────────────────────────────────────
+_QUEUE_FILE = os.path.join(_ROOT, "smalltools", "_records", "_push_queue.jsonl")
+_QUEUE_MAX = 100  # 队列上限，防极端情况无限膨胀（超过丢最旧）
+
+
+def _enqueue_failed(title, content, kind):
+    """三通道全失败的消息落盘排队（同 title 去重；队列超限丢最旧）。best-effort。"""
+    try:
+        os.makedirs(os.path.dirname(_QUEUE_FILE), exist_ok=True)
+        pending = _read_queue()
+        if any(it.get("title") == title for it in pending):
+            return  # 同标题未发消息已在队列，不重复入队（守护重试会反复触发）
+        pending.append({"ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "kind": kind, "title": title, "content": content})
+        _write_queue(pending[-_QUEUE_MAX:])
+    except Exception as e:  # noqa: BLE001
+        print("排队落盘失败:", type(e).__name__, e)
+
+
+def _read_queue():
+    if not os.path.isfile(_QUEUE_FILE):
+        return []
+    with open(_QUEUE_FILE, encoding="utf-8") as f:
+        items = []
+        for ln in f:
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                items.append(json.loads(ln))
+            except Exception:  # noqa: BLE001
+                pass  # 坏行丢弃
+        return items
+
+
+def _write_queue(items):
+    tmp = _QUEUE_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        for it in items:
+            f.write(json.dumps(it, ensure_ascii=False) + "\n")
+    os.replace(tmp, _QUEUE_FILE)
+
+
+def flush_pending(max_n=10):
+    """补发积压队列（通道恢复后由 push() 成功路径自动调用，也可手动调）。
+
+    逐条尝试三通道，成功一条删一条；遇到仍失败立即停止（通道未恢复），
+    避免空转。返回成功补发条数。
+    """
+    pending = _read_queue()
+    if not pending:
+        return 0
+    cfg = load_notify_cfg()
+    sent, remain = 0, list(pending)
+    for it in pending[:max_n]:
+        t, c = it.get("title", ""), it.get("content", "")
+        ok = push_wecom(t, c, cfg) or _push_pushplus(t, c, cfg) or _push_serverchan(t, c, cfg)
+        if ok:
+            sent += 1
+            remain.remove(it)
+            time.sleep(1.0)  # 多条连发降速，避免企微群机器人限频(20条/分钟)
+        else:
+            break  # 通道仍不可用，剩余留队下次再试
+    if sent or len(remain) != len(pending):
+        _write_queue(remain)
+    if sent:
+        print("↩️ 已自动补发积压推送 %d 条（余 %d 条待通道恢复）" % (sent, len(remain)))
     return sent

@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("publish", "scan", "all")]
+    [ValidateSet("publish", "scan", "holdings", "all")]
     [string]$Daemon = "all"
 )
 $ErrorActionPreference = "Stop"
@@ -27,7 +27,8 @@ function Stop-One([string]$tag) {
 }
 
 switch ($Daemon) {
-    "publish" { Stop-One "publish" }
-    "scan"    { Stop-One "scan" }
-    "all"     { Stop-One "publish"; Stop-One "scan" }
+    "publish"  { Stop-One "publish" }
+    "scan"     { Stop-One "scan" }
+    "holdings" { Stop-One "holdings_flow" }
+    "all"      { Stop-One "publish"; Stop-One "scan"; Stop-One "holdings_flow" }
 }

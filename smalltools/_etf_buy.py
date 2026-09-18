@@ -42,7 +42,7 @@ v0.3 实测结果（13 只 2015 前成立 ETF，qfq，2015-01-05~2026-09-04）�
 数据：
 - data source 腾讯 fqkline(qfq 前复权日K)，复用 backtest_guangmo.fetch_tencent，640根/次自动翻页
 - 落盘 smalltools/_etf_cache.json {code:{name, snaps:[{date,open,high,low,close,volume}]}}
-  与既有 _kline_cache.json 同构，便于未来 App/其它脚本复用
+  与既有 data/kline_store.json 同构，便于未来 App/其它脚本复用
 
 用法：
   python _etf_buy.py --fetch-only    # 只拉数据（断点续拉，已存在跳过）

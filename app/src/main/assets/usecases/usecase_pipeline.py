@@ -31,6 +31,7 @@ import json
 import os
 import sys
 import xml.etree.ElementTree as ET
+import _kline_store
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 USECASES_DIR = _HERE   # 与 usecase/pipeline XML 单一事实源同目录
@@ -364,7 +365,7 @@ def _market_direction(ctx, node, inputs):
         s = st.get("state", "OSCILLATION")
     else:
         s = str(st)
-    if s == "CRASH":
+    if s == "CRSH":
         s = "BEARISH"
     ctx.market = {"state": s, "detail": st}
     if s in ("BULLISH", "OSCILLATION", "BEARISH"):
@@ -2649,14 +2650,35 @@ def _generate_orders(ctx, node, inputs):
     每只待买候选用自己的近端K线匹配 上涨/中性/下跌 三类趋势——
       匹配到「下跌」→ 直接拦截（不进入买入决策，不生成订单）；
       匹配到「上涨」→ 放行进入买入 node，由买入内部再判断是否生成订单；
-      匹配到「中性」→ 继续按原流程执行（含下方看空形态否决等全部原检查）。"""
-    scored = ctx.get("n_ai") or []
+      匹配到「中性」→ 继续按原流程执行（含下方看空形态否决等全部原检查）。
+
+    2026-09-17 回测修订（用户质疑「机构增持被拦截是不是不对」）：机构保送输入
+    （sourceNode=inst_buy_recent 的 dict）命中票**跳过三重拦截**直接生成订单——
+    回测 6398 事件显示放开组 fwd10 胜率57%/均+2.2% 全面优于放行组，机构在下跌
+    中接货后反弹概率更高（详见循环内 inst_buy 分支注释）。"""
+    scored = ctx.get(node.config.get("sourceNode") or "n_ai") or []
+    inst_buy = isinstance(scored, dict)
+    if inst_buy:
+        # 2026-09-17 用户需求：inst_buy_recent（月内机构买入）命中票保送——dict 输出取 scored。
+        # 回测修订（同日二批）：688 只池 6398 个机构增持披露事件（2022-01~2026-06）显示
+        # 被三重拦截（趋势下跌/看空形态/口诀）的机构增持票若放开：fwd10 胜率 57%/均 +2.2%、
+        # fwd20 胜率 54%/均 +3.2%，全面优于放行组（55%/+1.8%、48%/+2.4%）——机构在下跌中
+        # 接货后反弹概率更高。故保送票跳过三重拦截直接生成订单（maxHoldings 上限仍生效）。
+        scored = scored.get("scored") or []
     max_hold = int(node.config.get("maxHoldings", 5))
     cache = ctx.cache or {}
     orders = []
     for cid, sc in scored:
         snaps = (cache.get(cid) or {}).get("snaps") or []
         name = (cache.get(cid) or {}).get("name") or cid
+        if inst_buy:
+            ctx.notes.append("[%s] 🚨 %s(%s) 月内机构增持保送票：跳过趋势/形态/口诀三重拦截直接生成订单"
+                             "（回测2022-2026放行组fwd10胜率57%%均+2.2%%优于拦截组）"
+                             % (node.id, name, cid))
+            orders.append({"secid": cid, "score": sc, "reason": "inst_buy_recent"})
+            if len(orders) >= max_hold:
+                break
+            continue
         tm = _trend_match_3way(snaps)
         if tm["label"] == "下跌":
             ctx.notes.append("[%s] ❌ %s(%s) 趋势匹配=下跌(%s)，直接拦截不生成订单"
@@ -2677,6 +2699,262 @@ def _generate_orders(ctx, node, inputs):
             break
     ctx.orders = orders
     return ctx.orders
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 月内机构买入检测（inst_buy_recent，2026-09-17 用户需求）
+#   「ETF 全行业扫描 + ETF top5 + 三大周期 + 持仓个票 → 对所有准备筛选的股票，
+#    分析最近一个月内是否有国家队/社保/基金/大机构资金买入；命中票直接保送到
+#    生成订单的 node（是否买入或拦截由买入订单 node 的最终操作决定）；即使
+#    最终没有买入，也要在 view log 里红色标注（🚨 前缀 → APK 执行日志红色）。」
+#   判定口径（与 APK InstBuyRecentNode 同构）：
+#     · 披露日 NOTICE_DATE 距今 ≤ noticeDays(35) 天的十大流通股东最新一期；
+#     · HOLD_NUM_CHANGE > 0（环比增持）；
+#     · HOLDER_NAME 命中机构身份（国家队/社保养老/大基金/公募/险资/QFII外资/北向）。
+#   数据源：东财 datacenter RPT_F10_EH_FREEHOLDERS（在线，逐票）；
+#   当日缓存 data/_inst_buy_recent_YYYYMMDD.json（按 code 复用，避免重复抓取）。
+# ══════════════════════════════════════════════════════════════════════════
+
+_IBR_KINDS = (
+    ("国家队", ("汇金", "证金", "国新投资", "梧桐树投资", "中央汇金资产管理", "国家队基金")),
+    ("社保养老", ("社保", "养老")),
+    ("大基金", ("国家集成电路", "国家制造业", "国家大基金", "先进制造产业投资基金")),
+    ("公募基金", ("基金", "易方达", "华夏", "嘉实", "富国", "中欧", "广发", "南方", "博时",
+                 "招商", "兴全", "景顺", "银华", "工银", "建信", "交银", "农银", "汇添富",
+                 "华安", "国泰", "鹏华", "大成", "万家", "天弘", "诺安", "长信", "海富通")),
+    ("险资", ("人寿", "平安资管", "平安人寿", "太保", "新华", "泰康", "人保", "阳光人寿", "大家资产")),
+    ("QFII外资", ("高盛", "瑞银", "摩根", "贝莱德", "淡马锡", "阿布扎比", "挪威央行",
+                 "新加坡政府投资", "巴克莱", "施罗德", "科威特政府")),
+    ("北向", ("香港中央结算",)),
+)
+_IBR_KIND_SCORE = {"国家队": 95, "社保养老": 90, "大基金": 88, "公募基金": 78,
+                   "险资": 76, "QFII外资": 74, "北向": 72}
+
+
+def _ibr_holder_kind(holder_name):
+    n = str(holder_name or "")
+    # 「香港中央结算(代理人)有限公司」= H股登记处（H股股东托管），
+    # ≠「香港中央结算有限公司」(北向资金)。代理人误判为北向会污染信号
+    #（2026-09-17 回测发现，实测海南橡胶曾误命中 chg+0.0%）→ 直接排除。
+    if "代理人" in n:
+        return None
+    for kind, kws in _IBR_KINDS:
+        for kw in kws:
+            if kw in n:
+                return kind
+    return None
+
+
+def _ibr_fetch_holders(code6, timeout=8):
+    """东财 datacenter：单票十大流通股东全部记录（END_DATE 倒序）。失败返回 []。"""
+    try:
+        import urllib.request
+        secu = "%s.%s" % (code6, "SH" if code6[:1] in "569" else "SZ")
+        url = ("https://datacenter-web.eastmoney.com/api/data/v1/get"
+               "?reportName=RPT_F10_EH_FREEHOLDERS&columns=ALL"
+               "&filter=(SECUCODE%%3D%%22%s%%22)"
+               "&sortColumns=END_DATE,HOLDER_RANK&sortTypes=-1,1&pageSize=60" % secu)
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Referer": "https://emweb.securities.eastmoney.com/"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            d = json.loads(resp.read().decode("utf-8"))
+        rows = (((d or {}).get("result") or {}).get("data")) or []
+        out = []
+        for r in rows:
+            out.append({
+                "HOLDER_NAME": r.get("HOLDER_NAME") or "",
+                "HOLD_NUM": r.get("HOLD_NUM") or 0,
+                "HOLD_NUM_CHANGE": r.get("HOLD_NUM_CHANGE") or 0,
+                "CHANGE_RATIO": r.get("CHANGE_RATIO") or 0,
+                "FREE_HOLDNUM_RATIO": r.get("FREE_HOLDNUM_RATIO") or 0,
+                "END_DATE": str(r.get("END_DATE") or "")[:10],
+                "NOTICE_DATE": str(r.get("NOTICE_DATE") or "")[:10],
+            })
+        return out
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _ibr_cache_file(today_s):
+    return os.path.join(_REPO_ROOT, "data", "_inst_buy_recent_%s.json" % today_s)
+
+
+def _ibr_holders(code6, today_s, cache):
+    """十大流通股东记录（当日磁盘缓存 + 内存缓存）。"""
+    if code6 in cache:
+        return cache[code6]
+    try:
+        with open(_ibr_cache_file(today_s), encoding="utf-8") as f:
+            disk = json.load(f)
+        cache.update(disk)
+    except Exception:  # noqa: BLE001
+        pass
+    if code6 in cache:
+        return cache[code6]
+    recs = _ibr_fetch_holders(code6)
+    cache[code6] = recs
+    try:
+        os.makedirs(os.path.dirname(_ibr_cache_file(today_s)), exist_ok=True)
+        with open(_ibr_cache_file(today_s), "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False)
+    except Exception:  # noqa: BLE001
+        pass
+    return recs
+
+
+def _ibr_check(code6, name, recs, today, notice_days=35, end_days=130):
+    """月内机构买入判定 → (hits, exits)（同票多机构可多条）。
+
+    2026-09-17 用户需求①（机构增持保送前，先看当天选股前是否已退出）：
+    按 HOLDER_NAME 只看该机构「最新一条」记录（END_DATE/NOTICE_DATE 最大）判定——
+    · 机构最新报告期 < 票级最新报告期（从最新一期十大流通股东中消失）→ 已退出，
+      旧增持作废不保送（exits 返回供日志标注）；
+    · 最新披露已非增持（HOLD_NUM_CHANGE<=0）→ 减持/持平，不保送；
+    · 其余走原窗口判定（披露≤noticeDays + 报告期≤endDays + 增持 + 机构身份）。
+    """
+    import datetime as _dt
+
+    def _key(r):
+        return (str(r.get("END_DATE") or ""), str(r.get("NOTICE_DATE") or ""))
+
+    latest_period = max((str(r.get("END_DATE") or "") for r in recs), default="")
+    own = {}
+    for r in recs:
+        h = r.get("HOLDER_NAME") or ""
+        if h and (h not in own or _key(r) > _key(own[h])):
+            own[h] = r
+    hits, exits = [], []
+    for holder, r in own.items():
+        kind = _ibr_holder_kind(holder)
+        if not kind:
+            continue
+        notice = r.get("NOTICE_DATE") or r.get("END_DATE") or ""
+        try:
+            nd = _dt.date.fromisoformat(notice[:10])
+            ed = _dt.date.fromisoformat((r.get("END_DATE") or "")[:10])
+        except Exception:  # noqa: BLE001
+            continue
+        own_period = str(r.get("END_DATE") or "")
+        if latest_period and own_period < latest_period:
+            # 该机构未出现在最新一期十大流通股东 → 已退出（曾增持过才提示）
+            ever_buy = False
+            try:
+                for r2 in recs:
+                    if (r2.get("HOLDER_NAME") or "") == holder and \
+                            float(r2.get("HOLD_NUM_CHANGE") or 0) > 0:
+                        ever_buy = True
+                        break
+            except Exception:  # noqa: BLE001
+                pass
+            if ever_buy:
+                exits.append({"code": code6, "name": name, "holder": holder,
+                              "kind": kind, "end_date": own_period})
+            continue
+        try:
+            chg = float(r.get("HOLD_NUM_CHANGE") or 0)
+        except Exception:  # noqa: BLE001
+            chg = 0.0
+        if chg <= 0:
+            continue
+        if (today - nd).days > notice_days or (today - ed).days > end_days:
+            continue
+        try:
+            ratio = float(r.get("CHANGE_RATIO") or 0)
+        except Exception:  # noqa: BLE001
+            ratio = 0.0
+        hits.append({
+            "code": code6, "name": name, "holder": holder,
+            "kind": kind, "chg_num": int(chg), "chg_ratio": round(ratio, 2),
+            "hold_ratio": round(float(r.get("FREE_HOLDNUM_RATIO") or 0), 2),
+            "end_date": r.get("END_DATE"), "notice_date": notice[:10],
+            "days_ago": (today - nd).days,
+            "score": round(_IBR_KIND_SCORE.get(kind, 70) + min(25.0, max(0.0, ratio)), 1),
+        })
+    return hits, exits
+
+
+@register("inst_buy_recent")
+def _inst_buy_recent_node(ctx, node, inputs):
+    """月内机构买入检测（2026-09-17 用户需求，详见模块注释）。
+
+    config：sourceNode=n_inst_pool（检测范围=三周期+ETF扫描+ETFtop5+实仓全池）、
+      topN=80（在线检测上限，实仓必检）、noticeDays=35、endDays=130。
+    输出：{as_of, n, hits/instBuyHits:[{code,name,holder,kind,chg_num,chg_ratio,
+      end_date,notice_date,days_ago,score}], rows:[…+instBuy 标注], scored,
+      source}。scored 供 generate_orders 保送（score=身份权重+增持幅度）。"""
+    cfg = dict(node.config or {})
+    src = ctx.get(cfg.get("sourceNode") or "n_inst_pool")
+    if not isinstance(src, dict) or not src.get("rows"):
+        src = _upstream_rows(inputs, ("n_inst_pool",)) or {"rows": []}
+    src = src if isinstance(src, dict) else {"rows": []}
+    import datetime as _dt
+    today = _dt.date.today()
+    today_s = today.strftime("%Y%m%d")
+    top_n = int(cfg.get("topN", 80) or 80)
+    notice_days = int(cfg.get("noticeDays", 35) or 35)
+    end_days = int(cfg.get("endDays", 130) or 130)
+
+    rows = list(src.get("rows") or [])
+    queue = [r for r in rows if "实仓" in (r.get("from") or "")] + \
+            [r for r in rows if "实仓" not in (r.get("from") or "")]
+    queue = queue[:top_n]
+    cache = {}
+    hits = []
+    for r in queue:
+        c6 = str(r.get("code") or "")
+        if not (len(c6) == 6 and c6.isdigit()):
+            continue
+        recs = _ibr_holders(c6, today_s, cache)
+        if recs:
+            hs, exs = _ibr_check(c6, r.get("name") or "", recs, today,
+                                 notice_days, end_days)
+            hits.extend(hs)
+            for e in exs:
+                ctx.notes.append(
+                    "[%s] ⚠ [月内机构买入] %s(%s) %s·%s 曾增持但已退出最新一期"
+                    "十大流通股东（%s 后消失），不作保送"
+                    % (node.id, e["name"], e["code"], e["kind"],
+                       e["holder"], e["end_date"]))
+    by_code = {}
+    for h in hits:
+        by_code.setdefault(h["code"], []).append(h)
+    for h in hits:
+        h["reason"] = "月内机构买入保送(%s·%s %+.1f%%)" % (
+            h["kind"], h["holder"], h["chg_ratio"])
+    out_rows = []
+    for r in rows:
+        row = dict(r)
+        hs = by_code.get(str(row.get("code") or "")) or []
+        if hs:
+            h0 = max(hs, key=lambda x: x["score"])
+            row["instBuy"] = "🚨 %s·%s %+.1f%%(%d天前披露)" % (
+                h0["kind"], h0["holder"], h0["chg_ratio"], h0["days_ago"])
+            row["instBuyHits"] = len(hs)
+        out_rows.append(row)
+    scored = []
+    for c6, hs in by_code.items():
+        h0 = max(hs, key=lambda x: x["score"])
+        secid = ("sh" if c6[:1] in "569" else "sz") + c6
+        scored.append((secid, h0["score"]))
+    scored.sort(key=lambda x: -x[1])
+    out = {"as_of": ctx.asof, "n": len(rows), "n_check": len(queue),
+           "hits": hits, "instBuyHits": hits, "rows": out_rows, "scored": scored,
+           "n_hit_codes": len(by_code),
+           "source": "月内机构买入检测(国家队/社保/大基金/公募/险资/QFII/北向 增持)"}
+    ctx.stage(node.id, out)
+    if hits:
+        for h in hits[:10]:
+            ctx.notes.append("[%s] 🚨 [月内机构买入] %s(%s) %s·%s 增持%+.1f%%（%s披露，%d天前）"
+                             % (node.id, h["name"], h["code"], h["kind"], h["holder"],
+                                h["chg_ratio"], h["notice_date"], h["days_ago"]))
+        ctx.notes.append("[%s] 🚨 月内机构买入命中 %d 只 / 检测 %d 只（命中票保送 %s，"
+                         "是否买入由买入订单 node 最终操作决定）"
+                         % (node.id, len(by_code), len(queue), node.id.replace("n_inst_buy", "n_orders")))
+    else:
+        ctx.notes.append("[%s] 月内机构买入检测: 0 命中（检测 %d 只，noticeDays=%d）"
+                         % (node.id, len(queue), notice_days))
+    return out
 
 
 @register("swap_weak", "position_merge")
@@ -3667,9 +3945,126 @@ def _amb_eval_stock(code, name, sector, snaps, i, p):
             "obvUp": obv_up, "wash": wash, "score": round(score, 2)}
 
 
+def _etf_ambush_scan(ctx, node, p, cfg, cache, top_sectors, scan_cap, top_n, lookback):
+    """universe=etf：全部行业/主题 ETF 前五重仓 → 埋伏信号扫描（2026-09-17）。
+
+    候选池与 etf_industry_scan 同源（data/_etf_holdings.json，剔除宽基/科创板可选）；
+    主题动量 = 成分股近 10/20/5 日均值收益加权（与 hot_sector 模式同一公式），
+    前 topSectors 个主题的成分股享受热度加分，但**扫描范围 = 全部主题的全部候选**。
+    行情取数：ctx.cache → data/_etf_top5_hist.json 兜底（_etf_snaps_for）。
+    """
+    ind_only = _bool_cfg(cfg.get("industryOnly"), True)
+    base_themes = set(x.strip() for x in str(cfg.get("baseThemes", "宽基")).split(",")
+                      if x.strip())
+    ex_star = _bool_cfg(cfg.get("excludeStar"), True)
+    min_etf = int(cfg.get("minETF", 1))
+
+    d = _etf_holdings_data()
+    if not d:
+        ctx.notes.append("[%s] ⚠️ 缺 data/_etf_holdings.json（ETF 全景埋伏数据资产），"
+                         "请先跑 smalltools/_etf_holdings.py update" % node.id)
+        return {"as_of": "", "rows": [], "scanned": 0, "hotSectors": []}
+
+    # ① 行业/主题 ETF → 前五重仓股（候选 + 归属主题/ETF 列表）
+    cand = {}
+    theme_codes = {}
+    for f in d.get("funds") or []:
+        theme = str(f.get("theme") or "")
+        if ind_only and theme in base_themes:
+            continue
+        codes_of_fund = []
+        for s in f.get("top") or []:
+            c6 = _etf_code6(s.get("code"))
+            if not c6:
+                continue
+            if ex_star and c6[:2] in ("68", "69"):
+                continue
+            e = cand.setdefault(c6, {"name": s.get("name") or "", "themes": [],
+                                     "etfs": []})
+            if theme and theme not in e["themes"]:
+                e["themes"].append(theme)
+            fn = str(f.get("name") or f.get("code"))
+            if fn not in e["etfs"]:
+                e["etfs"].append(fn)
+            codes_of_fund.append(c6)
+        if theme:
+            theme_codes.setdefault(theme, []).extend(codes_of_fund)
+    cand = {k: v for k, v in cand.items() if len(v["etfs"]) >= min_etf}
+    if not cand:
+        ctx.notes.append("[%s] ⚠️ ETF 持仓矩阵无候选（industryOnly=%s）" % (node.id, ind_only))
+        return {"as_of": "", "rows": [], "scanned": 0, "hotSectors": []}
+
+    def _ret(c6, win):
+        snaps = _etf_snaps_for(cache, c6, win + 2)
+        i = _dip_row_at(ctx, snaps)
+        if i < win or not snaps[i].get("close"):
+            return None
+        c0 = snaps[i - win].get("close")
+        if c0:
+            return (snaps[i]["close"] / c0 - 1) * 100
+        return None
+
+    def _theme_mom(theme):
+        rs = []
+        for c6 in set(theme_codes.get(theme) or []):
+            r = _ret(c6, 10)
+            if r is not None:
+                rs.append(r)
+        if not rs:
+            return None
+        return sum(rs) / len(rs)
+
+    # ② 主题动量排序（近10日为主，近20/5日加权），取前 topSectors 个给加分
+    ranked = []
+    for theme in theme_codes:
+        r10 = _theme_mom(theme)
+        if r10 is None:
+            continue
+        ranked.append((theme, r10))
+    ranked.sort(key=lambda x: -x[1])
+    hot = ranked[:top_sectors]
+    rank_of = {t: i + 1 for i, (t, _r) in enumerate(hot)}
+
+    # ③ 逐只评估（全部候选，扫描上限 scan_cap；加分 = 热门主题排名）
+    rows, asof, scanned = [], "", 0
+    for c6, meta in cand.items():
+        if scanned >= scan_cap:
+            break
+        snaps = _etf_snaps_for(cache, c6, p["min_snaps"] + p["ma_l"])
+        i = _dip_row_at(ctx, snaps)
+        if i < p["min_snaps"] + p["ma_l"]:
+            continue
+        scanned += 1
+        best = min((rank_of.get(t, top_sectors + 1) for t in meta["themes"]),
+                   default=top_sectors + 1)
+        sec_name = "/".join(meta["themes"][:2]) or "/".join(meta["etfs"][:2])[:12]
+        row = _amb_eval_stock(_etf_prefixed(c6), meta["name"] or c6, sec_name,
+                              snaps, i, p)
+        if not row:
+            continue
+        if best <= top_sectors:
+            row["score"] = round(row["score"] + (top_sectors - best + 1), 2)
+        row["etfs"] = len(meta["etfs"])
+        rows.append(row)
+        if row["date"] > asof:
+            asof = row["date"]
+
+    top = sorted(rows, key=lambda r: -r["score"])[:top_n]
+    hot_txt = "、".join("%s(近10日%+.1f%%)" % (t, r) for t, r in hot)
+    ctx.notes.append("[%s] ETF全景埋伏：候选%d只(主题%d个) | 热门主题：%s | 扫描%d只 → 命中%d只"
+                     % (node.id, len(cand), len(theme_codes), hot_txt or "—", scanned, len(top)))
+    return {"as_of": asof, "rows": top, "scanned": scanned,
+            "hotSectors": [t for t, _r in hot], "universe": len(cand)}
+
+
 @register("sector_ambush_signal")
 def _sector_ambush_signal(ctx, node, inputs):
-    """热门板块「2~3连阳 + 多头趋势 + 主力埋伏」扫描。"""
+    """「2~3连阳 + 多头趋势 + 主力埋伏」扫描（universe=hot_sector|etf，2026-09-17）。
+
+    hot_sector（默认）：hot_sector_config 板块热度 Top5 → 成分股；
+    etf：全部行业/主题 ETF 前五重仓股（data/_etf_holdings.json，与 etf_industry_scan
+    同源），主题动量排序取前 topSectors 个给加分，但**扫描范围 = 全部主题**。
+    """
     cfg = node.config
     p = {
         "bull_min": int(cfg.get("bullMin", 2)), "bull_max": int(cfg.get("bullMax", 3)),
@@ -3687,7 +4082,12 @@ def _sector_ambush_signal(ctx, node, inputs):
     scan_cap = int(cfg.get("scanCap", 400))
     top_n = int(cfg.get("topN", 10))
     lookback = int(cfg.get("lookbackDays", 20))
+    universe = str(cfg.get("universe", "hot_sector")).lower()
     cache = ctx.cache or {}
+
+    if universe == "etf":
+        return _etf_ambush_scan(ctx, node, p, cfg, cache,
+                                top_sectors, scan_cap, top_n, lookback)
 
     hs = _load_hot_sector_config()
     if not hs:
@@ -3797,7 +4197,7 @@ def _ambush_exit_policy(ctx, node, inputs):
 #  ETF 三个独立 usecase 引擎节点（2026-09-12）
 #    ① etf_holdings_rank   ETF 持股 top5（前五重仓覆盖矩阵）
 #    ② etf_industry_scan   ETF 全行业扫描（行业ETF→前五重仓→低吸打分 topN）
-#    ③ etf_pure_screen     纯 ETF 本体筛选（RAS绿转红/MACD/OBV/RSI6/250日回撤/流动性）
+#    ③ etf_pure_screen     纯 ETF 本体筛选（RS绿转红/MACD/OBV/RSI6/250日回撤/流动性）
 #
 #  为何拆三个独立 usecase（见 usecase XML 头注）：
 #    · 入口不同：行业板块 / ETF 前五重仓覆盖 / ETF 本身；
@@ -3806,8 +4206,8 @@ def _ambush_exit_policy(ctx, node, inputs):
 #
 #  规则出处：E:\Android\work\dev\选股思路\ETF选股思路.txt
 #    §1 初选池：主题赛道 + 流动性(日均额≥5000万) + PE分位20~40%(成长≤50%)
-#              + RAS绿转红 + 距250日高回撤 40%~60%
-#    §2 日线底仓 base_buy = RAS绿转红 & DIF>DEA & OBV>OBV_MA20 & RSI6∈[30,55]
+#              + RS绿转红 + 距250日高回撤 40%~60%
+#    §2 日线底仓 base_buy = RS绿转红 & DIF>DEA & OBV>OBV_MA20 & RSI6∈[30,55]
 #              & drawdown∈[0.4,0.6]
 #    §3 做T t_buy/t_sell = RSI6≤30/≥70 且 MACD 柱收窄/扩张
 #  数据资产：data/_etf_holdings.json（ETF→前五重仓矩阵，APK 内置同名资产）
@@ -3932,7 +4332,7 @@ def _lsq_slope(vals):
 
 
 def _ras_slope_series(etf_closes, bench_closes, win=20):
-    """RAS 相对强度(ETF/沪深300) 的 win 日滚动斜率序列；样本不足返回 []。"""
+    """RS 相对强度(ETF/沪深300) 的 win 日滚动斜率序列；样本不足返回 []。"""
     m = min(len(etf_closes or []), len(bench_closes or []))
     if m < win + 1:
         return []
@@ -3993,11 +4393,112 @@ def _sar_state(closes, highs, lows):
     return cur, bars, fresh_up
 
 
+def _etf_kdj_j(highs, lows, closes, n=9, k1=3, d1=3):
+    """KDJ(n,k1,d1) 末值 J=3K-2D（RSV 递推，K/D 种子 50，与行情软件口径近似）。"""
+    if len(closes) < n + 1:
+        return None
+    k = d = 50.0
+    for i in range(len(closes)):
+        hi = max(highs[max(0, i - n + 1):i + 1])
+        lo = min(lows[max(0, i - n + 1):i + 1])
+        rsv = 50.0 if hi <= lo else (closes[i] - lo) / (hi - lo) * 100.0
+        k = (k1 - 1) / k1 * k + rsv / k1
+        d = (d1 - 1) / d1 * d + k / d1
+    return 3.0 * k - 2.0 * d
+
+
+def _etf_kdj_prev_j(highs, lows, closes, n=9):
+    """前一日的 KDJ J 值（判『超卖回升』用）。"""
+    if len(closes) < n + 2:
+        return None
+    return _etf_kdj_j(highs[:-1], lows[:-1], closes[:-1], n)
+
+
+def _etf_boll(closes, n=20, w=2.0):
+    """BOLL(n,w) → (mid, up, lo) 末值（总体标准差）。样本不足返回 None。"""
+    if len(closes) < n:
+        return None
+    win = closes[-n:]
+    mid = sum(win) / n
+    var = sum((x - mid) ** 2 for x in win) / n
+    sd = var ** 0.5
+    return mid, mid + w * sd, mid - w * sd
+
+
+def _etf_cci(highs, lows, closes, n=14):
+    """CCI(n) 末值。样本不足返回 None。"""
+    if len(closes) < n:
+        return None
+    tps = [(highs[i] + lows[i] + closes[i]) / 3.0 for i in range(len(closes))]
+    win = tps[-n:]
+    ma = sum(win) / n
+    md = sum(abs(x - ma) for x in win) / n
+    if md <= 1e-12:
+        return 0.0
+    return (tps[-1] - ma) / (0.015 * md)
+
+
+def _etf_cci_prev(highs, lows, closes, n=14):
+    """前一日 CCI（判『穿越-100回升』用）。"""
+    if len(closes) < n + 1:
+        return None
+    return _etf_cci(highs[:-1], lows[:-1], closes[:-1], n)
+
+
+def _etf_adx(highs, lows, closes, n=14):
+    """Wilder ADX(n) → (adx, pdi, mdi)。样本不足返回 None。"""
+    if len(closes) < 2 * n + 1:
+        return None
+    tr_l, pdm_l, mdm_l = [], [], []
+    for i in range(1, len(closes)):
+        tr = max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]),
+                 abs(lows[i] - closes[i - 1]))
+        up = highs[i] - highs[i - 1]
+        dn = lows[i - 1] - lows[i]
+        pdm = up if (up > dn and up > 0) else 0.0
+        mdm = dn if (dn > up and dn > 0) else 0.0
+        tr_l.append(tr); pdm_l.append(pdm); mdm_l.append(mdm)
+    def _wma(vals):
+        out, acc = [], 0.0
+        for i, v in enumerate(vals):
+            if i < n:
+                acc += v
+            else:
+                acc = acc - acc / n + v
+            out.append(acc)
+        return out
+    tr_s, pdm_s, mdm_s = _wma(tr_l), _wma(pdm_l), _wma(mdm_l)
+    dx_l = []
+    for i in range(len(tr_s)):
+        if tr_s[i] <= 1e-12:
+            continue
+        pdi = 100.0 * pdm_s[i] / tr_s[i]
+        mdi = 100.0 * mdm_s[i] / tr_s[i]
+        if pdi + mdi > 1e-12:
+            dx_l.append(100.0 * abs(pdi - mdi) / (pdi + mdi))
+    if len(dx_l) < n:
+        return None
+    adx = sum(dx_l[:n]) / n
+    for dx in dx_l[n:]:
+        adx = (adx * (n - 1) + dx) / n
+    pdi = 100.0 * pdm_s[-1] / tr_s[-1] if tr_s[-1] > 1e-12 else 0.0
+    mdi = 100.0 * mdm_s[-1] / tr_s[-1] if tr_s[-1] > 1e-12 else 0.0
+    return adx, pdi, mdi
+
+
 def _etf_pick_score(closes, opens, highs, lows, vols, pos60):
     """低吸打分（自包含，双端同口径）。返回 None=样本不足；否则 dict。
 
     硬门控：SAR 绿（下跌趋势）直接排除（对齐 smalltools/_etf_holdings._decide_pick）。
     权重与 APK `EtfIndustryScanNode` 逐项一致，任何调整请同步改 pipeline XML 注释。
+
+    2026-09-16 技术因子扩容（用户需求：ETF 全行业扫描/top5 不能只看 SAR）：
+      · KDJ(9,3,3)：J<20 超卖区 +1.2；J 从 <0 上穿 0（超卖回升）再 +0.5
+      · BOLL(20,2)：下影触下轨收回 +1.0；站上中轨 +0.8
+      · CCI(14)：从 <-100 上穿 -100（超卖回升）+1.0；|CCI|<100 中性 +0.3
+      · 均线：MA5>MA10>MA20>MA60 多头排列 +1.0；四线粘合(振幅≤3%) +0.8
+      · 趋势线：MA20 近 20 日斜率>0 +0.4
+      · ADX(14)：ADX≥25 且 PDI>MDI（多头趋势确立）+0.8；ADX<20（无趋势·低吸更安全）+0.4
     """
     n = len(closes)
     if n < 60:
@@ -4017,6 +4518,43 @@ def _etf_pick_score(closes, opens, highs, lows, vols, pos60):
     vr = (vols[-1] / v5) if v5 > 0 else 1.0
     # 放量企稳（双端可复现口径）：收阳 + 量比≥1.05 + 站上 MA5 + 三日不新低
     stable = bool(up_day and vr >= 1.05 and c > ma5 and three_no_low)
+    # ── 2026-09-16 新增技术因子（与 Kotlin EtfScreenMath.pickScore 逐项同口径）──
+    ma20 = sum(closes[-20:]) / 20.0 if n >= 20 else None
+    ma60 = sum(closes[-60:]) / 60.0 if n >= 60 else None
+    kdj_j = _etf_kdj_j(highs, lows, closes)
+    kdj_j_prev = _etf_kdj_prev_j(highs, lows, closes)
+    boll = _etf_boll(closes)
+    cci = _etf_cci(highs, lows, closes)
+    cci_prev = _etf_cci_prev(highs, lows, closes)
+    adx_t = _etf_adx(highs, lows, closes)
+    # 均线形态
+    ma_stack = bool(ma20 and ma60 and ma5 > ma10 > ma20 > ma60)
+    ma_glu = False
+    if ma20 and ma60 and ma60 > 0:
+        mas = [ma5, ma10, ma20, ma60]
+        ma_glu = (max(mas) / min(mas) - 1.0) <= 0.03
+    # 趋势线斜率：MA20 的 20 日变化
+    ma20_slope_up = False
+    if n >= 40:
+        ma20_prev = sum(closes[-40:-20]) / 20.0
+        ma20_slope_up = ma20 > ma20_prev if ma20_prev > 0 else False
+    # 因子文本
+    kdj_s = ""
+    if kdj_j is not None:
+        kdj_s = "J=%.0f%s" % (kdj_j, "↑回升" if (kdj_j_prev is not None
+                          and kdj_j_prev < 0 <= kdj_j) else "")
+    boll_s = ""
+    if boll:
+        _mid, _up, _lo = boll
+        boll_s = ("下轨" if (lows[-1] <= _lo * 1.005 and c > _lo) else
+                  ("中轨上" if c > _mid else ("中轨下" if c > _lo else "破下轨")))
+    cci_s = ""
+    if cci is not None:
+        cci_s = "%d" % round(cci)
+    adx_s = ""
+    if adx_t:
+        _adx, _pdi, _mdi = adx_t
+        adx_s = "%.0f%s" % (_adx, "多头" if _pdi > _mdi else "空头")
     s = 0.0
     if stable:
         s += 3.0
@@ -4043,6 +4581,34 @@ def _etf_pick_score(closes, opens, highs, lows, vols, pos60):
         s += 0.6
     if up_day and 1.0 <= vr <= 3.5:
         s += 1.0
+    # ── 新增因子打分（低吸语义：超卖+企稳+趋势转折，不追强）──
+    if kdj_j is not None and kdj_j < 20:
+        s += 1.2
+        if kdj_j_prev is not None and kdj_j_prev < 0 <= kdj_j:
+            s += 0.5
+    if boll:
+        _mid, _up, _lo = boll
+        if lows[-1] <= _lo * 1.005 and c > _lo:
+            s += 1.0
+        if c > _mid:
+            s += 0.8
+    if cci is not None:
+        if cci_prev is not None and cci_prev < -100 <= cci:
+            s += 1.0
+        elif abs(cci) < 100:
+            s += 0.3
+    if ma_stack:
+        s += 1.0
+    if ma_glu:
+        s += 0.8
+    if ma20_slope_up:
+        s += 0.4
+    if adx_t:
+        _adx, _pdi, _mdi = adx_t
+        if _adx >= 25 and _pdi > _mdi:
+            s += 0.8
+        elif _adx < 20:
+            s += 0.4
     core = bool(stable or fresh or macd_t == "金叉")
     return {"score": round(s, 2), "core": core,
             "sar": ("SAR红↑%d" % sar_bars) if not fresh else "SAR刚翻红",
@@ -4050,7 +4616,13 @@ def _etf_pick_score(closes, opens, highs, lows, vols, pos60):
             "macd": macd_t, "obv": obv_t, "rsi6": rsi6, "pos60": pos60,
             "above5": bool(c > ma5), "above10": bool(c > ma10),
             "threeNoLow": three_no_low, "upDay": up_day,
-            "volRatio": round(vr, 2), "stable": stable}
+            "volRatio": round(vr, 2), "stable": stable,
+            # 2026-09-16 新增因子（推送表/APK 行可直接读）
+            "kdj": kdj_s, "boll": boll_s, "cci": cci_s, "adx": adx_s,
+            "kdjJ": round(kdj_j, 1) if kdj_j is not None else None,
+            "cciVal": round(cci, 0) if cci is not None else None,
+            "adxVal": round(adx_t[0], 1) if adx_t else None,
+            "maStack": ma_stack, "maGlu": ma_glu, "ma20SlopeUp": ma20_slope_up}
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -4729,6 +5301,11 @@ def _etf_industry_scan_node(ctx, node, inputs):
                "volRatio": sc["volRatio"], "stable": sc["stable"],
                "above5": sc["above5"], "above10": sc["above10"],
                "threeNoLow": sc["threeNoLow"], "upDay": sc["upDay"],
+               # 2026-09-16 新增技术因子（ETF 全行业扫描不再只看 SAR）
+               "kdj": sc.get("kdj", ""), "boll": sc.get("boll", ""),
+               "cci": sc.get("cci", ""), "adx": sc.get("adx", ""),
+               "maStack": sc.get("maStack", False), "maGlu": sc.get("maGlu", False),
+               "ma20SlopeUp": sc.get("ma20SlopeUp", False),
                "kline": _etf_kline_desc(closes, len(closes) - 1),
                "trend": _etf_trend_label(snaps)}
         if embed:
@@ -4761,7 +5338,7 @@ def _etf_industry_scan_node(ctx, node, inputs):
 
 @register("etf_pure_screen")
 def _etf_pure_screen_node(ctx, node, inputs):
-    """纯 ETF 本体筛选：ETF 自身 RAS/MACD/OBV/RSI6/250日回撤/流动性 → 底仓与做T信号。
+    """纯 ETF 本体筛选：ETF 自身 RS/MACD/OBV/RSI6/250日回撤/流动性 → 底仓与做T信号。
 
     与 smalltools 的 dip_buy 不同：本节点筛的是 **ETF 本体**（不是成分股），
     规则直接落地 ETF选股思路.txt §1~§3 的 select_etf / base_buy / t_buy / t_sell。
@@ -4877,7 +5454,7 @@ def _etf_pure_screen_node(ctx, node, inputs):
             "kline": _etf_kline_desc(closes, len(closes) - 1),
             "trend": _etf_trend_label(snaps),
             "exit": {"tpRsi": 75.0, "sl250": round(lo250 * 0.95, 3),
-                     "note": "底仓止盈: RSI6>75 或 RAS转绿；底仓止损: 跌破250日低点下方5%"}})
+                     "note": "底仓止盈: RSI6>75 或 RS转绿；底仓止损: 跌破250日低点下方5%"}})
     rows.sort(key=lambda r: (-r["score"], r["dd250"]))
     n_base = len([r for r in rows if r["baseBuy"]])
     picked = [r for r in rows if r["baseBuy"]][:top_n]
@@ -4942,7 +5519,7 @@ def _n_t_trade_import(ctx, node, inputs):
 if __name__ == "__main__":
     # 自检样例：python app/src/main/assets/usecases/usecase_pipeline.py
     import json
-    cache = json.load(open(os.path.join(_SMALLTOOLS_DIR, "_kline_cache.json"),
+    cache = json.load(open(_kline_store.store_path(),
                            encoding="utf-8"))
     runner = UseCaseRunner("ultra_short", cache=cache, asof="2026-08-15", period="ultra_short")
     res = runner.run()

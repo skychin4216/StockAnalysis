@@ -16,6 +16,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _market_db  # noqa: E402
+import _kline_store  # noqa: E402
 
 SMALL = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DB = os.path.join(os.path.dirname(SMALL), "data", "market_data.db")
@@ -32,8 +33,8 @@ def main():
         sys.exit(1)
     _market_db.DB_PATH = args.db
 
-    # 1) K线一致性：SQLite vs _kline_cache.json
-    cache = json.load(open(os.path.join(SMALL, "_kline_cache.json"), encoding="utf-8"))
+    # 1) K线一致性：SQLite vs data/kline_store.json
+    cache = json.load(open(_kline_store.store_path(), encoding="utf-8"))
     conn = _market_db.get_conn()
     mismatch = checked = 0
     for secid in list(cache)[:5]:

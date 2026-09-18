@@ -176,6 +176,77 @@ def download_params(cfg, out_path):
     return True
 
 
+def latest_local_mirror():
+    """本地 _records/cloud/ 下最新 phone_* 镜像目录名（无 → None）。"""
+    try:
+        names = [d for d in os.listdir(RECORD_DIR)
+                 if d.startswith("phone_")
+                 and os.path.isdir(os.path.join(RECORD_DIR, d))]
+        return max(names) if names else None
+    except OSError:
+        return None
+
+
+def _positions_of(mirror_name):
+    """读指定镜像 data.json 的 real_positions（getAllActive 已过滤 isActive）。"""
+    p = os.path.join(RECORD_DIR, mirror_name or "", "data.json")
+    try:
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+        pos = d.get("real_positions") or []
+        return pos if isinstance(pos, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def sync_holdings_if_changed(log=print):
+    """检测 COS 最新手机数据包是否比本地镜像新（2026-09-18 用户需求：
+    盘中推送前实时查看用户持仓是否变更，变更先同步再分析）。
+
+    调用方：_publish_candidates._do_round 每轮推送前（10 分钟一轮，一次
+    ListObjectsV2 轻量探测）。返回 (status, msg)，绝不抛异常：
+      synced = 有新包，已下载落镜像，msg 含 real_positions 增/删/改摘要
+      same   = 镜像已最新（或 COS 无包）
+      skip   = COS 未配置（本地 exe/无密钥环境）
+      fail   = 网络/解析失败（沿用旧镜像，不阻塞推送）
+    """
+    try:
+        from cos_utils import configured
+        cfg = load_cloud_config()
+        if not configured(cfg):
+            return "skip", "COS 未配置"
+        prefix = cfg["prefix"].strip("/") + "/"
+        objs = list_objects(cfg, prefix)
+        if not objs:
+            return "same", "COS 无数据包"
+        remote = os.path.splitext(os.path.basename(objs[0]["Key"]))[0]
+        local = latest_local_mirror()
+        if local and remote <= local:
+            return "same", "镜像已最新(%s)" % local
+        old = {str(p.get("stock_code")): p for p in _positions_of(local)}
+        save_one(cfg, objs[0], None)          # 下载最新包 → _records/cloud/<remote>/
+        new = {str(p.get("stock_code")): p for p in _positions_of(remote)}
+        added = [(new[k].get("stock_name") or k) for k in new if k not in old]
+        removed = [(old[k].get("stock_name") or k) for k in old if k not in new]
+        changed = []
+        for k in new:
+            if k in old and (new[k].get("quantity") != old[k].get("quantity")
+                             or abs(float(new[k].get("avg_buy_price") or 0)
+                                    - float(old[k].get("avg_buy_price") or 0)) > 1e-6):
+                changed.append(new[k].get("stock_name") or k)
+        parts = []
+        if added:
+            parts.append("新买 " + "、".join(added))
+        if removed:
+            parts.append("清仓 " + "、".join(removed))
+        if changed:
+            parts.append("调仓 " + "、".join(changed))
+        msg = "实仓镜像已同步 → %s（%s）" % (remote, "；".join(parts) or "持仓未变(其他表更新)")
+        return "synced", msg
+    except Exception as e:  # noqa: BLE001
+        return "fail", "%s: %s" % (type(e).__name__, e)
+
+
 def focus_key_of(cfg):
     """focus_key 解析：cloud_config.json → app_config.json → 默认值。"""
     key = (cfg.get("focus_key") or "").strip()

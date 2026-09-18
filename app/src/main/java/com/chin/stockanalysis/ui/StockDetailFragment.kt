@@ -1636,7 +1636,7 @@ class StockDetailFragment : Fragment() {
     }
 
     /**
-     * K 线下方「匹配图谱」区：自动检测看多形态 + RSA 状态，命中即在 K 线下方
+     * K 线下方「匹配图谱」区：自动检测看多形态 + SAR 状态，命中即在 K 线下方
      * **直接展示匹配到的图谱**（该股最近 20 根 K 线 + MA5 迷你图），无需再点击跳转。
      */
     private fun appendTrendMatchPanel() {
@@ -1655,7 +1655,7 @@ class StockDetailFragment : Fragment() {
             background = bg
         }
 
-        // 标题行：匹配形态 + RSA 状态 + 识别窗口说明
+        // 标题行：匹配形态 + SAR 状态 + 识别窗口说明
         val titleRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1676,7 +1676,7 @@ class StockDetailFragment : Fragment() {
         })
         if (!match.stateLabel.isNullOrBlank()) {
             titleRow.addView(TextView(ctx).apply {
-                text = " RSA·${match.stateLabel}"
+                text = " SAR·${match.stateLabel}"
                 textSize = 11f
                 setTextColor(if (match.stateBull) Color.parseColor("#E53935") else Color.parseColor("#43A047"))
                 setTypeface(null, Typeface.BOLD)

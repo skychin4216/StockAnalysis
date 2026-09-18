@@ -44,8 +44,8 @@ class AutoTradePortfolioEngine(private val context: Context) {
         /** 统一持仓数量上限 */
         const val MAX_HOLDINGS = 5
 
-        /** 单次建仓数量上限 */
-        const val MAX_OPEN_PER_ROUND = 3
+        /** 单次建仓数量上限（2026-09-17 用户需求：最终可买入票 3 → 至多 5 只） */
+        const val MAX_OPEN_PER_ROUND = 5
 
         /** 选股池上限 */
         const val MAX_SELECT = 5

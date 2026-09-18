@@ -49,14 +49,14 @@ NODE_PARAMS = {
         "中线": {"minScore": 55},
         "长线": {"minScore": 55},
     },
-    "generate_orders": {       # GenerateOrdersNode：单次最大持仓数
-        "超短": {"maxHoldings": 3},
+    "generate_orders": {       # GenerateOrdersNode：单次最大持仓数（2026-09-18 3→5 全周期统一）
+        "超短": {"maxHoldings": 5},
         "短线": {"maxHoldings": 5},
         "中线": {"maxHoldings": 5},
         "长线": {"maxHoldings": 5},
     },
     "swap_weak": {             # SwapWeakNode：换弱最大持仓数
-        "超短": {"maxHoldings": 3},
+        "超短": {"maxHoldings": 5},
         "短线": {"maxHoldings": 5},
         "中线": {"maxHoldings": 5},
         # 长线 pipeline 未挂 swap_weak

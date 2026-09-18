@@ -18,7 +18,7 @@
       （本地 13 只池以宽基为主，故默认 false，避免筛空）。
 -->
 <DagPipeline id="etf_pure_screen_dag" name="纯ETF筛选Pipeline"
-    description="沪深300门控 → ETF本体(RAS/MACD/OBV/RSI6/250日回撤/流动性)筛选 → 多理论投票止损">
+    description="沪深300门控 → ETF本体(RS/MACD/OBV/RSI6/250日回撤/流动性)筛选 → 多理论投票止损">
 
   <NodeList>
     <!-- ── 阶段1：大盘门控 ── -->
@@ -46,7 +46,7 @@
         <param name="rsiLo" value="30" />
         <param name="rsiHi" value="55" />
         <param name="rsiSell" value="70" />
-        <!-- RAS 相对强度斜率窗口（vs 沪深300） -->
+        <!-- RS 相对强度斜率窗口（vs 沪深300） -->
         <param name="rasWin" value="20" />
         <!-- 流动性：20 日均成交额（亿元）；volLot=100 表示 volume 单位为「手」 -->
         <param name="amountWin" value="20" />
@@ -67,7 +67,7 @@
         <!-- 宽基：只做 T 不作底仓（本地池以宽基为主，默认关闭该限制） -->
         <param name="excludeBroadBaseBuy" value="false" />
         <param name="broadCodes" value="510300,159915,510050,510500,510180,510880,159919,510330,510900,159901,159905,159949" />
-        <param name="strategyText" value="ETF本体筛选：base_buy = RAS绿转红 &amp; DIF>DEA &amp; OBV>OBV_MA20 &amp; RSI6∈[30,55] &amp; 距250日高回撤∈[0.35,0.65] &amp; 20日均额≥0.5亿；t_buy = RSI6≤30 且 MACD柱收窄；t_sell = RSI6≥70 且 MACD柱扩张；大盘三态自适应(见 etf_pure_screen_pipeline.xml)" />
+        <param name="strategyText" value="ETF本体筛选：base_buy = RS绿转红 &amp; DIF>DEA &amp; OBV>OBV_MA20 &amp; RSI6∈[30,55] &amp; 距250日高回撤∈[0.35,0.65] &amp; 20日均额≥0.5亿；t_buy = RSI6≤30 且 MACD柱收窄；t_sell = RSI6≥70 且 MACD柱扩张；大盘三态自适应(见 etf_pure_screen_pipeline.xml)" />
       </config>
     </Node>
 

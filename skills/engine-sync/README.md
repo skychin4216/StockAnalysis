@@ -54,7 +54,7 @@ smalltools 内部有两条选股链，都必须覆盖：
 
 编辑 `AutoQuant/screen_smalltools.py`（若新增参数字段）：
 - 它已桥接 smalltools 引擎：`load_cache()` / `market_state()` / `analyze_snaps()` / `trend_follow_scan()` / `extra_filter()` / `sell_rule_for()`
-- 数据源 `smalltools/_kline_cache.json`，与拟合同源
+- 数据源 `data/kline_store.json`，与拟合同源
 - 运行：`cd AutoQuant && python screen_smalltools.py [--asof 2026-08-20] [--period 短线] [--out data/xxx.json]`
 
 ### Step 4: APK 同步（Kotlin）

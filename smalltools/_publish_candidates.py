@@ -14,7 +14,7 @@ v11 盘中共振版：交易时段每 10 分钟一轮(v3 守护)，选股不再�
                                                   # 关闭市场上下文，纯形态快速模式
 
 数据流：
-  _kline_cache.json(池) + _industry_map(行业) + _market_context(盘中异动/资金/热度/实仓/exe)
+  data/kline_store.json(池) + _industry_map(行业) + _market_context(盘中异动/资金/热度/实仓/exe)
   → 候选清单 JSON(schema2, groups 含共振字段 reso/total)
   → 每轮推送微信(pushplus/serverchan)：CodeBuddy + exe 命中并列 + 实仓建议 + 板块资金流
   → PUT 到 COS(candidates_key)，APK 工作台「PC 候选」Tab 下载展示
@@ -186,6 +186,9 @@ def score_pool(cache, asof, trend):
                     p.pop("macroSectorKeywords", None)
                 r = analyze_snaps(sub, p, trend, market_vol_ratio=market_vol_ratio)
             except Exception:
+                continue
+            # 数据不足（<20 根，统一池含次新股）时 analyze_snaps 返回 {"error":...}
+            if "passCount" not in r:
                 continue
             ratio = r["passCount"] / max(r["totalChecks"], 1)
             # v9: 低位埋伏通过直接记录（中长线：均线粘合+三日不新低）
@@ -1090,7 +1093,8 @@ def _round_legacy(data, ctx, cfg, old_secids=None):
             items = keep
             if not items:
                 continue
-        show = items[:3] if period != "板块轮动" else items[:3]
+        # 2026-09-18：每周期展示 3→5（与买入上限 5 对齐）
+        show = items[:5] if period != "板块轮动" else items[:5]
         head = "🟢 %s" % period
         if period == "板块轮动":
             body = []
@@ -1332,15 +1336,31 @@ def _find_item_by_secid(data, secid):
 #   告▲基 04-24（公告级：增减持/定增获配，T+1，最新最及时）/ 锁基 06-30（锁定持股=十大股东
 #   可见而流通榜不可见的限售部分）/ ▲国 06-30（季报十大流通股东，原口径）/ 史▼基 25-09
 #   （超 365 天窗口的公告历史，仅给时间点、不计分）。对应资产侧新增 blk/ann 两条通道。
-# 列口径 = [股票名称, 代码] + 16 格 cells
-#          （距60日高/今日/所属ETF 3 + 趋势图谱/星后形态 2 + _tech_cells 7
+# 列口径 = [股票名称, 代码] + 19 格 cells
+#          （距60日高/今日/所属ETF 3 + 趋势图谱/星后形态 2 + _tech_cells 10
 #            + 趋势图 1 + 机构股 1 + 国家队 1 + 备注 1）。
-_TABLE_HEAD = ["股票名称", "代码", "距60日高", "今日", "所属ETF",
+# 2026-09-16 用户需求：技术列从 7 扩到 10，新增 KDJ(短线择时) / BOLL(布林位置) / VOL(成交额)
+# 2026-09-16 用户需求：技术列 7→10（KDJ/BOLL/VOL）后，「代码」列后再加「主力成本」列
+# （_chip_dist 移动筹码分布，成交量前 30% 大成交日加权，见 _chip_cell）。
+_TABLE_HEAD = ["股票名称", "代码", "主力成本", "PE静", "PB", "营收%", "净利%", "ROE%", "PEG",
+               "距60日高", "今日", "所属ETF",
                "趋势图谱", "星后形态", "RSI", "SAR", "MACD", "OBV",
-               "均线粘合", "换手", "量比", "趋势图", "机构股", "国家队", "备注"]
-_N_CELLS = len(_TABLE_HEAD) - 2          # 16：距60日高 … 备注
-_I_INST = _TABLE_HEAD.index("机构股") - 2     # cells 下标 13（趋势图 12 之后）
-_I_NAT = _TABLE_HEAD.index("国家队") - 2       # cells 下标 14（机构股 13 之后）
+               "KDJ", "BOLL", "均线粘合", "换手", "量比", "VOL",
+               "趋势图", "机构股", "国家队", "合同/市值", "备注"]
+_N_CELLS = len(_TABLE_HEAD) - 2          # 27：主力成本 … 备注
+_I_INST = _TABLE_HEAD.index("机构股") - 2     # cells 下标（随 _TABLE_HEAD 自动位移）
+_I_NAT = _TABLE_HEAD.index("国家队") - 2
+_I_CON = _TABLE_HEAD.index("合同/市值") - 2
+#   2026-09-17 用户需求「PE/PB/营收%/净利%/ROE%/PEG 加入推送表，指标相关放靠近的列」——
+#   基本面 6 列紧跟「主力成本」成组（_annotate_fundamentals 在表格导出前统一回填）：
+#   PE静/PB ← 腾讯 qt.gtimg；营收%/净利%/ROE% ← 东财 RPT_LICO_FN_CPD（当日缓存）；
+#   PEG = 静态PE ÷ 营收增速%（口径同 选股思路/PEG_营收增速_超跌反转.txt）。
+_FUND_COLS = ("PE静", "PB", "营收%", "净利%", "ROE%", "PEG")
+_I_FUND0 = _TABLE_HEAD.index(_FUND_COLS[0]) - 2   # cells 下标：基本面块首列
+#   2026-09-15 用户需求「通过合同分析前景，同板块对比，按市值归一」——
+#   近 90 天 订单类合同额/借款发债额 ÷ 总市值（_contract_scan.scan），
+#   cell 如「订+12%」「借3%」「订9.2%借19.7%」/「—」。经 _annotate_contracts
+#   在表格导出前统一回填（只补统一 17 列 rows 段，自定义 body 段不受影响）。
 
 # ── v11b 趋势图谱列（2026-09-08）：识别「连跌x天→十字星→星后大/小阴阳」K线形态 ──
 # 口径与 dip_crossstar_stat.py（十字星分歧四形态·18年市场库）完全一致：
@@ -1445,15 +1465,21 @@ def _tw(s):
 
 def _tech_cells(tech="", snaps=None):
     """指标摘要串(rich_tag: RSI.. SAR.. MACD.. OBV.. 均线粘合..) + 可选 snaps
-    → 7 个表格单元格 [RSI, SAR, MACD, OBV, 均线粘合, 换手, 量比]。
-    摘要串缺失时用 snaps 重算；仍缺的置 ''（渲染时显示 —）。"""
+    → 10 个表格单元格 [RSI, SAR, MACD, OBV, KDJ, BOLL, 均线粘合, 换手, 量比, VOL]。
+    摘要串缺失时用 snaps 重算；仍缺的置 ''（渲染时显示 —）。
+
+    2026-09-16 用户需求：原 7 列扩 10 列 —— 新增 KDJ(9,3,3) / BOLL(20,2) / VOL。
+    KDJ 短线择时：J 值超 100 短期见顶，J<0 短期见底；BOLL 显示价格相对中轨/上下轨位置；
+    VOL 显当日成交额（亿/万），方便一眼判断放量/缩量。
+    """
     t = tech or ""
     if not t and snaps:
         try:
             t = _tech_rich(snaps)
         except Exception:
             t = ""
-    d = {"rsi": "", "sar": "", "macd": "", "obv": "", "sq": "", "to": "", "vr": ""}
+    d = {"rsi": "", "sar": "", "macd": "", "obv": "", "sq": "",
+         "to": "", "vr": "", "kdj": "", "boll": "", "vol": ""}
     for tok in str(t).split():
         if tok.startswith("RSI"):
             d["rsi"] = tok[3:].lstrip(": ")
@@ -1489,7 +1515,162 @@ def _tech_cells(tech="", snaps=None):
                     d["vr"] = "%.1f" % vr
         except Exception:
             pass
-    return [d["rsi"], d["sar"], d["macd"], d["obv"], d["sq"], d["to"], d["vr"]]
+    # 2026-09-16 新增：KDJ / BOLL / VOL 三列直接由 snaps 重算（无摘要串依赖）
+    if snaps:
+        try:
+            kdj = _tech_kdj(snaps)
+            if kdj:
+                d["kdj"] = kdj
+        except Exception:
+            pass
+        try:
+            boll = _tech_boll(snaps)
+            if boll:
+                d["boll"] = boll
+        except Exception:
+            pass
+        try:
+            vol = _tech_vol(snaps, secid="")    # secid 在 _pk_tech_cells 单独传
+            if vol:
+                d["vol"] = vol
+        except Exception:
+            pass
+    return [d["rsi"], d["sar"], d["macd"], d["obv"],
+            d["kdj"], d["boll"], d["sq"], d["to"], d["vr"], d["vol"]]
+
+
+def _tech_kdj(snaps, n=9, m1=3, m2=3):
+    """KDJ(9,3,3) 短线择时——给出 J 值（最敏感，>100 短期见顶，<0 短期见底）。
+    返回 "J=72↑" / "J=85↓" / "J=42" / ""（数据不足时）。"""
+    if len(snaps) < n + 1:
+        return ""
+    closes = [float(s["close"]) for s in snaps[-(n + 1):]]
+    highs = [float(s["high"]) for s in snaps[-(n + 1):]]
+    lows = [float(s["low"]) for s in snaps[-(n + 1):]]
+    # K/D 状态需迭代初始化 50；只算末态 J 够短线参考
+    k_prev = d_prev = 50.0
+    k = d = j = 0.0
+    for i in range(len(closes) - 1, len(closes) - 1 - n, -1):
+        if i < 0:
+            break
+        hh = max(highs[max(0, i - n + 1):i + 1])
+        ll = min(lows[max(0, i - n + 1):i + 1])
+        if hh <= ll:
+            rsv = 50.0
+        else:
+            rsv = (closes[i] - ll) / (hh - ll) * 100.0
+        k = (k_prev * (m1 - 1) + rsv) / m1
+        d = (d_prev * (m2 - 1) + k) / m2
+        j = 3 * k - 2 * d
+        k_prev, d_prev = k, d
+    # 与前日 J 对比给方向
+    prev_j = None
+    try:
+        closes2 = [float(s["close"]) for s in snaps[-(n + 2):-1]]
+        highs2 = [float(s["high"]) for s in snaps[-(n + 2):-1]]
+        lows2 = [float(s["low"]) for s in snaps[-(n + 2):-1]]
+        k_prev = d_prev = 50.0
+        for i in range(len(closes2) - 1, len(closes2) - 1 - n, -1):
+            if i < 0:
+                break
+            hh = max(highs2[max(0, i - n + 1):i + 1])
+            ll = min(lows2[max(0, i - n + 1):i + 1])
+            rsv = (closes2[i] - ll) / (hh - ll) * 100.0 if hh > ll else 50.0
+            k = (k_prev * 2 + rsv) / 3
+            d = (d_prev * 2 + k) / 3
+            j2 = 3 * k - 2 * d
+            k_prev, d_prev = k, d
+        prev_j = j2
+    except Exception:
+        pass
+    arrow = "↑" if prev_j is not None and j > prev_j else ("↓" if prev_j is not None and j < prev_j else "")
+    flag = ""
+    if j > 100:
+        flag = "超"
+    elif j < 0:
+        flag = "底"
+    return ("J=%d%s%s" % (round(j), arrow, flag)).rstrip("↑↓")
+
+
+def _tech_boll(snaps, n=20, k=2.0):
+    """BOLL(20,2) 中轨/上下轨——给出 close 相对位置：
+    '↑破上轨' / '上轨下沿' / '中上' / '中轨' / '中下' / '上轨上沿' / '↓破下轨'。"""
+    if len(snaps) < n:
+        return ""
+    closes = [float(s["close"]) for s in snaps[-n:]]
+    mid = sum(closes) / n
+    var = sum((c - mid) ** 2 for c in closes) / n
+    std = var ** 0.5
+    upper = mid + k * std
+    lower = mid - k * std
+    c = closes[-1]
+    bw = upper - lower
+    if bw <= 0:
+        return ""
+    pos = (c - mid) / (bw / 2) * 100    # 中轨=0，上轨=+100，下轨=-100
+    if c > upper:
+        return "↑破上轨"
+    if c < lower:
+        return "↓破下轨"
+    if pos > 50:
+        return "上轨下沿"
+    if pos > 0:
+        return "中上"
+    if pos > -50:
+        return "中下"
+    return "下轨上沿"
+
+
+def _tech_vol(snaps, secid=""):
+    """当日成交额（元，按亿/万）+ 5 日均量对比 → VOL 一眼判断放量/缩量。
+    返回 '4.2亿↑放' / '1.3亿' / '5200万↓缩' / ''（数据不足时）。
+
+    优先用 store 里的 amount 字段（成交额，元）；缺失时按 volume × close × share_factor 估算。
+    2026-09-16：用户发现 '24万' 实为 24 万手 ≈ 4 亿元的误读 → 改用金额显示；
+    同日发现科创板 volume 单位为「股」（不是「手」），× 100 后会放大 100 倍 → 按板块区分。
+    share_factor: sh688/sh689 → 1（股）；其它 → 100（手→股）。
+    """
+    if not snaps:
+        return ""
+    sf = 1 if secid.startswith(("sh688", "sh689")) else 100
+    last = snaps[-1] or {}
+    amt = float(last.get("amount", 0) or 0)
+    if amt <= 0:
+        v = float(last.get("volume", 0) or 0)
+        c = float(last.get("close", 0) or 0)
+        if v > 0 and c > 0:
+            amt = v * c * sf                    # 手/股 → 成交额
+    if amt <= 0:
+        return ""
+    if amt >= 1e8:
+        s = "%.1f亿" % (amt / 1e8)
+    elif amt >= 1e4:
+        s = "%.0f万" % (amt / 1e4)
+    else:
+        s = "%d" % int(amt)
+    # 与近 5 日均额对比
+    avg_amt = None
+    if len(snaps) >= 6:
+        try:
+            amts = []
+            for snap in snaps[-6:-1]:
+                a = float(snap.get("amount", 0) or 0)
+                if a <= 0:
+                    sv = float(snap.get("volume", 0) or 0)
+                    sc = float(snap.get("close", 0) or 0)
+                    if sv > 0 and sc > 0:
+                        a = sv * sc * sf
+                amts.append(a)
+            avg_amt = sum(amts) / len(amts) if amts else None
+        except Exception:
+            pass
+    if avg_amt and avg_amt > 0:
+        ratio = amt / avg_amt
+        if ratio >= 1.5:
+            s += "↑放"
+        elif ratio <= 0.6:
+            s += "↓缩"
+    return s
 
 
 # ── 趋势图列（2026-09-10）：经典K线形态匹配 → 方向(上涨/中性/下跌) + 形态名 ──
@@ -1739,7 +1920,25 @@ def _nat_cell(code):
         parts.append("史%s%s%s" % (_ANN_SYM.get(v.get("annDir") or "", "·"),
                                  _NAT_KIND.get(v.get("annKind") or "", ""),
                                  _nat_day(v.get("annNotice"))))
-    return " ".join(parts[:4]) if parts else "—"
+    cell = " ".join(parts[:4]) if parts else "—"
+    if cell == "—":
+        return cell
+    # 2026-09-16 用户需求：cell 末尾加情绪标识（多空性质）
+    # ▲/流入 → 利好 ↑（长期资金建仓=看多）；= 持稳 → 中性 →；▼/流出/退 → 利空 ↓（减仓=看空）
+    bull = cell.count("▲") + cell.count("流入")
+    bear = cell.count("▼") + cell.count("流出") + cell.count("退")
+    hold = cell.count("持稳")
+    if bear and not bull:
+        mood = "↓" + ("↓" if "退" in cell else "")
+    elif bull > bear:
+        mood = "↑"
+    elif bear > bull:
+        mood = "↓"
+    elif hold or "=" in cell:
+        mood = "→"
+    else:
+        mood = ""
+    return (cell + " " + mood).strip() if mood else cell
 
 
 def _national_etf_lines(max_lines=4):
@@ -1823,14 +2022,42 @@ def _write_inst_pool(secs, asof=""):
         return None
 
 
+def _chip_cell(snaps):
+    """主力成本格（2026-09-16 用户需求：「代码」列后新增一列显示主力成本价）。
+
+    口径 = _chip_dist.compute（移动筹码分布：成交量前 30% 大成交日按金额加权），
+    window=120 交易日。显示「成本价 + 相对现价%」：
+      172.0↑+4%  主力成本在现价上方 4%（主力套牢，反弹阻力位）
+      168.4↓-3%  主力成本在现价下方 3%（主力获利，支撑参考）
+    snaps 不足/异常 → 「—」不阻塞推送。
+    """
+    try:
+        if not snaps or len(snaps) < 30:
+            return "—"
+        import _chip_dist
+        r = _chip_dist.compute(snaps, window=120)
+        mc = r.get("main_cost")
+        last = r.get("close")
+        if not mc or not last:
+            return "—"
+        rel = (mc / last - 1.0) * 100
+        arrow = "↑" if rel > 0 else "↓"
+        return "%.1f%s%+.0f%%" % (mc, arrow, rel)
+    except Exception:  # noqa: BLE001
+        return "—"
+
+
 def _unified_cells(snaps, tech="", etf_tag="", note="", tech_cells=None,
                    p60=None, day=None, note_cap=26, inst=None, nat=None):
-    """公共 16 单元格（五段选股 / 实仓镜像共用同一口径）。
+    """统一表单元格（五段选股 / 实仓镜像共用同一口径），对齐 _TABLE_HEAD[2:]。
 
-    距60日高 / 今日 / 所属ETF / 趋势图谱 / 星后形态 / RSI / SAR / MACD / OBV /
-    均线粘合 / 换手 / 量比 / 趋势图 / 机构股 / 国家队 / 备注。
+    主力成本 / 距60日高 / 今日 / 所属ETF / 趋势图谱 / 星后形态 / RSI / SAR / MACD /
+    OBV / KDJ / BOLL / 均线粘合 / 换手 / 量比 / VOL / 趋势图 / 机构股 / 国家队 /
+    合同/市值 / 备注。
+    （合同/市值 列 2026-09-15 起由 _annotate_contracts 在导出前回填，
+     此处先占位「—」，回填时替换 _I_CON 位。）
 
-    - tech_cells：外部已算好的 7 格技术列（如 _etf_holdings._pk_tech_cells），优先；
+    - tech_cells：外部已算好的 10 格技术列（如 _etf_holdings._pk_tech_cells），优先；
     - p60 / day：外部已持有的原始数值（ETF 段来自持仓覆盖 + 实时行情），优先于 snaps 重算；
     - 趋势图谱 / 星后形态：十字星口径（_trend_cells），未匹配 → 空（渲染为 —）；
     - 趋势图：经典K线形态 + 方向（_trend_chart_cell，_trend_match_3way 口径）；
@@ -1851,15 +2078,154 @@ def _unified_cells(snaps, tech="", etf_tag="", note="", tech_cells=None,
     mid = list(tech_cells) if tech_cells else _tech_cells(tech, snaps)
     note_s = str(note or "").replace("\r", " ").replace("\n", " ").strip()[:note_cap]
     graph, after = _trend_cells(snaps)
-    return ([p60_s, day_s, str(etf_tag or ""), graph, after] + mid
+    # 合同/市值 列（_I_CON 位）2026-09-15 新增：此处先占位「—」，
+    # _annotate_contracts 在表格导出前替换为扫描结果（构建期不抓公告、不阻塞）。
+    # 2026-09-16：「主力成本」列插在「今日」之后（_TABLE_HEAD[3] 位）。
+    # 2026-09-17：基本面 6 列（PE静/PB/营收%/净利%/ROE%/PEG）插在「主力成本」后成组，
+    # _annotate_fundamentals 在表格导出前统一回填（此处占位「—」，ETF/缺数据自然为 —）。
+    fund_ph = ["—"] * len(_FUND_COLS)
+    return ([_chip_cell(snaps)] + fund_ph + [p60_s, day_s, str(etf_tag or ""), graph, after] + mid
             + [_trend_chart_cell(snaps), inst if inst else "—",
-               nat if nat else "—", note_s])
+               nat if nat else "—", "—", note_s])
+
+
+def _annotate_contracts(img_secs):
+    """统一表「合同/市值」列回填（2026-09-15 用户需求）。
+
+    近 90 天 订单类合同额 / 借款发债额 ÷ 总市值（_contract_scan.scan，
+    正文按 art_code 永久缓存，列表页每轮实时拉）。只处理「rows 段且 cells 数
+    = _N_CELLS（17，含占位）」的统一表行（五段候选 + 实仓镜像）——替换
+    _I_CON 位的占位「—」；自定义 body 段（低吸表/绿转红表等自带表头）
+    不受影响；失败静默 → 整列「—」不阻塞推送。
+    """
+    try:
+        import _contract_scan
+        codes = [str(r.get("code") or "") for s in img_secs
+                 for r in (s.get("rows") or [])
+                 if r.get("code") and len(r.get("cells") or []) == _N_CELLS]
+        codes = [c for c in dict.fromkeys(codes)
+                 if c and not c.startswith(("—", "8", "4")) and len(c) == 6]
+        if not codes:
+            return
+        cmap = _contract_scan.scan(codes)
+        # 2026-09-16 用户需求：合同/市值列加情绪标识
+        # 订+>10% → 利好 ↑；借+>5% → 利空 ↓；兼有 → 中性 →；单一小额 → →
+        import re as _re
+        def _con_mood(v):
+            if v in ("", "—", None):
+                return v or "—"
+            bull = bear = 0.0
+            m = _re.search(r"订\+(\d+\.?\d*)%", v)
+            if m:
+                pct = float(m.group(1))
+                bull = pct
+            m = _re.search(r"借\+(\d+\.?\d*)%", v)
+            if m:
+                pct = float(m.group(1))
+                bear = pct
+            mood = ""
+            if bull >= 10 and bear == 0:
+                mood = " ↑"
+            elif bear >= 5 and bull == 0:
+                mood = " ↓"
+            elif bull > 0 or bear > 0:
+                mood = " →"
+            return v + mood
+        for s in img_secs:
+            for r in (s.get("rows") or []):
+                cells = r.get("cells")
+                if cells is not None and len(cells) == _N_CELLS:
+                    cells[_I_CON] = _con_mood(cmap.get(str(r.get("code") or ""), "—"))
+    except Exception as e:  # noqa: BLE001
+        ops_note("contract_col_fail", "%s: %s" % (type(e).__name__, e))
+        print("合同/市值列回填失败(整列显示—):", type(e).__name__, e)
+
+
+def _annotate_fundamentals(img_secs):
+    """统一表基本面 6 列回填（2026-09-17 用户需求）：PE静/PB/营收%/净利%/ROE%/PEG。
+
+    数据源与板块 PEG 早报（_board_peg_report）完全同口径：
+      · PE静/PB ← 腾讯 qt.gtimg 批量（_sector_quote.quotes，只处理统一表行）；
+      · 营收%/净利%/ROE% ← 东财 RPT_LICO_FN_CPD（_board_peg_report.em_perf_map，
+        当日缓存 data/_em_perf_YYYYMMDD.json，daemon 08:00 早报已预热，缺票自动
+        回落上一报告期）；
+      · PEG = 静态PE ÷ 营收增速%（txt 口径；PE≤0 / 增速≤0 / 微利 PEG>50 → 「—」）。
+    ETF 行（无 PE/业绩）与缺数据自然显示「—」；失败静默 → 整块列「—」不阻塞推送。
+    """
+    try:
+        secs = []
+        for s in img_secs:
+            for r in (s.get("rows") or []):
+                c = str(r.get("code") or "")
+                if (c and len(c) == 6 and c.isdigit()
+                        and not c.startswith(("4", "8", "9"))
+                        and len(r.get("cells") or []) == _N_CELLS):
+                    secs.append((("sh" if c[0] in ("5", "6") else "sz") + c, c))
+        secs = list(dict.fromkeys(secs))
+        if not secs:
+            return
+        q = {}
+        try:
+            from _sector_quote import quotes
+            q = quotes([(sid, c6, "") for sid, c6 in secs]) or {}
+        except Exception as e:  # noqa: BLE001
+            ops_note("fund_quote_fail", "%s: %s" % (type(e).__name__, e))
+        perf = {}
+        try:
+            import _board_peg_report
+            perf = _board_peg_report.em_perf_map(
+                [c6 for _, c6 in secs],
+                log=lambda m: ops_note("fund_col", str(m).strip())) or {}
+        except Exception as e:  # noqa: BLE001
+            ops_note("fund_perf_fail", "%s: %s" % (type(e).__name__, e))
+
+        def _f1(v):   # PE静/ROE：一位小数
+            return "%.1f" % v if isinstance(v, (int, float)) and v == v else "—"
+
+        def _f2(v):   # PEG：两位小数
+            return "%.2f" % v if isinstance(v, (int, float)) and v == v else "—"
+
+        def _pct(v):  # 营收/净利同比：带符号整数百分比
+            if not isinstance(v, (int, float)) or v != v:
+                return "—"
+            return "%+.0f%%" % v
+
+        for s in img_secs:
+            for r in (s.get("rows") or []):
+                cells = r.get("cells")
+                if cells is None or len(cells) != _N_CELLS:
+                    continue
+                c6 = str(r.get("code") or "")
+                qq = q.get(("sh" if c6[:1] in ("5", "6") else "sz") + c6) or {}
+                pf = perf.get(c6) or {}
+                pe = qq.get("pe_static")
+                pb = qq.get("pb")
+                if not pe or pe <= 0:
+                    pe = None          # ETF/缺字段 腾讯回 0 → 显示 —
+                if not pb or pb <= 0:
+                    pb = None
+                ystz = pf.get("ystz")
+                peg = None
+                if pe and pe > 0 and ystz and ystz > 0:
+                    peg = pe / ystz
+                    if peg > 50:      # 微利股静态PE数千 → PEG 无意义（同早报口径）
+                        peg = None
+                cells[_I_FUND0] = _f1(pe)
+                cells[_I_FUND0 + 1] = _f2(pb)
+                cells[_I_FUND0 + 2] = _pct(ystz)
+                cells[_I_FUND0 + 3] = _pct(pf.get("sjltz"))
+                cells[_I_FUND0 + 4] = _f1(pf.get("roe"))
+                cells[_I_FUND0 + 5] = _f2(peg)
+    except Exception as e:  # noqa: BLE001
+        ops_note("fund_col_fail", "%s: %s" % (type(e).__name__, e))
+        print("基本面列回填失败(整块显示—):", type(e).__name__, e)
 
 
 def _table_lines(rows):
-    """rows: [{name, code, cells(16)}] → 对齐文本表行(含表头/分隔线)。空列以 — 占位。
-    16 = 距60日高/今日/所属ETF 3 + 趋势图谱/星后形态 2
-        + 技术 7(RSI/SAR/MACD/OBV/粘合/换手/量比) + 趋势图 1 + 机构股 1 + 国家队 1 + 备注 1。"""
+    """rows: [{name, code, cells(17)}] → 对齐文本表行(含表头/分隔线)。空列以 — 占位。
+    17 = 距60日高/今日/所属ETF 3 + 趋势图谱/星后形态 2
+        + 技术 7(RSI/SAR/MACD/OBV/粘合/换手/量比) + 趋势图 1 + 机构股 1 + 国家队 1
+        + 合同/市值 1（_annotate_contracts 回填）+ 备注 1。"""
     if not rows:
         return []
     body = []
@@ -2249,6 +2615,76 @@ def _intel_lines(max_age_min=150):
     return out
 
 
+def _reversal_patterns_lines(asof=None, max_lines=8):
+    """2026-09-16 用户需求：「底部反转形态」抄底参考（双锤子/早晨之星/吞没/岛形/V形/圆弧底）。
+
+    区别于 _oversold_alert（接飞刀预警，仍在阴跌）—— 本工具给「形态反转确认」，
+    是真正可抄底的候选。读 smalltools/_reversal_patterns.scan 出 TopN。
+    """
+    try:
+        import _reversal_patterns as rp
+        import _kline_store
+        # 2026-09-16：load_store 已带 mtime 单例缓存，此处不额外传 store 也几乎零成本
+        store = _kline_store.load_store()
+        rows = rp.scan(store, asof=asof or _today_str(), top=max_lines)
+    except Exception as e:
+        return ["🔁 底部反转形态：扫描失败(%s)" % (type(e).__name__, e)]
+    if not rows:
+        return ["🔁 底部反转形态：无形态命中（score<3.0）"]
+    lines = ["🔁 底部反转形态扫描(%d只·score≥3.0·可抄底)" % len(rows)]
+    for r in rows[:max_lines]:
+        lines.append("  · %s %s 现价%.2f 60日%+.1f%% %s"
+                     % (r["code"], r["name"][:8], r["close"], r["dd60"], r["label"]))
+    return lines
+
+
+def _macro_events_lines(asof=None):
+    """2026-09-16 用户需求：08:00 盘前/15:10 收盘推送增加宏观事件行（加息/战争/石油/出口管制等）。
+
+    数据源 = app/src/main/assets/macro_events/event_library.json（_event_kb.active_events）。
+    按事件 direction（+1 利好 / -1 利空）+ magnitude 加权排序，取 Top 5。
+    """
+    try:
+        from _event_kb import active_events
+        events = active_events(asof or _today_str())
+    except Exception:
+        return []
+    if not events:
+        return []
+    bull, bear = [], []
+    for ins, t in events:
+        try:
+            mag = float(ins.get("magnitude", 1.0))
+        except (TypeError, ValueError):
+            mag = 1.0
+        end = ins.get("end") or ""
+        end_short = end[5:] if len(end) >= 10 else ""
+        # direction 写在 t 顶层（-1 利空 / +1 利好）
+        d = int(t.get("direction") or 0)
+        name = t.get("name") or ins.get("event") or "?"
+        item = "[%s·%s]%s" % (mag, end_short, name)
+        if d > 0:
+            bull.append(item)
+        elif d < 0:
+            bear.append(item)
+    lines = ["🌐 活跃宏观事件（窗口期内·影响板块）"]
+    if bull:
+        lines.append("  📈 利好（" + str(len(bull)) + "）: " + " | ".join(bull[:3]))
+    if bear:
+        lines.append("  📉 利空（" + str(len(bear)) + "）: " + " | ".join(bear[:3]))
+    # 等待窗口事件（magnitude ≤ 0.7 或短窗口）单独标注
+    wait = []
+    for ins, t in events:
+        mag = float(ins.get("magnitude", 1.0) or 0)
+        end = ins.get("end") or ""
+        start = ins.get("start") or ""
+        if mag <= 0.7 and end[:7] == start[:7]:
+            wait.append(t.get("name") or ins.get("event") or "?")
+    if wait:
+        lines.append("  ⏰ 待观察: " + " | ".join(wait[:2]))
+    return lines
+
+
 def _daily_intel_lines(max_age_min=480):
     """08:00/09:00 每日节奏情报前导：宏观 → 利好利空板块 → 候选（同日有效）。
 
@@ -2341,11 +2777,15 @@ def _etf_table_rows():
                                nat=_nat_cell(code))
         # 趋势图谱：日K现算未命中（趋势图谱/星后形态均空）时，改用引擎发布的跌后K形态；
         # 趋势图若因日K不足落到 — 而引擎给了方向，则用「方向+标签」回填（信息不丢）。
-        if not cells[3] and (it.get("kline") or ""):
-            cells[3] = str(it["kline"])
+        # 2026-09-16 修复：原硬编码 cells[3]/cells[12] 是 17 列时代的下标，
+        # 扩到 KDJ/BOLL/VOL/主力成本 后错位（趋势方向曾被填进「换手」列）→ 改动态下标。
+        _i_graph = _TABLE_HEAD.index("趋势图谱") - 2
+        _i_chart = _TABLE_HEAD.index("趋势图") - 2
+        if not cells[_i_graph] and (it.get("kline") or ""):
+            cells[_i_graph] = str(it["kline"])
         tr = str(it.get("trend") or "")
-        if tr and cells[12] in ("", "—"):
-            cells[12] = {"上涨": "↑", "下跌": "↓"}.get(tr, "→") + tr
+        if tr and cells[_i_chart] in ("", "—"):
+            cells[_i_chart] = {"上涨": "↑", "下跌": "↓"}.get(tr, "→") + tr
         rows.append({
             "name": "·" + (it.get("name") or code),
             "code": code[2:] if code[:2] in ("sh", "sz", "bj") else code,
@@ -2597,7 +3037,8 @@ def _build_candidate_sections(data, ctx, cache, dag, old_secids, asof, intraday=
                     dag_all.add(raw)
         normal = [x for x in seq_all if not x[4]]
         ups = [x for x in seq_all if x[4]]
-        keeps = (normal[:3] + ups[:3])[:3]
+        # 2026-09-18 用户口径：买入上限 3→5，推送展示同步放宽（此前 DAG 段固定 3 只）
+        keeps = (normal[:5] + ups[:5])[:5]
         dag_tags = _etf_tags([(k[1] or k[0] or "")[-6:] for k in keeps])
         for raw, code, nm, extra, lu, disp in keeps:
             snaps = _find_cache_snaps(cache, raw or code)
@@ -2813,7 +3254,7 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
     推送；None = 不出图（正文同口径可读行）。
 
     返回 (pages, imgs)；pages=[(title, content), ...]，
-    imgs=[长图png, 全左对齐xlsx, 原始csv, ...]。
+    imgs=[长图png, 全左对齐xlsx]（CSV 只落盘不推送，2026-09-15）。
     """
     old_secids = old_secids or set()
     imgs = []
@@ -2942,6 +3383,13 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
     if img_secs:
         _write_inst_pool(img_secs, asof)
 
+    # ── 合同/市值 列回填（2026-09-15 用户需求，_contract_scan）──
+    #  近90天 订单类合同额/借款发债额 ÷ 总市值；失败静默 → 整列「—」不阻塞推送。
+    if img_secs:
+        _annotate_contracts(img_secs)
+        # 2026-09-17 用户需求：基本面 6 列（PE静/PB/营收%/净利%/ROE%/PEG）统一回填
+        _annotate_fundamentals(img_secs)
+
     # ── 统一渲染：各段先填充到「一份 CSV」，再由该 CSV 出「一张长图」（2026-09-12 用户方案）──
     #  页1/页2/页3 的所有表都进同一份 CSV + 同一张长图（各表标题+表头各自保留）；正文只留
     #  标题占位，渲染失败则逐段回退文本表（内容不丢）。imgs = [长图, 原始 CSV]。
@@ -2985,8 +3433,8 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
             imgs.append(png_path)
             if xlsx_path and os.path.isfile(xlsx_path):
                 imgs.append(xlsx_path)          # 全左对齐、可直接看（Excel/WPS 打开）
-            if csv_path and os.path.isfile(csv_path):
-                imgs.append(csv_path)           # 原始数据（程序/脚本消费）
+            # 2026-09-15 用户要求：XLSX 与 CSV 内容一致，只发 XLSX——
+            # CSV 不再随消息推送，但仍落盘（长图由它渲染、程序/脚本仍可消费）。
             hit = set(s.get("target") for s in img_secs)
             for t in ("p1", "p2", "p3"):
                 if t in hit:
@@ -3096,6 +3544,7 @@ def run_once(dry=False, candidates_key=None, timed_push=False, use_ctx=True, pos
     if timed_push:
         # 守护(10分钟)轮：候选构成/实仓建议有变化才完整推送（完整推含与上轮重复入选标的）。
         # 无变化则跳过微信消息，但仍上传 COS、写 LAST_FILE。首轮/换盘段首轮必推。
+        # 2026-09-17 D 方案补充：整点（10/11/13/14 点）即使无变化也发 1 行 ⏭ 跟 _market_scan 节奏对齐。
         sig = _cand_sig(data)
         rhythm = _load_rhythm()
         seg = "am" if current_session() == "am" else "pm"
@@ -3104,9 +3553,14 @@ def run_once(dry=False, candidates_key=None, timed_push=False, use_ctx=True, pos
                               cache=cache)
             rhythm["cand_sig"] = sig
             rhythm["push_seg"] = seg
+            rhythm["last_full_push_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             _save_rhythm(rhythm)
         else:
             print("[守护] 候选/实仓建议与上轮一致，跳过本轮微信推送（仍上传 COS）")
+            # D 方案：整点 ⏭ 单行推送，跟 _market_scan 节奏对齐
+            if _is_round_hour():
+                last_push_at = _parse_last_push_at(rhythm)
+                _push_skip_label(data, cfg, last_push_at=last_push_at)
     else:
         # 盘中新信号：仅在新买点出现时推送
         send_wechat(data, old_secids, cfg)
@@ -3130,9 +3584,29 @@ def _cand_sig(data):
     return "\n".join(parts)
 
 
+def _push_skip_label(data, cfg, last_push_at=None):
+    """2026-09-17 D 方案：候选/实仓无变化时，整点发 1 行 ⏭（同步 _market_scan 节奏）。
+    内容：[选股] HH:MM 本轮 N 只｜实仓{警示/无变化}｜末次推送 HH:MM
+    """
+    try:
+        now = datetime.datetime.now()
+        n_cand = sum(len(v) for v in (data.get("groups") or {}).values())
+        pos = data.get("positions") or []
+        _ALERT = ("止损警戒", "减仓警戒", "减仓应对")
+        pos_alert = any((p.get("verdict") in _ALERT) for p in pos) if pos else False
+        pos_label = "实仓有警示" if pos_alert else "实仓无变化"
+        last_label = last_push_at.strftime("%H:%M") if last_push_at else "-"
+        txt = "[选股] %s 本轮 %d 只｜%s｜末次推送 %s" % (
+            now.strftime("%H:%M"), n_cand, pos_label, last_label)
+        _push_wechat("⏭ 选股节奏", txt, cfg)
+        print("[守护] 整点 ⏭ 推送: %s" % txt)
+    except Exception as e:  # noqa: BLE001
+        print("[守护] 整点 ⏭ 推送失败：%s %s" % (type(e).__name__, e))
+
+
 # ── 6. 盘段节奏守护：开盘后先「下载 + XML DAG 当日选股」，之后每 interval 秒推送 ──
 # 交易时段分两个盘段：
-#   上午段 09:30-11:30：段首跑一次 prep（下载 _kline_cache 增量 → XML DAG 当日选股）
+#   上午段 09:30-11:30：段首跑一次 prep（下载 data/kline_store.json 增量 → XML DAG 当日选股）
 #   下午段 13:00-15:00：段首再跑一次 prep（数据更新到当日最新后再跑 XML DAG）
 # prep 完成后本段立即选股一次，之后每 interval 秒一轮；非交易时段挂起。
 # 状态（当天哪段已 prep / 各段上次选股时间）持久化 _daemon_rhythm.json，
@@ -3246,6 +3720,29 @@ def rhythm_mark_round(session, now=None):
     _save_rhythm(d)
 
 
+# 2026-09-17 D 方案：盘中轮无变化时，整点（10/11/13/14 点）发 1 行 ⏭ 跟 _market_scan 节奏对齐
+# am/pm 段内整点：am 10:00 / 11:00；pm 13:00 / 14:00
+# 排除 09:00（盘前）、11:30（close）、15:00/15:10/15:20（收盘后必推）
+ROUND_HOUR_PUSH = {10, 11, 13, 14}
+
+
+def _is_round_hour(now=None):
+    """整点推送时刻判定（D 方案）。am 段：10:00/11:00；pm 段：13:00/14:00。"""
+    now = now or datetime.datetime.now()
+    return now.minute == 0 and now.hour in ROUND_HOUR_PUSH
+
+
+def _parse_last_push_at(rhythm):
+    """从 rhythm["last_full_push_at"] 解析末次完整推送时间（失败返回 None）。"""
+    s = (rhythm or {}).get("last_full_push_at")
+    if not s:
+        return None
+    try:
+        return datetime.datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
 # ── v3 时刻表辅助（2026-09-08 用户确认）───────────────────────────────────
 # 交易日时刻表：
 #   09:00        预热：K线增量下载 + 情报扫描(dry)暖缓存（美股隔夜/韩股开盘/快讯研报）
@@ -3312,6 +3809,16 @@ def _is_quarter(now=None):
 def _today_at(hour, minute=0):
     now = datetime.datetime.now()
     return now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+
+def _today_str():
+    """今天的 YYYY-MM-DD 字符串。
+
+    2026-09-16 补：_reversal_patterns_lines / _macro_events_lines 都调用了本函数，
+    但这个函数当时不存在 → NameError 被 except 吞掉，导致「宏观事件行」静默失效、
+    「底部反转形态」一直显示「扫描失败(NameError ...)」。
+    """
+    return datetime.datetime.now().strftime("%Y-%m-%d")
 
 
 def next_weekday_0900(now=None):
@@ -3826,6 +4333,20 @@ def _do_round(slot, dry, use_ctx, log):
     # （此前整天读 T-1 定格）。dry 预演不触发子进程；快照失败仅留痕、本轮照跑。
     if not dry and _snap_should_refresh(slot):
         run_intraday_snapshot(session=slot, log=log)
+    # 2026-09-18 用户需求：盘中推送前实时检测云端用户持仓是否变更（手机端改仓后
+    # 「云同步→立即上传」会产生新 phone_*.zip）。变更 → 先同步镜像再分析，
+    # 使本轮实仓评估/持仓建议读到最新持仓；检测/同步失败绝不阻塞本轮推送。
+    if not dry:
+        try:
+            import cloud_download
+            _st, _msg = cloud_download.sync_holdings_if_changed(log=log)
+            if _st == "synced":
+                log("🔄 %s（本轮实仓分析已用最新持仓）" % _msg)
+                ops_note("holdings_synced", _msg)
+            elif _st == "fail":
+                log("  ! 持仓变更检测失败（%s），本轮沿用旧镜像" % _msg)
+        except Exception as e:  # noqa: BLE001
+            log("持仓变更检测异常（不阻塞本轮）：%s %s" % (type(e).__name__, e))
     t0 = time.time()
     try:
         rc = run_once(dry=dry, candidates_key=None,
@@ -3899,6 +4420,22 @@ def _push_eod_summary(dry, use_ctx, log):
         if segs:
             lines.append("📊 当日多轮入选（共振参考）")
             lines.extend("  · " + s for s in segs)
+    # ②.6 宏观事件（2026-09-16 用户需求：加息/战争/石油/美国资本担忧等）
+    try:
+        me_lines = _macro_events_lines(asof=asof)
+        if me_lines:
+            lines.append("")
+            lines.extend(me_lines)
+    except Exception as e:
+        log("宏观事件行追加失败: %s" % e)
+    # ②.7 底部反转形态（2026-09-16 用户需求：双锤子/早晨之星等可抄底形态）
+    try:
+        rp_lines = _reversal_patterns_lines(asof=asof, max_lines=6)
+        if rp_lines:
+            lines.append("")
+            lines.extend(rp_lines)
+    except Exception as e:
+        log("底部反转形态行追加失败: %s" % e)
     # ②.5 自检复盘摘要（尾盘已入账本/结算，asof 一致才追加；失败不影响总结）
     try:
         with open(os.path.join(HERE, "_records", "_selfreview_report.json"),
@@ -3931,14 +4468,37 @@ def _push_eod_summary(dry, use_ctx, log):
     else:
         lines.append("💼 今日无实仓持仓记录（未做持仓评估）")
     if pnl_all is not None:
+        # 2026-09-17 用户需求：收盘总结不要千篇一律 → 每档多条随机（cheer 池）
+        import random as _rnd
         if pnl_all >= 0:
-            cheer = "今天账户飘红，节奏很棒，继续守住纪律 👏"
+            cheer = _rnd.choice([
+                "今天账户飘红，节奏很棒，继续守住纪律 👏",
+                "红盘收官，赚钱的日子记得谢谢纪律，而不是谢谢运气 🎉",
+                "今天赚了，请继续保持：赚小钱靠行情，赚大钱靠不乱来 ✨",
+                "飘红的日子最危险——容易让人忘记止损这回事。喝杯茶冷静下 🍵",
+                "账户在涨，心态别飘。明天开盘前，规则还是那条规则 🌤️"])
         elif pnl_all > -2:
-            cheer = "今天小幅波动，别着急——坚持既定纪律，修复往往就在两三个交易日内 💪"
+            cheer = _rnd.choice([
+                "今天小幅波动，别着急——坚持既定纪律，修复往往就在两三个交易日内 💪",
+                "小阴小阳才是常态，大惊小怪才是大敌。按计划走就好 🙂",
+                "今天市场在原地踏步，你也没必要加戏。等它先表态 🤔",
+                "波动不大的一天，正好用来检查仓位和止损位，而不是刷新盈亏 📐",
+                "盘面无聊说明多空都在等信号——别抢答，让子弹再飞一会儿 🕊️"])
         else:
-            cheer = "今天回撤了些，辛苦了。按纪律控住仓位、稳住心态，市场会还你公道 🧘"
+            cheer = _rnd.choice([
+                "今天回撤了些，辛苦了。按纪律控住仓位、稳住心态，市场会还你公道 🧘",
+                "亏钱的一天，也是离「知道什么不该做」更近的一天 📖",
+                "回撤不是失败，失控才是。今天仓位没乱动，就算守住了 🛡️",
+                "行情不给面子很正常，止损位就是用来给它面子的边界 🚧",
+                "老话说：会买的是徒弟，会等的是师傅，会割肉的是掌门。今天练到哪一课了 ⚔️"])
     else:
-        cheer = "今天也完整跑完了选股流程，辛苦了，好好休息 🌙"
+        import random as _rnd
+        cheer = _rnd.choice([
+            "今天也完整跑完了选股流程，辛苦了，好好休息 🌙",
+            "没有持仓评估的日子，复盘照做——手艺不能生疏 🔧",
+            "空仓也是仓，跑完流程就该下班了 🌆",
+            "今天没账户数据，但流程一天没落下，这本身就是纪律 🧱",
+            "收工。明天的机会，交给明天的开盘铃 ⏰"])
     # ⑤ 四根宏观哨兵（收盘定格：WTI 当日值入连续天数账，越阈给次日定向动作）
     try:
         import _macro_sentinel as msent
@@ -4141,6 +4701,91 @@ def _check_rounds(log=print):
             got.get("am", 0), EXPECT_ROUNDS["am"], got.get("pm", 0), EXPECT_ROUNDS["pm"]))
 
 
+def _monthly_pool_refresh(dry, log):
+    """月度双创核心池刷新（用户 2026-09-16 需求：每月 1 日更新股票池和个股板块，
+    剔除 ST/亏损）。
+
+    动作：重算 data/_cybc_pool.json（东财行业/PE/市值综合评分，剔新 ST/亏损、
+    纳入次新）→ 新入池股补 2008 起全历史（_cybc_pool.py --history）→ 微信概要。
+    幂等：月度 flag（smalltools/data/_cybc_pool_month.json 记已执行月份），
+    月 1 日守护未开则当月首个守护日自动补跑。返回 True=已执行。
+    """
+    import subprocess
+    ym = datetime.date.today().strftime("%Y-%m")
+    here = os.path.dirname(os.path.abspath(__file__))
+    flag = os.path.join(here, "data", "_cybc_pool_month.json")
+    try:
+        with open(flag, encoding="utf-8") as f:
+            if json.load(f).get("ym") == ym:
+                return False
+    except (OSError, ValueError):
+        pass
+    log("🔄 月度池刷新（%s）…" % ym)
+    py = sys.executable
+    try:
+        r1 = subprocess.run([py, "-X", "utf8", os.path.join(here, "_cybc_pool.py")],
+                            capture_output=True, text=True, timeout=600,
+                            encoding="utf-8", errors="replace")
+        n_new = ""
+        try:
+            with open(os.path.join(os.path.dirname(here), "data",
+                                   "_cybc_pool.json"), encoding="utf-8") as f:
+                n_new = json.load(f).get("n")
+        except (OSError, ValueError):
+            pass
+        r2 = subprocess.run(
+            [py, "-X", "utf8", os.path.join(here, "_cybc_pool.py"), "--history"],
+            capture_output=True, text=True, timeout=1800,
+            encoding="utf-8", errors="replace")
+        ok = r1.returncode == 0 and r2.returncode == 0
+        body = ("月度双创核心池刷新 %s：%s 只入池（%s）\n全历史缓存：%s"
+                % (ym, n_new or "?",
+                   (r1.stdout or "").strip().splitlines()[-1:] or ["—"],
+                   (r2.stdout or "").strip().splitlines()[-1] if r2.stdout else "—"))
+        if not ok:
+            body += "\n⚠ stderr: %s" % ((r1.stderr or r2.stderr or "")[:200])
+        log(("✓ " if ok else "✗ ") + "月度池刷新" + ("" if ok else "失败"))
+        ops_note("monthly_pool", body[:400])
+        if not dry:
+            try:
+                _push_wechat("🔄 月度池刷新 %s" % ym, body, load_notify_cfg())
+            except Exception as e:  # noqa: BLE001
+                log("池刷新微信推送失败：%s" % e)
+    except Exception as e:  # noqa: BLE001
+        log("月度池刷新异常：%s" % e)
+        ops_note("monthly_pool_fail", "%s: %s" % (type(e).__name__, e))
+        return False
+    with open(flag, "w", encoding="utf-8") as f:
+        json.dump({"ym": ym, "at": datetime.datetime.now().isoformat()}, f,
+                  ensure_ascii=False)
+    return True
+
+
+def _offhour_watch_until(target, dry, log, stop_check):
+    """非交易时间哨兵（2026-09-17 用户口径修正）：每小时**只采集去重存池**。
+
+    昨晚（09-17 凌晨 02:39）实测每小时推送太频繁，用户要求删除非交易时间的即时推送，
+    改为「采集 + 去重 + 写新闻池」（_records/_offhour_news_pool.jsonl），
+    推送统一交给 08:00 pre8 与盘中 1h 节奏消费（push=False）。
+    到 target 时刻返回，交回正常盘段节奏。详见 smalltools/_offhour_watch.py。
+    """
+    while stop_check is None or not stop_check():
+        now = datetime.datetime.now()
+        if now >= target:
+            return
+        try:
+            import _offhour_watch
+            _offhour_watch.run_hourly(dry=dry, log=log, push=False)
+        except Exception as e:  # noqa: BLE001
+            log("非交易时间哨兵异常: %s %s" % (type(e).__name__, e))
+        nxt = (now + datetime.timedelta(hours=1)).replace(
+            minute=5, second=0, microsecond=0)   # 下一整点过后 5 分
+        if nxt >= target:
+            _sleep_until(target, stop_check)
+            return
+        _sleep_until(nxt, stop_check)
+
+
 def daemon_serve(prep=True, interval=600, dry=False, use_ctx=True,
                  log=print, stop_check=None):
     """盘段守护 v4（2026-09-11 用户确认节奏；2026-09-13 间隔 15→10 分钟）：
@@ -4160,17 +4805,46 @@ def daemon_serve(prep=True, interval=600, dry=False, use_ctx=True,
     盘中情报：独立 _market_scan.py 守护同频扫描，有变动才推送。
     盘中轮推送不再含「实仓买卖/做T」建议；守护/选股错误写入 _daemon_ops.jsonl。
     """
+    _inbox_last_ts = [0]  # inbox 扫描节流（每 60 秒最多一次，详见主循环）
     log("盘段守护 v4：08:00 盘前情报 → 09:00 预热/亚太情报 → 09:20 盘前速览 → 09:30 起每10分选股 "
         "→ 11:31 午间总结 → 13:00 起每10分 → 15:00 尾盘 → 15:10 收盘总结 → 15:20 表格化复盘")
+    # 2026-09-15：启动即冲刷推送积压队列（密钥迁移/断网期间失败落盘的消息，
+    # 通道恢复后开机即补发，不等到下一个动作点）
+    try:
+        push_channel.flush_pending()
+    except Exception as e:  # noqa: BLE001
+        log("启动冲刷积压异常: %s %s" % (type(e).__name__, e))
     while stop_check is None or not stop_check():
         now = datetime.datetime.now()
-        # ── 周末：睡到下一交易日 08:00 ──
-        if now.weekday() >= 5:
-            nxt = next_weekday_at(now, 8, 0)
-            log("[%s] 周末 → 下一交易日 %s 08:00 盘前情报" % (
+        # ── 非交易日（周末/节假日）：全天睡眠，醒在下一交易日 08:00 ──
+        try:
+            import _trade_calendar as _tcal
+            _rest = not _tcal.is_trading_day(now.date())
+        except Exception as e:  # noqa: BLE001
+            log("交易日历不可用（按周末判断兜底）: %s %s" % (type(e).__name__, e))
+            _rest = now.weekday() >= 5
+        if _rest:
+            try:
+                nxt = _tcal.next_trading_at(now, 8, 0)
+            except Exception:  # noqa: BLE001
+                nxt = next_weekday_at(now, 8, 0)
+            log("[%s] 非交易日 → 每小时宏观哨兵直到 %s 08:00 盘前情报" % (
                 now.strftime("%m-%d %H:%M"), nxt.strftime("%m-%d")))
-            _sleep_until(nxt, stop_check)
+            _offhour_watch_until(nxt, dry, log, stop_check)
             continue
+        # ── 每 60 秒顺带扫一次 inbox（与盘段节奏解耦，盘段/空档/非交易日均生效）
+        # 2026-09-15 接入：用户在 CS 网页上传文本/log，daemon 自动感知并分析
+        # 处理流程见 smalltools/_inbox_analyze.py
+        try:
+            import time as _t
+            if _t.time() - _inbox_last_ts[0] >= 60:
+                _inbox_last_ts[0] = _t.time()
+                import _inbox_analyze
+                n = _inbox_analyze.scan_once(log=log)
+                if n:
+                    log("✓ inbox 本轮处理 %d 个文件（详见微信推送 + data/_outbox/）" % n)
+        except Exception as e:  # noqa: BLE001
+            log("inbox 扫描异常: %s %s" % (type(e).__name__, e))
         slot = _slot_of(now)
         # ── 08:00-08:59 盘前情报（宏观 + 美股收盘 → 利好利空板块 → 候选标的 → 存库）──
         if slot == "pre8":
@@ -4186,6 +4860,15 @@ def daemon_serve(prep=True, interval=600, dry=False, use_ctx=True,
                 except Exception as e:  # noqa: BLE001
                     log("08:00 盘前情报失败：%s（2 分钟后重试）" % e)
                     _interruptible_sleep(120, stop_check)
+                    continue
+                # 2026-09-16 用户需求：盘前情报后追加「板块 PEG/营收增速早报」——
+                # board_index 每板块前10大市值 → PEG/营收增速/ROE xlsx + 微信摘要
+                # （_board_peg_report，参考 选股思路/PEG_营收增速_超跌反转.txt）。
+                try:
+                    import _board_peg_report
+                    _board_peg_report.run(dry=dry, log=log)
+                except Exception as e:  # noqa: BLE001
+                    log("板块 PEG 早报失败（不阻塞后续盘段）：%s" % e)
                 continue
             _sleep_until(_today_at(9, 0), stop_check)
             continue
@@ -4304,11 +4987,24 @@ def daemon_serve(prep=True, interval=600, dry=False, use_ctx=True,
                     log("15:20 复盘失败：%s（2 分钟后重试）" % e)
                     _interruptible_sleep(120, stop_check)
                 continue
-            # 当日流程完毕 → 次日 08:00 盘前情报
-            _sleep_until(next_weekday_at(now, 8, 0), stop_check)
+            # 15:30：月度池刷新（每月首个守护日；幂等，用户 2026-09-16 需求）
+            if rhythm_need_flag("pool"):
+                if hm < 15 * 60 + 30:
+                    _sleep_until(_today_at(15, 30), stop_check)
+                    continue
+                if _monthly_pool_refresh(dry, log):
+                    rhythm_mark_flag("pool")
+                continue
+            # 当日流程完毕 → 非交易时间每小时宏观哨兵，直到次日 08:00 盘前情报
+            # （2026-09-17 用户需求：大宏观事件先分析再选股并推送，1h 间隔）
+            _offhour_watch_until(next_weekday_at(now, 8, 0), dry, log, stop_check)
             continue
         nxt = _next_slot_at(now)
         if nxt:
+            if now.hour < 8:
+                # 早间空档（00:00→08:00）也是非交易时间：每小时宏观哨兵
+                _offhour_watch_until(nxt, dry, log, stop_check)
+                continue
             log("[%s] 空档 → 下一动作 %s" % (
                 now.strftime("%H:%M:%S"), nxt.strftime("%m-%d %H:%M")))
             _sleep_until(nxt, stop_check)

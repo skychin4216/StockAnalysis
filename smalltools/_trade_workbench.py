@@ -56,10 +56,10 @@ HEAD = [
     "机构评级", "机构裁定", "机构分", "持股比例%", "本期环比pp", "连续增持期",
     "净增持pp", "基金家数", "户数环比%",
     "现价", "止损价", "止损幅度%", "距止损空间%", "止损理论", "风险动作", "动量",
-    "趋势规律", "备注",
+    "主力成本", "成本偏离%", "趋势规律", "备注",
 ]
 COL_W = [5, 12, 8, 16, 12, 18, 7, 10, 10, 9, 9, 8, 10,
-         9, 9, 10, 11, 16, 14, 26, 18, 22]
+         9, 9, 10, 11, 16, 14, 26, 10, 11, 18, 22]
 
 _GRADE_ORDER = {"A": 0, "B": 1, "C": 2}
 
@@ -140,7 +140,7 @@ def run_workbench(asof=None, period="MID", grade="", no_holdings=False, out=None
     from _full_cycle_backtest import load_cache
     cache = load_cache()
     if not cache:
-        print("✗ 行情缓存为空（smalltools/_kline_cache.json）", file=sys.stderr)
+        print("✗ 行情缓存为空（data/kline_store.json）", file=sys.stderr)
         return 2
     all_dates = sorted({s["date"] for e in cache.values() for s in e.get("snaps", [])})
     asof = asof or all_dates[-1]
@@ -183,22 +183,43 @@ def run_workbench(asof=None, period="MID", grade="", no_holdings=False, out=None
                              -(float(r.get("score") or 0))))
     inst = _load_inst_asset()
 
+    def _chip_data(code, bars):
+        """调 _chip_dist.summary 拿主力成本 + 90% 区间，失败返回空。"""
+        try:
+            from _chip_dist import summary
+            cd = summary(code, window=120)
+            if not cd or cd.get("error") or cd.get("main_cost") is None:
+                return None, None
+            main_cost = cd.get("main_cost")
+            avg_cost = cd.get("avg_cost")
+            return main_cost, avg_cost
+        except Exception:
+            return None, None
+
     def _cell(r, i):
         grade_ = (r.get("grade") or "").upper()
         bars = (r.get("bars") or pool_bars.get(_code6(r.get("code")))
                 or _bars_for(cache, r.get("code")))
+        close_now = float(r.get("close") or (bars[-1].get("close") if bars else 0)
+                          or r.get("entry") or 0)
+        main_cost, avg_cost = _chip_data(r.get("code"), bars)
+        dev_pct = "—"
+        if main_cost and close_now > 0:
+            dev_pct = _fmt((close_now - main_cost) / main_cost * 100, 2, "%")
         return [
             i + 1, r.get("name") or "", _code6(r.get("code")), r.get("from") or "",
             grade_ or "—", r.get("label") or "—", _fmt(r.get("score"), 1),
             _fmt(r.get("hold_ratio"), 2), _fmt(r.get("latest_chg"), 2),
             _fmt(r.get("streak"), 0), _fmt(r.get("net_chg"), 2),
             _fmt(r.get("n_funds"), 0), _fmt(r.get("holder_chg_pct"), 1),
-            _fmt(r.get("close") or (bars[-1].get("close") if bars else 0) or r.get("entry") or 0, 3),
+            _fmt(close_now, 3),
             _fmt(r.get("stop"), 3),
             _fmt(r.get("stopPct"), 2, "%"), _fmt(r.get("spacePct"), 2, "%"),
             _win_theory(r.get("stopTheory")) if r.get("stop") else "—",
             r.get("stopAction") or ("已破位→清仓" if r.get("broken") else "持有"),
             r.get("momentum") or "—",
+            _fmt(main_cost, 2),
+            dev_pct,
             _trend_rule(bars),
             ("⚠ 机构撤退/散户票" if grade_ == "C" else
              ("★ 机构真加仓·强趋势" if grade_ == "A" else "")),

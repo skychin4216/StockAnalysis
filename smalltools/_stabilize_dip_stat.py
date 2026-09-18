@@ -13,14 +13,15 @@
   useMA60=false）。含 MA60(2.5%) 口径供中/长参考。
 · 买卖 = 信号日收盘买、第 H 日收盘卖(close→close)；H∈1/2/3/5/10。
 · 大盘 = 上证 close vs MA20/MA60：牛 c>ma20>ma60；熊 c<ma20<ma60；其余震荡。
-数据：smalltools/_kline_cache.json（sh000001 + 215 龙头，同 dip_rebound_stat）。
+数据：data/kline_store.json（sh000001 + 215 龙头，同 dip_rebound_stat）。
 """
 import json
 import os
 from datetime import date
+import _kline_store
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CACHE = os.path.join(HERE, "_kline_cache.json")
+CACHE = _kline_store.store_path()
 OUT = os.path.join(os.path.dirname(HERE), "AutoQuant", "backtest_logs", "_stabilize_dip_report.md")
 START = "2018-01-01"
 IDX = {"sh000001", "sh000688", "sz399001", "sz399006"}

@@ -28,8 +28,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from backtest_guangmo import analyze_snaps, PARAMS, get_index_dir, triple_vote
+import _kline_store
 
-CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
+CACHE = _kline_store.store_path()
 INDEXES = ["sh000001", "sz399001", "sz399006"]
 
 # 各周期：选股日窗口 [start, end] + 持有天数 + 止盈% + 止损%

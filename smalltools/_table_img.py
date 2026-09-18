@@ -206,8 +206,14 @@ def render_multi_table(title, sections, out_path, note=None, dpi=110):
     return out_path
 
 
-def render_table(title, header, rows, out_path, note=None, dpi=110):
-    """渲染表格为 PNG。返回 out_path；失败抛异常由调用方兜底。"""
+def render_table(title, header, rows, out_path, note=None, dpi=110,
+                 cell_colors=None):
+    """渲染表格为 PNG。返回 out_path；失败抛异常由调用方兜底。
+
+    cell_colors（2026-09-18 复盘巡诊需求）：与 rows 同形的颜色矩阵
+    list[list[str|None]]，非 None 的单元格用指定前景色（如涨红 '#C62828'
+    /跌绿 '#1B7A3D'），None 用默认黑；不传则行为与旧版完全一致。
+    """
     plt = _plt()
     from matplotlib.patches import Rectangle
 
@@ -274,11 +280,14 @@ def render_table(title, header, rows, out_path, note=None, dpi=110):
     for ri, r in enumerate(rows):
         bg = ZEBRA if ri % 2 else "#FFFFFF"
         x = M
+        rc = (cell_colors[ri] if cell_colors and ri < len(cell_colors) else None)
         for ci in range(n_col):
             v = (r[ci] if ci < len(r) else "") or "—"
+            cc = (rc[ci] if rc and ci < len(rc) else None)
             _box(x, y, col_w[ci] + cell_gap, row_h, bg)
             _cell_text(x, y, col_w[ci], row_h, v,
-                       size=body_pt if ri % 2 == 0 else body_pt)
+                       size=body_pt if ri % 2 == 0 else body_pt,
+                       color=cc or "#1A1A1A")
             x += col_w[ci] + cell_gap
         y -= row_h
     # 底部说明（可选）

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<usecase id="etf_ambush" version="1.0" env="all">
+    <name>ETF全景埋伏</name>
+    <description>全部行业/主题 ETF 前五重仓股（与 etf_industry_scan 同源）跑 2~3 连阳 + 多头排列 + 梯量 + OBV 上行 + 洗盘回踩的埋伏信号；主题动量 Top5 成分股热度加分，扫描范围不限热门主题。</description>
+    <steps>
+        <pipeline ref="usecases/etf_ambush_pipeline.xml" name="etf_ambush_dag"/>
+    </steps>
+    <config>
+        <param name="orderType" value="SectorAmbush"/>
+        <param name="maxHoldings" value="10"/>
+        <param name="holdingPeriod" value="短"/>
+        <param name="stopLoss" value="6"/>
+    </config>
+</usecase>

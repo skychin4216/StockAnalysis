@@ -123,13 +123,13 @@ class QuantWorkbenchFragment : Fragment() {
     // ═══════════════════════════════════════════════════
 
     private fun buildUI() {
-        // ── 标题行：仅保留「建仓」圆形按钮（状态矩阵拟合 / 拟合参数导入 / PC 候选 已整合到 量化选股→数据 Tab）──
-        // 2026-09-11：按钮由整行填充的「🚀 一键建仓」改为固定 32dp 圆形「建仓」，行高随之减半（去 Button 默认 48dp 最小高）；
-        // 省下的宽度留给右侧沪深300 门控小字，使其由两行折行变为一行展示。
+        // ── 行1：建仓 + 推送 + 交易日 + 仅主板（2026-09-16 用户需求：共占一行，行数从 4 收敛到 2）──
+        // 2026-09-11：按钮由整行填充的「🚀 一键建仓」改为固定 32dp 圆形「建仓」。
         rootLayout.addView(LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
-            setPadding(dp(12), dp(2), dp(12), dp(2))
+            setPadding(dp(10), dp(2), dp(10), dp(2))
+            setBackgroundColor(Color.WHITE)
             addView(TextView(requireContext()).apply {
                 text = "建仓"
                 textSize = 10f
@@ -142,34 +142,29 @@ class QuantWorkbenchFragment : Fragment() {
                 isClickable = true
                 setOnClickListener { runQuickBuild() }
             }, LinearLayout.LayoutParams(dp(32), dp(32)))
-            // 沪深300 门控：判断的是「大盘结构」这一公共前提（三周期低吸与 ETF 低吸同用），
-            // 故不再在 ETF 页独占整行横幅，改为挂在「建仓」同一行右侧、小字单行显示。
+            // 2026-09-15 用户需求：建仓右侧新增「推送」圆钮 —— 选股完成后一键让 PC
+            // 推送最新候选完整轮到微信群（经 COS 中继提交 push.round 任务，见 pushRoundToPc）。
             addView(TextView(requireContext()).apply {
-                etfGateTv = this
-                textSize = 9f
-                gravity = Gravity.CENTER_VERTICAL or Gravity.END
-                setPadding(dp(6), 0, 0, 0)
-                isSingleLine = true
-                ellipsize = TextUtils.TruncateAt.END
-                visibility = View.GONE
-            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        })
-        // ETF 页 render 成功后发布门控 → 即时刷新本行小字（未跑 ETF 时回落到上次值）
-        QuantWorkbenchState.etfGateListener = etfGateListener
-        applyEtfGate(
-            QuantWorkbenchState.etfGateLine1, QuantWorkbenchState.etfGateLine2,
-            QuantWorkbenchState.etfGateOk
-        )
-        // ── 公共「交易日」行：日期选择 + 仅主板 + 当前周期提示（随 Tab 切换）──
-        rootLayout.addView(LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(8, 4, 8, 4)
-            setBackgroundColor(Color.WHITE)
+                text = "推送"
+                textSize = 10f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                setPadding(dp(0), dp(0), dp(0), dp(0))
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.parseColor("#1565C0"))
+                }
+                isClickable = true
+                setOnClickListener { confirmPushRound() }
+            }, LinearLayout.LayoutParams(dp(32), dp(32)).apply {
+                leftMargin = dp(6)
+            })
+            // 交易日标签 + 日期选择 + 仅主板（2026-09-16 并入本行）
             addView(TextView(requireContext()).apply {
                 text = "📅 交易日:"; textSize = 12f
                 setTextColor(Color.parseColor("#333333"))
                 setTypeface(typeface, Typeface.BOLD)
+                setPadding(dp(8), 0, 0, 0)
             }.also { dateLabelTv = it })
             addView(TradingDayPickerView(requireContext()).apply {
                 layoutParams = LinearLayout.LayoutParams(
@@ -187,18 +182,45 @@ class QuantWorkbenchFragment : Fragment() {
             })
             addView(Switch(requireContext()).apply {
                 text = "仅主板"; textSize = 11f; isChecked = QuantWorkbenchState.mainBoardOnly
+                setPadding(0, 0, 0, 0)
                 setTextColor(Color.parseColor("#333333"))
                 setOnCheckedChangeListener { _, checked ->
                     QuantWorkbenchState.mainBoardOnly = checked
                 }
             })
+        })
+        // ── 行2：沪深300 门控 + 周期特征（随 Tab 切换，右对齐）──
+        // 2026-09-16 用户需求：门控独占一行不再截断；原「💎 持仓6月-1年+ | 最多N只 | …」
+        // 整行提示取消（下方周期 Tab 标题已有类似信息），只保留最后一段特征词（如"深度基本面"）。
+        rootLayout.addView(LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(2), dp(12), dp(2))
+            setBackgroundColor(Color.WHITE)
+            addView(TextView(requireContext()).apply {
+                etfGateTv = this
+                textSize = 10f
+                gravity = Gravity.CENTER_VERTICAL
+                isSingleLine = true
+                ellipsize = TextUtils.TruncateAt.END
+                visibility = View.GONE
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
             addView(TextView(requireContext()).apply {
                 textSize = 10f
                 setTextColor(Color.parseColor("#E65100"))
-                setPadding(8, 0, 0, 0)
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            }.also { periodTipTv = it })
+                gravity = Gravity.CENTER_VERTICAL or Gravity.END
+                isSingleLine = true
+                setPadding(dp(8), 0, 0, 0)
+            }.also { periodTipTv = it }, LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         })
+        // ETF 页 render 成功后发布门控 → 即时刷新本行（未跑 ETF 时回落到上次值）
+        QuantWorkbenchState.etfGateListener = etfGateListener
+        applyEtfGate(
+            QuantWorkbenchState.etfGateLine1, QuantWorkbenchState.etfGateLine2,
+            QuantWorkbenchState.etfGateOk
+        )
 
         // ── 公共「周期」行：选项随当前 Tab 切换（超短/长线无周期选择时隐藏）──
         rootLayout.addView(LinearLayout(requireContext()).apply {
@@ -272,7 +294,7 @@ class QuantWorkbenchFragment : Fragment() {
     }
 
     /**
-     * 刷新「建仓」行右侧的沪深300 门控小字（2026-09-11：按钮改圆形后宽度充足，两行合并为一行）。
+     * 刷新「沪深300 门控」独立行（2026-09-16：从建仓行右侧小字移出，单独成行、不再截断）。
      * line1 = 状态（沪深300 空头排列），line2 = 数值链（4554<MA20(4601)<MA60(4703)）。
      * 多头=绿（可低吸）/ 非多头=红（低吸暂停）；无数据时整块隐藏，不留空位。
      */
@@ -291,7 +313,10 @@ class QuantWorkbenchFragment : Fragment() {
 
     /** 根据当前 Tab 刷新公共「交易日」行提示 + 公共「周期」行选项/选中态（选项/选中态均来自共享状态） */
     private fun updateCommonRowsForTab(position: Int, frag: QuantFragmentBase?) {
-        periodTipTv.text = frag?.getPeriodTipText() ?: ""
+        // 2026-09-16：只显示周期特征词（"💎 持仓6月-1年+ | 最多8只 | 深度基本面" 的最后一段），
+        // 持仓时长/最多N只下方周期页标题已有，不重复占行。
+        periodTipTv.text = (frag?.getPeriodTipText() ?: "")
+            .split("|").lastOrNull()?.trim() ?: ""
         val options = frag?.getPeriodOptions().orEmpty()
         if (options.isEmpty()) {
             periodRow.visibility = View.GONE
@@ -469,6 +494,48 @@ class QuantWorkbenchFragment : Fragment() {
     }
 
     /**
+     * 📤 推送确认（2026-09-15 新增，「建仓」右侧圆钮）：
+     * 选股/建仓完成后，一键让 PC 推送最新候选完整轮（正文 + 长图 + XLSX）到微信群。
+     * 密钥只存在 PC 侧（assets 已清理敏感凭证），APK 仅经 COS 中继提交任务。
+     */
+    private fun confirmPushRound() {
+        AlertDialog.Builder(requireContext())
+            .setTitle("推送最新候选到微信群")
+            .setMessage(
+                "向 PC 提交 push.round 任务：强制推送最新一轮选股候选" +
+                    "（正文 + 长图 + XLSX，只发 XLSX 不再重复发 CSV）到微信群。\n\n" +
+                    "· 需 PC 端守护 / AutoQuant 在线（COS 中继可达）\n" +
+                    "· 推送的是 PC 侧最新候选清单（守护每盘段自动刷新）"
+            )
+            .setPositiveButton("推送") { _, _ -> submitPushRoundTask() }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 提交 push.round 任务到 PC（IO 线程），结果 Toast 反馈。 */
+    private fun submitPushRoundTask() {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            var msg: String
+            try {
+                val resp = com.chin.stockanalysis.stock.data.PcBridgeClient
+                    .submitTask("push.round")
+                val jo = org.json.JSONObject(resp)
+                msg = if (jo.optBoolean("ok")) {
+                    "已提交推送任务到 PC（task ${jo.optString("task_id")}），完成后微信群可见"
+                } else {
+                    "PC 返回失败：${jo.optString("error").ifBlank { "未知错误" }.take(80)}"
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "提交 push.round 失败: ${e.message}")
+                msg = "提交失败：${e.message?.take(80) ?: "PC 不可达"}（需守护在线）"
+            }
+            withContext(Dispatchers.Main) {
+                Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    /**
      * 供 StrategyFragment 转发跨 Tab 指令（周期操作已集成到工作台内部）：
      * - EXECUTE_SIMULATE_TRADE：切中线并执行买卖评估（T+1 卖出模拟）
      * - RUN_PIPELINE：切短线并执行 DAG 建仓管线
@@ -638,10 +705,25 @@ class QuantWorkbenchFragment : Fragment() {
                     val (k, d, j) = com.chin.stockanalysis.strategy.backtest.MathIndicators.kdj(highs, lows, closes)
                     val trend = com.chin.stockanalysis.strategy.backtest.MathIndicators.maTrend(closes).trend
                     val vr = com.chin.stockanalysis.strategy.backtest.MathIndicators.volumeRatio(vols)
+                    // 2026-09-16：量化工作台 cell 摘要补 BOLL(20,2)位置 + 当日成交额(VOL)
+                    val (upper, mid, lower) = com.chin.stockanalysis.strategy.backtest.MathIndicators.bollinger(closes)
+                    val bollPos = when {
+                        mid == 0.0 -> "—"
+                        last.close > upper -> "↑破上轨"
+                        last.close < lower -> "↓破下轨"
+                        last.close > mid -> "中上"
+                        else -> "中下"
+                    }
+                    val volStr = when {
+                        last.volume >= 1e8 -> "%.1f亿".format(last.volume / 1e8)
+                        last.volume >= 1e4 -> "%.0f万".format(last.volume / 1e4)
+                        last.volume > 0 -> "%d".format(last.volume.toInt())
+                        else -> "—"
+                    }
                     val barSign = if (bar > 0) "+" else ""
                     val detail = "MACD ${"%.2f".format(dif)}/${"%.2f".format(dea)}/${barSign}${"%.2f".format(bar)}  " +
                         "RSI ${"%.1f".format(rsi)}  KDJ ${"%.0f".format(k)}/${"%.0f".format(d)}/${"%.0f".format(j)}  " +
-                        trend + "  量比 ${"%.1f".format(vr)}"
+                        trend + "  量比 ${"%.1f".format(vr)}  BOLL $bollPos  VOL $volStr"
                     rows.add(QuickBuildRow(code6, name, score, last.close, chg, detail))
                 }
             }

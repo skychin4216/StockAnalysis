@@ -13,7 +13,7 @@
 - 统计口径 B：真实账户净值法（固定初始本金、按信号日期顺序买入/卖出、资金复用、
   含手续费与印花税）——累计收益 = (期末总资产/初始本金 - 1)，失败交易天然计入
 
-数据：_kline_cache.json（111 只核心龙头 + 3 指数，末端日期随缓存自动更新）
+数据：data/kline_store.json（111 只核心龙头 + 3 指数，末端日期随缓存自动更新）
 """
 import json
 import os
@@ -24,10 +24,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from backtest_guangmo import analyze_snaps, PARAMS, get_index_dir, triple_vote
 from _pool_filters import extra_filter
+import _kline_store
 
-CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
+CACHE = _kline_store.store_path()
 INDEXES = ["sh000001", "sz399001", "sz399006"]
-TODAY = "2026-08-20"  # 数据末端（随 _kline_cache.json 增量更新自动前进）
+TODAY = "2026-08-20"  # 数据末端（随 data/kline_store.json 增量更新自动前进）
 
 # 各周期选股窗口（保证持仓完全走完，不借未来数据）
 WINDOWS = {

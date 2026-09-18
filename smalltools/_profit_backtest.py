@@ -27,8 +27,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from backtest_guangmo import analyze_snaps, PARAMS, get_index_dir, triple_vote, parse_market_regime
 from _trend_proto import trend_follow_scan
+import _kline_store
 
-CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
+CACHE = _kline_store.store_path()
 INDEXES = ["sh000001", "sz399001", "sz399006"]
 START = "2026-06-01"   # 近3个月窗口（2026-09-09 起）
 

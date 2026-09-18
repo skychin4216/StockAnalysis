@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-把 _kline_cache.json 中 2015-06 前已上市的老票/指数补齐到 2008-01-02。
+把 data/kline_store.json 中 2015-06 前已上市的老票/指数补齐到 2008-01-02。
 
 背景：腾讯 qfq(前复权) 对 2008 段部分股票(高分红/高送转)产生负价 → 不可用；
 方案：历史段用腾讯 hfq(后复权，价格恒正、区间内除权已调整、成交量与 qfq 完全一致)，
@@ -18,8 +18,9 @@ import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import backtest_guangmo as bg  # noqa: E402
+import _kline_store
 
-CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
+CACHE_FILE = _kline_store.store_path()
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 PROXIES = {"http": None, "https": None}
 

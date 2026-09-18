@@ -3,6 +3,7 @@
 import sys, json, datetime
 sys.path.insert(0, "e:/Android/work/dev/StockAnalysis/smalltools")
 import requests
+import _kline_store
 
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 PROXIES = {"http": None, "https": None}
@@ -141,7 +142,7 @@ def main():
         print("\n【分时】今日5分钟K线暂无（开盘前或接口无数据）")
 
     # 3) 日线技术指标（缓存）
-    cache = json.load(open("_kline_cache.json", encoding="utf-8"))
+    cache = json.load(open(_kline_store.store_path(), encoding="utf-8"))
     print("\n【日线技术指标】(截至缓存最新)")
     for code, label in {"sh000001": "上证指数", "sz399001": "深证成指", "sz399006": "创业板指"}.items():
         ent = cache.get(code)

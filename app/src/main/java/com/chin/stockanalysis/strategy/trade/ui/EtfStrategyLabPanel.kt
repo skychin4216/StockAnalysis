@@ -30,7 +30,7 @@ import kotlinx.coroutines.withContext
  * 五个区块全部由公共构件 [QuantUiKit]（深色主题）构造，与三周期页共用同一套 UI 语言：
  *
  *   ① 参数         —— 生效参数（信号阈值 / 离场参数 / 门控）展示 + 编辑 / 恢复默认 / 重跑
- *   ② 选股判定     —— 13 只 ETF 五条件（RAS/MACD/OBV/RSI/位置）命中明细 + 推荐分
+ *   ② 选股判定     —— 13 只 ETF 五条件（RS/MACD/OBV/RSI/位置）命中明细 + 推荐分
  *   ③ 买卖/做T信号 —— 底仓买入 / 底仓清仓 / 正T低吸 / 反T高抛（思路文档口径）
  *   ④ 回测         —— T+1 开盘成交、单仓状态机、大盘门控，输出胜率/盈亏比/收益/回撤
  *   ⑤ 网格拟合     —— 搜索「信号阈值 × 离场参数」最优组合，一键应用 → 修正选股思路
@@ -156,7 +156,7 @@ object EtfStrategyLabPanel {
         body.addView(kv(ctx, "大盘门控（沪深300 结构多头）", if (params.useGate) "开启" else "关闭"))
         body.addView(kv(ctx, "选股条件 RSI6 区间", "${params.rsiLo.toInt()} ~ ${params.rsiHi.toInt()}"))
         body.addView(kv(ctx, "选股条件 250日高回撤区间", "${params.ddLo.toInt()}% ~ ${params.ddHi.toInt()}%"))
-        body.addView(kv(ctx, "底仓清仓超买线", "RSI6 > ${params.rsiOverbought.toInt()}（或 RAS 转绿 / MACD 死叉）"))
+        body.addView(kv(ctx, "底仓清仓超买线", "RSI6 > ${params.rsiOverbought.toInt()}（或 RS 转绿 / MACD 死叉）"))
         body.addView(kv(ctx, "做T阈值", "正T低吸 ≤ ${params.tBuyRsi.toInt()} · 反T高抛 ≥ ${params.tSellRsi.toInt()}"))
         body.addView(kv(ctx, "离场参数", "tp +${params.tp}% / sl ${params.sl}% / ${params.hold}日 · 冷却${params.cool}日"))
         body.addView(buttonRow(ctx, listOf(
@@ -170,9 +170,9 @@ object EtfStrategyLabPanel {
         body.addView(QuantUiKit.titleRow(ctx, P, "② 选股判定（五条件）",
             "（入选 $selN / ${r.picks.size} 只）"))
         body.addView(QuantUiKit.note(ctx, P,
-            "①RAS绿转红 ②MACD金叉/DIF拐头 ③OBV上行 ④RSI6区间 ⑤回撤区间 —— 五中全中=底仓买入信号",
+            "①RS绿转红 ②MACD金叉/DIF拐头 ③OBV上行 ④RSI6区间 ⑤回撤区间 —— 五中全中=底仓买入信号",
             textSize = 10f, colorHex = P.tip))
-        val pickCols = listOf("名称", "代码", "收盘", "回撤250", "RSI6", "RAS", "MACD", "OBV", "命中", "状态")
+        val pickCols = listOf("名称", "代码", "收盘", "回撤250", "RSI6", "RS", "MACD", "OBV", "命中", "状态")
         val pickW = intArrayOf(84, 78, 58, 60, 42, 58, 66, 52, 60, 50)
         val pickTable = QuantUiKit.table(ctx, P, pickCols, pickW, body)
         if (r.picks.isEmpty()) {

@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-"""五大板块(有色/黄金/科技/医药/电池)动量扫描,基于 _kline_cache.json
+"""五大板块(有色/黄金/科技/医药/电池)动量扫描,基于 data/kline_store.json
 输出:板块内近 5/10/20 日动量、MA 排列、距 60 日高点回撤、防守/进攻属性
 """
 import json
 import os
+import _kline_store
 
-CACHE = os.path.join(os.path.dirname(__file__), "_kline_cache.json")
+CACHE = _kline_store.store_path()
 
 # 板块关键词分组(按股票名称)
 SECTORS = {

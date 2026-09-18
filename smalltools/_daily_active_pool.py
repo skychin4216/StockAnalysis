@@ -11,7 +11,7 @@
        {date, amount_top[100], turnover_top[100], gain_top[100],
         month_sectors[行业20日榜], concept_sectors[概念20日榜]}
   2. StockAnalysis/data/_daily_hot_history.json -- 历史上榜天数累计（多日连续上榜=市场焦点）
-  3. 与核心池(_kline_cache.json)对比 → 控制台输出「池外新晋活跃股」
+  3. 与核心池(data/kline_store.json)对比 → 控制台输出「池外新晋活跃股」
   4. --fetch-candidates: 把池外多日上榜/成交前20的候选从 market_data.db 补 K 线（每日只几只，轻量）
 
 用法：
@@ -30,6 +30,7 @@ import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _market_db  # noqa: E402
+import _kline_store
 
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Referer": "https://quote.eastmoney.com/"}
 PX = {"http": None, "https": None}
@@ -42,7 +43,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 DAILY_HOT = os.path.join(ROOT, "data", "_daily_hot.json")
 HIST_FILE = os.path.join(ROOT, "data", "_daily_hot_history.json")
-CACHE_FILE = os.path.join(HERE, "_kline_cache.json")
+CACHE_FILE = _kline_store.store_path()
 DB = os.path.join(ROOT, "data", "market_data.db")
 
 # 榜单抓取页大小（东财实际每页上限 100）

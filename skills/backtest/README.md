@@ -41,7 +41,7 @@
 
 | 脚本 | 功能 |
 |------|------|
-| `_extend_cache.py` | 扩展 `_kline_cache.json` 到 2023-01-01（长线回溯需要250日MA） |
+| `_extend_cache.py` | 扩展 `data/kline_store.json` 到 2023-01-01（长线回溯需要250日MA） |
 | `_fix_cache_names.py` | 修复缓存中股票名称（is_cyclical_industry 依赖） |
 | `_net_check.py` / `_netdiag*.py` | 腾讯/东财/新浪数据源连通性诊断 |
 | `_idx_trend.py` / `_microcap_today.py` | 指数趋势 / 微盘跳水确认 |
@@ -64,7 +64,7 @@
 
 - 腾讯日K：`web.ifzq.gtimg.cn/appstock/app/fqkline/get`
 - 东财日K：`push2his.eastmoney.com/api/qt/stock/kline/get`
-- 缓存文件：`smalltools/_kline_cache.json`（默认 640 根/只）
+- 缓存文件：`data/kline_store.json`（默认 640 根/只）
 
 ## 回测口径（重要）
 

@@ -14,7 +14,7 @@
     # 逐日低吸信号 → 次日开盘买 / 网格持有 → 正确率/累计收益/盈亏比/回撤
 
 口径说明：
-  - 回放以「当日收盘定稿K线」把 _kline_cache.json 截断到 asof（等于当日 dag 文件口径），
+  - 回放以「当日收盘定稿K线」把 data/kline_store.json 截断到 asof（等于当日 dag 文件口径），
     引擎、技术指标、ETF低吸均为该时点确定值，可复现。
   - 板块/ETF 资金流为盘中实时采集、无历史存档，页面2 以全行业ETF前五低吸(收盘口径)替代，
     并附说明行。
@@ -116,7 +116,7 @@ def dag_for(day, kind="close"):
 def render_chart(cacheD, asof, chart_days=CHART_DAYS, suffix=""):
     """四大指数「起点归一化涨跌幅折线图」（离线切片，2026-09-09 与实盘推送同风格）。返回 (ok, png)。
 
-    sh000300(沪深300) 不在 PC 全量池 cache（_kline_cache.json 只有深证成指），
+    sh000300(沪深300) 不在 PC 全量池 cache（data/kline_store.json 只有深证成指），
     与 _big_board_lines 口径一致走 _etf_index_cache()（_etf_cache.json）兜底，
     再统一截断到 asof（无未来函数）。
     """
@@ -230,7 +230,7 @@ def replay_one(day, cache, hist, args):
 
 
 def replay_days(days, args):
-    print("加载行情缓存(_kline_cache.json) ...")
+    print("加载行情缓存(data/kline_store.json) ...")
     cache = PC.load_cache()
     print("  标的 %d 只" % len(cache))
     hist = EH.load_top5_hist().get("codes") or {}

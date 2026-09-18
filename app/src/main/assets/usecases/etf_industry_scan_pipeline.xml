@@ -75,7 +75,7 @@
         <param name="oscScoreAdd" value="1.0" />
         <param name="oscPos60Max" value="-12" />
         <param name="bearishPause" value="true" />
-        <param name="strategyText" value="行业/主题ETF前五重仓 → SAR红(硬门控) + MACD金叉/红柱 + OBV上行 + RSI6∈[20,55] + 放量企稳(收阳&amp;量比≥1.05&amp;站上MA5&amp;三日不新低) + 距60日高回撤分层加分；score≥5.0 且含转折确认；大盘三态自适应(见 etf_industry_scan_pipeline.xml)" />
+        <param name="strategyText" value="行业/主题ETF前五重仓 → 硬门控SAR红 + 基础分(MACD金叉/红柱 + OBV上行 + RSI6∈[20,55] + 放量企稳(收阳&amp;量比≥1.05&amp;站上MA5&amp;三日不新低) + 距60日高回撤分层) + 2026-09-16技术因子扩容：KDJ(9,3,3)J&lt;20超卖+1.2且回升再+0.5 / BOLL(20,2)触下轨收回+1.0站中轨+0.8 / CCI(14)穿越-100回升+1.0 / 均线多头排列+1.0四线粘合+0.8 / MA20趋势线斜率↑+0.4 / ADX(14)≥25多头+0.8或&lt;20无趋势+0.4；score≥5.0 且含转折确认；大盘三态自适应。双端口径：usecase_pipeline._etf_pick_score ↔ EtfScreenMath.pickScore" />
       </config>
     </Node>
 

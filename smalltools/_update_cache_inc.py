@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""增量更新 _kline_cache.json 到最新交易日（仅补缺失日期，保留原有数据）。
+"""增量更新 data/kline_store.json 到最新交易日（仅补缺失日期，保留原有数据）。
 
 同步写公共数据库 StockAnalysis/data/market_data.db（_market_db），
 保证 exe / smalltools 使用同一数据源。
@@ -37,8 +37,9 @@ import _market_db
 # 轮换到健康 qfq 源(东财多host/腾讯ifzq·sqt)；单源连续失败熔断、自动迁移；
 # 未复权实时(qtg/sina)仅收盘后兜底「当日根」。
 from _multi_source import fetch_one_qfq, realtime_fallback
+import _kline_store
 
-CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
+CACHE_FILE = _kline_store.store_path()
 _LOCK = threading.Lock()  # 保护 SQLite 串行写（并发网络拉取 + 串行落库）
 _BATCH_SIZE = 30          # 批量实时单次请求代码数
 _SESSION = requests.Session()
@@ -146,7 +147,7 @@ def _maybe_restrict_codes(cache, codes, beg, end, workers):
 
 
 def _write_cache(cache):
-    """原子落盘 _kline_cache.json（tmp + replace）。"""
+    """原子落盘 data/kline_store.json（tmp + replace）。"""
     tmp = CACHE_FILE + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False)
@@ -282,7 +283,7 @@ def _batch_missing_fallbacks(batch_snaps, cache, end_ymd):
     return fixed
 
 
-def main():
+def main(argv=None):
     import argparse
     ap = argparse.ArgumentParser(description="并发增量更新日线缓存")
     ap.add_argument("--workers", type=int, default=30, help="并发数（日K路径，默认 30）")
@@ -292,7 +293,8 @@ def main():
     ap.add_argument("--force", action="store_true",
                     help="强制日K重拉最新已收盘交易日区间并覆盖——即使缓存日期已最新。"
                          "用于修正盘中泄漏写死的当日K(收盘后跑一次即可)。")
-    args = ap.parse_args()
+    # argv 参数供 exe 内 data_freshness 以列表方式复用（2026-09-15 exe 保鲜修复）
+    args = ap.parse_args(argv)
 
     with open(CACHE_FILE, "r", encoding="utf-8") as f:
         cache = json.load(f)

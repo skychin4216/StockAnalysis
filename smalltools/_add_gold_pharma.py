@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""临时脚本：把黄金/医药龙头补入 _kline_cache.json（腾讯日K，两段拼接 2022-08 起）。用完即删。"""
+"""临时脚本：把黄金/医药龙头补入 data/kline_store.json（腾讯日K，两段拼接 2022-08 起）。用完即删。"""
 import json
 import os
 import shutil
@@ -10,9 +10,10 @@ import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from backtest_guangmo import fetch_tencent_float_shares, vol_shares_factor  # noqa: E402
+import _kline_store
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CACHE = os.path.join(HERE, "_kline_cache.json")
+CACHE = _kline_store.store_path()
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 PROXIES = {"http": None, "https": None}
 BEG, END = "2022-08-01", "2026-08-20"

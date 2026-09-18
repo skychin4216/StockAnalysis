@@ -8,7 +8,7 @@
      再入场——volume ≥ min_vol_ratio × 前5日均量(不含当日) 且 收盘>昨收 且 收>开。
      （放量 = 换手承接；企稳 = 阳线收复，排除缩量阴跌中接飞刀）
 
-数据口径与 _kline_cache.json 一致：snaps 升序 dict 列表，
+数据口径与 data/kline_store.json 一致：snaps 升序 dict 列表，
 字段 date/open/high/low/close/volume（volume 缺省 0 的字段视为无）。
 
 用法（模块内调用）：
@@ -170,7 +170,7 @@ def describe(snaps, i, ind=None, look=5, min_vol_ratio=1.5):
 
 
 if __name__ == "__main__":
-    # 自检：从 _kline_cache 取一只低位票打印当前状态
+    # 自检：从 kline_store 取一只低位票打印当前状态
     from _full_cycle_backtest import load_cache
     cache = load_cache()
     for sid, ent in sorted(cache.items()):

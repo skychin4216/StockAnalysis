@@ -6,7 +6,7 @@
   - 规则/参数 = app/src/main/assets/usecases/sector_ambush_pipeline.xml（唯一事实源）
   - 执行器   = app/src/main/assets/usecases/usecase_pipeline.py（XML DAG Python
     引擎，XML DAG = 主线；与 APK UseCaseLoader 解析同一份 XML）
-  - 数据     = smalltools/_kline_cache.json（全池日线快照）
+  - 数据     = data/kline_store.json（全池日线快照）
   - 发布物   = data/_ambush_live_picks.json（PC/exe 展示，与 APK SectorAmbushFragment
     输出字段同构）
 
@@ -14,14 +14,15 @@ APK 端：工作台→埋伏 Tab 本地执行 sector_ambush usecase（本地快�
 PC/exe 端：运行本脚本生成 _ambush_live_picks.json，供 AutoQuant/exe 展示或回测。
 
 用法：
-  python _ambush_publish.py              # 读本地 _kline_cache.json 发布埋伏名单
-  python _ambush_publish.py --fetch      # 先增量刷新 _kline_cache.json，再发布
+  python _ambush_publish.py              # 读本地 data/kline_store.json 发布埋伏名单
+  python _ambush_publish.py --fetch      # 先增量刷新 data/kline_store.json，再发布
 """
 import argparse
 import json
 import os
 import subprocess
 import sys
+import _kline_store
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 USECASES = os.path.normpath(os.path.join(HERE, "..", "app", "src", "main", "assets", "usecases"))
@@ -29,7 +30,7 @@ for _p in (HERE, USECASES):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-CACHE = os.path.join(HERE, "_kline_cache.json")
+CACHE = _kline_store.store_path()
 OUT = os.path.join(HERE, "data", "_ambush_live_picks.json")
 PREP_CACHE = os.path.join(HERE, "_update_cache_inc.py")
 
@@ -76,7 +77,7 @@ def run_live(cache):
 
 def main():
     ap = argparse.ArgumentParser(description="板块埋伏 usecase 发布（XML 单一源）")
-    ap.add_argument("--fetch", action="store_true", help="先增量刷新 _kline_cache.json 再发布")
+    ap.add_argument("--fetch", action="store_true", help="先增量刷新 data/kline_store.json 再发布")
     args = ap.parse_args()
 
     cache = ensure_fresh_cache() if args.fetch else load_cache()

@@ -59,7 +59,7 @@ import android.graphics.BitmapFactory
  * 交互约定：
  * - 点击扫描结果「左侧（股票名称区域）」→ 直接在该行下方展开：该股 K 线图 + 匹配的图谱迷你图
  *   （再点一次收起），无需离开扫描结果。
- * - 点击扫描结果「右侧 RSA / 📈形态 标签」→ 自动滑到「趋势图」子页，
+ * - 点击扫描结果「右侧 SAR / 📈形态 标签」→ 自动滑到「趋势图」子页，
  *   并 focusPatternByEn 自动匹配定位到该股对应的图谱 index（高亮 + 滚动到视野中央）。
  * - 输入股票名称或代码 → 自动补数据并注入/定位该股形态。
  * - 「📷 选择截图」→ OCR 识别截图 K 线形态，AI 解析后注入图谱并定位。
@@ -476,10 +476,10 @@ class TrendChartTabFragment : Fragment() {
             }
             row.addView(left)
 
-            // RSA 趋势状态标签（仅展示；已注入 WebView 的行保留跳转定位）
+            // SAR 趋势状态标签（仅展示；已注入 WebView 的行保留跳转定位）
             if (!stateLabel.isNullOrBlank()) {
                 row.addView(TextView(ctx).apply {
-                    text = "RSA·$stateLabel"
+                    text = "SAR·$stateLabel"
                     textSize = 10f
                     setTextColor(if (stateBull) Color.parseColor("#E53935") else Color.parseColor("#43A047"))
                     setPadding(dp(4), dp(2), dp(4), dp(2))
@@ -842,7 +842,7 @@ class TrendChartTabFragment : Fragment() {
             }
         } catch (_: Exception) {}
         box.addView(TextView(ctx).apply {
-            text = "匹配趋势：$tag" + (if (!state.isNullOrBlank()) " · RSA·$state" else "") +
+            text = "匹配趋势：$tag" + (if (!state.isNullOrBlank()) " · SAR·$state" else "") +
                 (if (bullish) " · 方向:偏多" else " · 方向:震荡/谨慎")
             textSize = 10f
             setTextColor(Color.parseColor("#E65100"))
@@ -1208,7 +1208,7 @@ class TrendChartTabFragment : Fragment() {
                 )
                 injected++
             }
-            // 全部扫完 → 按上涨概率重排结果行（形态权重 + RSA 偏多优先；展开中的行不打扰）
+            // 全部扫完 → 按上涨概率重排结果行（形态权重 + SAR 偏多优先；展开中的行不打扰）
             resortScanRows(hits)
             val indexLine = indexTrendText(db)
             val stNote = if (stCount > 0) " 剔除ST/退市$stCount 只" else ""
@@ -1405,7 +1405,7 @@ class TrendChartTabFragment : Fragment() {
 
     // ═══════════════════════════ 本地形态识别 ═══════════════════════════
 
-    /** 本地 K 线形态识别（与趋势图分类对齐；基于共享引擎，含 RSA 状态加权拦截/放行） */
+    /** 本地 K 线形态识别（与趋势图分类对齐；基于共享引擎，含 SAR 状态加权拦截/放行） */
     private fun detectTrendPattern(candles: List<DailySnapshotEntity>): Pair<String, String>? =
         TrendPatternEngine.match(candles.take(40).reversed())?.let { it.cat to it.tag }
 

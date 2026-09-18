@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """核心池维护：审计 + 剔除 ST/退市风险 + 补齐热点龙头。
 
-背景：核心池(_kline_cache.json)由多个脚本手工扩展，存在三类问题：
+背景：核心池(data/kline_store.json)由多个脚本手工扩展，存在三类问题：
   1. ST/*ST/退市风险股混入（如 *ST闻泰、ST惠程），选股会命中这些垃圾；
   2. 热点板块龙头缺失（如 2026 AI 液冷温控），导致永远选不到；
   3. 池子长期不更新，数据覆盖滞后。
@@ -26,9 +26,10 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _add_leaders import fetch_full  # noqa: E402
 import _market_db  # noqa: E402
+import _kline_store
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CACHE_FILE = os.path.join(HERE, "_kline_cache.json")
+CACHE_FILE = _kline_store.store_path()
 REPORT_FILE = os.path.join(HERE, "_pool_report.json")
 
 

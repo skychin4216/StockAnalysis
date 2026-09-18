@@ -4,7 +4,40 @@
     "purpose": "宏观/事件驱动事件库 —— 供 macro_event_bias (Python/exe) 与 macro_event_bias (Kotlin DAG) 节点共用。单一事实源。",
     "design": "事件 = 类型定义(event_types) + 历史/当前实例(instances)。节点对当前窗口内(instances.start<=T<=instances.end)的实例按 seed_map 关键词动态加权：候选名命中关键词 → score += delta * magnitude。不硬编码结论：同类型每次发生强度(magnitude)/影响面可不同；事件结束后的实际板块表现可回写 learned 做经验校正（后续学习脚本）。关键词匹配对象是股票名称(与 macroSectorKeywords 同语义)。",
     "maintainer_note": "要新增当前正在发生的宏观事件：在 instances 追加一条 {event:<类型id>, start:今天, end:预估结束, magnitude:强度0~2, note}。Python/exe 从磁盘读本文件可直接生效；APK 打包时需重新构建或编辑内部存储副本。",
-    "updated": "2026-09-05"
+    "updated": "2026-09-17"
+  },
+  "learned_history": {
+    "fed_rate_hike": {
+      "updated": "2026-09-17",
+      "desc": "美联储加息周期对 A 股四大指数实证（kline_store 实测，指数起点收盘为基准）。完整报告：docs/fed_hike_a_share_impact.md。指标含义：t20/t120/t250=首加息后20/120/250交易日涨跌幅%；full=末加息日涨跌幅%；trough=区间最低涨跌幅%；recover=区间最低日回到起点所需交易日数。",
+      "phases": {
+        "t5": "首周四指数 ±1%（利空提前定价）",
+        "t10_60": "杀估值期：高 PE / 亏损票跌幅最深（C1 创 -25%、C2 创 -8%）",
+        "t120_250": "半年/一年：取决于国内是否宽松对冲（C2 沪不跌 vs C1 沪 -19.8%）",
+        "recover": "沪 5周(C2)~2.4年(C1)；创业板 1.8~2.3年（需等美联储降息+国内政策共振）"
+      },
+      "cycles": {
+        "C1_1518": {
+          "start": "2015-12-17", "end": "2018-12-19", "first_hike": "2015-12-17", "bp": 225,
+          "sh":  {"t20": -19.0, "t120": -19.8, "t250": -12.8, "full": -28.8, "trough": -30.6, "recover_td": 545},
+          "sz":  {"t20": -22.1, "t120": -21.1, "t250": -20.2, "full": -42.2, "trough": -44.0, "recover_td": 416},
+          "cyb": {"t20": -25.5, "t120": -25.9, "t250": -30.4, "full": -55.3, "trough": -57.5, "recover_td": 421},
+          "note": "叠加熔断+贸易战+去杠杆；最低点 2018-10-18 早于末加日 2 个月"
+        },
+        "C2_2223": {
+          "start": "2022-03-17", "end": "2023-07-26", "first_hike": "2022-03-17", "bp": 525,
+          "sh":   {"t20": -0.6, "t120": 1.5,  "t250": 0.9,  "full": 0.3,  "trough": -10.2, "recover_td": 25},
+          "sz":   {"t20": -4.9, "t120": -3.4, "t250": -5.9, "full": -10.8, "trough": -17.0, "recover_td": 34},
+          "cyb":  {"t20": -8.2, "t120": -6.0, "t250": -12.6, "full": -19.2, "trough": -21.7, "recover_td": 537},
+          "kc50": {"t20": -12.1, "t120": -9.5, "t250": -9.1, "full": -15.9, "trough": -24.0, "recover_td": 69},
+          "note": "国内降准降息对冲 → 沪 5 周修复；创业板 2.3 年（等 2024-09 降息+9·24 共振）"
+        },
+        "C3_26": {
+          "start": "2026-08-01", "end": "2026-12-31", "first_hike": "2026-09-17", "bp": 25,
+          "note": "进行中：09-17 首加落地，点阵图 16 官员预计年内再加息；国内持续宽松对冲 → 对标 C2 结构（沪强、成长/创业板弱、修复看国内政策+降息预期）"
+        }
+      }
+    }
   },
   "event_types": [
     {
@@ -161,15 +194,23 @@
     }
   ],
   "instances": [
-    {"id": "fed_hike_1518", "event": "fed_rate_hike", "start": "2015-12-17", "end": "2018-12-19", "magnitude": 1.0, "note": "2015-12 首次加息 → 2018-12 最后一次加息（2018 还叠加贸易战）"},
+    {"id": "fed_hike_1518", "event": "fed_rate_hike", "start": "2015-12-17", "end": "2018-12-19", "first_hike": "2015-12-17", "magnitude": 1.0, "note": "2015-12 首次加息 → 2018-12 最后一次加息（2018 还叠加贸易战）。实证：上证整轮-28.8%/创业板-55.3%，沪修复545个交易日"},
     {"id": "tradewar_18", "event": "trade_war", "start": "2018-03-22", "end": "2020-01-15", "magnitude": 1.0, "note": "2018-03-22 特朗普对华 301 关税 → 2020-01-15 第一阶段协议"},
     {"id": "fed_cut_19", "event": "fed_rate_cut", "start": "2019-07-31", "end": "2020-03-15", "magnitude": 0.6, "note": "2019 预防式降息 3 次 → 2020-03 紧急降息前"},
     {"id": "covid_20", "event": "pandemic_risk", "start": "2020-01-20", "end": "2020-04-30", "magnitude": 1.0, "note": "2020-01 武汉疫情爆发 → 2020 春季全球恐慌"},
     {"id": "fed_ease_20", "event": "fed_rate_cut", "start": "2020-03-23", "end": "2021-12-31", "magnitude": 1.2, "note": "2020-03-23 无限QE+降息至零 → 2021 大水漫灌后期转通胀"},
     {"id": "geopolitics_22", "event": "geopolitics", "start": "2022-02-24", "end": "2022-10-01", "magnitude": 1.0, "note": "2022-02-24 俄乌冲突 → 大宗暴涨/避险，10 月后边际钝化"},
-    {"id": "fed_hike_22", "event": "fed_rate_hike", "start": "2022-03-17", "end": "2023-07-26", "magnitude": 1.2, "note": "2022-03 启动加息，2022 年内 425bp → 2023-07 最后一次+25bp"},
+    {"id": "fed_hike_22", "event": "fed_rate_hike", "start": "2022-03-17", "end": "2023-07-26", "first_hike": "2022-03-17", "magnitude": 1.2, "note": "2022-03 启动加息，2022 年内 425bp → 2023-07 最后一次+25bp。实证：国内宽松对冲下沪仅+0.3%（5周修复）、创业板-19.2%（修复537个交易日）"},
     {"id": "el_nino_23", "event": "el_nino", "start": "2023-06-01", "end": "2024-03-31", "magnitude": 1.0, "note": "NOAA 2023-06 宣布厄尔尼诺形成 → 2024 春季结束（A 股种业/粮食 2023H2 有主题行情）"},
     {"id": "ai_boom_23", "event": "ai_breakthrough", "start": "2023-03-01", "end": "2023-12-31", "magnitude": 0.8, "note": "2023 AI 元年：GPT-4/算力主升 → A 股 TMT/光模块行情 2023-01~06 为主"},
-    {"id": "fed_cut_24", "event": "fed_rate_cut", "start": "2024-09-19", "end": "2024-12-18", "magnitude": 1.2, "note": "2024-09-19 降50bp 开启新降息周期，2024-11/-12 各降25bp"}
+    {"id": "fed_cut_24", "event": "fed_rate_cut", "start": "2024-09-19", "end": "2024-12-18", "magnitude": 1.2, "note": "2024-09-19 降50bp 开启新降息周期，2024-11/-12 各降25bp"},
+    {"id": "ai_boom_24", "event": "ai_breakthrough", "start": "2024-01-01", "end": "2026-12-31", "magnitude": 1.0, "note": "2024~2026 全球 AI 算力持续扩张：英伟达 H200/B200/GB200 迭代，OpenAI/Claude/Gemini 训练+推理需求，A股光模块/PCB/液冷/服务器主线持续受益"},
+    {"id": "fed_hike_2609", "event": "fed_rate_hike", "start": "2026-08-01", "end": "2026-12-31", "first_hike": "2026-09-17", "magnitude": 0.8, "note": "2026-09-17 FOMC 如期加息25bp落地：点阵图16官员预计2026年内再加息、沃什鹰派发言、高盛预期10月再加息——紧缩周期确认延续而非末段。A股影响：杀高估值成长(半导体/AI/创新药)与黄金，高股息(煤炭/银行/电力)相对占优。决议前一日(09-16)科创50+4.1%为「买预期」抢跑，次日冲高回落为「卖事实」典型节奏。first_hike=09-17 为实际首加息日（start=08-01 为周期预期确认起点），T+10~T+60 为实证杀估值期。"},
+    {"id": "chip_export_25", "event": "chip_export_control", "start": "2025-01-01", "end": "2026-12-31", "magnitude": 0.9, "note": "美国对华半导体出口管制持续升级：H20/B20/先进制程设备/EDA 三方持续扩限；A股国产替代(半导体设备/材料/EDA)持续受益"},
+    {"id": "new_energy_25", "event": "new_energy_policy", "start": "2025-01-01", "end": "2026-12-31", "magnitude": 0.8, "note": "国内新能源/储能政策延续：风光大基地+新型电力系统+储能装机；A 股光伏/储能/锂电主题仍有政策催化"},
+    {"id": "geopolitics_25", "event": "geopolitics", "start": "2024-10-01", "end": "2026-12-31", "magnitude": 0.9, "note": "俄乌冲突延续 + 中东(以色列-伊朗)紧张；避险(黄金)+ 能源(石油/煤) + 军工主题持续受益。"},
+    {"id": "trade_war_25", "event": "trade_war", "start": "2025-02-01", "end": "2026-12-31", "magnitude": 1.0, "note": "特朗普 2025 就职后关税 2.0：对华 60%/对全球 10% 基准；稀土/半导体/造船反制；国产替代+军工+黄金主题。"},
+    {"id": "gold_rally_25", "event": "gold_rally", "start": "2025-01-01", "end": "2026-12-31", "magnitude": 1.2, "note": "央行购金 + 实际利率预期下行 + 地缘避险 → 金价中枢持续上移；黄金股弹性 > 金价（资源股估值修复）"},
+    {"id": "rate_cut_cn_25", "event": "rate_cut_cn", "start": "2025-01-01", "end": "2026-12-31", "magnitude": 0.7, "note": "央行 2025~2026 持续宽松（降准+MLF+LPR 调降）；金融/地产/有色/券商间接受益"}
   ]
 }

@@ -20,6 +20,9 @@ import java.util.TimeZone
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -85,6 +88,39 @@ class CloudSyncManager(private val context: Context) {
 
     fun isConfigured(cfg: CloudConfig): Boolean =
         cfg.bucket.isNotBlank() && cfg.region.isNotBlank() && cfg.secretId.isNotBlank() && cfg.secretKey.isNotBlank()
+
+    /**
+     * 持仓编辑保存后自动 force 上传（2026-09-18 用户需求）：
+     * PC 盘中守护每轮推送前会探测 COS 最新 phone 包（smalltools/cloud_download.py
+     * 的 sync_holdings_if_changed），改仓后自动上传 → ≤10 分钟内被 PC 感知、
+     * 先同步再分析。静默后台执行 + 60 秒节流（连续编辑只传最后的包）；
+     * 云同步未配置直接跳过、失败仅 Log 留痕不打扰 UI（手动「立即上传」兜底）。
+     */
+    fun autoSyncAfterHoldingsEdit() {
+        try {
+            val cfg = loadConfig()
+            if (!isConfigured(cfg)) return
+            val now = System.currentTimeMillis()
+            synchronized(lastAutoSyncAt) {
+                if (now - lastAutoSyncAt < 60_000L) return
+                lastAutoSyncAt = now
+            }
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                try {
+                    val r = uploadData(cfg, force = true) { }
+                    if (r.isSuccess) {
+                        Log.i(TAG, "☁️ 持仓编辑自动上传成功: ${r.getOrDefault("")}")
+                    } else {
+                        Log.w(TAG, "☁️ 持仓编辑自动上传失败: ${r.exceptionOrNull()?.message}")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "☁️ 持仓编辑自动上传异常(忽略): ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "☁️ 持仓编辑自动上传触发失败(忽略): ${e.message}")
+        }
+    }
 
     // ═══════════════════════════════════════════════════════════
     // 1. 上传：打包数据 → ZIP → COS PUT
@@ -762,6 +798,8 @@ class CloudSyncManager(private val context: Context) {
     companion object {
         private const val TAG = "CloudSyncManager"
         private val PERIODS = listOf("UltraShortQuant", "ShortTermQuant", "MidTermQuant", "LongTermQuant")
+        /** 持仓编辑自动 force 上传的节流时间戳（60s 内多次编辑只传最后一次触发的包） */
+        private var lastAutoSyncAt = 0L
 
         private fun nowTimestamp(): String =
             SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA).format(Date())

@@ -1570,6 +1570,13 @@ class GenerateOrdersNode(
 
     override suspend fun execute(context: PipelineContext, input: Any): OrderGenerationResult {
         // 兼容多种上游：AIPrediction / MergedSignalPool / NewsGuardResult
+        // instBuyCodes：月内机构增持保送票（2026-09-17 用户需求·回测修订）——
+        // 回测（688 只池 6398 个机构增持披露事件，2022-01~2026-06）显示：被三重
+        // 拦截（趋势下跌/看空形态/口诀）的机构增持票若放开，fwd10 胜率 57%/均
+        // +2.2%、fwd20 胜率 54%/均 +3.2%，全面优于放行组（55%/+1.8%、48%/+2.4%）
+        // ——机构在下跌中接货后反弹概率更高。故保送票跳过三重拦截，评分阈值/
+        // 同日重复/仓位预算等其余检查仍走。
+        val instBuyCodes = HashSet<String>()
         val topPicks: List<AIPredictionEngine.AIPick> = when (input) {
             is AIPredictionEngine.AIPrediction -> input.topPicks
             is com.chin.stockanalysis.strategy.topology.core.MergedSignalPool ->
@@ -1601,8 +1608,36 @@ class GenerateOrdersNode(
                 }
             }
             else -> {
-                context.log(nodeId, "⚠ 未知输入类型: ${input::class.simpleName}，无法生成订单")
-                return OrderGenerationResult(emptyList(), 0, false)
+                // 2026-09-17 用户需求：月内机构买入保送——inst_buy_recent 节点输出
+                // JSONObject（hits/instBuyHits），命中票（国家队/社保/大基金/公募/险资/
+                // QFII/北向 近35天披露增持）直接保送进入订单候选；是否买入或拦截仍由
+                // 本 node 的最终操作决定（评分阈值/趋势门控/同日重复/仓位预算全走）。
+                val obj = input as? org.json.JSONObject
+                if (obj != null && obj.optJSONArray("instBuyHits") != null) {
+                    val hits = obj.optJSONArray("instBuyHits") ?: org.json.JSONArray()
+                    val byCode = LinkedHashMap<String, org.json.JSONObject>()
+                    for (i in 0 until hits.length()) {
+                        val h = hits.optJSONObject(i) ?: continue
+                        val c = h.optString("code")
+                        val prev = byCode[c]
+                        if (prev == null || h.optDouble("score") > prev.optDouble("score")) byCode[c] = h
+                    }
+                    instBuyCodes.addAll(byCode.values.map { it.optString("secid", "") })
+                    byCode.values.mapIndexed { index, h ->
+                        AIPredictionEngine.AIPick(
+                            stockCode = h.optString("secid", ""),
+                            stockName = h.optString("name", ""),
+                            rank = index + 1,
+                            compositeScore = h.optDouble("score", 80.0).toInt(),
+                            upProbability = h.optDouble("score", 80.0).toInt(),
+                            reason = h.optString("reason", "月内机构买入保送"),
+                            actionSuggestion = "机构保送"
+                        )
+                    }
+                } else {
+                    context.log(nodeId, "⚠ 未知输入类型: ${input::class.simpleName}，无法生成订单")
+                    return OrderGenerationResult(emptyList(), 0, false)
+                }
             }
         }
 
@@ -1705,11 +1740,18 @@ class GenerateOrdersNode(
                     continue
                 }
 
+                // 1.4 机构保送票：跳过趋势/形态/口诀三重拦截（2026-09-17 回测修订，
+                //     依据见 execute 顶部 instBuyCodes 注释；同日重复/仓位预算等其余检查仍走）
+                val isInstBuy = pick.stockCode in instBuyCodes
+                if (isInstBuy) {
+                    context.log(nodeId, "🚨 ${pick.stockName}(${pick.stockCode}) 月内机构增持保送票：跳过趋势/形态/口诀三重拦截（回测2022-2026放行组fwd10胜率57%均+2.2%优于拦截组）")
+                }
+
                 // 1.5 个股级三类趋势匹配门控（需求①：趋势图三类 上涨/中性/下跌 均匹配，四周期统一）
                 //     下跌 → 直接拦截；上涨 → 放行（买入 node 内再判断是否生成订单）；中性 → 继续原流程
                 val candles60 = try { db.dailySnapshotDao().getByCode(pick.stockCode, 60) } catch (_: Exception) { emptyList() }
                 val trendMatch = TrendClassGate.classify(candles60)
-                if (trendMatch.label == "下跌") {
+                if (!isInstBuy && trendMatch.label == "下跌") {
                     filteredCount++
                     filteredReasons.add("${pick.stockName}(${pick.stockCode}): 趋势匹配=下跌(${trendMatch.detail})直接拦截")
                     context.log(nodeId, "❌ ${pick.stockName}(${pick.stockCode}) 趋势匹配=下跌(${trendMatch.detail})，直接拦截不生成订单")
@@ -1762,7 +1804,7 @@ class GenerateOrdersNode(
                             }
                     } else null
                 } catch (_: Exception) { null }
-                if (bearishPattern != null) {
+                if (bearishPattern != null && !isInstBuy) {
                     filteredCount++
                     filteredReasons.add("${pick.stockName}(${pick.stockCode}): 看空形态[${bearishPattern.patternName}]否决买入")
                     context.log(nodeId, "❌ ${pick.stockName}(${pick.stockCode}) 命中看空形态[${bearishPattern.patternName}·看空]，否决买入（形态只标注，看涨才买入）")
@@ -1800,7 +1842,7 @@ class GenerateOrdersNode(
                         else -> null
                     }
                 } else null
-                if (idiomVeto != null) {
+                if (idiomVeto != null && !isInstBuy) {
                     filteredCount++
                     filteredReasons.add("${pick.stockName}(${pick.stockCode}): 口诀否决[$idiomVeto]")
                     context.log(nodeId, "❌ ${pick.stockName}(${pick.stockCode}) 口诀买前否决[$idiomVeto]（连续大涨/陡拉/冲高回踩/缓跌放量）")

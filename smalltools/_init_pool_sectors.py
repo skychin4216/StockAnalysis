@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""临时脚本：把 hot_sector_config 新增板块龙头加入 _kline_cache.json + 公共库 market_data.db。
+"""临时脚本：把 hot_sector_config 新增板块龙头加入 data/kline_store.json + 公共库 market_data.db。
 
 用于补齐 军工/机器人/低空经济/券商金融/白酒消费/传媒游戏 6 个中等以上板块。
 拉取全量历史(2020-01-01 起)，之后由 _update_cache_inc.py 增量维护。
@@ -14,8 +14,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from backtest_guangmo import fetch_east, fetch_tencent
 import _market_db
 from hot_sector_config import HOT_SECTOR_CONFIG
+import _kline_store
 
-CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
+CACHE_FILE = _kline_store.store_path()
 END = "20260909"
 
 

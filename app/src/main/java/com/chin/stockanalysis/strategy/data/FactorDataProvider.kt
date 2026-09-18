@@ -329,6 +329,36 @@ class FactorDataProvider {
     }
 
     /**
+     * 十大流通股东全部记录（2026-09-17 新增，供 InstBuyRecentNode 月内机构买入检测）。
+     *
+     * 数据源：东方财富 F10 PageAjax → sdltgd（与 getNorthboundHold 同一接口，
+     * 但返回**全部**十大流通股东记录，最近一期在数组头部）。字段：
+     * HOLDER_NAME / HOLD_NUM / HOLD_NUM_CHANGE / CHANGE_RATIO /
+     * FREE_HOLDNUM_RATIO / END_DATE / NOTICE_DATE。
+     */
+    suspend fun getTopFreeHolders(code6: String): List<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            if (code6.length != 6 || !code6.all { it.isDigit() }) return@withContext emptyList()
+            val secuCode = "SH$code6".takeIf { code6[0] in "569" } ?: "SZ$code6"
+            val url = "${DataConfig.eastmoneyF10Shareholder}?code=$secuCode"
+            val req = Request.Builder().url(url)
+                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .addHeader("Referer", DataConfig.eastmoneyF10Host)
+                .build()
+            val resp = client.newCall(req).execute()
+            if (!resp.isSuccessful) return@withContext emptyList()
+            val json = JSONObject(resp.body?.string() ?: "")
+            val arr = json.optJSONArray("sdltgd") ?: return@withContext emptyList()
+            val out = ArrayList<JSONObject>(arr.length())
+            for (i in 0 until arr.length()) out.add(arr.getJSONObject(i))
+            out
+        } catch (e: Exception) {
+            Log.w(TAG, "十大流通股东获取失败: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /**
      * 将标准股票代码转换为东方财富 F10 格式（如 sh600519 → SH600519）
      */
     private fun toSecuCode(code: String): String {

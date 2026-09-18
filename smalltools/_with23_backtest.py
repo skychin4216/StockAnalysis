@@ -22,11 +22,12 @@ from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import _kline_store  # noqa: E402
 from backtest_guangmo import analyze_snaps
 from _full_cycle_backtest import (load_cache, market_state, filter_asof, simulate_trade,
                                    stats, WINDOWS, SELL_RULES, INDEXES)
 
-CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
+CACHE = _kline_store.store_path()
 
 # 并发持仓上限（近似 AutoTradePortfolioEngine.maxHoldings）
 MAX_POSITIONS = {"超短线": 3, "短线": 3, "中线": 3, "长线": 2}
@@ -349,7 +350,7 @@ def main():
     all_dates = sorted(dates)
     date_to_idx = {d: i for i, d in enumerate(all_dates)}
     print("=" * 78)
-    print("2+3 效果对比回测 | 数据: _kline_cache.json | 口径: 固定本金(不复利)")
+    print("2+3 效果对比回测 | 数据: data/kline_store.json | 口径: 固定本金(不复利)")
     print("有2+3 = IC排序 + ①方向过滤(中线剔下降/震荡，长线仅剔下降) + ②季节日历 + ③龙头优先 + 组合容量")
     print("=" * 78)
     results = {}

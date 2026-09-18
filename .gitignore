@@ -104,3 +104,52 @@ data/_index_market_replay_*.png
 
 # 抓取原始缓存（_inst_holdings.py reuse 用，可重抓）
 data/_inst_raw.json.gz
+
+# ===== 2026-09-18 补充：运行态/可再生缓存/敏感数据（不入库） =====
+
+# 本地 K 线统一库（231MB，由 _cybc_pool.py --history 重建）
+data/kline_store.json
+
+# 用户实仓（敏感信息）
+data/_holdings.json
+
+# 会话批量导出 / 日志归档 / 临时探针
+会话批量导出-*/
+*.log.*.bak
+*.pid
+smalltools/_tmp*.py
+
+# inbox 工作流运行目录（INBOX.md 文档入库，产物不入库）
+data/_outbox/
+data/_processed/
+
+# 复盘表格 PNG/CSV（_review_tools.py 可重跑生成）
+data/review_tables/
+
+# 每日缓存 / 探针产物（可重抓重算）
+data/_em_perf_*.json
+data/_inst_buy_recent_*.json
+data/_apk_candidates_today.json
+data/_ibr_hist_cache.json
+data/_probe_*.json
+data/_etf_share_alert.json
+data/_dip_v3_summary.json
+data/board_index.json
+data/board_peg/
+data/_cybc_pool.json
+smalltools/_news_authoritative.json
+smalltools/data/_contract_cache.json
+smalltools/data/_cybc_pool_month.json
+smalltools/data/_dip_backtest_summary.json
+smalltools/data/_kline_cybc.json
+smalltools/data/_probe_*.json
+
+# 守护运行态记录（smalltools/_records/ 下新增的状态/池文件）
+smalltools/_records/_holdings_flow_last.json
+smalltools/_records/_holdings_flow_state.json
+smalltools/_records/_news_links.jsonl
+smalltools/_records/_offhour_news_pool.jsonl
+smalltools/_records/_offhour_state.json
+smalltools/_records/_push_queue.jsonl
+smalltools/_records/_review_tails.json
+smalltools/_records/_trade_calendar.json

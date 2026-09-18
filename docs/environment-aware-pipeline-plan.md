@@ -67,7 +67,7 @@
 ## 四、数据增强方案（用户要求：科创50/美股/外围前排消息）
 
 ### 4.1 科创50 指数（sh000688）
-- 腾讯行情接口 `qt.gtimg.cn/q=sh000688` 可取日K，加入 `_kline_cache.json`，
+- 腾讯行情接口 `qt.gtimg.cn/q=sh000688` 可取日K，加入 `data/kline_store.json`，
   环境判断从 3 指数升级为 4 指数投票（上证/深成/创业板/科创50）。
 - Kotlin 端 `IndexSnapshot` 增加科创50。
 

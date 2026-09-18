@@ -6,7 +6,7 @@
 可回测、可拟合、可修正的闭环，供 exe（AutoQuant GUI）与 APK 两端读取同一份结论。
 
 一、选股五条件（日线底仓信号）
-  ① RAS 相对强度(ETF/沪深300) 20 日斜率「绿转红」（相对走强）
+  ① RS 相对强度(ETF/沪深300) 20 日斜率「绿转红」（相对走强）
   ② MACD 金叉 / DIF 底部拐头向上
   ③ OBV 在 OBV_MA20 上方（资金进场）
   ④ RSI(6) ∈ [rsi_lo, rsi_hi]（低位未超买）
@@ -14,7 +14,7 @@
 
 二、买卖 / 做T 信号
   · 底仓买入：日线五条件全中（T 日收盘判定，T+1 开盘可买）
-  · 底仓清仓：RAS 转绿 / RSI6 > rsi_overbought / MACD 死叉
+  · 底仓清仓：RS 转绿 / RSI6 > rsi_overbought / MACD 死叉
   · 正T 低吸：RSI6 ≤ t_buy_rsi 且 MACD 绿柱缩短，OBV 不创新低
   · 反T 高抛：RSI6 ≥ t_sell_rsi 且 MACD 红柱缩短
 
@@ -187,7 +187,7 @@ def build_ind(ent, bench):
         peak = max(win)
         dd250.append((1 - c / peak) * 100.0 if peak > 0 else 0.0)
 
-    # RAS 相对强度：ETF/沪深300 按日期对齐后前向填充
+    # RS 相对强度：ETF/沪深300 按日期对齐后前向填充
     ras_slope = [0.0] * len(closes)
     g2r = [False] * len(closes)
     r2g = [False] * len(closes)
@@ -245,7 +245,7 @@ def gate_flags(cache):
 # ═══════════════════════════ 五条件 ═══════════════════════════
 
 def hit_at(ind, i, p):
-    """返回五条件布尔列表 [①RAS绿转红, ②MACD金叉/拐头, ③OBV上行, ④RSI区间, ⑤回撤区间]。"""
+    """返回五条件布尔列表 [①RS绿转红, ②MACD金叉/拐头, ③OBV上行, ④RSI区间, ⑤回撤区间]。"""
     c1 = ind["g2r"][i]
     c2 = (ind["dif"][i] > ind["dea"][i]
           or (i >= 2 and ind["dif"][i] > ind["dif"][i - 1] and ind["dif"][i - 1] <= ind["dif"][i - 2]))
@@ -301,7 +301,7 @@ def build_signals(inds, p):
         death = ind["dif"][i] < ind["dea"][i] and ind["dif"][i - 1] >= ind["dea"][i - 1]
         if ind["r2g"][i]:
             out.append({"code": code, "name": nm, "close": round(close, 3), "kind": "底仓清仓",
-                        "detail": "RAS 相对强度红转绿 · 主趋势转弱"})
+                        "detail": "RS 相对强度红转绿 · 主趋势转弱"})
         elif ind["rsi6"][i] > p["rsi_overbought"]:
             out.append({"code": code, "name": nm, "close": round(close, 3), "kind": "底仓清仓",
                         "detail": f"RSI6 {ind['rsi6'][i]:.0f} > {p['rsi_overbought']:.0f} 超买"})
@@ -557,10 +557,10 @@ def main():
         print(f"\nETF 选股思路实验室  asof={report['as_of']}  池={report['pool_size']} 只")
         print(f"门控: {report['gate_note']}")
         print("=" * 96)
-        print(f"② 选股判定（五条件）  ①RAS绿转红 ②MACD金叉/拐头 ③OBV上行 ④RSI区间 ⑤回撤区间"
+        print(f"② 选股判定（五条件）  ①RS绿转红 ②MACD金叉/拐头 ③OBV上行 ④RSI区间 ⑤回撤区间"
               f"  [当前信号口径 {p.get('signal')} = {SIGNAL_LABEL.get(p.get('signal'), '-')}]")
         print(f"{'名称':<12}{'代码':<10}{'收盘':>8}{'回撤250':>9}{'RSI6':>7}  "
-              f"{'RAS':<5}{'MACD':<8}{'OBV':<4}{'命中':<6}{'状态'}")
+              f"{'RS':<5}{'MACD':<8}{'OBV':<4}{'命中':<6}{'状态'}")
         for r in report["picks"]:
             print(f"{r['name']:<12}{r['code']:<10}{r['close']:>8.3f}{r['dd250']:>8.0f}%"
                   f"{r['rsi6']:>7.0f}  {r['ras']:<5}{r['macd']:<8}{r['obv']:<4}"

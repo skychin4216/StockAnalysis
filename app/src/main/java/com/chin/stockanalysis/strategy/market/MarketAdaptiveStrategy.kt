@@ -69,26 +69,26 @@ object MarketAdaptiveStrategy {
                 description = "📉 弱趋势空头（强度${strength}）：阈值60，最多2只",
                 direction = direction
             )
-            // 多头上升
+            // 多头上升（2026-09-17 用户需求：最终可买入票提至至多 5 只）
             direction == "BULLISH" -> AdaptiveParams(
                 scoreThreshold = 50,
-                maxStockCount = 4,
+                maxStockCount = 5,
                 strategyTheme = "进攻因子（高Beta+高成长+高换手率+合同负债增速）",
                 stopLossRate = -0.08,
                 takeProfitRate = 0.15,
                 positionCapPercent = capResult.capPercent,
-                description = "📈 多头上升（强度${strength}）：阈值50，最多4只，让利润奔驰",
+                description = "📈 多头上升（强度${strength}）：阈值50，最多5只，让利润奔驰",
                 direction = direction
             )
-            // 震荡
+            // 震荡（2026-09-17 用户需求：最终可买入票提至至多 5 只）
             else -> AdaptiveParams(
                 scoreThreshold = 55,
-                maxStockCount = 3,
+                maxStockCount = 5,
                 strategyTheme = "做T因子（振幅>4%+流动性前20%+适合日内波动）",
                 stopLossRate = -0.05,
                 takeProfitRate = 0.07,
                 positionCapPercent = capResult.capPercent,
-                description = "📊 震荡市（强度${strength}）：阈值55，最多3只，配合做T",
+                description = "📊 震荡市（强度${strength}）：阈值55，最多5只，配合做T",
                 direction = direction
             )
         }

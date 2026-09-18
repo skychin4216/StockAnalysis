@@ -236,6 +236,11 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
                             statusTv.text = "✅ 真实持仓已清空 (${positions.size} 只)"
                             Toast.makeText(requireContext(), "真实持仓已清空", Toast.LENGTH_SHORT).show()
                         }
+                        // 清空属于重大持仓变更 → 自动 force 上传云端（PC 盘中守护 ≤10 分钟感知）
+                        try {
+                            com.chin.stockanalysis.cloud.CloudSyncManager(requireContext().applicationContext)
+                                .autoSyncAfterHoldingsEdit()
+                        } catch (_: Exception) {}
                     } catch (e: Exception) {
                         withContext(Dispatchers.Main) { statusTv.text = "❌ 清空失败: ${e.message?.take(40)}" }
                     }
@@ -1049,6 +1054,11 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
                 // 补齐该股日K快照（做T引擎要求 daily_snapshot ≥10 天，手工添加的股票往往无历史数据），
                 // 完成后再次刷新触发做T检测
                 ensureRealPositionDailyData(code, name)
+                // 持仓变更自动 force 上传云端（PC 盘中守护 ≤10 分钟感知；60s 节流/未配置静默跳过）
+                try {
+                    com.chin.stockanalysis.cloud.CloudSyncManager(ctx.applicationContext)
+                        .autoSyncAfterHoldingsEdit()
+                } catch (_: Exception) {}
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     Toast.makeText(ctx, "添加失败: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -1720,6 +1730,11 @@ class RealHoldingQuantFragment : QuantFragmentBase() {
                             android.util.Log.i(TAG, "✅ calling refreshPositions() from insertAll callback")
                             refreshPositions()
                         }
+                        // OCR 批量导入持仓 → 自动 force 上传云端（PC 盘中守护 ≤10 分钟感知）
+                        try {
+                            com.chin.stockanalysis.cloud.CloudSyncManager(ctx.applicationContext)
+                                .autoSyncAfterHoldingsEdit()
+                        } catch (_: Exception) {}
                     } catch (e: Exception) {
                         android.util.Log.e(TAG, "❌ 插入失败: ${e.message}", e)
                         withContext(Dispatchers.Main) {

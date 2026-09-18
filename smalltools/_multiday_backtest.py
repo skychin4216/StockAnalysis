@@ -20,6 +20,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import _kline_store  # noqa: E402
 from backtest_guangmo import (
     analyze_snaps, PARAMS, fetch_kline, get_index_dir, triple_vote,
     parse_market_regime,
@@ -71,7 +72,7 @@ LEADER_STOCKS = sorted(set([
 
 # 日K缓存：secid -> {"name":..., "snaps":[...]}，一次拉取多日复用
 KLINE_CACHE = {}
-CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
+CACHE_FILE = _kline_store.store_path()
 
 
 def get_kline_cached(secid, beg="20250101", end="20260813"):

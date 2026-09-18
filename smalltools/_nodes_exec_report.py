@@ -17,7 +17,7 @@
   用例清单自动扫描 `*_usecase.xml`（新增 usecase 无需改本脚本即被覆盖）。
 
 用法：
-  python _nodes_exec_report.py                        # asof = _kline_cache.json 最新交易日
+  python _nodes_exec_report.py                        # asof = data/kline_store.json 最新交易日
   python _nodes_exec_report.py --asof 2026-09-11
   python _nodes_exec_report.py --asof 2026-09-11 --json data/_nodes_exec_report.json
   python _nodes_exec_report.py --selfcheck            # 自检模式：精简输出 + 退出码
@@ -27,7 +27,7 @@
   2 = 有 bypass 或静默跳过（引擎缺 module / 无数据降级 —— 结果可能不完整）
   3 = 有 usecase 执行异常
 
-数据源：smalltools/_kline_cache.json（个股+指数）、smalltools/_etf_cache.json（ETF 本体）。
+数据源：data/kline_store.json（个股+指数）、smalltools/_etf_cache.json（ETF 本体）。
 规则/参数源：app/src/main/assets/usecases/*.xml（唯一事实源）。
 """
 import argparse
@@ -49,8 +49,9 @@ except Exception:
     pass
 
 import usecase_pipeline as up  # noqa: E402
+import _kline_store
 
-KLINE_FILE = os.path.join(HERE, "_kline_cache.json")
+KLINE_FILE = _kline_store.store_path()
 ETF_FILE = os.path.join(HERE, "_etf_cache.json")
 
 # (usecase_id, period, 数据源 kline|etf|merged)

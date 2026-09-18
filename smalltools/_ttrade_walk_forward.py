@@ -5,7 +5,7 @@
 目标：为 APK TTradeEngine 的做T信号拟合阈值参数（backtest_params.json t_trade 区块）。
 
 方法论（无未来函数）：
-- 数据：smalltools/_kline_cache.json（114 只候选股日K，字段 date/open/close/high/low/volume）
+- 数据：data/kline_store.json（114 只候选股日K，字段 date/open/close/high/low/volume）
 - 训练段 2023-08-15 ~ 2025-08-15，验证段 2025-08-15 ~ 2026-08-15
 - 信号（与 APK TTradeEngine.generateSignals 同口径）：
     T_BUY ：收盘价贴近支撑位 + 距 ma5 预期收益达标
@@ -29,8 +29,9 @@ import json
 import os
 import sys
 from datetime import date
+import _kline_store
 
-CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_kline_cache.json")
+CACHE = _kline_store.store_path()
 RECORD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_records")
 
 TRAIN_START = date(2023, 8, 15)

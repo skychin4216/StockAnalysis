@@ -83,15 +83,24 @@ class SectorAmbushFragment : Fragment() {
     companion object {
         private const val PREFS = "sector_ambush_live"
         private const val KEY_JSON = "last_json"
+        private const val KEY_JSON_ETF = "last_json_etf"
+        private const val KEY_UNIVERSE = "universe_etf"
         private const val TAG = "SectorAmbushFragment"
         /** 埋伏持仓在统一 real_positions 表中的 periodType（与短/中/长/ETF 同表隔离） */
         private const val PERIOD_TYPE_AMBUSH = "SectorAmbushQuant"
     }
 
+    /** 候选池模式：false=热门板块Top5（sector_ambush）；true=ETF全景（etf_ambush，2026-09-17） */
+    private var universeEtf = false
+    private fun ambushUseCaseId() = if (universeEtf) "etf_ambush" else "sector_ambush"
+    private fun ambushCacheKey() = if (universeEtf) KEY_JSON_ETF else KEY_JSON
+
     private data class LocalOutcome(val payloadJson: String?, val error: String?)
 
     override fun onCreateView(inflater: android.view.LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         val ctx = requireContext()
+        universeEtf = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_UNIVERSE, false)
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(8), dp(12), dp(12))
@@ -117,7 +126,8 @@ class SectorAmbushFragment : Fragment() {
         root.addView(scroll, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        body.addView(sectionTitle(ctx, "今日埋伏信号（热门板块 → 主力启动票）"))
+        body.addView(sectionTitle(ctx, if (universeEtf) "今日埋伏信号（ETF全景 → 主力启动票）"
+        else "今日埋伏信号（热门板块 → 主力启动票）"))
         signalTable = buildScrollTable(body)
 
         footLabel = TextView(ctx).apply {
@@ -143,7 +153,7 @@ class SectorAmbushFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         val cached = requireContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_JSON, null)
+            .getString(ambushCacheKey(), null)
         if (cached != null) render(cached)
         refresh()
     }
@@ -185,7 +195,7 @@ class SectorAmbushFragment : Fragment() {
             val elapsed = (System.currentTimeMillis() - t0) / 1000.0
             if (payloadJson != null) {
                 requireContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .edit().putString(KEY_JSON, payloadJson).apply()
+                    .edit().putString(ambushCacheKey(), payloadJson).apply()
                 render(payloadJson)
                 val pj = runCatching { JSONObject(payloadJson) }.getOrNull()
                 val sigN = pj?.optJSONArray("signal_today")?.length() ?: 0
@@ -213,13 +223,13 @@ class SectorAmbushFragment : Fragment() {
     ): LocalOutcome {
         val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
         val res = UseCaseLoader.run(
-            "sector_ambush", date,
+            ambushUseCaseId(), date,
             onNodeProgress = onNodeProgress,
             onNodeDone = onNodeDone
         )
         if (!res.success) {
             val msg = res.errors.entries.joinToString("; ") { "${it.key}:${it.value}" }
-                .ifBlank { "sector_ambush 执行失败" }
+                .ifBlank { ambushUseCaseId() + " 执行失败" }
             return LocalOutcome(null, msg)
         }
         val payload = res.stageOutputs["n_ambush_exit"] as? JSONObject
@@ -579,19 +589,29 @@ class SectorAmbushFragment : Fragment() {
                 layoutParams = LinearLayout.LayoutParams(0, dp(22), weight).apply { marginEnd = dp(1) }
                 setOnClickListener { onClick() }
             }
+        row.addView(mk(if (universeEtf) "🌐ETF全景" else "🔥热门板块", "#00695C", 4f) { toggleUniverse() })
         row.addView(mk("📈埋伏", "#E65100", 5f) { refresh() })
-        row.addView(mk("🔀Pipeline", "#6A1B9A", 5f) { openAmbushPipeline() })
+        row.addView(mk("🔀Pipeline", "#6A1B9A", 4f) { openAmbushPipeline() })
         row.addView(mk("📦持仓", "#1565C0", 4f) { showAmbushHoldings() })
-        row.addView(mk("📊报告", "#455A64", 4f) { showAmbushReport() })
+        row.addView(mk("📊报告", "#455A64", 3f) { showAmbushReport() })
         return row
     }
 
-    /** 🔀 Pipeline：sector_ambush usecase 分层流程图（可进入拓扑编辑器改 XML） */
+    /** 🌐 候选池模式切换：热门板块Top5 ↔ 全部行业/主题ETF前五重仓（2026-09-17）。 */
+    private fun toggleUniverse() {
+        universeEtf = !universeEtf
+        requireContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_UNIVERSE, universeEtf).apply()
+        // detach/attach 触发 onCreateView 重建（模式标签/缓存键/表格全部切换）
+        parentFragmentManager.beginTransaction().detach(this).attach(this).commit()
+    }
+
+    /** 🔀 Pipeline：当前模式的 usecase 分层流程图（可进入拓扑编辑器改 XML） */
     private fun openAmbushPipeline() {
         val ctx = requireContext()
         PipelineFlowChart.showFlowChart(
             context = ctx,
-            useCaseId = "sector_ambush",
+            useCaseId = ambushUseCaseId(),
             onOpenEditor = {
                 runCatching {
                     startActivity(

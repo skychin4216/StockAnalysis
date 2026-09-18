@@ -36,7 +36,7 @@ private data class AmbSector(
     val score: Double
 )
 
-/** 阶段1：热门板块埋伏信号扫描 */
+/** 阶段1：热门板块埋伏信号扫描（universe=hot_sector|etf，2026-09-17） */
 class SectorAmbushSignalNode(
     private val topSectors: Int = 5,
     private val bullMin: Int = 2,
@@ -54,10 +54,19 @@ class SectorAmbushSignalNode(
     private val minSnapshots: Int = 60,
     private val scanCap: Int = 400,
     private val topN: Int = 10,
-    private val lookbackDays: Int = 20
+    private val lookbackDays: Int = 20,
+    /** 候选池：hot_sector=板块热度Top5（默认）；etf=全部行业/主题ETF前五重仓 */
+    private val universe: String = "hot_sector",
+    private val industryOnly: Boolean = true,
+    private val baseThemes: String = "宽基",
+    private val excludeStar: Boolean = true,
+    private val minETF: Int = 1
 ) : BaseNode<Any, JSONObject>("sector_ambush_signal", "热门板块埋伏信号扫描", NodeType.FACTOR_COMPUTE) {
 
     override suspend fun execute(context: PipelineContext, input: Any): JSONObject {
+        if (universe.equals("etf", ignoreCase = true)) {
+            return executeEtf(context)
+        }
         val db = StockDatabase.getInstance(context.androidContext)
         val out = JSONObject().put("as_of", "").put("rows", JSONArray())
             .put("scanned", 0).put("hotSectors", JSONArray())
@@ -165,6 +174,134 @@ class SectorAmbushSignalNode(
             inputCodes = mergeOrder.take(5).toList(),
             outputCodes = top.take(5).map { it.optString("code") }
         )
+        return out
+    }
+
+    // ══════════ ETF 全景埋伏（universe=etf，2026-09-17）══════════
+
+    /** 全部行业/主题 ETF 前五重仓股 → 埋伏信号扫描（候选与 etf_industry_scan 同源）。 */
+    private suspend fun executeEtf(context: PipelineContext): JSONObject {
+        val db = StockDatabase.getInstance(context.androidContext)
+        val out = JSONObject().put("as_of", "").put("rows", JSONArray())
+            .put("scanned", 0).put("hotSectors", JSONArray())
+
+        val d = EtfHoldingsStore.load(context.androidContext)
+        if (d == null) {
+            context.log(nodeId, "⚠️ 缺 _etf_holdings.json（ETF 全景埋伏数据资产），跳过")
+            return out
+        }
+        val base = baseThemes.split(",").map { it.trim() }.filter { it.isNotBlank() }.toSet()
+
+        // ① 行业/主题 ETF → 前五重仓候选 + 归属主题/ETF 列表
+        data class Meta(
+            val name: String,
+            val themes: LinkedHashSet<String>,
+            val etfs: LinkedHashSet<String>
+        )
+        val cand = LinkedHashMap<String, Meta>()
+        val themeCodes = HashMap<String, MutableList<String>>()
+        val fundArr = d.optJSONArray("funds") ?: JSONArray()
+        for (i in 0 until fundArr.length()) {
+            val f = fundArr.optJSONObject(i) ?: continue
+            val theme = f.optString("theme")
+            if (industryOnly && theme in base) continue
+            val top = f.optJSONArray("top") ?: continue
+            for (k in 0 until top.length()) {
+                val s = top.optJSONObject(k) ?: continue
+                val c6 = EtfScreenMath.code6(s.optString("code"))
+                if (c6.isEmpty()) continue
+                if (excludeStar && (c6.startsWith("68") || c6.startsWith("69"))) continue
+                val e = cand.getOrPut(c6) {
+                    Meta(s.optString("name"), LinkedHashSet(), LinkedHashSet())
+                }
+                if (theme.isNotBlank()) {
+                    e.themes.add(theme)
+                    themeCodes.getOrPut(theme) { mutableListOf() }.add(c6)
+                }
+                e.etfs.add(f.optString("name").ifBlank { f.optString("code") })
+            }
+        }
+        val universeMap = cand.filterValues { it.etfs.size >= minETF }
+        if (universeMap.isEmpty()) {
+            context.log(nodeId, "⚠️ ETF 持仓矩阵无候选（industryOnly=$industryOnly），跳过")
+            return out
+        }
+
+        // ② 逐只取日K（StockDatabase → EtfCacheStore 兜底），并算近10日收益给主题动量
+        val histOf = HashMap<String, List<DailySnapshotEntity>>()
+        for (c6 in universeMap.keys) {
+            val h = loadHist(db, c6, c6)
+            histOf[c6] = if (h.size >= minSnapshots + maLong) h else etfCacheHist(context, c6)
+        }
+        fun ret10(c6: String): Double? {
+            val h = histOf[c6] ?: return null
+            if (h.size < 11) return null
+            val c0 = h[h.size - 11].close
+            return if (c0 > 0) (h.last().close / c0 - 1) * 100 else null
+        }
+        val ranked = ArrayList<Pair<String, Double>>()
+        for ((theme, codes) in themeCodes) {
+            val rs = codes.distinct().mapNotNull { ret10(it) }
+            if (rs.isNotEmpty()) ranked.add(theme to rs.average())
+        }
+        ranked.sortByDescending { it.second }
+        val hot = ranked.take(topSectors)
+        val rankOf = HashMap<String, Int>()
+        hot.forEachIndexed { idx, p -> rankOf[p.first] = idx + 1 }
+
+        // ③ 逐只评估（全部候选；热门主题排名加分，扫描不限热门主题）
+        val rows = ArrayList<JSONObject>()
+        var scanned = 0
+        var asOf = ""
+        for ((c6, meta) in universeMap) {
+            if (scanned >= scanCap) break
+            val hist = histOf[c6] ?: continue
+            if (hist.size < minSnapshots + maLong) continue
+            scanned++
+            if (meta.name.contains("ST") || meta.name.contains("退")) continue
+            val bestRank = meta.themes.minOfOrNull { rankOf[it] ?: (topSectors + 1) }
+                ?: (topSectors + 1)
+            val secName = meta.themes.take(2).joinToString("/").ifBlank { "ETF重仓" }
+            val row = evalStock(c6, meta.name, secName, hist) ?: continue
+            if (bestRank <= topSectors) {
+                row.put("score", round2(row.optDouble("score", 0.0) + (topSectors - bestRank + 1)))
+            }
+            row.put("etfs", meta.etfs.size)
+            val dd = row.optString("date")
+            if (dd > asOf) asOf = dd
+            rows.add(row)
+        }
+        val top = rows.sortedByDescending { it.optDouble("score", 0.0) }.take(topN)
+        val arr = JSONArray()
+        top.forEach { arr.put(it) }
+        out.put("as_of", asOf).put("rows", arr).put("scanned", scanned)
+            .put("hotSectors", JSONArray(hot.map { it.first }))
+            .put("universe", universeMap.size)
+
+        context.log(nodeId, "🔭 ETF全景埋伏：候选 ${universeMap.size} 只(主题 ${themeCodes.size} 个) | " +
+                "热门主题：${hot.joinToString("、") { "${it.first}(近10日${"%.1f".format(it.second)}%)" }} | " +
+                "扫描 $scanned 只 → 命中 ${top.size} 只")
+        return out
+    }
+
+    /** EtfCacheStore 日K(JSON) → DailySnapshotEntity 兜底（ETF 重仓股不在 StockDatabase 时）。 */
+    private fun etfCacheHist(context: PipelineContext, c6: String): List<DailySnapshotEntity> {
+        val snaps = EtfCacheStore.load(context.androidContext)
+            ?.optJSONObject(EtfScreenMath.prefixed(c6))?.optJSONArray("snaps") ?: return emptyList()
+        val out = ArrayList<DailySnapshotEntity>(snaps.length())
+        for (i in 0 until snaps.length()) {
+            val s = snaps.optJSONObject(i) ?: continue
+            out.add(
+                DailySnapshotEntity(
+                    code = EtfScreenMath.prefixed(c6), name = s.optString("name"),
+                    date = s.optString("date"),
+                    open = s.optDouble("open"), close = s.optDouble("close"),
+                    high = s.optDouble("high"), low = s.optDouble("low"),
+                    volume = s.optDouble("volume").toLong(), amount = s.optDouble("amount"),
+                    changePct = s.optDouble("changePct")
+                )
+            )
+        }
         return out
     }
 

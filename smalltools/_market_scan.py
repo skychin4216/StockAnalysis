@@ -19,6 +19,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 import sys
 import time
 
@@ -59,7 +60,8 @@ GLOBAL_INDEX = {
     "100.399001": "沪深300",  # 占位（东财A股用不同secid，忽略）
 }
 
-DEFAULT_INTERVAL = 600  # 10 分钟（2026-09-08 与选股守护 v3 盘中轮同频 10 分钟选股/情报）
+DEFAULT_INTERVAL = 3600  # 1 小时（2026-09-17 用户口径：交易时段间隔 1h 推送一次；
+#                          非交易时段只采集存库去重，不推送。原 600s/10 分钟太频繁）
 
 
 # ── 1. 采集 ─────────────────────────────────────────────────────────────
@@ -188,6 +190,47 @@ def collect_reports(days=2, per_org=5, top_org=5):
     return out
 
 
+# A 股大盘指数（sina hq 一次性拉；含用户提到的上证/沪深300/科创50）
+CN_INDEX_POOL = (
+    ("sh000001", "上证指数"), ("sz399001", "深证成指"), ("sh000300", "沪深300"),
+    ("sh000688", "科创50"), ("sz399006", "创业板指"), ("sh000852", "中证1000"),
+    ("sh000905", "中证500"), ("sz399303", "国证2000"),
+)
+_INDEX_RE = re.compile(r'hq_str_(\w+)="([^"]+)"')
+
+
+def collect_indices():
+    """A 股大盘指数实时涨跌幅（sina hq，参照 _kline_store / usecase_pipeline 沪深300/sh000001 约定）。"""
+    try:
+        codes = ",".join(c for c, _ in CN_INDEX_POOL)
+        r = requests.get("https://hq.sinajs.cn/list=" + codes, timeout=10,
+                         headers={**HEADERS, "Referer": "https://finance.sina.com.cn"},
+                         proxies=PROXIES)
+        r.encoding = "gbk"
+    except Exception as e:  # noqa: BLE001
+        print("A股大盘拉取失败:", e)
+        return []
+    name_map = dict(CN_INDEX_POOL)
+    out = []
+    for line in (r.text or "").splitlines():
+        m = _INDEX_RE.search(line)
+        if not m or not m.group(2):
+            continue
+        f = m.group(2).split(",")
+        if len(f) < 33:
+            continue
+        code = m.group(1)
+        try:
+            price = float(f[3])
+            prev = float(f[2]) or float(f[30])
+            pct = float(f[32]) if f[32] else ((price / prev - 1) * 100 if prev else 0.0)
+        except (ValueError, IndexError):
+            continue
+        out.append({"code": code, "name": name_map.get(code, f[0] or code),
+                    "price": price, "pct": pct})
+    return out
+
+
 def collect_news(top=10):
     """东财 7x24 财经快讯。"""
     try:
@@ -203,9 +246,13 @@ def collect_news(top=10):
         return []
     out = []
     for it in lst[:top]:
+        code = str(it.get("code") or "").strip()
         out.append({
             "title": it.get("title") or it.get("summary", "")[:60],
             "time": it.get("showTime") or it.get("digestTime") or "",
+            # 原文网页 URL（2026-09-17 用户需求：参考过的消息保留网页方便整理）
+            "url": it.get("uniqueUrl") or (
+                "https://finance.eastmoney.com/a/%s.html" % code if code else ""),
         })
     return out
 
@@ -219,6 +266,8 @@ def collect_all():
         "reports": collect_reports(),
         "news": collect_news(),
         "session": collect_session_factor(),
+        # 2026-09-17：A 股大盘八指数实时（情报卡呈现；不进入 DAG 主线）
+        "indices": collect_indices(),
     }
     # 每晚/每次采集顺带刷新外围历史缓存（纳指/韩股代理日K，供隔夜外围因子）
     try:
@@ -318,6 +367,15 @@ def diff_snap(prev, cur):
         fresh = [t for t in ce.get(key, []) if t not in set(pe.get(key, []))]
         if fresh:
             changes.append((head, [t[:55] for t in fresh[:3]]))
+    # 权威源六类（2026-09-17 用户口径：美/中各 1财经+1政治+1机构）
+    # 条目为 {title,url,time,src}，比较/展示只取标题；原文 URL 已归档 _records/_news_links.jsonl
+    pa, ca = (prev or {}).get("auth") or {}, cur.get("auth") or {}
+    for key in ("us_finance", "us_politics", "us_agency",
+                "cn_finance", "cn_politics", "cn_agency"):
+        pt = set(_news_watch._titles(pa.get(key) or []))
+        fresh = [t for t in _news_watch._titles(ca.get(key) or []) if t and t not in pt]
+        if fresh:
+            changes.append((_news_watch.AUTH_LABEL.get(key, key), [t[:55] for t in fresh[:3]]))
     return changes
 
 
@@ -339,6 +397,11 @@ def _push_wechat(title, content, cfg):
 
 def format_content(cur, changes):
     lines = []
+    # 顶部先放大盘指数（用户需求：盘中能直接看到上证/沪深300/科创50 走势）
+    idx = cur.get("indices") or []
+    if idx:
+        lines.append("🇨🇳 A 股大盘: " + " | ".join(
+            "%s%+.2f%%" % (it["name"], it["pct"]) for it in idx))
     for head, rows in changes:
         lines.append(head)
         lines += ["  " + r for r in rows]
@@ -351,34 +414,56 @@ def format_content(cur, changes):
 
 
 # ── 4. 交易时段 ─────────────────────────────────────────────────────────
+def _is_trading_day(d=None):
+    """交易日判断（周末必非；节假日查 _trade_calendar；拿不到日历当交易日）。"""
+    try:
+        import _trade_calendar as _tcal
+        return _tcal.is_trading_day(d)
+    except Exception:  # noqa: BLE001
+        return (d or datetime.date.today()).weekday() < 5
+
+
 def in_trading_time(now=None):
     now = now or datetime.datetime.now()
-    if now.weekday() >= 5:
+    if not _is_trading_day(now.date()):
         return False
     hm = now.hour * 60 + now.minute
     return (9 * 60 + 30) <= hm <= (11 * 60 + 30) or (13 * 60) <= hm <= (15 * 60)
 
 
 def next_trading_start(now=None):
-    """下一个交易时段开始时间：当天 09:30（开盘前）/ 13:00（午休）或次一工作日 9:30。"""
+    """下一个交易时段开始时间：当天 09:30（开盘前）/ 13:00（午休）或次一交易日 9:30。"""
     now = now or datetime.datetime.now()
-    if now.weekday() < 5:
+    if _is_trading_day(now.date()):
         hm = now.hour * 60 + now.minute
         if hm < 9 * 60 + 30:
             return now.replace(hour=9, minute=30, second=0, microsecond=0)
         if hm < 13 * 60:
             return now.replace(hour=13, minute=0, second=0, microsecond=0)
     d = now.date()
-    while True:
+    for _ in range(30):
         d += datetime.timedelta(days=1)
-        if d.weekday() < 5:
+        if _is_trading_day(d):
             return datetime.datetime.combine(d, datetime.time(9, 30))
+    return datetime.datetime.combine(d, datetime.time(9, 30))
 
 
-def run_once(force=False, dry=False):
+def run_once(force=False, dry=False, push=True):
+    """采集 → 对比上次快照 → 有变动才推送。
+
+    push=False（2026-09-17 用户口径）：非交易时段只采集 + 写快照做去重基线，**不推送**。
+    dry=True 同理不推送（但采集与快照仍执行，保证下一轮 diff 基线正确）。
+    """
     t0 = time.time()
     cur = collect_all()
     cur["ext"] = _news_watch.collect_ext()  # 外媒/宏观/名人/券商宏观策略
+    # 2026-09-17 用户口径：权威源收敛为「美/中各 1财经+1政治+1机构」（≤18 条，5 分钟复用缓存）
+    cur["auth"] = _news_watch.collect_authoritative()
+    # 东财 7x24 快讯同样保留原文网页 URL（归档 → _records/_news_links.jsonl）
+    try:
+        _news_watch.archive_links({"east_724": cur.get("news") or []})
+    except Exception:  # noqa: BLE001
+        pass
     # 四根宏观哨兵（美债/日元/油价/费半）：随每次扫描刷新，新越阈时随情报推送提醒
     try:
         import _macro_sentinel as msent
@@ -398,6 +483,10 @@ def run_once(force=False, dry=False):
         "%s(%d)" % (o["org"], o["count"]) for o in cur["reports"]))
     print("  📰 快讯: %s" % " | ".join(
         n["title"][:24] for n in cur["news"][:3]))
+    # 2026-09-17：A 股八指数实时涨跌
+    idx = cur.get("indices") or []
+    print("  🇨🇳 大盘: %s" % " | ".join(
+        "%s%+.2f%%" % (it["name"], it["pct"]) for it in idx))
 
     prev = {}
     if os.path.exists(LAST_SNAP):
@@ -421,8 +510,8 @@ def run_once(force=False, dry=False):
     with open(LAST_SNAP, "w", encoding="utf-8") as f:
         json.dump(cur, f, ensure_ascii=False, indent=1)
 
-    if dry:
-        print("[dry] 不推送")
+    if dry or not push:
+        print("[skip] 不推送（dry=%s push=%s），已采集+写快照去重" % (dry, push))
         return 0
     if not changes:
         print("✅ 无变动，不推送")
@@ -449,23 +538,31 @@ def main():
     ap.add_argument("--dry", action="store_true", help="采集但不推送")
     args = ap.parse_args()
     if args.daemon:
-        print("情报守护启动：交易时段每 %d 秒收集，有变动才推送微信" % args.interval)
+        print("情报守护启动：交易时段每 %d 分钟采集+推送；非交易时段仅采集去重（不推送）"
+              % max(args.interval // 60, 1))
         while True:
             if in_trading_time():
                 try:
-                    run_once(force=False, dry=args.dry)
+                    run_once(force=False, dry=args.dry, push=True)
                 except KeyboardInterrupt:
                     break
                 except Exception as e:
                     print("轮询异常:", type(e).__name__, e)
                 time.sleep(args.interval)
             else:
+                # 非交易时段：只采集 + 写快照做去重基线（不推送），30 分钟一次
+                try:
+                    run_once(force=False, dry=True, push=False)
+                except KeyboardInterrupt:
+                    break
+                except Exception as e:
+                    print("非交易采集异常:", type(e).__name__, e)
                 nxt = next_trading_start()
                 wait = max((nxt - datetime.datetime.now()).total_seconds(), 1)
-                print("[%s] 非交易时段，等待 %.1f 分钟 → %s" % (
+                print("[%s] 非交易时段（仅采集去重，不推送），等待 %.1f 分钟 → %s" % (
                     datetime.datetime.now().strftime("%H:%M"), wait / 60,
                     nxt.strftime("%m-%d %H:%M")))
-                time.sleep(min(wait, 600))
+                time.sleep(min(wait, 1800))
         return 0
     return run_once(force=args.force, dry=args.dry)
 

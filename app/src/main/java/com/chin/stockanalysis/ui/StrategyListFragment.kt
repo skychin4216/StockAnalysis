@@ -113,6 +113,18 @@ class StrategyListFragment : Fragment() {
             }
         }
         preloadSectorLabelMap()
+        // 2026-09-16 修复：冷启动直接进「策略」Tab 时 UseCaseLoader 未初始化 →
+        // 平台策略分组（含豆包完整闭环 complete_closed_loop）整组不显示。
+        // 此前依赖工作台/AI 对话等入口先跑 init，直接进本页就"策略消失"。
+        // initLoader 内含 NodeRegistry.init（读 assets XML），放 IO 协程完成后刷新列表。
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                com.chin.stockanalysis.strategy.topology.xml.UseCaseExecution.initLoader(ctx)
+            } catch (e: Exception) {
+                Log.w("SLF", "UseCaseLoader 初始化失败: ${e.message}")
+            }
+            withContext(Dispatchers.Main) { refreshList() }
+        }
     }
 
     private fun buildUI() {
