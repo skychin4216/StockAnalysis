@@ -1,5 +1,5 @@
 {
- "ts": "2026-09-18 11:31:17",
+ "ts": "2026-09-18 12:01:53",
  "us": [
   {
    "name": "英特尔",
@@ -57,20 +57,20 @@
    {
     "name": "SK海力士",
     "code": "kr000660",
-    "pct": 4.81375,
-    "price": 1829000.0
+    "pct": 5.2149,
+    "price": 1836000.0
    },
    {
     "name": "三星电子",
     "code": "kr005930",
-    "pct": 3.06931,
-    "price": 260250.0
+    "pct": 2.77228,
+    "price": 259500.0
    },
    {
     "name": "现代汽车",
     "code": "kr005380",
-    "pct": 1.10193,
-    "price": 367000.0
+    "pct": 0.96419,
+    "price": 366500.0
    }
   ],
   "index": null
@@ -484,54 +484,54 @@
  ],
  "news": [
   {
-   "title": "第二波有奖发票来了！多省9月发票变彩票",
-   "time": "2026-09-18 11:29:26",
-   "url": "https://finance.eastmoney.com/a/202609183878440078.html"
+   "title": "网传相关全极耳磷酸铁锂电池存在原材料供货问题？蔚蓝锂芯：不属实",
+   "time": "2026-09-18 11:52:55",
+   "url": "https://finance.eastmoney.com/a/202609183878452624.html"
   },
   {
-   "title": "湖北首单“认股权+担保”登记落地武汉股交",
-   "time": "2026-09-18 11:27:12",
-   "url": "https://finance.eastmoney.com/a/202609183878447234.html"
+   "title": "两款肿瘤特定全营养配方食品获批 我国特医食品已实现大类全覆盖",
+   "time": "2026-09-18 11:48:18",
+   "url": "https://finance.eastmoney.com/a/202609183878451455.html"
   },
   {
-   "title": "三亚：打造黄金珠宝产业集群和珠宝旅游消费目的地",
-   "time": "2026-09-18 11:26:13",
-   "url": "https://finance.eastmoney.com/a/202609183878444090.html"
+   "title": "南向资金净买入额达30亿港元",
+   "time": "2026-09-18 11:47:43",
+   "url": "https://finance.eastmoney.com/a/202609183878451379.html"
   },
   {
-   "title": "大金融板块异动拉升 华鑫股份涨停",
-   "time": "2026-09-18 11:22:35",
-   "url": "https://finance.eastmoney.com/a/202609183878442579.html"
+   "title": "现货钯金日内涨幅超2%",
+   "time": "2026-09-18 11:47:35",
+   "url": "https://finance.eastmoney.com/a/202609183878451693.html"
   },
   {
-   "title": "韩国总统称不会向霍尔木兹海峡派兵“介入战争”",
-   "time": "2026-09-18 11:22:32",
-   "url": "https://finance.eastmoney.com/a/202609183878443480.html"
+   "title": "联想市值超越美团",
+   "time": "2026-09-18 11:39:55",
+   "url": "https://finance.eastmoney.com/a/202609183878449392.html"
   },
   {
-   "title": "国产大模型降本叠加算力业绩兑现，云计算ETF华泰柏瑞涨超2.05%",
-   "time": "2026-09-18 11:22:09",
-   "url": "https://finance.eastmoney.com/a/202609183878443394.html"
+   "title": "A股午盘丨创业板指涨2.11% 芯片产业链集体走强",
+   "time": "2026-09-18 11:34:58",
+   "url": "https://finance.eastmoney.com/a/202609183878448880.html"
   },
   {
-   "title": "现货黄金短线走低 向下跌破4340美元/盎司",
-   "time": "2026-09-18 11:18:23",
-   "url": "https://finance.eastmoney.com/a/202609183878440172.html"
+   "title": "SK海力士股价涨幅扩大至5%",
+   "time": "2026-09-18 11:33:21",
+   "url": "https://finance.eastmoney.com/a/202609183878449127.html"
   },
   {
-   "title": "算力需求扩散通信电子齐涨，创业板科技ETF华泰柏瑞涨超2.17%",
-   "time": "2026-09-18 11:17:20",
-   "url": "https://finance.eastmoney.com/a/202609183878440647.html"
+   "title": "日经225指数突破65000点 日内涨1.80%",
+   "time": "2026-09-18 11:32:28",
+   "url": "https://finance.eastmoney.com/a/202609183878447410.html"
   },
   {
-   "title": "三孚新科：公司旗下明毅电子光模块VCP电镀设备将交付头部AI服务器PCB制造商",
-   "time": "2026-09-18 11:16:27",
-   "url": "https://finance.eastmoney.com/a/202609183878438149.html"
+   "title": "国泰君安期货公司增资至75亿",
+   "time": "2026-09-18 11:31:41",
+   "url": "https://finance.eastmoney.com/a/202609183878447949.html"
   },
   {
-   "title": "超节点概念持续走高 共进股份直线涨停",
-   "time": "2026-09-18 11:16:20",
-   "url": "https://finance.eastmoney.com/a/202609183878439481.html"
+   "title": "科创50指数上涨3.93% 全市场超4500股飘红 半导体板块领涨",
+   "time": "2026-09-18 11:30:46",
+   "url": "https://finance.eastmoney.com/a/202609183878447571.html"
   }
  ],
  "session": {
@@ -590,19 +590,18 @@
   }
  ],
  "ext": {
-  "ts": "2026-09-18 11:31:47",
+  "ts": "2026-09-18 12:02:38",
   "climate": [],
   "world": [
    "三亚：打造黄金珠宝产业集群和珠宝旅游消费目的地",
    "现货黄金短线走低 向下跌破4340美元/盎司",
    "巴克莱银行预计英国央行将在11月加息25个基点",
-   "日本央行：实际利率一直保持在低位",
-   "日本央行：2026财年下半年CPI增速可能明显高于2%",
    "美国务院批准向沙特出售48架F-35战斗机"
   ],
   "names": [
    "苹果回应iPhone Duo维修贵",
-   "【苹果回应iPhone Duo维修贵】针对iPhone Duo官方维修价格，记者以消费者身份咨询苹果官方客服。客服表示，目前iPhone Duo尚未开启预购，具体维修价格待预购后公布。客服称，iPhone Duo采用内外双屏设计，维修费用可能“确实比较昂贵”。以iPhone 18 Pro Max为例，屏幕损坏正常维修费用为3198元。 (中新经纬)"
+   "【iPhone 18 Pro“破发” 有“黄牛”报价低于发售价】苹果iPhone 18 Pro系列首销。上午8时许，记者走访深圳南山益田假日广场苹果官方零售店发现，门店外已有不少消费者在排队取机。由于产品规划调整，苹果暂未推出iPhone 18基础款，本次发售iPhone 18 Pro和iPhone 18 Pro Max两款新机，起售价分别为9999元、10999元。门店外多名被市场俗称为“黄牛”的回收人员正在现场收机。记者现场看到iPhone 18 Pro整体回购行情偏淡，部分人员直接不收购iPhone 18 Pro，甚至有的回购价低于苹果官方起售价，首销日即现“破发”。iPhone 18 Pro Max 256GB和512GB版本回收行情相对其他版本较好，1TB和2TB大容量版本行情遇冷。 (中国证券报)",
+   "【花旗：美联储渐进加息对中国香港银行盈利略偏正面 首选股为中银香港】花旗发布研报称，美联储昨日加息25个基点，将联邦基金利率目标区间上调至3.75厘至4厘，点阵图中位数显示今年仍有一次25个基点加息;远期曲线预期至2027年底前再加息3次，终端利率预计达4.5%至4.75%。该行认为，美联储渐进加息对中国香港银行盈利略偏正面，中银香港(02388)是该行中国香港银行股首选。"
   ],
   "macro_reports": [
    "东吴证券|房地产行业月报：投资端仍处调整阶段，核心城市价格韧性延续",
@@ -611,17 +610,37 @@
   ]
  },
  "auth": {
-  "ts": "2026-09-18 11:31:49",
-  "us_finance": [],
+  "ts": "2026-09-18 12:02:41",
+  "us_finance": [
+   {
+    "title": "渣打银行表示，美联储主席凯文·沃什可能已经移除了买入美元的最大障碍，同时制造了卖出美元的最大障碍。之前买入美元的最大障碍是货币贬值担忧；卖出",
+    "url": "https://wallstreetcn.com/livenews/3167145",
+    "time": "2026-09-18 11:40",
+    "src": "wallstreetcn"
+   }
+  ],
   "us_politics": [
    {
-    "title": "【韩国济州道知事：将延续对中国公民免签政策】据“中国驻韩国大使馆”公众号消息，9月17日，戴兵大使在使馆会见韩国济州道知事魏圣坤。驻济州总领",
-    "url": "https://finance.sina.cn/7x24/2026-09-18/detail-inisfiif3446703.d.html",
-    "time": "2026-09-18 11:15:54",
+    "title": "【美国司法部反垄断官员：AI安全协调不构成反竞争行为】美国司法部一名反垄断官员周四表示，在安全问题上的协调并不构成反竞争行为。美国司法部反垄",
+    "url": "https://finance.sina.cn/7x24/2026-09-18/detail-inisfiii0238958.d.html",
+    "time": "2026-09-18 11:33:39",
     "src": "sina"
    }
   ],
-  "us_agency": [],
+  "us_agency": [
+   {
+    "title": "Federal Reserve issues FOMC statement",
+    "url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260916a.htm",
+    "time": "<![CDATA[Wed, 16 Sep 2026 18:00:00 GMT]]>",
+    "src": "federalreserve"
+   },
+   {
+    "title": "Federal Reserve Board and Federal Open Market Committee release econom",
+    "url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260916b.htm",
+    "time": "<![CDATA[Wed, 16 Sep 2026 18:00:00 GMT]]>",
+    "src": "federalreserve"
+   }
+  ],
   "cn_finance": [
    {
     "title": "越疆科技A股过会后停滞：账上24亿现金仍要募12亿 有何隐情？",
@@ -630,15 +649,15 @@
     "src": "eastmoney"
    },
    {
-    "title": "【午评：沪指高开高走涨1.04%，半导体、存储芯片板块涨幅居前】A股三大指数早盘集体上涨，截至午盘，上证指数涨1.04%，深证成指涨1.52",
-    "url": "https://finance.sina.cn/7x24/2026-09-18/detail-inisfiif3463010.d.html",
-    "time": "2026-09-18 11:31:22",
+    "title": "【日元跌幅扩大 此前日本央行两位委员就加息决议投下反对票】在日本央行如期上调基准利率后，日元兑美元跌幅扩大，而两名委员投下反对票令市场对进一",
+    "url": "https://finance.sina.cn/7x24/2026-09-18/detail-inisfiif3496396.d.html",
+    "time": "2026-09-18 12:00:28",
     "src": "sina"
    },
    {
-    "title": "日本央行决议后，日元兑美元汇率走弱至157。",
-    "url": "https://finance.sina.cn/7x24/2026-09-18/detail-inisfiii0227081.d.html",
-    "time": "2026-09-18 11:23:18",
+    "title": "【上半年A股上市公司缴税2.5万亿元 税负平稳】今年以来一些上市公司披露补税公告引起市场关注，但整体来看上市公司税负平稳。 从税务部门了解到",
+    "url": "https://finance.sina.cn/7x24/2026-09-18/detail-inisfiii0263784.d.html",
+    "time": "2026-09-18 11:55:02",
     "src": "sina"
    }
   ],
@@ -652,21 +671,21 @@
   ],
   "cn_agency": [
    {
-    "title": "印尼财政部长：在全球不确定性背景下，印尼债券市场走势稳健。",
-    "url": "https://finance.sina.cn/7x24/2026-09-18/detail-inisfiii0227649.d.html",
-    "time": "2026-09-18 11:23:45",
+    "title": "日本央行公布利率决议后，日本银行股跌势延续。",
+    "url": "https://finance.sina.cn/7x24/2026-09-18/detail-inisfiii0251286.d.html",
+    "time": "2026-09-18 11:43:37",
     "src": "sina"
    },
    {
-    "title": "印尼财政部长：1-8月补贴与补偿支出达331.4万亿印尼盾，同比增长52.1%。",
-    "url": "https://finance.sina.cn/7x24/2026-09-18/detail-inisfiif3448827.d.html",
-    "time": "2026-09-18 11:17:56",
+    "title": "日本央行决议后，日本30年期国债价格抹去了此前的涨幅。",
+    "url": "https://finance.sina.cn/7x24/2026-09-18/detail-inisfiif3476495.d.html",
+    "time": "2026-09-18 11:41:25",
     "src": "sina"
    },
    {
-    "title": "巴克莱预计英国央行将在11月加息25个基点，并在2027年2月再加息25个基点。",
-    "url": "https://finance.sina.cn/7x24/2026-09-18/detail-inisfiii0212584.d.html",
-    "time": "2026-09-18 11:09:57",
+    "title": "日本央行加息后，基准10年期日本国债期货涨幅收窄，最新上涨0.22日元。",
+    "url": "https://finance.sina.cn/7x24/2026-09-18/detail-inisfiif3464422.d.html",
+    "time": "2026-09-18 11:32:19",
     "src": "sina"
    }
   ]
@@ -681,13 +700,13 @@
    "value": 5.36
   },
   "usdjpy": {
-   "ts": "11:31:52",
-   "last": 156.9303,
-   "pct": 0.62
+   "ts": "12:02:45",
+   "last": 156.91,
+   "pct": null
   },
   "wti": {
    "date": "2026-09-18",
-   "last": 96.558,
+   "last": 96.603,
    "prev": 97.23,
    "name": "纽约原油"
   },
