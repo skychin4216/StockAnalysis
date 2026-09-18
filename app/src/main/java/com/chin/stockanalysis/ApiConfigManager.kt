@@ -67,7 +67,7 @@ class ApiConfigManager(context: Context) {
 
     val builtInProviders: List<ApiProviderConfig> = listOf(
         // ═══════════════════════════════════════════════════════════════
-        // ⭐ 優先級 1：高品質付費模型（豆包、千問）
+        // ⭐ 优先级 1：高品质付费模型（豆包、千问）
         // ═══════════════════════════════════════════════════════════════
 
         // 火山引擎 - 豆包大模型（字节跳动官方，付费，推荐使用）
@@ -94,9 +94,7 @@ class ApiConfigManager(context: Context) {
                 "doubao-seed-1-6-vision-250815",      // Seed 1.6 Vision 多模态
                 "doubao-seed-code-preview-251028",    // Seed Code Preview (旧)
                 // 经典 1.5
-                "doubao-1-5-pro-32k-250115",          // 1.5 Pro 32k
-                // 自定义接入点 ID（按需启用）
-                "ep-20260515024618-chcvf"
+                "doubao-1-5-pro-32k-250115"           // 1.5 Pro 32k
             ),
             fallbackModels = listOf(
                 "doubao-seed-2-0-code-preview-260215",
@@ -131,7 +129,7 @@ class ApiConfigManager(context: Context) {
         ),
 
         // ═══════════════════════════════════════════════════════════════
-        // 優先級 2：免費備用（矽基流動等）
+        // 优先级 2：免费备用（矽基流动等）
         // ═══════════════════════════════════════════════════════════════
 
         // ⭐⭐⭐ 强烈推荐：硅基流动 - DeepSeek V3 Flash（免费，最新最快）
@@ -277,20 +275,21 @@ class ApiConfigManager(context: Context) {
     /**
      * 获取指定 ID 的提供商配置。
      *
-     * API Key 优先级（三重回退）：
+     * API Key 优先级（回退链）：
      * 1. 用户在设置中手动填写的 Key（SharedPreferences）- 最高优先级
-     * 2. 本地配置文件 api_keys_local.properties 中的 Key - 次高优先级
-     * 3. 空字符串（无 Key）
+     * 2. api_keys_local.properties（assets/内部存储/sdcard）
+     * 3. assets/data/app_config.json 的 ai_providers.<section>.api_key（2026-09-11 新增）
+     * 4. 空字符串（无 Key）
      */
     fun getProviderConfig(providerId: String): ApiProviderConfig? {
         val builtIn = builtInProviders.find { it.id == providerId } ?: return null
         val selectedModel = getSelectedModel(providerId)
         // 优先级1: 用户设置
         val userKey = getUserApiKey(providerId)
-        // 优先级2: 本地配置文件
+        // 优先级2: 本地配置（api_keys_local.properties → app_config.json 的 ai_providers.<x>.api_key）
         val localKey = if (userKey == null) {
             try {
-                com.chin.stockanalysis.ApiKeysLoader.get(getLocalKeyName(providerId))
+                com.chin.stockanalysis.ApiKeysLoader.getForProvider(providerId)
             } catch (_: Exception) { "" }
         } else null
         val effectiveKey = userKey ?: localKey ?: ""
@@ -343,8 +342,12 @@ class ApiConfigManager(context: Context) {
         return allModels.filter { it !in KNOWN_INVALID_MODELS }
     }
 
-    /** 已知无效的模型 ID 列表（会在 getProviderModels() 中自动过滤） */
-    private val KNOWN_INVALID_MODELS = emptySet<String>()
+    /** 已知无效的模型 ID 列表（会在 getProviderModels() 中自动过滤）。
+     *  2026-09-13：ep-20260515024618-chcvf 实测 HTTP 500 InternalServiceError（接入点已失效），
+     *  从可选列表移入黑名单；老用户 prefs 里若仍存着它，getSelectedModel() 会自动回退到默认模型。 */
+    private val KNOWN_INVALID_MODELS = setOf(
+        "ep-20260515024618-chcvf"
+    )
 
     /** 获取当前提供商选中的模型；未配置时返回默认模型。
      *  如果持久化的模型已不在有效列表中，自动清除并回退到默认模型。 */
@@ -401,19 +404,4 @@ class ApiConfigManager(context: Context) {
         }
     }
 
-    /**
-     * 根据提供商 ID 获取本地配置文件中的 Key 名称
-     */
-    private fun getLocalKeyName(providerId: String): String {
-        return when (providerId) {
-            "siliconflow-v3-flash", "siliconflow-v3", "siliconflow-r1",
-            "siliconflow-qwen", "siliconflow-llama", "siliconflow-v25" ->
-                ApiKeysLoader.KEY_SILICONFLOW
-            "doubao" -> ApiKeysLoader.KEY_DOUBAO
-            "deepseek-official" -> ApiKeysLoader.KEY_DEEPSEEK
-            // 阿里云 DashScope 统一使用 ALIYUN_MAAS_KEY
-            "aliyun-maas", "dashscope", "dashscope-qwen3" -> ApiKeysLoader.KEY_ALIYUN_MAAS
-            else -> "${providerId.uppercase()}_KEY"
-        }
-    }
 }

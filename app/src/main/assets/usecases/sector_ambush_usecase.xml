@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 热门板块「埋伏」UseCase（与 etf_dip / dip_buy 同构的 XML DAG 单一事实源）
+
+  入口 usecase → 引用的 pipeline（门控/信号/离场单链）：
+    [1] 数据准备（n_amb_import）：确认本地日K快照充足
+    [2] 信号阶段（n_ambush_signal）：定位热门板块 → 成分股扫描
+        「2~3连阳 + 多头排列且 MA20 抬升 + 梯量温和放量 + OBV 上行 + 缩量洗盘不破 MA20
+         + 距60日高回撤 -25%~-1%」→ 有主力埋伏痕迹的启动票
+    [3] 离场阶段（n_ambush_exit）：tp/sl/hold 参数 + strategy 文案打包发布
+
+  双端共用：APK UseCaseLoader 直接加载执行；usecase_pipeline.py（与本 XML 同居
+  assets/usecases 的 Python 引擎）解析同一份 XML —— 任何一端只改 XML，双端行为自动同源。
+
+  规则/参数全部在 pipeline XML（sector_ambush_pipeline.xml），改参数只改那一处。
+-->
+<usecase id="sector_ambush" name="热门板块埋伏">
+  <description>板块热度Top5 → 2~3连阳+多头+主力埋伏(梯量/OBV/洗盘)扫描 → 离场参数打包</description>
+  <steps>
+    <pipeline ref="usecases/sector_ambush_pipeline.xml" name="sector_ambush_dag" />
+  </steps>
+  <config>
+    <param name="orderType" value="SectorAmbush" />
+    <param name="maxHoldings" value="0" />
+    <param name="holdingPeriod" value="swing" />
+  </config>
+</usecase>

@@ -91,10 +91,10 @@ class StockScreener(
     }
 
     // ═══════════════════════════════
-    // 大盤環境檢測
+    // 大盘环境检测
     // ═══════════════════════════════
 
-    /** 檢測大盤環境方向（三指數綜合：上證+深證+創業板） */
+    /** 检测大盘环境方向（三指数综合：上证+深证+创业板） */
     suspend fun detectMarketDirection(): String {
         return try {
             val db = com.chin.stockanalysis.stock.database.StockDatabase.getInstance(context)

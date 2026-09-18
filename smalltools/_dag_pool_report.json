@@ -1,0 +1,150 @@
+{
+ "date": "2026-08-26",
+ "engine": "dag",
+ "periods": {
+  "超短": {
+   "marketTrend": "OSCILLATION",
+   "maConvergencePct": 0.59,
+   "marketConverged": true,
+   "bounceBonus": false,
+   "hits": [
+    {
+     "code": "sz000630",
+     "name": "铜陵有色",
+     "close": 6.75,
+     "convergenceDegree": 0.39,
+     "passCount": 7,
+     "totalChecks": 9,
+     "changePct": 4.98,
+     "drawdownPct": 3.6,
+     "volumeRatio": 1.81,
+     "score": 99.6,
+     "bounceBonus": false,
+     "regime": "NEUTRAL"
+    }
+   ]
+  },
+  "短线": {
+   "marketTrend": "OSCILLATION",
+   "maConvergencePct": 0.59,
+   "marketConverged": true,
+   "bounceBonus": false,
+   "hits": [
+    {
+     "code": "sh600497",
+     "name": "驰宏锌锗",
+     "close": 10.4,
+     "convergenceDegree": 0.92,
+     "passCount": 6,
+     "totalChecks": 8,
+     "changePct": 4.73,
+     "drawdownPct": 5.0,
+     "volumeRatio": 1.54,
+     "score": 99.1,
+     "bounceBonus": false,
+     "regime": "NEUTRAL"
+    },
+    {
+     "code": "sz000630",
+     "name": "铜陵有色",
+     "close": 6.75,
+     "convergenceDegree": 1.22,
+     "passCount": 6,
+     "totalChecks": 8,
+     "changePct": 4.98,
+     "drawdownPct": 3.6,
+     "volumeRatio": 1.81,
+     "score": 98.8,
+     "bounceBonus": false,
+     "regime": "NEUTRAL"
+    },
+    {
+     "code": "sh600117",
+     "name": "西宁特钢",
+     "close": 2.35,
+     "convergenceDegree": 2.58,
+     "passCount": 6,
+     "totalChecks": 8,
+     "changePct": 3.52,
+     "drawdownPct": -1.3,
+     "volumeRatio": 3.1,
+     "score": 97.4,
+     "bounceBonus": false,
+     "regime": "NEUTRAL"
+    }
+   ]
+  },
+  "中线": {
+   "marketTrend": "OSCILLATION",
+   "maConvergencePct": 0.59,
+   "marketConverged": true,
+   "bounceBonus": false,
+   "hits": [
+    {
+     "code": "sz000545",
+     "name": "金浦钛业",
+     "close": 2.64,
+     "convergenceDegree": 1.61,
+     "passCount": 6,
+     "totalChecks": 8,
+     "changePct": 1.93,
+     "drawdownPct": 0.4,
+     "volumeRatio": 1.46,
+     "score": 98.4,
+     "bounceBonus": false,
+     "regime": "NEUTRAL"
+    }
+   ]
+  },
+  "长线": {
+   "marketTrend": "OSCILLATION",
+   "maConvergencePct": 0.59,
+   "marketConverged": true,
+   "bounceBonus": false,
+   "hits": [
+    {
+     "code": "sh601985",
+     "name": "中国核电",
+     "close": 8.92,
+     "convergenceDegree": 0.81,
+     "passCount": 6,
+     "totalChecks": 9,
+     "changePct": 0.9,
+     "drawdownPct": 3.1,
+     "volumeRatio": 1.78,
+     "score": 99.2,
+     "bounceBonus": false,
+     "regime": "NEUTRAL"
+    },
+    {
+     "code": "sh600497",
+     "name": "驰宏锌锗",
+     "close": 10.4,
+     "convergenceDegree": 0.92,
+     "passCount": 7,
+     "totalChecks": 9,
+     "changePct": 4.73,
+     "drawdownPct": 5.0,
+     "volumeRatio": 1.54,
+     "score": 99.1,
+     "bounceBonus": false,
+     "regime": "NEUTRAL"
+    },
+    {
+     "code": "sz000630",
+     "name": "铜陵有色",
+     "close": 6.75,
+     "convergenceDegree": 1.22,
+     "passCount": 6,
+     "totalChecks": 9,
+     "changePct": 4.98,
+     "drawdownPct": 3.6,
+     "volumeRatio": 1.81,
+     "score": 98.8,
+     "bounceBonus": false,
+     "regime": "NEUTRAL"
+    }
+   ]
+  }
+ }
+}

@@ -11,25 +11,39 @@ import com.chin.stockanalysis.strategy.models.SignalAction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/**
+ * ## 低估值策略（重写版）
+ *
+ * 使用真实 PE/PB/ROE 数据进行估值筛选，废除旧版「股价=估值」的错误逻辑。
+ *
+ * 三维评分：
+ * - 估值(40%)：PE < 15 满分，PE 15-25 递减，PE > 40 或亏损淘汰
+ * - 质量(30%)：ROE > 15% 满分，毛利率 > 30% 加分
+ * - 安全边际(30%)：PB < 2 满分，市值 > 200 亿加分
+ *
+ * 淘汰条件：PE < 0（亏损）、ST 股、日均成交 < 5000 万
+ */
 class LowValuationStrategy(
     private val screener: StockScreener
 ) : Strategy {
 
     override val id = "low_valuation"
     override var name = "低估值策略"
-    override var description = "筛选市盈率低于行业均值、基本面稳健且价格企稳的低估值股票"
+    override var description = "筛选PE/PB低于合理区间、ROE稳健且具备安全边际的低估值股票"
     override val category = StrategyCategory.VALUE
+    override val holdingPeriods = listOf(HoldingPeriod.LONG)
     override val source = StrategySource.BUILTIN
+    override val signalExpiryHours = 720
 
     override val config = StrategyConfig.custom(
-        params = mapOf("pe_max" to 15.0, "roe_min" to 15.0, "stabilization_days" to 5),
+        params = mapOf("pe_max" to 25.0, "pb_max" to 3.0, "roe_min" to 10.0),
         maxResults = 15
     )
 
     override var weightFactors: List<WeightFactor> = listOf(
-        WeightFactor("valuation", "估值评分", 40, "基于价格水平的估值评分"),
-        WeightFactor("stable", "企稳评分", 30, "价格波动幅度评分"),
-        WeightFactor("liquidity", "流动性", 30, "成交活跃度评分")
+        WeightFactor("valuation", "估值评分", 40, "PE越低得分越高"),
+        WeightFactor("quality", "质量评分", 30, "ROE和毛利率"),
+        WeightFactor("safety", "安全边际", 30, "PB和市值保障")
     )
 
     override suspend fun screen(): Result<ScreeningResult> = withContext(Dispatchers.IO) {
@@ -49,45 +63,116 @@ class LowValuationStrategy(
         } catch (e: Exception) { Result.failure(e) }
     }
 
+    override suspend fun isAvailable(): Boolean = true
+
     private suspend fun screenWithPool(pool: List<StockRealtime>, startTime: Long): Result<ScreeningResult> {
         if (pool.isEmpty()) return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,
             signals = emptyList(), totalScanned = 0, scanTimeMs = System.currentTimeMillis() - startTime
         ))
 
-        // 大盤環境預檢
         val marketDir = try { screener.detectMarketDirection() } catch (_: Exception) { "OSCILLATION" }
         val isBearish = marketDir == "BEARISH"
-        val lvStrengthThreshold = if (isBearish) 55 else 40
-        Log.i("LV_Strategy", "大盤環境: $marketDir → 低估值門檻 ${if (isBearish) "40→55" else "標準門檻40"}")
+        val strengthThreshold = if (isBearish) 55 else 40
+        val peMax = (config.params["pe_max"] as? Number)?.toDouble() ?: 25.0
+        val pbMax = (config.params["pb_max"] as? Number)?.toDouble() ?: 3.0
+        val roeMin = (config.params["roe_min"] as? Number)?.toDouble() ?: 10.0
 
-        val step1 = pool.filter { it.amount > 50_000_000 && it.changePercent in -10.0..10.0 && it.price > 1.0 }
-        Log.i("LV_Strategy", "pool=${pool.size} → 过滤(amt>50M & chg in[-5,5] & price>1)=${step1.size}")
-        val step2 = step1.map { calculateSignal(it) }
-        val step3 = step2.filter { it.strength >= lvStrengthThreshold }
-        Log.i("LV_Strategy", "打分后 strength>=$lvStrengthThreshold: ${step3.size}")
-        val signals = step3.sortedByDescending { it.strength }.take(config.maxResults)
+        Log.i("LV_Strategy", "大盘: $marketDir, 门槛: PE<$peMax PB<$pbMax ROE>$roeMin")
+
+        // 硬性淘汰
+        val candidates = pool.filter { stock ->
+            // 淘汰亏损股（PE < 0 或 PE = 0 表示无数据/亏损）
+            stock.pe > 0 &&
+            // 淘汰 ST
+            !stock.name.contains("ST", ignoreCase = true) &&
+            // 流动性保障
+            stock.amount > 50_000_000 &&
+            // PE 上限
+            stock.pe <= peMax &&
+            // PB 上限（PB=0 表示无数据，放行）
+            (stock.pb <= 0 || stock.pb <= pbMax) &&
+            // 价格稳定（排除涨跌停）
+            stock.changePercent in -9.0..9.0
+        }
+
+        Log.i("LV_Strategy", "pool=${pool.size} → 硬性过滤后=${candidates.size}")
+
+        val signals = candidates.map { stock -> calculateSignal(stock, roeMin) }
+            .filter { it.strength >= strengthThreshold }
+            .sortedByDescending { it.strength }
+            .take(config.maxResults)
+
+        Log.i("LV_Strategy", "评分后 strength>=$strengthThreshold: ${signals.size}")
         return Result.success(ScreeningResult(
             strategyId = id, strategyName = name, category = category,
             signals = signals, totalScanned = pool.size, scanTimeMs = System.currentTimeMillis() - startTime
         ))
     }
 
-    override suspend fun isAvailable(): Boolean = true
+    private fun calculateSignal(stock: StockRealtime, roeMin: Double): StrategySignal {
+        // ── 估值评分 (0-40) ──
+        val valuationScore = when {
+            stock.pe <= 8 -> 40
+            stock.pe <= 12 -> 36
+            stock.pe <= 15 -> 32
+            stock.pe <= 18 -> 26
+            stock.pe <= 20 -> 20
+            stock.pe <= 25 -> 14
+            else -> 8
+        }
 
-    private fun calculateSignal(stock: StockRealtime): StrategySignal {
-        val w = weightFactors.associateBy { it.key }
-        val valuationScore = when { stock.price < 10 -> 40; stock.price < 20 -> 35; stock.price < 50 -> 30; stock.price < 100 -> 20; stock.price < 200 -> 10; else -> 5 }
-        val changeAbs = kotlin.math.abs(stock.changePercent)
-        val stableScore = when { changeAbs < 0.5 -> 30; changeAbs < 1.0 -> 25; changeAbs < 2.0 -> 20; changeAbs < 3.0 -> 15; changeAbs < 5.0 -> 10; else -> 5 }
-        val liquidityScore = when { stock.amount > 500_000_000 -> 25; stock.amount > 200_000_000 -> 20; stock.amount > 100_000_000 -> 15; else -> 10 }
-        val rawStrength = valuationScore + stableScore + liquidityScore
-        val strength = minOf(rawStrength, 100)
+        // ── 质量评分 (0-30) ──
+        val roeScore = when {
+            stock.roeTTM >= 25 -> 18
+            stock.roeTTM >= 20 -> 15
+            stock.roeTTM >= 15 -> 12
+            stock.roeTTM >= roeMin -> 8
+            stock.roeTTM > 0 -> 4
+            else -> 0 // ROE 无数据
+        }
+        val marginScore = when {
+            stock.grossMarginTTM >= 50 -> 12
+            stock.grossMarginTTM >= 30 -> 10
+            stock.grossMarginTTM >= 20 -> 7
+            stock.grossMarginTTM > 0 -> 4
+            else -> 2 // 无数据给基础分
+        }
+        val qualityScore = (roeScore + marginScore).coerceAtMost(30)
+
+        // ── 安全边际评分 (0-30) ──
+        val pbScore = when {
+            stock.pb <= 0 -> 8   // 无数据
+            stock.pb <= 1.0 -> 15
+            stock.pb <= 1.5 -> 12
+            stock.pb <= 2.0 -> 10
+            stock.pb <= 3.0 -> 6
+            else -> 2
+        }
+        val capScore = when {
+            stock.marketCap >= 100_000_000_000 -> 15  // 千亿以上
+            stock.marketCap >= 50_000_000_000 -> 12   // 500亿
+            stock.marketCap >= 20_000_000_000 -> 9    // 200亿
+            stock.marketCap >= 10_000_000_000 -> 6    // 100亿
+            stock.marketCap > 0 -> 3
+            else -> 2 // 无数据
+        }
+        val safetyScore = (pbScore + capScore).coerceAtMost(30)
+
+        val strength = (valuationScore + qualityScore + safetyScore).coerceIn(0, 100)
+
+        val reason = buildString {
+            append("PE=${"%.1f".format(stock.pe)}")
+            if (stock.pb > 0) append(" PB=${"%.2f".format(stock.pb)}")
+            if (stock.roeTTM > 0) append(" ROE=${"%.1f".format(stock.roeTTM)}%")
+            if (stock.marketCap > 0) append(" 市值${"%.0f".format(stock.marketCap / 100_000_000)}亿")
+        }
+
         return StrategySignal(
             stockCode = stock.code, stockName = stock.name, strategyId = id, category = category,
             strength = strength,
             action = when { strength >= 70 -> SignalAction.BUY; strength >= 50 -> SignalAction.WATCH; else -> SignalAction.HOLD },
-            reason = "低估值候选：¥${String.format("%.2f", stock.price)}, 涨跌${String.format("%.2f", stock.changePercent)}%",
+            reason = reason,
             currentPrice = stock.price, changePercent = stock.changePercent
         )
     }

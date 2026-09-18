@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicReference
  */
 class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProvider {
 
-    /** 流式請求的完整回應（包含可能的 tool_calls） */
+    /** 流式请求的完整回应（包含可能的 tool_calls） */
     data class ChatResponse(
         val content: String,
         val finishReason: String?,
@@ -63,11 +63,11 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
     }
 
     /**
-     * 強制 JSON 輸出模式（response_format: json_object）
-     * 適用於 Agent 場景：結構化數據提取、股票分析 JSON 輸出等
+     * 强制 JSON 输出模式（response_format: json_object）
+     * 适用于 Agent 场景：结构化数据提取、股票分析 JSON 输出等
      *
-     * @param maxTokens 自定義最大輸出 tokens（預設 6144）。
-     *   簡單 Agent（1-3）建議 4096，複雜 Agent（6 風控）建議 6144-8192
+     * @param maxTokens 自定义最大输出 tokens（预设 6144）。
+     *   简单 Agent（1-3）建议 4096，复杂 Agent（6 风控）建议 6144-8192
      */
     fun sendMessageStreamJson(
         messages: List<Message>,
@@ -81,7 +81,7 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
     }
 
     /**
-     * 帶 Function Calling 工具的擴展方法（非接口方法）
+     * 带 Function Calling 工具的扩展方法（非接口方法）
      */
     fun sendMessageStreamWithTools(
         messages: List<Message>,
@@ -96,6 +96,26 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         doSend(messages, systemPrompt, onSuccess, onComplete, onError, tools, toolChoice, onToolCalls, modelIndex = 0, retryCount = 0, jsonMode = false)
     }
 
+    /**
+     * 带 Function Calling 的流式请求（使用预构建的 JSONArray 讯息）
+     *
+     * 与 sendMessageStreamWithTools 不同，此方法接受预先构建好的 JSONArray 讯息阵列，
+     * 允许呼叫者直接控制 system/user/assistant/tool 等角色讯息，
+     * 支援完整的 Function Calling 对话历史（包含 tool_calls 和 tool role 回复）。
+     */
+    fun sendMessageStreamWithRawMessages(
+        rawMessages: JSONArray,
+        onSuccess: (content: String) -> Unit,
+        onComplete: (fullContent: String) -> Unit,
+        onError: (errorMsg: String) -> Unit,
+        tools: List<ChatTools.ToolDef>? = null,
+        toolChoice: String? = null,
+        onToolCalls: ((List<ChatTools.ToolCall>) -> Unit)? = null
+    ) {
+        doSend(emptyList(), "", onSuccess, onComplete, onError, tools, toolChoice, onToolCalls,
+            modelIndex = 0, retryCount = 0, jsonMode = false, rawMessages = rawMessages)
+    }
+
     private fun doSend(
         messages: List<Message>,
         systemPrompt: String,
@@ -108,11 +128,12 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         modelIndex: Int,
         retryCount: Int,
         jsonMode: Boolean,
-        maxTokens: Int? = null
+        maxTokens: Int? = null,
+        rawMessages: JSONArray? = null
     ) {
         val model = getModel(modelIndex, onError) ?: return
         val url = config.baseUrl.trimEnd('/') + "/chat/completions"
-        val requestBody = buildBody(messages, systemPrompt, model, tools, toolChoice, jsonMode, maxTokens)
+        val requestBody = buildBody(messages, systemPrompt, model, tools, toolChoice, jsonMode, maxTokens, rawMessages)
 
         Log.d(TAG, "📤 请求: $url | 模型: $model | 重试: $retryCount | jsonMode=$jsonMode")
 
@@ -133,7 +154,7 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
 
                 Log.e(TAG, "❌ 网络失败: ${e.message}")
                 handleRetry(messages, systemPrompt, onSuccess, onComplete, onError,
-                    tools, toolChoice, onToolCalls, modelIndex, retryCount + 1, "网络错误: ${e.message}", jsonMode)
+                    tools, toolChoice, onToolCalls, modelIndex, retryCount + 1, "网络错误: ${e.message}", jsonMode, rawMessages = rawMessages)
             }
 
             override fun onResponse(call: Call, response: Response) {
@@ -148,16 +169,16 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
                     if (code in 400..499) {
                         Log.d(TAG, "🔄 客户端错误 $code，跳过重试，直接切换模型")
                         handleRetry(messages, systemPrompt, onSuccess, onComplete, onError,
-                            tools, toolChoice, onToolCalls, modelIndex, 3, "HTTP $code", jsonMode)  // retryCount=3 强制跳过重试
+                            tools, toolChoice, onToolCalls, modelIndex, 3, "HTTP $code", jsonMode, rawMessages = rawMessages)  // retryCount=3 强制跳过重试
                     } else {
                         handleRetry(messages, systemPrompt, onSuccess, onComplete, onError,
-                            tools, toolChoice, onToolCalls, modelIndex, retryCount + 1, "HTTP $code", jsonMode)
+                            tools, toolChoice, onToolCalls, modelIndex, retryCount + 1, "HTTP $code", jsonMode, rawMessages = rawMessages)
                     }
                     return
                 }
 
                 try {
-                    handleResponse(response, onSuccess, onComplete, onError, onToolCalls, jsonMode)
+                    handleResponse(response, onSuccess, onComplete, onError, onToolCalls, jsonMode, model)
                 } catch (e: Exception) {
                     Log.e(TAG, "❌ 响应处理异常: ${e.message}")
                     val partial = accumulated?.toString() ?: ""
@@ -165,10 +186,10 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
                         onComplete(partial)
                     } else {
                         handleRetry(messages, systemPrompt, onSuccess, onComplete, onError,
-                            tools, toolChoice, onToolCalls, modelIndex, retryCount + 1, "流式处理异常: ${e.message}", jsonMode)
+                            tools, toolChoice, onToolCalls, modelIndex, retryCount + 1, "流式处理异常: ${e.message}", jsonMode, rawMessages = rawMessages)
                     }
                 } finally {
-                    // 確保 response body 被關閉，避免 OkHttp 連接洩漏
+                    // 确保 response body 被关闭，避免 OkHttp 连接泄漏
                     try { response.close() } catch (_: Exception) {}
                 }
             }
@@ -195,16 +216,17 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         onToolCalls: ((List<ChatTools.ToolCall>) -> Unit)?,
         modelIndex: Int, retryCount: Int, lastError: String,
         jsonMode: Boolean = false,
-        maxTokens: Int? = null
+        maxTokens: Int? = null,
+        rawMessages: JSONArray? = null
     ) {
         when {
             retryCount < 3 -> {
                 Log.d(TAG, "🔄 第 $retryCount 次重试中...")
-                doSend(messages, systemPrompt, onSuccess, onComplete, onError, tools, toolChoice, onToolCalls, modelIndex, retryCount, jsonMode, maxTokens)
+                doSend(messages, systemPrompt, onSuccess, onComplete, onError, tools, toolChoice, onToolCalls, modelIndex, retryCount, jsonMode, maxTokens, rawMessages)
             }
             modelIndex < config.fallbackModels.size -> {
                 Log.d(TAG, "🔄 回退到备用模型 #${modelIndex + 1}")
-                doSend(messages, systemPrompt, onSuccess, onComplete, onError, tools, toolChoice, onToolCalls, modelIndex + 1, 0, jsonMode, maxTokens)
+                doSend(messages, systemPrompt, onSuccess, onComplete, onError, tools, toolChoice, onToolCalls, modelIndex + 1, 0, jsonMode, maxTokens, rawMessages)
             }
             else -> onError(lastError)
         }
@@ -215,31 +237,40 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         tools: List<ChatTools.ToolDef>? = null,
         toolChoice: String? = null,
         jsonMode: Boolean = false,
-        maxTokens: Int? = null
+        maxTokens: Int? = null,
+        rawMessages: JSONArray? = null
     ): JSONObject {
-        val msgArray = JSONArray()
-        if (!systemPrompt.isNullOrBlank())
-            msgArray.put(JSONObject().apply { put("role", "system"); put("content", systemPrompt) })
-        for (msg in messages) {
-            if (msg.isStreaming || msg.isError || msg.content.isBlank()) continue
-            msgArray.put(JSONObject().apply {
-                put("role", if (msg.isUser) "user" else "assistant")
-                put("content", msg.content)
-            })
+        val msgArray = if (rawMessages != null) {
+            rawMessages
+        } else {
+            JSONArray().apply {
+                if (!systemPrompt.isNullOrBlank())
+                    put(JSONObject().apply { put("role", "system"); put("content", systemPrompt) })
+                for (msg in messages) {
+                    if (msg.isStreaming || msg.isError || msg.content.isBlank()) continue
+                    put(JSONObject().apply {
+                        put("role", if (msg.isUser) "user" else "assistant")
+                        put("content", msg.content)
+                    })
+                }
+            }
         }
         return JSONObject().apply {
             put("model", model)
             put("messages", msgArray)
             put("temperature", 0.7)
-            // Pipeline Agent 分層：簡單 Agent 4096，複雜 Agent 6144，通用預設 6144
+            // Pipeline Agent 分层：简单 Agent 4096，复杂 Agent 6144，通用预设 6144
             put("max_tokens", maxTokens ?: if (jsonMode) 6144 else 4096)
             put("stream", true)
+            // Token 用量统计（Phase E）：流式模式下服务端默认**不回传** usage，
+            // 必须显式声明 include_usage，否则 TokenUsageTracker 永远统计不到东西。
+            put("stream_options", JSONObject().apply { put("include_usage", true) })
             if (jsonMode) {
                 put("response_format", JSONObject().apply { put("type", "json_object") })
-                // 關閉思考模式（doubao-seed-1.6 等推理模型支持），避免思考過程混入輸出
+                // 关闭思考模式（doubao-seed-1.6 等推理模型支持），避免思考过程混入输出
                 put("thinking", JSONObject().apply { put("type", "disabled") })
             }
-            // Function Calling 工具定義
+            // Function Calling 工具定义
             if (!tools.isNullOrEmpty()) {
                 val toolsArray = JSONArray()
                 for (tool in tools) {
@@ -258,7 +289,7 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         }
     }
 
-    /** 將 Map<String, Any> 轉為 JSONObject（遞迴處理嵌套結構） */
+    /** 将 Map<String, Any> 转为 JSONObject（递回处理嵌套结构） */
     private fun Map<String, Any>.toJsonObject(): JSONObject {
         val json = JSONObject()
         for ((key, value) in this) {
@@ -304,7 +335,9 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         onComplete: (String) -> Unit,
         onError: (String) -> Unit,
         onToolCalls: ((List<ChatTools.ToolCall>) -> Unit)? = null,
-        jsonMode: Boolean = false
+        jsonMode: Boolean = false,
+        /** 本次请求实际使用的模型 ID，用于 Token 用量归属 */
+        model: String = ""
     ) {
         val body = response.body
         if (body == null) {
@@ -317,7 +350,7 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         accumulated = sb
         var lineCount = 0
 
-        // tool_calls 流式累積：按 index 分別收集 id / function.name / function.arguments 片段
+        // tool_calls 流式累积：按 index 分别收集 id / function.name / function.arguments 片段
         val toolCallBuilders = mutableMapOf<Int, MutableMap<String, StringBuilder>>()
         var finishReason: String? = null
 
@@ -339,7 +372,7 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
 
                 // 容错：如果单行 JSON 解析失败，尝试累积下一行（SSE 可能因推理模型新行符分裂）
                 try {
-                    parseSSEData(data, sb, onSuccess, toolCallBuilders, finishReason, jsonMode)
+                    parseSSEData(data, sb, onSuccess, toolCallBuilders, finishReason, jsonMode, model)
                 } catch (e: Exception) {
                     val nextLine = source.readUtf8Line()
                     if (nextLine != null) {
@@ -353,7 +386,7 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
                             // 当前 JSON 被换行符截断，尝试拼接
                             val merged = data + nextTrimmed
                             try {
-                                parseSSEData(merged, sb, onSuccess, toolCallBuilders, finishReason, jsonMode)
+                                parseSSEData(merged, sb, onSuccess, toolCallBuilders, finishReason, jsonMode, model)
                             } catch (e2: Exception) {
                                 if (lineCount <= 3) Log.v(TAG, "跳过非 JSON 行(合并后): ${data.take(80)} | next=${nextTrimmed.take(40)}")
                             }
@@ -376,12 +409,12 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
             return
         } finally {
             accumulated = null
-            // 確保 source 和 response 被關閉，避免 OkHttp 連接洩漏
+            // 确保 source 和 response 被关闭，避免 OkHttp 连接泄漏
             try { source.close() } catch (_: Exception) {}
             try { response.close() } catch (_: Exception) {}
         }
 
-        // 組裝 tool_calls 結果
+        // 组装 tool_calls 结果
         val collectedToolCalls = if (toolCallBuilders.isNotEmpty()) {
             toolCallBuilders.entries.sortedBy { it.key }.mapNotNull { (_, parts) ->
                 val id = parts["id"]?.toString() ?: return@mapNotNull null
@@ -396,7 +429,7 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         } else emptyList()
 
         if (collectedToolCalls.isNotEmpty()) {
-            Log.d(TAG, "🔧 收集到 ${collectedToolCalls.size} 個 tool_calls | finishReason=$finishReason")
+            Log.d(TAG, "🔧 收集到 ${collectedToolCalls.size} 个 tool_calls | finishReason=$finishReason")
             onToolCalls?.invoke(collectedToolCalls)
         }
 
@@ -405,7 +438,7 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
             Log.d(TAG, "流式完成: ${result.length} 字符 | $lineCount 行")
             onComplete(result)
         } else if (collectedToolCalls.isNotEmpty()) {
-            // 純 tool_call 無 content，視為成功完成
+            // 纯 tool_call 无 content，视为成功完成
             onComplete("")
         } else {
             onError("AI 回复为空")
@@ -419,22 +452,37 @@ class OpenAiCompatibleProvider(override val config: ApiProviderConfig) : ApiProv
         onSuccess: (String) -> Unit,
         toolCallBuilders: MutableMap<Int, MutableMap<String, StringBuilder>>,
         _finishReason: String?,
-        jsonMode: Boolean = false
+        jsonMode: Boolean = false,
+        model: String = ""
     ) {
         val json = JSONObject(data)
+
+        // ── Token 用量（Phase E）──
+        // 必须放在 choices 早退**之前**：带 usage 的收尾 chunk 里 choices 是空数组，
+        // 走原来的 `choices.length() == 0 -> return` 会把 usage 整段丢掉。
+        json.optJSONObject("usage")?.let { usage ->
+            com.chin.stockanalysis.ai.TokenUsageTracker.record(
+                model = model,
+                promptTokens = usage.optLong("prompt_tokens", 0L),
+                completionTokens = usage.optLong("completion_tokens", 0L),
+                cachedTokens = usage.optJSONObject("prompt_tokens_details")
+                    ?.optLong("cached_tokens", 0L) ?: 0L
+            )
+        }
+
         val choices = json.optJSONArray("choices")
         if (choices == null || choices.length() == 0) return
         val choice = choices.getJSONObject(0)
         val delta = choice.optJSONObject("delta") ?: return
 
         // content 和 reasoning_content 二选一
-        // jsonMode 時丟棄 reasoning_content（思考過程），只保留 content（最終回答）
+        // jsonMode 时丢弃 reasoning_content（思考过程），只保留 content（最终回答）
         val content = delta.optString("content", "")
         val reasoningContent = delta.optString("reasoning_content", "")
         val textToAppend = if (jsonMode) {
-            content  // JSON 模式：只要最終回答，不要思考過程
+            content  // JSON 模式：只要最终回答，不要思考过程
         } else {
-            content.ifBlank { reasoningContent }  // 普通模式：回退到思考過程
+            content.ifBlank { reasoningContent }  // 普通模式：回退到思考过程
         }
         if (textToAppend.isNotEmpty()) {
             sb.append(textToAppend)

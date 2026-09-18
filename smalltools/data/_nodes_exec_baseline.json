@@ -1,0 +1,647 @@
+{
+ "asof": "2026-09-11",
+ "generated_at": "2026-09-12T14:32:56",
+ "bypassed": [
+  {
+   "usecase": "ultra_short",
+   "node": "n_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_candle",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_finance",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_inst_tips",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_intraday",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_news_str",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_newsguard",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_sector_leaders",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_sector_strength",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_style_rotation",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "ultra_short",
+   "node": "n_t1sell",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "short",
+   "node": "n_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_candle",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_crosstab",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_finance",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_heat",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_inst_tips",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_intraday",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_multihot",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_news_str",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_newsguard",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_rot_pen",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "short",
+   "node": "n_sector_leaders",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "short",
+   "node": "n_sector_strength",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "short",
+   "node": "n_style_rotation",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "short",
+   "node": "n_zipline",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_base_guard",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_candle",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_crossday",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_crosstab",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_defensive",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_direction",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_finance",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_heat",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_inst_tips",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_leader",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_multihot",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_news_str",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_newsguard",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_pe_peer",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_rot_pen",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_season",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_sector_leaders",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_sector_pool",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_sector_strength",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "mid",
+   "node": "n_style_rotation",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "long",
+   "node": "n_base_guard",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "long",
+   "node": "n_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_candle",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_defensive",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "long",
+   "node": "n_direction",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "long",
+   "node": "n_finance",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_heat",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_inst_tips",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_leader",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "long",
+   "node": "n_newsguard",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_pe_peer",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_season",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "long",
+   "node": "n_sector_leaders",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "long",
+   "node": "n_sector_pool",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "long",
+   "node": "n_sector_strength",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "long",
+   "node": "n_style_rotation",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "real_holding",
+   "node": "n_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "real_holding",
+   "node": "n_holding_diag",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "real_holding",
+   "node": "n_holding_predict",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "real_holding",
+   "node": "n_leader_analysis",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "real_holding",
+   "node": "n_news",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "real_holding",
+   "node": "n_rh_eval",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "real_holding",
+   "node": "n_t_trade",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_hold",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_import",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_inst",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_kline",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_leader",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_news",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_nguard",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_save",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_synth",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "t_trade",
+   "node": "t_zf",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "stock_deep_analysis",
+   "node": "n_periods",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "stock_deep_analysis",
+   "node": "n_sector_strength",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "stock_deep_analysis",
+   "node": "n_style_rotation",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_base_guard",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_candle",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_crossday",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_crosstab",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_defensive",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_direction",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_heat",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_inst_tips",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_leader",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_multihot",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_news_str",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_newsguard",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_pe_peer",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_rot_pen",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_season",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "direction",
+   "node": "n_sector_pool",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "common",
+   "node": "n_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "common",
+   "node": "n_sector_leaders",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "common",
+   "node": "n_sector_strength",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "common",
+   "node": "n_style_rotation",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_base_guard",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_bg",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_candle",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_crossday",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_crosstab",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_defensive",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_direction",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_finance",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_heat",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_inst_tips",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_intraday",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_leader",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_multihot",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_news_str",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_newsguard",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_pe_peer",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_rot_pen",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_season",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_sector_leaders",
+   "reason": "降级为透传"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_sector_pool",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_sector_strength",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_style_rotation",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_t1sell",
+   "reason": "未实现 module"
+  },
+  {
+   "usecase": "complete_closed_loop",
+   "node": "n_zipline",
+   "reason": "降级为透传"
+  }
+ ],
+ "silent_count": 99
+}

@@ -14,29 +14,29 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 /**
- * ## 統一數據門面（Facade）
+ * ## 统一数据门面（Facade）
  *
- * 為所有模式（快速/深度/專家/Agent）提供統一的數據獲取接口。
+ * 为所有模式（快速/深度/专家/Agent）提供统一的数据获取接口。
  *
- * ### 數據獲取優先級
- * 1. **實時 API**（新浪/騰訊/東方財富）— 最快最新
- * 2. **網絡搜索**（東方財富搜索/DuckDuckGo）— 補充基本面
- * 3. **本地數據庫** — 歷史數據、資金流向
+ * ### 数据获取优先级
+ * 1. **实时 API**（新浪/腾讯/东方财富）— 最快最新
+ * 2. **网络搜索**（东方财富搜索/DuckDuckGo）— 补充基本面
+ * 3. **本地数据库** — 历史数据、资金流向
  *
  * ### 使用方式
  * ```kotlin
  * val facade = StockDataFacade.getInstance(context)
  *
- * // 獲取實時行情
+ * // 获取实时行情
  * val quote = facade.getRealtimeQuote("sh603986")
  *
- * // 獲取基本面信息
+ * // 获取基本面信息
  * val fundamental = facade.getFundamentalInfo("sh603986")
  *
- * // 獲取歷史數據（含新鮮度檢查）
+ * // 获取历史数据（含新鲜度检查）
  * val history = facade.getHistoricalSnapshots("sh603986", 30)
  *
- * // 獲取資金流向
+ * // 获取资金流向
  * val fundFlow = facade.getFundFlow("sh603986", 5)
  * ```
  */
@@ -61,33 +61,33 @@ class StockDataFacade private constructor(private val context: Context) {
     private val realtimeRepo by lazy { StockDataSourceFactory.createDefaultRepository(context) }
 
     // ═══════════════════════════════════════════════
-    // 實時行情
+    // 实时行情
     // ═══════════════════════════════════════════════
 
     /**
-     * 獲取單只股票的實時行情
-     * 優先級：新浪→騰訊→東方財富（通過 MultiSourceStockRepository 並行獲取）
+     * 获取单只股票的实时行情
+     * 优先级：新浪→腾讯→东方财富（通过 MultiSourceStockRepository 并行获取）
      *
-     * @return StockRealtime? 成功返回實時數據，失敗返回 null
+     * @return StockRealtime? 成功返回实时数据，失败返回 null
      */
     suspend fun getRealtimeQuote(code: String): StockRealtime? = withContext(Dispatchers.IO) {
         try {
             val map = realtimeRepo.getRealtime(listOf(code))
             map[code]
         } catch (e: Exception) {
-            Log.w(TAG, "獲取實時行情失敗 [$code]: ${e.message}")
+            Log.w(TAG, "获取实时行情失败 [$code]: ${e.message}")
             null
         }
     }
 
     /**
-     * 批量獲取實時行情
+     * 批量获取实时行情
      */
     suspend fun getRealtimeQuotes(codes: List<String>): Map<String, StockRealtime> = withContext(Dispatchers.IO) {
         try {
             realtimeRepo.getRealtime(codes)
         } catch (e: Exception) {
-            Log.w(TAG, "批量獲取實時行情失敗: ${e.message}")
+            Log.w(TAG, "批量获取实时行情失败: ${e.message}")
             emptyMap()
         }
     }
@@ -97,15 +97,15 @@ class StockDataFacade private constructor(private val context: Context) {
     // ═══════════════════════════════════════════════
 
     /**
-     * 獲取股票基本面信息
-     * 優先級：
-     * 1. 東方財富搜索 API（實時）
-     * 2. 本地數據庫（可能過期）
+     * 获取股票基本面信息
+     * 优先级：
+     * 1. 东方财富搜索 API（实时）
+     * 2. 本地数据库（可能过期）
      *
-     * @return FundamentalInfo 包含名稱、主營業務、板塊等
+     * @return FundamentalInfo 包含名称、主营业务、板块等
      */
     suspend fun getFundamentalInfo(code: String): FundamentalInfo = withContext(Dispatchers.IO) {
-        // === 優先1：東方財富 API ===
+        // === 优先1：东方财富 API ===
         val emInfo = try {
             val url = com.chin.stockanalysis.config.DataConfig.eastmoneySearchUrl(code)
             val request = Request.Builder()
@@ -116,10 +116,10 @@ class StockDataFacade private constructor(private val context: Context) {
             if (response.isSuccessful) {
                 val body = response.body?.string()
                 if (!body.isNullOrBlank()) {
-                    // 東方財富返回 {"QuotationCodeTable":{"Data":[...]}} 或直接 JSONArray
+                    // 东方财富返回 {"QuotationCodeTable":{"Data":[...]}} 或直接 JSONArray
                     val arr = try {
                         val root = JSONObject(body)
-                        // 嘗試 QuotationCodeTable.Data 格式
+                        // 尝试 QuotationCodeTable.Data 格式
                         if (root.has("QuotationCodeTable")) {
                             root.getJSONObject("QuotationCodeTable")
                                 .getJSONArray("Data")
@@ -137,20 +137,20 @@ class StockDataFacade private constructor(private val context: Context) {
                             business = item.optString("Business", ""),
                             industry = item.optString("Industry", ""),
                             code = item.optString("Code", code),
-                            source = "東方財富實時",
+                            source = "东方财富实时",
                             isFresh = true
                         )
                     } else null
                 } else null
             } else null
         } catch (e: Exception) {
-            Log.w(TAG, "東方財富基本面獲取失敗 [$code]: ${e.message}")
+            Log.w(TAG, "东方财富基本面获取失败 [$code]: ${e.message}")
             null
         }
 
         if (emInfo != null) return@withContext emInfo
 
-        // === Fallback：本地數據庫 ===
+        // === Fallback：本地数据库 ===
         val basic = db.stockBasicDao().getByCode(code)
         val sectorNames = db.sectorStockDao().getSectorNamesByStockCode(code)
         val chainRationale = basic?.chainRationale ?: ""
@@ -160,7 +160,7 @@ class StockDataFacade private constructor(private val context: Context) {
             business = basic?.business ?: "",
             industry = "",
             code = code,
-            source = "本地數據庫",
+            source = "本地数据库",
             isFresh = false,
             sectorNames = sectorNames,
             chainRationale = chainRationale
@@ -168,15 +168,15 @@ class StockDataFacade private constructor(private val context: Context) {
     }
 
     // ═══════════════════════════════════════════════
-    // 歷史數據（含新鮮度檢查）
+    // 历史数据（含新鲜度检查）
     // ═══════════════════════════════════════════════
 
     /**
-     * 獲取歷史快照數據
-     * 自動檢查新鮮度，標注數據來源
+     * 获取历史快照数据
+     * 自动检查新鲜度，标注数据来源
      *
      * @param days 最近 N 天
-     * @return HistoricalData 包含快照列表和新鮮度信息
+     * @return HistoricalData 包含快照列表和新鲜度信息
      */
     suspend fun getHistoricalSnapshots(code: String, days: Int = 30): HistoricalData = withContext(Dispatchers.IO) {
         val snapshots = db.dailySnapshotDao().getByCode(code, days)
@@ -196,20 +196,20 @@ class StockDataFacade private constructor(private val context: Context) {
             snapshots = snapshots,
             latestDate = latestDate,
             isFresh = isFresh,
-            source = if (isFresh) "本地數據庫" else "本地數據庫（舊）"
+            source = if (isFresh) "本地数据库" else "本地数据库（旧）"
         )
     }
 
     // ═══════════════════════════════════════════════
-    // 資金流向
+    // 资金流向
     // ═══════════════════════════════════════════════
 
     /**
-     * 獲取資金流向數據
-     * 目前只有本地數據庫，自動標注新鮮度
+     * 获取资金流向数据
+     * 目前只有本地数据库，自动标注新鲜度
      *
      * @param days 最近 N 天
-     * @return FundFlowData 包含合計流入、平均換手率、新鮮度
+     * @return FundFlowData 包含合计流入、平均换手率、新鲜度
      */
     suspend fun getFundFlow(code: String, days: Int = 5): FundFlowData = withContext(Dispatchers.IO) {
         val snapshots = db.dailySnapshotDao().getByCode(code, days)
@@ -231,20 +231,20 @@ class StockDataFacade private constructor(private val context: Context) {
             avgTurnoverRate = avgTurnover,
             latestDate = snapshots.firstOrNull()?.date ?: "",
             isFresh = isFresh,
-            source = if (isFresh) "本地數據庫" else "本地數據庫（舊）",
+            source = if (isFresh) "本地数据库" else "本地数据库（旧）",
             isEmpty = snapshots.isEmpty()
         )
     }
 
     // ═══════════════════════════════════════════════
-    // 組合查詢（一鍵獲取所有維度）
+    // 组合查询（一键获取所有维度）
     // ═══════════════════════════════════════════════
 
     /**
-     * 一鍵獲取股票的所有分析數據（並行獲取）
-     * 用於 StockAnalysisAgent、ChatAgent 等場景
+     * 一键获取股票的所有分析数据（并行获取）
+     * 用于 StockAnalysisAgent、ChatAgent 等场景
      *
-     * @return StockAnalysisData 包含實時行情、基本面、歷史數據、資金流向
+     * @return StockAnalysisData 包含实时行情、基本面、历史数据、资金流向
      */
     suspend fun getAnalysisData(code: String, days: Int = 30): StockAnalysisData = withContext(Dispatchers.IO) {
         val quote = getRealtimeQuote(code)
@@ -262,7 +262,7 @@ class StockDataFacade private constructor(private val context: Context) {
     }
 
     // ═══════════════════════════════════════════════
-    // 數據類
+    // 数据类
     // ═══════════════════════════════════════════════
 
     data class FundamentalInfo(

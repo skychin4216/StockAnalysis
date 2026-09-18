@@ -114,14 +114,14 @@ class StockDatabaseManager private constructor(private val appContext: Context) 
     }
 
     /**
-     * 从 [ThemeStockLibrary] 同步数据到 Room 数据库（優化版）
+     * 从 [ThemeStockLibrary] 同步数据到 Room 数据库（优化版）
      *
-     * 選股邏輯：
-     * 1. 核心龍頭股（LeaderStockPool）
-     * 2. 年度/月度/周熱門板塊龍頭（ThemeStockLibrary）
-     * 3. 根據 ETF 漲跌判斷熱門板塊 → 查找子板塊前 10
-     * 4. 過濾：去掉 ST + 去掉小市值(<100億) + 其他不良股票
-     * 5. 最終導入 200-500 只核心股票（無硬性上限，以質量為準）
+     * 选股逻辑：
+     * 1. 核心龙头股（LeaderStockPool）
+     * 2. 年度/月度/周热门板块龙头（ThemeStockLibrary）
+     * 3. 根据 ETF 涨跌判断热门板块 → 查找子板块前 10
+     * 4. 过滤：去掉 ST + 去掉小市值(<100亿) + 其他不良股票
+     * 5. 最终导入 200-500 只核心股票（无硬性上限，以质量为准）
      *
      * @param isFullImport true = 首次全量导入（无需对比，直接写入）
      *                       false = 增量同步（对比差异，增删改）
@@ -140,15 +140,15 @@ class StockDatabaseManager private constructor(private val appContext: Context) 
                 }
             }
 
-            // ── 2. 收集候選股票 ──
+            // ── 2. 收集候选股票 ──
             val candidateSet = mutableSetOf<String>()
 
-            // 2a. 核心龍頭股（產業主線，排除概念板塊）
+            // 2a. 核心龙头股（产业主线，排除概念板块）
             val coreLeaders = LeaderStockPool.getMainlineCodes(appContext)
             candidateSet.addAll(coreLeaders)
-            Log.d(TAG, "核心龍頭股: ${coreLeaders.size} 只")
+            Log.d(TAG, "核心龙头股: ${coreLeaders.size} 只")
 
-            // 2b. 年度/月度/周熱門板塊（從 ThemeStockLibrary 選取）
+            // 2b. 年度/月度/周热门板块（从 ThemeStockLibrary 选取）
             val annualHotThemes = listOf("ai_tech", "new_energy", "semiconductor")
             val monthlyHotThemes = listOf("nonferrous_metals", "commercial_space", "military", "pharma")
             val weeklyHotThemes = listOf("bank", "liquor", "steel", "consumer")
@@ -163,9 +163,9 @@ class StockDatabaseManager private constructor(private val appContext: Context) 
                     candidateSet.add(ts.code)
                 }
             }
-            Log.d(TAG, "熱門板塊股: ${candidateSet.size - coreLeaders.size} 只")
+            Log.d(TAG, "热门板块股: ${candidateSet.size - coreLeaders.size} 只")
 
-            // 2c. 根據 ETF 漲跌動態發現熱門板塊
+            // 2c. 根据 ETF 涨跌动态发现热门板块
             try {
                 val today = java.time.LocalDate.now().toString()
                 val dates = db.dailySnapshotDao().getAvailableDates(5)
@@ -193,19 +193,19 @@ class StockDatabaseManager private constructor(private val appContext: Context) 
                     for (ts in stocks) {
                         candidateSet.add(ts.code)
                     }
-                    Log.d(TAG, "ETF $etfCode 漲幅 ${"%.1f".format(changePct)}% → 加入板塊 $sectorKey")
+                    Log.d(TAG, "ETF $etfCode 涨幅 ${"%.1f".format(changePct)}% → 加入板块 $sectorKey")
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "ETF 動態板塊獲取失敗: ${e.message}")
+                Log.w(TAG, "ETF 动态板块获取失败: ${e.message}")
             }
 
-            // 2d. 查找子板塊前 10（通過 LeaderStockPool 持久化配置）
+            // 2d. 查找子板块前 10（通过 LeaderStockPool 持久化配置）
             try {
                 for (cfg in LeaderStockPool.getAllConfigs(appContext)) {
                     for (subSector in cfg.subSectors) {
                         val topCodes = subSector.stocks.take(10)
                         for (code in topCodes) {
-                            // 檢查該代碼在 themeStockMap 中是否存在且不是 ST
+                            // 检查该代码在 themeStockMap 中是否存在且不是 ST
                             val (_, ts) = themeStockMap[code] ?: continue
                             if (!ts.name.contains("ST", ignoreCase = true)) {
                                 candidateSet.add(code)
@@ -214,12 +214,12 @@ class StockDatabaseManager private constructor(private val appContext: Context) 
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "子板塊獲取失敗: ${e.message}")
+                Log.w(TAG, "子板块获取失败: ${e.message}")
             }
 
-            Log.d(TAG, "候選池總計: ${candidateSet.size} 只（去重後）")
+            Log.d(TAG, "候选池总计: ${candidateSet.size} 只（去重后）")
 
-            // ── 3. 過濾條件 ──
+            // ── 3. 过滤条件 ──
             val filteredStocks = mutableListOf<StockBasicEntity>()
             val filteredSectors = mutableListOf<SectorStockEntity>()
 
@@ -230,15 +230,15 @@ class StockDatabaseManager private constructor(private val appContext: Context) 
                 // 3a. 去掉 ST
                 if (ts.name.contains("ST", ignoreCase = true)) continue
 
-                // 3b. 去掉名稱異常的（如 "退市"、"摘牌"）
+                // 3b. 去掉名称异常的（如 "退市"、"摘牌"）
                 if (ts.name.contains("退市") || ts.name.contains("摘牌")) continue
 
-                // 3c. 去掉代碼異常的（非標準 6 位數字）
+                // 3c. 去掉代码异常的（非标准 6 位数字）
                 val pureCode = code.replace(Regex("^(sh|sz|bj)"), "")
                 if (!pureCode.matches(Regex("^\\d{6}$"))) continue
 
-                // 3d. 市值過濾（如果有市值數據）
-                // TODO: 當 stock_basics 表有 market_cap 欄位時啟用
+                // 3d. 市值过滤（如果有市值数据）
+                // TODO: 当 stock_basics 表有 market_cap 栏位时启用
 
                 filteredStocks.add(StockBasicEntity(
                     code = ts.code,
@@ -253,15 +253,15 @@ class StockDatabaseManager private constructor(private val appContext: Context) 
                 ))
             }
 
-            // 3e. 最終數量控制（無硬性上限，但記錄日誌）
+            // 3e. 最终数量控制（无硬性上限，但记录日志）
             val finalCount = filteredStocks.size
             when {
-                finalCount < 200 -> Log.w(TAG, "⚠️ 選股數量偏少: $finalCount 只，建議檢查數據源")
-                finalCount > 800 -> Log.w(TAG, "⚠️ 選股數量偏多: $finalCount 只，已自動保留")
-                else -> Log.d(TAG, "✅ 選股數量合理: $finalCount 只")
+                finalCount < 200 -> Log.w(TAG, "⚠️ 选股数量偏少: $finalCount 只，建议检查数据源")
+                finalCount > 800 -> Log.w(TAG, "⚠️ 选股数量偏多: $finalCount 只，已自动保留")
+                else -> Log.d(TAG, "✅ 选股数量合理: $finalCount 只")
             }
 
-            // ── 4. 寫入數據庫 ──
+            // ── 4. 写入数据库 ──
             if (isFullImport) {
                 stockDao.insertAll(filteredStocks)
                 sectorDao.clearAll()
@@ -292,7 +292,7 @@ class StockDatabaseManager private constructor(private val appContext: Context) 
                 val latestCodes = filteredStocks.map { it.code }.toSet()
                 val removedCodes = existingStocks.keys - latestCodes
                 if (removedCodes.isNotEmpty()) {
-                    Log.d(TAG, "🗑️ 移除 ${removedCodes.size} 只不再符合條件的股票")
+                    Log.d(TAG, "🗑️ 移除 ${removedCodes.size} 只不再符合条件的股票")
                 }
 
                 sectorDao.clearAll()

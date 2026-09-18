@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 个股豆包深度分析 UseCase（详情页「深度分析」/ AI 对话框「快速·专家」个股分析统一入口）
+
+  豆包体系个股维度分析：
+    ① 市场研判（大盘多周期 → 板块强弱 → 方向 → 风格，复用 market_rotation_pipeline）
+    ② 四周期深度打分（超短/短/中/长 深度分析，产出报告 + 推荐动作）
+
+  调用方通过 seedStageOutputs 注入当前个股：
+    seedStageOutputs["n_target"] = 股票代码（String）
+-->
+<usecase id="stock_deep_analysis" name="个股豆包深度分析">
+  <steps>
+    <pipeline ref="usecases/market_rotation_pipeline.xml" name="市场研判" />
+    <pipeline ref="usecases/stock_deep_analysis_pipeline.xml" name="四周期深度分析" />
+  </steps>
+</usecase>

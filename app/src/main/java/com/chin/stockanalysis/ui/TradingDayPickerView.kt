@@ -32,7 +32,7 @@ class TradingDayPickerView @JvmOverloads constructor(
     companion object {
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
-        /** 中国股市假日（2025-2026），需要每年更新 */
+        /** 中国股市假日（2025-2027），需要每年按国务院公布更新；2026-10-08 起至年底无节假日 */
         val CHINESE_HOLIDAYS: Set<LocalDate> by lazy {
             val raw = listOf(
                 "2025-01-01","2025-01-27","2025-01-28","2025-01-29","2025-01-30","2025-01-31","2025-02-03","2025-02-04",
@@ -44,7 +44,8 @@ class TradingDayPickerView @JvmOverloads constructor(
                 "2026-04-04","2026-04-05","2026-04-06",
                 "2026-05-01","2026-05-02","2026-05-03","2026-05-04","2026-05-05",
                 "2026-05-31","2026-06-01",
-                "2026-10-01","2026-10-02","2026-10-03","2026-10-04","2026-10-05","2026-10-06","2026-10-07"
+                "2026-10-01","2026-10-02","2026-10-03","2026-10-04","2026-10-05","2026-10-06","2026-10-07",
+                "2027-01-01","2027-01-02","2027-01-03"
             )
             raw.map { LocalDate.parse(it) }.toSet()
         }
@@ -59,6 +60,18 @@ class TradingDayPickerView @JvmOverloads constructor(
         fun recentTradingDay(): LocalDate {
             var d = LocalDate.now()
             if (LocalTime.now() < LocalTime.of(9, 30)) d = d.minusDays(1)
+            while (d.dayOfWeek == DayOfWeek.SATURDAY || d.dayOfWeek == DayOfWeek.SUNDAY || d in CHINESE_HOLIDAYS) {
+                d = d.minusDays(1)
+            }
+            return d
+        }
+
+        /**
+         * 将指定日期校正到最近的交易日（向回退）。
+         * 如果当天是交易日则返回当天，否则向前找到最近的交易日。
+         */
+        fun recentTradingDay(from: LocalDate): LocalDate {
+            var d = from
             while (d.dayOfWeek == DayOfWeek.SATURDAY || d.dayOfWeek == DayOfWeek.SUNDAY || d in CHINESE_HOLIDAYS) {
                 d = d.minusDays(1)
             }

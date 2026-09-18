@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 个股深度分析 Pipeline（豆包体系 · 个股维度）
+
+  接收调用方通过 seed 注入的 stageOutputs["n_target"]（个股代码），
+  对当前个股执行超短/短/中/长 四周期深度打分，输出深度分析报告。
+
+  输出（存入共享 PipelineContext.stageOutputs）：
+    - stageOutputs["n_periods"] ：PeriodDeepAnalysisRunner.Result（四周期打分 + 报告文本）
+
+  依赖公共前置步骤（在 stock_deep_analysis useCase 中先执行）：
+    - market_rotation_pipeline：n_adaptive（大盘方向） / n_style_rotation（风格环境）
+-->
+<DagPipeline id="stock_deep_analysis_dag" name="个股深度分析Pipeline"
+    description="四周期深度打分（豆包体系·个股维度）">
+
+  <NodeList>
+    <!-- 四周期深度分析（超短/短/中/长 打分 → 报告） -->
+    <Node id="n_periods" name="四周期深度分析" module="stock_deep_analysis" />
+  </NodeList>
+</DagPipeline>

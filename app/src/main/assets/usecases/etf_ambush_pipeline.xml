@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## ETF 全景「埋伏」Pipeline（V2 DAG · 全部行业/主题 ETF 前五重仓 → 埋伏信号 → 离场打包）
+
+  与 sector_ambush_pipeline.xml 同一套埋伏规则（2~3连阳 + 多头排列 + 梯量 + OBV + 洗盘），
+  区别仅在候选池（universe=etf，2026-09-17）：
+    · 热门板块版：hot_sector_config 板块热度 Top5 → 成分股（约 5 板块）；
+    · ETF 全景版：data/_etf_holdings.json 全部行业/主题 ETF（剔除宽基/科创板）前五重仓股
+      （候选与 etf_industry_scan 同源，约 150~300 只），主题动量 Top5 成分股享受热度加分，
+      但扫描范围 = 全部主题（冷门主题的好形态也能被扫到）。
+  行情取数（Python）：ctx.cache(kline_store) → data/_etf_top5_hist.json 兜底；
+  APK 侧：StockDatabase daily_snapshot → EtfCacheStore 兜底。
+
+  stageOutputs：
+    - "n_ambush_signal"  JSONObject {as_of, hotSectors[], rows[], scanned, universe}
+    - "n_ambush_exit"    JSONObject {as_of, hotSectors, signal_today, strategy, exit{tp,sl,hold}}
+
+  双端共用：APK UseCaseLoader / AutoQuant usecase_pipeline.py 解析同一份 XML（单一事实源）。
+-->
+<DagPipeline id="etf_ambush_dag" name="ETF全景埋伏Pipeline"
+    description="全部行业/主题ETF前五重仓 → 2~3连阳+多头+主力埋伏扫描 → 离场参数打包">
+
+  <NodeList>
+    <!-- ── 阶段0：数据导入检查（保证后续节点有足够日K） ── -->
+    <Node id="n_amb_import" name="数据导入检查" module="data_import">
+      <config>
+        <param name="days" value="60" />
+        <param name="minSnapshots" value="60" />
+      </config>
+    </Node>
+
+    <!-- ── 阶段1：ETF 全景埋伏信号扫描（universe=etf 走 ETF 持仓候选池） ── -->
+    <Node id="n_ambush_signal" name="ETF全景埋伏信号扫描" module="sector_ambush_signal">
+      <config>
+        <!-- 候选池：etf = 全部行业/主题 ETF 前五重仓；hot_sector = 板块热度 Top5（默认） -->
+        <param name="universe" value="etf" />
+        <param name="industryOnly" value="true" />
+        <param name="baseThemes" value="宽基" />
+        <param name="excludeStar" value="true" />
+        <param name="minETF" value="1" />
+        <!-- 主题动量：成分股近10日均值收益排序，前 topSectors 个主题给热度加分 -->
+        <param name="topSectors" value="5" />
+        <param name="topN" value="10" />
+        <!-- 启动形态：连续阳线根数区间（2~3 根 = 刚启动，不追连涨多日的高位票） -->
+        <param name="bullMin" value="2" />
+        <param name="bullMax" value="3" />
+        <!-- 趋势：均线多头排列 close>MA5>MA10>MA20 且 MA20 抬升 -->
+        <param name="maShort" value="5" />
+        <param name="maMid" value="10" />
+        <param name="maLong" value="20" />
+        <!-- 主力埋伏证据①：梯量/温和放量（阳线段均量 / 前 10 日均量） -->
+        <param name="volExpand" value="1.2" />
+        <param name="volExpandMax" value="3.0" />
+        <!-- 主力埋伏证据②：OBV 上行（资金累积流入） -->
+        <param name="requireObvUp" value="true" />
+        <!-- 主力埋伏证据③：启动前缩量洗盘且不破 MA20 -->
+        <param name="requireWash" value="true" />
+        <!-- 位置：距 ddWin 日高点回撤区间（太低=破位，太高=追高） -->
+        <param name="ddWin" value="60" />
+        <param name="dd60Lo" value="-25" />
+        <param name="dd60Hi" value="-1" />
+        <param name="minSnapshots" value="60" />
+        <!-- 扫描上限（全部 ETF 重仓股合并去重后的最大扫描只数） -->
+        <param name="scanCap" value="600" />
+      </config>
+    </Node>
+
+    <!-- ── 阶段2：离场参数 + 发布打包（埋伏型，短线持有） ── -->
+    <Node id="n_ambush_exit" name="埋伏离场打包" module="ambush_exit_policy">
+      <config>
+        <param name="tp" value="8.0" />
+        <param name="sl" value="-5.0" />
+        <param name="hold" value="10" />
+        <param name="strategyText" value="ETF全景埋伏: 全部行业/主题ETF前五重仓(剔除宽基/科创) → 2~3连阳 + close>MA5>MA10>MA20且MA20抬升 + 梯量温和放量(1.2~3倍) + OBV上行 + 启动前缩量洗盘不破MA20 + 距60日高回撤-25%~-1%；主题动量Top5成分股热度加分；持≤10日 tp+8%/sl-5%" />
+      </config>
+    </Node>
+  </NodeList>
+
+  <Links>
+    <Link>
+      <SourceNodeId>n_amb_import</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_ambush_signal</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_ambush_signal</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_ambush_exit</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+  </Links>
+</DagPipeline>

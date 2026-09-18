@@ -469,7 +469,7 @@ object SectorSubDivision {
     )
 
     /** 获取某板块的子板块列表 */
-    /** 判斷名稱是否為某個大板塊的子板塊 */
+    /** 判断名称是否为某个大板块的子板块 */
     fun isSubSectorName(name: String): Boolean {
         for (subList in ALL_SECTORS.values) {
             if (subList.any { it.name == name }) return true

@@ -6,12 +6,14 @@ import com.chin.stockanalysis.agent.stock.StockPickingResult
 import com.chin.stockanalysis.agent.stock.StockRecommendation
 import com.chin.stockanalysis.config.FeatureFlagManager
 import com.chin.stockanalysis.strategy.StrategyEngineHolder
-import com.chin.stockanalysis.strategy.trade.SimulationTradeEngine
+import com.chin.stockanalysis.strategy.HoldingPeriod
+import com.chin.stockanalysis.strategy.topology.xml.DagTradeExecutor
+import com.chin.stockanalysis.stock.database.StockDatabase
 
 /**
- * ## 選股路由層
+ * ## 选股路由层
  *
- * Legacy: SimulationTradeEngine.runTradeSession() → 轉換為 StockPickingResult
+ * Legacy: DagTradeExecutor (mid_term pipeline) → 从 DB 读取订单转为推荐
  * Agent: StockPickingAgent.pickStocks()
  */
 interface StockPickingService {
@@ -24,7 +26,7 @@ interface StockPickingService {
     ): StockPickingResult
 }
 
-/** Legacy 實現 — 調用 SimulationTradeEngine.runTradeSession() */
+/** Legacy 实现 — 调用 DAG Pipeline (mid_term) */
 class LegacyStockPickingService : StockPickingService {
     override suspend fun pickStocks(
         context: Context,
@@ -34,42 +36,55 @@ class LegacyStockPickingService : StockPickingService {
         onProgress: ((String) -> Unit)?
     ): StockPickingResult {
         val engine = StrategyEngineHolder.get()
-        val strategies = engine.getStrategies()
+        val strategies = engine.getEnabledStrategiesByPeriod(HoldingPeriod.MID)
         if (strategies.isEmpty()) {
-            return StockPickingResult(success = false, rawOutput = "無可用策略")
+            return StockPickingResult(success = false, rawOutput = "无可用策略")
         }
 
-        val te = SimulationTradeEngine(context)
-        val config = SimulationTradeEngine.TradeSessionConfig(
-            tradeDate = date ?: java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd")),
-            onlyMainBoard = onlyMainBoard
+        val tradeDate = date ?: java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+        val today = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+
+        onProgress?.invoke("正在执行 DAG 选股 Pipeline...")
+        val result = DagTradeExecutor.execute(
+            context = context,
+            useCaseId = "mid_term",
+            tradeDate = tradeDate,
+            today = today,
+            strategies = strategies,
+            orderType = "MidTermQuant",
+            onNodeProgress = { _, nodeName ->
+                onProgress?.invoke("🔄 $nodeName 执行中...")
+            }
         )
 
-        onProgress?.invoke("正在執行選股 Pipeline...")
-        val report = te.runTradeSession(strategies, config)
-
-        // 將 TradeSessionReport 轉換為 StockPickingResult
-        val recommendations = report.aiTop3.map { pick ->
-            StockRecommendation(
-                code = pick.stockCode,
-                name = pick.stockName,
-                strategies = listOf("LegacyPipeline"),
-                score = pick.compositeScore,
-                reason = pick.reason
-            )
-        }.take(maxResults)
+        // 从 DB 读取今日订单转为推荐列表
+        val db = StockDatabase.getInstance(context)
+        val orders = try { db.strategyTradeOrderDao().getByDate(tradeDate) } catch (_: Exception) { emptyList() }
+        val recommendations = orders
+            .filter { it.status == "BUYING" || it.status == "PENDING" }
+            .sortedByDescending { it.scoreAtBuy }
+            .take(maxResults)
+            .map { order ->
+                StockRecommendation(
+                    code = order.stockCode,
+                    name = order.stockName,
+                    strategies = listOf("DAG_Pipeline"),
+                    score = order.scoreAtBuy,
+                    reason = order.reason
+                )
+            }
 
         return StockPickingResult(
-            success = recommendations.isNotEmpty(),
+            success = result.success && recommendations.isNotEmpty(),
             recommendations = recommendations,
-            marketAssessment = report.summary,
-            rawOutput = report.summary,
+            marketAssessment = result.uiText,
+            rawOutput = result.uiText,
             steps = 9
         )
     }
 }
 
-/** Agent 實現 */
+/** Agent 实现 */
 class AgentStockPickingService : StockPickingService {
     override suspend fun pickStocks(
         context: Context,
@@ -83,7 +98,7 @@ class AgentStockPickingService : StockPickingService {
     }
 }
 
-/** 路由工廠 */
+/** 路由工厂 */
 object StockPickingRouter {
     fun getService(): StockPickingService {
         return when (FeatureFlagManager.resolveRoute(FeatureFlagManager.stockPickingRoute)) {

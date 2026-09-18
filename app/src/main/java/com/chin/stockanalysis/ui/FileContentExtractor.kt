@@ -16,15 +16,15 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 
 /**
- * ## 檔案內容提取器 v1.0
+ * ## 档案内容提取器 v1.0
  *
  * 支援格式：
- * - txt/csv: 純文本直接讀取
+ * - txt/csv: 纯文本直接读取
  * - pdf: Android PdfRenderer (API 21+)
- * - docx: ZIP+XML 解析（DOCX 本質是 ZIP 壓縮的 XML）
- * - xlsx: ZIP+XML 解析（XLSX 本質是 ZIP 壓縮的 XML）
- * - 圖片: base64 編碼供 AI Vision 分析
- * - word (doc): 返回提示（需第三方庫）
+ * - docx: ZIP+XML 解析（DOCX 本质是 ZIP 压缩的 XML）
+ * - xlsx: ZIP+XML 解析（XLSX 本质是 ZIP 压缩的 XML）
+ * - 图片: base64 编码供 AI Vision 分析
+ * - word (doc): 返回提示（需第三方库）
  */
 object FileContentExtractor {
 
@@ -38,7 +38,7 @@ object FileContentExtractor {
     )
 
     /**
-     * 從 Uri 提取內容（自動根據副檔名分發）
+     * 从 Uri 提取内容（自动根据副档名分发）
      */
     suspend fun extract(context: Context, uri: Uri, fileName: String? = null): ExtractedContent =
         withContext(Dispatchers.IO) {
@@ -47,10 +47,10 @@ object FileContentExtractor {
                 val extension = name.substringAfterLast('.', "").lowercase()
                 val mimeType = context.contentResolver.getType(uri) ?: ""
 
-                Log.i(TAG, "提取檔案: $name (ext=$extension, mime=$mimeType)")
+                Log.i(TAG, "提取档案: $name (ext=$extension, mime=$mimeType)")
 
                 when {
-                    // 圖片格式 → base64
+                    // 图片格式 → base64
                     mimeType.startsWith("image/") -> extractImageAsBase64(context, uri)
                     // PDF
                     extension == "pdf" || mimeType == "application/pdf" ->
@@ -64,26 +64,26 @@ object FileContentExtractor {
                     // TXT / CSV
                     extension in listOf("txt", "csv", "json", "xml", "md", "log") ->
                         ExtractedContent(text = extractPlainText(context, uri))
-                    // 純文本
+                    // 纯文本
                     mimeType.startsWith("text/") ->
                         ExtractedContent(text = extractPlainText(context, uri))
                     // 其他
-                    else -> ExtractedContent(text = "[不支援的檔案格式: .$extension]")
+                    else -> ExtractedContent(text = "[不支援的档案格式: .$extension]")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "提取失敗: ${e.message}")
-                ExtractedContent(text = "[無法讀取檔案: ${e.message}]")
+                Log.e(TAG, "提取失败: ${e.message}")
+                ExtractedContent(text = "[无法读取档案: ${e.message}]")
             }
         }
 
     // ════════════════════════════════════════
-    // 純文本 (txt/csv/json/xml/md/log)
+    // 纯文本 (txt/csv/json/xml/md/log)
     // ════════════════════════════════════════
 
     private fun extractPlainText(context: Context, uri: Uri): String {
         return context.contentResolver.openInputStream(uri)?.use { stream ->
             stream.bufferedReader().use { it.readText() }
-        } ?: "[無法讀取文件]"
+        } ?: "[无法读取文件]"
     }
 
     // ════════════════════════════════════════
@@ -97,23 +97,23 @@ object FileContentExtractor {
 
         try {
             pfd = context.contentResolver.openFileDescriptor(uri, "r")
-                ?: return "[無法讀取 PDF: 開啟失敗]"
+                ?: return "[无法读取 PDF: 开启失败]"
 
             renderer = PdfRenderer(pfd)
-            val pageCount = renderer.pageCount.coerceAtMost(50) // 最多讀取 50 頁
+            val pageCount = renderer.pageCount.coerceAtMost(50) // 最多读取 50 页
 
-            sb.appendLine("[PDF 共 $pageCount 頁]")
+            sb.appendLine("[PDF 共 $pageCount 页]")
             sb.appendLine()
 
             for (i in 0 until pageCount) {
                 val page = renderer.openPage(i)
                 try {
-                    // 將頁面渲染為 Bitmap 後嘗試 OCR / 尺寸記錄
+                    // 将页面渲染为 Bitmap 后尝试 OCR / 尺寸记录
                     val width = page.width
                     val height = page.height
-                    sb.appendLine("--- 第 ${i + 1} 頁 (${width}x${height}) ---")
-                    // 標記：Android PdfRenderer 只能渲染圖，無法直接提取文字
-                    // 後續可接入 OCR，目前提供頁面信息供 AI 參考
+                    sb.appendLine("--- 第 ${i + 1} 页 (${width}x${height}) ---")
+                    // 标记：Android PdfRenderer 只能渲染图，无法直接提取文字
+                    // 后续可接入 OCR，目前提供页面信息供 AI 参考
                 } finally {
                     page.close()
                 }
@@ -121,11 +121,11 @@ object FileContentExtractor {
 
             if (pageCount > 0) {
                 sb.appendLine()
-                sb.appendLine("[提示: PDF 文字提取需 AI OCR 能力，請確認 AI 模型支援圖片分析]")
+                sb.appendLine("[提示: PDF 文字提取需 AI OCR 能力，请确认 AI 模型支援图片分析]")
             }
         } catch (e: Exception) {
-            Log.w(TAG, "PDF 提取失敗: ${e.message}")
-            return "[PDF 解析失敗: ${e.message}]"
+            Log.w(TAG, "PDF 提取失败: ${e.message}")
+            return "[PDF 解析失败: ${e.message}]"
         } finally {
             renderer?.close()
             try { pfd?.close() } catch (_: Exception) {}
@@ -142,10 +142,10 @@ object FileContentExtractor {
         return try {
             context.contentResolver.openInputStream(uri)?.use { stream ->
                 extractTextFromOOXML(stream, "word/document.xml")
-            } ?: "[無法讀取 DOCX]"
+            } ?: "[无法读取 DOCX]"
         } catch (e: Exception) {
-            Log.w(TAG, "DOCX 提取失敗: ${e.message}")
-            "[DOCX 解析失敗: ${e.message}]"
+            Log.w(TAG, "DOCX 提取失败: ${e.message}")
+            "[DOCX 解析失败: ${e.message}]"
         }
     }
 
@@ -158,28 +158,28 @@ object FileContentExtractor {
             context.contentResolver.openInputStream(uri)?.use { stream ->
                 // 先提取 shared strings
                 val sharedStrings = extractSharedStrings(stream)
-                // 重新打開流提取工作表
+                // 重新打开流提取工作表
                 context.contentResolver.openInputStream(uri)?.use { stream2 ->
                     extractSheetData(stream2, sharedStrings)
-                } ?: "[無法讀取 XLSX]"
-            } ?: "[無法讀取 XLSX]"
+                } ?: "[无法读取 XLSX]"
+            } ?: "[无法读取 XLSX]"
         } catch (e: Exception) {
-            Log.w(TAG, "XLSX 提取失敗: ${e.message}")
-            "[XLSX 解析失敗: ${e.message}]"
+            Log.w(TAG, "XLSX 提取失败: ${e.message}")
+            "[XLSX 解析失败: ${e.message}]"
         }
     }
 
     // ════════════════════════════════════════
-    // 圖片 → Base64
+    // 图片 → Base64
     // ════════════════════════════════════════
 
     private fun extractImageAsBase64(context: Context, uri: Uri): ExtractedContent {
         return try {
             context.contentResolver.openInputStream(uri)?.use { stream ->
                 val bitmap = BitmapFactory.decodeStream(stream)
-                    ?: return ExtractedContent(text = "[無法解碼圖片]")
+                    ?: return ExtractedContent(text = "[无法解码图片]")
 
-                // 壓縮大圖（限制最大 2048px，避免 base64 過大）
+                // 压缩大图（限制最大 2048px，避免 base64 过大）
                 val processed = if (bitmap.width > 2048 || bitmap.height > 2048) {
                     val scale = minOf(2048f / bitmap.width, 2048f / bitmap.height)
                     val w = (bitmap.width * scale).toInt()
@@ -197,15 +197,15 @@ object FileContentExtractor {
                 if (processed != bitmap) processed.recycle()
 
                 ExtractedContent(
-                    text = "[圖片: ${processed.width}x${processed.height}]",
+                    text = "[图片: ${processed.width}x${processed.height}]",
                     base64Image = base64,
                     isImage = true,
                     mimeType = "image/jpeg"
                 )
-            } ?: ExtractedContent(text = "[無法讀取圖片]")
+            } ?: ExtractedContent(text = "[无法读取图片]")
         } catch (e: Exception) {
-            Log.w(TAG, "圖片編碼失敗: ${e.message}")
-            ExtractedContent(text = "[圖片處理失敗: ${e.message}]")
+            Log.w(TAG, "图片编码失败: ${e.message}")
+            ExtractedContent(text = "[图片处理失败: ${e.message}]")
         }
     }
 
@@ -213,7 +213,7 @@ object FileContentExtractor {
     // OOXML (DOCX/XLSX) 共用方法
     // ════════════════════════════════════════
 
-    /** 從 OOXML ZIP 中提取指定 XML 文件的純文字 */
+    /** 从 OOXML ZIP 中提取指定 XML 文件的纯文字 */
     private fun extractTextFromOOXML(inputStream: InputStream, targetEntry: String): String {
         val sb = StringBuilder()
         val zis = ZipInputStream(inputStream)
@@ -230,11 +230,11 @@ object FileContentExtractor {
 
         zis.close()
         val result = sb.toString().trim()
-        if (result.isEmpty()) return "[DOCX 文件中未找到文字內容]"
+        if (result.isEmpty()) return "[DOCX 文件中未找到文字内容]"
         return result
     }
 
-    /** 從 OOXML 中提取 shared strings 表 */
+    /** 从 OOXML 中提取 shared strings 表 */
     private fun extractSharedStrings(inputStream: InputStream): Map<Int, String> {
         val map = mutableMapOf<Int, String>()
         val zis = ZipInputStream(inputStream)
@@ -263,7 +263,7 @@ object FileContentExtractor {
         return map
     }
 
-    /** 從 XLSX 工作表提取數據（CSV 格式） */
+    /** 从 XLSX 工作表提取数据（CSV 格式） */
     private fun extractSheetData(inputStream: InputStream, sharedStrings: Map<Int, String>): String {
         val sb = StringBuilder()
         val zis = ZipInputStream(inputStream)
@@ -283,7 +283,7 @@ object FileContentExtractor {
         zis.close()
 
         val result = sb.toString().trim()
-        if (result.isEmpty()) return "[XLSX 文件中未找到數據]"
+        if (result.isEmpty()) return "[XLSX 文件中未找到数据]"
         if (!found) return "[XLSX 解析: 未找到工作表]"
         return result
     }
@@ -324,11 +324,11 @@ object FileContentExtractor {
         return sb.toString()
     }
 
-    /** 從 XML 中提取純文字（去除標籤） */
+    /** 从 XML 中提取纯文字（去除标签） */
     private fun extractTextFromXml(xml: String): String {
         val sb = StringBuilder()
 
-        // 提取 <w:t> 內容（Word 文字節點）
+        // 提取 <w:t> 内容（Word 文字节点）
         val wtRegex = Regex("<w:t[^>]*>(.*?)</w:t>")
         var lastWasSpace = false
 
@@ -343,16 +343,16 @@ object FileContentExtractor {
             lastWasSpace = false
         }
 
-        // 提取 <w:p> 段落邊界，插入換行
+        // 提取 <w:p> 段落边界，插入换行
         val result = sb.toString()
         if (result.isEmpty()) return ""
 
-        // 在段落標記處插入換行（簡單處理）
+        // 在段落标记处插入换行（简单处理）
         val paraRegex = Regex("<w:p[ >]")
         val paraMatches = paraRegex.findAll(xml).toList()
         if (paraMatches.size > 1) {
-            // 已通過 w:t 提取，保留原始順序
-            // w:t 之間的換行通過 w:p 自然分隔
+            // 已通过 w:t 提取，保留原始顺序
+            // w:t 之间的换行通过 w:p 自然分隔
             return result
         }
 
@@ -360,7 +360,7 @@ object FileContentExtractor {
     }
 
     // ════════════════════════════════════════
-    // 輔助方法
+    // 辅助方法
     // ════════════════════════════════════════
 
     private fun getFileNameFromUri(context: Context, uri: Uri): String? {

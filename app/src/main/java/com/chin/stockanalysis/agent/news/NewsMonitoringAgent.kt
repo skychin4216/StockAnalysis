@@ -10,18 +10,18 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * ## 新聞監控 Agent（ReAct 模式）
+ * ## 新闻监控 Agent（ReAct 模式）
  *
- * 替代現有的 HotSectorNewsUpdater 定時任務，實現主動新聞監控：
- * 1. 監控熱門板塊新聞動態
- * 2. 評估新聞對股票的影響
- * 3. 發現重大利好/利空時主動提醒
- * 4. 持續跟蹤重要事件進展
+ * 替代现有的 HotSectorNewsUpdater 定时任务，实现主动新闻监控：
+ * 1. 监控热门板块新闻动态
+ * 2. 评估新闻对股票的影响
+ * 3. 发现重大利好/利空时主动提醒
+ * 4. 持续跟踪重要事件进展
  */
 class NewsMonitoringAgent(context: Context) : AgentBase(
     id = "news_monitor",
-    name = "新聞監控 Agent",
-    description = "主動監控市場新聞，評估影響，發現重大事件時主動提醒",
+    name = "新闻监控 Agent",
+    description = "主动监控市场新闻，评估影响，发现重大事件时主动提醒",
     context = context
 ) {
     companion object {
@@ -35,34 +35,34 @@ class NewsMonitoringAgent(context: Context) : AgentBase(
     }
 
     override fun buildSystemPrompt(): String = """
-        你是一位專業的市場新聞分析 Agent，負責監控和評估市場新聞對股票的影響。
+        你是一位专业的市场新闻分析 Agent，负责监控和评估市场新闻对股票的影响。
 
         ## 核心能力
-        1. 主動發現熱門板塊的最新新聞
-        2. 評估單條新聞的利好/利空程度和影響範圍
-        3. 識別重大催化事件（政策、業績、併購、技術突破等）
-        4. 跟蹤重要事件的後續進展
-        5. 給出投資建議（關注/規避/無影響）
+        1. 主动发现热门板块的最新新闻
+        2. 评估单条新闻的利好/利空程度和影响范围
+        3. 识别重大催化事件（政策、业绩、并购、技术突破等）
+        4. 跟踪重要事件的后续进展
+        5. 给出投资建议（关注/规避/无影响）
 
-        ## 評估維度
+        ## 评估维度
         - 情感: 利好 / 利空 / 中性
-        - 強度: 1-100（100 為極重大）
-        - 影響範圍: 個股 / 板塊 / 全市場
-        - 持續性: 一次性 / 短期 / 中期 / 長期
-        - 確定性: 傳聞 / 預期 / 確認
+        - 强度: 1-100（100 为极重大）
+        - 影响范围: 个股 / 板块 / 全市场
+        - 持续性: 一次性 / 短期 / 中期 / 长期
+        - 确定性: 传闻 / 预期 / 确认
 
-        ## 輸出格式
+        ## 输出格式
         {
           "news_items": [
             {
               "title": "...",
               "sentiment": "利好",
               "strength": 75,
-              "scope": "板塊",
+              "scope": "板块",
               "duration": "中期",
-              "certainty": "確認",
+              "certainty": "确认",
               "affected_stocks": ["600519", "000858"],
-              "recommendation": "關注"
+              "recommendation": "关注"
             }
           ],
           "summary": "..."
@@ -70,7 +70,7 @@ class NewsMonitoringAgent(context: Context) : AgentBase(
     """.trimIndent()
 
     /**
-     * 監控指定板塊的新聞
+     * 监控指定板块的新闻
      */
     suspend fun monitorSector(
         sectorName: String? = null,
@@ -82,8 +82,8 @@ class NewsMonitoringAgent(context: Context) : AgentBase(
         }
 
         val result = react(
-            input = sectorName?.let { "監控 $it 板塊的最新新聞動態，評估對相關股票的影響" }
-                ?: "監控當前熱門板塊的最新新聞動態",
+            input = sectorName?.let { "监控 $it 板块的最新新闻动态，评估对相关股票的影响" }
+                ?: "监控当前热门板块的最新新闻动态",
             ctx = ctx,
             maxSteps = 5
         )
@@ -92,7 +92,7 @@ class NewsMonitoringAgent(context: Context) : AgentBase(
     }
 
     /**
-     * 評估單條新聞對股票的影響
+     * 评估单条新闻对股票的影响
      */
     suspend fun assessNewsImpact(
         newsTitle: String,
@@ -104,7 +104,7 @@ class NewsMonitoringAgent(context: Context) : AgentBase(
         }
 
         val result = react(
-            input = "評估新聞『$newsTitle』對股票 ${stockCodes.joinToString()} 的影響",
+            input = "评估新闻『$newsTitle』对股票 ${stockCodes.joinToString()} 的影响",
             ctx = ctx,
             maxSteps = 3
         )
@@ -128,13 +128,13 @@ class NewsMonitoringAgent(context: Context) : AgentBase(
                             title = obj.getString("title"),
                             sentiment = obj.optString("sentiment", "中性"),
                             strength = obj.optInt("strength", 50),
-                            scope = obj.optString("scope", "個股"),
+                            scope = obj.optString("scope", "个股"),
                             duration = obj.optString("duration", "短期"),
-                            certainty = obj.optString("certainty", "傳聞"),
+                            certainty = obj.optString("certainty", "传闻"),
                             affectedStocks = obj.optJSONArray("affected_stocks")?.let {
                                 (0 until it.length()).map { idx -> it.getString(idx) }
                             } ?: emptyList(),
-                            recommendation = obj.optString("recommendation", "觀察")
+                            recommendation = obj.optString("recommendation", "观察")
                         )
                     )
                 }
@@ -151,7 +151,7 @@ class NewsMonitoringAgent(context: Context) : AgentBase(
     }
 }
 
-/** 新聞監控結果 */
+/** 新闻监控结果 */
 data class NewsMonitorResult(
     val success: Boolean,
     val items: List<NewsAssessment> = emptyList(),
@@ -159,7 +159,7 @@ data class NewsMonitorResult(
     val rawOutput: String = ""
 )
 
-/** 單條新聞評估 */
+/** 单条新闻评估 */
 data class NewsAssessment(
     val title: String,
     val sentiment: String,
@@ -171,7 +171,7 @@ data class NewsAssessment(
     val recommendation: String
 )
 
-/** 新聞影響評估結果 */
+/** 新闻影响评估结果 */
 data class NewsImpactResult(
     val success: Boolean,
     val assessment: String,
@@ -179,10 +179,10 @@ data class NewsImpactResult(
 )
 
 /** ================================================================ */
-/** 獲取板塊新聞工具 */
+/** 获取板块新闻工具 */
 class FetchSectorNewsTool(private val ctx: Context) : AgentTool {
     override val name = "fetch_sector_news"
-    override val description = "獲取指定板塊或熱門板塊的最新新聞"
+    override val description = "获取指定板块或热门板块的最新新闻"
     override val parameters = listOf("sector", "limit")
 
     override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
@@ -199,10 +199,10 @@ class FetchSectorNewsTool(private val ctx: Context) : AgentTool {
                     db.newsFactorDao().getActiveBySector("", limit)
                 }
 
-                if (news.isEmpty()) return@withContext "暫無相關新聞"
+                if (news.isEmpty()) return@withContext "暂无相关新闻"
 
                 buildString {
-                    appendLine("【新聞列表】${sector ?: "熱門板塊"}（${news.size}條）")
+                    appendLine("【新闻列表】${sector ?: "热门板块"}（${news.size}条）")
                     news.forEachIndexed { i, n ->
                         val sentimentLabel = when {
                             n.sentiment > 0 -> "利好"
@@ -213,23 +213,23 @@ class FetchSectorNewsTool(private val ctx: Context) : AgentTool {
                     }
                 }
             } catch (e: Exception) {
-                "錯誤: 獲取新聞失敗: ${e.message}"
+                "错误: 获取新闻失败: ${e.message}"
             }
         }
     }
 }
 
-/** 新聞影響評估工具 */
+/** 新闻影响评估工具 */
 class NewsImpactTool(private val ctx: Context) : AgentTool {
     override val name = "news_impact"
-    override val description = "評估新聞對指定股票的影響程度"
+    override val description = "评估新闻对指定股票的影响程度"
     override val parameters = listOf("news_title", "stock_codes")
 
     override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
         val c = ctx
         return withContext(Dispatchers.IO) {
             try {
-                val title = params["news_title"] ?: return@withContext "錯誤: 缺少新聞標題"
+                val title = params["news_title"] ?: return@withContext "错误: 缺少新闻标题"
                 val codes = params["stock_codes"]?.split(",")?.map { it.trim() } ?: emptyList()
                 val db = StockDatabase.getInstance(c)
 
@@ -239,42 +239,42 @@ class NewsImpactTool(private val ctx: Context) : AgentTool {
                     val related = basic?.business?.let { business ->
                         title.contains(business) || business.contains(title.take(10))
                     } ?: false
-                    impacts.add("$code(${basic?.name ?: "未知"}): ${if (related) "直接相關" else "間接相關"}")
+                    impacts.add("$code(${basic?.name ?: "未知"}): ${if (related) "直接相关" else "间接相关"}")
                 }
 
                 buildString {
-                    appendLine("【新聞影響評估】$title")
+                    appendLine("【新闻影响评估】$title")
                     impacts.forEach { appendLine("- $it") }
                 }
             } catch (e: Exception) {
-                "錯誤: 評估失敗: ${e.message}"
+                "错误: 评估失败: ${e.message}"
             }
         }
     }
 }
 
-/** 事件跟蹤工具 */
+/** 事件跟踪工具 */
 class TrackEventTool(private val ctx: Context) : AgentTool {
     override val name = "track_event"
-    override val description = "跟蹤重要事件的後續進展"
+    override val description = "跟踪重要事件的后续进展"
     override val parameters = listOf("event_keyword", "days")
 
     override suspend fun execute(params: Map<String, String>, agentCtx: AgentContext): String {
         val c = ctx
         return withContext(Dispatchers.IO) {
             try {
-                val keyword = params["event_keyword"] ?: return@withContext "錯誤: 缺少事件關鍵詞"
+                val keyword = params["event_keyword"] ?: return@withContext "错误: 缺少事件关键词"
                 val days = params["days"]?.toIntOrNull() ?: 7
                 val db = StockDatabase.getInstance(c)
 
-                // 取最近 50 條新聞，然後手動過濾關鍵詞
+                // 取最近 50 条新闻，然后手动过滤关键词
                 val recentNews = db.newsFactorDao().getActiveBySector("", 50)
                 val filtered = recentNews.filter { it.title.contains(keyword, ignoreCase = true) }
 
-                if (filtered.isEmpty()) return@withContext "未找到相關事件進展"
+                if (filtered.isEmpty()) return@withContext "未找到相关事件进展"
 
                 buildString {
-                    appendLine("【事件跟蹤】$keyword（近 $days 天）")
+                    appendLine("【事件跟踪】$keyword（近 $days 天）")
                     filtered.forEach { n ->
                         val sentimentLabel = when {
                             n.sentiment > 0 -> "利好"
@@ -285,7 +285,7 @@ class TrackEventTool(private val ctx: Context) : AgentTool {
                     }
                 }
             } catch (e: Exception) {
-                "錯誤: 跟蹤失敗: ${e.message}"
+                "错误: 跟踪失败: ${e.message}"
             }
         }
     }

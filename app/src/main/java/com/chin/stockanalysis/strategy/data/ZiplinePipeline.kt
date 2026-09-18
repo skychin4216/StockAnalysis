@@ -41,7 +41,7 @@ class ZiplinePipeline(private val context: Context) {
         lookbackDays: Int = 30
     ): FactorSet = withContext(Dispatchers.IO) {
         try {
-            // 只計算傳入股票，大幅減少無效計算
+            // 只计算传入股票，大幅减少无效计算
             val targetCodes = stocks.map { it.code }.toSet()
             val availableDates = db.dailySnapshotDao().getAvailableDates(lookbackDays + 5)
                 .filter { it <= date }.sorted().takeLast(lookbackDays)
@@ -53,7 +53,7 @@ class ZiplinePipeline(private val context: Context) {
                 try {
                     val snaps = db.dailySnapshotDao().getByDate(d)
                     for (snap in snaps) {
-                        if (snap.code !in targetCodes) continue  // 只計算候選池
+                        if (snap.code !in targetCodes) continue  // 只计算候选池
                         history.getOrPut(snap.code) { mutableListOf() }.add(snap.close)
                         volumes.getOrPut(snap.code) { mutableListOf() }.add(snap.volume)
                     }
@@ -98,14 +98,7 @@ class ZiplinePipeline(private val context: Context) {
     }
 
     private fun computeRSI(prices: List<Double>, period: Int): Double {
-        if (prices.size < period + 1) return 50.0
-        val diffs = (1 until prices.size).map { prices[it] - prices[it - 1] }.takeLast(period)
-        var gain = 0.0; var loss = 0.0
-        for (d in diffs) { if (d >= 0) gain += d else loss -= d }
-        if (gain + loss == 0.0) return 50.0
-        val avgGain = gain / period; val avgLoss = loss / period
-        val rs = if (avgLoss == 0.0) 100.0 else avgGain / avgLoss
-        return 100.0 - 100.0 / (1.0 + rs)
+        return com.chin.stockanalysis.strategy.analysis.RsiCalculator.compute(prices, period)
     }
 
     private fun computeATR(prices: List<Double>): Double {

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 先判方向再定周期 UseCase（v6）
+
+  核心思路：方向不对，周期不启动。
+  中线/长线 DAG 内部已串联 v6 节点（n_direction 个股方向标签 → n_season 行业季节日历 → n_leader 龙头股跟踪）：
+  1. 先判方向：剔除「下降趋势/区间震荡」股（中线/长线只买 蓄势/上升/突破）
+  2. 行业季节日历：命中春耕/夏季用电高峰/年底备货/商品锚定(油价/锂价/铜价/金价)板块加分
+  3. 龙头股跟踪：板块内龙头优先 +8 分，龙头走弱标记提示切换
+
+  本 usecase 顺序执行中线 DAG → 长线 DAG（共享 PipelineContext，先判方向再定周期）。
+-->
+<usecase id="direction" name="先判方向再定周期">
+  <description>个股方向判断→行业季节日历→龙头股跟踪→中线/长线周期流程</description>
+  <steps>
+    <pipeline ref="usecases/mid_term_pipeline.xml" name="中线DAG(先判方向)" />
+    <pipeline ref="usecases/long_term_pipeline.xml" name="长线DAG(先判方向)" />
+  </steps>
+  <config>
+    <param name="orderType" value="DirectionThenPeriod" />
+    <param name="maxHoldings" value="4" />
+    <param name="maxStocksPerStrategy" value="10" />
+    <param name="holdingPeriod" value="mid" />
+  </config>
+</usecase>

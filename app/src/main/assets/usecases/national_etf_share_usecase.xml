@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 国家队（汇金）宽基 ETF 份额动向 UseCase（XML DAG 单一事实源）
+
+  ★ 定位与另外三类 usecase 的区别（务必区分）：
+    · 三大选股周期（超短/短/中长）  入口=个股行情，产出**个股**买卖信号；
+    · etf_industry_scan / etf_holdings_top5 入口=ETF 重仓/覆盖，产出**个股**观察清单；
+    · national_etf_share（本 usecase）入口=**宽基 ETF 份额**，产出**市场级**结论：
+        「国家队（汇金）在买还是在卖」+「拐点时间点」，不产生个股买卖信号。
+
+  与 national_flow（十大流通股东·个股级）的分工：本链读宽基 ETF 份额（市场级、每日可观测），
+  national_flow 读个股十大流通股东（季报滞后、汇金 2015 后披露稀少）；两者互补，勿合并。
+
+  双端共用：APK UseCaseLoader 直接加载执行；usecase_pipeline.py（与本 XML 同居
+  assets/usecases 的 Python 引擎）解析同一份 XML —— 任何一端只改 XML，双端行为自动同源。
+  参数全部在 pipeline XML（national_etf_share_pipeline.xml），改参数只改那一处。
+  数据资产：data/_etf_share_signal.json + data/_etf_share_hist.json
+  产出算法：smalltools/_etf_share_flow.py（唯一事实源；探针 smalltools/_probe_fund_holders.py 已转正）
+  规则出处：E:\Android\work\dev\选股思路\national_flow_research.md、
+             institutional_breakout_guide.md（§8 FundFlowAnalyzer）
+-->
+<usecase id="national_etf_share" name="国家队ETF份额动向">
+  <description>宽基ETF份额(申赎) → 四象限(低位承接/高位派发) → 拐点买点卖点 + 时间点 → 汇金身份点名（市场级横幅，不选个股）</description>
+  <steps>
+    <pipeline ref="usecases/national_etf_share_pipeline.xml" name="national_etf_share_dag" />
+  </steps>
+  <config>
+    <param name="orderType" value="NationalEtfShare" />
+    <param name="maxHoldings" value="0" />
+    <param name="holdingPeriod" value="etf" />
+  </config>
+</usecase>

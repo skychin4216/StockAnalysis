@@ -174,6 +174,16 @@ class StrategyResultDialogFragment : BottomSheetDialogFragment() {
                 orientation = LinearLayout.HORIZONTAL
                 setPadding(4, 6, 4, 6)
                 if (idx % 2 == 1) setBackgroundColor(Color.parseColor("#F5F5F5"))
+                isClickable = true
+                setOnClickListener {
+                    dismiss()
+                    StockDetailNavigator.navigateFromFragment(
+                        this@StrategyResultDialogFragment,
+                        s.stockCode,
+                        s.stockName,
+                        changePct = s.changePercent
+                    )
+                }
             }
             row.addView(cell("${idx + 1}", weights[0], Color.GRAY))
             row.addView(cell(s.stockName, weights[1], Color.parseColor("#333333")))

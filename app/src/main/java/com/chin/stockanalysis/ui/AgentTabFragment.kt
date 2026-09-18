@@ -143,31 +143,31 @@ class AgentTabFragment : Fragment() {
         scroll.addView(layout)
 
         val etName = EditText(requireContext()).apply { hint = "名称"; setSingleLine(); textSize = 13f }
-        val etDesc = createScrollingEdit(requireContext(), hint = "設定描述（描述智能体的角色和功能）", minLines = 5, maxLines = 10, textSize = 13f)
+        val etDesc = createScrollingEdit(requireContext(), hint = "设定描述（描述智能体的角色和功能）", minLines = 5, maxLines = 10, textSize = 13f)
         val etPrompt = createScrollingEdit(requireContext(), hint = "如: 财报 300XXX\n空报 300XXX\n里程碑 300XXX", minLines = 3, maxLines = 5, textSize = 12f).apply {
             setText("BOM 赛道\n选股 赛道\n财报 股票代码\n空报 股票代码\n里程碑 股票代码\n全流程 赛道/个股")
         }
-        val etAutoCmd = createScrollingEdit(requireContext(), hint = "AI根据設定描述自动生成的全自动执行规则", minLines = 5, maxLines = 10, textSize = 12f)
+        val etAutoCmd = createScrollingEdit(requireContext(), hint = "AI根据设定描述自动生成的全自动执行规则", minLines = 5, maxLines = 10, textSize = 12f)
 
         val heading = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 6; topMargin = 12 }
         val p = lparams(6)
 
         layout.addView(lbl("名称"), heading)
         layout.addView(etName, p)
-        layout.addView(lbl("設定描述（description）"), heading)
+        layout.addView(lbl("设定描述（description）"), heading)
         layout.addView(etDesc, p)
 
         val btnGen = btnGen()
         layout.addView(btnGen, LinearLayout.LayoutParams(WRAP, WRAP).apply { bottomMargin = 8; topMargin = 8; gravity = android.view.Gravity.CENTER_HORIZONTAL })
 
-        layout.addView(lbl("輸入指令描述（quickPrompt）"), heading)
+        layout.addView(lbl("输入指令描述（quickPrompt）"), heading)
         layout.addView(etPrompt, p)
         layout.addView(lbl("全自动执行规则描述（systemPrompt — AI生成）"), heading)
         layout.addView(etAutoCmd, p)
 
         btnGen.setOnClickListener {
             val desc = etDesc.text.toString().trim()
-            if (desc.isBlank()) { toast("请先填写設定描述"); return@setOnClickListener }
+            if (desc.isBlank()) { toast("请先填写设定描述"); return@setOnClickListener }
             btnGen.text = "⏳ 生成中..."; btnGen.isEnabled = false
             lifecycleScope.launch {
                 try { val ac = genAutoCommand(desc); ui { etAutoCmd.setText(ac); btnGen.text = "✅ 已生成"; btnGen.isEnabled = true } }
@@ -202,13 +202,13 @@ class AgentTabFragment : Fragment() {
         scroll.addView(layout)
 
         val etName = EditText(requireContext()).apply { setText(agent.name); hint = "名称"; setSingleLine(); textSize = 13f }
-        val etDesc = createScrollingEdit(requireContext(), hint = "設定描述（描述智能体的角色和功能）", minLines = 5, maxLines = 10, textSize = 13f).apply {
+        val etDesc = createScrollingEdit(requireContext(), hint = "设定描述（描述智能体的角色和功能）", minLines = 5, maxLines = 10, textSize = 13f).apply {
             setText(cleanDesc(agent.description))
         }
         val etPrompt = createScrollingEdit(requireContext(), hint = "如: 财报 300XXX\n空报 300XXX\n里程碑 300XXX", minLines = 3, maxLines = 5, textSize = 12f).apply {
             setText(agent.quickPrompt)
         }
-        val etAutoCmd = createScrollingEdit(requireContext(), hint = "AI根据設定描述自动生成的全自动执行规则", minLines = 5, maxLines = 10, textSize = 12f).apply {
+        val etAutoCmd = createScrollingEdit(requireContext(), hint = "AI根据设定描述自动生成的全自动执行规则", minLines = 5, maxLines = 10, textSize = 12f).apply {
             setText(agent.systemPrompt)
         }
 
@@ -217,20 +217,20 @@ class AgentTabFragment : Fragment() {
 
         layout.addView(lbl("名称"), heading)
         layout.addView(etName, p)
-        layout.addView(lbl("設定描述（description）"), heading)
+        layout.addView(lbl("设定描述（description）"), heading)
         layout.addView(etDesc, p)
 
         val btnGen = btnGen()
         layout.addView(btnGen, LinearLayout.LayoutParams(WRAP, WRAP).apply { bottomMargin = 8; topMargin = 8; gravity = android.view.Gravity.CENTER_HORIZONTAL })
 
-        layout.addView(lbl("輸入指令描述（quickPrompt）"), heading)
+        layout.addView(lbl("输入指令描述（quickPrompt）"), heading)
         layout.addView(etPrompt, p)
         layout.addView(lbl("全自动执行规则描述（systemPrompt — AI生成）"), heading)
         layout.addView(etAutoCmd, p)
 
         btnGen.setOnClickListener {
             val desc = etDesc.text.toString().trim()
-            if (desc.isBlank()) { toast("请先填写設定描述"); return@setOnClickListener }
+            if (desc.isBlank()) { toast("请先填写设定描述"); return@setOnClickListener }
             btnGen.text = "⏳ 生成中..."; btnGen.isEnabled = false
             lifecycleScope.launch {
                 try { val ac = genAutoCommand(desc); ui { etAutoCmd.setText(ac); btnGen.text = "✅ 已生成"; btnGen.isEnabled = true } }
@@ -253,8 +253,8 @@ class AgentTabFragment : Fragment() {
     private fun showAgentDetail(agent: Agent) {
         val info = buildString {
             appendLine("${agent.icon} ${agent.name}\n")
-            appendLine("📝 設定描述（description）:"); appendLine(agent.description); appendLine()
-            appendLine("📋 輸入指令描述（quickPrompt）:"); appendLine(agent.quickPrompt); appendLine()
+            appendLine("📝 设定描述（description）:"); appendLine(agent.description); appendLine()
+            appendLine("📋 输入指令描述（quickPrompt）:"); appendLine(agent.quickPrompt); appendLine()
             if (agent.systemPrompt.isNotBlank()) { appendLine("⚡ 全自动执行规则描述（systemPrompt）:"); appendLine(agent.systemPrompt); appendLine() }
             appendLine("🏷️ ${agent.triggerKeywords.joinToString(", ").ifBlank { "无" }}")
             appendLine("📊 ${agent.usageCount}次 | 🕐 ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(agent.createdAt))}")
@@ -326,15 +326,17 @@ class AgentTabFragment : Fragment() {
             "4. 不要添加问候语或解释\n\n" +
             "用户描述：$description"
         var result = ""
+        var errorMsg: String? = null
         kotlinx.coroutines.suspendCancellableCoroutine<Unit> { cont ->
             provider.sendMessageStream(
                 messages = listOf(com.chin.stockanalysis.ui.Message(content = description, isUser = true)),
                 systemPrompt = sysPrompt,
                 onSuccess = { result = it },
                 onComplete = { result = it.ifEmpty { result }; cont.resumeWith(Result.success(Unit)) },
-                onError = { result = ""; cont.resumeWith(Result.success(Unit)) }
+                onError = { errMsg -> errorMsg = errMsg; cont.resumeWith(Result.failure(Exception("AI请求失败: $errMsg"))) }
             )
         }
+        if (errorMsg != null) throw Exception("AI请求失败: $errorMsg")
         if (result.isBlank()) throw Exception("AI生成结果为空")
         return result
     }

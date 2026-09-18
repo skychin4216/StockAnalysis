@@ -9,23 +9,23 @@ import com.chin.stockanalysis.news.HotSectorNewsUpdater
 import com.chin.stockanalysis.stock.database.StockDatabase
 
 /**
- * ## 新聞監控路由層
+ * ## 新闻监控路由层
  *
- * Legacy: HotSectorNewsUpdater.updateIfNeeded() → 查 DB 最新結果 → 轉換為 NewsMonitorResult
+ * Legacy: HotSectorNewsUpdater.updateIfNeeded() → 查 DB 最新结果 → 转换为 NewsMonitorResult
  * Agent: NewsMonitoringAgent.monitorSector()
  */
 interface NewsMonitoringService {
     suspend fun monitor(context: Context, sector: String? = null): NewsMonitorResult
 }
 
-/** Legacy 實現 — 調用 HotSectorNewsUpdater + 查 DB */
+/** Legacy 实现 — 调用 HotSectorNewsUpdater + 查 DB */
 class LegacyNewsMonitoringService : NewsMonitoringService {
     override suspend fun monitor(context: Context, sector: String?): NewsMonitorResult {
-        // 1. 觸發後台新聞更新
+        // 1. 触发后台新闻更新
         val updater = HotSectorNewsUpdater(context)
         updater.updateIfNeeded(forceRefresh = true, ignoreQuantPause = true)
 
-        // 2. 從 DB 讀取最新結果
+        // 2. 从 DB 读取最新结果
         val db = StockDatabase.getInstance(context)
         val newsFactors = if (sector.isNullOrBlank()) {
             db.newsFactorDao().getAllActive(20)
@@ -36,12 +36,12 @@ class LegacyNewsMonitoringService : NewsMonitoringService {
         if (newsFactors.isEmpty()) {
             return NewsMonitorResult(
                 success = false,
-                summary = "未找到相關新聞",
+                summary = "未找到相关新闻",
                 rawOutput = "No news factors found"
             )
         }
 
-        // 3. 轉換為 NewsAssessment
+        // 3. 转换为 NewsAssessment
         val items = newsFactors.map { entity ->
             NewsAssessment(
                 title = entity.title,
@@ -51,7 +51,7 @@ class LegacyNewsMonitoringService : NewsMonitoringService {
                 duration = "",
                 certainty = if (entity.impactStrength >= 70) "高" else if (entity.impactStrength >= 40) "中" else "低",
                 affectedStocks = entity.tags.split(",").filter { it.isNotBlank() },
-                recommendation = if (entity.sentiment > 0) "關注" else if (entity.sentiment < 0) "回避" else "觀望"
+                recommendation = if (entity.sentiment > 0) "关注" else if (entity.sentiment < 0) "回避" else "观望"
             )
         }
 
@@ -61,13 +61,13 @@ class LegacyNewsMonitoringService : NewsMonitoringService {
         return NewsMonitorResult(
             success = true,
             items = items,
-            summary = "共 ${items.size} 條新聞：利好 $positiveCount / 利空 $negativeCount / 中性 ${items.size - positiveCount - negativeCount}",
+            summary = "共 ${items.size} 条新闻：利好 $positiveCount / 利空 $negativeCount / 中性 ${items.size - positiveCount - negativeCount}",
             rawOutput = items.joinToString("\n") { "[${it.sentiment}] ${it.title}" }
         )
     }
 }
 
-/** Agent 實現 */
+/** Agent 实现 */
 class AgentNewsMonitoringService : NewsMonitoringService {
     override suspend fun monitor(context: Context, sector: String?): NewsMonitorResult {
         val agent = NewsMonitoringAgent(context)

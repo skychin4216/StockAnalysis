@@ -8,12 +8,12 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 /**
- * ## App 後台統一調度器
+ * ## App 后台统一调度器
  *
- * 啟動時執行：
- *  1. 熱門板塊池定時刷新
- *  2. 股票資料中心初始化
- *  3. 持倉監控（每 5 分鐘檢查一次）
+ * 启动时执行：
+ *  1. 热门板块池定时刷新
+ *  2. 股票资料中心初始化
+ *  3. 持仓监控（每 5 分钟检查一次）
  */
 object AppBackgroundRunner {
 
@@ -22,49 +22,116 @@ object AppBackgroundRunner {
     private var monitorJob: Job? = null
     private var _appScope: CoroutineScope? = null
 
-    /** 量化選股運行時設為 true，後臺 AI 相關任務應暫停 */
+    /** 盘中实时行情轻量刷新间隔(毫秒) = 30 分钟 */
+    private const val INTRADAY_REFRESH_INTERVAL = 30 * 60 * 1000L
+
+    /** 量化选股运行时设为 true，后台 AI 相关任务应暂停 */
     @Volatile
     var isQuantRunning = false
 
-    /** 暫停後臺 AI 任務（量化選股開始時調用） */
+    /** 暂停后台 AI 任务（量化选股开始时调用） */
     fun pauseForQuant() {
         isQuantRunning = true
-        Log.i(TAG, "⏸️ 量化選股開始，暫停後臺 AI 任務")
+        Log.i(TAG, "⏸️ 量化选股开始，暂停后台 AI 任务")
     }
 
-    /** 量化開始前，先確保新聞因子是最新的，然後再暫停後臺 */
+    /** 量化开始前，先确保新闻因子是最新的，然后再暂停后台 */
     suspend fun ensureNewsFreshThenPause(context: Context) {
         try {
             val updater = com.chin.stockanalysis.news.HotSectorNewsUpdater(context.applicationContext)
             updater.updateIfNeeded(forceRefresh = true)
-            Log.i(TAG, "📰 新聞因子已刷新，暫停後臺 AI 任務")
+            Log.i(TAG, "📰 新闻因子已刷新，暂停后台 AI 任务")
         } catch (e: Exception) {
-            Log.w(TAG, "新聞刷新失敗（不阻塞量化）: ${e.message}")
+            Log.w(TAG, "新闻刷新失败（不阻塞量化）: ${e.message}")
         }
         isQuantRunning = true
     }
 
-    /** 恢復後臺 AI 任務並立即觸發一次（量化選股結束時調用） */
+    /** 恢复后台 AI 任务并立即触发一次（量化选股结束时调用） */
     suspend fun resumeAfterQuant(context: Context) {
         isQuantRunning = false
-        Log.i(TAG, "▶️ 量化選股結束，恢復後臺 AI 任務，立即觸發一次")
+        Log.i(TAG, "▶️ 量化选股结束，恢复后台 AI 任务，立即触发一次")
         monitorJob?.cancel()
         try { monitorWatchlist(context) } catch (_: Exception) {}
         _appScope?.let { startPositionMonitor(context.applicationContext, it) }
     }
 
-    /** 觸發一次持倉監控（不重啟定時器，供量化結束後額外調用） */
+    /** 触发一次持仓监控（不重启定时器，供量化结束后额外调用） */
     suspend fun monitorWatchlistDirect(context: Context) {
-        try { monitorWatchlist(context) } catch (e: Exception) { Log.w(TAG, "額外監控失敗: ${e.message}") }
+        try { monitorWatchlist(context) } catch (e: Exception) { Log.w(TAG, "额外监控失败: ${e.message}") }
+    }
+
+    /**
+     * 盘中定时轻量刷新优先池当日实时行情（替代全量 K 线拉取，大幅降低耗时）。
+     *
+     * 每 30 分钟执行一次：交易时段(9:30-11:30 / 13:00-15:00)内，仅对
+     * 「基本股票池 + 板块龙头 + AI精选 + 自选 + 真实持仓」调用 refreshTodayRealtime，
+     * 只更新当日快照的行情字段，不重拉历史 K 线。收盘后不再刷新。
+     */
+    private fun startIntradayPriorityRefresh(context: Context, scope: CoroutineScope) {
+        scope.launch(Dispatchers.IO) {
+            while (isActive) {
+                try {
+                    val now = java.time.LocalTime.now()
+                    val inAm = now.isAfter(java.time.LocalTime.of(9, 30)) &&
+                        now.isBefore(java.time.LocalTime.of(11, 30))
+                    val inPm = now.isAfter(java.time.LocalTime.of(13, 0)) &&
+                        now.isBefore(java.time.LocalTime.of(15, 0))
+                    if (inAm || inPm) {
+                        refreshPriorityPool(context.applicationContext)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "盘中优先池刷新失败: ${e.message}")
+                }
+                delay(INTRADAY_REFRESH_INTERVAL)
+            }
+        }
+    }
+
+    /**
+     * 组装优先池并轻量刷新当日行情。
+     * 优先池 = 基本股票池 + 板块龙头 + 近5天AI精选 + 自选股 + 真实持仓（去重）
+     */
+    private suspend fun refreshPriorityPool(context: Context) {
+        val codes = mutableSetOf<String>()
+        try { codes.addAll(com.chin.stockanalysis.strategy.data.HistoricalDataFetcher.getCoreStockPool(context)) } catch (_: Exception) {}
+        try { codes.addAll(com.chin.stockanalysis.strategy.data.LeaderStockPool.getMainlineCodes(context)) } catch (_: Exception) {}
+        try {
+            val db = StockDatabase.getInstance(context)
+            db.aiSelectedStockDao()
+                .getRecentDays(LocalDate.now().minusDays(5).format(DATE_FMT))
+                .forEach { codes.add(it.stockCode) }
+            db.userWatchlistDao().getAll().forEach { codes.add(it.stockCode) }
+            db.realPositionDao().getAllActive().forEach { codes.add(it.stockCode) }
+        } catch (_: Exception) {}
+        if (codes.isEmpty()) return
+        val start = System.currentTimeMillis()
+        val updated = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(context)
+            .refreshTodayRealtime(codes.toList())
+        Log.i(TAG, "⏱️ 盘中优先池刷新: ${codes.size}只 更新$updated 耗时${System.currentTimeMillis() - start}ms")
     }
 
     fun start(context: Context, scope: CoroutineScope) {
-        Log.i(TAG, "🚀 啟動後台任務")
+        Log.i(TAG, "🚀 启动后台任务")
         EastMoneyHotSectorSource.startPoolScheduler(scope)
         StockDataCenter.init(context.applicationContext, scope)
         _appScope = scope
 
-        // 啟動時執行一次：遷移超過 5 天的 AI 精選到自選股
+        // 启动盘中自动四周期选股（交易时段每 15 分钟一轮，结果仅系统通知栏）
+        try {
+            AutoPickScheduler.start(context.applicationContext, scope)
+        } catch (e: Exception) {
+            Log.w(TAG, "自动选股调度启动失败: ${e.message}")
+        }
+
+        // 启动每日节奏调度（08:00 盘前情报 / 09:00 亚太情报 / 15:20 表格化复盘）
+        try {
+            DailyRhythmScheduler.start(context.applicationContext, scope)
+        } catch (e: Exception) {
+            Log.w(TAG, "每日节奏调度启动失败: ${e.message}")
+        }
+
+        // 启动时执行一次：迁移超过 5 天的 AI 精选到自选股
         scope.launch(Dispatchers.IO) {
             try {
                 val db = StockDatabase.getInstance(context.applicationContext)
@@ -73,9 +140,106 @@ object AppBackgroundRunner {
             } catch (_: Exception) {}
         }
 
-        // 啟動時增量同步 daily_snapshot（拉取缺失的交易日數據）
+        // 启动时增量同步 daily_snapshot（拉取缺失的交易日数据）
         scope.launch(Dispatchers.IO) {
             syncMissingTradingDays(context.applicationContext)
+        }
+
+        // 盘中(9:30-11:30/13:00-15:00)每 30 分钟轻量刷新优先池当日行情
+        startIntradayPriorityRefresh(context.applicationContext, scope)
+
+        // 启动时收集全球 Top10 机构研报新闻因子（每日一次，多调用方共享同一 job）
+        scope.launch(Dispatchers.IO) {
+            com.chin.stockanalysis.news.TopInstitutionNewsCollector.ensureFreshGlobal(scope, context.applicationContext).await()
+        }
+
+        // 启动时修复 strategy_trade_orders 中缺失的股票名称
+        // （选股时可能因数据未导入导致名称为空，此处自动补全）
+        scope.launch(Dispatchers.IO) {
+            fixMissingOrderStockNames(context.applicationContext)
+        }
+
+        // 启动时监控真实持仓做T机会（后台自动生成推荐）
+        scope.launch(Dispatchers.IO) {
+            monitorTTradeOpportunities(context.applicationContext)
+        }
+
+        // 启动时更新板块周期摘要（每周/每月主要板块追踪）
+        scope.launch(Dispatchers.IO) {
+            try {
+                val tracker = com.chin.stockanalysis.strategy.backtest.SectorPeriodTracker(context.applicationContext)
+                tracker.update()
+            } catch (e: Exception) {
+                Log.w(TAG, "板块周期摘要更新失败: ${e.message}")
+            }
+        }
+
+        // 启动时保存当日板块数据（供走势/轮动 Tab 使用）
+        scope.launch(Dispatchers.IO) {
+            try {
+                // 等待板块池首次刷新完成
+                kotlinx.coroutines.delay(5000)
+                val engine = com.chin.stockanalysis.strategy.backtest.SectorRotationEngine(context.applicationContext)
+                engine.saveDailySectorData()
+            } catch (e: Exception) {
+                Log.w(TAG, "板块每日数据保存失败: ${e.message}")
+            }
+        }
+
+        // 启动板块龙头异动监测（盘中周期扫描行业+概念板块龙头，仅刷新选股信号供 Pipeline 融合，不独立推送）
+        scope.launch(Dispatchers.IO) {
+            // 等待板块池首次刷新，确保扫描有数据
+            kotlinx.coroutines.delay(10_000)
+            com.chin.stockanalysis.strategy.monitor.SectorLeaderMonitor.startMonitor(
+                context.applicationContext,
+                scope
+            )
+        }
+
+        // 启动 AutoQuant 自主决策 Agent（盘中定时决策：实时价+板块信号喂参，60 分钟限流一次）
+        scope.launch(Dispatchers.IO) {
+            kotlinx.coroutines.delay(20_000) // 等持仓/板块数据就绪
+            com.chin.stockanalysis.agent.autoquant.AutoQuantAgentRunner.start(
+                context.applicationContext,
+                scope
+            )
+        }
+
+        // 启动时刷新热门板块-股票映射（确保 sector_stocks 表覆盖当前热门板块）
+        scope.launch(Dispatchers.IO) {
+            try {
+                kotlinx.coroutines.delay(8000) // 等待板块池刷新完成
+                val hotSource = EastMoneyHotSectorSource
+                val sectorSource = com.chin.stockanalysis.stock.data.sources.EastMoneySectorSource()
+                val db = StockDatabase.getInstance(context.applicationContext)
+                // 取行业+概念热门板块（按 code 去重，用中文名作为 sectorKey）
+                val hotSectors = (hotSource.industrySectors + hotSource.conceptSectors)
+                    .distinctBy { it.code }
+                    .map { it.code to it.name }
+                if (hotSectors.isEmpty()) {
+                    Log.i(TAG, "热门板块映射：池为空，跳过")
+                    return@launch
+                }
+                var updated = 0
+                for ((bkCode, sectorName) in hotSectors) {
+                    try {
+                        val stocks = sectorSource.fetchSectorComponents(bkCode, topN = 30, excludeKcb = false, excludeCyb = false)
+                        if (stocks.isEmpty()) continue
+                        val entities = stocks.map { s ->
+                            SectorStockEntity(
+                                sectorKey = sectorName,
+                                sectorName = sectorName,
+                                stockCode = s.code
+                            )
+                        }
+                        db.sectorStockDao().insertAll(entities)
+                        updated++
+                    } catch (_: Exception) {}
+                }
+                Log.i(TAG, "🔥 热门板块映射刷新: $updated/${hotSectors.size} 个板块")
+            } catch (e: Exception) {
+                Log.w(TAG, "热门板块映射刷新失败: ${e.message}")
+            }
         }
 
         startPositionMonitor(context.applicationContext, scope)
@@ -83,18 +247,18 @@ object AppBackgroundRunner {
 
     /**
      * 增量同步 daily_snapshot：
-     * 查詢本地最後一條數據日期，拉取從那天到今天之間所有缺失的交易日數據。
+     * 查询本地最后一条数据日期，拉取从那天到今天之间所有缺失的交易日数据。
      *
-     * - 首次安裝：拉取最近 5 個交易日
-     * - 正常使用：只拉取缺失的天數（通常 0-1 天）
-     * - 長期未使用：拉取缺失的所有交易日（最多 30 天）
+     * - 首次安装：拉取最近 5 个交易日
+     * - 正常使用：只拉取缺失的天数（通常 0-1 天）
+     * - 长期未使用：拉取缺失的所有交易日（最多 30 天）
      */
     private suspend fun syncMissingTradingDays(context: Context) {
         try {
             val db = StockDatabase.getInstance(context)
             val today = LocalDate.now()
 
-            // 查詢本地最新數據日期
+            // 查询本地最新数据日期
             val existingDates = try {
                 db.dailySnapshotDao().getAvailableDates(30)
             } catch (_: Exception) { emptyList() }
@@ -104,36 +268,214 @@ object AppBackgroundRunner {
                 .maxOrNull()
 
             if (latestDate != null && latestDate >= today.format(DATE_FMT)) {
-                Log.i(TAG, "📅 daily_snapshot 已是最新（$latestDate），跳過增量同步")
+                Log.i(TAG, "📅 daily_snapshot 已是最新（$latestDate），跳过增量同步")
                 return
             }
 
-            // 計算需要拉取的天數
+            // 计算需要拉取的天数
             val startLocalDate = if (latestDate != null) {
                 LocalDate.parse(latestDate, DATE_FMT).plusDays(1)
             } else {
-                today.minusDays(5)  // 首次安裝，拉取最近 5 天
+                today.minusDays(5)  // 首次安装，拉取最近 5 天
             }
             val daysToFetch = java.time.temporal.ChronoUnit.DAYS.between(startLocalDate, today).toInt().coerceIn(0, 30)
 
             if (daysToFetch <= 0) {
-                Log.i(TAG, "📅 無需增量同步")
+                Log.i(TAG, "📅 无需增量同步")
                 return
             }
 
-            Log.i(TAG, "📅 增量同步 daily_snapshot：從 ${startLocalDate.format(DATE_FMT)} 到 ${today.format(DATE_FMT)}（約 $daysToFetch 天）")
+            Log.i(TAG, "📅 增量同步 daily_snapshot：从 ${startLocalDate.format(DATE_FMT)} 到 ${today.format(DATE_FMT)}（约 $daysToFetch 天）")
 
             val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(context)
             val count = fetcher.fetchAllHistoricalData(
-                days = daysToFetch + 2,  // 多拉 2 天保險
+                days = daysToFetch + 2,  // 多拉 2 天保险
                 startDateOverride = startLocalDate,
                 onProgress = { progress ->
-                    Log.d(TAG, "📅 增量同步: ${progress.completedStocks}/${progress.totalStocks} (${progress.totalRecords} 條)")
+                    Log.d(TAG, "📅 增量同步: ${progress.completedStocks}/${progress.totalStocks} (${progress.totalRecords} 条)")
                 }
             )
-            Log.i(TAG, "📅 增量同步完成：寫入 $count 條記錄")
+            Log.i(TAG, "📅 增量同步完成：写入 $count 条记录")
         } catch (e: Exception) {
-            Log.w(TAG, "📅 增量同步失敗（不阻塞啟動）: ${e.message}")
+            Log.w(TAG, "📅 增量同步失败（不阻塞启动）: ${e.message}")
+        }
+    }
+
+    /**
+     * 实仓每日真实数据补齐：手工录入/OCR 的实仓股票通常不在系统扫描池内，
+     * 全市场按日同步不会覆盖它们，导致 daily_snapshot 只有新增当天补拉的少量日K，
+     * 之后每个交易日不再更新 → 持仓表价格列缺失、做T引擎因历史不足（≥10天）无信号。
+     *
+     * 逐只实仓按「本地最后快照日 → 最近交易日」增量补拉日K并回写现价/PE/换手，
+     * 与四大周期持仓保持同等的数据新鲜度。数据已最新时单条 SQL 快速跳过，开销极低。
+     */
+    private suspend fun syncRealPositionDailyData(context: Context) {
+        try {
+            val db = StockDatabase.getInstance(context)
+            val positions = db.realPositionDao().getAllActive()
+            if (positions.isEmpty()) return
+
+            val targetDate = try {
+                java.time.LocalDate.parse(
+                    com.chin.stockanalysis.ui.TradingDayPickerView.recentTradingDay().format(DATE_FMT)
+                )
+            } catch (_: Exception) {
+                LocalDate.now()
+            }
+            val fetcher = com.chin.stockanalysis.strategy.data.HistoricalDataFetcher(context)
+            var updatedCodes = 0
+            var totalRecords = 0
+            for (p in positions) {
+                try {
+                    // 该股本地最新一条快照日期（daily_snapshot DESC 取最新）
+                    val lastBar = db.dailySnapshotDao().getByCode(p.stockCode, 1).firstOrNull()
+                    val lastDate = try {
+                        lastBar?.let { LocalDate.parse(it.date, DATE_FMT) }
+                    } catch (_: Exception) { null }
+                    val buyDate = try {
+                        if (p.buyDate.isNotBlank()) LocalDate.parse(p.buyDate, DATE_FMT) else null
+                    } catch (_: Exception) { null }
+                    // 无任何历史时：从买入日（缺省近 60 天）开始补齐，保证做T引擎有足够样本
+                    val start = (lastDate ?: (buyDate ?: LocalDate.now().minusDays(60))).plusDays(1)
+                    if (!start.isAfter(targetDate)) {
+                        val (records, _) = fetcher.fetchOneStock(p.stockCode, start, targetDate)
+                        if (records.isNotEmpty()) {
+                            db.dailySnapshotDao().insertAll(records)
+                            totalRecords += records.size
+                            val latest = records.maxByOrNull { it.date }
+                            if (latest != null && latest.close > 0) {
+                                db.realPositionDao().updateMarketData(
+                                    id = p.id,
+                                    currentPrice = latest.close,
+                                    pe = latest.pe,
+                                    turnoverRate = latest.turnoverRate
+                                )
+                            }
+                            updatedCodes++
+                            Log.i(TAG, "📈 实仓 ${p.stockName}(${p.stockCode}) 日K补齐 ${records.size} 条 (${start}→${targetDate})")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "实仓日K补齐失败 ${p.stockName}(${p.stockCode}): ${e.message}")
+                }
+            }
+            if (updatedCodes > 0) {
+                Log.i(TAG, "📈 实仓每日数据同步完成: $updatedCodes/${positions.size} 只, 新增 $totalRecords 条")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "syncRealPositionDailyData 失败: ${e.message}")
+        }
+    }
+
+    /**
+     * OS 级兜底入口（RealPositionDailySyncWorker 每日 11:35/15:05 调用）：
+     * 仅补齐实仓每日日K，不触碰现有循环/做T逻辑。与每 5 分钟循环里的
+     * syncRealPositionDailyData 同实现，幂等、轻量；App 被回收后由
+     * WorkManager 到点拉起执行。
+     */
+    suspend fun syncRealPositionsForWorker(context: Context) {
+        syncRealPositionDailyData(context)
+    }
+
+    /**
+     * 修复所有数据表中缺失的股票名称
+     *
+     * 选股管道可能选出尚未导入 daily_snapshot 的股票，导致各表中 stockName 为空。
+     * 使用 StockNameResolver 统一补全，覆盖以下表：
+     *   - strategy_trade_orders（策略订单）
+     *   - user_watchlist（自选股）
+     *   - ai_selected_stock（AI 精选）
+     *   - institutional_tips（机构线索）
+     */
+    private suspend fun fixMissingOrderStockNames(context: Context) {
+        try {
+            val db = StockDatabase.getInstance(context)
+            val allMissingCodes = mutableSetOf<String>()
+
+            // 1. strategy_trade_orders
+            val ordersMissing = db.strategyTradeOrderDao().getRecent(200)
+                .filter { it.stockName.isBlank() }
+                .map { it.id to it.stockCode }
+            allMissingCodes += ordersMissing.map { it.second }
+
+            // 2. user_watchlist
+            val watchlistMissing = try {
+                db.userWatchlistDao().getAll()
+                    .filter { it.stockName.isBlank() }
+                    .map { it.stockCode to it.stockCode }
+            } catch (_: Exception) { emptyList() }
+            allMissingCodes += watchlistMissing.map { it.first }
+
+            // 3. ai_selected_stock
+            val aiMissing = try {
+                db.aiSelectedStockDao().getAll()
+                    .filter { it.stockName.isBlank() }
+                    .map { it.id to it.stockCode }
+            } catch (_: Exception) { emptyList() }
+            allMissingCodes += aiMissing.map { it.second }
+
+            // 4. institutional_tips
+            val today = LocalDate.now().format(DATE_FMT)
+            val tipsMissing = try {
+                db.institutionalTipDao().getActiveTips(today)
+                    .filter { it.stockName.isBlank() }
+                    .map { it.id to it.stockCode }
+            } catch (_: Exception) { emptyList() }
+            allMissingCodes += tipsMissing.map { it.second }
+
+            if (allMissingCodes.isEmpty()) return
+
+            Log.i(TAG, "🔧 fixMissingOrderStockNames: ${allMissingCodes.size} 只股票缺少名称，开始补全")
+
+            // 统一调用 StockNameResolver 批量解析
+            val nameMap = StockNameResolver.resolveBatch(context, allMissingCodes.toList())
+            Log.i(TAG, "  StockNameResolver 解析命中: ${nameMap.size}/${allMissingCodes.size}")
+
+            // 回写各表
+            var fixed = 0
+
+            // strategy_trade_orders
+            for ((id, code) in ordersMissing) {
+                val name = nameMap[code] ?: continue
+                db.strategyTradeOrderDao().updateStockName(id, name)
+                fixed++
+            }
+
+            // user_watchlist（用 insert REPLACE 覆盖）
+            for ((code, _) in watchlistMissing) {
+                val name = nameMap[code] ?: continue
+                try {
+                    val existing = db.userWatchlistDao().getByCode(code)
+                    if (existing != null) {
+                        db.userWatchlistDao().insert(existing.copy(stockName = name))
+                        fixed++
+                    }
+                } catch (_: Exception) {}
+            }
+
+            // ai_selected_stock
+            for ((id, code) in aiMissing) {
+                val name = nameMap[code] ?: continue
+                try {
+                    val entity = db.aiSelectedStockDao().getAll().find { it.id == id } ?: continue
+                    db.aiSelectedStockDao().insert(entity.copy(stockName = name))
+                    fixed++
+                } catch (_: Exception) {}
+            }
+
+            // institutional_tips
+            for ((id, code) in tipsMissing) {
+                val name = nameMap[code] ?: continue
+                try {
+                    val tip = db.institutionalTipDao().getActiveTips(today).find { it.id == id } ?: continue
+                    db.institutionalTipDao().insert(tip.copy(stockName = name))
+                    fixed++
+                } catch (_: Exception) {}
+            }
+
+            Log.i(TAG, "  ✅ fixMissingOrderStockNames 完成: 补全 $fixed 笔记录")
+        } catch (e: Exception) {
+            Log.w(TAG, "fixMissingOrderStockNames 失败: ${e.message}")
         }
     }
 
@@ -142,7 +484,10 @@ object AppBackgroundRunner {
         monitorJob = scope.launch(Dispatchers.IO) {
             while (isActive) {
                 try { monitorWatchlist(context) }
-                catch (e: Exception) { Log.w(TAG, "監控異常: ${e.message}") }
+                catch (e: Exception) { Log.w(TAG, "监控异常: ${e.message}") }
+                // 每5分钟同时检查做T机会
+                try { monitorTTradeOpportunities(context) }
+                catch (e: Exception) { Log.w(TAG, "做T监控异常: ${e.message}") }
                 delay(5 * 60 * 1000L)
             }
         }
@@ -152,7 +497,7 @@ object AppBackgroundRunner {
         val db = StockDatabase.getInstance(context)
         val today = LocalDate.now().format(DATE_FMT)
 
-        // ── 1. 監控自選股買賣點 ──
+        // ── 1. 监控自选股买卖点 ──
         val watchlist = db.userWatchlistDao().getAll()
         if (watchlist.isNotEmpty()) {
             val codes = watchlist.map { it.stockCode }
@@ -170,25 +515,25 @@ object AppBackgroundRunner {
                     item.status == "WATCHING" && changePct > 2.0 -> {
                         db.userWatchlistDao().update(item.copy(status = "BOUGHT", buyPrice = snap.close, buyDate = today))
                         buySignals++
-                        Log.i(TAG, "🟢 自動買入: ${item.stockName}(${item.stockCode})")
+                        Log.i(TAG, "🟢 自动买入: ${item.stockName}(${item.stockCode})")
                     }
                     item.status == "BOUGHT" && (changePct > 5.0 || changePct < -3.0) -> {
                         db.userWatchlistDao().update(item.copy(status = "SOLD", sellPrice = snap.close, sellDate = today))
                         sellSignals++
-                        Log.i(TAG, "🟡 自動賣出: ${item.stockName}(${item.stockCode})")
+                        Log.i(TAG, "🟡 自动卖出: ${item.stockName}(${item.stockCode})")
                     }
                 }
             }
             if (buySignals > 0 || sellSignals > 0)
-                Log.i(TAG, "📊 監控(自選): ${watchlist.size}只 買入${buySignals} 賣出${sellSignals}")
+                Log.i(TAG, "📊 监控(自选): ${watchlist.size}只 买入${buySignals} 卖出${sellSignals}")
         }
 
-        // ── 2. 監控 AI 精選股買賣點 ──
+        // ── 2. 监控 AI 精选股买卖点 ──
         monitorAiSelectedStocks(context, db, today)
     }
 
     /**
-     * 保留最近 5 天的 AI 精選記錄，超出的遷移到自選股後刪除
+     * 保留最近 5 天的 AI 精选记录，超出的迁移到自选股后删除
      */
     private suspend fun migrateOldAiPicksToWatchlist(context: Context, db: StockDatabase, today: String) {
         val aiDao = db.aiSelectedStockDao()
@@ -197,7 +542,7 @@ object AppBackgroundRunner {
         val oldStocks = allAiStocks.filter { it.selectedDate < minDate }
         if (oldStocks.isEmpty()) return
 
-        Log.i(TAG, "🔄 遷移 ${oldStocks.size} 只超 5 天 AI 精選股到自選股...")
+        Log.i(TAG, "🔄 迁移 ${oldStocks.size} 只超 5 天 AI 精选股到自选股...")
         val watchlistDao = db.userWatchlistDao()
         for (stock in oldStocks) {
             val existing = watchlistDao.getByCode(stock.stockCode)
@@ -210,20 +555,21 @@ object AppBackgroundRunner {
                     status = "WATCHING",
                     scoreAtAdd = stock.score
                 ))
-                Log.i(TAG, "  ➕ ${stock.stockName}(${stock.stockCode}) → 自選股")
+                Log.i(TAG, "  ➕ ${stock.stockName}(${stock.stockCode}) → 自选股")
             }
         }
-        // 刪除超過 5 天的記錄
+        // 删除超过 5 天的记录
         aiDao.deleteBeforeDate(minDate)
-        Log.i(TAG, "✅ AI 精選遷移完成，保留近 5 天數據")
+        Log.i(TAG, "✅ AI 精选迁移完成，保留近 5 天数据")
     }
 
     /**
-     * 監控 AI 精選股（當天）
+     * 监控 AI 精选股（当天）
      */
     private suspend fun monitorAiSelectedStocks(context: Context, db: StockDatabase, today: String) {
         val aiDao = db.aiSelectedStockDao()
-        val aiStocks = aiDao.getByDate(today)
+        // 自动盘中选股(auto_*)候选不参与自动买入监控，避免盘中候选每 15 分钟把自选列表刷爆
+        val aiStocks = aiDao.getByDate(today).filter { !it.source.startsWith("auto_") }
         if (aiStocks.isEmpty()) return
 
         val snapshots = try { db.dailySnapshotDao().getByDate(today) } catch (_: Exception) { emptyList() }
@@ -234,7 +580,7 @@ object AppBackgroundRunner {
             val snap = snapMap[stock.stockCode] ?: continue
             val changePct = snap.changePct
 
-            // AI 精選當天漲幅 > 2% → 自動加入自選股並標記為 BOUGHT
+            // AI 精选当天涨幅 > 2% → 自动加入自选股并标记为 BOUGHT
             if (changePct > 2.0) {
                 val watchlistDao = db.userWatchlistDao()
                 val existing = watchlistDao.getByCode(stock.stockCode)
@@ -250,15 +596,15 @@ object AppBackgroundRunner {
                         scoreAtAdd = stock.score
                     ))
                     buySignals++
-                    Log.i(TAG, "🤖 AI精選自動買入: ${stock.stockName}(${stock.stockCode})")
+                    Log.i(TAG, "🤖 AI精选自动买入: ${stock.stockName}(${stock.stockCode})")
                 }
             }
         }
         if (buySignals > 0)
-            Log.i(TAG, "📊 AI監控: ${aiStocks.size}只精選 買入${buySignals}")
+            Log.i(TAG, "📊 AI监控: ${aiStocks.size}只精选 买入${buySignals}")
     }
 
-    /** 將策略精選股添加到自選股 */
+    /** 将策略精选股添加到自选股 */
     suspend fun addToWatchlist(context: Context, stockCode: String, stockName: String, source: String, score: Int = 0) {
         val db = StockDatabase.getInstance(context)
         if (db.userWatchlistDao().getByCode(stockCode) == null) {
@@ -269,27 +615,234 @@ object AppBackgroundRunner {
         }
     }
 
-    suspend fun addBatchToWatchlist(context: Context, stocks: List<Triple<String, String, Int>>, source: String) {
+    suspend fun addBatchToWatchlist(context: Context, stocks: List<Triple<String, String, Int>>, source: String, tradeDate: String = LocalDate.now().format(DATE_FMT)) {
         StockDatabase.getInstance(context).userWatchlistDao().insertAll(
-            stocks.map { (c, n, s) -> UserWatchlistEntity(stockCode = c, stockName = n, source = source, addedDate = LocalDate.now().format(DATE_FMT), scoreAtAdd = s) }
+            stocks.map { (c, n, s) -> UserWatchlistEntity(stockCode = c, stockName = n, source = source, addedDate = tradeDate, scoreAtAdd = s) }
         )
     }
 
-    /** 保存當天 AI 精選股（保留 5 天記錄，清除超過 5 天的舊數據） */
+    /** 保存当天 AI 精选股（保留 5 天记录，清除超过 5 天的旧数据） */
     suspend fun saveAiSelectedStocks(context: Context, stocks: List<AiSelectedStockEntity>) {
         val db = StockDatabase.getInstance(context)
         val today = LocalDate.now().format(DATE_FMT)
         val minDate = LocalDate.now().minusDays(5).format(DATE_FMT)
-        // 刪除超過 5 天的記錄，保留近 5 天
+        // 删除超过 5 天的记录，保留近 5 天
         db.aiSelectedStockDao().deleteBeforeDate(minDate)
         db.aiSelectedStockDao().insertAll(stocks)
-        Log.i(TAG, "🤖 AI精選保存: ${stocks.size} 只 → ai_selected_stock（保留近 5 天）")
+        Log.i(TAG, "🤖 AI精选保存: ${stocks.size} 只 → ai_selected_stock（保留近 5 天）")
     }
 
-    /** 清除當天 AI 精選（策略重新運行前調用） */
+    /** 清除当天 AI 精选（策略重新运行前调用） */
     suspend fun clearTodayAiSelected(context: Context) {
         val db = StockDatabase.getInstance(context)
         val today = LocalDate.now().format(DATE_FMT)
         db.aiSelectedStockDao().deleteByDate(today)
+    }
+
+    /**
+     * 后台监控做T机会（覆盖所有周期 + 真实持仓）
+     *
+     * 每5分钟自动执行：
+     * 1. 过期前一天仍为 PENDING 的推荐
+     * 2. 扫描 4 个周期模拟持仓 + 真实持仓，生成做T信号
+     * 3. 跟踪已有推荐的价格轨迹，检查目标是否触及
+     * 4. 收盘时（15:00后）标记当日推荐为 TARGET_MISSED
+     *
+     * 用户可在「做T」面板查看推荐历史和执行状态。
+     */
+    private suspend fun monitorTTradeOpportunities(context: Context) {
+        val db = StockDatabase.getInstance(context)
+        val tEngine = com.chin.stockanalysis.strategy.trade.TTradeEngine(context)
+        val today = java.time.LocalDate.now().toString()
+
+        // 0. 实仓每日真实数据补齐（增量、轻量）：实仓股票多不在扫描池内，
+        //    需在开盘/收盘/任意打开时刻与四大周期持仓一样每天更新日K与现价，
+        //    做T/盈亏分析才使用到当日真实数据
+        try { syncRealPositionDailyData(context) } catch (e: Exception) {
+            Log.w(TAG, "实仓每日数据补齐失败: ${e.message}")
+        }
+
+        // 1. 过期旧推荐
+        try { tEngine.expireOldRecommendations() } catch (_: Exception) {}
+
+        // 1.5 每个交易日同步实仓股价：盘中优先池刷新已回写实时价，
+        //     收盘后/非盘中用当日 dailySnapshot 收盘价兜底回写（保证每个交易日实仓数据新鲜）
+        try {
+            val positions = db.realPositionDao().getAllActive()
+            if (positions.isNotEmpty()) {
+                val todaySnaps = db.dailySnapshotDao().getByDate(today)
+                val snapByCode = todaySnaps.associateBy { it.code }
+                for (p in positions) {
+                    val snap = snapByCode[p.stockCode] ?: continue
+                    if (snap.close <= 0) continue
+                    db.realPositionDao().updateMarketData(
+                        id = p.id,
+                        currentPrice = snap.close,
+                        pe = snap.pe,
+                        turnoverRate = snap.turnoverRate
+                    )
+                }
+            }
+        } catch (_: Exception) {}
+
+        // 2. 收盘结算（15:00后只执行一次）
+        val now = java.time.LocalDateTime.now()
+        if (now.hour >= 15 && now.minute < 5) {
+            try { tEngine.markDayEnd(today) } catch (_: Exception) {}
+        }
+
+        // 3. 透过做T Pipeline 进行多维度分析（日K机构意图 + 外盘情绪 + 板块新闻）
+        val periodTypes = listOf("UltraShortQuant", "ShortTermQuant", "MidTermQuant", "LongTermQuant")
+        var totalSaved = 0
+        var totalSignals = 0
+
+        for (periodType in periodTypes) {
+            try {
+                val result = com.chin.stockanalysis.strategy.topology.xml.DagTradeExecutor
+                    .executeTTradePipeline(context, periodType)
+                totalSignals += result.signalsCount
+                totalSaved += result.savedCount
+            } catch (e: Exception) {
+                Log.w(TAG, "做T Pipeline[$periodType] 失败: ${e.message}")
+            }
+        }
+
+        // 4. 真实持仓也走 Pipeline（periodType = RealPosition）
+        try {
+            val positions = db.realPositionDao().getAllActive()
+            if (positions.isNotEmpty()) {
+                val result = com.chin.stockanalysis.strategy.topology.xml.DagTradeExecutor
+                    .executeTTradePipeline(context, "RealPosition")
+                totalSignals += result.signalsCount
+                totalSaved += result.savedCount
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "做T Pipeline[RealPosition] 失败: ${e.message}")
+        }
+
+        // 5. 跟踪已有推荐的价格轨迹（使用 daily snapshot 收盘价）
+        val currentPrices = mutableMapOf<String, Double>()
+        val snapshots = try { db.dailySnapshotDao().getByDate(today) } catch (_: Exception) { emptyList() }
+        for (snap in snapshots) {
+            currentPrices[snap.code] = snap.close
+        }
+        if (currentPrices.isNotEmpty()) {
+            try { tEngine.trackOutcomeForRecommendations(currentPrices) } catch (_: Exception) {}
+        }
+
+        if (totalSaved > 0 || totalSignals > 0) {
+            Log.i(TAG, "做T Pipeline 监控: 生成 $totalSignals 条信号，保存 $totalSaved 条推荐")
+
+            // 6. 通知新产生的做T推荐（避免重复通知）
+            try {
+                val prefs = context.getSharedPreferences("t_trade_notification", Context.MODE_PRIVATE)
+                val notifiedIds = prefs.getStringSet("notified_rec_ids", mutableSetOf<String>()) ?: mutableSetOf()
+                val pendingRecs = db.tTradeRecommendationDao().getPendingByDate(today)
+                val newRecs = pendingRecs.filter { it.id.toString() !in notifiedIds }
+
+                if (newRecs.isNotEmpty()) {
+                    val newIds = newRecs.map { it.id.toString() }.toSet()
+                    val updatedNotified = notifiedIds.toMutableSet().apply { addAll(newIds) }
+                    // 只保留最近 200 条记录，避免无限增长
+                    val trimmed = updatedNotified.toList().takeLast(200).toSet()
+                    prefs.edit().putStringSet("notified_rec_ids", trimmed).apply()
+
+                    val notifier = com.chin.stockanalysis.notification.TradeNotifier
+                    for (rec in newRecs) {
+                        val signalLabel = when (rec.signalType) {
+                            "T_BUY" -> "做T买入"
+                            "T_SELL" -> "做T卖出"
+                            "RT_SELL" -> "反T卖出"
+                            "RT_BUY" -> "反T买回"
+                            else -> rec.signalType
+                        }
+                        val periodLabel = when (rec.periodType) {
+                            "UltraShortQuant" -> "超短"
+                            "ShortTermQuant" -> "短线"
+                            "MidTermQuant" -> "中线"
+                            "LongTermQuant" -> "长线"
+                            "RealPosition" -> "持仓"
+                            else -> rec.periodType.take(4)
+                        }
+                        val title = "$signalLabel — ${rec.stockName}(${rec.stockCode.takeLast(4)})"
+                        val body = buildString {
+                            appendLine("[$periodLabel] ${"%.2f".format(rec.suggestedPrice)} → 目标 ${"%.2f".format(rec.targetPrice)}")
+                            appendLine("建议 ${rec.quantity}股 | 预期 ${"%.2f%%".format(rec.expectedProfitPct)}")
+                            if (rec.reason.isNotBlank()) append(rec.reason)
+                            // 附成功率统计反馈
+                            try {
+                                val sr = tEngine.getSuccessRate(7)
+                                if (sr.total > 0) {
+                                    appendLine()
+                                    append("📊 近7天: ${sr.total}条信号 | 命中率 ${"%.1f%%".format(sr.overallSuccessRate)} | 盈利占比 ${"%.1f%%".format(sr.profitRate)}")
+                                }
+                            } catch (_: Exception) {}
+                        }.trim()
+                        notifier.send(context, title, body, "TREC_${rec.id}")
+                        // 自动执行（置信度超阈值时自动买卖）
+                        autoExecuteIfEligible(context, rec, tEngine, title)
+                    }
+                    Log.i(TAG, "做T通知: 发送 ${newRecs.size} 条新推荐通知")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "做T通知发送失败: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * 自动执行做T信号：当推荐置信度 ≥ 用户设定的阈值时，
+     * 自动调用 TTradeEngine.executeTTrade 完成买卖，并标记推荐为已执行。
+     */
+    private suspend fun autoExecuteIfEligible(
+        context: Context,
+        rec: com.chin.stockanalysis.strategy.trade.TTradeRecommendationEntity,
+        tEngine: com.chin.stockanalysis.strategy.trade.TTradeEngine,
+        title: String
+    ) {
+        try {
+            val notifier = com.chin.stockanalysis.notification.TradeNotifier
+            if (!notifier.isAutoExecuteEnabled(context)) return
+
+            // 只自动执行开仓腿（T_BUY / RT_SELL）；配对腿依赖已有持仓，交由用户确认
+            val openType = when (rec.signalType) {
+                "T_BUY" -> com.chin.stockanalysis.strategy.trade.TTradeType.T_BUY
+                "RT_SELL" -> com.chin.stockanalysis.strategy.trade.TTradeType.RT_SELL
+                else -> return
+            }
+
+            // 从 reason 前缀解析置信度：[置信度78%...]
+            val confidencePct = Regex("置信度(\\d+)%")
+                .find(rec.reason)?.groupValues?.get(1)?.toIntOrNull() ?: return
+            val thresholdPct = (notifier.getAutoExecuteThreshold(context) * 100).toInt()
+            if (confidencePct < thresholdPct) return
+
+            val signal = com.chin.stockanalysis.strategy.trade.TTradeSignal(
+                stockCode = rec.stockCode,
+                stockName = rec.stockName,
+                signalType = openType,
+                suggestedPrice = rec.suggestedPrice,
+                targetPrice = rec.targetPrice,
+                quantity = rec.quantity,
+                reason = rec.reason,
+                expectedProfitPct = rec.expectedProfitPct,
+                periodType = rec.periodType,
+                confidence = confidencePct
+            )
+            val recordId = tEngine.executeTTrade(signal, rec.periodType)
+            tEngine.markRecommendationExecuted(rec.id, rec.suggestedPrice)
+            Log.i(TAG, "🤖 自动执行: ${rec.stockName}(${rec.stockCode}) ${rec.signalType} " +
+                "置信度${confidencePct}%≥${thresholdPct}% @ ${rec.suggestedPrice} → 记录#$recordId")
+            notifier.send(
+                context,
+                "🤖 已自动执行 — $title",
+                "置信度${confidencePct}% ≥ 阈值${thresholdPct}%，系统已自动${
+                    if (openType == com.chin.stockanalysis.strategy.trade.TTradeType.T_BUY) "买入" else "卖出"
+                }\n${rec.stockName} ${"%.2f".format(rec.suggestedPrice)} × ${rec.quantity}股",
+                "AUTO_EXEC_${rec.id}"
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "自动执行做T失败: ${e.message}")
+        }
     }
 }

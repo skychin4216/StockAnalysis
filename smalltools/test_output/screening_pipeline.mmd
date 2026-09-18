@@ -1,0 +1,20 @@
+graph TD
+
+    %% 量化選股Pipeline | id=screening_pipeline
+    %% 全市場掃描→多策略並行篩選→信號合併→板塊加權
+
+    %% ===== Layer 0 =====
+    n_ctx(["n_ctx"]):::dataSource
+    n_merge[("n_merge")]:::aggregation
+
+    %% ===== Layer 1 =====
+    n_pool(["n_pool"]):::dataSource
+    n_boost[("n_boost")]:::aggregation
+
+    %% ===== 連線 =====
+    n_ctx -->|市場上下文| n_pool
+    n_merge -->|合併+板塊加權| n_boost
+
+    %% ===== 樣式定義 =====
+    classDef dataSource fill:#059669,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef aggregation fill:#4F46E5,stroke:#ffffff,stroke-width:1px,color:#ffffff

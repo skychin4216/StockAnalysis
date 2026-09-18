@@ -1,0 +1,18 @@
+{
+  "period": "ULTRA_SHORT",
+  "mode": "QUICK",
+  "description": "超短线 Agent 配置：QUICK 模式，2 Agent 并行，时效优先",
+  "agents": ["StockAnalysisAgent", "RiskManagementAgent"],
+  "parallel": true,
+  "timeout": 30,
+  "maxBatchSize": 5,
+  "postProcess": {
+    "sortBy": "strength",
+    "maxResults": 3,
+    "stopLoss": -2.0,
+    "takeProfit": 3.0,
+    "autoSellEngine": false,
+    "t1Sell": true,
+    "comment": "超短线 T+1 卖出，止损-2%/止盈+3%"
+  }
+}

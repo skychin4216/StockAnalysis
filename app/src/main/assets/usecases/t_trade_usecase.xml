@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 做T/反T Pipeline UseCase v2
+
+  核心三维度: 日K机构意图 + 外盘情绪 + 板块新闻
+  复用 7 个现有 Node + 新建 5 个 Node
+
+  每个周期 Tab 各跑一次（periodType 不同）。
+-->
+<usecase id="t_trade" name="做T决策">
+  <description>日K机构意图+外盘情绪+板块新闻→交叉验证→做T/反T建议</description>
+  <steps>
+    <pipeline ref="usecases/t_trade_pipeline.xml" name="做TDAG流程" />
+  </steps>
+  <config>
+    <param name="periodType" value="" />
+    <param name="minConfidence" value="0.3" />
+  </config>
+</usecase>

@@ -1,0 +1,244 @@
+{
+ "window": [
+  "2026-08-15",
+  "2026-09-15"
+ ],
+ "signals": {
+  "超短": [],
+  "短线": [],
+  "中线": [],
+  "长线": [
+   [
+    "sh600483",
+    "福能股份",
+    "2026-08-18",
+    982,
+    "BULLISH"
+   ],
+   [
+    "sh600483",
+    "福能股份",
+    "2026-08-19",
+    983,
+    "BULLISH"
+   ],
+   [
+    "sh600025",
+    "华能水电",
+    "2026-08-20",
+    984,
+    "OSCILLATION"
+   ],
+   [
+    "sh600025",
+    "华能水电",
+    "2026-08-21",
+    985,
+    "OSCILLATION"
+   ]
+  ]
+ },
+ "trades": {
+  "超短": [],
+  "短线": [],
+  "中线": [],
+  "长线": []
+ },
+ "state_dist": {
+  "超短": {
+   "BULLISH": 3,
+   "OSCILLATION": 2,
+   "CRASH": 1
+  },
+  "短线": {
+   "BULLISH": 3,
+   "OSCILLATION": 2,
+   "CRASH": 1
+  },
+  "中线": {
+   "BULLISH": 3,
+   "OSCILLATION": 2,
+   "CRASH": 1
+  },
+  "长线": {
+   "BULLISH": 3,
+   "OSCILLATION": 2,
+   "CRASH": 1
+  }
+ },
+ "params_used": {
+  "超短": {},
+  "短线": {},
+  "中线": {},
+  "长线": {
+   "BULLISH": {
+    "style": "hold",
+    "maxHold": 40,
+    "tp": 50,
+    "sl": -12,
+    "tRatio": 0.4
+   },
+   "OSCILLATION": {
+    "style": "hold",
+    "maxHold": 40,
+    "tp": 50,
+    "sl": -12,
+    "tRatio": 0.4
+   }
+  }
+ },
+ "fitted": {
+  "超短": {
+   "BULLISH": {
+    "rule": {
+     "style": "nextday",
+     "maxHold": 1,
+     "tp": 0.0,
+     "sl": 0.0
+    },
+    "avg": 0.854792711891232,
+    "wr": 47.524752475247524,
+    "n": 101
+   },
+   "OSCILLATION": {
+    "rule": {
+     "style": "nextday",
+     "maxHold": 1,
+     "tp": 0.0,
+     "sl": 0.0
+    },
+    "avg": 1.9440984306396385,
+    "wr": 60.60606060606061,
+    "n": 33
+   },
+   "BEARISH": {
+    "rule": {
+     "style": "nextday",
+     "maxHold": 1,
+     "tp": 0.0,
+     "sl": 0.0
+    },
+    "avg": -0.4703894121307653,
+    "wr": 52.17391304347826,
+    "n": 23
+   }
+  },
+  "短线": {
+   "BULLISH": {
+    "rule": {
+     "style": "streak",
+     "streakDays": 2,
+     "maBreak": 5,
+     "maxHold": 8,
+     "tp": 0.0,
+     "sl": 0.0
+    },
+    "avg": 1.367922276301166,
+    "wr": 40.87591240875913,
+    "n": 137
+   },
+   "OSCILLATION": {
+    "rule": {
+     "style": "streak",
+     "streakDays": 3,
+     "maBreak": 8,
+     "maxHold": 5,
+     "tp": 0.0,
+     "sl": 0.0
+    },
+    "avg": 3.3051819877663853,
+    "wr": 52.0,
+    "n": 50
+   },
+   "BEARISH": {
+    "rule": {
+     "style": "streak",
+     "streakDays": 2,
+     "maBreak": 8,
+     "maxHold": 10,
+     "tp": 0.0,
+     "sl": 0.0
+    },
+    "avg": 6.651064455241164,
+    "wr": 72.72727272727273,
+    "n": 11
+   }
+  },
+  "中线": {
+   "BULLISH": {
+    "rule": {
+     "style": "hold",
+     "maxHold": 20,
+     "tp": 25,
+     "sl": -8,
+     "tRatio": 0.4
+    },
+    "avg": 9.190923331021953,
+    "wr": 89.45578231292517,
+    "n": 294
+   },
+   "OSCILLATION": {
+    "rule": {
+     "style": "hold",
+     "maxHold": 20,
+     "tp": 25,
+     "sl": -6,
+     "tRatio": 0.4
+    },
+    "avg": 2.731932093213449,
+    "wr": 64.19753086419753,
+    "n": 81
+   },
+   "BEARISH": {
+    "rule": {
+     "style": "hold",
+     "maxHold": 12,
+     "tp": 15,
+     "sl": -6,
+     "tRatio": 0.4
+    },
+    "avg": 2.791189905914568,
+    "wr": 73.33333333333333,
+    "n": 15
+   }
+  },
+  "长线": {
+   "BULLISH": {
+    "rule": {
+     "style": "hold",
+     "maxHold": 40,
+     "tp": 50,
+     "sl": -12,
+     "tRatio": 0.4
+    },
+    "avg": 9.52668926102349,
+    "wr": 80.40816326530611,
+    "n": 490
+   },
+   "OSCILLATION": {
+    "rule": {
+     "style": "hold",
+     "maxHold": 40,
+     "tp": 50,
+     "sl": -12,
+     "tRatio": 0.4
+    },
+    "avg": 8.42409119954738,
+    "wr": 72.6027397260274,
+    "n": 219
+   },
+   "BEARISH": {
+    "rule": {
+     "style": "hold",
+     "maxHold": 40,
+     "tp": 50,
+     "sl": -12,
+     "tRatio": 0.4
+    },
+    "avg": 10.003905475734111,
+    "wr": 77.68595041322314,
+    "n": 121
+   }
+  }
+ }
+}

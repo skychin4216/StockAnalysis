@@ -1,0 +1,110 @@
+graph TD
+
+    %% 架構圖 | id=architecture
+
+    %% ===== Layer 0 =====
+    subgraph L0["Layer 0"]
+        ds_tencent(["腾讯 K线/实时 (web.ifzq.gtimg.cn)"]):::dataSource
+        ds_east(["东方财富 K线/实时/行情"]):::dataSource
+        ds_sina(["新浪 K线 (money.finance.sina.com.cn)"]):::dataSource
+        ds_f10(["东财 F10 财务/股东户数/北向/研报"]):::dataSource
+        ds_dc(["东财数据中心 RPT_HOLDERNUMLATEST 等"]):::dataSource
+        ds_news(["新闻/公告 (关键词情绪)"]):::dataSource
+    end
+
+    %% ===== Layer 1 =====
+    subgraph L1["Layer 1"]
+        st_cache(["_kline_cache.json (核心池日K缓存 2023起)"]):::dataSource
+        st_guangmo{{"backtest_guangmo.py analyze_snaps 13项粘合链"}}:::strategy
+        st_trend{{"_trend_proto.py trend_follow_scan 趋势链"}}:::strategy
+        st_market[["market_state/triple_vote 大盘状态(BULLISH/OSC/BEAR/CRASH)"]]:::enrichment
+        st_rotation[["_rotation_engine.py 板块动量轮动"]]:::enrichment
+        st_filter["_pool_filters.py extra_filter 硬过滤"]:::filter
+        st_wf("_walk_forward.py 三年月度滚动拟合"):::aiPrediction
+    end
+
+    %% ===== Layer 2 =====
+    subgraph L2["Layer 2"]
+        p_params[("backtest_params.json ★ 唯一参数源 (select/trend/sell 9格矩阵)")]:::aggregation
+    end
+
+    %% ===== Layer 3 =====
+    subgraph L3["Layer 3"]
+        pb_publish[("_publish_candidates.py 每日选股+发布")]:::aggregation
+        pb_cand[/"candidates_quant.json (40只候选清单)"\]:::dataTransform
+        pb_wechat(("微信推送 (pushplus/serverchan)")):::tradeAction
+        pb_cos(["COS 腾讯云 candidates/params/market_data.db"]):::dataSource
+    end
+
+    %% ===== Layer 4 =====
+    subgraph L4["Layer 4"]
+        exe_screen{{"screen_smalltools.py 桥接引擎选股(逻辑零漂移)"}}:::strategy
+        exe_fit("auto_fit_backtest.py walk_forward.py 回测拟合"):::aiPrediction
+        exe_gui[/"AutoQuant-GUI.exe (PyInstaller 打包)"\]:::dataTransform
+        exe_http[/"data_service.py HTTP API :8888 (C/S 控制服务待扩展)"\]:::dataTransform
+        exe_cloud[/"cloudsync/ exe 云同步包(COS)"\]:::dataTransform
+    end
+
+    %% ===== Layer 5 =====
+    subgraph L5["Layer 5"]
+        apk_params[/"BacktestParamsLoader 加载 JSON 覆盖参数"\]:::dataTransform
+        apk_pipeline{{"StockCheckPipeline 四周期选股管线"}}:::strategy
+        apk_factor{"FactorDataProvider 资金流/财报/情绪/股东户数/北向"}:::factorCompute
+        apk_cloud[/"CloudSyncManager (COS 上下行同步)"\]:::dataTransform
+        apk_agent("AgentOrchestrator AutoQuantAgentRunner (AI Agent 后台决策)"):::aiPrediction
+        apk_bench(("量化工作台 PC候选Tab 一键建仓")):::tradeAction
+        apk_adb[/"adb 广播接收 (数据刷新/同步命令)"\]:::dataTransform
+    end
+
+    %% ===== 連線 =====
+    ds_tencent -->|日K抓取(重试+回退)| st_cache
+    ds_east -->|交叉校验| st_cache
+    ds_sina -->|备用回退| st_cache
+    ds_f10 -->|F10/股东/北向| apk_factor
+    ds_dc -->|股东户数/北向| apk_factor
+    ds_news -->|新闻情绪| apk_factor
+    st_cache -->|K线喂入| st_guangmo
+    st_cache -->|K线喂入| st_trend
+    st_cache -->|板块动量| st_rotation
+    st_cache -->|指数方向| st_market
+    st_market -->|大盘状态路由| st_guangmo
+    st_market -->|BULLISH 时启用| st_trend
+    st_guangmo -->|粘合命中| st_filter
+    st_trend -->|趋势命中| st_filter
+    st_rotation -->|板块代理| st_filter
+    st_wf -->|拟合参数| st_guangmo
+    st_wf -->|拟合参数| st_trend
+    st_wf -->|众数参数导出(_export_params.py)| p_params
+    p_params -->|sell_rule_for 读矩阵| exe_screen
+    p_params -->|applySelect/TrendFollow| apk_params
+    st_filter -->|精选候选| pb_publish
+    st_rotation -->|板块轮动| pb_publish
+    pb_publish -->|生成清单| pb_cand
+    pb_publish -->|推送微信| pb_wechat
+    pb_publish -->|PUT candidates| pb_cos
+    pb_cos -->|APK 下载候选/参数/行情库| apk_cloud
+    apk_cloud -->|上传手机会话数据 phone_*.zip| pb_cos
+    apk_cloud -->|exe 拉取手机数据→自动拟合→参数回流| exe_cloud
+    st_cache -->|同源K线| exe_screen
+    exe_fit -->|桥接引擎回测| st_cache
+    exe_screen -->|选股结果入 GUI| exe_gui
+    exe_screen -->|候选清单 API| exe_http
+    exe_http -->|局域网拉取候选(长轮询 /push)| apk_bench
+    apk_params -->|参数注入| apk_pipeline
+    apk_factor -->|因子评分| apk_pipeline
+    apk_pipeline -->|四周期选股结果| apk_bench
+    apk_agent -->|AI 决策/报告| apk_bench
+    apk_cloud -->|下载最新拟合参数| apk_params
+    apk_adb -->|adb 命令触发刷新/上传| apk_cloud
+    apk_adb -->|adb 命令触发选股| apk_pipeline
+
+    %% ===== 樣式定義 =====
+    classDef dataSource fill:#059669,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef strategy fill:#7C3AED,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef filter fill:#DC2626,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef aiPrediction fill:#2563EB,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef enrichment fill:#0891B2,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef aggregation fill:#4F46E5,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef tradeAction fill:#D97706,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef factorCompute fill:#0D9488,stroke:#ffffff,stroke-width:1px,color:#ffffff
+    classDef dataTransform fill:#6B7280,stroke:#ffffff,stroke-width:1px,color:#ffffff

@@ -10,14 +10,14 @@ import org.json.JSONObject
 /**
  * ## 技能引擎
  *
- * 管理 Skill 的 CRUD 和持久化，架構：
+ * 管理 Skill 的 CRUD 和持久化，架构：
  *
- * - **設定檔** (assets/skills_config.json + files/skills_dynamic.json)
- *   → Skill 定義（id, name, prompts, keywords）
+ * - **设定档** (assets/skills_config.json + files/skills_dynamic.json)
+ *   → Skill 定义（id, name, prompts, keywords）
  * - **SharedPreferences** (skill_prefs)
- *   → 執行時狀態（enabled, usageCount, createdAt）
+ *   → 执行时状态（enabled, usageCount, createdAt）
  *
- * 兩者在 init 時合併：設定檔提供定義，SharedPreferences 覆蓋狀態。
+ * 两者在 init 时合并：设定档提供定义，SharedPreferences 覆盖状态。
  */
 class SkillEngine(private val context: Context) {
 
@@ -33,7 +33,7 @@ class SkillEngine(private val context: Context) {
 
     init {
         loadFromPrefs()
-        // 每次啟動都同步設定檔，確保新增的 Skill 能自動載入
+        // 每次启动都同步设定档，确保新增的 Skill 能自动载入
         syncFromConfig()
     }
 
@@ -66,14 +66,14 @@ class SkillEngine(private val context: Context) {
     }
 
     /**
-     * 動態建立 Skill
+     * 动态建立 Skill
      *
-     * 同時寫入：
-     * 1. 記憶體 (skills map)
+     * 同时写入：
+     * 1. 记忆体 (skills map)
      * 2. SharedPreferences (runtime state)
-     * 3. skills_dynamic.json (定義持久化，重啟後自動復原)
+     * 3. skills_dynamic.json (定义持久化，重启后自动复原)
      *
-     * @return 新建的 Skill，若 ID 衝突則回傳 null
+     * @return 新建的 Skill，若 ID 冲突则回传 null
      */
     fun createDynamicSkill(
         id: String,
@@ -84,7 +84,7 @@ class SkillEngine(private val context: Context) {
         prompts: List<String>
     ): Skill? {
         if (skills.containsKey(id)) {
-            Log.w(TAG, "Skill ID $id 已存在，無法動態建立")
+            Log.w(TAG, "Skill ID $id 已存在，无法动态建立")
             return null
         }
         val skill = Skill(
@@ -100,7 +100,7 @@ class SkillEngine(private val context: Context) {
         )
         register(skill)
 
-        // 持久化到 skills_dynamic.json（重啟後仍存在）
+        // 持久化到 skills_dynamic.json（重启后仍存在）
         try {
             val config = SkillConfigLoader.SkillConfig(
                 id = skill.id,
@@ -113,9 +113,9 @@ class SkillEngine(private val context: Context) {
                 autoTrigger = skill.autoTrigger
             )
             SkillConfigLoader.addDynamicSkill(context, config)
-            Log.i(TAG, "🆕 動態 Skill 已存入設定檔: ${skill.id}")
+            Log.i(TAG, "🆕 动态 Skill 已存入设定档: ${skill.id}")
         } catch (e: Exception) {
-            Log.w(TAG, "動態 Skill 設定檔寫入失敗: ${e.message}")
+            Log.w(TAG, "动态 Skill 设定档写入失败: ${e.message}")
         }
 
         return skill
@@ -172,19 +172,19 @@ class SkillEngine(private val context: Context) {
         prefs.edit().putString(PREFS_KEY, arr.toString()).apply()
     }
 
-    // ── 設定檔同步 + 預設 Skill ──
+    // ── 设定档同步 + 预设 Skill ──
 
     /**
-     * 每次啟動時同步設定檔中的 Skill 定義
+     * 每次启动时同步设定档中的 Skill 定义
      *
-     * 與舊版 `registerDefaults()` 不同，此方法**始終執行**（不限於首次啟動）：
-     * 1. 確保硬編碼基礎 Skill（早盤、尾盤）始終存在
-     * 2. 從設定檔載入所有選股 Skill，對已存在於 SharedPreferences 的 Skill 保留其狀態
-     *    （enabled / usageCount / createdAt），僅補充分不存在的新 Skill
-     * 3. 設定檔載入失敗時 fallback 到硬編碼 Skill
+     * 与旧版 `registerDefaults()` 不同，此方法**始终执行**（不限于首次启动）：
+     * 1. 确保硬编码基础 Skill（早盘、尾盘）始终存在
+     * 2. 从设定档载入所有选股 Skill，对已存在于 SharedPreferences 的 Skill 保留其状态
+     *    （enabled / usageCount / createdAt），仅补充分不存在的新 Skill
+     * 3. 设定档载入失败时 fallback 到硬编码 Skill
      */
     private fun syncFromConfig() {
-        // 確保硬編碼基礎 Skill 始終存在（若已由 SharedPreferences 載入則保留狀態）
+        // 确保硬编码基础 Skill 始终存在（若已由 SharedPreferences 载入则保留状态）
         val existingIds = skills.keys
         if ("morning_check" !in existingIds) {
             register(Skill(
@@ -213,20 +213,20 @@ class SkillEngine(private val context: Context) {
             ))
         }
 
-        // 從設定檔載入選股 Skill（內建 + 動態）
+        // 从设定档载入选股 Skill（内建 + 动态）
         try {
             val allConfigs = SkillConfigLoader.loadAllSkills(context)
             var newCount = 0
             var existCount = 0
             for (config in allConfigs) {
                 if (config.id !in skills) {
-                    // 新 Skill：從設定檔載入定義
+                    // 新 Skill：从设定档载入定义
                     val skill = config.toSkill()
                     register(skill)
                     newCount++
-                    Log.i(TAG, "  📄 新增: ${config.id} (${if (config.isDynamic) "動態" else "內建"})")
+                    Log.i(TAG, "  📄 新增: ${config.id} (${if (config.isDynamic) "动态" else "内建"})")
                 } else {
-                    // 已存在的 Skill：保留 SharedPreferences 中的狀態，僅更新定義
+                    // 已存在的 Skill：保留 SharedPreferences 中的状态，仅更新定义
                     val existing = skills[config.id]!!
                     val updatedPrompt = config.toSkill().prompts
                     val updatedTrigger = config.toSkill().triggerPrompt
@@ -248,14 +248,14 @@ class SkillEngine(private val context: Context) {
                         )
                         skills[config.id] = refreshed
                         saveToPrefs()
-                        Log.i(TAG, "  🔄 更新: ${config.id} (定義已變更)")
+                        Log.i(TAG, "  🔄 更新: ${config.id} (定义已变更)")
                     }
                     existCount++
                 }
             }
-            Log.i(TAG, "📋 同步完成: ${existCount}個保留 + ${newCount}個新增 (來自設定檔)")
+            Log.i(TAG, "📋 同步完成: ${existCount}个保留 + ${newCount}个新增 (来自设定档)")
         } catch (e: Exception) {
-            Log.w(TAG, "從設定檔載入 Skill 失敗: ${e.message}", e)
+            Log.w(TAG, "从设定档载入 Skill 失败: ${e.message}", e)
         }
     }
 }
