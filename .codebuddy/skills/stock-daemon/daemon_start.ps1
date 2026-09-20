@@ -1,56 +1,28 @@
+<#
+  stock-daemon skill —— 启动后台守护【2026-09-19 改为薄封装】
+
+  实现已收敛到 `smalltools/_daemon_ctl.py`（exe 守护 Tab / codebuddy / 命令行**共用同一个实现**，
+  避免三套逻辑漂移）。本脚本保留旧入口与旧参数（-Daemon）兼容，实际逻辑全部转发。
+
+  用法（与旧版一致）：
+    powershell -File daemon_start.ps1 -Daemon all
+    powershell -File daemon_start.ps1 -Daemon publish
+    可用值：all | publish | scan | holdings | bridge
+
+  等价新用法（推荐）：
+    python smalltools/_daemon_ctl.py start all
+    python smalltools/_daemon_ctl.py status --json      # 机器可读（含心跳/假死判定）
+    python smalltools/_daemon_ctl.py logs publish 50    # 日志尾部
+    python smalltools/_daemon_ctl.py send publish "..."  # 给守护发指令
+#>
 param(
-    [ValidateSet("publish", "scan", "holdings", "all")]
-    [string]$Daemon = "all",
-    # 每次重启前把旧日志归档，最多保留多少份历史（2026-09-17 用户需求：追加 + 轮转）
-    [int]$KeepLogs = 7
+  [string]$Daemon = "all",
+  [switch]$Quiet
 )
 $ErrorActionPreference = "Stop"
-$root = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
-$dir  = Join-Path $root "smalltools"
-$py   = "C:\Program Files\Python313\python.exe"
-$env:PYTHONIOENCODING = "utf-8"   # 必须：日志含 emoji，cp936 下 print 会崩
-
-function Rotate-Log([string]$path, [int]$keep = 7) {
-    # Start-Process -RedirectStandardOutput 是「覆盖」模式：每次启动都会 truncate。
-    # 所以启动前把已有日志改名归档（相当于追加效果），并只保留最近 $keep 份。
-    if (-not (Test-Path $path)) { return }
-    $item = Get-Item $path
-    if ($item.Length -eq 0) { Remove-Item $path -Force -ErrorAction SilentlyContinue; return }
-    $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
-    $arch  = "$path.$stamp.bak"
-    Move-Item -Path $path -Destination $arch -Force
-    Get-ChildItem "$path.*.bak" -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending | Select-Object -Skip $keep |
-        Remove-Item -Force -ErrorAction SilentlyContinue
-    Write-Output "  日志已归档: $(Split-Path $arch -Leaf)"
-}
-
-function Start-One([string]$scriptName, [string]$tag) {
-    $log    = Join-Path $dir "_daemon_$tag.log"
-    $err    = Join-Path $dir "_daemon_$tag.err.log"
-    $pidF   = Join-Path $dir "_daemon_$tag.pid"
-    if (Test-Path $pidF) {
-        $old = [int]([System.IO.File]::ReadAllText($pidF).Trim())
-        if (Get-Process -Id $old -ErrorAction SilentlyContinue) {
-            Write-Output "[$tag] 已在运行 pid=$old，跳过"
-            return
-        }
-        Write-Output "[$tag] 旧 pid=$old 已失效，重新拉起"
-    }
-    Rotate-Log $log $KeepLogs
-    Rotate-Log $err $KeepLogs
-    $p = Start-Process -FilePath $py -ArgumentList $scriptName, "--daemon" `
-        -WorkingDirectory $dir -RedirectStandardOutput $log -RedirectStandardError $err `
-        -WindowStyle Hidden -PassThru
-    [System.IO.File]::WriteAllText($pidF, $p.Id.ToString())
-    Write-Output "[$tag] 已启动 pid=$($p.Id)  log=$log"
-}
-
-switch ($Daemon) {
-    "publish"  { Start-One "_publish_candidates.py" "publish" }
-    "scan"     { Start-One "_market_scan.py" "scan" }
-    "holdings" { Start-One "_holdings_flow_daemon.py" "holdings_flow" }
-    "all"      { Start-One "_publish_candidates.py" "publish"
-                 Start-One "_market_scan.py" "scan"
-                 Start-One "_holdings_flow_daemon.py" "holdings_flow" }
-}
+# $PSScriptRoot = <root>/.codebuddy/skills/stock-daemon  →  上溯 3 层到项目根
+$root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
+$ctl = Join-Path $root "smalltools\_daemon_ctl.py"
+if (-not (Test-Path $ctl)) { Write-Error "未找到统一控制层: $ctl"; exit 1 }
+python $ctl start $Daemon
+exit $LASTEXITCODE

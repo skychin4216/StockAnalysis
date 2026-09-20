@@ -1,38 +1,30 @@
+<#
+  stock-daemon skill —— 查看后台守护状态【2026-09-19 改为薄封装】
+
+  实现收敛到 `smalltools/_daemon_ctl.py`。相比旧版新增：
+    · 状态区分 running / **stale（心跳超时＝疑假死）** / stopped
+    · 心跳按**交易时段动态**判定（盘中 20 分钟、盘后 3 小时、非交易日 4 小时），不再误报
+    · 顺带打印每个守护的日志尾部一行
+
+  用法：
+    powershell -File daemon_status.ps1              # 表格
+    powershell -File daemon_status.ps1 -Json        # 机器可读（exe / 自动化）
+
+  等价新用法：
+    python smalltools/_daemon_ctl.py status
+    python smalltools/_daemon_ctl.py status --json
+    python smalltools/_daemon_ctl.py logs scan 50
+#>
 param(
-    [ValidateSet("publish", "scan", "holdings", "all")]
-    [string]$Daemon = "all"
+  [switch]$Json,
+  [double]$StaleMin = 0
 )
-$root = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
-$dir  = Join-Path $root "smalltools"
-
-function Show-One([string]$tag, [string]$scriptName) {
-    $log  = Join-Path $dir "_daemon_$tag.log"
-    $err  = Join-Path $dir "_daemon_$tag.err.log"
-    $pidF = Join-Path $dir "_daemon_$tag.pid"
-    Write-Output "==== $scriptName ($tag) ===="
-    if (Test-Path $pidF) {
-        $id = [int]([System.IO.File]::ReadAllText($pidF).Trim())
-        $proc = Get-Process -Id $id -ErrorAction SilentlyContinue
-        if ($proc) {
-            Write-Output ("运行中 pid={0} 启动于 {1}" -f $id, $proc.StartTime)
-        } else {
-            Write-Output "PID 文件存在但进程已不在（pid=$id）"
-        }
-    } else {
-        Write-Output "未运行（无 pid 文件）"
-    }
-    if (Test-Path $log) { Write-Output "-- 日志尾部 --"; Get-Content $log -Tail 8 -Encoding UTF8 }
-    if ((Test-Path $err) -and (Get-Item $err).Length -gt 0) { Write-Output "-- stderr --"; Get-Content $err -Tail 5 -Encoding UTF8 }
-}
-
-switch ($Daemon) {
-    "publish"  { Show-One "publish" "_publish_candidates.py" }
-    "scan"     { Show-One "scan" "_market_scan.py" }
-    "holdings" { Show-One "holdings_flow" "_holdings_flow_daemon.py" }
-    "all"      { Show-One "publish" "_publish_candidates.py"
-                 Show-One "scan" "_market_scan.py"
-                 Show-One "holdings_flow" "_holdings_flow_daemon.py" }
-}
-
-$rhythm = Join-Path $dir "_daemon_rhythm.json"
-if (Test-Path $rhythm) { Write-Output "==== 当日节奏 ===="; Get-Content $rhythm -Encoding UTF8 }
+$ErrorActionPreference = "Stop"
+$root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
+$ctl = Join-Path $root "smalltools\_daemon_ctl.py"
+if (-not (Test-Path $ctl)) { Write-Error "未找到统一控制层: $ctl"; exit 1 }
+$args = @($ctl, "status")
+if ($Json) { $args += "--json" }
+if ($StaleMin -gt 0) { $args += @("--stale-min", "$StaleMin") }
+python @args
+exit $LASTEXITCODE

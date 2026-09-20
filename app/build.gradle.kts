@@ -113,6 +113,17 @@ dependencies {
     // 网络请求
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
+    // 2026-09-20：腾讯云 COS 官方 Android SDK —— 取代自研 CosSigner 手工签名。
+    // 背景：自研签名在 APK 侧持续报 403 SignatureDoesNotMatch，而 PC 侧用**相同算法、
+    // 相同输入**（同一 host/key/headers/密钥）PUT 到同一键空间实测 **HTTP 200**；
+    // 逐行比对算法、URL 编码、密钥值、键名、host、header 集合后全部一致，
+    // 故问题锁定在「Android 平台运行时差异」。交由官方 SDK 处理签名/重试/分片。
+    // 自研 CosSigner 保留为 fallback（SDK 初始化失败时自动回退，不影响可用性）。
+    // exclude okhttp：避免与项目现有 okhttp 4.12.0 冲突。
+    implementation("com.qcloud.cos:cos-android:5.9.52") {
+        exclude(group = "com.squareup.okhttp3")
+    }
+
     // Room 数据库（本地持久化）
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")

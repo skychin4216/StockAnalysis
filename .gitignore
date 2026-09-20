@@ -153,3 +153,34 @@ smalltools/_records/_offhour_state.json
 smalltools/_records/_push_queue.jsonl
 smalltools/_records/_review_tails.json
 smalltools/_records/_trade_calendar.json
+
+# ===== 2026-09-20 补充：构建日志 / 备份 / 可再生产物（不入库） =====
+
+# 编译与运行错误输出（*.log 上面已忽略，这里补 .err）
+*.err
+_apk_build*.log
+
+# 回溯/导入等长任务的运行日志
+smalltools/_bs_import.log
+smalltools/_maintain.log
+smalltools/_wf_2008.log
+smalltools/_wf_report.log
+
+# 参数与记录备份（跑前快照，不入库）
+*.bak_2026*
+smalltools/_records_bak_*/
+smalltools/_records_rebuild/
+
+# 一次性临时清单（代码里的临时输入，可重生成）
+smalltools/_codes_2020.txt
+
+# 分钟K导入产物（体积大、可由 _baostock_import/_tdx_import 重拉）
+data/intraday/
+data/intraday_tdx/
+data/intraday_qmt/
+
+# 回溯报告产物（xlsx/png，可由 _wf_2008_report.py 重出）
+data/wf_2008/
+
+# 守护 inbox 运行目录
+data/_inbox/

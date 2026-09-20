@@ -52,6 +52,19 @@ XML DAG 是选股主线（`usecases/*.xml` + `usecase_pipeline.py`），
   不可达时东财+新浪关键词过滤兜底）。`_daily_intel.collect_news()` 默认走它。
 - **日志轮转**：`daemon_start.ps1` 启动前把 `_daemon_*.log/.err.log` 归档为 `*.YYYYmmdd_HHMMSS.bak`，保留最近 7 份。
 - **运行节奏**：用户任务没有次数/轮次上限；不要因担心 token 提前收尾；不可恢复硬错误才停下报告。
+- **资金流 pipeline**（2026-09-18 新增）：`assets/usecases/fund_flow_pipeline.xml`（+`fund_flow_usecase.xml`）
+  = 板块资金流榜 → 个股资金流 v2.1 双层评分（趋势分0-6 + 质量分0-4）→ 级别闸 → generate_orders。
+  级别参数 `level`：1=strict(≥8) / 2=normal(≥6，默认) / 3=aggressive(≥5) / **4=direct（≥8 写 ffDirectHits 直达订单）**；
+  generate_orders 新增 `directField` 参数（默认 instBuyHits，资金流传 ffDirectHits），直达票跳过趋势/形态/口诀三重拦截。
+  数据源：板块=东财 push2delay（push2his/push2 本机不可达）；个股=新浪 MoneyFlow.ssl_qsfx_zjlrqs；
+  工具 `smalltools/_stock_fundflow.py`（评分 + 缓存 data/_stock_fflow_YYYYMMDD.json）。
+- **埋伏板块**（2026-09-18 用户需求）：sector_ambush `topSectors=10`（动量榜）+ `inflowSectors=10`
+  （东财板块主力净流入>0 降序）并集去重；etf 版 topSectors 5→10。
+- **模型锁定（仅限 CodeBuddy 对话）**：CodeBuddy 客户端的模型选择器锁定 DeepSeek 并取消 Auto
+  （Auto 会路由到其它模型，是积分消耗过快的主因），详见 `skills/deepseek-enforcement.md` §5。
+  ⚠️ **仅约束 IDE 里的 Agent 对话**：exe / smalltools / APK 内部的 AI 调用**可用任意厂商**
+  （火山方舟 / 通义 / 硅基流动 / 智谱 / 讯飞等，见 `smalltools/ai_config.py`），
+  禁止以"只用 DeepSeek"为由删改这些端点——2026-09-19 用户明确澄清。
 
 ## 4. 本会话已读取的「大文件」摘要（不要重复读）
 

@@ -3,6 +3,7 @@ package com.chin.stockanalysis.stock.database
 import android.util.Log
 import com.chin.stockanalysis.config.DataConfig
 import com.chin.stockanalysis.stock.data.HttpClientProvider
+import com.chin.stockanalysis.strategy.data.DataSourceConfig
 import okhttp3.Request
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -25,7 +26,9 @@ object GlobalMarketCollector {
 
     private const val TAG = "GlobalMarket"
 
-    private const val SINA_HOST = "https://hq.sinajs.cn/list="
+    // 2026-09-19：URL 统一走 DataSourceConfig（来源 data/datasources.json）
+    private val SINA_HOST = DataSourceConfig.host("sina_quote")
+        .ifEmpty { "https://hq.sinajs.cn" } + "/list="
     private const val SINA_REFERER = "https://finance.sina.com.cn"
 
     /** 东财 secid → (中文名 to 区域) */
@@ -220,7 +223,8 @@ object GlobalMarketCollector {
 
     /** 日线（腾讯 fqkline，前复权）：返回 (日期, 收盘, 最高) 序列，升序。 */
     fun fetchDailyKline(code: String, days: Int = 90): List<Triple<String, Double, Double>> {
-        val url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get" +
+        val url = DataSourceConfig.urlOr(
+            "tencent_kline", "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get") +
             "?param=$code,day,,,$days,qfq"
         val body = fetch(url, "https://gu.qq.com/") ?: return emptyList()
         return runCatching {
@@ -261,7 +265,9 @@ object GlobalMarketCollector {
 
     /** 东财 7x24 财经快讯。 */
     fun fetchNews(limit: Int = 12): List<NewsItem> {
-        val url = "https://np-listapi.eastmoney.com/comm/web/getFastNewsList" +
+        val url = DataSourceConfig.urlOr(
+            "east_fast_news",
+            "https://np-listapi.eastmoney.com/comm/web/getFastNewsList") +
             "?client=web&biz=web_724&fastColumn=102&sortEnd=&pageSize=$limit&req_trace=1"
         val body = fetch(url) ?: return emptyList()
         return runCatching {

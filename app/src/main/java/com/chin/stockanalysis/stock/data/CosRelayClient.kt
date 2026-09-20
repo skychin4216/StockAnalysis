@@ -3,6 +3,7 @@ package com.chin.stockanalysis.stock.data
 import android.content.Context
 import android.os.Build
 import com.chin.stockanalysis.cloud.CloudSyncManager
+import com.chin.stockanalysis.cloud.CosXmlClient   // 2026-09-20：官方 COS SDK 封装
 import com.chin.stockanalysis.cloud.CosSigner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -138,6 +139,7 @@ object CosRelayClient {
         "${cfg.bucket}.cos.${cfg.region}.myqcloud.com"
 
     private fun requireCfg(context: Context): CloudSyncManager.CloudConfig {
+        CosXmlClient.init(context)   // 2026-09-20：注入全局 context，供腾讯云官方 SDK 使用
         val cfg = CloudSyncManager(context).loadConfig()
         check(cfg.bucket.isNotBlank() && cfg.region.isNotBlank()
                 && cfg.secretId.isNotBlank() && cfg.secretKey.isNotBlank()) {
@@ -148,7 +150,43 @@ object CosRelayClient {
 
     // ───────────────────────── COS 原语 ─────────────────────────
 
+    /** 官方 SDK 客户端（懒加载；context 未注入/初始化异常 → null，自动回退自研签名）。 */
+    @Volatile
+    private var sdkCli: CosXmlClient? = null
+
+    @Volatile
+    private var sdkInitTried = false
+
+    private fun sdkClient(cfg: CloudSyncManager.CloudConfig): CosXmlClient? {
+        sdkCli?.let { return it }
+        if (sdkInitTried) return null
+        synchronized(this) {
+            if (sdkCli == null && !sdkInitTried) {
+                sdkInitTried = true
+                sdkCli = try {
+                    CosXmlClient.of(cfg)
+                } catch (e: Throwable) {
+                    android.util.Log.w("CosRelayClient", "CosXmlClient 初始化失败: ${e.message}")
+                    null
+                }
+            }
+        }
+        return sdkCli
+    }
+
     private fun putText(cfg: CloudSyncManager.CloudConfig, key: String, body: String) {
+        // 2026-09-20：优先走**腾讯云官方 SDK**（CosXmlClient）。
+        // 自研 CosSigner 在 APK 侧持续 403 SignatureDoesNotMatch，而算法/编码/密钥/键名
+        // 已逐项验证与 PC 侧一致（PC 同输入 PUT 实测 HTTP 200），疑为 Android 平台差异。
+        // 官方 SDK 失败时**自动回退**自研签名，保证可用性不受影响。
+        sdkClient(cfg)?.let { sdk ->
+            val (ok, code, detail) = sdk.put(key, body.toByteArray(Charsets.UTF_8))
+            if (ok) {
+                android.util.Log.i("CosRelayClient", "SDK put 成功: $key（官方 SDK 通道）")
+                return
+            }
+            android.util.Log.w("CosRelayClient", "SDK put 失败(code=$code $detail)，回退自研: $key")
+        }
         val h = host(cfg)
         val now = System.currentTimeMillis() / 1000
         val headers = mapOf("host" to h, "content-type" to "application/json")
@@ -162,7 +200,22 @@ object CosRelayClient {
             .build()
         client.newCall(req).execute().use { r ->
             if (!r.isSuccessful) {
-                throw RuntimeException("COS PUT HTTP ${r.code}: ${r.body?.string()?.take(200)}")
+                // 2026-09-19：403 时把 COS 的 <Code>/<Message> 打全（旧实现只取 200 字符，
+                // 只看到 xml 声明，无法区分「密钥错 / 时间偏差 / 地域不符 / 无权限」）。
+                val body = r.body?.string() ?: ""
+                val code = Regex("<Code>([^<]+)</Code>").find(body)?.groupValues?.get(1)
+                val msg = Regex("<Message>([^<]+)</Message>").find(body)?.groupValues?.get(1)
+                val hint = when (code) {
+                    "SignatureDoesNotMatch" -> "（密钥 secretId/secretKey 不匹配或已轮换）"
+                    "RequestTimeTooSkewed" -> "（手机系统时间与标准时间偏差过大，请开启自动对时）"
+                    "AccessDenied" -> "（子账号/密钥无该桶写权限）"
+                    "NoSuchBucket" -> "（bucket 名或 region 地域填错）"
+                    else -> ""
+                }
+                throw RuntimeException(
+                    "COS PUT HTTP ${r.code}${if (code != null) " [$code]$hint" else ""}: " +
+                        (msg ?: body.take(300))
+                )
             }
         }
     }
