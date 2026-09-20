@@ -36,8 +36,24 @@ from _full_cycle_backtest import load_cache, market_state, simulate_trade, stats
 from _pool_filters import extra_filter
 import _market_db  # noqa: E402  公共数据库：拟合参数归档
 
-START = date(2023, 8, 15)
-END = date(2026, 8, 15)
+# 2026-09-19 用户需求：支持「从 2008 年起」全历史回溯拟合。
+# data/kline_store.json 本就含 688 只、2008-01-02 起全历史，故只需放开窗口——
+# 用**环境变量**覆盖（零侵入、不动 CLI 语义、默认行为完全不变）：
+#     WF_START=2008-08-15 WF_END=2026-08-15 python -u _walk_forward.py
+_ENV_S = (os.environ.get("WF_START") or "").strip()
+_ENV_E = (os.environ.get("WF_END") or "").strip()
+
+
+def _env_date(s, dflt):
+    try:
+        y, m, d = (int(x) for x in s.split("-"))
+        return date(y, m, d)
+    except Exception:  # noqa: BLE001
+        return dflt
+
+
+START = _env_date(_ENV_S, date(2023, 8, 15))
+END = _env_date(_ENV_E, date(2026, 8, 15))
 MONTH_DAY = 15
 RECORD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_records")
 
@@ -57,8 +73,18 @@ HOLD_GRIDS = {
     "中线": dict(holds=[8, 10, 12, 15, 20], tps=[15, 20, 25], sls=[-6, -8, -10]),
     "长线": dict(holds=[15, 20, 25, 30, 40], tps=[25, 30, 40, 50], sls=[-8, -10, -12]),
 }
-STREAK_GRID = dict(streaks=[2, 3, 4], mas=[5, 8], holds=[5, 8, 10])
-NEXTDAY_GRID = dict(holds=[1, 2])
+# 2026-09-20 用户需求：按口径B「命中时点分布」扩展候选网格。
+#
+# 此前：NEXTDAY_GRID holds=[1,2]（**没有 3**）、STREAK_GRID mas=[5,8]（**没有 13/20**）
+# ⇒ 拟合**结构性地选不到**「持 3 天」「破 13 日线」这类更优解（无论数据怎么说）。
+#
+# 实测依据（口径B，345 笔样本，baostock 分钟数据）：
+#   T+1 命中 15.1%  →  T+1~3 命中 29.2%  →  T+1~5 命中 38.5%
+# 即**空间主要在 T+3~T+5 兑现**；而旧网格最强只能"隔日卖"(maxHold=1)
+# 与"破 8 日线"（T+1~T+3 正常回踩就触发），必然与信号节奏错配
+# （实证：中京电子 09-08 同价 17.74，超短隔日卖 -5.69% vs 短线程持有到期 +10.77%）。
+STREAK_GRID = dict(streaks=[2, 3, 4], mas=[5, 8, 13], holds=[5, 6, 8, 10])
+NEXTDAY_GRID = dict(holds=[1, 2, 3])
 
 
 def month_windows(cache_last=None):

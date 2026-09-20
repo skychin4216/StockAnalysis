@@ -16,10 +16,10 @@
    "why": ""
   },
   "短线": {
-   "extra_pass": 0,
-   "state": "",
-   "since": "",
-   "why": ""
+   "extra_pass": 1,
+   "state": "BEARISH",
+   "since": "2026-09-18",
+   "why": "近22笔wr=31.8% vs 基线BEARISH 63.6%"
   },
   "中线": {
    "extra_pass": 0,
@@ -34,7 +34,25 @@
    "why": ""
   }
  },
- "feedback_log": [],
+ "feedback_log": [
+  {
+   "ts": "2026-09-18 15:05:27",
+   "events": [
+    {
+     "period": "短线",
+     "n_recent": 22,
+     "wr_recent": 31.8,
+     "avg_recent": 0.86,
+     "dom_state": "BEARISH",
+     "base_wr": 63.6,
+     "gap_pp": -31.8,
+     "extra_pass": 1,
+     "action": "收紧+1",
+     "mode": "dry"
+    }
+   ]
+  }
+ ],
  "baseline": {
   "超短": {
    "BEARISH": {
@@ -105,5 +123,5 @@
    }
   }
  },
- "updated_at": "2026-09-17 15:02:16"
+ "updated_at": "2026-09-18 15:05:27"
 }

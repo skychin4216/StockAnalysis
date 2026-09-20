@@ -26,7 +26,12 @@ _SESSION = requests.Session()  # 连接复用（keep-alive），避免每请求 
 # 腾讯 fqkline 为主（稳定）；换手率 = 成交量 / 流通股本（流通股本由实时接口反推）
 import re
 
-HOSTS = ["https://90.push2his.eastmoney.com", "https://push2his.eastmoney.com"]
+# 2026-09-19：主机/URL 统一走 data/datasources.json（_sources），缺失时回退硬编码
+try:
+    import _sources as _SRC
+    HOSTS = _SRC.alt_hosts("east_kline")
+except Exception:  # noqa: BLE001
+    HOSTS = ["https://90.push2his.eastmoney.com", "https://push2his.eastmoney.com"]
 
 
 def to_east_secid(secid):
@@ -78,7 +83,12 @@ def fetch_tencent_float_shares(secid):
     if secid.startswith("sh000") or secid.startswith("sz399"):
         return None
     try:
-        r = _SESSION.get("https://qt.gtimg.cn/q=" + secid, timeout=10,
+        try:
+            import _sources as _SRC3
+            _qt_url = _SRC3.url("tencent_qt", codes=secid)
+        except Exception:  # noqa: BLE001
+            _qt_url = "https://qt.gtimg.cn/q=" + secid
+        r = _SESSION.get(_qt_url, timeout=10,
                          headers=HEADERS, proxies=PROXIES)
         r.encoding = "gbk"
         m = re.search(r'="([^"]*)"', r.text)
@@ -116,7 +126,11 @@ def fmt_tencent_date(d):
 
 
 def fetch_tencent(secid, beg="20250101", end=END_DATE):
-    url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+    try:
+        import _sources as _SRC2
+        url = _SRC2.url("tencent_kline")
+    except Exception:  # noqa: BLE001
+        url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
     params = {"param": f"{secid},day,{fmt_tencent_date(beg)},{fmt_tencent_date(end)},640,qfq"}
     for attempt in range(3):
         try:
