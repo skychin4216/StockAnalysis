@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## 资金流选股 Pipeline（V2 DAG · 板块资金流 → 个股资金流 v2.1 双层评分 → 级别闸 → 生成订单）
+
+  设计口径 = 《资金流选股策略_优化设计方案_v2.1.md》（用户 2026-09-18 提供）：
+    · 趋势分 0-6：20D(3分) > 10D(2分) > 5D(1分)，1D 仅确认(+0.5，需 5D>0)；
+      价格位置惩罚：距5日均线>8% → -1，距10日均线>12% → -1（抑制追高）；
+    · 质量分 0-4：超大单占比 ≥0.6→2 / ≥0.4→1；5日流入加速 +1；无 NOISE/DIVERG_A +1；
+    · 总分 0-10 → STRONG_BUY(≥8) / BUY(≥6) / WATCH(≥4) / SKIP(<4)。
+  数据源（2026-09-18 实测）：板块 = 东财 push2delay 实时；个股 = 新浪历史资金流序列
+  （MoneyFlow.ssl_qsfx_zjlrqs，近 30~60 日逐日净流入 + 超大单净额，见 smalltools/_stock_fundflow.py）。
+  ⚠️ 东财 push2his/push2 全域名在本机不可达（ConnectionError），故个股历史序列用新浪源。
+
+  级别参数 level（用户需求：设计不同级别，某些级别可通过某些 node，最高级直达生成订单 node）：
+    1 = strict     仅 STRONG_BUY(≥8分) 放行，走全部拦截（趋势/形态/口诀）
+    2 = normal     STRONG_BUY + BUY(≥6分) 放行，走全部拦截（默认）
+    3 = aggressive ≥5分放行（含 WATCH），仍走全部拦截
+    4 = direct     最高级：≥8分 写入 ffDirectHits → n_ff_orders 跳过三重拦截直达生成订单
+                    （与机构保送 instBuyHits 同一机制；评分阈值/同日重复/仓位预算仍走）
+  调整级别只需改下方 <param name="level" value="..."/>（双端同源）。
+
+  stageOutputs：
+    - "n_ff_sector"  {as_of, inflowTop[], outflowBottom[], flowMap{}}
+    - "n_ff_screen"  {as_of, stocks[], n, scanned, sectorFlow{}}
+    - "n_ff_level"   {scored[(secid,score)], ffDirectHits[], level, n}
+    - "n_ff_orders"  orders[]
+
+  双端共用：APK UseCaseLoader / AutoQuant usecase_pipeline.py 解析同一份 XML（单一事实源）。
+-->
+<DagPipeline id="fund_flow_dag" name="资金流选股Pipeline"
+    description="板块资金流榜 → 个股资金流v2.1双层评分(趋势0-6+质量0-4) → 级别闸(1~4) → 生成订单(level=4直达)">
+
+  <NodeList>
+    <!-- ── 阶段0：数据导入检查（保证后续节点有足够日K） ── -->
+    <Node id="n_ff_import" name="数据导入检查" module="data_import">
+      <config>
+        <param name="days" value="60" />
+        <param name="minSnapshots" value="60" />
+      </config>
+    </Node>
+
+    <!-- ── 阶段1：板块资金流榜（净流入 TopN / 净流出 BottomN） ── -->
+    <Node id="n_ff_sector" name="板块资金流榜" module="fund_flow_sector">
+      <config>
+        <!-- 东财行业板块主力净流入榜条数（净流入 TopN + 净流出 BottomN） -->
+        <param name="topN" value="15" />
+      </config>
+    </Node>
+
+    <!-- ── 阶段2：个股资金流 v2.1 双层评分 ── -->
+    <Node id="n_ff_screen" name="个股资金流评分" module="fund_flow_screen">
+      <config>
+        <param name="sourceNode" value="n_ff_sector" />
+        <!-- 输出候选上限（按总分降序） -->
+        <param name="topN" value="20" />
+        <!-- 入池最低总分（0-10；WATCH 门槛） -->
+        <param name="minScore" value="4.0" />
+        <!-- 扫描上限（全池代码，防止耗时过长） -->
+        <param name="scanCap" value="600" />
+      </config>
+    </Node>
+
+    <!-- ── 阶段2.5：主力行为分阶段识别（2026-09-19 用户需求）──
+         四态：建仓 BUILD / 拉升 PULL / 洗盘 WASH / 出货 DUMP。
+         插在「个股评分」与「级别闸」之间，让级别闸拿到的 rows 带 mfStage 标注：
+           · 出货(DUMP)  → 级别闸可降级/剔除（避免接盘主力派发）
+           · 洗盘(WASH) / 建仓(BUILD) → 加分
+           · 拉升(PULL)  → 保留但提示追高风险
+         判定口径与 `smalltools/_main_force.py::detect()` 同源；上游缺技术字段时
+         安全降级为 NONE（不猜测、不误判）。 -->
+    <Node id="n_ff_mf" name="主力行为识别" module="main_force_stage">
+      <config>
+        <param name="sourceNode" value="n_ff_screen" />
+        <param name="topN" value="120" />
+      </config>
+    </Node>
+
+    <!-- ── 阶段3：级别闸（level 1~4；4=最高级直达订单） ── -->
+    <Node id="n_ff_level" name="资金流级别闸" module="fund_flow_level">
+      <config>
+        <param name="sourceNode" value="n_ff_mf" />
+        <!-- 1=strict / 2=normal / 3=aggressive / 4=direct（直达生成订单） -->
+        <param name="level" value="2" />
+      </config>
+    </Node>
+
+    <!-- ── 阶段4：买入订单生成（directField 指定 ffDirectHits 直达票跳过三重拦截） ── -->
+    <Node id="n_ff_orders" name="买入订单生成" module="generate_orders">
+      <config>
+        <param name="sourceNode" value="n_ff_level" />
+        <param name="directField" value="ffDirectHits" />
+        <param name="maxHoldings" value="5" />
+        <param name="orderType" value="MidTermQuant" />
+        <param name="totalCapRatio" value="12.5" />
+        <param name="singlePositionRatio" value="5.0" />
+      </config>
+    </Node>
+  </NodeList>
+
+  <Links>
+    <Link>
+      <SourceNodeId>n_ff_import</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_ff_sector</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_ff_sector</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_ff_screen</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_ff_screen</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_ff_mf</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_ff_mf</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_ff_level</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_ff_level</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_ff_orders</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+  </Links>
+</DagPipeline>

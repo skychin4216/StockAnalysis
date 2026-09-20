@@ -38,8 +38,9 @@
         <param name="baseThemes" value="宽基" />
         <param name="excludeStar" value="true" />
         <param name="minETF" value="1" />
-        <!-- 主题动量：成分股近10日均值收益排序，前 topSectors 个主题给热度加分 -->
-        <param name="topSectors" value="5" />
+        <!-- 主题动量：成分股近10日均值收益排序，前 topSectors 个主题给热度加分
+             （2026-09-18：5→10，扩大主题加分覆盖面） -->
+        <param name="topSectors" value="10" />
         <param name="topN" value="10" />
         <!-- 启动形态：连续阳线根数区间（2~3 根 = 刚启动，不追连涨多日的高位票） -->
         <param name="bullMin" value="2" />

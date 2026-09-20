@@ -94,9 +94,29 @@
         <param name="endDays" value="130" />
       </config>
     </Node>
-    <Node id="n_orders" name="买入订单生成（机构保送）" module="generate_orders">
+    <!-- ── 阶段5b：★ 超级权限闸（priority level = 0，2026-09-19 用户需求）──
+         "国家队(汇金/证金/国新/梧桐树) + 社保养老 **同时** 在近 7 天内披露买入" →
+         最高置信度，写成 superDirectHits 直达 n_orders（跳过趋势/形态/口诀三重拦截）。
+         等级体系：0 超级权限 > 4 资金流直达 > 3 激进 > 2 常规 > 1 严格。
+         ⚠️ 持仓披露是季度粒度，"买入时间"用披露日 NOTICE_DATE 近似（真实成交日不可得）。 -->
+    <Node id="n_super" name="★超级权限(国家队+社保双买入)" module="super_holder_gate">
       <config>
         <param name="sourceNode" value="n_inst_buy" />
+        <param name="noticeDays" value="30" />
+        <param name="requireBoth" value="true" />
+        <param name="level" value="0" />
+        <!-- mode 两档（2026-09-19 回测对比，见 _super_holder_backtest.py）：
+             recent = 严格：近 noticeDays 天「双买入」（样本少、胜率略高：T+5 66.7% vs 53.6%）
+             hold   = 宽松：「没卖出就能买」（最新一期仍持有且未减持；样本多 1147 条，
+                      但 T+5 胜率 53.6%、均收益 +0.75% 并未提高，且 32.3% 的信号在
+                      下一期显示机构已退出/减持 → 披露滞后风险，故默认仍用 recent） -->
+        <param name="mode" value="triple" />
+      </config>
+    </Node>
+    <Node id="n_orders" name="买入订单生成（机构保送+超级权限）" module="generate_orders">
+      <config>
+        <param name="sourceNode" value="n_super" />
+        <param name="directField" value="instBuyHits,superDirectHits" />
         <param name="maxHoldings" value="5" />
         <param name="orderType" value="MidTermQuant" />
       </config>
@@ -130,6 +150,12 @@
     </Link>
     <Link>
       <SourceNodeId>n_inst_buy</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_super</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_super</SourceNodeId>
       <SourcePortId>0</SourcePortId>
       <TargetNodeId>n_orders</TargetNodeId>
       <TargetPortId>0</TargetPortId>

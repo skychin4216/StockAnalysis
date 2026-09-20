@@ -155,6 +155,8 @@
     <!-- 订单生成 Layer 7 -->
     <Node id="n_orders" name="买入订单生成" module="generate_orders">
       <config>
+        <!-- 2026-09-19 实验优化（_bypass_lab.py）：距60日高过近=追高，实验高位组 T+3 胜率仅 17% -->
+        <param name="maxPos60" value="-8" />
         <param name="maxHoldings" value="5" />
         <param name="orderType" value="LongTermQuant" />
         <param name="totalCapRatio" value="50" />

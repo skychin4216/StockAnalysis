@@ -90,6 +90,8 @@ class InstBuyRecentNode(
         val today = LocalDate.now()
         val provider = FactorDataProvider()
         val hits = JSONArray()
+        // 2026-09-19 用户需求「只要没有卖出就算可以买入」：最新一期仍持有且未减持 → holds
+        val holds = JSONArray()
         val hitCodes = HashSet<String>()
 
         // 实仓优先必检，其余按池顺序取前 topN
@@ -151,7 +153,25 @@ class InstBuyRecentNode(
                 val noticeDate = runCatching { LocalDate.parse(notice.take(10)) }.getOrNull() ?: continue
                 val endDate = runCatching { LocalDate.parse(end.take(10)) }.getOrNull() ?: continue
                 val daysAgo = ChronoUnit.DAYS.between(noticeDate, today)
-                if (daysAgo > noticeDays || daysAgo < 0) continue
+                if (daysAgo < 0) continue
+                // 「没卖出就能买」（2026-09-19）：最新一期仍在十大流通股东、HOLDER_STATE
+                // 非「减持」→ 记入 holds。⚠️ 披露滞后：报告期后卖出要等下一期公告才可见。
+                if (end == latestPeriod && rec.optString("HOLDER_STATE", "") != "减持" &&
+                    ChronoUnit.DAYS.between(endDate, today) <= endDays
+                ) {
+                    holds.put(JSONObject()
+                        .put("code", c6)
+                        .put("secid", (if (c6[0] in "569") "sh" else "sz") + c6)
+                        .put("name", name)
+                        .put("holder", holder)
+                        .put("kind", kind)
+                        .put("state", rec.optString("HOLDER_STATE", "").ifBlank { "不变" })
+                        .put("ratio", rec.optDouble("FREE_HOLDNUM_RATIO", 0.0))
+                        .put("end_date", end)
+                        .put("notice_date", notice)
+                        .put("days_ago", daysAgo))
+                }
+                if (daysAgo > noticeDays) continue
                 if (ChronoUnit.DAYS.between(endDate, today) > endDays) continue
                 val chg = rec.optDouble("HOLD_NUM_CHANGE", 0.0)
                 if (chg <= 0) continue
@@ -209,6 +229,9 @@ class InstBuyRecentNode(
             .put("n_hit_codes", hitCodes.size)
             .put("hits", hits)
             .put("instBuyHits", hits)
+            // 2026-09-19：holds = 「最新一期仍持有且未减持」（"没卖出就能买"口径）
+            .put("holds", holds)
+            .put("holdHits", holds)
             .put("rows", outRows)
             .put("source", "月内机构买入检测(国家队/社保/大基金/公募/险资/QFII/北向 增持)")
         context.setStageOutput(nodeId, out)

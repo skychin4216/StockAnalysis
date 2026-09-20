@@ -333,6 +333,38 @@ class AncestralRulesNode(
             tags.add("深坑大买(回撤${"%.1f".format(dd60)}%+$bonus)")
         }
 
+        // ═══ 规则 13/14：2026-09-19 新增（来源《选股口诀》量价核心篇，
+        //   与 Python usecase_pipeline.py::_ancestral_rules 同口径同权重）═══
+        val closes = snaps.map { it.close }
+        val cNow = closes.lastOrNull() ?: 0.0
+        // 注：hi20 复用函数上方已有声明，勿重复定义（会 Conflicting declarations）
+
+        // 规则 13：突破不放量，十次九次诓 —— 触及/突破近20日高点却未放量(量比<1.0)=假突破
+        if (hi20 > 0 && cNow >= hi20 * 0.995 && volRatio < 1.0) {
+            val penalty = when (holdingPeriod) {
+                "ULTRA_SHORT" -> -14
+                "SHORT" -> -12
+                "MID" -> -9
+                else -> -7
+            }
+            totalAdj += penalty
+            tags.add("突破不放量=假突破(量比${"%.2f".format(volRatio)}$penalty)")
+        }
+
+        // 规则 14：价涨量缩，小心见顶 —— 5日涨≥8% 却缩量(量比<0.85)
+        val chg5 = if (closes.size >= 6 && closes[closes.size - 6] > 0)
+            (cNow / closes[closes.size - 6] - 1) * 100 else 0.0
+        if (chg5 >= 8.0 && volRatio < 0.85) {
+            val penalty = when (holdingPeriod) {
+                "ULTRA_SHORT" -> -10
+                "SHORT" -> -10
+                "MID" -> -8
+                else -> -6
+            }
+            totalAdj += penalty
+            tags.add("价涨量缩见顶预警(5日${"%.1f".format(chg5)}%$penalty)")
+        }
+
         val summary = if (tags.isEmpty()) "无触发" else tags.joinToString("; ")
         return RuleResult(totalAdj, summary)
     }

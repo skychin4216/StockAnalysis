@@ -128,6 +128,49 @@ object MacdDivergenceAnalyzer {
         )
     }
 
+    /**
+     * MACD **顶背离**检测（2026-09-19 用户需求④：所有 usecase 顶背离不买）。
+     *
+     * 口径：价格创新高（段高点抬高）但 MACD 柱峰不创新高（柱走低）→ 顶背离。
+     * 与 Python `_technicals.macd_divergence(kind="top")` 同口径（原实现只有底背离，
+     * 顶背离是本次补齐的功能）。
+     *
+     * @return 描述文本；无顶背离返回 null（`GenerateOrdersNode` 据此否决买入）。
+     */
+    fun topDivergence(
+        closes: List<Double>,
+        highs: List<Double>,
+        lookback: Int = 60,
+        fast: Int = 12,
+        slow: Int = 26,
+        signal: Int = 9
+    ): String? {
+        val n = minOf(closes.size, highs.size)
+        if (n < slow + signal + 2) return null
+        val bars = macdBars(closes.take(n), fast, slow, signal)
+        val _highs = highs.take(n)
+        val scanStart = maxOf(1, n - lookback)
+        val peaks = mutableListOf<Int>()
+        var i = n - 2
+        while (i > scanStart && peaks.size < 2) {
+            if (bars[i] > bars[i - 1] && bars[i] >= bars[i + 1]) peaks.add(i)
+            i--
+        }
+        if (peaks.isEmpty()) return null
+        val p2 = peaks[0]
+        val p1 = if (peaks.size >= 2) peaks[1] else maxOf(0, p2 - 5)
+        val hi1 = segHigh(_highs, p1)
+        val hi2 = segHigh(_highs, p2)
+        if (hi2 <= hi1 || bars[p2] >= bars[p1]) return null
+        return "MACD顶背离（段高 ${fmt(hi1)}→${fmt(hi2)} 抬升，柱 ${fmt(bars[p1])}→${fmt(bars[p2])} 走低）"
+    }
+
+    private fun segHigh(highs: List<Double>, idx: Int): Double {
+        val from = maxOf(0, idx - 2)
+        val to = minOf(highs.size - 1, idx + 2)
+        return highs.subList(from, to + 1).maxOrNull() ?: Double.MIN_VALUE
+    }
+
     private fun segmentLow(lows: List<Double>, idx: Int): Double {
         val n = lows.size
         val from = maxOf(0, idx - 2)

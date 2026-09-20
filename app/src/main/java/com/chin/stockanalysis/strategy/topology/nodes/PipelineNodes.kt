@@ -455,13 +455,19 @@ class SmartMoneyFilterNode(
 
             for (signal in pool.boostedSignals) {
                 var score = SmartMoneyCache.getScore(signal.stockCode).combined
-                // 轮动惩罚降分：股票所属任一板块受罚则扣分（取最重惩罚）
+                // 轮动惩罚降分：股票所属任一板块受罚则扣分（取最重惩罚）；
+                // v3 龙头豁免——若该股在「最重惩罚板块」的龙头名单内，惩罚减半
                 if (rotationResult != null && rotationResult.sectorPenalties.isNotEmpty()) {
                     val sectors = StockDataCenter.getSectorsByStock(signal.stockCode)
-                    val sectorPenalty = sectors
-                        .mapNotNull { rotationResult.sectorPenalties[it] }
-                        .minOrNull() ?: 0
+                    val heaviest = sectors
+                        .mapNotNull { s -> rotationResult.sectorPenalties[s]?.let { s to it } }
+                        .minByOrNull { it.second }
+                    var sectorPenalty = heaviest?.second ?: 0
                     if (sectorPenalty < 0) {
+                        val sector = heaviest!!.first
+                        if (rotationResult.sectorLeaders[sector]?.contains(signal.stockCode) == true) {
+                            sectorPenalty = (sectorPenalty * 0.5).toInt()
+                        }
                         score += sectorPenalty
                     }
                 }

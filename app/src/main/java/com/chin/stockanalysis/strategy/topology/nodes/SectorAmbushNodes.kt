@@ -38,7 +38,9 @@ private data class AmbSector(
 
 /** 阶段1：热门板块埋伏信号扫描（universe=hot_sector|etf，2026-09-17） */
 class SectorAmbushSignalNode(
-    private val topSectors: Int = 5,
+    private val topSectors: Int = 10,
+    /** 2026-09-18 用户需求：叠加「资金净流入远超流出」板块数（净流入>0 按净额降序）。 */
+    private val inflowSectors: Int = 10,
     private val bullMin: Int = 2,
     private val bullMax: Int = 3,
     private val maShort: Int = 5,
@@ -82,7 +84,7 @@ class SectorAmbushSignalNode(
             context.log(nodeId, "⚠️ 无板块历史数据（sector_daily_record 为空），无法定位热门板块，跳过埋伏扫描")
             return out
         }
-        val sectors = records.groupBy { it.sectorCode }.map { (code, recs) ->
+        val ranked = records.groupBy { it.sectorCode }.map { (code, recs) ->
             val name = recs.firstOrNull()?.sectorName ?: code
             val hotDays = recs.count { it.isHot == "S" || it.isHot == "A" }
             val inflow = recs.sumOf { it.mainNetInflow }
@@ -90,7 +92,15 @@ class SectorAmbushSignalNode(
             val comp = recs.map { it.compositeScore }.maxOrNull() ?: 0.0
             AmbSector(code, name, hotDays, inflow, avgChg,
                 hotDays * 3.0 + comp + inflow / 1e8 + avgChg)
-        }.sortedByDescending { it.score }.take(topSectors)
+        }.sortedByDescending { it.score }
+        // 2026-09-18 用户需求：10 个热门（动量榜）+ 10 个资金净流入（净流入>0 降序）并集去重
+        val uniq = LinkedHashMap<String, AmbSector>()
+        ranked.take(topSectors).forEach { uniq[it.code] = it }
+        if (inflowSectors > 0) {
+            ranked.filter { it.inflow > 0 }.sortedByDescending { it.inflow }
+                .take(inflowSectors).forEach { uniq.putIfAbsent(it.code, it) }
+        }
+        val sectors = uniq.values.toList()
 
         // ── ② 板块 → 成分股（sector_stocks；key 不匹配时按板块名回退） ──
         val pairs = try {
@@ -142,7 +152,7 @@ class SectorAmbushSignalNode(
             val secName = stockSector[raw] ?: stockSector[bare] ?: ""
             val row = evalStock(bare, name, secName, hist) ?: continue
             // 板块热度加分：越靠前的热门板块，其成分股加分越多
-            val bonus = (topSectors - (sectorRank[secName] ?: topSectors) + 1).toDouble()
+            val bonus = (sectors.size - (sectorRank[secName] ?: sectors.size) + 1).toDouble()
             row.put("score", round2(row.optDouble("score", 0.0) + bonus))
             val d = row.optString("date")
             if (d > asOf) asOf = d

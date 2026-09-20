@@ -585,45 +585,53 @@ class NewsStrengthNode(
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
- * ## 板块轮动惩罚结果（v2）
+ * ## 板块轮动惩罚结果（v3）
  *
  * 不再只输出单一总惩罚（死值），而是携带**板块级惩罚映射**，
  * 供下游 [SmartMoneyFilterNode] 对受罚板块中的股票逐股降分，真正影响选股。
  *
  * @property rotationPenalty 总惩罚分（≤0，供报表 rotationPenalty 字段 / 历史记录）
  * @property sectorPenalties 板块名 → 惩罚分（负值，命中受罚板块的股票在主力资金过滤中降分）
+ * @property sectorLeaders 板块名 → 龙头豁免名单（板块内信号强度前 N 只，惩罚减半；v3）
  * @property rotationSpeedFactor 跨日轮动因子（1.3 快速轮动加重 / 0.7 持续性强放宽 / 1.0 中性）
  * @property overlap 今日与昨日 top10 板块重合度（0~1）
  */
 data class RotationPenaltyResult(
     val rotationPenalty: Int,
     val sectorPenalties: Map<String, Int>,
+    val sectorLeaders: Map<String, List<String>> = emptyMap(),
     val rotationSpeedFactor: Double = 1.0,
     val overlap: Double = 0.5
 )
 
 /**
- * ## 板块轮动惩罚节点 v2
+ * ## 板块轮动惩罚节点 v3
  *
- * 三维度惩罚机制：
- * 1. **集中度惩罚**（对数衰减）：某板块信号数超过阈值后施加惩罚，但用 log2 衰减而非线性
- * 2. **板块生命周期**：结合 consecutiveHotDays 判断板块所处阶段
+ * 四维度惩罚机制：
+ * 1. **一票一板块（v3）**：每只股票只向「当前命中数最少」的所属板块投 1 票
+ *    （按代码排序的确定性贪心），消除行业+概念多板块重复累计放大惩罚
+ * 2. **集中度惩罚**（对数衰减）：某板块信号数超过阈值后施加惩罚，但用 log2 衰减而非线性
+ * 3. **板块生命周期**：结合 consecutiveHotDays 判断板块所处阶段
  *    - 刚启动(≤2天) → 不惩罚
  *    - 高潮期(3-4天) → 轻度惩罚
  *    - 退潮期(≥5天) → 重度惩罚
- * 3. **跨日轮动检测**：比较今天和昨天的选股板块分布
+ * 4. **跨日轮动检测**：比较今天和昨天的选股板块分布
  *    - 重合度低(<30%) → 轮动快，分散持仓惩罚加重
  *    - 重合度高(>70%) → 板块持续性强，集中度惩罚放宽
+ * 5. **龙头豁免（v3）**：受罚板块内信号强度前 [leaderExempt] 只（默认 2，0=关闭）
+ *    惩罚减半，输出 [RotationPenaltyResult.sectorLeaders] 供下游减半消费
  *
- * 输出为 [RotationPenaltyResult]，其中 `sectorPenalties` 供下游
- * 主力资金过滤（smart_money_filter）对受罚板块个股降分，实现惩罚闭环。
+ * 输出为 [RotationPenaltyResult]，其中 `sectorPenalties`/`sectorLeaders` 供下游
+ * 主力资金过滤（smart_money_filter）对受罚板块个股降分（龙头减半），实现惩罚闭环。
  *
- * @property thresholdDays 板块集中度阈值（默认 3）
+ * @property maxCountPerSector 板块集中度阈值（同板块命中股票数 ≥ 此值才惩罚，默认 3）
  * @property penaltyPerExcess 基础惩罚分数（默认 10）
+ * @property leaderExempt 龙头豁免只数（板块内强度前 N 只惩罚减半，默认 2，0=关闭）
  */
 class RotationPenaltyNode(
-    private val thresholdDays: Int = 3,
-    private val penaltyPerExcess: Int = 10
+    private val maxCountPerSector: Int = 3,
+    private val penaltyPerExcess: Int = 10,
+    private val leaderExempt: Int = 2
 ) : BaseNode<Any, RotationPenaltyResult>("rotation_penalty", "板块轮动惩罚", NodeType.ENRICHMENT) {
 
     override suspend fun execute(context: PipelineContext, input: Any): RotationPenaltyResult {
@@ -645,13 +653,16 @@ class RotationPenaltyNode(
                 if (tradingDays.size >= 2) tradingDays[tradingDays.size - 2].date else today
             } catch (_: Exception) { today }
 
-            // ── 1. 板块集中度统计 ──
+            // ── 1. 板块集中度统计（v3：一票一板块，每票投当前命中数最少的所属板块）──
+            val stockSectors = mutableMapOf<String, List<String>>()   // code → 全部所属板块（豁免判定复用）
             val sectorCounts = mutableMapOf<String, Int>()
-            for (code in pool.stockHits.keys) {
-                val sectors = StockDataCenter.getSectorsByStock(code)
-                for (sector in sectors) {
-                    sectorCounts[sector] = (sectorCounts[sector] ?: 0) + 1
-                }
+            for (code in pool.stockHits.keys.sorted()) {
+                val sectors = StockDataCenter.getSectorsByStock(code).filter { it.isNotBlank() }
+                if (sectors.isEmpty()) continue
+                stockSectors[code] = sectors
+                val target = sectors.minWithOrNull(
+                    compareBy({ sectorCounts[it] ?: 0 }, { it }))!!
+                sectorCounts[target] = (sectorCounts[target] ?: 0) + 1
             }
 
             // ── 2. 板块连续热门天数（生命周期） ──
@@ -688,10 +699,10 @@ class RotationPenaltyNode(
             val sectorPenalties = mutableMapOf<String, Int>()  // 板块 → 惩罚分（负值，供下游逐股降分）
             val penalizedSectors = mutableListOf<String>()
             for ((sector, count) in sectorCounts) {
-                if (count < thresholdDays) continue
+                if (count < maxCountPerSector) continue
 
                 // 4a. 集中度惩罚（对数衰减）
-                val excess = count - thresholdDays + 1
+                val excess = count - maxCountPerSector + 1
                 val basePenalty = (log2(excess + 1.0) * penaltyPerExcess).toInt()
 
                 // 4b. 板块生命周期系数
@@ -720,9 +731,24 @@ class RotationPenaltyNode(
             val scaledSectorPenalties = sectorPenalties.mapValues { (_, p) ->
                 (p * rotationSpeedFactor).toInt().coerceIn(-100, 0)
             }
+
+            // ── 5. 龙头豁免（v3）：受罚板块内信号强度前 N 只惩罚减半 ──
+            val strengthByCode = pool.boostedSignals.associate { it.stockCode to it.strength }
+            val sectorLeaders = mutableMapOf<String, List<String>>()
+            if (leaderExempt > 0 && scaledSectorPenalties.isNotEmpty()) {
+                for (sector in scaledSectorPenalties.keys) {
+                    val members = strengthByCode.keys.filter { sector in stockSectors[it].orEmpty() }
+                    val top = members.sortedWith(
+                        compareByDescending<String> { strengthByCode[it] ?: 0 }.thenBy { it })
+                        .take(leaderExempt)
+                    if (top.isNotEmpty()) sectorLeaders[sector] = top
+                }
+            }
+
             val result = RotationPenaltyResult(
                 rotationPenalty = finalPenalty,
                 sectorPenalties = scaledSectorPenalties,
+                sectorLeaders = sectorLeaders,
                 rotationSpeedFactor = rotationSpeedFactor,
                 overlap = overlap
             )
@@ -732,11 +758,14 @@ class RotationPenaltyNode(
             context.log(nodeId, "📤 $nodeName 输出: penalty=$finalPenalty (轮动因子=${"%.1f".format(rotationSpeedFactor)})")
 
             if (finalPenalty < 0) {
-                context.log(nodeId, "板块轮动惩罚v2: $finalPenalty 分, " +
-                    "惩罚板块: ${penalizedSectors.joinToString()}, " +
-                    "跨日重合度=${"%.0f".format(overlap * 100)}%")
+                val leadInfo = if (sectorLeaders.isNotEmpty()) {
+                    ", 龙头豁免减半: " + sectorLeaders.entries.joinToString { "${it.key}[${it.value.joinToString("/")}]" }
+                } else ""
+                context.log(nodeId, "板块轮动惩罚v3: $finalPenalty 分, " +
+                        "惩罚板块: ${penalizedSectors.joinToString()}, " +
+                        "跨日重合度=${"%.0f".format(overlap * 100)}%$leadInfo")
             } else {
-                context.log(nodeId, "板块轮动惩罚v2: 无惩罚（板块分散度正常）")
+                context.log(nodeId, "板块轮动惩罚v3: 无惩罚（板块分散度正常）")
             }
             context.recordStockFlow(
                 nodeId = nodeId, nodeName = nodeName,
@@ -1565,8 +1594,33 @@ class GenerateOrdersNode(
     private val maxHoldings: Int = 6,
     private val orderType: String = "MidTermQuant",
     private val totalCapRatio: Double = 12.5,
-    private val singlePositionRatio: Double = 5.0
+    private val singlePositionRatio: Double = 5.0,
+    /**
+     * 直达订单字段名（2026-09-18 用户需求：不同来源的保送/直达票共用同一机制）。
+     * 默认 instBuyHits（月内机构增持保送）；资金流 DAG 传 ffDirectHits
+     * （fund_flow_level level=4 输出），命中票同样跳过三重拦截直达订单。
+     */
+    private val directField: String = "instBuyHits",
+    /**
+     * 2026-09-19 实验驱动优化（PC 侧 smalltools/_bypass_lab.py，近12日330条样本）：
+     * 可跳过指定拦截（小写逗号分隔：trend / pattern / idiom）——即「不同级别权限」。
+     * 实验显示当日急拉>5% 组 T+5 胜率 93%/均+8.37%，口诀否决在误杀这批票
+     * → 超短/短线配 bypass=idiom。
+     */
+    private val bypass: Set<String> = emptySet(),
+    /** 距60日高上限（如 -5 = 要求距60日高 ≤ -5%）；null = 不启用高位闸。 */
+    private val maxPos60: Double? = null
 ) : BaseNode<Any, OrderGenerationResult>("generate_orders", "买入订单生成", NodeType.TRADE_ACTION) {
+
+    /**
+     * ST / *ST / 退市整理 剔除（2026-09-19 用户需求：所有 ST 一律剔除）。
+     * A股 ST 票名称必定带 ST 标记，故按名称判定可靠；「退」= 退市整理期。
+     */
+    private fun isExcludedName(name: String?): Boolean {
+        val n = (name ?: "").trim().uppercase().replace(" ", "")
+        if (n.isEmpty()) return false
+        return n.contains("ST") || n.contains("PT") || n.contains("退")
+    }
 
     override suspend fun execute(context: PipelineContext, input: Any): OrderGenerationResult {
         // 兼容多种上游：AIPrediction / MergedSignalPool / NewsGuardResult
@@ -1613,27 +1667,37 @@ class GenerateOrdersNode(
                 // QFII/北向 近35天披露增持）直接保送进入订单候选；是否买入或拦截仍由
                 // 本 node 的最终操作决定（评分阈值/趋势门控/同日重复/仓位预算全走）。
                 val obj = input as? org.json.JSONObject
-                if (obj != null && obj.optJSONArray("instBuyHits") != null) {
-                    val hits = obj.optJSONArray("instBuyHits") ?: org.json.JSONArray()
+                // 2026-09-19：directField 支持逗号分隔多来源（如 "instBuyHits,superDirectHits"）——
+                // level=0 超级权限（super_holder_gate）与机构保送/资金流直达可并存。
+                val hits = org.json.JSONArray()
+                for (f in directField.split(",")) {
+                    val fa = obj?.optJSONArray(f.trim()) ?: continue
+                    for (i in 0 until fa.length()) fa.optJSONObject(i)?.let { hits.put(it) }
+                }
+                val scoredArr = obj?.optJSONArray("scored")
+                if (obj != null && (hits.length() > 0 || scoredArr != null)) {
                     val byCode = LinkedHashMap<String, org.json.JSONObject>()
                     for (i in 0 until hits.length()) {
                         val h = hits.optJSONObject(i) ?: continue
-                        val c = h.optString("code")
+                        val c = h.optString("code").ifBlank { h.optString("secid") }
                         val prev = byCode[c]
                         if (prev == null || h.optDouble("score") > prev.optDouble("score")) byCode[c] = h
                     }
                     instBuyCodes.addAll(byCode.values.map { it.optString("secid", "") })
-                    byCode.values.mapIndexed { index, h ->
-                        AIPredictionEngine.AIPick(
-                            stockCode = h.optString("secid", ""),
-                            stockName = h.optString("name", ""),
-                            rank = index + 1,
-                            compositeScore = h.optDouble("score", 80.0).toInt(),
-                            upProbability = h.optDouble("score", 80.0).toInt(),
-                            reason = h.optString("reason", "月内机构买入保送"),
-                            actionSuggestion = "机构保送"
-                        )
-                    }
+                    // 候选池：优先 scored（资金流 DAG 全量放行名单），缺省回退直达名单（机构链）
+                    val cand = scoredArr ?: hits
+                    (0 until cand.length()).mapNotNull { cand.optJSONObject(it) }
+                        .mapIndexed { index, h ->
+                            AIPredictionEngine.AIPick(
+                                stockCode = h.optString("secid", ""),
+                                stockName = h.optString("name", ""),
+                                rank = index + 1,
+                                compositeScore = h.optDouble("score", 80.0).toInt(),
+                                upProbability = h.optDouble("score", 80.0).toInt(),
+                                reason = h.optString("reason", "月内机构买入保送"),
+                                actionSuggestion = "保送"
+                            )
+                        }
                 } else {
                     context.log(nodeId, "⚠ 未知输入类型: ${input::class.simpleName}，无法生成订单")
                     return OrderGenerationResult(emptyList(), 0, false)
@@ -1733,6 +1797,17 @@ class GenerateOrdersNode(
             val candidates = mutableListOf<AIPredictionEngine.AIPick>()
 
             for (pick in topPicks) {
+                // 0. 红线：ST / *ST / 退市整理票一律剔除（2026-09-19 用户需求；
+                //    优先于保送/直达，与 Python usecase_pipeline._excluded 同口径）
+                if (isExcludedName(pick.stockName)) {
+                    filteredCount++
+                    filteredReasons.add("${pick.stockName}(${pick.stockCode}): ST/退市剔除")
+                    context.log(
+                        nodeId,
+                        "❌ ${pick.stockName}(${pick.stockCode}) ST/退市股，剔除不生成订单")
+                    continue
+                }
+
                 // 1. 评分阈值过滤
                 if (pick.compositeScore < scoreThreshold) {
                     filteredCount++
@@ -1744,14 +1819,32 @@ class GenerateOrdersNode(
                 //     依据见 execute 顶部 instBuyCodes 注释；同日重复/仓位预算等其余检查仍走）
                 val isInstBuy = pick.stockCode in instBuyCodes
                 if (isInstBuy) {
-                    context.log(nodeId, "🚨 ${pick.stockName}(${pick.stockCode}) 月内机构增持保送票：跳过趋势/形态/口诀三重拦截（回测2022-2026放行组fwd10胜率57%均+2.2%优于拦截组）")
+                    context.log(nodeId, "🚨 ${pick.stockName}(${pick.stockCode}) ${pick.reason}：跳过趋势/形态/口诀三重拦截（机构增持回测2022-2026放行组fwd10胜率57%均+2.2%优于拦截组）")
                 }
 
                 // 1.5 个股级三类趋势匹配门控（需求①：趋势图三类 上涨/中性/下跌 均匹配，四周期统一）
                 //     下跌 → 直接拦截；上涨 → 放行（买入 node 内再判断是否生成订单）；中性 → 继续原流程
                 val candles60 = try { db.dailySnapshotDao().getByCode(pick.stockCode, 60) } catch (_: Exception) { emptyList() }
+                // 2026-09-19「高位闸」：距60日高过近 = 追高（PC 侧实验 _bypass_lab.py：
+                //   高位组(≥-5%) T+3 胜率仅 17%、T+5 26%/均 -3.23%，为最差分组）
+                if (maxPos60 != null && !isInstBuy && candles60.isNotEmpty()) {
+                    val hi = candles60.maxOf { it.high }
+                    val last = candles60.last().close
+                    if (hi > 0 && last > 0) {
+                        val p60 = (last / hi - 1.0) * 100
+                        if (p60 > maxPos60) {
+                            filteredCount++
+                            filteredReasons.add(
+                                "${pick.stockName}(${pick.stockCode}): 距60日高${"%.1f".format(p60)}%>${maxPos60}%（高位追高闸）")
+                            context.log(
+                                nodeId,
+                                "❌ ${pick.stockName}(${pick.stockCode}) 距60日高 ${"%.1f".format(p60)}% > ${maxPos60}%（高位追高闸：实验高位组T+3胜率17%）")
+                            continue
+                        }
+                    }
+                }
                 val trendMatch = TrendClassGate.classify(candles60)
-                if (!isInstBuy && trendMatch.label == "下跌") {
+                if (!isInstBuy && "trend" !in bypass && trendMatch.label == "下跌") {
                     filteredCount++
                     filteredReasons.add("${pick.stockName}(${pick.stockCode}): 趋势匹配=下跌(${trendMatch.detail})直接拦截")
                     context.log(nodeId, "❌ ${pick.stockName}(${pick.stockCode}) 趋势匹配=下跌(${trendMatch.detail})，直接拦截不生成订单")
@@ -1790,6 +1883,23 @@ class GenerateOrdersNode(
                     continue
                 }
 
+                // 3.55 MACD 顶背离否决（2026-09-19 用户需求④：所有 usecase 顶背离不买）
+                //      与 Python 引擎 usecase_pipeline._generate_orders 同口径；直达票不否决；
+                //      bypass 里加 "topdiv" 可关闭（与 trend/pattern/idiom 同一套开关）。
+                val _topDiv = try {
+                    if (candles60.size >= 40) {
+                        com.chin.stockanalysis.strategy.analysis.MacdDivergenceAnalyzer
+                            .topDivergence(candles60.map { it.close },
+                                           candles60.map { it.high })
+                    } else null
+                } catch (_: Exception) { null }
+                if (_topDiv != null && !isInstBuy && "topdiv" !in bypass) {
+                    filteredCount++
+                    filteredReasons.add("${pick.stockName}(${pick.stockCode}): $_topDiv 否决买入")
+                    context.log(nodeId, "❌ ${pick.stockName}(${pick.stockCode}) $_topDiv → 否决买入（全 usecase 统一；bypass=topdiv 可关）")
+                    continue
+                }
+
                 // 3.6 看空形态否决：K线形态匹配只做标注（日志/趋势图展示），
                 //     买入必须看涨——近端K线命中强度≥3 的看跌形态（如看跌吞没/看跌三鸦/黄昏之星等）直接否决买入
                 //     口径与 QuantFragmentBase.logTrendPatternMatches 一致（60根K、≥30根、strength≥3）
@@ -1804,7 +1914,7 @@ class GenerateOrdersNode(
                             }
                     } else null
                 } catch (_: Exception) { null }
-                if (bearishPattern != null && !isInstBuy) {
+                if (bearishPattern != null && !isInstBuy && "pattern" !in bypass) {
                     filteredCount++
                     filteredReasons.add("${pick.stockName}(${pick.stockCode}): 看空形态[${bearishPattern.patternName}]否决买入")
                     context.log(nodeId, "❌ ${pick.stockName}(${pick.stockCode}) 命中看空形态[${bearishPattern.patternName}·看空]，否决买入（形态只标注，看涨才买入）")
@@ -1842,7 +1952,7 @@ class GenerateOrdersNode(
                         else -> null
                     }
                 } else null
-                if (idiomVeto != null && !isInstBuy) {
+                if (idiomVeto != null && !isInstBuy && "idiom" !in bypass) {
                     filteredCount++
                     filteredReasons.add("${pick.stockName}(${pick.stockCode}): 口诀否决[$idiomVeto]")
                     context.log(nodeId, "❌ ${pick.stockName}(${pick.stockCode}) 口诀买前否决[$idiomVeto]（连续大涨/陡拉/冲高回踩/缓跌放量）")

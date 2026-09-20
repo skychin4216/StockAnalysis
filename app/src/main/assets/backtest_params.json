@@ -1,8 +1,8 @@
 {
- "version": 4,
- "generated": "2026-09-17 01:29",
- "source": "AutoQuant export_params.py (params_history + App 基准)",
- "period": "2025-12-23 ~ 2026-09-16",
+ "version": 3,
+ "generated": "2026-08-16",
+ "source": "smalltools/_walk_forward.py (三年 walk-forward) + _factor_ic.py (IC 排序器)",
+ "period": "2023-08-15 ~ 2026-08-15",
  "select_params": {
   "超短": {
    "convergenceThreshold": 3.0,
@@ -26,7 +26,11 @@
    "requireAboveAllMAs": false,
    "requireVolumeShrink": false,
    "moderateVolumeLower": 0.0,
-   "moderateVolumeUpper": 0.0
+   "moderateVolumeUpper": 0.0,
+   "allowQuietRise": true,
+   "quietVolumeRatio": 1.0,
+   "allowLowAmbush": false,
+   "allowStableDip": true
   },
   "短线": {
    "convergenceThreshold": 3.0,
@@ -50,15 +54,21 @@
    "requireOpenBelowMAs": false,
    "requireVolumeShrink": false,
    "moderateVolumeLower": 0.0,
-   "moderateVolumeUpper": 0.0
+   "moderateVolumeUpper": 0.0,
+   "allowQuietRise": true,
+   "quietVolumeRatio": 1.0,
+   "allowLowAmbush": false,
+   "allowStableDip": true
   },
   "中线": {
    "convergenceThreshold": 2.5,
    "useMA60": true,
    "convergenceDurationDays": 15,
-   "minDrawdownPct": 30.0,
+   "minDrawdownPct": 15.0,
    "requireMA60Rising": true,
    "requireAboveAllMAs": true,
+   "allowLowAmbush": true,
+   "allowQuietRise": false,
    "moderateVolumeLower": 1.2,
    "moderateVolumeUpper": 1.8,
    "lookbackDays": 120,
@@ -79,7 +89,7 @@
    "convergenceThreshold": 2.5,
    "useMA60": true,
    "convergenceDurationDays": 20,
-   "minDrawdownPct": 20.0,
+   "minDrawdownPct": 10.0,
    "requireMA60Rising": true,
    "maRisingDays": 10,
    "requireMA250Rising": true,
@@ -97,36 +107,9 @@
    "requireOpenBelowMAs": false,
    "moderateVolumeLower": 0.0,
    "moderateVolumeUpper": 0.0,
-   "volumeBreakoutRatio": 0.0
-  }
- },
- "trend_follow": {
-  "超短": {
-   "useMA60": false,
-   "nearHighDrawdownPct": 0.8,
-   "volumeRatio": 2.0,
-   "minPassCount": 6,
-   "requireChangePct": true,
-   "guard_chg": 0.0,
-   "guard_vr": 1.5
-  },
-  "短线": {
-   "useMA60": true,
-   "nearHighDrawdownPct": 1.0,
-   "volumeRatio": 2.0,
-   "minPassCount": 5,
-   "requireChangePct": true,
-   "guard_chg": 2.0,
-   "guard_vr": 1.5
-  }
- },
- "seasonality": {
-  "enabled": true,
-  "anchors": {
-   "锂价": "down",
-   "油价": "up",
-   "铜价": "up",
-   "金价": "up"
+   "volumeBreakoutRatio": 0.0,
+   "allowLowAmbush": true,
+   "allowQuietRise": false
   }
  },
  "rank_factors": {
@@ -159,15 +142,14 @@
    "convergenceDays": -0.214,
    "changePct": -0.211,
    "direction": 0.35,
-   "seasonality": 0.3,
-   "ml_prob": 0.2
+   "seasonality": 0.3
   }
  },
  "sell_rules": {
   "超短": {
    "default": {
     "style": "nextday",
-    "maxHold": 1,
+    "maxHold": 3,
     "tp": 0.0,
     "sl": 0.0,
     "avg": 0.0,
@@ -176,40 +158,37 @@
    },
    "by_state": {
     "BULLISH": {
+     "maxHold": 3,
+     "sl": 0.0,
      "style": "nextday",
-     "maxHold": 1,
-     "tp": 0.4,
-     "sl": -0.8,
-     "avg": 3.27,
-     "wr": 44.5,
-     "n": 44
+     "tp": 0.0
     },
     "OSCILLATION": {
+     "maxHold": 3,
+     "sl": 0.0,
      "style": "nextday",
-     "maxHold": 1,
-     "tp": 0.4,
-     "sl": -0.8,
-     "avg": 1.51,
-     "wr": 56.1,
-     "n": 207
+     "tp": 0.0
     },
     "BEARISH": {
+     "maxHold": 3,
+     "sl": 0.0,
      "style": "nextday",
-     "maxHold": 1,
-     "tp": 0.4,
-     "sl": -0.8,
-     "avg": 5.08,
-     "wr": 67.3,
-     "n": 129
+     "tp": 0.0
+    },
+    "CRASH": {
+     "maxHold": 3,
+     "sl": 0.0,
+     "style": "nextday",
+     "tp": 0.0
     }
    },
-   "fitted_months": 35
+   "fitted_months": 69
   },
   "短线": {
    "default": {
     "style": "streak",
     "streakDays": 3,
-    "maBreak": 5,
+    "maBreak": 13,
     "maxHold": 10,
     "tp": 0.0,
     "sl": 0.0,
@@ -219,40 +198,39 @@
    },
    "by_state": {
     "BULLISH": {
+     "maBreak": 13,
+     "maxHold": 6,
+     "sl": 0.0,
+     "streakDays": 4,
      "style": "streak",
-     "streakDays": 2,
-     "maBreak": 5,
-     "maxHold": 3,
-     "tp": 1.5,
-     "sl": -1.5,
-     "avg": 1.26,
-     "wr": 53.0,
-     "n": 55
+     "tp": 0.0
     },
     "OSCILLATION": {
+     "maBreak": 13,
+     "maxHold": 10,
+     "sl": 0.0,
+     "streakDays": 4,
      "style": "streak",
-     "streakDays": 2,
-     "maBreak": 8,
-     "maxHold": 3,
-     "tp": 1.5,
-     "sl": -1.5,
-     "avg": 2.68,
-     "wr": 56.5,
-     "n": 50
+     "tp": 0.0
     },
     "BEARISH": {
+     "maBreak": 13,
+     "maxHold": 10,
+     "sl": 0.0,
+     "streakDays": 3,
      "style": "streak",
+     "tp": 0.0
+    },
+    "CRASH": {
+     "maBreak": 5,
+     "maxHold": 8,
+     "sl": 0.0,
      "streakDays": 2,
-     "maBreak": 8,
-     "maxHold": 5,
-     "tp": 1.5,
-     "sl": -5.0,
-     "avg": 6.79,
-     "wr": 43.7,
-     "n": 134
+     "style": "streak",
+     "tp": 0.0
     }
    },
-   "fitted_months": 36
+   "fitted_months": 75
   },
   "中线": {
    "default": {
@@ -267,37 +245,28 @@
    },
    "by_state": {
     "BULLISH": {
-     "style": "hold",
      "maxHold": 20,
-     "tp": 25,
      "sl": -8,
+     "style": "hold",
      "tRatio": 0.4,
-     "avg": 8.5,
-     "wr": 79.1,
-     "n": 206
+     "tp": 25
     },
     "OSCILLATION": {
-     "style": "hold",
-     "maxHold": 10,
-     "tp": 25,
+     "maxHold": 20,
      "sl": -6,
+     "style": "hold",
      "tRatio": 0.4,
-     "avg": 2.89,
-     "wr": 63.6,
-     "n": 33
+     "tp": 25
     },
     "BEARISH": {
+     "maxHold": 20,
+     "sl": -6,
      "style": "hold",
-     "maxHold": 10,
-     "tp": 3.0,
-     "sl": -8.0,
      "tRatio": 0.4,
-     "avg": 1.33,
-     "wr": 65.8,
-     "n": 168
+     "tp": 20
     }
    },
-   "fitted_months": 36
+   "fitted_months": 76
   },
   "长线": {
    "default": {
@@ -312,253 +281,40 @@
    },
    "by_state": {
     "BULLISH": {
-     "style": "hold",
      "maxHold": 40,
-     "tp": 50,
      "sl": -12,
+     "style": "hold",
      "tRatio": 0.4,
-     "avg": 10.73,
-     "wr": 80.1,
-     "n": 337
+     "tp": 50
     },
     "OSCILLATION": {
-     "style": "hold",
      "maxHold": 40,
-     "tp": 50,
      "sl": -12,
+     "style": "hold",
      "tRatio": 0.4,
-     "avg": 14.54,
-     "wr": 80.0,
-     "n": 90
+     "tp": 50
     },
     "BEARISH": {
-     "style": "hold",
      "maxHold": 40,
-     "tp": 50,
      "sl": -12,
+     "style": "hold",
      "tRatio": 0.4,
-     "avg": 18.32,
-     "wr": 81.5,
-     "n": 27
+     "tp": 50
+    },
+    "CRASH": {
+     "maxHold": 40,
+     "sl": -12,
+     "style": "hold",
+     "tRatio": 0.4,
+     "tp": 40
     }
    },
-   "fitted_months": 36,
-   "lowVol": {
-    "vol20_max": 3.4,
-    "default": {
-     "style": "hold",
-     "maxHold": 300,
-     "tp": 0.0,
-     "sl": -20.0,
-     "tRatio": 0.4
-    }
-   }
+   "fitted_months": 76
   }
  },
  "meta": {
-  "fitted_months": 37,
-  "note": "sell_rules 以 APK 本机拟合为准（实盘/实仓最新）；select_params/rank_factors 保留 PC 三年 walk-forward + IC 排序；APK 缺失字段由 PC 同周期同状态规则补全",
-  "ttrade_source": "E:\\Android\\work\\dev\\StockAnalysis\\AutoQuant\\backtest_logs\\ttrade_params.json",
-  "ttrade_fit_window": [
-   "2025-08-15",
-   "2026-08-15"
-  ],
-  "pc_hold": {
-   "ultra_short": 3,
-   "short": 15,
-   "mid": 45,
-   "long": 180
-  },
-  "pc_step": {
-   "ultra_short": 2,
-   "short": 5,
-   "mid": 5,
-   "long": 10
-  },
-  "pc_build_time": "2026-08-25 10:30:00",
-  "period": "2023-08-15 ~ 2026-08-25",
-  "fit_time": "2026-09-17 01:29",
-  "fit_source": "AutoQuant _self_fit_pipeline.py 三状态回溯自拟合",
-  "fit_data_range": "2008-01-02 ~ 2026-09-16",
-  "fit_phases": {
-   "震荡": [
-    "2026-03-05 ~ 2026-03-18",
-    "2026-05-20 ~ 2026-05-26",
-    "2026-08-06 ~ 2026-08-11"
-   ],
-   "牛市": [
-    "2025-12-23 ~ 2026-01-20",
-    "2026-04-14 ~ 2026-04-29",
-    "2026-06-23 ~ 2026-07-01",
-    "2026-08-12 ~ 2026-08-19"
-   ],
-   "熊市": [
-    "2026-02-03 ~ 2026-02-11",
-    "2026-03-24 ~ 2026-04-08",
-    "2026-06-01 ~ 2026-08-31",
-    "2026-09-03 ~ 2026-09-10",
-    "2026-09-14 ~ 2026-09-16"
-   ]
-  }
- },
- "t_trade": {
-  "supportMa5Factor": 0.98,
-  "supportMa10Factor": 0.94,
-  "resistanceMa5Factor": 1.0,
-  "resistanceMa10Factor": 1.01,
-  "nearSupportThreshold": 0.02,
-  "nearResistanceThreshold": 0.01,
-  "minExpectedProfitPct": 0.3,
-  "pairProfitPct": 0.8,
-  "indexOscillationTrendPct": 3.0,
-  "indexOscillationAmpBandPct": 1.2,
-  "intradayWindowMinutes": 20,
-  "intradayRallySellPct": 3.0,
-  "intradayPlungeBuyPct": 3.0,
-  "intradayWindowConfBonus": 10,
-  "intradayOscillationConfBonus": 10
- },
- "dag_nodes": {
-  "version": 1,
-  "generated": "2026-09-18 00:59",
-  "source": "AutoQuant _dag_node_params.py (Kotlin 节点硬编码 + pipeline XML config 镜像)",
-  "common": {
-   "data_import": {
-    "days": 60,
-    "minSnapshots": 100
-   },
-   "market_ma_unified": {
-    "threshold": 0.02
-   },
-   "pool_filter": {
-    "excludeST": true,
-    "excludeStart300": true,
-    "excludeStart688": true,
-    "excludeStart8": true,
-    "excludeStart9": true
-   },
-   "candidate_pool": {
-    "useStockPoolFallback": true
-   }
-  },
-  "strict_selection_ref": "select_params",
-  "node_params": {
-   "financial_health": {
-    "minScore": 60,
-    "maxDebtRatio": 70
-   },
-   "smart_money_filter": {
-    "超短": {
-     "minScore": 30
-    },
-    "短线": {
-     "minScore": 55
-    },
-    "中线": {
-     "minScore": 55
-    },
-    "长线": {
-     "minScore": 55
-    }
-   },
-   "generate_orders": {
-    "超短": {
-     "maxHoldings": 5
-    },
-    "短线": {
-     "maxHoldings": 5
-    },
-    "中线": {
-     "maxHoldings": 5
-    },
-    "长线": {
-     "maxHoldings": 5
-    }
-   },
-   "swap_weak": {
-    "超短": {
-     "maxHoldings": 5
-    },
-    "短线": {
-     "maxHoldings": 5
-    },
-    "中线": {
-     "maxHoldings": 5
-    }
-   },
-   "defensive_dividend": {
-    "maxPb": 1.5,
-    "maxDebtRatio": 70,
-    "maxCandidates": 5,
-    "minMarketCapYi": 500,
-    "中线": {
-     "maxPerSector": 2
-    },
-    "长线": {
-     "maxPerSector": 1
-    }
-   },
-   "bounce_reversal": {
-    "noNewLowDays": 3,
-    "boostPoints": 12,
-    "indexCode": "sh000001"
-   },
-   "direction_label": {
-    "exclude": [
-     "DOWNTREND",
-     "OSCILLATION"
-    ],
-    "penalty": 25
-   },
-   "news_guard": {
-    "impactThreshold": 75,
-    "sentimentThreshold": -30
-   },
-   "news_strength": {
-    "lookbackDays": 3
-   },
-   "rotation_penalty": {
-    "thresholdDays": 3,
-    "penaltyPerExcess": 10
-   },
-   "cross_day_aggregation": {
-    "windowDays": 5,
-    "topN": 20
-   }
-  },
-  "data_gated_nodes": {
-   "financial_health": {
-    "data": "财务快照(pe/pb/roe/debt/marketCap)",
-    "fallback": "数据缺失时跳过"
-   },
-   "smart_money_filter": {
-    "data": "智能资金流分 SmartMoneyCache",
-    "fallback": "数据缺失时跳过"
-   },
-   "inst_tips": {
-    "data": "机构增减持/调研",
-    "fallback": "数据缺失时跳过"
-   },
-   "news_strength": {
-    "data": "新闻热度",
-    "fallback": "数据缺失时跳过"
-   },
-   "news_guard": {
-    "data": "新闻冲击/情绪分",
-    "fallback": "数据缺失时跳过"
-   },
-   "ai_predict": {
-    "data": "AI 涨跌预测模型",
-    "fallback": "数据缺失时跳过"
-   },
-   "sector_boost": {
-    "data": "板块强度(StockDataCenter)",
-    "fallback": "数据缺失时跳过"
-   },
-   "seasonality_boost": {
-    "data": "商品/季节因子",
-    "fallback": "数据缺失时跳过"
-   }
-  }
+  "fitted_months": 76,
+  "note": "by_state 为各大盘状态的拟合众数规则；无样本状态回退 default；rank_factors 为 IC/ICIR 全量检验的排序权重（负=值越小越优先）",
+  "rule_tuning": "2026-09-20 用户需求：按口径B命中时点分布调整卖出规则（超短 maxHold 1→3；短线 maBreak 8→13、BULLISH maxHold 8→6）"
  }
 }

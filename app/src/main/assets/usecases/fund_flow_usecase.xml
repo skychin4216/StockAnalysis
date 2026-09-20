@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<usecase id="fund_flow" version="1.0" env="all">
+    <name>资金流选股</name>
+    <description>板块资金流榜（净流入/流出）→ 个股资金流 v2.1 双层评分（趋势分0-6 + 质量分0-4 = 0~10：20D&gt;10D&gt;5D&gt;1D 多周期共振 + 超大单占比/加速度/无背离质量校验 + 距均线过远惩罚）→ 级别闸（1=strict 仅STRONG_BUY / 2=normal +BUY / 3=aggressive +WATCH / 4=direct 最高级直达生成订单）→ 买入订单生成。</description>
+    <steps>
+        <pipeline ref="usecases/fund_flow_pipeline.xml" name="fund_flow_dag"/>
+    </steps>
+    <config>
+        <param name="orderType" value="FundFlow"/>
+        <param name="maxHoldings" value="5"/>
+        <param name="holdingPeriod" value="短"/>
+        <param name="stopLoss" value="5"/>
+        <!-- 资金流级别：1=strict / 2=normal（默认）/ 3=aggressive / 4=direct（直达订单） -->
+        <param name="flowLevel" value="2"/>
+    </config>
+</usecase>

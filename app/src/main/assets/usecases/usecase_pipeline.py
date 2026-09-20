@@ -1542,30 +1542,42 @@ def _stock_sector_map():
 
 @register("rotation_penalty")
 def _rotation_penalty(ctx, node, inputs):
-    """板块轮动惩罚 v2：集中度(对数衰减) × 生命周期 × 跨日轮动因子。
+    """板块轮动惩罚 v3：一票一板块 × 集中度(对数衰减) × 生命周期 × 跨日轮动 × 龙头豁免。
 
-    config：thresholdDays（默认 3）、penaltyPerExcess（默认 10）
-    输出 {rotationPenalty, sectorPenalties, rotationSpeedFactor, overlap}，下游
-    smart_money_filter 据此对受罚板块个股降分（惩罚闭环）。
+    v3（2026-09-18，对应 docs/策略体系完整分析.md 十二章遗留项）：
+      ① 一票一板块——每票只投「当前命中数最少」的所属板块（按代码排序的确定性贪心），
+        消除一票多板块（行业+概念）重复累计放大惩罚的误伤；
+      ② 龙头豁免——受罚板块内评分前 leaderExempt 只（默认 2，0=关闭）惩罚减半，
+        输出 sectorLeaders 供 smart_money_filter 消费（豁免按全部所属板块判定归属）；
+      ③ 参数改名 maxCountPerSector（语义=同板块命中只数阈值，兼容旧名 thresholdDays）。
+    config：maxCountPerSector/thresholdDays（默认 3）、penaltyPerExcess（默认 10）、
+            leaderExempt（默认 2）
+    输出 {rotationPenalty, sectorPenalties, sectorLeaders, rotationSpeedFactor, overlap}，
+    下游 smart_money_filter 据此对受罚板块个股降分（惩罚闭环）。
     跨端说明：APK 的 sectorDailyRecord（板块连续热门天数 / 昨日 Top10 板块）PC 无此表，
     hotDays 改由 n_sector_strength.hotDays 折算；昨日板块 PC 无历史 → overlap 取 0.5
     默认中等轮动（rotationSpeedFactor=1.0），不引入额外惩罚偏差。
     """
     import math
     cfg = node.config or {}
-    threshold = int(cfg.get("thresholdDays") or 3)
+    threshold = int(cfg.get("maxCountPerSector") or cfg.get("thresholdDays") or 3)
     per_excess = int(cfg.get("penaltyPerExcess") or 10)
+    leader_n = int(cfg.get("leaderExempt", 2))
     pool = ctx.get("n_boost") or ctx.get("n_merge") or []
     if not pool:
-        res = {"rotationPenalty": 0, "sectorPenalties": {},
+        res = {"rotationPenalty": 0, "sectorPenalties": {}, "sectorLeaders": {},
                "rotationSpeedFactor": 1.0, "overlap": 0.5}
         ctx.stage(node.id, res)
         return res
     rev = _stock_sector_map()
+    # ── v3 ① 一票一板块：每票投当前命中数最少的所属板块（确定性贪心）──
     counts = {}
-    for cid, _sc in pool:
-        for s in rev.get(cid, ()):
-            counts[s] = counts.get(s, 0) + 1
+    for cid, _sc in sorted(pool, key=lambda x: x[0]):
+        secs = [s for s in rev.get(cid, ()) if s]
+        if not secs:
+            continue
+        s = min(secs, key=lambda t: (counts.get(t, 0), t))
+        counts[s] = counts.get(s, 0) + 1
     hot_days = {s.get("name"): int(round(s.get("hotDays") or 0))
                 for s in ((ctx.get("n_sector_strength") or {}).get("topSectors") or [])}
     today_top = {s for s, c in counts.items() if c >= 2}
@@ -1588,14 +1600,26 @@ def _rotation_penalty(ctx, node, inputs):
                          (("高潮%d d" % hd) if hd <= 4 else ("退潮%d d" % hd)), sp))
     final = max(-100, min(0, int(penalty * factor)))
     scaled = {s: max(-100, min(0, int(p * factor))) for s, p in sector_pen.items()}
-    res = {"rotationPenalty": final, "sectorPenalties": scaled,
+    # ── v3 ② 龙头豁免：受罚板块内评分前 N 只（按全部所属板块判定归属）──
+    strength = {cid: sc for cid, sc in pool}
+    leaders = {}
+    if leader_n > 0 and scaled:
+        for s in scaled:
+            members = [cid for cid in strength if s in rev.get(cid, ())]
+            top = sorted(members, key=lambda c: (-strength[c], c))[:leader_n]
+            if top:
+                leaders[s] = top
+    res = {"rotationPenalty": final, "sectorPenalties": scaled, "sectorLeaders": leaders,
            "rotationSpeedFactor": factor, "overlap": overlap}
     ctx.stage(node.id, res)
     if final < 0:
-        ctx.notes.append("[%s] ⚠️ 轮动惩罚v2 %d 分（轮动因子 %.1f，跨日重合度 %.0f%%）：%s"
-                         % (node.id, final, factor, overlap * 100, ", ".join(labels)))
+        lead_note = ("；龙头豁免减半：%s" % "、".join(
+            "%s[%s]" % (s, "/".join(cid for cid in cs)) for s, cs in leaders.items())
+        ) if leaders else ""
+        ctx.notes.append("[%s] ⚠️ 轮动惩罚v3 %d 分（轮动因子 %.1f，跨日重合度 %.0f%%，一票一板块）：%s%s"
+                         % (node.id, final, factor, overlap * 100, ", ".join(labels), lead_note))
     else:
-        ctx.notes.append("[%s] ⚠️ 轮动惩罚v2：无惩罚（板块分散度正常）" % node.id)
+        ctx.notes.append("[%s] ⚠️ 轮动惩罚v3：无惩罚（板块分散度正常）" % node.id)
     return res
 
 
@@ -1970,6 +1994,24 @@ def _ancestral_adjust(snaps, hp):
         adj += bon
         tags.append("深坑大买(回撤%.1f%%+%d)" % (dd60, bon))
 
+    # ── 规则13/14：2026-09-19 新增（来源《选股口诀》量价核心篇）──
+    # 规则13 突破不放量，十次九次诓
+    #   价格已触及/突破近 20 日高点，但当日量比 < 1.0（未放量）→ 大概率假突破，重罚。
+    c_now = float(closes[-1] or 0)
+    if hi20 > 0 and c_now >= hi20 * 0.995 and vol_ratio < 1.0:
+        pen = {"ULTRA_SHORT": -14, "SHORT": -12, "MID": -9}.get(hp, -7)
+        adj += pen
+        tags.append("突破不放量=假突破(量比%.2f%d)" % (vol_ratio, pen))
+
+    # 规则14 价涨量缩，小心见顶
+    #   近 5 日已涨 ≥8% 却呈缩量（量比 < 0.85）→ 见顶预警，减分。
+    chg5 = ((c_now / closes[-6] - 1) * 100
+            if len(closes) >= 6 and closes[-6] else 0.0)
+    if chg5 >= 8.0 and vol_ratio < 0.85:
+        pen = {"ULTRA_SHORT": -10, "SHORT": -10, "MID": -8}.get(hp, -6)
+        adj += pen
+        tags.append("价涨量缩见顶预警(5日%.1f%%+%d)" % (chg5, pen))
+
     return adj, ("; ".join(tags) if tags else "无触发")
 
 
@@ -1984,19 +2026,25 @@ def _smart_money_filter(ctx, node, inputs):
               or ctx.get("n_boost") or [])
     scored = sorted(scored, key=lambda x: -x[1])[:50]
     pen = (ctx.get("n_rot_pen") or {}).get("sectorPenalties") or {}
+    leaders = (ctx.get("n_rot_pen") or {}).get("sectorLeaders") or {}
     if pen:
         rev = _stock_sector_map()
-        adj, n_pen = [], 0
+        adj, n_pen, n_half = [], 0, 0
         for cid, sc in scored:
-            d = sum(pen[s] for s in rev.get(cid, ()) if s in pen)
-            if d:
+            cand = [(pen[s], s) for s in rev.get(cid, ()) if s in pen]
+            if cand:
+                d, s = min(cand)          # 取最重惩罚（对齐 APK minOrNull 口径）
+                if cid in leaders.get(s, ()):
+                    d = int(d * 0.5)      # v3 龙头豁免：板块内评分前N只惩罚减半
+                    n_half += 1
                 n_pen += 1
                 adj.append((cid, max(0.0, min(100.0, float(sc) + max(-100, d)))))
             else:
                 adj.append((cid, sc))
         adj.sort(key=lambda x: -x[1])
         scored = adj
-        ctx.notes.append("[%s] 🧊 轮动惩罚施加：%d 只降分" % (node.id, n_pen))
+        ctx.notes.append("[%s] 🧊 轮动惩罚施加：%d 只降分（龙头豁免减半 %d 只）"
+                         % (node.id, n_pen, n_half))
     # 防守高息候选兜底保留（APK SmartMoneyFilter 防守模式放宽 minScore）
     have = {c for c, _s in scored}
     kept = [c for c in (ctx.get("defensive_codes") or []) if c not in have]
@@ -2638,6 +2686,39 @@ def _idiom_buy_veto(snaps):
         return None
 
 
+def _pos60_pct(snaps):
+    """距60日高百分比（负 = 低于60日高点）。数据不足/异常返回 None。"""
+    try:
+        if not snaps or len(snaps) < 20:
+            return None
+        win = snaps[-60:]
+        c = float(win[-1].get("close") or 0)
+        hi = max(float(x.get("high") or x.get("close") or 0) for x in win)
+        return (c / hi - 1) * 100 if (hi and c) else None
+    except Exception:
+        return None
+
+
+def _excluded(name):
+    """ST / *ST / 退市整理 排除（2026-09-19 用户需求：所有 ST 一律剔除）。
+
+    返回原因文案（命中）或空串（未命中）。优先用 smalltools/_name_filter.py
+    （与 PC 其它脚本同口径），不可用时内联兜底。
+    """
+    try:
+        import _name_filter as _nf
+        return _nf.excluded_reason(name)
+    except Exception:  # noqa: BLE001
+        n = str(name or "").strip().upper().replace(" ", "")
+        if "ST" in n:
+            return "ST/*ST 股剔除"
+        if "PT" in n:
+            return "PT 老三板剔除"
+        if "退" in n:
+            return "退市整理期剔除"
+        return ""
+
+
 @register("generate_orders")
 def _generate_orders(ctx, node, inputs):
     """买入订单生成：scored → orders。
@@ -2658,42 +2739,109 @@ def _generate_orders(ctx, node, inputs):
     中接货后反弹概率更高（详见循环内 inst_buy 分支注释）。"""
     scored = ctx.get(node.config.get("sourceNode") or "n_ai") or []
     inst_buy = isinstance(scored, dict)
+    direct_reason = {}
     if inst_buy:
         # 2026-09-17 用户需求：inst_buy_recent（月内机构买入）命中票保送——dict 输出取 scored。
         # 回测修订（同日二批）：688 只池 6398 个机构增持披露事件（2022-01~2026-06）显示
         # 被三重拦截（趋势下跌/看空形态/口诀）的机构增持票若放开：fwd10 胜率 57%/均 +2.2%、
         # fwd20 胜率 54%/均 +3.2%，全面优于放行组（55%/+1.8%、48%/+2.4%）——机构在下跌中
         # 接货后反弹概率更高。故保送票跳过三重拦截直接生成订单（maxHoldings 上限仍生效）。
+        # 2026-09-18 扩展：直达字段名可配（default instBuyHits）——资金流 DAG 的
+        # fund_flow_level(level=4) 输出 ffDirectHits，同样直达订单（同一机制两套来源）。
+        # 2026-09-19：directField 支持逗号分隔多来源（如 "instBuyHits,superDirectHits"）——
+        # level=0 超级权限（super_holder_gate）与机构保送/资金流直达可并存，先到先用。
+        direct_field = node.config.get("directField") or "instBuyHits"
+        for _f in str(direct_field).split(","):
+            for h in (scored.get(_f.strip()) or []):
+                if not isinstance(h, dict):
+                    continue
+                cc = str(h.get("secid") or h.get("code") or "")
+                if cc and cc not in direct_reason:
+                    direct_reason[cc] = str(h.get("reason") or "机构增持保送")
         scored = scored.get("scored") or []
     max_hold = int(node.config.get("maxHoldings", 5))
+    # 2026-09-19 实验驱动（详见 _bypass_lab.py）：
+    #   · maxPos60：距60日高上限（默认 -5，即要求距60日高 ≤ -5%）→ 拦掉追高票；
+    #   · bypass：可跳过指定拦截（trend / pattern / idiom，逗号分隔），用于按周期/行情
+    #     给不同「权限级别」。实验显示当日急拉>5% 组 T+5 胜率 93%/均 +8.37%，
+    #     而口诀否决会误杀这批票 → 短线/超短可配 bypass=idiom。
+    bypass = set(x.strip().lower() for x in
+                 str(node.config.get("bypass") or "").split(",") if x.strip())
+    _mp = node.config.get("maxPos60")
+    max_pos60 = float(_mp) if _mp not in (None, "", "none") else None
     cache = ctx.cache or {}
+    # 2026-09-19 环境层自适应：用大盘（上证）MFI/CMF/A-D 背离 + 季节，对**闸门松紧**做
+    # 加减（顶背离/诱多收紧、底背离放宽、熊市收紧），**不改任何选股规则本身**——
+    # 历史高胜率的选股链路保持原样。envAdaptive=false 可关闭。
+    if str(node.config.get("envAdaptive", "true")).lower() != "false":
+        try:
+            import _market_env
+            bench = (cache.get("sh000001") or cache.get("sh000300") or {}).get("snaps") or []
+            _env = _market_env.env_of(bench)
+            _mp0, _bp0 = max_pos60, set(bypass)
+            max_pos60, bypass = _market_env.gate_adjust(_env, max_pos60, bypass)
+            if (_mp0, _bp0) != (max_pos60, bypass):
+                ctx.notes.append(
+                    "[%s] 🌐 环境层：%s / A-D%s / %s（MFI=%s CMF=%s）→ 闸门 pos60 %s→%s，bypass %s→%s"
+                    % (node.id, _env.get("regime"), _env.get("divergence"),
+                       _env.get("season"), _env.get("mfi"), _env.get("cmf"),
+                       _mp0, max_pos60, sorted(_bp0), sorted(bypass)))
+        except Exception as e:  # noqa: BLE001
+            ctx.notes.append("[%s] 环境层不可用（按原配置执行）：%s" % (node.id, e))
     orders = []
     for cid, sc in scored:
         snaps = (cache.get(cid) or {}).get("snaps") or []
         name = (cache.get(cid) or {}).get("name") or cid
-        if inst_buy:
-            ctx.notes.append("[%s] 🚨 %s(%s) 月内机构增持保送票：跳过趋势/形态/口诀三重拦截直接生成订单"
-                             "（回测2022-2026放行组fwd10胜率57%%均+2.2%%优于拦截组）"
-                             % (node.id, name, cid))
-            orders.append({"secid": cid, "score": sc, "reason": "inst_buy_recent"})
+        # 2026-09-19 用户需求：ST / *ST / 退市整理票一律剔除（含直达保送票，红线优先）
+        if _excluded(name):
+            ctx.notes.append("[%s] ❌ %s(%s) %s，不生成订单"
+                             % (node.id, name, cid, _excluded(name)))
+            continue
+        if cid in direct_reason:
+            ctx.notes.append("[%s] 🚨 %s(%s) %s：跳过趋势/形态/口诀三重拦截直接生成订单"
+                             "（机构增持回测2022-2026放行组fwd10胜率57%%均+2.2%%优于拦截组）"
+                             % (node.id, name, cid, direct_reason[cid]))
+            orders.append({"secid": cid, "score": sc, "reason": direct_reason[cid]})
             if len(orders) >= max_hold:
                 break
             continue
-        tm = _trend_match_3way(snaps)
-        if tm["label"] == "下跌":
-            ctx.notes.append("[%s] ❌ %s(%s) 趋势匹配=下跌(%s)，直接拦截不生成订单"
-                             % (node.id, name, cid, tm["detail"]))
-            continue
-        pat = _candle_veto_bearish(snaps)
-        if pat:
-            ctx.notes.append("[%s] ❌ %s(%s) 近端命中看空形态[%s·看空]，否决买入（形态仅标注，看涨才买入）"
-                             % (node.id, name, cid, pat))
-            continue
-        veto = _idiom_buy_veto(snaps)
-        if veto:
-            ctx.notes.append("[%s] ❌ %s(%s) 口诀买前否决[%s]（连续大涨/陡拉/冲高回踩/缓跌放量）"
-                             % (node.id, name, cid, veto))
-            continue
+        # 2026-09-19「高位闸」：距60日高过近 = 追高。实验（_bypass_lab.py，近12日330条样本）：
+        #   高位组(≥-5%) T+3 胜率仅 17%、T+5 26%/均 -3.23%（最差）；排除后 T+3 41%→50%。
+        if max_pos60 is not None:
+            p60 = _pos60_pct(snaps)
+            if p60 is not None and p60 > max_pos60:
+                ctx.notes.append("[%s] ❌ %s(%s) 距60日高 %+.1f%% > %.0f%%（高位追高闸："
+                                 "实验高位组T+3胜率17%%/均-3.2%%）"
+                                 % (node.id, name, cid, p60, max_pos60))
+                continue
+        if "trend" not in bypass:
+            tm = _trend_match_3way(snaps)
+            if tm["label"] == "下跌":
+                ctx.notes.append("[%s] ❌ %s(%s) 趋势匹配=下跌(%s)，直接拦截不生成订单"
+                                 % (node.id, name, cid, tm["detail"]))
+                continue
+        if "pattern" not in bypass:
+            pat = _candle_veto_bearish(snaps)
+            if pat:
+                ctx.notes.append("[%s] ❌ %s(%s) 近端命中看空形态[%s·看空]，否决买入"
+                                 "（形态仅标注，看涨才买入）" % (node.id, name, cid, pat))
+                continue
+        if "idiom" not in bypass:
+            veto = _idiom_buy_veto(snaps)
+            if veto:
+                ctx.notes.append("[%s] ❌ %s(%s) 口诀买前否决[%s]（连续大涨/陡拉/冲高回踩/缓跌放量）"
+                                 % (node.id, name, cid, veto))
+                continue
+        # 2026-09-19 用户需求④：**顶背离不买**——统一放在本拦截链（所有 usecase 的
+        # 选股/持仓镜像/精选一次生效：三周期 + ETF 扫描 + 机构链非直达票）。
+        # 直达票（level0/level4/机构保送）在上方已 continue，不受此否决约束。
+        if str(node.config.get("vetoTopDiv", "true")).lower() != "false":
+            _td = _top_divergence(snaps)
+            if _td:
+                ctx.notes.append("[%s] ❌ %s(%s) MACD 顶背离[%s] → 否决买入"
+                                 "（全 usecase 统一；vetoTopDiv=false 可关闭）"
+                                 % (node.id, name, cid, _td))
+                continue
         orders.append({"secid": cid, "score": sc, "reason": "pipeline"})
         if len(orders) >= max_hold:
             break
@@ -2824,7 +2972,7 @@ def _ibr_check(code6, name, recs, today, notice_days=35, end_days=130):
         h = r.get("HOLDER_NAME") or ""
         if h and (h not in own or _key(r) > _key(own[h])):
             own[h] = r
-    hits, exits = [], []
+    hits, exits, holds = [], [], []
     for holder, r in own.items():
         kind = _ibr_holder_kind(holder)
         if not kind:
@@ -2836,6 +2984,20 @@ def _ibr_check(code6, name, recs, today, notice_days=35, end_days=130):
         except Exception:  # noqa: BLE001
             continue
         own_period = str(r.get("END_DATE") or "")
+        # 2026-09-19 用户需求「只要没有卖出就算可以买入」：该机构**最新一期**仍在
+        # 十大流通股东名单中、且 HOLDER_STATE 不是「减持」→ 记入 holds（持有中）。
+        # ⚠️ 披露滞后风险：社保/大基金在报告期后卖出，要等下一期（最长约 1 个季度）
+        # 才出现在公告里——holds 只能保证「截至最新已披露期未卖出」，不能保证今天没卖。
+        _state = str(r.get("HOLDER_STATE") or "")
+        if own_period == latest_period and _state not in ("减持",) \
+                and (today - ed).days <= end_days:
+            holds.append({
+                "code": code6, "name": name, "holder": holder, "kind": kind,
+                "state": _state or "不变",
+                "ratio": round(float(r.get("FREE_HOLDNUM_RATIO") or 0), 2),
+                "end_date": r.get("END_DATE"), "notice_date": notice[:10],
+                "days_ago": (today - nd).days,
+            })
         if latest_period and own_period < latest_period:
             # 该机构未出现在最新一期十大流通股东 → 已退出（曾增持过才提示）
             ever_buy = False
@@ -2871,7 +3033,564 @@ def _ibr_check(code6, name, recs, today, notice_days=35, end_days=130):
             "days_ago": (today - nd).days,
             "score": round(_IBR_KIND_SCORE.get(kind, 70) + min(25.0, max(0.0, ratio)), 1),
         })
-    return hits, exits
+    return hits, exits, holds
+
+
+def _top_divergence(snaps):
+    """MACD 顶背离检测 → 描述文本或 None（2026-09-19 用户需求④）。
+
+    用户要求「所有 usecase 选股都加入（参与否决）：顶背离不买」——
+    因此判定放在 `generate_orders` 的统一拦截链里（一处改动，全部 usecase 生效：
+    三周期 + ETF 扫描 + 精选 + 机构保送链的非直达票）。
+    注：**直达票（level0 超级权限 / level4 资金流 / 机构保送）不否决**——那是人工
+    确认过的最高置信度信号（用户 2026-09-17 明确要求机构增持票跳过三重拦截）。
+    """
+    try:
+        T = _st("_technicals")
+        d = T.macd_divergence(snaps[-120:] if len(snaps) > 120 else snaps) or {}
+        if str(d.get("kind") or "") == "top":
+            return T.divergence_text(d) or "MACD顶背离"
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _ema_ser(vals, n):
+    """指数移动平均（节点内自用，避免跨模块依赖）。"""
+    k, out, e = 2.0 / (n + 1), [], None
+    for v in vals:
+        e = v if e is None else v * k + e * (1 - k)
+        out.append(e)
+    return out
+
+
+@register("reversal_confirm")
+def _reversal_confirm(ctx, node, inputs):
+    """背离确认 + 趋势K线法则（2026-09-19 用户需求，出自《PEG_营收增速_超跌反转.txt》）。
+
+    补齐代码里的三处空白（原先 MACD 背离只有 `_technicals.macd_divergence` 函数、
+    只做报表标记、**没有任何 DAG 节点消费**；「底背离三步法」「趋势K线法则」零实现）：
+
+    ① MACD 背离：顶/底背离（柱与 DIF 双口径，near/cross 档位）——直接复用 `_technicals`。
+    ② 底背离三步法（文档口径，专门过滤**假底背离**）：
+         第1步 价格创阶段新低；
+         第2步 MACD 绿柱不再放大、开始拐头（柱底抬高 → 底背离）；
+         第3步 右侧确认：**缩量回踩不破低 且 放量向上突破**。
+       三步齐 → 「真底背离」；只满足前两步 → 「假背离(待确认)」
+       （文档：下跌趋势中第一次底背离 70% 是假的，不可直接满仓）。
+    ③ 趋势K线法则（择时）：
+         上涨：取近端「最高价不再创新高」的 0 号K线 → 后数 3 根，用第 3 根**最低点**画支撑；
+               价格在线上 → 持有；有效跌破 → 离场。
+         下跌：取近端「最低价不再创新低」的 0 号K线 → 后数 3 根，用第 3 根**最高点**画压力；
+               突破 → 买入候选；未破 → 观望。
+
+    config：lookback=60（参与计算的K线根数）、vetoTop=true（顶背离票标记为「不建议买入」）。
+    输出：{n, rows:[{code,name,dv,dvTxt,three,trendK,support,resist,close}],
+           stats:{topDiv,botDiv,realBottom,fakeBottom,exitWarn,buyTrigger}}
+    """
+    cfg = node.config or {}
+    lookback = int(cfg.get("lookback", 60) or 60)
+    cache = ctx.cache or {}
+    try:
+        T = _st("_technicals")
+    except Exception as e:  # noqa: BLE001
+        ctx.notes.append("[%s] ⚠ _technicals 不可用：%s" % (node.id, e))
+        return {"n": 0, "rows": [], "stats": {}}
+    rows = []
+    st = {"topDiv": 0, "botDiv": 0, "realBottom": 0, "fakeBottom": 0,
+          "exitWarn": 0, "buyTrigger": 0}
+    for code in list(cache.keys()):
+        ent = cache.get(code) or {}
+        snaps = ent.get("snaps") or []
+        if len(snaps) < 30:
+            continue
+        sl = snaps[-lookback:]
+        closes = [float(s.get("close") or 0) for s in sl]
+        lows = [float(s.get("low") or c) for s, c in zip(sl, closes)]
+        highs = [float(s.get("high") or c) for s, c in zip(sl, closes)]
+        vols = [float(s.get("volume") or 0) for s in sl]
+        if not closes[-1]:
+            continue
+        # ① MACD 背离（复用既有实现）
+        dv, dv_txt = "", ""
+        try:
+            d = T.macd_divergence(sl) or {}
+            dv = str(d.get("kind") or "")
+            dv_txt = T.divergence_text(d) if dv else ""
+            if dv == "top":
+                st["topDiv"] += 1
+            elif dv == "bottom":
+                st["botDiv"] += 1
+        except Exception:  # noqa: BLE001
+            pass
+        # ② 底背离三步法
+        dif = _ema_ser(closes, 12)
+        dea = _ema_ser(dif, 9)
+        hist = [a - b for a, b in zip(dif, dea)]
+        n = len(closes)
+        w = min(25, n - 1)
+        s1 = min(lows[-5:]) < min(lows[-w:-5]) if n > w else False
+        hr, hp = min(hist[-5:]), min(hist[-w:-5])
+        s2 = (hr > hp) or (hist[-1] > hist[-2] and hist[-2] < 0)   # 柱不创新低 / 拐头
+        vr = sum(vols[-5:]) / 5.0
+        vp = (sum(vols[-w:-5]) / max(1, w - 5)) * 1.0
+        s3a = vr < vp if vp else False                             # 缩量回踩
+        s3b = closes[-1] > max(closes[-6:-1]) and vols[-1] > vp * 1.2 if vp else False
+        three = ""
+        if s1 and s2 and s3a and s3b:
+            three = "真底背离"
+            st["realBottom"] += 1
+        elif s1 and s2:
+            three = "假背离(待确认)"
+            st["fakeBottom"] += 1
+        # ③ 趋势K线法则（0 号K线 + 3 根偏移定支撑/压力）
+        trend_k, sup, res = "", None, None
+        m = min(20, n - 4)
+        if m > 3:
+            hi_i = max(range(n - m, n), key=lambda i: highs[i])
+            lo_i = min(range(n - m, n), key=lambda i: lows[i])
+            if hi_i + 3 < n:
+                sup = round(lows[hi_i + 3], 2)
+                if closes[-1] < sup:
+                    trend_k = "跌破支撑→离场"
+                    st["exitWarn"] += 1
+                else:
+                    trend_k = "支撑上方→持有"
+            if lo_i + 3 < n:
+                res = round(highs[lo_i + 3], 2)
+                if closes[-1] > res:
+                    if not trend_k or "持有" in trend_k:
+                        trend_k = "突破压力→买入候选"
+                        st["buyTrigger"] += 1
+                elif not trend_k:
+                    trend_k = "未破压力→观望"
+        rows.append({"code": code, "name": ent.get("name") or code,
+                     "close": round(closes[-1], 2), "dv": dv, "dvTxt": dv_txt[:40],
+                     "three": three, "trendK": trend_k, "support": sup, "resist": res})
+    ctx.notes.append("[%s] 🔍 背离/趋势K：顶背离%d 底背离%d（真底%d/假底%d）｜"
+                     "趋势K 离场预警%d 买入触发%d（扫描%d只）"
+                     % (node.id, st["topDiv"], st["botDiv"], st["realBottom"],
+                        st["fakeBottom"], st["exitWarn"], st["buyTrigger"], len(rows)))
+    real = [r for r in rows if r["three"] == "真底背离"]
+    if real:
+        ctx.notes.append("[%s] ✅ 真底背离（三步齐）：%s" % (
+            node.id, "、".join("%s(%s)" % (r["name"], r["code"]) for r in real[:8])))
+    return {"n": len(rows), "rows": rows, "stats": st}
+
+
+@register("news_context")
+def _news_context(ctx, node, inputs):
+    """新闻情报上下文（2026-09-19 用户需求）：把**当日累积的盘中消息**整理成
+    「板块/主题 → 提及次数 + 多空情绪」，供选股参考。
+
+    用户原话：「虽然是累积到缓存，你在盘中选股时候也需要参考（usecase 都有参考
+    新闻因子等，把这些信息整理后分析）」。
+
+    数据：`smalltools/_records/_news_accum_YYYYMMDD.jsonl`（`_market_scan` 盘中写入，
+          普通快讯；重大快讯不落此处，已即时推）
+    出参：{day, n, keywords:[{kw,n,sample}], hotSectors[], sentiment:{pos,neg}}
+    下游可用：`ctx.get("n_news")` 读 keywords/hotSectors 做选股加分或过滤，
+             也可仅作日志展示（当前 `generate_orders` 尚未耦合，避免改变既有胜率口径）。
+    config：topN=12（关键词条数）、day=""（默认当日）。
+    """
+    import os as _os
+    cfg = node.config or {}
+    top_n = int(cfg.get("topN", 12) or 12)
+    import datetime as _dt
+    day = str(cfg.get("day") or "") or _dt.date.today().strftime("%Y%m%d")
+    rec_dir, root = "", ""
+    try:
+        import _daily_intel as _di
+        rec_dir = _os.path.dirname(_di.LEDGER)
+        root = _os.path.dirname(_os.path.dirname(_os.path.dirname(_di.LEDGER)))
+    except Exception:  # noqa: BLE001
+        pass
+    texts = []
+    if rec_dir:
+        try:
+            with open(_os.path.join(rec_dir, "_news_accum_%s.jsonl" % day),
+                      encoding="utf-8") as f:
+                for ln in f:
+                    try:
+                        x = (json.loads(ln) or {}).get("x") or ""
+                    except ValueError:
+                        continue
+                    t = x.split("|", 1)[-1].strip()
+                    if t:
+                        texts.append(t)
+        except OSError:
+            pass
+    kw = {}
+    if root and texts:
+        try:
+            with open(_os.path.join(root, "data", "board_index.json"),
+                      encoding="utf-8") as f:
+                bi = json.load(f)
+            names = []
+            for kind in ("industry", "subindustry", "concept"):
+                names.extend(list((bi.get(kind) or {}).keys()))
+            for nm in names:
+                _n = str(nm).strip()
+                if len(_n) < 2:
+                    continue
+                c = sum(1 for t in texts if _n in t)
+                if c:
+                    kw[_n] = c
+        except Exception:  # noqa: BLE001
+            pass
+    POS = ("利好", "上涨", "突破", "涨价", "超预期", "增长", "扩产", "中标", "订单")
+    NEG = ("利空", "下跌", "暴跌", "低于预期", "下滑", "亏损", "减持", "处罚", "退市")
+    pos = sum(1 for t in texts if any(w in t for w in POS))
+    neg = sum(1 for t in texts if any(w in t for w in NEG))
+    top = sorted(kw.items(), key=lambda kv: -kv[1])[:top_n]
+    out = {"as_of": ctx.asof, "day": day, "n": len(texts),
+           "keywords": [{"kw": k, "n": v,
+                         "sample": next((t for t in texts if k in t), "")[:60]}
+                        for k, v in top],
+           "hotSectors": [k for k, _ in top[:8]],
+           "sentiment": {"pos": pos, "neg": neg},
+           "source": "盘中消息累积(_market_scan) + 板块关键词提及统计"}
+    ctx.stage(node.id, out)
+    if texts:
+        ctx.notes.append("[%s] 📰 新闻上下文：累积 %d 条（利多词 %d/利空词 %d）；热议板块 %s"
+                         % (node.id, len(texts), pos, neg,
+                            "、".join("%s×%d" % (k, v) for k, v in top[:6]) or "—"))
+    else:
+        ctx.notes.append("[%s] 新闻上下文：%s 无累积消息（盘中普通快讯会累积到此）"
+                         % (node.id, day))
+    return out
+
+
+@register("etf_flow_leader")
+def _etf_flow_leader(ctx, node, inputs):
+    """ETF 资金流 → 板块 → **放量大阳线**个股 = 主力建仓信号（2026-09-19 用户需求）。
+
+    算法（业界有正式名称：Wyckoff 吸筹的 SOS「Sign of Strength」＝ 放量突破大阳线，
+    配合量价异动 VPA 与资金流确认；本项目已有件全用上，不引入新数据源）：
+
+      ① 板块层（钱先进来）：ETF 资金流榜净流入 > 0 的主题
+         （`_market_context.fetch_etf_flow`，东财 ETF 榜 f62/f66）
+         ∪ 行业板块主力净流入 TopN（`_sector_fundflow.fetch_board_flow`）
+      ② 个股层（放量大阳线＝主力动手）：涨幅 ≥ bigYangPct(默认5%)
+         ＋ 量比 ≥ volRatio(默认1.8×20日均量) ＋ 收盘位于当日振幅上 30%（非长上影）
+      ③ 低位层（建仓在低位）：距 60 日高 ≤ -lowPos(默认10%)，过滤追高
+
+    权限：**level=1** —— 低于三机构同时持有(level=0 超级权限)，高于 level=4 通用资金流直达
+    （用户 2026-09-19：「比三大机构持有的权限稍微低一点」）。命中写 efDirectHits →
+    `generate_orders(directField="efDirectHits")` 直达（跳过趋势/形态/口诀/顶背离拦截）。
+
+    config：bigYangPct=5、volRatio=1.8、lowPos=10、topN=10、level=1。
+    输出：{n, rows, hits, efDirectHits, level, themes, boards, source}
+    """
+    cfg = node.config or {}
+    big_pct = float(cfg.get("bigYangPct", 5) or 5) / 100.0
+    vr_min = float(cfg.get("volRatio", 1.8) or 1.8)
+    low_pos = float(cfg.get("lowPos", 10) or 10)
+    top_n = int(cfg.get("topN", 10) or 10)
+    level = int(cfg.get("level", 1) or 1)
+    cache = ctx.cache or {}
+
+    # ① 资金流入方向（ETF 主题 + 板块净流入）
+    themes, boards = [], []
+    try:
+        _mc = _st("_market_context")
+        for it in ((_mc.fetch_etf_flow() or [])):
+            if (it.get("in_yi") or 0) > 0:
+                themes.append(it)
+    except Exception as e:  # noqa: BLE001
+        ctx.notes.append("[%s] ⚠ ETF 资金流不可用：%s" % (node.id, e))
+    try:
+        import _sector_fundflow as _sff
+        for b, v in sorted((_sff.fetch_board_flow() or {}).items(),
+                           key=lambda kv: -(kv[1].get("main_yi") or 0))[:top_n]:
+            if (v.get("main_yi") or 0) > 0:
+                boards.append(b)
+    except Exception as e:  # noqa: BLE001
+        ctx.notes.append("[%s] ⚠ 板块资金流不可用：%s" % (node.id, e))
+    hot_kw = [str(it.get("name") or "") for it in themes if it.get("name")] + boards
+
+    # code → [板块名] 反查表（board_index.json，2026-09-19 用户需求：
+    # 让「钱进的板块」真正落到个股上——cache 里没有 industry 字段，原先只能拿股票名
+    # 去匹配板块名，几乎全不中，方向语义形同失效）
+    code2board = {}
+    try:
+        import os as _os
+        import _daily_intel as _di
+        # _di.LEDGER = smalltools/_records/_pick_ledger.jsonl → 上溯 3 层到项目根
+        _root = _os.path.dirname(_os.path.dirname(_os.path.dirname(_di.LEDGER)))
+        with open(_os.path.join(_root, "data", "board_index.json"),
+                  encoding="utf-8") as _f:
+            _bi = json.load(_f)
+        for _kind in ("industry", "subindustry", "concept"):
+            for _bname, _codes in (_bi.get(_kind) or {}).items():
+                for _c in (_codes or []):
+                    _cs = str(_c)
+                    code2board.setdefault(_cs, []).append(str(_bname))
+                    code2board.setdefault(_cs[2:], []).append(str(_bname))
+    except Exception as _e:  # noqa: BLE001
+        ctx.notes.append("[%s] ⚠ board_index 反查表不可用：%s" % (node.id, _e))
+
+    # ②③ 个股层
+    hits, rows = [], []
+    for code in list(cache.keys()):
+        ent = cache.get(code) or {}
+        snaps = ent.get("snaps") or []
+        if len(snaps) < 25:
+            continue
+        name = ent.get("name") or str(code)
+        # 方向匹配（2026-09-19）：命中"钱进来的板块/主题" → **加分优先**（不做硬过滤，
+        # 否则个股缺 industry 映射时会整段 0 命中；方向是权重而非门槛）。
+        hit_dir = False
+        if hot_kw:
+            ind = str(ent.get("industry") or "")
+            _bds = code2board.get(str(code)) or code2board.get(str(code)[2:]) or []
+            # 双向匹配：热点词出现在板块名里，或板块名出现在热点词里
+            # （"半导体" ↔ "半导体及元件" 两种口径都能对上）
+            hit_dir = any(
+                k and (k in ind or k in name
+                       or any(b and (k in b or b in k) for b in _bds))
+                for k in hot_kw)
+        c, p = snaps[-1], snaps[-2]
+        try:
+            close, pc = float(c.get("close") or 0), float(p.get("close") or 0)
+        except (TypeError, ValueError):
+            continue
+        if close <= 0 or pc <= 0:
+            continue
+        chg = close / pc - 1
+        vols = [float(s.get("volume") or 0) for s in snaps[-21:-1]]
+        vmean = (sum(vols) / len(vols)) if vols else 0
+        try:
+            vlast = float(c.get("volume") or 0)
+        except (TypeError, ValueError):
+            vlast = 0.0
+        vr = (vlast / vmean) if vmean else 0.0
+        hi = float(c.get("high") or close)
+        lo = float(c.get("low") or close)
+        upper = (close - lo) / ((hi - lo) or 1e-9)
+        hi60 = max((float(s.get("high") or 0) for s in snaps[-60:]), default=close)
+        pos60 = (close / hi60 - 1) * 100 if hi60 else 0.0
+        if not (chg >= big_pct and vr >= vr_min and upper >= 0.7
+                and pos60 <= -low_pos):
+            continue
+        cid = str(code)
+        bare = cid[2:] if cid[:2].lower() in ("sh", "sz", "bj") else cid
+        secid = cid if cid[:2].lower() in ("sh", "sz", "bj") else (
+            ("sh" if bare[:1] in "569" else "sz") + bare)
+        reason = ("💰ETF资金流+大阳线(涨%+.1f%% 量比%.1f 距60高%+.0f%%%s)"
+                  % (chg * 100, vr, pos60, "·钱进方向✓" if hit_dir else ""))
+        hits.append({"code": bare, "secid": secid, "name": name,
+                     "score": round(60.0 + chg * 100 + min(10.0, vr * 2)
+                                    + (20.0 if hit_dir else 0.0), 1),
+                     "reason": reason})
+        rows.append({"code": bare, "name": name, "chg": round(chg * 100, 2),
+                     "vr": round(vr, 2), "pos60": round(pos60, 1),
+                     "efl": reason})
+    hits.sort(key=lambda h: -h["score"])
+    top = hits[:top_n]
+    out = {"n": len(rows), "rows": rows, "hits": top, "efDirectHits": top,
+           "level": level, "scored": [(h["secid"], h["score"]) for h in top],
+           "themes": [t.get("name") for t in themes[:6]], "boards": boards[:6],
+           "source": "ETF资金流→板块→放量大阳线(主力建仓, level=%d)" % level}
+    ctx.stage(node.id, out)
+    if top:
+        ctx.notes.append("[%s] 💰 ETF资金流共振命中 %d 只（level%d 直达订单）：%s"
+                         % (node.id, len(top), level,
+                            "、".join("%s(%s)" % (r["name"], r["efl"].split("(")[-1].rstrip(")"))
+                                      for r in rows[:5])))
+        ctx.notes.append("[%s] 钱进方向：ETF %s ｜ 板块 %s" % (
+            node.id, "、".join(x for x in out["themes"] if x) or "—",
+            "、".join(out["boards"]) or "—"))
+    else:
+        ctx.notes.append("[%s] ETF资金流共振：0 命中（ETF方向 %d 个 / 板块 %d 个，"
+                         "扫描 %d 只，阈 涨≥%.0f%% 量比≥%.1f 距60高≤-%.0f%%）"
+                         % (node.id, len(themes), len(boards), len(cache),
+                            big_pct * 100, vr_min, low_pos))
+    return out
+
+
+@register("super_holder_gate")
+def _super_holder_gate(ctx, node, inputs):
+    """★ 超级权限闸（priority level = 0，2026-09-19 用户需求）。
+
+    语义：**国家队（汇金/证金/国新/梧桐树）+ 社保养老 同时**在近期披露买入同一票 →
+    视为最高置信度信号，写成 superDirectHits 直达生成订单 node（跳过趋势/形态/口诀
+    三重拦截），优先级高于 level 4 的资金流直达（ffDirectHits）与机构保送（instBuyHits）——
+    等级体系：0 超级权限 > 4 直达 > 3 激进 > 2 常规 > 1 严格。
+
+    口径（用户原话"如果 9.10 左右买入，那我们就认为这是一只超级好的股票，直接生成订单"）：
+      · 数据来源 = 上游 `inst_buy_recent` 的 hits（每条含 kind/notice_date/days_ago/chg_ratio）；
+        ⚠️ **持仓披露是季度粒度，"买入时间"只能用披露日 NOTICE_DATE 近似**（真实成交日
+        公开数据不可得）——即口径为「近 N 天内**披露**的增持」。
+      · `noticeDays` 默认 7（"一个星期之内"）：days_ago ≤ 7 才算"近期买入"；
+      · `requireBoth` 默认 true：同一票必须**同时**出现「国家队」与「社保养老」两条命中；
+        置 false 则任一即可（宽松档）；
+      · 透传上游 scored/rows，接在 inst_buy_recent 之后不破坏原保送链。
+
+    config：sourceNode=n_inst_buy、noticeDays=7、requireBoth=true、level=0。
+    """
+    cfg = dict(node.config or {})
+    src = ctx.get(cfg.get("sourceNode") or "n_inst_buy") or inputs
+    src = src if isinstance(src, dict) else {}
+    notice_days = int(cfg.get("noticeDays", 7) or 7)
+    require_both = str(cfg.get("requireBoth", "true")).lower() != "false"
+    level = int(cfg.get("level", 0) or 0)
+    # 2026-09-19 用户需求：mode 两档（严格 vs "没卖出就能买"）
+    #   mode=recent（默认，严格）：近 noticeDays 天内**披露增持**（hits）
+    #   mode=hold  （宽松）：只要最新一期仍持有且未减持（holds）——
+    #            即"没卖出就算可以买"，不要求近期有增持动作。
+    #   ⚠️ 两者共同风险：披露滞后（季报）。社保/大基金若在报告期后卖出，要等下一期
+    #      公告才知道 —— 所以 hold 档可能买到"其实已卖"的票（下方 soldRisk 标注提示）。
+    mode = str(cfg.get("mode") or "recent").lower()
+    if mode in ("hold", "triple"):
+        pool = list(src.get("holds") or src.get("holdHits") or [])
+    else:
+        pool = list(src.get("hits") or src.get("instBuyHits") or [])
+    by_code = {}
+    for h in pool:
+        by_code.setdefault(str(h.get("code") or ""), []).append(h)
+    # 2026-09-19 用户需求②：mode=triple = **国家队 + 大基金 + 社保 同时持有**（未减持）。
+    # 回测（_super_holder_backtest.py，2019 起）该口径最优：47 样本，T+5 胜率 66%、
+    # 均 +2.17%（是宽松档 +0.75% 的近 3 倍、严格档 +1.26% 的 1.7 倍），✅+◐ 44.7%。
+    if mode == "triple":
+        need = {"国家队", "大基金", "社保养老"}
+    else:
+        need = {"国家队", "社保养老"}
+    # 卖出风险：hits 里有、但最新一期已不在 holds 里 → 该票已被减持/退出（滞后警示）
+    _sold = set()
+    if mode == "hold":
+        _hd = {str(h.get("code") or "") for h in (src.get("holds") or [])}
+        _sold = {str(h.get("code") or "") for h in (src.get("hits") or [])
+                 if str(h.get("code") or "") and str(h.get("code")) not in _hd}
+    out_hits = []
+    for c6, hs in by_code.items():
+        if not c6:
+            continue
+        recent = (list(hs) if mode in ("hold", "triple")
+                  else [h for h in hs if int(h.get("days_ago") or 999) <= notice_days])
+        kinds = {str(h.get("kind") or "") for h in recent}
+        if mode == "triple" and notice_days > 0:
+            # 用户 2026-09-19 需求①：在"三机构同时持有（未退出）"基础上，再要求
+            # **近 noticeDays 天内有买入动作**（回测 D30：胜率 70%/T+10 +3.32% 最优）。
+            # 注：必须同时满足"当前交易日未退出"——holds 本身即未减持快照 ✓
+            _fresh = {str(h0.get("kind") or "") for h0 in (src.get("hits") or [])
+                      if str(h0.get("code") or "") == c6
+                      and int(h0.get("days_ago") or 999) <= notice_days}
+            if not _fresh:
+                continue
+            kinds = kinds | _fresh
+        ok = need.issubset(kinds) if require_both else bool(kinds & need)
+        if not ok:
+            continue
+        if mode == "hold":
+            best = max(recent, key=lambda h: h.get("ratio") or 0)
+            _detail = "、".join("%s%s(持仓%.2f%%,%d天前披露)" % (
+                h.get("kind"), h.get("state") or "不变", h.get("ratio") or 0,
+                h.get("days_ago") or 0)
+                for h in sorted(recent, key=lambda x: -(x.get("ratio") or 0))[:3])
+            _head = "★超级权限(level%d,未卖出)：%s" % (level, "+".join(sorted(kinds & need)))
+        else:
+            best = max(recent, key=lambda h: h.get("score") or 0)
+            _detail = "、".join("%s %+.1f%%(%d天前披露)" % (
+                h.get("kind"), h.get("chg_ratio") or 0, h.get("days_ago") or 0)
+                for h in sorted(recent, key=lambda x: -(x.get("score") or 0))[:3])
+            _head = "★超级权限(level%d)：%s 近%d天同时买入" % (
+                level, "+".join(sorted(kinds & need)), notice_days)
+        row = dict(best)
+        row["secid"] = ("sh" if c6[:1] in "569" else "sz") + c6
+        row["level"] = level
+        row["mode"] = mode
+        row["superKinds"] = sorted(kinds & need)
+        row["reason"] = _head + "（" + _detail + "）"
+        if c6 in _sold:
+            row["soldRisk"] = "⚠️最新一期已减持/退出（披露滞后，可能已卖出）"
+        out_hits.append(row)
+    out_hits.sort(key=lambda h: -(h.get("score") or 0))
+    scored = [((h.get("secid") or ""), h.get("score") or 95) for h in out_hits]
+    out = {"as_of": src.get("as_of") or ctx.asof, "n": len(by_code),
+           "superDirectHits": out_hits, "hits": out_hits,
+           "level": level, "requireBoth": require_both, "noticeDays": notice_days,
+           "mode": mode, "n_sold_risk": len(_sold & {str(h.get("code")) for h in out_hits}),
+           "rows": src.get("rows") or [],
+           "scored": scored or (src.get("scored") or []),
+           "source": ("★超级权限(level=%d,未卖出即可)：国家队+社保 同时持有未减持" % level
+                      if mode == "hold" else
+                      "★超级权限(level=%d)：国家队+社保 近%d天双买入" % (level, notice_days))}
+    ctx.stage(node.id, out)
+    if out_hits:
+        for h in out_hits[:10]:
+            ctx.notes.append("[%s] ★ 超级权限(level%d) %s(%s) %s" % (
+                node.id, level, h.get("name"), h.get("code"), h.get("reason")))
+        ctx.notes.append("[%s] ★ 超级权限命中 %d 只 → 直达生成订单（跳过三重拦截）"
+                         % (node.id, len(out_hits)))
+    else:
+        ctx.notes.append("[%s] 超级权限(level%d)：0 命中（检查 %d 只，noticeDays=%d，"
+                         "requireBoth=%s）" % (node.id, level, len(by_code),
+                                               notice_days, require_both))
+    return out
+
+
+@register("main_force_stage")
+def _main_force_stage_node(ctx, node, inputs):
+    """主力行为分阶段识别：建仓 / 拉升 / 洗盘 / 出货（2026-09-19 用户需求）。
+
+    补齐此前只有「主力建仓」（inst_buy_recent 十大流通股东）的缺口，形成完整生命周期：
+        建仓 BUILD → 拉升 PULL → 洗盘 WASH → 出货 DUMP
+    与 Kotlin `MainForceStageNode` 及 `smalltools/_main_force.py::detect()` **同口径同阈值**
+    （单一事实源在 _main_force.py，Kotlin 侧为其移植）。
+
+    config：sourceNode=n_direction、topN=120。
+    输出：{as_of, n, n_tagged, counts{BUILD/PULL/WASH/DUMP/NONE},
+           rows:[…+ mfStage/mfConf/mfReasons 标注], source}。
+    下游用法：mfStage==DUMP 一票否决；WASH/BUILD 加分；PULL 提示追高风险。
+    """
+    cfg = dict(node.config or {})
+    src = ctx.get(cfg.get("sourceNode") or "n_direction")
+    if not isinstance(src, dict) or not src.get("rows"):
+        src = _upstream_rows(inputs, ("n_direction",)) or {"rows": []}
+    src = src if isinstance(src, dict) else {"rows": []}
+    top_n = int(cfg.get("topN", 120) or 120)
+    rows = list(src.get("rows") or [])[:top_n]
+    asof = getattr(ctx, "asof", "") or ""
+
+    try:
+        import _main_force as _MF          # noqa: PLC0415
+        from _kline_store import load_store  # noqa: PLC0415
+        store = load_store()
+    except Exception as e:                 # noqa: BLE001
+        out = {"as_of": asof, "n": 0, "n_tagged": 0, "counts": {}, "rows": rows,
+               "source": "主力行为识别(不可用: %s)" % e}
+        ctx.stage(node.id, out)
+        return out
+
+    counts = {}
+    n_tag = 0
+    for r in rows:
+        secid = r.get("secid") or ""
+        if not secid:
+            c6 = str(r.get("code") or "")
+            if len(c6) == 6 and c6.isdigit():
+                secid = ("sh" if c6[0] == "6" else "sz") + c6
+            else:
+                continue
+        ent = store.get(secid) or {}
+        snaps = (ent.get("snaps") or [])[-120:]
+        if len(snaps) < 25:
+            continue
+        try:
+            res = _MF.detect(snaps)
+        except Exception:                  # noqa: BLE001
+            continue
+        r["mfStage"] = res["stage"]
+        r["mfConf"] = res["conf"]
+        r["mfReasons"] = res["reasons"]
+        counts[res["stage"]] = counts.get(res["stage"], 0) + 1
+        if res["stage"] != "NONE":
+            n_tag += 1
+    out = {"as_of": asof, "n": len(rows), "n_tagged": n_tag, "counts": counts,
+           "rows": rows, "source": "主力行为识别(建仓/拉升/洗盘/出货)"}
+    ctx.stage(node.id, out)
+    return out
 
 
 @register("inst_buy_recent")
@@ -2900,16 +3619,17 @@ def _inst_buy_recent_node(ctx, node, inputs):
             [r for r in rows if "实仓" not in (r.get("from") or "")]
     queue = queue[:top_n]
     cache = {}
-    hits = []
+    hits, holds = [], []
     for r in queue:
         c6 = str(r.get("code") or "")
         if not (len(c6) == 6 and c6.isdigit()):
             continue
         recs = _ibr_holders(c6, today_s, cache)
         if recs:
-            hs, exs = _ibr_check(c6, r.get("name") or "", recs, today,
-                                 notice_days, end_days)
+            hs, exs, hds = _ibr_check(c6, r.get("name") or "", recs, today,
+                                      notice_days, end_days)
             hits.extend(hs)
+            holds.extend(hds)
             for e in exs:
                 ctx.notes.append(
                     "[%s] ⚠ [月内机构买入] %s(%s) %s·%s 曾增持但已退出最新一期"
@@ -2941,6 +3661,9 @@ def _inst_buy_recent_node(ctx, node, inputs):
     out = {"as_of": ctx.asof, "n": len(rows), "n_check": len(queue),
            "hits": hits, "instBuyHits": hits, "rows": out_rows, "scored": scored,
            "n_hit_codes": len(by_code),
+           # 2026-09-19：holds = 「最新一期仍持有且未减持」（用户"没卖出就能买"口径）
+           "holds": holds, "holdHits": holds,
+           "n_hold_codes": len({h["code"] for h in holds}),
            "source": "月内机构买入检测(国家队/社保/大基金/公募/险资/QFII/北向 增持)"}
     ctx.stage(node.id, out)
     if hits:
@@ -4057,6 +4780,154 @@ def _etf_ambush_scan(ctx, node, p, cfg, cache, top_sectors, scan_cap, top_n, loo
             "hotSectors": [t for t, _r in hot], "universe": len(cand)}
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# 资金流选股 DAG（fund_flow_sector / fund_flow_screen / fund_flow_level，2026-09-18 用户需求）
+#   设计口径 = 配套文档《资金流选股策略_优化设计方案_v2.1.md》：
+#     ① fund_flow_sector 板块资金流榜（净流入 TopN / 净流出 BottomN）→ 定位热门方向；
+#     ② fund_flow_screen 个股资金流 v2.1 双层评分（趋势分 0-6 + 质量分 0-4 = 0~10）；
+#     ③ fund_flow_level  级别闸（level 1~4）：级别越高放行越多；
+#        level=4（最高级）命中票写入 ffDirectHits → 直达 generate_orders；
+#     ④ generate_orders  directField 指定的直达票跳过趋势/形态/口诀三重拦截
+#        （与机构保送 instBuyHits 同一机制，评分阈值/同日重复/仓位预算仍走）。
+#   数据源：板块=东财 push2delay；个股=新浪历史资金流（见 smalltools/_stock_fundflow.py）。
+# ══════════════════════════════════════════════════════════════════════════
+
+@register("fund_flow_sector")
+def _fund_flow_sector(ctx, node, inputs):
+    """① 板块资金流榜：主力净流入 TopN / 净流出 BottomN（东财行业板块，实时）。"""
+    import datetime as _dt
+    cfg = node.config
+    top_n = int(cfg.get("topN", 15))
+    today = _dt.date.today().isoformat()
+    empty = {"as_of": today, "inflowTop": [], "outflowBottom": [], "flowMap": {}}
+    try:
+        full = _st("_sector_fundflow").fetch_board_flow()
+    except Exception as e:  # noqa: BLE001
+        ctx.notes.append("[%s] ⚠️ 板块资金流获取失败：%s" % (node.id, e))
+        return empty
+    if not full:
+        ctx.notes.append("[%s] ⚠️ 板块资金流为空（接口不可达），跳过板块榜" % node.id)
+        return empty
+
+    def _row(name, v):
+        return {"name": name, "code": v.get("code") or "",
+                "main_yi": round(float(v.get("main_yi") or 0.0), 2),
+                "main_pct": round(float(v.get("main_pct") or 0.0), 2),
+                "zdf_pct": round(float(v.get("zdf_pct") or 0.0), 2)}
+
+    ranked = sorted(full.items(), key=lambda kv: -(kv[1].get("main_yi") or 0.0))
+    inflow = [_row(n, v) for n, v in ranked[:top_n] if (v.get("main_yi") or 0) > 0]
+    outflow = [_row(n, v) for n, v in ranked[-top_n:] if (v.get("main_yi") or 0) < 0]
+    ctx.notes.append("[%s] 板块资金流：净流入Top%d（%s）｜净流出Top%d（%s）"
+                     % (node.id, len(inflow),
+                        "、".join("%s%+.1f亿" % (r["name"], r["main_yi"]) for r in inflow[:8]),
+                        len(outflow),
+                        "、".join("%s%+.1f亿" % (r["name"], r["main_yi"]) for r in outflow[:5])))
+    return {"as_of": today, "inflowTop": inflow, "outflowBottom": outflow,
+            "flowMap": {r["name"]: r["main_yi"] for r in inflow}}
+
+
+@register("fund_flow_screen")
+def _fund_flow_screen(ctx, node, inputs):
+    """② 个股资金流 v2.1 双层评分（趋势分 0-6 + 质量分 0-4）。
+
+    候选池 = ctx.cache（当日 K 线缓存里的全池代码，与其它 pipeline 同源）；
+    snaps 传入评分器用于「距均线过远」的价格位置惩罚。输出 stocks 供级别闸消费。
+    """
+    import datetime as _dt
+    cfg = node.config
+    top_n = int(cfg.get("topN", 20))
+    min_score = float(cfg.get("minScore", 4.0))
+    scan_cap = int(cfg.get("scanCap", 600))
+    src = cfg.get("sourceNode") or ""
+    flow_map = {}
+    if src:
+        up = ctx.get(src)
+        if isinstance(up, dict):
+            flow_map = up.get("flowMap") or {}
+    cache = ctx.cache or {}
+    # cache 键为 secid（如 sz300308，与 kline_store 同源）→ 提取裸码并保留原键回填
+    key_of, codes = {}, []
+    for c in cache.keys():
+        if not isinstance(c, str):
+            continue
+        bare = c[2:] if c[:2].lower() in ("sh", "sz", "bj") else c
+        if len(bare) == 6 and bare.isdigit() and bare not in key_of:
+            key_of[bare] = c
+            codes.append(bare)
+    codes = codes[:scan_cap]
+    if not codes:
+        ctx.notes.append("[%s] ⚠️ 候选池为空（ctx.cache 无有效代码），跳过资金流选股" % node.id)
+        return {"as_of": _dt.date.today().isoformat(), "stocks": [], "n": 0,
+                "scanned": 0, "sectorFlow": flow_map}
+    snaps_map = {c: (cache.get(key_of.get(c, c)) or {}).get("snaps") or [] for c in codes}
+    try:
+        res = _st("_stock_fundflow").batch(codes, snaps_map=snaps_map, workers=8)
+    except Exception as e:  # noqa: BLE001
+        ctx.notes.append("[%s] ⚠️ 资金流评分失败：%s" % (node.id, e))
+        return {"as_of": _dt.date.today().isoformat(), "stocks": [], "n": 0,
+                "scanned": 0, "sectorFlow": flow_map}
+    for r in res:
+        ent = cache.get(key_of.get(r["code6"], r["code6"])) or {}
+        r["name"] = ent.get("name") or r["code6"]
+        r["secid"] = key_of.get(r["code6"], r["code6"])   # 供 generate_orders 用 cache 反查
+    keep = [r for r in res if r["score"] >= min_score][:top_n]
+    dist = {}
+    for r in keep:
+        dist[r["signal"]] = dist.get(r["signal"], 0) + 1
+    ctx.notes.append("[%s] 资金流选股：扫描%d只 → ≥%.1f分 %d只（%s）｜板块净流入Top：%s"
+                     % (node.id, len(res), min_score, len(keep),
+                        "、".join("%s%d" % (k, v) for k, v in dist.items()) or "无",
+                        "、".join(list(flow_map.keys())[:6]) or "—"))
+    return {"as_of": _dt.date.today().isoformat(), "stocks": keep, "n": len(keep),
+            "scanned": len(res), "sectorFlow": flow_map}
+
+
+@register("fund_flow_level")
+def _fund_flow_level(ctx, node, inputs):
+    """③ 级别闸：level 1~4 决定放行范围与是否直达生成订单。
+
+    level 口径（用户 2026-09-18 需求「设计不同的级别，某些级别可以通过某些 node，
+    最高级别是直达生成订单的 node」）：
+      1 = strict     仅 STRONG_BUY（≥8 分）放行，走全部拦截
+      2 = normal     STRONG_BUY + BUY（≥6 分）放行，走全部拦截（默认）
+      3 = aggressive ≥5 分放行（含 WATCH），仍走全部拦截
+      4 = direct     最高级：≥8 分（STRONG_BUY）写 ffDirectHits → 直达订单节点
+    评分映射：资金流 0~10 分 ×10 → 0~100，与 DAG 其它节点/评分阈值同刻度。
+    """
+    cfg = node.config
+    level = int(cfg.get("level", 2))
+    src = cfg.get("sourceNode") or ""
+    up = ctx.get(src) if src else inputs
+    stocks = (up.get("stocks") or []) if isinstance(up, dict) else (up or [])
+    lv_map = {1: (8.0, False), 2: (6.0, False), 3: (5.0, False), 4: (8.0, True)}
+    min_score, direct = lv_map.get(level, lv_map[2])
+    scored, hits = [], []
+    for s in stocks:
+        try:
+            sc = float(s.get("score") or 0)
+        except (TypeError, ValueError):
+            continue
+        if sc < min_score:
+            continue
+        cid = str(s.get("secid") or s.get("code6") or s.get("code") or "")
+        if not cid:
+            continue
+        sc100 = round(sc * 10, 1)
+        scored.append((cid, sc100))
+        if direct:
+            hits.append({"code": cid, "secid": cid,
+                         "name": s.get("name") or cid, "score": sc100,
+                         "reason": "资金流直达(level%d:%s)" % (
+                             level, s.get("signal") or "STRONG_BUY")})
+    lv_name = {1: "strict", 2: "normal", 3: "aggressive", 4: "direct"}.get(level, "normal")
+    ctx.notes.append("[%s] 💰 资金流级别 level=%d(%s)：放行 ≥%.1f 分 → %d 只%s"
+                     % (node.id, level, lv_name, min_score, len(scored),
+                        "，其中 %d 只直达订单" % len(hits) if hits else ""))
+    return {"scored": scored, "ffDirectHits": hits, "level": level,
+            "n": len(scored), "sectorFlow": (up.get("sectorFlow") if isinstance(up, dict) else {}) or {}}
+
+
 @register("sector_ambush_signal")
 def _sector_ambush_signal(ctx, node, inputs):
     """「2~3连阳 + 多头趋势 + 主力埋伏」扫描（universe=hot_sector|etf，2026-09-17）。
@@ -4078,7 +4949,10 @@ def _sector_ambush_signal(ctx, node, inputs):
         "dd_lo": float(cfg.get("dd60Lo", -25)), "dd_hi": float(cfg.get("dd60Hi", -1)),
         "min_snaps": int(cfg.get("minSnapshots", 60)),
     }
-    top_sectors = int(cfg.get("topSectors", 5))
+    top_sectors = int(cfg.get("topSectors", 10))
+    # 2026-09-18 用户需求：埋伏从「5 个热门板块」升级为「10 个热门板块
+    # + 10 个资金净流入（远超流出）板块」→ inflowSectors 控制第二个榜的数量。
+    inflow_sectors = int(cfg.get("inflowSectors", 10))
     scan_cap = int(cfg.get("scanCap", 400))
     top_n = int(cfg.get("topN", 10))
     lookback = int(cfg.get("lookbackDays", 20))
@@ -4129,7 +5003,32 @@ def _sector_ambush_signal(ctx, node, inputs):
         ctx.notes.append("[%s] ⚠️ 板块成分股在缓存中无数据，无法计算板块热度" % node.id)
         return {"as_of": "", "rows": [], "scanned": 0, "hotSectors": []}
     ranked.sort(key=lambda x: -x[2])
-    hot = ranked[:top_sectors]
+    hot_mom = ranked[:top_sectors]
+
+    # ②b 资金净流入榜（2026-09-18 用户需求）：东财板块主力净流入 TopN（main_yi>0）
+    #     「资金流入远超流出」= 主力净流入为正且按净额降序取前 N，与动量榜并集去重。
+    ranked_map = {item[0]: item for item in ranked}
+    ff_hot, ff_note = [], ""
+    if inflow_sectors > 0:
+        try:
+            import _sector_fundflow as _sff
+            ff = _sff.get_sector_fundflow([b for b, _c, _s, _5, _10, _20 in ranked])
+            cand = sorted(((b, float(v.get("main_yi") or 0.0)) for b, v in ff.items()),
+                          key=lambda x: -x[1])
+            for b, yi in cand[:inflow_sectors]:
+                if b in ranked_map and yi > 0:
+                    ff_hot.append((ranked_map[b], yi))
+            if ff_hot:
+                ff_note = "、".join("%s(%+.1f亿)" % (it[0], yi) for it, yi in ff_hot)
+        except Exception as e:  # noqa: BLE001
+            ctx.notes.append("[%s] ⚠️ 板块资金流获取失败(%s)，仅按动量选板块"
+                             % (node.id, type(e).__name__))
+    hot = list(hot_mom)
+    _seen = {x[0] for x in hot}
+    for item, _yi in ff_hot:
+        if item[0] not in _seen:
+            hot.append(item)
+            _seen.add(item[0])
     rank_of = {b: i + 1 for i, (b, _c, _s, _5, _10, _20) in enumerate(hot)}
 
     # ③ 逐只评估（合并去重，扫描上限 scan_cap）
@@ -4154,7 +5053,7 @@ def _sector_ambush_signal(ctx, node, inputs):
         row = _amb_eval_stock(code, ent.get("name") or code, sec_of[code], snaps, i, p)
         if not row:
             continue
-        row["score"] = round(row["score"] + (top_sectors - rank_of[row["sector"]] + 1), 2)
+        row["score"] = round(row["score"] + (len(hot) - rank_of[row["sector"]] + 1), 2)
         rows.append(row)
         if row["date"] > asof:
             asof = row["date"]
@@ -4162,8 +5061,12 @@ def _sector_ambush_signal(ctx, node, inputs):
     top = sorted(rows, key=lambda r: -r["score"])[:top_n]
     hot_txt = "、".join("%s(近10日%+.1f%%)" % (b, (r10 or 0.0))
                         for b, _c, _s, _r5, r10, _r20 in hot)
-    ctx.notes.append("[%s] 热门板块埋伏(近%d日)：%s | 扫描%d只 → 命中%d只"
-                     % (node.id, lookback, hot_txt, scanned, len(top)))
+    if ff_note:
+        hot_txt += " ｜💰资金净流入榜：%s" % ff_note
+    ctx.notes.append("[%s] 热门板块埋伏(近%d日，动量%d个+资金流榜%d个 → 并集%d个)：%s "
+                     "| 扫描%d只 → 命中%d只"
+                     % (node.id, lookback, len(hot_mom), len(ff_hot), len(hot),
+                        hot_txt, scanned, len(top)))
     return {"as_of": asof, "rows": top, "scanned": scanned,
             "hotSectors": [b for b, _c, _s, _r5, _r10, _r20 in hot]}
 

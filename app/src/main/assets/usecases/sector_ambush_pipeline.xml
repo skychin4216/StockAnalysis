@@ -36,9 +36,12 @@
     <!-- ── 阶段1：热门板块埋伏信号扫描（规则参数全部下沉至此，供双端引擎读取） ── -->
     <Node id="n_ambush_signal" name="热门板块埋伏信号扫描" module="sector_ambush_signal">
       <config>
-        <!-- 板块热度：读近 lookbackDays 日板块记录，取最强前 topSectors 个板块 -->
+        <!-- 板块热度：读近 lookbackDays 日板块记录，取最强前 topSectors 个板块；
+             2026-09-18 用户需求：5→10 个热门板块，并叠加 inflowSectors 个
+             「资金净流入远超流出」板块（主力净流入>0 按净额降序，与动量榜并集去重） -->
         <param name="lookbackDays" value="20" />
-        <param name="topSectors" value="5" />
+        <param name="topSectors" value="10" />
+        <param name="inflowSectors" value="10" />
         <!-- 启动形态：连续阳线根数区间（2~3 根 = 刚启动，不追连涨多日的高位票） -->
         <param name="bullMin" value="2" />
         <param name="bullMax" value="3" />

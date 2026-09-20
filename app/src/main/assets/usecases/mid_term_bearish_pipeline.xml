@@ -122,7 +122,14 @@
 
     <!-- 中线独有：增强 Layer 4 -->
     <Node id="n_news_str" name="新闻力度计算" module="news_strength" />
-    <Node id="n_rot_pen" name="板块轮动惩罚" module="rotation_penalty" />
+    <Node id="n_rot_pen" name="板块轮动惩罚" module="rotation_penalty">
+      <!-- v3（2026-09-18）：中线轮动周期更长 → 阈值 5/力度 15 差异化；leaderExempt=龙头豁免 -->
+      <config>
+        <param name="maxCountPerSector" value="5" />
+        <param name="penaltyPerExcess" value="15" />
+        <param name="leaderExempt" value="2" />
+      </config>
+    </Node>
 
     <!-- 防守高息（熊市/震荡时启动，寻找银行/电力/高速公路等高息防御股）
          maxPerSector=2：每板块最多 2 只，避免防守候选全部集中在银行 -->
@@ -156,6 +163,8 @@
     <!-- 中线补齐：订单生成 Layer 8 -->
     <Node id="n_orders" name="买入订单生成" module="generate_orders">
       <config>
+        <!-- 2026-09-19 实验优化（_bypass_lab.py）：距60日高过近=追高，实验高位组 T+3 胜率仅 17% -->
+        <param name="maxPos60" value="-8" />
         <param name="maxHoldings" value="5" />
         <param name="orderType" value="MidTermQuant" />
         <param name="totalCapRatio" value="40" />

@@ -328,10 +328,15 @@ object NodeRegistry {
             NewsStrengthNode(lookbackDays = days)
         }
         register("rotation_penalty") { ctx, config ->
-            val threshold = config["thresholdDays"]?.toIntOrNull() ?: 3
+            // v3：maxCountPerSector 为正名（语义=同板块命中只数阈值），兼容旧名 thresholdDays；
+            // leaderExempt=板块内强度前 N 只惩罚减半（默认 2，0=关闭）
+            val threshold = config["maxCountPerSector"]?.toIntOrNull()
+                ?: config["thresholdDays"]?.toIntOrNull() ?: 3
             val penalty = config["penaltyPerExcess"]?.toIntOrNull() ?: 10
+            val leaderExempt = config["leaderExempt"]?.toIntOrNull() ?: 2
             RotationPenaltyNode(
-                thresholdDays = threshold, penaltyPerExcess = penalty)
+                maxCountPerSector = threshold, penaltyPerExcess = penalty,
+                leaderExempt = leaderExempt)
         }
 
         // 中线过滤
@@ -362,7 +367,13 @@ object NodeRegistry {
                 maxHoldings = maxH,
                 orderType = orderType,
                 totalCapRatio = totalRatio,
-                singlePositionRatio = singleRatio
+                singlePositionRatio = singleRatio,
+                // 2026-09-18：直达订单字段可配（默认机构保送 instBuyHits；资金流 DAG 传 ffDirectHits）
+                directField = config["directField"] ?: "instBuyHits",
+                // 2026-09-19：bypass（可跳过 trend/pattern/idiom 拦截）+ maxPos60（高位追高闸）
+                bypass = (config["bypass"] ?: "").split(",")
+                    .map { it.trim().lowercase() }.filter { it.isNotBlank() }.toSet(),
+                maxPos60 = config["maxPos60"]?.toDoubleOrNull()
             )
         }
         register("position_merge") { ctx, _ -> PositionMergeNode() }
@@ -371,6 +382,17 @@ object NodeRegistry {
 
         // ══════════ 月内机构买入检测（2026-09-17 用户需求） ══════════
         // 对全池（三周期+ETF全行业扫描+ETFtop5+实仓）检测近35天披露的十大流通股东
+        // 主力行为分阶段识别（建仓/拉升/洗盘/出货，2026-09-19 用户需求）：
+        // 补齐此前只有「主力建仓」的缺口；与 PC 侧 smalltools/_main_force.py::detect() 同口径同阈值，
+        // 也与做T侧 InstIntent 枚举语义一致，但面向**全市场选股**。
+        register("main_force_stage") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.MainForceStageNode(
+                sourceNode = config["sourceNode"] ?: "n_direction",
+                topN = config["topN"]?.toIntOrNull() ?: 120,
+                withFlow = (config["withFlow"] ?: "1") != "0"
+            )
+        }
+
         // 机构增持；命中票保送 generate_orders（JSONObject 输入分支），命中即 view log
         // 红色标注（🚨）。与 Python usecase_pipeline.py inst_buy_recent 同口径。
         register("inst_buy_recent") { _, config ->
@@ -379,6 +401,69 @@ object NodeRegistry {
                 topN = config["topN"]?.toIntOrNull() ?: 80,
                 noticeDays = config["noticeDays"]?.toLongOrNull() ?: 35L,
                 endDays = config["endDays"]?.toLongOrNull() ?: 130L
+            )
+        }
+
+        // ★ 超级权限闸（priority level = 0，2026-09-19 用户需求）：
+        // 国家队(汇金/证金/国新/梧桐树) + 社保养老 **同时** 在近 7 天披露买入 → 直达订单
+        // （跳过趋势/形态/口诀三重拦截）。与 Python usecase_pipeline.py super_holder_gate 同口径。
+        register("super_holder_gate") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.SuperHolderGateNode(
+                sourceNode = config["sourceNode"] ?: "n_inst_buy",
+                noticeDays = config["noticeDays"]?.toIntOrNull() ?: 7,
+                requireBoth = (config["requireBoth"] ?: "true").lowercase() != "false",
+                level = config["level"]?.toIntOrNull() ?: 0,
+                mode = config["mode"] ?: "recent"
+            )
+        }
+
+        // ETF 资金流共振（priority level = 1，2026-09-19 用户需求）：
+        // ETF 净流入方向 + 板块放量大阳线（主力建仓）→ 直达订单；
+        // 权限低于三机构同时持有(level=0)，高于通用资金流直达(level=4)。
+        // 与 Python usecase_pipeline.py:etf_flow_leader 同口径。
+        register("etf_flow_leader") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.EtfFlowLeaderNode(
+                topN = config["topN"]?.toIntOrNull() ?: 10,
+                bigYangPct = config["bigYangPct"]?.toDoubleOrNull() ?: 5.0,
+                volRatio = config["volRatio"]?.toDoubleOrNull() ?: 1.8,
+                lowPos = config["lowPos"]?.toDoubleOrNull() ?: 10.0,
+                level = config["level"]?.toIntOrNull() ?: 1
+            )
+        }
+
+        // 新闻情报上下文（2026-09-19 用户需求）：当日累积快讯 → 板块关键词 + 多空情绪。
+        register("news_context") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.NewsContextNode(
+                topN = config["topN"]?.toIntOrNull() ?: 12
+            )
+        }
+
+        // 背离确认 + 趋势K线法则（2026-09-19 用户需求①，标注/增强节点，只标注不否决）。
+        register("reversal_confirm") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.ReversalConfirmNode(
+                lookback = config["lookback"]?.toIntOrNull() ?: 60
+            )
+        }
+
+        // ══════════ 资金流选股（2026-09-18 用户需求） ══════════
+        // 板块资金流榜 → 个股资金流 v2.1 双层评分 → 级别闸（level 1~4，4=直达生成订单）。
+        // 规则/参数在 assets/usecases/fund_flow_pipeline.xml（双端同源）；与 Python
+        // usecase_pipeline.py 的 fund_flow_* 节点同口径（见 FundFlowNodes.kt）。
+        register("fund_flow_sector") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.FundFlowSectorNode(
+                topN = config["topN"]?.toIntOrNull() ?: 15
+            )
+        }
+        register("fund_flow_screen") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.FundFlowScreenNode(
+                topN = config["topN"]?.toIntOrNull() ?: 20,
+                minScore = config["minScore"]?.toDoubleOrNull() ?: 4.0,
+                scanCap = config["scanCap"]?.toIntOrNull() ?: 600
+            )
+        }
+        register("fund_flow_level") { _, config ->
+            com.chin.stockanalysis.strategy.topology.nodes.FundFlowLevelNode(
+                level = config["level"]?.toIntOrNull() ?: 2
             )
         }
 
@@ -543,7 +628,8 @@ object NodeRegistry {
         // 热门板块埋伏 sector_ambush（规则/参数在 assets/usecases/sector_ambush_pipeline.xml，双端同源）
         register("sector_ambush_signal") { _, config ->
             com.chin.stockanalysis.strategy.topology.nodes.SectorAmbushSignalNode(
-                topSectors = config["topSectors"]?.toIntOrNull() ?: 5,
+                topSectors = config["topSectors"]?.toIntOrNull() ?: 10,
+                inflowSectors = config["inflowSectors"]?.toIntOrNull() ?: 10,
                 bullMin = config["bullMin"]?.toIntOrNull() ?: 2,
                 bullMax = config["bullMax"]?.toIntOrNull() ?: 3,
                 maShort = config["maShort"]?.toIntOrNull() ?: 5,

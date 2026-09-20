@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ## ETF 资金流 → 板块 → 放量大阳线（主力建仓）Pipeline（2026-09-19 用户需求）
+
+  与同目录 usecase_pipeline.py（Python 引擎，XML DAG 主线）共用同一份文件 —— 单一事实源。
+
+  思路：ETF 资金净流入的**方向**（钱先进来）→ 该方向个股出现**放量大阳线**
+  （＝主力动手，Wyckoff 吸筹的 SOS / 量价异动）→ 视为主力建仓信号。
+
+  权限级别：**level = 1**
+    0 = 三机构同时持有（超级权限，最高）
+    1 = ETF资金流共振 + 板块大阳线  ← 本链（用户要求：比三机构稍微低一点）
+    4 = 资金流直达（≥8 分）
+    3 = 激进（≥5 分）／2 = 常规（≥6 分）／1 = 严格（≥8 分，fund_flow_level 内部档）
+
+  判定三条件（缺一不可，详见 usecase_pipeline.py:etf_flow_leader 注释）：
+    ① 板块层：ETF 资金流净流入主题 ∪ 板块主力净流入 TopN
+    ② 个股层：涨幅 ≥ bigYangPct(5%) ＋ 量比 ≥ volRatio(1.8) ＋ 收盘在当日振幅上 30%
+    ③ 低位层：距 60 日高 ≤ -lowPos(10%)（主力建仓在低位，过滤追高）
+
+  命中写 efDirectHits → generate_orders(directField="efDirectHits") 直达：
+  跳过趋势/形态/口诀/顶背离拦截（仓位上限、ST 红线仍生效）。
+
+  stageOutputs：
+    - "n_efl_pool"   JSONObject {as_of, n, rows[]}     选股池汇总（同 inst_pool_build）
+    - "n_efl"        JSONObject {n, rows[], hits[], efDirectHits[],
+                                level, themes[], boards[], source}
+    - "n_efl_orders" 订单列表
+-->
+<DagPipeline id="etf_flow_leader_dag" name="ETF资金流共振Pipeline"
+    description="ETF资金流方向 + 板块放量大阳线（主力建仓）→ level1 直达生成订单">
+
+  <NodeList>
+    <!-- 阶段1：选股池汇总（三周期 + ETF 扫描 + 实仓；供个股层扫描） -->
+    <Node id="n_efl_pool" name="选股池汇总" module="inst_pool_build">
+      <config>
+        <param name="includeHoldings" value="true" />
+        <param name="maxRows" value="300" />
+        <param name="embedBars" value="true" />
+        <param name="barsLimit" value="140" />
+      </config>
+    </Node>
+
+    <!-- 阶段2：ETF 资金流方向 → 板块 → 放量大阳线个股（主力建仓） -->
+    <Node id="n_efl" name="ETF资金流共振(主力建仓)" module="etf_flow_leader">
+      <config>
+        <param name="sourceNode" value="n_efl_pool" />
+        <param name="bigYangPct" value="5" />
+        <param name="volRatio" value="1.8" />
+        <param name="lowPos" value="10" />
+        <param name="topN" value="10" />
+        <param name="level" value="1" />
+      </config>
+    </Node>
+
+    <!-- 阶段3：直达生成订单（level=1 权限：跳过拦截，仓位/ST 红线仍生效） -->
+    <Node id="n_efl_orders" name="买入订单生成(ETF资金流共振)" module="generate_orders">
+      <config>
+        <param name="sourceNode" value="n_efl" />
+        <param name="directField" value="efDirectHits" />
+        <param name="maxHoldings" value="5" />
+        <param name="orderType" value="MidTermQuant" />
+      </config>
+    </Node>
+  </NodeList>
+
+  <Links>
+    <Link>
+      <SourceNodeId>n_efl_pool</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_efl</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+    <Link>
+      <SourceNodeId>n_efl</SourceNodeId>
+      <SourcePortId>0</SourcePortId>
+      <TargetNodeId>n_efl_orders</TargetNodeId>
+      <TargetPortId>0</TargetPortId>
+    </Link>
+  </Links>
+</DagPipeline>

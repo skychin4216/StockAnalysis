@@ -83,6 +83,10 @@
     <!-- 订单生成 Layer 6 -->
     <Node id="n_orders" name="买入订单生成" module="generate_orders">
       <config>
+        <!-- 2026-09-19 实验优化（_bypass_lab.py）：距60日高过近=追高，实验高位组 T+3 胜率仅 17% -->
+        <param name="maxPos60" value="-5" />
+        <!-- bypass=idiom：放开口诀否决（实验显示当日急拉>5%组 T+5 胜率 93%、均+8.37%，口诀在误杀） -->
+        <param name="bypass" value="idiom" />
         <param name="maxHoldings" value="5" />
         <param name="orderType" value="UltraShortQuant" />
         <param name="totalCapRatio" value="15" />

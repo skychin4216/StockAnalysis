@@ -1,0 +1,270 @@
+{
+  "version": 1,
+  "updated": "2026-09-19",
+  "note": "统一数据源配置（单一事实源）。改了域名/路径只改这里，代码统一走 smalltools/_sources.py（Python）或 DataSourceConfig.kt（APK）。APK 副本：python smalltools/_sources.py --sync-apk 生成到 app/src/main/assets/datasources.json。",
+  "defaults": {
+    "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    "timeout": 12,
+    "retries": 2,
+    "direct": true,
+    "encoding": "utf-8"
+  },
+  "sources": {
+    "tencent_qt": {
+      "url": "https://qt.gtimg.cn/q={codes}",
+      "encoding": "gbk",
+      "referer": "https://gu.qq.com/",
+      "desc": "腾讯实时行情（批量，codes=逗号分隔 secid，如 sh600188,sz300308；返回 ~ 分隔字段）"
+    },
+    "tencent_kline": {
+      "url": "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+      "referer": "https://gu.qq.com/",
+      "desc": "腾讯前复权日K（param=secid,day,beg,end,count,qfq）；⚠️本机曾返回 WAF 501，需 fallback",
+      "fallbacks": ["sina_kline"]
+    },
+    "tencent_proxy_kline": {
+      "url": "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/kline/kline",
+      "referer": "https://gu.qq.com/",
+      "desc": "腾讯代理K线（非复权；备选源，生产未用，用于诊断对照/应急切换）",
+      "fallbacks": ["tencent_kline", "sina_kline"]
+    },
+    "sina_m5": {
+      "url": "https://quotes.sina.cn/cn/api/jsonp_v2.php/=/CN_MarketDataService.getKLineData?symbol={codes}&scale={scale}&ma=no&datalen={n}",
+      "referer": "https://finance.sina.com.cn/",
+      "desc": "新浪分钟K（scale=5/15/30/60；codes=sz300308；n=根数，300≈6个交易日）",
+      "fallbacks": ["tencent_proxy_m5"]
+    },
+    "tencent_proxy_m5": {
+      "url": "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/kline/mkline?param={codes},m5,,{n}",
+      "referer": "https://gu.qq.com/",
+      "desc": "腾讯代理分钟K（m5；末根含当日盘中实时）",
+      "fallbacks": ["sina_m5"]
+    },
+    "sina_quote": {
+      "url": "https://hq.sinajs.cn/list={codes}",
+      "encoding": "gbk",
+      "referer": "https://finance.sina.com.cn/",
+      "desc": "新浪实时行情（codes=逗号分隔 secid）"
+    },
+    "sina_kline": {
+      "url": "https://quotes.sina.cn/cn/api/jsonp_v2.php/=/CN_MarketDataService.getKLineData",
+      "referer": "https://finance.sina.com.cn/",
+      "desc": "新浪日K（symbol=sz300308&scale=240&ma=no&datalen=300；响应形如 =([...])）"
+    },
+    "sina_moneyflow": {
+      "url": "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/MoneyFlow.ssl_qsfx_zjlrqs",
+      "referer": "https://finance.sina.com.cn/",
+      "desc": "新浪个股资金流历史序列（daima=sz300308&num=60&sort=opendate&asc=0）"
+    },
+    "east_delay_clist": {
+      "url": "https://push2delay.eastmoney.com/api/qt/clist/get",
+      "referer": "https://quote.eastmoney.com/",
+      "desc": "东财延迟列表行情/板块资金流（fid=f62 主力净流入；fs=m:90+t:2 行业板块）"
+    },
+    "east_delay_stock": {
+      "url": "https://push2delay.eastmoney.com/api/qt/stock/get",
+      "referer": "https://quote.eastmoney.com/",
+      "desc": "东财单只实时（secid=0.300308&fields=f43,f62,...）"
+    },
+    "east_delay_fflow": {
+      "url": "https://push2delay.eastmoney.com/api/qt/stock/fflow/daykline/get",
+      "referer": "https://quote.eastmoney.com/",
+      "desc": "东财个股资金流日线（secid=0.300308&lmt=1；四档明细 主力/超大/大/中/小）"
+    },
+    "east_delay_ulist": {
+      "url": "https://push2delay.eastmoney.com/api/qt/ulist.np/get",
+      "referer": "https://quote.eastmoney.com/",
+      "desc": "东财多标的行情（全球指数等；secids=1.000001,100.STI）"
+    },
+    "east_delay_stock_flow": {
+      "url": "https://push2delay.eastmoney.com/api/qt/stock/fflow/kline/get",
+      "referer": "https://quote.eastmoney.com/",
+      "desc": "东财个股资金流分时/分钟（备用）"
+    },
+    "east_kline": {
+      "url": "https://90.push2his.eastmoney.com/api/qt/stock/kline/get",
+      "alt_hosts": [
+        "https://push2his.eastmoney.com",
+        "https://17.push2his.eastmoney.com",
+        "https://80.push2his.eastmoney.com"
+      ],
+      "referer": "https://quote.eastmoney.com/",
+      "desc": "东财前复权日K（secid/klt=101/fqt=1/beg/end）；⚠️本机 push2his 系列常被重置，需 fallback",
+      "fallbacks": ["tencent_kline", "sina_kline"]
+    },
+    "east_clist": {
+      "url": "https://push2.eastmoney.com/api/qt/clist/get",
+      "alt_hosts": [
+        "https://90.push2.eastmoney.com",
+        "https://92.push2.eastmoney.com"
+      ],
+      "referer": "https://quote.eastmoney.com/",
+      "desc": "东财实时列表（资金流/涨幅榜/ETF 列表）",
+      "fallbacks": ["east_delay_clist"]
+    },
+    "east_datacenter": {
+      "url": "https://datacenter-web.eastmoney.com/api/data/v1/get",
+      "referer": "https://data.eastmoney.com/",
+      "desc": "东财数据中心报表（reportName=RPT_*，十大流通股东/业绩等）"
+    },
+    "east_datacenter_sec": {
+      "url": "https://datacenter.eastmoney.com/securities/api/data/v1/get",
+      "referer": "https://data.eastmoney.com/",
+      "desc": "东财数据中心（证券维度报表，备用）"
+    },
+    "east_fundf10": {
+      "url": "https://fundf10.eastmoney.com/FundArchivesDatas.aspx",
+      "referer": "https://fund.eastmoney.com/",
+      "desc": "天天基金 F10（ETF 持仓/份额等）"
+    },
+    "east_fund_api": {
+      "url": "https://api.fund.eastmoney.com/f10/lsjz",
+      "referer": "https://fundf10.eastmoney.com/",
+      "desc": "天天基金历史净值（备用）"
+    },
+    "east_fund_ann": {
+      "url": "https://api.fund.eastmoney.com/f10/JJGG",
+      "referer": "https://fundf10.eastmoney.com/",
+      "desc": "天天基金基金公告（ETF 份额/分红等）"
+    },
+    "east_pdf": {
+      "url": "http://pdf.dfcfw.com/pdf/H2_{code}_1.pdf",
+      "desc": "东财公告 PDF（⚠️ 必须 http://，https 会返回反爬 JS 挑战页；占位 code）"
+    },
+    "fed_press_rss": {
+      "url": "https://www.federalreserve.gov/feeds/press_all.xml",
+      "desc": "美联储新闻稿 RSS（加息/政策，宏观）"
+    },
+    "east_fundmob": {
+      "url": "https://fundmobapi.eastmoney.com/FundMNewApi/FundMNFInfo",
+      "referer": "https://fund.eastmoney.com/",
+      "desc": "天天基金移动端接口（ETF 行情/份额）"
+    },
+    "east_emweb": {
+      "url": "https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/PageAjax",
+      "referer": "https://emweb.securities.eastmoney.com/",
+      "desc": "东财 F10 页面接口（公司概况/股东等，code=SZ300308）"
+    },
+    "east_notice": {
+      "url": "https://np-anotice-stock.eastmoney.com/api/security/ann",
+      "referer": "https://data.eastmoney.com/",
+      "desc": "东财个股公告列表（sr=-1&page_size=20&stock_list=300308）"
+    },
+    "east_cnotice": {
+      "url": "https://np-cnotice-stock.eastmoney.com/api/content/ann",
+      "referer": "https://data.eastmoney.com/",
+      "desc": "东财公告正文（art_code）"
+    },
+    "east_reportapi": {
+      "url": "https://reportapi.eastmoney.com/report/list",
+      "referer": "https://data.eastmoney.com/",
+      "desc": "东财研报列表（行业/个股研报）"
+    },
+    "east_news_api": {
+      "url": "https://np-listapi.eastmoney.com/comm/web/getNewsByColumns",
+      "referer": "https://finance.eastmoney.com/",
+      "desc": "东财快讯/新闻列表"
+    },
+    "east_fast_news": {
+      "url": "https://np-listapi.eastmoney.com/comm/web/getFastNewsList",
+      "referer": "https://finance.eastmoney.com/",
+      "desc": "东财 7x24 全球快讯（_daily_intel/_news_watch 用）"
+    },
+    "east_article": {
+      "url": "https://finance.eastmoney.com/a/{code}.html",
+      "referer": "https://finance.eastmoney.com/",
+      "desc": "东财新闻正文页（占位 code）"
+    },
+    "east_report_info": {
+      "url": "https://data.eastmoney.com/report/info/{info}.html",
+      "referer": "https://data.eastmoney.com/",
+      "desc": "东财研报详情页（占位 info）"
+    },
+    "sina_zhibo": {
+      "url": "https://zhibo.sina.com.cn/api/zhibo/feed",
+      "referer": "https://finance.sina.com.cn/",
+      "desc": "新浪财经 7x24 直播（国际政经/名人快讯）"
+    },
+    "cpc_noaa_oni": {
+      "url": "https://www.cpc.ncep.noaa.gov/data/indices/oni.ascii",
+      "desc": "NOAA ONI 海温指数（厄尔尼诺/拉尼娜 → 农业/气候主题）"
+    },
+    "wechat_upload_media": {
+      "url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/upload_media",
+      "desc": "企微机器人素材上传（发图片/文件前先上传拿 media_id）"
+    },
+    "east_search": {
+      "url": "https://search-api-web.eastmoney.com/search/jsonp",
+      "referer": "https://so.eastmoney.com/",
+      "desc": "东财搜索（备用）"
+    },
+    "quote_eastmoney": {
+      "url": "https://quote.eastmoney.com/",
+      "desc": "东财行情首页（仅作 Referer 用，不请求）"
+    },
+    "gu_qq": {
+      "url": "https://gu.qq.com/",
+      "desc": "腾讯证券首页（仅作 Referer 用，不请求）"
+    },
+    "finance_sina": {
+      "url": "https://finance.sina.com.cn/",
+      "desc": "新浪财经首页（仅作 Referer 用，不请求）"
+    },
+    "wallstreetcn": {
+      "url": "https://api-one.wallstcn.com/apiv1/content/lives",
+      "referer": "https://wallstreetcn.com/",
+      "desc": "华尔街见闻快讯（权威财经源）"
+    },
+    "wechat_webhook": {
+      "url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send",
+      "desc": "企业微信机器人（推送；key 在 cloud_config/notify 配置里）"
+    },
+    "pushplus": {
+      "url": "https://www.pushplus.plus/send",
+      "desc": "PushPlus 推送（备用通道）"
+    },
+    "serverchan": {
+      "url": "https://sctapi.ftqq.com/{sendkey}.send",
+      "desc": "Server 酱推送（备用通道）"
+    },
+    "fred": {
+      "url": "https://fred.stlouisfed.org/graph/fredgraph.csv",
+      "desc": "美联储经济数据（利率/通胀，宏观）"
+    },
+    "sse_query": {
+      "url": "https://query.sse.com.cn/commonQuery.do",
+      "referer": "https://www.sse.com.cn/",
+      "desc": "上交所数据查询（备用）"
+    },
+    "deepseek_api": {
+      "url": "https://api.deepseek.com/v1/chat/completions",
+      "base_url": "https://api.deepseek.com/v1/",
+      "desc": "DeepSeek（AI 端点之一；exe/smalltools 可用，见 ai_config.py）"
+    },
+    "volces_ark": {
+      "url": "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+      "base_url": "https://ark.cn-beijing.volces.com/api/v3/",
+      "desc": "火山方舟（exe/smalltools 可用；2026-09-19 用户澄清：AI 端点不限于 DeepSeek）"
+    },
+    "dashscope_api": {
+      "url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/",
+      "desc": "阿里云百炼/通义 Qwen（exe/smalltools 可用，见 ai_config.py）"
+    },
+    "siliconflow_api": {
+      "url": "https://api.siliconflow.cn/v1/chat/completions",
+      "base_url": "https://api.siliconflow.cn/v1/",
+      "desc": "硅基流动（exe/smalltools 可用）"
+    },
+    "bigmodel_api": {
+      "url": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4/",
+      "desc": "智谱 GLM（APK/exe 可用）"
+    },
+    "xfyun_spark": {
+      "url": "https://spark-api-open.xf-yun.com/v1/chat/completions",
+      "base_url": "https://spark-api-open.xf-yun.com/v1/",
+      "desc": "讯飞星火（APK 可用）"
+    }
+  }
+}
