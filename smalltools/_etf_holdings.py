@@ -52,8 +52,15 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 MOBILE_UA = {"User-Agent": "Mozilla/5.0 (Linux; Android 12; Pixel) AppleWebKit/537.36"}
 PROXIES = {"http": None, "https": None}
 
-FUNDMOB_API = "https://fundmobapi.eastmoney.com/FundMNewApi/FundMNInverstPosition"
-QUOTE_API = "https://qt.gtimg.cn/q="
+# 2026-09-19：URL 统一走 data/datasources.json（_sources），缺失回退硬编码
+try:
+    import _sources as _SRC
+    FUNDMOB_API = (_SRC.host("east_fundmob")
+                   + "/FundMNewApi/FundMNInverstPosition")
+    QUOTE_API = _SRC.host("tencent_qt") + "/q="
+except Exception:  # noqa: BLE001
+    FUNDMOB_API = "https://fundmobapi.eastmoney.com/FundMNewApi/FundMNInverstPosition"
+    QUOTE_API = "https://qt.gtimg.cn/q="
 
 # ── 宽基（进覆盖矩阵，但行业低吸推送不参与）──
 BASE_FUNDS = [
@@ -212,7 +219,11 @@ def tencent_quotes(codes):
     try:
         sina_headers = dict(HEADERS)
         sina_headers["Referer"] = "https://finance.sina.com.cn"
-        surl = "https://hq.sinajs.cn/list=" + ",".join(p for _, p in items)
+        try:      # 2026-09-19：URL 统一走 data/datasources.json（_sources）
+            import _sources as _SRC2
+            surl = _SRC2.url("sina_quote", codes=",".join(p for _, p in items))
+        except Exception:  # noqa: BLE001
+            surl = "https://hq.sinajs.cn/list=" + ",".join(p for _, p in items)
         sr = requests.get(surl, timeout=8, headers=sina_headers, proxies=PROXIES)
         sr.encoding = "gbk"
         return _parse_sina(sr.text)
@@ -1159,9 +1170,23 @@ def _snaps_live(code):
     2026-09-12：统一表格口径后，所有选股结果都要「距60日高 / 今日 / 趋势图谱 /
     星后形态 / 趋势图」，这些需原始日K；故把 _meta_live 拉到的 rows 一并缓存复用，
     不额外发请求。
+
+    2026-09-19：外部日K源（腾讯 web.ifzq / 东财 push2his）被 WAF 拦截时返回空
+    → ETF 全行业扫描 / ETF top5 段会「静默变 0 只」（盘中明明有 9/2 只）。
+    故外部源为空时回退项目唯一数据源 data/kline_store.json（离线可用）。
     """
     _meta_live(code)
-    return _SNAP_TODAY.get(code) or []
+    rows = _SNAP_TODAY.get(code) or []
+    if not rows:
+        try:
+            from _kline_store import load_store
+            ent = (load_store() or {}).get(_prefixed(code)) or {}
+            rows = ent.get("snaps") or []
+            if rows:
+                _SNAP_TODAY[code] = rows
+        except Exception:  # noqa: BLE001
+            rows = []
+    return rows
 
 
 def _meta_live(code):
@@ -1176,14 +1201,30 @@ def _meta_live(code):
     if code in _KLINE_TODAY:
         return _KLINE_TODAY[code]
     meta = {}
+    rows = []
     try:
         import _overseas_fetch
-        rows = _overseas_fetch.fetch_kline(_prefixed(code), count=300)
-        if rows:
-            _SNAP_TODAY[code] = rows
-            meta = _screen_meta(rows)
+        rows = _overseas_fetch.fetch_kline(_prefixed(code), count=300) or []
     except Exception:
-        meta = {}
+        # 2026-09-19：外部源被 WAF 拦截时返回 HTML 501 页 → r.json() 抛 JSONDecodeError，
+        # 旧实现直接跳到外层 except 把 meta 置空，兜底分支根本没机会执行（ETF 段静默 0 只）。
+        rows = []
+    if not rows:
+        # 回退项目唯一数据源 data/kline_store.json（离线可用，末根可能比当日早一天）。
+        try:
+            from _kline_store import load_store
+            # 必须取末 300 根：与外部 fetch_kline(count=300) 同窗口；全历史（2008 起
+            # 3000+ 根）会让 _screen_meta 内部异常被吞成空 meta。
+            rows = (((load_store() or {}).get(_prefixed(code)) or {})
+                    .get("snaps") or [])[-300:]
+        except Exception:
+            rows = []
+    if rows:
+        _SNAP_TODAY[code] = rows
+        try:
+            meta = _screen_meta(rows)
+        except Exception:
+            meta = {}
     _KLINE_TODAY[code] = meta
     return meta
 

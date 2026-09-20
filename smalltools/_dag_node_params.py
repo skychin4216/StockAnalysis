@@ -85,9 +85,10 @@ NODE_PARAMS = {
     "news_strength": {         # NewsStrengthNode（短线）
         "lookbackDays": 3,
     },
-    "rotation_penalty": {      # RotationPenaltyNode（周期 pipeline 均挂载）
-        "thresholdDays": 3,    # 强势天数阈值
-        "penaltyPerExcess": 10,# 每超出 1 天扣 10 分
+    "rotation_penalty": {      # RotationPenaltyNode v3（周期 pipeline 均挂载）
+        "maxCountPerSector": 3,    # 同板块命中只数阈值（v3 改名，原 thresholdDays）
+        "penaltyPerExcess": 10,    # 每超出 1 只扣 10 分
+        "leaderExempt": 2,         # 板块内强度前 N 只惩罚减半（v3 龙头豁免）
     },
     "cross_day_aggregation": { # CrossDayAggregationNode
         "windowDays": 5,

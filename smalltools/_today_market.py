@@ -19,7 +19,12 @@ def fetch_realtime():
     """腾讯实时行情：现价/昨收/今开/涨跌/涨跌%/成交额(万)"""
     codes = ["sh000001", "sz399001", "sz399006"]
     try:
-        r = requests.get("https://qt.gtimg.cn/q=" + ",".join(codes),
+        try:      # 2026-09-19：URL 统一走 data/datasources.json（_sources）
+            import _sources as _S
+            _qurl = _S.url("tencent_qt", codes=",".join(codes))
+        except Exception:  # noqa: BLE001
+            _qurl = "https://qt.gtimg.cn/q=" + ",".join(codes)
+        r = requests.get(_qurl,
                          timeout=10, headers=HEADERS, proxies=PROXIES)
         r.encoding = "gbk"
         out = []
@@ -53,8 +58,13 @@ def fetch_m5(secid, end):
         "fields1": "f1,f2,f3,f4,f5,f6",
         "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
     }
-    for host in ["https://push2his.eastmoney.com", "https://90.push2his.eastmoney.com",
-                 "https://92.push2his.eastmoney.com"]:
+    try:      # 2026-09-19：主机列表统一走 data/datasources.json（_sources）
+        import _sources as _S2
+        _hosts = _S2.alt_hosts("east_kline")
+    except Exception:  # noqa: BLE001
+        _hosts = ["https://push2his.eastmoney.com", "https://90.push2his.eastmoney.com",
+                  "https://92.push2his.eastmoney.com"]
+    for host in _hosts:
         try:
             r = requests.get(host + "/api/qt/stock/kline/get", params=params,
                              timeout=10, headers=HEADERS, proxies=PROXIES)

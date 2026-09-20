@@ -39,16 +39,22 @@ _HDR_SINA["Referer"] = "https://finance.sina.com.cn"
 
 # ── qfq 日K源注册 ────────────────────────────────────────────────────────────
 # 每源一个 host + 一个 keep-alive Session（域名级故障互不传染）
-EAST_HOSTS = [
-    "https://push2his.eastmoney.com",
-    "https://90.push2his.eastmoney.com",
-    "https://17.push2his.eastmoney.com",
-    "https://80.push2his.eastmoney.com",
-]
-# web.sqt.gtimg.cn 实测不提供 fqkline(非JSON)，只保留 ifzq（2026-09-10 验证）
-TENCENT_HOSTS = [
-    "https://web.ifzq.gtimg.cn",
-]
+# 2026-09-19：主机列表统一走 data/datasources.json（_sources），缺失回退硬编码
+try:
+    import _sources as _SRC
+    EAST_HOSTS = _SRC.alt_hosts("east_kline")
+    TENCENT_HOSTS = [_SRC.host("tencent_kline")]
+except Exception:  # noqa: BLE001
+    EAST_HOSTS = [
+        "https://push2his.eastmoney.com",
+        "https://90.push2his.eastmoney.com",
+        "https://17.push2his.eastmoney.com",
+        "https://80.push2his.eastmoney.com",
+    ]
+    # web.sqt.gtimg.cn 实测不提供 fqkline(非JSON)，只保留 ifzq（2026-09-10 验证）
+    TENCENT_HOSTS = [
+        "https://web.ifzq.gtimg.cn",
+    ]
 
 SOURCES = []
 for i, h in enumerate(EAST_HOSTS):

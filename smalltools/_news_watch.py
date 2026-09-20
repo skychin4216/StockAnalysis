@@ -168,6 +168,15 @@ def _get(url, params):
     return r.json()
 
 
+def _u(name, fallback):
+    """2026-09-19：URL 统一走 data/datasources.json（_sources）；缺失回退硬编码。"""
+    try:
+        import _sources as _src
+        return _src.url(name)
+    except Exception:  # noqa: BLE001
+        return fallback
+
+
 def _east_fast(column):
     """东财快讯列表：column=100 全球 / 103 要闻。返回条目（含原文网页 URL）。"""
     key = "east:%s" % column
@@ -175,7 +184,8 @@ def _east_fast(column):
     if hit is not None:
         return hit
     try:
-        data = _get("https://np-listapi.eastmoney.com/comm/web/getFastNewsList",
+        data = _get(_u("east_fast_news",
+                       "https://np-listapi.eastmoney.com/comm/web/getFastNewsList"),
                     {"client": "web", "biz": "web_724", "fastColumn": column,
                      "sortEnd": "", "pageSize": 30, "req_trace": "1"})
         out = []
@@ -198,7 +208,7 @@ def _sina_live():
     if hit is not None:
         return hit
     try:
-        data = _get("https://zhibo.sina.com.cn/api/zhibo/feed",
+        data = _get(_u("sina_zhibo", "https://zhibo.sina.com.cn/api/zhibo/feed"),
                     {"page": 1, "page_size": 40, "zhibo_id": 152, "tag_id": 0,
                      "dire": "f", "dpc": 1})
         feed = (((data.get("result") or {}).get("data") or {}).get("feed") or {}).get("list") or []
@@ -224,7 +234,7 @@ def _east_macro_reports():
     try:
         end = datetime.date.today()
         begin = end - datetime.timedelta(days=3)
-        data = _get("https://reportapi.eastmoney.com/report/list",
+        data = _get(_u("east_reportapi", "https://reportapi.eastmoney.com/report/list"),
                     {"industryCode": "*", "pageSize": 8, "pageNo": 1, "qType": 1,
                      "code": "*", "beginTime": begin.strftime("%Y-%m-%d"),
                      "endTime": end.strftime("%Y-%m-%d")})
@@ -262,7 +272,8 @@ def fetch_oni_state():
                 d = json.load(f)
             if time.time() - d.get("ts", 0) < (172800 if d.get("ok") else 3600):
                 return d.get("text") or None
-        r = requests.get("https://www.cpc.ncep.noaa.gov/data/indices/oni.ascii",
+        r = requests.get(_u("cpc_noaa_oni",
+                        "https://www.cpc.ncep.noaa.gov/data/indices/oni.ascii"),
                          timeout=8, headers=HEADERS, proxies=PROXIES)
         r.raise_for_status()
         rows = [ln.split() for ln in r.text.splitlines() if ln.strip()]
@@ -327,7 +338,7 @@ def _wallstreetcn_lives(limit=20):
     if hit is not None:
         return hit
     try:
-        data = _get("https://api-one.wallstcn.com/apiv1/content/lives",
+        data = _get(_u("wallstreetcn", "https://api-one.wallstcn.com/apiv1/content/lives"),
                     {"channel": "global-channel", "client": "pc",
                      "limit": limit, "first_page": "true"})
         items = (data.get("data") or {}).get("items") or []
@@ -358,7 +369,8 @@ def _fed_rss(limit=10):
     if hit is not None:
         return hit
     try:
-        r = requests.get("https://www.federalreserve.gov/feeds/press_all.xml",
+        r = requests.get(_u("fed_press_rss",
+                            "https://www.federalreserve.gov/feeds/press_all.xml"),
                          timeout=TIMEOUT, headers=HEADERS, proxies=PROXIES)
         r.raise_for_status()
         out = []

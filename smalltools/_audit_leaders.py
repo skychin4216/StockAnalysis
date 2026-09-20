@@ -32,7 +32,14 @@ socket.setdefaulttimeout(8)
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 PROXIES = {"http": None, "https": None}
 
-HOSTS = ["https://push2.eastmoney.com", "https://push2delay.eastmoney.com"]
+# 2026-09-19：主机与 URL 统一走 data/datasources.json（_sources），缺失回退硬编码
+try:
+    import _sources as _SRC
+    HOSTS = _SRC.alt_hosts("east_clist")
+    DC_URL = _SRC.url("east_datacenter_sec")
+except Exception:  # noqa: BLE001
+    HOSTS = ["https://push2.eastmoney.com", "https://push2delay.eastmoney.com"]
+    DC_URL = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
 
 _session = None
 
@@ -85,7 +92,7 @@ def fetch_quote(code):
 def fetch_latest_net_profit(code):
     """返回 (report_date, 归母净利润-亿, 净利润-亿) 或 (None, None, None)。"""
     pure = re.sub(r"\D", "", code)[-6:]
-    url = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
+    url = DC_URL
     params = {
         "reportName": "RPT_LICO_FN_CPD",
         "columns": "ALL",

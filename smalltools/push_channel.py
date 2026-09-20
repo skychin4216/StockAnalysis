@@ -30,7 +30,18 @@ import time
 import urllib.parse
 import urllib.request
 
-WECOM_BASE = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send"
+# 2026-09-19 用户需求：URL 统一走 data/datasources.json（_sources），缺失回退硬编码
+try:
+    import _sources as _SRC
+    WECOM_BASE = _SRC.url("wechat_webhook")
+    _WECOM_MEDIA = _SRC.url("wechat_upload_media")
+    _PUSHPLUS = _SRC.url("pushplus")
+    _SERVERCHAN = _SRC.host("serverchan")   # 取 base（url 模板含 {sendkey}，调用处自行拼 key）
+except Exception:  # noqa: BLE001
+    WECOM_BASE = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send"
+    _WECOM_MEDIA = "https://qyapi.weixin.qq.com/cgi-bin/webhook/upload_media"
+    _PUSHPLUS = "https://www.pushplus.plus/send"
+    _SERVERCHAN = "https://sctapi.ftqq.com"
 WECOM_IMAGE_LIMIT = 2 * 1024 * 1024  # 企业微信 image 消息单张 ≤ 2MB
 WECOM_FILE_MIN = 5                   # 企业微信 file 消息 5B ~ 20MB
 WECOM_FILE_MAX = 20 * 1024 * 1024
@@ -196,7 +207,7 @@ def _push_pushplus(title, content, cfg, opener=None):
     opener = opener or _opener()
     try:
         req = urllib.request.Request(
-            cfg.get("pushplus_url", "https://www.pushplus.plus/send"),
+            cfg.get("pushplus_url", _PUSHPLUS),
             data=json.dumps({"token": token, "title": title, "content": content,
                              "template": "txt"}).encode("utf-8"),
             headers=PUSH_HEADERS, method="POST")
@@ -217,7 +228,7 @@ def _push_serverchan(title, content, cfg, opener=None):
     opener = opener or _opener()
     try:
         url = ("%s/%s.send?title=%s&desp=%s" % (
-            cfg.get("serverchan_url", "https://sctapi.ftqq.com"), key,
+            cfg.get("serverchan_url", _SERVERCHAN), key,
             urllib.parse.quote(title), urllib.parse.quote(content)))
         with opener.open(url, timeout=10) as r:
             ok = json.loads(r.read().decode("utf-8")).get("code") == 0
@@ -289,7 +300,7 @@ def send_file(file_path, cfg):
     base = (cfg.get("wecom_url") or WECOM_BASE).rstrip("/")
     upload_url = base.replace("/webhook/send", "/webhook/upload_media")
     if "/upload_media" not in upload_url:
-        upload_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/upload_media"
+        upload_url = _WECOM_MEDIA
     upload_url += "?key=%s&type=file" % urllib.parse.quote(key, safe="")
     fname = os.path.basename(file_path)
     boundary = "----StockAnalysis%s" % hashlib.md5(

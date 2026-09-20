@@ -140,7 +140,20 @@ def render_multi_table(title, sections, out_path, note=None, dpi=110):
     M = 26
     W = max(1240, max(m[2] for m in sec_meta) + 2 * M)
     top_gap = 116 if title else 34
-    seg_h = sum(sec_h + head_h + len(s["rows"]) * row_h + 10 for s in secs)
+    def _rows_h(rows, nc):
+        """段内总行高——支持单元格多行（2026-09-19：机构列「日期（机构动作）」多行）。"""
+        tot = 0
+        for r in rows:
+            mx = 1
+            for ci in range(min(nc, len(r))):
+                v = str(r[ci] or "")
+                if "\n" in v:
+                    mx = max(mx, v.count("\n") + 1)
+            tot += row_h * mx
+        return tot
+
+    seg_h = sum(sec_h + head_h + _rows_h(s["rows"], sec_meta[si][0]) + 10
+                for si, s in enumerate(secs))
     bottom_gap = 40 + (26 if note else 0)
     H = top_gap + seg_h + bottom_gap
 
@@ -157,9 +170,17 @@ def render_multi_table(title, sections, out_path, note=None, dpi=110):
     HEAD_BG, HEAD_FG, ZEBRA, GRID = "#3B5B92", "#FFFFFF", "#F2F6FB", "#C9D3E0"
     SEC_BG, SEC_FG = "#E8EEF7", "#24406E"
 
-    def _cell_text(x, y, w, h, val, bold=False, color="#1A1A1A", size=body_pt):
-        ax.text(x + text_pad, y + h / 2, _clean(val), ha="left", va="center",
-                fontsize=size, fontweight="bold" if bold else "normal", color=color)
+    def _cell_text(x, y, w, h, val, bold=False, color="#1A1A1A", size=body_pt,
+                   multiline=False):
+        """单元格文本。multiline=True 时按 \n 多行渲染（顶部对齐）。2026-09-19 新增。"""
+        _t = _clean(val)
+        if multiline and "\n" in _t:
+            ax.text(x + text_pad, y + h - 5, _t, ha="left", va="top", fontsize=size,
+                    fontweight="bold" if bold else "normal", color=color,
+                    linespacing=1.15)
+        else:
+            ax.text(x + text_pad, y + h / 2, _t, ha="left", va="center",
+                    fontsize=size, fontweight="bold" if bold else "normal", color=color)
 
     def _box(x, y, w, h, bg):
         ax.add_patch(Rectangle((x, y), w, h, facecolor=bg, edgecolor=GRID, lw=0.9))
@@ -186,14 +207,21 @@ def render_multi_table(title, sections, out_path, note=None, dpi=110):
                 x += cws[i] + cell_gap
             y -= head_h
         for ri, r in enumerate(s["rows"]):
+            # 动态行高：单元格含 \n 时按最大行数扩展（2026-09-19 多行机构列）
+            mx = 1
+            for ci in range(min(nc, len(r))):
+                _v = str(r[ci] or "")
+                if "\n" in _v:
+                    mx = max(mx, _v.count("\n") + 1)
+            rh = row_h * mx
             bg = ZEBRA if ri % 2 else "#FFFFFF"
             x = x0
             for ci in range(nc):
                 v = (r[ci] if ci < len(r) else "") or "—"
-                _box(x, y, cws[ci] + cell_gap, row_h, bg)
-                _cell_text(x, y, cws[ci], row_h, v, size=body_pt)
+                _box(x, y, cws[ci] + cell_gap, rh, bg)
+                _cell_text(x, y, cws[ci], rh, v, size=body_pt, multiline=mx > 1)
                 x += cws[ci] + cell_gap
-            y -= row_h
+            y -= rh
         y -= 10
 
     if note:
@@ -243,7 +271,15 @@ def render_table(title, header, rows, out_path, note=None, dpi=110,
     W = max(1240, int(sum(col_w)) + 2 * M + (n_col - 1) * int(cell_gap))
     top_gap = 116             # 标题区高度（顶栏标题与表头间留足距离，防止遮挡）
     bottom_gap = 40 + (26 if note else 0)
-    H = top_gap + head_h + len(rows) * row_h + bottom_gap
+    _rh_tot = 0
+    for _r in rows:
+        _mx = 1
+        for _ci in range(min(n_col, len(_r))):
+            _v = str(_r[_ci] or "")
+            if "\n" in _v:
+                _mx = max(_mx, _v.count("\n") + 1)
+        _rh_tot += row_h * _mx
+    H = top_gap + head_h + _rh_tot + bottom_gap
 
     fig = plt.figure(figsize=(W / dpi, H / dpi), dpi=dpi)
     ax = fig.add_axes([0, 0, 1, 1])
@@ -260,9 +296,17 @@ def render_table(title, header, rows, out_path, note=None, dpi=110,
     ZEBRA = "#F2F6FB"
     GRID = "#C9D3E0"
 
-    def _cell_text(x, y, w, h, val, bold=False, color="#1A1A1A", size=body_pt):
-        ax.text(x + text_pad, y + h / 2, _clean(val), ha="left", va="center",
-                fontsize=size, fontweight="bold" if bold else "normal", color=color)
+    def _cell_text(x, y, w, h, val, bold=False, color="#1A1A1A", size=body_pt,
+                   multiline=False):
+        """单元格文本。multiline=True 时按 \n 多行渲染（顶部对齐）。2026-09-19 新增。"""
+        _t = _clean(val)
+        if multiline and "\n" in _t:
+            ax.text(x + text_pad, y + h - 5, _t, ha="left", va="top", fontsize=size,
+                    fontweight="bold" if bold else "normal", color=color,
+                    linespacing=1.15)
+        else:
+            ax.text(x + text_pad, y + h / 2, _t, ha="left", va="center",
+                    fontsize=size, fontweight="bold" if bold else "normal", color=color)
 
     def _box(x, y, w, h, bg):
         ax.add_patch(Rectangle((x, y), w, h, facecolor=bg, edgecolor=GRID, lw=0.9))
@@ -278,18 +322,25 @@ def render_table(title, header, rows, out_path, note=None, dpi=110,
     y -= head_h
     # 数据行
     for ri, r in enumerate(rows):
+        # 动态行高（2026-09-19：单元格含 \n 时按最大行数扩展）
+        mx = 1
+        for ci in range(min(n_col, len(r))):
+            _v = str(r[ci] or "")
+            if "\n" in _v:
+                mx = max(mx, _v.count("\n") + 1)
+        rh = row_h * mx
         bg = ZEBRA if ri % 2 else "#FFFFFF"
         x = M
         rc = (cell_colors[ri] if cell_colors and ri < len(cell_colors) else None)
         for ci in range(n_col):
             v = (r[ci] if ci < len(r) else "") or "—"
             cc = (rc[ci] if rc and ci < len(rc) else None)
-            _box(x, y, col_w[ci] + cell_gap, row_h, bg)
-            _cell_text(x, y, col_w[ci], row_h, v,
+            _box(x, y, col_w[ci] + cell_gap, rh, bg)
+            _cell_text(x, y, col_w[ci], rh, v,
                        size=body_pt if ri % 2 == 0 else body_pt,
-                       color=cc or "#1A1A1A")
+                       color=cc or "#1A1A1A", multiline=mx > 1)
             x += col_w[ci] + cell_gap
-        y -= row_h
+        y -= rh
     # 底部说明（可选）
     if note:
         ax.text(M, 16, _clean(note), ha="left", va="bottom",

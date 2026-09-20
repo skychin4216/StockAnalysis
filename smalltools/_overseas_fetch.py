@@ -22,7 +22,8 @@ import sys
 import requests
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CACHE_FILE = os.path.join(HERE, "_overseas_cache.json")
+# 2026-09-19：统一数据根（exe/smalltools/PC 共用一份，见 _data_root.py）
+CACHE_FILE = __import__("_data_root").data_path("_overseas_cache.json")
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 PROXIES = {"http": None, "https": None}  # 直连，不读系统代理
@@ -39,9 +40,18 @@ START = "2022-01-01"
 END = "2099-12-31"
 
 
-def fetch_kline(code, count=800):
-    """腾讯 fqkline：A股标的返回 count 根（约 3 年日K）。"""
-    url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+def _tencent_kline(code, count=800):
+    """源1：腾讯 fqkline（web.ifzq.gtimg.cn）——A股标的返回 count 根。
+
+    ⚠️ 2026-09-19：该域名会对高频访问返回 WAF 拦截页（HTTP 501，HTML 而非 JSON）
+    → r.json() 抛异常，必须有第二个源兜底。
+    """
+    # 2026-09-19：URL 统一走 data/datasources.json（_sources），配置缺失回退硬编码
+    try:
+        import _sources as _SRC
+        url = _SRC.url("tencent_kline")
+    except Exception:  # noqa: BLE001
+        url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
     r = requests.get(url, params={"param": f"{code},day,{START},{END},{count},qfq"},
                      timeout=15, headers=HEADERS, proxies=PROXIES)
     node = (r.json().get("data") or {}).get(code, {})
@@ -53,6 +63,66 @@ def fetch_kline(code, count=800):
                          "high": float(it[3]), "low": float(it[4]), "volume": float(it[5])})
         except (IndexError, ValueError):
             continue
+    return rows
+
+
+def _sina_kline(code, count=800):
+    """源2：新浪 CN_MarketDataService.getKLineData（腾讯被拦时兜底）。
+
+    响应形如 "=([...])"；字段 day/open/high/low/close/volume（volume 单位=股，
+    需 /100 转腾讯「手」量纲，与 _review_tools._sina_snaps 同口径）。
+    """
+    try:
+        import _sources as _SRC
+        url = _SRC.url("sina_kline")
+    except Exception:  # noqa: BLE001
+        url = "https://quotes.sina.cn/cn/api/jsonp_v2.php/=/CN_MarketDataService.getKLineData"
+    t = requests.get(url, params={"symbol": code.lower(), "scale": "240", "ma": "no",
+                                  "datalen": str(count)},
+                     headers=dict(HEADERS, Referer="https://finance.sina.com.cn"),
+                     timeout=12, proxies=PROXIES).text
+    i = t.find("=(")
+    j = t.rfind("]")
+    if i < 0 or j < 0:
+        return []
+    try:
+        arr = json.loads(t[i + 2:j + 1])
+    except ValueError:
+        return []
+    rows = []
+    prev = None
+    for x in arr or []:
+        try:
+            c = float(x.get("close"))
+            rows.append({
+                "date": str(x.get("day") or "")[:10],
+                "open": float(x.get("open")), "high": float(x.get("high")),
+                "low": float(x.get("low")), "close": c,
+                "volume": (float(x.get("volume")) or 0.0) / 100.0,
+                "changePct": ((c / prev - 1) * 100) if (c and prev) else 0.0,
+            })
+            prev = c
+        except (TypeError, ValueError):
+            continue
+    return rows
+
+
+def fetch_kline(code, count=800):
+    """多源日K（2026-09-19 用户需求：多几个 fallback 渠道，别吊死在腾讯一家）。
+
+    源1 腾讯 web.ifzq → 源2 新浪 CN_MarketDataService → 都失败返回 []
+    （调用方还应兜底到本地唯一数据源 data/kline_store.json，见 _etf_holdings._meta_live）。
+    """
+    try:
+        rows = _tencent_kline(code, count)
+    except Exception:
+        rows = []
+    if rows:
+        return rows
+    try:
+        rows = _sina_kline(code, count)
+    except Exception:
+        rows = []
     return rows
 
 

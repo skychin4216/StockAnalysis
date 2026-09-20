@@ -36,6 +36,17 @@ UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
 PX = {"http": None, "https": None}
 DAYS = 90
 
+# 2026-09-19：URL 统一走 data/datasources.json（_sources），缺失回退硬编码
+try:
+    import _sources as _SRC
+    ANN_URL = _SRC.url("east_notice")
+    CONTENT_URL = _SRC.url("east_cnotice")
+    QUOTE_BASE = _SRC.host("tencent_qt") + "/q="
+except Exception:  # noqa: BLE001
+    ANN_URL = "https://np-anotice-stock.eastmoney.com/api/security/ann"
+    CONTENT_URL = "https://np-cnotice-stock.eastmoney.com/api/content/ann"
+    QUOTE_BASE = "https://qt.gtimg.cn/q="
+
 ORDER_KW = re.compile(r"合同|中标|订单|框架协议|预中标|联合体|签订|中标候选人")
 DEBT_KW = re.compile(r"借款|贷款|公司债|可转债|中期票据|短期融资券|融资租赁|发债|债券")
 
@@ -86,7 +97,7 @@ def _get(url, params, timeout=10):
 
 def list_anns(code, days=DAYS):
     """近 days 天公告列表 → [(date, title, art_code)]。"""
-    j = _get("https://np-anotice-stock.eastmoney.com/api/security/ann",
+    j = _get(ANN_URL,
              {"sr": "-1", "page_size": "50", "page_index": "1",
               "ann_type": "A", "client_source": "web", "stock_list": code})
     out = []
@@ -106,7 +117,7 @@ def list_anns(code, days=DAYS):
 
 
 def content(art_code):
-    j = _get("https://np-cnotice-stock.eastmoney.com/api/content/ann",
+    j = _get(CONTENT_URL,
              {"art_code": art_code, "client_source": "web", "page_index": 1})
     try:
         return (j.get("data") or {}).get("notice_content") or ""
@@ -174,7 +185,7 @@ def _mcaps(codes):
             p = "sh" if c.startswith("6") else ("bj" if c.startswith(("4", "8", "9")) else "sz")
             batch.append(p + c)
         try:
-            r = _SESS.get("https://qt.gtimg.cn/q=" + ",".join(batch),
+            r = _SESS.get(QUOTE_BASE + ",".join(batch),
                           timeout=10, headers=UA, proxies=PX)
             r.encoding = "gbk"
         except Exception:

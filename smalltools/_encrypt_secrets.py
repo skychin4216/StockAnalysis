@@ -18,8 +18,12 @@ import os
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, "AutoQuant"))
-from smalltools.secrets_util import encrypt_payload
+# 2026-09-20 修复：原为 `sys.path.insert(0, ROOT/AutoQuant)` +
+# `from smalltools.secrets_util import ...` —— 但 ROOT/AutoQuant 里没有 smalltools 包，
+# 直接跑本脚本必报 `ModuleNotFoundError: No module named 'smalltools'`。
+# 改为把 `smalltools/` 本身加入 sys.path 并直接 import 模块。
+sys.path.insert(0, os.path.join(ROOT, "smalltools"))
+from secrets_util import encrypt_payload  # noqa: E402
 KEYSTORE = os.path.join(ROOT, "keystore.properties")
 SECRETS_ENC = os.path.join(ROOT, "app", "src", "main", "assets", "data", "secrets.enc")
 EXE_CFG = os.path.join(ROOT, "AutoQuant", "cloud_config.json")

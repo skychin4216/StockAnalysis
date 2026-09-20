@@ -201,7 +201,24 @@ def request(secret_id, secret_key, bucket, region, method,
     req.add_header("Authorization", auth)
     for k, v in headers.items():
         req.add_header(k, v)
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 禁用系统代理，直连
+    # 2026-09-19/20：受拦截环境（企业代理 / 安全软件改签证书 / 证书链异常）访问 COS 会报
+    #   SSL CERTIFICATE_VERIFY_FAILED: Hostname mismatch, certificate is not valid for
+    #   'stockanalysis-1471852701-1471852701.cos.ap-guangzhou.myqcloud.com'
+    # 该域名的 bucket 确实存在（`verify=False` 时返回 403 AccessDenied 而非 NoSuchBucket），
+    # 故是**本机 TLS 校验层**问题 —— 表现为**时好时坏**（同一份代码，不同时段结果不同）。
+    # 默认仍严格校验证书（安全优先）；受拦截环境可设 `COS_INSECURE_TLS=1` 跳过。
+    #
+    # ⚠️ 2026-09-20 修正：早先用 `opener.add_handler(HTTPSHandler(context=...))` **无效** ——
+    # `build_opener()` 已内置一个默认 HTTPSHandler，两个 handler 并存时默认的先命中，
+    # 开关等于没开（实测开与不开都报同一个 SSL 错）。必须**在构造 opener 时就传入**。
+    _handlers = [urllib.request.ProxyHandler({})]      # 禁用系统代理，直连
+    if (os.environ.get("COS_INSECURE_TLS") or "").strip().lower() in ("1", "true", "yes"):
+        import ssl as _ssl
+        _ctx = _ssl.create_default_context()
+        _ctx.check_hostname = False
+        _ctx.verify_mode = _ssl.CERT_NONE
+        _handlers.append(urllib.request.HTTPSHandler(context=_ctx))
+    opener = urllib.request.build_opener(*_handlers)
     try:
         with opener.open(req, timeout=timeout) as resp:
             return resp.status, dict(resp.headers), resp.read()

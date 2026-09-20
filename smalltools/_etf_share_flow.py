@@ -70,11 +70,20 @@ SIGNAL_FILE = os.path.join(DATA_DIR, "_etf_share_signal.json")
 
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 PX = {"http": None, "https": None}
-GMB_API = "https://fundf10.eastmoney.com/FundArchivesDatas.aspx"
-ANN_API = "https://api.fund.eastmoney.com/f10/JJGG"
-PDF_HOST = "http://pdf.dfcfw.com/pdf/H2_%s_1.pdf"   # ★ 必须 http
-PUSH_API = "https://push2delay.eastmoney.com/api/qt/stock/get"
-SSE_API = "https://query.sse.com.cn/commonQuery.do"           # ★ 上交所（可按 STAT_DATE 回溯）
+# 2026-09-19：URL 统一走 data/datasources.json（_sources），缺失回退硬编码
+try:
+    import _sources as _SRC
+    GMB_API = _SRC.url("east_fundf10")
+    ANN_API = _SRC.url("east_fund_ann")
+    PDF_HOST = _SRC.url("east_pdf").replace("{code}", "%s")   # ★ 必须 http（反爬）
+    PUSH_API = _SRC.url("east_delay_stock")
+    SSE_API = _SRC.url("sse_query")                           # ★ 上交所（可按 STAT_DATE 回溯）
+except Exception:  # noqa: BLE001
+    GMB_API = "https://fundf10.eastmoney.com/FundArchivesDatas.aspx"
+    ANN_API = "https://api.fund.eastmoney.com/f10/JJGG"
+    PDF_HOST = "http://pdf.dfcfw.com/pdf/H2_%s_1.pdf"   # ★ 必须 http
+    PUSH_API = "https://push2delay.eastmoney.com/api/qt/stock/get"
+    SSE_API = "https://query.sse.com.cn/commonQuery.do"
 SSE_SQL = "COMMON_SSE_ZQPZ_ETFZL_XXPL_ETFGM_SEARCH_L"
 DAILY_NOTE = "日频 ETF 份额序列（--snap 累积当日 + --backfill 回补沪市历史）"
 

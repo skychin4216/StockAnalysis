@@ -1,0 +1,2 @@
+{"ts": "2026-09-20 00:52:51", "gateway": "paper", "dry_run": true, "order": {"symbol": "sh600000", "side": "buy", "price": 10.0, "qty": 100, "order_type": "limit", "reason": "paper demo 买入"}, "reason": "paper demo 买入", "result": {"ok": true, "note": "dry_run 未真实报单"}}
+{"ts": "2026-09-20 00:52:51", "gateway": "paper", "dry_run": true, "order": {"symbol": "sh600000", "side": "sell", "price": 10.5, "qty": 100, "order_type": "limit", "reason": "paper demo 卖出"}, "reason": "paper demo 卖出", "result": {"ok": true, "note": "dry_run 未真实报单"}}

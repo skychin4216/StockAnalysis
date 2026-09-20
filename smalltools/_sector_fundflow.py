@@ -23,7 +23,12 @@ import requests
 
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Referer": "https://quote.eastmoney.com/"}
 PX = {"http": None, "https": None}
-HOST = "https://push2delay.eastmoney.com/api/qt/clist/get"
+# 2026-09-19：URL 统一走 data/datasources.json（_sources），配置缺失回退硬编码
+try:
+    import _sources as _SRC
+    HOST = _SRC.url("east_delay_clist")
+except Exception:  # noqa: BLE001
+    HOST = "https://push2delay.eastmoney.com/api/qt/clist/get"
 
 # 东财行业板块名 → 轮动引擎候选常用名（仅提示用，实际查询直接用东财板块名）
 ALIAS = {

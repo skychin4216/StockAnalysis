@@ -67,8 +67,12 @@ def quotes(cands):
     for i in range(0, len(cands), 12):
         batch = [c for c, _, _ in cands[i:i + 12]]
         try:
-            r = requests.get("https://qt.gtimg.cn/q=" + ",".join(batch),
-                             timeout=10, headers=UA, proxies=PX)
+            try:      # 2026-09-19：URL 统一走 data/datasources.json（_sources）
+                import _sources as _SRC
+                _qurl = _SRC.url("tencent_qt", codes=",".join(batch))
+            except Exception:  # noqa: BLE001
+                _qurl = "https://qt.gtimg.cn/q=" + ",".join(batch)
+            r = requests.get(_qurl, timeout=10, headers=UA, proxies=PX)
             r.encoding = "gbk"
         except Exception:
             continue

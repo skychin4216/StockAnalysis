@@ -47,7 +47,11 @@ from _sector_quote import kline_stats, quotes   # noqa: E402
 
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 SINA_H = {"Referer": "https://finance.sina.com.cn", **UA}
-EAST_DELAY = "https://push2delay.eastmoney.com"
+try:      # 2026-09-19：URL 统一走 data/datasources.json（_sources）
+    import _sources as _SRC0
+    EAST_DELAY = _SRC0.host("east_delay_clist")
+except Exception:  # noqa: BLE001
+    EAST_DELAY = "https://push2delay.eastmoney.com"
 EAST_UT = "fa5fd1943c7b386f172d6893dbfba10b"
 
 # 新浪指数兜底：secid → (新浪代码, 名称, 区域, 点位字段, 涨跌幅字段)
@@ -61,7 +65,8 @@ SINA_IDX_FALLBACK = {
 }
 
 APP_CONFIG = os.path.join(ROOT, "app", "src", "main", "assets", "data", "app_config.json")
-DATA_DIR = os.path.join(HERE, "data")
+# 2026-09-19：统一数据根（exe/smalltools/PC 共用一份，见 _data_root.py）
+DATA_DIR = __import__("_data_root").data_dir()
 INTEL_JSON = os.path.join(DATA_DIR, "_daily_intel.json")      # 供盘中轮前导展示
 TABLE_DIR = os.path.join(DATA_DIR, "review_tables")
 LEDGER = os.path.join(HERE, "_records", "_pick_ledger.jsonl")
@@ -249,8 +254,12 @@ def east_kr_stocks():
 def sina_lines(syms):
     """新浪批量行情 → {代码: [字段...]}。"""
     try:
-        r = requests.get("https://hq.sinajs.cn/list=" + ",".join(syms),
-                         timeout=10, headers=SINA_H)
+        try:      # 2026-09-19：URL 统一走 data/datasources.json（_sources）
+            import _sources as _SRC
+            _surl = _SRC.url("sina_quote", codes=",".join(syms))
+        except Exception:  # noqa: BLE001
+            _surl = "https://hq.sinajs.cn/list=" + ",".join(syms)
+        r = requests.get(_surl, timeout=10, headers=SINA_H)
         r.encoding = "gbk"
     except Exception as e:  # noqa: BLE001
         print("新浪行情失败: %s" % type(e).__name__)
@@ -478,8 +487,13 @@ def collect_news(top=12, authoritative=True, drain_pool=True):
             return out
     # 兜底：东财 7x24 全量
     try:
+        try:      # 2026-09-19：URL 统一走 data/datasources.json（_sources）
+            import _sources as _SRC2
+            _fnurl = _SRC2.url("east_fast_news")
+        except Exception:  # noqa: BLE001
+            _fnurl = "https://np-listapi.eastmoney.com/comm/web/getFastNewsList"
         r = requests.get(
-            "https://np-listapi.eastmoney.com/comm/web/getFastNewsList",
+            _fnurl,
             params={"client": "web", "biz": "web_724", "fastColumn": "102",
                     "sortEnd": "", "pageSize": top, "req_trace": "1"},
             timeout=10, headers=UA)
@@ -1215,6 +1229,7 @@ def review_sections(log=print, trade_date=None):
     #   · D+1~D+5 = 入选日后第 k 个交易日收盘相对入选价的涨跌（未到 → ·）；
     #   · 入选超过 5 个交易日的信号剔除（过期不再巡诊）。
     rows_d = []
+    store = {}          # K线库（d 段口径：本地唯一数据源，供标题标注截至日期复用）
     ledgers = _recent_ledgers(6)
     sig = {}
     for lg in ledgers:
@@ -1228,53 +1243,152 @@ def review_sections(log=print, trade_date=None):
                             "asof": lg.get("asof"), "close": p.get("close"),
                             "src": p.get("src")}
     if sig:
+        # ⚠ 2026-09-19 用户明确：**巡诊不过滤 ST**。巡诊是事后复盘证据，
+        # 出现 ST = 选股环节（基本面/资金面）漏检的实证，过滤掉等于掩盖问题。
+        # （订单端 generate_orders 仍保留 ST 红线——ST 不许买，这是两回事。）
+        # 2026-09-18 修复：K线**主用 data/kline_store.json**（项目唯一数据源、离线可用），
+        # 腾讯日K仅兜底。原实现只走 web.ifzq.gtimg.cn，该域名被 WAF 拦截时（HTTP 501，
+        # 本机实测）kmap 全空 → rows_d 为空 → **巡诊整段消失**（用户反馈「表格没有巡诊」）。
+        store = {}
+        try:
+            from _kline_store import load_store
+            store = load_store() or {}
+        except Exception as e:  # noqa: BLE001
+            log("巡诊：K线库不可用 %s（回退腾讯日K）" % e)
         try:
             from backtest_guangmo import fetch_tencent
         except Exception as e:  # noqa: BLE001
             fetch_tencent = None
             log("巡诊：日K模块不可用 %s" % e)
-        if fetch_tencent is not None:
-            beg = (datetime.date.today() - datetime.timedelta(days=25)).strftime("%Y%m%d")
-            end = datetime.date.today().strftime("%Y%m%d")
-            for sid, v in sig.items():
+        beg = (datetime.date.today() - datetime.timedelta(days=25)).strftime("%Y%m%d")
+        end = datetime.date.today().strftime("%Y%m%d")
+        for sid, v in sig.items():
+            # 2026-09-19 用户需求：D+1~D+5 记录**当日最低~最高价区间**（不是收盘价），
+            # 故 kmap 存 {date: {"c":收盘, "lo":最低, "hi":最高}}。
+            kmap = {}
+
+            def _put(snaps_iter):
+                for s in (snaps_iter or []):
+                    if not (s.get("close") and s.get("date")):
+                        continue
+                    try:
+                        _c = float(s["close"])
+                        kmap[str(s["date"])[:10]] = {
+                            "c": _c,
+                            "lo": float(s.get("low") or _c),
+                            "hi": float(s.get("high") or _c)}
+                    except (TypeError, ValueError):
+                        continue
+
+            ent = store.get(sid) or store.get(sid[2:]) or {}
+            _put(ent.get("snaps"))
+            if not kmap and fetch_tencent is not None:
                 try:
                     _, snaps = fetch_tencent(sid, beg, end)
                 except Exception:
                     snaps = []
-                kmap = {str(s.get("date"))[:10]: float(s["close"])
-                        for s in (snaps or []) if s.get("close")}
-                if not kmap:
-                    continue                      # 日K拉不到 → 整行跳过（无锚点无法逐日）
-                days = sorted(kmap)
-                asof = v.get("asof") or ""
-                if asof not in kmap:
-                    continue                      # 入选日无K线（停牌/超窗）→ 无法对齐
-                base = v.get("close") or kmap[asof]
-                after = days[days.index(asof) + 1:]
-                if len(after) > 5:
-                    continue                      # 超过5个交易日 → 剔除
-                dcells = []
-                for k in range(1, 6):
-                    dcells.append("%.1f%%" % ((kmap[after[k - 1]] / base - 1) * 100)
-                                  if len(after) >= k else "·")
-                rows_d.append([v.get("name") or sid, sid[2:], v.get("period") or "—",
-                               asof, _fmt_num(base)] + dcells
-                              + [(v.get("src") or "—")[:20]])
-            # 排序：按已实现的最远日涨跌降序（同旧版按涨跌排，读者先看最好/最差）
-            def _last_pct(r):
-                for c in reversed(r[5:10]):
-                    if c not in ("·", ""):
-                        try:
-                            return float(c.replace("%", "").replace("+", ""))
-                        except ValueError:
-                            return -99.0
-                return -99.0
-            rows_d.sort(key=lambda r: -_last_pct(r))
+                _put(snaps)
+            if not kmap:
+                continue                          # 日K拉不到 → 整行跳过（无锚点无法逐日）
+            days = sorted(kmap)
+            asof = v.get("asof") or ""
+            if asof not in kmap:
+                continue                          # 入选日无K线（停牌/超窗）→ 无法对齐
+            # 2026-09-19：kline_store 是全历史（2008 起）→ 只保留 asof 及之后 6 个交易日，
+            # 否则 after 长度=全部历史、必被下方「>5 剔除」误杀（整段无数据的真因）。
+            i0 = days.index(asof)
+            days = days[i0:i0 + 6]
+            kmap = {d: kmap[d] for d in days}
+            base = v.get("close") or kmap[asof]["c"]
+            after = days[days.index(asof) + 1:]
+            if len(after) > 5:
+                continue                          # 超过5个交易日 → 剔除
+            # D+n = 当日「最低 ~ **可成交最高**」区间（2026-09-19 用户需求二次修订：
+            # 卖出价不能取瞬时波峰——人手速来不及；改取"能卖掉"的口径：连续 2 根
+            # 5 分钟K（=10 分钟窗口）都达到过的最高价，见 `_intraday.tradable_highs`。
+            # 分钟K不可用时诚实回退日K最高价（并在日志留痕）。
+            _tx, _judge = {}, {}
+            try:
+                import _intraday
+                _tx = _intraday.tradable_highs(sid)
+                if base:
+                    # 2026-09-19 用户口径：成功=5日内>+5% 且维持 1 小时；
+                    # 尚可=+1%~5% 站稳 30 分钟；失败=≤+1%。（按日切分，不跨隔夜）
+                    _judge = _intraday.eval_trade(sid, base, since=asof)
+            except Exception as e:  # noqa: BLE001
+                log("巡诊：分钟K不可用 %s（回退日K最高价）" % e)
+            dcells = []
+            _best_pct, _best_d = -99.0, 0
+            for k in range(1, 6):
+                if len(after) >= k:
+                    _d = kmap[after[k - 1]]
+                    _t = (_tx.get(after[k - 1]) or {}).get("tx") or _d["hi"]
+                    dcells.append("%s~%s" % (_fmt_num(_d["lo"]), _fmt_num(_t)))
+                    if base:
+                        _p = (_t / base - 1) * 100
+                        if _p > _best_pct:
+                            _best_pct, _best_d = _p, k
+                else:
+                    dcells.append("·")
+            _best_cell = ("%+.1f%%(D+%d)" % (_best_pct, _best_d)) if _best_d else "·"
+            _lh = (_judge.get("run_1h") or 0) / 12.0      # 连续站上 +5% 的小时数
+            _lm = (_judge.get("run_30m") or 0) * 5 / 60.0  # 连续站上 +1% 的小时数
+            _judge_cell = {
+                "success": "✅成功(维持%.1fh)" % _lh,
+                "ok": "◐尚可(站稳%.1fh)" % _lm,
+                "weak": "⚠未站稳",
+                "fail": "❌失败(≤+1%)",
+            }.get(_judge.get("level") or "", "—")
+            rows_d.append([v.get("name") or sid, sid[2:], v.get("period") or "—",
+                           asof, _fmt_num(base)] + dcells
+                          + [_best_cell, _judge_cell, (v.get("src") or "—")[:20]])
+
+            # 排序：判定优先（✅>◐>⚠>❌），同档按「5日最高可成交收益」降序
+            def _rank(r):
+                _lv = str(r[-2])
+                _pri = (3 if _lv.startswith("✅") else 2 if _lv.startswith("◐")
+                        else 1 if _lv.startswith("⚠") else 0)
+                try:
+                    _pct = float(str(r[-3]).split("%")[0].replace("+", ""))
+                except (TypeError, ValueError, IndexError):
+                    _pct = -99.0
+                return (_pri, _pct)
+
+            rows_d.sort(key=lambda r: (-_rank(r)[0], -_rank(r)[1]))
+    # K线库最新日期（写进标题）：D+n 为「·」多半是库还没更新到当日，不是逻辑漏算
+    _klast = ""
+    try:
+        _b = (store.get("sh000001") or store.get("sh000300") or {}).get("snaps") or []
+        if _b:
+            _klast = str(_b[-1].get("date") or "")[:10]
+    except Exception:  # noqa: BLE001
+        _klast = ""
     if rows_d:
-        sections.append({"title": "d. 近5日信号票巡诊（入选后逐日涨跌，超5日剔除）",
+        _ok = sum(1 for r in rows_d if str(r[-2]).startswith("✅"))
+        _mid = sum(1 for r in rows_d if str(r[-2]).startswith("◐"))
+        _wk = sum(1 for r in rows_d if str(r[-2]).startswith("⚠"))
+        _bd = sum(1 for r in rows_d if str(r[-2]).startswith("❌"))
+        _tot = _ok + _mid + _wk + _bd
+        _stat = ("·判定：✅成功%d ◐尚可%d ⚠未站稳%d ❌失败%d（成功率%s）"
+                 % (_ok, _mid, _wk, _bd,
+                    ("%.0f%%" % (_ok / _tot * 100)) if _tot else "—"))
+        sections.append({"title": "d. 近5日信号票巡诊（入选后逐日涨跌，超5日剔除%s）"
+                                  "·卖出价取「可成交高」=连续10分钟站上过的最高价"
+                                  "·判定：>+5%%维持1h=成功｜+1~5%%站稳30m=尚可｜≤+1%%=失败"
+                                  "%s"
+                         % ("·K线截至%s" % _klast if _klast else "", _stat),
                          "header": ["名称", "代码", "周期", "入选日", "入选价",
-                                    "D+1", "D+2", "D+3", "D+4", "D+5", "来源"],
+                                    "D+1低~可成交高", "D+2低~可成交高", "D+3低~可成交高",
+                                    "D+4低~可成交高", "D+5低~可成交高",
+                                    "5日最高可成交收益", "判定", "来源"],
                          "body": rows_d[:20]})
+    else:
+        # 2026-09-18：空巡诊也要留段（旧实现整段消失，用户误以为漏数据/出 bug）
+        sections.append({"title": "d. 近5日信号票巡诊（无数据%s）"
+                         % ("·K线截至%s" % _klast if _klast else ""),
+                         "header": ["提示"],
+                         "body": [["近5日台账信号在 K 线库（data/kline_store.json）中无对应日K，"
+                                   "或数据源不可用 → 无法逐日巡诊"]]})
     return sections
 
 
@@ -1401,7 +1515,9 @@ def push_review(dry=False, log=print):
     brief.append("")
     brief.append("口径：a 当日选股与盘中同一构建器（主线DAG / smalltool / ETF全行业扫描 / ETF "
                  "top5 / ETF当日）；b 实仓镜像逐笔建议 + 组合纪律；c 用板块内权重股当日均涨"
-                 "核对情报判定；d 近5日信号票按入选价逐日算 D+1~D+5 收盘涨跌（未到为 ·，超5日剔除）。")
+                 "核对情报判定；d 近5日信号票按入选价逐日算 D+1~D+5 的「最低~可成交高」"
+                         "（可成交高=连续 2 根 5 分钟K（10 分钟窗口）都达到过的最高价，"
+                         "剔除人手速来不及的瞬时波峰；未到为 ·，超5日剔除）。")
     brief.append(_pick_review_tail())
     content = "\n".join(brief)
 
@@ -1436,7 +1552,9 @@ def push_review(dry=False, log=print):
             log("复盘存库失败：%s" % e)
     log("✓ 复盘完成（%d 段），推送%s" % (len(sections), "成功" if pushed else
                                     ("跳过" if dry else "失败")))
-    return png
+    # 2026-09-18：返回推送是否成功（dry 视为成功），守护据此决定是否 mark rhythm——
+    # 推送失败不置位，2 分钟后自动重试，避免「标记完成但用户没收到」
+    return bool(pushed) or bool(dry)
 
 
 # ────────────────────────────── 入口 ──────────────────────────────

@@ -65,11 +65,31 @@ DEFAULT_INTERVAL = 3600  # 1 小时（2026-09-17 用户口径：交易时段间�
 
 
 # ── 1. 采集 ─────────────────────────────────────────────────────────────
+def _u(name, fallback, **fmt):
+    """2026-09-19：URL 统一走 data/datasources.json（_sources）；缺失回退硬编码。"""
+    try:
+        import _sources as _src
+        u = _src.url(name)
+        return u.format(**fmt) if fmt else u
+    except Exception:  # noqa: BLE001
+        return fallback.format(**fmt) if fmt else fallback
+
+
+def _hosts(name, fallback):
+    """多主机列表（优先配置的 alt_hosts）。"""
+    try:
+        import _sources as _src
+        hs = _src.alt_hosts(name)
+        return hs or list(fallback)
+    except Exception:  # noqa: BLE001
+        return list(fallback)
+
+
 def _tencent(codes):
     """腾讯批量实时行情，返回 {code: {name, price, pct, ts}}。"""
     try:
-        r = requests.get("https://qt.gtimg.cn/q=" + codes, timeout=10,
-                         headers=HEADERS, proxies=PROXIES)
+        r = requests.get(_u("tencent_qt", "https://qt.gtimg.cn/q={codes}", codes=codes),
+                         timeout=10, headers=HEADERS, proxies=PROXIES)
         r.encoding = "gbk"
     except Exception as e:
         print("腾讯行情失败:", e)
@@ -112,8 +132,9 @@ def collect_kr():
     top = rows[:KR_TOP]
     # KOSPI 指数（多 host 重试）
     kospi = None
-    for host in ("https://push2.eastmoney.com", "https://90.push2.eastmoney.com",
-                 "https://92.push2.eastmoney.com"):
+    for host in _hosts("east_clist", ("https://push2.eastmoney.com",
+                                      "https://90.push2.eastmoney.com",
+                                      "https://92.push2.eastmoney.com")):
         try:
             r = requests.get(
                 host + "/api/qt/stock/get",
@@ -159,7 +180,7 @@ def collect_reports(days=2, per_org=5, top_org=5):
     for page in (1, 2):
         try:
             r = requests.get(
-                "https://reportapi.eastmoney.com/report/list",
+                _u("east_reportapi", "https://reportapi.eastmoney.com/report/list"),
                 params={"industryCode": "*", "pageSize": 50, "pageNo": page,
                         "qType": 0, "code": "*",
                         "beginTime": begin.strftime("%Y-%m-%d"),
@@ -203,8 +224,10 @@ def collect_indices():
     """A 股大盘指数实时涨跌幅（sina hq，参照 _kline_store / usecase_pipeline 沪深300/sh000001 约定）。"""
     try:
         codes = ",".join(c for c, _ in CN_INDEX_POOL)
-        r = requests.get("https://hq.sinajs.cn/list=" + codes, timeout=10,
-                         headers={**HEADERS, "Referer": "https://finance.sina.com.cn"},
+        r = requests.get(
+            _u("sina_quote", "https://hq.sinajs.cn/list={codes}", codes=codes),
+            timeout=10,
+            headers={**HEADERS, "Referer": "https://finance.sina.com.cn"},
                          proxies=PROXIES)
         r.encoding = "gbk"
     except Exception as e:  # noqa: BLE001
@@ -235,7 +258,8 @@ def collect_news(top=10):
     """东财 7x24 财经快讯。"""
     try:
         r = requests.get(
-            "https://np-listapi.eastmoney.com/comm/web/getFastNewsList",
+            _u("east_fast_news",
+               "https://np-listapi.eastmoney.com/comm/web/getFastNewsList"),
             params={"client": "web", "biz": "web_724", "fastColumn": "102",
                     "sortEnd": "", "pageSize": top, "req_trace": "1"},
             timeout=10, headers=HEADERS, proxies=PROXIES)
@@ -376,6 +400,114 @@ def diff_snap(prev, cur):
         fresh = [t for t in _news_watch._titles(ca.get(key) or []) if t and t not in pt]
         if fresh:
             changes.append((_news_watch.AUTH_LABEL.get(key, key), [t[:55] for t in fresh[:3]]))
+    return _gate_changes(changes)
+
+
+# ── 2026-09-19 用户需求③：消息类推送改「早盘集中」模式 ─────────────────────
+#   盘中（09:30-15:00）消息类只**累积到当日缓存**，不逐轮刷屏（原来每 10 分钟一轮，
+#   消息被切得零碎）；早盘(08:00/09:00)与收盘(15:10+)一次性展示全部。
+#   重大类别（气候/外媒宏观/权威源政治金融）不受限——大事件仍需第一时间看到。
+_QUIET_KEYS = ("📰 财经快讯", "📄 机构新研报", "🗣️ 名人·大行动态", "📑 券商宏观·策略")
+# 2026-09-19 用户确认：「盘中仍保留重大资讯即时推」——普通快讯收进早盘，
+# 命中下面关键词的**重大快讯**照常即时推（另起「🔥 重大快讯」段，避免混在累积里）。
+_MAJOR_KW = ("降准", "降息", "加息", "央行", "美联储", "议息", "国务院", "证监会",
+             "财政部", "发改委", "关税", "制裁", "战争", "冲突", "停火", "谈判",
+             "重组", "并购", "要约", "退市", "立案", "处罚", "暂停交易", "熔断",
+             "暴雷", "违约", "减持新规", "印花税", "扩大内需", "刺激", "紧急")
+
+
+def _accum_path(day):
+    return os.path.join(HERE, "_records", "_news_accum_%s.jsonl" % day)
+
+
+def accum_summary(day, max_lines=12, as_table=True):
+    """读某日累积的盘中消息 → 推送内容。
+
+    2026-09-19 用户需求：普通快讯累积到当日缓存（避免刷屏），早盘/收盘**整合成表格**
+    推送（分类 × 条数 × 最新标题），供一眼扫完；重大/名人言论另设专题行。
+    """
+    p = _accum_path(day)
+    if not os.path.exists(p):
+        return []
+    seen, items = set(), []
+    try:
+        for ln in open(p, encoding="utf-8"):
+            try:
+                x = (json.loads(ln) or {}).get("x") or ""
+            except ValueError:
+                continue
+            head, _, txt = x.partition("|")
+            if not txt or txt in seen:
+                continue
+            seen.add(txt)
+            items.append((head, txt))
+    except OSError:
+        return []
+    if not items:
+        return []
+    groups = {}
+    for head, txt in items:
+        groups.setdefault(head, []).append(txt)
+    if not as_table:
+        return ["共 %d 条（去重）" % len(items)] + \
+               ["%s %s" % (h, t) for h, t in items[:max_lines]]
+    # markdown 表格（企微机器人支持 markdown 渲染）
+    out = ["📥 盘中消息累积（%s，去重后 %d 条）" % (day, len(items)),
+           "| 类别 | 条数 | 最新标题 |", "| --- | --- | --- |"]
+    for head, arr in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+        out.append("| %s | %d | %s |" % (head, len(arr), arr[-1][:38]))
+    # 重大/名人专题（用户 2026-09-19：可能影响走势的单独拎出来）
+    pick = []
+    for head, arr in groups.items():
+        for t in arr:
+            if any(k in t for k in _MAJOR_KW):
+                pick.append("%s %s" % (head, t[:46]))
+    if pick:
+        out.append("")
+        out.append("🔥 重大/名人（可能影响走势，共 %d 条）" % len(pick))
+        out.extend("  · " + x for x in pick[:max_lines])
+    return out
+
+
+def _gate_changes(changes):
+    """档位门控：盘中只累积消息类；早盘/收盘全推 + 带累积汇总。"""
+    import datetime as _dt
+    now = _dt.datetime.now()
+    hm = now.hour * 60 + now.minute
+    quiet = (9 * 60 + 30) <= hm < 15 * 60
+    if quiet:
+        keep, acc = [], []
+        for head, lines in changes:
+            if head not in _QUIET_KEYS:
+                keep.append((head, lines))          # 重大类（气候/外媒/权威源）照常推
+                continue
+            if head == "📰 财经快讯":
+                # 用户 2026-09-19 确认：**重大快讯即时推**，普通快讯收进早盘累积
+                hot = [x for x in lines if any(k in x for k in _MAJOR_KW)]
+                rest = [x for x in lines if x not in hot]
+                if hot:
+                    keep.append(("🔥 重大快讯(即时)", hot))
+                if rest:
+                    acc.extend("%s|%s" % (head, x) for x in rest)
+            else:
+                acc.extend("%s|%s" % (head, x) for x in lines)
+        if acc:
+            try:
+                os.makedirs(os.path.dirname(_accum_path("x")), exist_ok=True)
+                with open(_accum_path(now.strftime("%Y%m%d")), "a", encoding="utf-8") as f:
+                    for x in acc:
+                        f.write(json.dumps(
+                            {"t": now.strftime("%Y-%m-%d %H:%M"), "x": x},
+                            ensure_ascii=False) + "\n")
+            except Exception:  # noqa: BLE001
+                pass
+        return keep
+    # 早盘/收盘：把盘中累积一次性汇总带上（早盘看昨日、收盘看当日）
+    day = (now.strftime("%Y%m%d") if hm >= 15 * 60
+           else (now - _dt.timedelta(days=1)).strftime("%Y%m%d"))
+    summ = accum_summary(day)
+    if summ:
+        changes = list(changes) + [("📥 盘中消息累积(早盘集中显示)", summ[1:])]
     return changes
 
 

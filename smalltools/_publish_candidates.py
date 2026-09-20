@@ -1880,9 +1880,15 @@ def _nat_map():
 
 
 def _nat_day(d):
-    """披露/公告日 → 单元格里的短日期（MM-DD）。"""
+    """披露/公告日 → 单元格短日期（**YY-MM-DD**）。
+
+    2026-09-19 用户反馈修复：原先只显示 MM-DD（`d[5:]`），把 2015-10-28 / 2020-03-27 /
+    2023-04-28 这类旧记录显示成"10-28 / 03-27 / 04-28"，看起来像**今年**的事，
+    严重误导（用户举例：兆易创新「退社 03-27」实为 2020 年、中科曙光「退国 10-28」
+    实为 2015 年）。改为保留两位年份（23-04-28），一眼可辨。
+    """
     d = str(d or "")[:10]
-    return (" " + d[5:]) if len(d) >= 7 else ""
+    return (" " + d[2:]) if len(d) >= 10 else ""
 
 
 def _nat_cell(code):
@@ -1896,49 +1902,72 @@ def _nat_cell(code):
     if not v:
         return "—"
     fresh, quarter = [], []
-    # ① 公告级（最新、最及时；只有窗口内才计分，由 annFresh 标记）
+
+    def _item(date_str, kind_short, action, prefix=""):
+        """→ '2023-04-28（大基金退出）'（2026-09-19 用户需求：多行 + 带年份 + 带机构名）。"""
+        _d = str(date_str or "")[:10]
+        # 先经 _NAT_KIND（big→基 / nat→国 / ss→社）再转中文全名
+        _ks = _NAT_KIND.get(kind_short, kind_short)
+        _cn = {"国": "国家队", "基": "大基金", "社": "社保", "北": "北向"}.get(_ks, _ks)
+        return "%s（%s%s%s）" % (_d or "—", prefix, _cn, action)
+
+    # ① 公告级（最新、最及时；只有窗口内才计分）
     ast = v.get("annState")
     if ast in ("流入", "流出"):
-        fresh.append("告%s%s%s" % (_NAT_SYM.get(ast, ""),
-                                 _NAT_KIND.get(v.get("annKind") or "", ""),
-                                 _nat_day(v.get("annNotice"))))
+        fresh.append(_item(v.get("annNotice"), v.get("annKind") or "",
+                           {"流入": "增持", "流出": "减持"}.get(ast, ast), "公告·"))
     # ② 锁定持股（十大股东可见 / 十大流通榜不可见 = 限售、定增锁定中）
     lst = v.get("lockState")
     if lst in ("流入", "流出"):
-        fresh.append("锁%s%s" % (_NAT_KIND.get(v.get("lockKind") or "", ""),
-                               _nat_day(v.get("lockNotice"))))
-    # ③ 季报十大流通股东（原口径）
+        fresh.append(_item(v.get("lockNotice"), v.get("lockKind") or "",
+                           {"流入": "增持", "流出": "减持"}.get(lst, lst), "锁定·"))
+    # ③ 季报十大流通股东——2026-09-19 用户反馈修复：只取近 **2 年**内披露/报告期；
+    #    更早的（中科曙光 2015「退国」、兆易创新 2020「退社」）不代表当前状态，
+    #    只有当前无任何记录时才以「历史·」前缀展示，避免"旧退出"被当成"刚退出"。
+    import datetime as _dt2
+    _today = _dt2.date.today()
+    stale = []
     for k, short in _NAT_LAB:
         st = v.get(k + "State")
         if st not in ("流入", "流出", "退出"):
             continue
-        quarter.append("%s%s%s" % (_NAT_SYM.get(st, ""), short,
-                                 _nat_day(v.get(k + "Notice") or v.get(k + "End"))))
+        _d = str(v.get(k + "Notice") or v.get(k + "End") or "")[:10]
+        try:
+            _age = (_today - _dt2.date.fromisoformat(_d)).days
+        except Exception:  # noqa: BLE001
+            _age = 99999
+        if _age > 730:
+            stale.append((short, st, _d))
+            continue
+        quarter.append(_item(_d, short, st))
     parts = fresh[:2] + quarter[:2]
-    # ④ 公告历史（超出 365 天窗口）：给出「最后一次直接买卖」的时间点，明确标注为「史」
+    # ③b 仅有陈年记录 → 以「历史·」展示（带年份，一眼可辨是历史）
+    if not parts and stale:
+        parts = [_item(_d, short, st, "历史·") for short, st, _d in stale[:2]]
+    # ④ 公告历史（超出 365 天窗口）：最后一次直接买卖的时间点
     if not fresh and v.get("annNotice"):
-        parts.append("史%s%s%s" % (_ANN_SYM.get(v.get("annDir") or "", "·"),
-                                 _NAT_KIND.get(v.get("annKind") or "", ""),
-                                 _nat_day(v.get("annNotice"))))
-    cell = " ".join(parts[:4]) if parts else "—"
-    if cell == "—":
-        return cell
-    # 2026-09-16 用户需求：cell 末尾加情绪标识（多空性质）
-    # ▲/流入 → 利好 ↑（长期资金建仓=看多）；= 持稳 → 中性 →；▼/流出/退 → 利空 ↓（减仓=看空）
-    bull = cell.count("▲") + cell.count("流入")
-    bear = cell.count("▼") + cell.count("流出") + cell.count("退")
-    hold = cell.count("持稳")
+        parts.append(_item(v.get("annNotice"), v.get("annKind") or "",
+                           v.get("annDir") or "买卖", "历史·"))
+    if not parts:
+        return "—"
+    cell = "\n".join(parts[:4])          # ★ 多条 = 多行
+    # 情绪标识（2026-09-16 需求；2026-09-19 改为按中文动作词判定，附加到最后一行）
+    bull = cell.count("流入") + cell.count("增持")
+    bear = cell.count("流出") + cell.count("减持") + cell.count("退出")
     if bear and not bull:
-        mood = "↓" + ("↓" if "退" in cell else "")
+        mood = "↓↓" if "退出" in cell else "↓"
     elif bull > bear:
         mood = "↑"
     elif bear > bull:
         mood = "↓"
-    elif hold or "=" in cell:
+    elif "持稳" in cell:
         mood = "→"
     else:
         mood = ""
-    return (cell + " " + mood).strip() if mood else cell
+    lines = cell.split("\n")
+    if mood:
+        lines[-1] = lines[-1] + " " + mood
+    return "\n".join(lines)
 
 
 def _national_etf_lines(max_lines=4):
@@ -3139,6 +3168,8 @@ def _build_candidate_sections(data, ctx, cache, dag, old_secids, asof, intraday=
                     etf_flow=etf_flow, dag_codes=dag_codes, max_rows=10):
                 code6 = str(pk.get("code") or "")
                 snaps = _eh._snaps_live(code6)      # 与 _meta_live 同一次拉取（当日缓存）
+                if snaps:
+                    pk["snaps"] = snaps   # 2026-09-18：注入 snaps → _pk_tech_cells 内部可算 KDJ/BOLL/VOL
                 # 备注只留 ETF 扫描自身的「绿转红√」判定：原先还回显 pk.tag
                 # （"RSI58 SAR红↑1 MACD红柱扩大"），而 RSI/SAR/MACD 三列由 _pk_tech_cells(pk)
                 # 按**当日实时 snaps** 另算 → 同一张表里同一指标出现两个值（59 vs 58 等），
@@ -3184,6 +3215,8 @@ def _build_candidate_sections(data, ctx, cache, dag, old_secids, asof, intraday=
                         themes, etf_flow, dag_codes=dag_codes, max_rows=10):
                     code6 = str(pk.get("code") or "")
                     snaps = _eh._snaps_live(code6)
+                    if snaps:
+                        pk["snaps"] = snaps   # 2026-09-18：注入 snaps → KDJ/BOLL/VOL 可算
                     lb_rows.append({
                         "name": str(pk.get("name") or code6) + ("√DAG" if pk.get("dag_hit") else ""),
                         "code": code6,
@@ -3296,7 +3329,10 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
                 "（如 ↑上涨·早晨之星）· 机构股=A机构加仓/B机构参与/C散户票（季报滞后，非实时信号）"
                 " · 国家队（直接持股证据链，三类合流）：告▲基 04-24=股东增减持/定增获配公告"
                 "(T+1，最快) · 锁基 06-30=锁定持股(十大股东可见而流通榜不可见=限售，"
-                "如大基金定增锁定18个月) · ▲国 06-30=季报十大流通股东流入(退=退出，披露日)"
+                "如大基金定增锁定18个月) · ▲国 26-06-30=季报十大流通股东流入"
+                " · 日期统一 YY-MM-DD（**含年份**，2026-09-19 修复：原先只显示 MM-DD，"
+                "会把 2015/2020 年的旧记录看成今年）· 退=退出(披露日) · 史=超 2 年旧记录"
+                "（仅存档，不代表当前状态）"
                 " · 史▼基 25-09=超365天窗口的公告历史(仅给时间点，不计分)"
                 " ｜ 标记：封板·=当日涨停不可追 · 新·=本轮新晋 · 流出·=资金流出"
                 " · 实仓段「建议/盈亏%」在备注格 · 距60日高负值=低于60日高点")
@@ -4428,6 +4464,17 @@ def _push_eod_summary(dry, use_ctx, log):
             lines.extend(me_lines)
     except Exception as e:
         log("宏观事件行追加失败: %s" % e)
+    # ②.65 大环境多因子打分（2026-09-19 用户需求②：多因子打分替代单链推导）
+    #   因子权重取自 _macro_gold_chain.py 实测相关系数（TIPS -0.24 / 美元 -0.23 /
+    #   油价→CPI +0.38 仅作预警）；输出 黄金/科技/能源 三资产倾向 + CPI 预警。
+    try:
+        import _macro_env_score as _mes
+        _es = _mes.line()
+        if _es:
+            lines.append("")
+            lines.append(_es)
+    except Exception as e:  # noqa: BLE001
+        log("大环境多因子行追加失败: %s" % e)
     # ②.7 底部反转形态（2026-09-16 用户需求：双锤子/早晨之星等可抄底形态）
     try:
         rp_lines = _reversal_patterns_lines(asof=asof, max_lines=6)
@@ -4980,13 +5027,33 @@ def daemon_serve(prep=True, interval=600, dry=False, use_ctx=True,
                     continue
                 try:
                     import _daily_intel
-                    _daily_intel.push_review(dry=dry, log=log)
-                    rhythm_mark_flag("rev")
-                    log("✓ 15:20 表格化复盘完成")
+                    _rev_ok = _daily_intel.push_review(dry=dry, log=log)
+                    if _rev_ok or dry:
+                        rhythm_mark_flag("rev")
+                        log("✓ 15:20 表格化复盘完成")
+                    else:
+                        log("15:20 复盘推送失败，2 分钟后重试（不置位 rev）")
+                        _interruptible_sleep(120, stop_check)
                 except Exception as e:  # noqa: BLE001
                     log("15:20 复盘失败：%s（2 分钟后重试）" % e)
                     _interruptible_sleep(120, stop_check)
                 continue
+            # 15:25：K线本地库增量更新（2026-09-19 用户需求「加进守护收盘后例行」）
+            #   把当日K线补进 data/kline_store.json —— 它是 ETF 段/巡诊的兜底数据源，
+            #   必须新鲜；独立标记 kls（与 15:00 尾盘拉取 tail 分开），晚 25 分钟更稳妥
+            #   （收盘后行情源几分钟才写入当日K线，15:00 立刻拉常拿不到）。
+            if rhythm_need_flag("kls"):
+                if hm < 15 * 60 + 25:
+                    _sleep_until(_today_at(15, 25), stop_check)
+                    continue
+                if _run_script(PREP_DOWNLOAD, log=log, stop_check=stop_check):
+                    rhythm_mark_flag("kls")
+                    log("✓ K线库增量更新完成（收盘后 15:25，兜底数据源已新鲜）")
+                else:
+                    log("K线库增量更新失败，5 分钟后重试")
+                    _interruptible_sleep(300, stop_check)
+                continue
+
             # 15:30：月度池刷新（每月首个守护日；幂等，用户 2026-09-16 需求）
             if rhythm_need_flag("pool"):
                 if hm < 15 * 60 + 30:

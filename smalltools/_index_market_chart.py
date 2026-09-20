@@ -108,7 +108,48 @@ def refresh(force_online=True):
         out[code] = {"name": name, "snaps": snaps}
     cache["codes"] = out
     _save_cache(cache)
+    _patch_realtime(out)   # 当日实时末端补丁（不落盘：OHLC 为近似值，避免污染缓存）
     return out
+
+
+def _patch_realtime(out):
+    """2026-09-18 修复：用腾讯实时行情把「今日」最新点位补进日线末端。
+
+    用户反馈 15:10 收盘总结里上证仍是昨日点位（3876）——东财/腾讯**日线**接口
+    盘后延迟（当日 K 线通常 17 点后才写入），15 点档推送拿到的是昨日缓存。
+    此处改用 qt.gtimg 实时接口（s_sh000001 等）拿现价/当日涨跌幅：实时可用且
+    snaps 末根日期 < 今天时，追加一根近似蜡烛（OHLC≈现价）。日线当晚落库后，
+    末根日期==今天，本补丁自动跳过（不会重复/覆盖真 K 线）。
+    """
+    import re as _re
+    import requests as _rq
+    try:
+        codes = ",".join("s_" + c for c, _ in INDEXES)
+        r = _rq.get("https://qt.gtimg.cn/q=" + codes, timeout=5,
+                    headers={"Referer": "https://gu.qq.com/"})
+        r.encoding = "gbk"
+        today = _dt.date.today().isoformat()
+        for i, chunk in enumerate(r.text.split(";")):
+            if i >= len(INDEXES):
+                break
+            m = _re.search(r'"([^"]+)"', chunk)
+            if not m:
+                continue
+            parts = m.group(1).split(",")
+            if len(parts) < 5:
+                continue
+            try:
+                px = float(parts[1])
+                pct = float(parts[3])
+            except ValueError:
+                continue
+            code = INDEXES[i][0]
+            snaps = (out.get(code) or {}).get("snaps") or []
+            if px > 0 and snaps and snaps[-1].get("date", "") < today:
+                snaps.append({"date": today, "open": px, "high": px, "low": px,
+                              "close": px, "changePct": pct})
+    except Exception:
+        pass   # 实时补丁失败不影响主链路（仍用日线缓存）
 
 
 def _build_series(out, days=60):

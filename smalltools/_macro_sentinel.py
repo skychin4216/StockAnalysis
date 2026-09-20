@@ -41,6 +41,26 @@ CACHE_FILE = os.path.join(HERE, "_macro_sentinel_cache.json")
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 SINA_H = {"Referer": "https://finance.sina.com.cn", **UA}
 
+
+def _u(name, fallback, **fmt):
+    """2026-09-19：URL 统一走 data/datasources.json（_sources）；缺失/失败回退硬编码。"""
+    try:
+        import _sources as _src
+        u = _src.url(name)
+        return u.format(**fmt) if fmt else u
+    except Exception:  # noqa: BLE001
+        return fallback.format(**fmt) if fmt else fallback
+
+
+def _hosts(name, fallback):
+    """多主机列表（优先配置的 alt_hosts）。"""
+    try:
+        import _sources as _src
+        hs = _src.alt_hosts(name)
+        return hs or list(fallback)
+    except Exception:  # noqa: BLE001
+        return list(fallback)
+
 # ── 阈值（用户 2026-09-10 口径）────────────────────────────────────────
 Y10_ALERT = 5.0     # 10Y 美债 %，高于触发
 Y30_ALERT = 5.5     # 30Y 美债 %，高于触发
@@ -92,8 +112,9 @@ def _f(v, default=None):
 def _fred_last(series_id):
     """FRED 官方 CSV（公开免 key）最后一条非空 (date, value)；失败 None。"""
     try:
-        r = requests.get("https://fred.stlouisfed.org/graph/fredgraph.csv",
-                         params={"id": series_id}, timeout=12, headers=UA)
+        r = requests.get(
+            _u("fred", "https://fred.stlouisfed.org/graph/fredgraph.csv"),
+            params={"id": series_id}, timeout=12, headers=UA)
         rows = r.text.strip().splitlines()
         for ln in reversed(rows[1:]):
             d, _, v = ln.partition(",")
@@ -107,7 +128,8 @@ def _fred_last(series_id):
 
 def _east_quote(secid):
     """东财 push2 实时（fltt=2）→ {last, pct, name}；失败 None。"""
-    for host in ("https://push2.eastmoney.com", "https://90.push2.eastmoney.com"):
+    for host in _hosts("east_clist", ("https://push2.eastmoney.com",
+                                      "https://90.push2.eastmoney.com")):
         try:
             r = requests.get(host + "/api/qt/ulist.np/get", timeout=8,
                              params={"secids": secid, "fields": "f2,f3,f14",
@@ -128,7 +150,9 @@ def _east_quote(secid):
 def _sina_field(sym):
     """新浪 hq.sinajs.cn 原始字段；失败返回 None。"""
     try:
-        r = requests.get("https://hq.sinajs.cn/list=" + sym, timeout=8, headers=SINA_H)
+        r = requests.get(
+            _u("sina_quote", "https://hq.sinajs.cn/list={codes}", codes=sym),
+            timeout=8, headers=SINA_H)
         r.encoding = "gbk"
         body = r.text.split("=", 1)[1].split('"', 1)[1].rsplit('"', 1)[0]
         return body.split(",")
@@ -139,7 +163,9 @@ def _sina_field(sym):
 def _tencent_field(sym):
     """腾讯 qt.gtimg.cn（外盘期货逗号分隔）→ 字段列表；失败 None。"""
     try:
-        r = requests.get("https://qt.gtimg.cn/q=" + sym, timeout=8, headers=UA)
+        r = requests.get(
+            _u("tencent_qt", "https://qt.gtimg.cn/q={codes}", codes=sym),
+            timeout=8, headers=UA)
         r.encoding = "gbk"
         txt = r.text.split('="', 1)[1].rstrip('";\n')
         return txt.split(",")

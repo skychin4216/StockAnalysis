@@ -150,6 +150,25 @@ class _Bars:
     def series(self, code):
         return [(s["date"], s["close"]) for s in self.snaps(code)]
 
+    def range_fwd(self, code, d0, n):
+        """d0 之后第 n 个交易日的 (最低价, 最高价)；不存在返回 None。
+
+        2026-09-19 用户需求：巡诊记录「当日最低~最高价区间」而非收盘价。
+        """
+        snaps = self.snaps(code)
+        ds = [s.get("date") for s in snaps]
+        if d0 not in ds:
+            return None
+        j = ds.index(d0) + n
+        if j >= len(snaps):
+            return None
+        s = snaps[j]
+        lo = s.get("low") or s.get("close")
+        hi = s.get("high") or s.get("close")
+        if not lo or not hi:
+            return None
+        return (float(lo), float(hi))
+
     def ret_fwd(self, code, d0, n):
         """d0 收盘 → n 个交易日后收盘的涨跌%；d0 不在序列返回 None。"""
         bars = self.series(code)
@@ -501,28 +520,50 @@ def cmd_signal(days=5, push=False):
     fund = _fund_map(list(first))
     header = ["名称", "代码", "主力成本", "PE静", "PB", "营收%", "净利%", "ROE%",
               "PEG", "距60高", "周期", "入选日", "入选价",
-              "1日", "2日", "3日", "4日", "5日", "至今", "来源"]
+              "1日低~高", "2日低~高", "3日低~高", "4日低~高", "5日低~高",
+              "至今", "来源"]
     rows, colors = [], []
     color_cols = list(range(13, 19))            # 1日 ~ 至今：涨红跌绿
+    # ⚠ 2026-09-19 用户明确：**巡诊不过滤 ST**（它是选股漏检的证据）。
+    # 这里只统计 ST 数量用于提示，不做剔除。
+    _st_drop = 0
+    try:
+        import _name_filter as _nf
+        _st_list = [k for k, v in first.items() if _nf.is_excluded((v[1] or {}).get("name"))]
+        _st_drop = len(_st_list)
+    except Exception:  # noqa: BLE001
+        _st_drop = 0
     for sid, (d, p) in sorted(first.items(), key=lambda kv: kv[1][0], reverse=True):
         snaps = bars.snaps(sid)
         fu = fund.get(sid) or {}
         dd = _dd60(snaps)
         ser = dict(bars.series(sid))
         base = ser.get(d)                        # 入选日收盘价
-        rts = [bars.ret_fwd(sid, d, n) for n in (1, 2, 3, 4, 5, 999)]
+        # 2026-09-19 用户需求：1~5日记录「当日最低~最高价区间」，末列保留至今涨跌
+        rngs = [bars.range_fwd(sid, d, n) for n in (1, 2, 3, 4, 5)]
+        rt_now = bars.ret_fwd(sid, d, 999)
         row = [p.get("name") or sid, sid[2:], _f2(_main_cost(snaps)),
                _f1(fu.get("pe_static")), _f2(fu.get("pb")),
                _pct(fu.get("ystz")), _pct(fu.get("sjltz")), _f1(fu.get("roe")),
                _f2(fu.get("peg")), _pct1(dd), str(p.get("period") or "—"),
                d[5:], _f2(base)]
-        row += [_pct1(r) for r in rts]
+        row += [("%s~%s" % (_f2(r[0]), _f2(r[1]))) if r else "·" for r in rngs]
+        row.append(_pct1(rt_now))
         row.append(str(p.get("src") or "—"))
         rows.append(row)
-        colors.append([None] * 13 + [_pct_color(r) for r in rts] + [None])
-    note = ("近%d日信号票 %d 只（同票取最早入选日）。主力成本=移动筹码(前30%%大成交日"
-            "量加权)；PE静/PB/换手=腾讯；营收/净利/ROE=东财最新报告期；"
-            "N日=入选日收盘→N个交易日后收盘；红=涨 绿=跌。" % (days, len(rows)))
+        # 区间列按「最高价 vs 入选价」上色（涨红跌绿），至今列按涨跌上色
+        _cc = []
+        for r in rngs:
+            if r and base:
+                _cc.append(_pct_color((r[1] / base - 1) * 100))
+            else:
+                _cc.append(None)
+        colors.append([None] * 13 + _cc + [_pct_color(rt_now), None])
+    note = ("近%d日信号票 %d 只（同票取最早入选日，已剔除 ST/退市%s）。"
+            "主力成本=移动筹码(前30%%大成交日量加权)；PE静/PB/换手=腾讯；"
+            "营收/净利/ROE=东财最新报告期；1~5日=该交易日最低~最高价区间（非收盘价）；"
+            "至今=最新收盘相对入选价；红=涨 绿=跌。"
+            % (days, len(rows), (" %d 只" % _st_drop) if _st_drop else ""))
     return _emit("信号票巡诊（近%d日 %d 只）" % (days, len(rows)), header, rows,
                  "信号票巡诊_%s.png" % datetime.now().strftime("%Y%m%d_%H%M%S"),
                  note, push=push, cell_colors=colors, color_cols=color_cols)
