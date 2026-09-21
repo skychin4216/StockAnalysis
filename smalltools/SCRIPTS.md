@@ -212,3 +212,8 @@ python _year_backtest.py > out_year.txt
 - \_sector_gate.py\  板块闸门：冷板块(20日动量<+3%且资金<5亿)须连涨≥3天才放行；长线豁免；成分<3只不误杀
 - \_sector_heatmap.py\ 板块资金活跃度热力图（板块x日期 imshow，0轴上红=活跃/下绿=冷清；--save-flow 每日落盘真资金流）
 - \_pool_filters.py\ 新增 SECTOR_GATE 开关（默认关，SECTOR_GATE=1 开启板块闸门）
+
+## 宏观复盘 / 守护任务（2026-09-21）
+- \_macro_oil_gold_review.py\ 油价/黄金事件复盘 → A股利好利空板块 + 趋势校验（内盘SC0/AU0 + 池内20日动量 + 东财当日/主力双源）；`--push` 推微信群；产出 `docs/油价黄金复盘.md`
+- \tasks/rc_daemon.bat\ / \auto_sell_daemon.bat\ / \flow_save.bat\ 守护启动器
+- 计划任务：`StockAnalysis_FlowSave`（工作日 15:10）；两个常驻守护走**启动文件夹**（onlogon 需管理员权限，实测 Access denied 后改用 Startup）

@@ -104,7 +104,19 @@ def handle_message(msg: Dict[str, Any], gw) -> bool:
     codes = PC.parse_buy(text)
     sells = parse_sell(text)
     if not codes and not sells:
-        return False
+        # ★ 2026-09-21 修复「APK 发了没反应，看起来像发送失败」：
+        #   原先这里直接 return False → 上层静默标记 done（无回复），
+        #   用户在 APK 里看不到任何回执，误以为没发出去。
+        #   现在**一律回执**（结论进「对话」、说明进「日志」）。
+        codes_hint = "、".join(sorted((PC.load().get("codes") or {}).keys())[:8]) or "（暂无清单）"
+        reply(mid, "已收到：%s" % text[:30],
+              "\n".join([
+                  "• 该消息不是买入/卖出指令",
+                  "• 支持的格式：买 11 ／ 买 11 12 21 ／ 卖出 11",
+                  "• 当前可用子编码：%s" % codes_hint,
+                  "• 其它内容已留给人工/CodeBuddy 处理",
+              ]))
+        return True
 
     steps: List[str] = []
     now = dt.datetime.now()

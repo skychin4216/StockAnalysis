@@ -401,22 +401,25 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
             return
         }
         // ★ 乐观 UI（2026-09-21）：**先上屏再发送**，不必等中继往返几十秒。
-        //   失败时会在同一条会话里追加「⚠ 发送失败」提示，不会出现"发了但看不见"。
-        addMsgRow(content, prefix = "我:", category = CAT_CHAT, fromApk = true)
+        //   气泡下方实时显示状态：发送中… → ✅ 已送达 / ❌ 发送失败（QQ 风格）
+        val refs = addMsgRow(content, prefix = "我:", category = CAT_CHAT,
+            fromApk = true, status = "发送中…")
         msgInput?.setText("")
         scope.launch {
             try {
                 val r = PcBridgeClient.sendMsg(content = content)
                 val j = JSONObject(r)
                 if (j.optBoolean("ok", false)) {
+                    // 已送达后淡出（4 秒），不长期占用视觉
+                    setStatus(refs, "✅ 已送达", 0xFF7CB342.toInt(), clearAfterMs = 4000)
                     Toast.makeText(context, "已发送给 CodeBuddy", Toast.LENGTH_SHORT).show()
                 } else {
                     val err = j.optString("error", "未知错误")
-                    addMsgRow("⚠ 发送失败：$err", prefix = "系统:", category = CAT_CHAT)
+                    setStatus(refs, "❌ 失败：$err", 0xFFC62828.toInt())
                     Toast.makeText(context, "发送失败: $err", Toast.LENGTH_LONG).show()
                 }
             } catch (e: Exception) {
-                addMsgRow("⚠ 发送失败：${e.message}", prefix = "系统:", category = CAT_CHAT)
+                setStatus(refs, "❌ 失败：${e.message}", 0xFFC62828.toInt())
                 Toast.makeText(context, "发送失败: ${e.message}", Toast.LENGTH_LONG).show()
             }
         }
@@ -475,35 +478,42 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
         category: String = CAT_CHAT,
         fromApk: Boolean = false,
         persist: Boolean = true,
-        card: Boolean = false
-    ) {
+        card: Boolean = false,
+        ts: String = "",
+        status: String? = null
+    ): MutableList<TextView> {
+        val stamp = ts.ifBlank { nowTs() }
+        val refs = mutableListOf<TextView>()
+        fun add(containerCat: String, t: String, p: String, styleCat: String) {
+            addTo(containerCat, t, p, styleCat, fromApk, stamp, status)?.let { refs.add(it) }
+        }
         if (category == CAT_LOG) {
-            addTo(CAT_ALL, text, prefix, CAT_LOG, fromApk)      // 时间线：完整
-            addTo(CAT_LOG, text, prefix, CAT_LOG, fromApk)      // 日志：完整过程
+            add(CAT_ALL, text, prefix, CAT_LOG)                 // 时间线：完整
+            add(CAT_LOG, text, prefix, CAT_LOG)                 // 日志：完整过程
             bump(CAT_ALL); bump(CAT_LOG)
         } else if (card) {
             // 结构化卡片（如选股清单）：多行直接进「对话」，**不折叠**、不转日志
-            val full = if (prefix.isBlank()) text else "$prefix $text"
-            addTo(CAT_ALL, text, prefix, CAT_CHAT, fromApk)
-            addTo(CAT_CHAT, text, prefix, CAT_CHAT, fromApk)
+            add(CAT_ALL, text, prefix, CAT_CHAT)
+            add(CAT_CHAT, text, prefix, CAT_CHAT)
             bump(CAT_ALL); bump(CAT_CHAT)
-            if (persist && !restoring) appendHistory(text, prefix, category, fromApk, card = true)
-            renderTabs(); autoScroll(); return
+            if (persist && !restoring) appendHistory(text, prefix, category, fromApk, card = true, ts = stamp)
+            renderTabs(); autoScroll(); return refs
         } else {
             val full = if (prefix.isBlank()) text else "$prefix $text"
             val summary = summarize(text, prefix)
             val folded = summary != full                        // 被折叠 ⇒ 详情转入日志
-            addTo(CAT_ALL, text, prefix, CAT_CHAT, fromApk)     // 时间线：完整不截断
-            addTo(CAT_CHAT, summary, "", CAT_CHAT, fromApk)     // 对话：一行结论
+            add(CAT_ALL, text, prefix, CAT_CHAT)                // 时间线：完整不截断
+            add(CAT_CHAT, summary, "", CAT_CHAT)                // 对话：一行结论
             bump(CAT_ALL); bump(CAT_CHAT)
             if (folded) {
-                addTo(CAT_LOG, text, prefix, CAT_CHAT, fromApk) // 日志：完整原文
+                add(CAT_LOG, text, prefix, CAT_CHAT)            // 日志：完整原文
                 bump(CAT_LOG)
             }
         }
-        if (persist && !restoring) appendHistory(text, prefix, category, fromApk)
+        if (persist && !restoring) appendHistory(text, prefix, category, fromApk, ts = stamp)
         renderTabs()
         autoScroll()
+        return refs
     }
 
     // ── 聊天记录持久化（2026-09-21：重开面板不再从零开始）──
@@ -518,14 +528,14 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
     }
 
     private fun appendHistory(text: String, prefix: String, category: String,
-                              fromApk: Boolean, card: Boolean = false) {
+                              fromApk: Boolean, card: Boolean = false, ts: String = "") {
         try {
             var arr = loadHistory()
             arr.put(JSONObject().apply {
                 put("t", text); put("p", prefix)
                 put("c", category); put("me", fromApk)
                 if (card) put("card", true)
-                put("ts", SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date()))
+                put("ts", ts.ifBlank { nowTs() })
             })
             if (arr.length() > HISTORY_MAX) {          // 超出上限 → 丢弃最旧的
                 val trimmed = JSONArray()
@@ -547,7 +557,8 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
                 val o = arr.getJSONObject(i)
                 addMsgRow(o.optString("t"), o.optString("p"),
                     o.optString("c", CAT_CHAT), o.optBoolean("me", false),
-                    persist = false, card = o.optBoolean("card", false))
+                    persist = false, card = o.optBoolean("card", false),
+                    ts = o.optString("ts"))
             }
         } catch (_: Exception) {
         } finally {
@@ -567,10 +578,12 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
 
     /** 往指定 Tab 容器追加一行（View 只能有一个父容器 → 每个 Tab 各建一份实例）。 */
     private fun addTo(containerCat: String, text: String, prefix: String,
-                      styleCat: String, fromApk: Boolean) {
+                      styleCat: String, fromApk: Boolean,
+                      ts: String, status: String?): TextView? {
+        val ref = buildRow(text, prefix, styleCat, fromApk, ts, status)
         chatBoxes[containerCat]?.addView(
-            buildRow(text, prefix, styleCat, fromApk),
-            LinearLayout.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            ref.root, LinearLayout.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        return ref.statusTv
     }
 
     private fun bump(cat: String) { tabCounts[cat] = (tabCounts[cat] ?: 0) + 1 }
@@ -588,13 +601,21 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
         return if (folded) "$s  （详见日志）" else s
     }
 
-    /** 构建单条气泡行；每行的 TextView 再套一层 HorizontalScrollView 以支持左右滚动。 */
+    /** 一行消息的视图引用：root 用于挂载，statusTv 用于后续更新「发送中/已送达/失败」。 */
+    private class RowRef(val root: View, val statusTv: TextView?)
+
+    /**
+     * 构建单条气泡行（QQ 风格）：气泡 + 下方一行小字「时间戳 · 发送状态」。
+     * 每行的气泡再套一层 HorizontalScrollView 以支持左右滚动。
+     */
     private fun buildRow(
         text: String,
         prefix: String,
         category: String,
-        fromApk: Boolean
-    ): View {
+        fromApk: Boolean,
+        ts: String,
+        status: String?
+    ): RowRef {
         val bubble = TextView(context).apply {
             this.text = if (prefix.isBlank()) text else "$prefix $text"
             textSize = 12f
@@ -619,11 +640,40 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
             addView(bubble, ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
+        // ── 气泡下方的小字：时间戳 + 发送状态（QQ/微信风格）──
+        val meta = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        meta.addView(TextView(context).apply {
+            this.text = ts
+            textSize = 9f
+            setTextColor(0xFF9E9E9E.toInt())
+        })
+        val statusTv = TextView(context).apply {
+            this.text = status.orEmpty()
+            textSize = 9f
+            setTextColor(0xFF9E9E9E.toInt())
+            setPadding(6.dp(), 0, 0, 0)
+            visibility = if (status.isNullOrBlank()) View.GONE else View.VISIBLE
+        }
+        meta.addView(statusTv)
+
+        val col = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = if (fromApk) Gravity.END else Gravity.START
+            addView(hsv, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(meta, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = 1.dp()
+            })
+        }
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = if (fromApk) Gravity.END else Gravity.START
         }
-        row.addView(hsv, LinearLayout.LayoutParams(
+        row.addView(col, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         row.layoutParams = LinearLayout.LayoutParams(
             MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -631,8 +681,26 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
             leftMargin = if (fromApk) 40.dp() else 0
             rightMargin = if (fromApk) 0 else 40.dp()
         }
-        return row
+        return RowRef(row, statusTv)
     }
+
+    /** 更新某条消息的发送状态（并可选若干毫秒后自动清空，QQ 的「已读」淡出效果）。 */
+    private fun setStatus(refs: List<TextView>, text: String, okColor: Int? = null,
+                          clearAfterMs: Long = 0) {
+        refs.forEach { tv ->
+            tv.text = text
+            tv.visibility = if (text.isBlank()) View.GONE else View.VISIBLE
+            if (okColor != null) tv.setTextColor(okColor)
+            if (clearAfterMs > 0) {
+                tv.postDelayed({
+                    tv.text = ""
+                    tv.visibility = View.GONE
+                }, clearAfterMs)
+            }
+        }
+    }
+
+    private fun nowTs() = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
 
     // ── Tab 切换：只显示当前 Tab 的滚动容器，其余彻底隐藏（内容互不干扰） ──
 
