@@ -1,7 +1,7 @@
 # GitHub 分支保护配置清单（照着点即可）
 
-> 目标：`dev` / `main` 只有**你自己能写、能合并**，其他人**只读**。
-> 仓库：`https://github.com/skychin4216/StockAnalysis`（当前为 **public**）
+> 目标：`dev` / `main` 只有**你自己能写、能合并**；`maosheng` 开放给**协作者开发**。
+> 仓库：`https://github.com/skychin4216/StockAnalysis`（**private**，2026-09-22 确认）
 > 配套文件：`.github/CODEOWNERS`（已建好）
 
 ---
@@ -12,11 +12,16 @@
 |---|---|---|
 | 别人**不能 push / 不能 merge** 到 dev、main | ✅ 能 | 下面「二、三」 |
 | 别人**必须你批准**才能改 | ✅ 能 | 下面「四」 CODEOWNERS |
-| 别人**不能 fork** | ❌ 不能 | 公开仓库天然允许 fork（fork 不影响你的分支）|
-| 别人**连看都看不到** | ⚠️ 要转私有 | Settings → Danger zone → Change visibility → Private |
+| 非协作者**连看都看不到** | ✅ **已完成** | 仓库已是 **private**（2026-09-22 确认）|
+| 协作者**能看全部代码** | ⚠️ 现状如此 | private 仓库的协作者可读所有分支、全部历史 |
 
-**结论**：公开仓库下你能锁死「写」，锁不住「看 / fork」。
-**如果要彻底不给他们看，只能把仓库转 private**（GitHub Free 已支持私有仓库 + 无限协作者）。
+> **2026-09-22 现状确认**：仓库**已是 private**，对外隔离这一步**已完成**，无需再做。
+> 现在的边界是：
+> - **非协作者**：看不到任何东西 ✅
+> - **协作者**：能看到**全部代码 + 全部历史**（含选股核心），且可在 `maosheng` 上开发
+>
+> 也就是说 —— **「拆分仓库 / 镜像对外仓库」这套方案当前并不需要**。
+> 只有当哪天你希望「协作者能开发，但看不到选股核心」时，才需要重新考虑它。
 
 ---
 
@@ -84,15 +89,34 @@
 
 ---
 
-## 五（可选）、给 `maosheng` 也加保护
+## 五、给 `maosheng` 加保护（**与 dev/main 不同，别照抄**）
 
-`maosheng` 是**给别人看的只读快照**。建议也保护起来，避免被误改：
+> ⚠️ **2026-09-22 更正**：`maosheng` **不是**只读快照，而是**给协作者基于你的代码做开发的分支**。
+> 所以他们**必须能 push**，配置与 dev/main 相反。
 
 - Target：`maosheng`
-- 勾选：`Restrict deletions` + `Block force pushes` + `Require a pull request before merging`
+- 勾选：
+  - ✅ `Restrict deletions` —— 防误删
+  - ✅ `Block force pushes` —— **关键**，见下方「禁止强推」纪律
+  - ❌ **不要**勾 `Restrict who can push`（勾了协作者就推不上去了）
+  - ❌ **不要**勾 `Require a pull request before merging`（他们直接在分支上开发）
 - Bypass list：只加你自己
 
-> 注意：我们后续同步 dev → maosheng 仍由你（或我以你的凭据）执行，**不受影响**。
+### 🚫 铁律：`maosheng` 永远禁止 force push
+
+协作者在 `maosheng` 上有自己的提交。**任何** `git push --force` / 「删分支重建」都会**直接抹掉他们的代码**。
+
+同步 dev → maosheng 只允许用 **merge**：
+
+```bash
+git checkout maosheng
+git pull origin maosheng        # 先拿到协作者的最新提交
+git merge origin/dev            # 再合入 dev
+# 有冲突就解决
+git push origin maosheng        # 普通 push，绝不 --force
+```
+
+上面第五节勾了 `Block force pushes`，就是为了在服务端兜底 —— 万一误敲了 force 也会被拒绝。
 
 ---
 
@@ -100,12 +124,21 @@
 
 | 场景 | 操作 |
 |---|---|
-| 日常开发 | 在 `dev` 上提交（只有你能推）|
-| 要给别人最新版本 | 由我执行「删 maosheng → 从 dev 重建 → 推送」（**会先跟你确认**）|
-| 别人想改代码 | 让他们 fork 后开 PR → 你（Code Owner）批准才合入 |
+| 你的日常开发 | 在 `dev` 上提交（只有你能推）|
+| 协作者开发 | 直接在 `maosheng` 上提交（他们能推，你也能推）|
+| 把 dev 的新代码给到协作者 | **`merge`**：`git merge origin/dev` → 普通 push（**禁止 force**）|
+| 把协作者的代码收回主线 | 他们从 `maosheng` 开 PR → `dev` → 你（Code Owner）批准才合入 |
+| 发布稳定版 | `dev` → `main`（快进）|
 
-> ⚠️ 同步 maosheng 前我会先扫一遍有没有私密内容（AI 密钥 / 交易记录 / 实仓），
-> 确认干净再推 —— 这正是我们做 git-crypt 加密的意义。
+### 协作者参与的注意事项
+
+1. **他们能看到全部代码与历史**（private 仓库协作者权限如此）。若日后不想让他们看到选股核心，
+   那才需要「镜像对外仓库」方案，届时可再启用。
+2. **加密文件对他们不可读**：`git-crypt` 加密的 5 个文件（交易/持仓/选票）他们没有密钥，
+   工作区里是密文，**照原样提交回去不会泄露**；但若要他们参与这部分开发，才需要考虑给密钥。
+3. **历史里有一处明文**：`ddd3c68`(2026-09-20) 的 `data/_trade_orders.jsonl` 未加密入库过
+   （2 行，内容为 `gateway=paper` / `dry_run=true` 的**模拟盘测试数据**，无真实成交）。
+   协作者可见。若要清除需 force-push 重写历史 —— 代价大于收益，当前决定**不动**。
 
 ---
 
