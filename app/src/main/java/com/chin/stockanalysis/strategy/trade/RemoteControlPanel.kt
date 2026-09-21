@@ -37,18 +37,30 @@ import org.json.JSONObject
  * - RemoteControlDialog（全屏）：AI 对话框「📡 远程」按钮等打开，含任务列表
  * - StrategyImportFragment「🎛 远程」卡片（compact=true）：数据→PC参数 页
  *
- * ## 布局（2026-09-20 按需求重排）
+ * ## 布局（2026-09-22 用户指定）
  * 1. `🌐 远程控制` 标题 + 中继状态（`设备ID · 同步时间 MM-dd HH:mm:ss`）+ 测试中继连接
  * 2. 快捷任务（预设控件，一键与 PC 端 exe 沟通）
- * 3. **会话区**（微信/QQ 气泡式）：对话记录 + PC 端日志的统一消息流，
- *    支持「全部 / 对话 / 日志」筛选；外层垂直滚动、每行内层水平滚动（长日志行可左右拖）
+ * 3. **五个 Tab**（各一套独立滚动容器，内容完全隔离）：`对话 股票 任务 日志 全部`，
+ *    行尾是 `🗑 清空`（二次点击确认；与 Tab 同基线对齐）
  * 4. 输入框 + 发送（置于会话区**下方**）
+ *
+ * ## Tab 职责（各司其职）
+ * - **对话** = 结论：`我 ↔ CodeBuddy` 的双向问答，一行摘要
+ * - **股票** = ★ 选到的股票：PC 推送的选股结果，本地持久化（2026-09-22 新增）
+ * - **任务** = 原底部任务区块（状态 + 取消）
+ * - **日志** = 过程：仅 PC 端 exe 任务输出（`🖥`）
+ * - **全部** = 完整时间线：对话 + 日志 + 选股按发生顺序穿插
  *
  * ## 消息来源（刻意区分）
  * - `我:` —— 本机发出（右对齐绿气泡）
  * - `CodeBuddy:` —— PC 端 AI 回复（左对齐浅绿气泡）
  * - `🖥` —— PC 端 exe 任务日志（左对齐深色条，带时间戳）
- * 前两者归 `CAT_CHAT`，日志归 `CAT_LOG`，可按标签筛选。
+ * - `🎯` —— 选股结果（左对齐蓝字浅蓝底；完整卡片在「股票」Tab）
+ *
+ * ## PC → APK 推送消费
+ * `startMsgPolling()` 每 3 秒拉一次 `PcBridgeClient.fetchPushes()`（`pc/push/{deviceId}/`），
+ * 按 `kind` 分流：`candidates/stock/picks` → 「股票」Tab；其余 → 「对话」一行摘要。
+ * `fetchPushes` 自带 seq 游标，已消费的不会重复回来。
  *
  * 连接走**联网中继**（`CosRelayClient`，纯 COS）：无需填 IP / Token，两端联网即可。
  */
@@ -85,9 +97,20 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
         const val CAT_LOG = "log"     // PC 端 exe 任务日志
         const val CAT_ALL = "all"     // 全部（对话+日志的完整时间线）
         const val CAT_TASK = "task"   // 任务列表（原底部区块，已收编为 Tab）
+        const val CAT_STOCK = "stock" // ★ 选到的股票（2026-09-22 新增，持久化保存选股结果）
 
         /** PC 端日志行的来源标签（exe 侧输出；CodeBuddy 的回复走 CAT_CHAT）。 */
         const val PC_LOG_PREFIX = "🖥"
+
+        /** 「股票」Tab 的来源标签；PC 推送的选股结果用它标记。 */
+        const val STOCK_PREFIX = "🎯"
+
+        /**
+         * PC → APK 推送里代表「选股结果」的 kind 取值。
+         * `relay_push.py` 定义的语义：notice / candidates / intel / signal；
+         * 选股命中 `candidates`，另兼容 `stock`、`picks` 以防 PC 侧后续改名。
+         */
+        val STOCK_KINDS = setOf("candidates", "stock", "picks", "pick")
 
         /** 「对话」Tab 一行结论的最大字数；超出则折叠，完整内容转入「日志」。 */
         const val CHAT_SUMMARY_MAX = 60
@@ -96,10 +119,14 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
         const val PREF_FILE = "remote_control"
         const val PREF_HISTORY = "history"
         const val PREF_SEQ = "reply_seq"
+        // 注：PC 推送的已读游标由 CosRelayClient 内部维护（KEY_PUSH_SEQ），
+        //     本面板不另存，避免两处游标不一致导致漏消费或重复消费。
+        const val PREF_STOCKS = "stocks"        // ★ 选股结果单独持久化（不与会话共用上限）
         const val HISTORY_MAX = 300      // 超过则丢弃最旧的，避免无限膨胀
+        const val STOCK_MAX = 500        // 「股票」Tab 最多保留的条数
 
-        /** Tab 展示顺序：对话 → 日志 → 全部 → 任务 */
-        val TAB_ORDER = listOf(CAT_CHAT, CAT_LOG, CAT_ALL, CAT_TASK)
+        /** Tab 展示顺序（2026-09-22 用户指定）：对话 → 股票 → 任务 → 日志 → 全部 */
+        val TAB_ORDER = listOf(CAT_CHAT, CAT_STOCK, CAT_TASK, CAT_LOG, CAT_ALL)
     }
 
     private fun prefs() =
@@ -211,17 +238,23 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
             setPadding(8.dp(), 6.dp(), 8.dp(), 6.dp())
             setBackgroundColor(0xFFF2F3F5.toInt())
         }
-        // ── 三个 Tab：各司其职、内容**完全隔离**（不再是一个列表做可见性过滤） ──
-        //   全部 = 完整时间线：对话 + 日志按发生顺序穿插，排查问题看这里
-        //   对话 = 仅「我 ↔ CodeBuddy」的双向问答，不含任何流水
+        // ── 五个 Tab：各司其职、内容**完全隔离**（不再是一个列表做可见性过滤） ──
+        //   对话 = 仅「我 ↔ CodeBuddy」的双向问答（结论，一行摘要）
+        //   股票 = ★ 选到的股票（PC 推送的选股结果，本地持久化，2026-09-22 新增）
+        //   任务 = 原底部任务区块（状态行 + 任务卡）
         //   日志 = 仅 PC 端 exe 任务输出（🖥），不含聊天
-        //   任务 = 原底部任务区块（状态行 + 任务卡），2026-09-21 收编为第四个 Tab
+        //   全部 = 完整时间线：对话 + 日志按发生顺序穿插，排查问题看这里
         val tabs = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        listOf("对话" to CAT_CHAT, "日志" to CAT_LOG, "全部" to CAT_ALL, "任务" to CAT_TASK)
-            .forEach { (label, cat) ->
+        listOf(
+            "对话" to CAT_CHAT,
+            "股票" to CAT_STOCK,
+            "任务" to CAT_TASK,
+            "日志" to CAT_LOG,
+            "全部" to CAT_ALL,
+        ).forEach { (label, cat) ->
             tabs.addView(TextView(context).apply {
                 text = "$label 0"
                 textSize = 12f
@@ -258,9 +291,18 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
                 clearArmed = false
                 text = "🗑 清空"
                 clearHistory()
-                Toast.makeText(context, "已清空会话记录", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "已清空（任务列表保留）", Toast.LENGTH_SHORT).show()
             }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            // ★ 2026-09-22 修正「清空偏下」：Tab 行是 CENTER_VERTICAL 居中，而各 Tab
+            //   都带 bottomMargin=4dp，唯独清空没有 → 它的盒子比 Tab 矮 4dp，居中时
+            //   整体下移 2dp，肉眼看着就比 Tab 低一截。补上同样的 bottomMargin 即对齐。
+            includeFontPadding = false          // 去除字体上下留白，基线再准一点
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            bottomMargin = 4.dp()
+            gravity = Gravity.CENTER_VERTICAL
+        })
         msgPanel.addView(tabs)
 
         // 每个 Tab 一套**独立的** ScrollView + 内容盒：各自累积、各自保留滚动位置，
@@ -449,11 +491,85 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
                     lastReplySeq = j.optInt("after", lastReplySeq)
                     // 持久化已读游标 → 重开面板不会把历史回复再灌一遍
                     prefs().edit().putInt(PREF_SEQ, lastReplySeq).apply()
+
+                    // ★ PC 主动推送（选股结果 / 情报 / 信号）。
+                    //   fetchPushes 内部自带 seq 游标（CosRelayClient.KEY_PUSH_SEQ），
+                    //   已消费的不会重复回来，重启也不会漏。
+                    try {
+                        for (p in PcBridgeClient.fetchPushes(limit = 30)) consumePush(p)
+                    } catch (_: Exception) {
+                        // 中继不可用/未登记设备 → 静默
+                    }
                 } catch (_: Exception) {
                     // 未连接或网络不可达，静默继续
                 }
                 delay(3000)
             }
+        }
+    }
+
+    /**
+     * 消费一条 PC 主动推送（`pc/push/{deviceId}/`）。
+     *
+     * 信封结构（`cos_relay.make_envelope`，method="push"）：
+     * `{kind, params:{title, content, payload}, seq, ts}`。
+     *
+     * **分流原则 —— 「股票」Tab 只放选股结果**：
+     * - kind ∈ STOCK_KINDS（candidates / stock / picks）→ 逐条进「股票」Tab
+     * - 其余（notice / intel / signal…）→ 进「对话」一行摘要
+     * 否则情报、信号会和系统通知一起把选出来的票淹没。
+     */
+    private fun consumePush(p: JSONObject) {
+        val kind = p.optString("kind")
+        val params = p.optJSONObject("params") ?: return
+        val title = params.optString("title")
+        val content = params.optString("content")
+        val payload = params.optJSONObject("payload")
+        val stamp = p.optLong("ts", System.currentTimeMillis() / 1000) * 1000
+        val ts = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(stamp))
+
+        if (kind !in STOCK_KINDS) {
+            val one = listOf(title, content).filter { it.isNotBlank() }.joinToString(" — ")
+            if (one.isNotBlank()) {
+                addMsgRow(one, prefix = "🔔", category = CAT_CHAT, fromApk = false)
+            }
+            return
+        }
+
+        // ① 优先用结构化清单（payload.list / codes / items）
+        val list = payload?.optJSONArray("list")
+            ?: payload?.optJSONArray("codes")
+            ?: payload?.optJSONArray("items")
+        if (list != null && list.length() > 0) {
+            for (i in 0 until list.length()) {
+                val it = list.get(i)
+                if (it is JSONObject) {
+                    addStockPick(
+                        code = it.optString("code").ifBlank { it.optString("symbol") },
+                        name = it.optString("name"),
+                        price = it.optString("price"),
+                        pct = it.optString("pct").ifBlank { it.optString("change") },
+                        reason = it.optString("reason").ifBlank { it.optString("why") },
+                        ts = ts
+                    )
+                } else {
+                    addStockPick(code = it.toString(), ts = ts)
+                }
+            }
+            if (title.isNotBlank()) {
+                addMsgRow("$title（${list.length()} 只）", prefix = STOCK_PREFIX,
+                    category = CAT_CHAT, fromApk = false)
+            }
+            return
+        }
+
+        // ② 没有结构化清单 → 正文按行退化解析，至少不让选股结果丢掉
+        val lines = content.split("\n").map { it.trim() }.filter { it.isNotBlank() }
+        if (lines.isEmpty()) return
+        for (line in lines) addStockPick(code = line, ts = ts)
+        if (title.isNotBlank()) {
+            addMsgRow("$title（${lines.size} 只）", prefix = STOCK_PREFIX,
+                category = CAT_CHAT, fromApk = false)
         }
     }
 
@@ -564,16 +680,128 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
         } finally {
             restoring = false
         }
+        restoreStocks()     // ★ 选股结果是独立持久化的，单独回放
         renderTabs()
     }
 
-    /** 清空历史（同时重置 Tab 计数与三个容器）。 */
+    /** 清空历史（同时重置 Tab 计数与容器；**「任务」Tab 不受影响**）。 */
     fun clearHistory() {
-        prefs().edit().remove(PREF_HISTORY).putInt(PREF_SEQ, 0).apply()
+        prefs().edit()
+            .remove(PREF_HISTORY)
+            .remove(PREF_STOCKS)
+            .putInt(PREF_SEQ, 0)
+            .apply()
         lastReplySeq = 0
         chatBoxes.forEach { (cat, box) -> if (cat != CAT_TASK) box.removeAllViews() }
         TAB_ORDER.forEach { cat -> if (cat != CAT_TASK) tabCounts[cat] = 0 }
         renderTabs()
+    }
+
+    // ── ★「股票」Tab：选中的股票（2026-09-22 新增）──
+    //
+    // 数据来源：PC 端推送到微信群的同时，经中继写 `pc/push/{deviceId}/`
+    // （`relay_push.py`，kind="candidates"）。面板轮询拉取，**只挑选股结果**
+    // 进这个 Tab —— 情报/信号等其他通知不进来，免得把选股淹没。
+    // 本地用 SharedPreferences 持久化，关掉面板/重启进程都还在。
+
+    /** 追加一条选股结果：完整卡片进「股票」Tab，一行摘要进「全部」。 */
+    private fun addStockPick(
+        code: String, name: String = "", price: String = "", pct: String = "",
+        reason: String = "", ts: String = "", persist: Boolean = true
+    ) {
+        val t = ts.ifBlank { nowTs() }
+        chatBoxes[CAT_STOCK]?.addView(
+            buildStockCard(code, name, price, pct, reason, t),
+            LinearLayout.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                .apply { bottomMargin = 4.dp() })
+        val one = listOf(code, name, price, pct).filter { it.isNotBlank() }.joinToString(" ")
+        addTo(CAT_ALL, one, STOCK_PREFIX, CAT_STOCK, false, t, null)
+        bump(CAT_STOCK)
+        bump(CAT_ALL)
+        if (persist) appendStock(code, name, price, pct, reason, t)
+        renderTabs()
+        autoScroll()
+    }
+
+    /** 选股卡片：代码·名称 / 价格·涨幅 / 理由 / 时间。 */
+    private fun buildStockCard(
+        code: String, name: String, price: String, pct: String, reason: String, ts: String
+    ): View = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(10.dp(), 8.dp(), 10.dp(), 8.dp())
+        background = rnd(0xFFE3F2FD.toInt(), 8.dp())
+        addView(TextView(context).apply {
+            text = listOf(code, name).filter { it.isNotBlank() }.joinToString(" ")
+            textSize = 14f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(0xFF0D47A1.toInt())
+        })
+        val mid = listOf(price, pct).filter { it.isNotBlank() }.joinToString("   ")
+        if (mid.isNotBlank()) addView(TextView(context).apply {
+            text = mid
+            textSize = 12f
+            setTextColor(0xFF37474F.toInt())
+            setPadding(0, 2.dp(), 0, 0)
+        })
+        if (reason.isNotBlank()) addView(TextView(context).apply {
+            text = reason
+            textSize = 11f
+            setTextColor(0xFF607D8B.toInt())
+            setPadding(0, 2.dp(), 0, 0)
+            setSingleLine(false)
+            setHorizontallyScrolling(true)      // 长理由不撑破布局，可横向拖
+        })
+        addView(TextView(context).apply {
+            text = ts
+            textSize = 10f
+            setTextColor(0xFF90A4AE.toInt())
+            setPadding(0, 3.dp(), 0, 0)
+        })
+    }
+
+    private fun appendStock(code: String, name: String, price: String, pct: String,
+                            reason: String, ts: String) {
+        try {
+            val arr = loadStocks()
+            arr.put(JSONObject().apply {
+                put("code", code); put("name", name); put("price", price)
+                put("pct", pct); put("reason", reason); put("ts", ts)
+            })
+            val trimmed = JSONArray()
+            val from = if (arr.length() > STOCK_MAX) arr.length() - STOCK_MAX else 0
+            for (i in from until arr.length()) trimmed.put(arr.get(i))
+            prefs().edit().putString(PREF_STOCKS, trimmed.toString()).apply()
+        } catch (_: Exception) {
+            // 持久化失败不影响 UI
+        }
+    }
+
+    private fun loadStocks(): JSONArray {
+        val s = prefs().getString(PREF_STOCKS, null) ?: return JSONArray()
+        return try { JSONArray(s) } catch (_: Exception) { JSONArray() }
+    }
+
+    /** 回放已保存的选股结果（panel 创建时调用）。 */
+    private fun restoreStocks() {
+        try {
+            val arr = loadStocks()
+            if (arr.length() == 0) {
+                chatBoxes[CAT_STOCK]?.addView(TextView(context).apply {
+                    text = "暂无选股记录。\nPC 端推送选股结果（kind=candidates）后会自动出现在这里，并保留在本地。"
+                    textSize = 11f
+                    setTextColor(0xFF90A4AE.toInt())
+                    setPadding(8.dp(), 14.dp(), 8.dp(), 14.dp())
+                })
+                return
+            }
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                addStockPick(o.optString("code"), o.optString("name"),
+                    o.optString("price"), o.optString("pct"),
+                    o.optString("reason"), o.optString("ts"), persist = false)
+            }
+        } catch (_: Exception) {
+        }
     }
 
     /** 往指定 Tab 容器追加一行（View 只能有一个父容器 → 每个 Tab 各建一份实例）。 */
@@ -622,12 +850,14 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
             setTextColor(
                 if (fromApk) Color.WHITE
                 else if (category == CAT_LOG) 0xFFCFD8DC.toInt()
+                else if (category == CAT_STOCK) 0xFF0D47A1.toInt()   // ★ 选股：蓝字
                 else 0xFF263238.toInt()
             )
             setPadding(10.dp(), 6.dp(), 10.dp(), 6.dp())
             background = rnd(
                 if (fromApk) 0xFF2E7D32.toInt()
                 else if (category == CAT_LOG) 0xFF263238.toInt()
+                else if (category == CAT_STOCK) 0xFFBBDEFB.toInt()   // ★ 选股：浅蓝底
                 else 0xFFDCEDC8.toInt(), 8.dp()
             )
             // 关键：关掉自动换行、仍保留 \n 换行 → 超长行交给外层横向滚动
