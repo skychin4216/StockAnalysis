@@ -5108,7 +5108,10 @@ def main():
                     help="盘中轮间隔秒（v4 默认 600=10 分钟；首轮在段首立即选股）")
     ap.add_argument("--dry", action="store_true", help="不通知不上传（调试）")
     ap.add_argument("--key", default=None, help="COS candidates_key，默认 stockanalysis/quant/candidates.json")
-    ap.add_argument("--timed", action="store_true", help="定时推送模式（单次执行也推送整轮概览）")
+    ap.add_argument("--timed", action="store_true",
+                    help="定时推送模式（**已默认开启**，保留仅为兼容旧调用）")
+    ap.add_argument("--no-push", action="store_true",
+                    help="只选股+上传 COS，**不推送通知**（2026-09-21 新增）")
     ap.add_argument("--no-pos", action="store_true",
                     help="推送不含实仓段（默认随整轮消息内嵌，有变化才展开详情）")
     ap.add_argument("--no-ctx", action="store_true", help="跳过市场上下文/共振/实仓（纯形态快速选股）")
@@ -5122,7 +5125,13 @@ def main():
         daemon_serve(prep=not args.no_prep, interval=args.interval,
                      dry=args.dry, use_ctx=not args.no_ctx)
         return 0
-    return run_once(dry=args.dry, candidates_key=args.key, timed_push=args.timed,
+    # ★ 2026-09-21 用户确认：`--once` **默认带推送**（原先必须显式加 --timed，
+    #   导致「跑了选股却什么都没发」的踩坑）。要只选股不发通知用 `--no-push`。
+    timed = not args.no_push
+    if args.timed and args.no_push:
+        print("⚠ --timed 与 --no-push 同时给出：以 --no-push 为准（不推送）")
+        timed = False
+    return run_once(dry=args.dry, candidates_key=args.key, timed_push=timed,
                     use_ctx=not args.no_ctx, pos_advice=not args.no_pos)
 
 

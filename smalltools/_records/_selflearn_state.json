@@ -16,10 +16,10 @@
    "why": ""
   },
   "短线": {
-   "extra_pass": 1,
+   "extra_pass": 2,
    "state": "BEARISH",
-   "since": "2026-09-18",
-   "why": "近22笔wr=31.8% vs 基线BEARISH 63.6%"
+   "since": "2026-09-21",
+   "why": "近26笔wr=42.3% vs 基线BEARISH 63.6%"
   },
   "中线": {
    "extra_pass": 0,
@@ -47,6 +47,23 @@
      "base_wr": 63.6,
      "gap_pp": -31.8,
      "extra_pass": 1,
+     "action": "收紧+1",
+     "mode": "dry"
+    }
+   ]
+  },
+  {
+   "ts": "2026-09-21 15:02:27",
+   "events": [
+    {
+     "period": "短线",
+     "n_recent": 26,
+     "wr_recent": 42.3,
+     "avg_recent": 2.65,
+     "dom_state": "BEARISH",
+     "base_wr": 63.6,
+     "gap_pp": -21.3,
+     "extra_pass": 2,
      "action": "收紧+1",
      "mode": "dry"
     }
@@ -123,5 +140,5 @@
    }
   }
  },
- "updated_at": "2026-09-18 15:05:27"
+ "updated_at": "2026-09-21 15:02:27"
 }

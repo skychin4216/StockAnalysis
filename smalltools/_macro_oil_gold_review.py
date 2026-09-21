@@ -331,12 +331,49 @@ def build_review() -> Dict[str, Any]:
             "oil_down": oil_down, "gold_up": gold_up, "checks": checks}
 
 
+ARCHIVE = os.path.join(ROOT, "docs", "复盘记录.md")
+ARCHIVE_MAX = 40          # 最多保留多少期（超出丢最旧的）
+
+
+def archive(text: str, oil: Dict[str, Any], gold: Dict[str, Any]) -> str:
+    """把本次复盘**追加**到 docs/复盘记录.md（按时间倒序，便于回看）。
+
+    微信消息会漏、会过期，md 是可靠归档（用户明确要求）。
+    """
+    stamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+    head = "## %s ｜ 原油 %.2f (%+.2f%%) ｜ 黄金 %.2f (%+.2f%%)" % (
+        stamp, oil.get("last", 0), oil.get("chg", 0),
+        gold.get("last", 0), gold.get("chg", 0))
+    body = text.split("## 一、行情快照", 1)[-1]
+    body = "## 一、行情快照" + body if "## 一、行情快照" in text else body
+    entry = "\n\n---\n\n" + head + "\n\n" + body.strip() + "\n"
+
+    old = ""
+    if os.path.exists(ARCHIVE):
+        try:
+            old = open(ARCHIVE, encoding="utf-8").read()
+        except Exception:                            # noqa: BLE001
+            old = ""
+    header = "# 复盘记录（按时间倒序，最新在最前）\n"
+    if old.startswith(header):
+        old = old[len(header):]
+    parts = [p for p in old.split("\n---\n") if p.strip()]
+    parts = [entry.lstrip("\n-")] + parts          # 新的放最前
+    parts = parts[:ARCHIVE_MAX]
+    os.makedirs(os.path.dirname(ARCHIVE), exist_ok=True)
+    with open(ARCHIVE, "w", encoding="utf-8") as f:
+        f.write(header + "\n---\n".join(parts))
+    return ARCHIVE
+
+
 def main(push: bool = False) -> None:
     r = build_review()
     os.makedirs(os.path.dirname(DOC), exist_ok=True)
     with open(DOC, "w", encoding="utf-8") as f:
         f.write(r["text"])
+    arc = archive(r["text"], r["oil"], r["gold"])
     print("复盘已写入:", DOC)
+    print("已归档到:", arc)
     print(r["text"][:1200])
     if push:
         try:

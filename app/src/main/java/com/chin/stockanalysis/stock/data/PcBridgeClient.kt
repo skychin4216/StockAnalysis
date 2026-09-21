@@ -87,9 +87,20 @@ object PcBridgeClient {
 
     // ───────────────────────── APK ↔ CodeBuddy 消息桥 ─────────────────────────
 
-    /** 发送消息给 CodeBuddy，返回 `{ok, msg_id}` */
-    suspend fun sendMsg(content: String): String =
-        cmd("msg.send", JSONObject().put("content", content).put("sender", "apk")).toString()
+    /**
+     * 发送消息给 CodeBuddy，返回 `{ok, msg_id}`。
+     *
+     * ★ 2026-09-21：改用 `deliver()`（**只投递、不等应答**）。
+     * 原实现走 `command()` 会最长等 90 秒同步应答，等不到就抛「中继超时」→ UI 报
+     * 「发送失败」，但消息其实**已经落到 PC 的 cb_inbox.json**（用户实测踩到）。
+     * 消息回复本来就是异步的（由 `fetchMsgReplies` 轮询），不需要同步应答。
+     */
+    suspend fun sendMsg(content: String): String {
+        val msgId = CosRelayClient.deliver(
+            ctx(), "msg.send",
+            JSONObject().put("content", content).put("sender", "apk"))
+        return JSONObject().put("ok", true).put("msg_id", msgId).toString()
+    }
 
     /** 拉取 CodeBuddy 回复，返回 `{ok, after, total, messages:[{content,ts,seq}]}` */
     suspend fun fetchMsgReplies(after: Int): String =

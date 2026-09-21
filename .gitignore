@@ -191,3 +191,18 @@ data/pick_charts/
 data/_auto_positions.json
 data/_pick_codes.json
 data/_daily_intel.json
+
+# ===== 2026-09-21 隐私加固（仓库为 public，交易/持仓类数据一律不入库）=====
+# 订单流水：dry_run 阶段无害，但**一旦 TRADE_LIVE=1 实盘就会泄露真实成交**
+data/_trade_orders*.jsonl
+data/_trade_orders*.json
+data/_paper_account.json
+data/_trade_gateway*.json
+# 复盘/巡诊等运行产物
+data/_patrol_recent.json
+data/_maintain_caliber.json
+# 落盘的资金流历史（体积增长，不入库）
+data/_sector_flow_daily.json
+# 一次性探针/导出（本轮排查产生）
+smalltools/_apk_today.log
+smalltools/_tmp_fetch_apklog.py
