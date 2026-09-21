@@ -240,7 +240,7 @@ def judge_stock(secid: str, sector: str, asof: str = "", period: str = "短线"
         return ok, why
     try:
         import _oversold_relax as OR                 # noqa: PLC0415
-        r = OR.evaluate(secid, asof)
+        r = OR.evaluate(secid, asof, sector)         # 板块必须传：冷门板块不放宽
         if r.get("relax"):
             return True, "闸门放宽(超跌反转维稳)：%s 连跌%d 量比%.2f 指数20日%+.1f%%" % (
                 r.get("pattern") or "形态", r.get("down_streak", 0),

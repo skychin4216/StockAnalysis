@@ -42,6 +42,32 @@ CUM_WINDOW = 10             # 累计跌幅观察窗口（交易日）
 CUM_DROP = float(os.environ.get("RELAX_CUM_DROP", "-12.0"))
 # 九转 TD 计数（close[i] < close[i-4] 连续根数）；用户：「连续跌7天以上，符合九转信号之一」
 TD_MIN = int(os.environ.get("RELAX_TD_MIN", "7"))
+# 下跌段天数（从近 12 日内最高收盘到当前的交易日数；用户：万科「一共 7 天」）
+MIN_DECLINE_DAYS = int(os.environ.get("RELAX_DECLINE_DAYS", "7"))
+
+# ── ★ 板块属性：只有「热门赛道」才允许放宽 ──
+# 用户明确：「房地产目前是冷门板块，一潭死水，**不能放宽**。
+#           如果是其他**热门板块**，则可以考虑放宽。」
+# ⇒ 冷门板块（房地产/银行/白酒/煤炭…）即便出现超跌反转也**不放行**，
+#   因为那是资金持续流出、没有承接的「死水」，反弹多为一日游。
+#   热门赛道（资金长期关注）短期回调 7 天 + 底部反转形态，才是「上车机会」。
+HOT_TRACKS = [
+    "半导体", "集成电路", "元件", "消费电子", "光学光电", "通信设备", "通信",
+    "人工智能", "AI", "算力", "光模块", "服务器", "软件", "计算机", "互联网",
+    "机器人", "自动化设备", "军工", "航天", "国防", "船舶",
+    "创新药", "生物制品", "医疗器械", "化学制药",
+    "电池", "光伏", "风电", "储能", "电网设备", "电源设备",
+    "小金属", "稀有金属", "能源金属", "有色金属", "稀土",
+    "汽车零部件", "智能驾驶", "汽车电子",
+]
+
+
+def is_hot_track(sector: str) -> bool:
+    """板块是否属于「热门赛道」（可调，见 HOT_TRACKS）。"""
+    s = (sector or "").strip()
+    if not s:
+        return False
+    return any(k in s or s in k for k in HOT_TRACKS)
 SHRINK_VR = float(os.environ.get("RELAX_SHRINK_VR", "0.85"))
 ENV_MOM = float(os.environ.get("RELAX_ENV_MOM", "-3.0"))
 
@@ -145,6 +171,20 @@ def no_new_low(snaps: List[Dict[str, Any]]) -> bool:
     return _f(snaps[-1], "low") >= _f(snaps[-2], "low")
 
 
+def decline_days(snaps: List[Dict[str, Any]], window: int = 12) -> int:
+    """**下跌段天数**：近 window 日内「最高收盘价」那一天 到 当前 的交易日数。
+
+    用户口径（万科A）：「9.09 开始跌，9.17 只是缩量阳，**一共 7 天**」。
+    最高收盘在 09-08（3.27），其后 09-09…09-17 正好 7 个交易日 → 本函数返回 7。
+    """
+    seg = snaps[-window:] if len(snaps) > window else snaps
+    if len(seg) < 3:
+        return 0
+    closes = [_f(s, "close") for s in seg]
+    i_max = max(range(len(closes)), key=lambda i: closes[i])
+    return len(seg) - 1 - i_max
+
+
 def td_count(snaps: List[Dict[str, Any]]) -> int:
     """TD 买入结构计数（**九转**）：连续 `close[i] < close[i-4]` 的根数。
 
@@ -226,8 +266,11 @@ def env_need_support(asof: str = "") -> Dict[str, Any]:
     return {"ok": False, "mom20": 0.0, "need": False}
 
 
-def evaluate(secid: str, asof: str = "") -> Dict[str, Any]:
-    """四条件评估。返回 {relax, reasons[], pattern, down_streak, vol_ratio, env}。"""
+def evaluate(secid: str, asof: str = "", sector: str = "") -> Dict[str, Any]:
+    """评估是否放宽闸门。返回 {relax, reasons[], pattern, decline_days, …}。
+
+    @param sector 个股所属行业/板块（**必需**）—— 冷门板块一律不放宽。
+    """
     sn = snaps_of(secid)
     if asof:
         sn = [s for s in sn if str(s.get("date"))[:10] <= asof]
@@ -252,6 +295,8 @@ def evaluate(secid: str, asof: str = "") -> Dict[str, Any]:
     c3 = vr <= SHRINK_VR
     c4 = bool(env.get("need"))
     c5 = nnl                             # ★ 强制：最后一天不新低
+    dd = decline_days(sn)
+    c6 = is_hot_track(sector)            # ★ 强制：板块必须是**热门赛道**
 
     reasons = [
         "C1 超跌：连跌(按低点)%d天%s ／ 近%d日%+.2f%%%s ／ 九转%d%s → %s" % (
@@ -263,11 +308,16 @@ def evaluate(secid: str, asof: str = "") -> Dict[str, Any]:
             env.get("mom20", 0.0), ENV_MOM, "✓" if c4 else "✗"),
         "C5 **最后一天不新低**（强制）：%s %s" % (
             "是（低点抬高）" if nnl else "否（仍在创新低）", "✓" if c5 else "✗"),
+        "C6 **热门赛道**（强制）：%s %s" % (
+            sector or "-", "✓" if c6 else "✗ 冷门板块不放宽（如房地产=一潭死水）"),
+        "　（下跌段 %d 天，阈值 ≥%d %s）" % (
+            dd, MIN_DECLINE_DAYS, "✓" if dd >= MIN_DECLINE_DAYS else "✗"),
     ]
-    # 用户口径：连跌≥8天 **且** 最后一天不新低，再叠加形态/缩量/维稳环境
-    relax = c1 and c2 and c3 and c4 and c5
+    # 用户口径：下跌段≥7天 + 最后一天不新低 + **板块是热门赛道**，
+    #           再叠加形态/缩量/维稳环境
+    relax = c1 and c2 and c3 and c4 and c5 and c6
     return {"relax": relax, "reasons": reasons, "pattern": pat,
-            "down_streak": ds, "td_count": td, "no_new_low": nnl,
+            "down_streak": ds, "td_count": td, "no_new_low": nnl, "decline_days": dd,
             "cum_drop": round(cd, 2), "vol_ratio": round(vr, 3), "env": env,
             "conditions": {"c1_oversold": c1, "c1a_streak": c1a, "c1b_cumdrop": c1b,
                            "c1c_td": c1c, "c2_pattern": c2, "c3_shrink": c3,
