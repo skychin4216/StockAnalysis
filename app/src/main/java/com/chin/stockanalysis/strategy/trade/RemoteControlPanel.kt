@@ -735,6 +735,7 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
             textSize = 14f
             setTypeface(null, Typeface.BOLD)
             setTextColor(0xFF0D47A1.toInt())
+            enableCopy()                        // ★ 代码/名称可复制
         })
         val mid = listOf(price, pct).filter { it.isNotBlank() }.joinToString("   ")
         if (mid.isNotBlank()) addView(TextView(context).apply {
@@ -742,6 +743,7 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
             textSize = 12f
             setTextColor(0xFF37474F.toInt())
             setPadding(0, 2.dp(), 0, 0)
+            enableCopy()
         })
         if (reason.isNotBlank()) addView(TextView(context).apply {
             text = reason
@@ -750,12 +752,14 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
             setPadding(0, 2.dp(), 0, 0)
             setSingleLine(false)
             setHorizontallyScrolling(true)      // 长理由不撑破布局，可横向拖
+            enableCopy()
         })
         addView(TextView(context).apply {
             text = ts
             textSize = 10f
             setTextColor(0xFF90A4AE.toInt())
             setPadding(0, 3.dp(), 0, 0)
+            enableCopy()
         })
     }
 
@@ -836,6 +840,23 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
      * 构建单条气泡行（QQ 风格）：气泡 + 下方一行小字「时间戳 · 发送状态」。
      * 每行的气泡再套一层 HorizontalScrollView 以支持左右滚动。
      */
+    /**
+     * 让文本可被**长按选中 / 复制**（2026-09-22：对话·股票·任务·日志·全部 五个 Tab 全支持）。
+     *
+     * 用 Android 原生能力 `setTextIsSelectable(true)`：长按弹出系统「全选/复制」菜单，
+     * 能正确复制**用户选中的部分**，比自己写剪贴板更稳（也自带粘贴光标）。
+     *
+     * 两个注意点：
+     * - 该方法内部已把 TextView 设为可聚焦，无需再设 `isFocusableInTouchMode`，
+     *   否则父容器（HorizontalScrollView）的横向拖动会被首个长按抢走。
+     * - 与「长行横向滚动」不冲突：选择由系统处理，滚动仍归外层容器。
+     */
+    private fun TextView.enableCopy() {
+        setTextIsSelectable(true)
+        // 选中后光标可见；不改变布局，也不拦截触摸
+        setCursorVisible(true)
+    }
+
     private fun buildRow(
         text: String,
         prefix: String,
@@ -863,6 +884,7 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
             // 关键：关掉自动换行、仍保留 \n 换行 → 超长行交给外层横向滚动
             setSingleLine(false)
             setHorizontallyScrolling(true)
+            enableCopy()                        // ★ 长按可选中/复制
         }
         val hsv = HorizontalScrollView(context).apply {
             isFillViewport = false              // 短气泡保持内容宽度，长气泡才横向滚
@@ -879,6 +901,7 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
             this.text = ts
             textSize = 9f
             setTextColor(0xFF9E9E9E.toInt())
+            enableCopy()
         })
         val statusTv = TextView(context).apply {
             this.text = status.orEmpty()
@@ -886,6 +909,7 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
             setTextColor(0xFF9E9E9E.toInt())
             setPadding(6.dp(), 0, 0, 0)
             visibility = if (status.isNullOrBlank()) View.GONE else View.VISIBLE
+            enableCopy()
         }
         meta.addView(statusTv)
 
@@ -1033,17 +1057,20 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
             textSize = 13f
             setTextColor(color)
             setTypeface(null, Typeface.BOLD)
+            enableCopy()                        // ★ 任务名/状态可复制
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         head.addView(TextView(context).apply {
             text = if (state == "success") "退出$exit" else if (state == "failed") "失败" else t.optString("created_at", "").takeLast(8)
             textSize = 11f
             setTextColor(0xFF90A4AE.toInt())
+            enableCopy()
         })
         card.addView(head)
         card.addView(TextView(context).apply {
             text = "$type | ${t.optString("finished_at", "运行中").takeLast(8)}"
             textSize = 10f
             setTextColor(0xFF90A4AE.toInt())
+            enableCopy()                        // ★ 任务 ID 常在这里，务必可复制
         })
         val ops = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         if (state == "running" || state == "queued") {
