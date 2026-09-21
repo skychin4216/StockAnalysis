@@ -17,6 +17,7 @@ codebuddy 想控制/监控就得各自 shell out 到 PS，容易出现三套实�
     scan            _market_scan.py --daemon            盘中情报扫描（快讯/研报）
     holdings_flow   _holdings_flow_daemon.py --daemon   持仓/板块资金流监控
     bridge          _bridge_daemon.py                   手机桥（与 scan 强依赖）
+    responder       _msg_responder.py --daemon          APK消息常驻应答（秒级ACK+AI分析）
 
 ## 用法
 
@@ -60,6 +61,8 @@ DAEMONS = [
      "desc": "持仓+板块资金流监控"},
     {"name": "bridge", "script": "_bridge_daemon.py", "args": [],
      "desc": "手机桥（与 scan 强依赖）"},
+    {"name": "responder", "script": "_msg_responder.py", "args": ["--daemon"],
+     "desc": "APK消息常驻应答（秒级ACK+AI分析）"},
 ]
 BY_NAME = {d["name"]: d for d in DAEMONS}
 ALIAS = {"holdings": "holdings_flow", "holding_flow": "holdings_flow"}
