@@ -35,11 +35,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
-MIN_DOWN_STREAK = 8         # C1-a 严格连跌天数下限
-CUM_WINDOW = 10             # C1-b 累计跌幅观察窗口（交易日）
-CUM_DROP = -12.0            # C1-b 近 10 日累计跌幅 ≤ 此值 → 也算超跌
-SHRINK_VR = 0.85            # C3 缩量线（量比 ≤ 此值视为缩量）
-ENV_MOM = -3.0              # C4 指数近 20 日动量 ≤ 此值 → 维稳动机强
+# ── 阈值（均可用环境变量覆盖，便于按实盘反馈微调）──
+# 连跌天数：**按最低价**数连续新低（下跌途中允许阳线），且**不含**最后那个「不新低」日
+MIN_DOWN_STREAK = int(os.environ.get("RELAX_DOWN_STREAK", "8"))
+CUM_WINDOW = 10             # 累计跌幅观察窗口（交易日）
+CUM_DROP = float(os.environ.get("RELAX_CUM_DROP", "-12.0"))
+# 九转 TD 计数（close[i] < close[i-4] 连续根数）；用户：「连续跌7天以上，符合九转信号之一」
+TD_MIN = int(os.environ.get("RELAX_TD_MIN", "7"))
+SHRINK_VR = float(os.environ.get("RELAX_SHRINK_VR", "0.85"))
+ENV_MOM = float(os.environ.get("RELAX_ENV_MOM", "-3.0"))
 
 _store = None
 
@@ -112,10 +116,44 @@ def is_hammer(snaps: List[Dict[str, Any]]) -> bool:
 
 
 def down_streak(snaps: List[Dict[str, Any]]) -> int:
-    """从最后一根往前数连续下跌（收 < 前收）天数。"""
+    """连续下跌天数 —— **按最低价**判定（2026-09-21 用户纠正）。
+
+    ★ 关键口径（用户原话）：「9.16 最低位比 15 低，9.17 最低位比 9.16 高」
+      ⇒ 不能用「连续收阴」判，因为下跌途中**允许有阳线**（万科 09-16 收 +0.33%
+        却仍创新低）。要用 **low[i] < low[i-1]** 数「连续新低」天数。
+      ⇒ 且**最后一天是「不新低」的止跌确认日**，不计入连跌段，
+        故从**倒数第二根**开始往前数。
+    """
     n = 0
-    for i in range(len(snaps) - 1, 0, -1):
-        if _f(snaps[i], "close") < _f(snaps[i - 1], "close"):
+    for i in range(len(snaps) - 2, 0, -1):          # 从倒数第 2 根起（最后那根是不新低日）
+        if _f(snaps[i], "low") < _f(snaps[i - 1], "low"):
+            n += 1
+        else:
+            break
+    return n
+
+
+def no_new_low(snaps: List[Dict[str, Any]]) -> bool:
+    """最后一天**不新低**（止跌确认）：low[-1] >= low[-2]。
+
+    用户强调：「一定要保证连续跌 ≥8 天 + 最后一天不新低」。
+    （注释：此前 `三日不新低` 那套是针对**热门板块**的追涨确认，
+      这里是**超跌板块**的止跌确认，二者场景不同。）
+    """
+    if len(snaps) < 2:
+        return False
+    return _f(snaps[-1], "low") >= _f(snaps[-2], "low")
+
+
+def td_count(snaps: List[Dict[str, Any]]) -> int:
+    """TD 买入结构计数（**九转**）：连续 `close[i] < close[i-4]` 的根数。
+
+    用户：「这个连续跌 7 天以上，符合九转信号之一」。
+    经典 TD Buy Setup 要 9 根；这里把计数暴露出来，阈值由 `TD_MIN` 控制。
+    """
+    n = 0
+    for i in range(len(snaps) - 1, 3, -1):
+        if _f(snaps[i], "close") < _f(snaps[i - 4], "close"):
             n += 1
         else:
             break
@@ -197,36 +235,43 @@ def evaluate(secid: str, asof: str = "") -> Dict[str, Any]:
         return {"relax": False, "reasons": ["K线不足(<25根)"], "pattern": "",
                 "down_streak": 0, "vol_ratio": 1.0, "env": {}}
 
-    ds = down_streak(sn)
+    ds = down_streak(sn)                 # 连续新低天数（按 low，从倒数第2根起）
+    nnl = no_new_low(sn)                 # 最后一天不新低（**强制**）
+    td = td_count(sn)                    # 九转 TD 计数
     vr = vol_ratio(sn)
     pat = detect_pattern(sn)
     env = env_need_support(asof)
-
     cd = cum_drop(sn)
-    # C1 双路径：严格连跌 ≥N 天 **或** 近 10 日累计跌幅 ≤ -12%
-    # （用户说的「连续 8 天下跌」在实践中常含中途小阳线，只认严格连跌会漏掉）
-    c1a = ds >= MIN_DOWN_STREAK
-    c1b = cd <= CUM_DROP
-    c1 = c1a or c1b
+
+    # C1 三选一（任一成立即可）
+    c1a = ds >= MIN_DOWN_STREAK          # 连跌(按最低价) ≥ 8 天
+    c1b = cd <= CUM_DROP                 # 近 10 日累计跌幅 ≤ -12%
+    c1c = td >= TD_MIN                   # 九转 TD 计数 ≥ 7
+    c1 = c1a or c1b or c1c
     c2 = bool(pat)
     c3 = vr <= SHRINK_VR
     c4 = bool(env.get("need"))
+    c5 = nnl                             # ★ 强制：最后一天不新低
 
     reasons = [
-        "C1 超跌：连跌 %d 天%s ／ 近%d日 %+.2f%%%s（任一满足即可）%s" % (
+        "C1 超跌：连跌(按低点)%d天%s ／ 近%d日%+.2f%%%s ／ 九转%d%s → %s" % (
             ds, "✓" if c1a else "✗", CUM_WINDOW, cd, "✓" if c1b else "✗",
-            "✓" if c1 else "✗"),
+            td, "✓" if c1c else "✗", "✓" if c1 else "✗"),
         "C2 反转形态：%s %s" % (pat or "无", "✓" if c2 else "✗"),
         "C3 缩量：量比 %.2f（阈值 ≤%.2f）%s" % (vr, SHRINK_VR, "✓" if c3 else "✗"),
         "C4 维稳环境：指数20日 %+.2f%%（阈值 ≤%.1f%%）%s" % (
             env.get("mom20", 0.0), ENV_MOM, "✓" if c4 else "✗"),
+        "C5 **最后一天不新低**（强制）：%s %s" % (
+            "是（低点抬高）" if nnl else "否（仍在创新低）", "✓" if c5 else "✗"),
     ]
-    # **必须同时满足**（用户口径：超跌 + 反转 + 缩量 + 大环境）
-    relax = c1 and c2 and c3 and c4
+    # 用户口径：连跌≥8天 **且** 最后一天不新低，再叠加形态/缩量/维稳环境
+    relax = c1 and c2 and c3 and c4 and c5
     return {"relax": relax, "reasons": reasons, "pattern": pat,
-            "down_streak": ds, "cum_drop": round(cd, 2), "vol_ratio": round(vr, 3), "env": env,
+            "down_streak": ds, "td_count": td, "no_new_low": nnl,
+            "cum_drop": round(cd, 2), "vol_ratio": round(vr, 3), "env": env,
             "conditions": {"c1_oversold": c1, "c1a_streak": c1a, "c1b_cumdrop": c1b,
-                           "c2_pattern": c2, "c3_shrink": c3, "c4_policy_env": c4}}
+                           "c1c_td": c1c, "c2_pattern": c2, "c3_shrink": c3,
+                           "c4_policy_env": c4, "c5_no_new_low": c5}}
 
 
 def should_relax(secid: str, asof: str = "") -> bool:
