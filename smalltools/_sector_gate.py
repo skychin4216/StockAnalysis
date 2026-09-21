@@ -227,17 +227,45 @@ def judge(sector: str, asof: str = "", period: str = "短线") -> Tuple[bool, st
     return res
 
 
+def judge_stock(secid: str, sector: str, asof: str = "", period: str = "短线"
+                ) -> Tuple[bool, str]:
+    """**带个股豁免**的板块判定（2026-09-21 用户思路）。
+
+    冷板块若该票满足「超跌 + 底部反转形态 + 缩量 + 维稳环境」
+    （`_oversold_relax.evaluate`），则**放宽闸门放行** —— 避免把
+    「政策要拉一把的超跌板块」一票否决（万科A 教训）。
+    """
+    ok, why = judge(sector, asof, period)
+    if ok:
+        return ok, why
+    try:
+        import _oversold_relax as OR                 # noqa: PLC0415
+        r = OR.evaluate(secid, asof)
+        if r.get("relax"):
+            return True, "闸门放宽(超跌反转维稳)：%s 连跌%d 量比%.2f 指数20日%+.1f%%" % (
+                r.get("pattern") or "形态", r.get("down_streak", 0),
+                r.get("vol_ratio", 1.0), (r.get("env") or {}).get("mom20", 0.0))
+    except Exception:                                # noqa: BLE001
+        pass
+    return ok, why
+
+
 def filter_candidates(cands: List[Dict[str, Any]], period: str = "短线",
                       asof: str = "", sector_key: str = "industry"
                       ) -> Tuple[List[Dict[str, Any]], List[Tuple[Dict[str, Any], str]]]:
-    """按板块闸门过滤候选票。返回 (保留, [(被剔除票, 原因)])。"""
+    """按板块闸门过滤候选票。返回 (保留, [(被剔除票, 原因)])。
+
+    对每一票走 [judge_stock]（含超跌反转豁免），并对同板块结果做缓存。
+    """
     kept, dropped = [], []
     seen: Dict[str, Tuple[bool, str]] = {}
     for c in cands or []:
         sec = c.get(sector_key) or c.get("board") or ""
-        if sec not in seen:
-            seen[sec] = judge(sec, asof, period)
-        ok, reason = seen[sec]
+        secid = c.get("secid") or ""
+        key = sec + "|" + str(secid) if secid else sec
+        if key not in seen:
+            seen[key] = judge_stock(secid, sec, asof, period) if secid else judge(sec, asof, period)
+        ok, reason = seen[key]
         if ok:
             kept.append(c)
         else:

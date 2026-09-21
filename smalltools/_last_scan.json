@@ -1,55 +1,55 @@
 {
- "ts": "2026-09-21 22:10:52",
+ "ts": "2026-09-21 22:41:29",
  "us": [
   {
    "name": "英特尔",
-   "pct": 9.53,
-   "price": 118.95
+   "pct": 11.12,
+   "price": 120.68
   },
   {
    "name": "超威半导体",
-   "pct": 8.78,
-   "price": 608.96
+   "pct": 8.74,
+   "price": 608.74
   },
   {
    "name": "Meta Platforms",
-   "pct": 7.41,
-   "price": 714.5
+   "pct": 6.87,
+   "price": 710.91
   },
   {
    "name": "高通",
-   "pct": 3.87,
-   "price": 184.59
+   "pct": 5.47,
+   "price": 187.44
   },
   {
    "name": "特斯拉",
-   "pct": 3.24,
-   "price": 376.06
+   "pct": 3.1,
+   "price": 375.57
   },
   {
    "name": "谷歌-A",
-   "pct": 1.51,
-   "price": 354.82
+   "pct": 2.09,
+   "price": 356.84
   },
   {
    "name": "奈飞",
-   "pct": 1.39,
-   "price": 72.79
-  },
-  {
-   "name": "甲骨文",
-   "pct": 1.3,
-   "price": 149.53
-  },
-  {
-   "name": "亚马逊",
-   "pct": 1.19,
-   "price": 256.73
+   "pct": 1.71,
+   "price": 73.02
   },
   {
    "name": "默沙东",
-   "pct": 1.03,
-   "price": 148.38
+   "pct": 1.56,
+   "price": 149.16
+  },
+  {
+   "name": "台积电",
+   "pct": 1.36,
+   "price": 440.6
+  },
+  {
+   "name": "礼来",
+   "pct": 1.22,
+   "price": 1166.98
   }
  ],
  "kr": {
@@ -327,6 +327,46 @@
  ],
  "news": [
   {
+   "title": "比特币涨至86000美元 过去24小时涨6.7%",
+   "time": "2026-09-21 22:37:39",
+   "url": "https://finance.eastmoney.com/a/202609213880344531.html"
+  },
+  {
+   "title": "OpenAI据悉正在开发新功能以应对xAI旗下Grok机器人的竞争",
+   "time": "2026-09-21 22:33:32",
+   "url": "https://finance.eastmoney.com/a/202609213880344383.html"
+  },
+  {
+   "title": "WTI原油失守92美元/桶",
+   "time": "2026-09-21 22:24:27",
+   "url": "https://finance.eastmoney.com/a/202609213880328118.html"
+  },
+  {
+   "title": "AMD总市值首次突破1万亿美元 股价创历史新高",
+   "time": "2026-09-21 22:17:12",
+   "url": "https://finance.eastmoney.com/a/202609213880319081.html"
+  },
+  {
+   "title": "奕斯伟计算通过港交所上市聆讯",
+   "time": "2026-09-21 22:14:41",
+   "url": "https://finance.eastmoney.com/a/202609213880323633.html"
+  },
+  {
+   "title": "WTI原油期货跌幅扩大至4%",
+   "time": "2026-09-21 22:13:15",
+   "url": "https://finance.eastmoney.com/a/202609213880313569.html"
+  },
+  {
+   "title": "妙可蓝多：创始人、董事柴琇辞职",
+   "time": "2026-09-21 22:10:41",
+   "url": "https://finance.eastmoney.com/a/202609213880313287.html"
+  },
+  {
+   "title": "诺和诺德首席财务官：公司目标是在2030年之前将营业利润率维持在与当前大致稳定的水平",
+   "time": "2026-09-21 22:08:03",
+   "url": "https://finance.eastmoney.com/a/202609213880313459.html"
+  },
+  {
    "title": "现货黄金日内跌1%",
    "time": "2026-09-21 22:03:50",
    "url": "https://finance.eastmoney.com/a/202609213880304665.html"
@@ -335,46 +375,6 @@
    "title": "美股光通信股走高 Astera Labs涨超7%",
    "time": "2026-09-21 22:02:45",
    "url": "https://finance.eastmoney.com/a/202609213880305252.html"
-  },
-  {
-   "title": "*ST元道：收到股票终止上市决定",
-   "time": "2026-09-21 22:02:32",
-   "url": "https://finance.eastmoney.com/a/202609213880305882.html"
-  },
-  {
-   "title": "利比亚Sharara油田已损失约20万桶/日的产能",
-   "time": "2026-09-21 22:01:31",
-   "url": "https://finance.eastmoney.com/a/202609213880305560.html"
-  },
-  {
-   "title": "美联储古尔斯比：不认为加息是在收回2025年的降息",
-   "time": "2026-09-21 22:01:10",
-   "url": "https://finance.eastmoney.com/a/202609213880303190.html"
-  },
-  {
-   "title": "OpenAI与Anthropic据悉正洽谈互相进行压力测试",
-   "time": "2026-09-21 21:57:19",
-   "url": "https://finance.eastmoney.com/a/202609213880300459.html"
-  },
-  {
-   "title": "湖北：发放“算力券”提升补贴比例 将模型、词元等服务模式纳入补贴范围",
-   "time": "2026-09-21 21:57:17",
-   "url": "https://finance.eastmoney.com/a/202609213880298855.html"
-  },
-  {
-   "title": "纳斯达克100指数涨幅扩大至1.5%",
-   "time": "2026-09-21 21:57:13",
-   "url": "https://finance.eastmoney.com/a/202609213880295361.html"
-  },
-  {
-   "title": "Arm美股盘初涨超10%",
-   "time": "2026-09-21 21:49:00",
-   "url": "https://finance.eastmoney.com/a/202609213880287831.html"
-  },
-  {
-   "title": "纳斯达克综合指数涨1.1%",
-   "time": "2026-09-21 21:48:37",
-   "url": "https://finance.eastmoney.com/a/202609213880286678.html"
   }
  ],
  "session": {
@@ -433,27 +433,25 @@
   }
  ],
  "ext": {
-  "ts": "2026-09-21 22:11:21",
+  "ts": "2026-09-21 22:41:59",
   "climate": [],
   "world": [
+   "比特币涨至86000美元 过去24小时涨6.7%",
+   "WTI原油失守92美元/桶",
+   "AMD总市值首次突破1万亿美元 股价创历史新高",
+   "WTI原油期货跌幅扩大至4%",
    "现货黄金日内跌1%",
    "美联储古尔斯比：不认为加息是在收回2025年的降息",
    "纳斯达克100指数涨幅扩大至1.5%",
-   "纳斯达克综合指数涨1.1%",
-   "美国电信巨头T-Mobile：客户可在国际上使用5G独立组网漫游",
-   "美国银行表示：铝价在未来几周可能反弹 但明年将面临下行压力",
-   "美国银行表示铝价在未来几周可能反弹",
-   "诺和诺德美国负责人：自1月以来诺和诺德在肥胖症领域的市场份额已提升约8个百分点"
+   "纳斯达克综合指数涨1.1%"
   ],
   "names": [
    "亚马逊：今年将部署5,000台智能眼镜设备",
    "亚马逊：2027年在快递服务合作伙伴计划上投资19亿美元",
    "谷歌推出899美元起售的Googlebook AI笔记本电脑",
    "Meta宣布连接法国和美国的Petal海底电缆预计2029年投入使用",
-   "市场消息：尚不清楚 OpenAI 与 Anthropic 是否达成协议。",
-   "【OpenAI与Anthropic曾接近达成协议，互相开展 AI 压力测试】一位了解谈判内情的消息人士透露，在 OpenAI 接连发生多起与自身技术相关的网络安全事件、行业从业者发出严重警示之前，OpenAI 就已和 Anthropic 磋商一份具备法律约束力的协议，双方计划互相针对对方的大模型开展压力测试。这名消息人士称，今年早些时候，两家企业及其法务团队一直在敲定协议细节，计划对各自模型开展多类测试，排查漏洞与潜在隐藏风险。目前尚不清楚，在 OpenAI 遭遇多起事件、未发布模型入侵其自身及其他企业系统之前，双方是否完成协议签署。一名熟悉 OpenAI 战略的人士表示，公司一直在研讨多种方案，探索企业之间、企业与政府在 AI 安全领域的合作模式。该人士称，相关讨论近期拓展至全新安全机制，覆盖模型训练前以及正式发布前两大阶段。",
-   "市场消息： OpenAI 与 Anthropic 今年已就压力测试事宜展开讨论。",
-   "市场消息： OpenAI 与 Anthropic 正洽谈互相开展压力测试。"
+   "【OpenAI开发新功能应对Grok Bot和Meta Muse竞争】据报道，OpenAI正开发新功能，以更直接与SpaceX近期推出的Grok Bot竞争，并讨论推出个人AI助手，应对Meta新发布的Muse。相关产品将主要基于OpenAI现有Codex和ChatGPT中的智能体技术进行重新整合和包装，可连接邮箱、日历及其他应用，自动完成预约、邮件沟通等多步骤任务。报道称，Grok Bot可作为全天候运行的“AI队友”或数字助理，执行市场调研、广告策划及应用内操作；Meta的Muse则可完成回复邮件、购物及与商家沟通等任务。个人AI助手应用Instinct也已吸引超过10万用户。OpenAI目前尚未明确相关新功能的发布时间，但随着Meta、SpaceX等加速布局个人AI智能体，公司面临更大竞争压力。",
+   "市场消息：OPENAI开发新功能以对抗Grok机器人，考虑对Meta的Muse作出回应。"
   ],
   "macro_reports": [
    "浦银国际证券|医药行业：美拟允许多数中国药品授权继续开展，创新药BD政策风险边际缓和",
@@ -462,32 +460,44 @@
   ]
  },
  "auth": {
-  "ts": "2026-09-21 22:11:24",
+  "ts": "2026-09-21 22:42:01",
   "us_finance": [
    {
-    "title": "纳斯达克100指数涨约1.3%，重返30000点整数位心理关口上方。成分股Arm控股涨超9.2%，Strategy涨8.2%，RKLB涨7.",
-    "url": "https://wallstreetcn.com/livenews/3168351",
-    "time": "2026-09-21 21:41",
+    "title": "纳斯达克100指数涨超2%，成分股Arm控股涨12.4%，英特尔涨11.6%，西部数据涨10%，AMD涨9.2%，Strategy涨8.1%",
+    "url": "https://wallstreetcn.com/livenews/3168377",
+    "time": "2026-09-21 22:37",
     "src": "wallstreetcn"
    },
    {
-    "title": "美股三大股指高开，道指涨0.49%，标普500指数涨0.6%，纳指涨0.7%。明星科技股普涨，英特尔涨超9%，公司携手友达布局Micro L",
-    "url": "https://wallstreetcn.com/livenews/3168345",
-    "time": "2026-09-21 21:30",
+    "title": "美国芝加哥联储主席古尔斯比（Austan Goolsbee）警告称，美联储无法忽视反复且持续的供给冲击，必须以一种可能引发经济困难的方式作出",
+    "url": "https://wallstreetcn.com/livenews/3168365",
+    "time": "2026-09-21 22:11",
     "src": "wallstreetcn"
    },
    {
-    "title": "标普500指数高开42.33点，涨幅0.55%，报7692.83点；\n\n道琼斯工业平均指数高开254.12点，涨幅0.49%，报51936.",
-    "url": "https://wallstreetcn.com/livenews/3168344",
-    "time": "2026-09-21 21:30",
-    "src": "wallstreetcn"
+    "title": "美联储古尔斯比：不认为加息是在收回2025年的降息",
+    "url": "https://finance.eastmoney.com/a/202609213880303190.html",
+    "time": "2026-09-21 22:01:10",
+    "src": "eastmoney"
    }
   ],
   "us_politics": [
    {
-    "title": "【国泰海通：地缘仍是当前资产的关键定价锚】国泰海通发布研报认为，美联储加息并不会对市场形成有效支撑，近期市场的反弹主要来源于地缘利好信息的释",
-    "url": "https://finance.sina.cn/7x24/2026-09-21/detail-inisqzxx9247920.d.html",
-    "time": "2026-09-21 22:06:45",
+    "title": "法庭文件显示，美国有线电视新闻网（CNN）、MSNBC与政治新闻网（Politico）正式起诉唐纳德·特朗普。",
+    "url": "https://finance.sina.cn/7x24/2026-09-21/detail-inisqzxx9260762.d.html",
+    "time": "2026-09-21 22:24:55",
+    "src": "sina"
+   },
+   {
+    "title": "市场消息：为声援美国有线电视新闻网(CNN)，美国电视网CBS、NBC、ABC和福克斯将停止报道特朗普。",
+    "url": "https://finance.sina.cn/7x24/2026-09-21/detail-inisqzxx9259355.d.html",
+    "time": "2026-09-21 22:22:33",
+    "src": "sina"
+   },
+   {
+    "title": "市场消息：高市早苗在与特朗普会谈中将重点强调日本对美投资事宜。",
+    "url": "https://finance.sina.cn/7x24/2026-09-21/detail-inisqzxz6026792.d.html",
+    "time": "2026-09-21 22:14:31",
     "src": "sina"
    }
   ],
@@ -503,12 +513,6 @@
     "url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20260916b.htm",
     "time": "<![CDATA[Wed, 16 Sep 2026 18:00:00 GMT]]>",
     "src": "federalreserve"
-   },
-   {
-    "title": "美联储古尔斯比：不认为加息是在收回2025年的降息",
-    "url": "https://finance.eastmoney.com/a/202609213880303190.html",
-    "time": "2026-09-21 22:01:10",
-    "src": "eastmoney"
    }
   ],
   "cn_finance": [
@@ -517,23 +521,24 @@
     "url": "https://finance.eastmoney.com/a/202609213880180363.html",
     "time": "2026-09-21 19:54:38",
     "src": "eastmoney"
-   },
-   {
-    "title": "【9月21日增减持汇总】9月21日盘后，据不完全统计，包括津膜科技、美联新材、捷强装备、探路者、广康生化、安车检测、奥精医疗、科林电气、ST",
-    "url": "https://finance.sina.cn/7x24/2026-09-21/detail-inisqzxz6017895.d.html",
-    "time": "2026-09-21 22:03:58",
-    "src": "sina"
    }
   ],
   "cn_politics": [
    {
-    "title": "【上饶市政协原党组成员、副主席熊孙魁接受审查调查】江西省纪委监委21日通报，上饶市政协原党组成员、副主席熊孙魁涉嫌严重违纪违法，主动向组织交",
-    "url": "https://finance.sina.cn/7x24/2026-09-21/detail-inisqzxz6021954.d.html",
-    "time": "2026-09-21 22:08:30",
+    "title": "【五大国产手机接入中国地震预警网】记者9月21日从中国地震局获悉，近日荣耀手机地震预警应用全面通过中国地震台网中心技术评测，正式接入中国地震",
+    "url": "",
+    "time": "2026-09-21 22:36:59",
     "src": "sina"
    }
   ],
-  "cn_agency": []
+  "cn_agency": [
+   {
+    "title": "土耳其财政部：截至8月末土耳其中央政府债务存量为158938亿里拉。",
+    "url": "https://finance.sina.cn/7x24/2026-09-21/detail-inisqzxx9262938.d.html",
+    "time": "2026-09-21 22:30:28",
+    "src": "sina"
+   }
+  ]
  },
  "sentinel": {
   "y10": {
@@ -545,22 +550,22 @@
    "value": 5.29
   },
   "usdjpy": {
-   "ts": "22:11:28",
-   "last": 157.46,
+   "ts": "22:42:04",
+   "last": 157.34,
    "pct": null
   },
   "wti": {
    "date": "2026-09-21",
-   "last": 92.187,
+   "last": 91.858,
    "prev": 96.08,
    "name": "纽约原油"
   },
   "wti_days": 2,
   "sox": {
    "name": "费城半导体(SOX)",
-   "last": 12181.7845,
-   "pct": 2.18,
-   "ts": "2026-09-21 22:11:24",
+   "last": 12251.4635,
+   "pct": 2.77,
+   "ts": "2026-09-21 22:42:00",
    "prev": 12145.9253
   },
   "alerts": []
