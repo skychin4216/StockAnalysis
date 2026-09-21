@@ -193,3 +193,22 @@ python _profit_backtest.py > out_profit.txt
 # 3. 一年中线/长线回溯 + 参数拟合
 python _year_backtest.py > out_year.txt
 ```
+
+## 选股子编码 + 并排图 + 自动交易（2026-09-21）
+- \_stock_chart.py\  个股「日K(60日)+当天分时」并排 PNG（matplotlib，红涨绿跌，超2MB自动降dpi）
+- \_pick_codes.py\   选股子编码分配/解析：11/12/21…（十位=组别 1短线 2中线 3长线 4板块轮动），落盘 data/_pick_codes.json
+- \_pick_card.py\    选股→子编码清单卡片 + 并排图 + 微信群推送（--no-push 只出图）
+- \_remote_cmd.py\   APK 指令消费：买 11 / 买 11 12 21 / 卖出 11 → _trade_gateway 下单（默认 dry_run，TRADE_LIVE=1 实盘）
+- \_auto_sell.py\    T+1 自动止盈止损守护：>=买入价x1.03 止盈、<=x0.95 止损（--take-profit/--stop-loss 可调；--daemon 常驻 30s）
+
+## 模拟交易引擎（2026-09-21，参考幻方量化/聚宽的实盘贴近做法）
+- \_paper_sim.py\  18年样本外模拟交易：显式交易成本(佣金万2.5双边最低5元+印花税千1卖出+过户费万0.2+滑点0.1%双边)、T+1约束、日内触价成交(同日双触按止损悲观)、样本外信号(selected_*.json)
+  - \--compare\  出场规则横评（固定止盈止损 / 移动止盈 / ATR止损 / 固定持有）
+  - \--sweep\    参数敏感性扫描（防过拟合：好策略应在邻域稳定）
+  - **实测结论**：固定+3%/-5% 为**负期望**(PF 0.61~0.97)；ATR止损2x(PF 1.49~1.65) 与 持有10日(PF 1.64~1.75) 显著更优，且跨周期一致
+
+## 板块闸门 / 热力图 / 模拟交易（2026-09-21）
+- \_paper_sim.py\    模拟交易引擎（18年样本外，显式交易成本，--compare 出场规则横评，--sweep 参数扫描）
+- \_sector_gate.py\  板块闸门：冷板块(20日动量<+3%且资金<5亿)须连涨≥3天才放行；长线豁免；成分<3只不误杀
+- \_sector_heatmap.py\ 板块资金活跃度热力图（板块x日期 imshow，0轴上红=活跃/下绿=冷清；--save-flow 每日落盘真资金流）
+- \_pool_filters.py\ 新增 SECTOR_GATE 开关（默认关，SECTOR_GATE=1 开启板块闸门）

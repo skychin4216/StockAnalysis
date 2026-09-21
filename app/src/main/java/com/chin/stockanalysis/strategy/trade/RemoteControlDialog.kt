@@ -44,14 +44,15 @@ class RemoteControlDialog(context: Context) : Dialog(context) {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.WHITE)
         }
-        // ── 标题栏 ──
+        // ── 标题栏（2026-09-20：竖向留白减半 12dp→6dp，标题栏整体高度约为原来一半）──
+        // ★ 这里是唯一的「远程控制」标题；RemoteControlPanel 内部不再重复渲染标题。
         root.addView(LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(16.dp(), 12.dp(), 8.dp(), 12.dp())
+            setPadding(16.dp(), 6.dp(), 8.dp(), 6.dp())
             setBackgroundColor(0xFF4527A0.toInt())
             addView(TextView(context).apply {
-                text = "🎛 远程控制 (PC · CodeBuddy)"
+                text = "🌐 远程控制"
                 textSize = 17f
                 setTextColor(Color.WHITE)
                 setTypeface(null, Typeface.BOLD)

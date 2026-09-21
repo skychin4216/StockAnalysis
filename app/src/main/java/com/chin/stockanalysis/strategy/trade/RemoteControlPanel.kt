@@ -9,12 +9,16 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.widget.EditText
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.chin.stockanalysis.stock.data.CosRelayClient
 import com.chin.stockanalysis.stock.data.PcBridgeClient
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,10 +34,23 @@ import org.json.JSONObject
  * 远程控制面板（C/S · APK 客户端 · 可复用 View）
  *
  * 同一套面板可内嵌在两种入口：
- * - RemoteControlDialog（全屏）：AI 对话框「📡 远程」按钮等打开，含任务列表 + 日志区
- * - StrategyImportFragment「🎛 远程」卡片（compact=true）：数据→PC参数 页，含连接信息 + 快捷任务 + CodeBuddy 消息
+ * - RemoteControlDialog（全屏）：AI 对话框「📡 远程」按钮等打开，含任务列表
+ * - StrategyImportFragment「🎛 远程」卡片（compact=true）：数据→PC参数 页
  *
- * 连接配置走**联网中继**（`CosRelayClient`，纯 COS）：无需填 IP / Token，两端联网即可。
+ * ## 布局（2026-09-20 按需求重排）
+ * 1. `🌐 远程控制` 标题 + 中继状态（`设备ID · 同步时间 MM-dd HH:mm:ss`）+ 测试中继连接
+ * 2. 快捷任务（预设控件，一键与 PC 端 exe 沟通）
+ * 3. **会话区**（微信/QQ 气泡式）：对话记录 + PC 端日志的统一消息流，
+ *    支持「全部 / 对话 / 日志」筛选；外层垂直滚动、每行内层水平滚动（长日志行可左右拖）
+ * 4. 输入框 + 发送（置于会话区**下方**）
+ *
+ * ## 消息来源（刻意区分）
+ * - `我:` —— 本机发出（右对齐绿气泡）
+ * - `CodeBuddy:` —— PC 端 AI 回复（左对齐浅绿气泡）
+ * - `🖥` —— PC 端 exe 任务日志（左对齐深色条，带时间戳）
+ * 前两者归 `CAT_CHAT`，日志归 `CAT_LOG`，可按标签筛选。
+ *
+ * 连接走**联网中继**（`CosRelayClient`，纯 COS）：无需填 IP / Token，两端联网即可。
  */
 class RemoteControlPanel(context: Context, private val compact: Boolean = false) :
     LinearLayout(context) {
@@ -45,14 +62,48 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
 
     private var statusTv: TextView? = null
     private var taskListBox: LinearLayout? = null
-    private var logBox: LinearLayout? = null
-    private var logScroll: ScrollView? = null
+    private var syncTv: TextView? = null
 
-    // CodeBuddy 消息区
+    // 会话区（对话 / 日志 / 全部 / 任务 —— 四个 Tab 各自一套独立滚动容器）
     private var msgInput: EditText? = null
-    private var msgBox: LinearLayout? = null
-    private var msgScroll: ScrollView? = null
-    private var lastReplySeq = 0
+    private var lastReplySeq = prefs().getInt(PREF_SEQ, 0)
+
+    /** Tab 类别 -> 该 Tab 的滚动容器 / 内容盒子。四者互不干扰，各自保留滚动位置。 */
+    private val chatScrolls = mutableMapOf<String, ScrollView>()
+    private val chatBoxes = mutableMapOf<String, LinearLayout>()
+    private val filterTabs = mutableMapOf<String, TextView>()
+    /** Tab 上的计数（对话=N / 日志=N / 全部=N / 任务=N） */
+    private val tabLabels = mutableMapOf<String, String>()
+    private val tabCounts = mutableMapOf<String, Int>()
+    private var chatFilter = CAT_CHAT
+
+    /** 回放历史时置位：此期间的 addMsgRow 不再重复落盘（否则会自我叠加） */
+    private var restoring = false
+
+    private companion object {
+        const val CAT_CHAT = "chat"   // 对话（我 / CodeBuddy）
+        const val CAT_LOG = "log"     // PC 端 exe 任务日志
+        const val CAT_ALL = "all"     // 全部（对话+日志的完整时间线）
+        const val CAT_TASK = "task"   // 任务列表（原底部区块，已收编为 Tab）
+
+        /** PC 端日志行的来源标签（exe 侧输出；CodeBuddy 的回复走 CAT_CHAT）。 */
+        const val PC_LOG_PREFIX = "🖥"
+
+        /** 「对话」Tab 一行结论的最大字数；超出则折叠，完整内容转入「日志」。 */
+        const val CHAT_SUMMARY_MAX = 60
+
+        // ── 聊天记录持久化（跨 Dialog 开关 / 跨进程重启保留）──
+        const val PREF_FILE = "remote_control"
+        const val PREF_HISTORY = "history"
+        const val PREF_SEQ = "reply_seq"
+        const val HISTORY_MAX = 300      // 超过则丢弃最旧的，避免无限膨胀
+
+        /** Tab 展示顺序：对话 → 日志 → 全部 → 任务 */
+        val TAB_ORDER = listOf(CAT_CHAT, CAT_LOG, CAT_ALL, CAT_TASK)
+    }
+
+    private fun prefs() =
+        context.applicationContext.getSharedPreferences(PREF_FILE, Context.MODE_PRIVATE)
 
     private fun Int.dp() = (this * density + 0.5f).toInt()
 
@@ -63,6 +114,7 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
         // buildView() 内部已把子视图 addView 到 this（root），这里不能再 addView 返回值，
         // 否则会把自己添加为自己，形成父子循环引用 → resetResolvedLayoutDirection 无限递归 → StackOverflowError
         buildView()
+        restoreHistory()   // 恢复上一次的聊天/日志记录（2026-09-21：不要每次打开都从零开始）
     }
 
     override fun onAttachedToWindow() {
@@ -86,39 +138,50 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
     private fun buildView(): View {
         val root = this
 
-        // ── 连接配置（联网中继：无需 IP、无需 Token） ──
+        // ── 中继单行头部：左侧「测试中继连接」按钮 + **右侧**并入的设备/同步信息 ──
+        //
+        // ★ 面板本身**不再**无条件渲染「🌐 远程控制」标题 —— RemoteControlDialog 顶部
+        //   已有标题栏，两处都画会重复；只有 compact（StrategyImportFragment 卡片）
+        //   没有外层标题时才补一个。
         val cfgBox = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(12.dp(), 8.dp(), 12.dp(), 8.dp())
+            setPadding(12.dp(), 6.dp(), 12.dp(), 6.dp())
             setBackgroundColor(0xFFEDE7F6.toInt())
         }
-        cfgBox.addView(TextView(context).apply {
-            text = "📡 联网中继（无需填 IP / 无需填 Token）"
-            textSize = 12f
-            setTextColor(0xFF7B1FA2.toInt())
-            setTypeface(null, Typeface.BOLD)
-        })
-        cfgBox.addView(TextView(context).apply {
-            text = "两端各自联网即可，不要求同一 WiFi；PC 端需运行 python -m autoquant.relay_worker"
-            textSize = 10f
-            setTextColor(0xFFB39DDB.toInt())
-        })
-        cfgBox.addView(TextView(context).apply {
-            text = CosRelayClient.statusText(context)
-            textSize = 11f
-            setTextColor(0xFF4527A0.toInt())
-        })
-        cfgBox.addView(TextView(context).apply {
+        if (compact) {
+            cfgBox.addView(TextView(context).apply {
+                text = "🌐 远程控制"
+                textSize = 15f
+                setTextColor(0xFF4527A0.toInt())
+                setTypeface(null, Typeface.BOLD)
+            })
+        }
+        val headRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        headRow.addView(TextView(context).apply {
             text = "🔗 测试中继连接"
-            textSize = 13f
+            textSize = 12f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            setPadding(0, 10.dp(), 0, 10.dp())
+            setPadding(10.dp(), 6.dp(), 10.dp(), 6.dp())
             background = rnd(0xFF00838F.toInt(), 6.dp())
             setOnClickListener { saveAndTest() }
-        }, LinearLayout.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = 6.dp()
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        // 设备 ID + **具体同步时间点**：CosRelayClient.statusText() 只给相对时间
+        // （「X 分钟前」），这里改成绝对时间；已并入按钮右侧，不再单独占一行。
+        syncTv = TextView(context).apply {
+            text = syncStatusText()
+            textSize = 10f
+            setTextColor(0xFF7B1FA2.toInt())
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            maxLines = 2
+        }
+        headRow.addView(syncTv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            leftMargin = 8.dp()
         })
+        cfgBox.addView(headRow)
         root.addView(cfgBox)
 
         // ── 快捷任务按钮 ──
@@ -142,24 +205,111 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
         )) { submit(it) })
         root.addView(quick)
 
-        // ── 💬 CodeBuddy 即时通讯 ──
+        // ── 💬 会话区（微信/QQ 气泡式：对话记录 + PC 端 exe 日志；输入框在下方） ──
         val msgPanel = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(12.dp(), 8.dp(), 12.dp(), 8.dp())
-            setBackgroundColor(0xFFE8F5E9.toInt())
+            setPadding(8.dp(), 6.dp(), 8.dp(), 6.dp())
+            setBackgroundColor(0xFFF2F3F5.toInt())
         }
-        msgPanel.addView(TextView(context).apply {
-            text = "💬 发给 CodeBuddy（AI 自动处理并回复）"
-            textSize = 13f
-            setTextColor(0xFF2E7D32.toInt())
-            setTypeface(null, Typeface.BOLD)
-        })
+        // ── 三个 Tab：各司其职、内容**完全隔离**（不再是一个列表做可见性过滤） ──
+        //   全部 = 完整时间线：对话 + 日志按发生顺序穿插，排查问题看这里
+        //   对话 = 仅「我 ↔ CodeBuddy」的双向问答，不含任何流水
+        //   日志 = 仅 PC 端 exe 任务输出（🖥），不含聊天
+        //   任务 = 原底部任务区块（状态行 + 任务卡），2026-09-21 收编为第四个 Tab
+        val tabs = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        listOf("对话" to CAT_CHAT, "日志" to CAT_LOG, "全部" to CAT_ALL, "任务" to CAT_TASK)
+            .forEach { (label, cat) ->
+            tabs.addView(TextView(context).apply {
+                text = "$label 0"
+                textSize = 12f
+                gravity = Gravity.CENTER
+                setPadding(14.dp(), 4.dp(), 14.dp(), 4.dp())
+                background = rnd(0xFFDDDDDD.toInt(), 12.dp())
+                tabLabels[cat] = label
+                tabCounts[cat] = 0
+                filterTabs[cat] = this
+                setOnClickListener { setChatFilter(cat) }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                rightMargin = 6.dp()
+                bottomMargin = 4.dp()
+            })
+        }
+        // ── 🗑 清空：放在 Tab 行末尾（仅清空会话历史，不影响「任务」列表）──
+        tabs.addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))   // 柔性间距，把它推到最右
+        var clearArmed = false
+        tabs.addView(TextView(context).apply {
+            text = "🗑 清空"
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setPadding(10.dp(), 4.dp(), 10.dp(), 4.dp())
+            setTextColor(0xFFC62828.toInt())
+            background = rnd(0xFFFFEBEE.toInt(), 12.dp())
+            setOnClickListener {
+                // 防误触：第一次点击进入「待确认」状态，3 秒内再点一次才真正清空
+                if (!clearArmed) {
+                    clearArmed = true
+                    text = "🗑 再点确认"
+                    postDelayed({ clearArmed = false; text = "🗑 清空" }, 3000)
+                    return@setOnClickListener
+                }
+                clearArmed = false
+                text = "🗑 清空"
+                clearHistory()
+                Toast.makeText(context, "已清空会话记录", Toast.LENGTH_SHORT).show()
+            }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        msgPanel.addView(tabs)
+
+        // 每个 Tab 一套**独立的** ScrollView + 内容盒：各自累积、各自保留滚动位置，
+        // 同一时刻只显示当前 Tab 的那一个 —— 内容真正隔离，不会互相挤到一起。
+        val bodyHost = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+        TAB_ORDER.forEach { cat ->
+            val sv = ScrollView(context).apply {
+                isFillViewport = true
+                isVerticalScrollBarEnabled = true
+                setBackgroundColor(Color.WHITE)
+            }
+            val box = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(6.dp(), 6.dp(), 6.dp(), 6.dp())
+            }
+            // 「任务」Tab 的内容 = 原底部区块（状态行 + 任务卡片）
+            if (cat == CAT_TASK) {
+                statusTv = TextView(context).apply {
+                    setPadding(4.dp(), 4.dp(), 4.dp(), 4.dp())
+                    textSize = 12f
+                    setTextColor(0xFF546E7A.toInt())
+                    text = "连接中…"
+                }
+                box.addView(statusTv)
+                taskListBox = LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(6.dp(), 4.dp(), 6.dp(), 4.dp())
+                }
+                box.addView(taskListBox, LinearLayout.LayoutParams(
+                    MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            }
+            sv.addView(box, ViewGroup.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            chatScrolls[cat] = sv
+            chatBoxes[cat] = box
+            bodyHost.addView(sv, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        }
+        msgPanel.addView(
+            bodyHost,
+            LinearLayout.LayoutParams(MATCH_PARENT, if (compact) 160.dp() else 0, 1f)
+        )
+        renderTabs()
+
+        // 输入行：放在会话区**下方**，与微信/QQ 一致
         val inputRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         msgInput = EditText(context).apply {
-            hint = "例如：帮我跑每日选股并发布 / 分析近期市场状态"
+            hint = "输入指令…（发送后由 PC 端 CodeBuddy 处理并回复）"
             textSize = 13f
             setSingleLine(false)
-            maxLines = 2
+            maxLines = 3
         }
         inputRow.addView(msgInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         inputRow.addView(TextView(context).apply {
@@ -167,68 +317,20 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
             textSize = 13f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            setPadding(14.dp(), 8.dp(), 14.dp(), 8.dp())
+            setPadding(16.dp(), 8.dp(), 16.dp(), 8.dp())
             background = rnd(0xFF2E7D32.toInt(), 6.dp())
             setOnClickListener { sendToCodeBuddy() }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             leftMargin = 6.dp()
         })
         msgPanel.addView(inputRow, LinearLayout.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = 4.dp()
+            topMargin = 6.dp()
         })
-        msgPanel.addView(TextView(context).apply {
-            text = "回复区（PC 端 CodeBuddy 的回复会显示在这里）"
-            textSize = 11f
-            setTextColor(0xFF81C784.toInt())
-            setPadding(0, 4.dp(), 0, 2.dp())
-        })
-        msgScroll = ScrollView(context).apply {
-            isFillViewport = true
-            setBackgroundColor(Color.WHITE)
-        }
-        msgBox = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(6.dp(), 4.dp(), 6.dp(), 4.dp())
-        }
-        msgScroll?.addView(msgBox, ViewGroup.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        msgPanel.addView(msgScroll, LinearLayout.LayoutParams(MATCH_PARENT, if (compact) 110.dp() else 150.dp()))
-        root.addView(msgPanel)
+        root.addView(msgPanel, LinearLayout.LayoutParams(MATCH_PARENT, 0, if (compact) 1f else 2f))
 
-        // ── 状态 ──
-        statusTv = TextView(context).apply {
-            setPadding(16.dp(), 8.dp(), 16.dp(), 8.dp())
-            textSize = 12f
-            setTextColor(0xFF546E7A.toInt())
-            text = "连接中…"
-        }
-        root.addView(statusTv)
-
-        if (compact) return root
-
-        // ── 任务列表 ──
-        taskListBox = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(10.dp(), 4.dp(), 10.dp(), 4.dp())
-        }
-        root.addView(ScrollView(context).apply {
-            isFillViewport = true
-            addView(taskListBox, ViewGroup.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        }, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
-
-        // ── 日志区 ──
-        logScroll = ScrollView(context).apply {
-            isFillViewport = true
-            setBackgroundColor(0xFF101418.toInt())
-        }
-        logBox = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(10.dp(), 8.dp(), 10.dp(), 8.dp())
-        }
-        logScroll?.addView(logBox, ViewGroup.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        root.addView(logScroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f).apply {
-            topMargin = 4.dp()
-            bottomMargin = 4.dp()
-        })
+        // 注1：原先这里还有一个独立的深色「日志区」—— 已并入会话区，成为「日志」Tab。
+        // 注2：原先底部还有「状态行 + 任务列表」两个 view —— 2026-09-21 已收编为
+        //      「任务」Tab（见上方 TAB_ORDER），底部不再单独占位。
         return root
     }
 
@@ -278,6 +380,7 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
             try {
                 val j = PcBridgeClient.ping()
                 statusTv?.text = "✅ 中继已连通 ${j.optString("server", "PC")}"
+                syncTv?.text = syncStatusText()      // 刷新「设备 · 同步时间」
                 refreshTasks()
                 startMsgPolling()
             } catch (e: Exception) {
@@ -297,18 +400,23 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
             Toast.makeText(context, "请输入消息内容", Toast.LENGTH_LONG).show()
             return
         }
+        // ★ 乐观 UI（2026-09-21）：**先上屏再发送**，不必等中继往返几十秒。
+        //   失败时会在同一条会话里追加「⚠ 发送失败」提示，不会出现"发了但看不见"。
+        addMsgRow(content, prefix = "我:", category = CAT_CHAT, fromApk = true)
+        msgInput?.setText("")
         scope.launch {
             try {
                 val r = PcBridgeClient.sendMsg(content = content)
                 val j = JSONObject(r)
                 if (j.optBoolean("ok", false)) {
-                    addMsgRow("我: $content", fromApk = true)
-                    msgInput?.setText("")
                     Toast.makeText(context, "已发送给 CodeBuddy", Toast.LENGTH_SHORT).show()
                 } else {
-                    Toast.makeText(context, "发送失败: ${j.optString("error", "未知错误")}", Toast.LENGTH_LONG).show()
+                    val err = j.optString("error", "未知错误")
+                    addMsgRow("⚠ 发送失败：$err", prefix = "系统:", category = CAT_CHAT)
+                    Toast.makeText(context, "发送失败: $err", Toast.LENGTH_LONG).show()
                 }
             } catch (e: Exception) {
+                addMsgRow("⚠ 发送失败：${e.message}", prefix = "系统:", category = CAT_CHAT)
                 Toast.makeText(context, "发送失败: ${e.message}", Toast.LENGTH_LONG).show()
             }
         }
@@ -325,9 +433,19 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
                     val msgs = j.optJSONArray("messages") ?: JSONArray()
                     for (i in 0 until msgs.length()) {
                         val m = msgs.getJSONObject(i)
-                        addMsgRow("CodeBuddy: ${m.optString("content")}", fromApk = false)
+                        // content = 结论 → 对话（一行摘要）；detail = 过程 → 日志（逐行）
+                        addMsgRow(m.optString("content"), prefix = "CodeBuddy:",
+                            category = CAT_CHAT, fromApk = false)
+                        val detail = m.optString("detail")
+                        if (detail.isNotBlank()) {
+                            detail.split("\n").filter { it.isNotBlank() }.forEach { line ->
+                                addMsgRow(line, prefix = "🖥 明细:", category = CAT_LOG)
+                            }
+                        }
                     }
                     lastReplySeq = j.optInt("after", lastReplySeq)
+                    // 持久化已读游标 → 重开面板不会把历史回复再灌一遍
+                    prefs().edit().putInt(PREF_SEQ, lastReplySeq).apply()
                 } catch (_: Exception) {
                     // 未连接或网络不可达，静默继续
                 }
@@ -336,25 +454,219 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
         }
     }
 
-    private fun addMsgRow(text: String, fromApk: Boolean) {
+    /**
+     * 追加一条消息。
+     *
+     * ### 「结论 vs 过程」分工（2026-09-21 与用户确认的口径）
+     * - **对话 Tab** = 结论：只放**一行摘要**（换行折叠、超长截断并标注「详见日志」）
+     * - **日志 Tab** = 过程：完整原文 / 分步明细 / 任务流水
+     * - **全部 Tab** = 完整时间线：对话 + 日志按发生顺序穿插，**不截断**
+     *
+     * 因此同一条内容在不同 Tab 里的详细程度是刻意不同的：
+     * 对话里能一眼看清「发生了什么」，日志里才看「怎么发生的」。
+     *
+     * @param category CAT_CHAT(对话/结论) / CAT_LOG(PC 端 exe 日志)
+     * @param fromApk  true=我方（右对齐绿气泡）；false=对端（左对齐）
+     * @param prefix   来源标签，如 `我:` / `CodeBuddy:` / `🖥`
+     */
+    private fun addMsgRow(
+        text: String,
+        prefix: String = "",
+        category: String = CAT_CHAT,
+        fromApk: Boolean = false,
+        persist: Boolean = true,
+        card: Boolean = false
+    ) {
+        if (category == CAT_LOG) {
+            addTo(CAT_ALL, text, prefix, CAT_LOG, fromApk)      // 时间线：完整
+            addTo(CAT_LOG, text, prefix, CAT_LOG, fromApk)      // 日志：完整过程
+            bump(CAT_ALL); bump(CAT_LOG)
+        } else if (card) {
+            // 结构化卡片（如选股清单）：多行直接进「对话」，**不折叠**、不转日志
+            val full = if (prefix.isBlank()) text else "$prefix $text"
+            addTo(CAT_ALL, text, prefix, CAT_CHAT, fromApk)
+            addTo(CAT_CHAT, text, prefix, CAT_CHAT, fromApk)
+            bump(CAT_ALL); bump(CAT_CHAT)
+            if (persist && !restoring) appendHistory(text, prefix, category, fromApk, card = true)
+            renderTabs(); autoScroll(); return
+        } else {
+            val full = if (prefix.isBlank()) text else "$prefix $text"
+            val summary = summarize(text, prefix)
+            val folded = summary != full                        // 被折叠 ⇒ 详情转入日志
+            addTo(CAT_ALL, text, prefix, CAT_CHAT, fromApk)     // 时间线：完整不截断
+            addTo(CAT_CHAT, summary, "", CAT_CHAT, fromApk)     // 对话：一行结论
+            bump(CAT_ALL); bump(CAT_CHAT)
+            if (folded) {
+                addTo(CAT_LOG, text, prefix, CAT_CHAT, fromApk) // 日志：完整原文
+                bump(CAT_LOG)
+            }
+        }
+        if (persist && !restoring) appendHistory(text, prefix, category, fromApk)
+        renderTabs()
+        autoScroll()
+    }
+
+    // ── 聊天记录持久化（2026-09-21：重开面板不再从零开始）──
+
+    private fun loadHistory(): JSONArray {
+        val s = prefs().getString(PREF_HISTORY, null) ?: return JSONArray()
+        return try {
+            JSONArray(s)
+        } catch (_: Exception) {
+            JSONArray()
+        }
+    }
+
+    private fun appendHistory(text: String, prefix: String, category: String,
+                              fromApk: Boolean, card: Boolean = false) {
+        try {
+            var arr = loadHistory()
+            arr.put(JSONObject().apply {
+                put("t", text); put("p", prefix)
+                put("c", category); put("me", fromApk)
+                if (card) put("card", true)
+                put("ts", SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date()))
+            })
+            if (arr.length() > HISTORY_MAX) {          // 超出上限 → 丢弃最旧的
+                val trimmed = JSONArray()
+                for (i in arr.length() - HISTORY_MAX until arr.length()) trimmed.put(arr.get(i))
+                arr = trimmed
+            }
+            prefs().edit().putString(PREF_HISTORY, arr.toString()).apply()
+        } catch (_: Exception) {
+            // 持久化失败不应影响 UI 正常使用
+        }
+    }
+
+    /** panel 创建时回放历史记录（回放期间 `restoring=true`，不再重复落盘）。 */
+    private fun restoreHistory() {
+        restoring = true
+        try {
+            val arr = loadHistory()
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                addMsgRow(o.optString("t"), o.optString("p"),
+                    o.optString("c", CAT_CHAT), o.optBoolean("me", false),
+                    persist = false, card = o.optBoolean("card", false))
+            }
+        } catch (_: Exception) {
+        } finally {
+            restoring = false
+        }
+        renderTabs()
+    }
+
+    /** 清空历史（同时重置 Tab 计数与三个容器）。 */
+    fun clearHistory() {
+        prefs().edit().remove(PREF_HISTORY).putInt(PREF_SEQ, 0).apply()
+        lastReplySeq = 0
+        chatBoxes.forEach { (cat, box) -> if (cat != CAT_TASK) box.removeAllViews() }
+        TAB_ORDER.forEach { cat -> if (cat != CAT_TASK) tabCounts[cat] = 0 }
+        renderTabs()
+    }
+
+    /** 往指定 Tab 容器追加一行（View 只能有一个父容器 → 每个 Tab 各建一份实例）。 */
+    private fun addTo(containerCat: String, text: String, prefix: String,
+                      styleCat: String, fromApk: Boolean) {
+        chatBoxes[containerCat]?.addView(
+            buildRow(text, prefix, styleCat, fromApk),
+            LinearLayout.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+    }
+
+    private fun bump(cat: String) { tabCounts[cat] = (tabCounts[cat] ?: 0) + 1 }
+
+    /**
+     * 对话用的**一行结论**：换行折叠成「 / 」、超长截断并提示详见日志。
+     * 与完整原文不同（即发生折叠）时，调用方会把完整内容额外投放到「日志」Tab。
+     */
+    private fun summarize(text: String, prefix: String): String {
+        val multiline = text.contains("\n")
+        val one = text.replace(Regex("\\s*\\n+\\s*"), " / ").trim()
+        val folded = multiline || one.length > CHAT_SUMMARY_MAX
+        val head = if (one.length <= CHAT_SUMMARY_MAX) one else one.take(CHAT_SUMMARY_MAX) + "…"
+        val s = if (prefix.isBlank()) head else "$prefix $head"
+        return if (folded) "$s  （详见日志）" else s
+    }
+
+    /** 构建单条气泡行；每行的 TextView 再套一层 HorizontalScrollView 以支持左右滚动。 */
+    private fun buildRow(
+        text: String,
+        prefix: String,
+        category: String,
+        fromApk: Boolean
+    ): View {
+        val bubble = TextView(context).apply {
+            this.text = if (prefix.isBlank()) text else "$prefix $text"
+            textSize = 12f
+            setTextColor(
+                if (fromApk) Color.WHITE
+                else if (category == CAT_LOG) 0xFFCFD8DC.toInt()
+                else 0xFF263238.toInt()
+            )
+            setPadding(10.dp(), 6.dp(), 10.dp(), 6.dp())
+            background = rnd(
+                if (fromApk) 0xFF2E7D32.toInt()
+                else if (category == CAT_LOG) 0xFF263238.toInt()
+                else 0xFFDCEDC8.toInt(), 8.dp()
+            )
+            // 关键：关掉自动换行、仍保留 \n 换行 → 超长行交给外层横向滚动
+            setSingleLine(false)
+            setHorizontallyScrolling(true)
+        }
+        val hsv = HorizontalScrollView(context).apply {
+            isFillViewport = false              // 短气泡保持内容宽度，长气泡才横向滚
+            isHorizontalScrollBarEnabled = true
+            addView(bubble, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = if (fromApk) Gravity.END else Gravity.START
         }
-        row.addView(TextView(context).apply {
-            this.text = text
-            textSize = 12f
-            setTextColor(if (fromApk) Color.WHITE else 0xFF263238.toInt())
-            setPadding(10.dp(), 6.dp(), 10.dp(), 6.dp())
-            background = rnd(if (fromApk) 0xFF2E7D32.toInt() else 0xFFDCEDC8.toInt(), 8.dp())
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            rightMargin = if (fromApk) 0 else 40.dp()
-            leftMargin = if (fromApk) 40.dp() else 0
-        })
-        msgBox?.addView(row, LinearLayout.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        row.addView(hsv, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        row.layoutParams = LinearLayout.LayoutParams(
+            MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = 3.dp()
-        })
-        msgScroll?.post { msgScroll?.fullScroll(View.FOCUS_DOWN) }
+            leftMargin = if (fromApk) 40.dp() else 0
+            rightMargin = if (fromApk) 0 else 40.dp()
+        }
+        return row
+    }
+
+    // ── Tab 切换：只显示当前 Tab 的滚动容器，其余彻底隐藏（内容互不干扰） ──
+
+    private fun setChatFilter(cat: String) {
+        chatFilter = cat
+        chatScrolls.forEach { (c, sv) -> sv.visibility = if (c == cat) View.VISIBLE else View.GONE }
+        renderTabs()
+        autoScroll()
+    }
+
+    /** 渲染 Tab：高亮当前项 + 显示各自条数（全部 12 / 对话 3 / 日志 9）。 */
+    private fun renderTabs() {
+        filterTabs.forEach { (cat, tv) ->
+            val on = (cat == chatFilter)
+            tv.text = "${tabLabels[cat] ?: cat} ${tabCounts[cat] ?: 0}"
+            tv.setTextColor(if (on) Color.WHITE else 0xFF546E7A.toInt())
+            tv.background = rnd(if (on) 0xFF4527A0.toInt() else 0xFFDDDDDD.toInt(), 12.dp())
+        }
+        chatScrolls.forEach { (c, sv) -> sv.visibility = if (c == chatFilter) View.VISIBLE else View.GONE }
+    }
+
+    /** 把**当前可见**的 Tab 滚到底部（隐藏的 Tab 不打扰，各自保留自己的滚动位置）。 */
+    private fun autoScroll() {
+        val sv = chatScrolls[chatFilter] ?: return
+        sv.post { sv.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    /** 中继状态：设备 ID（如 sms9280-xxxx）+ **具体同步时间点**（绝对时间，非「X分钟前」）。 */
+    private fun syncStatusText(): String {
+        val dev = CosRelayClient.deviceId(context)
+        val last = CosRelayClient.lastOkAt(context)
+        val t = if (last <= 0L) "尚未同步"
+        else SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date(last))
+        return "$dev · 同步时间 $t"
     }
 
     private fun submit(taskType: String) {
@@ -387,6 +699,8 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
                     taskListBox?.addView(taskCard(tasks.getJSONObject(i)))
                 }
                 statusTv?.text = "共 ${tasks.length()} 个任务（最近） | 中继"
+                tabCounts[CAT_TASK] = tasks.length()   // 任务数显示在「任务」Tab 上
+                renderTabs()
             } catch (e: Exception) {
                 statusTv?.text = "⚠ 获取任务列表失败: ${e.message}"
             }
@@ -406,8 +720,8 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
         val name = t.optString("name")
         val type = t.optString("type")
         val exit = t.optInt("exit_code", 0)
-        val tail = t.optJSONArray("log_tail")
-        val tailText = (0 until (tail?.length() ?: 0)).joinToString("\n") { tail!!.getString(it) }.takeLast(400)
+        // 注：原先这里还会把 `log_tail` 渲染成 3 行预览 —— 与「日志」Tab 内容重复，
+        // 已按需求移除；要看完整日志请点卡片上的「📜 日志」，结果会进「日志」Tab。
 
         val card = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -433,14 +747,6 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
             textSize = 10f
             setTextColor(0xFF90A4AE.toInt())
         })
-        if (tailText.isNotBlank()) {
-            card.addView(TextView(context).apply {
-                text = tailText.take(200)
-                textSize = 10f
-                maxLines = 3
-                setTextColor(0xFF546E7A.toInt())
-            })
-        }
         val ops = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         if (state == "running" || state == "queued") {
             ops.addView(TextView(context).apply {
@@ -479,22 +785,19 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
         }
     }
 
+    /** 拉取某任务的完整日志，作为「日志」行并入会话流（`🖥` = PC 端 exe 输出）。 */
     private fun showLogs(taskId: String) {
         scope.launch {
             try {
                 val r = PcBridgeClient.taskLogs(taskId = taskId, cursor = 0)
-                val j = JSONObject(r)
-                val logs = j.optJSONArray("logs") ?: JSONArray()
-                logBox?.removeAllViews()
+                val logs = JSONObject(r).optJSONArray("logs") ?: JSONArray()
+                addMsgRow("── 任务 $taskId 日志（${logs.length()} 行）──",
+                    prefix = PC_LOG_PREFIX, category = CAT_LOG)
                 for (i in 0 until logs.length()) {
                     val item = logs.getJSONObject(i)
-                    logBox?.addView(TextView(context).apply {
-                        text = "${item.optString("ts")}  ${item.optString("line")}"
-                        textSize = 11f
-                        setTextColor(0xFFE0E0E0.toInt())
-                    })
+                    addMsgRow("${item.optString("ts")}  ${item.optString("line")}",
+                        prefix = PC_LOG_PREFIX, category = CAT_LOG)
                 }
-                logScroll?.post { logScroll?.fullScroll(View.FOCUS_DOWN) }
             } catch (e: Exception) {
                 statusTv?.text = "❌ 日志获取失败: ${e.message}"
             }
@@ -514,14 +817,10 @@ class RemoteControlPanel(context: Context, private val compact: Boolean = false)
                     val logs = j.optJSONArray("logs") ?: JSONArray()
                     for (i in 0 until logs.length()) {
                         val item = logs.getJSONObject(i)
-                        logBox?.addView(TextView(context).apply {
-                            text = "${item.optString("ts")}  ${item.optString("line")}"
-                            textSize = 11f
-                            setTextColor(0xFFE0E0E0.toInt())
-                        })
+                        addMsgRow("${item.optString("ts")}  ${item.optString("line")}",
+                            prefix = PC_LOG_PREFIX, category = CAT_LOG)
                     }
                     cursor = j.optInt("cursor", cursor)
-                    logScroll?.post { logScroll?.fullScroll(View.FOCUS_DOWN) }
                     val state = j.optString("state")
                     if (state == "success" || state == "failed" || state == "cancelled") {
                         statusTv?.text = "任务 $taskId 结束: $state"

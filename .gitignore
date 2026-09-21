@@ -184,3 +184,10 @@ data/wf_2008/
 
 # 守护 inbox 运行目录
 data/_inbox/
+
+# ===== 2026-09-21 补充：图表/运行时产物（可重生成，不入库） =====
+data/charts/
+data/pick_charts/
+data/_auto_positions.json
+data/_pick_codes.json
+data/_daily_intel.json

@@ -91,14 +91,31 @@ class SectorTabFragment : Fragment() {
             3 -> EastMoneyHotSectorSource.conceptSectors
             else -> emptyList()
         }
-        if (live.isNotEmpty()) { updateGrid(live); return }
+        // ★ 2026-09-21 修复「未开盘时热门行情全是 0」：
+        // 非交易时段东财仍会返回板块条目，但 f3(涨跌幅)/f62(主力净流入)/f8(换手)
+        // 全部归零，且 optDouble 默认值即 0 → 看起来像"数据有了但其实全是 0"。
+        // 这里判定"整屏都是 0"时**不采纳**，继续走历史兜底（上一交易日数据）。
+        if (live.isNotEmpty() && !isAllZero(live)) { updateGrid(live); return }
 
-        // 2. 全局缓存为空 → 直接 API 获取
+        // 2. 全局缓存为空/全 0 → 直接 API 获取
         lifecycleScope.launch(Dispatchers.IO) {
             val direct = EastMoneyHotSectorSource().fetchSectorsByTypeDirect(sectorType, 20)
-            if (direct.isNotEmpty()) { lifecycleScope.launch(Dispatchers.Main) { updateGrid(direct) }; return@launch }
-            // 3. API 也失败 → 历史 DB
+            if (direct.isNotEmpty() && !isAllZero(direct)) {
+                lifecycleScope.launch(Dispatchers.Main) { updateGrid(direct) }
+                return@launch
+            }
+            // 3. API 也失败/全 0 → 历史 DB（上一交易日）
             loadFromHistoryOnly()
+        }
+    }
+
+    /** 整屏数据是否"全为 0"（非交易时段的特征）：涨跌幅、主力净流入、换手三者皆 0。 */
+    private fun isAllZero(list: List<com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource.HotSector>): Boolean {
+        if (list.isEmpty()) return true
+        return list.all {
+            kotlin.math.abs(it.changePercent) < 1e-6 &&
+                kotlin.math.abs(it.mainNetInflow) < 1e-6 &&
+                kotlin.math.abs(it.turnoverRate) < 1e-6
         }
     }
 

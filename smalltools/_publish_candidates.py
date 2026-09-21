@@ -204,13 +204,33 @@ def score_pool(cache, asof, trend):
 
 
 def hot_sectors(cache, industry, asof, top=8, window=20):
-    """行业近 window 日平均涨幅（东财行业口径），供清单展示 + 板块代理过滤。"""
+    """行业近 window 日平均涨幅（东财行业口径），供清单展示 + 板块代理过滤。
+
+    ★ 2026-09-21 修复「非开盘时热门行情全是 0」：
+    原实现硬性要求 `snaps[-1]["date"] == asof`，而 asof 若不是交易日（周末/节假日/
+    盘前），**所有票都被 continue → 整个数组为空 → 前端显示 0**。
+    现改为**回退到 <= asof 的最近交易日**（`asof_eff`），非开盘时展示上一交易日数据。
+    """
     agg = {}
+    # ① 先确定有效基准日：asof 本身有数据就用它，否则用 <= asof 的最近交易日
+    asof_eff = asof
+    if asof:
+        latest = ""
+        for code, ent in cache.items():
+            if code.startswith("sh000") or code.startswith("sz399"):
+                continue
+            sn = ent.get("snaps") or []
+            if sn:
+                d = str(sn[-1].get("date"))[:10]
+                if d <= asof and d > latest:
+                    latest = d
+        asof_eff = latest or asof
     for code, ent in cache.items():
         if code.startswith("sh000") or code.startswith("sz399"):
             continue
-        snaps = ent.get("snaps") or []
-        if len(snaps) < window or snaps[-1]["date"] != asof:
+        snaps = [s for s in (ent.get("snaps") or [])
+                 if not asof_eff or str(s.get("date"))[:10] <= asof_eff]
+        if len(snaps) < window:
             continue
         closes = [s["close"] for s in snaps[-window:]]
         if not closes or closes[0] <= 0:
