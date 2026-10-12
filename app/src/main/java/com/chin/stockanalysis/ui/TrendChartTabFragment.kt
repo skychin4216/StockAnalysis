@@ -10,6 +10,7 @@ import android.view.ViewGroup
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -35,6 +36,7 @@ import com.chin.stockanalysis.strategy.analysis.TrendPatternEngine
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
 import com.chin.stockanalysis.strategy.data.HistoricalDataFetcher
 import com.chin.stockanalysis.strategy.data.StockPoolAggregator
+import com.chin.stockanalysis.strategy.indicatorbt.SavedScanPool
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
@@ -78,6 +80,13 @@ class TrendChartTabFragment : Fragment() {
     private var scanListBox: LinearLayout? = null
     private var scanScroll: ScrollView? = null
     private var scanSerial = 0
+    /** WR 指标策略开关（扫描页勾选）：勾选后 WR2<25 的股票也加入扫描结果 */
+    private var wrStrategyEnabled = false
+    /** 保存筛选池按钮（文案随过滤结果数量更新） */
+    private var savePoolBtn: TextView? = null
+    private var savedHintTv: TextView? = null
+    /** 当前列表实际展示的命中（即当前过滤后的结果），供保存按钮持久化 */
+    private var lastShownHits: List<ScanHit> = emptyList()
 
     private val trendScanMemory = ConcurrentHashMap<String, Long>()
 
@@ -237,6 +246,58 @@ class TrendChartTabFragment : Fragment() {
         }
         scroll.addView(box)
 
+        // WR 指标策略勾选：勾选后从已扫描股票池中过滤出 WR2<25 的短线强势股（无需重新扫描）
+        val wrCb = CheckBox(ctx).apply {
+            text = "🎯 WR策略：短线强势选股（仅显示 WR2<25）"
+            textSize = 12f
+            setTextColor(Color.parseColor("#555555"))
+            setPadding(dp(4), 0, dp(4), 0)
+            setOnCheckedChangeListener { _, checked ->
+                wrStrategyEnabled = checked
+                applyScanFilter()
+            }
+        }
+        box.addView(wrCb)
+
+        // 保存当前筛选结果为股票池（供「回测」页批量回测）
+        val saveRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(2), 0, dp(2), dp(2))
+        }
+        savePoolBtn = TextView(ctx).apply {
+            text = "💾 保存当前筛选股票（0 只）"
+            textSize = 11f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#1976D2"))
+            setPadding(dp(10), dp(5), dp(10), dp(5))
+            isClickable = true
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            setOnClickListener {
+                val shown = lastShownHits
+                if (shown.isEmpty()) {
+                    Toast.makeText(ctx, "当前没有可保存的股票，请先扫描", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                val items = shown.map { SavedScanPool.Item(it.code, it.name) }
+                val n = SavedScanPool.save(ctx, items)
+                Toast.makeText(ctx, "✅ 已保存 $n 只股票到筛选池（回测页可批量回测）", Toast.LENGTH_SHORT).show()
+                refreshSaveBtn()
+            }
+        }
+        saveRow.addView(savePoolBtn)
+        val savedHint = TextView(ctx).apply {
+            textSize = 10f
+            setTextColor(Color.parseColor("#999999"))
+            setPadding(dp(8), 0, 0, 0)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        saveRow.addView(savedHint)
+        savedHintTv = savedHint
+        box.addView(saveRow)
+
         val listBox = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, 2, 0, 0)
@@ -244,6 +305,7 @@ class TrendChartTabFragment : Fragment() {
         box.addView(listBox)
         scanListBox = listBox
         scanScroll = scroll
+        refreshSaveBtn()
         return scroll
     }
 
@@ -522,36 +584,70 @@ class TrendChartTabFragment : Fragment() {
         val jumpable: Boolean
     )
 
-    /** 扫描命中记录（用于扫描结束后按上涨概率重排结果行） */
+    /** 扫描命中记录（用于扫描结束后按上涨概率重排/过滤结果行） */
     private data class ScanHit(
         val code: String,
         val name: String,
         val candles: List<DailySnapshotEntity>,
         val weight: Int,
-        val bull: Boolean
-    )
+        val bull: Boolean,
+        /** 形态命中标签；null 表示未命中K线形态 */
+        val patternTag: String? = null,
+        val stateLabel: String? = null,
+        /** 最新 WR2（通达信口径）；null 表示数据不足 */
+        val wr2: Double? = null
+    ) {
+        /** 当前展示标签：优先形态标签，否则 WR 强势标签 */
+        fun displayTag(): String =
+            patternTag ?: "WR2=%.0f 强势".format(wr2 ?: Double.NaN)
 
-    /** 扫描结束后按上涨概率重排结果行（若某行正展开则不打扰，直接跳过重排） */
-    private fun resortScanRows(hits: List<ScanHit>) {
-        if (hits.size < 2) return
+        /** 是否通过当前过滤：未勾选=形态命中；勾选=WR2<25 短线强势 */
+        fun passes(wrFilter: Boolean): Boolean =
+            if (wrFilter) wr2 != null && wr2 < 25.0 else patternTag != null
+    }
+
+    /** 最近一次扫描的全部候选（勾选 WR 时即时过滤，无需重新扫描） */
+    private var lastScanHits: List<ScanHit> = emptyList()
+
+    /** 依据勾选状态对已扫描结果做过滤/重排，重建结果行 */
+    private fun applyScanFilter() {
+        val hits = lastScanHits
+        if (hits.isEmpty()) return
         val box = scanListBox ?: return
         requireActivity().runOnUiThread {
             if (!isAdded) return@runOnUiThread
-            if (box.childCount != hits.size) return@runOnUiThread
-            for (i in 0 until box.childCount) {
-                val cell = box.getChildAt(i) as? LinearLayout ?: continue
-                if (cell.childCount > 1 && cell.getChildAt(1).visibility == View.VISIBLE) return@runOnUiThread
-            }
-            val cells = (0 until box.childCount).map { box.getChildAt(it) }
-            val sorted = hits.withIndex()
+            val shown = hits.filter { it.passes(wrStrategyEnabled) }
                 .sortedWith(
-                    compareByDescending<IndexedValue<ScanHit>> { it.value.weight }
-                        .thenByDescending { if (it.value.bull) 1 else 0 }
-                        .thenBy { it.value.code }
+                    compareByDescending<ScanHit> { it.weight }
+                        .thenByDescending { if (it.bull) 1 else 0 }
+                        .thenBy { it.code }
                 )
+            lastShownHits = shown
             box.removeAllViews()
-            for (si in sorted) box.addView(cells[si.index])
+            scanSerial = 0
+            shown.forEach { h ->
+                addScanRow(
+                    code = h.code,
+                    name = h.name,
+                    en = "",
+                    tag = h.displayTag(),
+                    stateLabel = h.stateLabel,
+                    stateBull = h.bull,
+                    jumpable = false
+                )
+            }
+            refreshSaveBtn()
+            val mode = if (wrStrategyEnabled) "WR短线强势过滤（WR2<25）" else "形态识别"
+            status("🎯 $mode：${shown.size}/${hits.size} 只通过过滤")
         }
+    }
+
+    /** 刷新保存按钮与已保存数量提示（须在主线程调用） */
+    private fun refreshSaveBtn() {
+        savePoolBtn?.text = "💾 保存当前筛选股票（${lastShownHits.size} 只）"
+        val ctx = context ?: return
+        val n = SavedScanPool.count(ctx)
+        savedHintTv?.text = if (n > 0) "已保存池：$n 只（回测页可用）" else "尚未保存"
     }
 
     private fun toggleRowExpand(cell: LinearLayout, chev: TextView, info: ExpandInfo) {
@@ -630,6 +726,14 @@ class TrendChartTabFragment : Fragment() {
                     setPadding(0, dp(2), 0, dp(2))
                 })
                 expand.addView(buildStaticKline(snaps.takeLast(40), 180, listOf(5, 10, 20)))
+                // WR 威廉指标图（WR2 短线 + WR14 中期，25 强势线 / 75 超卖线，坐标倒置与行情软件一致）
+                expand.addView(TextView(ctx).apply {
+                    text = "WR 威廉指标（WR2 / WR14 · 低于25短线强势，高于75超卖）"
+                    textSize = 10f
+                    setTextColor(Color.parseColor("#666666"))
+                    setPadding(0, dp(4), 0, dp(2))
+                })
+                expand.addView(buildWrChart(snaps.takeLast(40), 110))
                 // 匹配趋势图：K线 + 未来5日情景预测（2026-09-06 替换原“20根裁剪K线”）
                 expand.addView(buildTrendMatchBox(snaps.takeLast(40), info))
                 // 操作行
@@ -1171,7 +1275,9 @@ class TrendChartTabFragment : Fragment() {
             val recentDay = com.chin.stockanalysis.ui.TradingDayPickerView
                 .recentTradingDay().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
             var updated = 0; var skipped = 0; var failed = 0; var injected = 0
+            // 全部候选（形态命中 + WR2 都记录，供勾选框即时过滤；无需重新扫描）
             val hits = ArrayList<ScanHit>()
+            lastScanHits = emptyList()
             // 新一轮扫描：先清空上次结果列表，随后逐行实时追加
             val box0 = scanListBox
             if (box0 != null) requireActivity().runOnUiThread { if (isAdded) box0.removeAllViews() }
@@ -1190,32 +1296,159 @@ class TrendChartTabFragment : Fragment() {
                         updated++; trendScanMemory[code] = System.currentTimeMillis()
                     } else failed++
                 }
-                // 形态识别（数据齐全的股票命中后立即出结果行，无需等全量扫完）
-                // 2026-09-05：命中只进本页列表（行内展开本地K线），不再注入趋势图 WebView 库
+                // 形态识别 + WR2（数据齐全的股票全部记录为候选，行内展开看本地K线）
+                // 2026-09-05：命中只进本页列表，不再注入趋势图 WebView 库
                 // —— 趋势图库只保留模板/手动搜索注入的图谱，避免扫描结果刷屏污染模板区
                 val candles = try { db.dailySnapshotDao().getByCode(code, 40) } catch (e: Exception) { emptyList() }
                 if (candles.size < 20) continue
-                val match = TrendPatternEngine.match(candles.take(40).reversed()) ?: continue
-                hits.add(ScanHit(code, nm, candles, match.weight, match.stateBull))
-                addScanRow(
+                val bars = candles.take(40).reversed()
+                val match = TrendPatternEngine.match(bars)
+                val wr2 = wr2Value(bars)
+                if (match != null) injected++
+                val hit = ScanHit(
                     code = code,
                     name = nm,
-                    en = "",
-                    tag = match.tag,
-                    stateLabel = match.stateLabel,
-                    stateBull = match.stateBull,
-                    jumpable = false
+                    candles = candles,
+                    weight = match?.weight ?: 0,
+                    bull = match?.stateBull ?: true,
+                    patternTag = match?.tag,
+                    stateLabel = match?.stateLabel,
+                    wr2 = wr2
                 )
-                injected++
+                hits.add(hit)
+                // 实时追加：仅追加通过当前过滤条件的行（未勾选=形态命中；勾选=WR2<25）
+                if (hit.passes(wrStrategyEnabled)) {
+                    addScanRow(
+                        code = code,
+                        name = nm,
+                        en = "",
+                        tag = hit.displayTag(),
+                        stateLabel = hit.stateLabel,
+                        stateBull = hit.bull,
+                        jumpable = false
+                    )
+                }
             }
-            // 全部扫完 → 按上涨概率重排结果行（形态权重 + SAR 偏多优先；展开中的行不打扰）
-            resortScanRows(hits)
+            // 全部扫完 → 缓存候选，按当前勾选过滤/重排结果行
+            lastScanHits = hits
+            applyScanFilter()
+            val wrCount = hits.count { it.wr2 != null && it.wr2 < 25.0 }
             val indexLine = indexTrendText(db)
             val stNote = if (stCount > 0) " 剔除ST/退市$stCount 只" else ""
+            val wrNote = if (wrStrategyEnabled)
+                "，🎯 WR短线强势过滤 WR2<25 命中 $wrCount 只" else "，WR2<25 强势股 $wrCount 只（勾选 WR策略可过滤）"
             val marketNote = if (indexLine.isNotBlank())
                 "\n$indexLine（形态识别仅针对个股，反映个股相对强弱）" else ""
-            status("✅ 扫描完成：共 ${codes.size} 只（$countText）→ 更新 $updated/复用 $skipped/失败 $failed$stNote，识别看多形态 $injected 个（仅本地列表，未写入趋势图库）$marketNote")
+            status("✅ 扫描完成：共 ${codes.size} 只（$countText）→ 更新 $updated/复用 $skipped/失败 $failed$stNote，识别看多形态 $injected 个$wrNote（仅本地列表，未写入趋势图库）$marketNote")
         }
+    }
+
+    /**
+     * 威廉 WR2（通达信口径，N=2）：(2日最高-收盘)/(2日最高-2日最低)×100，范围 0~100。
+     * WR2<25 = 收盘价贴近2日区间顶部（短线强势）。bars 为旧→新顺序。
+     */
+    private fun wr2Value(bars: List<DailySnapshotEntity>): Double? {
+        val series = wrSeries(bars, 2)
+        val v = series.lastOrNull { !it.isNaN() } ?: return null
+        return v
+    }
+
+    /** WR 序列（通达信口径）：(N日最高-收盘)/(N日最高-N日最低)×100，NaN=数据不足。bars 旧→新 */
+    private fun wrSeries(bars: List<DailySnapshotEntity>, n: Int): DoubleArray {
+        val out = DoubleArray(bars.size) { Double.NaN }
+        for (i in n - 1 until bars.size) {
+            var hh = Double.MIN_VALUE
+            var ll = Double.MAX_VALUE
+            for (j in i - n + 1..i) {
+                if (bars[j].high > hh) hh = bars[j].high
+                if (bars[j].low < ll) ll = bars[j].low
+            }
+            out[i] = if (hh > ll) (hh - bars[i].close) / (hh - ll) * 100.0 else 50.0
+        }
+        return out
+    }
+
+    /** WR 迷你图：WR2（2日，粗橙）+ WR14（14日，细灰），25/75 参考线，纵轴倒置（与通达信一致） */
+    private fun buildWrChart(snaps: List<DailySnapshotEntity>, heightDp: Int): LineChart {
+        val ctx = requireContext()
+        val chart = LineChart(ctx)
+        chart.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(heightDp)
+        )
+        chart.setBackgroundColor(Color.WHITE)
+        chart.description.isEnabled = false
+        chart.legend.textSize = 8f
+        chart.legend.textColor = Color.parseColor("#999999")
+        chart.setScaleEnabled(true)
+        chart.setPinchZoom(true)
+        chart.setDragEnabled(true)
+        chart.setHighlightPerTapEnabled(false)
+        chart.setHighlightPerDragEnabled(false)
+        chart.setVisibleXRangeMaximum((snaps.size + 2).toFloat())
+        chart.moveViewToX(0f)
+
+        fun entriesFor(n: Int): List<Entry> {
+            val s = wrSeries(snaps, n)
+            return snaps.indices.mapNotNull { i ->
+                if (!s[i].isNaN()) Entry(i.toFloat(), s[i].toFloat()) else null
+            }
+        }
+
+        val ds2 = LineDataSet(entriesFor(2), "WR2").apply {
+            color = Color.parseColor("#E65100")
+            lineWidth = 1.6f
+            setDrawCircles(false)
+            setDrawValues(false)
+            isHighlightEnabled = false
+        }
+        val ds14 = LineDataSet(entriesFor(14), "WR14").apply {
+            color = Color.parseColor("#9E9E9E")
+            lineWidth = 1.1f
+            setDrawCircles(false)
+            setDrawValues(false)
+            isHighlightEnabled = false
+        }
+        chart.data = LineData(ds2, ds14)
+
+        chart.xAxis.apply {
+            position = com.github.mikephil.charting.components.XAxis.XAxisPosition.BOTTOM
+            granularity = (snaps.size / 4).coerceAtLeast(1).toFloat()
+            labelCount = 4
+            textSize = 8f
+            textColor = Color.parseColor("#999999")
+            setDrawGridLines(false)
+            setAvoidFirstLastClipping(true)
+            val dates = snaps.map { it.date }
+            valueFormatter = object : com.github.mikephil.charting.formatter.ValueFormatter() {
+                override fun getFormattedValue(value: Float): String {
+                    val ix = value.toInt()
+                    return if (ix in dates.indices) dates[ix].takeLast(5) else ""
+                }
+            }
+        }
+        chart.axisLeft.apply {
+            textSize = 8f
+            textColor = Color.parseColor("#999999")
+            setDrawGridLines(true)
+            gridColor = Color.parseColor("#EEEEEE")
+            axisMinimum = 0f
+            axisMaximum = 100f
+            labelCount = 5
+            // 倒置：0（强势区）在上方，100（超卖区）在下方，与通达信 WR 副图一致
+            isInverted = true
+            removeAllLimitLines()
+            addLimitLine(com.github.mikephil.charting.components.LimitLine(25f, "强势25").apply {
+                lineColor = Color.parseColor("#E53935"); lineWidth = 1f
+                textSize = 8f; textColor = Color.parseColor("#E53935")
+            })
+            addLimitLine(com.github.mikephil.charting.components.LimitLine(75f, "超卖75").apply {
+                lineColor = Color.parseColor("#43A047"); lineWidth = 1f
+                textSize = 8f; textColor = Color.parseColor("#43A047")
+            })
+        }
+        chart.axisRight.isEnabled = false
+        chart.invalidate()
+        return chart
     }
 
     /** 输入框定位：支持 代码(002384/sz002384) 或 股票名称 模糊匹配 */

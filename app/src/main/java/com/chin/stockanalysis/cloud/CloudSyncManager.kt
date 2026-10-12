@@ -101,7 +101,7 @@ class CloudSyncManager(private val context: Context) {
             val cfg = loadConfig()
             if (!isConfigured(cfg)) return
             val now = System.currentTimeMillis()
-            synchronized(lastAutoSyncAt) {
+            synchronized(autoSyncLock) {
                 if (now - lastAutoSyncAt < 60_000L) return
                 lastAutoSyncAt = now
             }
@@ -798,6 +798,7 @@ class CloudSyncManager(private val context: Context) {
     companion object {
         private const val TAG = "CloudSyncManager"
         private val PERIODS = listOf("UltraShortQuant", "ShortTermQuant", "MidTermQuant", "LongTermQuant")
+        private val autoSyncLock = Any()
         /** 持仓编辑自动 force 上传的节流时间戳（60s 内多次编辑只传最后一次触发的包） */
         private var lastAutoSyncAt = 0L
 

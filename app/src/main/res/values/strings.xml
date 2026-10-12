@@ -141,6 +141,8 @@
     <string name="stock_tab_trend">📈 K线趋势</string>
     <string name="stock_tab_hot">🔥 热门行情</string>
     <string name="stock_tab_news">📰 热点新闻</string>
+    <string name="stock_tab_indicator_bt">🧪 回测</string>
+    <string name="stock_tab_ssa">🌊 SSA</string>
 
     <!-- 策略按钮 -->
     <string name="btn_build_position">📈建仓</string>

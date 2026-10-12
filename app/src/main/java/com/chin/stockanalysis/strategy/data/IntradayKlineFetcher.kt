@@ -57,6 +57,62 @@ class IntradayKlineFetcher(private val context: Context) {
     }
 
     /**
+     * 历史小时 K（klt=60，东财 push2his），用于「三层 SSA 做T」回测。
+     * 一次请求 lmt=2000，约覆盖 1.5~2 年小时线；返回升序列表（含 date / datetime）。
+     */
+    suspend fun fetchHourlyHistory(code: String, days: Int = 760): List<IntradayKlineEntity> =
+        withContext(Dispatchers.IO) {
+            val beg = LocalDate.now().minusDays(days.toLong()).format(DATE_FMT)
+            val end = LocalDate.now().format(DATE_FMT)
+            fetchHourlyInternal(code, beg, end)
+        }
+
+    private suspend fun fetchHourlyInternal(code: String, beg: String, end: String): List<IntradayKlineEntity> {
+        val market = if (code.startsWith("sh")) 1 else if (code.startsWith("bj")) 1 else 0
+        val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
+        val url = "${DataConfig.eastmoneyPush2his}/stock/kline/get?" +
+                "secid=$market.$pureCode&klt=60&fqt=1" +
+                "&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58" +
+                "&beg=$beg&end=$end&lmt=2000"
+        for (attempt in 0..2) {
+            try {
+                if (attempt > 0) kotlinx.coroutines.delay(500L * (1 shl attempt))
+                val req = Request.Builder().url(url)
+                    .addHeader("User-Agent", "Mozilla/5.0")
+                    .addHeader("Referer", DataConfig.eastmoneyQuote)
+                    .build()
+                val resp = client.newCall(req).execute()
+                if (!resp.isSuccessful) continue
+                val body = resp.body?.string() ?: continue
+                val data = JSONObject(body).optJSONObject("data") ?: continue
+                val klines = data.optJSONArray("klines") ?: continue
+                val stockName = cleanStockName(data.optString("name", ""))
+                val out = ArrayList<IntradayKlineEntity>(klines.length())
+                for (i in 0 until klines.length()) {
+                    val p = klines.getString(i).split(",")
+                    if (p.size < 7) continue
+                    val datetime = p[0]
+                    val barDate = datetime.split(" ").firstOrNull()?.replace("-", "") ?: continue
+                    out.add(IntradayKlineEntity(
+                        code = code, name = stockName, datetime = datetime, date = barDate,
+                        open = p[1].toDoubleOrNull() ?: 0.0,
+                        close = p[2].toDoubleOrNull() ?: 0.0,
+                        high = p[3].toDoubleOrNull() ?: 0.0,
+                        low = p[4].toDoubleOrNull() ?: 0.0,
+                        volume = p[5].toLongOrNull() ?: 0L,
+                        amount = p[6].toDoubleOrNull() ?: 0.0,
+                        intervalMin = 60
+                    ))
+                }
+                return out
+            } catch (e: Exception) {
+                Log.d(TAG, "hourly60 #$attempt $code: ${e.message?.take(60)}")
+            }
+        }
+        return emptyList()
+    }
+
+    /**
      * 批量获取多只股票的盘中 K 线。
      *
      * @param codes 股票代码列表

@@ -259,7 +259,9 @@ class QuantWorkbenchFragment : Fragment() {
             setTabTextColors(Color.parseColor("#999999"), Color.parseColor("#E65100"))
             setBackgroundColor(Color.WHITE)
             elevation = 2f
-            tabMode = TabLayout.MODE_FIXED
+            // 2026-10-08：新增「技术指标」后共 7 个页签，窄屏下改为可横向滑动，避免末位被挤没
+            tabMode = TabLayout.MODE_SCROLLABLE
+            isTabIndicatorFullWidth = false
         }
         rootLayout.addView(periodTabLayout)
         periodPager = ViewPager2(requireContext()).apply {
@@ -278,6 +280,7 @@ class QuantWorkbenchFragment : Fragment() {
                 3 -> "实仓"
                 4 -> "ETF"
                 5 -> "埋伏"
+                6 -> "技术指标"
                 else -> throw IllegalStateException("period tab count mismatch: $position")
             }
         }.attach()
@@ -570,11 +573,12 @@ class QuantWorkbenchFragment : Fragment() {
             QuantWorkbenchState.etfGateOk
         )
         childFragmentManager.executePendingTransactions()
-        for (i in 0 until 6) {
+        for (i in 0 until 7) {
             when (val f = childFragmentManager.findFragmentByTag("f$i")) {
                 is QuantFragmentBase -> f.refreshPositions()
                 is EtfDipFragment -> f.refresh()
                 is SectorAmbushFragment -> f.refresh()
+                is TechIndicatorQuantFragment -> f.refresh()
                 else -> Unit
             }
         }
@@ -844,9 +848,10 @@ class QuantWorkbenchFragment : Fragment() {
             }
     }
 
-    /** 内嵌周期页适配器：短 / 中 / 长 / 实仓 / ETF / 埋伏（超短引擎并入短线，2026-09-05；埋伏 2026-09-11 新增） */
+    /** 内嵌周期页适配器：短 / 中 / 长 / 实仓 / ETF / 埋伏 / 技术指标（超短引擎并入短线，2026-09-05；
+     *  埋伏 2026-09-11 新增；技术指标多信号选股 2026-10-08 新增） */
     private class PeriodTabAdapter(fragment: Fragment) : FragmentStateAdapter(fragment) {
-        override fun getItemCount() = 6
+        override fun getItemCount() = 7
 
         override fun createFragment(position: Int): Fragment {
             return when (position) {
@@ -856,6 +861,7 @@ class QuantWorkbenchFragment : Fragment() {
                 3 -> RealHoldingQuantFragment()
                 4 -> EtfDipFragment()
                 5 -> SectorAmbushFragment()
+                6 -> TechIndicatorQuantFragment()
                 else -> throw IllegalStateException("Unknown position: $position")
             }
         }
