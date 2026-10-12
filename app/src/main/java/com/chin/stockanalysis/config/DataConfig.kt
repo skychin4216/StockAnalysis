@@ -143,14 +143,26 @@ object DataConfig {
     // ═══════════════════════════════════════════════
     // 东方财富 (eastmoney)
     // ═══════════════════════════════════════════════
-    val eastmoneyPush2 get() = get("data_sources.eastmoney.push2")
-
     /**
-     * 东方财富 push2 备用域名（push2delay）。
+     * 东方财富行情基址（clist / ulist.np 等）。
      *
-     * 2026-09-11 实测：`push2.eastmoney.com` 会 RemoteDisconnected，`push2delay.eastmoney.com`
-     * 同一套 `ulist.np/get` 接口正常返回。每日节奏情报等新链路一律走此域名。
+     * ★ 2026-09-21 修复「热门行情全 0 / Unable to resolve host」：
+     *   `push2.eastmoney.com` **在手机与 PC 上都已不可用**：
+     *     - 手机：APK 日志实测 `UnknownHostException: push2.eastmoney.com`
+     *       （`No address associated with hostname`）连续 9 次，全部重试失败；
+     *     - PC：全分片 `RemoteDisconnected`（2026-09-11 已记录，见 `_sources.py` alt_hosts）。
+     *   而 `push2delay.eastmoney.com` 是**同一套接口**（数据延迟约 15 分钟），
+     *   两端实测均正常。⇒ **统一改走 delay 域名**，一次改动修复全部 11+ 处调用点
+     *   （HotSector / StockSource / BidAsk / EftMarketData …）。
+     *
+     * 原域名保留为 [eastmoneyPush2Raw]，需要直连或做多域名回退时可取用。
      */
+    val eastmoneyPush2 get() = get("data_sources.eastmoney.push2delay")
+
+    /** 原始 push2 域名（当前不可用，仅作回退/诊断用）。 */
+    val eastmoneyPush2Raw get() = get("data_sources.eastmoney.push2")
+
+    /** 与 [eastmoneyPush2] 同源；保留旧名以免调用点失效。 */
     val eastmoneyPush2Delay get() = get("data_sources.eastmoney.push2delay")
     val eastmoneyPush2his get() = get("data_sources.eastmoney.push2his")
     val eastmoneySearchapi get() = get("data_sources.eastmoney.searchapi")

@@ -1,0 +1,21 @@
+# git-crypt 选择性加密（2026-09-21）
+#
+# 用法前提：`git-crypt` 已在 PATH（本机装在 C:\Users\sky1c\bin\git-crypt.exe），
+#           且已在本仓库执行过 `git-crypt init`。
+# 密钥位置：.git/git-crypt/keys/default（**不入版本库**）
+#          已导出备份到 C:\Users\sky1c\git-crypt-key-stockanalysis —— 请另行妥善保存，
+#          密钥丢失后这些文件将无法解密。
+#
+# 规则：下列文件**在仓库里始终为密文**，工作区为明文（clean/smudge 自动转换）。
+# ★ 注意：这些文件**不能**同时被 .gitignore 排除，否则不会进版本库
+#         （已在 .gitignore 中相应移除/调整）。
+
+# 交易与持仓类（实盘后会含真实成交，必须加密）
+data/_trade_orders.jsonl filter=git-crypt diff=git-crypt
+data/_trade_orders.json filter=git-crypt diff=git-crypt
+data/_auto_positions.json filter=git-crypt diff=git-crypt
+data/_paper_account.json filter=git-crypt diff=git-crypt
+data/_pick_codes.json filter=git-crypt diff=git-crypt
+
+# ★ 刻意不加密、且永不入库：data/_holdings.json（个人实仓）
+#   它属于「真敏感」——即便加密也不应进公开仓库，保持 .gitignore 即可。

@@ -174,6 +174,50 @@ object CosRelayClient {
         return sdkCli
     }
 
+    /**
+     * **只投递、不等应答**（消息类专用，2026-09-21 修复「发送失败」误报）。
+     *
+     * ### 为什么需要它
+     * `command()` 的设计是「PUT 命令 → 轮询等 PC 写回应答 → 返回 data」，最长等 **90 秒**；
+     * 等不到就 `throw RuntimeException("中继超时…")`。
+     *
+     * 但**消息投递本身在 PUT 成功那一刻就完成了**。PC 侧 `relay_worker` 若正在忙、
+     * 轮询间隔内没来得及回写应答文件，APK 就会**误报「发送失败」**——而消息其实已经
+     * 落到 `cb_inbox.json`（用户实测：报失败但 PC 确实收到了）。
+     *
+     * ⇒ 消息类（`msg.send`）没必要等同步应答：投递成功即返回 msgId，
+     *   回复由 `msg.replies` 轮询获取（本来就是异步的）。
+     *
+     * 返回值：msgId（可用于日志关联）。
+     */
+    suspend fun deliver(
+        context: Context,
+        method: String,
+        params: JSONObject = JSONObject(),
+    ): String = withContext(Dispatchers.IO) {
+        val cfg = requireCfg(context)
+        val dev = deviceId(context)
+        val prefix = bridgePrefix(cfg)
+        val tok = token(cfg.secretKey)
+        val seq = nextSeq(context)
+        val msgId = UUID.randomUUID().toString().replace("-", "")
+
+        val env = JSONObject()
+            .put("v", 1).put("msgId", msgId).put("deviceId", dev).put("seq", seq)
+            .put("ts", System.currentTimeMillis() / 1000).put("kind", "cmd")
+            .put("method", method).put("params", params)
+            .put("replyTo", JSONObject.NULL).put("ok", true)
+            .put("data", JSONObject()).put("err", JSONObject.NULL)
+        env.put("sig", sign(env, tok))
+
+        putText(cfg, "$prefix/pc/inbox/$dev/${"%08d".format(seq)}-$msgId.json", env.toString())
+        // 投递成功即视为成功：记录通信时间 + 顺手心跳
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .edit().putLong(KEY_LAST_OK, System.currentTimeMillis()).apply()
+        runCatching { beat(context) }
+        msgId
+    }
+
     private fun putText(cfg: CloudSyncManager.CloudConfig, key: String, body: String) {
         // 2026-09-20：优先走**腾讯云官方 SDK**（CosXmlClient）。
         // 自研 CosSigner 在 APK 侧持续 403 SignatureDoesNotMatch，而算法/编码/密钥/键名

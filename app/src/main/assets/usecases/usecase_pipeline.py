@@ -3593,6 +3593,63 @@ def _main_force_stage_node(ctx, node, inputs):
     return out
 
 
+@register("oversold_relax")
+def _oversold_relax_node(ctx, node, inputs):
+    """超跌反转 + 政策维稳 → **冷板块放宽闸门**（2026-09-21 用户思路，万科A 案例）。
+
+    用户逻辑（已量化，见 `smalltools/_oversold_relax.py`）：
+        C1 超跌    连跌 ≥8 天 **或** 近 10 日累计 ≤ -12%
+        C2 反转形态 锤子 / **刺穿线** / 早晨之星 / 看涨吞没
+        C3 缩量    量比 ≤ 0.85（下跌末端抛压枯竭）
+        C4 维稳环境 指数近 20 日 ≤ -3%（越弱 → 政策"拉一把"动机越强）
+    四者同时满足 → 该票**豁免板块闸门**（冷板块也放行），并打 `relax` 标记。
+
+    config：sourceNode=n_direction、topN=120。
+    输出：{as_of, n, n_relax, rows:[…+ relax/relaxPattern/relaxReasons]}
+    下游用法：命中票的 `mfStage`/板块闸门判定应放宽；可在 generate_orders 前加权。
+    """
+    cfg = dict(node.config or {})
+    src = ctx.get(cfg.get("sourceNode") or "n_direction")
+    if not isinstance(src, dict) or not src.get("rows"):
+        src = _upstream_rows(inputs, ("n_direction",)) or {"rows": []}
+    src = src if isinstance(src, dict) else {"rows": []}
+    top_n = int(cfg.get("topN", 120) or 120)
+    rows = list(src.get("rows") or [])[:top_n]
+    asof = getattr(ctx, "asof", "") or ""
+
+    try:
+        import _oversold_relax as OR          # noqa: PLC0415
+    except Exception as e:                    # noqa: BLE001
+        out = {"as_of": asof, "n": 0, "n_relax": 0, "rows": rows,
+               "source": "超跌反转放宽(不可用: %s)" % e}
+        ctx.stage(node.id, out)
+        return out
+
+    n_relax = 0
+    for r in rows:
+        secid = r.get("secid") or ""
+        if not secid:
+            c6 = str(r.get("code") or "")
+            if len(c6) == 6 and c6.isdigit():
+                secid = ("sh" if c6[0] == "6" else "sz") + c6
+            else:
+                continue
+        try:
+            res = OR.evaluate(secid, asof)
+        except Exception:                     # noqa: BLE001
+            continue
+        r["relax"] = bool(res.get("relax"))
+        r["relaxPattern"] = res.get("pattern") or ""
+        r["relaxReasons"] = res.get("reasons") or []
+        r["relaxConds"] = res.get("conditions") or {}
+        if r["relax"]:
+            n_relax += 1
+    out = {"as_of": asof, "n": len(rows), "n_relax": n_relax, "rows": rows,
+           "source": "超跌反转+政策维稳放宽(连跌/累计跌幅 + 锤子/刺穿/晨星/吞没 + 缩量 + 指数弱)"}
+    ctx.stage(node.id, out)
+    return out
+
+
 @register("inst_buy_recent")
 def _inst_buy_recent_node(ctx, node, inputs):
     """月内机构买入检测（2026-09-17 用户需求，详见模块注释）。

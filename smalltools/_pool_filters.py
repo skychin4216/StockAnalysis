@@ -28,6 +28,8 @@ MAIN_BOARD = True
 SECTOR_FILTER = True
 SECTOR_THRESHOLD = float(os.environ.get("SECTOR_THRESHOLD", "-3.0"))  # 行业近20日平均涨幅低于此值→弱板块
 SECTOR_LOOKBACK = 20
+# 2026-09-21 新增：板块闸门（冷板块须连涨≥3天才放行）。默认关闭，SECTOR_GATE=1 开启。
+SECTOR_GATE = os.environ.get("SECTOR_GATE", "0").strip().lower() in ("1", "true", "yes")
 STICKY_HARD = True
 SHORT_HARD = True
 # 按周期提高 minPassCount（analyze_snaps 通过后仍低于此值 → 拒绝）。默认不覆盖。
@@ -181,4 +183,34 @@ def extra_filter(code, name, r, period, cache, all_dates, date_to_idx, asof):
         r20 = sector_ret20(cache, all_dates, date_to_idx, code, name, asof)
         if r20 is not None and r20 < SECTOR_THRESHOLD:
             return False
+    # 8) 板块闸门（2026-09-21 新增）：**资金不流入的冷板块，必须连续上涨 ≥3 天才放行**
+    #    起因：短线选到万科A（房地产长期下跌/横盘、无资金流入，只是偶尔被消息刺激）。
+    #    默认 SECTOR_GATE=False（保守），设 SECTOR_GATE=1 开启；长线自动豁免。
+    if SECTOR_GATE:
+        try:
+            import _sector_gate as SG                        # noqa: PLC0415
+            sec = (cache.get(code) or {}).get("industry") if cache else None
+            if not sec:
+                sec = _sector_gate_sector_of(code, name)
+            ok, _why = SG.judge(sec or "", asof=asof, period=period)
+            if not ok:
+                return False
+        except Exception:                                    # noqa: BLE001
+            pass                                             # 闸门故障不阻断选股
     return True
+
+
+def _sector_gate_sector_of(code: str, name: str) -> str:
+    """代码/名称 → 行业（用 board_index 反查，取不到返回空）。"""
+    try:
+        import json
+        import os
+        b = json.load(open(os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "data", "board_index.json"), encoding="utf-8"))
+        for key in ("industry", "subindustry", "concept"):
+            for sec_name, members in (b.get(key) or {}).items():
+                if code in members:
+                    return sec_name
+    except Exception:                                        # noqa: BLE001
+        pass
+    return ""

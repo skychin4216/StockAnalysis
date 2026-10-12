@@ -184,3 +184,28 @@ data/wf_2008/
 
 # 守护 inbox 运行目录
 data/_inbox/
+
+# ===== 2026-09-21 补充：图表/运行时产物（可重生成，不入库） =====
+data/charts/
+data/pick_charts/
+data/_auto_positions.json
+data/_pick_codes.json
+data/_daily_intel.json
+
+# ===== 2026-09-21 隐私加固 =====
+# ★ 原则（与 .gitattributes 配套）：
+#   ① **真敏感**（个人实仓）→ 永不入库
+#   ② **需要版本化的运维数据** → 走 git-crypt 加密入库（见 .gitattributes）
+# 因此下面**不再**忽略 git-crypt 保护的那几个文件（否则它们进不了版本库）。
+#
+# 个人实仓：即使加密也不入库
+data/_holdings.json
+data/_holdings*.json
+# 复盘/巡诊等运行产物（不需要版本化）
+data/_patrol_recent.json
+data/_maintain_caliber.json
+# 落盘的资金流历史（体积增长，不入库）
+data/_sector_flow_daily.json
+# 一次性探针/导出（本轮排查产生）
+smalltools/_apk_today.log
+smalltools/_tmp_fetch_apklog.py

@@ -204,13 +204,33 @@ def score_pool(cache, asof, trend):
 
 
 def hot_sectors(cache, industry, asof, top=8, window=20):
-    """行业近 window 日平均涨幅（东财行业口径），供清单展示 + 板块代理过滤。"""
+    """行业近 window 日平均涨幅（东财行业口径），供清单展示 + 板块代理过滤。
+
+    ★ 2026-09-21 修复「非开盘时热门行情全是 0」：
+    原实现硬性要求 `snaps[-1]["date"] == asof`，而 asof 若不是交易日（周末/节假日/
+    盘前），**所有票都被 continue → 整个数组为空 → 前端显示 0**。
+    现改为**回退到 <= asof 的最近交易日**（`asof_eff`），非开盘时展示上一交易日数据。
+    """
     agg = {}
+    # ① 先确定有效基准日：asof 本身有数据就用它，否则用 <= asof 的最近交易日
+    asof_eff = asof
+    if asof:
+        latest = ""
+        for code, ent in cache.items():
+            if code.startswith("sh000") or code.startswith("sz399"):
+                continue
+            sn = ent.get("snaps") or []
+            if sn:
+                d = str(sn[-1].get("date"))[:10]
+                if d <= asof and d > latest:
+                    latest = d
+        asof_eff = latest or asof
     for code, ent in cache.items():
         if code.startswith("sh000") or code.startswith("sz399"):
             continue
-        snaps = ent.get("snaps") or []
-        if len(snaps) < window or snaps[-1]["date"] != asof:
+        snaps = [s for s in (ent.get("snaps") or [])
+                 if not asof_eff or str(s.get("date"))[:10] <= asof_eff]
+        if len(snaps) < window:
             continue
         closes = [s["close"] for s in snaps[-window:]]
         if not closes or closes[0] <= 0:
@@ -5088,7 +5108,10 @@ def main():
                     help="盘中轮间隔秒（v4 默认 600=10 分钟；首轮在段首立即选股）")
     ap.add_argument("--dry", action="store_true", help="不通知不上传（调试）")
     ap.add_argument("--key", default=None, help="COS candidates_key，默认 stockanalysis/quant/candidates.json")
-    ap.add_argument("--timed", action="store_true", help="定时推送模式（单次执行也推送整轮概览）")
+    ap.add_argument("--timed", action="store_true",
+                    help="定时推送模式（**已默认开启**，保留仅为兼容旧调用）")
+    ap.add_argument("--no-push", action="store_true",
+                    help="只选股+上传 COS，**不推送通知**（2026-09-21 新增）")
     ap.add_argument("--no-pos", action="store_true",
                     help="推送不含实仓段（默认随整轮消息内嵌，有变化才展开详情）")
     ap.add_argument("--no-ctx", action="store_true", help="跳过市场上下文/共振/实仓（纯形态快速选股）")
@@ -5102,7 +5125,13 @@ def main():
         daemon_serve(prep=not args.no_prep, interval=args.interval,
                      dry=args.dry, use_ctx=not args.no_ctx)
         return 0
-    return run_once(dry=args.dry, candidates_key=args.key, timed_push=args.timed,
+    # ★ 2026-09-21 用户确认：`--once` **默认带推送**（原先必须显式加 --timed，
+    #   导致「跑了选股却什么都没发」的踩坑）。要只选股不发通知用 `--no-push`。
+    timed = not args.no_push
+    if args.timed and args.no_push:
+        print("⚠ --timed 与 --no-push 同时给出：以 --no-push 为准（不推送）")
+        timed = False
+    return run_once(dry=args.dry, candidates_key=args.key, timed_push=timed,
                     use_ctx=not args.no_ctx, pos_advice=not args.no_pos)
 
 
