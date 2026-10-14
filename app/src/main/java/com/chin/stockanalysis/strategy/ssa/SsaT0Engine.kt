@@ -7,19 +7,32 @@ import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
+import kotlin.math.sqrt
 
 /**
  * ## 三层周期 SSA 稳态做T回测引擎（纯 Kotlin）
  *
- * 周线（环境总闸）→ 日线（过滤器+硬止损）→ 1小时（cycle 拐点做T）。
+ * 主体层 = 小时线**三态机**（UP / WINDOW / FLAT），以「中位线 vs 趋势线」关系定状态：
+ * 因 mid = trend + cycle，「中位线在趋势线上方」等价于 cycle>0。
+ *   UP     (cycle>0)：核心做多，直至 cycle 下穿 0 全仓离场；上升中超极限卖、破极限买回做T。
+ *   WINDOW (cycle<0 且买入窗口开)：价格上穿中位线买、触正常上沿卖。
+ *   FLAT   (cycle<0 且窗口关)：空仓，仅价格破极限下沿买T、超极限上沿卖T。
+ * 日线/周线层仅作参考与统计口径，不参与主状态判定。
+ *
+ * 扰动区间（2026-10 新口径，实证校准）：
+ * - **中线 = trend + cycle**（价格尺度平滑线，即该段趋势的中位价；SSA 未去均值，trend+cycle+noise==价格）。
+ * - **σ = 残差噪声分量(close−中线)的滚动标准差**（tailStd）；噪声即 SSA 的 noise，天然无未来函数。
+ * - 正常区间 = 中线 ± cycleMult·σ（默认 1.5σ，触轨做T阈值）；
+ *   极限区间 = 中线 ± noiseMult·σ（默认 2.0σ，结构失效/硬止损阈值）。
  *
  * ⚠️ 铁律：
  * 1. 三层全部**固定长度滚动窗口**逐K重算 SSA，禁止一次性全量分解（全量=未来函数）。
  * 2. 信号在 t 收盘确认、t+1 开盘成交；1H 决策时能看到的日线/周线状态只可能是
  *    「已经收盘」的那一根（当日15:00前不用当日日K，当周未结束不用当周周K）。
- * 3. SSA 右端点会随新K重构，因此**只用连续2根确认的 cycle 拐点**，不预测未来高低点。
- * 4. A/B/C 是已收盘K的状态分类，用于当下的风控开关，不引用未来K。
- * 5. 反T必须先有底仓；B/C 禁止一切新开T；硬止损独立于 cycle 信号。
+ * 3. 区间由 t 收盘生成、供 t+1 使用，绝不引用未来K；触轨用当根 low/high 判定。
+ * 4. A/B/C 是已收盘K的状态分类（A=正常区间内 B=极限区间内 C=突破极限区间），用于当下风控开关。
+ * 5. 反T必须先有底仓，且**仅在中周期趋势非上行时允许**（实证：上行段反T高抛被趋势碾压）。
+ * 6. **止损只保下轨**：上轨突破不强制平仓（主升段让利润奔跑），只有下轨破位才离场。
  */
 object SsaT0Engine {
 
@@ -33,25 +46,59 @@ object SsaT0Engine {
         val isHour: Boolean get() = time.isNotEmpty()
     }
 
-    /** 每层固定参数（窗口长度固定，不自动自适应） */
+    /** 每层固定参数（窗口长度固定，不自动自适应）
+     *  cycleMult = 正常区间 σ 倍数（触轨阈值）；noiseMult = 极限区间 σ 倍数（止损阈值）。 */
     data class LayerCfg(
         val embedL: Int,        // SSA 嵌入窗口 L
         val windowM: Int,       // 每次分解使用的固定滚动样本长度
         val lookbackN: Int,     // 波动标准差回看
-        val cycleMult: Double = 1.0,
-        val noiseMult: Double = 1.0
+        val cycleMult: Double = 1.5,   // 正常区间 = 中线 ± 1.5σ
+        val noiseMult: Double = 2.0    // 极限区间 = 中线 ± 2.0σ
     )
 
     data class Params(
         val week: LayerCfg = LayerCfg(20, 80, 12),
         val day: LayerCfg = LayerCfg(30, 120, 20),
         val hour: LayerCfg = LayerCfg(30, 120, 20),
-        val capUpPct: Double = 40.0,       // 周线趋势向上时单T仓位上限（%资金）
-        val capDownPct: Double = 25.0,     // 周线趋势向下时
+        val corePct: Double = 80.0,        // UP 段核心仓位（%权益）
+        val tPct: Double = 30.0,           // UP 段极限带反向T 摆动比例（%持仓）
         val commissionRate: Double = 0.00025,
         val stampDutyRate: Double = 0.0005,
         val slippageRate: Double = 0.0005, // 滑点（双边各计）
-        val trainRatio: Double = 0.70
+        val trainRatio: Double = 0.70,
+        /** 下跌趋势亏损削减方案（供对比）：0=基线 1=冻结核心仓 2=日线下行降仓 3=提前离场 */
+        val reduceMode: Int = 0,
+        /** 试验规则：价格上穿中位线买入 / 下穿中位线卖出（为 true 时完全替代三态机，供对比） */
+        val useMidCross: Boolean = false,
+        /** 仅配合 useMidCross：盘中「触及中位线」即成交（挂单在 mid[t-1]，触及即按线价成交），不等 t+1 开盘 */
+        val execAtTouch: Boolean = false,
+        /** 仅配合 useMidCross：中位线 EMA 平滑跨度（1=不平滑），用于减少穿越误判 */
+        val midSmoothSpan: Int = 1,
+        /** 仅配合 useMidCross：买入需中位线在最近 K 根内上升（0=不启用），中位线下行时禁止买入 */
+        val midRisingK: Int = 0,
+        /** 试验规则：cycle 拐点驱动做T（为 true 时完全替代三态机，供对比）*/
+        val useCycleRule: Boolean = false,
+        /** 仅配合 useCycleRule：拐点确认窗口 1=3点反转立即确认 2=再等1根确认（4点单调）*/
+        val cyConfirm: Int = 1,
+        /** 仅配合 useCycleRule：启用上升段规则（谷底满仓 / 回中线补满 / 峰顶全清）*/
+        val cyUpLeg: Boolean = true,
+        /** 仅配合 useCycleRule：启用下降段规则（仅中位线上行且价上穿中线买；触极限/回买入点/回中线卖）*/
+        val cyDownLeg: Boolean = true,
+        /** 仅配合 useCycleRule：下降段买入需中位线在最近 K 根内上行（0=不启用）*/
+        val cyMidRisingK: Int = 3,
+        /** 仅配合 useCycleRule：cycle 信号层 "H"=小时线 / "D"=日线（日线更平滑、拐点更少、贴合大趋势）；
+         *  日线信号在「该日K 首次可用于 1H 决策」的那根(通常当日 15:00)触发一次。*/
+        val cyLayer: String = "H",
+        /** 仅配合 useCycleRule：上升段 cycle 下穿 0（中位线下穿趋势线）也清仓（峰顶确认前的补充退出）*/
+        val cyExitOnZero: Boolean = false,
+        /** 三态机 WINDOW 段向下止损：0=关闭(基线) 1=跌破正常下沿(nDn)止损 2=跌破极限下沿(eDn)止损 */
+        val winStopDn: Int = 0,
+        /** 三态机 WINDOW 段买入仓位%（默认100=满仓） */
+        val winPosPct: Double = 100.0,
+        /** 三态机 WINDOW 段买入需日线趋势非下行（减少下跌段接盘） */
+        val winDayUp: Boolean = false,
+        /** 三态机状态(UP/WINDOW/FLAT)判定所用的 cycle 层："H"=小时线(基线) "D"=日线(更平滑、状态更稳) */
+        val regimeLayer: String = "H"
     )
 
     /** 一层滚动 SSA 全序列结果（数组下标对齐该层 bars） */
@@ -74,10 +121,26 @@ object SsaT0Engine {
         val returnPct: Double,
         val barsHeld: Int,
         val weeklyUpAtOpen: Boolean,
+        val dayUpAtOpen: Boolean,
         val exitReason: String
     )
 
     data class RiskEvent(val index: Int, val time: String, val level: String, val reason: String)
+
+    // ═══════════════════════ 下一根操作建议 ═══════════════════════
+
+    /** 建议动作常量（与 SsaHybridEngine 对齐，避免两页语义分裂） */
+    const val BUY = 0
+    const val SELL = 1
+    const val HOLD_POS = 2
+    const val HOLD_EMPTY = 3
+
+    /** 末根「下一根操作建议」：state 用 regime 口径(1=UP/2=FLAT/3=WINDOW/0=暖机)，
+     *  action ∈ {BUY/SELL/HOLD_POS/HOLD_EMPTY}，holdPct=末根实际持仓占权益%。 */
+    data class Advice(
+        val index: Int, val time: String, val state: Int,
+        val action: Int, val reason: String, val close: Double, val holdPct: Double
+    )
 
     data class SegStats(
         val name: String,
@@ -94,18 +157,34 @@ object SsaT0Engine {
     data class Result(
         val params: Params,
         val h: Layer, val d: Layer, val w: Layer,
+        /** 1H 主状态序列：1=UP(cycle>0) 2=FLAT 3=WINDOW，暖机=0（供图表画三态分区背景） */
+        val regime: IntArray,
         val markers: List<Marker>,
         val trades: List<Trade>,
         val riskEvents: List<RiskEvent>,
         val equity: DoubleArray, val benchmark: DoubleArray, val drawdown: DoubleArray,
         val splitIndex: Int,
         val full: SegStats, val train: SegStats, val test: SegStats,
-        val weekDown: WeekDownReport
+        val weekDown: WeekDownReport,
+        val dayDown: WeekDownReport,
+        val bandEval: BandEval,
+        /** 回测末根的实际持仓占权益百分比（供「下一根操作建议」判断当前是否有底仓） */
+        val finalHoldingPct: Double = 0.0
     )
 
     data class WeekDownReport(
         val trades: Int, val winRatePct: Double, val avgPnlPct: Double,
         val totalPnlPct: Double, val weeks: Int
+    )
+
+    /** 周期扰动区间评估：命中率 / 触轨后反转成功率 / 区间偏离误差（全部只用历史+下一根真实K） */
+    data class BandEval(
+        val layerName: String,
+        val bars: Int,
+        val insideRatePct: Double,          // 收盘价落在激进扰动区间内的比例
+        val touchUp: Int, val touchUpReversalPct: Double,   // 触上沿次数 / 下一根收盘回落比例
+        val touchDn: Int, val touchDnReversalPct: Double,   // 触下沿次数 / 下一根收盘反弹比例
+        val avgDevPct: Double               // 收盘价相对中线（前收）的平均绝对偏离%
     )
 
     // ═══════════════════════════════ 主入口 ═══════════════════════════════
@@ -126,7 +205,10 @@ object SsaT0Engine {
         val d = buildLayer(dayBars, params.day)
         val h = buildLayer(hourBars, params.hour)
 
-        val sim = simulate(h, d, w, params)
+        val reg = if (params.regimeLayer.equals("D", ignoreCase = true))
+            regimes(dailyCycleOnHour(h, d))
+        else regimes(DoubleArray(h.bars.size) { h.mid[it] - h.trend[it] })
+        val sim = simulate(h, d, w, reg, params)
         val split = (h.bars.size * params.trainRatio).toInt()
 
         val full = segmentStats("全样本", h, sim.equity, sim.benchmark, sim.trades, 0, h.bars.size, params)
@@ -143,9 +225,101 @@ object SsaT0Engine {
             weeks = countWeeks(h.bars, 0, h.bars.size)
         )
 
-        return Result(params, h, d, w, sim.markers, sim.trades, sim.riskEvents,
+        // 日线下跌环境独立绩效：开仓时「日线趋势 5 根斜率向下」的 T 单（下跌趋势亏损归因桶）
+        val downD = sim.trades.filter { !it.dayUpAtOpen }
+        val dayDown = WeekDownReport(
+            trades = downD.size,
+            winRatePct = if (downD.isEmpty()) 0.0 else downD.count { it.returnPct > 0 }.toDouble() / downD.size * 100,
+            avgPnlPct = if (downD.isEmpty()) 0.0 else downD.map { it.returnPct }.average(),
+            totalPnlPct = downD.sumOf { it.returnPct },
+            weeks = countWeeks(h.bars, 0, h.bars.size)
+        )
+
+        val lastIdx = h.bars.size - 1
+        val holdPct = if (sim.equity[lastIdx] > 0)
+            sim.finalShares * h.bars[lastIdx].close / sim.equity[lastIdx] * 100 else 0.0
+        return Result(params, h, d, w, reg, sim.markers, sim.trades, sim.riskEvents,
             sim.equity, sim.benchmark, sim.drawdown, split,
-            full, train, test, weekDown)
+            full, train, test, weekDown, dayDown, bandEval(h), holdPct)
+    }
+
+    /**
+     * 末根「下一根操作建议」：对最后一根已收盘 K 复现 [simulate] 的 `when(reg[last])` 决策，
+     * 用末根实际持仓 [Result.finalHoldingPct] 判断"是否有底仓"。
+     *
+     * 支持边界：默认三态机（含 winHalf=winPosPct、reduceMode∈{0,1,2}）完整支持；
+     * useCycleRule / useMidCross / reduceMode==3 支线仅返回 HOLD_EMPTY + 提示（以回测末段成交为准）。
+     */
+    fun adviceOf(r: Result): Advice {
+        val h = r.h; val bars = h.bars; val n = bars.size
+        val last = n - 1
+        val p = r.params
+        val close = bars[last].close
+        val time = labelOf(bars[last])
+        val state = r.regime[last]
+        val hold = r.finalHoldingPct
+        fun of(a: Int, reason: String) = Advice(last, time, state, a, reason, close, hold)
+
+        if (p.useCycleRule) return of(HOLD_EMPTY, "当前为「日线cycle拐点」规则，请以回测末段成交为准")
+        if (p.useMidCross) return of(HOLD_EMPTY, "当前为「中线上穿」规则，请以回测末段成交为准")
+        if (p.reduceMode == 3) return of(HOLD_EMPTY, "当前为「提前离场」规则，请以回测末段成交为准")
+        if (state == 0) return of(HOLD_EMPTY, "暖机中·观望")
+
+        val mid = h.mid[last]; val nUp = h.nUp[last]; val nDn = h.nDn[last]
+        val eUp = h.eUp[last]; val eDn = h.eDn[last]
+        val empty = hold <= 1e-9
+        return when (state) {
+            1 -> when {   // UP：核心做多 + 极限带反向T
+                hold < p.corePct - 1e-9 -> of(BUY, "UP建仓/回补至核心仓")
+                close > eUp -> of(SELL, "UP超极限上沿·卖T")
+                close < eDn -> of(BUY, "UP破极限下沿·买回T")
+                else -> of(HOLD_POS, "UP核心持有")
+            }
+            3 -> {        // WINDOW：上穿中位买 / 触正常上沿卖 / 可选破下沿止损
+                val stopLine = when (p.winStopDn) { 1 -> nDn; 2 -> eDn; else -> Double.NaN }
+                val prevMid = if (last >= 1) h.mid[last - 1] else Double.NaN
+                val crossUp = !prevMid.isNaN() && bars[last - 1].close < prevMid && close >= mid
+                when {
+                    r.regime[last - 1] != 3 && hold > 1e-9 -> of(SELL, "中位线下穿趋势线·全平")
+                    hold > 1e-9 && !stopLine.isNaN() && close < stopLine ->
+                        of(SELL, if (p.winStopDn == 2) "WINDOW破极限下沿·止损" else "WINDOW破正常下沿·止损")
+                    empty && crossUp && !p.winDayUp -> of(BUY, "WINDOW上穿中位·买入")
+                    hold > 1e-9 && close >= nUp -> of(SELL, "WINDOW触正常上沿·卖出")
+                    hold > 1e-9 -> of(HOLD_POS, "WINDOW持有")
+                    else -> of(HOLD_EMPTY, "WINDOW空仓观望")
+                }
+            }
+            else -> when {  // FLAT：空仓，仅极限突破T
+                hold > 1e-9 -> of(SELL, "FLAT峰顶回落·清仓")
+                close < eDn -> of(BUY, "FLAT破极限下沿·买T")
+                else -> of(HOLD_EMPTY, "FLAT空仓观望")
+            }
+        }
+    }
+
+    /** 1H 周期扰动区间评估（next 为真实下一根，仅用于事后评估，不参与信号） */
+    private fun bandEval(h: Layer): BandEval {
+        val bars = h.bars
+        var inside = 0; var valid = 0
+        var tu = 0; var tuOk = 0; var td = 0; var tdOk = 0
+        var dev = 0.0; var devN = 0
+        for (t in 1 until bars.size) {
+            if (h.nUp[t].isNaN()) continue
+            valid++
+            val c = bars[t].close
+            if (c in h.nDn[t]..h.nUp[t]) inside++
+            if (h.mid[t] > 0) { dev += abs(c - h.mid[t]) / h.mid[t]; devN++ }
+            val next = if (t + 1 < bars.size) bars[t + 1].close else Double.NaN
+            if (bars[t].high >= h.nUp[t]) { tu++; if (!next.isNaN() && next < c) tuOk++ }
+            if (bars[t].low <= h.nDn[t]) { td++; if (!next.isNaN() && next > c) tdOk++ }
+        }
+        return BandEval(
+            layerName = "1H", bars = valid,
+            insideRatePct = if (valid == 0) 0.0 else inside * 100.0 / valid,
+            touchUp = tu, touchUpReversalPct = if (tu == 0) 0.0 else tuOk * 100.0 / tu,
+            touchDn = td, touchDnReversalPct = if (td == 0) 0.0 else tdOk * 100.0 / td,
+            avgDevPct = if (devN == 0) 0.0 else dev * 100.0 / devN
+        )
     }
 
     // ═══════════════════════════════ 周K聚合 ═══════════════════════════════
@@ -190,19 +364,21 @@ object SsaT0Engine {
             val seg = close.copyOfRange(t - M + 1, t + 1)
             val dec = SsaEngine.decompose(seg, L)
             val mm = seg.size
-            val trEnd = dec.trend[mm - 1]; val cyEnd = dec.cycle[mm - 1]
-            trend[t] = trEnd; cycle[t] = cyEnd
-            val cs = tailStd(dec.cycle, N)
-            val ns = tailStd(dec.noise, N)
-            // 供 t+1 使用的轨道（在 t 收盘生成）
+            trend[t] = dec.trend[mm - 1]
+            cycle[t] = dec.cycle[mm - 1]
+            // σ = 残差噪声分量（close − (trend+cycle)）最近 N 根的滚动标准差，无未来函数
+            val sigma = tailStd(dec.noise, N)
+            // 中线 = trend + cycle（价格尺度平滑线 = 该段趋势中位价），于 t 收盘生成供 t+1 使用。
+            // 正常区间 = 中线 ± 1.5σ；极限区间 = 中线 ± 2.0σ。
             if (t + 1 < n) {
-                mid[t + 1] = trEnd
-                nUp[t + 1] = trEnd + cfg.cycleMult * cs
-                nDn[t + 1] = trEnd - cfg.cycleMult * cs
-                eUp[t + 1] = trEnd + cfg.cycleMult * cs + cfg.noiseMult * ns
-                eDn[t + 1] = trEnd - cfg.cycleMult * cs - cfg.noiseMult * ns
+                val m = dec.trend[mm - 1] + dec.cycle[mm - 1]
+                mid[t + 1] = m
+                nUp[t + 1] = m + cfg.cycleMult * sigma
+                nDn[t + 1] = m - cfg.cycleMult * sigma
+                eUp[t + 1] = m + cfg.noiseMult * sigma
+                eDn[t + 1] = m - cfg.noiseMult * sigma
             }
-            // 当根事后情景（轨道由 t-1 生成，无未来）
+            // 当根事后情景（区间由 t-1 生成，无未来）：A=正常区间内 B=极限区间内 C=突破极限区间
             if (!nUp[t].isNaN()) {
                 scn[t] = when {
                     close[t] in nDn[t]..nUp[t] -> SsaEngine.SCN_A
@@ -214,63 +390,97 @@ object SsaT0Engine {
         return Layer(bars, trend, cycle, mid, nUp, nDn, eUp, eDn, scn)
     }
 
+    /** 尾窗标准差：最近 n 个有效值的样本标准差（ddof=1） */
     private fun tailStd(v: DoubleArray, n: Int): Double {
-        var cnt = 0; var sum = 0.0
+        var s = 0.0; var s2 = 0.0; var cnt = 0
         val from = max(0, v.size - n)
-        for (i in from until v.size) if (!v[i].isNaN()) { sum += v[i]; cnt++ }
+        for (i in from until v.size) if (!v[i].isNaN()) {
+            s += v[i]; s2 += v[i] * v[i]; cnt++
+        }
         if (cnt < 2) return 0.0
-        val mean = sum / cnt
-        var ss = 0.0
-        for (i in from until v.size) if (!v[i].isNaN()) ss += (v[i] - mean).pow(2)
-        return kotlin.math.sqrt(ss / (cnt - 1))
+        val mean = s / cnt
+        val vari = (s2 - cnt * mean * mean) / (cnt - 1)
+        return if (vari <= 0.0) 0.0 else sqrt(vari)
     }
 
-    // ═══════════════════════════════ 做T状态机 ═══════════════════════════════
+    // ═══════════════════════════════ 三态做T状态机 ═══════════════════════════════
 
-    // 持仓状态：1=底仓正常(1单位) 2=正T加仓(2单位) 0=反T卖出/风控清空
-    private data class Leg(
-        val direction: String,        // 正T / 反T
-        val openIndex: Int, val openPrice: Double, val shares: Long,
-        val weeklyUp: Boolean
-    )
+    /** FIFO 持仓批次：买入入队、卖出按先进先出配对成 T 单 */
+    private data class Lot(val openIndex: Int, val openPrice: Double, var shares: Long)
 
     private data class SimOut(
         val equity: DoubleArray, val benchmark: DoubleArray, val drawdown: DoubleArray,
         val markers: List<Marker>, val trades: List<Trade>, val riskEvents: List<RiskEvent>,
-        val baseShares: Long, val basePrice: Double, val startIndex: Int
+        val finalCash: Double, val finalShares: Long
     )
 
-    private fun simulate(h: Layer, d: Layer, w: Layer, p: Params): SimOut {
+    /** 主状态序列（主体层=小时线）：因 mid=trend+cycle，「中位线 vs 趋势线」等价于 cycle 符号。
+     *  UP=1(cycle>0，核心做多) / WINDOW=3(cycle<0 且买入窗口开) / FLAT=2(cycle<0 且窗口关)，暖机=0。
+     *  窗口由 cycle 拐点开关：谷底反转(cy[i-2]>cy[i-1]<cy[i] 且 cy[i-1]<0)开窗；
+     *  峰顶反转(cy[i-2]<cy[i-1]>cy[i] 且 cy[i-1]>0)关窗。 */
+    private fun regimes(cy: DoubleArray): IntArray {
+        val n = cy.size
+        val reg = IntArray(n)
+        var window = false
+        for (i in 0 until n) {
+            if (i < 2 || cy[i].isNaN() || cy[i - 1].isNaN() || cy[i - 2].isNaN()) continue
+            if (cy[i - 2] < cy[i - 1] && cy[i - 1] > cy[i] && cy[i - 1] > 0) window = false
+            if (cy[i - 2] > cy[i - 1] && cy[i - 1] < cy[i] && cy[i - 1] < 0) window = true
+            reg[i] = if (cy[i] > 0) 1 else if (window) 3 else 2
+        }
+        return reg
+    }
+
+    /** 把日线 cycle 映射到小时线时间轴（每个 1H 根取其「已收盘」日K 的 cycle），供 regimeLayer="D" 用 */
+    private fun dailyCycleOnHour(h: Layer, d: Layer): DoubleArray {
+        val n = h.bars.size
+        val out = DoubleArray(n) { Double.NaN }
+        var di = -1
+        for (t in 0 until n) {
+            val hb = h.bars[t]
+            while (di + 1 < d.bars.size) {
+                val db = d.bars[di + 1]
+                if (db.date < hb.date || (db.date == hb.date && hb.time >= "15:00")) di++ else break
+            }
+            if (di >= 0) out[t] = d.cycle[di]
+        }
+        return out
+    }
+
+    /** EMA 平滑（保留前导 NaN，不污染序列）：span=1 时返回原序列 */
+    private fun emaNaN(src: DoubleArray, span: Int): DoubleArray {
+        val a = 2.0 / (span + 1)
+        var prev = Double.NaN
+        return DoubleArray(src.size) { i ->
+            val v = src[i]
+            if (v.isNaN()) Double.NaN
+            else { prev = if (prev.isNaN()) v else a * v + (1 - a) * prev; prev }
+        }
+    }
+
+    private fun simulate(h: Layer, d: Layer, w: Layer, reg: IntArray, p: Params): SimOut {
         val n = h.bars.size
         val closes = DoubleArray(n) { h.bars[it].close }
+        // 中线规则专用中位线（可选 EMA 平滑；不影响三态机）
+        val midS = if (p.midSmoothSpan > 1) emaNaN(h.mid, p.midSmoothSpan) else h.mid
 
-        // 暖机：等待三层轨道均有效后开始
+        // 暖机：轨道有效且状态已判定
         var start = 0
         for (i in h.bars.indices) {
-            if (!h.nUp[i].isNaN()) { start = i; break }
+            if (reg[i] != 0 && !h.mid[i].isNaN() && !h.eUp[i].isNaN()) { start = i; break }
         }
-        // 基准底仓在 start 开盘建立（虚拟底仓）
-        val basePrice = h.bars[start].open.takeIf { it > 0 } ?: h.bars[start].close
-        val baseShares = lots(INITIAL_CAPITAL * p.capUpPct / 100.0, basePrice)
-        var cash = INITIAL_CAPITAL - baseShares * basePrice * (1 + p.commissionRate) * (1 + p.slippageRate)
-        var state = 1
-        var leg: Leg? = null
+        val benchBase = h.bars[start].open.takeIf { it > 0 } ?: h.bars[start].close
+
+        var cash = INITIAL_CAPITAL
+        var sh = 0L
+        val queue = ArrayDeque<Lot>()
+        var xt = false                       // FLAT 段极限突破 T 仓标记
+        var frozenCore = 0L                  // 方案1：UP 段进入时冻结的核心仓股数
+        var upBlocked = false                // 方案3：UP 段提前离场后禁止再入场（直至脱离UP）
         val trades = ArrayList<Trade>()
         val markers = ArrayList<Marker>()
         val events = ArrayList<RiskEvent>()
 
-        markers.add(Marker(start, basePrice, true, "底仓"))
-
-        fun dayIdxFor(t: Int): Int {
-            // 1H 决策时可见的最新已收盘日K
-            val hd = h.bars[t].date
-            val tm = h.bars[t].time
-            var di = -1
-            for (i in d.bars.indices) {
-                if (d.bars[i].date < hd || (d.bars[i].date == hd && tm >= "15:00")) di = i else break
-            }
-            return di
-        }
         fun weekIdxFor(t: Int): Int {
             val hd = h.bars[t].date
             val tm = h.bars[t].time
@@ -281,123 +491,304 @@ object SsaT0Engine {
             return wi
         }
 
+        // 已收盘日K索引（当日 15:00 前不用当日日K，避免未来函数）
+        fun dayIdxFor(t: Int): Int {
+            val hd = h.bars[t].date
+            val tm = h.bars[t].time
+            var di = -1
+            for (i in d.bars.indices) {
+                if (d.bars[i].date < hd || (d.bars[i].date == hd && tm >= "15:00")) di = i else break
+            }
+            return di
+        }
+
+        // 日线趋势 5 根斜率方向是否向下（只用已收盘日K）
+        fun dayDownAt(t: Int): Boolean {
+            val di = dayIdxFor(t)
+            if (di < 5) return false
+            val a = d.trend[di]; val b = d.trend[di - 5]
+            return !a.isNaN() && !b.isNaN() && a < b
+        }
+
+        // ── cycle 拐点规则预计算（仅当启用；只用历史，无未来函数）──
+        // cyLayer="H"：信号取 1H 的 SSA 周期分量 h.cycle；
+        // cyLayer="D"：信号取日线周期分量 d.cycle（更平滑、拐点更少、贴合大趋势），
+        //              日线拐点在「该日K 首次可用于 1H 决策」的那根(通常当日 15:00)触发一次。
+        // 谷底=先降后升的最低点；峰顶=先升后降的最高点。
+        // cyConfirm=1：3点反转，确认根 s 立即触发；cyConfirm=2：再等1根，要求 4 点单调确认。
+        val useDayCy = p.useCycleRule && p.cyLayer.equals("D", ignoreCase = true)
+        val valleySig = BooleanArray(n)   // 谷底确认信号（1H 信号根）
+        val peakSig = BooleanArray(n)     // 峰顶确认信号（1H 信号根）
+        // 当前 1H 根可见的 cycle 值（日线层取其「已收盘」日K 的 cycle）
+        fun cyAt(t: Int): Double {
+            if (!useDayCy) return if (t in 0 until n) h.cycle[t] else Double.NaN
+            val di = dayIdxFor(t)
+            return if (di in d.cycle.indices) d.cycle[di] else Double.NaN
+        }
+        if (p.useCycleRule) {
+            val need = if (p.cyConfirm >= 2) 3 else 2
+            if (!useDayCy) {
+                val cy = DoubleArray(n) { h.cycle[it] }
+                fun okCy(i: Int) = i >= 0 && !cy[i].isNaN()
+                for (s in need until n) {
+                    if (!okCy(s) || !okCy(s - 1) || !okCy(s - 2)) continue
+                    if (p.cyConfirm >= 2) {
+                        if (!okCy(s - 3)) continue
+                        if (cy[s - 3] > cy[s - 2] && cy[s - 2] < cy[s - 1] && cy[s - 1] < cy[s]) valleySig[s] = true
+                        if (cy[s - 3] < cy[s - 2] && cy[s - 2] > cy[s - 1] && cy[s - 1] > cy[s]) peakSig[s] = true
+                    } else {
+                        if (cy[s - 2] > cy[s - 1] && cy[s - 1] < cy[s]) valleySig[s] = true
+                        if (cy[s - 2] < cy[s - 1] && cy[s - 1] > cy[s]) peakSig[s] = true
+                    }
+                }
+            } else {
+                val dn = d.bars.size
+                val dy = d.cycle
+                fun okD(i: Int) = i >= 0 && !dy[i].isNaN()
+                val dv = BooleanArray(dn); val dp = BooleanArray(dn)
+                for (s in need until dn) {
+                    if (!okD(s) || !okD(s - 1) || !okD(s - 2)) continue
+                    if (p.cyConfirm >= 2) {
+                        if (!okD(s - 3)) continue
+                        if (dy[s - 3] > dy[s - 2] && dy[s - 2] < dy[s - 1] && dy[s - 1] < dy[s]) dv[s] = true
+                        if (dy[s - 3] < dy[s - 2] && dy[s - 2] > dy[s - 1] && dy[s - 1] > dy[s]) dp[s] = true
+                    } else {
+                        if (dy[s - 2] > dy[s - 1] && dy[s - 1] < dy[s]) dv[s] = true
+                        if (dy[s - 2] < dy[s - 1] && dy[s - 1] > dy[s]) dp[s] = true
+                    }
+                }
+                // 日线信号 → 1H 信号根（该日K 首次可用时触发一次）
+                var lastDi = Int.MIN_VALUE
+                for (t in 0 until n) {
+                    val di = dayIdxFor(t)
+                    if (di != lastDi) {
+                        if (di in 0 until dn) { valleySig[t] = dv[di]; peakSig[t] = dp[di] }
+                        lastDi = di
+                    }
+                }
+            }
+        }
+        // 段方向初值：回看最近一个已确认拐点（找不到则按 cycle 符号）
+        val baseCy = cyAt(start)
+        var legUp = !baseCy.isNaN() && baseCy > 0.0
+        for (i in start downTo 3) {
+            if (valleySig[i]) { legUp = true; break }
+            if (peakSig[i]) { legUp = false; break }
+        }
+        var downEntry = 0.0               // 下降段买入成交价（保本线）
+
+        // 买入至目标股数（整手、受现金约束），t 收盘决策 → exec 开盘成交
+        fun buyTo(exec: Int, fill: Double, target: Long, reason: String,
+                  markIdx: Int = exec - 1, markPrice: Double = closes[exec - 1]) {
+            val need = ((target - sh) / 100) * 100
+            if (need <= 0) return
+            var q = min(need, lots(cash, fill))
+            while (q > 0 && buyCost(q, fill, p) > cash) q -= 100
+            if (q <= 0) return
+            cash -= buyCost(q, fill, p)
+            queue.addLast(Lot(exec, fill, q)); sh += q
+            // 图表标记默认落在「信号根」(收盘确认的那根, exec-1)；盘中触及模式则落在成交根与本根线价
+            markers.add(Marker(markIdx, markPrice, true, reason))
+        }
+
+        // 卖出（FIFO 配对成 T 单）；level 非空则同时记一条风控日志
+        fun sellQty(exec: Int, fill: Double, want: Long, reason: String, level: String?,
+                    markIdx: Int = exec - 1, markPrice: Double = closes[exec - 1]) {
+            val q = (min(want, sh) / 100) * 100
+            if (q <= 0) return
+            cash += sellProceeds(q, fill, p); sh -= q
+            var remain = q
+            while (remain > 0 && queue.isNotEmpty()) {
+                val lot = queue.first()
+                val take = min(lot.shares, remain)
+                val wi = weekIdxFor(lot.openIndex)
+                val weeklyUp = if (wi >= 1) w.trend[wi] >= w.trend[wi - 1] else true
+                val di = dayIdxFor(lot.openIndex)
+                val dayUp = if (di >= 5) (d.trend[di] >= d.trend[di - 5]) else true
+                val cost0 = buyCost(take, lot.openPrice, p)
+                trades.add(Trade(
+                    direction = "正T",
+                    openIndex = lot.openIndex, openTime = labelOf(h.bars[lot.openIndex]), openPrice = lot.openPrice,
+                    closeIndex = exec, closeTime = labelOf(h.bars[exec]), closePrice = fill,
+                    returnPct = (sellProceeds(take, fill, p) - cost0) / cost0 * 100,
+                    barsHeld = exec - lot.openIndex,
+                    weeklyUpAtOpen = weeklyUp, dayUpAtOpen = dayUp, exitReason = reason
+                ))
+                if (take >= lot.shares) queue.removeFirst() else lot.shares -= take
+                remain -= take
+            }
+            markers.add(Marker(markIdx, markPrice, false, reason))
+            if (level != null) events.add(RiskEvent(exec, labelOf(h.bars[exec]), level, reason))
+        }
+
         val equity = DoubleArray(n) { INITIAL_CAPITAL }
         val bench = DoubleArray(n) { INITIAL_CAPITAL }
 
-        for (t in start until n) {
-            val di = dayIdxFor(t); val wi = weekIdxFor(t)
-            val dayScn = if (di >= 0) d.scenario[di] else 0
-            val weekScn = if (wi >= 0) w.scenario[wi] else 0
-            val weekUp = if (wi >= 1) w.trend[wi] >= w.trend[wi - 1] else true
-            val capPct = if (weekUp) p.capUpPct else p.capDownPct
+        for (t in start until n - 1) {
+            val fill = h.bars[t + 1].open
+            val mid = h.mid[t]; val nUp = h.nUp[t]; val nDn = h.nDn[t]; val eUp = h.eUp[t]; val eDn = h.eDn[t]
+            if (fill > 0 && !mid.isNaN() && !nUp.isNaN() && !eUp.isNaN() && !eDn.isNaN()) {
+                val ci = closes[t]
+                val prevMid = h.mid[t - 1]
+                val crossUp = !prevMid.isNaN() && closes[t - 1] < prevMid && ci >= mid
+                val crossDn = !prevMid.isNaN() && closes[t - 1] >= prevMid && ci < mid
 
-            // 收盘价相对日线蓝色正常区间（硬止损判定，用已收盘日K轨道）
-            val hardStop = di >= 0 && !d.nUp[di].isNaN() &&
-                (closes[t] > d.nUp[di] || closes[t] < d.nDn[di])
+                if (p.useCycleRule) {
+                    // ── 试验规则：cycle 拐点驱动做T ──
+                    // 上升段：谷底确认满仓买入 → 回中线/低点反转补满 → 峰顶确认全部卖出。
+                    // 下降段：仅「中位线上行且价上穿中线」或「价格低点反转」买入；
+                    //         触极限上沿 / 价回买入点 / 价回中位线 任一先到即卖。
+                    val fullSh = lots(cash + sh * ci, fill)
+                    val lowRev = t >= 2 &&
+                        h.bars[t - 2].low > h.bars[t - 1].low && h.bars[t - 1].low < h.bars[t].low
+                    val prevMidC = h.mid[t - 1]
+                    val crossUpMid = !prevMidC.isNaN() && closes[t - 1] < prevMidC && ci >= mid
+                    val midRising = p.cyMidRisingK <= 0 ||
+                        (t - p.cyMidRisingK >= 0 && !h.mid[t - p.cyMidRisingK].isNaN() &&
+                            mid > h.mid[t - p.cyMidRisingK])
 
-            // ── cycle 拐点（连续2根确认，规避端点重构问题；先于风控计算） ──
-            var valley = false; var peak = false
-            if (t >= 2 && !h.cycle[t].isNaN() && !h.cycle[t - 1].isNaN() && !h.cycle[t - 2].isNaN()) {
-                valley = h.cycle[t - 2] > h.cycle[t - 1] && h.cycle[t - 1] < h.cycle[t]
-                peak = h.cycle[t - 2] < h.cycle[t - 1] && h.cycle[t - 1] > h.cycle[t]
-            }
-
-            // ── 层级风控（优先级最高，t 收盘决策，t+1 开盘成交） ──
-            // B 情景：T腿立即平；仅剩底仓时遇 cycle 峰顶也离场（整单位近似"减半尽快离场"）
-            var force: String? = null
-            when {
-                weekScn == SsaEngine.SCN_C -> force = "周线C·全平停手"
-                dayScn == SsaEngine.SCN_C -> force = "日线C·全平停手"
-                hardStop -> force = "价格越日线蓝轨·硬止损"
-                dayScn == SsaEngine.SCN_B && leg != null -> force = "日线B·减半离场"
-                dayScn == SsaEngine.SCN_B && state == 1 && peak -> force = "日线B·顶背离场"
-            }
-
-            if (force != null && t + 1 < n && state > 0) {
-                val fill = h.bars[t + 1].open
-                // 平掉 T 腿
-                if (leg != null) {
-                    closeLeg(leg, t + 1, fill, h, trades, markers, force, p, isLong = leg.direction == "正T")
-                    if (leg.direction == "正T") { cash += sellProceeds(leg.shares, fill, p); state = 1 }
-                    else { cash -= buyCost(leg.shares, fill, p); state = 1 }
-                    leg = null
-                }
-                // C/硬止损：底仓也清；B：只减半（已无加仓腿则不动底仓）
-                if (state == 1 && (weekScn == SsaEngine.SCN_C || dayScn == SsaEngine.SCN_C || hardStop)) {
-                    cash += sellProceeds(baseShares, fill, p)
-                    markers.add(Marker(t + 1, fill, false, force))
-                    state = 0
-                }
-                // B 情景底仓顶背离场：整单位离场（模型最小粒度）
-                if (state == 1 && dayScn == SsaEngine.SCN_B) {
-                    cash += sellProceeds(baseShares, fill, p)
-                    markers.add(Marker(t + 1, fill, false, force))
-                    state = 0
-                }
-                events.add(RiskEvent(t + 1, labelOf(h.bars[t + 1]),
-                    if (weekScn == SsaEngine.SCN_C) "周线" else "日线", force))
-            }
-
-            // 开新T许可：日线A 且 周线非C，且不是刚被风控清空的状态
-            val allowOpen = dayScn == SsaEngine.SCN_A && weekScn != SsaEngine.SCN_C
-
-            if (t + 1 < n && force == null) {
-                val fill = h.bars[t + 1].open
-                if (fill > 0) when {
-                    // 反T接回（最高优先，结束反T）
-                    leg?.direction == "反T" && valley -> {
-                        cash -= buyCost(leg.shares, fill, p)
-                        closeLeg(leg, t + 1, fill, h, trades, markers, "cycle谷底·接回", p, isLong = false)
-                        leg = null; state = 1
-                    }
-                    // 正T止盈（结束正T）
-                    leg?.direction == "正T" && peak -> {
-                        cash += sellProceeds(leg.shares, fill, p)
-                        closeLeg(leg, t + 1, fill, h, trades, markers, "cycle峰顶·止盈", p, isLong = true)
-                        leg = null; state = 1
-                    }
-                    // 正T低吸（无T腿时；state=0 视为重建底仓式开新正T）
-                    leg == null && valley && allowOpen -> {
-                        // 单T仓位 = 总资金 × (周线向上40% / 向下25%)；整手
-                        val sh = lots(INITIAL_CAPITAL * capPct / 100.0, fill)
-                        if (sh > 0 && cash >= buyCost(sh, fill, p)) {
-                            cash -= buyCost(sh, fill, p)
-                            leg = Leg("正T", t + 1, fill, sh, weekUp)
-                            state += 1
-                            markers.add(Marker(t + 1, fill, true, "正T低吸"))
+                    if (valleySig[t]) {                      // cycle 谷底 → 转上升段
+                        legUp = true; downEntry = 0.0
+                        if (p.cyUpLeg && sh < fullSh) buyTo(t + 1, fill, fullSh, "cycle谷底·满仓买入")
+                    } else if (peakSig[t]) {                 // cycle 峰顶 → 转下降段并全清
+                        legUp = false; downEntry = 0.0
+                        if (p.cyUpLeg && sh > 0L) sellQty(t + 1, fill, sh, "cycle峰顶·全部卖出", "1H")
+                    } else if (legUp) {                      // 上升段：维持满仓（回中线/低点反转补满）
+                        val cyNow = cyAt(t); val cyPrev = cyAt(t - 1)
+                        if (p.cyExitOnZero && cyNow < 0.0 && !cyPrev.isNaN() && cyPrev >= 0.0) {
+                            // cycle 下穿 0（中位线下穿趋势线）→ 峰顶确认前的补充退出
+                            legUp = false; downEntry = 0.0
+                            if (sh > 0L) sellQty(t + 1, fill, sh, "上升段cycle下穿0·清仓", "1H")
+                        } else if (p.cyUpLeg && sh < fullSh) {
+                            val why = if (lowRev) "上升段低点反转·补满" else "上升段回中线·补满"
+                            buyTo(t + 1, fill, fullSh, why)
+                        }
+                    } else {                                 // 下降段：尽量不买，仅限定条件
+                        if (sh == 0L) {
+                            if (p.cyDownLeg && midRising && crossUpMid) {
+                                buyTo(t + 1, fill, lots(INITIAL_CAPITAL, fill), "下降段上穿中线·买入")
+                                downEntry = fill
+                            } else if (p.cyDownLeg && lowRev) {
+                                buyTo(t + 1, fill, lots(INITIAL_CAPITAL, fill), "下降段低点反转·买入")
+                                downEntry = fill
+                            }
+                        } else {
+                            when {
+                                ci >= eUp -> {
+                                    sellQty(t + 1, fill, sh, "下降段触极限·卖出", null); downEntry = 0.0
+                                }
+                                downEntry > 0 && ci <= downEntry -> {
+                                    sellQty(t + 1, fill, sh, "下降段回买入点·卖出", null); downEntry = 0.0
+                                }
+                                ci < mid -> {
+                                    sellQty(t + 1, fill, sh, "下降段回中位线·卖出", null); downEntry = 0.0
+                                }
+                            }
                         }
                     }
-                    // 反T高抛（必须有底仓：state==1 且无T腿）
-                    leg == null && state == 1 && peak && allowOpen -> {
-                        val sh = lots(INITIAL_CAPITAL * capPct / 100.0, fill)
-                            .coerceAtMost(baseShares)
-                        if (sh > 0) {
-                            cash += sellProceeds(sh, fill, p)
-                            leg = Leg("反T", t + 1, fill, sh, weekUp)
-                            state = 0
-                            markers.add(Marker(t + 1, fill, false, "反T高抛"))
+                } else if (p.useMidCross) {
+                    // ── 试验规则：价格上穿中位线买入 / 下穿中位线卖出（不看三态，满仓进出）──
+                    val mNow = midS[t]
+                    if (!mNow.isNaN()) {
+                        // 中位线上行过滤：仅当最近 K 根中位线在上行时才允许买入（中位线下行时禁止买入）
+                        val risingOk = p.midRisingK <= 0 ||
+                            (t - p.midRisingK >= 0 && !midS[t - p.midRisingK].isNaN() && mNow > midS[t - p.midRisingK])
+                        val prevMidS = if (t - 1 >= 0) midS[t - 1] else Double.NaN
+                        if (p.execAtTouch) {
+                            // 盘中触及即成交：参考线 L = 上一根中位线（t-1收盘已知，无未来函数）。
+                            // 等价于每根在 L 挂限价/停损单：当根 open/high/low 触及则按线价成交（已含滑点）。
+                            val L = prevMidS
+                            if (!L.isNaN()) {
+                                val o = h.bars[t].open; val hi = h.bars[t].high; val lo = h.bars[t].low
+                                if (sh == 0L) {
+                                    if (risingOk) {
+                                        if (o >= L) buyTo(t, o, lots(INITIAL_CAPITAL, o), "触及中线·买入", t, o)
+                                        else if (hi >= L) buyTo(t, L, lots(INITIAL_CAPITAL, L), "触及中线·买入", t, L)
+                                    }
+                                } else {
+                                    if (o <= L) sellQty(t, o, sh, "触及中线·卖出", null, t, o)
+                                    else if (lo <= L) sellQty(t, L, sh, "触及中线·卖出", null, t, L)
+                                }
+                            }
+                        } else {
+                            val xUp = !prevMidS.isNaN() && closes[t - 1] < prevMidS && ci >= mNow
+                            val xDn = !prevMidS.isNaN() && closes[t - 1] >= prevMidS && ci < mNow
+                            if (sh == 0L && xUp && risingOk) buyTo(t + 1, fill, lots(INITIAL_CAPITAL, fill), "上穿中线·买入")
+                            else if (sh > 0 && xDn) sellQty(t + 1, fill, sh, "下穿中线·卖出", null)
+                        }
+                    }
+                } else {
+                if (reg[t] != 1) upBlocked = false    // 一旦脱离UP，解除提前离场的观望
+
+                when (reg[t]) {
+                    1 -> { // ── UP：核心做多 + 极限带反向T（reduceMode 决定削减方案）──
+                        xt = false
+                        val dayDown = dayDownAt(t)
+                        when {
+                            // 方案3：日线下行且收盘破中位 → 提前全平，转为观望直至脱离UP
+                            p.reduceMode == 3 && upBlocked -> { /* 已离场，观望 */ }
+                            p.reduceMode == 3 && dayDown && ci < mid -> {
+                                sellQty(t + 1, fill, sh, "UP日线下行+破中位·提前离场", "1H")
+                                upBlocked = true
+                            }
+                            // 方案1：核心仓在 UP 进入时冻结，之后仅 close<eDn 才补回（消除金字塔加仓）
+                            p.reduceMode == 1 -> {
+                                val entering = reg[t - 1] != 1
+                                if (entering) frozenCore = lots((cash + sh * ci) * p.corePct / 100.0, fill)
+                                when {
+                                    entering -> buyTo(t + 1, fill, frozenCore, "UP建仓")
+                                    ci > eUp -> sellQty(t + 1, fill, (sh * p.tPct / 100.0).toLong(), "UP超上限卖T", null)
+                                    ci < eDn -> buyTo(t + 1, fill, frozenCore, "UP破下限买T")
+                                }
+                            }
+                            // 基线 / 方案2：核心仓 = 权益×corePct；方案2 在日线下行时上限折半(80→40)
+                            else -> {
+                                val corePctEff = if (p.reduceMode == 2 && dayDown) p.corePct * 0.5 else p.corePct
+                                val coreShares = lots((cash + sh * ci) * corePctEff / 100.0, fill)
+                                when {
+                                    sh < coreShares -> buyTo(t + 1, fill, coreShares, "UP建仓/回补")
+                                    ci > eUp -> sellQty(t + 1, fill, (sh * p.tPct / 100.0).toLong(), "UP超上限卖T", null)
+                                    ci < eDn -> buyTo(t + 1, fill, coreShares, "UP破下限买T")
+                                }
+                            }
+                        }
+                    }
+                    3 -> { // ── WINDOW：中位线上穿买 / 触正常上沿卖 / （可选）破下沿止损 ──
+                        xt = false
+                        val stopLine = when (p.winStopDn) { 1 -> nDn; 2 -> eDn; else -> Double.NaN }
+                        if (reg[t - 1] != 3 && sh > 0) {
+                            sellQty(t + 1, fill, sh, "中位线下穿趋势线·全平", "1H")
+                        } else if (sh > 0 && !stopLine.isNaN() && ci < stopLine) {
+                            sellQty(t + 1, fill, sh, if (p.winStopDn == 2) "WINDOW破极限下沿·止损" else "WINDOW破正常下沿·止损", "1H")
+                        } else if (sh == 0L && crossUp && (!p.winDayUp || !dayDownAt(t))) {
+                            buyTo(t + 1, fill, lots(INITIAL_CAPITAL * p.winPosPct / 100.0, fill), "WINDOW上穿中位·买入")
+                        } else if (sh > 0 && ci >= nUp) {
+                            sellQty(t + 1, fill, sh, "WINDOW触正常上沿·卖出", null)
+                        }
+                    }
+                    else -> { // ── FLAT：空仓，只做极限突破T ──
+                        if (sh > 0 && !xt) {
+                            sellQty(t + 1, fill, sh, "FLAT峰顶回落·清仓", "1H")
+                        } else if (sh == 0L && ci < eDn) {
+                            buyTo(t + 1, fill, lots(INITIAL_CAPITAL, fill), "FLAT破极限·买T")
+                            xt = true
+                        } else if (xt && sh > 0 && ci > eUp) {
+                            sellQty(t + 1, fill, sh, "FLAT超极限·卖T", null)
+                            xt = false
                         }
                     }
                 }
+                }
             }
-
-            // 持仓估值：state 0/1/2 → 0/1/2 个单位（T腿份额按其自身价估）
-            var posVal = if (state >= 1) baseShares * closes[t] else 0.0
-            if (leg != null && leg.direction == "正T") posVal += leg.shares * closes[t]
-            equity[t] = cash + posVal
-            bench[t] = INITIAL_CAPITAL * (closes[t] / basePrice)
+            equity[t] = cash + sh * closes[t]
+            bench[t] = INITIAL_CAPITAL * (closes[t] / benchBase)
         }
-
-        // 期末：未平T腿按最后收盘平仓结算（统计用，不改变 state 语义）
+        // 末根估值（不在其开盘决策）
         val last = n - 1
-        if (leg != null) {
-            val fill = closes[last]
-            closeLeg(leg, last, fill, h, trades, markers, "期末平仓", p, isLong = leg.direction == "正T")
-            if (leg.direction == "正T") cash += sellProceeds(leg.shares, fill, p) else cash -= buyCost(leg.shares, fill, p)
-            leg = null; state = 1
+        if (last >= start) {
+            equity[last] = cash + sh * closes[last]
+            bench[last] = INITIAL_CAPITAL * (closes[last] / benchBase)
         }
-        var posVal = if (state >= 1) baseShares * closes[last] else 0.0
-        equity[last] = cash + posVal
 
         var peak = INITIAL_CAPITAL
         val dd = DoubleArray(n)
@@ -405,7 +796,7 @@ object SsaT0Engine {
             if (equity[i] > peak) peak = equity[i]
             dd[i] = (equity[i] - peak) / peak * 100
         }
-        return SimOut(equity, bench, dd, markers, trades, events, baseShares, basePrice, start)
+        return SimOut(equity, bench, dd, markers, trades, events, cash, sh)
     }
 
     private fun labelOf(b: Bar) = "${b.date.take(4)}-${b.date.substring(4, 6)}-${b.date.substring(6, 8)} ${b.time}"
@@ -420,28 +811,6 @@ object SsaT0Engine {
 
     private fun sellProceeds(shares: Long, price: Double, p: Params): Double =
         shares * price * (1 - p.slippageRate) * (1 - p.commissionRate - p.stampDutyRate)
-
-    private fun closeLeg(
-        leg: Leg, closeIndex: Int, fill: Double, h: Layer,
-        trades: MutableList<Trade>, markers: MutableList<Marker>,
-        reason: String, p: Params, isLong: Boolean
-    ) {
-        val ret = if (isLong)
-            (sellProceeds(leg.shares, fill, p) - buyCost(leg.shares, leg.openPrice, p)) /
-                buyCost(leg.shares, leg.openPrice, p) * 100
-        else
-            (sellProceeds(leg.shares, leg.openPrice, p) - buyCost(leg.shares, fill, p)) /
-                sellProceeds(leg.shares, leg.openPrice, p) * 100
-        trades.add(Trade(
-            direction = leg.direction,
-            openIndex = leg.openIndex, openTime = labelOf(h.bars[leg.openIndex]),
-            openPrice = leg.openPrice,
-            closeIndex = closeIndex, closeTime = labelOf(h.bars[closeIndex]),
-            closePrice = fill, returnPct = ret, barsHeld = closeIndex - leg.openIndex,
-            weeklyUpAtOpen = leg.weeklyUp, exitReason = reason
-        ))
-        markers.add(Marker(closeIndex, fill, isLong, reason))
-    }
 
     // ═══════════════════════════════ 分段统计 ═══════════════════════════════
 

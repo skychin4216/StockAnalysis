@@ -1,9 +1,7 @@
 package com.chin.stockanalysis.strategy.indicatorbt
 
-import com.chin.stockanalysis.strategy.techsignal.TechSignalEngine
 import com.chin.stockanalysis.strategy.techsignal.TechSignalEngine.Plot
 import com.chin.stockanalysis.strategy.techsignal.TechSignalEngine.Sig
-import com.chin.stockanalysis.strategy.techsignal.TechSignalEngine.TechBar
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -51,7 +49,7 @@ object IndicatorBacktestEngine {
         KDJ("KDJ 低位金叉"),
         BOLL("布林下轨反弹"),
         WR("WR 威廉超卖回升"),
-        MULTI("多信号综合(勾选6信号)")
+        MULTI("多信号综合(5信号复合)")
     }
 
     /** 策略参数全集（不同策略只使用其中部分字段） */
@@ -73,8 +71,10 @@ object IndicatorBacktestEngine {
         val wrOverbought: Double = 20.0,
         val commissionRate: Double = 0.00025,   // 佣金费率（双边）
         val stampDutyRate: Double = 0.0005,     // 印花税（卖出单边）
-        // MULTI 多信号策略：启用的技术信号 key（见 TechSignalEngine.Sig.key）
-        val multiSignals: Set<String> = setOf("macd", "wr", "rsi", "obv", "skdj", "bias")
+        // MULTI 多信号策略：启用的技术信号 key（macd/wr/rsi/obv/skdj，见 run() 中 MULTI 分支规则）
+        val multiSignals: Set<String> = setOf("macd", "wr", "rsi", "obv", "skdj"),
+        // MULTI：SKDJ 金叉触发窗口（金叉当日及之后 N 根 K 内，闸门满足即买入），0 = 仅金叉当日
+        val multiCrossWindow: Int = 3
     ) {
         fun isValid(type: StrategyType): String? = when (type) {
             StrategyType.MA_CROSS ->
@@ -311,27 +311,144 @@ object IndicatorBacktestEngine {
             }
 
             StrategyType.MULTI -> {
-                // 复用「技术指标」选股引擎的 6 信号定义：任一启用信号出现买入点→买，任一卖出点→卖
-                val techBars = bars.map {
-                    TechBar(it.date, it.open, it.high, it.low, it.close, it.volume.toDouble())
-                }
-                val enabled = params.multiSignals.mapNotNull { k ->
-                    Sig.values().firstOrNull { s -> s.key == k }
-                }.toSet()
-                val out = TechSignalEngine.evaluate(techBars, enabled)
-                    ?: throw IllegalArgumentException("K线不足，无法计算技术信号（需≥35根）")
-                for (sig in Sig.values()) {
-                    val p = out.plots[sig] ?: continue
-                    if (sig in enabled) {
-                        p.buys.forEach { bi ->
-                            if (bi in buySignal.indices) markBuy(bi, "${sig.label} 买入点")
-                        }
-                        p.sells.forEach { si ->
-                            if (si in sellSignal.indices) markSell(si, "${sig.label} 卖出点")
-                        }
+                // ── 「多信号综合」5 条件复合规则 ──
+                // 1. MACD(6,13,9)：大趋势闸门 —— DIF>DEA（金叉后的多头区间）；
+                //    红柱见顶后首次缩短 → 卖出
+                // 2. WR(14)：从 >80 超卖区回落到 <65 → 允许买入；WR<25 为强势（买入/持有）；
+                //    由 <25 上穿 ≥25 → 必须卖出
+                // 3. SKDJ(9,3)：K 上穿 D 金叉 → 买入触发（须同时满足 1、2 两条闸门）；K 下穿 D → 卖出
+                // 4. MAOBV：OBV 取 10 日均线后再做 EMA(3) 平滑，平滑线连续上升 → 允许买入
+                // 5. RSI(6)：做 EMA(3) 平滑，平滑线上升 → 允许买入；平滑线转降
+                //    仅作卖出辅助确认（须同时有 MACD 红柱缩短或 SKDJ 死叉才计入，不单独触发）
+                // 买入 = 勾选信号的闸门全部满足，且（启用 SKDJ 时）出现 K 上穿 D 金叉
+                // 卖出 = 勾选信号中 MACD / WR / SKDJ 任一成立；RSI 转降不单独触发
+                val cl = closes(bars)
+                val (dif, dea, hist) = macdSeries(cl, 6, 13, 9)
+                val wr = wrSeries(bars, 14)
+                val (k, d, _) = kdjSeries(bars, 9)
+                val vol = DoubleArray(n) { bars[it].volume.toDouble() }
+                val obv = DoubleArray(n)
+                for (i in 1 until n) {
+                    obv[i] = obv[i - 1] + when {
+                        cl[i] > cl[i - 1] -> vol[i]
+                        cl[i] < cl[i - 1] -> -vol[i]
+                        else -> 0.0
                     }
                 }
-                val plots = Sig.values().mapNotNull { s -> out.plots[s]?.let { s to it } }
+                val maobvS = emaSeries(smaSeries(obv, 10), 3)
+                val rsiRaw = rsiSeries(cl, 6)
+                val rsiS = emaSeries(rsiRaw, 3)
+
+                val useMacd = "macd" in params.multiSignals
+                val useWr = "wr" in params.multiSignals
+                val useSkdj = "skdj" in params.multiSignals
+                val useObv = "obv" in params.multiSignals
+                val useRsi = "rsi" in params.multiSignals
+                require(useMacd || useWr || useSkdj || useObv || useRsi) { "请至少勾选一个技术信号" }
+
+                fun rising2(a: DoubleArray, i: Int) = nv(a, i) && nv(a, i - 1) && nv(a, i - 2) &&
+                    a[i] > a[i - 1] && a[i - 1] > a[i - 2]
+
+                val bMacd = ArrayList<Int>(); val sMacd = ArrayList<Int>()
+                val bWr = ArrayList<Int>(); val sWr = ArrayList<Int>()
+                val bSkdj = ArrayList<Int>(); val sSkdj = ArrayList<Int>()
+                val bObv = ArrayList<Int>()
+                val bRsi = ArrayList<Int>(); val sRsi = ArrayList<Int>()
+
+                // SKDJ 金叉为买入触发，但在快速反转行情中金叉当日其余闸门常尚未转多，
+                // 之后 K 又长期位于 D 之上不再金叉 → 会整段错过主升浪。
+                // 故金叉当日及之后 skdjWindow 根 K 内，闸门一旦全部满足即视为有效买入触发。
+                val skdjWindow = params.multiCrossWindow
+                var lastCrossIdx = -1
+
+                for (i in 2 until n) {
+                    // 各信号的事件点（同时用于副图标注与主逻辑）
+                    val macdBuy = nv(dif, i - 1) && nv(dea, i - 1) && nv(dif, i) && nv(dea, i) &&
+                        dif[i - 1] <= dea[i - 1] && dif[i] > dea[i]
+                    val macdSell = nv(hist, i) && nv(hist, i - 1) && nv(hist, i - 2) &&
+                        hist[i] > 0 && hist[i - 1] > hist[i - 2] && hist[i] < hist[i - 1]
+                    val wrBuy = nv(wr, i - 1) && nv(wr, i) && wr[i - 1] > 80.0 && wr[i] < 65.0
+                    val wrSell = nv(wr, i - 1) && nv(wr, i) && wr[i - 1] < 25.0 && wr[i] >= 25.0
+                    val skdjBuy = nv(k, i - 1) && nv(d, i - 1) && nv(k, i) && nv(d, i) &&
+                        k[i - 1] <= d[i - 1] && k[i] > d[i]
+                    val skdjSell = nv(k, i - 1) && nv(d, i - 1) && nv(k, i) && nv(d, i) &&
+                        k[i - 1] >= d[i - 1] && k[i] < d[i]
+                    val obvRising = rising2(maobvS, i)
+                    val obvTurnUp = nv(maobvS, i - 2) && maobvS[i] > maobvS[i - 1] && maobvS[i - 1] <= maobvS[i - 2]
+                    val rsiRising = rising2(rsiS, i)
+                    val rsiFalling = nv(rsiS, i) && nv(rsiS, i - 1) && rsiS[i] < rsiS[i - 1]
+                    val rsiTurnUp = nv(rsiS, i - 2) && rsiS[i] > rsiS[i - 1] && rsiS[i - 1] <= rsiS[i - 2]
+                    val rsiTurnDown = nv(rsiS, i - 2) && rsiS[i] < rsiS[i - 1] && rsiS[i - 1] >= rsiS[i - 2]
+
+                    if (macdBuy) bMacd.add(i)
+                    if (macdSell) sMacd.add(i)
+                    if (wrBuy) bWr.add(i)
+                    if (wrSell) sWr.add(i)
+                    if (skdjBuy) bSkdj.add(i)
+                    if (skdjSell) sSkdj.add(i)
+                    if (obvTurnUp) bObv.add(i)
+                    if (rsiTurnUp) bRsi.add(i)
+                    if (rsiTurnDown) sRsi.add(i)
+
+                    // 闸门：勾选的信号才参与
+                    if (skdjBuy) lastCrossIdx = i
+                    val barsSinceCross = if (lastCrossIdx < 0) Int.MAX_VALUE else i - lastCrossIdx
+                    val gateMacd = nv(dif, i) && nv(dea, i) && dif[i] > dea[i]
+                    val gateWr = nv(wr, i) && wr[i] < 65.0
+                    val gateOk = (!useMacd || gateMacd) && (!useWr || gateWr) &&
+                        (!useObv || obvRising) && (!useRsi || rsiRising)
+                    // 触发：未启用 SKDJ 时无需触发；启用时为金叉当日或金叉后 skdjWindow 根内
+                    val triggerOk = !useSkdj || barsSinceCross <= skdjWindow
+
+                    if (gateOk && triggerOk) {
+                        val why = ArrayList<String>(5)
+                        if (useMacd) why.add("MACD多头 DIF%.3f>DEA%.3f".format(dif[i], dea[i]))
+                        if (useWr) why.add("WR14 %.1f<65（自超卖区回落）".format(wr[i]))
+                        if (useSkdj) {
+                            if (barsSinceCross == 0) why.add("SKDJ金叉 K%.1f上穿D%.1f".format(k[i], d[i]))
+                            else why.add("SKDJ金叉后第%d根，闸门转多".format(barsSinceCross))
+                        }
+                        if (useObv) why.add("MAOBV10平滑线连续上升")
+                        if (useRsi) why.add("RSI6平滑线连续上升")
+                        markBuy(i, why.joinToString("；"))
+                    }
+
+                    // 卖出：MACD / WR / SKDJ 任一独立触发；
+                    // RSI 平滑线转降仅作辅助确认，不单独触发卖出
+                    val sellHits = ArrayList<String>(4)
+                    if (useMacd && macdSell)
+                        sellHits.add("MACD红柱见顶缩短 %.4f→%.4f".format(hist[i - 1], hist[i]))
+                    if (useWr && wrSell)
+                        sellHits.add("WR14 由%.1f上穿25（强势转弱）".format(wr[i - 1]))
+                    if (useSkdj && skdjSell)
+                        sellHits.add("SKDJ死叉 K%.1f下穿D%.1f".format(k[i], d[i]))
+                    if (sellHits.isNotEmpty()) {
+                        if (useRsi && rsiFalling)
+                            sellHits.add("RSI6平滑线转降 %.2f→%.2f（辅助确认）".format(rsiS[i - 1], rsiS[i]))
+                        markSell(i, sellHits.joinToString("；"))
+                    }
+                }
+
+                // 副图：指标线 + 各信号自身事件标注（未启用也画，便于对照）
+                val plots = listOf(
+                    Sig.MACD to Plot(
+                        listOf("DIF" to dif, "DEA" to dea), bars = hist,
+                        refs = listOf(0.0 to ""), buys = bMacd, sells = sMacd
+                    ),
+                    Sig.WR to Plot(
+                        listOf("WR14" to wr), refs = listOf(80.0 to "80", 65.0 to "65", 25.0 to "25"),
+                        buys = bWr, sells = sWr, inverted = true
+                    ),
+                    Sig.RSI to Plot(
+                        listOf("RSI6" to rsiRaw, "RSI6平滑" to rsiS),
+                        refs = listOf(50.0 to "50", 80.0 to "80", 20.0 to "20"), buys = bRsi, sells = sRsi
+                    ),
+                    Sig.OBV to Plot(listOf("OBV" to obv, "MAOBV10平滑" to maobvS), buys = bObv),
+                    Sig.SKDJ to Plot(
+                        listOf("K" to k, "D" to d), refs = listOf(80.0 to "80", 20.0 to "20"),
+                        buys = bSkdj, sells = sSkdj
+                    )
+                )
                 return simulate(
                     bars, buySignal, sellSignal, params, type,
                     mainLines = emptyList(), subTitle = null, subLines = emptyList(), subHist = null,
@@ -578,16 +695,21 @@ object IndicatorBacktestEngine {
         return out
     }
 
-    /** EMA 序列：前 n-1 个为 NaN，第 n-1 个用 SMA 播种 */
+    /**
+     * EMA 序列：跳过前导 NaN，从首个有效值起的 n 个有效值用 SMA 播种，之前保持 NaN。
+     * 输入为原始序列（无 NaN）时等价于原「前 n-1 个 NaN」实现。
+     */
     fun emaSeries(v: DoubleArray, n: Int): DoubleArray {
         val out = DoubleArray(v.size) { Double.NaN }
-        if (v.size < n) return out
+        var first = -1
+        for (i in v.indices) if (!v[i].isNaN()) { first = i; break }
+        if (first < 0 || v.size - first < n) return out
         var seed = 0.0
-        for (i in 0 until n) seed += v[i]
+        for (i in first until first + n) seed += v[i]
         var ema = seed / n
-        out[n - 1] = ema
+        out[first + n - 1] = ema
         val k = 2.0 / (n + 1)
-        for (i in n until v.size) {
+        for (i in first + n until v.size) {
             ema = v[i] * k + ema * (1 - k)
             out[i] = ema
         }

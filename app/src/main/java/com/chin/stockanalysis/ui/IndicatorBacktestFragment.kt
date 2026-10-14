@@ -271,8 +271,8 @@ class IndicatorBacktestFragment : Fragment() {
             }
             val sigRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
             val sigLabels = linkedMapOf(
-                "macd" to "MACD(6,13,9)", "wr" to "WR1/WR2", "rsi" to "RSI6",
-                "obv" to "OBV/MAOBV", "skdj" to "SKDJ(9,3)", "bias" to "BIAS-QL"
+                "macd" to "MACD(6,13,9)大趋势", "wr" to "WR(14)", "rsi" to "RSI(6)平滑",
+                "obv" to "MAOBV(10)平滑", "skdj" to "SKDJ(9,3)"
             )
             sigLabels.forEach { (key, txt) ->
                 val cb = CheckBox(ctx).apply {
@@ -789,10 +789,14 @@ class IndicatorBacktestFragment : Fragment() {
             })
         }
 
+        val multiLabels = mapOf(
+            "macd" to "MACD(6,13,9) DIF/DEA/柱", "wr" to "WR(14) 80/65/25",
+            "rsi" to "RSI(6) + EMA3平滑", "obv" to "OBV + MAOBV10(EMA3平滑)", "skdj" to "SKDJ(9,3)"
+        )
         r.multiPlots?.forEach { (sig, plot) ->
             val enabled = r.params.multiSignals.contains(sig.key)
             resultBox.addView(card {
-                it.addView(cardTitle((if (enabled) "📊 " else "⚪ 未启用 · ") + sig.label))
+                it.addView(cardTitle((if (enabled) "📊 " else "⚪ 未启用 · ") + (multiLabels[sig.key] ?: sig.label)))
                 val v = buildMultiPlotChart(r.bars, plot, sig == Sig.MACD, 140)
                 if (v is BarLineChartBase<*>) linked.add(v)
                 it.addView(v)

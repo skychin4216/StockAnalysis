@@ -9,6 +9,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
 import org.json.JSONObject
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -57,17 +58,75 @@ class IntradayKlineFetcher(private val context: Context) {
     }
 
     /**
-     * 历史小时 K（klt=60，东财 push2his），用于「三层 SSA 做T」回测。
-     * 一次请求 lmt=2000，约覆盖 1.5~2 年小时线；返回升序列表（含 date / datetime）。
+     * 历史小时 K（新浪 scale=60 优先，东财 push2his klt=60 兜底），用于「三层 SSA 做T」回测。
+     * PC 端回测实测：东财 push2his 本机不可达，新浪 60 分钟接口稳定（datalen=1023 ≈ 1.7 年）；
+     * 返回升序列表（含 date / datetime）。
      */
     suspend fun fetchHourlyHistory(code: String, days: Int = 760): List<IntradayKlineEntity> =
         withContext(Dispatchers.IO) {
+            fetchHourlySina(code)?.let { if (it.isNotEmpty()) return@withContext it }
             val beg = LocalDate.now().minusDays(days.toLong()).format(DATE_FMT)
             val end = LocalDate.now().format(DATE_FMT)
-            fetchHourlyInternal(code, beg, end)
+            fetchHourlyEastmoney(code, beg, end)
         }
 
-    private suspend fun fetchHourlyInternal(code: String, beg: String, end: String): List<IntradayKlineEntity> {
+    /**
+     * 新浪 60 分钟 K：`CN_MarketData.getKLineData?symbol=sh600176&scale=60&ma=no&datalen=1023`。
+     * 与 [HistoricalDataFetcher] 日 K（scale=240）同一接口，响应为纯 JSON 数组
+     * `[{day:"2026-01-15 15:00:00",open,high,low,close,volume},...]`。
+     * @return 成功返回列表；全失败返回 null（交由东财兜底）
+     */
+    private suspend fun fetchHourlySina(code: String): List<IntradayKlineEntity>? {
+        val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
+        val prefix = when {
+            code.startsWith("sh") -> "sh"
+            code.startsWith("sz") -> "sz"
+            code.startsWith("bj") -> "bj"
+            pureCode.startsWith("6") || pureCode.startsWith("5") || pureCode.startsWith("9") -> "sh"
+            else -> "sz"
+        }
+        val url = "${DataConfig.sinaKline}?symbol=$prefix$pureCode&scale=60&ma=no&datalen=1023"
+        for (attempt in 0..1) {
+            try {
+                if (attempt > 0) kotlinx.coroutines.delay(400L * attempt)
+                val req = Request.Builder().url(url)
+                    .addHeader("User-Agent", "Mozilla/5.0")
+                    .addHeader("Referer", "https://finance.sina.com.cn/")
+                    .build()
+                val resp = client.newCall(req).execute()
+                if (!resp.isSuccessful) continue
+                val body = resp.body?.string() ?: continue
+                if (!body.trimStart().startsWith("[")) continue
+                val arr = JSONArray(body)
+                val out = ArrayList<IntradayKlineEntity>(arr.length())
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    val day = o.optString("day", "")
+                    if (day.length < 16) continue
+                    val datetime = day.substring(0, 16)          // "2026-01-15 15:00"
+                    val barDate = datetime.substring(0, 10).replace("-", "")
+                    out.add(IntradayKlineEntity(
+                        code = code, name = "", datetime = datetime, date = barDate,
+                        open = o.optDouble("open", 0.0),
+                        close = o.optDouble("close", 0.0),
+                        high = o.optDouble("high", 0.0),
+                        low = o.optDouble("low", 0.0),
+                        volume = o.optLong("volume", 0L),
+                        amount = o.optDouble("amount", 0.0),
+                        intervalMin = 60
+                    ))
+                }
+                Log.d(TAG, "hourly60 sina $code: ${out.size} 根")
+                return out
+            } catch (e: Exception) {
+                Log.d(TAG, "hourly60 sina #$attempt $code: ${e.message?.take(60)}")
+            }
+        }
+        return null
+    }
+
+    /** 东财 push2his klt=60 兜底（本机常被重置，仅作备用）。 */
+    private suspend fun fetchHourlyEastmoney(code: String, beg: String, end: String): List<IntradayKlineEntity> {
         val market = if (code.startsWith("sh")) 1 else if (code.startsWith("bj")) 1 else 0
         val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
         val url = "${DataConfig.eastmoneyPush2his}/stock/kline/get?" +
