@@ -853,11 +853,18 @@ class VolumePriceFragment : Fragment() {
         // ⚠️ 对数坐标：值域跨 4 个数量级（0.1~2000+），线性轴必然把主体压成一条线，cap 封顶也没用（95分位本身就落在极端区）
         // 显示值 = log10(v)，下限 0.1 防 log(0)；Y 轴标签反变换回原始量级（万/亿缩写）
         fun lg(v: Double) = kotlin.math.log10(maxOf(v, 0.1)).toFloat()
+        // ⚠️ 纯 log 仍被压扁：十字星日 ÷0.05% 把 rate 打爆到 ~1e8（log10=8），主体 3~30 只占 log 值域顶部 1/8
+        // 解决：log 后按 2%~98% 分位截断（极值日顶到边界即可），并保证最小跨度，主体才能撑满整个图
+        val srt = rate.map { lg(it).toDouble() }.sorted()
+        var loL = srt[(n * 0.02).toInt().coerceIn(0, n - 1)]
+        var hiL = srt[(n * 0.98).toInt().coerceIn(0, n - 1)]
+        if (hiL - loL < 1.5) { val mid = (hiL + loL) / 2; loL = mid - 0.75; hiL = mid + 0.75 }
+        fun lgc(v: Double) = lg(v).coerceIn(loL.toFloat(), hiL.toFloat())
 
         val entries = ArrayList<BarEntry>(n)
         val colors = IntArray(n)
         for (i in 0 until n) {
-            entries.add(BarEntry(i.toFloat(), lg(rate[i])))
+            entries.add(BarEntry(i.toFloat(), lgc(rate[i])))
             colors[i] = when {
                 i == 0 -> Color.parseColor("#CCCCCC")
                 bars[i].close >= bars[i - 1].close -> Color.parseColor("#EF9A9A")
@@ -879,7 +886,7 @@ class VolumePriceFragment : Fragment() {
                 sv += bars[j].vol / 10000.0
                 if (j > 0) sc += abs((bars[j].close - bars[j - 1].close) / bars[j - 1].close * 100.0)
             }
-            rateEs.add(Entry(i.toFloat(), lg(sv / maxOf(sc, 1.0))))
+            rateEs.add(Entry(i.toFloat(), lgc(sv / maxOf(sc, 1.0))))
         }
         val rateDs = LineDataSet(rateEs, "量价速率(5K)").apply {
             color = Color.parseColor("#7B1FA2"); lineWidth = 2f
@@ -898,6 +905,7 @@ class VolumePriceFragment : Fragment() {
             xAxis.setDrawGridLines(false)
             xAxis.labelCount = 6   // 速率图在最下面，带日期标签
             axisLeft.setDrawGridLines(true); axisLeft.gridColor = Color.parseColor("#EEEEEE")
+            axisLeft.setLabelCount(5, false) // 对数轴 label 反变换后是不均匀量级，label 多了会挤成一团
             // 对数轴：内部值 = log10(万手/1%)，标签反变换回原始量级并缩写 万/亿
             axisLeft.valueFormatter = object : ValueFormatter() {
                 override fun getFormattedValue(value: Float): String {
