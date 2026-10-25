@@ -1,0 +1,62 @@
+[
+ {
+  "variant": "base_close",
+  "pool_ret": -5.924131427034644,
+  "pool_mdd": -22.253396219139308,
+  "avg_trades": 11.812865497076023,
+  "win_rate": 32.386175146888846,
+  "profit_stocks": 51,
+  "total_trades": 2020,
+  "n": 171
+ },
+ {
+  "variant": "hl_20_10",
+  "pool_ret": -3.772312642504967,
+  "pool_mdd": -15.86399894106812,
+  "avg_trades": 4.526315789473684,
+  "win_rate": 33.277524393595826,
+  "profit_stocks": 52,
+  "total_trades": 774,
+  "n": 171
+ },
+ {
+  "variant": "hl_10_20",
+  "pool_ret": -6.764890315587862,
+  "pool_mdd": -22.856262110015685,
+  "avg_trades": 6.2105263157894735,
+  "win_rate": 32.33040488922841,
+  "profit_stocks": 44,
+  "total_trades": 1062,
+  "n": 171
+ },
+ {
+  "variant": "hl_20_5",
+  "pool_ret": -3.9203445222328894,
+  "pool_mdd": -13.45214640334389,
+  "avg_trades": 4.923976608187134,
+  "win_rate": 31.478926166426163,
+  "profit_stocks": 49,
+  "total_trades": 842,
+  "n": 171
+ },
+ {
+  "variant": "hl_10_10",
+  "pool_ret": -4.653063298035083,
+  "pool_mdd": -19.50966851388194,
+  "avg_trades": 6.918128654970761,
+  "win_rate": 36.20274659980542,
+  "profit_stocks": 54,
+  "total_trades": 1183,
+  "n": 171
+ },
+ {
+  "variant": "hl_20_10_w",
+  "pool_ret": -3.5290708173014567,
+  "pool_mdd": -15.310043247902298,
+  "avg_trades": 4.035087719298246,
+  "win_rate": 33.46146490724804,
+  "profit_stocks": 52,
+  "total_trades": 690,
+  "n": 171
+ }
+]

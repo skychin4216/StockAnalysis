@@ -251,6 +251,29 @@ object SsaEngine {
 
     // ═══════════════════════════════ SSA 分解 ═══════════════════════════════
 
+    /**
+     * 只算滚动**趋势 / 周期分量末端值**（与 [run] 里 `trendAt` / `cycleAt` **同源同口径**：每个 t 用
+     * `[0..t]` 全历史独立做完整 SSA 分解，取末端值；`t < L` 为 NaN），跳过情景分类/交易配对/评估等重计算。
+     *
+     * 供 1H「周期分量副图」与「周期拐点对本策略有没有帮助」的对照回测使用。**无未来函数**
+     * （第 t 根的值只用了 ≤ t 的收盘）。周期分量是**价格尺度**（元），与价格同轴可比。
+     *
+     * @param L 嵌入窗口长度（1H 层默认 30）
+     */
+    internal fun rollingTrendCycle(closes: DoubleArray, L: Int = 30): Pair<DoubleArray, DoubleArray> {
+        val n = closes.size
+        val trend = DoubleArray(n) { Double.NaN }
+        val cycle = DoubleArray(n) { Double.NaN }
+        for (t in L until n) {
+            val seg = closes.copyOfRange(0, t + 1)
+            val dec = decompose(seg, L)
+            val m = seg.size
+            trend[t] = dec.trend[m - 1]
+            cycle[t] = dec.cycle[m - 1]
+        }
+        return trend to cycle
+    }
+
     internal data class Decomp(
         val trend: DoubleArray, val cycle: DoubleArray,
         val noise: DoubleArray, val singularValues: DoubleArray

@@ -19,6 +19,8 @@ import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.fragment.app.Fragment
@@ -26,6 +28,7 @@ import androidx.lifecycle.lifecycleScope
 import com.chin.stockanalysis.agent.stock.StockAnalysisAgent
 import com.chin.stockanalysis.strategy.backtest.DailySnapshotEntity
 import com.chin.stockanalysis.strategy.data.HistoricalDataFetcher
+import com.chin.stockanalysis.strategy.data.IntradayKlineFetcher
 import com.chin.stockanalysis.strategy.ssa.SsaHybridEngine
 import com.chin.stockanalysis.strategy.ssa.SsaHybridEngine.Bar
 import com.chin.stockanalysis.strategy.ssa.SsaPoolStore
@@ -81,6 +84,8 @@ class SsaHybridFragment : Fragment() {
     private lateinit var etBars: EditText
     private lateinit var autoFit: CheckBox
     private lateinit var optFit: CheckBox
+    private lateinit var fastCh: CheckBox
+    private lateinit var cycCh: CheckBox
     private lateinit var modeBtnSingle: Button
     private lateinit var modeBtnPool: Button
     private lateinit var inputCard: LinearLayout
@@ -105,6 +110,8 @@ class SsaHybridFragment : Fragment() {
     private var recoProfFilter = "ALL"
     private var recoBusy = false
     private val recoNameCache = HashMap<String, String>()
+    /** 单票分析数据级别：false=日线，true=1H 小时线 */
+    private var hourlyMode = false
     private val recoPipeline by lazy { SsaRecoPipeline(requireContext()) }
     // ── 板块分析 ──
     private lateinit var sectorBox: LinearLayout
@@ -189,6 +196,32 @@ class SsaHybridFragment : Fragment() {
         box.addView(inputCard0)
         inputCard0.addView(inputRow)
 
+        // 数据级别：日线 / 1H（1H 模式价格图只画价格+买卖点）
+        val lvRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(2), 0, 0)
+        }
+        lvRow.addView(TextView(ctx).apply {
+            text = "数据级别:"; textSize = 11f; setTextColor(GRAY)
+            setPadding(0, 0, dp(6), 0)
+        })
+        val lvGroup = RadioGroup(ctx).apply { orientation = RadioGroup.HORIZONTAL }
+        val rbDay = RadioButton(ctx).apply {
+            text = "日线"; textSize = 11.5f; isChecked = !hourlyMode; id = 1001
+        }
+        val rbHour = RadioButton(ctx).apply {
+            text = "1H 小时线"; textSize = 11.5f; isChecked = hourlyMode; id = 1002
+        }
+        lvGroup.addView(rbDay); lvGroup.addView(rbHour)
+        lvGroup.setOnCheckedChangeListener { _, id ->
+            hourlyMode = (id == rbHour.id)
+            // 1H 默认关闭快通道、开启「仅 cycle 拐点」；日线保持默认
+            if (::fastCh.isInitialized) fastCh.isChecked = !hourlyMode
+            if (::cycCh.isInitialized) cycCh.isChecked = hourlyMode
+        }
+        lvRow.addView(lvGroup)
+        inputCard0.addView(lvRow)
+
         // 参数行
         val hsv = HorizontalScrollView(ctx)
         val prow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
@@ -234,6 +267,20 @@ class SsaHybridFragment : Fragment() {
             setPadding(dp(2), dp(2), dp(2), dp(2))
         }
         inputCard0.addView(optFit)
+        fastCh = CheckBox(ctx).apply {
+            text = "⚡ 快通道（ER10≥0.6 突破唐奇安15 → 买/跌破 → 卖；1H 默认关闭，避免高频噪声）"
+            textSize = 10.5f; setTextColor(BLACK)
+            isChecked = !hourlyMode
+            setPadding(dp(2), dp(2), dp(2), dp(2))
+        }
+        inputCard0.addView(fastCh)
+        cycCh = CheckBox(ctx).apply {
+            text = "🌀 仅 cycle 拐点（谷底买 / 峰顶卖；1H 默认开启，不看 trend 斜率）"
+            textSize = 10.5f; setTextColor(BLACK)
+            isChecked = hourlyMode
+            setPadding(dp(2), dp(2), dp(2), dp(2))
+        }
+        inputCard0.addView(cycCh)
         inputCard = inputCard0
         poolTools = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
@@ -358,23 +405,27 @@ class SsaHybridFragment : Fragment() {
             status("⚠️ 参数需全部为数字"); return
         }
         var p = SsaHybridEngine.Params(s, l, c, ema, (basePct / 100.0).coerceIn(0.0, 1.0))
+        p = withFast(p)
         p.validate()?.let { status("⚠️ $it"); return }
         val auto = autoFit.isChecked
         runBtn.isEnabled = false
         resultBox.removeAllViews()
+        val hourly = hourlyMode
         lifecycleScope.launch {
             try {
-                status("⏳ 解析股票 / 加载日K…")
+                status("⏳ 解析股票 / 加载${if (hourly) "1H" else "日"}K…")
                 val (code, name) = withContext(Dispatchers.IO) { resolveCode(raw) }
                 if (code == null) { status("⚠️ 未找到「$raw」"); return@launch }
-                val all = withContext(Dispatchers.IO) { loadDaily(code) }
-                if (all == null) { status("⚠️ $name 日K不足"); return@launch }
+                val all = withContext(Dispatchers.IO) {
+                    if (hourly) loadHourly(code) else loadDaily(code)
+                }
+                if (all == null) { status("⚠️ $name ${if (hourly) "1H" else "日"}K不足"); return@launch }
                 val bars = if (all.size > nbars) all.takeLast(nbars) else all
                 if (auto) {
                     status("⏳ 票性识别中（L30 滚动 SSA）…")
                     val prof = withContext(Dispatchers.Default) { runCatching { SsaHybridEngine.classifyOnly(bars) } }
                         .getOrElse { status("⚠️ 票性识别失败：${it.message}"); return@launch }
-                    p = SsaHybridEngine.recommendedParams(prof.label)
+                    p = withFast(SsaHybridEngine.recommendedParams(prof.label))
                     prefillParams(p)
                     status("🏷️ 识别为${labelCn(prof.label)} → 已预填 t${p.trendShort}/${p.trendLong}+c${p.cycleL}" +
                         " EMA${p.smoothSpan} 底仓${(p.baseFraction * 100).toInt()}%，开始回测")
@@ -387,7 +438,7 @@ class SsaHybridFragment : Fragment() {
                     }.getOrElse { status("⚠️ 寻优失败：${it.message}"); return@launch }
                     if (grid.isEmpty()) { status("⚠️ K线不足，无可扫描组合"); return@launch }
                     val best = grid[0]
-                    p = best.params
+                    p = withFast(best.params)
                     prefillParams(p)
                     val mono = TextView(requireContext()).apply {
                         typeface = Typeface.MONOSPACE; textSize = 11f; setTextColor(BLACK)
@@ -409,7 +460,7 @@ class SsaHybridFragment : Fragment() {
                 }
                 status("⏳ 逐K滚动 SSA + 回测（${bars.size} 根，手机约需 10~40 秒）…")
                 val r = withContext(Dispatchers.Default) { runCatching { SsaHybridEngine.run(bars, p) } }
-                r.onSuccess { render(name ?: code, code, it) }
+                r.onSuccess { render(name ?: code, code, it, hourly) }
                     .onFailure { status("⚠️ 回测失败：${it.message}") }
                 if (r.isSuccess) status("✅ 完成：${name ?: code}($code) 截至 ${r.getOrNull()?.latestDate}")
             } finally {
@@ -448,8 +499,8 @@ class SsaHybridFragment : Fragment() {
     }
 
     private fun advWord(a: Int): Triple<String, Int, String> = when (a) {
-        SsaHybridEngine.BUY -> Triple("买入", GREEN, "adv")
-        SsaHybridEngine.SELL -> Triple("卖出", RED, "adv")
+        SsaHybridEngine.BUY -> Triple("买入", RED, "adv")
+        SsaHybridEngine.SELL -> Triple("卖出", GREEN, "adv")
         SsaHybridEngine.HOLD_POS -> Triple("持有", BLUE, "adv")
         else -> Triple("观望", GRAY, "adv")
     }
@@ -1049,6 +1100,11 @@ class SsaHybridFragment : Fragment() {
         }
     }
 
+    /** 按界面开关收敛参数：未勾快通道则清零；「仅 cycle 拐点」直接透传 */
+    private fun withFast(p: SsaHybridEngine.Params): SsaHybridEngine.Params =
+        if (fastCh.isChecked) p.copy(cycleOnly = cycCh.isChecked)
+        else p.copy(fastErThr = 0.0, fastDonN = 0, cycleOnly = cycCh.isChecked)
+
     /** 自动配参后把推荐值写回输入框（K线根数不动） */
     private fun prefillParams(p: SsaHybridEngine.Params) {
         etShort.setText(p.trendShort.toString())
@@ -1065,7 +1121,7 @@ class SsaHybridFragment : Fragment() {
         else -> "震荡混合票"
     }
 
-    private fun render(name: String, code: String, r: SsaHybridEngine.Result) {
+    private fun render(name: String, code: String, r: SsaHybridEngine.Result, hourly: Boolean = false) {
         resultBox.removeAllViews()
 
         // ① 次日建议大卡
@@ -1156,24 +1212,40 @@ class SsaHybridFragment : Fragment() {
                 "均持仓" to "${st.avgHoldBars} 根K"
             )))
             it.addView(TextView(requireContext()).apply {
-                text = "区间 ${st.startDate} ~ ${st.endDate}（${st.barCount} 根日K）"
+                text = "区间 ${st.startDate} ~ ${st.endDate}（${st.barCount} 根${if (hourly) "1H" else "日"}K）"
                 textSize = 10f; setTextColor(GRAY); setPadding(dp(4), dp(6), dp(4), 0)
             })
         })
 
         // ⑤ 图（主图/副图联动：捏合缩放视口同步 + 十字光标竖线跨图）
-        val pChart = priceChart(r)
-        val dChart = kdjChart(r)
+        // 1H 模式：价格图只画价格 + 买卖点（不画 trend 双线），点击买卖点弹出该K详情卡
+        val pointTv = TextView(requireContext()).apply {
+            text = if (hourly) "👆 点击图中的买入/卖出点，查看该根K线详情" else ""
+            textSize = 10.5f; setTextColor(GRAY)
+            typeface = Typeface.MONOSPACE
+            setPadding(dp(6), dp(6), dp(6), 0)
+        }
+        val pChart = priceChart(r, hourly)
         val cChart = lineChart(r) { _, _ -> null }
         val eChart = equityChart(r)
-        linkCharts(listOf(pChart, dChart, cChart, eChart))
+        // 右侧留白：lastX 之后多给 N 根的空间，便于把最后一根K拖到视野中间（三图一致，保持横轴对齐）
+        val padBars = if (hourly) 15f else 10f
+        listOf(pChart, cChart, eChart).forEach { ch ->
+            // 三图横轴范围必须完全一致（auto 最小值会因 cycle 前段 NaN 被跳过而不同 → 窗口错位）
+            ch.xAxis.axisMinimum = 0f
+            ch.xAxis.axisMaximum = (r.bars.size - 1).toFloat() + padBars
+        }
+        // 1H：点击（或十字光标扫过）买卖点所在K线时，更新下方详情卡
+        linkCharts(listOf(pChart, cChart, eChart)) { src, idx ->
+            if (hourly && src === pChart &&
+                r.trades.any { it.buyIndex == idx || it.sellIndex == idx }) {
+                pointTv.text = pointDesc(r, idx)
+            }
+        }
         resultBox.addView(card {
-            it.addView(cardTitle("📈 价格 + trend 双线 + 买卖点"))
+            it.addView(cardTitle(if (hourly) "📈 1H 价格 + 买卖点" else "📈 价格 + trend 双线 + 买卖点"))
             it.addView(pChart)
-        })
-        resultBox.addView(card {
-            it.addView(cardTitle("📊 KDJ 副图（9,3,3 · K橙/D蓝/J紫 · 20/80 超卖超买线）"))
-            it.addView(dChart)
+            if (hourly) it.addView(pointTv)
         })
         resultBox.addView(card {
             it.addView(cardTitle("🌊 周期分量 cycle L${r.params.cycleL}（EMA${r.params.smoothSpan}）"))
@@ -1250,8 +1322,23 @@ class SsaHybridFragment : Fragment() {
         chart.xAxis.position = XAxis.XAxisPosition.BOTTOM
         chart.xAxis.textSize = 8f
         chart.axisLeft.textSize = 9f
+        // 三图绘图区（content 矩形）强制一致：Y 轴标签宽度不同会让 content 宽度/左边界不同，
+        // 即使视口同步，十字竖线也会错开几像素
+        chart.setViewPortOffsets(dp(48).toFloat(), dp(8).toFloat(), dp(8).toFloat(), dp(40).toFloat())
         setup(chart)
         return chart
+    }
+
+    /**
+     * 十字光标统一样式：深灰粗实线（3dp，库内部 setHighlightLineWidth 入参为 dp）。
+     * 逐条数据集统一设置 —— 高亮落在哪条数据集上都一样粗，不会出现「点到买卖点光标消失」。
+     */
+    private fun LineDataSet.crosshair(): LineDataSet = apply {
+        highLightColor = Color.parseColor("#37474F")
+        setHighlightLineWidth(3f)
+        disableDashedHighlightLine()
+        setDrawVerticalHighlightIndicator(true)
+        setDrawHorizontalHighlightIndicator(true)
     }
 
     private fun dateFormatter(r: SsaHybridEngine.Result) = object : ValueFormatter() {
@@ -1261,7 +1348,10 @@ class SsaHybridFragment : Fragment() {
         }
     }
 
-    private fun priceChart(r: SsaHybridEngine.Result): LineChart = baseChart { chart ->
+    private fun priceChart(
+        r: SsaHybridEngine.Result,
+        simple: Boolean = false
+    ): LineChart = baseChart { chart ->
         val n = r.bars.size
         fun ds(vals: DoubleArray, label: String, color: Int, width: Float, skipNaN: Boolean = true): LineDataSet {
             val entries = ArrayList<Entry>()
@@ -1273,36 +1363,48 @@ class SsaHybridFragment : Fragment() {
             return LineDataSet(entries, label).apply {
                 this.color = color; lineWidth = width; setDrawCircles(false)
                 setDrawValues(false); mode = LineDataSet.Mode.LINEAR
-            }
+            }.crosshair()
         }
         val close = DoubleArray(n) { r.bars[it].close }
-        val data = LineData(
-            ds(close, "收盘", BLACK, 1.0f, false).apply {
-                // 十字光标样式：竖线 + 横线（贴收盘价）
-                setHighlightLineWidth(2.2f)
-                enableDashedHighlightLine(8f, 4f, 0f)
-                highLightColor = Color.parseColor("#888888")
-            },
-            ds(r.trendShortLine, "短trend", BLUE, 1.1f),
-            ds(r.trendLongLine, "长trend", ORANGE, 1.1f)
-        )
-        // 买卖点
+        val sets = ArrayList<com.github.mikephil.charting.interfaces.datasets.ILineDataSet>()
+        sets.add(ds(close, "收盘", BLACK, 1.0f, false))
+        if (!simple) {
+            sets.add(ds(r.trendShortLine, "短trend", BLUE, 1.1f))
+            sets.add(ds(r.trendLongLine, "长trend", ORANGE, 1.1f))
+        }
+        // 买卖点（A股习惯：红=买入，绿=卖出）
         val buys = ArrayList<Entry>(); val sells = ArrayList<Entry>()
         r.trades.forEach { t ->
             buys.add(Entry(t.buyIndex.toFloat(), t.buyPrice.toFloat()))
             sells.add(Entry(t.sellIndex.toFloat(), t.sellPrice.toFloat()))
         }
-        data.addDataSet(LineDataSet(buys, "买入").apply {
-            setDrawValues(false); color = GREEN; setDrawCircles(true)
-            setCircleColor(GREEN); circleRadius = 3f; lineWidth = 0f
-        })
-        data.addDataSet(LineDataSet(sells, "卖出").apply {
+        sets.add(LineDataSet(buys, "买入").apply {
             setDrawValues(false); color = RED; setDrawCircles(true)
-            setCircleColor(RED); circleRadius = 3f; lineWidth = 0f
-        })
+            setCircleColor(RED); circleRadius = 4f; lineWidth = 0f
+        }.crosshair())
+        sets.add(LineDataSet(sells, "卖出").apply {
+            setDrawValues(false); color = GREEN; setDrawCircles(true)
+            setCircleColor(GREEN); circleRadius = 4f; lineWidth = 0f
+        }.crosshair())
+        val data = LineData(sets)
         chart.data = data
         chart.xAxis.valueFormatter = dateFormatter(r)
         chart.invalidate()
+    }
+
+    /** 买卖点详情小卡文案：日期时间 + OHLC + 买卖价/原因 */
+    private fun pointDesc(r: SsaHybridEngine.Result, idx: Int): String {
+        val b = r.bars.getOrNull(idx) ?: return "—"
+        val buy = r.trades.firstOrNull { it.buyIndex == idx }
+        val sell = r.trades.firstOrNull { it.sellIndex == idx }
+        return buildString {
+            append("📌 ${b.date}\n")
+            append("开 ${fmt2(b.open)}  高 ${fmt2(b.high)}  低 ${fmt2(b.low)}  收 ${fmt2(b.close)}\n")
+            if (buy != null) append("🔴 买入 ${fmt2(buy.buyPrice)}  ·  ${buy.buyWhy}")
+            if (buy != null && sell != null) append("\n")
+            if (sell != null) append("🟢 卖出 ${fmt2(sell.sellPrice)}  ·  ${sell.exitReason}" +
+                "  ·  收益 ${pct(sell.returnPct)}  持仓 ${sell.barsHeld} 根")
+        }
     }
 
     private fun lineChart(r: SsaHybridEngine.Result, @Suppress("UNUSED_PARAMETER") unused: (Int, Int) -> Unit): LineChart =
@@ -1313,56 +1415,11 @@ class SsaHybridFragment : Fragment() {
                 entries.add(Entry(i.toFloat(), r.cycleLine[i].toFloat()))
             val ds = LineDataSet(entries, "cycle").apply {
                 color = PURPLE; lineWidth = 1.0f; setDrawCircles(false); setDrawValues(false)
-            }
+            }.crosshair()
             chart.data = LineData(ds)
             chart.xAxis.valueFormatter = dateFormatter(r)
             chart.invalidate()
         }
-
-    /** KDJ 副图：K/D/J 三线（9,3,3 标准参数）+ 20/80 超卖超买参考线，支持十字光标联动与捏合缩放 */
-    private fun kdjChart(r: SsaHybridEngine.Result): LineChart = baseChart { chart ->
-        val n = r.bars.size
-        val kArr = DoubleArray(n); val dArr = DoubleArray(n); val jArr = DoubleArray(n)
-        var kp = 50.0; var dp = 50.0
-        for (i in 0 until n) {
-            var lo = r.bars[i].low; var hi = r.bars[i].high
-            for (j in max(0, i - 8) until i) {
-                if (r.bars[j].low < lo) lo = r.bars[j].low
-                if (r.bars[j].high > hi) hi = r.bars[j].high
-            }
-            val rsv = if (hi == lo) 50.0 else (r.bars[i].close - lo) / (hi - lo) * 100
-            val kv = rsv / 3 + kp * 2 / 3
-            val dv = kv / 3 + dp * 2 / 3
-            kArr[i] = kv; dArr[i] = dv; jArr[i] = 3 * kv - 2 * dv
-            kp = kv; dp = dv
-        }
-        fun ds(vals: DoubleArray, label: String, color: Int, width: Float) =
-            LineDataSet(ArrayList<Entry>().apply {
-                for (i in 0 until n) add(Entry(i.toFloat(), vals[i].toFloat()))
-            }, label).apply {
-                this.color = color; lineWidth = width; setDrawCircles(false); setDrawValues(false)
-                setHighlightLineWidth(2.2f)                      // 十字光标竖线：粗虚线，与主图一致
-                enableDashedHighlightLine(8f, 4f, 0f)
-                highLightColor = Color.parseColor("#888888")
-                setDrawHorizontalHighlightIndicator(false)
-            }
-        chart.data = LineData(
-            ds(kArr, "K", ORANGE, 1.1f),
-            ds(dArr, "D", BLUE, 1.1f),
-            ds(jArr, "J", PURPLE, 1.0f)
-        )
-        chart.setAutoScaleMinMaxEnabled(false)   // KDJ 值域固定 0~100，用固定轴，放大后也稳定
-        chart.axisLeft.axisMinimum = -20f        // J 可短暂越界
-        chart.axisLeft.axisMaximum = 140f
-        chart.axisLeft.addLimitLine(LimitLine(80f, "80").apply {
-            lineColor = Color.parseColor("#E57373"); lineWidth = 0.8f; textSize = 8f
-        })
-        chart.axisLeft.addLimitLine(LimitLine(20f, "20").apply {
-            lineColor = Color.parseColor("#81C784"); lineWidth = 0.8f; textSize = 8f
-        })
-        chart.xAxis.valueFormatter = dateFormatter(r)
-        chart.invalidate()
-    }
 
     /**
      * ## 主图/副图联动
@@ -1371,19 +1428,35 @@ class SsaHybridFragment : Fragment() {
      *   任意图高亮变化时把同一 x 索引同步到其余图，竖线视觉上同时穿过主图与副图
      * - 单指拖动 = 十字扫描；双指 = 捏合缩放与平移
      */
-    private fun linkCharts(charts: List<BarLineChartBase<*>>) {
+    private fun linkCharts(
+        charts: List<BarLineChartBase<*>>,
+        onSelect: ((BarLineChartBase<*>, Int) -> Unit)? = null
+    ) {
         fun syncFrom(src: BarLineChartBase<*>) {
             val sv = FloatArray(9)
             src.viewPortHandler.matrixTouch.getValues(sv)
+            // matrixTouch 作用在「value→px」之后的像素空间（Transformer: valueToPx → touch → offset），
+            // 所以 scaleX 是缩放倍数、transX 是像素平移，不能把数据值直接当像素用。
+            // 按可视跨度换算缩放、按左边界数据值反推平移，才能真正同窗口。
+            val z = sv[Matrix.MSCALE_X]
+            val sMin = src.xAxis.axisMinimum
+            val sRange = src.xAxis.axisMaximum - sMin
+            if (z <= 0f || sRange <= 0f) return
+            val leftVal = src.lowestVisibleX
             charts.forEach { dst ->
                 if (dst !== src) {
-                    val dm = Matrix(dst.viewPortHandler.matrixTouch)
+                    val vph = dst.viewPortHandler
+                    val dm = Matrix(vph.matrixTouch)
                     val dv = FloatArray(9)
                     dm.getValues(dv)
-                    dv[Matrix.MSCALE_X] = sv[Matrix.MSCALE_X]
-                    dv[Matrix.MTRANS_X] = sv[Matrix.MTRANS_X]
+                    val dMin = dst.xAxis.axisMinimum
+                    val dRange = dst.xAxis.axisMaximum - dMin
+                    if (dRange <= 0f) return@forEach
+                    dv[Matrix.MSCALE_X] = z * dRange / sRange
+                    dv[Matrix.MTRANS_X] =
+                        -dv[Matrix.MSCALE_X] * (leftVal - dMin) * vph.contentWidth() / dRange
                     dm.setValues(dv)
-                    dst.viewPortHandler.refresh(dm, dst, true)
+                    vph.refresh(dm, dst, true)
                 }
             }
         }
@@ -1404,8 +1477,21 @@ class SsaHybridFragment : Fragment() {
                 override fun onValueSelected(e: Entry, h: Highlight) {
                     if (linkingHighlight) return
                     linkingHighlight = true
-                    charts.forEach { o -> if (o !== c) o.highlightValue(h.x, 0, false) }
+                    charts.forEach { o ->
+                        if (o !== c) {
+                            // 用像素位置生成 Highlight：三参 highlightValue(x, dsi, ...) 构造的 Highlight
+                            // dataIndex 恒为 -1，CombinedData.getEntryForHighlight 会 List.get(-1) 越界闪退
+                            val pix = o.getTransformer(YAxis.AxisDependency.LEFT)
+                                .getPixelForValues(h.x, 0f)
+                            val px = pix.x.toFloat()
+                            val content = o.viewPortHandler.contentRect
+                            val hl = if (px >= content.left && px <= content.right)
+                                o.getHighlightByTouchPoint(px, content.centerY()) else null
+                            if (hl != null) o.highlightValue(hl, false)
+                        }
+                    }
                     linkingHighlight = false
+                    onSelect?.invoke(c, e.x.toInt())
                 }
                 override fun onNothingSelected() {
                     if (linkingHighlight) return
@@ -1426,10 +1512,10 @@ class SsaHybridFragment : Fragment() {
         }
         val ds1 = LineDataSet(e1, "策略(万)").apply {
             color = RED; lineWidth = 1.2f; setDrawCircles(false); setDrawValues(false)
-        }
+        }.crosshair()
         val ds2 = LineDataSet(e2, "买持(万)").apply {
             color = GRAY; lineWidth = 1.0f; setDrawCircles(false); setDrawValues(false)
-        }
+        }.crosshair()
         chart.data = LineData(ds1, ds2)
         chart.xAxis.valueFormatter = dateFormatter(r)
         chart.invalidate()
@@ -1451,14 +1537,25 @@ class SsaHybridFragment : Fragment() {
         return pick?.code to pick?.name
     }
 
+    /** 当日已成功补拉过的票（code → 交易日），避免批量更新时重复拉网 */
+    private val dailyRefreshedDay = HashMap<String, String>()
+
     private suspend fun loadDaily(code: String): List<Bar>? {
         val ctx = requireContext()
         val db = StockDatabase.getInstance(ctx)
         var local: List<DailySnapshotEntity> =
             runCatching { db.dailySnapshotDao().getByCode(code, 2000) }.getOrDefault(emptyList())
-        if (local.size < 500) {
+
+        // 缺口判定：不足 500 根，或本地末根早于最近交易日（原来只看根数，导致老票永远停更）
+        val targetDay = runCatching { TradingDayPickerView.recentTradingDay().toString() }.getOrNull() ?: ""
+        val lastDate = local.maxOfOrNull { it.date } ?: ""
+        val stale = local.size < 500 || (targetDay.isNotEmpty() && lastDate < targetDay)
+        if (stale && dailyRefreshedDay[code] != targetDay) {
             val ok = HistoricalDataFetcher(ctx).fetchStockLatest(code, 900)
-            if (ok) local = runCatching { db.dailySnapshotDao().getByCode(code, 2000) }.getOrDefault(emptyList())
+            if (ok) {
+                dailyRefreshedDay[code] = targetDay
+                local = runCatching { db.dailySnapshotDao().getByCode(code, 2000) }.getOrDefault(emptyList())
+            }
         }
         val bars = local.filter { it.close > 0 && it.high > 0 && it.low > 0 }
             .sortedBy { it.date }
@@ -1467,6 +1564,19 @@ class SsaHybridFragment : Fragment() {
     }
 
     private fun Double.ifZero(f: Double) = if (this == 0.0) f else this
+
+    /** 1H 小时线：与缠论 Tab 同源（本地 IntradayKlineFetcher） */
+    private suspend fun loadHourly(code: String): List<Bar>? {
+        val full = if (code.startsWith("sh") || code.startsWith("sz")) code
+        else (if (code[0] in "659") "sh" else "sz") + code
+        val ents = runCatching {
+            IntradayKlineFetcher(requireContext()).fetchHourlyHistory(full)
+        }.getOrNull() ?: return null
+        val bars = ents.filter { it.close > 0 && it.high > 0 && it.low > 0 }
+            .sortedBy { it.datetime }
+            .map { Bar(it.datetime, it.open, it.high, it.low, it.close) }
+        return if (bars.size < 150) null else bars
+    }
 
     // ═══════════════════════ UI 工具 ═══════════════════════
 

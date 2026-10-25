@@ -1,0 +1,21 @@
+{
+  "params": {
+    "zig": 5.0,
+    "hit_win": 3,
+    "stop": -0.08,
+    "timeout": 60,
+    "fee": 0.0013
+  },
+  "stocks": 172,
+  "bots": 6847,
+  "tops": 6838,
+  "bot_hit": 1209,
+  "top_hit": 533,
+  "buy_n": 6025,
+  "sell_n": 2375,
+  "buy_prec": 1815,
+  "sell_prec": 686,
+  "trades_n": 2038,
+  "win_rate": 0.4053,
+  "avg_ret": -0.0026
+}

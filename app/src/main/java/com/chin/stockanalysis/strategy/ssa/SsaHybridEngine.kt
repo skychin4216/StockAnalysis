@@ -1,5 +1,6 @@
 package com.chin.stockanalysis.strategy.ssa
 
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
@@ -18,6 +19,11 @@ import kotlin.math.sqrt
  * 每根 K 收盘给出次日建议：BUY / SELL / HOLD_POS(持有) / HOLD_EMPTY(空仓观望)，
  * 并用次日开盘成交、t+1/3/5 收盘滚动评估建议命中率。
  *
+ * **A 股 T+1（2026-10-22 修正）**：仅「t 收盘出信号 → t+1 开盘成交」只保证跨根，1H 级别下
+ * t+1 与 t 仍在同一交易日，会出现当日买入当日卖出（违规）。故 [AccountSim.executeOpen]
+ * 按**交易日**再判一次：卖出执行日必须晚于买入日，未解锁的卖单顺延到下一交易日开盘。
+ * 日线级别下原逻辑已天然满足 T+1，本约束不改变日线结果。
+ *
  * 逐 K 滚动 SSA 与 [SsaEngine] 完全同口径：每个 t 只用 [0..t] 历史独立分解取末端值；
  * trend/cycle 在末端值上再做 EMA 平滑（PC 全池 172 票验证 span=2 为甜点）。
  *
@@ -34,6 +40,9 @@ object SsaHybridEngine {
     const val HOLD_POS = 2
     const val HOLD_EMPTY = 3
 
+    /** 快速通道 Kaufman 效率系数窗口（与 PC 全池验证一致） */
+    private const val FAST_ER_W = 10
+
     data class Bar(
         val date: String,
         val open: Double,
@@ -48,6 +57,9 @@ object SsaHybridEngine {
      * @param cycleL     周期分量 SSA 窗口 L
      * @param smoothSpan trend/cycle 末端值 EMA 平滑 span（1=不平滑，全池验证推荐 2）
      * @param baseFraction 底仓比例 0..1（金叉买/死叉卖，不做波段）
+     * @param fastErThr 快速通道 ER10 阈值（>0 启用；2026-10-21 全池验证默认 0.6）
+     * @param fastDonN  快速通道唐奇安通道根数（前 N 根收盘高点/低点，0=关闭）
+     * @param fastSell  快速通道是否允许"跌破通道立即卖出"（实测仅快买无效，买卖需成对）
      */
     data class Params(
         val trendShort: Int = 10,
@@ -56,7 +68,12 @@ object SsaHybridEngine {
         val smoothSpan: Int = 2,
         val baseFraction: Double = 0.0,
         val commissionRate: Double = 0.00025,
-        val stampDutyRate: Double = 0.0005
+        val stampDutyRate: Double = 0.0005,
+        val fastErThr: Double = 0.6,
+        val fastDonN: Int = 15,
+        val fastSell: Boolean = true,
+        /** true = 仅跟随 cycle 拐点（谷底买 / 峰顶卖），忽略 trend 斜率与快通道 */
+        val cycleOnly: Boolean = false
     ) {
         fun validate(): String? = when {
             trendShort !in 5..60 -> "短趋势 L 需在 5~60"
@@ -64,6 +81,8 @@ object SsaHybridEngine {
             cycleL !in 5..60 -> "周期 L 需在 5~60"
             smoothSpan !in 1..10 -> "EMA span 需在 1~10"
             baseFraction !in 0.0..1.0 -> "底仓比例需在 0~1"
+            fastErThr !in 0.0..1.0 -> "快通道 ER 阈值需在 0~1"
+            fastDonN !in 0..120 -> "快通道通道根数需在 0~120"
             else -> null
         }
     }
@@ -134,7 +153,9 @@ object SsaHybridEngine {
         val cap0: Double, val capT: Double, val capB: Double,
         val cashT: Double, val shT: Long, val biT: Int, val biDate: String, val bpT: Double,
         val bwhy: String, val cashB: Double, val shB: Long,
-        val pendT: Int, val pendB: Int, val whyT: String, val inBull: Boolean
+        val pendT: Int, val pendB: Int, val whyT: String, val inBull: Boolean,
+        /** 底仓买入日期（T+1 判定；旧存档缺失 → 空串=不约束） */
+        val biDateB: String = ""
     )
 
     /** 每日荐股增量快照（推荐列表单票卡片所需全部字段） */
@@ -199,6 +220,11 @@ object SsaHybridEngine {
         val trades = sim.trades
         val equity = DoubleArray(n)
         val advice = IntArray(n) { HOLD_EMPTY }
+        // 快速通道序列（ER10 + 唐奇安收盘通道）：仅依赖收盘价，无未来函数
+        val erArr = if (params.fastErThr > 0.0) erSeries(close, FAST_ER_W)
+                    else DoubleArray(n) { Double.NaN }
+        val (donHi, donLo) = if (params.fastDonN > 0) donchianSeries(close, params.fastDonN)
+                             else DoubleArray(n) { Double.NaN } to DoubleArray(n) { Double.NaN }
 
         for (t in 0 until n) {
             sim.executeOpen(t, bars[t].date, open[t])
@@ -206,7 +232,8 @@ object SsaHybridEngine {
                 ts[t - 1], tl[t - 1], ts[t], tl[t],
                 if (t >= 2) cy[t - 2] else Double.NaN,
                 if (t >= 1) cy[t - 1] else Double.NaN,
-                cy[t]
+                cy[t],
+                closeCur = close[t], erCur = erArr[t], donHi = donHi[t], donLo = donLo[t]
             )
             equity[t] = sim.cashT + sim.shT * close[t] + sim.cashB + sim.shB * close[t]
         }
@@ -293,54 +320,63 @@ object SsaHybridEngine {
     )
 
     /**
-     * 参数网格扫描（单票寻优）：trendShort/trendLong ∈ trendGrid（短<长）× cycleL ∈ cycleGrid。
-     * 同档 L 的滚动 SSA 只分解一次（共享 trend/cycle 平滑序列），组合仅做轻量账户模拟，手机秒级完成。
-     * EMA 平滑、底仓、费率沿用 baseParams；返回按总收益降序。
+     * 参数网格扫描（单票寻优）：trendShort/trendLong ∈ trendGrid（短<长）× cycleL ∈ cycleGrid × smoothSpan ∈ spanGrid。
+     * 同档 L 的滚动 SSA 只分解一次（原始 trend/cycle 序列全 span 共享，各 span 仅重做 EMA 平滑），
+     * 组合仅做轻量账户模拟，手机秒级完成。
+     * 底仓、费率沿用 baseParams；返回按总收益降序。
      */
     fun scanGrid(
         bars: List<Bar>, baseParams: Params = Params(),
         trendGrid: List<Int> = listOf(5, 10, 20, 30, 60),
-        cycleGrid: List<Int> = listOf(20, 30, 60)
+        cycleGrid: List<Int> = listOf(20, 30, 60),
+        spanGrid: List<Int> = listOf(baseParams.smoothSpan)
     ): List<ScanRow> {
         val n = bars.size
         require(n >= 90) { "K线不足：寻优至少需要 90 根（当前 $n）" }
         val open = DoubleArray(n) { bars[it].open }
         val close = DoubleArray(n) { bars[it].close }
         val cap0 = max(100_000.0, open[0] * 100 * 1.2)
-        // 同 L 只滚动分解一次，序列全组合共享
-        val trEma = HashMap<Int, DoubleArray>()
-        val cyEma = HashMap<Int, DoubleArray>()
-        for (L in (trendGrid + cycleGrid).distinct()) {
-            val r = rolling(bars, L)
-            trEma[L] = ema(r.first, baseParams.smoothSpan)
-            cyEma[L] = ema(r.second, baseParams.smoothSpan)
-        }
+        // 快速通道序列与 span 无关，循环外只算一次（口径与 run() 一致）
+        val erArr = if (baseParams.fastErThr > 0.0) erSeries(close, FAST_ER_W)
+                    else DoubleArray(n) { Double.NaN }
+        val (donHiArr, donLoArr) = if (baseParams.fastDonN > 0) donchianSeries(close, baseParams.fastDonN)
+                                   else DoubleArray(n) { Double.NaN } to DoubleArray(n) { Double.NaN }
+        // 同 L 只滚动分解一次，原始序列全组合全 span 共享
+        val rollCache = HashMap<Int, Pair<DoubleArray, DoubleArray>>()
+        for (L in (trendGrid + cycleGrid).distinct()) rollCache[L] = rolling(bars, L)
         val combos = ArrayList<Triple<Int, Int, Int>>()
         val ls = trendGrid.distinct().sorted()
         for (s in ls) for (l in ls) if (s < l) for (c in cycleGrid.distinct()) combos.add(Triple(s, l, c))
         val rows = ArrayList<ScanRow>()
-        for ((s, l, c) in combos) {
-            if (maxOf(s, l, c) + 30 > n) continue   // 预热不足的组合跳过
-            val p = baseParams.copy(trendShort = s, trendLong = l, cycleL = c)
-            val sim = AccountSim(p, cap0)
-            val ts = trEma.getValue(s); val tl = trEma.getValue(l); val cy = cyEma.getValue(c)
-            val equity = DoubleArray(n)
-            for (t in 0 until n) {
-                sim.executeOpen(t, bars[t].date, open[t])
-                if (t > 0) sim.signalAndAdvise(
-                    ts[t - 1], tl[t - 1], ts[t], tl[t],
-                    if (t >= 2) cy[t - 2] else Double.NaN,
-                    if (t >= 1) cy[t - 1] else Double.NaN,
-                    cy[t]
-                )
-                equity[t] = sim.cashT + sim.shT * close[t] + sim.cashB + sim.shB * close[t]
+        for (span in spanGrid.distinct()) {
+            val trEma = HashMap<Int, DoubleArray>()
+            val cyEma = HashMap<Int, DoubleArray>()
+            for ((L, r) in rollCache) { trEma[L] = ema(r.first, span); cyEma[L] = ema(r.second, span) }
+            for ((s, l, c) in combos) {
+                if (maxOf(s, l, c) + 30 > n) continue   // 预热不足的组合跳过
+                val p = baseParams.copy(trendShort = s, trendLong = l, cycleL = c, smoothSpan = span)
+                val sim = AccountSim(p, cap0)
+                val ts = trEma.getValue(s); val tl = trEma.getValue(l); val cy = cyEma.getValue(c)
+                val equity = DoubleArray(n)
+                for (t in 0 until n) {
+                    sim.executeOpen(t, bars[t].date, open[t])
+                    if (t > 0) sim.signalAndAdvise(
+                        ts[t - 1], tl[t - 1], ts[t], tl[t],
+                        if (t >= 2) cy[t - 2] else Double.NaN,
+                        if (t >= 1) cy[t - 1] else Double.NaN,
+                        cy[t],
+                        closeCur = close[t], erCur = erArr[t],
+                        donHi = donHiArr[t], donLo = donLoArr[t]
+                    )
+                    equity[t] = sim.cashT + sim.shT * close[t] + sim.cashB + sim.shB * close[t]
+                }
+                var peak = equity[0]; var mdd = 0.0
+                for (e in equity) { peak = max(peak, e); mdd = min(mdd, (e / peak - 1) * 100) }
+                val trades = sim.trades
+                val wins = trades.count { it.returnPct > 0 }
+                rows.add(ScanRow(p, (equity[n - 1] / cap0 - 1) * 100, mdd,
+                    if (trades.isNotEmpty()) wins * 100.0 / trades.size else 0.0, trades.size))
             }
-            var peak = equity[0]; var mdd = 0.0
-            for (e in equity) { peak = max(peak, e); mdd = min(mdd, (e / peak - 1) * 100) }
-            val trades = sim.trades
-            val wins = trades.count { it.returnPct > 0 }
-            rows.add(ScanRow(p, (equity[n - 1] / cap0 - 1) * 100, mdd,
-                if (trades.isNotEmpty()) wins * 100.0 / trades.size else 0.0, trades.size))
         }
         rows.sortByDescending { it.total }
         return rows
@@ -353,41 +389,75 @@ object SsaHybridEngine {
         val capT = cap0 * (1.0 - params.baseFraction)
         val capB = cap0 * params.baseFraction
         var cashT = capT; var shT = 0L; var biT = -1; var biDate = ""; var bpT = 0.0; var bwhy = ""
-        var cashB = capB; var shB = 0L
+        var cashB = capB; var shB = 0L; var biDateB = ""
         var pendT = 0; var pendB = 0; var whyT = ""
         var inBull = false
+        /** 本挂单是否因 T+1 未解锁顺延过（成交时在离场原因上标注） */
+        private var t1Deferred = false
         val trades = ArrayList<Trade>()
 
-        /** t 日开盘：执行前一日挂单并清挂单 */
+        /** 交易日（取日期部分；1H bar.date 形如 "2026-10-21 15:00:00"） */
+        private fun dayOf(date: String): String = date.trim().substringBefore(' ')
+
+        /** T+1：卖出执行日必须严格晚于买入日（同一交易日不可卖） */
+        private fun t1AllowsSell(execDate: String, buyDate: String): Boolean {
+            val buyDay = dayOf(buyDate)
+            return buyDay.isEmpty() || dayOf(execDate) > buyDay
+        }
+
+        /**
+         * t 根开盘：执行上一根挂单并清挂单。
+         *
+         * T+1：卖出未解锁时**不清挂单**，顺延到下一根（下一交易日首根）开盘继续尝试。
+         */
         fun executeOpen(tIdx: Int, date: String, px: Double) {
+            // ── T 波段仓 ──
             if (pendT == 1 && shT == 0L) {
                 val lot = (cashT / (1 + params.commissionRate) / px / 100).toInt() * 100
                 if (lot > 0) {
                     cashT -= lot * px * (1 + params.commissionRate)
                     shT = lot.toLong(); biT = tIdx; biDate = date; bpT = px
                 }
+                pendT = 0; t1Deferred = false
             } else if (pendT == 2 && shT > 0L) {
-                cashT += shT * px * (1 - params.commissionRate - params.stampDutyRate)
-                trades.add(Trade(biT, biDate, bpT, tIdx, date, px,
-                    (px * (1 - params.commissionRate - params.stampDutyRate) /
-                        (bpT * (1 + params.commissionRate)) - 1) * 100,
-                    tIdx - biT, bwhy, whyT))
-                shT = 0
+                if (t1AllowsSell(date, biDate)) {
+                    cashT += shT * px * (1 - params.commissionRate - params.stampDutyRate)
+                    trades.add(Trade(biT, biDate, bpT, tIdx, date, px,
+                        (px * (1 - params.commissionRate - params.stampDutyRate) /
+                            (bpT * (1 + params.commissionRate)) - 1) * 100,
+                        tIdx - biT, bwhy, if (t1Deferred) "$whyT（T+1顺延）" else whyT))
+                    shT = 0; pendT = 0; t1Deferred = false
+                } else {
+                    t1Deferred = true   // 当日买入，T+1 未解锁 → 卖单顺延
+                }
+            } else {
+                pendT = 0; t1Deferred = false
             }
-            // 底仓账户成交（只认金叉/死叉）
+            // ── 底仓账户成交（只认金叉/死叉，同样受 T+1 约束）──
             if (pendB == 1 && shB == 0L) {
                 val lot = (cashB / (1 + params.commissionRate) / px / 100).toInt() * 100
-                if (lot > 0) { cashB -= lot * px * (1 + params.commissionRate); shB = lot.toLong() }
+                if (lot > 0) {
+                    cashB -= lot * px * (1 + params.commissionRate); shB = lot.toLong(); biDateB = date
+                }
+                pendB = 0
             } else if (pendB == 2 && shB > 0L) {
-                cashB += shB * px * (1 - params.commissionRate - params.stampDutyRate); shB = 0
+                if (t1AllowsSell(date, biDateB)) {
+                    cashB += shB * px * (1 - params.commissionRate - params.stampDutyRate); shB = 0; pendB = 0
+                }
+            } else {
+                pendB = 0
             }
-            pendT = 0; pendB = 0; whyT = ""
+            if (pendT == 0) whyT = ""
         }
 
         /** t 日收盘信号（trend/cycle 平滑值的当前与历史值，无未来函数），返回当日对次日的建议 */
         fun signalAndAdvise(
             tsPrev: Double, tlPrev: Double, tsCur: Double, tlCur: Double,
-            cyPrev2: Double, cyPrev1: Double, cyCur: Double
+            cyPrev2: Double, cyPrev1: Double, cyCur: Double,
+            closeCur: Double = Double.NaN,
+            erCur: Double = Double.NaN,
+            donHi: Double = Double.NaN,
+            donLo: Double = Double.NaN
         ): Int {
             var dead = false
             var windowOpen = false
@@ -405,6 +475,20 @@ object SsaHybridEngine {
                 trough = cyPrev2 > cyPrev1 && cyPrev1 < cyCur
                 peak = cyPrev2 < cyPrev1 && cyPrev1 > cyCur
             }
+            if (params.cycleOnly) {
+                // 仅跟随 cycle 拐点：峰顶卖、谷底买；不看 trend 斜率、不加快通道
+                if (shT > 0L) {
+                    if (peak) { pendT = 2; whyT = "周期峰顶" }
+                } else if (trough) {
+                    pendT = 1; bwhy = "周期谷底"
+                }
+                return when {
+                    pendT == 1 -> BUY
+                    pendT == 2 -> SELL
+                    shT > 0L || shB > 0L -> HOLD_POS
+                    else -> HOLD_EMPTY
+                }
+            }
             if (shT > 0L) {
                 when {
                     dead -> { pendT = 2; whyT = "趋势死叉"; pendB = 2 }
@@ -414,6 +498,19 @@ object SsaHybridEngine {
                 when {
                     windowOpen -> { pendT = 1; bwhy = "斜率转正"; pendB = 1 }
                     inBull && trough -> { pendT = 1; bwhy = "谷底买回" }
+                }
+            }
+            // ── 快速通道覆盖（2026-10-21 全池回测：ER10≥0.6 + 唐奇安15根，急涨急跌抢先反应）──
+            if (params.fastErThr > 0.0 && params.fastDonN > 0 &&
+                !closeCur.isNaN() && !erCur.isNaN() && !donHi.isNaN() && !donLo.isNaN() &&
+                erCur >= params.fastErThr
+            ) {
+                if (shT > 0L) {
+                    if (params.fastSell && closeCur < donLo) {
+                        pendT = 2; whyT = "快通道·跌破通道"; pendB = 2
+                    }
+                } else if (closeCur > donHi) {
+                    pendT = 1; bwhy = "快通道·突破通道"; pendB = 1
                 }
             }
             return when {
@@ -426,7 +523,7 @@ object SsaHybridEngine {
 
         /** 导出账户状态快照（持久化/续算用） */
         fun snap(): SimSnapshot = SimSnapshot(
-            cap0, capT, capB, cashT, shT, biT, biDate, bpT, bwhy, cashB, shB, pendT, pendB, whyT, inBull
+            cap0, capT, capB, cashT, shT, biT, biDate, bpT, bwhy, cashB, shB, pendT, pendB, whyT, inBull, biDateB
         )
 
         companion object {
@@ -435,7 +532,7 @@ object SsaHybridEngine {
                 val sim = AccountSim(p, s.cap0)
                 sim.cashT = s.cashT; sim.shT = s.shT; sim.biT = s.biT; sim.biDate = s.biDate
                 sim.bpT = s.bpT; sim.bwhy = s.bwhy
-                sim.cashB = s.cashB; sim.shB = s.shB
+                sim.cashB = s.cashB; sim.shB = s.shB; sim.biDateB = s.biDateB
                 sim.pendT = s.pendT; sim.pendB = s.pendB; sim.whyT = s.whyT
                 sim.inBull = s.inBull
                 return sim
@@ -540,7 +637,14 @@ object SsaHybridEngine {
                 cy30Last = emaStep(cy30Last, dec(30).cycle[n - 1], 2)
                 val t = n - 1
                 sim.executeOpen(t, nb.date, nb.open)
-                val adv = sim.signalAndAdvise(tsPrev, tlPrev, tsLast, tlLast, cyPrev2, cyPrev1, cyLast)
+                // 快速通道标量（与 run() 序列同口径）
+                val erCur = if (params.fastErThr > 0.0) erAt(close, t, FAST_ER_W) else Double.NaN
+                val (donHi, donLo) = if (params.fastDonN > 0) donAt(close, t, params.fastDonN)
+                                     else Double.NaN to Double.NaN
+                val adv = sim.signalAndAdvise(
+                    tsPrev, tlPrev, tsLast, tlLast, cyPrev2, cyPrev1, cyLast,
+                    closeCur = nb.close, erCur = erCur, donHi = donHi, donLo = donLo
+                )
                 adviceHistory.add(adv)
                 // 票性聚合增量
                 closeSum += nb.close
@@ -772,5 +876,46 @@ object SsaHybridEngine {
             out[i] = last
         }
         return out
+    }
+
+    // ═══════════════════════════ 快速通道指标 ═══════════════════════════
+
+    /** Kaufman 效率系数序列：ER = |c[t]-c[t-w]| / Σ|Δc|，t<w 为 NaN（0=纯震荡，1=单边） */
+    private fun erSeries(close: DoubleArray, w: Int): DoubleArray {
+        val n = close.size
+        val out = DoubleArray(n) { Double.NaN }
+        for (t in w until n) out[t] = erAt(close, t, w)
+        return out
+    }
+
+    /** 单点 ER（增量 step 用，与 [erSeries] 同口径） */
+    private fun erAt(close: DoubleArray, t: Int, w: Int): Double {
+        if (w <= 0 || t < w || t >= close.size) return Double.NaN
+        var sum = 0.0
+        for (i in t - w + 1..t) sum += abs(close[i] - close[i - 1])
+        return if (sum <= 1e-12) 0.0 else abs(close[t] - close[t - w]) / sum
+    }
+
+    /** 唐奇安收盘通道：hi/lo = 前 n 根（不含当前）close 的最高/最低，t<n 为 NaN */
+    private fun donchianSeries(close: DoubleArray, n: Int): Pair<DoubleArray, DoubleArray> {
+        val len = close.size
+        val hi = DoubleArray(len) { Double.NaN }
+        val lo = DoubleArray(len) { Double.NaN }
+        for (t in n until len) {
+            val (h, l) = donAt(close, t, n)
+            hi[t] = h; lo[t] = l
+        }
+        return hi to lo
+    }
+
+    /** 单点唐奇安（增量 step 用，与 [donchianSeries] 同口径） */
+    private fun donAt(close: DoubleArray, t: Int, n: Int): Pair<Double, Double> {
+        if (n <= 0 || t < n || t >= close.size) return Double.NaN to Double.NaN
+        var h = Double.NEGATIVE_INFINITY
+        var l = Double.POSITIVE_INFINITY
+        for (i in t - n until t) {
+            h = max(h, close[i]); l = min(l, close[i])
+        }
+        return h to l
     }
 }

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BBI12拐点+移动止盈8% 策略文档</title>
+<style>
+body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;max-width:860px;margin:0 auto;padding:16px;color:#222;line-height:1.65;font-size:15px}
+h1{font-size:20px;border-bottom:2px solid #1565C0;padding-bottom:8px}
+h2{font-size:17px;color:#1565C0;margin-top:26px;border-left:4px solid #1565C0;padding-left:8px}
+h3{font-size:15px;color:#333}
+table{border-collapse:collapse;width:100%;font-size:13px;margin:10px 0;overflow-x:auto;display:block}
+thead,tbody{display:table;width:100%}
+th,td{border:1px solid #ccc;padding:5px 7px;text-align:left;white-space:nowrap}
+th{background:#E3F2FD}
+.good{color:#C62828;font-weight:700}
+.bad{color:#2E7D32}
+code{background:#f0f0f0;padding:1px 5px;border-radius:3px;font-size:13px}
+.box{background:#FFF8E1;border:1px solid #FFE082;border-radius:6px;padding:10px 14px;margin:12px 0}
+.boxb{background:#E3F2FD;border:1px solid #90CAF9;border-radius:6px;padding:10px 14px;margin:12px 0}
+ul,ol{padding-left:22px}
+</style>
+</head>
+<body>
+<h1>BBI12 拐点 + 移动止盈 8% 策略（稳健/进取双模式）</h1>
+<p>定型：2026-10-20 ｜ 引擎：<code>SsaBbiErEngine.kt</code> ｜ 状态：已落地 App</p>
+
+<div class="boxb"><b>一句话：</b>BBI12 谷底拐点确认买入；峰顶拐点确认 或 自最高价回撤 ≥8% 止盈（先到先卖）；稳健模式额外要求买入时 Δ5ER &gt; -0.05。</div>
+
+<h2>1. 指标定义（全部无未来函数）</h2>
+<table>
+<tr><th>指标</th><th>定义</th><th>参数</th></tr>
+<tr><td>BBI</td><td>(MA3+MA6+MA12+MA24)/4</td><td>—</td></tr>
+<tr><td>BBI12</td><td>SMA(BBI, 12)</td><td>12</td></tr>
+<tr><td>谷底拐点</td><td>BBI12[t-1]≤BBI12[t-2] 且 BBI12[t]&gt;BBI12[t-1]，t 根收盘确认（信号根=确认根）</td><td>—</td></tr>
+<tr><td>峰顶拐点</td><td>BBI12[t-1]≥BBI12[t-2] 且 BBI12[t]&lt;BBI12[t-1]，同上</td><td>—</td></tr>
+<tr><td>ER（Kaufman 效率比）</td><td>|C[t]−C[t−60]| / Σ|ΔC|（近60根）</td><td>W=60</td></tr>
+<tr><td>Δ5ER</td><td>ER[t] − ER[t−5]</td><td>步长5</td></tr>
+<tr><td>Δ5ER 金叉</td><td>Δ5ER[t−1]≤0 且 Δ5ER[t]&gt;0</td><td>—</td></tr>
+</table>
+<p>数据口径：1H K 线，收盘价触发，手续费 0.13%/边。</p>
+
+<h2>2. 双模式规则</h2>
+<h3>进取模式（AGGRESSIVE）</h3>
+<ul>
+<li><b>买</b>：BBI12 谷底拐点确认根收盘价买入</li>
+<li><b>卖</b>（逐根检查，先到先卖）：① BBI12 峰顶拐点确认；② (持仓最高价−现价)/持仓最高价 ≥ 8% 止盈</li>
+</ul>
+<h3>稳健模式（STEADY）</h3>
+<ul>
+<li>同进取，买入多一道过滤：<b>拐点确认根 Δ5ER &gt; -0.05 才买</b></li>
+<li>Δ5ER ≤ -0.05 的谷底拐点记为 SKIP（急降中继，放弃）</li>
+<li>逻辑：ER 自由落体 = 趋势刚死，此时拐点大概率是下跌中继而非真底</li>
+</ul>
+<h3>Δ5ER 金叉预警（两模式共有，仅提示）</h3>
+<ul>
+<li>空仓时最近 3 根内出现金叉 → 提示「金叉预警」</li>
+<li>金叉领先谷底拐点平均 6.4 根，金叉价 88% 低于拐点确认价</li>
+<li><b>定位是情报信号（提前盯盘），不是买入信号</b>——假信号率 67%</li>
+</ul>
+
+<h2>3. 回测证据（171 只池，1H 全历史，费 0.13%/边）</h2>
+<h3>600176（强趋势票代表）</h3>
+<table>
+<tr><th>策略</th><th>收益</th><th>回撤</th><th>交易</th><th>胜率</th></tr>
+<tr><td>原始（拐点买+峰顶卖）</td><td>+214.55%</td><td>-20.30%</td><td>17</td><td>47%</td></tr>
+<tr><td><b>进取（+止盈8%）</b></td><td class="good">+235.65%</td><td class="good">-18.31%</td><td>17</td><td>53%</td></tr>
+<tr><td><b>稳健（+Δ5ER过滤）</b></td><td class="good">+172.72%</td><td class="good">-14.53%</td><td>12</td><td>58%</td></tr>
+<tr><td>旧口径（ER70闸门+0%止损，已废弃）</td><td class="bad">-7.96%</td><td>-10.41%</td><td>17</td><td>6%</td></tr>
+</table>
+<h3>池级（171 只均值）</h3>
+<table>
+<tr><th>策略</th><th>均值</th><th>中位</th><th>回撤</th><th>交易</th></tr>
+<tr><td>原始</td><td>-4.87%</td><td>-12.65%</td><td>-29.40%</td><td>23.2</td></tr>
+<tr><td>进取</td><td>-3.02%</td><td>-12.38%</td><td>-28.33%</td><td>23.2</td></tr>
+<tr><td>稳健(Δ5ER&gt;-0.05)</td><td class="good">-0.18%</td><td class="good">-6.05%</td><td class="good">-22.05%</td><td>15.6</td></tr>
+<tr><td>稳健(Δ5ER&gt;-0.03)</td><td class="good">+0.77%</td><td>-5.41%</td><td>-20.22%</td><td>13.4</td></tr>
+</table>
+<div class="box"><b>参数依据：</b>止盈 8% 是扫描 5/8/10/12/15/20% 后的收益/回撤双优拐点（≥15% 等于不触发，5% 太紧丢利润）；Δ5ER&gt;-0.05 再严会误杀 600176 最大两笔盈利（+28%/+62%）。<br><b>稳定性警示：</b>稳健模式前半段 +0.14% / 后半段 -3.15%，有区间依赖，需持续观察。</div>
+
+<h2>4. 已证伪路径（不要再试）</h2>
+<table>
+<tr><th>方案</th><th>结果</th><th>失败原因</th></tr>
+<tr><td>ER≥70 闸门 + 0% 止损</td><td>600176 +214%→-8%</td><td>ER 是后视镜，大盈利启动前 ER 必低，闸门精确滤掉最大盈利；0% 止损被噪音反复触发</td></tr>
+<tr><td>ER 横截面 ≥90/92</td><td>池级 +0.54% 但每票仅 1.2 笔</td><td>交易枯竭</td></tr>
+<tr><td>ER 自身分位</td><td>池级 ≥85 最优，600176 照样漏</td><td>大盈利买入时 ER 绝对值仅 0.08~0.11，自身分位也 &lt;70</td></tr>
+<tr><td>两极闸门 ≥90∪≤40</td><td>600176 +195.81% 池级全负</td><td>混沌突破是单票特例</td></tr>
+<tr><td>Δ5ER 金叉直接买</td><td>池级 -17.82% 灾难</td><td>假信号率 67%</td></tr>
+<tr><td>Δ5ER 死叉卖</td><td>600176 +214%→+2.21%</td><td>ER 回落≠趋势结束，利润全砍</td></tr>
+<tr><td>BBI12 平移预判 / 30min 辅助 / 卡尔曼融合</td><td>全部失败</td><td>噪声放大 / 短周期更差 / 对称融合无增益</td></tr>
+</table>
+
+<h2>5. 核心认知（调试牢记）</h2>
+<ol>
+<li><b>卖出层是主战场</b>：突破来自「止盈8%先到先卖」替代「峰顶确认卖」，不是买入层叠闸门</li>
+<li><b>固定止损与趋势票互斥</b>：0% 跌破买入价止损把强趋势票的小时级回调全打成止损，错过主升</li>
+<li><b>ER 的正确用法是 Δ5ER 方向过滤</b>，不是 ER 水平闸门</li>
+<li><b>金叉是领先指标但只能预警</b>：领先 6.4 根、价格更低，但假信号 2/3</li>
+<li><b>池级与单票矛盾是结构性的</b>：双模式就是给用户选择权</li>
+</ol>
+
+<h2>6. 代码位置</h2>
+<table>
+<tr><th>模块</th><th>文件</th></tr>
+<tr><td>引擎</td><td>app/.../strategy/ssa/SsaBbiErEngine.kt（TRAIL_PCT=8.0, D5ER_MIN=-0.05, ER_W=60, D5_LAG=5）</td></tr>
+<tr><td>策略注册</td><td>SsaAlertStore.kt（STRAT_ERBBI_STEADY / STRAT_ERBBI_AGGRO）</td></tr>
+<tr><td>单票预警 UI</td><td>SsaT0Fragment.kt（STRAT_ITEMS / onAlertRun / renderErBbi）</td></tr>
+<tr><td>持仓批量</td><td>SsaAlertBatch.kt（稳健模式覆盖 advice）</td></tr>
+<tr><td>PC 回测母本</td><td>smalltools/_ssa_causal_check.py + data/_kalman_1h_cache.json</td></tr>
+</table>
+
+<h2>7. 后续调优方向（未验证）</h2>
+<ol>
+<li>止盈参数自适应：强趋势票 8% 偏紧，可按 ER 水平动态放宽（ER&gt;0.3 时放到 12%）</li>
+<li>稳健阈值 -0.05 再校准（后半段偏弱）</li>
+<li>金叉预警实盘验证：若预警后 6 根内拐点出现率显著高于 33%，可升级为买入信号</li>
+<li>选股端前置：池级均值仍在 0 附近，「哪些票适合此策略」比策略本身更值得优化</li>
+</ol>
+</body>
+</html>

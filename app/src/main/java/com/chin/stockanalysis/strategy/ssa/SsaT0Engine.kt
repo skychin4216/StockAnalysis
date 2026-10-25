@@ -66,8 +66,9 @@ object SsaT0Engine {
         val stampDutyRate: Double = 0.0005,
         val slippageRate: Double = 0.0005, // 滑点（双边各计）
         val trainRatio: Double = 0.70,
-        /** 下跌趋势亏损削减方案（供对比）：0=基线 1=冻结核心仓 2=日线下行降仓 3=提前离场 */
-        val reduceMode: Int = 0,
+        /** 下跌趋势亏损削减方案（供对比）：0=基线 1=冻结核心仓 2=日线下行降仓 3=提前离场
+         *  2026-10-20 全池回测采纳：默认 2（回撤 -27.31→-25.41pp，盈利票 +6） */
+        val reduceMode: Int = 2,
         /** 试验规则：价格上穿中位线买入 / 下穿中位线卖出（为 true 时完全替代三态机，供对比） */
         val useMidCross: Boolean = false,
         /** 仅配合 useMidCross：盘中「触及中位线」即成交（挂单在 mid[t-1]，触及即按线价成交），不等 t+1 开盘 */
@@ -97,8 +98,33 @@ object SsaT0Engine {
         val winPosPct: Double = 100.0,
         /** 三态机 WINDOW 段买入需日线趋势非下行（减少下跌段接盘） */
         val winDayUp: Boolean = false,
+        /** WINDOW 段买入闸门·SNR：cycle 振幅/σ 需 ≥ 该值（0=关闭，默认关守恒基线） */
+        val winMinSnr: Double = 0.0,
+        /** 仅配合 winMinSnr：振幅回看根数（0=取 hour.embedL） */
+        val winSnrK: Int = 0,
+        /** WINDOW 段买入闸门·趋势强度：1H ADX(14) 需 ≥ 该值（0=关闭，默认关守恒基线） */
+        val winMinAdx: Double = 0.0,
+        /** UP 段卖出T仓按波动目标缩放：qty = tPct × min(1, σ_ref/σ_t)（仅缩放既有卖T数量，不新增卖出规则） */
+        val volTargetT: Boolean = false,
+        /** 仅配合 volTargetT：σ_ref 基准（价格尺度）；>0 直接使用，否则取全样本 σ 中位数 */
+        val sigmaRefAbs: Double = 0.0,
         /** 三态机状态(UP/WINDOW/FLAT)判定所用的 cycle 层："H"=小时线(基线) "D"=日线(更平滑、状态更稳) */
-        val regimeLayer: String = "H"
+        val regimeLayer: String = "H",
+        /** 2026-10-20 全池回测采纳：UP 段超上限卖T需 RSI(tRsiPeriod) > tRsiThr 确认 */
+        val tRsiConfirm: Boolean = false,
+        val tRsiPeriod: Int = 14,
+        val tRsiThr: Double = 70.0,
+        /** 2026-10-20 全池回测采纳：ADX 动态核心仓+卖T量（>25 重仓少做T / <20 轻仓多做T） */
+        val adxGate: Boolean = false,
+        val adxPeriod: Int = 14,
+        /** 2026-10-20 全池回测采纳：ER 自身时序分位入场闸（仅拦 UP 段买入；0=关闭，建议 70） */
+        val erGate: Double = 0.0,
+        /** 仅配合 erGate：Δ5ER ≤ 该值（自由落体）禁买 */
+        val erD5: Double = -0.05,
+        /** 仅配合 erGate：自身时序 ER 分位序列（[SsaErQuantile.erqArrays] 预计算注入，下标对齐 1H bars） */
+        val erPctArr: DoubleArray? = null,
+        /** 仅配合 erGate：个股原始 ER 序列（同上注入） */
+        val erArr: DoubleArray? = null
     )
 
     /** 一层滚动 SSA 全序列结果（数组下标对齐该层 bars） */
@@ -201,6 +227,13 @@ object SsaT0Engine {
             "周K不足：需≥${params.week.windowM + 10} 根（当前 ${weekBars.size}）"
         }
 
+        // erGate 自动接线：erGate>0 且未手动注入数组时，用 1H 收盘价现算 erq（自身时序分位）——单票自洽
+        val p = if (params.erGate > 0.0 && (params.erPctArr == null || params.erArr == null)) {
+            val closes = DoubleArray(hourBars.size) { hourBars[it].close }
+            val (pct, er) = SsaErQuantile.erqArrays(closes)
+            params.copy(erPctArr = pct, erArr = er)
+        } else params
+
         val w = buildLayer(weekBars, params.week)
         val d = buildLayer(dayBars, params.day)
         val h = buildLayer(hourBars, params.hour)
@@ -208,7 +241,7 @@ object SsaT0Engine {
         val reg = if (params.regimeLayer.equals("D", ignoreCase = true))
             regimes(dailyCycleOnHour(h, d))
         else regimes(DoubleArray(h.bars.size) { h.mid[it] - h.trend[it] })
-        val sim = simulate(h, d, w, reg, params)
+        val sim = simulate(h, d, w, reg, p)
         val split = (h.bars.size * params.trainRatio).toInt()
 
         val full = segmentStats("全样本", h, sim.equity, sim.benchmark, sim.trades, 0, h.bars.size, params)
@@ -268,12 +301,64 @@ object SsaT0Engine {
         val mid = h.mid[last]; val nUp = h.nUp[last]; val nDn = h.nDn[last]
         val eUp = h.eUp[last]; val eDn = h.eDn[last]
         val empty = hold <= 1e-9
+        // 镜像 simulate() 的 WINDOW 买入闸门（SNR/ADX 阈值 0=关闭 → 恒 true，基线守恒）
+        val winGateOkL: Boolean = if (p.winMinSnr <= 0.0 && p.winMinAdx <= 0.0) true else {
+            val cmL = p.hour.cycleMult
+            val sigmaL = if (cmL > 0.0) (h.nUp[last] - h.mid[last]) / cmL else Double.NaN
+            val snrKL = if (p.winSnrK > 0) p.winSnrK else p.hour.embedL
+            var mx = Double.NEGATIVE_INFINITY; var mn = Double.POSITIVE_INFINITY; var c = 0
+            for (i in max(0, last - snrKL + 1)..min(last, h.cycle.size - 1)) {
+                val v = h.cycle[i]; if (!v.isNaN()) { if (v > mx) mx = v; if (v < mn) mn = v; c++ }
+            }
+            val ampL = if (c >= 2) (mx - mn) / 2.0 else Double.NaN
+            val snrOk = if (p.winMinSnr > 0.0) (sigmaL > 0.0 && !ampL.isNaN() && ampL / sigmaL >= p.winMinSnr) else true
+            val adxOk = if (p.winMinAdx > 0.0) {
+                val a = adxSeries(bars, 14)
+                last in a.indices && !a[last].isNaN() && a[last] >= p.winMinAdx
+            } else true
+            snrOk && adxOk
+        }
         return when (state) {
-            1 -> when {   // UP：核心做多 + 极限带反向T
-                hold < p.corePct - 1e-9 -> of(BUY, "UP建仓/回补至核心仓")
-                close > eUp -> of(SELL, "UP超极限上沿·卖T")
-                close < eDn -> of(BUY, "UP破极限下沿·买回T")
-                else -> of(HOLD_POS, "UP核心持有")
+            1 -> {   // UP：核心做多 + 极限带反向T（镜像 simulate 三开关：ADX仓位 / RSI卖T确认 / ER闸拦买入）
+                var corePctEff = p.corePct
+                if (p.reduceMode == 2) {   // 日线下行核心仓折半（与 simulate 同口径：5根斜率<0）
+                    var dn = 0
+                    for (k in 1..5) { val i = last - k; if (i >= 1 && h.mid[i] < h.mid[i - 1]) dn++ }
+                    if (dn >= 3) corePctEff *= 0.5
+                }
+                if (p.adxGate) {
+                    val a = adxSeries(bars, p.adxPeriod)
+                    if (last in a.indices && !a[last].isNaN()) {
+                        corePctEff = if (a[last] > 25.0) min(corePctEff, 95.0)
+                                     else if (a[last] < 20.0) min(corePctEff, 60.0) else corePctEff
+                    }
+                }
+                // ER 闸（仅拦买入）：未注入数组则现算 erq（与 simulate 注入口径一致）
+                val erBlock = if (p.erGate > 0.0) {
+                    val (ep, ea) = if (p.erPctArr != null && p.erArr != null) p.erPctArr to p.erArr
+                    else {
+                        val cl = DoubleArray(n) { bars[it].close }
+                        SsaErQuantile.erqArrays(cl)
+                    }
+                    !(last < ep.size && ep[last].isFinite() && ep[last] >= p.erGate &&
+                        !(last >= 5 && last < ea.size && ea[last].isFinite() && ea[last - 5].isFinite() &&
+                            ea[last] - ea[last - 5] <= p.erD5))
+                } else false
+                when {
+                    hold < corePctEff - 1e-9 ->
+                        if (erBlock) of(HOLD_POS, "UP待回补·ER闸拦截(分位不足/Δ5ER弱)") else of(BUY, "UP建仓/回补至核心仓")
+                    close > eUp -> {
+                        val rsiOk = if (!p.tRsiConfirm) true else {
+                            val cl = DoubleArray(n) { bars[it].close }
+                            val rs = rsiSeries(cl, p.tRsiPeriod)
+                            last in rs.indices && !rs[last].isNaN() && rs[last] > p.tRsiThr
+                        }
+                        if (rsiOk) of(SELL, "UP超极限上沿·卖T") else of(HOLD_POS, "UP超上沿·RSI未确认(≤${p.tRsiThr.toInt()})")
+                    }
+                    close < eDn ->
+                        if (erBlock) of(HOLD_POS, "UP破下沿·ER闸拦截(分位不足/Δ5ER弱)") else of(BUY, "UP破极限下沿·买回T")
+                    else -> of(HOLD_POS, "UP核心持有")
+                }
             }
             3 -> {        // WINDOW：上穿中位买 / 触正常上沿卖 / 可选破下沿止损
                 val stopLine = when (p.winStopDn) { 1 -> nDn; 2 -> eDn; else -> Double.NaN }
@@ -283,7 +368,7 @@ object SsaT0Engine {
                     r.regime[last - 1] != 3 && hold > 1e-9 -> of(SELL, "中位线下穿趋势线·全平")
                     hold > 1e-9 && !stopLine.isNaN() && close < stopLine ->
                         of(SELL, if (p.winStopDn == 2) "WINDOW破极限下沿·止损" else "WINDOW破正常下沿·止损")
-                    empty && crossUp && !p.winDayUp -> of(BUY, "WINDOW上穿中位·买入")
+                    empty && crossUp && !p.winDayUp && winGateOkL -> of(BUY, "WINDOW上穿中位·买入")
                     hold > 1e-9 && close >= nUp -> of(SELL, "WINDOW触正常上沿·卖出")
                     hold > 1e-9 -> of(HOLD_POS, "WINDOW持有")
                     else -> of(HOLD_EMPTY, "WINDOW空仓观望")
@@ -403,6 +488,66 @@ object SsaT0Engine {
         return if (vari <= 0.0) 0.0 else sqrt(vari)
     }
 
+    /** Wilder RSI(n) 逐根序列（下标对齐 closes；前 n 根 NaN）。
+     *  移植自 `smalltools/_ssa_t0_engine.py rsi()`（2026-10-20 回测采纳 tRsiConfirm），
+     *  首值 = 前 n 根简单均值，之后 Wilder 平滑递推，无未来函数。 */
+    internal fun rsiSeries(closes: DoubleArray, n: Int): DoubleArray {
+        val len = closes.size
+        val out = DoubleArray(len) { Double.NaN }
+        if (len <= n) return out
+        var avgG = 0.0; var avgL = 0.0
+        for (i in 1..n) {
+            val d = closes[i] - closes[i - 1]
+            if (d > 0) avgG += d else avgL -= d
+        }
+        avgG /= n; avgL /= n
+        out[n] = 100.0 - 100.0 / (1.0 + (if (avgL > 0) avgG / avgL else 1e12))
+        for (i in n + 1 until len) {
+            val d = closes[i] - closes[i - 1]
+            avgG = (avgG * (n - 1) + (if (d > 0) d else 0.0)) / n
+            avgL = (avgL * (n - 1) + (if (d < 0) -d else 0.0)) / n
+            out[i] = 100.0 - 100.0 / (1.0 + (if (avgL > 0) avgG / avgL else 1e12))
+        }
+        return out
+    }
+
+    /** 1H Wilder ADX(n) 逐根序列（下标对齐 bars；前段 NaN）。与 [EtfScreenMath.adx] 同口径
+     *  （TR/+DM/−DM 累计和 → SMMA → DI → DX → ADX 递推），仅用于 WINDOW 买入闸门，无未来函数。 */
+    internal fun adxSeries(bars: List<Bar>, n: Int): DoubleArray {
+        val len = bars.size
+        val out = DoubleArray(len) { Double.NaN }
+        if (len < 2 * n + 1) return out
+        val m = len - 1
+        val tr = DoubleArray(m); val pdm = DoubleArray(m); val mdm = DoubleArray(m)
+        for (i in 1 until len) {
+            val j = i - 1
+            val h = bars[i].high; val l = bars[i].low; val pc = bars[i - 1].close
+            tr[j] = max(max(h - l, abs(h - pc)), abs(l - pc))
+            val up = h - bars[i - 1].high
+            val dn = bars[i - 1].low - l
+            pdm[j] = if (up > dn && up > 0) up else 0.0
+            mdm[j] = if (dn > up && dn > 0) dn else 0.0
+        }
+        fun wma(v: DoubleArray): DoubleArray {
+            val o = DoubleArray(v.size); var acc = 0.0
+            for (i in v.indices) { acc = if (i < n) acc + v[i] else acc - acc / n + v[i]; o[i] = acc }
+            return o
+        }
+        val trS = wma(tr); val pS = wma(pdm); val mS = wma(mdm)
+        var cnt = 0; var sum = 0.0; var adxV = Double.NaN
+        for (j in 0 until m) {
+            if (trS[j] <= 1e-12) continue
+            val pdi = 100.0 * pS[j] / trS[j]; val mdi = 100.0 * mS[j] / trS[j]
+            if (pdi + mdi <= 1e-12) continue
+            val d = 100.0 * abs(pdi - mdi) / (pdi + mdi)
+            cnt++
+            if (cnt <= n) { sum += d; if (cnt == n) adxV = sum / n }
+            else adxV = (adxV * (n - 1) + d) / n
+            out[j + 1] = adxV
+        }
+        return out
+    }
+
     // ═══════════════════════════════ 三态做T状态机 ═══════════════════════════════
 
     /** FIFO 持仓批次：买入入队、卖出按先进先出配对成 T 单 */
@@ -463,6 +608,63 @@ object SsaT0Engine {
         val closes = DoubleArray(n) { h.bars[it].close }
         // 中线规则专用中位线（可选 EMA 平滑；不影响三态机）
         val midS = if (p.midSmoothSpan > 1) emaNaN(h.mid, p.midSmoothSpan) else h.mid
+
+        // ── 可选闸门预计算（默认全关 → 不产生任何分支差异，基线逐字节守恒）──
+        val adxArr = if (p.winMinAdx > 0.0) adxSeries(h.bars, 14) else DoubleArray(0)
+        // 2026-10-20 回测采纳三开关（对应 Python --rsi / --adx / --erq）：
+        val rsiArr = if (p.tRsiConfirm) rsiSeries(closes, p.tRsiPeriod) else DoubleArray(0)
+        val adxArrT = if (p.adxGate) adxSeries(h.bars, p.adxPeriod) else DoubleArray(0)
+        // ER 入场闸（仅拦 UP 段买入，不拦卖T）：erPct≥erGate 且 Δ5ER>erD5 才放行；无未来函数（t 收盘值）
+        val erOk = if (p.erGate > 0.0 && p.erPctArr != null && p.erArr != null) {
+            val ep = p.erPctArr; val ea = p.erArr
+            BooleanArray(n) { t ->
+                t < ep.size && ep[t].isFinite() && ep[t] >= p.erGate &&
+                    !(t >= 5 && t < ea.size && ea[t].isFinite() && ea[t - 5].isFinite() &&
+                        ea[t] - ea[t - 5] <= p.erD5)
+            }
+        } else BooleanArray(0)
+        val cm = p.hour.cycleMult
+        // σ_t = (nUp[t] − mid[t]) / cycleMult（区间由 t−1 生成、供 t 决策，无未来函数）
+        fun sigmaAt(t: Int): Double =
+            if (t in h.nUp.indices && cm > 0.0) (h.nUp[t] - h.mid[t]) / cm else Double.NaN
+        // 波动目标 T 仓基准 σ_ref：显式给定，否则取全样本 σ 中位数
+        val sigmaRef: Double = when {
+            !p.volTargetT -> 0.0
+            p.sigmaRefAbs > 0.0 -> p.sigmaRefAbs
+            else -> {
+                val vals = ArrayList<Double>()
+                for (i in h.bars.indices) { val s = sigmaAt(i); if (!s.isNaN() && s > 0.0) vals.add(s) }
+                if (vals.isEmpty()) 0.0 else { vals.sort(); vals[vals.size / 2] }
+            }
+        }
+        val snrK = if (p.winSnrK > 0) p.winSnrK else p.hour.embedL
+        // cycle 振幅 = 最近 K 根 cycle 的 (max−min)/2
+        fun cycleAmpAt(t: Int): Double {
+            if (snrK <= 0) return Double.NaN
+            var mx = Double.NEGATIVE_INFINITY; var mn = Double.POSITIVE_INFINITY; var c = 0
+            for (i in max(0, t - snrK + 1)..min(t, h.cycle.size - 1)) {
+                val v = h.cycle[i]; if (!v.isNaN()) { if (v > mx) mx = v; if (v < mn) mn = v; c++ }
+            }
+            return if (c >= 2) (mx - mn) / 2.0 else Double.NaN
+        }
+        fun volF(t: Int): Double {
+            if (!p.volTargetT) return 1.0
+            val s = sigmaAt(t)
+            return if (s > 0.0 && sigmaRef > 0.0) min(1.0, sigmaRef / s) else 1.0
+        }
+        // WINDOW 买入闸门：SNR 与 ADX 同时满足（阈值 0=关闭 → 恒 true）
+        fun winGateOk(t: Int): Boolean {
+            if (p.winMinSnr > 0.0) {
+                val s = sigmaAt(t); val amp = cycleAmpAt(t)
+                if (!(s > 0.0) || amp.isNaN() || amp / s < p.winMinSnr) return false
+            }
+            if (p.winMinAdx > 0.0) {
+                if (t !in adxArr.indices) return false
+                val a = adxArr[t]
+                if (a.isNaN() || a < p.winMinAdx) return false
+            }
+            return true
+        }
 
         // 暖机：轨道有效且状态已判定
         var start = 0
@@ -737,18 +939,33 @@ object SsaT0Engine {
                                 if (entering) frozenCore = lots((cash + sh * ci) * p.corePct / 100.0, fill)
                                 when {
                                     entering -> buyTo(t + 1, fill, frozenCore, "UP建仓")
-                                    ci > eUp -> sellQty(t + 1, fill, (sh * p.tPct / 100.0).toLong(), "UP超上限卖T", null)
+                                    ci > eUp -> sellQty(t + 1, fill, (sh * p.tPct / 100.0 * volF(t)).toLong(), "UP超上限卖T", null)
                                     ci < eDn -> buyTo(t + 1, fill, frozenCore, "UP破下限买T")
                                 }
                             }
                             // 基线 / 方案2：核心仓 = 权益×corePct；方案2 在日线下行时上限折半(80→40)
+                            // 2026-10-20 回测采纳叠加：ADX 动态仓位 + RSI 卖T确认 + ER 闸拦买入
                             else -> {
-                                val corePctEff = if (p.reduceMode == 2 && dayDown) p.corePct * 0.5 else p.corePct
+                                var corePctEff = if (p.reduceMode == 2 && dayDown) p.corePct * 0.5 else p.corePct
+                                var tScale = 1.0
+                                if (p.adxGate && t in adxArrT.indices) {
+                                    val a = adxArrT[t]
+                                    if (!a.isNaN()) when {
+                                        a > 25.0 -> { corePctEff = min(corePctEff, 95.0); tScale = 0.5 }  // 强趋势：重仓少做T
+                                        a < 20.0 -> { corePctEff = min(corePctEff, 60.0); tScale = 2.0 }  // 震荡：轻仓多做T
+                                    }
+                                }
                                 val coreShares = lots((cash + sh * ci) * corePctEff / 100.0, fill)
+                                val sellQ = (sh * p.tPct / 100.0 * volF(t) * tScale).toLong()
+                                val erBlock = t in erOk.indices && !erOk[t]
                                 when {
-                                    sh < coreShares -> buyTo(t + 1, fill, coreShares, "UP建仓/回补")
-                                    ci > eUp -> sellQty(t + 1, fill, (sh * p.tPct / 100.0).toLong(), "UP超上限卖T", null)
-                                    ci < eDn -> buyTo(t + 1, fill, coreShares, "UP破下限买T")
+                                    sh < coreShares -> if (!erBlock) buyTo(t + 1, fill, coreShares, "UP建仓/回补")
+                                    ci > eUp -> {
+                                        val rsiOk = !p.tRsiConfirm ||
+                                            (t in rsiArr.indices && !rsiArr[t].isNaN() && rsiArr[t] > p.tRsiThr)
+                                        if (rsiOk) sellQty(t + 1, fill, sellQ, "UP超上限卖T", null)
+                                    }
+                                    ci < eDn -> if (!erBlock) buyTo(t + 1, fill, coreShares, "UP破下限买T")
                                 }
                             }
                         }
@@ -760,7 +977,7 @@ object SsaT0Engine {
                             sellQty(t + 1, fill, sh, "中位线下穿趋势线·全平", "1H")
                         } else if (sh > 0 && !stopLine.isNaN() && ci < stopLine) {
                             sellQty(t + 1, fill, sh, if (p.winStopDn == 2) "WINDOW破极限下沿·止损" else "WINDOW破正常下沿·止损", "1H")
-                        } else if (sh == 0L && crossUp && (!p.winDayUp || !dayDownAt(t))) {
+                        } else if (sh == 0L && crossUp && (!p.winDayUp || !dayDownAt(t)) && winGateOk(t)) {
                             buyTo(t + 1, fill, lots(INITIAL_CAPITAL * p.winPosPct / 100.0, fill), "WINDOW上穿中位·买入")
                         } else if (sh > 0 && ci >= nUp) {
                             sellQty(t + 1, fill, sh, "WINDOW触正常上沿·卖出", null)

@@ -11,8 +11,12 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /**
@@ -28,6 +32,13 @@ class IntradayKlineFetcher(private val context: Context) {
     companion object {
         private const val TAG = "IntradayKlineFetcher"
         private val DATE_FMT = DateTimeFormatter.ofPattern("yyyyMMdd")
+        private const val CACHE_DIR = "kline_cache"
+        private const val MEM_TTL_MS = 3 * 60 * 1000L   // 内存缓存 3 分钟（盘中连续点击不重复拉网）
+        /** 增量拉取根数：覆盖周末/假期/盘中空档绰绰有余，远小于全量 1023 */
+        private const val INCREMENTAL_BARS = 80
+        /** 磁盘缓存达到此根数即可走增量，否则全量（各策略最多用 200 根） */
+        private const val MIN_BARS_FOR_INCREMENTAL = 120
+        private val memCache = ConcurrentHashMap<String, Pair<List<IntradayKlineEntity>, Long>>()
     }
 
     private val client by lazy {
@@ -58,17 +69,208 @@ class IntradayKlineFetcher(private val context: Context) {
     }
 
     /**
+     * 拉取当日日线 OHLC（新浪 scale=240，datalen=5），返回 (open, high, low, close) 或 null。
+     * 收盘核对用——只需当日四个数，走 HTTP 一次搞定。
+     */
+    suspend fun fetchDailyOnce(code: String): DoubleArray? = withContext(Dispatchers.IO) {
+        val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
+        val prefix = when {
+            code.startsWith("sh") || pureCode.startsWith("6") || pureCode.startsWith("5") || pureCode.startsWith("9") -> "sh"
+            else -> "sz"
+        }
+        val url = "${DataConfig.sinaKline}?symbol=$prefix$pureCode&scale=240&ma=no&datalen=5"
+        for (attempt in 0..1) {
+            try {
+                if (attempt > 0) kotlinx.coroutines.delay(400L * attempt)
+                val req = Request.Builder().url(url)
+                    .addHeader("User-Agent", "Mozilla/5.0")
+                    .addHeader("Referer", "https://finance.sina.com.cn/")
+                    .build()
+                val resp = client.newCall(req).execute()
+                if (!resp.isSuccessful) continue
+                val body = resp.body?.string() ?: continue
+                if (!body.trimStart().startsWith("[")) continue
+                val arr = JSONArray(body)
+                if (arr.length() == 0) continue
+                val last = arr.getJSONObject(arr.length() - 1)
+                val close = last.optDouble("close", 0.0)
+                val open = last.optDouble("open", 0.0)
+                val high = last.optDouble("high", 0.0)
+                val low = last.optDouble("low", 0.0)
+                val day = last.optString("day", "")
+                // 必须是当日
+                val todayStr = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)
+                if (day.startsWith(todayStr)) {
+                    return@withContext doubleArrayOf(open, high, low, close)
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "dailyOnce #$attempt $code: ${e.message?.take(40)}")
+            }
+        }
+        null
+    }
+
+    /**
      * 历史小时 K（新浪 scale=60 优先，东财 push2his klt=60 兜底），用于「三层 SSA 做T」回测。
      * PC 端回测实测：东财 push2his 本机不可达，新浪 60 分钟接口稳定（datalen=1023 ≈ 1.7 年）；
      * 返回升序列表（含 date / datetime）。
+     *
+     * 2026-10-21 新增本地缓存 + 增量更新：
+     * - 内存缓存 3 分钟（避免连续点击/回测反复拉网）；
+     * - 磁盘缓存 `filesDir/kline_cache/hourly_<code>.json`，收盘后 / 周末 / 盘前直接复用；
+     * - 缓存 ≥120 根时只请求最近 [INCREMENTAL_BARS] 根（新浪 datalen / 东财 beg=末根日期），
+     *   与旧缓存按 datetime 合并；仅首次或缓存不足才全量拉 1023 根。
      */
     suspend fun fetchHourlyHistory(code: String, days: Int = 760): List<IntradayKlineEntity> =
         withContext(Dispatchers.IO) {
-            fetchHourlySina(code)?.let { if (it.isNotEmpty()) return@withContext it }
-            val beg = LocalDate.now().minusDays(days.toLong()).format(DATE_FMT)
-            val end = LocalDate.now().format(DATE_FMT)
-            fetchHourlyEastmoney(code, beg, end)
+            val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
+            // 1. 内存缓存（3 分钟 TTL，最快）
+            memCache[pureCode]?.let { (bars, ts) ->
+                if (System.currentTimeMillis() - ts < MEM_TTL_MS) {
+                    Log.d(TAG, "hourly60 mem $code: ${bars.size} 根（缓存）")
+                    return@withContext bars
+                }
+            }
+            // 2. 磁盘缓存
+            val disk = loadHourlyCache(pureCode)
+            if (disk != null && isCacheFresh(disk, pureCode)) {
+                Log.d(TAG, "hourly60 disk $code: ${disk.size} 根（缓存）")
+                memCache[pureCode] = disk to System.currentTimeMillis()
+                return@withContext disk
+            }
+            // 3. 网络拉取：缓存够深 → 只拉最近 80 根增量；首次/缓存不足 → 全量 1023 根
+            val today = LocalDate.now()
+            val canIncremental = disk != null && disk.size >= MIN_BARS_FOR_INCREMENTAL
+            val fresh = if (canIncremental) {
+                fetchHourlySina(code, INCREMENTAL_BARS)?.takeIf { it.isNotEmpty() }
+                    ?: fetchHourlyEastmoney(code, disk!!.last().date, today.format(DATE_FMT))
+                        .takeIf { it.isNotEmpty() }
+                    ?: fetchHourlySina(code)   // 增量两路都失败 → 退回全量，避免返回过期数据
+            } else {
+                fetchHourlySina(code)?.takeIf { it.isNotEmpty() }
+                    ?: fetchHourlyEastmoney(
+                        code,
+                        today.minusDays(days.toLong()).format(DATE_FMT),
+                        today.format(DATE_FMT)
+                    ).takeIf { it.isNotEmpty() }
+            }
+            val merged = if (disk != null && fresh != null) mergeBars(disk, fresh) else (fresh ?: disk ?: emptyList())
+            if (merged.isNotEmpty()) {
+                saveHourlyCache(pureCode, merged)
+                memCache[pureCode] = merged to System.currentTimeMillis()
+                Log.d(TAG, "hourly60 net $code: ${merged.size} 根（${if (canIncremental) "增量" else "全量"}，已存盘）")
+            }
+            merged
         }
+
+    // ═══════════════════════ 1H K线本地缓存（内存+磁盘）═══════════════════════
+
+    private fun cacheFile(code: String): File {
+        val dir = File(context.filesDir, CACHE_DIR).apply { mkdirs() }
+        return File(dir, "hourly_$code.json")
+    }
+
+    private fun saveHourlyCache(code: String, bars: List<IntradayKlineEntity>) {
+        runCatching {
+            cacheFile(code).writeText(toJsonArray(bars).toString())
+        }.onFailure { Log.w(TAG, "缓存写入失败 $code: ${it.message}") }
+    }
+
+    private fun loadHourlyCache(code: String): List<IntradayKlineEntity>? {
+        val f = cacheFile(code)
+        if (!f.exists()) return null
+        return runCatching {
+            fromJsonArray(JSONArray(f.readText()))
+        }.getOrNull().also {
+            if (it == null) Log.w(TAG, "缓存读取失败 $code，将重新下载")
+        }
+    }
+
+    /** 新旧合并：以 datetime 为键，新数据覆盖旧数据，返回升序列表 */
+    private fun mergeBars(old: List<IntradayKlineEntity>, fresh: List<IntradayKlineEntity>): List<IntradayKlineEntity> {
+        val map = old.associateBy { it.datetime }.toMutableMap()
+        for (b in fresh) map[b.datetime] = b
+        return map.values.sortedBy { it.datetime }
+    }
+
+    /**
+     * 缓存是否可复用。
+     * 关键：盘前/周末复用只能用于「已完整收盘」的缓存——
+     * 若最后一根不是 15 点收盘K线（如盘中 11:30 抓的快照），必须刷新补齐，
+     * 否则全天都会停在旧时刻（历史 bug：凌晨把 11:30 快照当盘前缓存复用）。
+     */
+    private fun isCacheFresh(bars: List<IntradayKlineEntity>, code: String): Boolean {
+        if (bars.isEmpty()) return false
+        val last = bars.last()
+        val lastDate = try {
+            LocalDate.parse(last.date, DATE_FMT)
+        } catch (_: Exception) { return false }
+        val now = LocalDateTime.now()
+        val today = now.toLocalDate()
+        if (lastDate.isAfter(today)) return false
+        val closed = isDayCloseBar(last)
+        if (lastDate == today) {
+            // 今日缓存：收盘后且确含收盘K线才算新鲜
+            return now.toLocalTime().isAfter(LocalTime.of(15, 5)) && closed
+        }
+        if (!closed) {
+            // 残缺缓存：10 分钟内刚拉过就不再重复请求（防停牌股反复打网）
+            val f = cacheFile(code)
+            return f.exists() && System.currentTimeMillis() - f.lastModified() < 10 * 60_000L
+        }
+        val dow = today.dayOfWeek
+        return dow == java.time.DayOfWeek.SATURDAY || dow == java.time.DayOfWeek.SUNDAY ||
+            now.toLocalTime().isBefore(LocalTime.of(9, 35))
+    }
+
+    /** 是否为当日收盘K线（A股 15:00） */
+    private fun isDayCloseBar(b: IntradayKlineEntity): Boolean {
+        val dt = b.datetime
+        val sp = dt.indexOf(' ')
+        if (sp < 0 || dt.length < sp + 3) return false
+        return dt.substring(sp + 1, sp + 3) == "15"
+    }
+
+    private fun toJsonArray(bars: List<IntradayKlineEntity>): JSONArray {
+        val arr = JSONArray()
+        for (b in bars) {
+            arr.put(JSONObject().apply {
+                put("code", b.code)
+                put("name", b.name)
+                put("datetime", b.datetime)
+                put("date", b.date)
+                put("open", b.open)
+                put("close", b.close)
+                put("high", b.high)
+                put("low", b.low)
+                put("volume", b.volume)
+                put("amount", b.amount)
+                put("intervalMin", b.intervalMin)
+            })
+        }
+        return arr
+    }
+
+    private fun fromJsonArray(arr: JSONArray): List<IntradayKlineEntity> {
+        val out = ArrayList<IntradayKlineEntity>(arr.length())
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            out.add(IntradayKlineEntity(
+                code = o.optString("code"),
+                name = o.optString("name"),
+                datetime = o.optString("datetime"),
+                date = o.optString("date"),
+                open = o.optDouble("open", 0.0),
+                close = o.optDouble("close", 0.0),
+                high = o.optDouble("high", 0.0),
+                low = o.optDouble("low", 0.0),
+                volume = o.optLong("volume", 0L),
+                amount = o.optDouble("amount", 0.0),
+                intervalMin = o.optInt("intervalMin", 60)
+            ))
+        }
+        return out
+    }
 
     /**
      * 新浪 60 分钟 K：`CN_MarketData.getKLineData?symbol=sh600176&scale=60&ma=no&datalen=1023`。
@@ -76,7 +278,7 @@ class IntradayKlineFetcher(private val context: Context) {
      * `[{day:"2026-01-15 15:00:00",open,high,low,close,volume},...]`。
      * @return 成功返回列表；全失败返回 null（交由东财兜底）
      */
-    private suspend fun fetchHourlySina(code: String): List<IntradayKlineEntity>? {
+    private suspend fun fetchHourlySina(code: String, datalen: Int = 1023): List<IntradayKlineEntity>? {
         val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
         val prefix = when {
             code.startsWith("sh") -> "sh"
@@ -85,7 +287,7 @@ class IntradayKlineFetcher(private val context: Context) {
             pureCode.startsWith("6") || pureCode.startsWith("5") || pureCode.startsWith("9") -> "sh"
             else -> "sz"
         }
-        val url = "${DataConfig.sinaKline}?symbol=$prefix$pureCode&scale=60&ma=no&datalen=1023"
+        val url = "${DataConfig.sinaKline}?symbol=$prefix$pureCode&scale=60&ma=no&datalen=$datalen"
         for (attempt in 0..1) {
             try {
                 if (attempt > 0) kotlinx.coroutines.delay(400L * attempt)

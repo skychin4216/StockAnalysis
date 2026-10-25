@@ -78,11 +78,20 @@ class SsaAnalysisFragment : Fragment() {
     private var scenarioScroll: View? = null
     private var t0Host: android.widget.FrameLayout? = null
     private var hybridHost: android.widget.FrameLayout? = null
+    private var chanlunHost: android.widget.FrameLayout? = null
+    private var macroHost: android.widget.FrameLayout? = null
+    private var vpHost: android.widget.FrameLayout? = null
     private var t0Added = false
     private var hybridAdded = false
+    private var chanlunAdded = false
+    private var macroAdded = false
+    private var vpAdded = false
     private lateinit var modeScenario: TextView
     private lateinit var modeT0: TextView
     private lateinit var modeHybrid: TextView
+    private lateinit var modeChanlun: TextView
+    private lateinit var modeMacro: TextView
+    private lateinit var modeVp: TextView
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         val ctx = requireContext()
@@ -169,21 +178,35 @@ class SsaAnalysisFragment : Fragment() {
         box.addView(hint("⚠️ 信号/推断只用历史数据，无未来函数；情景分类是事后评估不参与下单；" +
             "末尾 L 根K线有边缘效应；结果不构成投资建议。"))
 
-        // ── 模式切换：顶部两个按钮（情景风控 / 三层做T），做T页懒加载子 Fragment ──
+        // ── 模式切换：顶部两行四按钮（情景风控/三层做T / 混合策略/缠论），懒加载子 Fragment ──
         val modeRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(10), dp(6), dp(10), dp(6))
+            setPadding(dp(10), dp(6), dp(10), dp(3))
+            setBackgroundColor(Color.parseColor("#F7F7F7"))
+        }
+        val modeRow2 = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(10), dp(3), dp(10), dp(6))
             setBackgroundColor(Color.parseColor("#F7F7F7"))
         }
         modeScenario = modeBtn("📊 情景风控回测")
         modeT0 = modeBtn("🔄 三层稳态做T")
         modeHybrid = modeBtn("🧭 混合策略建议")
+        modeChanlun = modeBtn("📐 缠论")
+        modeMacro = modeBtn("🌊 大势分析")
+        modeVp = modeBtn("📈 量价策略")
         modeRow.addView(modeScenario, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             .apply { marginEnd = dp(6) })
-        modeRow.addView(modeT0, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        modeRow.addView(modeT0, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        modeRow2.addView(modeHybrid, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             .apply { marginEnd = dp(6) })
-        modeRow.addView(modeHybrid, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        modeRow2.addView(modeChanlun, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            .apply { marginEnd = dp(6) })
+        modeRow2.addView(modeMacro, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            .apply { marginEnd = dp(6) })
+        modeRow2.addView(modeVp, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(modeRow, 0)
+        root.addView(modeRow2, 1)
 
         val t0 = android.widget.FrameLayout(ctx).apply {
             id = View.generateViewId(); visibility = View.GONE
@@ -197,12 +220,36 @@ class SsaAnalysisFragment : Fragment() {
         root.addView(hyb, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
         ))
+        val cl = android.widget.FrameLayout(ctx).apply {
+            id = View.generateViewId(); visibility = View.GONE
+        }
+        root.addView(cl, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+        val mc = android.widget.FrameLayout(ctx).apply {
+            id = View.generateViewId(); visibility = View.GONE
+        }
+        root.addView(mc, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+        val vp = android.widget.FrameLayout(ctx).apply {
+            id = View.generateViewId(); visibility = View.GONE
+        }
+        root.addView(vp, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
         scenarioScroll = scroll
         t0Host = t0
         hybridHost = hyb
+        chanlunHost = cl
+        macroHost = mc
+        vpHost = vp
         modeScenario.setOnClickListener { switchMode(0) }
         modeT0.setOnClickListener { switchMode(1) }
         modeHybrid.setOnClickListener { switchMode(2) }
+        modeChanlun.setOnClickListener { switchMode(3) }
+        modeMacro.setOnClickListener { switchMode(4) }
+        modeVp.setOnClickListener { switchMode(5) }
         paintMode(0)
 
         return root
@@ -214,24 +261,20 @@ class SsaAnalysisFragment : Fragment() {
     }
 
     private fun paintMode(m: Int) {
-        modeScenario.background = GradientDrawable().apply {
-            cornerRadius = dp(8).toFloat()
-            if (m == 0) { setColor(Color.parseColor("#E0F2F1")); setStroke(dp(1), TEAL) }
-            else { setColor(Color.parseColor("#F2F2F2")); setStroke(dp(1), Color.parseColor("#DDDDDD")) }
+        fun paint(tv: TextView, on: Boolean) {
+            tv.background = GradientDrawable().apply {
+                cornerRadius = dp(8).toFloat()
+                if (on) { setColor(Color.parseColor("#E0F2F1")); setStroke(dp(1), TEAL) }
+                else { setColor(Color.parseColor("#F2F2F2")); setStroke(dp(1), Color.parseColor("#DDDDDD")) }
+            }
+            tv.setTextColor(if (on) TEAL else Color.parseColor("#666666"))
         }
-        modeScenario.setTextColor(if (m == 0) TEAL else Color.parseColor("#666666"))
-        modeT0.background = GradientDrawable().apply {
-            cornerRadius = dp(8).toFloat()
-            if (m == 1) { setColor(Color.parseColor("#E0F2F1")); setStroke(dp(1), TEAL) }
-            else { setColor(Color.parseColor("#F2F2F2")); setStroke(dp(1), Color.parseColor("#DDDDDD")) }
-        }
-        modeT0.setTextColor(if (m == 1) TEAL else Color.parseColor("#666666"))
-        modeHybrid.background = GradientDrawable().apply {
-            cornerRadius = dp(8).toFloat()
-            if (m == 2) { setColor(Color.parseColor("#E0F2F1")); setStroke(dp(1), TEAL) }
-            else { setColor(Color.parseColor("#F2F2F2")); setStroke(dp(1), Color.parseColor("#DDDDDD")) }
-        }
-        modeHybrid.setTextColor(if (m == 2) TEAL else Color.parseColor("#666666"))
+        paint(modeScenario, m == 0)
+        paint(modeT0, m == 1)
+        paint(modeHybrid, m == 2)
+        paint(modeChanlun, m == 3)
+        paint(modeMacro, m == 4)
+        paint(modeVp, m == 5)
     }
 
     private fun switchMode(m: Int) {
@@ -243,6 +286,12 @@ class SsaAnalysisFragment : Fragment() {
         host.visibility = if (m == 1) View.VISIBLE else View.GONE
         val hybHost = hybridHost ?: return
         hybHost.visibility = if (m == 2) View.VISIBLE else View.GONE
+        val clHost = chanlunHost ?: return
+        clHost.visibility = if (m == 3) View.VISIBLE else View.GONE
+        val mcHost = macroHost ?: return
+        mcHost.visibility = if (m == 4) View.VISIBLE else View.GONE
+        val vpH = vpHost ?: return
+        vpH.visibility = if (m == 5) View.VISIBLE else View.GONE
         if (m == 1 && !t0Added) {
             t0Added = true
             childFragmentManager.beginTransaction()
@@ -253,6 +302,24 @@ class SsaAnalysisFragment : Fragment() {
             hybridAdded = true
             childFragmentManager.beginTransaction()
                 .replace(hybHost.id, SsaHybridFragment())
+                .commitAllowingStateLoss()
+        }
+        if (m == 3 && !chanlunAdded) {
+            chanlunAdded = true
+            childFragmentManager.beginTransaction()
+                .replace(clHost.id, ChanlunFragment())
+                .commitAllowingStateLoss()
+        }
+        if (m == 4 && !macroAdded) {
+            macroAdded = true
+            childFragmentManager.beginTransaction()
+                .replace(mcHost.id, MacroTrendFragment())
+                .commitAllowingStateLoss()
+        }
+        if (m == 5 && !vpAdded) {
+            vpAdded = true
+            childFragmentManager.beginTransaction()
+                .replace(vpH.id, VolumePriceFragment())
                 .commitAllowingStateLoss()
         }
     }

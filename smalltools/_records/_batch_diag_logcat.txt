@@ -1,0 +1,40 @@
+﻿--------- beginning of main
+10-19 00:04:28.753 I/SsaT0Batch(29870): 开始：5 只持仓股
+10-19 00:04:34.800 I/SsaT0Batch(29870): 评分完成 5 只：{观望=4, 持仓=1}
+10-19 00:04:34.945 I/SsaT0Batch(29870): ER 表=171（本机=true）；开始池外补算判定
+10-19 00:04:35.050 I/SsaT0Batch(29870): 池外补算：3 只尝试，成功 3 只
+10-19 00:04:35.060 I/SsaT0Batch(29870): 渲染完成：5 张卡片
+10-19 00:31:24.046 I/SsaT0Batch(  581): 阶段标签 174 只（池外补算 3）
+10-19 00:41:55.054 I/SsaT0Batch(10953): 阶段标签 174 只（池外补算 3）
+10-19 00:46:10.502 I/SsaT0Batch(20834): 阶段标签 174 只（池外补算 3）
+--------- beginning of crash
+10-19 01:42:37.118 E/AndroidRuntime( 9033): FATAL EXCEPTION: ThreadPool.IOExecutor, thread No.1
+10-19 01:42:37.118 E/AndroidRuntime( 9033): Process: com.heytap.cloud, PID: 9033
+10-19 01:42:37.118 E/AndroidRuntime( 9033): android.database.sqlite.SQLiteCantOpenDatabaseException: Cannot open database [unable to open database file (code 14 SQLITE_CANTOPEN): Permission denied] '/data/user/0/com.heytap.cloud/databases/h5_offline_record.db' with flags 0x10000000
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at android.database.sqlite.SQLiteConnection.open(SQLiteConnection.java:290)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at android.database.sqlite.SQLiteConnection.open(SQLiteConnection.java:234)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at android.database.sqlite.SQLiteConnectionPool.openConnectionLocked(SQLiteConnectionPool.java:542)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at android.database.sqlite.SQLiteConnectionPool.open(SQLiteConnectionPool.java:228)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at android.database.sqlite.SQLiteConnectionPool.open(SQLiteConnectionPool.java:220)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at android.database.sqlite.SQLiteDatabase.openInner(SQLiteDatabase.java:1191)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at android.database.sqlite.SQLiteDatabase.open(SQLiteDatabase.java:1171)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at android.database.sqlite.SQLiteDatabase.openDatabase(SQLiteDatabase.java:1035)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at android.database.sqlite.SQLiteDatabase.openDatabase(SQLiteDatabase.java:1024)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at android.database.sqlite.SQLiteOpenHelper.getDatabaseLocked(SQLiteOpenHelper.java:394)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at android.database.sqlite.SQLiteOpenHelper.getWritableDatabase(SQLiteOpenHelper.java:336)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at androidx.sqlite.db.framework.FrameworkSQLiteOpenHelper$OpenHelper.getWritableOrReadableDatabase(FrameworkSQLiteOpenHelper.kt:5)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at androidx.sqlite.db.framework.FrameworkSQLiteOpenHelper$OpenHelper.innerGetDatabase(FrameworkSQLiteOpenHelper.kt:63)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at androidx.sqlite.db.framework.FrameworkSQLiteOpenHelper$OpenHelper.getSupportDatabase(FrameworkSQLiteOpenHelper.kt:24)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at androidx.sqlite.db.framework.FrameworkSQLiteOpenHelper.getWritableDatabase(FrameworkSQLiteOpenHelper.kt:6)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at androidx.room.RoomDatabase.inTransaction(RoomDatabase.kt:5)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at androidx.room.RoomDatabase.assertNotSuspendingTransaction(RoomDatabase.kt:1)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at ey.b.i(H5OfflineRecordDao_Impl.java:19)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at dy.l.k(PreloadResRepository.java:3)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at dy.h.run(R8$$SyntheticClass:5)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1156)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:651)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at java.lang.Thread.run(Thread.java:1119)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): Caused by: android.database.sqlite.SQLiteCantOpenDatabaseException: unable to open database file (code 14 SQLITE_CANTOPEN): Permission denied
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at android.database.sqlite.SQLiteConnection.nativeOpen(Native Method)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	at android.database.sqlite.SQLiteConnection.open(SQLiteConnection.java:253)
+10-19 01:42:37.118 E/AndroidRuntime( 9033): 	... 22 more

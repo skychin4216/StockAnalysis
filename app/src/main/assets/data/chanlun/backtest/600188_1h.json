@@ -1,0 +1,39 @@
+{
+ "code": "600188",
+ "lv": "1h",
+ "buy_types": [
+  "1",
+  "1p",
+  "2",
+  "2s"
+ ],
+ "sell_types": [
+  "1",
+  "1p",
+  "2",
+  "2s",
+  "3a",
+  "3b"
+ ],
+ "tp": 0.0,
+ "sl": 0.0,
+ "max_hold": 0,
+ "trades": 1,
+ "win_rate": 0.0,
+ "total_return": -0.0288,
+ "max_drawdown": -0.0288,
+ "avg_hold_bars": 18.0,
+ "avg_ret": -0.0288,
+ "detail": [
+  {
+   "buy_idx": 1001,
+   "sell_idx": 1019,
+   "buy_price": 18.694,
+   "sell_price": 18.156,
+   "ret": -0.0288,
+   "hold_bars": 18,
+   "buy_type": "1",
+   "reason": "sig"
+  }
+ ]
+}

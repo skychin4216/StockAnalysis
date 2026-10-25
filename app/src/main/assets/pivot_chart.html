@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<script src="echarts.min.js"></script>
+<style>
+  html,body{margin:0;padding:0;background:#ffffff;
+    font-family:-apple-system,Roboto,'PingFang SC','Microsoft YaHei',sans-serif;overflow-x:hidden;}
+  #root{padding:2px 2px 0 2px;}
+  .panel{border:1px solid #e8e8e8;border-radius:8px;margin:0 0 8px 0;overflow:hidden;}
+  .phead{padding:6px 8px 0 8px;}
+  .pt{font-size:12px;font-weight:bold;color:#222222;line-height:1.3;}
+  .ps{font-size:10px;color:#666666;margin-top:2px;line-height:1.3;}
+  .chart{width:100%;touch-action:pan-y;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+(function () {
+  var D = __DATA__;
+  var root = document.getElementById('root');
+  var charts = [];
+  (D.charts || []).forEach(function (sp) {
+    var panel = document.createElement('div');
+    panel.className = 'panel';
+    var head = document.createElement('div');
+    head.className = 'phead';
+    var t = document.createElement('div');
+    t.className = 'pt'; t.textContent = sp.title || '';
+    head.appendChild(t);
+    if (sp.sub) {
+      var s = document.createElement('div');
+      s.className = 'ps'; s.textContent = sp.sub;
+      head.appendChild(s);
+    }
+    panel.appendChild(head);
+    var el = document.createElement('div');
+    el.className = 'chart';
+    el.style.height = (sp.h || 300) + 'px';
+    panel.appendChild(el);
+    root.appendChild(panel);
+    try {
+      var ch = echarts.init(el, null, { renderer: 'canvas' });
+      ch.setOption(buildOption(D, sp));
+      charts.push(ch);
+    } catch (e) {
+      var msg = document.createElement('div');
+      msg.className = 'ps'; msg.textContent = '图表渲染失败：' + e;
+      head.appendChild(msg);
+    }
+  });
+  window.__charts = charts;
+  window.addEventListener('resize', function () {
+    charts.forEach(function (c) {
+      try {
+        var el = c.getDom();
+        if (el && el.clientWidth > 0 && el.clientHeight > 0) c.resize();
+      } catch (e) { /* 容器瞬时零尺寸时忽略 */ }
+    });
+  });
+})();
+
+function buildOption(D, sp) {
+  // 副图集合：优先 sp.subs（多副图，如 WR + SSA 1H 周期分量）；兼容旧的单副图 sp.subSeries
+  var subs = (sp.subs && sp.subs.length) ? sp.subs : [];
+  if (!subs.length && sp.subSeries && sp.subSeries.length) {
+    subs = [{ name: sp.subName || '', min: sp.subMin, max: sp.subMax, series: sp.subSeries }];
+  }
+  var K = subs.length;
+  var hasSub = K > 0;
+  var series = [];
+  var kline = {
+    name: 'K线', type: 'candlestick', xAxisIndex: 0, yAxisIndex: 0,
+    data: sp.kline || D.kline || [],
+    itemStyle: {
+      color: '#e53935', color0: '#2e7d32',
+      borderColor: '#e53935', borderColor0: '#2e7d32'
+    },
+    barMaxWidth: 7, z: 1
+  };
+  if (sp.areas && sp.areas.length) {
+    kline.markArea = {
+      silent: true,
+      itemStyle: { color: 'rgba(255,179,0,0.14)' },
+      data: sp.areas
+    };
+  }
+  series.push(kline);
+  (sp.series || []).forEach(function (s) {
+    var isSc = s.t === 'scatter';
+    series.push({
+      name: s.n,
+      type: isSc ? 'scatter' : 'line',
+      xAxisIndex: 0,
+      yAxisIndex: s.ax || 0,
+      data: s.d || [],
+      showSymbol: isSc,
+      symbol: isSc ? (s.sym || 'circle') : 'circle',
+      symbolSize: isSc ? (s.sz || 9) : 3,
+      symbolRotate: s.rot || 0,
+      lineStyle: { width: s.w || 1.2, color: s.c },
+      itemStyle: { color: s.c },
+      smooth: false,
+      connectNulls: false,
+      z: isSc ? 5 : (s.ax ? 3 : 2)
+    });
+  });
+
+  var yAxis = [{
+    gridIndex: 0,
+    type: 'value', scale: true, position: 'left',
+    axisLabel: { fontSize: 8, color: '#666666' },
+    axisLine: { lineStyle: { color: '#cccccc' } },
+    splitLine: { lineStyle: { color: '#f0f0f0' } }
+  }];
+  if (sp.y2) {
+    yAxis.push({
+      gridIndex: 0,
+      type: 'value', scale: true, position: 'right', name: sp.y2.name || '',
+      nameTextStyle: { fontSize: 8, color: '#e65100' },
+      min: sp.y2.min, max: sp.y2.max,
+      axisLabel: { fontSize: 8, color: '#e65100' },
+      axisLine: { show: true, lineStyle: { color: '#f0c8a0' } },
+      splitLine: { show: false }
+    });
+  }
+  // 副图：每个副图各挂一条独立 y 轴（gridIndex = i+1），其序列绑到对应 grid/轴。
+  // 支持 line（指标线）与 scatter（如 SSA 周期拐点标记）两种类型，支持 zero（画 0 轴虚线参考）。
+  subs.forEach(function (sb, gi) {
+    var gIdx = gi + 1;
+    var yi = yAxis.length;
+    var ax = {
+      gridIndex: gIdx, type: 'value', scale: true,
+      name: sb.name || '',
+      nameTextStyle: { fontSize: 8, color: '#5d4037' },
+      axisLabel: { fontSize: 8, color: '#5d4037' },
+      axisLine: { show: true, lineStyle: { color: '#d7ccc8' } },
+      splitLine: { lineStyle: { color: '#f5f0ee' } }
+    };
+    if (sb.min !== undefined && sb.min !== null) { ax.scale = false; ax.min = sb.min; }
+    if (sb.max !== undefined && sb.max !== null) { ax.max = sb.max; }
+    yAxis.push(ax);
+    (sb.series || []).forEach(function (s, sIdx) {
+      var isSc = s.t === 'scatter';
+      var one = {
+        name: s.n || '',
+        type: isSc ? 'scatter' : 'line',
+        xAxisIndex: gIdx, yAxisIndex: yi,
+        data: s.d || [],
+        showSymbol: isSc,
+        symbol: isSc ? (s.sym || 'circle') : 'circle',
+        symbolSize: isSc ? (s.sz || 7) : 3,
+        symbolRotate: s.rot || 0,
+        lineStyle: { width: s.w || 1.4, color: s.c },
+        itemStyle: { color: s.c },
+        smooth: false, connectNulls: false, z: isSc ? 5 : 3
+      };
+      // 0 轴虚线参考：只挂在面板第 1 条线上，避免重复绘制
+      if (sb.zero && sIdx === 0) {
+        one.markLine = {
+          silent: true, symbol: 'none',
+          lineStyle: { type: 'dashed', color: '#bbbbbb', width: 1 },
+          data: [{ yAxis: 0 }]
+        };
+      }
+      series.push(one);
+    });
+  });
+
+  var n = (D.dates || []).length;
+  var start = Math.max(0, n - 120);
+  // 多 grid 时每条类目轴必须显式声明 gridIndex，否则会默认挤在 grid 0，
+  // 造成「副图系列 = xAxis[1](grid0) + yAxis[1](grid1)」跨网格错配，ECharts 直接抛错。
+  var catAxis = function (showLabel, gridIndex) {
+    return {
+      gridIndex: gridIndex,
+      type: 'category', data: D.dates || [], boundaryGap: true,
+      axisLabel: { show: showLabel, fontSize: 8, color: '#666666' },
+      axisTick: { show: false },
+      axisLine: { lineStyle: { color: '#cccccc' } }
+    };
+  };
+  var opt = {
+    animation: false,
+    backgroundColor: '#ffffff',
+    legend: { top: 0, left: 'center', textStyle: { fontSize: 9, color: '#555555' }, itemWidth: 12, itemHeight: 7 },
+    tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: 10 }, axisPointer: { type: 'line' } },
+    series: series
+  };
+  if (hasSub) {
+    // 多 grid：上主图（K线 + 指标线），下 K 个副图（如 WR 超卖 + SSA 1H 周期分量），
+    // 共享同一组类目轴与缩放。全部用百分比定位：容器高度已按手机可见区自适应，
+    // 百分比随高度等比缩放，小屏也不会出现「主图下沿压到副图上沿」的重叠。
+    // 纵向预算：顶部留 5%（图例）、底部留 10%（滑块 + 末条类目轴标签），主图与各副图按剩余空间切分。
+    var topPad = 5, gap = 3, mainH = (K >= 2 ? 44 : 53);
+    var avail = 90 - topPad - mainH - gap * K;
+    var each = avail / K;
+    var right = sp.y2 ? 46 : 10;
+    var grids = [{ left: 44, right: right, top: topPad + '%', height: mainH + '%' }];
+    var xAxes = [catAxis(false, 0)];
+    var xIdxAll = [0];
+    for (var i = 0; i < K; i++) {
+      var gi = i + 1;
+      var top = topPad + mainH + gap + i * (each + gap);
+      grids.push({ left: 44, right: right, top: top + '%', height: each + '%' });
+      xAxes.push(catAxis(i === K - 1, gi));
+      xIdxAll.push(gi);
+    }
+    opt.grid = grids;
+    opt.xAxis = xAxes;
+    opt.axisPointer = { link: [{ xAxisIndex: 'all' }] };
+    // dataZoom 数组：第 1 项 = 下方滑块（平移/窗口）；第 2 项 = inside，负责**双指捏合缩放**
+    // （ECharts 的 inside 型 dataZoom 原生响应 pinch 手势）；xAxisIndex 绑定主图与全部副图
+    // → 一次捏合所有面板**同步缩放**（共用同一份区间）。单指竖拖仍归页面滚动
+    // （.chart 的 touch-action:pan-y），仅双指手势被图表接管。
+    opt.dataZoom = [{
+      type: 'slider', height: 12, bottom: 4, xAxisIndex: xIdxAll,
+      startValue: start, endValue: n - 1,
+      textStyle: { fontSize: 8, color: '#888888' },
+      borderColor: '#dddddd',
+      fillerColor: 'rgba(120,150,200,0.15)'
+    }, {
+      type: 'inside', xAxisIndex: xIdxAll, throttle: 50
+    }];
+  } else {
+    opt.grid = { left: 44, right: sp.y2 ? 46 : 10, top: 22, bottom: 36 };
+    opt.xAxis = catAxis(true, 0);
+    opt.dataZoom = [{
+      type: 'slider', height: 12, bottom: 4,
+      startValue: start, endValue: n - 1,
+      textStyle: { fontSize: 8, color: '#888888' },
+      borderColor: '#dddddd',
+      fillerColor: 'rgba(120,150,200,0.15)'
+    }, {
+      type: 'inside', xAxisIndex: [0], throttle: 50
+    }];
+  }
+  opt.yAxis = yAxis;
+  return opt;
+}
+</script>
+</body>
+</html>

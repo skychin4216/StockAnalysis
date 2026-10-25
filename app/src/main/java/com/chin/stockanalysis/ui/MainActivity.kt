@@ -20,7 +20,9 @@ import com.chin.stockanalysis.R
 import com.chin.stockanalysis.conversation.ConversationRepository
 import com.chin.stockanalysis.databinding.ActivityMainBinding
 import com.chin.stockanalysis.news.HotSectorNewsUpdater
+import com.chin.stockanalysis.service.SsaAlertOverlayService
 import com.chin.stockanalysis.stock.database.StockDataCenter
+import com.chin.stockanalysis.strategy.ssa.SsaAlertStore
 import com.chin.stockanalysis.storage.BackupManager
 import com.chin.stockanalysis.update.AppUpdateManager
 import com.google.android.material.bottomnavigation.BottomNavigationView
@@ -274,6 +276,8 @@ class MainActivity : AppCompatActivity() {
     /** App 进入后台时自动备份 */
     override fun onStart() {
         super.onStart()
+        // 回到前台：收起系统悬浮小浮窗（避免遮挡）
+        SsaAlertOverlayService.stop(this)
         // App 回到前台时清扫过期 AI Provider 占用（应对系统冻结导致的释放遗漏）
         com.chin.stockanalysis.ai.AiProviderPool.sweepExpired()
     }
@@ -290,6 +294,10 @@ class MainActivity : AppCompatActivity() {
         super.onStop()
         lifecycleScope.launch(Dispatchers.IO) {
             BackupManager.backupNow(this@MainActivity)
+        }
+        // 退出到后台：若用户已开启预警浮窗，则拉起前台服务显示系统浮窗
+        if (!isFinishing && !isChangingConfigurations && SsaAlertStore.isOverlayEnabled(this)) {
+            SsaAlertOverlayService.start(this)
         }
     }
 

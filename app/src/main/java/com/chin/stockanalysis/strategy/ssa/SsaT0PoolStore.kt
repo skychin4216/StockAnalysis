@@ -13,25 +13,31 @@ import org.json.JSONObject
  * - 池成员（code/name/加入日/锁定参数）存 SharedPreferences（JSON 字符串）
  * - 最近一次一键更新的池快照（每票状态/建议/绩效）存 filesDir JSON
  *
- * 锁定参数口径 = 加入时 UI「三层窗口 + 仓位/成本 + 两个保留选项（cyRule/winHalf）」，
+ * 锁定参数口径 = 加入时 UI「三层窗口 + 仓位/成本 + 三个保留选项（cyRule/winHalf/gateAdx）」，
  * 与 [SsaT0Engine.Params] 的构造顺序一致，保证"锁定参数 = 加入时所见"。
  */
 object SsaT0PoolStore {
 
-    /** 池成员：3 层窗口 + corePct/tPct/slippage + 两个保留选项（cycle 拐点 / WINDOW 半仓） */
+    /** 池成员：3 层窗口 + corePct/tPct/slippage + 三个保留选项（cycle 拐点 / WINDOW 半仓 / ADX 闸门）
+     *  + 2026-10-20 回测采纳三开关（rsiCf=RSI卖T确认 / adxG=ADX动态仓位 / erG=ER自身时序闸70） */
     data class PoolMember(
         val code: String, val name: String, val addedDate: String,
         val wl: Int, val wm: Int, val wn: Int,
         val dl: Int, val dm: Int, val dn: Int,
         val hl: Int, val hm: Int, val hn: Int,
         val cp: Double, val tp: Double, val slip: Double,
-        val cyRule: Boolean, val winHalf: Boolean
+        val cyRule: Boolean, val winHalf: Boolean, val gateAdx: Boolean,
+        val rsiCf: Boolean = false, val adxG: Boolean = false, val erG: Boolean = false
     ) {
         fun params(): Params {
             val base = Params(LayerCfg(wl, wm, wn), LayerCfg(dl, dm, dn), LayerCfg(hl, hm, hn),
                 cp, tp, slippageRate = slip)
             val withWin = if (winHalf) base.copy(winPosPct = 50.0) else base
-            return if (cyRule) withWin.copy(useCycleRule = true, cyLayer = "D", cyConfirm = 2) else withWin
+            val withAdx = if (gateAdx) withWin.copy(winMinAdx = 20.0) else withWin
+            val withCy = if (cyRule) withAdx.copy(useCycleRule = true, cyLayer = "D", cyConfirm = 2) else withAdx
+            val withRsi = if (rsiCf) withCy.copy(tRsiConfirm = true) else withCy
+            val withAdxG = if (adxG) withRsi.copy(adxGate = true) else withRsi
+            return if (erG) withAdxG.copy(erGate = 70.0) else withAdxG
         }
     }
 
@@ -42,7 +48,8 @@ object SsaT0PoolStore {
         p.day.embedL, p.day.windowM, p.day.lookbackN,
         p.hour.embedL, p.hour.windowM, p.hour.lookbackN,
         p.corePct, p.tPct, p.slippageRate,
-        p.useCycleRule, p.winPosPct < 100.0
+        p.useCycleRule, p.winPosPct < 100.0, p.winMinAdx > 0.0,
+        p.tRsiConfirm, p.adxGate, p.erGate > 0.0
     )
 
     private const val PREF = "ssa_t0_pool"
@@ -64,7 +71,8 @@ object SsaT0PoolStore {
                     o.optInt("dl", 30), o.optInt("dm", 120), o.optInt("dn", 20),
                     o.optInt("hl", 30), o.optInt("hm", 120), o.optInt("hn", 20),
                     o.optDouble("cp", 80.0), o.optDouble("tp", 30.0), o.optDouble("slip", 0.0005),
-                    o.optBoolean("cyRule", false), o.optBoolean("winHalf", false)))
+                    o.optBoolean("cyRule", false), o.optBoolean("winHalf", false), o.optBoolean("gateAdx", false),
+                    o.optBoolean("rsiCf", false), o.optBoolean("adxG", false), o.optBoolean("erG", false)))
             }
         }
     }
@@ -78,7 +86,8 @@ object SsaT0PoolStore {
                 put("dl", m.dl); put("dm", m.dm); put("dn", m.dn)
                 put("hl", m.hl); put("hm", m.hm); put("hn", m.hn)
                 put("cp", m.cp); put("tp", m.tp); put("slip", m.slip)
-                put("cyRule", m.cyRule); put("winHalf", m.winHalf)
+                put("cyRule", m.cyRule); put("winHalf", m.winHalf); put("gateAdx", m.gateAdx)
+                put("rsiCf", m.rsiCf); put("adxG", m.adxG); put("erG", m.erG)
             })
         }
         ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().putString(KEY_MEMBERS, arr.toString()).apply()
@@ -106,11 +115,12 @@ object SsaT0PoolStore {
 
     // ── 快照（最近一次一键更新结果）──────────────────────
 
-    /** 单票快照：截至末根1H + 当前状态/建议/持仓% + 回测绩效 */
+    /** 单票快照：截至末根1H + 当前状态/建议/持仓% + 回测绩效 + 末根点位（mid/eUp/eDn，2026-10-20 加） */
     data class T0Snapshot(
         val code: String, val name: String, val updated: String, val barLabel: String,
         val close: Double, val state: Int, val action: Int, val reason: String, val holdPct: Double,
-        val ret: Double, val mdd: Double, val winRate: Double, val trades: Int
+        val ret: Double, val mdd: Double, val winRate: Double, val trades: Int,
+        val mid: Double = Double.NaN, val eUp: Double = Double.NaN, val eDn: Double = Double.NaN
     )
 
     fun saveSnapshot(ctx: Context, snaps: List<T0Snapshot>) {
@@ -122,6 +132,9 @@ object SsaT0PoolStore {
                 put("state", s.state); put("action", s.action); put("reason", s.reason)
                 put("holdPct", s.holdPct); put("ret", s.ret); put("mdd", s.mdd)
                 put("winRate", s.winRate); put("trades", s.trades)
+                if (s.mid.isFinite()) put("mid", s.mid)
+                if (s.eUp.isFinite()) put("eUp", s.eUp)
+                if (s.eDn.isFinite()) put("eDn", s.eDn)
             })
         }
         ctx.getFileStreamPath(SNAP_FILE).parentFile?.mkdirs()
@@ -140,7 +153,9 @@ object SsaT0PoolStore {
                     o.optString("barLabel", ""), o.optDouble("close", 0.0),
                     o.optInt("state", 0), o.optInt("action", 3), o.optString("reason", ""),
                     o.optDouble("holdPct", 0.0), o.optDouble("ret", 0.0), o.optDouble("mdd", 0.0),
-                    o.optDouble("winRate", 0.0), o.optInt("trades", 0))
+                    o.optDouble("winRate", 0.0), o.optInt("trades", 0),
+                    o.optDouble("mid", Double.NaN), o.optDouble("eUp", Double.NaN),
+                    o.optDouble("eDn", Double.NaN))
             }
         } catch (e: Exception) { emptyList() }
     }

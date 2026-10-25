@@ -687,6 +687,12 @@ def build_candidates(cache, industry, ctx=None):
     data["portfolio"] = assess_portfolio(data["positions"])
     data = _attach_tech(data, cache)
     data = _quality_gate(data, cache)
+    # 2026-10-18 用户需求：APK「ER分位」tab —— 把「每日荐股核心池」横截面 ER 分位表一并推给端上
+    # （{6位代码: 0~100}，供候选票卡片 + 持仓票卡片 + ER Top10 查表，与推送表 ER分位列同源）
+    _er_map = _er_pct_of_pool(cache, asof)
+    data["er_pct_map"] = _er_map
+    data["er_pct_pool"] = "daily_reco" if _core_pool_codes() else "all"
+    data["er_pct_pool_n"] = len(_er_map)
     return data
 
 
@@ -1365,9 +1371,9 @@ def _find_item_by_secid(data, secid):
 _TABLE_HEAD = ["股票名称", "代码", "主力成本", "PE静", "PB", "营收%", "净利%", "ROE%", "PEG",
                "距60日高", "今日", "所属ETF",
                "趋势图谱", "星后形态", "RSI", "SAR", "MACD", "OBV",
-               "KDJ", "BOLL", "均线粘合", "换手", "量比", "VOL",
+               "KDJ", "BOLL", "均线粘合", "换手", "量比", "VOL", "ER分位",
                "趋势图", "机构股", "国家队", "合同/市值", "备注"]
-_N_CELLS = len(_TABLE_HEAD) - 2          # 27：主力成本 … 备注
+_N_CELLS = len(_TABLE_HEAD) - 2          # 28：主力成本 … 备注
 _I_INST = _TABLE_HEAD.index("机构股") - 2     # cells 下标（随 _TABLE_HEAD 自动位移）
 _I_NAT = _TABLE_HEAD.index("国家队") - 2
 _I_CON = _TABLE_HEAD.index("合同/市值") - 2
@@ -1377,6 +1383,9 @@ _I_CON = _TABLE_HEAD.index("合同/市值") - 2
 #   PEG = 静态PE ÷ 营收增速%（口径同 选股思路/PEG_营收增速_超跌反转.txt）。
 _FUND_COLS = ("PE静", "PB", "营收%", "净利%", "ROE%", "PEG")
 _I_FUND0 = _TABLE_HEAD.index(_FUND_COLS[0]) - 2   # cells 下标：基本面块首列
+#   2026-10-18 用户需求「ER 路由规则 v1 接入推送」——技术块末尾（VOL 之后）加
+#   「ER分位」列：跨票横截面 Kaufman 效率比分位（_annotate_er_percentile 导出前回填）。
+_I_ER = _TABLE_HEAD.index("ER分位") - 2           # cells 下标：ER 分位列
 #   2026-09-15 用户需求「通过合同分析前景，同板块对比，按市值归一」——
 #   近 90 天 订单类合同额/借款发债额 ÷ 总市值（_contract_scan.scan），
 #   cell 如「订+12%」「借3%」「订9.2%借19.7%」/「—」。经 _annotate_contracts
@@ -2101,10 +2110,11 @@ def _unified_cells(snaps, tech="", etf_tag="", note="", tech_cells=None,
     """统一表单元格（五段选股 / 实仓镜像共用同一口径），对齐 _TABLE_HEAD[2:]。
 
     主力成本 / 距60日高 / 今日 / 所属ETF / 趋势图谱 / 星后形态 / RSI / SAR / MACD /
-    OBV / KDJ / BOLL / 均线粘合 / 换手 / 量比 / VOL / 趋势图 / 机构股 / 国家队 /
+    OBV / KDJ / BOLL / 均线粘合 / 换手 / 量比 / VOL / ER分位 / 趋势图 / 机构股 / 国家队 /
     合同/市值 / 备注。
     （合同/市值 列 2026-09-15 起由 _annotate_contracts 在导出前回填，
-     此处先占位「—」，回填时替换 _I_CON 位。）
+     此处先占位「—」，回填时替换 _I_CON 位；
+     ER分位 列 2026-10-18 起由 _annotate_er_percentile 在导出前回填，此处占位「—」。）
 
     - tech_cells：外部已算好的 10 格技术列（如 _etf_holdings._pk_tech_cells），优先；
     - p60 / day：外部已持有的原始数值（ETF 段来自持仓覆盖 + 实时行情），优先于 snaps 重算；
@@ -2134,6 +2144,7 @@ def _unified_cells(snaps, tech="", etf_tag="", note="", tech_cells=None,
     # _annotate_fundamentals 在表格导出前统一回填（此处占位「—」，ETF/缺数据自然为 —）。
     fund_ph = ["—"] * len(_FUND_COLS)
     return ([_chip_cell(snaps)] + fund_ph + [p60_s, day_s, str(etf_tag or ""), graph, after] + mid
+            + ["—"]  # ER分位（_I_ER）占位：_annotate_er_percentile 导出前回填
             + [_trend_chart_cell(snaps), inst if inst else "—",
                nat if nat else "—", "—", note_s])
 
@@ -2268,6 +2279,124 @@ def _annotate_fundamentals(img_secs):
     except Exception as e:  # noqa: BLE001
         ops_note("fund_col_fail", "%s: %s" % (type(e).__name__, e))
         print("基本面列回填失败(整块显示—):", type(e).__name__, e)
+
+
+# ── ER 分位列（2026-10-18 用户需求·ER 路由规则 v1 接入推送）────────────────
+# 口径：Kaufman 效率比 ER = |C_i − C_{i−W}| / Σ|ΔC|（W=60 根收盘，只用 ≤ 末根）。
+# 回测（_er_router_backtest.py）用 1H/W=60 验证「跨票横截面 ER 高位」选择有效；
+# 推送侧受「单一事实源」约束 → 走 data/kline_store.json 日线池（cache），
+# 横截面在「每日荐股核心池」内计算（2026-10-18 用户口径，~172 只，非全池）：
+# ER分位 = 池内 ER 低于本票的比例（0~100），≥ P70（回测推荐闸门）加 ↑。
+# 仅作排序/标注用，不改买卖信号。
+_ER_W = 60       # 效率比窗口（根）
+_ER_P70 = 70     # 回测推荐横截面闸门（分位）
+
+# 2026-10-18 用户口径：ER 横截面「池」= 每日荐股核心池（~172 只），不再用全池 688。
+# 单一事实源同 app：app/src/main/assets/core_stock_pool.json（SsaRecoPipeline 全量构建所用池）；
+# 文件缺失/为空 → 退回全池（保持旧行为，不阻塞推送）。
+_ER_POOL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "..", "app", "src", "main", "assets", "core_stock_pool.json")
+_er_pool_cache = None
+
+
+def _core_pool_codes():
+    """每日荐股核心池 6 位代码集合（进程内缓存一次）；不可读/为空 → None（调用方退回全池）。"""
+    global _er_pool_cache
+    if _er_pool_cache is not None:
+        return _er_pool_cache or None
+    try:
+        with open(_ER_POOL_FILE, encoding="utf-8") as f:
+            arr = json.load(f).get("stocks") or []
+    except Exception as e:
+        print("ER 分位池：core_stock_pool.json 不可读，退回全池：", type(e).__name__, e)
+        _er_pool_cache = set()
+        return None
+    codes = set()
+    for s in arr:
+        s = str(s or "").strip()
+        if len(s) > 6 and s[:2] in ("sh", "sz", "bj"):
+            s = s[2:]
+        if s:
+            codes.add(s)
+    _er_pool_cache = codes
+    return codes or None
+
+
+def _er_of(closes, w=_ER_W):
+    """末根 Kaufman 效率比（数据不足/含缺失返回 None）。"""
+    n = len(closes)
+    if n < w + 1:
+        return None
+    vol = 0.0
+    for k in range(n - w, n):
+        a, b = closes[k], closes[k - 1]
+        if a is None or b is None:
+            return None
+        vol += abs(a - b)
+    if vol <= 0:
+        return 0.0
+    return abs(closes[-1] - closes[-1 - w]) / vol
+
+
+def _er_pct_of_pool(cache, asof=None, universe=None):
+    """横截面 ER 分位 → {code6: 0~100}。
+
+    池 = 每日荐股核心池（universe；None 表示按 _core_pool_codes() 取，取不到才退回全池）；
+    剔除指数与数据不足票；asof 用 ≤ 口径切片；分位在「池内」计算。
+    """
+    import bisect
+    if universe is None:
+        universe = _core_pool_codes()
+    ers = {}
+    for secid, ent in (cache or {}).items():
+        if not isinstance(ent, dict):
+            continue
+        if secid.startswith(("sh000", "sz399")):
+            continue
+        c6 = secid[2:] if secid[:2] in ("sh", "sz", "bj") else secid
+        if universe is not None and c6 not in universe:
+            continue
+        snaps = ent.get("snaps") or []
+        if asof:
+            snaps = [s for s in snaps if str(s.get("date") or "") <= asof]
+        cs = [s.get("close") for s in snaps]
+        e = _er_of(cs)
+        if e is None:
+            continue
+        ers[c6] = e
+    if not ers:
+        return {}
+    vals = sorted(ers.values())
+    n = len(vals)
+    # 中位秩分位 = (严格小于数 + 0.5×与之相等数) / 池内总数 × 100 —— 同值不塌缩到同一点
+    return {c6: 100.0 * (bisect.bisect_left(vals, e)
+                         + 0.5 * (bisect.bisect_right(vals, e) - bisect.bisect_left(vals, e))) / n
+            for c6, e in ers.items()}
+
+
+def _annotate_er_percentile(img_secs, er_map):
+    """统一表「ER分位」列回填（2026-10-18 用户需求）。
+
+    er_map = {6位代码: 0~100}（_er_pct_of_pool）；只处理统一表
+    rows 段（cells 数 = _N_CELLS）；ETF/池外票自然为「—」；失败静默不阻塞推送。
+    """
+    try:
+        if not er_map:
+            return
+        for s in img_secs:
+            for r in (s.get("rows") or []):
+                cells = r.get("cells")
+                if cells is None or len(cells) != _N_CELLS:
+                    continue
+                c6 = str(r.get("code") or "")
+                c6 = c6[2:] if c6[:2] in ("sh", "sz", "bj") else c6
+                p = er_map.get(c6)
+                if p is None:
+                    continue
+                cells[_I_ER] = "%d%s" % (round(p), "↑" if p >= _ER_P70 else "")
+    except Exception as e:  # noqa: BLE001
+        ops_note("er_col_fail", "%s: %s" % (type(e).__name__, e))
+        print("ER分位列回填失败(整列显示—):", type(e).__name__, e)
 
 
 def _table_lines(rows):
@@ -3342,8 +3471,8 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
     #  页1 段(⭐DAG/📋SmallTool/🎯ETF当日) + 页2 段(🌐全行业扫描/🎯ETF top5) + 页3 段(实仓)
     #  一律先「填充到一份 CSV」，再由该 CSV 渲染成一张长图（图 = CSV 内容，逐行一致）；
     #  整轮只发「正文 + 长图 + 原始 CSV」。此处仅收集，待 p2/p3 段收集完再统一渲染。
-    img_note = ("统一口径：五段选股 + 实仓镜像 + APK/exe 技术假设同为 18 列（距60日高/今日/"
-                "所属ETF/趋势图谱/星后形态/RSI/SAR/MACD/OBV/均线粘合/换手/量比/趋势图/机构股/国家队/备注）"
+    img_note = ("统一口径：五段选股 + 实仓镜像 + APK/exe 技术假设同为 30 列（距60日高/今日/"
+                "所属ETF/趋势图谱/星后形态/RSI/SAR/MACD/OBV/均线粘合/换手/量比/ER分位/趋势图/机构股/国家队/备注）"
                 " · 趋势图谱=连跌x天"
                 "→十字星 · 星后形态=星后第y天 大/小阴阳 · 趋势图=经典K线形态+方向"
                 "（如 ↑上涨·早晨之星）· 机构股=A机构加仓/B机构参与/C散户票（季报滞后，非实时信号）"
@@ -3445,6 +3574,10 @@ def round_pages(data, ctx, cfg, old_secids=None, pos_advice=True,
         _annotate_contracts(img_secs)
         # 2026-09-17 用户需求：基本面 6 列（PE静/PB/营收%/净利%/ROE%/PEG）统一回填
         _annotate_fundamentals(img_secs)
+        # 2026-10-18 用户需求：ER 路由规则 v1 接入推送 —— 「ER分位」列回填
+        # （跨全池横截面 Kaufman 效率比分位；优先复用推送 JSON 的 er_pct_map 保证与端上同源）
+        er_map = (data or {}).get("er_pct_map") or _er_pct_of_pool(cache, asof)
+        _annotate_er_percentile(img_secs, er_map)
 
     # ── 统一渲染：各段先填充到「一份 CSV」，再由该 CSV 出「一张长图」（2026-09-12 用户方案）──
     #  页1/页2/页3 的所有表都进同一份 CSV + 同一张长图（各表标题+表头各自保留）；正文只留

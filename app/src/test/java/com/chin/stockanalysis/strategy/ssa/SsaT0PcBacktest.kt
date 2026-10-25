@@ -125,9 +125,24 @@ class SsaT0PcBacktest {
                 "WINDOW半仓+仅日线上行" to Params(winPosPct = 50.0, winDayUp = true),
                 // ── 三态机状态判定改用日线 cycle（更平滑、状态更稳）──
                 "三态·日线cycle定状态" to Params(regimeLayer = "D"),
-                "三态·日线cycle+WINDOW半仓" to Params(regimeLayer = "D", winPosPct = 50.0)
+                "三态·日线cycle+WINDOW半仓" to Params(regimeLayer = "D", winPosPct = 50.0),
+                // ── WINDOW 买入闸门·SNR（cycle 振幅/σ）扫描 ──
+                "WINDOW SNR≥0.4" to Params(winMinSnr = 0.4),
+                "WINDOW SNR≥0.6" to Params(winMinSnr = 0.6),
+                "WINDOW SNR≥0.8" to Params(winMinSnr = 0.8),
+                // ── WINDOW 买入闸门·趋势强度 ADX(14) 扫描 ──
+                "WINDOW ADX≥15" to Params(winMinAdx = 15.0),
+                "WINDOW ADX≥20" to Params(winMinAdx = 20.0),
+                "WINDOW ADX≥25" to Params(winMinAdx = 25.0),
+                "WINDOW ADX≥30" to Params(winMinAdx = 30.0),
+                // ── 组合闸门 ──
+                "SNR0.6+ADX20" to Params(winMinSnr = 0.6, winMinAdx = 20.0),
+                // ── UP 段卖T按波动目标缩放（仅缩放既有卖T数量，不新增卖出规则）──
+                "volT·auto(σ中位)" to Params(volTargetT = true),
+                "volT·σref0.3" to Params(volTargetT = true, sigmaRefAbs = 0.3),
+                "volT·σref0.6" to Params(volTargetT = true, sigmaRefAbs = 0.6)
             )
-            val cmp = StringBuilder("方案,总收益%,训练收益%,样本外收益%,年化%,回撤%,T单,胜率%,笔均%,超额%,日线下跌笔数,日线下跌胜率%,日线下跌累计%\n")
+            val cmp = StringBuilder("方案,总收益%,训练收益%,样本外收益%,年化%,回撤%,T单,胜率%,笔均%,超额%,日线下跌笔数,日线下跌胜率%,日线下跌累计%,winStopDn,volT,snr,adx\n")
             variants.forEachIndexed { idx, (name, params) ->
                 val r = runCatching { SsaT0Engine.run(hour, day, params) }
                 r.onFailure { sb.appendLine("$name 回测抛异常：${it}") }
@@ -140,7 +155,9 @@ class SsaT0PcBacktest {
                         "%.2f".format(s.maxDrawdownPct), s.tradeCount,
                         "%.1f".format(s.winRatePct), "%.2f".format(s.avgPnlPct),
                         "%.2f".format(s.excessPct), wd.trades,
-                        "%.1f".format(wd.winRatePct), "%.2f".format(wd.totalPnlPct)).joinToString(","))
+                        "%.1f".format(wd.winRatePct), "%.2f".format(wd.totalPnlPct),
+                        params.winStopDn, if (params.volTargetT) 1 else 0,
+                        "%.2f".format(params.winMinSnr), "%.2f".format(params.winMinAdx)).joinToString(","))
 
                     File("build/ssa_t0_result_m$idx.txt").writeText("=== $name ===\n" + detail(res))
 

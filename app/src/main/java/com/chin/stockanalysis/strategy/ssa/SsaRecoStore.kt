@@ -141,7 +141,7 @@ class SsaRecoStore(private val dir: File) {
             put("cap0", s.sim.cap0); put("capT", s.sim.capT); put("capB", s.sim.capB)
             put("cashT", s.sim.cashT); put("shT", s.sim.shT); put("biT", s.sim.biT)
             put("biDate", s.sim.biDate); put("bpT", s.sim.bpT); put("bwhy", s.sim.bwhy)
-            put("cashB", s.sim.cashB); put("shB", s.sim.shB)
+            put("cashB", s.sim.cashB); put("shB", s.sim.shB); put("biDateB", s.sim.biDateB)
             put("pendT", s.sim.pendT); put("pendB", s.sim.pendB)
             put("whyT", s.sim.whyT); put("inBull", s.sim.inBull)
         }
@@ -199,7 +199,8 @@ class SsaRecoStore(private val dir: File) {
                 sim.getDouble("cashT"), sim.getLong("shT"), sim.getInt("biT"),
                 sim.getString("biDate"), sim.getDouble("bpT"), sim.getString("bwhy"),
                 sim.getDouble("cashB"), sim.getLong("shB"),
-                sim.getInt("pendT"), sim.getInt("pendB"), sim.getString("whyT"), sim.getBoolean("inBull")
+                sim.getInt("pendT"), sim.getInt("pendB"), sim.getString("whyT"), sim.getBoolean("inBull"),
+                sim.optString("biDateB", "")
             ),
             noiseRecent = noise, pendingZ = pz,
             hiCnt = tk.optInt("hiCnt", 0), hiSum3 = tk.optDouble("hiSum3", 0.0),
