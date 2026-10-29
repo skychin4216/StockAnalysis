@@ -121,19 +121,19 @@ class IntradayKlineFetcher(private val context: Context) {
      * - 缓存 ≥120 根时只请求最近 [INCREMENTAL_BARS] 根（新浪 datalen / 东财 beg=末根日期），
      *   与旧缓存按 datetime 合并；仅首次或缓存不足才全量拉 1023 根。
      */
-    suspend fun fetchHourlyHistory(code: String, days: Int = 760): List<IntradayKlineEntity> =
+    suspend fun fetchHourlyHistory(code: String, days: Int = 760, preferCache: Boolean = false): List<IntradayKlineEntity> =
         withContext(Dispatchers.IO) {
             val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
             // 1. 内存缓存（3 分钟 TTL，最快）
             memCache[pureCode]?.let { (bars, ts) ->
-                if (System.currentTimeMillis() - ts < MEM_TTL_MS) {
+                if (preferCache || System.currentTimeMillis() - ts < MEM_TTL_MS) {
                     Log.d(TAG, "hourly60 mem $code: ${bars.size} 根（缓存）")
                     return@withContext bars
                 }
             }
             // 2. 磁盘缓存
             val disk = loadHourlyCache(pureCode)
-            if (disk != null && isCacheFresh(disk, pureCode)) {
+            if (disk != null && (preferCache || isCacheFresh(disk, pureCode))) {
                 Log.d(TAG, "hourly60 disk $code: ${disk.size} 根（缓存）")
                 memCache[pureCode] = disk to System.currentTimeMillis()
                 return@withContext disk
@@ -368,6 +368,162 @@ class IntradayKlineFetcher(private val context: Context) {
                 return out
             } catch (e: Exception) {
                 Log.d(TAG, "hourly60 #$attempt $code: ${e.message?.take(60)}")
+            }
+        }
+        return emptyList()
+    }
+
+    // ═══════════════════════ 日线历史（~3 年，本地缓存 + 增量）═══════════════════════
+
+    private fun dailyCacheFile(code: String): File {
+        val dir = File(context.filesDir, CACHE_DIR).apply { mkdirs() }
+        return File(dir, "daily_$code.json")
+    }
+
+    /**
+     * 日线历史（默认 750 根 ≈ 3 年），供相空间等需要长日序列的模块。
+     * 与 1H 同款策略：内存 3 分钟 + 磁盘缓存 `daily_<code>.json` +
+     * 缓存 ≥200 根走增量（最近 40 根）合并；首次全量 750。
+     * @param preferCache true=磁盘有任何数据就直接用（批量场景省流量），false=按新鲜度判断
+     */
+    suspend fun fetchDailyHistory(code: String, datalen: Int = 750, preferCache: Boolean = false): List<IntradayKlineEntity> =
+        withContext(Dispatchers.IO) {
+            val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
+            val memKey = "D_$pureCode"
+            memCache[memKey]?.let { (bars, ts) ->
+                if (preferCache || System.currentTimeMillis() - ts < MEM_TTL_MS) return@withContext bars
+            }
+            val disk = runCatching {
+                dailyCacheFile(pureCode).takeIf { it.exists() }?.let { fromJsonArray(JSONArray(it.readText())) }
+            }.getOrNull()
+            if (disk != null && (preferCache || isDailyCacheFresh(disk))) {
+                memCache[memKey] = disk to System.currentTimeMillis()
+                return@withContext disk
+            }
+            val canInc = disk != null && disk.size >= 200
+            val today = LocalDate.now()
+            val fresh = if (canInc) {
+                fetchDailySina(code, 40)?.takeIf { it.isNotEmpty() }
+                    ?: fetchDailyEastmoney(code, disk!!.last().date, today.format(DATE_FMT)).takeIf { it.isNotEmpty() }
+                    ?: fetchDailySina(code, datalen)
+            } else {
+                fetchDailySina(code, datalen)?.takeIf { it.isNotEmpty() }
+                    ?: fetchDailyEastmoney(code, today.minusDays((datalen * 3 / 2).toLong()).format(DATE_FMT),
+                        today.format(DATE_FMT)).takeIf { it.isNotEmpty() }
+            }
+            val merged = if (disk != null && fresh != null) mergeBars(disk, fresh) else (fresh ?: disk ?: emptyList())
+            if (merged.isNotEmpty()) {
+                runCatching { dailyCacheFile(pureCode).writeText(toJsonArray(merged).toString()) }
+                memCache[memKey] = merged to System.currentTimeMillis()
+                Log.d(TAG, "daily $code: ${merged.size} 根（${if (canInc) "增量" else "全量"}，已存盘）")
+            }
+            merged
+        }
+
+    /** 日线缓存可复用：今日已收盘 / 周末 / 盘前；否则触发增量补齐 */
+    private fun isDailyCacheFresh(bars: List<IntradayKlineEntity>): Boolean {
+        if (bars.isEmpty()) return false
+        val lastDate = try {
+            LocalDate.parse(bars.last().date, DATE_FMT)
+        } catch (_: Exception) { return false }
+        val now = LocalDateTime.now()
+        val today = now.toLocalDate()
+        if (lastDate.isAfter(today)) return false
+        if (lastDate == today) return now.toLocalTime().isAfter(LocalTime.of(15, 5))
+        val dow = today.dayOfWeek
+        return dow == java.time.DayOfWeek.SATURDAY || dow == java.time.DayOfWeek.SUNDAY ||
+            now.toLocalTime().isBefore(LocalTime.of(9, 30))
+    }
+
+    /** 新浪日线：同 1H 接口 scale=240，day 字段为 "yyyy-MM-dd"（无时刻） */
+    private suspend fun fetchDailySina(code: String, datalen: Int): List<IntradayKlineEntity>? {
+        val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
+        val prefix = when {
+            code.startsWith("sh") -> "sh"
+            code.startsWith("sz") -> "sz"
+            code.startsWith("bj") -> "bj"
+            pureCode.startsWith("6") || pureCode.startsWith("5") || pureCode.startsWith("9") -> "sh"
+            else -> "sz"
+        }
+        val url = "${DataConfig.sinaKline}?symbol=$prefix$pureCode&scale=240&ma=no&datalen=$datalen"
+        for (attempt in 0..1) {
+            try {
+                if (attempt > 0) kotlinx.coroutines.delay(400L * attempt)
+                val req = Request.Builder().url(url)
+                    .addHeader("User-Agent", "Mozilla/5.0")
+                    .addHeader("Referer", "https://finance.sina.com.cn/")
+                    .build()
+                val resp = client.newCall(req).execute()
+                if (!resp.isSuccessful) continue
+                val body = resp.body?.string() ?: continue
+                if (!body.trimStart().startsWith("[")) continue
+                val arr = JSONArray(body)
+                val out = ArrayList<IntradayKlineEntity>(arr.length())
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    val day = o.optString("day", "")
+                    if (day.length < 10) continue
+                    val d10 = day.substring(0, 10)
+                    out.add(IntradayKlineEntity(
+                        code = code, name = "", datetime = "$d10 15:00", date = d10.replace("-", ""),
+                        open = o.optDouble("open", 0.0),
+                        close = o.optDouble("close", 0.0),
+                        high = o.optDouble("high", 0.0),
+                        low = o.optDouble("low", 0.0),
+                        volume = o.optLong("volume", 0L),
+                        amount = o.optDouble("amount", 0.0),
+                        intervalMin = 1440
+                    ))
+                }
+                Log.d(TAG, "daily sina $code: ${out.size} 根")
+                return out
+            } catch (e: Exception) {
+                Log.d(TAG, "daily sina #$attempt $code: ${e.message?.take(60)}")
+            }
+        }
+        return null
+    }
+
+    /** 东财日线兜底（klt=101，fqt=1 前复权）。 */
+    private suspend fun fetchDailyEastmoney(code: String, beg: String, end: String): List<IntradayKlineEntity> {
+        val market = if (code.startsWith("sh")) 1 else if (code.startsWith("bj")) 1 else 0
+        val pureCode = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
+        val url = "${DataConfig.eastmoneyPush2his}/stock/kline/get?" +
+                "secid=$market.$pureCode&klt=101&fqt=1" +
+                "&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58" +
+                "&beg=$beg&end=$end&lmt=2000"
+        for (attempt in 0..2) {
+            try {
+                if (attempt > 0) kotlinx.coroutines.delay(500L * (1 shl attempt))
+                val req = Request.Builder().url(url)
+                    .addHeader("User-Agent", "Mozilla/5.0")
+                    .addHeader("Referer", DataConfig.eastmoneyQuote)
+                    .build()
+                val resp = client.newCall(req).execute()
+                if (!resp.isSuccessful) continue
+                val body = resp.body?.string() ?: continue
+                val data = JSONObject(body).optJSONObject("data") ?: continue
+                val klines = data.optJSONArray("klines") ?: continue
+                val out = ArrayList<IntradayKlineEntity>(klines.length())
+                for (i in 0 until klines.length()) {
+                    val p = klines.getString(i).split(",")
+                    if (p.size < 7) continue
+                    val d10 = p[0].substring(0, 10)
+                    out.add(IntradayKlineEntity(
+                        code = code, name = cleanStockName(data.optString("name", "")),
+                        datetime = "$d10 15:00", date = d10.replace("-", ""),
+                        open = p[1].toDoubleOrNull() ?: 0.0,
+                        close = p[2].toDoubleOrNull() ?: 0.0,
+                        high = p[3].toDoubleOrNull() ?: 0.0,
+                        low = p[4].toDoubleOrNull() ?: 0.0,
+                        volume = p[5].toLongOrNull() ?: 0L,
+                        amount = p[6].toDoubleOrNull() ?: 0.0,
+                        intervalMin = 1440
+                    ))
+                }
+                return out
+            } catch (e: Exception) {
+                Log.d(TAG, "daily east #$attempt $code: ${e.message?.take(60)}")
             }
         }
         return emptyList()

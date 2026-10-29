@@ -73,25 +73,43 @@ class SsaAnalysisFragment : Fragment() {
     private lateinit var resultBox: LinearLayout
     private val paramInputs = ArrayList<EditText>()
     private var windowBars = 250
-    /** 模式：0=单票情景风控SSA；1=三层做T（独立子 Fragment） */
+    /** 模式：0=单票情景风控SSA；1+=独立子 Fragment */
     private var mode = 0
     private var scenarioScroll: View? = null
-    private var t0Host: android.widget.FrameLayout? = null
-    private var hybridHost: android.widget.FrameLayout? = null
-    private var chanlunHost: android.widget.FrameLayout? = null
-    private var macroHost: android.widget.FrameLayout? = null
-    private var vpHost: android.widget.FrameLayout? = null
-    private var t0Added = false
-    private var hybridAdded = false
-    private var chanlunAdded = false
-    private var macroAdded = false
-    private var vpAdded = false
-    private lateinit var modeScenario: TextView
-    private lateinit var modeT0: TextView
-    private lateinit var modeHybrid: TextView
-    private lateinit var modeChanlun: TextView
-    private lateinit var modeMacro: TextView
-    private lateinit var modeVp: TextView
+    private var modeHostRow: LinearLayout? = null
+    private val modeHosts = HashMap<Int, android.widget.FrameLayout>()
+    private val modeAdded = HashSet<Int>()
+    private val modeBtns = LinkedHashMap<Int, TextView>()
+
+    /**
+     * 策略注册表——新增策略只需加一行（id 唯一 + 按钮文案 + 分类），
+     * 分组、按钮、懒加载 host、切换全部自动生成。
+     */
+    private data class StrategyTab(val id: Int, val label: String, val category: String)
+    private val strategyTabs = listOf(
+        StrategyTab(0, "📊 情景风控", "回测·策略"),
+        StrategyTab(1, "🔄 三层做T", "回测·策略"),
+        StrategyTab(2, "🧭 混合策略", "回测·策略"),
+        StrategyTab(3, "📐 缠论", "回测·策略"),
+        StrategyTab(4, "🌊 大势分析", "板块·大盘"),
+        StrategyTab(5, "📈 量价策略", "板块·大盘"),
+        StrategyTab(8, "🕸 板块共振", "板块·大盘"),
+        StrategyTab(6, "🌀 相空间", "预测"),
+        StrategyTab(7, "📡 ARMA谱", "预测"),
+    )
+
+    /** 新策略在这里登记对应的 Fragment */
+    private fun createStrategyFragment(id: Int): Fragment? = when (id) {
+        1 -> SsaT0Fragment()
+        2 -> SsaHybridFragment()
+        3 -> ChanlunFragment()
+        4 -> MacroTrendFragment()
+        5 -> VolumePriceFragment()
+        6 -> PhaseSpaceFragment()
+        7 -> ArmaFragment()
+        8 -> SectorResonanceFragment()
+        else -> null
+    }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         val ctx = requireContext()
@@ -178,81 +196,51 @@ class SsaAnalysisFragment : Fragment() {
         box.addView(hint("⚠️ 信号/推断只用历史数据，无未来函数；情景分类是事后评估不参与下单；" +
             "末尾 L 根K线有边缘效应；结果不构成投资建议。"))
 
-        // ── 模式切换：顶部两行四按钮（情景风控/三层做T / 混合策略/缠论），懒加载子 Fragment ──
-        val modeRow = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(10), dp(6), dp(10), dp(3))
+        // ── 策略切换：按分类分组的 chip 行；新增策略只改 strategyTabs 注册表 ──
+        val tabBox = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(4), dp(10), dp(6))
             setBackgroundColor(Color.parseColor("#F7F7F7"))
         }
-        val modeRow2 = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(10), dp(3), dp(10), dp(6))
-            setBackgroundColor(Color.parseColor("#F7F7F7"))
+        strategyTabs.groupBy { it.category }.forEach { (cat, list) ->
+            tabBox.addView(TextView(ctx).apply {
+                text = cat; textSize = 10f; setTextColor(Color.parseColor("#999999"))
+                setPadding(0, dp(4), 0, dp(2))
+            })
+            val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+            list.forEach { def ->
+                val b = modeBtn(def.label)
+                modeBtns[def.id] = b
+                b.setOnClickListener { switchMode(def.id) }
+                row.addView(b, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    .apply { marginEnd = dp(6) })
+            }
+            tabBox.addView(row)
         }
-        modeScenario = modeBtn("📊 情景风控回测")
-        modeT0 = modeBtn("🔄 三层稳态做T")
-        modeHybrid = modeBtn("🧭 混合策略建议")
-        modeChanlun = modeBtn("📐 缠论")
-        modeMacro = modeBtn("🌊 大势分析")
-        modeVp = modeBtn("📈 量价策略")
-        modeRow.addView(modeScenario, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            .apply { marginEnd = dp(6) })
-        modeRow.addView(modeT0, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        modeRow2.addView(modeHybrid, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            .apply { marginEnd = dp(6) })
-        modeRow2.addView(modeChanlun, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            .apply { marginEnd = dp(6) })
-        modeRow2.addView(modeMacro, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            .apply { marginEnd = dp(6) })
-        modeRow2.addView(modeVp, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        root.addView(modeRow, 0)
-        root.addView(modeRow2, 1)
+        root.addView(tabBox, 0)
 
-        val t0 = android.widget.FrameLayout(ctx).apply {
-            id = View.generateViewId(); visibility = View.GONE
-        }
-        root.addView(t0, LinearLayout.LayoutParams(
+        // 各策略的懒加载宿主（一次只有一个可见）
+        val hostRow = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(hostRow, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
         ))
-        val hyb = android.widget.FrameLayout(ctx).apply {
-            id = View.generateViewId(); visibility = View.GONE
-        }
-        root.addView(hyb, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
-        ))
-        val cl = android.widget.FrameLayout(ctx).apply {
-            id = View.generateViewId(); visibility = View.GONE
-        }
-        root.addView(cl, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
-        ))
-        val mc = android.widget.FrameLayout(ctx).apply {
-            id = View.generateViewId(); visibility = View.GONE
-        }
-        root.addView(mc, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
-        ))
-        val vp = android.widget.FrameLayout(ctx).apply {
-            id = View.generateViewId(); visibility = View.GONE
-        }
-        root.addView(vp, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
-        ))
+        modeHostRow = hostRow
         scenarioScroll = scroll
-        t0Host = t0
-        hybridHost = hyb
-        chanlunHost = cl
-        macroHost = mc
-        vpHost = vp
-        modeScenario.setOnClickListener { switchMode(0) }
-        modeT0.setOnClickListener { switchMode(1) }
-        modeHybrid.setOnClickListener { switchMode(2) }
-        modeChanlun.setOnClickListener { switchMode(3) }
-        modeMacro.setOnClickListener { switchMode(4) }
-        modeVp.setOnClickListener { switchMode(5) }
         paintMode(0)
 
         return root
+    }
+
+    private fun hostFor(m: Int): android.widget.FrameLayout {
+        modeHosts[m]?.let { return it }
+        val h = android.widget.FrameLayout(requireContext()).apply {
+            id = View.generateViewId(); visibility = View.GONE
+        }
+        modeHostRow?.addView(h, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT
+        ))
+        modeHosts[m] = h
+        return h
     }
 
     private fun modeBtn(t: String) = TextView(requireContext()).apply {
@@ -261,20 +249,16 @@ class SsaAnalysisFragment : Fragment() {
     }
 
     private fun paintMode(m: Int) {
-        fun paint(tv: TextView, on: Boolean) {
-            tv.background = GradientDrawable().apply {
-                cornerRadius = dp(8).toFloat()
-                if (on) { setColor(Color.parseColor("#E0F2F1")); setStroke(dp(1), TEAL) }
-                else { setColor(Color.parseColor("#F2F2F2")); setStroke(dp(1), Color.parseColor("#DDDDDD")) }
-            }
-            tv.setTextColor(if (on) TEAL else Color.parseColor("#666666"))
+        modeBtns.forEach { (id, tv) -> paintBtn(tv, id == m) }
+    }
+
+    private fun paintBtn(tv: TextView, on: Boolean) {
+        tv.background = GradientDrawable().apply {
+            cornerRadius = dp(8).toFloat()
+            if (on) { setColor(Color.parseColor("#E0F2F1")); setStroke(dp(1), TEAL) }
+            else { setColor(Color.parseColor("#F2F2F2")); setStroke(dp(1), Color.parseColor("#DDDDDD")) }
         }
-        paint(modeScenario, m == 0)
-        paint(modeT0, m == 1)
-        paint(modeHybrid, m == 2)
-        paint(modeChanlun, m == 3)
-        paint(modeMacro, m == 4)
-        paint(modeVp, m == 5)
+        tv.setTextColor(if (on) TEAL else Color.parseColor("#666666"))
     }
 
     private fun switchMode(m: Int) {
@@ -282,44 +266,15 @@ class SsaAnalysisFragment : Fragment() {
         mode = m
         paintMode(m)
         scenarioScroll?.visibility = if (m == 0) View.VISIBLE else View.GONE
-        val host = t0Host ?: return
-        host.visibility = if (m == 1) View.VISIBLE else View.GONE
-        val hybHost = hybridHost ?: return
-        hybHost.visibility = if (m == 2) View.VISIBLE else View.GONE
-        val clHost = chanlunHost ?: return
-        clHost.visibility = if (m == 3) View.VISIBLE else View.GONE
-        val mcHost = macroHost ?: return
-        mcHost.visibility = if (m == 4) View.VISIBLE else View.GONE
-        val vpH = vpHost ?: return
-        vpH.visibility = if (m == 5) View.VISIBLE else View.GONE
-        if (m == 1 && !t0Added) {
-            t0Added = true
+        modeHosts.values.forEach { it.visibility = View.GONE }
+        if (m == 0) return
+        val host = hostFor(m)
+        host.visibility = View.VISIBLE
+        if (m !in modeAdded) {
+            val f = createStrategyFragment(m) ?: return
+            modeAdded.add(m)
             childFragmentManager.beginTransaction()
-                .replace(host.id, SsaT0Fragment())
-                .commitAllowingStateLoss()
-        }
-        if (m == 2 && !hybridAdded) {
-            hybridAdded = true
-            childFragmentManager.beginTransaction()
-                .replace(hybHost.id, SsaHybridFragment())
-                .commitAllowingStateLoss()
-        }
-        if (m == 3 && !chanlunAdded) {
-            chanlunAdded = true
-            childFragmentManager.beginTransaction()
-                .replace(clHost.id, ChanlunFragment())
-                .commitAllowingStateLoss()
-        }
-        if (m == 4 && !macroAdded) {
-            macroAdded = true
-            childFragmentManager.beginTransaction()
-                .replace(mcHost.id, MacroTrendFragment())
-                .commitAllowingStateLoss()
-        }
-        if (m == 5 && !vpAdded) {
-            vpAdded = true
-            childFragmentManager.beginTransaction()
-                .replace(vpH.id, VolumePriceFragment())
+                .replace(host.id, f)
                 .commitAllowingStateLoss()
         }
     }

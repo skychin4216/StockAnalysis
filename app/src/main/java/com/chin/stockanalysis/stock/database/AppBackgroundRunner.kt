@@ -216,10 +216,7 @@ object AppBackgroundRunner {
                 val hotSectors = (hotSource.industrySectors + hotSource.conceptSectors)
                     .distinctBy { it.code }
                     .map { it.code to it.name }
-                if (hotSectors.isEmpty()) {
-                    Log.i(TAG, "热门板块映射：池为空，跳过")
-                    return@launch
-                }
+                if (hotSectors.isEmpty()) Log.i(TAG, "热门板块映射：东财池为空，转新浪兜底")
                 var updated = 0
                 for ((bkCode, sectorName) in hotSectors) {
                     try {
@@ -237,6 +234,28 @@ object AppBackgroundRunner {
                     } catch (_: Exception) {}
                 }
                 Log.i(TAG, "🔥 热门板块映射刷新: $updated/${hotSectors.size} 个板块")
+                if (updated == 0) {
+                    // 东财不可达 → 新浪行业榜兜底：刷新 sector_stocks 覆盖当前热门行业
+                    try {
+                        val sina = com.chin.stockanalysis.stock.data.sources.SinaSectorSource()
+                        val boards = sina.fetchIndustryBoards()
+                        var sinaUpdated = 0
+                        for (b in boards.take(40)) {
+                            try {
+                                val comps = sina.fetchComponents(b.node, 30)
+                                if (comps.isEmpty()) continue
+                                db.sectorStockDao().insertAll(comps.map {
+                                    SectorStockEntity(sectorKey = b.node, sectorName = b.name, stockCode = it.symbol)
+                                })
+                                sinaUpdated++
+                                kotlinx.coroutines.delay(150)  // 节流，防新浪限频
+                            } catch (_: Exception) {}
+                        }
+                        Log.i(TAG, "🔥 新浪板块映射刷新（东财兜底）: $sinaUpdated/${boards.size} 个板块")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "新浪板块映射刷新失败: ${e.message}")
+                    }
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "热门板块映射刷新失败: ${e.message}")
             }

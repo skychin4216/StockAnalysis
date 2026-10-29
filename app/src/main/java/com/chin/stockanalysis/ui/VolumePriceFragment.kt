@@ -53,7 +53,7 @@ import kotlin.math.abs
  * 📈 量价策略 — 波段量价效率分析（Effort vs Result / Weis Wave 思路）
  *
  * 以价位为主轴把日K切成「一起一落」的波段链（zigzag），对每段回答三个问题：
- *  1. 这次价格运动用了多大的成交量？→ 段总量 / 单位涨幅成交量（万手每 1%）
+ *  1. 这次价格运动用了多大的成交量？→ 段总量 / 单位涨幅成交量（万股每 1%）
  *  2. 价格到关键区域后卖盘/买盘怎么变？→ 回落段量能 vs 上升段量能
  *  3. 冲击结束后能不能维持？→ 回撤比 + 量比 → 接受度评级（缩量被托住 / 放量回原地）
  * 相邻同向段做单位量对比：第二次过同一压力区量更小 → 更容易过去。
@@ -67,6 +67,7 @@ class VolumePriceFragment : Fragment() {
     private val GRAY = Color.parseColor("#999999")
     private val DARK = Color.parseColor("#333333")
     private val TEAL = Color.parseColor("#00897B")
+    private val GOLD = Color.parseColor("#F9A825")
 
     private data class KBar(val date: String, val open: Double, val high: Double,
                             val low: Double, val close: Double, val vol: Long)
@@ -79,10 +80,10 @@ class VolumePriceFragment : Fragment() {
         val fromDate: String, val toDate: String,
         val fromPrice: Double, val toPrice: Double,
         val chgPct: Double, val bars: Int,
-        val volSum: Double,   // 万手
-        val volAvg: Double,   // 万手/日
-        val unitVol: Double,  // 万手 / 1%
-        val obvDelta: Double, // 万手
+        val volSum: Double,   // 万股
+        val volAvg: Double,   // 万股/日
+        val unitVol: Double,  // 万股 / 1%
+        val obvDelta: Double, // 万股
         val endConfirmed: Boolean
     )
 
@@ -94,6 +95,7 @@ class VolumePriceFragment : Fragment() {
     private var windowBars = 250
     /** 数据级别：false=日线，true=1H 小时线 */
     private var hourlyMode = false
+    private var recentFocus = false   // 🔎 近10天：只收窄显示视口，分析仍基于完整窗口
     private var windowChipHost: LinearLayout? = null
     /** SSA cycle 嵌入窗口 L（20/30/60 可选） */
     private var cyclePeriod = 30
@@ -101,7 +103,9 @@ class VolumePriceFragment : Fragment() {
     /** 上次成功分析的完整结果，用于切换 SSA 周期 / 逐K回放 时不重拉数据直接重渲染 */
     private data class LastRun(val name: String, val code: String, val bars: List<KBar>,
                                val pivots: List<Pivot>, val legs: List<Leg>, val obv: DoubleArray, val th: Double,
-                               val cycle: DoubleArray?)
+                               val cycle: DoubleArray?,
+                               val vcp: com.chin.stockanalysis.strategy.analysis.VcpDetector.Result? = null,
+                               val vcpAll: List<com.chin.stockanalysis.strategy.analysis.VcpDetector.Result> = emptyList())
     private var lastRun: LastRun? = null
 
     // 四图十字光标联动
@@ -162,14 +166,7 @@ class VolumePriceFragment : Fragment() {
                     }
                 }
                 override fun onChartGestureStart(me: android.view.MotionEvent?, g: ChartTouchListener.ChartGesture?) {
-                    // 回放跟随中用户主动拖动/缩放 → 自动暂停；单击/长按不暂停（点击查明细不应打断回放）
-                    val isPanZoom = g == ChartTouchListener.ChartGesture.DRAG ||
-                            g == ChartTouchListener.ChartGesture.PINCH_ZOOM ||
-                            g == ChartTouchListener.ChartGesture.X_ZOOM ||
-                            g == ChartTouchListener.ChartGesture.Y_ZOOM ||
-                            g == ChartTouchListener.ChartGesture.ROTATE ||
-                            g == ChartTouchListener.ChartGesture.FLING
-                    if (isPanZoom && replayJob != null && !replayPaused) onReplayPause()
+                    // 暂停只由「⏸ 暂停」按钮控制；图表上的任何手势（含带位移的点击被识别成 DRAG）都不打断回放
                 }
                 override fun onChartGestureEnd(me: android.view.MotionEvent?, g: ChartTouchListener.ChartGesture?) {
                     // 点击/长按不算视口变化：否则点击一张未缩放的图会把它的完整矩阵套到已放大图上，图瞬间缩回去
@@ -199,7 +196,7 @@ class VolumePriceFragment : Fragment() {
 
         val titleV = title("📈 量价策略 · 波段量价效率")
         box.addView(titleV)
-        val hintV = hint("以价位为主轴切成「一起一落」波段链：上升段统计单位涨幅消耗多少成交量（万手/1%），" +
+        val hintV = hint("以价位为主轴切成「一起一落」波段链：上升段统计单位涨幅消耗多少成交量（万股/1%），" +
             "回落段看量能判断市场接受程度（缩量=下方有人接、被托住；放量=买单一停就回去）。" +
             "突破前高另起新段，相邻同向段对比单位量：第二次过同一位置量更小 → 更容易过去。附 OBV 背离检测。")
         box.addView(hintV)
@@ -266,6 +263,15 @@ class VolumePriceFragment : Fragment() {
         }
         rg.addView(rbDay); rg.addView(rbHour)
         lvRow.addView(rg)
+        android.widget.CheckBox(ctx).apply {
+            text = "🔎 近10天"; textSize = 12f
+            setOnCheckedChangeListener { _, c ->
+                recentFocus = c
+                // 取消时先复位四图视口，再按当前模式重填
+                if (!c) listOfNotNull(priceChart, rateChart, obvChart, ssaChart).forEach { it.fitScreen() }
+                lastRun?.let { lr -> chartHost?.let { h -> fillCharts(h, lr, lr.bars.size - 1) } }
+            }
+        }.also { lvRow.addView(it) }
         box.addView(lvRow)
         replayHideViews += lvRow
         rg.setOnCheckedChangeListener { _, id ->
@@ -317,7 +323,7 @@ class VolumePriceFragment : Fragment() {
 
         resultBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         box.addView(resultBox)
-        val tailHintV = hint("⚠️ 波段由收盘价 zigzag 切分，末端最后一段可能尚未确认（随行情变化）；量能单位=万手；结果不构成投资建议。")
+        val tailHintV = hint("⚠️ 波段由收盘价 zigzag 切分，末端最后一段可能尚未确认（随行情变化）；量能单位=万股；结果不构成投资建议。")
         box.addView(tailHintV)
         replayHideViews += tailHintV
         return scroll
@@ -367,9 +373,21 @@ class VolumePriceFragment : Fragment() {
                 val legs = buildLegs(bars, pivots, obv)
                 status("⏳ SSA cycle 分量计算中（L=$cyclePeriod）…")
                 val cycle = computeCycle(bars, cyclePeriod)
+                // VCP 波动收缩检测（多锚点扫描：大 base 内嵌套的小 VCP 一并检出）
+                val vcpAll = com.chin.stockanalysis.strategy.analysis.VcpDetector.detectAll(
+                    bars.map { com.chin.stockanalysis.strategy.analysis.VcpDetector.Bar(it.date, it.close, it.vol) },
+                    pivots.map { com.chin.stockanalysis.strategy.analysis.VcpDetector.Pivot(it.idx, it.price, it.isHigh, it.confirmed) },
+                    legs.map { com.chin.stockanalysis.strategy.analysis.VcpDetector.Leg(it.up, it.chgPct, it.volAvg) }
+                )
+                // 无成立形态时仍跑单锚点版拿失败原因，卡片照常显示 ❌ 说明
+                val vcpPrimary = vcpAll.firstOrNull() ?: com.chin.stockanalysis.strategy.analysis.VcpDetector.detect(
+                    bars.map { com.chin.stockanalysis.strategy.analysis.VcpDetector.Bar(it.date, it.close, it.vol) },
+                    pivots.map { com.chin.stockanalysis.strategy.analysis.VcpDetector.Pivot(it.idx, it.price, it.isHigh, it.confirmed) },
+                    legs.map { com.chin.stockanalysis.strategy.analysis.VcpDetector.Leg(it.up, it.chgPct, it.volAvg) }
+                )
                 val nm = name ?: code
-                lastRun = LastRun(nm, code, bars, pivots, legs, obv, th, cycle)
-                render(nm, code, bars, pivots, legs, obv, th, cycle)
+                lastRun = LastRun(nm, code, bars, pivots, legs, obv, th, cycle, vcpPrimary, vcpAll)
+                render(nm, code, bars, pivots, legs, obv, th, cycle, vcpPrimary, vcpAll)
                 status("✅ 分析完成：$nm($code) · ${legs.size} 段")
             } finally {
                 runBtn.isEnabled = true
@@ -453,7 +471,7 @@ class VolumePriceFragment : Fragment() {
             val cycle = computeCycle(lr.bars, cyclePeriod)
             if (!isAdded) return@launch
             lastRun = lr.copy(cycle = cycle)
-            render(lr.name, lr.code, lr.bars, lr.pivots, lr.legs, lr.obv, lr.th, cycle)
+            render(lr.name, lr.code, lr.bars, lr.pivots, lr.legs, lr.obv, lr.th, cycle, lr.vcp, lr.vcpAll)
             status("✅ 已按 L=$cyclePeriod 重绘 SSA cycle")
         }
     }
@@ -545,7 +563,7 @@ class VolumePriceFragment : Fragment() {
             val up = b.isHigh
             var volSum = 0.0
             for (i in (a.idx + 1)..b.idx) volSum += bars[i].vol.toDouble()
-            volSum /= 10000.0 // 手 → 万手
+            volSum /= 10000.0 // 股 → 万股
             val chgPct = (b.price - a.price) / a.price * 100.0
             val nBars = b.idx - a.idx
             legs.add(Leg(
@@ -567,11 +585,14 @@ class VolumePriceFragment : Fragment() {
     // ═══════════════════════ 渲染 ═══════════════════════
 
     private fun render(name: String, code: String, bars: List<KBar>, pivots: List<Pivot>,
-                       legs: List<Leg>, obv: DoubleArray, th: Double, cycle: DoubleArray?) {
+                       legs: List<Leg>, obv: DoubleArray, th: Double, cycle: DoubleArray?,
+                       vcp: com.chin.stockanalysis.strategy.analysis.VcpDetector.Result? = null,
+                       vcpAll: List<com.chin.stockanalysis.strategy.analysis.VcpDetector.Result> = emptyList()) {
         resultBox.removeAllViews()
         // 新一轮分析会重建 chartHost，旧 chart 仍挂在旧 host 上 → 必须清缓存，否则 addView 报 "already has a parent" 闪退
         priceChart = null; rateChart = null; obvChart = null; ssaChart = null
         renderSummary(name, code, bars, pivots, legs, obv, th)
+        vcp?.let { renderVcpCard(it, vcpAll.drop(1)) }
         val detailBox = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(6), 0, 0)
@@ -594,9 +615,9 @@ class VolumePriceFragment : Fragment() {
             it.addView(chipScroll(listOf(20 to "L=20", 30 to "L=30", 60 to "L=60"), cyclePeriod) { sel ->
                 if (sel != cyclePeriod) { cyclePeriod = sel; rerunSsa() }
             })
-            it.addView(hint("②OBV 能量潮（亿手）+ 唐奇安通道（20日：上轨/下轨/灰色中位线）：OBV 贴上轨运行=资金持续流入、趋势偏强；贴下轨=持续流出；在中位线附近来回=震荡，对应价格也震荡。价格新高 OBV 不新高 = 顶背离；价格新低 OBV 不新低 = 底背离。"))
+            it.addView(hint("②OBV 能量潮（亿股）+ 唐奇安通道（20日：上轨/下轨/灰色中位线）：OBV 贴上轨运行=资金持续流入、趋势偏强；贴下轨=持续流出；在中位线附近来回=震荡，对应价格也震荡。价格新高 OBV 不新高 = 顶背离；价格新低 OBV 不新低 = 底背离。"))
             it.addView(hint("③SSA cycle（青实线）＝剔除趋势噪声后的主周期振荡；橙虚线＝速度（一阶差分，峰领先 cycle 约 T/4）；紫点线＝加速度（二阶差分，再领先 T/4）：加速度下穿零轴是最早的周期衰竭预警，价格/周期/资金三维速度共振转向最可靠。三线各自归一化、共享零轴；半透明尾段＝边缘效应区（末端 L~2L 根）可信度低；回放时为整窗分解截断显示，仅用于观察节奏。"))
-            it.addView(hint("④速率图（对数轴，标签为原始量级）：柱=当日每推动 1% 价格消耗的成交量（红涨绿跌）。紫线=近5K 成交量合计÷涨跌幅合计（万手/1%）：走高=推同样的幅度越来越费量（浮筹多/阻力大），走低=越来越省量（浮筹少/抛压轻）。"))
+            it.addView(hint("④速率图（对数轴，标签为原始量级）：柱=当日每推动 1% 价格消耗的成交量（红涨绿跌）。紫线=近5K 成交量合计÷涨跌幅合计（万股/1%）：走高=推同样的幅度越来越费量（浮筹多/阻力大），走低=越来越省量（浮筹少/抛压轻）。"))
             it.addView(detailBox)
         })
         // 回放面板放图表卡片正下方；resultBox.removeAllViews() 已自动 detach，这里先防御性摘父再挂
@@ -630,6 +651,14 @@ class VolumePriceFragment : Fragment() {
             host.addView(ssaV, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(130)))
             host.addView(rate, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(150)))
             attachViewportSync()
+        }
+        // 近10天聚焦：四图视口统一收窄到窗口末端（回放时随 upto 逐帧前移）
+        if (recentFocus) {
+            val cnt = if (hourlyMode) 40 else 10
+            if (n > cnt) listOfNotNull(priceChart, rateChart, obvChart, ssaChart).forEach { c ->
+                c.setVisibleXRangeMaximum(cnt.toFloat())
+                c.moveViewToX((n - cnt).toFloat())
+            }
         }
     }
 
@@ -678,7 +707,7 @@ class VolumePriceFragment : Fragment() {
                     }
                 }
                 it.addView(TextView(ctx).apply {
-                    text = "🔁 同向段对比：段${cn(prevSame.no)} 单位量 %.2f → 段${cn(last.no)} %.2f 万手/1%%（%.2fx）→ $verdict"
+                    text = "🔁 同向段对比：段${cn(prevSame.no)} 单位量 %.2f → 段${cn(last.no)} %.2f 万股/1%%（%.2fx）→ $verdict"
                         .format(prevSame.unitVol, last.unitVol, r)
                     textSize = 11f; setTextColor(DARK); setPadding(0, 0, 0, dp(4))
                 })
@@ -698,6 +727,45 @@ class VolumePriceFragment : Fragment() {
                 text = "📊 OBV：" + obvDivergenceText(pivots, obv)
                 textSize = 11f; setTextColor(DARK)
             })
+        })
+    }
+
+    /** 🌀 VCP 波动收缩卡片：结论 + 收缩序列 + 压力/突破信息 + 评分；others = 多锚点扫出的其余成立形态 */
+    private fun renderVcpCard(v: com.chin.stockanalysis.strategy.analysis.VcpDetector.Result,
+                              others: List<com.chin.stockanalysis.strategy.analysis.VcpDetector.Result> = emptyList()) {
+        val ctx = requireContext()
+        resultBox.addView(card {
+            it.addView(cardTitle("🌀 VCP 波动收缩（高点走平·低点递升·振幅收缩·量能萎缩→放量突破）"))
+            val (icon, color) = when (v.status) {
+                com.chin.stockanalysis.strategy.analysis.VcpDetector.Status.BREAKOUT -> "✅" to RED
+                com.chin.stockanalysis.strategy.analysis.VcpDetector.Status.FORMING -> "🔄" to BLUE
+                com.chin.stockanalysis.strategy.analysis.VcpDetector.Status.INVALID -> "❌" to GRAY
+            }
+            it.addView(TextView(ctx).apply {
+                text = "$icon ${v.reason}" + if (v.status != com.chin.stockanalysis.strategy.analysis.VcpDetector.Status.INVALID) "（评分 ${v.score}/100）" else ""
+                textSize = 12f; setTextColor(color); setPadding(0, 0, 0, dp(4))
+            })
+            if (v.status == com.chin.stockanalysis.strategy.analysis.VcpDetector.Status.INVALID) return@card
+            // 收缩序列：-22.1% → -13.4% → -7.2%（每次带回落段日均量）
+            val seq = v.contractions.joinToString(" → ") { c -> "-%.1f%%".format(c.depthPct) }
+            it.addView(TextView(ctx).apply {
+                text = "📉 收缩序列（${v.anchorDate} 起）：$seq"
+                textSize = 11f; setTextColor(DARK); setPadding(0, 0, 0, dp(2))
+            })
+            it.addView(TextView(ctx).apply {
+                text = "🔇 回落段日均量：" + v.contractions.joinToString(" → ") { c -> "%.2f".format(c.downVolAvg) } +
+                    " 万股（末/首 = %.0f%%）".format(v.contractions.last().downVolAvg / v.contractions.first().downVolAvg * 100)
+                textSize = 11f; setTextColor(DARK); setPadding(0, 0, 0, dp(2))
+            })
+            it.addView(TextView(ctx).apply {
+                text = "🎯 压力 %.2f（主图青色虚线）· 金色折线=收缩轮廓（H0→各低点/反弹高点）\n现价距突破 %.1f%% · 最新量 %.2f 万股（%.2f×base均量 %.2f）"
+                    .format(v.resistance, v.distToResistPct, v.lastVol, v.volMult, v.baseVolAvg)
+                textSize = 11f; setTextColor(DARK)
+            })
+            if (v.tailUnconfirmed) it.addView(hint("注：末端拐点尚未确认，形态可能继续演化。"))
+            if (others.isNotEmpty()) it.addView(hint(
+                "🔎 多锚点另检出 ${others.size} 个成立形态（主图金色细轮廓）：" +
+                    others.joinToString("；") { o -> "${o.anchorDate} 起，压力 %.2f，评分 %d".format(o.resistance, o.score) }))
         })
     }
 
@@ -758,11 +826,11 @@ class VolumePriceFragment : Fragment() {
         for (k in 1 until pivots.size) {
             val leg = legs[k - 1]
             val main = "%s%.1f%%".format(if (leg.up) "+" else "－", abs(leg.chgPct))
-            val sub = if (leg.up) "%.2f万手/%%".format(leg.unitVol)
+            val sub = if (leg.up) "%.2f万股/%%".format(leg.unitVol)
             else {
                 val upPrev = legs.getOrNull(leg.no - 1)
                 if (upPrev != null && upPrev.up && upPrev.volAvg > 0) "量%.2fx".format(leg.volAvg / upPrev.volAvg)
-                else "%.2f万手/%%".format(leg.unitVol)
+                else "%.2f万股/%%".format(leg.unitVol)
             }
             pivotLabels[pivots[k].idx] = "$main\n$sub" + if (!pivots[k].confirmed) "…" else ""
         }
@@ -801,6 +869,20 @@ class VolumePriceFragment : Fragment() {
         if (bigSel.isNotEmpty()) dotSets.add(dotDs(bigSel, 7f))
         if (smallSel.isNotEmpty()) dotSets.add(dotDs(smallSel, 4.2f))
 
+        // VCP 收缩楔形金色轮廓（多锚点：主形态粗线，嵌套/早期形态细线；仅成立/构建中画出）
+        val vcps = lastRun?.vcpAll?.filter {
+            it.status != com.chin.stockanalysis.strategy.analysis.VcpDetector.Status.INVALID && it.wedge.size >= 2
+        } ?: emptyList()
+        val vcpDsList = vcps.mapIndexed { i, v ->
+            LineDataSet(v.wedge.map { Entry(it.idx.toFloat(), it.price.toFloat()) }, "VCP轮廓$i").apply {
+                color = GOLD; lineWidth = if (i == 0) 2.2f else 1.3f
+                setDrawCircles(true); circleRadius = if (i == 0) 4f else 3f; setDrawCircleHole(false)
+                setCircleColors(v.wedge.map { GOLD })
+                setDrawValues(false); isHighlightEnabled = false
+                mode = LineDataSet.Mode.LINEAR
+            }
+        }
+
         val chart = existing ?: CombinedChart(ctx).apply {
             description.isEnabled = false
             setBackgroundColor(Color.WHITE)
@@ -818,8 +900,17 @@ class VolumePriceFragment : Fragment() {
         chart.xAxis.axisMinimum = -0.5f; chart.xAxis.axisMaximum = n - 0.5f
         val data = CombinedData()
         data.setData(CandleData(cds))
-        data.setData(LineData((listOf(zigDs) + dotSets)))
+        data.setData(LineData(listOf(zigDs) + dotSets + vcpDsList))
         chart.data = data
+        // VCP 压力位虚线（回放每帧重建前先清，避免重复叠加）；主形态青色，其余金色
+        chart.axisLeft.removeAllLimitLines()
+        vcps.forEachIndexed { i, v ->
+            chart.axisLeft.addLimitLine(LimitLine(v.resistance.toFloat(), "VCP压力 %.2f".format(v.resistance)).apply {
+                lineColor = if (i == 0) TEAL else GOLD; lineWidth = 1.2f; enableDashedLine(10f, 6f, 0f)
+                textSize = 9f; textColor = if (i == 0) TEAL else GOLD
+                labelPosition = LimitLine.LimitLabelPosition.RIGHT_TOP
+            })
+        }
         // 点击K线/拐点 → 明细小卡片（listener 闭包引用 legs/pivots，每帧必须重建）
         chart.setOnChartValueSelectedListener(object : OnChartValueSelectedListener {
             override fun onValueSelected(e: Entry?, h: Highlight?) {
@@ -839,11 +930,11 @@ class VolumePriceFragment : Fragment() {
         return chart
     }
 
-    /** 图② 量价速率：逐K「单位涨幅成交量」(万手/1%) 柱 + 5K 平滑速率线；与主图逐K同位置 */
+    /** 图② 量价速率：逐K「单位涨幅成交量」(万股/1%) 柱 + 5K 平滑速率线；与主图逐K同位置 */
     private fun renderVolumeChart(existing: CombinedChart?, bars: List<KBar>, pivots: List<Pivot>, legs: List<Leg>): View {
         val ctx = requireContext()
         val n = bars.size
-        // 逐K单位量 = 当日成交量(万手) ÷ 当日|涨跌幅%|；涨跌幅<0.05%按0.05计
+        // 逐K单位量 = 当日成交量(万股) ÷ 当日|涨跌幅%|；涨跌幅<0.05%按0.05计
         val rate = DoubleArray(n)
         for (i in 1 until n) {
             val dpct = abs((bars[i].close - bars[i - 1].close) / bars[i - 1].close * 100.0)
@@ -871,12 +962,12 @@ class VolumePriceFragment : Fragment() {
                 else -> Color.parseColor("#A5D6A7")
             }
         }
-        val bds = BarDataSet(entries, "单位量 万手/1%(log)").apply {
+        val bds = BarDataSet(entries, "单位量 万股/1%(log)").apply {
             setColors(colors.toList())
             setDrawValues(false)
             isHighlightEnabled = false // 柱不出高亮，点选落到速率线上出十字线
         }
-        // 单一速率线：近5K 成交量合计 ÷ 近5K 涨跌幅绝对值合计（万手/1%），同样走对数
+        // 单一速率线：近5K 成交量合计 ÷ 近5K 涨跌幅绝对值合计（万股/1%），同样走对数
         // 用区间汇总而不是逐K平均，避免十字星把数值打爆；一条线看整体趋势即可
         val rateEs = ArrayList<Entry>(n)
         for (i in 0 until n) {
@@ -906,7 +997,7 @@ class VolumePriceFragment : Fragment() {
             xAxis.labelCount = 6   // 速率图在最下面，带日期标签
             axisLeft.setDrawGridLines(true); axisLeft.gridColor = Color.parseColor("#EEEEEE")
             axisLeft.setLabelCount(5, false) // 对数轴 label 反变换后是不均匀量级，label 多了会挤成一团
-            // 对数轴：内部值 = log10(万手/1%)，标签反变换回原始量级并缩写 万/亿
+            // 对数轴：内部值 = log10(万股/1%)，标签反变换回原始量级并缩写 万/亿
             axisLeft.valueFormatter = object : ValueFormatter() {
                 override fun getFormattedValue(value: Float): String {
                     val v = Math.pow(10.0, value.toDouble())
@@ -953,7 +1044,7 @@ class VolumePriceFragment : Fragment() {
         val n = bars.size
         val es = ArrayList<Entry>(n)
         for (i in 0 until n) es.add(Entry(i.toFloat(), (obv[i] / 1e8).toFloat()))
-        val ds = LineDataSet(es, "OBV(亿手)").apply {
+        val ds = LineDataSet(es, "OBV(亿股)").apply {
             color = BLUE; lineWidth = 1.5f
             setDrawCircles(false); setDrawValues(false)
             setDrawHighlightIndicators(true)
@@ -1152,12 +1243,12 @@ class VolumePriceFragment : Fragment() {
         })
         box.addView(TextView(ctx).apply {
             val unit = if (hourlyMode) "根" else "天"
-            text = "幅度 %s%.1f%%｜%d $unit｜总量 %.0f万手｜均量 %.1f万手｜单位涨幅 %.2f万手/1%%"
+            text = "幅度 %s%.1f%%｜%d $unit｜总量 %.0f万股｜均量 %.1f万股｜单位涨幅 %.2f万股/1%%"
                 .format(if (leg.up) "+" else "－", abs(leg.chgPct), leg.bars, leg.volSum, leg.volAvg, leg.unitVol)
             textSize = 11f; setTextColor(DARK)
         })
         box.addView(TextView(ctx).apply {
-            text = "OBV 段内变化：%s%.0f 万手".format(if (leg.obvDelta >= 0) "+" else "", leg.obvDelta)
+            text = "OBV 段内变化：%s%.0f 万股".format(if (leg.obvDelta >= 0) "+" else "", leg.obvDelta)
             textSize = 11f; setTextColor(DARK)
         })
         if (leg.up) {

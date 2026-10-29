@@ -12,6 +12,9 @@ class EastMoneyHotSectorSource {
     private val client = HttpClientProvider.realtimeClient
     private val tag = "HotPool"
 
+    /** 最近一次 fetchSectorsByTypeDirect 失败原因（诊断展示用） */
+    @Volatile var lastError: String? = null
+
     companion object {
         private val INDEX_CODES = listOf(
             "1.000001" to "上证指数", "0.399001" to "深证成指",
@@ -142,6 +145,8 @@ class EastMoneyHotSectorSource {
                     .addHeader("Cache-Control", "no-cache, no-store, must-revalidate")
                     .addHeader("Pragma", "no-cache")
                     .addHeader("Expires", "0")
+                    .addHeader("Connection", "close")   // 东财常提前断开 keep-alive 连接，禁复用
+                    .addHeader("Referer", "https://quote.eastmoney.com/")  // 东财 clist 无 Referer 会断连
                     .build()
                 val resp = client.newCall(req).execute()
                 if (!resp.isSuccessful) continue
@@ -212,10 +217,21 @@ class EastMoneyHotSectorSource {
                 .addHeader("Cache-Control", "no-cache, no-store, must-revalidate")
                 .addHeader("Pragma", "no-cache")
                 .addHeader("Expires", "0")
+                .addHeader("Connection", "close")   // 东财常提前断开 keep-alive 连接，禁复用防 unexpected end of stream
+                .addHeader("Referer", "https://quote.eastmoney.com/")  // 东财 clist 无 Referer 会断连（PC 侧已验证口径）
                 .build()
             val resp = client.newCall(req).execute()
-            if (!resp.isSuccessful) return emptyList()
-            val diffs = JSONObject(resp.body?.string() ?: "").optJSONObject("data")?.optJSONArray("diff") ?: return emptyList()
+            if (!resp.isSuccessful) {
+                lastError = "HTTP ${resp.code}"
+                Log.w(tag, "fetchSectorsByTypeDirect(type=$type) $lastError")
+                return emptyList()
+            }
+            val diffs = JSONObject(resp.body?.string() ?: "").optJSONObject("data")?.optJSONArray("diff")
+            if (diffs == null) {
+                lastError = "响应无 data.diff"
+                Log.w(tag, "fetchSectorsByTypeDirect(type=$type) $lastError")
+                return emptyList()
+            }
             val result = (0 until diffs.length()).map { i ->
                 val item = diffs.getJSONObject(i)
                 val c = item.optDouble("f3", 0.0); val t = item.optDouble("f8", 0.0)
@@ -230,8 +246,17 @@ class EastMoneyHotSectorSource {
                     top1ChangePercent = top, compositeScore = computeScore(c, t, inflow, top), sectorType = type,
                     change5d = c5, change10d = c10, change20d = c20)
             }
-            filterAndMerge(result).sortedByDescending { it.compositeScore }.take(topN)
-        } catch (_: Exception) { emptyList() }
+            val out = filterAndMerge(result).sortedByDescending { it.compositeScore }.take(topN)
+            if (out.isEmpty()) {
+                lastError = "过滤后为空（原始 ${result.size} 条）"
+                Log.w(tag, "fetchSectorsByTypeDirect(type=$type) $lastError")
+            }
+            out
+        } catch (e: Exception) {
+            lastError = "${e.javaClass.simpleName}: ${e.message?.take(60)}"
+            Log.w(tag, "fetchSectorsByTypeDirect(type=$type) 失败: $lastError")
+            emptyList()
+        }
     }
 
     /**

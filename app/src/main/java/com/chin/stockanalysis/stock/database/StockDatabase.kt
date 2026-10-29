@@ -149,7 +149,7 @@ interface AiSelectedStockDao {
         DailyIntelEntity::class,
         PushRecordEntity::class
     ],
-    version = 27,
+    version = 28,
     exportSchema = false
 )
 abstract class StockDatabase : RoomDatabase() {
@@ -547,6 +547,24 @@ abstract class StockDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v27 → v28 迁移：修复 daily_snapshot 成交量单位混乱（纯数据修复，无表结构变更）。
+         * 历史东财K线路径 f56(手)未×100 直接入库，与新浪/clist 路径(股)混存，同一只票前后差 100 倍，
+         * 导致 OBV/量价速率等量纲图表失真。
+         * 判定：amount(元) ≈ close×volume(股) → 比值≈100 的行为「手」→ ×100 统一成股。
+         * 幂等：修复后比值≈1，不会重复命中；amount 缺失的行（IF_MAIN 等）不动。
+         */
+        private val MIGRATION_27_28 = object : androidx.room.migration.Migration(27, 28) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    UPDATE daily_snapshot SET volume = volume * 100
+                    WHERE volume > 0 AND close > 0 AND amount > 1000
+                      AND amount / (close * volume) BETWEEN 50 AND 200
+                """.trimIndent())
+                Log.i(TAG, "✅ v27→v28 迁移完成：daily_snapshot 成交量单位已统一为股")
+            }
+        }
+
         fun getInstance(context: Context): StockDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -554,7 +572,7 @@ abstract class StockDatabase : RoomDatabase() {
                     StockDatabase::class.java,
                     DATABASE_NAME
                 )
-                    .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27)
+                    .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28)
                     .fallbackToDestructiveMigration()
                     .addCallback(destructiveCallback)
                     .build()

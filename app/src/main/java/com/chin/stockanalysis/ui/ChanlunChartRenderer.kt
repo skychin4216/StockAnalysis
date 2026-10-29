@@ -38,7 +38,8 @@ object ChanlunChartRenderer {
     /** 渲染 APP 本地引擎结果（ChanlunEngine.Structure）。 */
     fun render(chart: CombinedChart, st: com.chin.stockanalysis.strategy.chanlun.ChanlunEngine.Structure,
                bars: Int = 250, showBi: Boolean = true, showZs: Boolean = true, showBsp: Boolean = true,
-               showSP: Boolean = true, showFib: Boolean = false, showFx: Boolean = false) {
+               showSP: Boolean = true, showFib: Boolean = false, showFx: Boolean = false,
+               showMarker: Boolean = true) {
         val total = st.bars.size
         val offset = maxOf(0, total - bars)
         val n = total - offset
@@ -134,8 +135,8 @@ object ChanlunChartRenderer {
         }
 
         applyToChart(chart, cds, lineData, scatterData, labels, n, bars)
-        // 十字光标浮窗（本地引擎路径）
-        chart.marker = ChanlunMarkerView(chart.context, st, offset)
+        // 十字光标浮窗（本地引擎路径）；关闭时不显示小卡片
+        chart.marker = if (showMarker) ChanlunMarkerView(chart.context, st, offset) else null
 
         // ── 支撑/压力线（最近中枢 ZD/ZG，Y轴 LimitLine 带标签） ──
         if (showSP && st.zs.isNotEmpty()) {

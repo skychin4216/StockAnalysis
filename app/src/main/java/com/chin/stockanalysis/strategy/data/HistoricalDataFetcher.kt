@@ -834,7 +834,8 @@ class HistoricalDataFetcher(private val context: Context) {
                     results.add(DailySnapshotEntity(code = code, name = stockName, date = date,
                         open = parts[1].toDoubleOrNull() ?: 0.0, close = parts[2].toDoubleOrNull() ?: 0.0,
                         high = parts[3].toDoubleOrNull() ?: 0.0, low = parts[4].toDoubleOrNull() ?: 0.0,
-                        volume = parts[5].toLongOrNull() ?: 0L, amount = parts[6].toDoubleOrNull() ?: 0.0,
+                        // 东财K线 f56 成交量单位=手，统一×100 转股（与新浪/clist 实时行情口径一致）
+                        volume = (parts[5].toLongOrNull() ?: 0L) * 100, amount = parts[6].toDoubleOrNull() ?: 0.0,
                         changePct = parts[8].toDoubleOrNull() ?: 0.0, turnoverRate = 0.0, mainNetInflow = 0.0))
                 }
                 if (attempt > 0) {

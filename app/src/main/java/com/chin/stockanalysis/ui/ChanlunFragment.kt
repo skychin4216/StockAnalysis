@@ -1,4 +1,4 @@
-package com.chin.stockanalysis.ui
+﻿package com.chin.stockanalysis.ui
 
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -173,7 +173,15 @@ class ChanlunFragment : Fragment() {
                 }
                 results.sortByDescending { it.score }
                 prog.text = "完成：${pool.size} 只 → ${results.size} 个信号"
-                renderSignalList(listBox, results)
+                // 批量补名称（本地库→快照表→新浪，结果键统一转回裸代码）
+                val nameMap = HashMap<String, String>()
+                try {
+                    val pm = com.chin.stockanalysis.stock.database.StockNameResolver.resolveBatch(
+                        ctx.applicationContext,
+                        results.map { (if (it.code[0] in "659") "sh" else "sz") + it.code })
+                    for ((k, v) in pm) nameMap[k.removePrefix("sh").removePrefix("sz").removePrefix("bj")] = v
+                } catch (_: Exception) {}
+                renderSignalList(listBox, results, nameMap)
                 btn.isEnabled = true
             }
         }
@@ -203,7 +211,7 @@ class ChanlunFragment : Fragment() {
             base + (if (best.sure) 20 else 0) + (if (d <= 1) 15 else if (d <= 3) 10 else 5))
     }
 
-    private fun renderSignalList(box: LinearLayout, rows: List<SignalRow>) {
+    private fun renderSignalList(box: LinearLayout, rows: List<SignalRow>, names: Map<String, String> = emptyMap()) {
         box.removeAllViews()
         if (rows.isEmpty()) { box.addView(tv("无信号", GRAY, 12f)); return }
         // 按买点类型分组卡片：一买 / 二买 / 三买
@@ -254,8 +262,10 @@ class ChanlunFragment : Fragment() {
                     setPadding(dp(6), dp(4), dp(6), dp(4))
                     setOnClickListener { openSingle(r.code) }
                 }
+                val nm = names[r.code]
                 rowBox.addView(tv(
-                    "${r.code}   ${fmt2(r.price)}   ${if (r.sure) "✔ 已确认" else "· 待确认"}",
+                    (if (nm.isNullOrBlank()) r.code else "$nm ${r.code}") +
+                        "   ${fmt2(r.price)}   ${if (r.sure) "✔ 已确认" else "· 待确认"}",
                     if (r.sure) color else Color.parseColor("#333333"), 13f
                 ).apply { setTypeface(null, android.graphics.Typeface.BOLD) })
                 rowBox.addView(tv("中枢 ${r.zsCnt} 个 · ${r.dist} 根前 · 评分 ${r.score}", GRAY, 10f))
@@ -311,7 +321,12 @@ class ChanlunFragment : Fragment() {
         toggleRow2.addView(tv("　　　", GRAY, 12f))
         val cbSP = android.widget.CheckBox(ctx).apply { text = "支撑压力"; isChecked = true; textSize = 11f }
         val cbFib = android.widget.CheckBox(ctx).apply { text = "黄金分割"; isChecked = false; textSize = 11f }
-        toggleRow2.addView(cbSP); toggleRow2.addView(cbFib)
+        // 点击价格图时是否弹出十字光标小卡片（勾上才显示）
+        val cbMarker = android.widget.CheckBox(ctx).apply { text = "十字浮窗"; isChecked = true; textSize = 11f }
+        // 近10天：只收窄显示窗口（结构仍基于全量计算）；1H 按每交易日 4 根折算
+        val cbRecent = android.widget.CheckBox(ctx).apply { text = "近10天"; isChecked = false; textSize = 11f }
+        toggleRow2.addView(cbSP); toggleRow2.addView(cbFib); toggleRow2.addView(cbMarker); toggleRow2.addView(cbRecent)
+        fun effShow() = if (cbRecent.isChecked) (if (singleLv == "1h") 40 else 10) else 250
         box.addView(toggleRow2)
 
         val status = tv("输入代码点「分析」", GRAY, 11f)
@@ -332,9 +347,45 @@ class ChanlunFragment : Fragment() {
         val btnL60 = android.widget.Button(ctx).apply { text = "L=60"; textSize = 10f }
         lRow.addView(btnL30); lRow.addView(btnL60)
         box.addView(lRow)
-        fun refreshAux() { lastBars?.let { renderAuxCharts(obvChart, cycleChart, it, ssaL) } }
+        fun refreshAux() { lastBars?.let { renderAuxCharts(obvChart, cycleChart, it, ssaL, effShow()) } }
         btnL30.setOnClickListener { if (ssaL != 30) { ssaL = 30; refreshAux() } }
         btnL60.setOnClickListener { if (ssaL != 60) { ssaL = 60; refreshAux() } }
+
+        // ── 主副图联动：十字线延伸到副图 + 副图 X 跟随主图缩放平移（Y 各自独立）──
+        run {
+            val aux = arrayOf(obvChart, cycleChart)
+            fun syncX() {
+                val sv = FloatArray(9); chart.viewPortHandler.matrixTouch.getValues(sv)
+                aux.forEach { dst ->
+                    val dv = FloatArray(9); dst.viewPortHandler.matrixTouch.getValues(dv)
+                    sv[android.graphics.Matrix.MSCALE_Y] = dv[android.graphics.Matrix.MSCALE_Y]
+                    sv[android.graphics.Matrix.MTRANS_Y] = dv[android.graphics.Matrix.MTRANS_Y]
+                    val m = android.graphics.Matrix(); m.setValues(sv)
+                    dst.viewPortHandler.refresh(m, dst, true)
+                }
+            }
+            chart.onChartGestureListener = object : com.github.mikephil.charting.listener.OnChartGestureListener {
+                override fun onChartGestureStart(me: android.view.MotionEvent?, g: com.github.mikephil.charting.listener.ChartTouchListener.ChartGesture?) {}
+                override fun onChartGestureEnd(me: android.view.MotionEvent?, g: com.github.mikephil.charting.listener.ChartTouchListener.ChartGesture?) {
+                    // 点击/长按不算视口变化，不同步
+                    if (g == com.github.mikephil.charting.listener.ChartTouchListener.ChartGesture.SINGLE_TAP ||
+                        g == com.github.mikephil.charting.listener.ChartTouchListener.ChartGesture.LONG_PRESS) return
+                    syncX()
+                }
+                override fun onChartLongPressed(me: android.view.MotionEvent?) {}
+                override fun onChartDoubleTapped(me: android.view.MotionEvent?) = syncX()
+                override fun onChartSingleTapped(me: android.view.MotionEvent?) {}
+                override fun onChartFling(m1: android.view.MotionEvent?, m2: android.view.MotionEvent?, vx: Float, vy: Float) = syncX()
+                override fun onChartScale(me: android.view.MotionEvent?, sx: Float, sy: Float) = syncX()
+                override fun onChartTranslate(me: android.view.MotionEvent?, dx: Float, dy: Float) = syncX()
+            }
+            chart.setOnChartValueSelectedListener(object : OnChartValueSelectedListener {
+                override fun onValueSelected(e: com.github.mikephil.charting.data.Entry?, h: Highlight?) {
+                    if (e != null) aux.forEach { it.highlightValue(e.x, 0, false) }
+                }
+                override fun onNothingSelected() { aux.forEach { it.highlightValue(null) } }
+            })
+        }
 
         // ── 图例说明 ──
         val legend = """
@@ -344,6 +395,9 @@ class ChanlunFragment : Fragment() {
             ▪ 蓝虚线框=中枢（多空平衡区）
             ▪ 红圆点=买点（下方）  绿圆点=卖点（上方）
             ▪ 紫▽=顶分型  青△=底分型（分型确认后标记）
+            ▪ OBV副图：灰线=唐奇安通道20（上轨/下轨/虚线中位）；贴上轨=资金持续流入，贴下轨=流出
+            ▪ cycle副图：青实线=主周期振荡  橙虚线=速度(一阶)  紫点线=加速度(二阶，最早衰竭预警)
+            ▪ 点主图出十字线→副图同位置联动；主图缩放平移→副图X跟随
         """.trimIndent()
         box.addView(tv(legend, GRAY, 10f).apply { setPadding(0, dp(4), 0, dp(4)) })
 
@@ -368,9 +422,9 @@ class ChanlunFragment : Fragment() {
             replayPaused = false; btnPause.text = "⏸ 暂停"
             btnPlay.text = "▶ 逐K回放"
             if (restore) lastStructure?.let {
-                ChanlunChartRenderer.render(chart, it, 250, cbBi.isChecked, cbZs.isChecked, cbBsp.isChecked,
-                    cbSP.isChecked, cbFib.isChecked, cbFx.isChecked)
-                renderAuxCharts(obvChart, cycleChart, it.bars, ssaL)
+                ChanlunChartRenderer.render(chart, it, effShow(), cbBi.isChecked, cbZs.isChecked, cbBsp.isChecked,
+                    cbSP.isChecked, cbFib.isChecked, cbFx.isChecked, cbMarker.isChecked)
+                renderAuxCharts(obvChart, cycleChart, it.bars, ssaL, effShow())
             }
         }
 
@@ -389,9 +443,9 @@ class ChanlunFragment : Fragment() {
                         runCatching { com.chin.stockanalysis.strategy.chanlun.ChanlunEngine.compute(sub) }.getOrNull()
                     }
                     if (st != null) {
-                        ChanlunChartRenderer.render(chart, st, 250, cbBi.isChecked, cbZs.isChecked,
-                            cbBsp.isChecked, cbSP.isChecked, cbFib.isChecked, cbFx.isChecked)
-                        renderAuxCharts(obvChart, cycleChart, st.bars, ssaL)
+                        ChanlunChartRenderer.render(chart, st, effShow(), cbBi.isChecked, cbZs.isChecked,
+                            cbBsp.isChecked, cbSP.isChecked, cbFib.isChecked, cbFx.isChecked, cbMarker.isChecked)
+                        renderAuxCharts(obvChart, cycleChart, st.bars, ssaL, effShow())
                         val bar = bars[idx]
                         tvProg.text = "${idx + 1}/${bars.size}  ${bar.time}  收${fmt2(bar.close)}"
                         // ── 结构事件 diff：新分型 / 新笔 / 笔确认 / 新中枢 / 新买卖点 ──
@@ -470,9 +524,9 @@ class ChanlunFragment : Fragment() {
         // 重渲染辅助
         fun rerender() {
             val st = lastStructure ?: return
-            ChanlunChartRenderer.render(chart, st, 250, cbBi.isChecked, cbZs.isChecked, cbBsp.isChecked,
-                cbSP.isChecked, cbFib.isChecked, cbFx.isChecked)
-            renderAuxCharts(obvChart, cycleChart, st.bars, ssaL)
+            ChanlunChartRenderer.render(chart, st, effShow(), cbBi.isChecked, cbZs.isChecked, cbBsp.isChecked,
+                cbSP.isChecked, cbFib.isChecked, cbFx.isChecked, cbMarker.isChecked)
+            renderAuxCharts(obvChart, cycleChart, st.bars, ssaL, effShow())
         }
         cbBi.setOnCheckedChangeListener { _, _ -> rerender() }
         cbZs.setOnCheckedChangeListener { _, _ -> rerender() }
@@ -480,6 +534,12 @@ class ChanlunFragment : Fragment() {
         cbSP.setOnCheckedChangeListener { _, _ -> rerender() }
         cbFib.setOnCheckedChangeListener { _, _ -> rerender() }
         cbFx.setOnCheckedChangeListener { _, _ -> rerender() }
+        // 取消勾选时立即收起已弹出的小卡片
+        cbMarker.setOnCheckedChangeListener { _, checked ->
+            if (!checked) chart.highlightValue(null)
+            rerender()
+        }
+        cbRecent.setOnCheckedChangeListener { _, _ -> rerender() }
 
         btn.setOnClickListener {
             singleCode = codeEt.text.toString().trim()
@@ -511,12 +571,12 @@ class ChanlunFragment : Fragment() {
     private fun renderAuxCharts(obvChart: com.github.mikephil.charting.charts.LineChart,
                                 cycleChart: com.github.mikephil.charting.charts.LineChart,
                                 bars: List<com.chin.stockanalysis.strategy.chanlun.ChanlunEngine.Bar>,
-                                ssaL: Int) {
+                                ssaL: Int, showBars: Int = 250) {
         val n0 = bars.size
-        val show = minOf(250, n0)
+        val show = minOf(showBars, n0)
         val off = n0 - show
 
-        // ── ① OBV ──
+        // ── ① OBV + 唐奇安通道（20周期 上轨/下轨/灰色中位线）──
         val obv = DoubleArray(n0)
         for (i in 1 until n0) {
             val v = bars[i].volume
@@ -527,11 +587,32 @@ class ChanlunFragment : Fragment() {
         for (i in 0 until show) obvE.add(com.github.mikephil.charting.data.Entry(i.toFloat(), (obv[off + i] / 1e8).toFloat()))
         val obvDs = com.github.mikephil.charting.data.LineDataSet(obvE, "OBV(亿)").apply {
             color = BLUE; lineWidth = 1.3f; setDrawCircles(false); setDrawValues(false)
+            setDrawHighlightIndicators(true); highLightColor = Color.parseColor("#555555")
         }
+        // 唐奇安通道：N周期 OBV 最高/最低/中值。贴上轨=资金持续流入（强势），贴下轨=持续流出
+        val DCN = 20
+        val upE = ArrayList<com.github.mikephil.charting.data.Entry>(show)
+        val loE = ArrayList<com.github.mikephil.charting.data.Entry>(show)
+        val midE = ArrayList<com.github.mikephil.charting.data.Entry>(show)
+        for (i in 0 until show) {
+            val gi = off + i
+            val from = maxOf(0, gi - DCN + 1)
+            var hi = -Double.MAX_VALUE; var lo = Double.MAX_VALUE
+            for (j in from..gi) { val v = obv[j] / 1e8; if (v > hi) hi = v; if (v < lo) lo = v }
+            upE.add(com.github.mikephil.charting.data.Entry(i.toFloat(), hi.toFloat()))
+            loE.add(com.github.mikephil.charting.data.Entry(i.toFloat(), lo.toFloat()))
+            midE.add(com.github.mikephil.charting.data.Entry(i.toFloat(), ((hi + lo) / 2).toFloat()))
+        }
+        fun dcDs(e: List<com.github.mikephil.charting.data.Entry>, label: String, dashed: Boolean) =
+            com.github.mikephil.charting.data.LineDataSet(e, label).apply {
+                color = Color.parseColor("#BBBBBB"); lineWidth = 0.9f
+                setDrawCircles(false); setDrawValues(false)
+                if (dashed) enableDashedLine(8f, 5f, 0f)
+            }
         obvChart.apply {
             description.isEnabled = false; legend.isEnabled = false
             setTouchEnabled(false); setDrawGridBackground(false)
-            data = com.github.mikephil.charting.data.LineData(obvDs)
+            data = com.github.mikephil.charting.data.LineData(listOf(obvDs, dcDs(upE, "上轨", false), dcDs(loE, "下轨", false), dcDs(midE, "中位", true)))
             xAxis.apply { setDrawLabels(false); setDrawGridLines(false); axisMinimum = -0.5f; axisMaximum = show - 0.5f }
             axisLeft.apply { textColor = GRAY; textSize = 8f; setDrawGridLines(false) }
             axisRight.isEnabled = false
@@ -539,24 +620,45 @@ class ChanlunFragment : Fragment() {
             invalidate()
         }
 
-        // ── ② SSA cycle ──
+        // ── ② SSA cycle + 一阶速度(橙虚线) + 二阶加速度(紫点线)，三线各自归一化共享零轴 ──
         cycleChart.clear()
         if (n0 > ssaL + 5) {
             val closes = DoubleArray(n0) { bars[it].close }
             val cyc = runCatching { com.chin.stockanalysis.strategy.ssa.SsaEngine.decompose(closes, ssaL).cycle }.getOrNull()
             if (cyc != null) {
-                val cycE = ArrayList<com.github.mikephil.charting.data.Entry>(show)
-                for (i in 0 until show) {
-                    val v = cyc[off + i]
-                    if (!v.isNaN()) cycE.add(com.github.mikephil.charting.data.Entry(i.toFloat(), v.toFloat()))
+                // 一阶差分=速度（峰领先 cycle 约 T/4）；二阶差分=加速度（再领先 T/4，最早衰竭预警）
+                val vel = DoubleArray(n0) { Double.NaN }
+                val acc = DoubleArray(n0) { Double.NaN }
+                for (i in 1 until n0) if (!cyc[i].isNaN() && !cyc[i - 1].isNaN()) vel[i] = cyc[i] - cyc[i - 1]
+                for (i in 2 until n0) if (!vel[i].isNaN() && !vel[i - 1].isNaN()) acc[i] = vel[i] - vel[i - 1]
+                // 各自归一化（除以全序列绝对值最大，NaN 跳过），三线可比、共享零轴
+                fun maxAbs(a: DoubleArray): Double { var m = 0.0; for (v in a) if (!v.isNaN() && kotlin.math.abs(v) > m) m = kotlin.math.abs(v); return if (m > 0.0) m else 1.0 }
+                val mc = maxAbs(cyc); val mv = maxAbs(vel); val ma = maxAbs(acc)
+                fun mkEntry(a: DoubleArray, norm: Double): ArrayList<com.github.mikephil.charting.data.Entry> {
+                    val es = ArrayList<com.github.mikephil.charting.data.Entry>(show)
+                    for (i in 0 until show) {
+                        val v = a[off + i]
+                        if (!v.isNaN()) es.add(com.github.mikephil.charting.data.Entry(i.toFloat(), (v / norm).toFloat()))
+                    }
+                    return es
                 }
-                val cycDs = com.github.mikephil.charting.data.LineDataSet(cycE, "cycle L=$ssaL").apply {
+                val cycDs = com.github.mikephil.charting.data.LineDataSet(mkEntry(cyc, mc), "cycle L=$ssaL").apply {
                     color = TEAL; lineWidth = 1.4f; setDrawCircles(false); setDrawValues(false)
+                    setDrawHighlightIndicators(true); highLightColor = Color.parseColor("#555555")
+                }
+                val velDs = com.github.mikephil.charting.data.LineDataSet(mkEntry(vel, mv), "速度").apply {
+                    color = Color.parseColor("#FF9800"); lineWidth = 1.1f
+                    setDrawCircles(false); setDrawValues(false); enableDashedLine(10f, 6f, 0f)
+                }
+                val accDs = com.github.mikephil.charting.data.LineDataSet(mkEntry(acc, ma), "加速度").apply {
+                    color = Color.parseColor("#9C27B0"); lineWidth = 1.0f
+                    setDrawCircles(false); setDrawValues(false); enableDashedLine(3f, 4f, 0f)
                 }
                 cycleChart.apply {
-                    description.isEnabled = false; legend.isEnabled = false
+                    description.isEnabled = false
+                    legend.isEnabled = true; legend.textSize = 8f
                     setTouchEnabled(false); setDrawGridBackground(false)
-                    data = com.github.mikephil.charting.data.LineData(cycDs)
+                    data = com.github.mikephil.charting.data.LineData(listOf(cycDs, velDs, accDs))
                     xAxis.apply { setDrawLabels(false); setDrawGridLines(false); axisMinimum = -0.5f; axisMaximum = show - 0.5f }
                     axisLeft.apply { textColor = GRAY; textSize = 8f; setDrawGridLines(false) }
                     axisRight.isEnabled = false
