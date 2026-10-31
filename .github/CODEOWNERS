@@ -1,0 +1,37 @@
+# CODEOWNERS —— 谁**必须审查**哪些文件的改动
+#
+# ⚠️ 重要：本文件**本身不阻止任何人 push**，它只决定「PR 必须由谁批准」。
+#          要真正挡住别人的写/合并，必须在**分支保护规则**里勾选
+#          "Require review from Code Owners" + "Restrict who can push"。
+#          详见 docs/GitHub分支保护配置.md
+#
+# 语法：`路径模式     @用户名1 @用户名2`（用户名需是 GitHub 真实用户名，否则不生效）
+
+# ── 默认：全部文件归仓库所有者 ──
+*                                   @skychin4216
+
+# ── 隐私 / 加密相关（重点看护，改动可能泄露交易与持仓）──
+/.gitattributes                     @skychin4216
+/.gitignore                         @skychin4216
+/data/                              @skychin4216
+/smalltools/_secure_files.py        @skychin4216
+/smalltools/_apk_log_fetch.py       @skychin4216
+/app/src/main/assets/data/          @skychin4216
+
+# ── 交易与风控（改动影响真金白银）──
+/smalltools/_trade_gateway.py       @skychin4216
+/smalltools/_auto_sell.py           @skychin4216
+/smalltools/_remote_cmd.py          @skychin4216
+/smalltools/_paper_sim.py           @skychin4216
+
+# ── 选股核心逻辑 ──
+/smalltools/_publish_candidates.py  @skychin4216
+/smalltools/_pool_filters.py        @skychin4216
+/smalltools/_sector_gate.py         @skychin4216
+/smalltools/_oversold_relax.py      @skychin4216
+
+# ── 若日后要让他人共同维护某些模块，在这里加他们的 GitHub 用户名 ──
+# 例：/smalltools/_market_scan.py   @skychin4216 @someone-else
+#
+# 注意：加了别人 = 他们对该路径的 PR 有批准权。若只想让他们「读」，
+#       请不要加，保持只有自己即可。

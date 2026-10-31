@@ -102,8 +102,13 @@ def build(max_per_group: int = 4, with_charts: bool = True
     return {"content": content, "detail": detail, "codes": codes, "images": images}
 
 
-def push_wechat(images: List[str], text: str, max_imgs: int = 6) -> int:
-    """并排图 + 文本推送微信群。返回成功图片数。"""
+def push_wechat(images: List[str], text: str, max_imgs: int = 6, codes=None) -> int:
+    """并排图 + 文本推送微信群。返回成功图片数。
+
+    2026-09-22：选股结果**同时**以结构化清单写进 PC→APK 中继箱
+    （kind="candidates" + payload.list），APK 的「股票」Tab 据此逐条建卡片并本地保存。
+    微信群照旧收「图 + 文本」，两条通道并联、互不影响（见 push_channel.relay_push）。
+    """
     try:
         import push_channel as PC2                   # noqa: PLC0415
         cfg = PC2.load_notify_cfg()
@@ -117,8 +122,20 @@ def push_wechat(images: List[str], text: str, max_imgs: int = 6) -> int:
                 ok += 1
         except Exception as e:                       # noqa: BLE001
             print("  图片推送失败:", e)
+    # 结构化清单：APK「股票」Tab 优先读 payload.list，正文只作兜底展示
+    payload = None
+    if codes:
+        try:
+            payload = {"list": [
+                {"code": c, "name": (p.get("name") or ""), "secid": p.get("secid", "")}
+                for c, p in sorted(codes.items())
+            ]}
+        except Exception as e:                       # noqa: BLE001
+            print("  选股清单构建失败（仍按纯文本推送）:", e)
+            payload = None
     try:
-        PC2.push("当日选股（子编码下单）", text, cfg, kind="notice")
+        PC2.push("当日选股（子编码下单）", text, cfg,
+                 kind="candidates", payload=payload)
     except Exception as e:                           # noqa: BLE001
         print("  文本推送失败:", e)
     return ok
@@ -132,5 +149,5 @@ if __name__ == "__main__":
     print("─── 过程明细 ───")
     print(r["detail"])
     if not no_push and r["images"]:
-        n = push_wechat(r["images"], r["content"])
+        n = push_wechat(r["images"], r["content"], codes=r.get("codes"))
         print("微信群已推 %d/%d 张图" % (n, len(r["images"])))

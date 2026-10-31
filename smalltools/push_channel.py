@@ -347,12 +347,16 @@ def send_file(file_path, cfg):
         return False
 
 
-def relay_push(title, content, cfg, kind="notice"):
+def relay_push(title, content, cfg, kind="notice", payload=None):
     """P3：并联「PC → APK 中继箱」通道（best-effort，绝不影响企微结果）。
 
     企业微信把消息推给**人**，中继箱把消息推给**APK 本身** —— 两者职责不同，
     故并联而非替换（见 docs/bridge-relay-design.md §6.2）。
     缺 COS 配置 / relay 模块不可用 / 无已登记设备时静默跳过，绝不抛异常。
+
+    @param payload 结构化附加数据。APK 端**优先读它**：选股结果应传
+                   {"list": [{"code","name","price","pct","reason"}, ...]}，
+                   这样 APK 的「股票」Tab 能逐条建卡片，而不是去猜正文格式。
     """
     try:
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -360,19 +364,21 @@ def relay_push(title, content, cfg, kind="notice"):
         if os.path.isdir(rp_dir) and rp_dir not in sys.path:
             sys.path.insert(0, rp_dir)
         import relay_push as _rp  # 延迟导入：无 COS 依赖时不影响企微推送
-        return _rp.push(title, content, kind=kind)
+        return _rp.push(title, content, kind=kind, payload=payload)
     except Exception as e:  # noqa: BLE001
         print("中继推送跳过:", type(e).__name__, e)
         return 0
 
 
-def push(title, content, cfg, kind="notice", relay=True):
+def push(title, content, cfg, kind="notice", relay=True, payload=None):
     """统一微信推送入口。渠道顺序：企业微信机器人 > pushplus > serverchan。
 
     cfg 为 app_config.json 的 notify 段（dict）。返回是否至少一路发送成功。
 
-    @param kind  推送类型，中继箱通道据此给 APK 分类（notice / candidates / intel）
-    @param relay False = 只走微信通道，不写 PC→APK 中继箱
+    @param kind    推送类型，中继箱通道据此给 APK 分类：
+                   notice / candidates(选股) / intel / signal
+    @param relay   False = 只走微信通道，不写 PC→APK 中继箱
+    @param payload 结构化附加数据，原样透传给中继箱（见 relay_push）
 
     2026-09-15 加固（「无论如何都要推送」）：三通道全失败时消息**落盘排队**
     （_records/_push_queue.jsonl，同 title 去重），之后任一次推送成功自动补发
@@ -386,7 +392,7 @@ def push(title, content, cfg, kind="notice", relay=True):
     if not sent:
         print("未配置推送(notify.wecom_key / pushplus_token / serverchan_key)或通道故障，"
               "已落盘排队待补发：\n%s\n%s" % (title, content))
-        _enqueue_failed(title, content, kind)
+        _enqueue_failed(title, content, kind, payload)
     else:
         try:
             flush_pending()
@@ -395,7 +401,7 @@ def push(title, content, cfg, kind="notice", relay=True):
     # P3：并联中继箱。**无论企微成功与否都要写** —— 两者是互补通道，
     # 企微失败（限流/未配置）时 APK 更要能拿到消息。
     if relay:
-        relay_push(title, content, cfg, kind=kind)
+        relay_push(title, content, cfg, kind=kind, payload=payload)
     return sent
 
 
@@ -404,7 +410,7 @@ _QUEUE_FILE = os.path.join(_ROOT, "smalltools", "_records", "_push_queue.jsonl")
 _QUEUE_MAX = 100  # 队列上限，防极端情况无限膨胀（超过丢最旧）
 
 
-def _enqueue_failed(title, content, kind):
+def _enqueue_failed(title, content, kind, payload=None):
     """三通道全失败的消息落盘排队（同 title 去重；队列超限丢最旧）。best-effort。"""
     try:
         os.makedirs(os.path.dirname(_QUEUE_FILE), exist_ok=True)
@@ -412,7 +418,8 @@ def _enqueue_failed(title, content, kind):
         if any(it.get("title") == title for it in pending):
             return  # 同标题未发消息已在队列，不重复入队（守护重试会反复触发）
         pending.append({"ts": time.strftime("%Y-%m-%d %H:%M:%S"),
-                        "kind": kind, "title": title, "content": content})
+                        "kind": kind, "title": title, "content": content,
+                        "payload": payload})
         _write_queue(pending[-_QUEUE_MAX:])
     except Exception as e:  # noqa: BLE001
         print("排队落盘失败:", type(e).__name__, e)
