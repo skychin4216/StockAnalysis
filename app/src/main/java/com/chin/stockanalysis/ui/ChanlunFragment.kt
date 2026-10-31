@@ -1,4 +1,4 @@
-﻿package com.chin.stockanalysis.ui
+package com.chin.stockanalysis.ui
 
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -114,6 +114,7 @@ class ChanlunFragment : Fragment() {
 
     private fun switchSubMode(m: Int) {
         replayJob?.cancel(); replayJob = null   // 切页时停掉逐K回放
+        replayDlg?.dismiss(); replayDlg = null
         subMode = m
         paintSubMode(m)
         val host = contentHost ?: return
@@ -158,6 +159,7 @@ class ChanlunFragment : Fragment() {
         btn.setOnClickListener {
             btn.isEnabled = false
             listBox.removeAllViews()
+            recChartCache.clear()   // 重新扫描：旧结构缓存作废
             val pool = loadCorePool()
             val results = java.util.Collections.synchronizedList(ArrayList<SignalRow>())
             viewLifecycleOwner.lifecycleScope.launch {
@@ -190,6 +192,9 @@ class ChanlunFragment : Fragment() {
 
     private data class SignalRow(val code: String, val bspType: String, val sure: Boolean,
                                  val price: Double, val dist: Int, val zsCnt: Int, val score: Int)
+
+    /** 荐股行内嵌结构图缓存：点过的票不重复拉数/重算 */
+    private val recChartCache = HashMap<String, com.chin.stockanalysis.strategy.chanlun.ChanlunEngine.Structure>()
 
     private suspend fun scanOneLocal(code: String): SignalRow? = withContext(kotlinx.coroutines.Dispatchers.Default) {
         val bars = fetchBars(code, "1h")
@@ -257,10 +262,38 @@ class ChanlunFragment : Fragment() {
                     layoutParams = LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply { topMargin = dp(7); bottomMargin = dp(7) }
                 })
-                val rowBox = LinearLayout(requireContext()).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(dp(6), dp(4), dp(6), dp(4))
-                    setOnClickListener { openSingle(r.code) }
+                val rowBox = LinearLayout(requireContext())
+                rowBox.orientation = LinearLayout.VERTICAL
+                rowBox.setPadding(dp(6), dp(4), dp(6), dp(4))
+                rowBox.run {
+                    // 点击 = 行下方展开/收起「画好笔」的结构图；要完整分析再点图下「去单股分析 ›」
+                    setOnClickListener {
+                        val exist = rowBox.tag as? LinearLayout
+                        if (exist != null) { card.removeView(exist); rowBox.tag = null; return@setOnClickListener }
+                        val wrap = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL }
+                        wrap.addView(tv("⏳ 加载 ${r.code} 结构图…", GRAY, 10f))
+                        card.addView(wrap, card.indexOfChild(rowBox) + 1)
+                        rowBox.tag = wrap
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            val st = recChartCache[r.code] ?: runCatching {
+                                val bars = fetchBars(r.code, "1h")
+                                if (bars.size < 60) null
+                                else com.chin.stockanalysis.strategy.chanlun.ChanlunEngine.compute(bars)
+                            }.getOrNull()?.also { recChartCache[r.code] = it }
+                            if (rowBox.tag !== wrap) return@launch   // 加载期间已被收起
+                            wrap.removeAllViews()
+                            if (st == null) { wrap.addView(tv("⚠️ 数据不足", GRAY, 10f)); return@launch }
+                            val ch = CombinedChart(requireContext())
+                            wrap.addView(ch, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(220)))
+                            // 近 120 根：K线 + 笔 + 买卖点（中枢/分型等省略，保持卡片轻量）
+                            ChanlunChartRenderer.render(ch, st, 120,
+                                true, false, true, false, false, false, false)
+                            wrap.addView(tv("去单股分析 ›", TEAL, 11f, true).apply {
+                                setPadding(0, dp(6), 0, dp(2))
+                                setOnClickListener { openSingle(r.code) }
+                            })
+                        }
+                    }
                 }
                 val nm = names[r.code]
                 rowBox.addView(tv(
@@ -285,6 +318,8 @@ class ChanlunFragment : Fragment() {
     private var lastBars: List<com.chin.stockanalysis.strategy.chanlun.ChanlunEngine.Bar>? = null
     private var replayJob: kotlinx.coroutines.Job? = null
     private var replaySpeedMs = 500L
+    private var replayDlg: android.app.Dialog? = null
+    private fun btnSpeedText() = "速度:" + when (replaySpeedMs) { 1200L -> "慢"; 500L -> "中"; 200L -> "快"; else -> "极快" }
     private fun buildSinglePage(): View {
         val ctx = requireContext()
         val scroll = ScrollView(ctx)
@@ -298,8 +333,8 @@ class ChanlunFragment : Fragment() {
             inputType = android.text.InputType.TYPE_CLASS_NUMBER
         }
         val lvGroup = RadioGroup(ctx).apply { orientation = RadioGroup.HORIZONTAL }
-        val rb1h = RadioButton(ctx).apply { text = "1H"; isChecked = singleLv == "1h"; textSize = 12f }
-        val rbDay = RadioButton(ctx).apply { text = "日"; isChecked = singleLv == "day"; textSize = 12f }
+        val rb1h = RadioButton(ctx).apply { id = View.generateViewId(); text = "1H"; isChecked = singleLv == "1h"; textSize = 12f }
+        val rbDay = RadioButton(ctx).apply { id = View.generateViewId(); text = "日"; isChecked = singleLv == "day"; textSize = 12f }
         lvGroup.addView(rb1h); lvGroup.addView(rbDay)
         lvGroup.setOnCheckedChangeListener { _, id -> singleLv = if (id == rb1h.id) "1h" else "day" }
         val btn = android.widget.Button(ctx).apply { text = "分析" }
@@ -401,120 +436,149 @@ class ChanlunFragment : Fragment() {
         """.trimIndent()
         box.addView(tv(legend, GRAY, 10f).apply { setPadding(0, dp(4), 0, dp(4)) })
 
-        // ── ▶ 逐K回放面板：滚动回放历史K线，动态看 分型/笔/中枢/买卖点 的生成过程 ──
+        // ── ▶ 逐K回放：进入全屏回放页（外层策略网格不再挤压图表），✕/返回键退出并恢复原图 ──
         val replayRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val btnPlay = android.widget.Button(ctx).apply { text = "▶ 逐K回放"; textSize = 11f }
-        val btnPause = android.widget.Button(ctx).apply { text = "⏸ 暂停"; textSize = 11f }
-        val btnSpeed = android.widget.Button(ctx).apply { text = "速度:中"; textSize = 11f }
-        val btnReset = android.widget.Button(ctx).apply { text = "⏮ 重置"; textSize = 11f }
+        val btnPlay = android.widget.Button(ctx).apply { text = "▶ 逐K回放(全屏)"; textSize = 11f }
         val tvProg = tv("先点「分析」加载K线", GRAY, 10f).apply { setPadding(dp(6), 0, 0, 0) }
-        replayRow.addView(btnPlay); replayRow.addView(btnPause); replayRow.addView(btnSpeed); replayRow.addView(btnReset)
+        replayRow.addView(btnPlay)
         replayRow.addView(tvProg, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         box.addView(replayRow)
-        val logTv = tv("", GRAY, 10f)
-        val logScroll = ScrollView(ctx).apply { addView(logTv) }
-        box.addView(logScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(110)))
 
-        var replayPaused = false   // 暂停标志：回放循环挂起等待，idx 不前进
-
-        fun stopReplay(restore: Boolean) {
-            replayJob?.cancel(); replayJob = null
-            replayPaused = false; btnPause.text = "⏸ 暂停"
-            btnPlay.text = "▶ 逐K回放"
-            if (restore) lastStructure?.let {
-                ChanlunChartRenderer.render(chart, it, effShow(), cbBi.isChecked, cbZs.isChecked, cbBsp.isChecked,
-                    cbSP.isChecked, cbFib.isChecked, cbFx.isChecked, cbMarker.isChecked)
-                renderAuxCharts(obvChart, cycleChart, it.bars, ssaL, effShow())
+        /** 全屏回放页：进度行 + 主图(weight=1 占满中段) + 两副图 + 事件日志 + 紧凑控制条 */
+        fun openReplayDialog(bars: List<com.chin.stockanalysis.strategy.chanlun.ChanlunEngine.Bar>) {
+            val dlg = android.app.Dialog(ctx, android.R.style.Theme_Material_Light_NoActionBar_Fullscreen)
+            val root = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(8), dp(6), dp(8), dp(8)); setBackgroundColor(Color.WHITE)
             }
-        }
+            // 进度行固定单行高度：文字换行会触发整页重排，图表被重新测量 → 每帧闪一下
+            val dProg = tv("", GRAY, 11f).apply {
+                maxLines = 1
+                isSingleLine = true
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            }
+            root.addView(dProg, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(18)))
+            val dChart = CombinedChart(ctx)
+            root.addView(dChart, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+            val dObv = com.github.mikephil.charting.charts.LineChart(ctx)
+            root.addView(dObv, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(80)))
+            val dCycle = com.github.mikephil.charting.charts.LineChart(ctx)
+            root.addView(dCycle, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(80)))
+            val dLog = tv("", GRAY, 10f)
+            val dLogScroll = ScrollView(ctx).apply { addView(dLog) }
+            root.addView(dLogScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(84)))
+            val ctrl = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            val btnPause2 = android.widget.Button(ctx).apply { text = "⏸ 暂停"; textSize = 11f }
+            val btnSpeed2 = android.widget.Button(ctx).apply { text = btnSpeedText(); textSize = 11f }
+            val btnReset2 = android.widget.Button(ctx).apply { text = "⏮ 重置"; textSize = 11f }
+            val btnExit = android.widget.Button(ctx).apply { text = "✕ 退出"; textSize = 11f }
+            ctrl.addView(btnPause2); ctrl.addView(btnSpeed2); ctrl.addView(btnReset2); ctrl.addView(btnExit)
+            root.addView(ctrl)
+            dlg.setContentView(root)
 
-        fun startReplay() {
-            val bars = lastBars ?: return
-            btnPlay.text = "⏹ 停止"
-            logTv.text = ""
-            var idx = 40.coerceAtMost(bars.size - 1)   // 回放起点：前 40 根做结构暖机
-            var prevFx = 0; var prevBi = 0; var prevZs = 0; var prevBsp = 0; var prevLastSure = true
-            replayJob = viewLifecycleOwner.lifecycleScope.launch {
-                while (isActive && idx < bars.size) {
-                    while (isActive && replayPaused) delay(120)   // 暂停挂起，继续后从当前根接着走
-                    if (!isActive) break
-                    val sub = bars.subList(0, idx + 1)
-                    val st = withContext(kotlinx.coroutines.Dispatchers.Default) {
-                        runCatching { com.chin.stockanalysis.strategy.chanlun.ChanlunEngine.compute(sub) }.getOrNull()
+            var paused = false   // 暂停标志：回放循环挂起等待，idx 不前进
+            val WIN = 120   // 回放窗口固定根数：图表只画最近 120 根，推进由数据切片完成（视口不动 → 无闪烁）
+            fun renderD(st: com.chin.stockanalysis.strategy.chanlun.ChanlunEngine.Structure) {
+                ChanlunChartRenderer.render(dChart, st, WIN, cbBi.isChecked, cbZs.isChecked,
+                    cbBsp.isChecked, cbSP.isChecked, cbFib.isChecked, cbFx.isChecked, cbMarker.isChecked)
+                renderAuxCharts(dObv, dCycle, st.bars, ssaL, WIN)
+            }
+            fun startJob() {
+                paused = false; btnPause2.text = "⏸ 暂停"
+                var idx = 40.coerceAtMost(bars.size - 1)   // 回放起点：前 40 根做结构暖机
+                var prevFx = 0; var prevBi = 0; var prevZs = 0; var prevBsp = 0; var prevLastSure = true
+                replayJob = viewLifecycleOwner.lifecycleScope.launch {
+                    while (isActive && idx < bars.size) {
+                        while (isActive && paused) delay(120)   // 暂停挂起，继续后从当前根接着走
+                        if (!isActive) break
+                        val sub = bars.subList(0, idx + 1)
+                        val st = withContext(kotlinx.coroutines.Dispatchers.Default) {
+                            runCatching { com.chin.stockanalysis.strategy.chanlun.ChanlunEngine.compute(sub) }.getOrNull()
+                        }
+                        if (st != null) {
+                            renderD(st)
+                            val bar = bars[idx]
+                            dProg.text = "${idx + 1}/${bars.size}  ${bar.time}  收${fmt2(bar.close)}"
+                            // ── 结构事件 diff：新分型 / 新笔 / 笔确认 / 新中枢 / 新买卖点 ──
+                            val sbEvt = StringBuilder()
+                            if (st.fx.size > prevFx) {
+                                for (k in prevFx until st.fx.size) {
+                                    val f = st.fx[k]
+                                    sbEvt.append(if (f.type == com.chin.stockanalysis.strategy.chanlun.ChanlunEngine.FxType.TOP)
+                                        "▽ 顶分型 ${fmt2(f.price)}（${f.time}）\n" else "△ 底分型 ${fmt2(f.price)}（${f.time}）\n")
+                                }
+                                prevFx = st.fx.size
+                            }
+                            if (st.bi.size > prevBi) {
+                                for (k in prevBi until st.bi.size) {
+                                    val b = st.bi[k]
+                                    val dir = if (b.dir == com.chin.stockanalysis.strategy.chanlun.ChanlunEngine.Dir.UP) "↑上涨笔" else "↓下跌笔"
+                                    sbEvt.append("✏ 第${k + 1}笔成立 $dir ${fmt2(b.beginPrice)}→${fmt2(b.endPrice)}${if (b.sure) "" else "（虚笔）"}\n")
+                                }
+                                prevBi = st.bi.size
+                                prevLastSure = st.bi.lastOrNull()?.sure ?: true
+                            } else {
+                                val lb = st.bi.lastOrNull()
+                                if (lb != null && !prevLastSure && lb.sure) { sbEvt.append("✔ 第${st.bi.size}笔确认（虚转实）\n"); prevLastSure = true }
+                            }
+                            if (st.zs.size > prevZs) {
+                                val z = st.zs.last()
+                                sbEvt.append("▭ 中枢${st.zs.size}形成 [${fmt2(z.low)} ~ ${fmt2(z.high)}]\n")
+                                prevZs = st.zs.size
+                            }
+                            if (st.bsp.size > prevBsp) {
+                                for (k in prevBsp until st.bsp.size) {
+                                    val p = st.bsp[k]
+                                    sbEvt.append((if (p.isBuy) "🔴 ${p.type}买" else "🟢 ${p.type}卖") +
+                                        (if (p.sure) "" else "（虚）") + " @${fmt2(p.price)}（${p.time}）\n")
+                                }
+                                prevBsp = st.bsp.size
+                            }
+                            if (sbEvt.isNotEmpty()) {
+                                dLog.append(sbEvt.toString())
+                                dLogScroll.post { dLogScroll.fullScroll(View.FOCUS_DOWN) }
+                            }
+                        }
+                        idx++
+                        delay(replaySpeedMs)
                     }
-                    if (st != null) {
-                        ChanlunChartRenderer.render(chart, st, effShow(), cbBi.isChecked, cbZs.isChecked,
-                            cbBsp.isChecked, cbSP.isChecked, cbFib.isChecked, cbFx.isChecked, cbMarker.isChecked)
-                        renderAuxCharts(obvChart, cycleChart, st.bars, ssaL, effShow())
-                        val bar = bars[idx]
-                        tvProg.text = "${idx + 1}/${bars.size}  ${bar.time}  收${fmt2(bar.close)}"
-                        // ── 结构事件 diff：新分型 / 新笔 / 笔确认 / 新中枢 / 新买卖点 ──
-                        val sbEvt = StringBuilder()
-                        if (st.fx.size > prevFx) {
-                            for (k in prevFx until st.fx.size) {
-                                val f = st.fx[k]
-                                sbEvt.append(if (f.type == com.chin.stockanalysis.strategy.chanlun.ChanlunEngine.FxType.TOP)
-                                    "▽ 顶分型 ${fmt2(f.price)}（${f.time}）\n" else "△ 底分型 ${fmt2(f.price)}（${f.time}）\n")
-                            }
-                            prevFx = st.fx.size
-                        }
-                        if (st.bi.size > prevBi) {
-                            for (k in prevBi until st.bi.size) {
-                                val b = st.bi[k]
-                                val dir = if (b.dir == com.chin.stockanalysis.strategy.chanlun.ChanlunEngine.Dir.UP) "↑上涨笔" else "↓下跌笔"
-                                sbEvt.append("✏ 第${k + 1}笔成立 $dir ${fmt2(b.beginPrice)}→${fmt2(b.endPrice)}${if (b.sure) "" else "（虚笔）"}\n")
-                            }
-                            prevBi = st.bi.size
-                            prevLastSure = st.bi.lastOrNull()?.sure ?: true
-                        } else {
-                            val lb = st.bi.lastOrNull()
-                            if (lb != null && !prevLastSure && lb.sure) { sbEvt.append("✔ 第${st.bi.size}笔确认（虚转实）\n"); prevLastSure = true }
-                        }
-                        if (st.zs.size > prevZs) {
-                            val z = st.zs.last()
-                            sbEvt.append("▭ 中枢${st.zs.size}形成 [${fmt2(z.low)} ~ ${fmt2(z.high)}]\n")
-                            prevZs = st.zs.size
-                        }
-                        if (st.bsp.size > prevBsp) {
-                            for (k in prevBsp until st.bsp.size) {
-                                val p = st.bsp[k]
-                                sbEvt.append((if (p.isBuy) "🔴 ${p.type}买" else "🟢 ${p.type}卖") +
-                                    (if (p.sure) "" else "（虚）") + " @${fmt2(p.price)}（${p.time}）\n")
-                            }
-                            prevBsp = st.bsp.size
-                        }
-                        if (sbEvt.isNotEmpty()) {
-                            logTv.append(sbEvt.toString())
-                            logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
-                        }
-                    }
-                    idx++
-                    delay(replaySpeedMs)
+                    if (idx >= bars.size) { dProg.text = "回放完成 ${bars.size}/${bars.size}"; replayJob = null }
                 }
-                if (idx >= bars.size) { stopReplay(false); tvProg.text = "回放完成 ${bars.size}/${bars.size}" }
             }
+            btnPause2.setOnClickListener {
+                if (replayJob == null) return@setOnClickListener
+                paused = !paused
+                btnPause2.text = if (paused) "▶ 继续" else "⏸ 暂停"
+            }
+            btnSpeed2.setOnClickListener {
+                replaySpeedMs = when (replaySpeedMs) { 1200L -> 500L; 500L -> 200L; 200L -> 80L; else -> 1200L }
+                btnSpeed2.text = btnSpeedText()
+            }
+            btnReset2.setOnClickListener {
+                replayJob?.cancel(); replayJob = null; dLog.text = ""
+                startJob()
+            }
+            btnExit.setOnClickListener { dlg.dismiss() }
+            dlg.setOnDismissListener {
+                replayJob?.cancel(); replayJob = null; replayDlg = null
+                // 恢复主页面完整结构图
+                lastStructure?.let {
+                    ChanlunChartRenderer.render(chart, it, effShow(), cbBi.isChecked, cbZs.isChecked, cbBsp.isChecked,
+                        cbSP.isChecked, cbFib.isChecked, cbFx.isChecked, cbMarker.isChecked)
+                    renderAuxCharts(obvChart, cycleChart, it.bars, ssaL, effShow())
+                }
+            }
+            lastStructure?.let { renderD(it) }
+            dlg.show()
+            replayDlg = dlg
+            startJob()
         }
 
         btnPlay.setOnClickListener {
             val bars = lastBars
-            if (replayJob != null) { stopReplay(true); status.text = "已停止回放（恢复完整结构图）"; return@setOnClickListener }
             if (bars == null || bars.size < 60) { status.text = "请先点「分析」加载K线（需≥60根）"; return@setOnClickListener }
-            startReplay()
-        }
-        btnPause.setOnClickListener {
-            if (replayJob == null) return@setOnClickListener   // 未在回放时无效
-            replayPaused = !replayPaused
-            btnPause.text = if (replayPaused) "▶ 继续" else "⏸ 暂停"
-            tvProg.text = if (replayPaused) "已暂停（点「▶ 继续」接着走）" else tvProg.text
-        }
-        btnReset.setOnClickListener {
-            val wasPlaying = replayJob != null
-            stopReplay(false); logTv.text = ""; tvProg.text = "已重置到起点"
-            if (wasPlaying) startReplay()
-        }
-        btnSpeed.setOnClickListener {
-            replaySpeedMs = when (replaySpeedMs) { 1200L -> 500L; 500L -> 200L; 200L -> 80L; else -> 1200L }
-            btnSpeed.text = "速度:" + when (replaySpeedMs) { 1200L -> "慢"; 500L -> "中"; 200L -> "快"; else -> "极快" }
+            tvProg.text = "全屏回放页已打开（✕/返回键退出）"
+            openReplayDialog(bars)
         }
 
         val cardBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }

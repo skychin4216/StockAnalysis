@@ -16,9 +16,13 @@ import com.chin.stockanalysis.stock.data.sources.EastMoneyHotSectorSource
 import com.chin.stockanalysis.stock.data.sources.EastMoneySectorSource
 import com.chin.stockanalysis.stock.data.sources.SinaSectorSource
 import com.chin.stockanalysis.stock.database.StockDatabase
+import com.chin.stockanalysis.strategy.analysis.PhaseSpaceEngine
+import com.chin.stockanalysis.strategy.backtest.IntradayKlineEntity
+import com.chin.stockanalysis.strategy.chanlun.ChanlunEngine
 import com.chin.stockanalysis.strategy.data.IntradayKlineFetcher
 import com.chin.stockanalysis.strategy.gsp.GspEngine
 import com.chin.stockanalysis.strategy.gsp.SectorResonanceEngine
+import com.chin.stockanalysis.strategy.ssa.SsaHybridEngine
 import com.github.mikephil.charting.charts.LineChart
 import com.github.mikephil.charting.components.XAxis
 import com.github.mikephil.charting.data.Entry
@@ -76,6 +80,7 @@ class SectorResonanceFragment : Fragment() {
 
     // ── 逐K回测状态 ──
     private var replayJob: kotlinx.coroutines.Job? = null
+    private var btJob: kotlinx.coroutines.Job? = null
     private var replayStocks: List<SectorResonanceEngine.Stock>? = null
     private var replayBench: DoubleArray? = null
     private var replayDates: List<String>? = null
@@ -84,6 +89,7 @@ class SectorResonanceFragment : Fragment() {
 
     override fun onDestroyView() {
         replayJob?.cancel(); replayJob = null
+        btJob?.cancel(); btJob = null
         super.onDestroyView()
     }
 
@@ -291,6 +297,43 @@ class SectorResonanceFragment : Fragment() {
     /** 成分股三元组（本地/东财统一） */
     private data class Comp(val code: String, val name: String, val mcap: Double)
 
+    /**
+     * 按板块中文名从实时源补成分：先东财按名解析，无匹配再走新浪行业榜。
+     * 本地板块 key 是英文（如 semiconductor），无法直接查实时源，只能靠中文名反查。
+     */
+    private suspend fun remoteCompsByName(boardName: String, topN: Int): List<Comp> =
+        withContext(Dispatchers.IO) {
+            val em = runCatching {
+                EastMoneySectorSource().fetchByName(
+                    boardName, topN = topN, excludeKcb = false, excludeCyb = false
+                )?.second?.map { Comp(it.code, it.name, it.marketCapBillion.toDouble()) }
+            }.getOrNull().orEmpty()
+            if (em.isNotEmpty()) return@withContext em
+
+            val sina = SinaSectorSource()
+            val node = runCatching {
+                sina.fetchIndustryBoards().firstOrNull {
+                    it.name == boardName || it.name.contains(boardName) || boardName.contains(it.name)
+                }?.node
+            }.getOrNull()
+            if (node == null) emptyList()
+            else runCatching {
+                sina.fetchComponents(node, topN).map { Comp(it.symbol, it.name, it.mktcapYi) }
+            }.getOrDefault(emptyList())
+        }
+
+    /** 成分并集：按裸 6 位代码去重（primary 优先），上限 limit */
+    private fun unionComps(primary: List<Comp>, extra: List<Comp>, limit: Int): List<Comp> {
+        val seen = HashSet<String>(primary.size + extra.size)
+        val out = ArrayList<Comp>(minOf(limit, primary.size + extra.size))
+        for (c in primary.asSequence() + extra.asSequence()) {
+            if (!seen.add(c.code.takeLast(6))) continue
+            out.add(c)
+            if (out.size >= limit) break
+        }
+        return out
+    }
+
     private fun analyzeBoard(bkCode: String, boardName: String, local: Boolean = false, sina: Boolean = false) {
         lifecycleScope.launch {
             detailBox.removeAllViews()
@@ -303,7 +346,7 @@ class SectorResonanceFragment : Fragment() {
                     local -> {
                         // 本地路径：sector_stocks 取成分代码（带 sh/sz 前缀），stock_basics 补名
                         // ⚠️ stock_basics.code 可能是裸 6 位 → 双格式一起查，命中哪个用哪个
-                        runCatching {
+                        val localComps = runCatching {
                             val db = StockDatabase.getInstance(requireContext())
                             val codes = db.sectorStockDao().getStockCodesBySector(bkCode).take(topN)
                             val basics = db.stockBasicDao().getByCodes(codes + codes.map { it.takeLast(6) })
@@ -311,6 +354,10 @@ class SectorResonanceFragment : Fragment() {
                             basics.forEach { b -> nameMap[b.code] = b.name }
                             codes.map { Comp(it, nameMap[it] ?: nameMap[it.takeLast(6)] ?: it, 0.0) }
                         }.getOrDefault(emptyList())
+                        // 本地映射不足 topN 时，按板块中文名从东财/新浪实时源并集补成分
+                        // （救「本地映射不全」导致只有 2~3 只可用的情况）
+                        if (localComps.size >= topN) localComps
+                        else unionComps(localComps, remoteCompsByName(boardName, topN), topN)
                     }
                     sina -> runCatching {
                         SinaSectorSource().fetchComponents(bkCode, topN)
@@ -322,9 +369,9 @@ class SectorResonanceFragment : Fragment() {
                         ).map { Comp(it.code, it.name, it.marketCapBillion.toDouble()) }
                     }.getOrDefault(emptyList())
                 }
-            }
+            }.filter { !it.code.startsWith("bj") }   // 北交所日线不可用，不参与建图
             if (comps.size < 5) {
-                statusTv.text = "❌ 成分股拉取不足（${comps.size} 只），无法建图"
+                statusTv.text = "❌ 成分股拉取不足（${comps.size} 只）：本地映射与实时源均未补足 5 只，无法建图"
                 return@launch
             }
 
@@ -383,6 +430,7 @@ class SectorResonanceFragment : Fragment() {
             replayJob?.cancel()
             replayStocks = stocks; replayBench = benchClose; replayDates = dates
             replayBoardCode = bkCode; replayBoardName = boardName
+            btJob?.cancel(); btJob = null
             statusTv.text = "✅ $boardName 完成（${res.nStocks} 只 × ${res.nBars} 根）"
             renderDetail(res)
             saveCache(res)
@@ -495,6 +543,24 @@ class SectorResonanceFragment : Fragment() {
         replayPanel.addView(logScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(100)))
         detailBox.addView(replayPanel)
 
+        // ── ⑥ 策略回测：同一批逐帧结果上对比不同买法的单笔收益 ──
+        detailBox.addView(tv("⑥ 策略回测（对比不同买法：累计收益 / 胜率 / 单笔收益）", DARK, 11f, true)
+            .apply { setPadding(0, dp(10), 0, dp(2)) })
+        val btPanel = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(6), dp(10), dp(8))
+            background = rounded("#FFFFFF", 0)
+        }
+        val btBtn = Button(ctx).apply { text = "📈 运行策略对比"; textSize = 11f }
+        val btProg = tv("每 6 根开一笔（T+1 收盘买、持有 5 根），双边万3+5bp\n"
+            + "基础买法：接力Top1 / 补涨Top1 / 龙头跟随 / 全员等权\n"
+            + "组合择时：接力 +缠论 / +混合SSA / +相空间 / +缠论+相空间\n"
+            + "⚠ 组合行需逐票重算外部引擎，耗时较长", GRAY, 9f)
+        val btBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        btPanel.addView(btBtn); btPanel.addView(btProg); btPanel.addView(btBox)
+        detailBox.addView(btPanel)
+        btBtn.setOnClickListener { runStrategyBacktest(btBtn, btProg, btBox) }
+
         var replayPaused = false
         fun stopReplay() {
             replayJob?.cancel(); replayJob = null
@@ -570,6 +636,286 @@ class SectorResonanceFragment : Fragment() {
                 if (idx >= m0) { replayJob = null; btnPlay.text = "▶ 播放" }
             }
         }
+    }
+
+    // ════════════════════════ ⑥ 策略回测 ════════════════════════
+
+    private data class Snap(
+        val idx: Int, val date: String,
+        val state: SectorResonanceEngine.BoardState,
+        val leaderCode: String?, val leaderName: String?,
+        val cands: List<SectorResonanceEngine.Candidate>
+    )
+
+    private data class Trade(
+        val code: String, val name: String,
+        val buyDate: String, val sellDate: String,
+        val buyPx: Double, val sellPx: Double, val ret: Double
+    )
+
+    private data class Stat(
+        val name: String, val total: Double, val n: Int, val win: Double,
+        val avg: Double, val best: Double, val worst: Double, val trades: List<Trade>
+    )
+
+    private fun runStrategyBacktest(btBtn: Button, btProg: TextView, btBox: LinearLayout) {
+        if (btJob != null) {
+            btJob?.cancel(); btJob = null
+            btBtn.text = "📈 运行策略对比"; btProg.text = "已停止"
+            return
+        }
+        val stocksAll = replayStocks ?: return
+        val bench = replayBench ?: return
+        val dts = replayDates ?: return
+        val stocks = stocksAll.filter { it.close.size >= 60 && !it.name.contains("ST", true) }
+        if (stocks.size < 5) { btProg.text = "有效票不足（${stocks.size} 只，需≥5）"; return }
+        val m0 = minOf(stocks.minOf { it.close.size }, bench.size, dts.size)
+        if (m0 < 120) { btProg.text = "数据不足（$m0 根，需≥120）"; return }
+        val closesFull = stocks.map { it.close.takeLast(m0).toDoubleArray() }
+        val benchFull = bench.takeLast(m0).toDoubleArray()
+        val datesFull = dts.takeLast(m0)
+        val startIdx = 80
+        btBtn.text = "⏹ 停止"
+        btBox.removeAllViews()
+        btJob = lifecycleScope.launch {
+            val snaps = ArrayList<Snap>(m0)
+            for (idx in startIdx until m0 - 5) {
+                if (!isActive) break
+                btProg.text = "⏳ 逐帧重算 ${idx + 1}/$m0 …"
+                val res = withContext(Dispatchers.Default) {
+                    runCatching {
+                        val sub = stocks.mapIndexed { i, s ->
+                            SectorResonanceEngine.Stock(
+                                s.code, s.name, closesFull[i].copyOfRange(0, idx + 1), s.marketCap
+                            )
+                        }
+                        SectorResonanceEngine.analyze(
+                            boardCode = replayBoardCode, boardName = replayBoardName,
+                            stocks = sub,
+                            benchmarkClose = benchFull.copyOfRange(0, idx + 1),
+                            dates = datesFull.subList(0, idx + 1),
+                            window = window, order = order, diffuseT = diffuseT,
+                            leaderMode = leaderMode
+                        )
+                    }.getOrNull()
+                }
+                if (res != null) {
+                    snaps.add(Snap(idx, datesFull[idx], res.state, res.leaderCode, res.leaderName, res.candidates))
+                }
+                if (idx % 20 == 0) kotlinx.coroutines.yield()
+            }
+            if (!isActive) { btJob = null; return@launch }
+            if (snaps.isEmpty()) {
+                btProg.text = "❌ 逐帧结果为空"; btJob = null; btBtn.text = "📈 重新运行"; return@launch
+            }
+            val provider = SigProvider(stocks, closesFull, datesFull, m0)
+            val stats = simulate(snaps, closesFull, stocks, datesFull, m0, provider, btProg)
+            renderStats(btBox, stats)
+            btProg.text = "✅ 完成：${snaps.size} 帧 × ${stats.size} 策略（T+1 收盘执行、持有 5 根、双边万3+5bp）"
+            btJob = null; btBtn.text = "📈 重新运行"
+        }
+    }
+
+    /**
+     * 四种基础买法 + 三种「板块选股 × 其他模块择时」组合，在同一批逐帧结果上模拟：
+     * 每 6 根开一笔（买 t+1 收盘、卖 t+6 收盘），组合策略只是多加一道入场确认。
+     */
+    private suspend fun simulate(
+        snaps: List<Snap>, closes: List<DoubleArray>,
+        stocks: List<SectorResonanceEngine.Stock>, dates: List<String>, m0: Int,
+        provider: SigProvider, prog: TextView
+    ): List<Stat> {
+        val byCode = HashMap<String, Int>()
+        stocks.forEachIndexed { i, s -> byCode[s.code] = i }
+        val byIdx = HashMap<Int, Snap>(snaps.size)
+        snaps.forEach { byIdx[it.idx] = it }
+        val cost = 0.0003 * 2 + 0.0005 * 2
+
+        val selectors: Map<String, (Snap) -> List<SectorResonanceEngine.Candidate>> = mapOf(
+            "接力Top1" to { sn ->
+                sn.cands.filter { it.specPercentile < 0.5 && it.position < 0.75 && it.code != sn.leaderCode }
+                    .maxByOrNull { it.relayScore }?.let { listOf(it) } ?: emptyList()
+            },
+            "补涨Top1" to { sn ->
+                sn.cands.filter { it.position <= 0.90 }.maxByOrNull { it.score }?.let { listOf(it) }
+                    ?: emptyList()
+            },
+            "龙头跟随" to { sn ->
+                sn.cands.firstOrNull { it.code == sn.leaderCode }?.let { listOf(it) } ?: emptyList()
+            },
+            "全员等权" to { sn -> sn.cands.sortedByDescending { it.score }.take(10) }
+        )
+
+        data class Config(
+            val name: String, val base: String,
+            val gate: (suspend (SectorResonanceEngine.Candidate, Int) -> Boolean)? = null
+        )
+
+        val configs = listOf(
+            Config("接力Top1", "接力Top1"),
+            Config("补涨Top1", "补涨Top1"),
+            Config("龙头跟随", "龙头跟随"),
+            Config("全员等权", "全员等权"),
+            Config("接力+缠论", "接力Top1") { c, t -> provider.chanlunBuy(c.code, t) },
+            Config("接力+混合", "接力Top1") { c, t -> provider.hybridBuy(c.code, t) },
+            Config("接力+相空间", "接力Top1") { c, t -> provider.phaseUp(c.code, t) },
+            Config("接力+缠论+相空间", "接力Top1") { c, t ->
+                provider.chanlunBuy(c.code, t) && provider.phaseUp(c.code, t)
+            }
+        )
+
+        val first = snaps.first().idx
+        return configs.mapIndexed { ci, cfg ->
+            prog.text = "⏳ 组合回测 ${ci + 1}/${configs.size}：${cfg.name}…"
+            var total = 1.0
+            val trades = ArrayList<Trade>()
+            var t = first
+            while (t + 6 < m0) {
+                val sn = byIdx[t]
+                if (sn != null) {
+                    var picks = selectors[cfg.base]?.invoke(sn) ?: emptyList()
+                    if (cfg.gate != null && picks.isNotEmpty()) {
+                        picks = picks.filter { c -> cfg.gate.invoke(c, t) }
+                    }
+                    if (picks.isNotEmpty()) {
+                        var sum = 0.0
+                        var used = 0
+                        for (c in picks) {
+                            val i = byCode[c.code] ?: continue
+                            val bp = closes[i][t + 1]
+                            val sp = closes[i][t + 6]
+                            if (bp <= 0.0 || sp <= 0.0) continue
+                            val r = sp / bp - 1.0 - cost
+                            sum += r; used++
+                            trades.add(Trade(c.code, c.name, dates[t + 1], dates[t + 6], bp, sp, r))
+                        }
+                        if (used > 0) total *= (1.0 + sum / used)
+                    }
+                }
+                t += 6
+            }
+            val n = trades.size
+            Stat(
+                name = cfg.name,
+                total = total,
+                n = n,
+                win = if (n == 0) 0.0 else trades.count { it.ret > 0 }.toDouble() / n,
+                avg = if (n == 0) 0.0 else trades.sumOf { it.ret } / n,
+                best = trades.maxOfOrNull { it.ret } ?: 0.0,
+                worst = trades.minOfOrNull { it.ret } ?: 0.0,
+                trades = trades
+            )
+        }
+    }
+
+    /**
+     * 外部择时信号（按需计算 + 缓存）：
+     * - 缠论：对前缀 0..t 做因果计算，最近 3 根内出现买点 → 允许入场
+     * - 混合：SsaHybridEngine 逐 K 滚动本身因果，整段跑一次取 advice[t] ∈ {BUY, HOLD_POS}
+     * - 相空间：对前缀 0..t 重建，方法A 1 步预测涨幅 > 0 → 允许入场
+     * 取不到 OHLC / 引擎失败 → 视为"无确认"，该策略当期空仓。
+     */
+    private inner class SigProvider(
+        private val stocks: List<SectorResonanceEngine.Stock>,
+        private val closesFull: List<DoubleArray>,
+        private val datesFull: List<String>,
+        private val m0: Int
+    ) {
+        private val barCache = HashMap<String, List<IntradayKlineEntity>?>()
+        private val hyAdvice = HashMap<String, IntArray?>()
+        private val chanCache = HashMap<String, Boolean>()   // key = code@t
+        private val psCache = HashMap<String, Boolean>()
+
+        private suspend fun barsFor(code: String): List<IntradayKlineEntity>? {
+            if (barCache.containsKey(code)) return barCache[code]
+            val b = runCatching {
+                withContext(Dispatchers.IO) { fetcher.fetchDailyHistory(code, 750, preferCache = true) }
+            }.getOrNull()
+            val tail = if (b != null && b.size >= m0) b.takeLast(m0) else null
+            barCache[code] = tail
+            return tail
+        }
+
+        suspend fun chanlunBuy(code: String, t: Int): Boolean {
+            val key = "$code@$t"
+            chanCache[key]?.let { return it }
+            val tail = barsFor(code) ?: return false.also { chanCache[key] = false }
+            val res = withContext(Dispatchers.Default) {
+                runCatching {
+                    val cut = t.coerceAtMost(tail.size - 1)
+                    val bars = (0..cut).map { k ->
+                        val e = tail[k]
+                        ChanlunEngine.Bar(e.datetime.substring(0, 10), e.open, e.high, e.low, e.close, e.volume.toDouble())
+                    }
+                    ChanlunEngine.compute(bars)
+                }.getOrNull()
+            }
+            val ok = res?.bsp?.any { it.isBuy && it.idx >= t - 2 && it.idx <= t } ?: false
+            chanCache[key] = ok
+            return ok
+        }
+
+        suspend fun hybridBuy(code: String, t: Int): Boolean {
+            val arr = if (hyAdvice.containsKey(code)) hyAdvice[code] else {
+                val tail = barsFor(code)
+                val a = if (tail == null) null else withContext(Dispatchers.Default) {
+                    runCatching {
+                        SsaHybridEngine.run(tail.map {
+                            SsaHybridEngine.Bar(it.datetime.substring(0, 10), it.open, it.high, it.low, it.close)
+                        }).advice
+                    }.getOrNull()
+                }
+                hyAdvice[code] = a
+                a
+            } ?: return false
+            val k = t.coerceIn(0, arr.size - 1)
+            return arr[k] == SsaHybridEngine.BUY || arr[k] == SsaHybridEngine.HOLD_POS
+        }
+
+        suspend fun phaseUp(code: String, t: Int): Boolean {
+            val key = "$code@$t"
+            psCache[key]?.let { return it }
+            val idx = stocks.indexOfFirst { it.code == code }
+            if (idx < 0 || t < 120) { psCache[key] = false; return false }
+            val up = withContext(Dispatchers.Default) {
+                runCatching {
+                    PhaseSpaceEngine.analyze(
+                        dates = datesFull.subList(0, t + 1),
+                        closes = closesFull[idx].copyOfRange(0, t + 1),
+                        horizon = 1, evalN = 30, priceOnly = true
+                    )?.price?.fcPct?.firstOrNull()?.let { it > 0.0 } ?: false
+                }.getOrDefault(false)
+            }
+            psCache[key] = up
+            return up
+        }
+    }
+
+    private fun renderStats(box: LinearLayout, stats: List<Stat>) {
+        val ctx = requireContext()
+        box.removeAllViews()
+        box.addView(tv("策略        累计收益   笔数   胜率   单笔均   最好     最差", GRAY, 9f).apply {
+            setTypeface(android.graphics.Typeface.MONOSPACE)
+        })
+        stats.forEach { s ->
+            val color = if (s.total >= 1.0) RED else GREEN
+            box.addView(tv("%-10s %+8.1f%% %5d %6.0f%% %+6.1f%% %+6.1f%% %+6.1f%%".format(
+                s.name, (s.total - 1) * 100, s.n, s.win * 100, s.avg * 100, s.best * 100, s.worst * 100
+            ), color, 9f).apply { setTypeface(android.graphics.Typeface.MONOSPACE) })
+        }
+        val best = stats.maxByOrNull { it.total } ?: return
+        box.addView(tv("—— 收益最高：${best.name}（最近 15 笔买卖）", DARK, 10f, true)
+            .apply { setPadding(0, dp(8), 0, dp(2)) })
+        best.trades.takeLast(15).reversed().forEach { tr ->
+            val c = if (tr.ret >= 0) RED else GREEN
+            box.addView(tv("%s→%s  %s %s  %.2f → %.2f  %+.1f%%".format(
+                tr.buyDate.takeLast(5), tr.sellDate.takeLast(5), tr.name, tr.code.takeLast(6),
+                tr.buyPx, tr.sellPx, tr.ret * 100
+            ), c, 9f).apply { setTypeface(android.graphics.Typeface.MONOSPACE) })
+        }
+        box.addView(tv("说明：同一买法在同一窗口内每 6 根开一笔（不重叠），单笔收益已扣双边成本；" +
+            "累计收益为逐笔复利。不构成投资建议。", GRAY, 9f)
+            .apply { setPadding(0, dp(6), 0, 0) })
     }
 
     private fun candidateRow(rank: Int, c: SectorResonanceEngine.Candidate, relay: Boolean): View {

@@ -478,18 +478,84 @@ class VolumePriceFragment : Fragment() {
 
     // ═══════════════════════ 逐K回放（缠论页同款） ═══════════════════════
 
+    private var replayFullDlg: android.app.Dialog? = null
+    private var replayProgTv2: android.widget.TextView? = null
+
     private fun onReplayPlay() {
         val lr = lastRun
+        if (replayFullDlg != null) { replayFullDlg?.dismiss(); return }   // 全屏回放中再点 = 退出
         if (replayJob != null) { stopReplay(restore = true); status("已停止回放（恢复完整图）"); return }
         if (lr == null || lr.bars.size < 60) { status("⚠️ 先点「开始分析」加载K线（需≥60根）"); return }
-        startReplay()
+        openReplayFullscreen()
     }
 
     private fun onReplayPause() {
         if (replayJob == null) return   // 未在回放时无效
         replayPaused = !replayPaused
         btnReplayPause?.text = if (replayPaused) "▶ 继续" else "⏸ 暂停"
-        if (replayPaused) replayProgTv?.text = "已暂停（点「▶ 继续」接着走）"
+        if (replayPaused) { replayProgTv?.text = "已暂停（点「▶ 继续」接着走）"; replayProgTv2?.text = "已暂停（点「▶ 继续」接着走）" }
+    }
+
+    /** 全屏回放页（缠论同款）：进度行 + 四图区(weight=1 占满中段) + 紧凑控制条。
+     *  chartHost 临时搬进对话框，主图(K线)拉高 weight=1，退出时原样搬回。 */
+    private fun openReplayFullscreen() {
+        val ctx = requireContext()
+        val host = chartHost ?: return
+        val origParent = host.parent as? android.view.ViewGroup ?: return
+        val origIndex = origParent.indexOfChild(host)
+        val dlg = android.app.Dialog(ctx, android.R.style.Theme_Material_Light_NoActionBar_Fullscreen)
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(6), dp(8), dp(8)); setBackgroundColor(Color.WHITE)
+        }
+        // 进度行固定单行高度：换行会触发整页重排 → 每帧闪一下
+        val dProg = TextView(ctx).apply {
+            textSize = 11f; setTextColor(GRAY)
+            maxLines = 1; isSingleLine = true
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        root.addView(dProg, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(18)))
+        replayProgTv2 = dProg
+        origParent.removeView(host)
+        root.addView(host, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        val priceV = if (host.childCount > 0) host.getChildAt(0) else null
+        val priceLpOrig = priceV?.layoutParams
+        priceV?.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+        val ctrl = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val btnP = Button(ctx).apply { text = "⏸ 暂停"; textSize = 11f }
+        val btnS = Button(ctx).apply { text = btnReplaySpeed?.text ?: "速度:中"; textSize = 11f }
+        val btnR = Button(ctx).apply { text = "⏮ 重置"; textSize = 11f }
+        val btnX = Button(ctx).apply { text = "✕ 退出"; textSize = 11f }
+        ctrl.addView(btnP); ctrl.addView(btnS); ctrl.addView(btnR); ctrl.addView(btnX)
+        root.addView(ctrl)
+        dlg.setContentView(root)
+
+        btnP.setOnClickListener {
+            onReplayPause()
+            btnP.text = if (replayPaused) "▶ 继续" else "⏸ 暂停"
+        }
+        btnS.setOnClickListener {
+            replaySpeedMs = when (replaySpeedMs) { 1000L -> 400L; 400L -> 120L; else -> 1000L }
+            val t = "速度:" + when (replaySpeedMs) { 1000L -> "慢"; 400L -> "中"; else -> "快" }
+            btnS.text = t; btnReplaySpeed?.text = t
+        }
+        btnR.setOnClickListener {
+            stopReplay(restore = false)
+            replayProgTv2?.text = "已重置到起点"; replayProgTv?.text = "已重置到起点"
+            startReplay()
+            btnP.text = "⏸ 暂停"
+        }
+        btnX.setOnClickListener { dlg.dismiss() }
+        dlg.setOnDismissListener {
+            stopReplay(restore = true)                       // 先画回完整四图（host 还在对话框里也没关系）
+            if (priceV != null && priceLpOrig != null) priceV.layoutParams = priceLpOrig
+            (host.parent as? android.view.ViewGroup)?.removeView(host)
+            origParent.addView(host, origIndex.coerceAtMost(origParent.childCount))
+            replayFullDlg = null; replayProgTv2 = null
+        }
+        dlg.show()
+        replayFullDlg = dlg
+        startReplay()
     }
 
     /** 回放可见窗口宽度（根 K） */
@@ -530,7 +596,8 @@ class VolumePriceFragment : Fragment() {
                 fillCharts(host, lr, idx)
                 followReplayViewport(idx)
                 val bar = lr.bars[idx]
-                replayProgTv?.text = "${idx + 1}/${lr.bars.size}  ${bar.date}  收${bar.close}"
+                val prog = "${idx + 1}/${lr.bars.size}  ${bar.date}  收${bar.close}"
+                replayProgTv?.text = prog; replayProgTv2?.text = prog
                 idx++
                 kotlinx.coroutines.delay(replaySpeedMs)
             }
@@ -553,6 +620,8 @@ class VolumePriceFragment : Fragment() {
 
     override fun onDestroyView() {
         replayJob?.cancel(); replayJob = null   // 切页时停掉逐K回放
+        replayFullDlg?.setOnDismissListener(null)   // 防 dismiss 回调在视图销毁后触 fillCharts
+        replayFullDlg?.dismiss(); replayFullDlg = null
         super.onDestroyView()
     }
 

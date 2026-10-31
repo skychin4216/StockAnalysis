@@ -94,6 +94,7 @@ class SsaAnalysisFragment : Fragment() {
         StrategyTab(4, "🌊 大势分析", "板块·大盘"),
         StrategyTab(5, "📈 量价策略", "板块·大盘"),
         StrategyTab(8, "🕸 板块共振", "板块·大盘"),
+        StrategyTab(9, "🌡 RVG波动率", "板块·大盘"),
         StrategyTab(6, "🌀 相空间", "预测"),
         StrategyTab(7, "📡 ARMA谱", "预测"),
     )
@@ -108,6 +109,7 @@ class SsaAnalysisFragment : Fragment() {
         6 -> PhaseSpaceFragment()
         7 -> ArmaFragment()
         8 -> SectorResonanceFragment()
+        9 -> RvgFragment()
         else -> null
     }
 

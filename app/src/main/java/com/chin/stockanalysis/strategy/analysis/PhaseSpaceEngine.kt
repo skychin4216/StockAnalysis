@@ -48,7 +48,11 @@ object PhaseSpaceEngine {
 
     fun analyze(dates: List<String>, closes: DoubleArray, horizon: Int = 5,
                 evalN: Int = 250, cycleL: Int = 0,
-                opens: DoubleArray? = null, highs: DoubleArray? = null, lows: DoubleArray? = null): Result? {
+                opens: DoubleArray? = null, highs: DoubleArray? = null, lows: DoubleArray? = null,
+                /** true = 只算方法A 价格，跳过 B(cycle)/C(收益率)：逐K回测按前缀高频调用时用 */
+                priceOnly: Boolean = false,
+                /** 状态切换标签（true=动荡），长度须=closes.size；只作用于方法A 的近邻过滤 */
+                stateMask: BooleanArray? = null): Result? {
         val n = closes.size
         if (n < 120 || dates.size != n) return null
         val last = closes[n - 1]
@@ -58,13 +62,15 @@ object PhaseSpaceEngine {
         val mu = lg.average()
         val sd = sqrt(lg.sumOf { (it - mu) * (it - mu) } / n).coerceAtLeast(1e-9)
         val xPrice = DoubleArray(n) { (lg[it] - mu) / sd }
+        val priceMask = stateMask?.takeIf { it.size == n }
         val pricePass = runPass("价格", dates, closes, xPrice, horizon, evalN, last,
             fcToPrice = { z -> exp(z * sd + mu) },
-            fitToPrice = { _, z -> exp(z * sd + mu) })
+            fitToPrice = { _, z -> exp(z * sd + mu) },
+            stateMask = priceMask)
 
         // ── 方法B：因果 SSA cycle（L 自动寻优：ACF 主导周期 P → L≈P）──
-        val autoL = if (cycleL > 0) cycleL else selectCycleL(closes)
-        val cycFull = runCatching { causalCycle(closes, autoL) }.getOrNull()
+        val autoL = if (priceOnly) 0 else if (cycleL > 0) cycleL else selectCycleL(closes)
+        val cycFull = if (priceOnly) null else runCatching { causalCycle(closes, autoL) }.getOrNull()
         val validFrom = if (cycFull != null)
             (0 until n).firstOrNull { !cycFull[it].isNaN() } ?: n else n
         val cyclePass = if (cycFull != null && n - validFrom >= 120) {
@@ -79,21 +85,25 @@ object PhaseSpaceEngine {
             val xCyc = DoubleArray(nn) { (cyc[it] - cmu) / csd }
             runPass("cycle因果 L=$autoL", dts, cls, xCyc, horizon, evalN, last,
                 fcToPrice = { z -> trend[nn - 1] + z * csd },  // 预测：末日趋势平推 + cycle
-                fitToPrice = { t, z -> trend[t] + z * csd })   // 拟合：当日实际趋势 + cycle
+                fitToPrice = { t, z -> trend[t] + z * csd },   // 拟合：当日实际趋势 + cycle
+                stateMask = priceMask?.copyOfRange(validFrom, n))  // 裁掉前缀后下标对齐
         } else null
 
         // ── 方法C：对数收益率嵌入（去水平只留变动节奏；预测价=逐步收益率累乘还原）──
-        val lr = DoubleArray(n) { i -> if (i == 0) 0.0 else ln(closes[i] / closes[i - 1]) }
-        val rmu = lr.average()
-        val rsd = sqrt(lr.sumOf { (it - rmu) * (it - rmu) } / n).coerceAtLeast(1e-9)
-        val xRet = DoubleArray(n) { (lr[it] - rmu) / rsd }
-        val retPass0 = runPass("收益率", dates, closes, xRet, horizon, evalN, last,
-            fcToPrice = { it },  // 占位，下面按累计收益覆写
-            fitToPrice = { t, z -> if (t >= 1) closes[t - 1] * exp(z * rsd + rmu) else closes[0] },
-            hitZeroBased = true)
-        var cum = 0.0
-        val fcP = retPass0.fcPrices.map { z -> cum += z * rsd + rmu; last * exp(cum) }
-        val retPass = retPass0.copy(fcPrices = fcP, fcPct = fcP.map { (it / last - 1) * 100.0 })
+        val retPass: Pass? = if (priceOnly) null else {
+            val lr = DoubleArray(n) { i -> if (i == 0) 0.0 else ln(closes[i] / closes[i - 1]) }
+            val rmu = lr.average()
+            val rsd = sqrt(lr.sumOf { (it - rmu) * (it - rmu) } / n).coerceAtLeast(1e-9)
+            val xRet = DoubleArray(n) { (lr[it] - rmu) / rsd }
+            val retPass0 = runPass("收益率", dates, closes, xRet, horizon, evalN, last,
+                fcToPrice = { it },  // 占位，下面按累计收益覆写
+                fitToPrice = { t, z -> if (t >= 1) closes[t - 1] * exp(z * rsd + rmu) else closes[0] },
+                hitZeroBased = true,
+                stateMask = priceMask)
+            var cum = 0.0
+            val fcP = retPass0.fcPrices.map { z -> cum += z * rsd + rmu; last * exp(cum) }
+            retPass0.copy(fcPrices = fcP, fcPct = fcP.map { (it / last - 1) * 100.0 })
+        }
 
         // ── 十字星标记（走查窗口对齐）：实体/振幅 ≤10% ──
         val doji = if (opens != null && highs != null && lows != null &&
@@ -104,6 +114,19 @@ object PhaseSpaceEngine {
             } else emptyList()
 
         return Result(last, pricePass, cyclePass, retPass, doji)
+    }
+
+    /**
+     * 因果 SSA cycle 全序列（每个点只用 ≤t 的历史，严格无前视）。
+     * 供「周期位置 + 一阶速度」类因子一次性导出（相位状态机等），避免逐K重算。
+     * @param L 窗口长度，<=0 时自动寻优；返回 (cycle 序列, 实际使用 L)
+     */
+    fun cycleSeries(closes: DoubleArray, L: Int = 0): Pair<DoubleArray, Int>? {
+        val n = closes.size
+        if (n < 120) return null
+        val l = if (L > 0) L.coerceIn(5, maxOf(5, n / 4)) else selectCycleL(closes)
+        val cy = runCatching { causalCycle(closes, l) }.getOrNull() ?: return null
+        return cy to l
     }
 
     /**
@@ -161,7 +184,8 @@ object PhaseSpaceEngine {
                         horizon: Int, evalN: Int, last: Double,
                         fcToPrice: (Double) -> Double,
                         fitToPrice: (Int, Double) -> Double,
-                        hitZeroBased: Boolean = false): Pass {
+                        hitZeroBased: Boolean = false,
+                        stateMask: BooleanArray? = null): Pass {
         val n = x.size
 
         // ── τ：AMI 第一局部极小 ──
@@ -192,15 +216,28 @@ object PhaseSpaceEngine {
         }
         val theiler = off + 1
 
-        /** 邻点时刻必须 < tIdx-theiler 且 +outH 不越界，返回 (时刻, 距离²) 升序 */
+        /** 邻点时刻必须 < tIdx-theiler 且 +outH 不越界，返回 (时刻, 距离²) 升序。
+         *  stateMask 非空时只取「与查询点同状态」的候选（平静/动荡不互为邻居）；
+         *  同状态池 <8 个回退全量，避免预测大面积 null。 */
         fun neighbors(tIdx: Int, outH: Int): List<Pair<Int, Double>> {
             val q = vec(tIdx)
             val lim = tIdx - theiler
             val list = ArrayList<Pair<Int, Double>>()
-            var j = off
-            while (j <= lim - outH) {
-                list.add(j to dist2(q, vec(j)))
-                j++
+            if (stateMask != null) {
+                val cur = stateMask[tIdx]
+                var j = off
+                while (j <= lim - outH) {
+                    if (stateMask[j] == cur) list.add(j to dist2(q, vec(j)))
+                    j++
+                }
+            }
+            if (stateMask == null || list.size < 8) {
+                list.clear()
+                var j = off
+                while (j <= lim - outH) {
+                    list.add(j to dist2(q, vec(j)))
+                    j++
+                }
             }
             list.sortBy { it.second }
             return list
@@ -268,7 +305,10 @@ object PhaseSpaceEngine {
                 val p = predict(t, h) ?: continue
                 evalErrs[h - 1].add(p to x[t + h])
                 hitTot[h - 1]++
-                if ((p > x[t]) == (x[t + h] > x[t])) {
+                // 方向口径：price/cycle 用增量（预测是否高于当前）；收益率通道用零轴（预测 h 步后收益正负）
+                val ok = if (hitZeroBased) (p > 0.0) == (x[t + h] > 0.0)
+                         else (p > x[t]) == (x[t + h] > x[t])
+                if (ok) {
                     hitCnt[h - 1]++
                     if (h == 1) f1 = 1
                 }
